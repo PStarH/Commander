@@ -11,3 +11,9 @@ export * from './executor';
 // Parallel Task Pool
 export { TaskPool } from './taskPool';
 export type { PoolTask, PoolResult, PoolConfig } from './taskPool';
+// Task Framework
+export {
+  createTask, updateTaskStatus, appendTaskOutput, readTaskOutput,
+  killTask, getTask, listTasks, cleanupTask, getActiveCount,
+} from './task';
+export type { TaskType, TaskStatus, TaskHandle, TaskSpec } from './task';
