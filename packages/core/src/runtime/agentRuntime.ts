@@ -208,12 +208,11 @@ export class AgentRuntime {
                 if (siblingAbort.signal.aborted) {
                   return { toolCallId: tc.id, name: tc.name, output: '', error: 'Cancelled: sibling tool error', durationMs: 0 };
                 }
-                const result = await this.executeTool(runId, tc, ctx.agentId);
-                // Shell errors cascade: cancel siblings (Claude Code pattern)
-                if (result.error && (tc.name === 'shell_execute' || tc.name === 'bash')) {
+                const toolResult = await this.executeTool(runId, tc, ctx.agentId);
+                if (toolResult.error && (tc.name === 'shell_execute' || tc.name === 'bash')) {
                   siblingAbort.abort();
                 }
-                return { toolCallId: tc.id, name: tc.name, ...result };
+                return { toolCallId: tc.id, name: tc.name, output: toolResult.output, error: toolResult.error, durationMs: toolResult.durationMs };
               })
             );
             for (let i = 0; i < concurrentResults.length; i++) {
