@@ -9,7 +9,7 @@ interface OpenAICompletionUsage {
 
 interface OpenAIStreamChunk {
   choices: Array<{
-    delta: { content?: string; tool_calls?: Array<{ index: number; id?: string; type: string; function: { name?: string; arguments?: string } }> };
+    delta: { content?: string; reasoning_content?: string; tool_calls?: Array<{ index: number; id?: string; type: string; function: { name?: string; arguments?: string } }> };
     finish_reason: string | null;
   }>;
   usage?: OpenAICompletionUsage;
@@ -32,10 +32,13 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {
-    // Always use the configured defaultModel when set (handles custom API endpoints
-    // where the model name from routing may not match the API's expected model ID)
     const model = this.defaultModel || request.model;
     const body = this.buildBody(request, model);
+    // Include tool_calls if present on the last assistant message (for multi-turn)
+    const lastAssistant = [...request.messages].reverse().find(m => m.role === 'assistant');
+    if (lastAssistant && (lastAssistant as any).tool_calls) {
+      body.tool_calls = (lastAssistant as any).tool_calls;
+    }
     const useStreaming = request.cacheConfig?.useCacheControl ?? true;
 
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -61,10 +64,15 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   private buildBody(request: LLMRequest, model: string): Record<string, unknown> {
-    const messages = request.messages.map(m => ({
-      role: m.role,
-      content: m.content,
-    }));
+    const messages = request.messages.map(m => {
+      const msg: Record<string, unknown> = { role: m.role, content: m.content };
+      // Pass through optional fields that some models require
+      if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
+      if ((m as any).reasoning_content) msg.reasoning_content = (m as any).reasoning_content;
+      if ((m as any).name) msg.name = (m as any).name;
+      if ((m as any).tool_calls) msg.tool_calls = (m as any).tool_calls;
+      return msg;
+    });
 
     const body: Record<string, unknown> = {
       model,
@@ -98,6 +106,7 @@ export class OpenAIProvider implements LLMProvider {
     if (!reader) throw new Error('No response body');
 
     let content = '';
+    let reasoningContent = '';
     const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
     let currentTool: { id: string; name: string; arguments: string } | null = null;
     let usage: OpenAICompletionUsage | null = null;
@@ -126,6 +135,7 @@ export class OpenAIProvider implements LLMProvider {
           for (const choice of chunk.choices ?? []) {
             const delta = choice.delta;
             if (delta.content) content += delta.content;
+            if (delta.reasoning_content) reasoningContent += delta.reasoning_content;
             if (delta.tool_calls) {
               for (const tc of delta.tool_calls) {
                 if (tc.id) {
@@ -162,6 +172,7 @@ export class OpenAIProvider implements LLMProvider {
             arguments: JSON.parse(tc.arguments || '{}'),
           }))
         : undefined,
+      reasoning_content: reasoningContent || undefined,
     };
   }
 
@@ -187,6 +198,8 @@ export class OpenAIProvider implements LLMProvider {
       usage: tokenUsage,
       finishReason: choice?.finish_reason ?? 'stop',
       toolCalls,
+      // Capture reasoning_content for MiMo reasoning models
+      reasoning_content: message.reasoning_content,
     };
   }
 }

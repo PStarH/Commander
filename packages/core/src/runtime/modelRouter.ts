@@ -134,7 +134,8 @@ export class ModelRouter {
       provider: model.provider,
       reasoning,
       estimatedCost: Math.round(estimatedCost * 100000) / 100000,
-      maxTokens: Math.min(estimatedOutputTokens, 16384),
+      // Use higher cap for reasoning models that need thinking space
+      maxTokens: Math.min(estimatedOutputTokens, 64000),
     };
   }
 

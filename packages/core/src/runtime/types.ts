@@ -18,6 +18,8 @@ export interface LLMMessage {
   content: string;
   name?: string;
   tool_call_id?: string;
+  /** MiMo reasoning models put internal reasoning here. Must be passed back on follow-up calls. */
+  reasoning_content?: string;
 }
 
 /**
@@ -67,6 +69,8 @@ export interface LLMResponse {
   usage: TokenUsage;
   finishReason: 'stop' | 'length' | 'tool_calls' | 'error';
   toolCalls?: ToolCall[];
+  /** MiMo reasoning models put internal reasoning here. Present on responses from reasoning models. */
+  reasoning_content?: string;
 }
 
 /**

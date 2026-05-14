@@ -7,7 +7,15 @@
   "bin": {
     "commander": "../demo.ts"
   },
-  "keywords": ["multi-agent", "ai", "orchestration", "llm", "agents", "gaia", "workflow"],
+  "keywords": [
+    "multi-agent",
+    "ai",
+    "orchestration",
+    "llm",
+    "agents",
+    "gaia",
+    "workflow"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -23,5 +31,8 @@
     "@types/node": "^25.6.0",
     "typescript": "^5.0.0",
     "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "playwright": "^1.60.0"
   }
 }

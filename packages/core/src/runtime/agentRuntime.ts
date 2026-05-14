@@ -150,7 +150,7 @@ export class AgentRuntime {
     let totalTokens: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
-      const response = await this.callWithTimeout(request, routing);
+      let response = await this.callWithTimeout(request, routing);
       const stepDuration = Date.now() - startTime;
 
       if (response) {
@@ -182,8 +182,11 @@ export class AgentRuntime {
         };
         steps.push(step);
 
-        // Process tool calls with descending scheduler + observation masking
-        if (response.toolCalls && response.toolCalls.length > 0) {
+        // Process tool calls in a loop until resolved or deadline
+        const maxIterations = ctx.maxSteps || 10;
+        let toolLoopCount = 0;
+        while (response.toolCalls && response.toolCalls.length > 0 && toolLoopCount < maxIterations) {
+          toolLoopCount++;
           const orderedCalls = this.config.enableDescendingScheduler
             ? this.descendingToolOrder(response.toolCalls)
             : response.toolCalls;
@@ -200,7 +203,6 @@ export class AgentRuntime {
             });
           }
 
-          // Apply observation masking: keep last N, replace older with placeholders
           const maskedResults = this.applyObservationMask(rawResults, this.config.observationMaskWindow);
 
           for (const masked of maskedResults) {
@@ -213,11 +215,30 @@ export class AgentRuntime {
             };
             steps.push(toolStep);
 
+            const assistantMsg: any = { role: 'assistant', content: response.content };
+            if ((response as any).reasoning_content) {
+              assistantMsg.reasoning_content = (response as any).reasoning_content;
+            }
+            if ((response as any).toolCalls) {
+              assistantMsg.tool_calls = (response as any).toolCalls.map((tc: any) => ({
+                id: tc.id,
+                type: 'function',
+                function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+              }));
+            }
             request.messages.push(
-              { role: 'assistant', content: response.content },
+              assistantMsg,
               { role: 'tool', content: masked.output, tool_call_id: masked.toolCallId },
             );
           }
+
+          // Resume the model with tool results — get final answer
+          const followUp = await this.callWithTimeout(request, routing);
+          if (!followUp) break;
+          totalTokens.promptTokens += followUp.usage.promptTokens;
+          totalTokens.completionTokens += followUp.usage.completionTokens;
+          totalTokens.totalTokens += followUp.usage.totalTokens;
+          response = followUp;
         }
 
         const totalDurationMs = Date.now() - startTime;
@@ -226,7 +247,7 @@ export class AgentRuntime {
           agentId: ctx.agentId,
           missionId: ctx.missionId,
           status: 'success',
-          summary: response.content.slice(0, 500),
+          summary: response.content.slice(0, 2000), // longer summary to capture reasoning
           steps,
           totalTokenUsage: totalTokens,
           totalDurationMs,
