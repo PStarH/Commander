@@ -126,10 +126,19 @@ export interface ToolResult {
 
 /**
  * Interface for a tool that can be executed.
+ * Safety flags control concurrent execution and execution behavior.
  */
 export interface Tool {
   definition: ToolDefinition;
   execute(args: Record<string, unknown>): Promise<string>;
+  /** If true, tool can run in parallel with other concurrent-safe tools. Default: false */
+  isConcurrencySafe?: boolean;
+  /** If true, tool only reads state (no side effects). Allows speculative execution. Default: false */
+  isReadOnly?: boolean;
+  /** Max execution time in ms. 0 = no limit. Default: 0 */
+  timeout?: number;
+  /** Max output size in chars. Larger outputs are truncated and linked to file. Default: 10000 */
+  maxOutputSize?: number;
 }
 
 // ============================================================================

@@ -182,17 +182,52 @@ export class AgentRuntime {
         };
         steps.push(step);
 
-        // Process tool calls in a loop until resolved or deadline
+        // Process tool calls in a loop — concurrent-safe tools run in parallel
         const maxIterations = Math.max(ctx.maxSteps || 10, 20);
         let toolLoopCount = 0;
         while (response.toolCalls && response.toolCalls.length > 0 && toolLoopCount < maxIterations) {
           toolLoopCount++;
-          const orderedCalls = this.config.enableDescendingScheduler
-            ? this.descendingToolOrder(response.toolCalls)
-            : response.toolCalls;
+
+          // Partition tools: concurrent-safe first, then serial (state-mutating)
+          const calls = response.toolCalls;
+          const concurrencyMap = calls.map(tc => {
+            const tool = this.tools.get(tc.name);
+            return { tc, isSafe: tool?.isConcurrencySafe === true };
+          });
+          const safeCalls = concurrencyMap.filter(c => c.isSafe).map(c => c.tc);
+          const serialCalls = concurrencyMap.filter(c => !c.isSafe).map(c => c.tc);
 
           const rawResults: Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }> = [];
-          for (const tc of orderedCalls) {
+
+          // Run concurrent-safe tools in parallel
+          if (safeCalls.length > 0) {
+            const concurrentResults = await Promise.allSettled(
+              safeCalls.map(tc => this.executeTool(runId, tc, ctx.agentId))
+            );
+            for (let i = 0; i < concurrentResults.length; i++) {
+              const r = concurrentResults[i];
+              if (r.status === 'fulfilled') {
+                rawResults.push({
+                  toolCallId: safeCalls[i].id,
+                  name: safeCalls[i].name,
+                  output: r.value.output,
+                  error: r.value.error,
+                  durationMs: r.value.durationMs,
+                });
+              } else {
+                rawResults.push({
+                  toolCallId: safeCalls[i].id,
+                  name: safeCalls[i].name,
+                  output: '',
+                  error: r.reason?.toString() || 'Execution failed',
+                  durationMs: 0,
+                });
+              }
+            }
+          }
+
+          // Run serial tools in order
+          for (const tc of serialCalls) {
             const toolResult = await this.executeTool(runId, tc, ctx.agentId);
             rawResults.push({
               toolCallId: tc.id,
@@ -203,7 +238,11 @@ export class AgentRuntime {
             });
           }
 
-          const maskedResults = this.applyObservationMask(rawResults, this.config.observationMaskWindow);
+          // Reorder results to match original request order
+          const resultMap = new Map(rawResults.map(r => [r.toolCallId, r]));
+          const orderedResults = calls.map(tc => resultMap.get(tc.id)!).filter(Boolean);
+
+          const maskedResults = this.applyObservationMask(orderedResults, this.config.observationMaskWindow);
 
           for (const masked of maskedResults) {
             const toolStep: AgentExecutionStep = {
@@ -232,7 +271,7 @@ export class AgentRuntime {
             );
           }
 
-          // Resume the model with tool results — get final answer
+          // Resume the model with tool results
           const followUp = await this.callWithTimeout(request, routing);
           if (!followUp) break;
           totalTokens.promptTokens += followUp.usage.promptTokens;

@@ -72,6 +72,10 @@ const SDEF: ToolDefinition = {
 
 export class BrowserSearchTool implements Tool {
   readonly definition = SDEF;
+  isReadOnly = true;
+  isConcurrencySafe = true;
+  timeout = 60000;
+  maxOutputSize = 50000;
   async execute(args: Record<string,unknown>): Promise<string> {
     try { return await searchDDG(String(args.query||''), Math.min(10,Math.max(1,Number(args.count)||5))); }
     catch(err:any) { return 'Search failed: '+(err.message||'Unknown error'); }
