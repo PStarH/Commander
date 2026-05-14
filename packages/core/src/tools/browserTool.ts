@@ -1,69 +1,69 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
 
-function decodeHtml(text: string): string {
-  return text.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
-    .replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&nbsp;/g,' ')
-    .replace(/&#(\d+);/g,(_,c)=>String.fromCodePoint(Number(c)));
-}
-function stripHtml(h: string): string {
-  return h.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
-}
-function ddgBlocked(h: string): boolean {
-  return /g-recaptcha|are you a human|challenge-form/i.test(h);
+let stealthBrowser: any = null;
+async function getStealth() {
+  if (!stealthBrowser) {
+    const { addExtra } = await import('playwright-extra');
+    const { chromium } = await import('playwright');
+    const StealthPlugin = (await import('puppeteer-extra-plugin-stealth')).default;
+    const pe = addExtra(chromium);
+    pe.use(StealthPlugin());
+    stealthBrowser = pe;
+  }
+  return stealthBrowser;
 }
 
-async function searchDuckDuckGo(query: string, count: number): Promise<string|null> {
+async function searchDDG(query: string, count: number): Promise<string> {
+  const pe = await getStealth();
+  const browser = await pe.launch({headless:true,args:['--no-sandbox']});
   try {
-    const url = 'https://html.duckduckgo.com/html?q='+encodeURIComponent(query)+'&kl=us-en&kp=-2';
-    const res = await fetch(url, {headers:{'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36'}});
-    if (!res.ok) return null;
-    const html = await res.text();
-    if (ddgBlocked(html)) return null;
-    const results: string[] = [];
-    const linkRe = /<a[^>]*class="[^"]*\bresult__a\b[^"]*"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
-    const snipRe = /<a[^>]*class="[^"]*\bresult__snippet\b[^"]*"[^>]*>([\s\S]*?)<\/a>/i;
-    let m;
-    while ((m = linkRe.exec(html)) !== null && results.length < count) {
-      const title = decodeHtml(stripHtml(m[2]));
-      if (!title) continue;
-      const after = html.slice(m.index+m[0].length);
-      const next = after.search(/<a[^>]*class="[^"]*\bresult__a\b[^"]*"/i);
-      const scope = next>=0 ? after.slice(0,next) : after;
-      const sm = snipRe.exec(scope);
-      const snippet = sm ? decodeHtml(stripHtml(sm[1])) : '';
-      let url = m[1].replace(/&amp;/g,'&');
-      try { const p = new URL(url.startsWith('//')?'https:'+url:url); const u=p.searchParams.get('uddg'); if(u) url=u; } catch {}
-      results.push((results.length+1)+'. '+title);
-      if (snippet) results.push('   '+snippet.slice(0,300));
-      if (url) results.push('   '+url);
-    }
-    return results.length>0 ? 'Search results for "'+query+'":\n'+results.join('\n') : null;
-  } catch { return null; }
+    const page = await browser.newPage({viewport:{width:1280,height:800}});
+    await page.goto('https://duckduckgo.com/?q='+encodeURIComponent(query)+'&ia=web', {waitUntil:'networkidle',timeout:30000});
+    await page.waitForTimeout(1500);
+
+    const results = await page.evaluate((maxCount: number) => {
+      const items: string[] = [];
+      const articles = document.querySelectorAll('article[data-testid="result"]');
+      for (let i = 0; i < Math.min(maxCount, articles.length); i++) {
+        const a = articles[i];
+        const h2 = a.querySelector('h2');
+        const link = a.querySelector('a[href^="http"]');
+        const snip = a.querySelector('[data-testid="result-snippet"]');
+        if (!h2) continue;
+        const title = h2.textContent?.trim();
+        if (!title) continue;
+        items.push((i+1)+'. '+title);
+        if (snip && snip.textContent) items.push('   '+snip.textContent.trim().slice(0,300));
+        if (link) items.push('   '+(link as HTMLAnchorElement).href);
+      }
+      return items;
+    }, count);
+
+    return results.length > 0 ? 'Search results for "'+query+'":\n'+results.join('\n') : 'No results found.';
+  } finally { await browser.close(); }
 }
 
-async function searchBrave(query: string, count: number): Promise<string|null> {
-  const apiKey = process.env.BRAVE_API_KEY||'';
-  if (!apiKey) return null;
+async function fetchPage(url: string): Promise<string> {
+  const pe = await getStealth();
+  const browser = await pe.launch({headless:true,args:['--no-sandbox']});
   try {
-    const res = await fetch('https://api.search.brave.com/res/v1/web/search?q='+encodeURIComponent(query)+'&count='+count,
-      {headers:{'Accept':'application/json','Accept-Encoding':'gzip','x-rapidapi-key':apiKey}});
-    if (!res.ok) return null;
-    const data: any = await res.json();
-    const items = data.web?.results||[];
-    if (!items.length) return null;
-    const lines = ['Search results for "'+query+'":'];
-    for (let i=0; i<Math.min(count,items.length); i++) {
-      lines.push((i+1)+'. '+items[i].title);
-      if (items[i].description) lines.push('   '+items[i].description.slice(0,300));
-      if (items[i].url) lines.push('   '+items[i].url);
-    }
-    return lines.join('\n');
-  } catch { return null; }
+    const page = await browser.newPage({viewport:{width:1280,height:800}});
+    await page.goto(url, {waitUntil:'networkidle',timeout:30000});
+    await page.waitForTimeout(1000);
+    const content = await page.evaluate(() => {
+      for (const s of ['script','style','nav','footer','header','aside','iframe']) {
+        document.querySelectorAll(s).forEach(e => e.remove());
+      }
+      const m = document.querySelector('main,article,.content,#content,.post')||document.body;
+      return (m.textContent||'').replace(/\s+/g,' ').trim().slice(0,10000);
+    });
+    return content || 'No readable content.';
+  } finally { await browser.close(); }
 }
 
-const DEF: ToolDefinition = {
+const SDEF: ToolDefinition = {
   name:'browser_search',
-  description:'Search the web. Returns titles, URLs, snippets. DuckDuckGo (free) or Brave Search if BRAVE_API_KEY set.',
+  description:'Search the web (DuckDuckGo, no API key). Returns titles, URLs, snippets.',
   inputSchema:{type:'object',properties:{
     query:{type:'string',description:'Search query'},
     count:{type:'number',description:'Results (1-10, default 5)'},
@@ -71,17 +71,27 @@ const DEF: ToolDefinition = {
 };
 
 export class BrowserSearchTool implements Tool {
-  readonly definition = DEF;
+  readonly definition = SDEF;
   async execute(args: Record<string,unknown>): Promise<string> {
-    const query = String(args.query||'');
-    const count = Math.min(10,Math.max(1,Number(args.count)||5));
-    let r = await searchBrave(query,count);
-    if (r) return r;
-    r = await searchDuckDuckGo(query,count);
-    if (r) return r;
-    if (!process.env.BRAVE_API_KEY) {
-      return 'Set BRAVE_API_KEY for free web search (2,000 queries/month). Sign up: https://brave.com/search/api/';
-    }
-    return 'Search failed. Try a different query.';
+    try { return await searchDDG(String(args.query||''), Math.min(10,Math.max(1,Number(args.count)||5))); }
+    catch(err:any) { return 'Search failed: '+(err.message||'Unknown error'); }
+  }
+}
+
+const FDEF: ToolDefinition = {
+  name:'browser_fetch',
+  description:'Fetch webpage content using a browser. Extracts main readable text.',
+  inputSchema:{type:'object',properties:{
+    url:{type:'string',description:'Full URL'},
+  },required:['url']},
+};
+
+export class BrowserFetchTool implements Tool {
+  readonly definition = FDEF;
+  async execute(args: Record<string,unknown>): Promise<string> {
+    const url = String(args.url||'');
+    if (!url.startsWith('http://')&&!url.startsWith('https://')) return 'Invalid URL. Must start with http:// or https://.';
+    try { return 'Content from '+url+':\n'+await fetchPage(url); }
+    catch(err:any) { return 'Failed to fetch '+url+': '+(err.message||'Unknown error'); }
   }
 }

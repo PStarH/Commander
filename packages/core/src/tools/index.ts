@@ -3,7 +3,7 @@ export { FileReadTool, FileWriteTool, FileEditTool, FileSearchTool, FileListTool
 export { PythonExecuteTool, ShellExecuteTool } from './codeExecutionTool';
 export { MemoryStoreTool, MemoryRecallTool, MemoryListTool } from './persistenceTool';
 export { GitTool } from './gitTool';
-export { BrowserSearchTool } from './browserTool';
+export { BrowserSearchTool, BrowserFetchTool } from './browserTool';
 
 import type { Tool } from '../runtime/types';
 import { WebSearchTool, WebFetchTool } from './webSearchTool';
@@ -11,7 +11,7 @@ import { FileReadTool, FileWriteTool, FileEditTool, FileSearchTool, FileListTool
 import { PythonExecuteTool, ShellExecuteTool } from './codeExecutionTool';
 import { MemoryStoreTool, MemoryRecallTool, MemoryListTool } from './persistenceTool';
 import { GitTool } from './gitTool';
-import { BrowserSearchTool } from './browserTool';
+import { BrowserSearchTool, BrowserFetchTool } from './browserTool';
 
 export function createAllTools(): Map<string, Tool> {
   const tools = new Map<string, Tool>();
@@ -19,6 +19,7 @@ export function createAllTools(): Map<string, Tool> {
     ['web_search', new WebSearchTool()],
     ['web_fetch', new WebFetchTool()],
     ['browser_search', new BrowserSearchTool()],
+    ['browser_fetch', new BrowserFetchTool()],
     ['file_read', new FileReadTool()],
     ['file_write', new FileWriteTool()],
     ['file_edit', new FileEditTool()],
