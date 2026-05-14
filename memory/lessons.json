@@ -1,0 +1,34 @@
+{
+  "domain": "Lessons",
+  "entries": [
+    {
+      "id": "lsn-001",
+      "timestamp": "2026-04-09T02:20:00.000Z",
+      "type": "lesson",
+      "title": "Token 使用量是关键性能指标",
+      "content": "Anthropic 研究表明：Token 使用量解释 95% 的性能方差。需要建立 Token Budget 机制，限制每次 Agent 调用的 token 上限。",
+      "tags": ["token-budget", "performance", "anthropic"]
+    },
+    {
+      "id": "lsn-002",
+      "timestamp": "2026-04-09T02:20:00.000Z",
+      "type": "lesson",
+      "title": "Agent 通信要说做了什么，不只是做好了",
+      "content": "避免抽象的 'success' 状态，Agent 之间传递信息时要暴露具体行为。例如：'写入文件 X，修改行数 Y' 而不是 '任务完成'。这有利于审计和调试。",
+      "tags": ["communication", "audit", "best-practice"]
+    },
+    {
+      "id": "lsn-003",
+      "timestamp": "2026-04-09T02:20:00.000Z",
+      "type": "lesson",
+      "title": "Lead Agent + Subagents 架构有效",
+      "content": "Anthropic Multi-Agent 研究：Lead Agent 负责规划和协调，Subagents 并行执行。比单 Agent 提升 90.2% 性能。Commander 的 Orchestrator 正是这种模式。",
+      "tags": ["multi-agent", "architecture", "anthropic"]
+    }
+  ],
+  "metadata": {
+    "createdAt": "2026-04-09T02:20:00.000Z",
+    "updatedAt": "2026-04-09T02:20:00.000Z",
+    "entryCount": 3
+  }
+}

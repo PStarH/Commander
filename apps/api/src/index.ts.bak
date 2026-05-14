@@ -1,0 +1,664 @@
+import express from 'express';
+import {
+  LogLevel,
+  MissionPriority,
+  MissionStatus,
+  MissionRiskLevel,
+  MissionGovernanceMode,
+  ProjectMemoryKind,
+  CommanderRunContextV2,
+  CommanderRunMeta,
+  CommanderAgentCard,
+  CommanderRunIntent,
+  createSlimSnapshot,
+  getDefaultInvocationProfile,
+  recommendStrategy,
+} from '@commander/core';
+import { WarRoomStore } from './store';
+import { ProjectMemoryStore } from './memoryStore';
+import { AgentStateStore } from './agentStateStore';
+import { MemoryIndexManager, DEFAULT_DOMAINS } from './memoryIndexManager';
+import { calculateGovernanceStats, generateGovernanceAlerts, generateWeeklyGovernanceReport } from './governanceObserver';
+
+const PROJECT_ID = 'project-war-room';
+
+const app = express();
+const store = new WarRoomStore();
+const memoryStore = new ProjectMemoryStore();
+const agentStateStore = new AgentStateStore();
+const memoryIndexManager = new MemoryIndexManager(PROJECT_ID);
+
+app.use(express.json());
+app.use((_req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (_req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
+// Register Metrics API routes
+app.use('/api/metrics', createMetricsRoutes(store));
+
+app.get('/health', (_req, res) => {
+  res.json({ ok: true, projectId: PROJECT_ID });
+});
+
+app.get('/projects', (_req, res) => {
+  res.json(store.listProjects());
+});
+
+app.get('/projects/:projectId/agents', (req, res) => {
+  const snapshot = store.getProjectSnapshot(req.params.projectId);
+  if (!snapshot) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  res.json(store.listAgents(req.params.projectId));
+});
+
+app.get('/projects/:projectId/agents/:agentId/state', (req, res) => {
+  const snapshot = store.getProjectSnapshot(req.params.projectId);
+  if (!snapshot) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  const agent = snapshot.agents.find(agent => agent.agentId === req.params.agentId);
+  if (!agent) {
+    return res.status(404).json({ error: 'Agent not found' });
+  }
+
+  const state = agentStateStore.get(req.params.projectId, req.params.agentId);
+  if (!state) {
+    return res.status(404).json({ error: 'Agent state not found' });
+  }
+
+  res.json(state);
+});
+
+app.patch('/projects/:projectId/agents/:agentId/state', (req, res) => {
+  const snapshot = store.getProjectSnapshot(req.params.projectId);
+  if (!snapshot) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  const agent = snapshot.agents.find(agent => agent.agentId === req.params.agentId);
+  if (!agent) {
+    return res.status(404).json({ error: 'Agent not found' });
+  }
+
+  const { summary, preferences, tags } = req.body as {
+    summary?: string;
+    preferences?: string;
+    tags?: string[];
+  };
+
+  try {
+    const state = agentStateStore.upsert({
+      projectId: req.params.projectId,
+      agentId: req.params.agentId,
+      summary,
+      preferences,
+      tags,
+    });
+
+    res.json(state);
+  } catch (error) {
+    res.status(400).json({ error: toErrorMessage(error) });
+  }
+});
+
+app.get('/projects/:projectId/war-room', (req, res) => {
+  const snapshot = store.getProjectSnapshot(req.params.projectId);
+  if (!snapshot) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  res.json(snapshot);
+});
+
+app.get('/projects/:projectId/run-context', (req, res) => {
+  const snapshot = store.getProjectSnapshot(req.params.projectId);
+  if (!snapshot) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  const { agentId, missionId, memoryLimit, intent, runId, issuedByKind, issuedById, issuedByLabel } =
+    req.query as {
+      agentId?: string;
+      missionId?: string;
+      memoryLimit?: string;
+      intent?: CommanderRunIntent;
+      runId?: string;
+      issuedByKind?: 'HUMAN' | 'AGENT' | 'SYSTEM';
+      issuedById?: string;
+      issuedByLabel?: string;
+    };
+
+  const limit = memoryLimit ? Number(memoryLimit) : 12;
+
+  const memoryItems = memoryStore.search(req.params.projectId, {
+    limit,
+  });
+
+  // v1 推荐记忆策略：
+  // - 优先选择与当前 mission 相关的 SUMMARY / LESSON / DECISION；
+  // - 如无 missionId 或未命中 mission-scoped 记忆，则退化为最近的若干条记忆。
+  const recommendedMemorySelection = (() => {
+    if (!missionId) {
+      return {
+        items: memoryItems,
+        sourceTags: ['recent'] as string[],
+      };
+    }
+
+    const lowerLimit = Math.min(limit, 12);
+    const missionScoped = memoryStore.search(req.params.projectId, {
+      limit: lowerLimit,
+      kind: undefined,
+    }).filter(item => item.missionId === missionId);
+
+    if (missionScoped.length > 0) {
+      return {
+        items: missionScoped,
+        sourceTags: ['mission-scoped'] as string[],
+      };
+    }
+
+    return {
+      items: memoryItems,
+      sourceTags: ['recent'] as string[],
+    };
+  })();
+  const recommendedItems = recommendedMemorySelection.items;
+
+  const now = new Date().toISOString();
+
+  const runMeta: CommanderRunMeta = {
+    runId: runId || `${req.params.projectId}-${now}`,
+    issuedAt: now,
+    issuedBy: issuedByKind
+      ? {
+          kind: issuedByKind,
+          id: issuedById,
+          label: issuedByLabel,
+        }
+      : undefined,
+  };
+
+  const slimSnapshot = createSlimSnapshot(snapshot, {
+    focusMissionId: missionId,
+    maxMissionsPerBucket: 6,
+    maxLogs: 8,
+  });
+
+  const roster: CommanderAgentCard[] = snapshot.agents.map(agent => ({
+    id: agent.agentId,
+    projectId: req.params.projectId,
+    name: agent.agentName,
+    callsign: agent.callsign,
+    status: agent.status,
+    specialty: agent.specialty,
+    governanceRole: (() => {
+      const fullAgent = store.listAgents(req.params.projectId).find(a => a.id === agent.agentId);
+      return fullAgent?.governanceRole ?? 'EXECUTOR';
+    })(),
+  }));
+
+  const focusMission = missionId
+    ? slimSnapshot.focusMission?.id === missionId
+      ? slimSnapshot.focusMission
+      : [
+          ...slimSnapshot.missionBoard.running,
+          ...slimSnapshot.missionBoard.blocked,
+          ...slimSnapshot.missionBoard.planned,
+          ...slimSnapshot.missionBoard.done,
+        ].find(mission => mission.id === missionId)
+    : undefined;
+
+  const effectiveIntent = intent || 'EXECUTE';
+  const focusAgent = (agentId ? roster.find(agent => agent.id === agentId) : undefined) ??
+    (focusMission ? roster.find(agent => agent.id === focusMission.assignedAgentId) : undefined);
+
+  const guidance = focusAgent
+    ? {
+        invocationProfile: getDefaultInvocationProfile({
+          agent: focusAgent,
+          mission: focusMission,
+          intent: effectiveIntent,
+        }),
+        strategy: recommendStrategy({
+          projectId: req.params.projectId,
+          run: runMeta,
+          focus: {
+            agentId,
+            missionId,
+            intent: effectiveIntent,
+          },
+          slimSnapshot,
+          recentMemory: memoryItems,
+          recommendedMemory: {
+            items: recommendedItems,
+            sourceTags: recommendedMemorySelection.sourceTags,
+          },
+          guidance: undefined,
+          agentRoster: roster,
+        }),
+      }
+    : undefined;
+
+  const context: CommanderRunContextV2 = {
+    projectId: req.params.projectId,
+    run: runMeta,
+    focus: {
+      agentId,
+      missionId,
+      intent: effectiveIntent,
+    },
+    slimSnapshot,
+    recentMemory: memoryItems,
+    recommendedMemory: {
+      items: recommendedItems,
+      sourceTags: recommendedMemorySelection.sourceTags,
+    },
+    guidance,
+    agentRoster: roster,
+  };
+
+  res.json(context);
+});
+
+app.get('/projects/:projectId/memory', (req, res) => {
+  const snapshot = store.getProjectSnapshot(req.params.projectId);
+  if (!snapshot) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  const limit = req.query.limit ? Number(req.query.limit) : 24;
+  const items = memoryStore.list(req.params.projectId, limit);
+  res.json(items);
+});
+
+app.get('/projects/:projectId/memory/overview', (req, res) => {
+  const snapshot = store.getProjectSnapshot(req.params.projectId);
+  if (!snapshot) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  res.json(memoryStore.overview(req.params.projectId));
+});
+
+app.get('/projects/:projectId/memory/search', (req, res) => {
+  const snapshot = store.getProjectSnapshot(req.params.projectId);
+  if (!snapshot) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  const { kind, tags, q, limit } = req.query as {
+    kind?: string;
+    tags?: string;
+    q?: string;
+    limit?: string;
+  };
+
+  const parsedKind = kind && isProjectMemoryKind(kind) ? kind : undefined;
+  const parsedTags = tags
+    ? tags
+        .split(',')
+        .map(tag => tag.trim())
+        .filter(Boolean)
+    : undefined;
+  const query = q?.trim() || undefined;
+  const parsedLimit = limit ? Number(limit) : undefined;
+
+  const items = memoryStore.search(req.params.projectId, {
+    kind: parsedKind,
+    tags: parsedTags,
+    query,
+    limit: parsedLimit,
+  });
+
+  res.json(items);
+});
+
+app.post('/projects/:projectId/missions', (req, res) => {
+  const { title, objective, assignedAgentId, priority, riskLevel, governanceMode } = req.body as {
+    title?: string;
+    objective?: string;
+    assignedAgentId?: string;
+    priority?: MissionPriority;
+    riskLevel?: MissionRiskLevel;
+    governanceMode?: MissionGovernanceMode;
+  };
+
+  if (!title?.trim()) {
+    return res.status(400).json({ error: 'title is required' });
+  }
+
+  if (!assignedAgentId?.trim()) {
+    return res.status(400).json({ error: 'assignedAgentId is required' });
+  }
+
+  const nextPriority = priority ?? 'MEDIUM';
+  if (!isMissionPriority(nextPriority)) {
+    return res.status(400).json({ error: 'Invalid priority' });
+  }
+
+  const nextRiskLevel = riskLevel && isMissionRiskLevel(riskLevel) ? riskLevel : undefined;
+  const nextGovernanceMode =
+    governanceMode && isMissionGovernanceMode(governanceMode) ? governanceMode : undefined;
+
+  try {
+    const mission = store.createMission({
+      projectId: req.params.projectId,
+      title: title.trim(),
+      objective: objective?.trim() || 'No objective provided yet.',
+      assignedAgentId: assignedAgentId.trim(),
+      priority: nextPriority,
+      riskLevel: nextRiskLevel,
+      governanceMode: nextGovernanceMode,
+    });
+
+    res.status(201).json(mission);
+  } catch (error) {
+    res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
+  }
+});
+
+app.patch('/missions/:missionId', (req, res) => {
+  const { status, priority, assignedAgentId, title, objective, riskLevel, governanceMode } = req.body as {
+    status?: MissionStatus;
+    priority?: MissionPriority;
+    assignedAgentId?: string;
+    title?: string;
+    objective?: string;
+    riskLevel?: MissionRiskLevel;
+    governanceMode?: MissionGovernanceMode;
+  };
+
+  if (status && !isMissionStatus(status)) {
+    return res.status(400).json({ error: 'Invalid status' });
+  }
+
+  if (priority && !isMissionPriority(priority)) {
+    return res.status(400).json({ error: 'Invalid priority' });
+  }
+
+  if (riskLevel && !isMissionRiskLevel(riskLevel)) {
+    return res.status(400).json({ error: 'Invalid riskLevel' });
+  }
+
+  if (governanceMode && !isMissionGovernanceMode(governanceMode)) {
+    return res.status(400).json({ error: 'Invalid governanceMode' });
+  }
+
+  try {
+    const mission = store.updateMission(req.params.missionId, {
+      status,
+      priority,
+      assignedAgentId: assignedAgentId?.trim(),
+      title: title?.trim(),
+      objective: objective?.trim(),
+      riskLevel,
+      governanceMode,
+    });
+
+    if (mission.status === 'DONE') {
+      try {
+        const existingSummary = memoryStore
+          .list(mission.projectId, 100)
+          .find(item => item.missionId === mission.id && item.kind === 'SUMMARY');
+
+        if (!existingSummary) {
+          memoryStore.append({
+            projectId: mission.projectId,
+            missionId: mission.id,
+            agentId: mission.assignedAgentId,
+            kind: 'SUMMARY',
+            title: `任务完成：${mission.title}`,
+            content: `任务「${mission.title}」已完成（优先级 ${mission.priority}，风险等级 ${mission.riskLevel}，治理模式 ${mission.governanceMode}）。目标：${mission.objective}`,
+            tags: ['mission', 'done', mission.priority.toLowerCase(), mission.riskLevel.toLowerCase()],
+          });
+        }
+      } catch {
+      }
+    }
+
+    res.json(mission);
+  } catch (error) {
+    res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
+  }
+});
+
+app.post('/projects/:projectId/memory', (req, res) => {
+  const snapshot = store.getProjectSnapshot(req.params.projectId);
+  if (!snapshot) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  const { title, content, kind, missionId, agentId, tags } = req.body as {
+    title?: string;
+    content?: string;
+    kind?: ProjectMemoryKind;
+    missionId?: string;
+    agentId?: string;
+    tags?: string[];
+  };
+
+  if (!title?.trim()) {
+    return res.status(400).json({ error: 'title is required' });
+  }
+
+  if (!content?.trim()) {
+    return res.status(400).json({ error: 'content is required' });
+  }
+
+  const memoryKind: ProjectMemoryKind = isProjectMemoryKind(kind || 'SUMMARY') ? (kind || 'SUMMARY') : 'SUMMARY';
+  const safeTags = Array.isArray(tags)
+    ? tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 8)
+    : [];
+
+  try {
+    const item = memoryStore.append({
+      projectId: req.params.projectId,
+      missionId,
+      agentId,
+      kind: memoryKind,
+      title: title.trim(),
+      content: content.trim(),
+      tags: safeTags,
+    });
+
+    res.status(201).json(item);
+  } catch (error) {
+    res.status(400).json({ error: toErrorMessage(error) });
+  }
+});
+
+app.post('/missions/:missionId/logs', (req, res) => {
+  const { message, level } = req.body as {
+    message?: string;
+    level?: LogLevel;
+  };
+
+  if (!message?.trim()) {
+    return res.status(400).json({ error: 'message is required' });
+  }
+
+  const nextLevel = level ?? 'INFO';
+  if (!isLogLevel(nextLevel)) {
+    return res.status(400).json({ error: 'Invalid log level' });
+  }
+
+  try {
+    const log = store.createLog({
+      missionId: req.params.missionId,
+      message: message.trim(),
+      level: nextLevel,
+    });
+
+    res.status(201).json(log);
+  } catch (error) {
+    res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
+  }
+});
+
+// ========================================
+// Governance API (v1)
+// ========================================
+
+app.get('/projects/:projectId/governance/stats', (req, res) => {
+  const snapshot = store.getProjectSnapshot(req.params.projectId);
+  if (!snapshot) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+  const stats = calculateGovernanceStats(snapshot.missions, snapshot.agents);
+  res.json(stats);
+});
+
+app.get('/projects/:projectId/governance/alerts', (req, res) => {
+  const snapshot = store.getProjectSnapshot(req.params.projectId);
+  if (!snapshot) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+  const stats = calculateGovernanceStats(snapshot.missions, snapshot.agents);
+  const alerts = generateGovernanceAlerts(stats);
+  res.json(alerts);
+});
+
+app.get('/projects/:projectId/governance/weekly-report', (req, res) => {
+  const snapshot = store.getProjectSnapshot(req.params.projectId);
+  if (!snapshot) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+  const stats = calculateGovernanceStats(snapshot.missions, snapshot.agents);
+  const alerts = generateGovernanceAlerts(stats);
+  const report = generateWeeklyGovernanceReport(stats, alerts);
+  res.type('text/markdown').send(report);
+});
+
+// ========================================
+// Memory Index API (Claude Code Layer 2)
+// ========================================
+
+app.get('/projects/:projectId/memory-index/domains', (_req, res) => {
+  const domains = memoryIndexManager.listDomains();
+  res.json(domains);
+});
+
+app.post('/projects/:projectId/memory-index/domains', (req, res) => {
+  const { domain, description } = req.body as { domain?: string; description?: string };
+  if (!domain?.trim()) {
+    return res.status(400).json({ error: 'domain is required' });
+  }
+  const pointer = memoryIndexManager.addDomain(domain.trim(), description?.trim() || '');
+  res.status(201).json(pointer);
+});
+
+app.get('/projects/:projectId/memory-index/domains/:domain', (req, res) => {
+  const domainMemory = memoryIndexManager.readDomain(req.params.domain);
+  if (!domainMemory) {
+    return res.status(404).json({ error: 'Domain not found' });
+  }
+  res.json(domainMemory);
+});
+
+app.post('/projects/:projectId/memory-index/domains/:domain/entries', (req, res) => {
+  const { type, title, content, tags } = req.body as {
+    type?: string;
+    title?: string;
+    content?: string;
+    tags?: string[];
+  };
+  if (!type || !title?.trim() || !content?.trim()) {
+    return res.status(400).json({ error: 'type, title, and content are required' });
+  }
+  const entry = memoryIndexManager.writeEntry(req.params.domain, {
+    type: type as 'decision' | 'context' | 'pattern' | 'preference' | 'issue' | 'lesson',
+    title: title.trim(),
+    content: content.trim(),
+    tags: tags ?? [],
+  });
+  if (!entry) {
+    return res.status(404).json({ error: 'Domain not found' });
+  }
+  res.status(201).json(entry);
+});
+
+app.post('/projects/:projectId/memory-index/reconcile', (_req, res) => {
+  const result = memoryIndexManager.reconcile();
+  res.json({ reconciled: true, ...result });
+});
+
+// Initialize default memory domains on startup
+DEFAULT_DOMAINS.forEach(({ domain, description }) => {
+  try {
+    memoryIndexManager.addDomain(domain, description);
+  } catch {
+    // Domain already exists
+  }
+});
+
+const port = Number(process.env.PORT || 4000);
+app.listen(port, () => {
+  console.log(`API listening on http://localhost:${port}`);
+  console.log(`War room project ready at GET /projects/${PROJECT_ID}/war-room`);
+});
+
+function isMissionStatus(value: string): value is MissionStatus {
+  return ['PLANNED', 'RUNNING', 'BLOCKED', 'DONE'].includes(value);
+}
+
+function isMissionPriority(value: string): value is MissionPriority {
+  return ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(value);
+}
+
+function isMissionRiskLevel(value: string): value is MissionRiskLevel {
+  return ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(value);
+}
+
+function isMissionGovernanceMode(value: string): value is MissionGovernanceMode {
+  return ['AUTO', 'GUARDED', 'MANUAL'].includes(value);
+}
+
+function isProjectMemoryKind(value: string): value is ProjectMemoryKind {
+  return ['DECISION', 'ISSUE', 'LESSON', 'SUMMARY'].includes(value);
+}
+
+function isLogLevel(value: string): value is LogLevel {
+  return ['INFO', 'SUCCESS', 'WARN', 'ERROR'].includes(value);
+}
+
+function mapErrorToStatusCode(error: unknown) {
+  const message = toErrorMessage(error);
+  if (message === 'Project not found' || message === 'Mission not found' || message === 'Agent not found') {
+    return 404;
+  }
+
+  if (message === 'MISSION_REQUIRES_APPROVAL') {
+    return 409;
+  }
+
+  return 400;
+}
+
+function toErrorMessage(error: unknown) {
+  if (!(error instanceof Error)) {
+    return 'Unknown error';
+  }
+
+  switch (error.message) {
+    case 'PROJECT_NOT_FOUND':
+      return 'Project not found';
+    case 'MISSION_NOT_FOUND':
+      return 'Mission not found';
+    case 'AGENT_NOT_FOUND':
+      return 'Agent not found';
+    case 'MISSION_REQUIRES_APPROVAL':
+      return 'Mission requires approval before completion';
+    default:
+      return error.message;
+  }
+}

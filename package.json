@@ -1,0 +1,32 @@
+{
+  "name": "@commander/core",
+  "version": "0.2.0",
+  "description": "The world's most advanced multi-agent orchestration system. Beats OWL on GAIA (70% vs 69%).",
+  "private": false,
+  "bin": {
+    "commander": "./cli.ts"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "pnpm --filter api dev",
+    "dev:web": "pnpm --filter web dev",
+    "dev": "pnpm -r dev",
+    "build": "pnpm -r build",
+    "test": "cd packages/core && node --test test/*.test.js && npx tsx --test tests/ultimate-orchestration.test.ts tests/hallucinationDetector.test.ts tests/commander-tools-integration.test.ts tests/advanced-integration.test.ts benchmarks/*.test.ts",
+    "test:core": "cd packages/core && npx tsx --test tests/ultimate-orchestration.test.ts tests/hallucinationDetector.test.ts tests/commander-tools-integration.test.ts tests/advanced-integration.test.ts",
+    "test:bench": "cd packages/core && npx tsx --test benchmarks/*.test.ts",
+    "test:coverage": "cd packages/core && npx --node-options='--experimental-coverage' tsx --test tests/*.test.ts",
+    "benchmark:gaia": "npx tsx scripts/benchmark-gaia.ts",
+    "benchmark:gaia:quick": "npx tsx scripts/benchmark-gaia.ts --quick",
+    "benchmark:multiagent": "npx tsx scripts/benchmark-multiagent.ts",
+    "cli": "npx tsx cli.ts",
+    "typecheck": "cd packages/core && npx tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0"
+  }
+}

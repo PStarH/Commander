@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "projectId": "project-war-room",
+  "pointers": [
+    {
+      "domain": "Project Context",
+      "filePath": "project-context.json",
+      "description": "Project goals, constraints, architecture",
+      "lastUpdated": "2026-04-09T02:20:00.000Z"
+    },
+    {
+      "domain": "Decisions",
+      "filePath": "decisions.json",
+      "description": "Architectural decisions and rationale",
+      "lastUpdated": "2026-04-09T02:20:00.000Z"
+    },
+    {
+      "domain": "Patterns",
+      "filePath": "patterns.json",
+      "description": "Code patterns and conventions",
+      "lastUpdated": "2026-04-09T02:20:00.000Z"
+    },
+    {
+      "domain": "Preferences",
+      "filePath": "preferences.json",
+      "description": "User preferences and settings",
+      "lastUpdated": "2026-04-09T02:20:00.000Z"
+    },
+    {
+      "domain": "Issues",
+      "filePath": "issues.json",
+      "description": "Known issues and workarounds",
+      "lastUpdated": "2026-04-09T02:20:00.000Z"
+    },
+    {
+      "domain": "Lessons",
+      "filePath": "lessons.json",
+      "description": "Lessons learned from iterations",
+      "lastUpdated": "2026-04-09T02:20:00.000Z"
+    }
+  ],
+  "lastReconciled": "2026-04-09T02:20:00.000Z"
+}

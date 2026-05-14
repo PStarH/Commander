@@ -1,0 +1,26 @@
+{
+  "domain": "Issues",
+  "entries": [
+    {
+      "id": "iss-001",
+      "timestamp": "2026-04-09T02:20:00.000Z",
+      "type": "issue",
+      "title": "内存存储 - 数据不持久",
+      "content": "当前 v0 使用内存存储，重启后数据丢失。这是设计选择，用于 demo 和形态验证。后续版本需要切换到持久化存储（SQLite 或其他）。",
+      "tags": ["known-issue", "v0", "storage"]
+    },
+    {
+      "id": "iss-002",
+      "timestamp": "2026-04-09T02:20:00.000Z",
+      "type": "issue",
+      "title": "无语义检索",
+      "content": "当前 Memory 检索是简单的关键词匹配，没有 RAG/向量检索。需要集成 embedding 模型做语义搜索。",
+      "tags": ["known-issue", "memory", "rag"]
+    }
+  ],
+  "metadata": {
+    "createdAt": "2026-04-09T02:20:00.000Z",
+    "updatedAt": "2026-04-09T02:20:00.000Z",
+    "entryCount": 2
+  }
+}

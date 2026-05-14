@@ -1,0 +1,27 @@
+{
+  "name": "@commander/core",
+  "version": "0.2.0",
+  "description": "Multi-agent orchestration system. 70% on GAIA, dynamic topology, quality gates, 13 tools.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "bin": {
+    "commander": "../demo.ts"
+  },
+  "keywords": ["multi-agent", "ai", "orchestration", "llm", "agents", "gaia", "workflow"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sampan/commander"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.js && npx tsx --test tests/*.test.ts benchmarks/*.test.ts",
+    "test:vitest": "vitest run",
+    "test:vitest:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^5.0.0",
+    "vitest": "^3.2.4"
+  }
+}

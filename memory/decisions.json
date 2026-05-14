@@ -1,0 +1,34 @@
+{
+  "domain": "Decisions",
+  "entries": [
+    {
+      "id": "dec-001",
+      "timestamp": "2026-04-09T02:20:00.000Z",
+      "type": "decision",
+      "title": "采用 Monorepo 结构",
+      "content": "使用 pnpm workspace 管理 apps/api, apps/web, packages/core。优点：共享类型定义、统一版本管理、简化开发流程。",
+      "tags": ["architecture", "monorepo"]
+    },
+    {
+      "id": "dec-002",
+      "timestamp": "2026-04-09T02:20:00.000Z",
+      "type": "decision",
+      "title": "三层 Memory 架构",
+      "content": "参考 Claude Code 设计：\nLayer 1: In-Context (LLM context window)\nLayer 2: memory/index.json (pointer system)\nLayer 3: PROJECT.md (project config)\n\n这样可以在 session 间保持记忆，避免 context reset 丢失信息。",
+      "tags": ["memory", "architecture", "claude-code"]
+    },
+    {
+      "id": "dec-003",
+      "timestamp": "2026-04-09T02:20:00.000Z",
+      "type": "decision",
+      "title": "治理模式设计",
+      "content": "三种治理模式：\n- AUTO: 低风险任务，Agent 自主执行\n- GUARDED: 中风险任务，Sentinel 监控\n- MANUAL: 高风险任务，需要人工审批\n\n参考 Anthropic Multi-Agent 的 guardrails 设计。",
+      "tags": ["governance", "multi-agent", "anthropic"]
+    }
+  ],
+  "metadata": {
+    "createdAt": "2026-04-09T02:20:00.000Z",
+    "updatedAt": "2026-04-09T02:20:00.000Z",
+    "entryCount": 3
+  }
+}

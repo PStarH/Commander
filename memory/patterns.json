@@ -1,0 +1,26 @@
+{
+  "domain": "Patterns",
+  "entries": [
+    {
+      "id": "pat-001",
+      "timestamp": "2026-04-09T02:20:00.000Z",
+      "type": "pattern",
+      "title": "Store 模式",
+      "content": "所有状态管理使用 Store 类：\n- WarRoomStore: 项目、Agent、Mission、Log\n- ProjectMemoryStore: Memory items\n- AgentStateStore: Agent 连续性状态\n- MemoryIndexManager: 三层 Memory 架构\n\n每个 Store 负责自己的持久化（目前是 JSON 文件）。",
+      "tags": ["pattern", "state-management"]
+    },
+    {
+      "id": "pat-002",
+      "timestamp": "2026-04-09T02:20:00.000Z",
+      "type": "pattern",
+      "title": "Slim Snapshot 模式",
+      "content": "为减少 token 消耗，使用 SlimSnapshot 类型只保留必要字段：\n- focusMission: 当前任务\n- missionBoard: 任务看板（running/blocked/planned/done）\n- battleMetrics: 关键指标\n- latestLogs: 最近日志\n\n避免传递完整的历史数据。",
+      "tags": ["pattern", "token-optimization"]
+    }
+  ],
+  "metadata": {
+    "createdAt": "2026-04-09T02:20:00.000Z",
+    "updatedAt": "2026-04-09T02:20:00.000Z",
+    "entryCount": 2
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "domain": "Project Context",
+  "entries": [
+    {
+      "id": "ctx-001",
+      "timestamp": "2026-04-09T02:20:00.000Z",
+      "type": "context",
+      "title": "Commander 核心定位",
+      "content": "Commander 是面向「小团队 + 多个 AI Agent」的任务指挥台。核心目标是让 AI 不再只是一个聊天框，而是一个有工牌、有职责的"团队成员"。在同一个界面里管理：任务拆解、分配给人/Agent、执行过程记录、结果验收。",
+      "tags": ["architecture", "vision", "core"]
+    },
+    {
+      "id": "ctx-002",
+      "timestamp": "2026-04-09T02:20:00.000Z",
+      "type": "context",
+      "title": "技术栈 v0",
+      "content": "后端: TypeScript + Node.js (Express + 内存存储)\n前端: Vite + React 单页\n存储: 内存（刷新即丢），主要用于 demo / 形态验证",
+      "tags": ["tech-stack", "v0"]
+    }
+  ],
+  "metadata": {
+    "createdAt": "2026-04-09T02:20:00.000Z",
+    "updatedAt": "2026-04-09T02:20:00.000Z",
+    "entryCount": 2
+  }
+}
