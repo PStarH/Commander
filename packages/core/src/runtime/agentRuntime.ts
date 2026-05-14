@@ -199,10 +199,22 @@ export class AgentRuntime {
 
           const rawResults: Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }> = [];
 
-          // Run concurrent-safe tools in parallel
+          // Run concurrent-safe tools in parallel with sibling abort
           if (safeCalls.length > 0) {
+            const siblingAbort = new AbortController();
             const concurrentResults = await Promise.allSettled(
-              safeCalls.map(tc => this.executeTool(runId, tc, ctx.agentId))
+              safeCalls.map(async (tc) => {
+                // If a sibling already errored, skip
+                if (siblingAbort.signal.aborted) {
+                  return { toolCallId: tc.id, name: tc.name, output: '', error: 'Cancelled: sibling tool error', durationMs: 0 };
+                }
+                const result = await this.executeTool(runId, tc, ctx.agentId);
+                // Shell errors cascade: cancel siblings (Claude Code pattern)
+                if (result.error && (tc.name === 'shell_execute' || tc.name === 'bash')) {
+                  siblingAbort.abort();
+                }
+                return { toolCallId: tc.id, name: tc.name, ...result };
+              })
             );
             for (let i = 0; i < concurrentResults.length; i++) {
               const r = concurrentResults[i];
