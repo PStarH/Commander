@@ -8,3 +8,6 @@
 // Sequential Pattern (Priority P0)
 export * from './sequential';
 export * from './executor';
+// Parallel Task Pool
+export { TaskPool } from './taskPool';
+export type { PoolTask, PoolResult, PoolConfig } from './taskPool';
