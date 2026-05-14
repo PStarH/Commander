@@ -1,13 +1,36 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
-        with: { node-version: '22' }
-      - run: npm install -g pnpm
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - run: pnpm install
-      - run: cd packages/core && npx tsx --test tests/*.test.ts
-      - run: cd packages/core && npx tsc --noEmit
+
+      - name: TypeScript check
+        run: cd packages/core && npx tsc --noEmit
+
+      - name: Run core tests
+        run: cd packages/core && npx tsx --test tests/ultimate-orchestration.test.ts tests/hallucinationDetector.test.ts tests/commander-tools-integration.test.ts tests/advanced-integration.test.ts
+
+      - name: Run benchmarks
+        run: cd packages/core && npx tsx --test benchmarks/ultimate.benchmark.test.ts
+
+      - name: CLI check
+        run: npx tsx cli.ts status
