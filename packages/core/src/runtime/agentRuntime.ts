@@ -183,7 +183,7 @@ export class AgentRuntime {
         steps.push(step);
 
         // Process tool calls in a loop until resolved or deadline
-        const maxIterations = ctx.maxSteps || 10;
+        const maxIterations = Math.max(ctx.maxSteps || 10, 20);
         let toolLoopCount = 0;
         while (response.toolCalls && response.toolCalls.length > 0 && toolLoopCount < maxIterations) {
           toolLoopCount++;
