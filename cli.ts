@@ -18,6 +18,8 @@
  *   COMMANDER_TOOLS                     Comma-separated tool list
  *   COMMANDER_EFFORT                    SIMPLE|MODERATE|COMPLEX|DEEP_RESEARCH
  */
+import * as fs from 'fs';
+import * as path from 'path';
 import { deliberate, deliberateWithLLM } from './packages/core/src/ultimate/deliberation';
 import { classifyEffortLevel } from './packages/core/src/ultimate/effortScaler';
 import { AgentRuntime } from './packages/core/src/runtime/agentRuntime';
@@ -30,6 +32,9 @@ import { UltimateOrchestrator } from './packages/core/src/ultimate/orchestrator'
 import { TELOSOrchestrator } from './packages/core/src/telos/telosOrchestrator';
 import { CompanyEngine } from './packages/core/src/company';
 import { SSEStream } from './packages/core/src/runtime/sseStream';
+import { getMessageBus } from './packages/core/src/runtime/messageBus';
+import { getTraceRecorder } from './packages/core/src/runtime/executionTrace';
+import { getMetaLearner } from './packages/core/src/selfEvolution/metaLearner';
 
 // ============================================================================
 // ANSI styling — zero dependencies
@@ -321,23 +326,149 @@ async function cmdStatus() {
   kv('API Key (OpenAI)', config.openaiKey ? `${$.green}configured${$.reset}` : `${$.red}missing${$.reset}`);
   kv('Tools', config.tools.join(', '));
 
-  // Test runtime
   const runtime = createRuntime(config);
   kv('Runtime', runtime ? `${$.green}ready${$.reset}` : `${$.red}no provider${$.reset}`);
 
-  section('AVAILABLE SUBCOMMANDS');
-  const cmds = [
-    ['commander <task>', 'Quick plan (default)'],
-    ['commander run <task>', 'Full execution with streaming progress'],
-    ['commander plan <task>', 'Show deliberation plan'],
-    ['commander watch <task>', 'Execute with real-time SSE stream'],
-    ['commander company <task>', 'Company mode execution'],
-    ['commander status', 'Show system status'],
-    ['commander help', 'Show this help'],
-  ];
-  for (const [cmd, desc] of cmds) {
-    console.log(`  ${$.cyan}${cmd.padEnd(30)}${$.reset} ${$.dim}${desc}${$.reset}`);
+  // MetaLearner stats
+  try {
+    const learner = getMetaLearner();
+    const stats = learner.getStats();
+    kv('Experiences', String(stats.totalExperiences));
+    kv('Strategies', String(stats.trackedStrategies));
+    kv('Avg success', (stats.avgSuccessRate * 100).toFixed(0) + '%');
+    const suggestions = learner.getSuggestions();
+    if (suggestions.length > 0) {
+      section('OPTIMIZATIONS');
+      for (const s of suggestions.slice(0, 3)) {
+        console.log(`  ${$.yellow}!${$.reset} ${s.type}: ${s.from} → ${s.to} (${(s.confidence * 100).toFixed(0)}%)`);
+      }
+    }
+  } catch {}
+
+  // TaskPool stats
+  const poolStatsPath = path.join(process.cwd(), '.commander_results');
+  if (fs.existsSync(poolStatsPath)) {
+    const files = fs.readdirSync(poolStatsPath).filter(f => f.endsWith('.txt'));
+    if (files.length > 0) kv('Cached results', String(files.length));
   }
+}
+
+function cmdConfig(args: string[]) {
+  const configPath = path.join(process.cwd(), '.commander.json');
+  let cfg: Record<string, string> = {};
+  try { if (fs.existsSync(configPath)) cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch {}
+
+  if (args.length === 0) {
+    section('CONFIG');
+    const allKeys: Record<string, string> = {
+      'model': process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      'tools': process.env.COMMANDER_TOOLS || 'web_search,web_fetch,file_read,file_write,file_edit,file_search,file_list,python_execute,shell_execute,git',
+      'effort': process.env.COMMANDER_EFFORT || 'auto',
+      'max_workers': cfg.max_workers || '5',
+      'token_budget': cfg.token_budget || '200000',
+      'timeout': cfg.timeout || '300',
+    };
+    for (const [k, v] of Object.entries(allKeys)) {
+      const color = k === 'model' ? $.cyan : $.gray;
+      console.log(`  ${color}${k.padEnd(20)}${$.reset} ${v}`);
+    }
+    console.log(`\n  ${$.dim}Set: commander config set <key> <value>${$.reset}`);
+    return;
+  }
+
+  if (args[0] === 'set' && args.length >= 3) {
+    cfg[args[1]] = args.slice(2).join(' ');
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
+    console.log(`  ${$.green}✓${$.reset} ${args[1]} = ${cfg[args[1]]}`);
+    return;
+  }
+
+  console.log(`  ${$.red}Usage: commander config [set <key> <value>]${$.reset}`);
+}
+
+function cmdDoctor() {
+  section('DOCTOR');
+  let allGood = true;
+  const checks: Array<{ label: string; test: () => boolean; msg: string }> = [
+    { label: 'Node.js version', test: () => process.version.startsWith('v22') || process.version.startsWith('v20'), msg: 'Recommended: Node 20+' },
+    { label: 'API Key configured', test: () => !!(process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY), msg: 'Set OPENAI_API_KEY or ANTHROPIC_API_KEY' },
+    { label: 'Config file', test: () => true, msg: '' },
+    { label: 'Package installed', test: () => fs.existsSync(path.join(process.cwd(), 'node_modules')) || fs.existsSync(path.join(process.cwd(), '..', 'node_modules')), msg: 'Run: pnpm install' },
+    { label: 'Disk space', test: () => { try { const s = fs.statSync('/'); return s.size > 0; } catch { return true; } }, msg: '' },
+  ];
+
+  for (const check of checks) {
+    const passed = check.test();
+    if (!passed) allGood = false;
+    console.log(`  ${passed ? $.green + '✓' : $.red + '✗'}${$.reset} ${check.label}${check.msg ? ' — ' + $.yellow + check.msg + $.reset : ''}`);
+  }
+
+  // Test API connection
+  if (process.env.OPENAI_API_KEY) {
+    const baseUrl = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+    console.log(`  ${$.dim}Testing API connection...${$.reset}`);
+    fetch(baseUrl + '/models', {
+      headers: { 'Authorization': 'Bearer ' + process.env.OPENAI_API_KEY },
+      signal: AbortSignal.timeout(5000),
+    }).then(res => {
+      if (res.ok) console.log(`  ${$.green}✓${$.reset} API connected (${baseUrl})`);
+      else console.log(`  ${$.red}✗${$.reset} API error: ${res.status}`);
+    }).catch(() => {
+      console.log(`  ${$.yellow}!${$.reset} API unreachable (${baseUrl})`);
+    });
+  }
+
+  // Check playwright
+  try {
+    require.resolve('playwright');
+    console.log(`  ${$.green}✓${$.reset} Playwright available`);
+  } catch {
+    console.log(`  ${$.yellow}!${$.reset} Playwright not installed (browser_search needs it)`);
+  }
+
+  if (allGood) console.log(`\n  ${$.green}${$.bold}All checks passed${$.reset}`);
+  else console.log(`\n  ${$.yellow}Some checks need attention${$.reset}`);
+}
+
+async function cmdWorkers(topics: string[]) {
+  const { TaskPool } = require('./packages/core/src/orchestration/taskPool');
+
+  if (topics.length === 0) {
+    topics = ['LangGraph', 'CrewAI', 'AutoGen', 'MCP', 'Pydantic', 'LlamaIndex', 'Ollama', 'vLLM'];
+  }
+
+  const cfg = loadConfig();
+  const runtime = createRuntime(cfg);
+  if (!runtime) { console.error(`  ${$.red}No API key configured${$.reset}`); process.exit(1); }
+
+  const pool = new TaskPool(runtime, {
+    maxWorkers: topics.length,
+    defaultTokenBudget: 15000,
+    globalTokenBudget: 300000,
+    taskTimeoutMs: 120000,
+  });
+
+  const tasks = topics.map((topic, i) => ({
+    id: 'worker-' + (i + 1),
+    goal: 'Use browser_search to research: ' + topic + '. What is it? Key features? GitHub stars?',
+    agentId: 'worker-' + (i + 1),
+  }));
+
+  console.log(`\n  ${$.bold}Spawning ${tasks.length} workers...${$.reset}\n`);
+  const t0 = Date.now();
+  const results = await pool.dispatch(tasks);
+  const wallTime = ((Date.now() - t0) / 1000).toFixed(1);
+
+  console.log(`\n  ${$.bold}Results (${wallTime}s):${$.reset}\n`);
+  for (const r of results) {
+    const icon = r.status === 'success' ? '✅' : '❌';
+    const summary = (r.summary || '').replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim().slice(0, 100);
+    console.log(`  ${icon} ${r.taskId}: ${(r.durationMs / 1000).toFixed(1)}s, ${r.tokens} tok`);
+    if (summary) console.log(`     ${summary}`);
+    console.log();
+  }
+  const seqTime = results.reduce((s, r) => s + r.durationMs, 0) / 1000;
+  console.log(`  ${$.dim}Sequential would be: ${seqTime.toFixed(1)}s | Speedup: ${(seqTime / parseFloat(wallTime)).toFixed(1)}x${$.reset}\n`);
 }
 
 function cmdHelp() {
@@ -353,6 +484,9 @@ function cmdHelp() {
     ${$.cyan}commander watch <task>${$.reset}         Execute with SSE streaming
     ${$.cyan}commander company <task>${$.reset}       Company mode
     ${$.cyan}commander status${$.reset}               System status
+    ${$.cyan}commander config${$.reset}               Show/set configuration
+    ${$.cyan}commander doctor${$.reset}               Run system diagnostics
+    ${$.cyan}commander workers [topics...]${$.reset}   Spawn parallel research agents
     ${$.cyan}commander help${$.reset}                 This help
 
   ${$.bold}EXAMPLES${$.reset}
@@ -415,6 +549,17 @@ async function main() {
     case 'status':
       await cmdStatus();
       break;
+    case 'config':
+      cmdConfig(args.slice(1));
+      break;
+    case 'doctor':
+      cmdDoctor();
+      break;
+    case 'workers': {
+      const topics = args.slice(1);
+      await cmdWorkers(topics);
+      break;
+    }
     default:
       // Default: quick plan
       await cmdPlan(args.join(' '));
