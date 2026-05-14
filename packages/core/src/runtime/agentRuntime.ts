@@ -450,7 +450,20 @@ export class AgentRuntime {
     }
 
     try {
-      const output = await tool.execute(toolCall.arguments);
+      let output = await tool.execute(toolCall.arguments);
+      // Result budgeting: persist large outputs to disk, return reference
+      const maxSize = tool.maxOutputSize ?? this.config.observationMaskWindow * 1000;
+      if (typeof output === 'string' && output.length > maxSize && maxSize > 0) {
+        const fs = require('fs');
+        const path = require('path');
+        const crypto = require('crypto');
+        const hash = crypto.createHash('md5').update(output).digest('hex').slice(0, 8);
+        const resultDir = path.join(process.cwd(), '.commander_results');
+        if (!fs.existsSync(resultDir)) fs.mkdirSync(resultDir, { recursive: true });
+        const resultFile = path.join(resultDir, `${toolCall.name}-${hash}.txt`);
+        fs.writeFileSync(resultFile, output, 'utf-8');
+        output = `[Large output: ${output.length} chars. Saved to ${resultFile}.]\n${output.slice(0, maxSize / 2)}...\n[Truncated. Full output at ${resultFile}]`;
+      }
       const durationMs = Date.now() - startTime;
 
       tracer.recordToolExecution(runId, toolCall.name, toolCall.arguments, output, durationMs);

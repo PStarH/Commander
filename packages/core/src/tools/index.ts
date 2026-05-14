@@ -4,6 +4,8 @@ export { PythonExecuteTool, ShellExecuteTool } from './codeExecutionTool';
 export { MemoryStoreTool, MemoryRecallTool, MemoryListTool } from './persistenceTool';
 export { GitTool } from './gitTool';
 export { BrowserSearchTool, BrowserFetchTool } from './browserTool';
+export { AgentTool } from './agentTool';
+export type { AgentDef } from './agentTool';
 
 import type { Tool } from '../runtime/types';
 import { WebSearchTool, WebFetchTool } from './webSearchTool';
