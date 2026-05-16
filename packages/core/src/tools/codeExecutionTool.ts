@@ -2,11 +2,49 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Tool, ToolDefinition } from '../runtime/types';
+import { getSandboxManager } from '../sandbox/manager';
 
 const TEMP_DIR = path.join(process.cwd(), '.commander_exec');
 
 function ensureTempDir() {
   if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
+}
+
+/**
+ * Execute a command through the sandbox if available, falling back to execSync.
+ * This ensures code execution is confined when an OS-level sandbox (Seatbelt/Bubblewrap/Docker) is present.
+ */
+async function execSandboxed(command: string, timeoutSec: number, workdir?: string): Promise<string> {
+  const sandbox = getSandboxManager();
+  const timeout = timeoutSec * 1000;
+
+  if (sandbox.hasSandbox()) {
+    const profile = sandbox.getProfile('workspace-write');
+    const result = await sandbox.execute(command, { ...profile, timeout }, workdir);
+    const elapsed = result.durationMs;
+    if (result.exitCode === 0) {
+      return `[Exit: 0 | ${elapsed}ms]\n${result.stdout}`.trim();
+    }
+    if (result.stderr) return `[Exit: ${result.exitCode} | ${elapsed}ms]\nSTDERR:\n${result.stderr}`;
+    return `[Exit: ${result.exitCode} | ${elapsed}ms]`;
+  }
+
+  // Fallback: direct execSync (no sandbox available on this platform)
+  const start = Date.now();
+  try {
+    const stdout = execSync(command, {
+      timeout,
+      encoding: 'utf-8',
+      cwd: workdir ?? process.cwd(),
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return `[Exit: 0 | ${Date.now() - start}ms]\n${stdout}`.trim();
+  } catch (err: any) {
+    const elapsed = Date.now() - start;
+    if (err.stderr) return `[Exit: ${err.status ?? 1} | ${elapsed}ms]\nSTDERR:\n${err.stderr}`;
+    if (err.killed) return `[Exit: SIGTERM | ${timeoutSec}s timeout exceeded]`;
+    return `[Error] ${err.message}`;
+  }
 }
 
 export class PythonExecuteTool implements Tool {
@@ -34,21 +72,7 @@ export class PythonExecuteTool implements Tool {
 
     try {
       fs.writeFileSync(filePath, code, 'utf-8');
-
-      const start = Date.now();
-      const stdout = execSync(`python3 "${filePath}"`, {
-        timeout: timeout * 1000,
-        encoding: 'utf-8',
-        maxBuffer: 10 * 1024 * 1024,
-      });
-      const elapsed = Date.now() - start;
-
-      return `[Exit: 0 | ${elapsed}ms]\n${stdout}`.trim();
-    } catch (err: any) {
-      const elapsed = Date.now() - (err.startTime ?? 0) || 0;
-      if (err.stderr) return `[Exit: ${err.status ?? 1} | ${elapsed}ms]\nSTDERR:\n${err.stderr}`;
-      if (err.killed) return `[Exit: SIGTERM | ${timeout}s timeout exceeded]`;
-      return `[Error] ${err.message}`;
+      return await execSandboxed(`python3 "${filePath}"`, timeout);
     } finally {
       try { fs.unlinkSync(filePath); } catch { /* ignore */ }
     }
@@ -77,21 +101,7 @@ export class ShellExecuteTool implements Tool {
 
     if (!command) return 'Error: command is required';
 
-    try {
-      const start = Date.now();
-      const stdout = execSync(command, {
-        timeout: timeout * 1000,
-        encoding: 'utf-8',
-        cwd: path.resolve(process.cwd(), workdir),
-        maxBuffer: 10 * 1024 * 1024,
-      });
-      const elapsed = Date.now() - start;
-      return `[Exit: 0 | ${elapsed}ms]\n${stdout}`.trim();
-    } catch (err: any) {
-      const elapsed = Date.now() - (err.startTime ?? 0) || 0;
-      if (err.stderr) return `[Exit: ${err.status ?? 1} | ${elapsed}ms]\nSTDERR:\n${err.stderr}`;
-      if (err.killed) return `[Exit: SIGTERM | ${timeout}s timeout exceeded]`;
-      return `[Error] ${err.message}`;
-    }
+    const resolvedWorkdir = path.resolve(process.cwd(), workdir);
+    return execSandboxed(command, timeout, resolvedWorkdir);
   }
 }

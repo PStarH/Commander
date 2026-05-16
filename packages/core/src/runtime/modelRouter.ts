@@ -1,20 +1,23 @@
 /**
- * Model Router — Routes tasks to the optimal model based on complexity, cost, and capability needs.
+ * Smart Model Router — Task-aware, learning, cost-optimized model selection.
  *
- * Tiers:
- *   eco:      cheapest, trivial tasks (Haiku, GPT-4o-mini, Gemini Flash)
- *   standard: balanced, most tasks (Sonnet, GPT-4o, Gemini Pro)
- *   power:    strongest reasoning, complex tasks (Opus, GPT-5, Gemini Ultra)
- *   consensus: multi-model voting for critical decisions
+ * Surpasses OpenClaw's multi-model routing by adding:
+ * 1. Task-type → capability matching (code tasks → code-capable models)
+ * 2. Outcome-based learning with time decay (track success per model per task type)
+ * 3. Model fallback chain (try next candidate on failure)
+ * 4. Governor-aware budgeting (tight budget → cheaper models)
+ * 5. Cost-quality tradeoff (score models by capability fit × cost efficiency)
+ *
+ * Backward compatible: same class name, same route() interface.
  */
 
 import type {
   ModelConfig,
   ModelTier,
   RoutingDecision,
-  TokenUsage,
   AgentExecutionContext,
 } from './types';
+import { detectTaskType } from './unifiedVerification';
 
 // ============================================================================
 // Default model registry
@@ -37,6 +40,32 @@ const DEFAULT_MODELS: ModelConfig[] = [
 ];
 
 // ============================================================================
+// Task type → required capabilities mapping
+// ============================================================================
+
+const TASK_CAPABILITY_MAP: Record<string, string[]> = {
+  code: ['code'],
+  search: ['analysis'],
+  analysis: ['analysis'],
+  creative: ['creative'],
+  structured: ['code'],
+  general: [],
+};
+
+// ============================================================================
+// Outcome tracking for learning
+// ============================================================================
+
+interface ModelOutcome {
+  modelId: string;
+  taskType: string;
+  success: boolean;
+  durationMs: number;
+  tokensUsed: number;
+  timestamp: number;
+}
+
+// ============================================================================
 // Complexity scoring
 // ============================================================================
 
@@ -50,31 +79,37 @@ function scoreComplexity(ctx: AgentExecutionContext): ComplexityScore {
   let score = 0;
 
   // Goal length as a proxy for complexity
-  if (ctx.goal.length > 500) { score += 2; factors.push({ name: 'long_goal', contribution: 2 }); }
-  else if (ctx.goal.length > 200) { score += 1; factors.push({ name: 'medium_goal', contribution: 1 }); }
+  if (ctx.goal.length > 400) { score += 3; factors.push({ name: 'long_goal', contribution: 3 }); }
+  else if (ctx.goal.length > 150) { score += 2; factors.push({ name: 'medium_goal', contribution: 2 }); }
+  else if (ctx.goal.length > 50) { score += 1; factors.push({ name: 'short_goal', contribution: 1 }); }
 
   // Number of tools suggests breadth
-  if (ctx.availableTools.length > 5) { score += 2; factors.push({ name: 'many_tools', contribution: 2 }); }
-  else if (ctx.availableTools.length > 3) { score += 1; factors.push({ name: 'several_tools', contribution: 1 }); }
+  if (ctx.availableTools.length > 5) { score += 3; factors.push({ name: 'many_tools', contribution: 3 }); }
+  else if (ctx.availableTools.length > 3) { score += 2; factors.push({ name: 'several_tools', contribution: 2 }); }
+  else if (ctx.availableTools.length > 1) { score += 1; factors.push({ name: 'few_tools', contribution: 1 }); }
 
   // Token budget indicates expected effort
-  if (ctx.tokenBudget > 32000) { score += 2; factors.push({ name: 'large_budget', contribution: 2 }); }
-  else if (ctx.tokenBudget > 8000) { score += 1; factors.push({ name: 'medium_budget', contribution: 1 }); }
+  if (ctx.tokenBudget > 20000) { score += 3; factors.push({ name: 'large_budget', contribution: 3 }); }
+  else if (ctx.tokenBudget > 6000) { score += 2; factors.push({ name: 'medium_budget', contribution: 2 }); }
+  else if (ctx.tokenBudget > 3000) { score += 1; factors.push({ name: 'small_budget', contribution: 1 }); }
 
   // Complexity from context data presence of governance constraints
   const gov = ctx.contextData.governanceProfile as { riskLevel?: string } | undefined;
-  if (gov?.riskLevel === 'CRITICAL') { score += 3; factors.push({ name: 'critical_risk', contribution: 3 }); }
-  else if (gov?.riskLevel === 'HIGH') { score += 2; factors.push({ name: 'high_risk', contribution: 2 }); }
+  if (gov?.riskLevel === 'CRITICAL') { score += 4; factors.push({ name: 'critical_risk', contribution: 4 }); }
+  else if (gov?.riskLevel === 'HIGH') { score += 3; factors.push({ name: 'high_risk', contribution: 3 }); }
 
   return { score: Math.min(score, 10), factors };
 }
 
 // ============================================================================
-// Model Router
+// Smart Model Router
 // ============================================================================
 
 export class ModelRouter {
   private models: Map<string, ModelConfig> = new Map();
+  private outcomes: ModelOutcome[] = [];
+  private readonly maxOutcomes = 500;
+  private readonly decayHalfLifeMs = 20 * 60 * 1000; // 20 minutes
 
   constructor(customModels?: ModelConfig[]) {
     const allModels = customModels ?? DEFAULT_MODELS;
@@ -98,17 +133,35 @@ export class ModelRouter {
 
   /**
    * Route an execution context to the optimal model.
+   * Now task-type-aware with capability matching and governor integration.
+   * @param governorPhase - Current budget governor phase ('relaxed'|'moderate'|'tight'|'critical').
+   *   Callers should pass their per-run governor state instead of relying on global singleton.
    */
-  route(ctx: AgentExecutionContext): RoutingDecision {
+  route(ctx: AgentExecutionContext, governorPhase?: string): RoutingDecision {
     const complexity = scoreComplexity(ctx);
-    const tier = this.selectTier(complexity, ctx);
-    const candidates = this.selectCandidates(tier, ctx);
+    const taskType = detectTaskType(ctx.goal);
+    const requiredCaps = TASK_CAPABILITY_MAP[taskType] ?? [];
+
+    // Governor-aware tier adjustment: tight/critical budget → prefer cheaper tier
+    const governor = governorPhase ?? 'relaxed';
+    let tier = this.selectTier(complexity, ctx, governor);
+
+    // Capability-aware tier bump: if selected tier has no model with required caps, go higher
+    if (requiredCaps.length > 0) {
+      tier = this.bumpTierForCapabilities(tier, requiredCaps);
+    }
+
+    // Score and rank candidates by capability fit + cost efficiency + learning
+    const candidates = this.rankCandidates(tier, requiredCaps, taskType, ctx);
     const model = candidates[0];
 
     const reasoning: string[] = [
       `complexity: ${complexity.score}/10 (${complexity.factors.map(f => f.name).join(', ')})`,
+      `task_type: ${taskType}`,
+      `required_capabilities: ${requiredCaps.join(', ') || 'none'}`,
       `selected_tier: ${tier}`,
-      `available_in_tier: ${candidates.length}`,
+      `governor_phase: ${governor}`,
+      `candidates_ranked: ${candidates.length}`,
       `selected_model: ${model?.id ?? 'none'}`,
     ];
 
@@ -134,47 +187,62 @@ export class ModelRouter {
       provider: model.provider,
       reasoning,
       estimatedCost: Math.round(estimatedCost * 100000) / 100000,
-      // Use higher cap for reasoning models that need thinking space
       maxTokens: Math.min(estimatedOutputTokens, 64000),
     };
   }
 
-  private selectTier(complexity: ComplexityScore, ctx: AgentExecutionContext): ModelTier {
-    const gov = ctx.contextData.governanceProfile as { riskLevel?: string } | undefined;
+  /**
+   * Record a model execution outcome for learning.
+   * Call this after each successful or failed model execution.
+   */
+  recordOutcome(modelId: string, taskType: string, success: boolean, durationMs: number, tokensUsed: number): void {
+    this.outcomes.push({
+      modelId,
+      taskType,
+      success,
+      durationMs,
+      tokensUsed,
+      timestamp: Date.now(),
+    });
 
-    // Critical risk → always use power tier
-    if (gov?.riskLevel === 'CRITICAL') return 'consensus';
-
-    // High risk → power tier
-    if (gov?.riskLevel === 'HIGH') return 'power';
-
-    // High complexity → power tier
-    if (complexity.score >= 7) return 'power';
-
-    // Medium-high complexity
-    if (complexity.score >= 4) return 'standard';
-
-    // Low complexity → eco
-    return 'eco';
+    // Prune old outcomes
+    if (this.outcomes.length > this.maxOutcomes) {
+      this.outcomes = this.outcomes.slice(-this.maxOutcomes);
+    }
   }
 
-  private selectCandidates(tier: ModelTier, ctx: AgentExecutionContext): ModelConfig[] {
-    let candidates = Array.from(this.models.values())
-      .filter(m => m.tier === tier)
+  /**
+   * Get the next fallback model for a given model (for retry-with-fallback).
+   * Returns the next model in the same tier by priority, or steps down a tier.
+   */
+  getFallbackModel(failedModelId: string, taskType?: string): ModelConfig | undefined {
+    const failed = this.models.get(failedModelId);
+    if (!failed) return undefined;
+
+    const requiredCaps = TASK_CAPABILITY_MAP[taskType ?? 'general'] ?? [];
+
+    // Try same tier, next priority
+    const sameTier = Array.from(this.models.values())
+      .filter(m => m.tier === failed.tier && m.id !== failedModelId)
       .sort((a, b) => a.priority - b.priority);
 
-    // If no candidates in tier, fall back to adjacent tier
-    if (candidates.length === 0 && tier === 'consensus') {
-      candidates = this.selectCandidates('power', ctx);
-    }
-    if (candidates.length === 0 && tier === 'power') {
-      candidates = this.selectCandidates('standard', ctx);
-    }
-    if (candidates.length === 0) {
-      candidates = this.selectCandidates('eco', ctx);
+    for (const candidate of sameTier) {
+      if (this.hasCapabilities(candidate, requiredCaps)) return candidate;
     }
 
-    return candidates;
+    // Step down tier
+    const tierOrder: ModelTier[] = ['power', 'standard', 'eco'];
+    const currentIdx = tierOrder.indexOf(failed.tier);
+    for (let i = currentIdx + 1; i < tierOrder.length; i++) {
+      const lowerTier = Array.from(this.models.values())
+        .filter(m => m.tier === tierOrder[i])
+        .sort((a, b) => a.priority - b.priority);
+      for (const candidate of lowerTier) {
+        if (this.hasCapabilities(candidate, requiredCaps)) return candidate;
+      }
+    }
+
+    return undefined;
   }
 
   /**
@@ -186,6 +254,179 @@ export class ModelRouter {
     return (inputTokens / 1000) * model.costPer1KInput
       + (outputTokens / 1000) * model.costPer1KOutput;
   }
+
+  /**
+   * Get learning stats for debugging.
+   */
+  getLearningStats(): { modelId: string; taskType: string; successRate: string; avgDuration: number; count: number }[] {
+    const groups = new Map<string, ModelOutcome[]>();
+    for (const o of this.outcomes) {
+      const key = `${o.modelId}:${o.taskType}`;
+      const arr = groups.get(key) ?? [];
+      arr.push(o);
+      groups.set(key, arr);
+    }
+
+    return Array.from(groups.entries()).map(([key, outcomes]) => {
+      const [modelId, taskType] = key.split(':');
+      const successes = outcomes.filter(o => o.success).length;
+      const avgDuration = outcomes.reduce((s, o) => s + o.durationMs, 0) / outcomes.length;
+      return {
+        modelId,
+        taskType,
+        successRate: `${successes}/${outcomes.length}`,
+        avgDuration: Math.round(avgDuration),
+        count: outcomes.length,
+      };
+    });
+  }
+
+  // ============================================================================
+  // Internal
+  // ============================================================================
+
+  /**
+   * Select tier based on complexity, governance, and governor phase.
+   */
+  private selectTier(complexity: ComplexityScore, ctx: AgentExecutionContext, governor: string): ModelTier {
+    const gov = ctx.contextData.governanceProfile as { riskLevel?: string } | undefined;
+
+    // Critical risk → always use power tier
+    if (gov?.riskLevel === 'CRITICAL') return 'consensus';
+    if (gov?.riskLevel === 'HIGH') return 'power';
+
+    // Governor-aware: tight/critical budget → demote one tier (save cost)
+    if (governor === 'critical') {
+      if (complexity.score >= 7) return 'standard'; // would be power, demoted
+      return 'eco';
+    }
+    if (governor === 'tight') {
+      if (complexity.score >= 7) return 'standard';
+      if (complexity.score >= 4) return 'eco';
+      return 'eco';
+    }
+
+    // Normal routing
+    if (complexity.score >= 7) return 'power';
+    if (complexity.score >= 4) return 'standard';
+    return 'eco';
+  }
+
+  /**
+   * Rank candidates by: capability fit → cost efficiency → learning score.
+   * Returns sorted array (best first).
+   */
+  private rankCandidates(
+    tier: ModelTier,
+    requiredCaps: string[],
+    taskType: string,
+    ctx: AgentExecutionContext,
+  ): ModelConfig[] {
+    let candidates = Array.from(this.models.values())
+      .filter(m => m.tier === tier);
+
+    // Fallback chain if tier is empty
+    if (candidates.length === 0) {
+      const tierOrder: ModelTier[] = ['consensus', 'power', 'standard', 'eco'];
+      const startIdx = tierOrder.indexOf(tier);
+      for (let i = startIdx + 1; i < tierOrder.length; i++) {
+        candidates = Array.from(this.models.values()).filter(m => m.tier === tierOrder[i]);
+        if (candidates.length > 0) break;
+      }
+    }
+
+    // Score each candidate
+    const scored = candidates.map(m => ({
+      model: m,
+      score: this.scoreCandidate(m, requiredCaps, taskType, ctx),
+    }));
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored.map(s => s.model);
+  }
+
+  /**
+   * Score a model candidate: capability fit (0-1) × cost efficiency × learning bonus.
+   */
+  private scoreCandidate(
+    model: ModelConfig,
+    requiredCaps: string[],
+    taskType: string,
+    _ctx: AgentExecutionContext,
+  ): number {
+    // 1. Capability fit: what fraction of required caps does this model have?
+    const capFit = requiredCaps.length === 0
+      ? 1.0
+      : requiredCaps.filter(c => model.capabilities.includes(c)).length / requiredCaps.length;
+
+    // 2. Cost efficiency: cheaper is better (normalized against most expensive in same tier)
+    const tierModels = Array.from(this.models.values()).filter(m => m.tier === model.tier);
+    const maxCost = Math.max(...tierModels.map(m => m.costPer1KOutput), 0.001);
+    const costEfficiency = 1 - (model.costPer1KOutput / maxCost) * 0.3; // 0.7-1.0 range
+
+    // 3. Learning bonus: models that succeeded for this task type get a boost
+    const learningBonus = this.getLearningBonus(model.id, taskType);
+
+    // 4. Priority penalty (lower priority number = preferred)
+    const priorityFactor = 1 / (1 + model.priority * 0.1);
+
+    return capFit * costEfficiency * learningBonus * priorityFactor;
+  }
+
+  /**
+   * Calculate learning bonus from historical outcomes.
+   * Uses time-decayed success rate. Returns 0.8-1.2 multiplier.
+   */
+  private getLearningBonus(modelId: string, taskType: string): number {
+    const relevant = this.outcomes.filter(o =>
+      o.modelId === modelId && o.taskType === taskType,
+    );
+
+    if (relevant.length === 0) return 1.0; // No data → neutral
+
+    const now = Date.now();
+    let weightedSuccess = 0;
+    let totalWeight = 0;
+
+    for (const o of relevant) {
+      const age = now - o.timestamp;
+      const weight = Math.exp(-age / this.decayHalfLifeMs);
+      weightedSuccess += (o.success ? 1 : 0) * weight;
+      totalWeight += weight;
+    }
+
+    if (totalWeight === 0) return 1.0;
+
+    const successRate = weightedSuccess / totalWeight;
+    // Map 0-1 success rate to 0.8-1.2 bonus
+    return 0.8 + successRate * 0.4;
+  }
+
+  /**
+   * Check if a model has the required capabilities.
+   */
+  private hasCapabilities(model: ModelConfig, requiredCaps: string[]): boolean {
+    if (requiredCaps.length === 0) return true;
+    return requiredCaps.every(c => model.capabilities.includes(c));
+  }
+
+  /**
+   * If the selected tier has no model with all required capabilities, bump to next higher tier.
+   */
+  private bumpTierForCapabilities(tier: ModelTier, requiredCaps: string[]): ModelTier {
+    const tierOrder: ModelTier[] = ['eco', 'standard', 'power', 'consensus'];
+    let currentIdx = tierOrder.indexOf(tier);
+
+    while (currentIdx < tierOrder.length) {
+      const tierModels = Array.from(this.models.values()).filter(m => m.tier === tierOrder[currentIdx]);
+      const hasCapableModel = tierModels.some(m => this.hasCapabilities(m, requiredCaps));
+      if (hasCapableModel) return tierOrder[currentIdx];
+      currentIdx++;
+    }
+
+    return tier; // fallback to original
+  }
+
 }
 
 // Singleton

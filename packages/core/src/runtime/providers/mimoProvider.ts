@@ -1,4 +1,4 @@
-import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage, CacheConfig } from '../types';
+import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage, CacheConfig, ReasoningConfig } from '../types';
 
 interface OpenAICompletionUsage {
   prompt_tokens: number;
@@ -91,6 +91,16 @@ export class MiMoProvider implements LLMProvider {
       messages,
       max_tokens: request.maxTokens ?? 4096,
     };
+
+    // Apply reasoning/thinking configuration
+    // MiMo reasoning API supports enable_thinking + reasoning_effort for
+    // models that have thinking capability.
+    const rc = request.reasoningConfig;
+    if (rc?.enabled) {
+      body.enable_thinking = true;
+      if (rc.effort) body.reasoning_effort = rc.effort;
+      if (rc.budget && rc.budget > 0) body.max_thinking_tokens = rc.budget;
+    }
 
     if (request.tools && request.tools.length > 0) {
       body.tools = request.tools.map(t => ({

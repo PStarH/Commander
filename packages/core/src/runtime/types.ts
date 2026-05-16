@@ -29,6 +29,19 @@ export interface LLMMessage {
 }
 
 /**
+ * Reasoning/thinking configuration for LLM providers that support it.
+ * Controls whether the model performs internal reasoning before answering.
+ */
+export interface ReasoningConfig {
+  /** Enable reasoning/thinking tokens (default: model-dependent) */
+  enabled: boolean;
+  /** Maximum tokens for reasoning/thinking (0 = use provider default) */
+  budget?: number;
+  /** Effort level — some providers support low/medium/high reasoning effort */
+  effort?: 'low' | 'medium' | 'high';
+}
+
+/**
  * Request payload sent to an LLM provider.
  */
 export interface LLMRequest {
@@ -39,6 +52,45 @@ export interface LLMRequest {
   stop?: string[];
   tools?: ToolDefinition[];
   cacheConfig?: CacheConfig;
+  /** Reasoning/thinking config for supported providers (e.g. MiMo, OpenAI o-series) */
+  reasoningConfig?: ReasoningConfig;
+}
+
+/**
+ * Record of a single LLM API call for audit/provenance purposes.
+ * Written to samples store for every call.
+ */
+export interface ApiCallRecord {
+  /** Unique call ID */
+  callId: string;
+  /** Run/mission context */
+  runId?: string;
+  agentId?: string;
+  /** Request snapshot */
+  model: string;
+  provider: string;
+  temperature?: number;
+  maxTokens?: number;
+  reasoningConfig?: ReasoningConfig;
+  /** Token usage */
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  /** Performance */
+  durationMs: number;
+  finishReason: string;
+  /** Whether this was a retry */
+  attemptNumber: number;
+  /** Truncated content for audit (first 500 chars) */
+  contentPrefix: string;
+  /** Extracted code solution (eval context: function body or full solution from response) */
+  extractedCode?: string;
+  /** Error if any */
+  error?: string;
+  /** Evaluation task ID (e.g. "HumanEval/64") */
+  taskId?: string;
+  /** ISO timestamp */
+  timestamp: string;
 }
 
 /**
@@ -393,9 +445,14 @@ export type MessageHandler = (message: BusMessage) => void | Promise<void>;
 
 /**
  * A single trace event in execution history.
+ * Follows OpenTelemetry span attribute naming conventions for easy export.
  */
 export interface TraceEvent {
   id: string;
+  /** Span ID — unique per event, used for parent-child relationships */
+  spanId: string;
+  /** Trace ID — shared across all events in an execution, survives restarts */
+  traceId: string;
   runId: string;
   agentId: string;
   type: 'llm_call' | 'tool_execution' | 'decision' | 'error' | 'state_change';
@@ -404,12 +461,28 @@ export interface TraceEvent {
   data: {
     input?: unknown;
     output?: unknown;
+    /** OTel convention: gen_ai.request.model, gen_ai.response.model */
     modelInfo?: { model: string; provider: string; tier: ModelTier };
+    /** OTel convention: gen_ai.usage.prompt_tokens, gen_ai.usage.completion_tokens */
     tokenUsage?: TokenUsage;
     error?: string;
     stateTransition?: { from: string; to: string };
   };
-  parentId?: string;        // for nested traces
+  /** Parent span ID for creating trace trees */
+  parentSpanId?: string;
+}
+
+/**
+ * Active span handle returned by startSpan().
+ * Records duration automatically on end().
+ */
+export interface TraceSpan {
+  spanId: string;
+  traceId: string;
+  /** Finish the span and record it. Duration computed from start to now. */
+  end(attributes?: { output?: unknown; error?: string }): TraceEvent;
+  /** Add a child event to this span without ending it */
+  recordChild(type: TraceEvent['type'], attrs?: { input?: unknown; output?: unknown; error?: string; durationMs?: number }): TraceEvent;
 }
 
 /**
@@ -417,6 +490,7 @@ export interface TraceEvent {
  */
 export interface ExecutionTrace {
   runId: string;
+  traceId: string;
   agentId: string;
   missionId?: string;
   startedAt: string;

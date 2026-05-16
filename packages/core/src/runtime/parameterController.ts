@@ -1,4 +1,4 @@
-import type { LLMMessage, LLMRequest } from './types';
+import type { LLMMessage, LLMRequest, ReasoningConfig } from './types';
 import type { CommanderPlugin, BeforeLLMCallContext } from '../pluginManager';
 
 export type TaskType =
@@ -10,6 +10,58 @@ export type TaskType =
   | 'conversation'
   | 'planning'
   | 'default';
+
+/**
+ * Locked parameter profile for evaluation runs.
+ * When active, these override all dynamic adjustments.
+ */
+export interface EvaluationProfile {
+  temperature: number;
+  topP: number;
+  maxTokens: number;
+  reasoningConfig?: ReasoningConfig;
+}
+
+let activeEvalProfile: EvaluationProfile | null = null;
+
+/** Lock sampling parameters to a fixed profile (e.g. for eval runs). */
+export function setEvalProfile(profile: EvaluationProfile | null): void {
+  activeEvalProfile = profile;
+}
+
+/** Check whether an eval profile is currently active. */
+export function isEvalProfileActive(): boolean {
+  return activeEvalProfile !== null;
+}
+
+/** Get the active eval profile. */
+export function getEvalProfile(): EvaluationProfile | null {
+  return activeEvalProfile;
+}
+
+/** Decision log entry for parameter controller audit trail. */
+export interface ParamDecision {
+  timestamp: string;
+  taskType: TaskType;
+  confidence: number;
+  chosenTemperature: number;
+  chosenTopP: number;
+  chosenMaxTokens: number;
+  reasoningConfig?: ReasoningConfig;
+  evalProfileApplied: boolean;
+}
+
+const paramDecisions: ParamDecision[] = [];
+const MAX_PARAM_DECISIONS = 1000;
+
+export function getParamDecisions(): readonly ParamDecision[] {
+  return paramDecisions;
+}
+
+function recordDecision(d: ParamDecision): void {
+  paramDecisions.push(d);
+  if (paramDecisions.length > MAX_PARAM_DECISIONS) paramDecisions.shift();
+}
 
 export interface TaskProfile {
   taskType: TaskType;
@@ -137,6 +189,25 @@ export function getAdaptiveParams(
   attemptNumber: number,
   userOverride?: Partial<SamplingParams>,
 ): SamplingParams {
+  // Eval profile takes absolute priority
+  if (activeEvalProfile) {
+    const evalParams: SamplingParams = {
+      temperature: activeEvalProfile.temperature,
+      topP: activeEvalProfile.topP,
+    };
+    recordDecision({
+      timestamp: new Date().toISOString(),
+      taskType: 'default',
+      confidence: 1.0,
+      chosenTemperature: evalParams.temperature,
+      chosenTopP: evalParams.topP,
+      chosenMaxTokens: activeEvalProfile.maxTokens,
+      reasoningConfig: activeEvalProfile.reasoningConfig,
+      evalProfileApplied: true,
+    });
+    return evalParams;
+  }
+
   const profile = classifyTask(userMessage, history);
   const params = getSamplingParams(profile, userOverride);
   // Self-correction loop: increase temperature on retry, then fall back
@@ -145,7 +216,40 @@ export function getAdaptiveParams(
   } else if (attemptNumber >= 2) {
     params.temperature = Math.max(params.temperature - 0.1, 0.05);
   }
+
+  recordDecision({
+    timestamp: new Date().toISOString(),
+    taskType: profile.taskType,
+    confidence: profile.confidence,
+    chosenTemperature: params.temperature,
+    chosenTopP: params.topP,
+    chosenMaxTokens: 4096,
+    evalProfileApplied: false,
+  });
+
   return params;
+}
+
+/** Build a full LLMRequest with all controller-managed parameters applied. */
+export function applyControllerParams(
+  base: LLMRequest,
+  userMessage: string,
+  history: LLMMessage[],
+  attemptNumber: number,
+): LLMRequest {
+  const sampling = getAdaptiveParams(userMessage, history, attemptNumber);
+
+  const result: LLMRequest = {
+    ...base,
+    temperature: sampling.temperature,
+  };
+
+  // Apply eval profile reasoning config if active
+  if (activeEvalProfile?.reasoningConfig) {
+    result.reasoningConfig = activeEvalProfile.reasoningConfig;
+  }
+
+  return result;
 }
 
 export function createParameterControllerPlugin(overrides?: Partial<Record<TaskType, Partial<SamplingParams>>>): CommanderPlugin {

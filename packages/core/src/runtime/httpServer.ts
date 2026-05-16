@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import { IncomingMessage, ServerResponse, createServer } from 'http';
 import { AgentRuntime } from './agentRuntime';
 import { SSEStream } from './sseStream';
@@ -7,13 +8,17 @@ export interface HttpServerConfig {
   port: number;
   host: string;
   cors: boolean;
+  /** API key for Bearer auth. If undefined, a random key is generated at startup. Set to '' to explicitly disable auth (NOT recommended). */
   apiKey?: string;
+  /** Max requests per minute per IP. 0 = no limit. Default: 120 */
+  rateLimitPerMinute: number;
 }
 
 const DEFAULT_CONFIG: HttpServerConfig = {
   port: 3001,
-  host: '0.0.0.0',
+  host: '127.0.0.1', // Localhost-only by default (was 0.0.0.0 — GAP-12)
   cors: true,
+  rateLimitPerMinute: 120,
 };
 
 function parseBody(req: IncomingMessage): Promise<unknown> {
@@ -31,7 +36,10 @@ function sendJson(res: ServerResponse, status: number, data: unknown): void {
 }
 
 function authenticate(req: IncomingMessage, config: HttpServerConfig): boolean {
-  if (!config.apiKey) return true;
+  // If apiKey is explicitly empty string, auth is disabled (user opted in)
+  if (config.apiKey === '') return true;
+  // If apiKey is undefined (default), auth is required — key was generated at startup
+  if (!config.apiKey) return false;
   const auth = req.headers.authorization;
   return auth === `Bearer ${config.apiKey}` || auth === config.apiKey;
 }
@@ -41,9 +49,17 @@ export class CommanderHttpServer {
   private server: ReturnType<typeof createServer> | null = null;
   private runtimes: Map<string, AgentRuntime> = new Map();
   private bus = getMessageBus();
+  // Rate limiting: IP → { count, resetAt }
+  private rateLimitMap: Map<string, { count: number; resetAt: number }> = new Map();
 
   constructor(config?: Partial<HttpServerConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    // If no apiKey provided, generate one so the server isn't open by default
+    if (this.config.apiKey === undefined) {
+      this.config.apiKey = crypto.randomBytes(24).toString('hex');
+      console.log(`[HttpServer] Generated API key: ${this.config.apiKey}`);
+      console.log(`[HttpServer] Pass --api-key="" to disable auth (NOT recommended for production)`);
+    }
   }
 
   async start(): Promise<void> {
@@ -51,6 +67,9 @@ export class CommanderHttpServer {
       this.server = createServer((req, res) => { this.handleRequest(req, res); });
       this.server.listen(this.config.port, this.config.host, () => {
         console.log(`[HttpServer] Listening on http://${this.config.host}:${this.config.port}`);
+        if (this.config.apiKey) {
+          console.log(`[HttpServer] Authentication enabled (Bearer token required)`);
+        }
         resolve();
       });
     });
@@ -70,8 +89,17 @@ export class CommanderHttpServer {
     }
     if (!authenticate(req, this.config)) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      res.end(JSON.stringify({ error: 'Unauthorized. Provide Authorization: Bearer <api-key> header.' }));
       return;
+    }
+    // Rate limiting per IP
+    if (this.config.rateLimitPerMinute > 0) {
+      const ip = req.socket.remoteAddress ?? 'unknown';
+      if (!this.checkRateLimit(ip)) {
+        res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+        res.end(JSON.stringify({ error: 'Rate limit exceeded. Try again later.' }));
+        return;
+      }
     }
     const url = req.url ?? '/';
     const [path, queryStr] = url.split('?');
@@ -165,6 +193,18 @@ export class CommanderHttpServer {
     const unsubComplete = this.bus.subscribe('agent.completed', () => { stream.emitStatus('agent.completed'); });
     const unsubError = this.bus.subscribe('agent.failed', () => { stream.emitStatus('agent.error'); });
     req.on('close', () => { unsubStart(); unsubComplete(); unsubError(); stream.close(); });
+  }
+
+  private checkRateLimit(ip: string): boolean {
+    const now = Date.now();
+    const entry = this.rateLimitMap.get(ip);
+    if (!entry || now > entry.resetAt) {
+      this.rateLimitMap.set(ip, { count: 1, resetAt: now + 60_000 });
+      return true;
+    }
+    if (entry.count >= this.config.rateLimitPerMinute) return false;
+    entry.count++;
+    return true;
   }
 
   private getDefaultProvider(provider: string = 'openai'): any {
