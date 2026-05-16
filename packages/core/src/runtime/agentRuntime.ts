@@ -21,6 +21,7 @@ import { ContextCompactor } from './contextCompactor';
 import { classifyLLMError, computeBackoff } from './llmRetry';
 import { CircuitBreaker } from './circuitBreaker';
 import { createParameterControllerPlugin } from './parameterController';
+import { VerificationLoop } from './verificationLoop';
 import { getHookManager } from '../pluginManager';
 
 function generateId(): string {
@@ -51,6 +52,7 @@ export class AgentRuntime {
   private activeRuns: Set<string> = new Set();
   private compactor: ContextCompactor;
   private circuitBreaker: CircuitBreaker;
+  private verificationLoop: VerificationLoop;
 
   constructor(
     config?: Partial<AgentRuntimeConfig>,
@@ -60,6 +62,7 @@ export class AgentRuntime {
     this.router = router ?? getModelRouter();
     this.compactor = new ContextCompactor({ maxContextTokens: this.config.budgetHardCapTokens || 128000 });
     this.circuitBreaker = new CircuitBreaker(5, 30000);
+    this.verificationLoop = new VerificationLoop();
     // Auto-register adaptive parameter controller
     try { getHookManager().register(createParameterControllerPlugin()); } catch {};
   }
@@ -324,6 +327,22 @@ export class AgentRuntime {
               });
             }
           }
+        }
+
+        // Verification Loop: validate output before returning
+        const verifCtx = {
+          goal: ctx.goal,
+          output: response.content,
+          language: ctx.goal.toLowerCase().includes('python') ? 'python' : undefined,
+          toolsUsed: ctx.availableTools,
+        };
+        const verifResult = await this.verificationLoop.execute(ctx.goal, response.content, verifCtx as any);
+        if (verifResult.failures.length > 0 && attempt < this.config.maxRetries) {
+          const feedback = verifResult.failures.map((f: any) => `[${f.location}] ${f.message}`).join('\n');
+          lastError = `Verification failed: ${feedback}`;
+          tracer.recordDecision(runId, `verification (attempt ${attempt + 1}): ${feedback.slice(0, 100)}`, 0);
+          request.messages.push({ role: 'user', content: `Fix: ${feedback}` });
+          continue;
         }
 
         const totalDurationMs = Date.now() - startTime;
