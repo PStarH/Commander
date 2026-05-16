@@ -1,5 +1,7 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, after } from 'node:test';
+import assert from 'node:assert';
 import { AgentRuntime } from '../src/runtime/agentRuntime';
+import { resetHookManager } from '../src/pluginManager';
 import { ModelRouter, resetModelRouter } from '../src/runtime/modelRouter';
 import { getMessageBus, resetMessageBus } from '../src/runtime/messageBus';
 import { getTraceRecorder, resetTraceRecorder } from '../src/runtime/executionTrace';
@@ -40,7 +42,7 @@ function fmt(r: BenchmarkResult): string {
 describe('TELOS Benchmarks', () => {
   const results: BenchmarkResult[] = [];
 
-  afterAll(() => {
+  after(() => {
     console.log('\n═══ TELOS BENCHMARK RESULTS ═══');
     results.sort((a, b) => b.opsPerSec - a.opsPerSec);
     for (const r of results) console.log(fmt(r));
@@ -85,6 +87,7 @@ describe('TELOS Benchmarks', () => {
     resetModelRouter();
     resetMessageBus();
     resetTraceRecorder();
+    resetHookManager();
     const runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000 });
     runtime.registerProvider('openai', new MockLLMProvider('bench', { defaultResponse: 'Done.' }));
     const telos = new TELOSOrchestrator(runtime, { enableBudgetEnforcement: false });
@@ -95,6 +98,7 @@ describe('TELOS Benchmarks', () => {
     resetModelRouter();
     resetMessageBus();
     resetTraceRecorder();
+    resetHookManager();
     const runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000 });
     runtime.registerProvider('openai', new MockLLMProvider('bench', { defaultResponse: 'Completed.' }));
     const telos = new TELOSOrchestrator(runtime, { enableBudgetEnforcement: false });
@@ -158,6 +162,7 @@ describe('TELOS Benchmarks', () => {
     resetModelRouter();
     resetMessageBus();
     resetTraceRecorder();
+    resetHookManager();
     const runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 1000 });
     runtime.registerProvider('openai', new MockLLMProvider('bench', { defaultResponse: 'Completed.' }));
     const ctx: AgentExecutionContext = { agentId: 'bench', projectId: 'bench', goal: 'Test task', contextData: {}, availableTools: [], maxSteps: 5, tokenBudget: 4000 };

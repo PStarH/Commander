@@ -951,7 +951,7 @@ export {
   MemoryStats,
   MemoryStore,
   InMemoryMemoryStore,
-  SqliteMemoryStore,
+  JsonMemoryStore,
   createMemoryStore,
   fromProjectMemoryItem,
   toProjectMemoryItem,

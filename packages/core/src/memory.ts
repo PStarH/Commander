@@ -169,7 +169,7 @@ export interface MemoryStore {
  * In-Memory Memory Store
  * 
  * Simple implementation for testing and development.
- * Does NOT persist to disk - use SqliteMemoryStore for production.
+ * Does NOT persist to disk - use JsonMemoryStore for production.
  */
 export class InMemoryMemoryStore implements MemoryStore {
   private items: Map<string, EpisodicMemoryItem> = new Map();
@@ -484,7 +484,7 @@ export class InMemoryMemoryStore implements MemoryStore {
  * 
  * For now, use InMemoryMemoryStore for development.
  */
-export class SqliteMemoryStore implements MemoryStore {
+export class JsonMemoryStore implements MemoryStore {
   private items: Map<string, EpisodicMemoryItem> = new Map();
   private filePath: string;
   private nextId = 1;
@@ -773,7 +773,7 @@ export function createMemoryStore(type: 'in-memory' | 'sqlite' = 'in-memory'): M
     case 'in-memory':
       return new InMemoryMemoryStore();
     case 'sqlite':
-      return new SqliteMemoryStore('.commander/memory.json');
+      return new JsonMemoryStore('.commander/memory.json');
     default:
       throw new Error(`Unknown memory store type: ${type}`);
   }

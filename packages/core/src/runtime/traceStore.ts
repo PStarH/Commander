@@ -16,9 +16,12 @@ export interface TraceStore {
 export class PersistentTraceStore implements TraceStore {
   private baseDir: string;
   private buffers: Map<string, string[]> = new Map();
+  private tenantId?: string;
 
-  constructor(baseDir?: string) {
-    this.baseDir = baseDir ?? path.join(process.cwd(), '.commander_traces');
+  constructor(baseDir?: string, tenantId?: string) {
+    this.tenantId = tenantId;
+    const base = baseDir ?? path.join(process.cwd(), '.commander_traces');
+    this.baseDir = tenantId ? path.join(base, `tenant_${tenantId}`) : base;
     fs.mkdirSync(this.baseDir, { recursive: true });
   }
 
@@ -55,6 +58,12 @@ export class PersistentTraceStore implements TraceStore {
     for (const key of this.buffers.keys()) {
       this.flush(key);
     }
+  }
+
+  // GAP-04: Graceful shutdown — flush all buffers and clear maps
+  shutdown(): void {
+    this.flushAll();
+    this.buffers.clear();
   }
 
   readTrace(runId: string): TraceEvent[] {

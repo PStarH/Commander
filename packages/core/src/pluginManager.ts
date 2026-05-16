@@ -75,13 +75,30 @@ export type HookContext =
   | ErrorContext;
 
 // ============================================================================
+// Plugin Config Schema
+// ============================================================================
+
+export interface PluginConfigField {
+  type: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  description?: string;
+  default?: unknown;
+}
+
+export interface PluginConfigSchema {
+  type: 'object';
+  properties: Record<string, PluginConfigField>;
+  required?: string[];
+}
+
+export interface PluginLoadContext {
+  config: Record<string, unknown>;
+  hookManager: HookManager;
+}
+
+// ============================================================================
 // Plugin Interface
 // ============================================================================
 
-/**
- * A Commander plugin.
- * Hooks are optional — only implement what you need.
- */
 export interface CommanderPlugin {
   /** Plugin name (must be unique) */
   name: string;
@@ -89,6 +106,15 @@ export interface CommanderPlugin {
   version?: string;
   /** Plugin description */
   description?: string;
+  /** Plugins this plugin depends on (resolved before this plugin's hooks fire) */
+  dependsOn?: string[];
+  /** Config schema for validation */
+  configSchema?: PluginConfigSchema;
+
+  /** Called when the plugin is loaded (after registration). Can reject to fail registration. */
+  onLoad?: (ctx: PluginLoadContext) => Promise<void> | void;
+  /** Called when the plugin is unloaded. Cleanup resources here. */
+  onUnload?: () => Promise<void> | void;
 
   /** Called before a tool is executed. Return null to allow, or a ToolResult to block/override. */
   beforeToolCall?: (ctx: BeforeToolCallContext) => Promise<ToolResult | null> | ToolResult | null;
@@ -107,34 +133,92 @@ export interface CommanderPlugin {
 }
 
 // ============================================================================
+// Plugin Entry (internal wrapper)
+// ============================================================================
+
+interface PluginEntry {
+  plugin: CommanderPlugin;
+  enabled: boolean;
+  config: Record<string, unknown>;
+}
+
+// ============================================================================
 // Hook Manager
 // ============================================================================
 
 export class HookManager {
-  private plugins: Map<string, CommanderPlugin> = new Map();
+  private plugins: Map<string, PluginEntry> = new Map();
+  private hookTimeoutMs = 5000;
+
+  setHookTimeout(ms: number): void { this.hookTimeoutMs = ms; }
+  getHookTimeout(): number { return this.hookTimeoutMs; }
 
   /**
-   * Register a plugin.
+   * Register a plugin with optional config.
+   * Validates config schema, resolves dependencies, calls onLoad().
    * Throws if a plugin with the same name is already registered.
    */
-  register(plugin: CommanderPlugin): void {
+  async register(plugin: CommanderPlugin, config: Record<string, unknown> = {}): Promise<void> {
     if (this.plugins.has(plugin.name)) {
       throw new Error(`Plugin "${plugin.name}" is already registered`);
     }
-    this.plugins.set(plugin.name, plugin);
+
+    // Validate dependencies are registered (but not necessarily loaded yet)
+    if (plugin.dependsOn) {
+      for (const dep of plugin.dependsOn) {
+        if (!this.plugins.has(dep)) {
+          throw new Error(`Plugin "${plugin.name}" depends on "${dep}" which is not registered`);
+        }
+      }
+    }
+
+    // Validate config against schema
+    const mergedConfig = this.validateAndMergeConfig(plugin, config);
+
+    const entry: PluginEntry = {
+      plugin,
+      enabled: true,
+      config: mergedConfig,
+    };
+
+    this.plugins.set(plugin.name, entry);
+
+    // Call onLoad lifecycle hook
+    if (plugin.onLoad) {
+      try {
+        await plugin.onLoad({ config: mergedConfig, hookManager: this });
+      } catch (err) {
+        this.plugins.delete(plugin.name);
+        throw new Error(`Plugin "${plugin.name}" onLoad failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   /**
    * Unregister a plugin by name.
+   * Calls onUnload lifecycle hook.
    * Returns true if the plugin was found and removed.
    */
-  unregister(name: string): boolean {
-    return this.plugins.delete(name);
+  async unregister(name: string): Promise<boolean> {
+    const entry = this.plugins.get(name);
+    if (!entry) return false;
+    if (entry.plugin.onUnload) {
+      try { await entry.plugin.onUnload(); } catch { /* ok */ }
+    }
+    this.plugins.delete(name);
+    return true;
   }
 
   /** Get all registered plugin names */
   listPlugins(): string[] {
     return Array.from(this.plugins.keys());
+  }
+
+  /** Get detailed plugin info */
+  getPluginInfo(name: string): { plugin: CommanderPlugin; enabled: boolean; config: Record<string, unknown> } | undefined {
+    const entry = this.plugins.get(name);
+    if (!entry) return undefined;
+    return { plugin: entry.plugin, enabled: entry.enabled, config: { ...entry.config } };
   }
 
   /** Check if a plugin is registered */
@@ -144,97 +228,212 @@ export class HookManager {
 
   /** Get a specific plugin by name */
   getPlugin(name: string): CommanderPlugin | undefined {
-    return this.plugins.get(name);
+    return this.plugins.get(name)?.plugin;
   }
 
+  // ── Runtime enable/disable ──
+
+  enable(name: string): boolean {
+    const entry = this.plugins.get(name);
+    if (!entry) return false;
+    entry.enabled = true;
+    return true;
+  }
+
+  disable(name: string): boolean {
+    const entry = this.plugins.get(name);
+    if (!entry) return false;
+    entry.enabled = false;
+    return true;
+  }
+
+  isEnabled(name: string): boolean {
+    return this.plugins.get(name)?.enabled ?? false;
+  }
+
+  // ── Config ──
+
+  getConfig(name: string): Record<string, unknown> | undefined {
+    return this.plugins.get(name)?.config;
+  }
+
+  async updateConfig(name: string, config: Record<string, unknown>): Promise<void> {
+    const entry = this.plugins.get(name);
+    if (!entry) throw new Error(`Plugin "${name}" not found`);
+    const merged = this.validateAndMergeConfig(entry.plugin, config);
+    entry.config = merged;
+    // Re-trigger onLoad so plugin can react to config changes
+    if (entry.plugin.onLoad) {
+      await entry.plugin.onLoad({ config: merged, hookManager: this });
+    }
+  }
+
+  // ── Dependency ordering ──
+
   /**
-   * Fire 'beforeToolCall' hooks.
-   * Hooks run in registration order. If any hook returns a non-null ToolResult,
-   * subsequent hooks are skipped and the returned result is used.
-   * This allows plugins to block or override tool calls.
+   * Topological sort of registered plugins by dependency.
+   * Throws if a circular dependency is detected.
    */
+  getDependencyOrder(): string[] {
+    const visited = new Set<string>();
+    const inStack = new Set<string>();
+    const order: string[] = [];
+
+    const visit = (name: string) => {
+      if (inStack.has(name)) {
+        throw new Error(`Circular plugin dependency detected involving "${name}"`);
+      }
+      if (visited.has(name)) return;
+      inStack.add(name);
+      visited.add(name);
+      const entry = this.plugins.get(name);
+      if (entry?.plugin.dependsOn) {
+        for (const dep of entry.plugin.dependsOn) {
+          if (this.plugins.has(dep)) visit(dep);
+        }
+      }
+      inStack.delete(name);
+      order.push(name);
+    };
+
+    for (const name of this.plugins.keys()) {
+      if (!visited.has(name)) visit(name);
+    }
+    return order;
+  }
+
+  /** Get enabled plugin names in dependency order */
+  private getEnabledInOrder(): string[] {
+    return this.getDependencyOrder().filter(name => this.plugins.get(name)?.enabled);
+  }
+
+  // ── Hook firing (with dep ordering + enabled check) ──
+
   async fireBeforeToolCall(ctx: BeforeToolCallContext): Promise<ToolResult | null> {
-    for (const plugin of this.plugins.values()) {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
       if (plugin.beforeToolCall) {
-        const result = await plugin.beforeToolCall(ctx);
-        if (result !== null) return result;
+        try {
+          const result = await this.withTimeout(plugin.beforeToolCall(ctx), plugin.name, 'beforeToolCall');
+          if (result !== null) return result;
+        } catch { /* skip */ }
       }
     }
     return null;
   }
 
-  /**
-   * Fire 'afterToolCall' hooks.
-   * Each hook can transform the result. Hooks run in registration order,
-   * with each hook receiving the previous hook's output.
-   */
   async fireAfterToolCall(ctx: AfterToolCallContext): Promise<ToolResult> {
     let currentResult = ctx.result;
-    for (const plugin of this.plugins.values()) {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
       if (plugin.afterToolCall) {
-        currentResult = await plugin.afterToolCall({ ...ctx, result: currentResult });
+        try {
+          currentResult = await this.withTimeout(plugin.afterToolCall({ ...ctx, result: currentResult }), plugin.name, 'afterToolCall');
+        } catch { /* keep previous */ }
       }
     }
     return currentResult;
   }
 
-  /**
-   * Fire 'beforeLLMCall' hooks.
-   * Each hook can modify the request. Hooks run in registration order,
-   * with each hook receiving the previous hook's output.
-   */
   async fireBeforeLLMCall(ctx: BeforeLLMCallContext): Promise<LLMRequest> {
     let currentRequest = ctx.request;
-    for (const plugin of this.plugins.values()) {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
       if (plugin.beforeLLMCall) {
-        currentRequest = await plugin.beforeLLMCall({ ...ctx, request: currentRequest });
+        try {
+          currentRequest = await this.withTimeout(plugin.beforeLLMCall({ ...ctx, request: currentRequest }), plugin.name, 'beforeLLMCall');
+        } catch { /* keep previous */ }
       }
     }
     return currentRequest;
   }
 
-  /**
-   * Fire 'afterLLMCall' hooks.
-   */
   async fireAfterLLMCall(ctx: AfterLLMCallContext): Promise<void> {
-    for (const plugin of this.plugins.values()) {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
       if (plugin.afterLLMCall) {
-        await plugin.afterLLMCall(ctx);
+        try {
+          await this.withTimeout(plugin.afterLLMCall(ctx), plugin.name, 'afterLLMCall');
+        } catch { /* continue */ }
       }
     }
   }
 
-  /**
-   * Fire 'onAgentStart' hooks.
-   */
   async fireOnAgentStart(ctx: AgentStartContext): Promise<void> {
-    for (const plugin of this.plugins.values()) {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
       if (plugin.onAgentStart) {
-        await plugin.onAgentStart(ctx);
+        try {
+          await this.withTimeout(plugin.onAgentStart(ctx), plugin.name, 'onAgentStart');
+        } catch { /* continue */ }
       }
     }
   }
 
-  /**
-   * Fire 'onAgentComplete' hooks.
-   */
   async fireOnAgentComplete(ctx: AgentCompleteContext): Promise<void> {
-    for (const plugin of this.plugins.values()) {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
       if (plugin.onAgentComplete) {
-        await plugin.onAgentComplete(ctx);
+        try {
+          await this.withTimeout(plugin.onAgentComplete(ctx), plugin.name, 'onAgentComplete');
+        } catch { /* continue */ }
       }
     }
   }
 
-  /**
-   * Fire 'onError' hooks.
-   */
   async fireOnError(ctx: ErrorContext): Promise<void> {
-    for (const plugin of this.plugins.values()) {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
       if (plugin.onError) {
-        await plugin.onError(ctx);
+        try {
+          await this.withTimeout(plugin.onError(ctx), plugin.name, 'onError');
+        } catch { /* continue */ }
       }
     }
+  }
+
+  // ── Config validation ──
+
+  private validateAndMergeConfig(plugin: CommanderPlugin, config: Record<string, unknown>): Record<string, unknown> {
+    const schema = plugin.configSchema;
+    if (!schema) return { ...config };
+
+    const merged: Record<string, unknown> = { ...config };
+
+    // Apply defaults and validate types
+    for (const [key, field] of Object.entries(schema.properties)) {
+      const value = key in merged ? merged[key] : field.default;
+      if (value !== undefined) {
+        if (typeof value !== field.type && field.type !== 'array' && field.type !== 'object') {
+          throw new Error(`Plugin "${plugin.name}" config "${key}": expected ${field.type}, got ${typeof value}`);
+        }
+        merged[key] = value;
+      }
+    }
+
+    // Check required fields
+    if (schema.required) {
+      for (const key of schema.required) {
+        if (!(key in merged) || merged[key] === undefined) {
+          throw new Error(`Plugin "${plugin.name}" config "${key}" is required`);
+        }
+      }
+    }
+
+    return merged;
+  }
+
+  /** Wrap a plugin hook promise with a timeout. */
+  private withTimeout<T>(promise: Promise<T> | T, pluginName: string, hookName: string): Promise<T> {
+    if (typeof promise !== 'object' || promise === null || !('then' in promise)) {
+      return Promise.resolve(promise);
+    }
+    return Promise.race([
+      promise as Promise<T>,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error(`Plugin "${pluginName}" hook "${hookName}" timed out after ${this.hookTimeoutMs}ms`)), this.hookTimeoutMs);
+      }),
+    ]);
   }
 }
 
@@ -259,14 +458,22 @@ export function resetHookManager(): void {
 // Built-in plugins
 // ============================================================================
 
-/**
- * Create a logging plugin that prints hook activity to console.
- */
 export function createLoggingPlugin(): CommanderPlugin {
   return {
     name: 'builtin-logger',
     description: 'Logs all hook activity to console',
     version: '0.1.0',
+    configSchema: {
+      type: 'object',
+      properties: {
+        verbose: { type: 'boolean', description: 'Log all hook points', default: false },
+        prefix: { type: 'string', description: 'Log prefix', default: '[Plugin:logger]' },
+      },
+    },
+    onLoad: async (ctx) => {
+      const prefix = (ctx.config.prefix as string) ?? '[Plugin:logger]';
+      console.log(`${prefix} loaded (verbose=${ctx.config.verbose})`);
+    },
     beforeToolCall: async (ctx) => {
       console.log(`[Plugin:logger] beforeToolCall: ${ctx.toolName}`);
       return null;

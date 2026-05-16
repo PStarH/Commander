@@ -61,6 +61,8 @@ export interface LLMRequest {
  * Written to samples store for every call.
  */
 export interface ApiCallRecord {
+  /** Schema version for forward-compatible deserialization */
+  schemaVersion?: number;
   /** Unique call ID */
   callId: string;
   /** Run/mission context */
@@ -255,6 +257,10 @@ export interface AgentExecutionContext {
    missionId?: string;
    projectId: string;
    goal: string;
+   /** GAP-09: Tenant isolation — tenant this execution belongs to */
+   tenantId?: string;
+   /** GAP-09: User isolation — user who initiated this execution */
+   userId?: string;
    contextData: {
      warRoomSnapshot?: unknown;
      memoryItems?: unknown[];
@@ -448,6 +454,8 @@ export type MessageHandler = (message: BusMessage) => void | Promise<void>;
  * Follows OpenTelemetry span attribute naming conventions for easy export.
  */
 export interface TraceEvent {
+  /** Schema version for forward-compatible deserialization */
+  schemaVersion?: number;
   id: string;
   /** Span ID — unique per event, used for parent-child relationships */
   spanId: string;

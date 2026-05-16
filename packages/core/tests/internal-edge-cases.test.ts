@@ -113,7 +113,7 @@ describe('1.1 Tool Calling Edge Cases', () => {
 // ============================================================================
 describe('1.2 Long-term Memory Edge Cases', () => {
   it('LM-EC-1: 500+ noise messages — compaction preserves signal', () => {
-    const compactor = new ContextCompactor({ maxContextTokens: 50000, layer1Trigger: 0.3, layer2Trigger: 0.5, keepRecentTurns: 3, maxToolOutputChars: 100 });
+    const compactor = new ContextCompactor({ maxContextTokens: 10000, layer1Trigger: 0.3, layer2Trigger: 0.5, keepRecentTurns: 3, maxToolOutputChars: 100 });
     let msgs: LLMMessage[] = [{ role: 'system', content: 'You are a helpful assistant. The user prefers Python over JavaScript.' }];
     // Add 500 noise messages
     for (let i = 0; i < 500; i++) {

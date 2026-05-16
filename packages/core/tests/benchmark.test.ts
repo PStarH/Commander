@@ -5,7 +5,7 @@
  * 测试各组件的性能指标
  */
 
-import { describe, it, before } from 'node:test';
+import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import {
   TaskComplexityAnalyzer,

@@ -105,12 +105,19 @@ export interface EmbeddingStore {
 export class InMemoryEmbeddingStore implements EmbeddingStore {
   private embeddings = new Map<string, number[]>();
   private entries = new Map<string, MemoryEntry>();
+  /** Maximum number of entries (GAP-17: prevent unbounded growth) */
+  private readonly maxEntries: number;
+
+  constructor(maxEntries: number = 10000) {
+    this.maxEntries = maxEntries;
+  }
 
   getEntry(id: string): MemoryEntry | undefined {
     return this.entries.get(id);
   }
 
   setEntry(id: string, entry: MemoryEntry): void {
+    this.evictIfNeeded();
     this.entries.set(id, entry);
   }
 
@@ -121,6 +128,33 @@ export class InMemoryEmbeddingStore implements EmbeddingStore {
   setEmbedding(id: string, embedding: number[]): void {
     if (this.entries.has(id)) {
       this.embeddings.set(id, embedding);
+    }
+  }
+
+  /** GAP-17: Delete an entry and its embedding. */
+  delete(id: string): void {
+    this.entries.delete(id);
+    this.embeddings.delete(id);
+  }
+
+  /** GAP-17: Current entry count. */
+  get size(): number {
+    return this.entries.size;
+  }
+
+  /** GAP-17: Evict oldest entries when over limit. */
+  private evictIfNeeded(): void {
+    if (this.entries.size < this.maxEntries) return;
+    // Evict 10% of oldest entries
+    const toEvict = Math.max(1, Math.floor(this.maxEntries * 0.1));
+    const sorted = Array.from(this.entries.entries())
+      .sort((a, b) => {
+        const timeA = a[1].lastAccessedAt ? new Date(a[1].lastAccessedAt).getTime() : 0;
+        const timeB = b[1].lastAccessedAt ? new Date(b[1].lastAccessedAt).getTime() : 0;
+        return timeA - timeB; // oldest first
+      });
+    for (let i = 0; i < toEvict && i < sorted.length; i++) {
+      this.delete(sorted[i][0]);
     }
   }
 }

@@ -29,13 +29,19 @@ import { captureProvenance } from './provenance';
 import { StateCheckpointer, type CheckpointState } from './stateCheckpointer';
 import { DeadLetterQueue } from './deadLetterQueue';
 import { StepErrorBoundary } from './stepErrorBoundary';
+import { getMetricsCollector } from './metricsCollector';
 import { CompensationRegistry, type CompensableAction } from './compensationRegistry';
+import { AgentInbox } from './agentInbox';
+import { TeamRegistry } from './teamRegistry';
+import { AgentHandoff } from './agentHandoff';
 import { getGlobalThreeLayerMemory } from '../threeLayerMemory';
 import { getHookManager } from '../pluginManager';
 import { ToolResultCache } from './toolResultCache';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
 import { ToolPlanner } from './toolPlanner';
+import type { TenantProvider, TenantConfig } from './tenantProvider';
+import { getGlobalTenantProvider, getGlobalMemoryRegistry } from './tenantProvider';
 
 function generateId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -73,6 +79,9 @@ export class AgentRuntime {
   private checkpointer: StateCheckpointer;
   private dlq: DeadLetterQueue;
   private compensationRegistry: CompensationRegistry;
+  private agentInbox: AgentInbox;
+  private teamRegistry: TeamRegistry;
+  private agentHandoff: AgentHandoff;
   private toolCache: ToolResultCache;
   private outputManager: ToolOutputManager;
   private orchestrator: ToolOrchestrator;
@@ -81,12 +90,22 @@ export class AgentRuntime {
   private runningCount = 0;
   private waitingQueue: Array<() => void> = [];
 
+  // Tenant isolation
+  private tenantProvider: TenantProvider;
+  private tenantRateLimits: Map<string, { count: number; resetAt: number }> = new Map();
+  private tenantRunningCounts: Map<string, number> = new Map();
+  private tenantSamplesStores: Map<string, SamplesStore> = new Map();
+  private tenantTraceStores: Map<string, PersistentTraceStore> = new Map();
+  private tenantCheckpointers: Map<string, StateCheckpointer> = new Map();
+
   constructor(
     config?: Partial<AgentRuntimeConfig>,
     router?: ModelRouter,
+    tenantProvider?: TenantProvider,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.router = router ?? getModelRouter();
+    this.tenantProvider = tenantProvider ?? getGlobalTenantProvider();
     this.compactor = new ContextCompactor({ maxContextTokens: this.config.budgetHardCapTokens || 128000 });
     this.circuitBreaker = new CircuitBreaker(5, 30000);
     this.governor = new TokenGovernor({ totalBudget: this.config.budgetHardCapTokens || 64000 });
@@ -100,17 +119,20 @@ export class AgentRuntime {
     this.checkpointer = new StateCheckpointer();
     this.dlq = new DeadLetterQueue();
     this.compensationRegistry = new CompensationRegistry();
+    this.agentInbox = new AgentInbox();
+    this.teamRegistry = new TeamRegistry();
+    this.agentHandoff = new AgentHandoff(this.agentInbox, this.checkpointer);
     // Register default compensation handlers for mutation tools
     this.registerDefaultCompensation();
     try { this.memory = getGlobalThreeLayerMemory(); } catch { /* ok */ }
     try { getTraceRecorder(this.traceStore); } catch { /* ok */ }
-    // Tool calling infrastructure — surpasses all 5 competitors
+    // Tool calling infrastructure
     this.toolCache = new ToolResultCache({ enabled: true, maxEntries: 256, defaultTtlMs: 300_000 });
     this.outputManager = new ToolOutputManager({ enabled: true, turnBudget: 32000 });
     this.orchestrator = new ToolOrchestrator({ enabled: true, maxRetries: 1, circuitBreakerThreshold: 3 });
     this.planner = new ToolPlanner();
     // Auto-register adaptive parameter controller
-    try { getHookManager().register(createParameterControllerPlugin()); } catch {};
+    getHookManager().register(createParameterControllerPlugin()).catch(() => {});
   }
 
   registerProvider(name: string, provider: LLMProvider): void {
@@ -138,6 +160,10 @@ export class AgentRuntime {
     return this.checkpointer;
   }
 
+  getInbox(): AgentInbox { return this.agentInbox; }
+  getTeamRegistry(): TeamRegistry { return this.teamRegistry; }
+  getHandoff(): AgentHandoff { return this.agentHandoff; }
+
   /**
    * Execute an agent task end-to-end.
    * Wraps entire body in try/finally to guarantee cleanup (GAP-02, GAP-05).
@@ -152,8 +178,71 @@ export class AgentRuntime {
     const tracer = getTraceRecorder();
     const startTime = Date.now();
 
+    const tenantId = ctx.tenantId;
+    const tenantCfg = tenantId ? this.tenantProvider.getTenantConfig(tenantId) : undefined;
+
+    // GAP-09: Enforce per-tenant rate limit
+    if (tenantCfg?.enabled && tenantCfg.maxRunsPerMinute > 0) {
+      const rateEntry = this.tenantRateLimits.get(tenantId!);
+      const now = Date.now();
+      if (rateEntry && now < rateEntry.resetAt && rateEntry.count >= tenantCfg.maxRunsPerMinute) {
+        this.releaseSlot();
+        return {
+          runId, agentId: ctx.agentId, missionId: ctx.missionId,
+          status: 'failed', summary: 'Tenant rate limit exceeded',
+          steps: [], totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          totalDurationMs: 0, error: 'TENANT_RATE_LIMIT: too many runs per minute',
+        };
+      }
+      if (!rateEntry || now > rateEntry.resetAt) {
+        this.tenantRateLimits.set(tenantId!, { count: 1, resetAt: now + 60_000 });
+      } else {
+        rateEntry.count++;
+      }
+    }
+
+    // GAP-09: Enforce per-tenant concurrency limit
+    if (tenantCfg?.enabled && tenantCfg.maxConcurrency > 0) {
+      const current = this.tenantRunningCounts.get(tenantId!) ?? 0;
+      if (current >= tenantCfg.maxConcurrency) {
+        this.releaseSlot();
+        return {
+          runId, agentId: ctx.agentId, missionId: ctx.missionId,
+          status: 'failed', summary: 'Tenant concurrency limit exceeded',
+          steps: [], totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          totalDurationMs: 0, error: 'TENANT_CONCURRENCY_LIMIT: too many concurrent runs',
+        };
+      }
+      this.tenantRunningCounts.set(tenantId!, current + 1);
+    }
+
+    // GAP-09: Resolve tenant-scoped storage and memory
+    // Override class fields to tenant-scoped instances for this run's duration.
+    // Safe because acquireSlot() limits concurrency to maxConcurrentRuns,
+    // and tenant concurrency is enforced separately.
+    const origSamplesStore = this.samplesStore;
+    const origTraceStore = this.traceStore;
+    const origCheckpointer = this.checkpointer;
+    const origMemory = this.memory;
+    if (tenantId && tenantCfg?.enabled) {
+      if (!this.tenantSamplesStores.has(tenantId)) {
+        this.tenantSamplesStores.set(tenantId, new SamplesStore(undefined, tenantId));
+      }
+      if (!this.tenantTraceStores.has(tenantId)) {
+        this.tenantTraceStores.set(tenantId, new PersistentTraceStore(undefined, tenantId));
+      }
+      if (!this.tenantCheckpointers.has(tenantId)) {
+        this.tenantCheckpointers.set(tenantId, new StateCheckpointer(undefined, tenantId));
+      }
+      this.samplesStore = this.tenantSamplesStores.get(tenantId)!;
+      this.traceStore = this.tenantTraceStores.get(tenantId)!;
+      this.checkpointer = this.tenantCheckpointers.get(tenantId)!;
+      this.memory = getGlobalMemoryRegistry().getOrCreate(tenantId);
+    }
+
     this.activeRuns.add(runId);
     tracer.startRun(runId, ctx.agentId, ctx.missionId);
+    getMetricsCollector().setGauge('active_runs', 'Active concurrent runs', this.activeRuns.size);
 
     try {
 
@@ -229,6 +318,14 @@ export class AgentRuntime {
     // Apply parameter controller (eval profile, reasoning config, adaptive params)
     const request = applyControllerParams(baseRequest, ctx.goal, baseRequest.messages, 0);
 
+    // Pre-LLM tool provisioning: detect tool needs and inject results before LLM sees the question
+    try {
+      const provisioned = await this.provisionTools(ctx.goal, request);
+      if (provisioned) {
+        bus.publish('system.alert', 'runtime', { type: 'tool_provisioned' });
+      }
+    } catch { /* provisioning is best-effort */ }
+
     this.checkpointer.checkpoint({
       runId, agentId: ctx.agentId, missionId: ctx.missionId,
       timestamp: now(), phase: 'started',
@@ -244,6 +341,22 @@ export class AgentRuntime {
       },
       totalDurationMs: 0,
     });
+
+    // Check agent inbox for pending messages before execution
+    const inboxMessages = this.agentInbox.pollInbox(ctx.agentId);
+    if (inboxMessages.length > 0) {
+      const inboxBlock = inboxMessages.map(m =>
+        `[from:${m.from}] ${m.subject}: ${m.body.slice(0, 300)}`
+      ).join('\n');
+      request.messages.splice(request.messages.length - 1, 0, {
+        role: 'system' as const,
+        content: `## Pending Messages\n${inboxBlock}\n\nAddress these messages as part of your execution.`,
+      });
+      // Send read receipts
+      for (const msg of inboxMessages) {
+        this.agentInbox.acknowledge(ctx.agentId, msg.id);
+      }
+    }
 
     if (this.memory) {
       try {
@@ -271,6 +384,9 @@ export class AgentRuntime {
       goal: ctx.goal,
     });
 
+    // Fire plugin onAgentStart hooks
+    getHookManager().fireOnAgentStart({ ctx, runId }).catch(() => {});
+
     // 4. Execute with retry and circuit breaker
     let lastError: string | undefined;
     let lastErrorIsPermanent = false;
@@ -286,7 +402,10 @@ export class AgentRuntime {
     }
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
-      let response = await this.callWithTimeout(request, routing);
+      const llmCtx = { request, agentId: ctx.agentId, runId };
+      let llmRequest = await getHookManager().fireBeforeLLMCall(llmCtx);
+      let response = await this.callWithTimeout(llmRequest, routing);
+      await getHookManager().fireAfterLLMCall({ request: llmRequest, response, agentId: ctx.agentId, runId });
       const stepDuration = Date.now() - startTime;
 
       if (response) {
@@ -306,6 +425,11 @@ export class AgentRuntime {
           response,
           response.usage,
           stepDuration,
+        );
+        getMetricsCollector().recordLLMCall(
+          routing.modelId, routing.provider,
+          response.usage.totalTokens, stepDuration,
+          undefined, tenantId,
         );
 
         // Record step
@@ -334,7 +458,7 @@ export class AgentRuntime {
           const cachedResults: Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }> = [];
 
           for (const tc of calls) {
-            const cached = this.toolCache.get(tc);
+            const cached = this.toolCache.get(tc, tenantId);
             if (cached) {
               cachedResults.push({
                 toolCallId: tc.id,
@@ -391,12 +515,15 @@ export class AgentRuntime {
                     if (siblingAbort.signal.aborted) {
                       return { toolCallId: tc.id, name: tc.name, output: '', error: 'Cancelled: sibling tool error', durationMs: 0 };
                     }
-                    const toolResult = await this.executeTool(runId, tc, ctx.agentId);
+                    let toolResult = await this.executeTool(runId, tc, ctx.agentId, tenantId);
+                    toolResult = await getHookManager().fireAfterToolCall({
+                      toolName: tc.name, args: tc.arguments, result: toolResult, agentId: ctx.agentId, runId,
+                    });
                     if (toolResult.error && (tc.name === 'shell_execute' || tc.name === 'bash')) {
                       siblingAbort.abort();
                     }
                     if (!toolResult.error) {
-                      this.toolCache.set(tc, toolResult);
+                      this.toolCache.set(tc, toolResult, tenantId);
                     }
                     return { toolCallId: tc.id, name: tc.name, output: toolResult.output, error: toolResult.error, durationMs: toolResult.durationMs };
                   })
@@ -425,9 +552,12 @@ export class AgentRuntime {
                   rawResults.push({ toolCallId: tc.id, name: tc.name, output: '', error: `Hook blocked: ${hookResult.error || 'denied'}`, durationMs: 0 });
                   continue;
                 }
-                const toolResult = await this.executeTool(runId, tc, ctx.agentId);
+                let toolResult = await this.executeTool(runId, tc, ctx.agentId, tenantId);
+                toolResult = await getHookManager().fireAfterToolCall({
+                  toolName: tc.name, args: tc.arguments, result: toolResult, agentId: ctx.agentId, runId,
+                });
                 if (!toolResult.error) {
-                  this.toolCache.set(tc, toolResult);
+                  this.toolCache.set(tc, toolResult, tenantId);
                 }
                 rawResults.push({ toolCallId: tc.id, name: tc.name, output: toolResult.output, error: toolResult.error, durationMs: toolResult.durationMs });
               }
@@ -487,7 +617,10 @@ export class AgentRuntime {
           }
 
           // Resume the model with tool results
-          const followUp = await this.callWithTimeout(request, routing);
+          const followUpCtx = { request, agentId: ctx.agentId, runId };
+          let followUpRequest = await getHookManager().fireBeforeLLMCall(followUpCtx);
+          const followUp = await this.callWithTimeout(followUpRequest, routing);
+          await getHookManager().fireAfterLLMCall({ request: followUpRequest, response: followUp, agentId: ctx.agentId, runId });
           if (!followUp) break;
           totalTokens.promptTokens += followUp.usage.promptTokens;
           totalTokens.completionTokens += followUp.usage.completionTokens;
@@ -623,13 +756,11 @@ export class AgentRuntime {
           } catch { /* ok */ }
         }
 
-        // Complete trace
-        tracer.completeRun(runId);
-
-        await this.samplesStore.flush();
-        this.traceStore.flushAll();
+        // Fire plugin onAgentComplete hooks
+        getHookManager().fireOnAgentComplete({ result, runId }).catch(() => {});
 
         // Emit completed event
+        getMetricsCollector().recordRunComplete('success', totalDurationMs, steps.length, tenantId);
         bus.publish('agent.completed', ctx.agentId, {
           runId,
           missionId: ctx.missionId,
@@ -638,7 +769,6 @@ export class AgentRuntime {
           durationMs: totalDurationMs,
         });
 
-        this.activeRuns.delete(runId);
         return result;
       }
 
@@ -659,7 +789,9 @@ export class AgentRuntime {
 
     // All attempts failed
     tracer.recordError(runId, `All ${this.config.maxRetries + 1} attempts failed`, Date.now() - startTime);
-    tracer.completeRun(runId);
+
+    // Fire plugin onError hooks
+    getHookManager().fireOnError({ error: lastError ?? 'Unknown error', runId, agentId: ctx.agentId }).catch(() => {});
 
     this.checkpointer.terminalCheckpoint({
       runId, agentId: ctx.agentId, missionId: ctx.missionId,
@@ -692,17 +824,12 @@ export class AgentRuntime {
       } catch { /* ok */ }
     }
 
-    // Flush samples to disk before reporting failure
-    await this.samplesStore.flush();
-    this.traceStore.flushAll();
-
+    getMetricsCollector().recordRunComplete('failed', Date.now() - startTime, steps.length, tenantId);
     bus.publish('agent.failed', ctx.agentId, {
       runId,
       missionId: ctx.missionId,
       error: lastError,
     });
-
-    this.activeRuns.delete(runId);
 
     return {
       runId,
@@ -715,6 +842,26 @@ export class AgentRuntime {
       totalDurationMs: Date.now() - startTime,
       error: lastError,
     };
+
+    } finally {
+      // GAP-02 + GAP-05: Guarantee cleanup on ALL exit paths (normal, error, exception)
+      this.activeRuns.delete(runId);
+      getMetricsCollector().setGauge('active_runs', 'Active concurrent runs', this.activeRuns.size);
+      if (tenantCfg?.enabled && tenantCfg.maxConcurrency > 0 && tenantId) {
+        const c = (this.tenantRunningCounts.get(tenantId) ?? 1) - 1;
+        if (c <= 0) this.tenantRunningCounts.delete(tenantId);
+        else this.tenantRunningCounts.set(tenantId, c);
+      }
+      this.releaseSlot();
+      try { tracer.completeRun(runId); } catch { /* ok */ }
+      try { await this.samplesStore.flush(); } catch { /* ok */ }
+      try { this.traceStore.flushAll(); } catch { /* ok */ }
+      // Restore tenant-scoped overrides
+      this.samplesStore = origSamplesStore;
+      this.traceStore = origTraceStore;
+      this.checkpointer = origCheckpointer;
+      this.memory = origMemory;
+    }
   }
 
   private async callWithTimeout(
@@ -870,6 +1017,7 @@ export class AgentRuntime {
     runId: string,
     toolCall: ToolCall,
     agentId: string,
+    tenantId?: string,
   ): Promise<ToolResult> {
     const tracer = getTraceRecorder();
     const bus = getMessageBus();
@@ -950,6 +1098,8 @@ export class AgentRuntime {
       const errorMsg = boundaryResult.error ?? 'Unknown tool error';
 
       tracer.recordToolExecution(runId, toolCall.name, toolCall.arguments, '', durationMs, errorMsg);
+      getMetricsCollector().recordToolCall(toolCall.name, durationMs, errorMsg, tenantId);
+      getMetricsCollector().recordError(boundaryResult.errorClass, tenantId);
 
       // Compensate side-effects from prior mutation tools in this run
       this.compensationRegistry.compensate(actionId).catch(() => {});
@@ -992,6 +1142,7 @@ export class AgentRuntime {
     }
 
     tracer.recordToolExecution(runId, toolCall.name, toolCall.arguments, output, durationMs);
+    getMetricsCollector().recordToolCall(toolCall.name, durationMs, undefined, tenantId);
     bus.publish('tool.executed', agentId, { toolName: toolCall.name, durationMs });
 
     return {
@@ -1007,6 +1158,53 @@ export class AgentRuntime {
    * Research finding (NeurIPS 2025): 52% cost reduction, +2.6% solve rate vs raw agent.
    * Placeholder preserves conversation structure while discarding bulky tool output.
    */
+  /**
+   * Pre-LLM tool provisioning: detect tool needs, execute tools, inject results.
+   * Bridges the GAIA gap where LLM answers without calling tools.
+   */
+  private async provisionTools(goal: string, request: LLMRequest): Promise<boolean> {
+    const lower = goal.toLowerCase();
+    let provisioned = false;
+
+    // Detect calculation needs — route to python_execute before LLM answers
+    if ((lower.includes('calculate') || lower.includes('compute') || lower.includes('how many') ||
+         lower.includes('count') || lower.includes('sum') || lower.includes('average') ||
+         lower.includes('total') || lower.includes('distance') || lower.includes('volume') ||
+         /\d+/.test(goal)) && this.tools.has('python_execute')) {
+      const calcPrompt = `# Calculate the following. Output ONLY the numeric result, no explanation.\n${goal}`;
+      try {
+        const tool = this.tools.get('python_execute')!;
+        const calcResult = await tool.execute({ code: `import math\nprint(eval("""${goal.replace(/"/g, '\\"')}"""))` });
+        if (calcResult && !calcResult.startsWith('Error')) {
+          request.messages.push({
+            role: 'system',
+            content: `[Tool: Calculation result]\n${calcResult.slice(0, 500)}`,
+          });
+          provisioned = true;
+        }
+      } catch {}
+    }
+
+    // Detect web search needs
+    if ((lower.includes('search') || lower.includes('find') || lower.includes('look up') ||
+         lower.includes('what is') || lower.includes('who is') || lower.includes('latest') ||
+         lower.includes('current') || lower.includes('news')) && this.tools.has('web_search')) {
+      try {
+        const tool = this.tools.get('web_search')!;
+        const searchResult = await tool.execute({ query: goal.slice(0, 100), numResults: 3 });
+        if (searchResult && !searchResult.startsWith('Error')) {
+          request.messages.push({
+            role: 'system',
+            content: `[Tool: Web search results]\n${searchResult.slice(0, 1000)}`,
+          });
+          provisioned = true;
+        }
+      } catch {}
+    }
+
+    return provisioned;
+  }
+
   private applyObservationMask(
     toolResults: Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }>,
     windowSize: number,
@@ -1069,6 +1267,52 @@ export class AgentRuntime {
 
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Concurrency semaphore (GAP-07)
+  // ---------------------------------------------------------------------------
+
+  private async acquireSlot(): Promise<void> {
+    if (this.runningCount < this.config.maxConcurrency) {
+      this.runningCount++;
+      return;
+    }
+    // Wait for a slot to free up
+    return new Promise<void>(resolve => {
+      this.waitingQueue.push(() => {
+        this.runningCount++;
+        resolve();
+      });
+    });
+  }
+
+  private releaseSlot(): void {
+    this.runningCount--;
+    const next = this.waitingQueue.shift();
+    if (next) next();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Auto-resume (GAP-03)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * List runs that crashed (have checkpoints but no terminal state).
+   * Callers can use this to present a resume UI or auto-resume.
+   */
+  listUnfinishedRuns(): Array<{ runId: string; phase: string; timestamp: string }> {
+    return this.checkpointer.listCheckpoints().filter(
+      cp => cp.phase !== 'completed' && cp.phase !== 'failed',
+    );
+  }
+
+  /**
+   * Resume a crashed run from its last checkpoint.
+   * Returns null if the checkpoint is not found or already terminal.
+   */
+  resume(runId: string): CheckpointState | null {
+    return this.checkpointer.resume(runId);
   }
 
   getActiveRunCount(): number {

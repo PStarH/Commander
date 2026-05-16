@@ -159,7 +159,7 @@ describe('Internal Torture Test — All Weak Points Combined', () => {
   });
 
   it('torture: 10K messages without crash', () => {
-    const compactor = new ContextCompactor({ maxContextTokens: 1000000, layer1Trigger: 0.5, keepRecentTurns: 3 });
+    const compactor = new ContextCompactor({ maxContextTokens: 50000, layer1Trigger: 0.5, keepRecentTurns: 3 });
     let msgs: LLMMessage[] = [{ role: 'system', content: 'sys' }];
     for (let i = 0; i < 10000; i++) {
       msgs.push({ role: 'user', content: `msg${i}` });

@@ -31,6 +31,10 @@ class LSPClient {
   private diagnostics: Map<string, LSPDiagnostic[]> = new Map();
   private messageId = 0;
   private isConnected = false;
+  // GAP-20: Bound diagnostics map to prevent unbounded memory growth
+  private readonly MAX_DIAGNOSTIC_FILES = 500;
+  private readonly MAX_DIAGNOSTICS_PER_FILE = 200;
+  private diagnosticsInsertOrder: string[] = [];
 
   constructor(
     private serverCommand: string,
@@ -193,7 +197,17 @@ class LSPClient {
       if (msg.method === 'textDocument/publishDiagnostics') {
         const params = msg.params as LSPPublishDiagnosticsParams;
         const filePath = params.uri.replace('file://', '');
-        this.diagnostics.set(filePath, params.diagnostics);
+        // GAP-20: Bound diagnostics per file
+        const diags = params.diagnostics.slice(0, this.MAX_DIAGNOSTICS_PER_FILE);
+        // GAP-20: Evict oldest file entries when map grows too large
+        if (!this.diagnostics.has(filePath) && this.diagnostics.size >= this.MAX_DIAGNOSTIC_FILES) {
+          const oldest = this.diagnosticsInsertOrder.shift();
+          if (oldest) this.diagnostics.delete(oldest);
+        }
+        this.diagnostics.set(filePath, diags);
+        if (!this.diagnosticsInsertOrder.includes(filePath)) {
+          this.diagnosticsInsertOrder.push(filePath);
+        }
       }
     } catch {}
   }

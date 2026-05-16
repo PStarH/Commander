@@ -16,6 +16,10 @@ export class MessageBus {
   private history: BusMessage[] = [];
   private maxHistory: number;
   private topics: Set<MessageBusTopic> = new Set();
+  // GAP-23: Track last publish time per topic for pruning
+  private topicLastActive: Map<MessageBusTopic, number> = new Map();
+  private readonly MAX_TOPICS = 200;
+  private readonly TOPIC_IDLE_TTL_MS = 3600_000; // 1 hour
 
   constructor(maxHistory = 1000) {
     this.maxHistory = maxHistory;
@@ -46,9 +50,14 @@ export class MessageBus {
     };
 
     this.topics.add(topic);
+    this.topicLastActive.set(topic, Date.now());
     this.history.push(message);
     if (this.history.length > this.maxHistory) {
       this.history.shift();
+    }
+    // GAP-23: Prune idle topics when count exceeds limit
+    if (this.topics.size > this.MAX_TOPICS) {
+      this.pruneIdleTopics();
     }
 
     const handlers = this.subscribers.get(topic);
@@ -135,6 +144,19 @@ export class MessageBus {
    */
   clearHistory(): void {
     this.history = [];
+  }
+
+  /** GAP-23: Prune topics with no subscribers and no recent activity. */
+  private pruneIdleTopics(): void {
+    const now = Date.now();
+    for (const topic of this.topics) {
+      const lastActive = this.topicLastActive.get(topic) ?? 0;
+      const hasSubscribers = (this.subscribers.get(topic)?.size ?? 0) > 0;
+      if (!hasSubscribers && now - lastActive > this.TOPIC_IDLE_TTL_MS) {
+        this.topics.delete(topic);
+        this.topicLastActive.delete(topic);
+      }
+    }
   }
 
   /**
