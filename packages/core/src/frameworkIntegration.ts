@@ -113,8 +113,7 @@ export function createExecutionPlan(
 export function allocateBudget(mode: OrchestrationMode) {
   const { budgetAllocator } = getFramework();
   
-  // Use the actual signature: allocate(mode, complexity, agentCount)
-  const budget = budgetAllocator.allocate('SEQUENTIAL' as any, 50, 1);
+  const budget = budgetAllocator.allocate(mode, 50, 1);
   
   return {
     total: budget.total,

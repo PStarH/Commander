@@ -36,8 +36,8 @@ export class OpenAIProvider implements LLMProvider {
     const body = this.buildBody(request, model);
     // Include tool_calls if present on the last assistant message (for multi-turn)
     const lastAssistant = [...request.messages].reverse().find(m => m.role === 'assistant');
-    if (lastAssistant && (lastAssistant as any).tool_calls) {
-      body.tool_calls = (lastAssistant as any).tool_calls;
+    if (lastAssistant?.tool_calls) {
+      body.tool_calls = lastAssistant.tool_calls;
     }
     const useStreaming = request.cacheConfig?.useCacheControl ?? true;
 
@@ -66,11 +66,10 @@ export class OpenAIProvider implements LLMProvider {
   private buildBody(request: LLMRequest, model: string): Record<string, unknown> {
     const messages = request.messages.map(m => {
       const msg: Record<string, unknown> = { role: m.role, content: m.content };
-      // Pass through optional fields that some models require
       if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
-      if ((m as any).reasoning_content) msg.reasoning_content = (m as any).reasoning_content;
-      if ((m as any).name) msg.name = (m as any).name;
-      if ((m as any).tool_calls) msg.tool_calls = (m as any).tool_calls;
+      if (m.reasoning_content) msg.reasoning_content = m.reasoning_content;
+      if (m.name) msg.name = m.name;
+      if (m.tool_calls) msg.tool_calls = m.tool_calls;
       return msg;
     });
 

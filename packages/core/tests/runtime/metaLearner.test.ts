@@ -6,7 +6,7 @@ import type { ExecutionExperience } from '../../src/runtime/types';
 describe('MetaLearner', () => {
   let learner: MetaLearner;
 
-  before(() => {
+  beforeEach(() => {
     resetMetaLearner();
     learner = new MetaLearner(100, 2);
   });

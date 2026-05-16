@@ -461,8 +461,8 @@ export class LLMEvaluator {
     average: number;
     min: number;
     max: number;
-    criteria: Record<EvaluationCriterion, number>;
-  } | null {
+criteria: Partial<Record<EvaluationCriterion, number>>;
+   } | null {
     const results = this.results.get(targetId);
     if (!results || results.length === 0) return null;
     
@@ -476,11 +476,11 @@ export class LLMEvaluator {
       criteriaScores[r.criterion].push(r.score);
     });
     
-    const criteria: Record<EvaluationCriterion, number> = {} as any;
-    Object.entries(criteriaScores).forEach(([criterion, criterionScores]) => {
-      criteria[criterion as EvaluationCriterion] = 
-        criterionScores.reduce((a, b) => a + b, 0) / criterionScores.length;
-    });
+const criteria: Partial<Record<EvaluationCriterion, number>> = {};
+     Object.entries(criteriaScores).forEach(([criterion, criterionScores]) => {
+       criteria[criterion as EvaluationCriterion] =
+         criterionScores.reduce((a, b) => a + b, 0) / criterionScores.length;
+     });
     
     return {
       average: scores.reduce((a, b) => a + b, 0) / scores.length,

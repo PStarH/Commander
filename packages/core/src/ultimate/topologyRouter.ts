@@ -15,22 +15,24 @@ import type {
 } from './types';
 
 export class TopologyRouter {
-  private readonly topologyPerformance: Record<OrchestrationTopology, {
-    sequential: number;  // suitability for sequential tasks 0-1
-    parallel: number;    // suitability for parallel tasks 0-1
-    complex: number;     // suitability for complex tasks 0-1
-    research: number;    // suitability for research tasks 0-1
-    costMultiplier: number;
-  }> = {
-    SINGLE: { sequential: 1.0, parallel: 0.2, complex: 0.1, research: 0.1, costMultiplier: 1.0 },
-    SEQUENTIAL: { sequential: 1.0, parallel: 0.3, complex: 0.3, research: 0.2, costMultiplier: 1.1 },
-    PARALLEL: { sequential: 0.3, parallel: 1.0, complex: 0.6, research: 0.8, costMultiplier: 2.0 },
-    HIERARCHICAL: { sequential: 0.4, parallel: 0.7, complex: 1.0, research: 0.9, costMultiplier: 3.0 },
-    HYBRID: { sequential: 0.5, parallel: 0.8, complex: 0.9, research: 1.0, costMultiplier: 4.0 },
-    DEBATE: { sequential: 0.3, parallel: 0.4, complex: 0.8, research: 0.5, costMultiplier: 3.5 },
-    ENSEMBLE: { sequential: 0.2, parallel: 0.9, complex: 0.5, research: 0.4, costMultiplier: 3.0 },
-    EVALUATOR_OPTIMIZER: { sequential: 0.6, parallel: 0.3, complex: 0.7, research: 0.3, costMultiplier: 2.5 },
-  };
+private readonly topologyPerformance: Record<OrchestrationTopology, {
+     sequential: number;  // suitability for sequential tasks 0-1
+     parallel: number;    // suitability for parallel tasks 0-1
+     complex: number;     // suitability for complex tasks 0-1
+     research: number;    // suitability for research tasks 0-1
+     costMultiplier: number;
+   }> = {
+     SINGLE: { sequential: 1.0, parallel: 0.2, complex: 0.1, research: 0.1, costMultiplier: 1.0 },
+     SEQUENTIAL: { sequential: 1.0, parallel: 0.3, complex: 0.3, research: 0.2, costMultiplier: 1.1 },
+     PARALLEL: { sequential: 0.3, parallel: 1.0, complex: 0.6, research: 0.8, costMultiplier: 2.0 },
+     HIERARCHICAL: { sequential: 0.4, parallel: 0.7, complex: 1.0, research: 0.9, costMultiplier: 3.0 },
+     HYBRID: { sequential: 0.5, parallel: 0.8, complex: 0.9, research: 1.0, costMultiplier: 4.0 },
+     DEBATE: { sequential: 0.3, parallel: 0.4, complex: 0.8, research: 0.5, costMultiplier: 3.5 },
+     ENSEMBLE: { sequential: 0.2, parallel: 0.9, complex: 0.5, research: 0.4, costMultiplier: 3.0 },
+     EVALUATOR_OPTIMIZER: { sequential: 0.6, parallel: 0.3, complex: 0.7, research: 0.3, costMultiplier: 2.5 },
+     HANDOFF: { sequential: 0.8, parallel: 0.6, complex: 0.7, research: 0.6, costMultiplier: 2.0 },
+     CONSENSUS: { sequential: 0.5, parallel: 0.7, complex: 0.8, research: 0.7, costMultiplier: 3.5 },
+   };
 
   route(
     deliberation: DeliberationPlan,
@@ -109,16 +111,18 @@ export class TopologyRouter {
     const costPerf = this.topologyPerformance[selected];
     const expectedCost = deliberation.estimatedTokens * 0.000015 * costPerf.costMultiplier;
 
-    const latencyMap: Record<OrchestrationTopology, string> = {
-      SINGLE: '< 5s',
-      SEQUENTIAL: '10-30s',
-      PARALLEL: '15-45s',
-      HIERARCHICAL: '30-120s',
-      HYBRID: '1-5min',
-      DEBATE: '30-90s',
-      ENSEMBLE: '20-60s',
-      EVALUATOR_OPTIMIZER: '30-120s',
-    };
+const latencyMap: Record<OrchestrationTopology, string> = {
+       SINGLE: '< 5s',
+       SEQUENTIAL: '10-30s',
+       PARALLEL: '15-45s',
+       HIERARCHICAL: '30-120s',
+       HYBRID: '1-5min',
+       DEBATE: '30-90s',
+       ENSEMBLE: '20-60s',
+       EVALUATOR_OPTIMIZER: '30-120s',
+       HANDOFF: '10-30s',
+       CONSENSUS: '20-60s',
+     };
 
     return {
       topology: selected,
@@ -148,11 +152,8 @@ export class TopologyRouter {
       }
     }
 
-    const parallelismWidth = Math.max(
-      1,
-      ...Array.from(outgoingEdges.values()),
-      ...Array.from(incomingEdges.values()),
-    );
+const allValues = [1, ...Array.from(outgoingEdges.values()), ...Array.from(incomingEdges.values())];
+      const parallelismWidth = allValues.length > 0 ? Math.max(...allValues) : 1;
 
     const criticalPathDepth = this.calculateCriticalPath(nodes, edges);
 
@@ -182,13 +183,17 @@ export class TopologyRouter {
     }
 
     const memo = new Map<string, number>();
+    const visiting = new Set<string>();
     const dfs = (nodeId: string): number => {
       if (memo.has(nodeId)) return memo.get(nodeId)!;
+      if (visiting.has(nodeId)) return 0; // Cycle detected, break the loop
+      visiting.add(nodeId);
       const neighbors = adjList.get(nodeId) ?? [];
       let maxDepth = 0;
       for (const neighbor of neighbors) {
         maxDepth = Math.max(maxDepth, dfs(neighbor));
       }
+      visiting.delete(nodeId);
       memo.set(nodeId, maxDepth + 1);
       return maxDepth + 1;
     };

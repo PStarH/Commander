@@ -20,7 +20,7 @@ export { MCP_ERROR_CODES } from './types';
 
 export { MCPClient, StdioClientTransport, StreamableHTTPClientTransport, createMCPClient } from './client';
 export { MCPServer } from './server';
-export type { MCPToolRegistration } from './server';
+export type { MCPToolRegistration, MCPResourceRegistration, MCPPromptRegistration } from './server';
 export {
   canTransition,
   AGENT_CARD_WELL_KNOWN_PATH,

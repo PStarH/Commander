@@ -91,9 +91,9 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
       checkpoints = checkpointManager.getPendingForApprover(approverId as string);
     } else if (missionId) {
       checkpoints = checkpointManager.getPendingByMission(missionId as string);
-    } else {
-      checkpoints = Array.from((checkpointManager as any).checkpoints.values());
-    }
+} else {
+       checkpoints = checkpointManager.getAll();
+     }
 
     if (status) {
       checkpoints = checkpoints.filter(c => c.status === status);

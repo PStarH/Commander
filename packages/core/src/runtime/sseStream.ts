@@ -1,32 +1,40 @@
-import type { BusMessage } from './types';
+import type { BusMessage, MessageBusTopic } from './types';
 import { getMessageBus } from './messageBus';
 
 /**
- * SSE (Server-Sent Events) stream for real-time agent execution visibility.
+ * Structured SSE event types for real-time agent execution visibility.
  *
- * Subscribes to the message bus and formats events as SSE-compatible strings.
- * The orchestrator already emits events via getMessageBus() — this class
- * bridges those events to an HTTP response stream.
- *
- * Usage in an HTTP server:
- *   const stream = new SSEStream();
- *   res.writeHead(200, {
- *     'Content-Type': 'text/event-stream',
- *     'Cache-Control': 'no-cache',
- *     'Connection': 'keep-alive',
- *   });
- *   stream.pipe(res);
- *   // ... run agent ...
- *   stream.close();
+ * Reference: Codex CLI's OutputItemDone, ToolCallInputDelta, ReasoningContentDelta events.
+ * Commander adds richer structure with status, thinking, and diff events.
  */
+export type StructuredSSEEventType =
+  | 'agent.status'
+  | 'agent.thinking'
+  | 'reasoning.delta'
+  | 'tool_call.delta'
+  | 'tool_call.started'
+  | 'tool_call.completed'
+  | 'output.delta'
+  | 'output.completed'
+  | 'diff.available'
+  | 'error.occurred';
+
+export interface StructuredSSEEvent {
+  event: StructuredSSEEventType;
+  data: Record<string, unknown>;
+  timestamp: string;
+  seq: number;
+}
+
 export class SSEStream {
   private subscribers: Array<(event: string) => void> = [];
   private unsubscribers: Array<() => void> = [];
   private closed = false;
+  private seqCounter = 0;
 
-  constructor(topics?: string[]) {
+  constructor(topics?: MessageBusTopic[]) {
     const bus = getMessageBus();
-    const watchTopics = (topics ?? [
+    const watchTopics: MessageBusTopic[] = topics ?? [
       'agent.started',
       'agent.completed',
       'agent.failed',
@@ -36,12 +44,12 @@ export class SSEStream {
       'mission.completed',
       'system.alert',
       'tool.executed',
-    ]) as any[];
+    ];
 
     for (const topic of watchTopics) {
       const unsub = bus.subscribe(topic, (message: BusMessage) => {
         if (this.closed) return;
-        this.emit({
+        this.emitRaw({
           topic: message.topic,
           source: message.source,
           payload: message.payload,
@@ -53,10 +61,47 @@ export class SSEStream {
     }
   }
 
-  private emit(data: Record<string, unknown>): void {
-    const event = `data: ${JSON.stringify(data)}\n\n`;
+  emitStructured(eventType: StructuredSSEEventType, data: Record<string, unknown>): void {
+    if (this.closed) return;
+    const event: StructuredSSEEvent = {
+      event: eventType,
+      data,
+      timestamp: new Date().toISOString(),
+      seq: ++this.seqCounter,
+    };
+    this.dispatch(`event: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`);
+  }
+
+  private emitRaw(data: Record<string, unknown>): void {
+    this.dispatch(`data: ${JSON.stringify(data)}\n\n`);
+  }
+
+  private dispatch(payload: string): void {
     for (const subscriber of this.subscribers) {
-      try { subscriber(event); } catch { /* ignore */ }
+      try { subscriber(payload); } catch { /* ignore */ }
+    }
+  }
+
+  emitReasoning(content: string): void {
+    this.emitStructured('reasoning.delta', { content, length: content.length });
+  }
+
+  emitToolCall(toolName: string, status: 'started' | 'completed' | 'delta', detail?: Record<string, unknown>): void {
+    const eventType = status === 'started' ? 'tool_call.started'
+      : status === 'completed' ? 'tool_call.completed'
+      : 'tool_call.delta';
+    this.emitStructured(eventType, { toolName, ...detail });
+  }
+
+  emitStatus(status: string, detail?: string): void {
+    this.emitStructured('agent.status', { status, detail: detail ?? '' });
+  }
+
+  emitOutput(content: string, done = false): void {
+    if (done) {
+      this.emitStructured('output.completed', { content });
+    } else {
+      this.emitStructured('output.delta', { content });
     }
   }
 

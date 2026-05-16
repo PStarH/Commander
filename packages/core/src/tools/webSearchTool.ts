@@ -7,11 +7,16 @@ export class WebSearchTool implements Tool {
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'The search query' },
-        numResults: { type: 'number', description: 'Number of results to return (default: 5)', default: 5 },
+        query: { type: 'string', description: 'The search query. Be specific for better results.' },
+        numResults: { type: 'number', description: 'Number of results to return (default: 5, max: 10)', default: 5, minimum: 1, maximum: 10 },
       },
       required: ['query'],
     },
+    examples: [
+      { name: 'web_search', arguments: { query: 'latest TypeScript features 2026' } },
+      { name: 'web_search', arguments: { query: 'microservices architecture best practices', numResults: 3 } },
+    ],
+    category: 'web',
   };
 
   async execute(args: Record<string, unknown>): Promise<string> {

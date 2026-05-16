@@ -17,6 +17,11 @@ import type {
 import { ModelRouter, getModelRouter } from './modelRouter';
 import { getMessageBus } from './messageBus';
 import { getTraceRecorder } from './executionTrace';
+import { ContextCompactor } from './contextCompactor';
+import { classifyLLMError, computeBackoff } from './llmRetry';
+import { CircuitBreaker } from './circuitBreaker';
+import { createParameterControllerPlugin } from './parameterController';
+import { getHookManager } from '../pluginManager';
 
 function generateId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -44,6 +49,8 @@ export class AgentRuntime {
   private tools: Map<string, Tool> = new Map();
   private router: ModelRouter;
   private activeRuns: Set<string> = new Set();
+  private compactor: ContextCompactor;
+  private circuitBreaker: CircuitBreaker;
 
   constructor(
     config?: Partial<AgentRuntimeConfig>,
@@ -51,6 +58,10 @@ export class AgentRuntime {
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.router = router ?? getModelRouter();
+    this.compactor = new ContextCompactor({ maxContextTokens: this.config.budgetHardCapTokens || 128000 });
+    this.circuitBreaker = new CircuitBreaker(5, 30000);
+    // Auto-register adaptive parameter controller
+    try { getHookManager().register(createParameterControllerPlugin()); } catch {};
   }
 
   registerProvider(name: string, provider: LLMProvider): void {
@@ -144,10 +155,20 @@ export class AgentRuntime {
       goal: ctx.goal,
     });
 
-    // 4. Execute with retry
+    // 4. Execute with retry and circuit breaker
     let lastError: string | undefined;
+    let lastErrorIsPermanent = false;
     const steps: AgentExecutionStep[] = [];
     let totalTokens: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+    // Check circuit breaker before first attempt
+    if (!this.circuitBreaker.isAvailable()) {
+      const msg = 'CIRCUIT_OPEN: Too many recent failures. Cooling down.';
+      tracer.recordDecision(runId, msg, 0);
+      bus.publish('agent.failed', ctx.agentId, { runId, error: msg });
+      this.activeRuns.delete(runId);
+      return { runId, agentId: ctx.agentId, missionId: ctx.missionId, status: 'cancelled', summary: msg, steps: [], totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, totalDurationMs: 0, error: msg };
+    }
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
       let response = await this.callWithTimeout(request, routing);
@@ -289,6 +310,20 @@ export class AgentRuntime {
           totalTokens.completionTokens += followUp.usage.completionTokens;
           totalTokens.totalTokens += followUp.usage.totalTokens;
           response = followUp;
+
+          // Context compaction: check if we're approaching the limit and compact proactively
+          if (toolLoopCount > 3) {
+            const compactResult = this.compactor.compact(request.messages);
+            if (compactResult.action.droppedCount > 0) {
+              request.messages = compactResult.messages;
+              bus.publish('system.alert', 'runtime', {
+                type: 'context_compaction',
+                layer: compactResult.action.layer,
+                droppedCount: compactResult.action.droppedCount,
+                tokensSaved: compactResult.action.tokensSaved,
+              });
+            }
+          }
         }
 
         const totalDurationMs = Date.now() - startTime;
@@ -319,12 +354,18 @@ export class AgentRuntime {
         return result;
       }
 
-      // Handle failure
-      lastError = `Attempt ${attempt + 1} failed`;
-      tracer.recordError(runId, lastError, Date.now() - startTime);
+      // Handle failure with error classification
+      const ce = classifyLLMError(new Error(lastError || 'Unknown error'));
+      lastError = ce.message;
+      lastErrorIsPermanent = !ce.retryable;
+      tracer.recordError(runId, `${ce.errorClass}: ${ce.message}`, Date.now() - startTime);
 
-      if (attempt < this.config.maxRetries) {
-        await this.delay(this.config.retryDelayMs * (attempt + 1));
+      if (ce.retryable && attempt < this.config.maxRetries) {
+        const delayMs = ce.retryAfter ?? computeBackoff(attempt, this.config.retryDelayMs);
+        await this.delay(delayMs);
+      } else if (!ce.retryable) {
+        this.circuitBreaker.onFailure();
+        break; // Don't retry permanent errors
       }
     }
 
@@ -460,8 +501,16 @@ export class AgentRuntime {
       };
     }
 
+    const effectiveTimeout = tool.timeout ?? this.config.timeoutMs;
+    const execPromise = tool.execute(toolCall.arguments);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => reject(new Error(`TOOL_TIMEOUT: "${toolCall.name}" exceeded ${effectiveTimeout}ms`)), effectiveTimeout);
+      if (typeof timer.unref === 'function') (timer as ReturnType<typeof setTimeout> & { unref: () => void }).unref();
+    });
+
+    let output: string;
     try {
-      let output = await tool.execute(toolCall.arguments);
+      output = await Promise.race([execPromise, timeoutPromise]);
       // Result budgeting: persist large outputs to disk, return reference
       const maxSize = tool.maxOutputSize ?? this.config.observationMaskWindow * 1000;
       if (typeof output === 'string' && output.length > maxSize && maxSize > 0) {

@@ -11,7 +11,7 @@ describe('AgentRuntime', () => {
   let mockProvider: MockLLMProvider;
   let router: ModelRouter;
 
-  before(() => {
+  beforeEach(() => {
     resetModelRouter();
     resetMessageBus();
     resetTraceRecorder();

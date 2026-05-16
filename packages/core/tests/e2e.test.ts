@@ -5,7 +5,7 @@
  * 测试所有框架组件的完整协作
  */
 
-import { describe, it, before } from 'node:test';
+import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import {
   AdaptiveOrchestrator,
@@ -14,10 +14,7 @@ import {
   ReflectionEngine,
   ConsensusChecker,
   InspectorAgent,
-  getGlobalLogger,
-  getGlobalMetrics,
 } from '../src/index';
-import type { OrchestrationMode } from '../src/adaptiveOrchestrator';
 
 // ========================================
 // Test Scenario: Build a Distributed Logging System
@@ -31,7 +28,7 @@ describe('Commander Framework - End-to-End Tests', () => {
   let consensus: ConsensusChecker;
   let inspector: InspectorAgent;
 
-  before(() => {
+  beforeEach(() => {
     orchestrator = new AdaptiveOrchestrator();
     budgetAllocator = new TokenBudgetAllocator({ baseBudget: 100000 });
     memory = new ThreeLayerMemory();

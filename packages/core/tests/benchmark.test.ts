@@ -90,7 +90,7 @@ describe('Performance Benchmarks', () => {
   describe('TaskComplexityAnalyzer', () => {
     let analyzer: TaskComplexityAnalyzer;
 
-    before(() => {
+    beforeEach(() => {
       analyzer = new TaskComplexityAnalyzer();
     });
 
@@ -116,7 +116,7 @@ describe('Performance Benchmarks', () => {
   describe('AdaptiveOrchestrator', () => {
     let orchestrator: AdaptiveOrchestrator;
 
-    before(() => {
+    beforeEach(() => {
       orchestrator = new AdaptiveOrchestrator();
       for (let i = 0; i < 5; i++) {
         orchestrator.registerAgent({
@@ -177,7 +177,7 @@ describe('Performance Benchmarks', () => {
   describe('TokenBudgetAllocator', () => {
     let allocator: TokenBudgetAllocator;
 
-    before(() => {
+    beforeEach(() => {
       allocator = new TokenBudgetAllocator({ baseBudget: 100000 });
     });
 
@@ -209,7 +209,7 @@ describe('Performance Benchmarks', () => {
   describe('ThreeLayerMemory', () => {
     let memory: ThreeLayerMemory;
 
-    before(() => {
+    beforeEach(() => {
       memory = new ThreeLayerMemory();
     });
 
@@ -268,7 +268,7 @@ describe('Performance Benchmarks', () => {
   describe('ReflectionEngine', () => {
     let engine: ReflectionEngine;
 
-    before(() => {
+    beforeEach(() => {
       engine = new ReflectionEngine();
     });
 
@@ -305,7 +305,7 @@ describe('Performance Benchmarks', () => {
   describe('ConsensusChecker', () => {
     let checker: ConsensusChecker;
 
-    before(() => {
+    beforeEach(() => {
       checker = new ConsensusChecker({ minVoters: 3 });
     });
 
@@ -340,7 +340,7 @@ describe('Performance Benchmarks', () => {
   describe('InspectorAgent', () => {
     let inspector: InspectorAgent;
 
-    before(() => {
+    beforeEach(() => {
       inspector = new InspectorAgent();
     });
 

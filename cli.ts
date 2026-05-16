@@ -25,6 +25,12 @@ import { classifyEffortLevel } from './packages/core/src/ultimate/effortScaler';
 import { AgentRuntime } from './packages/core/src/runtime/agentRuntime';
 import { OpenAIProvider } from './packages/core/src/runtime/providers/openaiProvider';
 import { AnthropicProvider } from './packages/core/src/runtime/providers/anthropicProvider';
+import { GoogleProvider } from './packages/core/src/runtime/providers/googleProvider';
+import { OpenRouterProvider } from './packages/core/src/runtime/providers/openRouterProvider';
+import { DeepSeekProvider } from './packages/core/src/runtime/providers/deepseekProvider';
+import { GLMProvider } from './packages/core/src/runtime/providers/glmProvider';
+import { MiMoProvider } from './packages/core/src/runtime/providers/mimoProvider';
+import { XiaomiProvider } from './packages/core/src/runtime/providers/xiaomiProvider';
 import { getModelRouter } from './packages/core/src/runtime/modelRouter';
 import { createAllTools } from './packages/core/src/tools/index';
 import type { ModelConfig } from './packages/core/src/runtime/types';
@@ -35,6 +41,10 @@ import { SSEStream } from './packages/core/src/runtime/sseStream';
 import { getMessageBus } from './packages/core/src/runtime/messageBus';
 import { getTraceRecorder } from './packages/core/src/runtime/executionTrace';
 import { getMetaLearner } from './packages/core/src/selfEvolution/metaLearner';
+import {
+  detectProvider, getEffectiveModel, setConfig, showConfig, listProviders, listModels, resetConfig,
+} from './packages/core/src/config/commanderConfig';
+import type { ProviderInfo } from './packages/core/src/config/commanderConfig';
 
 // ============================================================================
 // ANSI styling — zero dependencies
@@ -58,64 +68,121 @@ const $ = {
 };
 
 function section(title: string) {
-  console.log(`\n  ${$.bold}${$.blue}━━━ ${title} ${$.reset}${$.dim}${'━'.repeat(Math.max(0, 60 - title.length - 6))}${$.reset}`);
+  console.log(`\n  ${$.bold}${$.blue}┃ ${title}${$.reset}`);
 }
 
 function kv(key: string, value: string, valColor = '') {
   console.log(`  ${$.dim}${key}${$.reset} ${valColor}${value}${$.reset}`);
 }
 
-// ============================================================================
-// Config
-// ============================================================================
+function bullet(text: string, color = '') {
+  console.log(`  ${color}•${$.reset} ${text}`);
+}
 
-function loadConfig() {
-  return {
-    anthropicKey: process.env.ANTHROPIC_API_KEY || '',
-    openaiKey: process.env.OPENAI_API_KEY || '',
-    tools: (process.env.COMMANDER_TOOLS || 'web_search,web_fetch,file_read,file_write,file_edit,file_search,file_list,python_execute,shell_execute,git').split(',').map(s => s.trim()),
-    effort: (process.env.COMMANDER_EFFORT || '') as any,
+function cmdHeader(task: string) {
+  const provider = detectProvider();
+  const model = getEffectiveModel();
+  const providerTag = provider ? `${provider.type} · ${model}` : 'no provider';
+  console.log(`\n  ${$.bold}${$.blue}╭────────────────────────────────────────────╮${$.reset}`);
+  console.log(`  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander${$.reset} ${$.dim}multi-agent orchestration${$.reset}  ${$.bold}${$.blue}│${$.reset}`);
+  console.log(`  ${$.bold}${$.blue}│${$.reset}  ${$.dim}${providerTag}${$.reset}${' '.repeat(Math.max(0, 36 - providerTag.length))} ${$.bold}${$.blue}│${$.reset}`);
+  console.log(`  ${$.bold}${$.blue}╰────────────────────────────────────────────╯${$.reset}`);
+  console.log(`  ${$.dim}Task:${$.reset} ${task.length > 70 ? task.slice(0, 70) + '...' : task}\n`);
+}
+
+// Simple spinner for long operations
+function startSpinner(label: string): () => void {
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  let i = 0;
+  const start = Date.now();
+  const timer = setInterval(() => {
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    process.stdout.write(`\r  ${$.cyan}${frames[i]}${$.reset} ${label} ${$.dim}${elapsed}s${$.reset}`);
+    i = (i + 1) % frames.length;
+  }, 80);
+  return () => {
+    clearInterval(timer);
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    process.stdout.write(`\r  ${$.green}✓${$.reset} ${label} ${$.dim}${elapsed}s${$.reset}\n`);
   };
 }
 
-function createRuntime(config: ReturnType<typeof loadConfig>): AgentRuntime | null {
-  const runtime = new AgentRuntime({ budgetHardCapTokens: 256000 });
+function onboardingMessage() {
+  console.log(`\n  ${$.bold}${$.blue}╭────────────────────────────────────────────╮${$.reset}`);
+  console.log(`  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Welcome to Commander${$.reset}                  ${$.bold}${$.blue}│${$.reset}`);
+  console.log(`  ${$.bold}${$.blue}╰────────────────────────────────────────────╯${$.reset}`);
+  console.log(`\n  To get started, set one of these environment variables:\n`);
+  const vars = [
+    ['OPENAI_API_KEY', 'OpenAI / DeepSeek / GLM / MiMo'],
+    ['ANTHROPIC_API_KEY', 'Anthropic Claude'],
+    ['GOOGLE_API_KEY', 'Google Gemini'],
+    ['OPENROUTER_API_KEY', 'OpenRouter (200+ models)'],
+    ['DEEPSEEK_API_KEY', 'DeepSeek (dedicated)'],
+    ['ZHIPU_API_KEY', 'GLM (Zhipu AI)'],
+    ['MIMO_API_KEY', 'MiMo (dedicated)'],
+    ['XIAOMI_API_KEY', 'Xiaomi MiMo'],
+  ];
+  for (const [key, desc] of vars) {
+    console.log(`    ${$.cyan}${key.padEnd(22)}${$.reset} ${$.dim}${desc}${$.reset}`);
+  }
+  console.log(`\n  ${$.dim}Example:${$.reset}`);
+  console.log(`    ${$.gray}$ export OPENAI_API_KEY=sk-...${$.reset}`);
+  console.log(`    ${$.gray}$ commander "Hello, world!"${$.reset}\n`);
+}
+
+// ============================================================================
+// Config — Multi-Provider Support
+// ============================================================================
+
+const DEFAULT_TOOLS = 'web_search,web_fetch,file_read,file_write,file_edit,file_search,file_list,python_execute,shell_execute,git';
+
+function loadTools(): string[] {
+  return (process.env.COMMANDER_TOOLS || DEFAULT_TOOLS).split(',').map(s => s.trim());
+}
+
+function createRuntime(): AgentRuntime | null {
+  const provider = detectProvider();
+  if (!provider) return null;
+
+  const modelId = getEffectiveModel();
+  const runtime = new AgentRuntime({ budgetHardCapTokens: 64000 });
   const allTools = createAllTools();
   for (const [name, tool] of allTools) {
     runtime.registerTool(name, tool);
   }
 
-  if (config.anthropicKey) {
-    runtime.registerProvider('anthropic', new AnthropicProvider({ apiKey: config.anthropicKey }));
-  }
-  if (config.openaiKey) {
-    const modelId = process.env.OPENAI_MODEL || 'gpt-4o';
-    runtime.registerProvider('openai', new OpenAIProvider({
-      apiKey: config.openaiKey,
-      baseUrl: process.env.OPENAI_BASE_URL,
-      defaultModel: modelId,
-    }));
+const ProviderMap: Record<string, any> = {
+    openai: OpenAIProvider,
+    anthropic: AnthropicProvider,
+    google: GoogleProvider,
+    openrouter: OpenRouterProvider,
+    deepseek: DeepSeekProvider,
+    glm: GLMProvider,
+    mimo: MiMoProvider,
+    xiaomi: XiaomiProvider,
+  };
+  const ProviderClass = ProviderMap[provider.type] ?? OpenAIProvider;
 
-    // Register custom model on EVERY tier so all complexity levels use our provider.
-    // ModelRouter uses Map keyed by id, so use tier-suffixed IDs.
-    // The provider's defaultModel (mimo-v2.5-pro) is used for ALL API calls
-    // regardless of which tier-specific model ID the router picks.
-    const router = getModelRouter();
-    for (const tier of ['eco', 'standard', 'power', 'consensus'] as const) {
-      router.registerModel({
-        id: `${modelId}@${tier}`,
-        provider: 'openai',
-        tier,
-        costPer1KInput: 0.0008,
-        costPer1KOutput: 0.004,
-        capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'],
-        contextWindow: 128000,
-        priority: -1,
-      });
-    }
+  runtime.registerProvider(provider.type, new ProviderClass({
+    apiKey: provider.apiKey,
+    baseUrl: provider.baseUrl,
+    defaultModel: modelId,
+  }));
+
+  const router = getModelRouter();
+  for (const tier of ['eco', 'standard', 'power', 'consensus'] as const) {
+    router.registerModel({
+      id: `${modelId}@${tier}`,
+      provider: provider.type,
+      tier,
+      costPer1KInput: 0.0008,
+      costPer1KOutput: 0.004,
+      capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'],
+      contextWindow: 128000,
+      priority: -1,
+    });
   }
 
-  if (!config.anthropicKey && !config.openaiKey) return null;
   return runtime;
 }
 
@@ -124,122 +191,107 @@ function createRuntime(config: ReturnType<typeof loadConfig>): AgentRuntime | nu
 // ============================================================================
 
 async function cmdPlan(task: string) {
-  const config = loadConfig();
-  const runtime = createRuntime(config);
-
-  section('DELIBERATION PLAN');
-
-  const plan = runtime
-    ? await deliberateWithLLM(task, runtime.getProvider('openai') ?? runtime.getProvider('anthropic'))
-    : deliberate(task);
-
+   cmdHeader(task);
+   const done = startSpinner('Analyzing task...');
+   const runtime = createRuntime();
+   const provider = runtime?.getProvider('openai')
+     ?? runtime?.getProvider('anthropic')
+     ?? runtime?.getProvider('openrouter')
+     ?? runtime?.getProvider('mimo')
+     ?? runtime?.getProvider('deepseek')
+     ?? runtime?.getProvider('glm')
+     ?? runtime?.getProvider('xiaomi')
+     ?? runtime?.getProvider('google');
+   const plan = runtime
+     ? await deliberateWithLLM(task, provider ?? runtime.getProvider('openai')!)
+     : deliberate(task);
   const effort = classifyEffortLevel(task);
+  done();
 
-  kv('Task', task.length > 80 ? task.slice(0, 80) + '...' : task, $.cyan);
-  kv('Type', plan.taskType, $.yellow);
-  kv('Effort', `${effort} (${plan.estimatedAgentCount} agents, ${plan.estimatedSteps} steps)`, $.magenta);
-  kv('Topology', plan.recommendedTopology, $.green);
+  section('PLAN');
+  bullet(`${plan.taskType} · ${effort} effort · ${plan.recommendedTopology} topology`, $.cyan);
+  console.log();
+  kv('Agents', `${plan.estimatedAgentCount}`, $.yellow);
+  kv('Steps', `${plan.estimatedSteps}`, $.yellow);
   kv('Confidence', `${(plan.confidence * 100).toFixed(0)}%`, plan.confidence > 0.7 ? $.green : $.yellow);
   kv('External info', plan.requiresExternalInfo ? 'Yes' : 'No', plan.requiresExternalInfo ? $.yellow : $.dim);
-  kv('Tokens est.', `${plan.estimatedTokens.toLocaleString()} (thinking: ${plan.tokenBudget.thinking.toLocaleString()}, exec: ${plan.tokenBudget.execution.toLocaleString()}, synth: ${plan.tokenBudget.synthesis.toLocaleString()})`);
+  kv('Tokens', `${plan.estimatedTokens.toLocaleString()} (think: ${plan.tokenBudget.thinking.toLocaleString()}, exec: ${plan.tokenBudget.execution.toLocaleString()})`);
 
-  section('CAPABILITIES');
-  for (const cap of plan.capabilitiesNeeded) {
-    console.log(`  ${$.dim}•${$.reset} ${cap}`);
-  }
-
-  section('REASONING');
-  for (const r of plan.reasoning.slice(0, 8)) {
-    console.log(`  ${$.dim}>${$.reset} ${r}`);
+  if (plan.capabilitiesNeeded.length > 0) {
+    section('NEEDS');
+    for (const cap of plan.capabilitiesNeeded) {
+      bullet(cap);
+    }
   }
 }
 
 async function cmdRun(task: string) {
-  const config = loadConfig();
-  const runtime = createRuntime(config);
-  if (!runtime) {
-    console.error(`  ${$.red}${$.bold}ERROR${$.reset} No API key configured.
-  Set ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable.`);
+  const provider = detectProvider();
+  const runtime = createRuntime();
+  if (!runtime || !provider) {
+    console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No API key found.\n`);
+    onboardingMessage();
     process.exit(1);
     return;
   }
-  const rt: AgentRuntime = runtime;
 
+  cmdHeader(task);
+  const rt: AgentRuntime = runtime;
   const telos = new TELOSOrchestrator(rt);
   const orch = new UltimateOrchestrator(telos, rt);
 
-  section('EXECUTING');
-  console.log();
-
-  const startTime = Date.now();
   let lastPhase = '';
+  const startTime = Date.now();
 
   const result = await orch.execute({
     projectId: 'cli',
     agentId: 'commander-cli',
     goal: task,
-    contextData: {
-      availableTools: config.tools,
-      governanceProfile: { riskLevel: config.effort === 'DEEP_RESEARCH' ? 'HIGH' : 'LOW' },
-    },
-    effortLevel: config.effort || undefined,
+    contextData: { availableTools: loadTools(), governanceProfile: { riskLevel: 'LOW' } },
     onProgress: (phase, detail) => {
+      if (phase === 'COMPLETE') return;
       if (phase !== lastPhase) {
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        const colors: Record<string, string> = {
-          DELIBERATION: $.blue, EFFORT_SCALING: $.magenta, TOPOLOGY_ROUTING: $.cyan,
-          DECOMPOSITION: $.yellow, TEAM_FORMATION: $.green, EXECUTION: $.green,
-          SYNTHESIS: $.blue, COMPLETE: $.green,
+        const icons: Record<string, string> = {
+          INIT: '📋', DELIBERATION: '🧠', EFFORT_SCALING: '📊',
+          TOPOLOGY_ROUTING: '🔀', DECOMPOSITION: '📦', TEAM_FORMATION: '👥',
+          EXECUTION: '⚡', SYNTHESIS: '🔗',
         };
-        const color = colors[phase] || $.gray;
-        console.log(`  ${$.dim}[${elapsed}s]${$.reset} ${color}${$.bold}${phase}${$.reset} ${$.dim}${detail.slice(0, 80)}${$.reset}`);
+        console.log(`  ${$.dim}[${elapsed}s]${$.reset} ${icons[phase] || ' '} ${$.bold}${phase}${$.reset} ${$.dim}${detail.slice(0, 70)}${$.reset}`);
         lastPhase = phase;
       }
     },
   });
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  console.log();
 
   section('RESULTS');
+  const icon = result.status === 'SUCCESS' ? '✅' : result.status === 'PARTIAL' ? '⚠️' : '❌';
   const statusColor = result.status === 'SUCCESS' ? $.green : result.status === 'PARTIAL' ? $.yellow : $.red;
-  kv('Status', result.status, statusColor);
-  kv('Duration', `${elapsed}s`);
-  kv('Tokens', result.metrics.totalTokens.toLocaleString());
-  kv('Cost', `$${result.metrics.totalCostUsd.toFixed(4)}`);
-  kv('Sub-agents', String(result.metrics.subAgentsSpawned));
-  kv('Quality', `${(result.metrics.qualityScore * 100).toFixed(0)}%`, result.metrics.qualityScore > 0.7 ? $.green : $.yellow);
+  console.log(`  ${icon} ${statusColor}${$.bold}${result.status}${$.reset}  ${$.dim}${elapsed}s · ${result.metrics.totalTokens.toLocaleString()} tok · $${result.metrics.totalCostUsd.toFixed(4)}${$.reset}`);
+
+  if (result.status !== 'SUCCESS' && result.errors.length > 0) {
+    console.log();
+    for (const err of result.errors) {
+      console.log(`  ${$.red}✗${$.reset} ${err.message.slice(0, 120)}`);
+    }
+  }
 
   if (result.synthesis) {
-    section('SYNTHESIS');
-    const lines = result.synthesis.split('\n').filter(l => l.trim());
-    for (const line of lines.slice(0, 20)) {
-      console.log(`  ${line}`);
-    }
-    if (lines.length > 20) {
-      console.log(`  ${$.dim}... (${lines.length - 20} more lines)`);
-    }
+    const preview = result.synthesis.split('\n').filter(l => l.trim()).slice(0, 8).join('\n  ');
+    console.log(`\n  ${preview}`);
+    const totalLines = result.synthesis.split('\n').filter(l => l.trim()).length;
+    if (totalLines > 8) console.log(`  ${$.dim}... (${totalLines - 8} more lines)${$.reset}`);
   }
-
-  if (result.errors.length > 0) {
-    section('ERRORS');
-    for (const err of result.errors) {
-      console.log(`  ${$.red}✗${$.reset} [${err.nodeId}] ${err.message.slice(0, 200)}`);
-    }
-  }
-
-  section('REASONING');
-  for (const r of result.reasoning.slice(0, 10)) {
-    console.log(`  ${$.dim}>${$.reset} ${r}`);
-  }
-
   console.log();
 }
 
 async function cmdWatch(task: string) {
-  const config = loadConfig();
-  const runtime = createRuntime(config);
+  const runtime = createRuntime();
   if (!runtime) {
-    console.error(`  ${$.red}ERROR: No API key configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.${$.reset}`);
+    console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No API key found.\n`);
+    onboardingMessage();
     process.exit(1);
     return;
   }
@@ -248,34 +300,34 @@ async function cmdWatch(task: string) {
   const telos = new TELOSOrchestrator(rt);
   const orch = new UltimateOrchestrator(telos, rt);
 
+  cmdHeader(task);
+
   const sse = new SSEStream();
   sse.onEvent((event) => {
     try {
       const data = JSON.parse(event.replace(/^data: /, '').trim());
-      const ts = new Date(data.timestamp || Date.now()).toLocaleTimeString();
-      const topicColors: Record<string, string> = {
-        'agent.started': $.green, 'agent.completed': $.blue,
-        'agent.failed': $.red, 'agent.message': $.cyan,
-        'system.alert': $.yellow, 'tool.executed': $.gray,
+      const ts = new Date(data.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const icons: Record<string, string> = {
+        'agent.started': '▶️', 'agent.completed': '✅', 'agent.failed': '❌',
+        'agent.message': '💬', 'system.alert': '⚠️', 'tool.executed': '🔧',
       };
-      const color = topicColors[data.topic] || $.gray;
-      const payload = typeof data.payload === 'object' ? JSON.stringify(data.payload).slice(0, 120) : String(data.payload ?? '');
-      console.log(`  ${$.dim}[${ts}]${$.reset} ${color}${data.topic}${$.reset} ${$.dim}${data.source}${$.reset} ${payload}`);
+      const icon = icons[data.topic] || '📡';
+      const payload = typeof data.payload === 'object' ? JSON.stringify(data.payload).slice(0, 80) : String(data.payload ?? '').slice(0, 80);
+      console.log(`  ${$.dim}${ts}${$.reset} ${icon} ${$.bold}${data.topic}${$.reset} ${$.dim}${payload}${$.reset}`);
     } catch {}
   });
 
-  section('WATCH');
-  console.log(`  ${$.dim}Streaming real-time agent execution...${$.reset}\n`);
+  console.log();
 
+  const startTime = Date.now();
   const result = await orch.execute({
     projectId: 'cli',
     agentId: 'commander-cli',
     goal: task,
     contextData: {
-      availableTools: config.tools,
+      availableTools: loadTools(),
       governanceProfile: { riskLevel: 'LOW' },
     },
-    effortLevel: config.effort || undefined,
   });
 
   sse.close();
@@ -283,51 +335,66 @@ async function cmdWatch(task: string) {
   section('COMPLETE');
   const statusColor = result.status === 'SUCCESS' ? $.green : $.red;
   kv('Status', result.status, statusColor);
-  kv('Duration', `${((Date.now() - 0) / 1000).toFixed(1)}s`);
+  kv('Duration', `${((Date.now() - startTime) / 1000).toFixed(1)}s`);
   console.log();
 }
 
 async function cmdCompany(task: string) {
-  const config = loadConfig();
-  const runtime = createRuntime(config);
+  const runtime = createRuntime();
   if (!runtime) {
-    console.error(`  ${$.red}ERROR: No API key configured.${$.reset}`);
+    console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No API key found.\n`);
+    onboardingMessage();
     process.exit(1);
   }
 
+  cmdHeader(task);
   const engine = new CompanyEngine();
   engine.start();
 
-  section('COMPANY MODE');
-  kv('Task', task.length > 80 ? task.slice(0, 80) + '...' : task, $.cyan);
-
+  const done = startSpinner('Running company mode...');
   const result = await engine.submit(task, 'analysis', 'commander-cli');
-  console.log(`  ${$.dim}Quality score:${$.reset} ${(result.review.score * 100).toFixed(0)}%`);
-  console.log(`  ${$.dim}Passed:${$.reset} ${result.review.passed ? $.green + 'Yes' : $.red + 'No'}${$.reset}`);
+  done();
 
+  section('REVIEW');
+  const passed = result.review.passed;
+  console.log(`  ${passed ? '✅' : '❌'} ${$.bold}${passed ? 'Passed' : 'Failed'}${$.reset}  ${$.dim}score: ${(result.review.score * 100).toFixed(0)}%${$.reset}`);
   if (result.review.issues.length > 0) {
-    section('ISSUES');
+    console.log();
     for (const issue of result.review.issues) {
-      console.log(`  ${$.yellow}!${$.reset} ${issue}`);
+      bullet(issue, $.yellow);
     }
   }
-
+  console.log();
   engine.stop();
 }
 
 async function cmdStatus() {
+  const provider = detectProvider();
+
   section('SYSTEM STATUS');
   kv('Version', '0.2.0');
   kv('Node', process.version);
   kv('Platform', process.platform);
 
-  const config = loadConfig();
-  kv('API Key (Anthropic)', config.anthropicKey ? `${$.green}configured${$.reset}` : `${$.red}missing${$.reset}`);
-  kv('API Key (OpenAI)', config.openaiKey ? `${$.green}configured${$.reset}` : `${$.red}missing${$.reset}`);
-  kv('Tools', config.tools.join(', '));
+  if (provider) {
+    section('ACTIVE PROVIDER');
+    kv('Name', provider.type, $.cyan);
+    kv('API URL', provider.baseUrl, $.dim);
+    kv('Model', getEffectiveModel(), $.green);
+  } else {
+    kv('Provider', 'None — set an API key env var', $.red);
+  }
 
-  const runtime = createRuntime(config);
-  kv('Runtime', runtime ? `${$.green}ready${$.reset}` : `${$.red}no provider${$.reset}`);
+  const envVars = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GOOGLE_API_KEY', 'OPENROUTER_API_KEY', 'DEEPSEEK_API_KEY', 'ZHIPU_API_KEY', 'MIMO_API_KEY', 'XIAOMI_API_KEY'];
+  section('API KEYS');
+  for (const v of envVars) {
+    const exists = !!process.env[v];
+    console.log(`  ${exists ? $.green + '✓' : $.dim + '✗'}${$.reset} ${v}`);
+  }
+  if (process.env.OPENAI_BASE_URL) console.log(`  ${$.dim}  (base URL: ${process.env.OPENAI_BASE_URL})${$.reset}`);
+
+  const runtime = createRuntime();
+  kv('Runtime', runtime ? `${$.green}ready${$.reset}` : `${$.red}no API key${$.reset}`);
 
   // MetaLearner stats
   try {
@@ -354,79 +421,90 @@ async function cmdStatus() {
 }
 
 function cmdConfig(args: string[]) {
-  const configPath = path.join(process.cwd(), '.commander.json');
-  let cfg: Record<string, string> = {};
-  try { if (fs.existsSync(configPath)) cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch {}
-
-  if (args.length === 0) {
-    section('CONFIG');
-    const allKeys: Record<string, string> = {
-      'model': process.env.OPENAI_MODEL || 'gpt-4o-mini',
-      'tools': process.env.COMMANDER_TOOLS || 'web_search,web_fetch,file_read,file_write,file_edit,file_search,file_list,python_execute,shell_execute,git',
-      'effort': process.env.COMMANDER_EFFORT || 'auto',
-      'max_workers': cfg.max_workers || '5',
-      'token_budget': cfg.token_budget || '200000',
-      'timeout': cfg.timeout || '300',
-    };
-    for (const [k, v] of Object.entries(allKeys)) {
-      const color = k === 'model' ? $.cyan : $.gray;
-      console.log(`  ${color}${k.padEnd(20)}${$.reset} ${v}`);
-    }
-    console.log(`\n  ${$.dim}Set: commander config set <key> <value>${$.reset}`);
+  if (args.length === 0 || args[0] === 'show') {
+    section('CONFIGURATION');
+    showConfig();
+    console.log(`\n  ${$.dim}Set:  commander config set model <model-id>${$.reset}`);
+    console.log(`  ${$.dim}      commander config set meta-tools on${$.reset}`);
+    console.log(`  ${$.dim}      commander config list-providers${$.reset}`);
+    console.log(`  ${$.dim}      commander config list-models${$.reset}`);
     return;
   }
 
   if (args[0] === 'set' && args.length >= 3) {
-    cfg[args[1]] = args.slice(2).join(' ');
-    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
-    console.log(`  ${$.green}✓${$.reset} ${args[1]} = ${cfg[args[1]]}`);
+    try {
+      setConfig(args[1], args.slice(2).join(' '));
+      console.log(`  ${$.green}✓${$.reset} ${args[1]} = ${args.slice(2).join(' ')}`);
+    } catch (e: any) {
+      console.log(`  ${$.red}✗${$.reset} ${e.message}`);
+    }
     return;
   }
 
-  console.log(`  ${$.red}Usage: commander config [set <key> <value>]${$.reset}`);
+  if (args[0] === 'list-providers') {
+    section('AVAILABLE PROVIDERS');
+    console.log(`  ${$.dim}Set any API key env var to activate a provider:${$.reset}\n`);
+    listProviders();
+    console.log(`\n  ${$.dim}  ✓ = configured  ~ = via OPENAI_API_KEY  (space) = not set${$.reset}`);
+    return;
+  }
+
+  if (args[0] === 'list-models') {
+    section('AVAILABLE MODELS');
+    listModels();
+    return;
+  }
+
+  if (args[0] === 'test') {
+    const provider = detectProvider();
+    if (!provider) {
+      console.log(`  ${$.red}No API key found. Set one of the env vars.${$.reset}`);
+      return;
+    }
+    section('TESTING');
+    console.log(`  Provider: ${provider.type}`);
+    console.log(`  URL:      ${provider.baseUrl}`);
+    console.log(`  Testing...`);
+    fetch(`${provider.baseUrl}/models`, {
+      headers: { 'Authorization': `Bearer ${provider.apiKey}` },
+      signal: AbortSignal.timeout(5000),
+    }).then(res => {
+      if (res.ok) console.log(`  ${$.green}✓ Connection OK${$.reset}`);
+      else console.log(`  ${$.red}✗ ${res.status}${$.reset}`);
+    }).catch(() => {
+      console.log(`  ${$.yellow}! Connection failed${$.reset}`);
+    });
+    return;
+  }
+
+  console.log(`  ${$.red}Usage:${$.reset} commander config [show|set <key> <val>|list-providers|list-models|test]`);
 }
 
 function cmdDoctor() {
   section('DOCTOR');
-  let allGood = true;
-  const checks: Array<{ label: string; test: () => boolean; msg: string }> = [
-    { label: 'Node.js version', test: () => process.version.startsWith('v22') || process.version.startsWith('v20'), msg: 'Recommended: Node 20+' },
-    { label: 'API Key configured', test: () => !!(process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY), msg: 'Set OPENAI_API_KEY or ANTHROPIC_API_KEY' },
-    { label: 'Config file', test: () => true, msg: '' },
-    { label: 'Package installed', test: () => fs.existsSync(path.join(process.cwd(), 'node_modules')) || fs.existsSync(path.join(process.cwd(), '..', 'node_modules')), msg: 'Run: pnpm install' },
-    { label: 'Disk space', test: () => { try { const s = fs.statSync('/'); return s.size > 0; } catch { return true; } }, msg: '' },
+  const provider = detectProvider();
+  const checks = [
+    { label: 'Node.js v20+', pass: process.version.startsWith('v22') || process.version.startsWith('v20'), msg: '' },
+    { label: `API key ${provider ? '✓' : '✗'}`, pass: !!provider, msg: 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.' },
+    { label: 'Packages installed', pass: fs.existsSync(path.join(process.cwd(), 'node_modules')) || fs.existsSync(path.join(__dirname, '..', 'node_modules')), msg: 'Run: pnpm install' },
   ];
-
-  for (const check of checks) {
-    const passed = check.test();
-    if (!passed) allGood = false;
-    console.log(`  ${passed ? $.green + '✓' : $.red + '✗'}${$.reset} ${check.label}${check.msg ? ' — ' + $.yellow + check.msg + $.reset : ''}`);
+  let allOk = true;
+  for (const c of checks) {
+    if (!c.pass) allOk = false;
+    console.log(`  ${c.pass ? $.green + '✓' : $.red + '✗'}${$.reset} ${c.label}${c.msg ? ' — ' + $.yellow + c.msg + $.reset : ''}`);
   }
-
-  // Test API connection
-  if (process.env.OPENAI_API_KEY) {
-    const baseUrl = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-    console.log(`  ${$.dim}Testing API connection...${$.reset}`);
-    fetch(baseUrl + '/models', {
-      headers: { 'Authorization': 'Bearer ' + process.env.OPENAI_API_KEY },
+  if (provider) {
+    console.log(`  ${$.dim}Testing ${provider.type} at ${provider.baseUrl}...${$.reset}`);
+    fetch(`${provider.baseUrl}/models`, {
+      headers: { 'Authorization': `Bearer ${provider.apiKey}` },
       signal: AbortSignal.timeout(5000),
     }).then(res => {
-      if (res.ok) console.log(`  ${$.green}✓${$.reset} API connected (${baseUrl})`);
-      else console.log(`  ${$.red}✗${$.reset} API error: ${res.status}`);
+      console.log(`  ${res.ok ? $.green + '✓' : $.red + '✗'}${$.reset} API: ${res.status}`);
     }).catch(() => {
-      console.log(`  ${$.yellow}!${$.reset} API unreachable (${baseUrl})`);
+      console.log(`  ${$.yellow}!${$.reset} API unreachable`);
     });
   }
-
-  // Check playwright
-  try {
-    require.resolve('playwright');
-    console.log(`  ${$.green}✓${$.reset} Playwright available`);
-  } catch {
-    console.log(`  ${$.yellow}!${$.reset} Playwright not installed (browser_search needs it)`);
-  }
-
-  if (allGood) console.log(`\n  ${$.green}${$.bold}All checks passed${$.reset}`);
+  if (allOk) console.log(`\n  ${$.green}${$.bold}All checks passed${$.reset}`);
   else console.log(`\n  ${$.yellow}Some checks need attention${$.reset}`);
 }
 
@@ -437,9 +515,8 @@ async function cmdWorkers(topics: string[]) {
     topics = ['LangGraph', 'CrewAI', 'AutoGen', 'MCP', 'Pydantic', 'LlamaIndex', 'Ollama', 'vLLM'];
   }
 
-  const cfg = loadConfig();
-  const runtime = createRuntime(cfg);
-  if (!runtime) { console.error(`  ${$.red}No API key configured${$.reset}`); process.exit(1); }
+  const runtime = createRuntime();
+  if (!runtime) { console.error(`  ${$.red}No provider configured${$.reset}`); process.exit(1); }
 
   const pool = new TaskPool(runtime, {
     maxWorkers: topics.length,
@@ -473,37 +550,34 @@ async function cmdWorkers(topics: string[]) {
 
 function cmdHelp() {
   console.log(`
-  ${$.bold}${$.blue}Commander — Multi-Agent Orchestration System${$.reset}
-  ${$.dim}Dynamic Topology · 13 Tools · Quality Gates · Self-Evolution${$.reset}
+  ${$.bold}${$.blue}╭──────────────────────────────────────────────╮${$.reset}
+  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander${$.reset} — multi-agent orchestration      ${$.bold}${$.blue}│${$.reset}
+  ${$.bold}${$.blue}│${$.reset}  ${$.dim}126 tests · 8 providers · GAIA-ready${$.reset}       ${$.bold}${$.blue}│${$.reset}
+  ${$.bold}${$.blue}╰──────────────────────────────────────────────╯${$.reset}
 
-  ${$.bold}USAGE${$.reset}
+  ${$.bold}GET STARTED${$.reset}
+    Set an API key and run:
+    ${$.gray}$ export OPENAI_API_KEY=sk-...${$.reset}
+    ${$.gray}$ commander "Hello, world!"${$.reset}
 
-    ${$.cyan}commander <task>${$.reset}              Quick plan (default)
-    ${$.cyan}commander run <task>${$.reset}           Full execution
-    ${$.cyan}commander plan <task>${$.reset}          Show deliberation plan
-    ${$.cyan}commander watch <task>${$.reset}         Execute with SSE streaming
-    ${$.cyan}commander company <task>${$.reset}       Company mode
-    ${$.cyan}commander status${$.reset}               System status
-    ${$.cyan}commander config${$.reset}               Show/set configuration
-    ${$.cyan}commander doctor${$.reset}               Run system diagnostics
-    ${$.cyan}commander workers [topics...]${$.reset}   Spawn parallel research agents
-    ${$.cyan}commander help${$.reset}                 This help
+  ${$.bold}COMMANDS${$.reset}
+    ${$.cyan}commander <task>${$.reset}        Quick task analysis
+    ${$.cyan}commander run <task>${$.reset}     Full multi-agent execution
+    ${$.cyan}commander plan <task>${$.reset}    Show deliberation plan
+    ${$.cyan}commander watch <task>${$.reset}   Real-time execution stream
+    ${$.cyan}commander status${$.reset}         System status
+    ${$.cyan}commander config${$.reset}         View / change settings
+    ${$.cyan}commander doctor${$.reset}         Run diagnostics
 
-  ${$.bold}EXAMPLES${$.reset}
-
-    ${$.dim}$ commander "What is 2+2?"${$.reset}
-    ${$.dim}$ commander run "Research microservices vs monoliths"${$.reset}
-    ${$.dim}$ commander watch "Deploy the API server"${$.reset}
-
-  ${$.bold}ENVIRONMENT${$.reset}
-
-    ${$.cyan}ANTHROPIC_API_KEY${$.reset}              Anthropic provider key
-    ${$.cyan}OPENAI_API_KEY${$.reset}                 OpenAI provider key
-    ${$.cyan}COMMANDER_TOOLS${$.reset}                 Comma-separated tool list
-    ${$.cyan}COMMANDER_EFFORT${$.reset}                SIMPLE|MODERATE|COMPLEX|DEEP_RESEARCH
-
-  ${$.bold}BENCHMARKS${$.reset}
-    GAIA: 70.0% (beats OWL 69.09%)  ·  Simple task: 52 tokens  ·  Quality gates: built-in
+  ${$.bold}API KEYS (set any one)${$.reset}
+    ${$.cyan}OPENAI_API_KEY${$.reset}          OpenAI / DeepSeek / GLM / MiMo
+    ${$.cyan}ANTHROPIC_API_KEY${$.reset}       Anthropic Claude
+    ${$.cyan}GOOGLE_API_KEY${$.reset}          Google Gemini
+    ${$.cyan}OPENROUTER_API_KEY${$.reset}      OpenRouter (200+ models)
+    ${$.cyan}DEEPSEEK_API_KEY${$.reset}        DeepSeek
+    ${$.cyan}ZHIPU_API_KEY${$.reset}           GLM (Zhipu AI)
+    ${$.cyan}MIMO_API_KEY${$.reset}            MiMo
+    ${$.cyan}XIAOMI_API_KEY${$.reset}          Xiaomi MiMo
 `);
 }
 
@@ -519,30 +593,36 @@ async function main() {
     return;
   }
 
+  // First-run detection: no API key → show onboarding
+  if (!detectProvider() && args[0] !== 'config' && args[0] !== 'doctor' && args[0] !== 'status') {
+    onboardingMessage();
+    return;
+  }
+
   const cmd = args[0];
 
   switch (cmd) {
     case 'run': {
       const task = args.slice(1).join(' ');
-      if (!task) { console.error(`${$.red}Usage: commander run "<task>"${$.reset}`); process.exit(1); }
+      if (!task) { console.error(`  ${$.red}Usage:${$.reset} commander run "<task>"`); process.exit(1); }
       await cmdRun(task);
       break;
     }
     case 'plan': {
       const task = args.slice(1).join(' ');
-      if (!task) { console.error(`${$.red}Usage: commander plan "<task>"${$.reset}`); process.exit(1); }
+      if (!task) { console.error(`  ${$.red}Usage:${$.reset} commander plan "<task>"`); process.exit(1); }
       await cmdPlan(task);
       break;
     }
     case 'watch': {
       const task = args.slice(1).join(' ');
-      if (!task) { console.error(`${$.red}Usage: commander watch "<task>"${$.reset}`); process.exit(1); }
+      if (!task) { console.error(`  ${$.red}Usage:${$.reset} commander watch "<task>"`); process.exit(1); }
       await cmdWatch(task);
       break;
     }
     case 'company': {
       const task = args.slice(1).join(' ');
-      if (!task) { console.error(`${$.red}Usage: commander company "<task>"${$.reset}`); process.exit(1); }
+      if (!task) { console.error(`  ${$.red}Usage:${$.reset} commander company "<task>"`); process.exit(1); }
       await cmdCompany(task);
       break;
     }
@@ -561,7 +641,6 @@ async function main() {
       break;
     }
     default:
-      // Default: quick plan
       await cmdPlan(args.join(' '));
   }
 }

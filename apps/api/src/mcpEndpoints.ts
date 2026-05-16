@@ -1,6 +1,6 @@
 import express, { Router } from 'express';
 import { MCPServer, getModelRouter } from '@commander/core';
-import type { MCPTool, MCPToolResult, MCPContentItem } from '@commander/core';
+import type { MCPTool, MCPToolResult, MCPContentItem, ModelTier } from '@commander/core';
 
 export function createMCPRouter(): Router {
   const router = express.Router();
@@ -65,7 +65,7 @@ function registerCoreTools(server: MCPServer): void {
     },
     async (args) => {
       const router = getModelRouter();
-      const models = router.listModels(args.tier as any);
+      const models = router.listModels(args.tier as ModelTier | undefined);
       return {
         content: [{ type: 'text', text: JSON.stringify(models.map(m => ({ id: m.id, tier: m.tier, provider: m.provider })), null, 2) }],
       };

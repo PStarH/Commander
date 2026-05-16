@@ -114,7 +114,7 @@ export class SequentialPipelineExecutor {
     // Initialize context (matching sequential.ts SequentialContext)
     const context: SequentialContext = {
       executionId: runId,
-      projectId: (pipeline as any).projectId || 'default-project',
+      projectId: pipeline.projectId || 'default-project',
       initialInput: initialInput,
       previousResults: [],
       currentStepIndex: 0,
@@ -164,12 +164,12 @@ export class SequentialPipelineExecutor {
       });
 
       // Execute steps sequentially
-      let currentInput = initialInput ?? (pipeline as any).initialInput;
+      let currentInput = initialInput ?? pipeline.initialInput;
 
       for (let i = 0; i < pipeline.steps.length; i++) {
         if (abortController.signal.aborted) {
           run.status = 'CANCELLED';
-          (run as any).error = 'Pipeline execution was cancelled';
+          run.error = 'Pipeline execution was cancelled';
           break;
         }
 
@@ -193,9 +193,9 @@ export class SequentialPipelineExecutor {
         if (result.status === 'SUCCESS') {
           currentInput = result.output;
         } else if (result.status === 'FAILURE') {
-          if ((pipeline as any).stopOnError !== false) {
+          if (pipeline.stopOnError !== false) {
             run.status = 'FAILED';
-            (run as any).error = result.error;
+            run.error = result.error;
             await this.emitEvent({
               type: 'PIPELINE_ERROR',
               pipelineId: pipeline.id,
@@ -216,20 +216,20 @@ export class SequentialPipelineExecutor {
       // Mark as completed if all steps succeeded
       if (run.status === 'RUNNING') {
         run.status = 'COMPLETED';
-        (run as any).completedAt = new Date().toISOString();
+        run.completedAt = new Date().toISOString();
         await this.emitEvent({
           type: 'PIPELINE_COMPLETE',
           pipelineId: pipeline.id,
           executionId: runId,
-          run: run as any,
+          run,
         });
       }
 
       return run;
     } catch (error) {
       run.status = 'FAILED';
-      (run as any).error = error instanceof Error ? error.message : 'Unknown error';
-      (run as any).completedAt = new Date().toISOString();
+      run.error = error instanceof Error ? error.message : 'Unknown error';
+      run.completedAt = new Date().toISOString();
 
       await this.emitEvent({
         type: 'PIPELINE_ERROR',
@@ -398,8 +398,8 @@ export class SequentialPipelineExecutor {
   cancel(run: SequentialPipelineRun): void {
     if (run.status === 'RUNNING') {
       run.status = 'CANCELLED';
-      (run as any).completedAt = new Date().toISOString();
-      (run as any).error = 'Cancelled by user';
+      run.completedAt = new Date().toISOString();
+      run.error = 'Cancelled by user';
     }
   }
 }

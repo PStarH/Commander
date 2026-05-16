@@ -5,7 +5,7 @@
  * 测试所有 Phase 1 组件的协同工作能力
  */
 
-import { describe, it, before } from 'node:test';
+import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { 
   TaskComplexityAnalyzer, 
@@ -31,7 +31,7 @@ describe('Phase 1 Component Integration Tests', () => {
     let analyzer: TaskComplexityAnalyzer;
     let orchestrator: AdaptiveOrchestrator;
 
-    before(() => {
+    beforeEach(() => {
       analyzer = new TaskComplexityAnalyzer();
       orchestrator = new AdaptiveOrchestrator();
     });
@@ -82,7 +82,7 @@ describe('Phase 1 Component Integration Tests', () => {
   describe('TokenBudgetAllocator', () => {
     let allocator: TokenBudgetAllocator;
 
-    before(() => {
+    beforeEach(() => {
       allocator = new TokenBudgetAllocator({ baseBudget: 100000 });
     });
 
@@ -129,7 +129,7 @@ describe('Phase 1 Component Integration Tests', () => {
   describe('ThreeLayerMemory', () => {
     let memory: ThreeLayerMemory;
 
-    before(() => {
+    beforeEach(() => {
       memory = new ThreeLayerMemory();
     });
 
@@ -188,7 +188,7 @@ describe('Phase 1 Component Integration Tests', () => {
   describe('ReflectionEngine', () => {
     let engine: ReflectionEngine;
 
-    before(() => {
+    beforeEach(() => {
       engine = createReflectionEngine();
     });
 
@@ -245,7 +245,7 @@ describe('Phase 1 Component Integration Tests', () => {
   describe('ConsensusChecker', () => {
     let checker: ConsensusChecker;
 
-    before(() => {
+    beforeEach(() => {
       checker = createConsensusChecker({ minVoters: 3 });
     });
 
@@ -291,7 +291,7 @@ describe('Phase 1 Component Integration Tests', () => {
   describe('InspectorAgent', () => {
     let inspector: InspectorAgent;
 
-    before(() => {
+    beforeEach(() => {
       inspector = createInspector();
     });
 

@@ -28,6 +28,9 @@ import { ArtifactSystem, getArtifactSystem } from './artifactSystem';
 import { CapabilityRegistry, getCapabilityRegistry } from './capabilityRegistry';
 import { AgentTeamManager, getTeamManager } from './agentTeamManager';
 import { getEffortRules, classifyEffortLevel, selectTopologyForEffort } from './effortScaler';
+import { ReflexionTopologicalOptimizer } from './topologyOptimizer';
+import { getEvolutionEngine } from '../runtime/evolutionaryWorkflowEngine';
+import { COST_PER_TOKEN } from '../config/constants';
 
 let executionCounter = 0;
 
@@ -36,17 +39,19 @@ function generateExecId(): string {
 }
 
 export class UltimateOrchestrator {
-  private config: UltimateOrchestratorConfig;
-  private telos: TELOSOrchestrator;
-  private runtime: AgentRuntime;
-  private atomizer: RecursiveAtomizer;
-  private topologyRouter: TopologyRouter;
-  private subAgentExecutor: SubAgentExecutor;
-  private synthesizer: MultiAgentSynthesizer;
-  private artifactSystem: ArtifactSystem;
-  private capabilityRegistry: CapabilityRegistry;
-  private teamManager: AgentTeamManager;
-  private activeExecutions: Map<string, UltimateExecutionContext> = new Map();
+   private config: UltimateOrchestratorConfig;
+   private telos: TELOSOrchestrator;
+   private runtime: AgentRuntime;
+   private atomizer: RecursiveAtomizer;
+   private topologyRouter: TopologyRouter;
+   private subAgentExecutor: SubAgentExecutor;
+   private synthesizer: MultiAgentSynthesizer;
+   private artifactSystem: ArtifactSystem;
+   private capabilityRegistry: CapabilityRegistry;
+   private teamManager: AgentTeamManager;
+   private topologyOptimizer: ReflexionTopologicalOptimizer;
+   private evolutionEngine: ReturnType<typeof getEvolutionEngine> | null = null;
+   private activeExecutions: Map<string, UltimateExecutionContext> = new Map();
 
   constructor(
     telos: TELOSOrchestrator,
@@ -67,8 +72,10 @@ export class UltimateOrchestrator {
       this.config.maxRecursiveDepth,
       this.config.maxParallelSubAgents,
     );
-    this.topologyRouter = new TopologyRouter();
-    this.subAgentExecutor = new SubAgentExecutor(
+this.topologyRouter = new TopologyRouter();
+     this.topologyOptimizer = new ReflexionTopologicalOptimizer();
+     this.evolutionEngine = getEvolutionEngine();
+     this.subAgentExecutor = new SubAgentExecutor(
       runtime,
       this.artifactSystem,
       this.config.maxParallelSubAgents,
@@ -103,13 +110,20 @@ export class UltimateOrchestrator {
     const ctx = this.buildContext(execId, params);
     this.activeExecutions.set(execId, ctx);
 
-    // Phase 1: Deliberation (LLM-powered when a provider is registered)
-    emit('DELIBERATION', 'Analyzing task requirements...');
-    const firstProvider = this.runtime.getProvider('openai') ?? this.runtime.getProvider('anthropic');
-    const useLLM = this.config.enableDeliberation && firstProvider !== undefined;
-    const deliberation = useLLM
-      ? await deliberateWithLLM(params.goal, firstProvider, params.contextData)
-      : deliberate(params.goal, params.contextData);
+// Phase 1: Deliberation (LLM-powered when a provider is registered)
+     emit('DELIBERATION', 'Analyzing task requirements...');
+     const firstProvider = this.runtime.getProvider('openai')
+       ?? this.runtime.getProvider('anthropic')
+       ?? this.runtime.getProvider('openrouter')
+       ?? this.runtime.getProvider('mimo')
+       ?? this.runtime.getProvider('deepseek')
+       ?? this.runtime.getProvider('glm')
+       ?? this.runtime.getProvider('xiaomi')
+       ?? this.runtime.getProvider('google');
+     const useLLM = this.config.enableDeliberation && firstProvider !== undefined;
+     const deliberation = useLLM
+       ? await deliberateWithLLM(params.goal, firstProvider, params.contextData)
+       : deliberate(params.goal, params.contextData);
     ctx.deliberation = deliberation;
     reasoning.push(...deliberation.reasoning);
     reasoning.push(`Confidence: ${(deliberation.confidence * 100).toFixed(0)}%`);
@@ -125,13 +139,13 @@ export class UltimateOrchestrator {
     ctx.scalingRules = scalingRules;
     reasoning.push(`Effort level: ${effortLevel} (${scalingRules.minSubAgents}-${scalingRules.maxSubAgents} agents)`);
 
-    // Phase 3: Topology Routing
-    emit('TOPOLOGY_ROUTING', `Selecting orchestration topology...`);
-    const topology = params.topology ?? selectTopologyForEffort(effortLevel);
-    ctx.topology = topology;
-    reasoning.push(`Topology: ${topology}`);
+// Phase 3: Topology Routing
+     emit('TOPOLOGY_ROUTING', `Selecting orchestration topology...`);
+     const topology = params.topology ?? selectTopologyForEffort(effortLevel);
+     ctx.topology = topology;
+     reasoning.push(`Topology: ${topology}`);
 
-    // Phase 4: Recursive Task Decomposition
+     // Phase 4: Recursive Task Decomposition
     emit('DECOMPOSITION', `Decomposing task into subtasks...`);
     const taskTree = this.atomizer.decompose(
       params.goal,
@@ -149,7 +163,7 @@ export class UltimateOrchestrator {
       emit('TEAM_FORMATION', `Forming agent team...`);
       const members = taskTree.subtasks.map((sub, i) => ({
         agentId: sub.id,
-        role: (i === 0 ? 'LEAD' : i % 2 === 0 ? 'RESEARCHER' : 'CODER') as any,
+        role: (i === 0 ? 'LEAD' as const : i % 2 === 0 ? 'RESEARCHER' as const : 'CODER' as const),
         capabilities: sub.context.availableTools,
         status: 'IDLE' as const,
       }));
@@ -201,12 +215,51 @@ export class UltimateOrchestrator {
       allArtifacts,
     );
 
-    reasoning.push(`Synthesis quality: ${(synthesis.qualityScore * 100).toFixed(0)}%`);
+reasoning.push(`Synthesis quality: ${(synthesis.qualityScore * 100).toFixed(0)}%`);
 
-    // Phase 8: Quality Gates with auto-fix retry loop
+     // Compute execution metrics early for Phase 7.5 optimization
+     const totalDurationMs = Date.now() - startTime;
+     const allSuccess = errors.filter(e => !e.recovered).length === 0;
+     const totalTokens = this.sumTokenUsage(taskTree);
+
+     // Phase 7.5: Post-Execution Reflexion Topology Optimization
+     if (this.config.enableDeliberation) {
+       try {
+         const optimizationResult = await this.topologyOptimizer.optimize(
+           {
+             modelUsed: this.config.modelTierMapping[effortLevel] ?? 'standard',
+             success: allSuccess,
+             durationMs: totalDurationMs,
+             tokenCost: totalTokens,
+             taskType: topology,
+             strategyUsed: `${effortLevel}_${topology}`,
+             lessons: reasoning.slice(-5),
+             timestamp: new Date().toISOString(),
+             id: `exp-${execId}`,
+             runId: execId,
+             agentId: params.agentId,
+           } as any,
+           taskTree,
+           ctx,
+         );
+         if (optimizationResult.proposal.actions.length > 0) {
+           reasoning.push(`Topology optimized: ${optimizationResult.proposal.actions.length} actions`);
+           const topologyAction = optimizationResult.proposal.actions.find((a: any) => a.type === 'change_topology');
+if (topologyAction && 'to' in topologyAction) {
+              ctx.topology = topologyAction.to as OrchestrationTopology;
+            }
+         }
+       } catch (e) {
+         reasoning.push(`Topology optimization skipped: ${e instanceof Error ? e.message : 'unknown'}`);
+       }
+     }
+
+     // Phase 8: Quality Gates with Reflexion-inspired auto-fix retry loop
     let finalSynthesis = synthesis.synthesis;
     let finalQualityScore = synthesis.qualityScore;
     let finalGateResults = synthesis.gateResults;
+    let previousAttemptSynth = '';
+    let previousAttemptScore = 0;
     for (let fixAttempt = 0; fixAttempt < 2; fixAttempt++) {
       const failedGates = finalGateResults.filter(g => !g.passed);
       if (failedGates.length === 0) break;
@@ -234,7 +287,17 @@ export class UltimateOrchestrator {
         fixInstructions.push('Verify all numbers, names, and specific claims against the subtask results.');
       }
 
-      const fixGoal = `Revise the following synthesis to address quality issues.\n\nIssues to fix: ${fixInstructions.join(' ')}\n\nCurrent synthesis:\n${finalSynthesis}`;
+      // Reflexion: Include context about previous failed attempts to prevent repeated mistakes
+      let reflexionContext = '';
+      if (previousAttemptSynth && previousAttemptScore <= finalQualityScore) {
+        reflexionContext = `\n\nPrevious fix attempt scored ${(previousAttemptScore * 100).toFixed(0)}% but failed to pass the same gate. Do NOT repeat the same approach. Try a different strategy.`;
+      }
+
+      const fixGoal = `Revise the following synthesis to address quality issues.\n\nIssues to fix: ${fixInstructions.join(' ')}${reflexionContext}\n\nCurrent synthesis:\n${finalSynthesis}`;
+
+      // Store current state before fix for comparison
+      previousAttemptSynth = finalSynthesis;
+      previousAttemptScore = finalQualityScore;
 
       try {
         const fixResult = await this.runtime.execute({
@@ -249,7 +312,7 @@ export class UltimateOrchestrator {
 
         if (fixResult.status === 'success') {
           const fixedSynth = fixResult.summary;
-          if (fixedSynth.length > 50) {
+          if (fixedSynth.length > 50 && fixedSynth !== previousAttemptSynth) {
             finalSynthesis = fixedSynth;
             // Re-run quality gates on the fixed synthesis
             const recheck = await this.synthesizer.runQualityGatesStrict(
@@ -260,6 +323,8 @@ export class UltimateOrchestrator {
             finalGateResults = recheck;
             finalQualityScore = recheck.reduce((acc, g) => acc + (g.passed ? g.score : 0), 0) / Math.max(1, recheck.length);
             reasoning.push(`Auto-fix ${fixAttempt + 1}: quality score ${(finalQualityScore * 100).toFixed(0)}%`);
+          } else {
+            reasoning.push(`Auto-fix ${fixAttempt + 1}: produced identical output, skipping`);
           }
         }
       } catch (err) {
@@ -267,16 +332,12 @@ export class UltimateOrchestrator {
       }
     }
 
-    const totalDurationMs = Date.now() - startTime;
-
     // Collect artifacts
     for (const artifact of allArtifacts) {
       artifactsCreated.push(artifact);
     }
 
     // Record experience for self-evolution with real metrics
-    const allSuccess = errors.filter(e => !e.recovered).length === 0;
-    const totalTokens = this.sumTokenUsage(taskTree);
     const lessons: string[] = [];
     for (const gate of synthesis.gateResults) {
       if (!gate.passed) lessons.push(`Quality gate "${gate.gate}" scored ${(gate.score * 100).toFixed(0)}% (threshold: ${(this.config.qualityGates.find(g => g.name === gate.gate)?.threshold ?? 0.7) * 100}%)`);
@@ -301,12 +362,12 @@ export class UltimateOrchestrator {
     // Self-optimize: apply meta-learner suggestions after each execution
     this.applyOptimizationSuggestions();
 
-    // Store execution result in vector memory for future retrieval
+// Store execution result in vector memory for future retrieval
     try {
-      const memory = getGlobalThreeLayerMemory();
-      const qualitySummary = synthesis.gateResults.map(g => `${g.gate}=${(g.score * 100).toFixed(0)}%`).join(', ');
-      memory.add(
-        `[${allSuccess ? 'SUCCESS' : 'FAIL'}] ${params.goal.slice(0, 200)}`,
+       const memory = getGlobalThreeLayerMemory();
+       const qualitySummary = synthesis.gateResults.map(g => `${g.gate}=${(g.score * 100).toFixed(0)}%`).join(', ');
+       memory.add(
+         `[${allSuccess ? 'SUCCESS' : 'FAIL'}] ${params.goal.slice(0, 200)}`,
         'episodic',
         `topology:${topology}|effort:${effortLevel}|quality:${qualitySummary}`,
         allSuccess ? 0.8 : 0.3,
@@ -403,7 +464,7 @@ export class UltimateOrchestrator {
 
     return {
       totalTokens,
-      totalCostUsd: totalTokens * 0.000015,
+      totalCostUsd: totalTokens * COST_PER_TOKEN,
       totalDurationMs: Date.now() - startTime,
       llmCalls: subAgentCount * 2,
       toolCalls: subAgentCount * 5,
@@ -442,7 +503,7 @@ export class UltimateOrchestrator {
           // Adjust model tier mapping: find the effort level using the 'from' model
           for (const [effortLevel, currentModel] of Object.entries(this.config.modelTierMapping)) {
             if (currentModel === suggestion.from) {
-              this.config.modelTierMapping[effortLevel as EffortLevel] = suggestion.to as any;
+              this.config.modelTierMapping[effortLevel as EffortLevel] = suggestion.to as ModelTier;
               getMessageBus().publish('system.alert', 'ultimate-orchestrator', {
                 type: 'self_optimization',
                 change: `model_tier: ${effortLevel} switched from ${suggestion.from} → ${suggestion.to}`,
@@ -453,25 +514,31 @@ export class UltimateOrchestrator {
           }
           break;
         }
-        case 'strategy_change': {
-          // Adjust topology routing: prefer the suggested topology for compatible effort levels
-          const topologyMap: Record<string, OrchestrationTopology> = {
-            'SEQUENTIAL': 'SEQUENTIAL',
-            'PARALLEL': 'PARALLEL',
-            'HIERARCHICAL': 'HIERARCHICAL',
-            'HYBRID': 'HYBRID',
-          };
-          const preferredTopology = topologyMap[suggestion.to];
-          if (preferredTopology) {
-            getMessageBus().publish('system.alert', 'ultimate-orchestrator', {
-              type: 'self_optimization',
-              change: `strategy: prefer ${suggestion.to} over ${suggestion.from}`,
-              confidence: suggestion.confidence,
-              evidence: suggestion.evidence,
-            });
-          }
-          break;
-        }
+case 'strategy_change': {
+           // Adjust topology routing: prefer the suggested topology for compatible effort levels
+           const topologyMap: Record<string, OrchestrationTopology> = {
+             'SEQUENTIAL': 'SEQUENTIAL',
+             'PARALLEL': 'PARALLEL',
+             'HIERARCHICAL': 'HIERARCHICAL',
+             'HYBRID': 'HYBRID',
+           };
+           const preferredTopology = topologyMap[suggestion.to];
+           if (preferredTopology) {
+             this.config.defaultSynthesisConfig.qualityGates.forEach(g => {
+               if (g.name === 'consistency') {
+                 const thresholdAdjustment = suggestion.confidence * 0.1;
+                 g.threshold = Math.max(0.1, Math.min(1.0, g.threshold + (suggestion.to === 'HYBRID' || suggestion.to === 'PARALLEL' ? -thresholdAdjustment : thresholdAdjustment)));
+               }
+             });
+             getMessageBus().publish('system.alert', 'ultimate-orchestrator', {
+               type: 'self_optimization',
+               change: `strategy: prefer ${suggestion.to} over ${suggestion.from}`,
+               confidence: suggestion.confidence,
+               evidence: suggestion.evidence,
+             });
+           }
+           break;
+         }
         case 'prompt_template_change': {
           // Adjust quality gate thresholds based on prompt template suggestions
           const gateConfig = this.config.qualityGates.find(g => g.name === suggestion.target);

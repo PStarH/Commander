@@ -16,7 +16,7 @@ describe('Runtime E2E: Full Pipeline', () => {
   let learner: MetaLearner;
   let provider: MockLLMProvider;
 
-  before(() => {
+  beforeEach(() => {
     resetModelRouter();
     resetMessageBus();
     resetTraceRecorder();
@@ -119,8 +119,12 @@ describe('Runtime E2E: Full Pipeline', () => {
     expect(result.status).toBe('success');
   });
 
-  it('Scenario 7: Meta-learner records execution as experience', async () => {
-    const result = await runtime.execute(makeContext());
+it('Scenario 7: Meta-learner records execution as experience', async () => {
+     // Reset meta-learner state to avoid interference from previous tests
+     const { clearMetaLearnerState } = await import('../../src/selfEvolution/metaLearner');
+     clearMetaLearnerState();
+
+     const result = await runtime.execute(makeContext());
 
     learner.recordExperience({
       id: `exp-${result.runId}`,

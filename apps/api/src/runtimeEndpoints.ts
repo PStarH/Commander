@@ -5,7 +5,7 @@ import { getMessageBus } from '@commander/core';
 import { getTraceRecorder } from '@commander/core';
 import { getMetaLearner } from '@commander/core';
 import { getHTMLReportRenderer, createWarRoomHTMLReport } from '@commander/core';
-import type { AgentExecutionContext } from '@commander/core';
+import type { AgentExecutionContext, MessageBusTopic } from '@commander/core';
 
 export function createRuntimeRouter(): Router {
   const router = express.Router();
@@ -118,10 +118,10 @@ export function createRuntimeRouter(): Router {
   router.get('/bus/messages', (req, res) => {
     const { topic, limit } = req.query;
     const bus = getMessageBus();
-    const messages = bus.getHistory(
-      topic as any,
-      limit ? parseInt(limit as string, 10) : undefined,
-    );
+const messages = bus.getHistory(
+       topic as MessageBusTopic | undefined,
+       limit ? parseInt(limit as string, 10) : undefined,
+     );
     res.json({ messages, count: messages.length });
   });
 

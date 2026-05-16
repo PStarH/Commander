@@ -1,4 +1,4 @@
-import type { AgentExecutionContext, LLMRequest, TokenUsage } from '../runtime/types';
+import type { AgentExecutionContext, LLMRequest, TokenUsage, ModelTier } from '../runtime/types';
 import { AgentRuntime } from '../runtime/agentRuntime';
 import { getModelRouter } from '../runtime/modelRouter';
 import { getMessageBus } from '../runtime/messageBus';
@@ -107,7 +107,7 @@ function buildPlanContext(
   assignments.push({
     agentId,
     role: roleMap[profile.mode] ?? 'executor',
-    modelTier: (tierMap[profile.complexity] ?? 'standard') as any,
+    modelTier: (tierMap[profile.complexity] ?? 'standard') as ModelTier,
     subtask: goal,
     dependencies: [],
   });
@@ -353,14 +353,14 @@ export class TELOSOrchestrator {
         const execResult = await this.runtime.execute(ctx);
 
         // Track cost
-        if (execResult.status === 'success') {
-          this.sentinel.recordCostFromUsage(
-            planId,
-            assignment.agentId,
-            execResult.steps[0]?.tokenUsage ? 'claude-3-5-sonnet' : routing.modelId,
-            execResult.totalTokenUsage,
-          );
-        }
+if (execResult.status === 'success') {
+           this.sentinel.recordCostFromUsage(
+             planId,
+             assignment.agentId,
+             routing.modelId,
+             execResult.totalTokenUsage,
+           );
+         }
 
         totalCostUsd += 0;
         totalTokens += execResult.totalTokenUsage.totalTokens;
