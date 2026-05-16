@@ -33,6 +33,8 @@ interface CacheEntry {
   hitCount: number;
   /** Last access time (for LRU) */
   lastAccessAt: number;
+  /** Monotonic access counter for LRU tiebreaking when timestamps collide */
+  accessOrder: number;
 }
 
 // ============================================================================
@@ -91,6 +93,7 @@ export class ToolResultCache {
   private config: ToolCacheConfig;
   private stats = { hits: 0, misses: 0, evictions: 0 };
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
+  private accessCounter = 0;
 
   constructor(config?: Partial<ToolCacheConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -149,6 +152,7 @@ export class ToolResultCache {
     // Update access stats (LRU)
     entry.hitCount++;
     entry.lastAccessAt = Date.now();
+    entry.accessOrder = ++this.accessCounter;
     this.stats.hits++;
 
     // Return cached result with zero duration
@@ -184,6 +188,7 @@ export class ToolResultCache {
       ttlMs,
       hitCount: 0,
       lastAccessAt: Date.now(),
+      accessOrder: ++this.accessCounter,
     });
   }
 
@@ -289,10 +294,13 @@ export class ToolResultCache {
   private evictLRU(): void {
     let oldestKey: string | undefined;
     let oldestTime = Infinity;
+    let oldestOrder = Infinity;
 
     for (const [key, entry] of this.cache) {
-      if (entry.lastAccessAt < oldestTime) {
+      if (entry.lastAccessAt < oldestTime ||
+          (entry.lastAccessAt === oldestTime && entry.accessOrder < oldestOrder)) {
         oldestTime = entry.lastAccessAt;
+        oldestOrder = entry.accessOrder;
         oldestKey = key;
       }
     }

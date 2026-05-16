@@ -10,7 +10,7 @@
  */
 
 import type { LLMMessage, LLMProvider } from './types';
-import { TokenGovernor } from './tokenGovernor';
+import { TokenGovernor, getTokenGovernor } from './tokenGovernor';
 
 // ============================================================================
 // Types
@@ -348,7 +348,7 @@ export class ContextCompactor {
     }
 
     try {
-      const governor = new TokenGovernor();
+      const governor = getTokenGovernor();
       const phase = governor.getState().phase;
 
       // Under pressure, lower thresholds to compact earlier
