@@ -1,24 +1,42 @@
-import type { TraceEvent, ExecutionTrace, TokenUsage, ModelTier } from './types';
+import type { TraceEvent, ExecutionTrace, TokenUsage, ModelTier, TraceSpan } from './types';
+import type { TraceStore } from './traceStore';
 
 function generateId(): string {
-  return `trace_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  return `span_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function generateTraceId(): string {
+  return `trace_${Date.now()}_${Math.random().toString(36).slice(2, 15)}`;
 }
 
 export class ExecutionTraceRecorder {
   private traces: Map<string, ExecutionTrace> = new Map();
   private maxTraces: number;
+  private store: TraceStore | null;
 
-  constructor(maxTraces = 500) {
+  constructor(maxTraces = 500, store?: TraceStore) {
     this.maxTraces = maxTraces;
+    this.store = store ?? null;
+  }
+
+  setStore(store: TraceStore): void {
+    this.store = store;
+  }
+
+  hasStore(): boolean {
+    return this.store !== null;
   }
 
   startRun(
     runId: string,
     agentId: string,
     missionId?: string,
+    traceId?: string,
   ): void {
+    const tid = traceId ?? generateTraceId();
     this.traces.set(runId, {
       runId,
+      traceId: tid,
       agentId,
       missionId,
       startedAt: new Date().toISOString(),
@@ -44,21 +62,25 @@ export class ExecutionTraceRecorder {
 
   recordEvent(
     runId: string,
-    event: Omit<TraceEvent, 'id' | 'runId' | 'timestamp' | 'agentId'>,
+    event: Omit<TraceEvent, 'id' | 'spanId' | 'traceId' | 'runId' | 'timestamp' | 'agentId'>,
   ): TraceEvent {
     const trace = this.traces.get(runId);
     if (!trace) {
+      const tid = generateTraceId();
       return {
-        id: '', runId, agentId: 'unknown',
+        id: '', spanId: '', traceId: tid, runId, agentId: 'unknown',
         timestamp: new Date().toISOString(), durationMs: 0,
         type: event.type ?? 'decision',
         data: event.data ?? {},
+        parentSpanId: event.parentSpanId,
       };
     }
 
     const fullEvent: TraceEvent = {
       ...event,
       id: generateId(),
+      spanId: generateId(),
+      traceId: trace.traceId,
       runId,
       agentId: trace.agentId,
       timestamp: new Date().toISOString(),
@@ -80,6 +102,8 @@ export class ExecutionTraceRecorder {
     if (event.type === 'tool_execution') trace.summary.toolExecutions++;
     if (event.type === 'error') trace.summary.errors++;
 
+    this.store?.append(fullEvent);
+
     if (this.traces.size > this.maxTraces) {
       const oldest = Array.from(this.traces.keys()).sort(
         (a, b) => new Date(this.traces.get(a)!.startedAt).getTime() - new Date(this.traces.get(b)!.startedAt).getTime(),
@@ -99,7 +123,7 @@ export class ExecutionTraceRecorder {
     output: unknown,
     tokenUsage: TokenUsage,
     durationMs: number,
-    parentId?: string,
+    parentSpanId?: string,
   ): TraceEvent {
     return this.recordEvent(runId, {
       type: 'llm_call',
@@ -110,7 +134,7 @@ export class ExecutionTraceRecorder {
         modelInfo: { model, provider, tier },
         tokenUsage,
       },
-      parentId,
+      parentSpanId,
     });
   }
 
@@ -121,13 +145,13 @@ export class ExecutionTraceRecorder {
     output: unknown,
     durationMs: number,
     error?: string,
-    parentId?: string,
+    parentSpanId?: string,
   ): TraceEvent {
     return this.recordEvent(runId, {
       type: 'tool_execution',
       durationMs,
       data: { input, output, error },
-      parentId,
+      parentSpanId,
     });
   }
 
@@ -135,13 +159,13 @@ export class ExecutionTraceRecorder {
     runId: string,
     decision: string,
     durationMs: number,
-    parentId?: string,
+    parentSpanId?: string,
   ): TraceEvent {
     return this.recordEvent(runId, {
       type: 'decision',
       durationMs,
       data: { input: undefined, output: decision },
-      parentId,
+      parentSpanId,
     });
   }
 
@@ -149,13 +173,13 @@ export class ExecutionTraceRecorder {
     runId: string,
     error: string,
     durationMs: number,
-    parentId?: string,
+    parentSpanId?: string,
   ): TraceEvent {
     return this.recordEvent(runId, {
       type: 'error',
       durationMs,
       data: { error },
-      parentId,
+      parentSpanId,
     });
   }
 
@@ -165,6 +189,7 @@ export class ExecutionTraceRecorder {
       throw new Error(`No trace found for run: ${runId}`);
     }
     trace.completedAt = new Date().toISOString();
+    this.store?.flush(runId);
     return trace;
   }
 
@@ -205,13 +230,69 @@ export class ExecutionTraceRecorder {
       totalErrors,
     };
   }
+
+  startSpan(
+    runId: string,
+    name: string,
+    parentSpanId?: string,
+  ): TraceSpan {
+    const trace = this.traces.get(runId);
+    const spanId = generateId();
+    const traceId = trace?.traceId ?? generateTraceId();
+    const agentId = trace?.agentId ?? 'unknown';
+    const startTime = Date.now();
+
+    if (!trace) {
+      this.traces.set(runId, {
+        runId, traceId, agentId, missionId: undefined,
+        startedAt: new Date().toISOString(), events: [], summary: {
+          totalEvents: 0, totalDurationMs: 0, totalTokens: 0,
+          llmCalls: 0, toolExecutions: 0, errors: 0, modelUsed: '',
+        },
+      });
+    }
+
+    return {
+      spanId,
+      traceId,
+      end: (attrs) => {
+        const durationMs = Date.now() - startTime;
+        const event = this.recordEvent(runId, {
+          type: 'state_change',
+          durationMs,
+          data: {
+            input: name,
+            output: attrs?.output,
+            error: attrs?.error,
+          },
+          parentSpanId,
+        });
+        return event;
+      },
+      recordChild: (type, attrs) => {
+        const childDuration = attrs?.durationMs ?? 0;
+        return this.recordEvent(runId, {
+          type,
+          durationMs: childDuration,
+          data: {
+            input: attrs?.input,
+            output: attrs?.output,
+            error: attrs?.error,
+          },
+          parentSpanId: spanId,
+        });
+      },
+    };
+  }
 }
 
 let globalRecorder: ExecutionTraceRecorder | null = null;
 
-export function getTraceRecorder(): ExecutionTraceRecorder {
+export function getTraceRecorder(store?: TraceStore): ExecutionTraceRecorder {
   if (!globalRecorder) {
-    globalRecorder = new ExecutionTraceRecorder();
+    globalRecorder = new ExecutionTraceRecorder(500, store);
+  } else if (store && !globalRecorder.hasStore()) {
+    globalRecorder.setStore(store);
   }
   return globalRecorder;
 }

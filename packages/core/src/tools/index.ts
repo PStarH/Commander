@@ -17,6 +17,7 @@ export { CodeSearchTool } from './codeSearchTool';
 export { ApplyPatchTool } from './patchTool';
 export { CodeRefinerTool } from './codeRefinerTool';
 export { AnswerFormatTool } from './answerFormatTool';
+export { CodeFixerTool } from './codeFixer';
 export { ToolRegistry, TOOL_CATEGORIES } from './toolRegistry';
 
 import type { Tool } from '../runtime/types';
@@ -36,6 +37,7 @@ import { CodeSearchTool } from './codeSearchTool';
 import { ApplyPatchTool } from './patchTool';
 import { CodeRefinerTool } from './codeRefinerTool';
 import { AnswerFormatTool } from './answerFormatTool';
+import { CodeFixerTool } from './codeFixer';
 
 export function createAllTools(options?: { enableMetaTools?: boolean }): Map<string, Tool> {
   const tools = new Map<string, Tool>();
@@ -63,6 +65,7 @@ export function createAllTools(options?: { enableMetaTools?: boolean }): Map<str
     ['apply_patch', new ApplyPatchTool()],
     ['refine_code', new CodeRefinerTool()],
     ['verify_answer', new AnswerFormatTool()],
+    ['fix_code', new CodeFixerTool()],
   ];
   for (const [name, tool] of instances) {
     tools.set(name, tool);

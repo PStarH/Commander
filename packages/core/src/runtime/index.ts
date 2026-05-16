@@ -20,6 +20,7 @@ export type {
   BusMessage,
   MessageHandler,
   TraceEvent,
+  TraceSpan,
   ExecutionTrace,
   HTMLReportSection,
   HTMLReport,
@@ -65,6 +66,30 @@ export {
   planSpeculativeExecution,
   isSpeculativelySafe,
 } from './speculativeExecutor';
+export { UnifiedVerificationPipeline, detectTaskType } from './unifiedVerification';
+export type { VerificationSignal, VerificationReport, UVPTaskContext, UVPConfig, TaskType } from './unifiedVerification';
+export { StateCheckpointer } from './stateCheckpointer';
+export type { CheckpointState } from './stateCheckpointer';
+export { PersistentTraceStore } from './traceStore';
+export type { TraceStore } from './traceStore';
+export { DeadLetterQueue } from './deadLetterQueue';
+export type { DeadLetterEntry, DLQCategory } from './deadLetterQueue';
+export { StepErrorBoundary } from './stepErrorBoundary';
+export type { RecoveryStrategy, ErrorBoundaryConfig, ErrorBoundaryResult } from './stepErrorBoundary';
+export { CompensationRegistry } from './compensationRegistry';
+export type { CompensableAction, CompensationHandler } from './compensationRegistry';
+export { TokenGovernor, getTokenGovernor, resetTokenGovernor } from './tokenGovernor';
+export type { OptimizationStrategy, BudgetState, GovernorDecision, GovernorConfig, TaskCategory } from './tokenGovernor';
+export { ToolResultCache } from './toolResultCache';
+export type { ToolCacheConfig, ToolCacheStats } from './toolResultCache';
+export { ToolOutputManager } from './toolOutputManager';
+export type { ToolOutputConfig, ManagedOutput, TurnBudgetState } from './toolOutputManager';
+export { ToolOrchestrator } from './toolOrchestrator';
+export type { OrchestratorConfig, OrchestratedResult, ToolExecutionPlan, ToolExecutionContext } from './toolOrchestrator';
+export { ToolAvailabilityManager, evaluate, allOf, anyOf, not, always, never, earlySteps, budgetRelaxed, budgetNotCritical, taskType, notYetUsed, requiresTool, maxErrors, createDefaultRules } from './toolAvailability';
+export type { AvailabilityContext, AvailabilityExpression, ToolAvailabilityRule } from './toolAvailability';
+export { ToolPlanner } from './toolPlanner';
+export type { ExecutionPlan, ExecutionStage, DependencyEdge, ResourceConflict } from './toolPlanner';
 export { CommanderHttpServer, createHttpServer } from './httpServer';
 export { BaseChannelAdapter } from './channelAdapter';
 export { TelegramAdapter, createTelegramAdapter } from './adapters/telegramAdapter';

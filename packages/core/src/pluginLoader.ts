@@ -121,10 +121,26 @@ export class PluginLoader {
   }
 
   async installFromNpm(packageName: string, targetDir?: string): Promise<string> {
+    // Validate package name to prevent command injection (GAP-11)
+    // Allows: @scope/name, name, name@version, @scope/name@version
+    const SAFE_PACKAGE_NAME = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*(@[a-z0-9-~.+^]+)?$/;
+    if (!SAFE_PACKAGE_NAME.test(packageName)) {
+      throw new Error(`Invalid package name: "${packageName}". Only alphanumeric, hyphens, dots, and scoped names are allowed.`);
+    }
+
     const installDir = targetDir ?? path.join(process.cwd(), '.commander', 'plugins');
     if (!fs.existsSync(installDir)) fs.mkdirSync(installDir, { recursive: true });
-    const { execSync } = await import('child_process');
-    execSync(`npm install --no-save --prefix "${installDir}" "${packageName}"`, { stdio: 'pipe', timeout: 120000 });
+    const { execFile } = await import('child_process');
+    // Use execFile (not execSync) to avoid shell interpolation. Add --ignore-scripts to block postinstall attacks.
+    await new Promise<void>((resolve, reject) => {
+      execFile('npm', ['install', '--no-save', '--ignore-scripts', '--prefix', installDir, packageName], {
+        timeout: 120000,
+        maxBuffer: 10 * 1024 * 1024,
+      }, (err) => {
+        if (err) reject(new Error(`npm install failed for "${packageName}": ${err.message}`));
+        else resolve();
+      });
+    });
     const nodeModulesDir = path.join(installDir, 'node_modules', packageName);
     const pluginJsonPath = path.join(nodeModulesDir, 'plugin.json');
     if (fs.existsSync(pluginJsonPath)) {

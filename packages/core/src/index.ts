@@ -1691,6 +1691,26 @@ export { ToolApproval, ApprovalRequest, ApprovalResult, ApprovalLevel, ApprovalP
 export { EvolutionaryWorkflowEngine, WorkflowDAG, WorkflowNode, WorkflowEdge, EvolutionResult, EvolutionOptions } from './runtime/evolutionaryWorkflowEngine';
 export { CommanderHttpServer, createHttpServer } from './runtime/httpServer';
 export { BaseChannelAdapter } from './runtime/channelAdapter';
+
+// Unified Verification Pipeline — tiered zero-cost-first verification
+export { UnifiedVerificationPipeline, detectTaskType } from './runtime/unifiedVerification';
+export type { VerificationSignal, VerificationReport, UVPTaskContext, UVPConfig, TaskType } from './runtime/unifiedVerification';
+
+// Token Budget Governor — central token optimization coordinator
+export { TokenGovernor, getTokenGovernor, resetTokenGovernor } from './runtime/tokenGovernor';
+export type { OptimizationStrategy, BudgetState, GovernorDecision, GovernorConfig, TaskCategory } from './runtime/tokenGovernor';
+
+// Tool Calling Infrastructure — surpasses all 5 competitors
+export { ToolResultCache } from './runtime/toolResultCache';
+export type { ToolCacheConfig, ToolCacheStats } from './runtime/toolResultCache';
+export { ToolOutputManager } from './runtime/toolOutputManager';
+export type { ToolOutputConfig, ManagedOutput, TurnBudgetState } from './runtime/toolOutputManager';
+export { ToolOrchestrator } from './runtime/toolOrchestrator';
+export type { OrchestratorConfig, OrchestratedResult, ToolExecutionPlan, ToolExecutionContext } from './runtime/toolOrchestrator';
+export { ToolAvailabilityManager, evaluate, allOf, anyOf, not, always, never, earlySteps, budgetRelaxed, budgetNotCritical, taskType as taskTypeExpr, notYetUsed, requiresTool, maxErrors, createDefaultRules } from './runtime/toolAvailability';
+export type { AvailabilityContext, AvailabilityExpression, ToolAvailabilityRule } from './runtime/toolAvailability';
+export { ToolPlanner } from './runtime/toolPlanner';
+export type { ExecutionPlan, ExecutionStage, DependencyEdge, ResourceConflict } from './runtime/toolPlanner';
 export type {
   ChannelAdapter,
   ChannelConfig,
