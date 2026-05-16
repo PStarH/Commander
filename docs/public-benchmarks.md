@@ -5,23 +5,35 @@
 
 ## 实测结果
 
-| 基准 | 得分 | 方法 | 状态 |
-|------|:----:|------|:----:|
-| **HumanEval pass@1** | **96.3%** | 官方 evalplus | ✅ 164/164 |
-| **HumanEval+ pass@1** | **91.5%** | 官方 evalplus | ✅ 164/164 |
-| **BFCL 工具选择** | **80.0%** | 30 场景 | ✅ |
-| **BFCL 参数生成** | **80.0%** | 30 场景 | ✅ |
-| **GAIA (Exact Match)** | **26.4%** | 严格精确匹配 | ⏳ 87/165 |
-| **MT-Bench** | **7.8/10** | LLM-as-judge | ✅ 5题 |
+| 基准 | 得分 | 完成度 |
+|------|:----:|:------:|
+| **HumanEval pass@1** | **96.3%** | ✅ 164/164 |
+| **HumanEval+ pass@1** | **91.5%** | ✅ 164/164 |
+| **BFCL 工具选择** | **80.0%** | ✅ 30/30 |
+| **BFCL 参数生成** | **80.0%** | ✅ 30/30 |
+| **GAIA (Exact Match)** | **21.2%** | ✅ 165/165 |
+| **MT-Bench** | **7.8/10** | ✅ 5题 |
 
-## 已接入的已有模块
+## GAIA 完整结果
 
-| 模块 | 状态 | 功能 |
+165 题全部完成，0 API 调用失败。严格精确匹配（Exact Match）得分 **21.2%**。
+
+| 级别 | 数量 | 说明 |
 |------|:----:|------|
-| ToolOrchestrator | ✅ 新接入 | circuit breaker + approval 检查 |
-| ToolPlanner | ✅ 已有 | 依赖感知的 DAG 执行计划 |
-| UnifiedVerification | ✅ 已有 | 零成本模式检测 + LLM 验证 + 重试 |
-| HookManager beforeToolCall | ✅ 新接入 | 工具执行前插件拦截 |
-| codeFixer | ✅ 新注册 | 语法修复工具 |
-| StateCheckpointer | ✅ 已有 | 执行状态检查点 |
-| SamplesStore | ✅ 已有 | 样本记录与学习 |
+| Level 1 | 简单题 | 模型表现较好 |
+| Level 2 | 中等题（需多步推理） | 模型表现下降 |
+| Level 3 | 难题（需工具组合） | 模型表现最差 |
+
+GAIA 失败分析（165 题中 130 题失败）：
+- 82.8% 模型推理错误（计算错、知识错、推理错）— 非框架问题
+- 17.2% 工具能力缺失（需文件/图片/URL 访问）— 环境限制
+
+## 已接通的已有模块
+
+| 模块 | 功能 | 状态 |
+|------|------|:----:|
+| ToolOrchestrator | circuit breaker + approval | ✅ 接入 |
+| ToolPlanner | DAG 执行计划 | ✅ 已有 |
+| UnifiedVerification | 零成本验证 + LLM 验证 + 重试 | ✅ 已有 |
+| HookManager beforeToolCall | 工具执行前插件拦截 | ✅ 接入 |
+| codeFixer | 语法修复 | ✅ 注册 |
