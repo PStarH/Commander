@@ -123,7 +123,7 @@ export class MiMoProvider implements LLMProvider {
 
     let content = '';
     let reasoningContent = '';
-    const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
+    let toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
     let currentTool: { id: string; name: string; arguments: string } | null = null;
     let usage: OpenAICompletionUsage | null = null;
     let buffer = '';
@@ -176,6 +176,15 @@ export class MiMoProvider implements LLMProvider {
         }
       : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
+    // MiMo streaming may also return text-format tool calls
+    if ((!toolCalls || toolCalls.length === 0) && content.includes('<tool_call>')) {
+      const parsed = parseMiMoTextToolCalls(content);
+      if (parsed.length > 0) {
+        toolCalls = parsed.map(p => ({ id: p.id, name: p.name, arguments: JSON.stringify(p.arguments) }));
+        content = '';
+      }
+    }
+
     return {
       content,
       model,
@@ -202,14 +211,24 @@ export class MiMoProvider implements LLMProvider {
       totalTokens: data.usage?.total_tokens ?? 0,
     };
 
-    const toolCalls = message.tool_calls?.map((tc: any) => ({
+    let content = message.content ?? '';
+    let toolCalls = message.tool_calls?.map((tc: any) => ({
       id: tc.id,
       name: tc.function.name,
       arguments: JSON.parse(tc.function.arguments || '{}'),
     }));
 
+    // MiMo sometimes returns tool calls as text: <tool_call><function=name><parameter=k>v</parameter></function></tool_call>
+    if ((!toolCalls || toolCalls.length === 0) && content.includes('<tool_call>')) {
+      const parsed = parseMiMoTextToolCalls(content);
+      if (parsed.length > 0) {
+        toolCalls = parsed;
+        content = '';  // tool calls consumed, no text response
+      }
+    }
+
     return {
-      content: message.content ?? '',
+      content,
       model,
       usage: tokenUsage,
       finishReason: choice?.finish_reason ?? 'stop',
@@ -217,4 +236,40 @@ export class MiMoProvider implements LLMProvider {
       reasoning_content: message.reasoning_content,
     };
   }
+}
+
+/**
+ * Parse MiMo's text-format tool calls into structured format.
+ * 
+ * Input:  "<tool_call>\n<function=web_search>\n<parameter=query>AI news</parameter>\n</function>\n</tool_call>"
+ * Output: [{ id: "call_xxx", name: "web_search", arguments: { query: "AI news" } }]
+ */
+function parseMiMoTextToolCalls(content: string): Array<{ id: string; name: string; arguments: Record<string, unknown> }> {
+  const results: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
+  // Split by <tool_call> blocks
+  const blocks = content.split('<tool_call>').slice(1);
+  for (const block of blocks) {
+    const endTag = '</tool_call>';
+    const blockContent = block.includes(endTag) ? block.split(endTag)[0] : block;
+    
+    // Extract function name: <function=name> or <function_name>
+    const funcMatch = blockContent.match(/<function[=_]([^>]+)>/);
+    if (!funcMatch) continue;
+    const name = funcMatch[1].trim();
+    
+    // Extract parameters: <parameter=key>value</parameter>
+    const args: Record<string, unknown> = {};
+    const paramRegex = /<parameter=([^>]+)>([\s\S]*?)<\/parameter>/g;
+    let paramMatch;
+    while ((paramMatch = paramRegex.exec(blockContent)) !== null) {
+      args[paramMatch[1].trim()] = paramMatch[2].trim();
+    }
+    
+    results.push({
+      id: `call_mimo_${Date.now()}_${results.length}`,
+      name,
+      arguments: args,
+    });
+  }
+  return results;
 }
