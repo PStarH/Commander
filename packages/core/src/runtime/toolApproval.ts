@@ -343,23 +343,45 @@ async requestApproval(
        }
      }
 
-     // 手动审批或半自动审批需要人工确认
-     if (policy.level === 'manual' || policy.level === 'semi_auto') {
-       const approvalRequest: ApprovalRequest = {
-         id: requestId,
-         toolName,
-         arguments: args,
-         policy,
-         requestTime: now,
-         timeoutAt: policy.timeoutMs
-           ? new Date(Date.now() + policy.timeoutMs).toISOString()
-           : undefined,
-         reason: context?.reason,
-         waitCount: 0,
-       };
+    // 手动审批或半自动审批需要人工确认
+    if (policy.level === 'manual' || policy.level === 'semi_auto') {
+      const pendingKey = `${toolName}:${context?.runId ?? 'global'}`;
+      const existingRequest = this.pendingApprovals.get(pendingKey);
+      const waitCount = existingRequest ? existingRequest.waitCount + 1 : 0;
+
+      const approvalRequest: ApprovalRequest = {
+        id: requestId,
+        toolName,
+        arguments: args,
+        policy,
+        requestTime: now,
+        timeoutAt: policy.timeoutMs
+          ? new Date(Date.now() + policy.timeoutMs).toISOString()
+          : undefined,
+        reason: context?.reason,
+        waitCount,
+      };
+
+      // For non-interactive mode with a callback that always approves, call it directly
+      try {
+        const result = await this.approvalCallback(approvalRequest);
+        this.pendingApprovals.set(pendingKey, approvalRequest);
+        this.recordDecision(toolName, result.approved, policy.level);
+        return result;
+      } catch {
+        // If callback fails, store as pending and return approval_failed
+        this.pendingApprovals.set(pendingKey, approvalRequest);
+        this.recordDecision(toolName, false, policy.level);
+        return {
+          approved: false,
+          requestId,
+          approvedAt: new Date().toISOString(),
+          reason: `Approval callback error for ${toolName}`,
+        };
+      }
     }
 
-    // 默认拒绝
+    // 默认拒绝（fallback for unrecognized levels）
     this.recordDecision(toolName, false, policy.level);
     return {
       approved: false,

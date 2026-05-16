@@ -11,6 +11,7 @@
  */
 
 import type { LLMProvider } from './types';
+import { HallucinationDetector } from '../hallucinationDetector';
 
 // ============================================================================
 // Types
@@ -186,6 +187,31 @@ function runStage0(ctx: UVPTaskContext, taskType: TaskType): { signals: Verifica
       }
     }
   }
+
+  // --- Advanced hallucination detection via standalone detector (richer signal analysis) ---
+  try {
+    const detector = new HallucinationDetector();
+    const hReport = detector.analyze(ctx.goal, ctx.output);
+    if (hReport.signals.length > 0) {
+      for (const hs of hReport.signals) {
+        const sev = hs.severity === 'high' ? 'high' as const : hs.severity === 'medium' ? 'medium' as const : 'low' as const;
+        signals.push({
+          stage: 0,
+          source: `hallucination_detector:${hs.type}`,
+          severity: sev,
+          message: hs.evidence,
+          snippet: ctx.output.slice(0, 100),
+          suggestion: hs.suggestion,
+        });
+        confidence -= sev === 'high' ? 0.25 : sev === 'medium' ? 0.15 : 0.05;
+      }
+    }
+    if (hReport.recommendation === 'reject') {
+      confidence = Math.min(confidence, 0.15);
+    } else if (hReport.recommendation === 'flag_for_review') {
+      confidence = Math.min(confidence, 0.5);
+    }
+  } catch { /* hallucination detection is best-effort */ }
 
   // --- Tool error detection (context-aware) ---
   if (ctx.toolsUsed && ctx.toolsUsed.length > 0) {

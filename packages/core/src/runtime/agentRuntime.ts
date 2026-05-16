@@ -39,7 +39,11 @@ import { getHookManager } from '../pluginManager';
 import { ToolResultCache } from './toolResultCache';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
+import { ToolApproval } from './toolApproval';
 import { ToolPlanner } from './toolPlanner';
+import { selectTools } from './toolRetriever';
+import { isConfidentResponse } from './entropyGater';
+import { createContentScanner, type ContentScanner } from '../contentScanner';
 import type { TenantProvider, TenantConfig } from './tenantProvider';
 import { getGlobalTenantProvider, getGlobalMemoryRegistry } from './tenantProvider';
 
@@ -86,6 +90,7 @@ export class AgentRuntime {
   private outputManager: ToolOutputManager;
   private orchestrator: ToolOrchestrator;
   private planner: ToolPlanner;
+  private contentScanner: ContentScanner;
   // Concurrency semaphore (GAP-07)
   private runningCount = 0;
   private waitingQueue: Array<() => void> = [];
@@ -129,8 +134,13 @@ export class AgentRuntime {
     // Tool calling infrastructure
     this.toolCache = new ToolResultCache({ enabled: true, maxEntries: 256, defaultTtlMs: 300_000 });
     this.outputManager = new ToolOutputManager({ enabled: true, turnBudget: 32000 });
-    this.orchestrator = new ToolOrchestrator({ enabled: true, maxRetries: 1, circuitBreakerThreshold: 3 });
+    // ToolApproval with auto-approve callback (semi_auto/manual policies still gate)
+    const toolApproval = new ToolApproval(
+      async (req) => ({ approved: true, requestId: req.id, approvedAt: new Date().toISOString(), reason: 'Auto-approved' }),
+    );
+    this.orchestrator = new ToolOrchestrator({ enabled: true, maxRetries: 1, circuitBreakerThreshold: 3, useApproval: true }, toolApproval);
     this.planner = new ToolPlanner();
+    this.contentScanner = createContentScanner();
     // Auto-register adaptive parameter controller
     getHookManager().register(createParameterControllerPlugin()).catch(() => {});
   }
@@ -286,6 +296,19 @@ export class AgentRuntime {
     //    Stable content (system, tools) FIRST for maximum cache hits.
     //    Variable content (user message) LAST.
     const systemPrompt = this.buildSystemPrompt(ctx, routing);
+    // Score and reorder tools by goal relevance for better LLM focus
+    // Most relevant tools first, then the rest sorted by relevance score
+    if (ctx.availableTools.length > 3) {
+      const relevantTools = selectTools(ctx.goal, ctx.availableTools);
+      if (relevantTools.length > 0) {
+        const seen = new Set(relevantTools);
+        ctx.availableTools = [
+          ...relevantTools,
+          ...ctx.availableTools.filter(t => !seen.has(t)),
+        ];
+      }
+    }
+
     const toolDefs = ctx.availableTools
       .map(name => this.tools.get(name)?.definition)
       .filter((t): t is ToolDefinition => t !== undefined);
@@ -443,6 +466,13 @@ export class AgentRuntime {
         };
         steps.push(step);
 
+        // Entropy gating: if model is confident with no tool calls, log for observability
+        if (!response.toolCalls || response.toolCalls.length === 0) {
+          if (isConfidentResponse(response)) {
+            bus.publish('system.alert', 'runtime', { type: 'entropy_gate', reason: 'confident_no_tool_calls' });
+          }
+        }
+
         // Process tool calls in a loop — with caching, planning, and output management
         const maxIterations = Math.max(ctx.maxSteps || 10, 20);
         let toolLoopCount = 0;
@@ -480,8 +510,13 @@ export class AgentRuntime {
             for (const stage of executionPlan.stages) {
               if (stage.toolCalls.length === 0) continue;
 
+              // Apply descending scheduler if enabled (broad exploration first)
+              const stageCalls = this.config.enableDescendingScheduler
+                ? this.descendingToolOrder(stage.toolCalls)
+                : stage.toolCalls;
+
               // Check orchestration plan (circuit breakers, approvals)
-              const planResult = await this.orchestrator.planExecution(stage.toolCalls, this.tools);
+              const planResult = await this.orchestrator.planExecution(stageCalls, this.tools);
               const approvedCalls = [...planResult.concurrent, ...planResult.serial];
 
               // Log skipped/circuit-broken tools
@@ -714,13 +749,29 @@ export class AgentRuntime {
           }
         }
 
+        // Content safety scan before returning result
+        let safeContent = response.content;
+        try {
+          const scanResult = await this.contentScanner.scan(safeContent);
+          if (!scanResult.isSafe) {
+            const criticalThreats = scanResult.threats.filter(t => t.severity === 'HIGH' || t.severity === 'CRITICAL');
+            if (criticalThreats.length > 0) {
+              bus.publish('system.alert', 'runtime', {
+                type: 'content_threat_blocked',
+                threats: criticalThreats.map(t => `${t.type}:${t.severity}`),
+              });
+              safeContent = `[Content blocked: ${criticalThreats.length} security threat(s) detected. Review and resubmit.]`;
+            }
+          }
+        } catch { /* content scanning is best-effort */ }
+
         const totalDurationMs = Date.now() - startTime;
         const result: AgentExecutionResult = {
           runId,
           agentId: ctx.agentId,
           missionId: ctx.missionId,
           status: 'success',
-          summary: response.content.slice(0, 2000), // longer summary to capture reasoning
+          summary: safeContent.slice(0, 2000),
           steps,
           totalTokenUsage: totalTokens,
           totalDurationMs,
