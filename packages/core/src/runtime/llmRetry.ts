@@ -26,8 +26,11 @@ export function classifyLLMError(err: unknown): ClassifiedError {
   if (statusCode === 529) return { retryable: true, errorClass: 'transient', message: 'API overloaded', statusCode: 529 };
   if (statusCode && statusCode >= 500) return { retryable: true, errorClass: 'transient', message: truncate(msg, 200), statusCode };
 
-  // Network/timeout errors: transient
-  if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('econnrefused') || msg.includes('econnreset') || msg.includes('enotfound') || msg.includes('connection refused') || msg.includes('network') || msg.includes('fetch failed') || msg.includes('abort')) {
+  // HTTP 408 Request Timeout — always retryable (GAP-26)
+  if (statusCode === 408) return { retryable: true, errorClass: 'transient', message: truncate(msg, 200), statusCode: 408 };
+
+  // Network/timeout errors: transient (GAP-26: added ECONNABORTED, ESOCKETTIMEDOUT)
+  if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('econnrefused') || msg.includes('econnreset') || msg.includes('enotfound') || msg.includes('connection refused') || msg.includes('network') || msg.includes('fetch failed') || msg.includes('abort') || msg.includes('econnaborted') || msg.includes('esockettimedout')) {
     return { retryable: true, errorClass: 'transient', message: truncate(msg, 200) };
   }
 

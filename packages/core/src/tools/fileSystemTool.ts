@@ -9,7 +9,28 @@ function safePath(target: string): string {
   if (!resolved.startsWith(SAFE_ROOT)) {
     throw new Error(`Access denied: path "${target}" is outside workspace`);
   }
-  return resolved;
+  // GAP-15: Resolve symlinks to prevent traversal bypass.
+  // If the resolved realpath escapes SAFE_ROOT, deny access.
+  try {
+    const real = fs.realpathSync(resolved);
+    if (!real.startsWith(SAFE_ROOT)) {
+      throw new Error(`Access denied: symlink "${target}" points outside workspace`);
+    }
+    return real;
+  } catch (err: any) {
+    // If file doesn't exist yet (write), check the parent directory
+    if (err.code === 'ENOENT') {
+      const parentDir = path.dirname(resolved);
+      try {
+        const realParent = fs.realpathSync(parentDir);
+        if (!realParent.startsWith(SAFE_ROOT)) {
+          throw new Error(`Access denied: parent directory of "${target}" is outside workspace`);
+        }
+      } catch { /* parent may not exist either — allow the write to fail naturally */ }
+      return resolved;
+    }
+    throw err;
+  }
 }
 
 export class FileReadTool implements Tool {

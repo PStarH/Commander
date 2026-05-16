@@ -81,11 +81,23 @@ export class ReflectionEngine {
   private readonly MIN_QUALITY_THRESHOLD = 0.5;
   private readonly PATTERN_SIMILARITY_THRESHOLD = 0.8;
   private readonly MAX_PATTERNS = 50;
+  // GAP-19: Bound session and history growth
+  private readonly MAX_SESSIONS = 500;
+  private readonly MAX_HISTORY = 2000;
 
   /**
    * 开始反思会话
    */
   startSession(taskId: string): string {
+    // GAP-19: Evict oldest sessions when over limit
+    if (this.sessions.size >= this.MAX_SESSIONS) {
+      const sorted = Array.from(this.sessions.entries())
+        .sort((a, b) => a[1].createdAt.localeCompare(b[1].createdAt));
+      const toEvict = Math.max(1, Math.floor(this.MAX_SESSIONS * 0.1));
+      for (let i = 0; i < toEvict && i < sorted.length; i++) {
+        this.sessions.delete(sorted[i][0]);
+      }
+    }
     const session: ReflectionSession = {
       id: generateUUID(),
       taskId,
@@ -135,6 +147,10 @@ export class ReflectionEngine {
       this.updateSessionQuality(session);
     }
 
+    // GAP-19: Trim history when over limit
+    if (this.reflectionHistory.length >= this.MAX_HISTORY) {
+      this.reflectionHistory = this.reflectionHistory.slice(-Math.floor(this.MAX_HISTORY * 0.8));
+    }
     this.reflectionHistory.push(reflection);
     this.detectPatterns(reflection);
 

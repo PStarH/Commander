@@ -86,6 +86,8 @@ export class SequentialPipelineExecutor {
     checkpointCallback: (run: SequentialPipelineRun) => Promise<void>;
   };
   private agentExecutor: AgentExecutor;
+  // GAP-25: Track active abort controllers per execution for proper cancellation
+  private activeAbortControllers: Map<string, AbortController> = new Map();
 
   constructor(
     agentExecutor: AgentExecutor,
@@ -110,6 +112,8 @@ export class SequentialPipelineExecutor {
   ): Promise<SequentialPipelineRun> {
     const runId = `${pipeline.id}-run-${Date.now()}`;
     const abortController = new AbortController();
+    // GAP-25: Register abort controller so cancel() can abort in-flight steps
+    this.activeAbortControllers.set(runId, abortController);
 
     // Initialize context (matching sequential.ts SequentialContext)
     const context: SequentialContext = {
@@ -239,6 +243,9 @@ export class SequentialPipelineExecutor {
       });
 
       return run;
+    } finally {
+      // GAP-25: Always clean up the abort controller
+      this.activeAbortControllers.delete(runId);
     }
   }
 
@@ -394,12 +401,16 @@ export class SequentialPipelineExecutor {
 
   /**
    * Cancel a running pipeline.
+   * GAP-25: Now actually aborts the in-flight step via AbortController.
    */
   cancel(run: SequentialPipelineRun): void {
     if (run.status === 'RUNNING') {
       run.status = 'CANCELLED';
       run.completedAt = new Date().toISOString();
       run.error = 'Cancelled by user';
+      // Abort any in-flight step execution
+      this.activeAbortControllers.get(run.executionId)?.abort();
+      this.activeAbortControllers.delete(run.executionId);
     }
   }
 }

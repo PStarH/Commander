@@ -36,9 +36,12 @@ export interface CheckpointState {
 
 export class StateCheckpointer {
   private baseDir: string;
+  private tenantId?: string;
 
-  constructor(baseDir?: string) {
-    this.baseDir = baseDir ?? path.join(process.cwd(), '.commander_state');
+  constructor(baseDir?: string, tenantId?: string) {
+    this.tenantId = tenantId;
+    const base = baseDir ?? path.join(process.cwd(), '.commander_state');
+    this.baseDir = tenantId ? path.join(base, `tenant_${tenantId}`) : base;
     fs.mkdirSync(path.join(this.baseDir, 'completed'), { recursive: true });
   }
 

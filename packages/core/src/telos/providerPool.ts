@@ -30,10 +30,17 @@ export class ProviderPool {
   private consecutiveFailures: Map<string, number> = new Map();
   private maxRetries: number;
   private retryDelayMs: number;
+  // GAP-27: Automatic recovery timer for 'down' providers
+  private recoveryTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly RECOVERY_CHECK_INTERVAL_MS = 60_000; // Check every 60s
+  private readonly RECOVERY_AFTER_FAILURES_MS = 120_000; // Try recovery after 2 min of being down
 
   constructor(maxRetries = 2, retryDelayMs = 2000) {
     this.maxRetries = maxRetries;
     this.retryDelayMs = retryDelayMs;
+    // GAP-27: Start periodic recovery check
+    this.recoveryTimer = setInterval(() => this.checkRecovery(), this.RECOVERY_CHECK_INTERVAL_MS);
+    if (this.recoveryTimer.unref) this.recoveryTimer.unref();
   }
 
   /**
@@ -243,6 +250,30 @@ export class ProviderPool {
 
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // GAP-27: Periodically attempt recovery of 'down' providers
+  private checkRecovery(): void {
+    const now = Date.now();
+    for (const [key, health] of this.healthCache) {
+      if (health.status === 'down') {
+        const lastCheck = new Date(health.lastCheck).getTime();
+        if (now - lastCheck > this.RECOVERY_AFTER_FAILURES_MS) {
+          // Reset to 'degraded' so it gets one more chance
+          health.status = 'degraded';
+          this.healthCache.set(key, health);
+          this.consecutiveFailures.set(key, 0);
+        }
+      }
+    }
+  }
+
+  /** Stop the recovery timer. Call when shutting down. */
+  dispose(): void {
+    if (this.recoveryTimer) {
+      clearInterval(this.recoveryTimer);
+      this.recoveryTimer = null;
+    }
   }
 }
 

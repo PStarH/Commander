@@ -17,13 +17,16 @@ import { extractCode, extractTaskId, isValidSolution } from './codeExtractor';
  */
 export class SamplesStore {
   private baseDir: string;
-  private llmStream: fs.WriteStream | null = null;
-  private verifStream: fs.WriteStream | null = null;
+  private tenantId?: string;
   private writeQueue: Array<() => Promise<void>> = [];
   private flushing = false;
+  private readonly MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
+  private readonly MAX_ROTATED_FILES = 3;
 
-  constructor(baseDir?: string) {
-    this.baseDir = baseDir ?? path.join(process.cwd(), '.commander_samples');
+  constructor(baseDir?: string, tenantId?: string) {
+    this.tenantId = tenantId;
+    const base = baseDir ?? path.join(process.cwd(), '.commander_samples');
+    this.baseDir = tenantId ? path.join(base, `tenant_${tenantId}`) : base;
     this.ensureDir();
   }
 
@@ -119,8 +122,6 @@ export class SamplesStore {
       if (task) await task();
     }
     this.flushing = false;
-    if (this.llmStream) { this.llmStream.end(); this.llmStream = null; }
-    if (this.verifStream) { this.verifStream.end(); this.verifStream = null; }
   }
 
   /** Get total record count for llm_calls (approximate). */
@@ -228,11 +229,43 @@ export class SamplesStore {
     }
   }
 
-  /** Append a JSON line to a given file (creates stream on first use). */
+  /** Append a JSON line to a given file with rotation. */
   private async appendLine(fileName: string, data: unknown): Promise<void> {
     const filePath = path.join(this.baseDir, fileName);
+    // GAP-21: Rotate file if it exceeds max size
+    try {
+      if (fs.existsSync(filePath)) {
+        const stat = fs.statSync(filePath);
+        if (stat.size >= this.MAX_FILE_BYTES) {
+          this.rotateFile(fileName);
+        }
+      }
+    } catch { /* proceed with append */ }
     const line = JSON.stringify(data) + '\n';
     fs.appendFileSync(filePath, line, 'utf-8');
+  }
+
+  // GAP-21: Rotate NDJSON files — shift .1, .2, .3, delete oldest
+  private rotateFile(fileName: string): void {
+    const dir = this.baseDir;
+    const base = path.join(dir, fileName);
+    // Delete oldest rotation
+    const oldest = `${base}.${this.MAX_ROTATED_FILES}`;
+    if (fs.existsSync(oldest)) {
+      try { fs.unlinkSync(oldest); } catch { /* ok */ }
+    }
+    // Shift existing rotations: .2 → .3, .1 → .2
+    for (let i = this.MAX_ROTATED_FILES - 1; i >= 1; i--) {
+      const from = `${base}.${i}`;
+      const to = `${base}.${i + 1}`;
+      if (fs.existsSync(from)) {
+        try { fs.renameSync(from, to); } catch { /* ok */ }
+      }
+    }
+    // Current → .1
+    if (fs.existsSync(base)) {
+      try { fs.renameSync(base, `${base}.1`); } catch { /* ok */ }
+    }
   }
 
   /** Read all non-empty lines from a file in the samples directory. */

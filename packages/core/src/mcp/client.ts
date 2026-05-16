@@ -40,9 +40,12 @@ export class StdioClientTransport implements MCPTransport {
 
   async start(): Promise<void> {
     const { spawn } = await import('child_process');
+    // GAP-16: Filter environment to avoid leaking secrets to MCP subprocess.
+    // Only pass safe variables + explicitly configured env vars.
+    const safeEnv = this.filterEnvironment();
     this.process = spawn(this.config.command!, this.config.args ?? [], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...this.config.env },
+      env: { ...safeEnv, ...this.config.env },
     });
 
     this.process.stdout.on('data', (data: Buffer) => {
@@ -87,6 +90,24 @@ export class StdioClientTransport implements MCPTransport {
   async close(): Promise<void> {
     this.process?.kill();
     this.process = null;
+  }
+
+  /**
+   * GAP-16: Filter environment variables to avoid leaking secrets.
+   * Only passes safe system variables. Secrets (API_KEY, TOKEN, SECRET, etc.) are excluded.
+   */
+  private filterEnvironment(): Record<string, string> {
+    const safeVars = ['PATH', 'HOME', 'USER', 'SHELL', 'TERM', 'LANG', 'LC_ALL', 'TMPDIR', 'NODE_PATH', 'PYTHONPATH'];
+    const denyPatterns = ['KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL', 'AUTH', 'PRIVATE'];
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v === undefined) continue;
+      if (safeVars.includes(k)) { env[k] = v; continue; }
+      const upper = k.toUpperCase();
+      if (denyPatterns.some(p => upper.includes(p))) continue;
+      env[k] = v;
+    }
+    return env;
   }
 }
 

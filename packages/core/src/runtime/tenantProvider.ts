@@ -1,0 +1,148 @@
+/**
+ * TenantProvider — Multi-tenant isolation for Commander.
+ *
+ * Defines the contract for tenant identification, configuration, and
+ * resource quota enforcement. Two built-in implementations:
+ *  - NullTenantProvider: single-tenant mode, no isolation (default)
+ *  - SimpleTenantProvider: static config map for multi-tenant deployments
+ */
+import { ThreeLayerMemory, getGlobalThreeLayerMemory } from '../threeLayerMemory';
+
+// ============================================================================
+// Types
+// ============================================================================
+
+export interface TenantConfig {
+  tenantId: string;
+  /** Max tokens per run. 0 = inherit runtime default. */
+  tokenBudget: number;
+  /** Max concurrent runs for this tenant. 0 = inherit runtime default. */
+  maxConcurrency: number;
+  /** Max runs per minute (rate limit). 0 = unlimited. */
+  maxRunsPerMinute: number;
+  /** Enables quota enforcement for this tenant. */
+  enabled: boolean;
+  /** Optional workspace root for file operations (chroot-like). */
+  workspacePath?: string;
+  /** Optional override for storage base directory. */
+  storagePath?: string;
+  /** Arbitrary metadata (labels, tags, billing code). */
+  metadata?: Record<string, string>;
+}
+
+// ============================================================================
+// TenantProvider Interface
+// ============================================================================
+
+export interface TenantProvider {
+  /** Look up tenant config by tenant ID. Returns undefined if unknown. */
+  getTenantConfig(tenantId: string): TenantConfig | undefined;
+  /** List all known tenant IDs. */
+  getKnownTenants(): string[];
+}
+
+// ============================================================================
+// NullTenantProvider — single-tenant mode, no isolation
+// ============================================================================
+
+export class NullTenantProvider implements TenantProvider {
+  getTenantConfig(_tenantId: string): TenantConfig | undefined {
+    return undefined;
+  }
+  getKnownTenants(): string[] {
+    return [];
+  }
+}
+
+// ============================================================================
+// SimpleTenantProvider — static config map
+// ============================================================================
+
+export class SimpleTenantProvider implements TenantProvider {
+  private tenants: Map<string, TenantConfig>;
+
+  constructor(tenants: TenantConfig[] = []) {
+    this.tenants = new Map(tenants.map(t => [t.tenantId, t]));
+  }
+
+  getTenantConfig(tenantId: string): TenantConfig | undefined {
+    return this.tenants.get(tenantId);
+  }
+
+  getKnownTenants(): string[] {
+    return Array.from(this.tenants.keys());
+  }
+
+  addTenant(config: TenantConfig): void {
+    this.tenants.set(config.tenantId, config);
+  }
+
+  removeTenant(tenantId: string): void {
+    this.tenants.delete(tenantId);
+  }
+}
+
+// ============================================================================
+// ThreeLayerMemory Registry — per-tenant memory isolation
+// ============================================================================
+
+export class ThreeLayerMemoryRegistry {
+  private instances: Map<string, ThreeLayerMemory> = new Map();
+  private defaultInstance: ThreeLayerMemory | null = null;
+
+  /** Get or create a memory instance for a tenant. */
+  getOrCreate(tenantId?: string): ThreeLayerMemory {
+    if (!tenantId) {
+      if (!this.defaultInstance) {
+        this.defaultInstance = getGlobalThreeLayerMemory();
+      }
+      return this.defaultInstance;
+    }
+    let mem = this.instances.get(tenantId);
+    if (!mem) {
+      mem = new ThreeLayerMemory();
+      this.instances.set(tenantId, mem);
+    }
+    return mem;
+  }
+
+  /** Remove a tenant's memory instance (free memory). */
+  remove(tenantId: string): void {
+    this.instances.delete(tenantId);
+  }
+
+  /** Get count of tenant-specific instances (excludes default). */
+  getTenantCount(): number {
+    return this.instances.size;
+  }
+}
+
+// ============================================================================
+// Global singleton
+// ============================================================================
+
+let globalTenantProvider: TenantProvider = new NullTenantProvider();
+let globalMemoryRegistry: ThreeLayerMemoryRegistry | null = null;
+
+export function getGlobalTenantProvider(): TenantProvider {
+  return globalTenantProvider;
+}
+
+export function setGlobalTenantProvider(provider: TenantProvider): void {
+  globalTenantProvider = provider;
+}
+
+export function resetGlobalTenantProvider(): void {
+  globalTenantProvider = new NullTenantProvider();
+}
+
+export function getGlobalMemoryRegistry(): ThreeLayerMemoryRegistry {
+  if (!globalMemoryRegistry) {
+    globalMemoryRegistry = new ThreeLayerMemoryRegistry();
+  }
+  return globalMemoryRegistry;
+}
+
+export function resetGlobalMemoryRegistry(): void {
+  globalMemoryRegistry = null;
+}

@@ -141,6 +141,21 @@ export class DefaultContentScanner implements ContentScanner {
     /DAN\s*:/gi, // "Do Anything Now" 攻击
     /developer\s+mode/gi,
     /sudo\s+mode/gi,
+    // GAP-14: Multi-language prompt injection patterns
+    /忽略(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi,          // Chinese: ignore previous instructions
+    /无视(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi,          // Chinese: disregard instructions
+    /你现在(是|变成|扮演)/gi,                                    // Chinese: you are now
+    /忘记(之前|所有|上面)(的)?(规则|指令|提示)/gi,               // Chinese: forget rules
+    /新(的)?指令\s*[:：]/gi,                                     // Chinese: new instruction
+    /忽略(前|以前)(所有)?(指令|命令|提示)/gi,                    // Chinese variant
+    /игнорируй\s+(все\s+)?предыдущие\s+(инструкции|команды)/gi,  // Russian: ignore previous
+    /забудь\s+(все\s+)?(правила|инструкции)/gi,                  // Russian: forget rules
+    /ты\s+теперь\s+/gi,                                          // Russian: you are now
+    /تجاهل\s+(جميع\s+)?(التعليمات|الأوامر)\s+(السابقة|الpreceding)/gi, // Arabic: ignore previous
+    /انسَ\s+(جميع\s+)?(القواعد|التعليمات)/gi,                  // Arabic: forget rules
+    /以前の(指示|命令|ルール)を(無視|忘れて)/gi,                   // Japanese: ignore previous
+    /あなたは今/gi,                                               // Japanese: you are now
+    /이전\s+(지시|명령|규칙)\s+(무시|잊어)/gi,                    // Korean: ignore previous
   ];
   
   // 隐藏 Unicode 字符

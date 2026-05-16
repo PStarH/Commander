@@ -13,6 +13,7 @@
 
 import type { ToolCall, ToolResult, Tool } from './types';
 import type { ToolApproval, ApprovalResult } from './toolApproval';
+import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
 
 // ============================================================================
 // Configuration
@@ -86,27 +87,18 @@ export interface OrchestratedResult {
 }
 
 // ============================================================================
-// Circuit Breaker State (per tool)
-// ============================================================================
-
-interface CircuitState {
-  failures: number;
-  lastFailureAt: number;
-  isOpen: boolean;
-}
-
-// ============================================================================
 // Tool Orchestrator
 // ============================================================================
 
 export class ToolOrchestrator {
   private config: OrchestratorConfig;
   private approval?: ToolApproval;
-  private circuits: Map<string, CircuitState> = new Map();
+  private breakerRegistry: CircuitBreakerRegistry;
 
   constructor(config?: Partial<OrchestratorConfig>, approval?: ToolApproval) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.approval = approval;
+    this.breakerRegistry = new CircuitBreakerRegistry();
   }
 
   /**
@@ -341,68 +333,39 @@ export class ToolOrchestrator {
   }
 
   // ============================================================================
-  // Circuit Breaker
+  // Circuit Breaker (delegates to CircuitBreakerRegistry)
   // ============================================================================
 
   private isCircuitOpen(toolName: string): boolean {
-    const state = this.circuits.get(toolName);
-    if (!state || !state.isOpen) return false;
-
-    // Check cooldown
-    if (Date.now() - state.lastFailureAt > this.config.circuitBreakerCooldownMs) {
-      state.isOpen = false;
-      state.failures = 0;
-      return false;
-    }
-
-    return true;
+    this.breakerRegistry.register(toolName, {
+      threshold: this.config.circuitBreakerThreshold,
+      recoveryTimeMs: this.config.circuitBreakerCooldownMs,
+    });
+    return !this.breakerRegistry.isAvailable(toolName);
   }
 
   private recordSuccess(toolName: string): void {
-    const state = this.circuits.get(toolName);
-    if (state) {
-      state.failures = 0;
-      state.isOpen = false;
-    }
+    this.breakerRegistry.onSuccess(toolName);
   }
 
   private recordFailure(toolName: string): void {
-    let state = this.circuits.get(toolName);
-    if (!state) {
-      state = { failures: 0, lastFailureAt: 0, isOpen: false };
-      this.circuits.set(toolName, state);
-    }
-
-    state.failures++;
-    state.lastFailureAt = Date.now();
-
-    if (state.failures >= this.config.circuitBreakerThreshold) {
-      state.isOpen = true;
-    }
+    this.breakerRegistry.onFailure(toolName);
   }
 
-  /**
-   * Get circuit breaker state for a tool.
-   */
   getCircuitState(toolName: string): { isOpen: boolean; failures: number } {
-    const state = this.circuits.get(toolName);
-    return {
-      isOpen: state?.isOpen ?? false,
-      failures: state?.failures ?? 0,
-    };
+    const stats = this.breakerRegistry.getStats(toolName);
+    return { isOpen: stats.state === 'OPEN', failures: stats.failureCount };
   }
 
-  /**
-   * Manually reset a tool's circuit breaker.
-   */
   resetCircuit(toolName: string): void {
-    this.circuits.delete(toolName);
+    this.breakerRegistry.reset(toolName);
   }
 
-  /**
-   * Reset all circuit breakers.
-   */
   resetAllCircuits(): void {
-    this.circuits.clear();
+    this.breakerRegistry.resetAll();
+  }
+
+  getBreakerRegistry(): CircuitBreakerRegistry {
+    return this.breakerRegistry;
   }
 }

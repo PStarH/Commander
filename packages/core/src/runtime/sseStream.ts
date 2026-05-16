@@ -31,6 +31,9 @@ export class SSEStream {
   private unsubscribers: Array<() => void> = [];
   private closed = false;
   private seqCounter = 0;
+  // GAP-28: Heartbeat to keep SSE connections alive through proxies
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly HEARTBEAT_INTERVAL_MS = 30_000; // 30 seconds
 
   constructor(topics?: MessageBusTopic[]) {
     const bus = getMessageBus();
@@ -59,6 +62,14 @@ export class SSEStream {
       });
       this.unsubscribers.push(unsub);
     }
+
+    // GAP-28: Start heartbeat to prevent proxy/load-balancer timeouts
+    this.heartbeatTimer = setInterval(() => {
+      if (!this.closed) {
+        this.dispatch(': heartbeat\n\n');
+      }
+    }, this.HEARTBEAT_INTERVAL_MS);
+    if (this.heartbeatTimer.unref) this.heartbeatTimer.unref();
   }
 
   emitStructured(eventType: StructuredSSEEventType, data: Record<string, unknown>): void {
@@ -124,6 +135,11 @@ export class SSEStream {
 
   close(): void {
     this.closed = true;
+    // GAP-28: Stop heartbeat timer on close
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
     for (const unsub of this.unsubscribers) {
       try { unsub(); } catch { /* ignore */ }
     }

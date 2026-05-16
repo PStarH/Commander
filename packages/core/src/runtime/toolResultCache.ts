@@ -90,18 +90,25 @@ export class ToolResultCache {
   private cache: Map<string, CacheEntry> = new Map();
   private config: ToolCacheConfig;
   private stats = { hits: 0, misses: 0, evictions: 0 };
+  private pruneTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(config?: Partial<ToolCacheConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    // GAP-22: Auto-prune expired entries every 60s
+    if (this.config.enabled) {
+      this.pruneTimer = setInterval(() => this.prune(), 60_000);
+      if (this.pruneTimer.unref) this.pruneTimer.unref();
+    }
   }
 
   /**
    * Generate a deterministic cache key from tool name and arguments.
    * Sorts object keys recursively for canonical form.
+   * When tenantId is provided, it's prepended to isolate caches per tenant.
    */
-  static computeKey(toolName: string, args: Record<string, unknown>): string {
+  static computeKey(toolName: string, args: Record<string, unknown>, tenantId?: string): string {
     const canonical = JSON.stringify(args, ToolResultCache.sortReplacer);
-    const payload = `${toolName}:${canonical}`;
+    const payload = tenantId ? `${tenantId}:${toolName}:${canonical}` : `${toolName}:${canonical}`;
     return createHash('sha256').update(payload).digest('hex');
   }
 
@@ -118,12 +125,13 @@ export class ToolResultCache {
 
   /**
    * Check if a tool call result is in cache and still valid.
+   * When tenantId is provided, cache lookup is scoped to that tenant.
    */
-  get(toolCall: ToolCall): ToolResult | undefined {
+  get(toolCall: ToolCall, tenantId?: string): ToolResult | undefined {
     if (!this.config.enabled) return undefined;
     if (this.isNeverCache(toolCall.name)) return undefined;
 
-    const key = ToolResultCache.computeKey(toolCall.name, toolCall.arguments);
+    const key = ToolResultCache.computeKey(toolCall.name, toolCall.arguments, tenantId);
     const entry = this.cache.get(key);
 
     if (!entry) {
@@ -153,13 +161,14 @@ export class ToolResultCache {
   /**
    * Store a tool result in cache.
    * Only caches if: enabled, tool is cacheable, result has no error.
+   * When tenantId is provided, cache is scoped to that tenant.
    */
-  set(toolCall: ToolCall, result: ToolResult): void {
+  set(toolCall: ToolCall, result: ToolResult, tenantId?: string): void {
     if (!this.config.enabled) return;
     if (this.isNeverCache(toolCall.name)) return;
-    if (result.error) return; // Don't cache errors
+    if (result.error) return;
 
-    const key = ToolResultCache.computeKey(toolCall.name, toolCall.arguments);
+    const key = ToolResultCache.computeKey(toolCall.name, toolCall.arguments, tenantId);
     const ttlMs = this.config.toolTtls[toolCall.name] ?? this.config.defaultTtlMs;
 
     // LRU eviction if at capacity
@@ -217,6 +226,14 @@ export class ToolResultCache {
    */
   clear(): void {
     this.cache.clear();
+  }
+
+  /** Stop the auto-prune timer. Call when shutting down. */
+  dispose(): void {
+    if (this.pruneTimer) {
+      clearInterval(this.pruneTimer);
+      this.pruneTimer = null;
+    }
   }
 
   /**

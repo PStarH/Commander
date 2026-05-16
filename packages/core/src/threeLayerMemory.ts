@@ -302,6 +302,8 @@ export class ThreeLayerMemory {
     if (idx > -1) {
       this.accessOrder.splice(idx, 1);
     }
+    // GAP-18: Also clean up the embedding store to prevent orphaned entries
+    this.embedStore.delete(id);
     return true;
   }
 

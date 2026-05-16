@@ -101,7 +101,7 @@ export class PluginLoader {
 
     const pkg: PluginPackage = { manifest, directory: resolvedDir, instance: pluginInstance };
     this.loaded.set(manifest.name, pkg);
-    getHookManager().register(pluginInstance);
+    await getHookManager().register(pluginInstance);
 
     console.debug(`[plugins] Loaded: ${manifest.name}@${manifest.version}`);
     return pkg;
@@ -166,7 +166,7 @@ export class PluginLoader {
   async unloadPlugin(name: string): Promise<boolean> {
     const pkg = this.loaded.get(name);
     if (!pkg) return false;
-    getHookManager().unregister(name);
+    await getHookManager().unregister(name);
     this.loaded.delete(name);
     return true;
   }

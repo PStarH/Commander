@@ -12,6 +12,10 @@ export interface HttpServerConfig {
   apiKey?: string;
   /** Max requests per minute per IP. 0 = no limit. Default: 120 */
   rateLimitPerMinute: number;
+  /** Optional mapping of API key → tenant ID for multi-tenant deployments.
+   *  Keys are stored as-is (not hashed — use secure keys). When set, tenantId
+   *  is derived from the Authorization header instead of trusting request body. */
+  tenantApiKeys?: Record<string, string>;
 }
 
 const DEFAULT_CONFIG: HttpServerConfig = {
@@ -87,6 +91,44 @@ export class CommanderHttpServer {
       res.end();
       return;
     }
+    const url = req.url ?? '/';
+    const [pathPart, queryStr] = url.split('?');
+    const segments = pathPart.split('/').filter(Boolean);
+
+    // GAP-31: Health endpoint bypasses auth and rate limiting
+    if (segments[0] === 'health' && (req.method ?? 'GET') === 'GET') {
+      sendJson(res, 200, {
+        status: 'ok',
+        uptime: process.uptime(),
+        activeSessions: this.runtimes.size,
+        busTopics: this.bus.getActiveTopics().length,
+        timestamp: new Date().toISOString(),
+      });
+      return;
+    }
+
+    // GAP-33: Metrics endpoint for monitoring
+    if (segments[0] === 'metrics' && (req.method ?? 'GET') === 'GET') {
+      const mem = process.memoryUsage();
+      sendJson(res, 200, {
+        uptime: process.uptime(),
+        activeSessions: this.runtimes.size,
+        busTopics: this.bus.getActiveTopics(),
+        subscriberCounts: this.bus.getAllSubscriberCounts(),
+        rateLimitEntries: this.rateLimitMap.size,
+        memory: {
+          rss: mem.rss,
+          heapUsed: mem.heapUsed,
+          heapTotal: mem.heapTotal,
+          external: mem.external,
+        },
+        pid: process.pid,
+        nodeVersion: process.version,
+        timestamp: new Date().toISOString(),
+      });
+      return;
+    }
+
     if (!authenticate(req, this.config)) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized. Provide Authorization: Bearer <api-key> header.' }));
@@ -101,9 +143,6 @@ export class CommanderHttpServer {
         return;
       }
     }
-    const url = req.url ?? '/';
-    const [path, queryStr] = url.split('?');
-    const segments = path.split('/').filter(Boolean);
     try {
       if (segments[0] === 'api') {
         await this.handleApiRequest(req, res, segments.slice(1), queryStr);
@@ -143,6 +182,8 @@ export class CommanderHttpServer {
         if (method === 'POST') {
           const body = await parseBody(req) as { prompt: string; sessionId?: string; provider?: string; model?: string };
           const sessionId = body.sessionId ?? `session_${Date.now()}`;
+          // Derive tenantId from API key (never trust request body for tenant)
+          const tenantId = this.resolveTenantFromAuth(req);
           let runtime = this.runtimes.get(sessionId);
           if (!runtime) {
             runtime = new AgentRuntime();
@@ -157,6 +198,7 @@ export class CommanderHttpServer {
             maxSteps: 50,
             tokenBudget: 100000,
             contextData: {},
+            tenantId,
           });
           sendJson(res, 200, { sessionId, status: result.status, summary: result.summary, steps: result.steps?.length });
           return;
@@ -193,6 +235,16 @@ export class CommanderHttpServer {
     const unsubComplete = this.bus.subscribe('agent.completed', () => { stream.emitStatus('agent.completed'); });
     const unsubError = this.bus.subscribe('agent.failed', () => { stream.emitStatus('agent.error'); });
     req.on('close', () => { unsubStart(); unsubComplete(); unsubError(); stream.close(); });
+  }
+
+  /** Resolve tenant ID from the Authorization header using configured API key mapping. */
+  private resolveTenantFromAuth(req: IncomingMessage): string | undefined {
+    if (!this.config.tenantApiKeys) return undefined;
+    const auth = req.headers.authorization;
+    if (!auth) return undefined;
+    // Strip "Bearer " prefix if present
+    const key = auth.startsWith('Bearer ') ? auth.slice(7) : auth;
+    return this.config.tenantApiKeys[key];
   }
 
   private checkRateLimit(ip: string): boolean {
