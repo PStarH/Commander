@@ -41,6 +41,8 @@ import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
 import { ToolApproval } from './toolApproval';
 import { ToolPlanner } from './toolPlanner';
+import { CycleDetector } from './cycleDetector';
+import { parseStructuredOutput } from './structuredOutput';
 import { selectTools } from './toolRetriever';
 import { isConfidentResponse } from './entropyGater';
 import { createContentScanner, type ContentScanner } from '../contentScanner';
@@ -90,6 +92,7 @@ export class AgentRuntime {
   private outputManager: ToolOutputManager;
   private orchestrator: ToolOrchestrator;
   private planner: ToolPlanner;
+  private cycleDetector: CycleDetector;
   private contentScanner: ContentScanner;
   // Concurrency semaphore (GAP-07)
   private runningCount = 0;
@@ -140,9 +143,25 @@ export class AgentRuntime {
     );
     this.orchestrator = new ToolOrchestrator({ enabled: true, maxRetries: 1, circuitBreakerThreshold: 3, useApproval: true }, toolApproval);
     this.planner = new ToolPlanner();
+    this.cycleDetector = new CycleDetector();
     this.contentScanner = createContentScanner();
     // Auto-register adaptive parameter controller
     getHookManager().register(createParameterControllerPlugin()).catch(() => {});
+  }
+
+  /** Invalidate read caches after mutation tools succeed */
+  private invalidateMutationCache(toolName: string): void {
+    if (toolName.startsWith('file_')) {
+      this.toolCache.invalidatePattern('file_read');
+    } else if (toolName.startsWith('memory_')) {
+      this.toolCache.invalidatePattern('memory_recall');
+      this.toolCache.invalidatePattern('memory_list');
+    } else if (toolName === 'git_push' || toolName === 'git_commit') {
+      this.toolCache.invalidateTool('git');
+    } else if (toolName === 'shell_execute' || toolName === 'python_execute') {
+      // Shell commands may mutate filesystem; invalidate file_read broadly
+      this.toolCache.invalidatePattern('file_read');
+    }
   }
 
   registerProvider(name: string, provider: LLMProvider): void {
@@ -269,8 +288,8 @@ export class AgentRuntime {
       timestamp: new Date().toISOString(),
     });
 
-    // Initialize token governor for this execution
-    this.governor.reset(ctx.tokenBudget);
+    // Per-run governor to prevent concurrent run corruption (was shared instance)
+    this.governor = new TokenGovernor({ totalBudget: ctx.tokenBudget || this.config.budgetHardCapTokens || 64000 });
     // Detect task type for strategy selection
     const taskType = detectTaskType(ctx.goal);
     this.governor.setTaskCategory(taskType === 'code' ? 'code' : taskType === 'search' ? 'search' : taskType === 'analysis' ? 'analysis' : taskType === 'structured' ? 'structured' : 'general');
@@ -471,12 +490,19 @@ export class AgentRuntime {
           if (isConfidentResponse(response)) {
             bus.publish('system.alert', 'runtime', { type: 'entropy_gate', reason: 'confident_no_tool_calls' });
           }
+          // Attempt structured output extraction for potential JSON answers
+          const structured = parseStructuredOutput(response.content);
+          if (structured) {
+            step.content = typeof structured === 'string' ? structured : JSON.stringify(structured);
+          }
         }
 
-        // Process tool calls in a loop — with caching, planning, and output management
+        // Process tool calls in a loop — with caching, planning, cycle detection, and output management
         const maxIterations = Math.max(ctx.maxSteps || 10, 20);
         let toolLoopCount = 0;
-        while (response.toolCalls && response.toolCalls.length > 0 && toolLoopCount < maxIterations) {
+        this.cycleDetector.reset();
+        let cycleDetected = false;
+        while (response.toolCalls && response.toolCalls.length > 0 && toolLoopCount < maxIterations && !cycleDetected) {
           toolLoopCount++;
 
           // Reset output manager turn budget
@@ -550,6 +576,12 @@ export class AgentRuntime {
                     if (siblingAbort.signal.aborted) {
                       return { toolCallId: tc.id, name: tc.name, output: '', error: 'Cancelled: sibling tool error', durationMs: 0 };
                     }
+                    const cycleCheck = this.cycleDetector.check(tc.name, tc.arguments, toolLoopCount);
+                    if (cycleCheck.detected) {
+                      bus.publish('system.alert', 'runtime', { type: 'cycle_detected', toolName: tc.name, description: cycleCheck.description });
+                      cycleDetected = true;
+                      return { toolCallId: tc.id, name: tc.name, output: '', error: `Cycle detected: ${cycleCheck.description}`, durationMs: 0 };
+                    }
                     let toolResult = await this.executeTool(runId, tc, ctx.agentId, tenantId);
                     toolResult = await getHookManager().fireAfterToolCall({
                       toolName: tc.name, args: tc.arguments, result: toolResult, agentId: ctx.agentId, runId,
@@ -559,6 +591,7 @@ export class AgentRuntime {
                     }
                     if (!toolResult.error) {
                       this.toolCache.set(tc, toolResult, tenantId);
+                      this.invalidateMutationCache(tc.name);
                     }
                     return { toolCallId: tc.id, name: tc.name, output: toolResult.output, error: toolResult.error, durationMs: toolResult.durationMs };
                   })
@@ -587,12 +620,20 @@ export class AgentRuntime {
                   rawResults.push({ toolCallId: tc.id, name: tc.name, output: '', error: `Hook blocked: ${hookResult.error || 'denied'}`, durationMs: 0 });
                   continue;
                 }
+                const cycleCheck = this.cycleDetector.check(tc.name, tc.arguments, toolLoopCount);
+                if (cycleCheck.detected) {
+                  bus.publish('system.alert', 'runtime', { type: 'cycle_detected', toolName: tc.name, description: cycleCheck.description });
+                  rawResults.push({ toolCallId: tc.id, name: tc.name, output: '', error: `Cycle detected: ${cycleCheck.description}`, durationMs: 0 });
+                  cycleDetected = true;
+                  break;
+                }
                 let toolResult = await this.executeTool(runId, tc, ctx.agentId, tenantId);
                 toolResult = await getHookManager().fireAfterToolCall({
                   toolName: tc.name, args: tc.arguments, result: toolResult, agentId: ctx.agentId, runId,
                 });
                 if (!toolResult.error) {
                   this.toolCache.set(tc, toolResult, tenantId);
+                  this.invalidateMutationCache(tc.name);
                 }
                 rawResults.push({ toolCallId: tc.id, name: tc.name, output: toolResult.output, error: toolResult.error, durationMs: toolResult.durationMs });
               }
@@ -764,6 +805,18 @@ export class AgentRuntime {
             }
           }
         } catch { /* content scanning is best-effort */ }
+
+        // If the final response has no text content (tool_call-only response),
+        // find the last text response from the step history for the summary.
+        if (!safeContent || safeContent.length === 0) {
+          for (let si = steps.length - 1; si >= 0; si--) {
+            const s = steps[si];
+            if (s.type === 'response' && s.content && !s.content.includes('<tool_call>')) {
+              safeContent = s.content;
+              break;
+            }
+          }
+        }
 
         const totalDurationMs = Date.now() - startTime;
         const result: AgentExecutionResult = {

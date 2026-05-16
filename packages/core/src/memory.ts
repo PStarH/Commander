@@ -174,11 +174,23 @@ export interface MemoryStore {
 export class InMemoryMemoryStore implements MemoryStore {
   private items: Map<string, EpisodicMemoryItem> = new Map();
   private nextId = 1;
+  private maxEntries: number;
+  private accessOrder = 0;
+  private accessOrderMap: Map<string, number> = new Map();
+
+  constructor(maxEntries = 10000) {
+    this.maxEntries = maxEntries;
+  }
 
   async write(options: MemoryWriteOptions): Promise<EpisodicMemoryItem> {
     const now = new Date().toISOString();
     const id = `memory-${this.nextId++}`;
-    
+
+    // LRU eviction when at capacity
+    if (this.items.size >= this.maxEntries) {
+      this.evictLRU();
+    }
+
     const item: EpisodicMemoryItem = {
       id,
       projectId: options.projectId,
@@ -192,14 +204,15 @@ export class InMemoryMemoryStore implements MemoryStore {
       priority: options.priority ?? this.calculateDefaultPriority(options),
       createdAt: now,
       lastAccessedAt: now,
-      expiresAt: options.duration === 'EPISODIC' 
+      expiresAt: options.duration === 'EPISODIC'
         ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 days for episodic
         : undefined,
       evidenceRefs: options.evidenceRefs,
       confidence: options.confidence ?? 0.8,
     };
-    
+
     this.items.set(id, item);
+    this.accessOrderMap.set(id, ++this.accessOrder);
     return item;
   }
 
@@ -216,17 +229,19 @@ export class InMemoryMemoryStore implements MemoryStore {
     if (!item || item.projectId !== options.projectId) {
       return null;
     }
-    
+
     if (options.delete) {
       this.items.delete(options.id);
+      this.accessOrderMap.delete(options.id);
       return null;
     }
-    
+
     if (options.updates) {
       Object.assign(item, options.updates);
       item.lastAccessedAt = new Date().toISOString();
+      this.accessOrderMap.set(options.id, ++this.accessOrder);
     }
-    
+
     return item;
   }
 
@@ -236,6 +251,7 @@ export class InMemoryMemoryStore implements MemoryStore {
       return false;
     }
     this.items.delete(id);
+    this.accessOrderMap.delete(id);
     return true;
   }
 
@@ -244,6 +260,7 @@ export class InMemoryMemoryStore implements MemoryStore {
     for (const [id, item] of this.items) {
       if (item.projectId === projectId && item.missionId === missionId) {
         this.items.delete(id);
+        this.accessOrderMap.delete(id);
         count++;
       }
     }
@@ -257,6 +274,7 @@ export class InMemoryMemoryStore implements MemoryStore {
       if (item.projectId === projectId && item.expiresAt) {
         if (new Date(item.expiresAt) < now) {
           this.items.delete(id);
+          this.accessOrderMap.delete(id);
           count++;
         }
       }
@@ -269,9 +287,10 @@ export class InMemoryMemoryStore implements MemoryStore {
     if (!item || item.projectId !== projectId) {
       return null;
     }
-    
+
     // Update last accessed time
     item.lastAccessedAt = new Date().toISOString();
+    this.accessOrderMap.set(id, ++this.accessOrder);
     return item;
   }
 
@@ -443,6 +462,23 @@ export class InMemoryMemoryStore implements MemoryStore {
 
   async close(): Promise<void> {
     // No-op for in-memory store
+  }
+
+  private evictLRU(): void {
+    let oldestId: string | undefined;
+    let oldestOrder = Infinity;
+
+    for (const [id, order] of this.accessOrderMap) {
+      if (order < oldestOrder) {
+        oldestOrder = order;
+        oldestId = id;
+      }
+    }
+
+    if (oldestId) {
+      this.items.delete(oldestId);
+      this.accessOrderMap.delete(oldestId);
+    }
   }
 
   private calculateDefaultPriority(options: MemoryWriteOptions): number {
