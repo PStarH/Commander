@@ -254,11 +254,18 @@ export class CheckpointManager {
    */
   getPendingForApprover(approverId: string): GovernanceCheckpoint[] {
     return Array.from(this.checkpoints.values())
-      .filter(c => 
-        c.status === 'pending' && 
+      .filter(c =>
+        c.status === 'pending' &&
         c.requiredApprovals.includes(approverId) &&
         !c.currentApprovals.some(a => a.reviewerId === approverId)
       );
+  }
+
+  /**
+   * Get all checkpoints (for admin endpoints)
+   */
+  getAll(): GovernanceCheckpoint[] {
+    return Array.from(this.checkpoints.values());
   }
   
   /**

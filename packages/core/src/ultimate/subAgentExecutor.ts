@@ -55,12 +55,28 @@ export class SubAgentExecutor {
     errors: ExecutionError[],
   ): Promise<void> {
     const dependencyMap = this.buildDependencyMap(node.subtasks);
+    this.computeCriticalPath(node.subtasks, dependencyMap);
     const orderedLevels = this.topologicalLevels(dependencyMap, node.subtasks);
 
     for (const level of orderedLevels) {
-      const batches = this.chunkArray(level, this.maxParallel);
+      // LAMaS: sort critical path tasks first within each level
+      const sorted = [...level].sort((a, b) => {
+        if (a.isOnCriticalPath && !b.isOnCriticalPath) return -1;
+        if (!a.isOnCriticalPath && b.isOnCriticalPath) return 1;
+        return (b.estimatedDurationMs ?? 0) - (a.estimatedDurationMs ?? 0);
+      });
+
+      const batches = this.chunkArray(sorted, this.maxParallel);
       for (const batch of batches) {
-        const promises = batch.map(sub => 
+        // LAMaS: allocate more tokens to critical path tasks
+        const adjustedBatch = batch.map(sub => {
+          if (sub.isOnCriticalPath) {
+            sub.context.estimatedTokens = Math.round((sub.context.estimatedTokens ?? 5000) * 1.5);
+          }
+          return sub;
+        });
+
+        const promises = adjustedBatch.map(sub => 
           this.executeNode(sub, projectId, baseContext, errors)
         );
         const results = await Promise.allSettled(promises);
@@ -68,7 +84,7 @@ export class SubAgentExecutor {
         for (let i = 0; i < results.length; i++) {
           const result = results[i];
           if (result.status === 'rejected') {
-            const subNode = batch[i];
+            const subNode = adjustedBatch[i];
             subNode.status = 'FAILED';
             errors.push({
               nodeId: subNode.id,
@@ -79,6 +95,124 @@ export class SubAgentExecutor {
           }
         }
       }
+    }
+  }
+
+  /**
+   * LAMaS: compute critical path using forward/backward pass.
+   * Nodes on the critical path have zero slack — delaying them
+   * delays the entire execution. These nodes get scheduling priority
+   * and larger token budgets.
+   */
+  private computeCriticalPath(
+    nodes: TaskTreeNode[],
+    dependencyMap: Map<string, string[]>,
+  ): void {
+    if (nodes.length === 0) return;
+
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    const est = new Map<string, number>();
+    const eft = new Map<string, number>();
+    const lft = new Map<string, number>();
+    const lst = new Map<string, number>();
+
+    // Forward pass: compute Earliest Start Time (EST) and Earliest Finish Time (EFT)
+    const inDegree = new Map<string, number>();
+    const adjList = new Map<string, string[]>();
+
+    for (const node of nodes) {
+      inDegree.set(node.id, 0);
+      adjList.set(node.id, []);
+    }
+
+    for (const [nodeId, deps] of dependencyMap) {
+      for (const dep of deps) {
+        adjList.get(dep)?.push(nodeId);
+        inDegree.set(nodeId, (inDegree.get(nodeId) ?? 0) + 1);
+      }
+    }
+
+    const queue: string[] = [];
+    for (const [nodeId, degree] of inDegree) {
+      if (degree === 0) {
+        queue.push(nodeId);
+        est.set(nodeId, 0);
+        const dur = nodeMap.get(nodeId)?.estimatedDurationMs ?? 10000;
+        eft.set(nodeId, dur);
+      }
+    }
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const currentEft = eft.get(current) ?? 0;
+
+      for (const successor of (adjList.get(current) ?? [])) {
+        const newEst = currentEft;
+        const currentEst = est.get(successor) ?? 0;
+        if (newEst > currentEst) {
+          est.set(successor, newEst);
+          const dur = nodeMap.get(successor)?.estimatedDurationMs ?? 10000;
+          eft.set(successor, newEst + dur);
+        }
+        inDegree.set(successor, (inDegree.get(successor) ?? 1) - 1);
+        if (inDegree.get(successor) === 0) {
+          queue.push(successor);
+        }
+      }
+    }
+
+    // Project finish time = max EFT
+    let projectFinish = 0;
+    for (const [, finish] of eft) {
+      projectFinish = Math.max(projectFinish, finish);
+    }
+
+    // Backward pass: compute Latest Finish Time (LFT) and Latest Start Time (LST)
+    for (const node of nodes) {
+      lft.set(node.id, projectFinish);
+    }
+
+    const outDegree = new Map<string, number>();
+    for (const node of nodes) {
+      outDegree.set(node.id, 0);
+    }
+    for (const [nodeId, deps] of dependencyMap) {
+      for (const _dep of deps) {
+        outDegree.set(_dep, (outDegree.get(_dep) ?? 0) + 1);
+      }
+    }
+
+    const reverseQueue: string[] = [];
+    for (const [nodeId, degree] of outDegree) {
+      if (degree === 0) {
+        reverseQueue.push(nodeId);
+      }
+    }
+
+    while (reverseQueue.length > 0) {
+      const current = reverseQueue.shift()!;
+      const currentLst = (lft.get(current) ?? projectFinish) - (nodeMap.get(current)?.estimatedDurationMs ?? 10000);
+      lst.set(current, currentLst);
+
+      for (const dep of (dependencyMap.get(current) ?? [])) {
+        const newLft = currentLst;
+        const currentLft = lft.get(dep) ?? projectFinish;
+        if (newLft < currentLft) {
+          lft.set(dep, newLft);
+        }
+        outDegree.set(dep, (outDegree.get(dep) ?? 1) - 1);
+        if (outDegree.get(dep) === 0) {
+          reverseQueue.push(dep);
+        }
+      }
+    }
+
+    // Mark critical path: EST === LST (zero slack)
+    for (const node of nodes) {
+      const nodeEst = est.get(node.id) ?? 0;
+      const nodeLst = lst.get(node.id) ?? 0;
+      const slack = Math.abs(nodeLst - nodeEst);
+      node.isOnCriticalPath = slack < 100; // sub-100ms slack = critical
     }
   }
 

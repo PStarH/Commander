@@ -31,6 +31,8 @@ export class RecursiveAtomizer {
     const nodeId = generateNodeId();
     const isAtomic = this.shouldBeAtomic(goal, deliberation, depth);
 
+    const estimatedTokens = isAtomic ? deliberation.estimatedTokens / 2 : deliberation.estimatedTokens;
+
     const node: TaskTreeNode = {
       id: nodeId,
       parentId,
@@ -42,9 +44,10 @@ export class RecursiveAtomizer {
       context: {
         systemPrompt: this.buildSystemPrompt(goal, deliberation, isAtomic),
         availableTools,
-        estimatedTokens: isAtomic ? deliberation.estimatedTokens / 2 : deliberation.estimatedTokens,
+        estimatedTokens,
       },
       status: 'PENDING',
+      estimatedDurationMs: Math.round(estimatedTokens * 5 + availableTools.length * 1000),
     };
 
     if (!isAtomic && depth < this.maxDepth) {

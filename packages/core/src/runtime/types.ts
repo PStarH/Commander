@@ -20,6 +20,12 @@ export interface LLMMessage {
   tool_call_id?: string;
   /** MiMo reasoning models put internal reasoning here. Must be passed back on follow-up calls. */
   reasoning_content?: string;
+  /** OpenAI-format tool calls for assistant messages */
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }>;
 }
 
 /**
@@ -97,11 +103,18 @@ export interface LLMProvider {
 
 /**
  * Definition of a tool an agent can call.
+ * Enhanced with BFCL-compatible fields for precise function calling.
  */
 export interface ToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** Examples of valid tool calls for few-shot disambiguation */
+  examples?: Array<{ name: string; arguments: Record<string, unknown> }>;
+  /** Category hint for tool selection disambiguation */
+  category?: string;
+  /** Whether this tool should be hidden from general-purpose models (specialized) */
+  hidden?: boolean;
 }
 
 /**
@@ -185,34 +198,59 @@ export interface RoutingDecision {
  * Context passed to an agent for execution.
  */
 export interface AgentExecutionContext {
-  agentId: string;
-  missionId?: string;
-  projectId: string;
-  goal: string;
-  contextData: {
-    warRoomSnapshot?: unknown;
-    memoryItems?: unknown[];
-    agentState?: Record<string, unknown>;
-    governanceProfile?: unknown;
-  };
-  availableTools: string[];
-  maxSteps: number;
-  tokenBudget: number;
+   runId?: string;
+   agentId: string;
+   missionId?: string;
+   projectId: string;
+   goal: string;
+   contextData: {
+     warRoomSnapshot?: unknown;
+     memoryItems?: unknown[];
+     agentState?: Record<string, unknown>;
+     governanceProfile?: unknown;
+   };
+availableTools: string[];
+    maxSteps: number;
+    tokenBudget: number;
 }
 
 /**
  * A step in agent execution.
  */
 export interface AgentExecutionStep {
-  stepNumber: number;
-  timestamp: string;
-  type: 'thought' | 'tool_call' | 'tool_result' | 'response';
-  content: string;
-  tokenUsage?: TokenUsage;
-  durationMs: number;
-  /** For tool calls: which tool and args */
-  toolCall?: ToolCall;
-  toolResult?: ToolResult;
+   stepNumber: number;
+   timestamp: string;
+   type: 'thought' | 'tool_call' | 'tool_result' | 'response';
+   content: string;
+   tokenUsage?: TokenUsage;
+   durationMs: number;
+   /** For tool calls: which tool and args */
+   toolCall?: ToolCall;
+   toolResult?: ToolResult;
+}
+
+/**
+ * Retry backoff configuration.
+ */
+export interface RetryConfig {
+  /** Maximum number of retries (default: 2) */
+  maxRetries: number;
+  /** Base delay in ms for exponential backoff (default: 1000) */
+  baseDelayMs: number;
+  /** Retry on specific HTTP status codes */
+  retryableStatusCodes: number[];
+}
+
+/**
+ * Observation feedback configuration.
+ */
+export interface ObservationFeedbackConfig {
+  /** Enable observation feedback (default: false) */
+  enabled: boolean;
+  /** Maximum number of observation hints to include (default: 3) */
+  maxHints: number;
+  /** Summary length for each observation hint (default: 200) */
+  hintSummaryLength: number;
 }
 
 /**
@@ -232,6 +270,43 @@ export interface AgentExecutionResult {
 }
 
 /**
+ * Configuration for dynamic tool retrieval (ITR-inspired).
+ * Dynamically selects only relevant tools per step instead of loading all.
+ */
+export interface ToolRetrievalConfig {
+  /** Enable dynamic tool retrieval (default: false) */
+  enabled: boolean;
+  /** Minimum number of tools to always include (default: 3) */
+  minTools: number;
+  /** Maximum number of tools to include per request (default: 10) */
+  maxTools: number;
+  /** Tools to always include regardless of relevance scoring */
+  alwaysInclude: string[];
+}
+
+/**
+ * Configuration for entropy-based tool gating.
+ * Skips unnecessary tool loading when model is already confident.
+ */
+export interface EntropyGatingConfig {
+  /** Enable entropy-based gating (default: false) */
+  enabled: boolean;
+}
+
+/**
+ * Configuration for PASTE-style speculative execution.
+ * Pre-executes predicted next tool calls during LLM processing time.
+ */
+export interface SpeculativeExecutionConfig {
+  /** Enable speculative execution (default: false) */
+  enabled: boolean;
+  /** Maximum speculative predictions per step (default: 2) */
+  maxPredictions: number;
+  /** Minimum confidence threshold (0-1) for speculative predictions (default: 0.3) */
+  minConfidence: number;
+}
+
+/**
  * Configuration for the Agent Runtime.
  */
 export interface AgentRuntimeConfig {
@@ -247,6 +322,16 @@ export interface AgentRuntimeConfig {
   enableDescendingScheduler: boolean;
   /** Hard cap on total tokens per execution. 0 = disabled. */
   budgetHardCapTokens: number;
+  /** Dynamic tool retrieval config (ITR-inspired) */
+  toolRetrieval?: ToolRetrievalConfig;
+  /** Entropy-based tool gating config */
+  entropyGating?: EntropyGatingConfig;
+/** PASTE-style speculative execution config */
+   speculativeExecution?: SpeculativeExecutionConfig;
+   /** Retry backoff configuration */
+   retryConfig?: RetryConfig;
+   /** Observation feedback: feed tool results back as hints to improve LLM reasoning */
+   observationFeedback?: ObservationFeedbackConfig;
 }
 
 // ============================================================================
@@ -257,17 +342,26 @@ export interface AgentRuntimeConfig {
  * Topics for inter-agent messages.
  */
 export type MessageBusTopic =
-  | 'agent.started'
-  | 'agent.completed'
-  | 'agent.failed'
-  | 'agent.message'
-  | 'mission.updated'
-  | 'mission.blocked'
-  | 'mission.completed'
-  | 'memory.written'
-  | 'system.alert'
-  | 'tool.executed'
-  | 'trace.recorded';
+   | 'agent.started'
+   | 'agent.completed'
+   | 'agent.failed'
+   | 'agent.message'
+   | 'agent.started.typed'
+   | 'agent.completed.typed'
+   | 'agent.failed.typed'
+   | 'mission.updated'
+   | 'mission.blocked'
+   | 'mission.completed'
+   | 'memory.written'
+   | 'system.alert'
+   | 'tool.executed'
+   | 'trace.recorded'
+   | 'workflow.replan'
+   | 'channel.message'
+   | 'channel.connected'
+   | 'channel.disconnected'
+   | 'channel.error'
+   | 'channel.interaction';
 
 /**
  * Priority levels for messages.
@@ -374,19 +468,28 @@ export interface HTMLReport {
  * A recorded experience for the self-evolution engine.
  */
 export interface ExecutionExperience {
-  id: string;
-  runId: string;
-  agentId: string;
-  missionId?: string;
-  taskType: string;
-  modelUsed: string;
-  strategyUsed: string;
-  success: boolean;
-  durationMs: number;
-  tokenCost: number;
-  errorPattern?: string;
-  lessons: string[];
-  timestamp: string;
+   id: string;
+   runId: string;
+   agentId: string;
+   missionId?: string;
+   taskType: string;
+   modelUsed: string;
+   strategyUsed: string;
+   success: boolean;
+   durationMs: number;
+   tokenCost: number;
+   errorPattern?: string;
+   lessons: string[];
+   toolsUsed?: string[];
+   topology?: string;
+   estimatedTokens?: number;
+   systemPrompt?: string;
+   availableTools?: string[];
+   modelTier?: string;
+   splitFrom?: string;
+   mergedFrom?: string;
+   nodeId?: string;
+   timestamp: string;
 }
 
 /**

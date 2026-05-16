@@ -442,3 +442,12 @@ export function getMetaLearner(persistPath?: string): MetaLearner {
 export function resetMetaLearner(): void {
   globalLearner = null;
 }
+
+export function clearMetaLearnerState(): void {
+  if (globalLearner) {
+    globalLearner['experiences'] = [];
+    globalLearner['reflections'] = [];
+    globalLearner['strategyPerformance'].clear();
+    globalLearner['thompsonPriors'].clear();
+  }
+}

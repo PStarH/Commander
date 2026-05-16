@@ -34,7 +34,7 @@ describe('TELOSOrchestrator', () => {
     });
   }
 
-  before(() => {
+  beforeEach(() => {
     orchestrator = setupOrchestrator();
   });
 

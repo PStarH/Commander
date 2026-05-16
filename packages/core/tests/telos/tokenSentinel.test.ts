@@ -4,7 +4,7 @@ import { TokenSentinel, resetTokenSentinel, estimateTokenCount, estimateMessages
 describe('TokenSentinel', () => {
   let sentinel: TokenSentinel;
 
-  before(() => {
+  beforeEach(() => {
     resetTokenSentinel();
     sentinel = new TokenSentinel(100, 50);
   });

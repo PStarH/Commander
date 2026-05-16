@@ -45,7 +45,7 @@ export class PythonExecuteTool implements Tool {
 
       return `[Exit: 0 | ${elapsed}ms]\n${stdout}`.trim();
     } catch (err: any) {
-      const elapsed = Date.now() - (err as any).startTime || 0;
+      const elapsed = Date.now() - (err.startTime ?? 0) || 0;
       if (err.stderr) return `[Exit: ${err.status ?? 1} | ${elapsed}ms]\nSTDERR:\n${err.stderr}`;
       if (err.killed) return `[Exit: SIGTERM | ${timeout}s timeout exceeded]`;
       return `[Error] ${err.message}`;
@@ -88,7 +88,7 @@ export class ShellExecuteTool implements Tool {
       const elapsed = Date.now() - start;
       return `[Exit: 0 | ${elapsed}ms]\n${stdout}`.trim();
     } catch (err: any) {
-      const elapsed = Date.now() - (err as any).startTime || 0;
+      const elapsed = Date.now() - (err.startTime ?? 0) || 0;
       if (err.stderr) return `[Exit: ${err.status ?? 1} | ${elapsed}ms]\nSTDERR:\n${err.stderr}`;
       if (err.killed) return `[Exit: SIGTERM | ${timeout}s timeout exceeded]`;
       return `[Error] ${err.message}`;

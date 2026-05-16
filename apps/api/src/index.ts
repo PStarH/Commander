@@ -14,6 +14,7 @@ import {
   getDefaultInvocationProfile,
   recommendStrategy,
   HallucinationDetector,
+  SequentialPipeline,
 } from '@commander/core';
 import { WarRoomStore } from './store';
 import { ProjectMemoryStore } from './memoryStore';
@@ -882,7 +883,7 @@ app.post('/api/security/scan/:contentType', async (req, res) => {
       return res.status(400).json({ error: 'Content is required' });
     }
     
-    const result: ScanResult = await contentScanner.scan(content, contentType as any);
+    const result: ScanResult = await contentScanner.scan(content, contentType as 'html' | 'markdown' | 'text' | 'json');
     
     res.json({
       safe: result.safe,
@@ -1192,8 +1193,8 @@ app.post('/api/agents/:agentId/self-assess', (req, res) => {
 
 app.get('/api/agents/:agentId/self-model', (req, res) => {
   const { agentId } = req.params;
-  const manager = selfAssessmentManager as any;
-  const assessor = manager.agents?.get(agentId);
+const manager = selfAssessmentManager;
+   const assessor = manager.getOrCreate(agentId);
   
   if (!assessor) {
     return res.status(404).json({ error: 'Agent not found. Run self-assessment first.' });
@@ -1395,8 +1396,19 @@ import { SequentialExecutor, createMockAgentExecutor } from './sequentialExecuto
 
 const pipelineRuns = new Map<string, any>();
 const sequentialExecutor = new SequentialExecutor({
-  agentExecutor: createMockAgentExecutor(),
-  runContextProvider: (async (ctx: any) => ({ projectId: ctx?.projectId ?? 'default', run: { runId: 'run', issuedAt: new Date().toISOString() }, slimSnapshot: {}, recentMemory: [], recommendedMemory: [], agentRoster: [] })) as any,
+   agentExecutor: createMockAgentExecutor(),
+   runContextProvider: (async (ctx: { projectId?: string }) => ({
+     projectId: ctx?.projectId ?? 'default',
+     run: { runId: 'run', issuedAt: new Date().toISOString() },
+     slimSnapshot: {
+       project: { id: 'default', codename: 'default', objective: '', status: 'ACTIVE', updatedAt: new Date().toISOString() },
+       missionBoard: { running: [], blocked: [], planned: [], done: [] },
+       battleMetrics: { health: 'GREEN', runningMissionCount: 0, blockedMissionCount: 0, completedMissionCount: 0, highRiskMissionCount: 0, manualGovernanceMissionCount: 0, logVolume24h: 0, completionRate: 0 },
+     },
+     recentMemory: [],
+     recommendedMemory: { items: [] },
+     agentRoster: [],
+   })),
 });
 
 app.post('/api/pipeline/execute', async (req, res) => {
@@ -1423,12 +1435,12 @@ app.post('/api/pipeline/execute', async (req, res) => {
   };
 
   try {
-    const run = await sequentialExecutor.execute(pipeline as any, { input });
-    pipelineRuns.set(run.id, run);
-    res.json(run);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+const run = await sequentialExecutor.execute(pipeline as SequentialPipeline, { input });
+     pipelineRuns.set(run.id, run);
+     res.json(run);
+   } catch (err: unknown) {
+     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+   }
 });
 
 app.get('/api/pipeline/runs/:runId', (req, res) => {

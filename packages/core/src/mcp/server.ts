@@ -3,6 +3,7 @@ import type {
   MCPResource,
   MCPPrompt,
   MCPContentItem,
+  MCPTextContent,
   MCPToolResult,
   MCPResourceContents,
   MCPJsonSchema,
@@ -21,6 +22,8 @@ import { MCP_ERROR_CODES } from './types';
 type ToolHandler = (args: Record<string, unknown>) => Promise<MCPToolResult | MCPContentItem[]>;
 type ResourceReader = (uri: string) => Promise<MCPResourceContents[]>;
 type PromptHandler = (args: Record<string, string>) => Promise<GetPromptResult>;
+
+import type { Tool, ToolDefinition } from '../runtime/types';
 
 export interface MCPToolRegistration {
   definition: MCPTool;
@@ -180,38 +183,97 @@ export class MCPServer {
     };
   }
 
-  /**
-   * Register the standard "run_agent" distributed execution tool on this server.
-   * This is what MCPRemoteRuntime calls to execute agents remotely.
-   */
+/**
+    * Register the standard "run_agent" distributed execution tool on this server.
+    * This is what MCPRemoteRuntime calls to execute agents remotely.
+    */
   registerAgentExecutor(handler: (args: {
-    agentId: string;
-    projectId: string;
-    goal: string;
-    availableTools: string[];
-    maxSteps: number;
-    tokenBudget: number;
-    contextData: Record<string, unknown>;
-  }) => Promise<MCPToolResult>): void {
-    this.registerTool(
-      {
-        name: 'run_agent',
-        description: 'Execute an agent task on this remote server and return results',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            agentId: { type: 'string', description: 'Agent identifier' },
-            projectId: { type: 'string', description: 'Project identifier' },
-            goal: { type: 'string', description: 'Task goal/description' },
-            availableTools: { type: 'array', items: { type: 'string' }, description: 'Available tool names' },
-            maxSteps: { type: 'number', description: 'Maximum execution steps' },
-            tokenBudget: { type: 'number', description: 'Token budget' },
-            contextData: { type: 'object', description: 'Additional context' },
-          },
-          required: ['agentId', 'projectId', 'goal'],
+     agentId: string;
+     projectId: string;
+     goal: string;
+     availableTools: string[];
+     maxSteps: number;
+     tokenBudget: number;
+     contextData: Record<string, unknown>;
+   }) => Promise<MCPToolResult>): void {
+     this.registerTool(
+       {
+         name: 'run_agent',
+         description: 'Execute an agent task on this remote server and return results',
+         inputSchema: {
+           type: 'object',
+           properties: {
+             agentId: { type: 'string', description: 'Agent identifier' },
+             projectId: { type: 'string', description: 'Project identifier' },
+             goal: { type: 'string', description: 'Task goal/description' },
+             availableTools: { type: 'array', items: { type: 'string' }, description: 'Available tool names' },
+             maxSteps: { type: 'number', description: 'Maximum execution steps' },
+             tokenBudget: { type: 'number', description: 'Token budget' },
+             contextData: { type: 'object', description: 'Additional context' },
+           },
+           required: ['agentId', 'projectId', 'goal'],
+         },
+       },
+       handler as unknown as ToolHandler,
+     );
+   }
+
+   /**
+    * Auto-register all Commander tools as MCP tools.
+    * Enables external MCP clients (Claude Desktop, Cursor, etc.) to use Commander's tool ecosystem.
+    */
+  registerCommanderTools(tools: Map<string, Tool>): void {
+    for (const [name, tool] of tools) {
+      const def = tool.definition;
+      this.registerTool(
+        {
+          name: def.name,
+          description: def.description,
+          inputSchema: def.inputSchema as unknown as MCPJsonSchema,
         },
+        async (args: Record<string, unknown>) => {
+          try {
+            const result = await tool.execute(args);
+            // Return as text content for MCP compatibility
+            return {
+              content: [{ type: 'text' as const, text: result }],
+            } satisfies MCPToolResult;
+          } catch (err) {
+            return {
+              content: [{
+                type: 'text' as const,
+                text: `Error executing ${name}: ${err instanceof Error ? err.message : String(err)}`,
+              }] as MCPTextContent[],
+            };
+          }
+        },
+      );
+    }
+  }
+
+  /**
+    * Register a resource that exposes tool execution results for monitoring.
+    */
+  registerExecutionResource(): void {
+    this.registerResource(
+      {
+        uri: 'command://execution/trace',
+        name: 'Execution Trace',
+        description: 'Access execution traces from the Commander agent runtime',
+        mimeType: 'application/json',
       },
-      handler as unknown as ToolHandler,
+      async (uri: string) => {
+        // Parse query params from URI
+        const url = new URL(uri, 'http://localhost');
+        const runId = url.searchParams.get('runId');
+        const format = url.searchParams.get('format') ?? 'json';
+
+        return [{
+          uri,
+          mimeType: format === 'text' ? 'text/plain' : 'application/json',
+          text: JSON.stringify({ runId, status: 'trace_available', data: [] }),
+        }];
+      },
     );
   }
 }

@@ -5,7 +5,7 @@ import { MockLLMProvider } from '../../src/runtime/mockLLMProvider';
 describe('ProviderPool', () => {
   let pool: ProviderPool;
 
-  before(() => {
+  beforeEach(() => {
     resetProviderPool();
     pool = new ProviderPool(1, 100);
   });

@@ -1465,8 +1465,14 @@ export {
   FileListTool,
   PythonExecuteTool,
   ShellExecuteTool,
-  createAllTools,
-} from './tools/index';
+createAllTools,
+   MetaTool,
+   getBuiltinMetaSpecs,
+   findMatchingMetaSpec,
+   ToolRegistry,
+   TOOL_CATEGORIES,
+ } from './tools/index';
+export type { MetaToolSpec, MetaToolStep, AgentDef } from './tools/index';
 
 // ============================================================================
 // Agent Loop — Persistent multi-agent execution
@@ -1567,13 +1573,16 @@ export {
 
 // Ultimate Framework - Additional Components (Phase 1)
 export { ThreeLayerMemory } from './threeLayerMemory';
-export { ReflectionEngine, createReflectionEngine } from './reflectionEngine';
-export { ConsensusChecker, createConsensusChecker } from './consensusCheck';
-export { InspectorAgent, createInspector } from './inspectorAgent';
-export { TaskComplexityAnalyzer } from './taskComplexityAnalyzer';
 
 // Logging & Metrics (Phase 2)
-export { Logger, MetricsCollector, getGlobalLogger, getGlobalMetrics } from './logging';
+export {
+  parseStructuredOutput,
+  validateStructuredOutput,
+} from './runtime/structuredOutput';
+export { ContextWindowManager, estimateTotalTokens } from './runtime/contextWindow';
+export type { ContextWindowConfig, WindowAction } from './runtime/contextWindow';
+
+ export { Logger, MetricsCollector, getGlobalLogger, getGlobalMetrics } from './logging';
 
 // Error Handler (Phase 2)
 export { ErrorHandler, CommanderError, TaskComplexityError, OrchestrationError, BudgetExhaustedError, MemoryError, ConsensusError, InspectionError } from './errorHandler';
@@ -1618,25 +1627,43 @@ export type {
   StrategyPerformance,
 } from './runtime/types';
 export {
-  ModelRouter,
-  getModelRouter,
-  resetModelRouter,
-  MessageBus,
-  getMessageBus,
-  resetMessageBus,
-  ExecutionTraceRecorder,
-  getTraceRecorder,
-  resetTraceRecorder,
-  AgentRuntime,
-  MockEmbeddingFunction,
-  cosineSimilarity,
-  l2Distance,
-  InMemoryEmbeddingStore,
-  calculateMemoryScore,
-  OpenAIProvider,
-  AnthropicProvider,
+   ModelRouter,
+   getModelRouter,
+   resetModelRouter,
+   MessageBus,
+   getMessageBus,
+   resetMessageBus,
+   ExecutionTraceRecorder,
+   getTraceRecorder,
+   resetTraceRecorder,
+   AgentRuntime,
+   MockEmbeddingFunction,
+   cosineSimilarity,
+   l2Distance,
+   InMemoryEmbeddingStore,
+calculateMemoryScore,
+    OpenAIProvider,
+    AnthropicProvider,
+    GoogleProvider,
+    OpenRouterProvider,
+    DeepSeekProvider,
+    GLMProvider,
+    MiMoProvider,
+    XiaomiProvider,
+    MCPRemoteRuntime,
+   SSEStream,
+   selectTools,
+   getToolRelevanceScores,
+   getToolCategory,
+   isConfidentResponse,
+   hasInformationGain,
+   PatternTracker,
+   getPatternTracker,
+   resetPatternTracker,
+   planSpeculativeExecution,
+   isSpeculativelySafe,
 } from './runtime';
-export type { EmbeddingFunction } from './runtime';
+export type { EmbeddingFunction, ToolRetrievalConfig, EntropyGatingConfig, SpeculativeExecutionConfig } from './runtime';
 
 // ============================================================================
 // HTML Reporting — Human-readable reports (Phase 3)
@@ -1650,11 +1677,41 @@ export {
 // ============================================================================
 // Self-Evolution Engine — Meta-learning & optimization (Phase 3)
 // ============================================================================
-export {
-  MetaLearner,
-  getMetaLearner,
-  resetMetaLearner,
-} from './selfEvolution';
+export { MetaLearner, getMetaLearner, resetMetaLearner } from './selfEvolution/metaLearner';
+export { ReflectionEngine, createReflectionEngine, getGlobalReflectionEngine } from './reflectionEngine';
+export { ConsensusChecker, createConsensusChecker } from './consensusCheck';
+export { InspectorAgent, createInspector } from './inspectorAgent';
+export { TaskComplexityAnalyzer } from './taskComplexityAnalyzer';
+
+// ============================================================================
+// Runtime Enhancements — Agent Execution Improvements
+// ============================================================================
+export { CycleDetector } from './runtime/cycleDetector';
+export { ToolApproval, ApprovalRequest, ApprovalResult, ApprovalLevel, ApprovalPolicy, DEFAULT_APPROVAL_POLICIES } from './runtime/toolApproval';
+export { EvolutionaryWorkflowEngine, WorkflowDAG, WorkflowNode, WorkflowEdge, EvolutionResult, EvolutionOptions } from './runtime/evolutionaryWorkflowEngine';
+export { CommanderHttpServer, createHttpServer } from './runtime/httpServer';
+export { BaseChannelAdapter } from './runtime/channelAdapter';
+export type {
+  ChannelAdapter,
+  ChannelConfig,
+  ChannelMessage,
+  ChannelStatus,
+  ChannelAttachment,
+  SendOptions,
+  MessageRole,
+} from './runtime/channelAdapter';
+
+// ============================================================================
+// Topology & Workflow Optimization
+// ============================================================================
+export { ReflexionTopologicalOptimizer as TopologyOptimizer, TopologyDiagnostics, OptimizationProposal, OptimizationAction } from './ultimate/topologyOptimizer';
+export { RuntimeWorkflowAdapter, AdaptiveExecutionResult } from './ultimate/runtimeWorkflowAdapter';
+
+// ============================================================================
+// Plugin System — Hooks & Extensions (师夷长技)
+// ============================================================================
+export { HookManager, getHookManager, resetHookManager, createLoggingPlugin } from './pluginManager';
+export type { CommanderPlugin, HookPoint, BeforeToolCallContext, AfterToolCallContext, BeforeLLMCallContext, AfterLLMCallContext, AgentStartContext, AgentCompleteContext, ErrorContext } from './pluginManager';
 
 // ============================================================================
 // TELOS Framework — Token-Efficient Low-waste Orchestration System (Phase 4)
@@ -1695,6 +1752,10 @@ export {
   EVALUATION_DIMENSIONS,
   DEFAULT_EVAL_CRITERIA,
 } from './telos';
+
+// ============================================================================
+// TELOS Framework — Token-Efficient Low-waste Orchestration System (Phase 4)
+// ============================================================================
 
 // ============================================================================
 // MCP — Model Context Protocol (Agent ↔ Tool communication standard)

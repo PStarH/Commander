@@ -127,12 +127,19 @@ export interface SequentialPipeline {
   
   /** Whether to stop on first failure */
   failFast?: boolean;
+  /** Legacy alias for failFast */
+  stopOnError?: boolean;
   
   /** Maximum parallel retries across pipeline */
   maxParallelRetries?: number;
   
   /** Checkpoint interval (number of steps between checkpoints) */
   checkpointInterval?: number;
+
+  /** Project that owns this pipeline */
+  projectId?: string;
+  /** Initial input for the first step */
+  initialInput?: unknown;
 }
 
 /**
@@ -144,6 +151,7 @@ export interface SequentialPipelineRun {
   status: SequentialPipelineStatus;
   startTime: string;
   endTime?: string;
+  completedAt?: string;
   stepResults: SequentialStepResult[];
   finalOutput?: unknown;
   error?: string;

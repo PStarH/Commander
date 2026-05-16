@@ -11,6 +11,8 @@
  * - Layer 3: Semantic Memory (abstracted knowledge, future work)
  */
 
+import { readFile, writeFile, mkdir } from 'fs/promises';
+
 // ============================================================================
 // Type Definitions
 // ============================================================================
@@ -495,7 +497,6 @@ export class SqliteMemoryStore implements MemoryStore {
   /** Load persisted data from disk */
   async init(): Promise<void> {
     try {
-      const { readFile } = require('fs/promises') as typeof import('fs/promises');
       const data = await readFile(this.filePath, 'utf-8');
       const parsed = JSON.parse(data);
       if (Array.isArray(parsed)) {
@@ -513,7 +514,6 @@ export class SqliteMemoryStore implements MemoryStore {
   /** Flush to disk if dirty */
   private async persist(): Promise<void> {
     if (!this.dirty) return;
-    const { writeFile, mkdir } = require('fs/promises') as typeof import('fs/promises');
     const dir = this.filePath.substring(0, this.filePath.lastIndexOf('/'));
     if (dir) await mkdir(dir, { recursive: true });
     await writeFile(this.filePath, JSON.stringify(Array.from(this.items.values()), null, 2));

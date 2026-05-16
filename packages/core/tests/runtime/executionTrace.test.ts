@@ -5,7 +5,7 @@ import { ExecutionTraceRecorder, resetTraceRecorder } from '../../src/runtime/ex
 describe('ExecutionTraceRecorder', () => {
   let tracer: ExecutionTraceRecorder;
 
-  before(() => {
+  beforeEach(() => {
     resetTraceRecorder();
     tracer = new ExecutionTraceRecorder(100);
   });

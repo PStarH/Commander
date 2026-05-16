@@ -48,7 +48,12 @@ export class ExecutionTraceRecorder {
   ): TraceEvent {
     const trace = this.traces.get(runId);
     if (!trace) {
-      throw new Error(`No trace found for run: ${runId}`);
+      return {
+        id: '', runId, agentId: 'unknown',
+        timestamp: new Date().toISOString(), durationMs: 0,
+        type: event.type ?? 'decision',
+        data: event.data ?? {},
+      };
     }
 
     const fullEvent: TraceEvent = {

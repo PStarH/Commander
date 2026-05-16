@@ -292,6 +292,13 @@ export class TaskManager {
   listByAgent(agentId: string): Task[] {
     return Array.from(this.tasks.values()).filter(t => t.agentId === agentId);
   }
+
+  /**
+   * List all tasks
+   */
+  listAll(): Task[] {
+    return Array.from(this.tasks.values());
+  }
 }
 
 /**

@@ -5,7 +5,7 @@ import { MessageBus, resetMessageBus } from '../../src/runtime/messageBus';
 describe('MessageBus', () => {
   let bus: MessageBus;
 
-  before(() => {
+  beforeEach(() => {
     resetMessageBus();
     bus = new MessageBus(50);
   });

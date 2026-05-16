@@ -18,15 +18,17 @@ import type { TELOSBudget } from '../telos/types';
  * AdaptOrch research shows topology selection alone yields 12-23% improvement.
  */
 export type OrchestrationTopology =
-  | 'SINGLE'         // Single agent handles everything
-  | 'SEQUENTIAL'     // Chain of agents, one after another
-  | 'PARALLEL'       // Multiple agents in parallel, then synthesize
-  | 'HIERARCHICAL'   // Orchestrator delegates to workers with recursive decomposition
-  | 'HYBRID'         // Mixed topology based on subtask dependencies
-  | 'DEBATE'         // Multiple agents debate to reach consensus
-  | 'ENSEMBLE'       // Multiple agents independently solve, then vote
-  | 'EVALUATOR_OPTIMIZER' // Generator + Evaluator iterative loop
-  ;
+   | 'SINGLE'         // Single agent handles everything
+   | 'SEQUENTIAL'     // Chain of agents, one after another
+   | 'PARALLEL'       // Multiple agents in parallel, then synthesize
+   | 'HIERARCHICAL'   // Orchestrator delegates to workers with recursive decomposition
+   | 'HYBRID'         // Mixed topology based on subtask dependencies
+   | 'DEBATE'         // Multiple agents debate to reach consensus
+   | 'ENSEMBLE'       // Multiple agents independently solve, then vote
+   | 'EVALUATOR_OPTIMIZER' // Generator + Evaluator iterative loop
+   | 'HANDOFF'        // Agent handoff pattern
+   | 'CONSENSUS'      // Multi-agent consensus pattern
+   ;
 
 /**
  * Task dependency graph for topology routing.
@@ -103,16 +105,22 @@ export interface TaskTreeNode {
   isAtomic: boolean;
   subtasks: TaskTreeNode[];
   dependencies: string[]; // IDs of sibling tasks this depends on
-  context: {
-    systemPrompt: string;
-    availableTools: string[];
-    estimatedTokens: number;
-  };
+context: {
+     systemPrompt: string;
+     availableTools: string[];
+     estimatedTokens: number;
+     splitFrom?: string;
+     mergedFrom?: string[];
+   };
   artifact?: ArtifactReference;
   status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PARTIAL';
   result?: string;
   tokenUsage?: TokenUsage;
   durationMs?: number;
+  /** LAMaS: estimated execution duration in ms (for critical path scheduling) */
+  estimatedDurationMs?: number;
+  /** LAMaS: true if this node is on the critical path of the DAG */
+  isOnCriticalPath?: boolean;
 }
 
 // ============================================================================
@@ -402,6 +410,70 @@ export interface ExecutionError {
   message: string;
   recovered: boolean;
   recoveryAction?: string;
+}
+
+// ============================================================================
+// Runtime Workflow Adapter Types (Phase 3.5)
+// ============================================================================
+
+export interface TaskState {
+  phase: 'discovery' | 'planning' | 'execution' | 'refinement' | 'verification' | 'termination';
+  completedSteps: number;
+  estimatedTotalSteps: number;
+  gatheredEvidence: EvidenceItem[];
+  confidence: number;
+  remainingBudget: number;
+  elapsedMs: number;
+  lastStepResult?: StepResult;
+  needsReplanning: boolean;
+  terminationReason?: string;
+}
+
+export interface EvidenceItem {
+  source: string;
+  content: string;
+  confidence: number;
+  timestamp: number;
+}
+
+export interface StepResult {
+  stepId: string;
+  success: boolean;
+  output: string;
+  durationMs: number;
+  tokenCost: number;
+  qualityScore?: number;
+}
+
+export interface SubWorkflow {
+  id: string;
+  topology: OrchestrationTopology;
+  steps: string[];
+  estimatedCost: number;
+  estimatedDuration: number;
+  successRate: number;
+}
+
+export interface WorkflowDecision {
+  subWorkflowId: string;
+  topology: OrchestrationTopology;
+  priority: number;
+  rationale: string;
+  alternatives: string[];
+}
+
+export interface AdaptiveExecutionResult {
+  finalResult: UltimateExecutionResult;
+  taskState: TaskState;
+  decisions: WorkflowDecision[];
+  stagesTraversed: string[];
+  rePlanningCount: number;
+  metrics: {
+    totalDurationMs: number;
+    totalTokens: number;
+    stageDurations: Map<string, number>;
+    adaptationCount: number;
+  };
 }
 
 // ============================================================================

@@ -6,7 +6,7 @@ import type { AgentExecutionContext, ModelConfig } from '../../src/runtime/types
 describe('ModelRouter', () => {
   let router: ModelRouter;
 
-  before(() => {
+  beforeEach(() => {
     resetModelRouter();
     router = new ModelRouter();
   });

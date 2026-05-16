@@ -95,8 +95,8 @@ export function createA2AV2Router(): Router {
 async function handleMethod(req: A2AJsonRpcRequest): Promise<A2AJsonRpcResponse> {
   switch (req.method) {
     case A2A_METHODS.SEND_MESSAGE: {
-      const params = req.params as any;
-      const task = createTask('WORKING');
+const params = req.params as Record<string, unknown>;
+       const task = createTask('WORKING');
       tasks.set(task.id, task);
       setTimeout(() => {
         task.status = { state: 'COMPLETED', timestamp: new Date().toISOString() };
@@ -105,24 +105,24 @@ async function handleMethod(req: A2AJsonRpcRequest): Promise<A2AJsonRpcResponse>
     }
 
     case A2A_METHODS.GET_TASK: {
-      const params = req.params as any;
-      const task = tasks.get(params.id);
-      if (!task) return errorResponse(req.id, A2A_ERROR.TASK_NOT_FOUND, 'Task not found');
-      return { jsonrpc: '2.0', id: req.id, result: { task } };
-    }
+const params = req.params as Record<string, unknown>;
+       const task = tasks.get((params as { id: string }).id);
+       if (!task) return errorResponse(req.id, A2A_ERROR.TASK_NOT_FOUND, 'Task not found');
+       return { jsonrpc: '2.0', id: req.id, result: { task } };
+     }
 
-    case A2A_METHODS.LIST_TASKS: {
-      return {
-        jsonrpc: '2.0', id: req.id,
-        result: { tasks: Array.from(tasks.values()), pageSize: 50, totalSize: tasks.size },
-      };
-    }
+     case A2A_METHODS.LIST_TASKS: {
+       return {
+         jsonrpc: '2.0', id: req.id,
+         result: { tasks: Array.from(tasks.values()), pageSize: 50, totalSize: tasks.size },
+       };
+     }
 
-    case A2A_METHODS.CANCEL_TASK: {
-      const params = req.params as any;
-      const task = tasks.get(params.id);
-      if (!task) return errorResponse(req.id, A2A_ERROR.TASK_NOT_FOUND, 'Task not found');
-      if (!canTransition(task.status.state, 'CANCELED')) {
+     case A2A_METHODS.CANCEL_TASK: {
+       const params = req.params as Record<string, unknown>;
+const task = tasks.get((params as { id: string }).id);
+       if (!task) return errorResponse(req.id, A2A_ERROR.TASK_NOT_FOUND, 'Task not found');
+       if (!canTransition(task.status.state, 'CANCELED')) {
         return errorResponse(req.id, A2A_ERROR.TASK_NOT_CANCELABLE, 'Task cannot be canceled');
       }
       task.status = { state: 'CANCELED', timestamp: new Date().toISOString() };

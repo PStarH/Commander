@@ -6,7 +6,7 @@
 
 import express, { Request, Response, Router } from 'express';
 import { AgentCardGenerator, AgentCardRegistry } from './agentCard';
-import { TaskManager, ArtifactManager, Task } from './a2aTask';
+import { TaskManager, ArtifactManager, Task, TaskStatus } from './a2aTask';
 
 export interface A2AServerConfig {
   port: number;
@@ -257,15 +257,15 @@ export function createA2ARouter(
     
     let tasks: Task[];
     
-    if (status) {
-      tasks = taskManager.listByStatus(status as any);
-    } else if (clientId) {
-      tasks = taskManager.listByClient(clientId as string);
-    } else if (agentId) {
-      tasks = taskManager.listByAgent(agentId as string);
-    } else {
-      tasks = Array.from((taskManager as any).tasks.values());
-    }
+if (status) {
+       tasks = taskManager.listByStatus(status as TaskStatus);
+     } else if (clientId) {
+       tasks = taskManager.listByClient(clientId as string);
+     } else if (agentId) {
+       tasks = taskManager.listByAgent(agentId as string);
+     } else {
+       tasks = Array.from(taskManager.listAll());
+     }
     
     res.json({ tasks, count: tasks.length });
   });

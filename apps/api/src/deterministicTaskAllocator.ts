@@ -23,6 +23,9 @@ export interface TaskAllocation {
   priority: TaskPriority;
   dependencies?: string[];   // 依赖的任务 ID
   metadata?: Record<string, unknown>;
+  releasedAt?: Date;         // 释放时间
+  releaseReason?: string;    // 释放原因
+  result?: unknown;          // 任务结果
 }
 
 /**
@@ -227,13 +230,13 @@ export class DeterministicTaskAllocator {
     }
 
     // 3. 更新状态
-    allocation.status = reason === 'completed' ? 'completed' : 
-                         reason === 'failed' ? 'failed' : 'released';
-    (allocation as any).releasedAt = new Date();
-    (allocation as any).releaseReason = reason;
-    if (result !== undefined) {
-      (allocation as any).result = result;
-    }
+allocation.status = reason === 'completed' ? 'completed' :
+                          reason === 'failed' ? 'failed' : 'released';
+     allocation.releasedAt = new Date();
+     allocation.releaseReason = reason;
+     if (result !== undefined) {
+       allocation.result = result;
+     }
 
     // 4. 从 Agent 任务集合中移除
     const agentTasks = this.agentAllocations.get(ownerId);
@@ -264,9 +267,9 @@ export class DeterministicTaskAllocator {
       }
     }
 
-    allocation.status = 'released';
-    (allocation as any).releasedAt = new Date();
-    (allocation as any).releaseReason = reason;
+allocation.status = 'released';
+     allocation.releasedAt = new Date();
+     allocation.releaseReason = reason;
 
     return { success: true };
   }
