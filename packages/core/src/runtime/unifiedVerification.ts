@@ -284,6 +284,35 @@ function runStage0(ctx: UVPTaskContext, taskType: TaskType): { signals: Verifica
     }
   }
 
+  // --- Numeric plausibility check (catch off-by-magnitude errors) ---
+  if ((taskType === 'code' || taskType === 'analysis' || taskType === 'general') &&
+      /\b(calculate|compute|sum|average|total|count|how many|percentage?|what is|find|determine)\b/i.test(ctx.goal) &&
+      /^\s*-?\d+[.,]?\d*\s*$/.test(ctx.output.trim())) {
+    // Extract numbers from the goal
+    const goalNums = ctx.goal.match(/\b\d+[.,]?\d*\b/g)?.map(n => parseFloat(n.replace(',', ''))) || [];
+    const outputNum = parseFloat(ctx.output.trim().replace(',', ''));
+    if (goalNums.length > 0 && !isNaN(outputNum) && outputNum > 0) {
+      // Check if output is an order of magnitude different from goal numbers
+      for (const gn of goalNums) {
+        if (gn > 0) {
+          const ratio = outputNum / gn;
+          if ((ratio > 0 && ratio < 0.1) || ratio > 10) {
+            signals.push({
+              stage: 0,
+              source: 'numeric_anomaly',
+              severity: 'high',
+              message: `Numeric result (${outputNum}) differs from input (${gn}) by ${ratio.toFixed(1)}x — potential calculation error`,
+              snippet: ctx.output.trim(),
+              suggestion: 'Verify calculation: result should be proportional to inputs',
+            });
+            confidence -= 0.3;
+            break;
+          }
+        }
+      }
+    }
+  }
+
   // --- Relevance check (task-type-aware) ---
   const goalWords = ctx.goal.split(/\s+/).length;
   const outputWords = ctx.output.split(/\s+/).length;
@@ -563,8 +592,14 @@ export class UnifiedVerificationPipeline {
       stagesRun.push(1);
     }
 
+    // Task-aware confidence adjustment: calculation tasks need stricter verification
+    let effectiveThreshold = this.config.confidenceSkipThreshold;
+    if (taskType === 'code' || taskType === 'analysis') {
+      effectiveThreshold = Math.min(effectiveThreshold, 0.7); // Stricter for code/analysis
+    }
+
     // Confidence-based skip: if zero-cost stages give high confidence, skip LLM verification
-    if (overallConfidence >= this.config.confidenceSkipThreshold) {
+    if (overallConfidence >= effectiveThreshold) {
       if (this.config.enableLearning) {
         this.memory.record({
           outputPrefix: ctx.output.slice(0, 40),
