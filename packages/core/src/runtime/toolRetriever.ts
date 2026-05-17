@@ -32,6 +32,15 @@ const TOOL_RELEVANCE_KEYWORDS: Record<string, string[]> = {
   memory_list: ['list memories', 'show memories', 'browse memory'],
   git: ['git', 'commit', 'push', 'pull', 'branch', 'merge', 'version control', 'repository', 'repo'],
   agent: ['delegate', 'sub-agent', 'subagent', 'spawn agent', 'fork', 'parallel task'],
+  execute_script: ['run script', 'execute script', 'script', 'run js', 'run ts', 'javascript', 'typescript', 'node script'],
+  vision_analyze: ['image', 'picture', 'photo', 'screenshot', 'visual', 'analyze image', 'describe image', 'ocr', 'what is in this image'],
+  pdf_extract: ['pdf', 'extract pdf', 'read pdf', 'parse pdf', 'pdf text', 'pdf content'],
+  screenshot_capture: ['screenshot', 'capture screen', 'take screenshot', 'screen capture', 'grab screen'],
+  code_search: ['search code', 'find code', 'grep code', 'code search', 'search repository', 'find function', 'find class', 'ripgrep'],
+  apply_patch: ['patch', 'apply patch', 'diff', 'unified diff', 'code patch', 'apply diff'],
+  refine_code: ['refine', 'improve code', 'refactor', 'clean up code', 'code quality', 'code review', 'optimize code'],
+  verify_answer: ['verify', 'check answer', 'validate answer', 'verify answer', 'format answer', 'answer quality'],
+  fix_code: ['fix code', 'debug', 'fix error', 'fix bug', 'code fix', 'repair code', 'syntax error', 'runtime error'],
 };
 
 const TOOL_CATEGORIES: Record<string, string> = {
@@ -51,6 +60,15 @@ const TOOL_CATEGORIES: Record<string, string> = {
   memory_list: 'memory',
   git: 'version_control',
   agent: 'orchestration',
+  execute_script: 'code_execution',
+  vision_analyze: 'multimodal',
+  pdf_extract: 'multimodal',
+  screenshot_capture: 'multimodal',
+  code_search: 'code_execution',
+  apply_patch: 'code_execution',
+  refine_code: 'code_execution',
+  verify_answer: 'validation',
+  fix_code: 'code_execution',
 };
 
 /**

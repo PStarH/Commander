@@ -1,0 +1,1 @@
+{"answer":"Saved `test.js` with 3 Jest tests for `add(a, b)`: positive, negative, and zero cases. Expects `add` exported from `./index.js`.","passed":true}
