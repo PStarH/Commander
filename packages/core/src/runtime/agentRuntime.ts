@@ -149,7 +149,7 @@ export class AgentRuntime {
     this.cycleDetector = new CycleDetector();
     this.contentScanner = createContentScanner();
     // Auto-register adaptive parameter controller
-    getHookManager().register(createParameterControllerPlugin()).catch(() => {});
+    getHookManager().register(createParameterControllerPlugin()).catch(e => console.debug("[runtime] hook:", e?.message));
   }
 
   /** Invalidate read caches after mutation tools succeed */
@@ -430,7 +430,7 @@ export class AgentRuntime {
     });
 
     // Fire plugin onAgentStart hooks
-    getHookManager().fireOnAgentStart({ ctx, runId }).catch(() => {});
+    getHookManager().fireOnAgentStart({ ctx, runId }).catch(e => console.debug("[runtime] hook:", e?.message));
 
     // 4. Execute with retry and circuit breaker
     let lastError: string | undefined;
@@ -865,7 +865,7 @@ export class AgentRuntime {
         }
 
         // Fire plugin onAgentComplete hooks
-        getHookManager().fireOnAgentComplete({ result, runId }).catch(() => {});
+        getHookManager().fireOnAgentComplete({ result, runId }).catch(e => console.debug("[runtime] hook:", e?.message));
 
         // Emit completed event
         getMetricsCollector().recordRunComplete('success', totalDurationMs, steps.length, tenantId);
@@ -899,7 +899,7 @@ export class AgentRuntime {
     tracer.recordError(runId, `All ${this.config.maxRetries + 1} attempts failed`, Date.now() - startTime);
 
     // Fire plugin onError hooks
-    getHookManager().fireOnError({ error: lastError ?? 'Unknown error', runId, agentId: ctx.agentId }).catch(() => {});
+    getHookManager().fireOnError({ error: lastError ?? 'Unknown error', runId, agentId: ctx.agentId }).catch(e => console.debug("[runtime] hook:", e?.message));
 
     this.checkpointer.terminalCheckpoint({
       runId, agentId: ctx.agentId, missionId: ctx.missionId,
@@ -1238,7 +1238,7 @@ export class AgentRuntime {
       getMetricsCollector().recordError(boundaryResult.errorClass, tenantId);
 
       // Compensate side-effects from prior mutation tools in this run
-      this.compensationRegistry.compensate(actionId).catch(() => {});
+      this.compensationRegistry.compensate(actionId).catch(e => console.debug("[runtime] hook:", e?.message));
 
       const structuredError = [
         `tool_error: "${toolCall.name}" failed after ${durationMs}ms`,

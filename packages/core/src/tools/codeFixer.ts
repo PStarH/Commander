@@ -89,7 +89,7 @@ export class CodeFixerTool implements Tool {
   readonly definition = DEFINITION;
   isConcurrencySafe = true;
   isReadOnly = true;
-  timeout = 5000;
+  timeout = 30000; // Increased from 5s: complex code needs more time
   maxOutputSize = 50000;
 
   async execute(args: Record<string, unknown>): Promise<string> {
