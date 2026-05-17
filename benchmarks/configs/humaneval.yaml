@@ -1,0 +1,8 @@
+benchmark:
+  name: humaneval
+  type: generation
+  dataset: /tmp/humanevalplus.jsonl.gz
+  format: jsonl
+  temperature: 0.2
+  answer_key: "answer"
+  prompt_key: "prompt"
