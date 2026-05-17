@@ -1,4 +1,5 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage, CacheConfig } from '../types';
+import { FormatBridge } from '../formatBridge';
 
 interface OpenAICompletionUsage {
   prompt_tokens: number;
@@ -90,14 +91,7 @@ export class DeepSeekProvider implements LLMProvider {
     };
 
     if (request.tools && request.tools.length > 0) {
-      body.tools = request.tools.map(t => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.inputSchema,
-        },
-      }));
+      body.tools = FormatBridge.adaptToolsForProvider(request.tools, 'deepseek');
       body.parallel_tool_calls = true;
     }
 

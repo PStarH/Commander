@@ -1,0 +1,1 @@
+{"answer":"Created `crontab.txt`:\n- `0 2 * * *` — Daily at 2:00 AM\n- `0 8 * * 1` — Weekly Monday at 8:00 AM\n\nReplace `/path/to/daily_backup.sh` and `/path/to/weekly_backup.sh` with actual script paths.","passed":true}

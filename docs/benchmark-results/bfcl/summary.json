@@ -1,0 +1,9 @@
+{
+  "benchmark": "BFCL (Function Calling)",
+  "dataset": "30 tasks (subset \u2014 NOT official BFCL leaderboard)",
+  "model": "MiMo-V2.5-Pro via Commander pipeline",
+  "date": "2026-05-16",
+  "tool_selection_accuracy": "80.0%",
+  "parameter_accuracy": "80.0%",
+  "caveat": "Small sample (30 tasks). Official BFCL has 2000+ tasks. Score not directly comparable to leaderboard."
+}

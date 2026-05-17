@@ -1,0 +1,1 @@
+{"answer":"Done. Saved `Dockerfile` — uses `node:20-alpine`, copies dependencies, installs production packages, exposes port 3000, and runs `node index.js`.","passed":true}

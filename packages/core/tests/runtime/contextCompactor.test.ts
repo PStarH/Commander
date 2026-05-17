@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ContextCompactor } from '../../src/runtime/contextCompactor';
+import { ContextCompactor, type CompactTaskType, type AdaptiveProfile, type CompositionScore } from '../../src/runtime/contextCompactor';
 import type { LLMMessage } from '../../src/runtime/types';
 
 function msgs(...contents: string[]): LLMMessage[] {
@@ -242,6 +242,212 @@ describe('ContextCompactor (upgraded)', () => {
       const layer = compactor.needsCompaction(messages);
       // At 120 chars ≈ 30+ tokens, 100 token budget, should be > 50%
       assert.ok(layer !== null);
+    });
+  });
+
+  describe('adaptive compaction — task type profiles', () => {
+    it('returns correct profile for code tasks', () => {
+      const compactor = new ContextCompactor();
+      const profile = compactor.getCurrentTaskTypeProfile('code');
+      assert.equal(profile.keepRecentTurns, 4);
+      assert.equal(profile.maxToolOutputChars, 800);
+      assert.equal(profile.collapseVerbosity, 'detail');
+      assert.equal(profile.layerTriggers.layer1, 0.63);
+    });
+
+    it('returns correct profile for search tasks', () => {
+      const compactor = new ContextCompactor();
+      const profile = compactor.getCurrentTaskTypeProfile('search');
+      assert.equal(profile.keepRecentTurns, 2);
+      assert.equal(profile.maxToolOutputChars, 300);
+      assert.equal(profile.collapseVerbosity, 'aggressive');
+      assert.equal(profile.layerTriggers.layer1, 0.55);
+    });
+
+    it('returns correct profile for analysis tasks', () => {
+      const compactor = new ContextCompactor();
+      const profile = compactor.getCurrentTaskTypeProfile('analysis');
+      assert.equal(profile.keepRecentTurns, 3);
+      assert.equal(profile.collapseVerbosity, 'balanced');
+    });
+
+    it('returns correct profile for structured tasks', () => {
+      const compactor = new ContextCompactor();
+      const profile = compactor.getCurrentTaskTypeProfile('structured');
+      assert.equal(profile.keepRecentTurns, 2);
+      assert.equal(profile.collapseVerbosity, 'aggressive');
+    });
+
+    it('returns correct profile for general tasks', () => {
+      const compactor = new ContextCompactor();
+      const profile = compactor.getCurrentTaskTypeProfile('general');
+      assert.equal(profile.keepRecentTurns, 3);
+      assert.equal(profile.collapseVerbosity, 'balanced');
+    });
+  });
+
+  describe('adaptive compaction — backward compatibility', () => {
+    it('compact() without task type uses default profile', () => {
+      const compactor = new ContextCompactor({ maxContextTokens: 400, layer1Trigger: 0.99, layer2Trigger: 0.99, layer3Trigger: 0.3, layer4Trigger: 0.99, keepRecentTurns: 1, governorAware: false });
+      const messages: LLMMessage[] = [
+        { role: 'system', content: 'You are a helpful assistant that helps with various tasks' },
+        ...msgs('a'.repeat(80), 'b'.repeat(80), 'c'.repeat(80), 'd'.repeat(80), 'e'.repeat(80), 'f'.repeat(80)),
+      ];
+      const { action } = compactor.compact(messages);
+      assert.equal(action.layer, 3);
+      assert.ok(action.droppedCount > 0);
+    });
+
+    it('compact() with explicit config overrides adaptive profile', () => {
+      // config.keepRecentTurns = 1 differs from DEFAULT_CONFIG.keepRecentTurns = 3
+      // So config should win over profile's keepRecentTurns
+      const compactor = new ContextCompactor({ maxContextTokens: 300, layer1Trigger: 0.99, layer2Trigger: 0.99, layer3Trigger: 0.01, keepRecentTurns: 1, governorAware: false });
+      const messages: LLMMessage[] = [
+        { role: 'system', content: 'sys' },
+        ...msgs('a', 'b', 'c', 'd', 'e', 'f'),
+      ];
+      // With keepRecentTurns=1 and 3 turns (6 messages), compact should drop 2 turns
+      const { action } = compactor.compact(messages, undefined, 'code');
+      assert.equal(action.layer, 3);
+      // Code profile wants keepRecentTurns=4, but config wants 1 → config wins
+      assert.ok(action.droppedCount >= 2);
+    });
+  });
+
+  describe('adaptive compaction — task type affects thresholds', () => {
+    it('code task compacts later than search task', () => {
+      // Create messages that are right at code threshold but above search threshold
+      const msgText = 'this is a test message that uses tokens'.repeat(20);
+      const messages = msgs(msgText, msgText, msgText, msgText);
+
+      const compactor = new ContextCompactor({
+        maxContextTokens: 200,
+        governorAware: false,
+      });
+
+      // With same messages, code should need less urgent compaction than search
+      // because code has higher thresholds
+      const codeLayer = compactor.needsCompaction(messages, 'code');
+      const searchLayer = compactor.needsCompaction(messages, 'search');
+
+      // Search compacts earlier, so its layer should be >= code's layer
+      // (null < 1 < 2 < 3 < 4)
+      const codeVal = codeLayer ?? 0;
+      const searchVal = searchLayer ?? 0;
+      assert.ok(searchVal >= codeVal, `Search (${searchVal}) should compact at least as aggressively as code (${codeVal})`);
+    });
+
+    it('detail collapse verbosity includes more items than aggressive', () => {
+      const compactor = new ContextCompactor({
+        maxContextTokens: 500,
+        layer1Trigger: 0.99,
+        layer2Trigger: 0.99,
+        layer3Trigger: 0.01,
+        keepRecentTurns: 0,
+        governorAware: false,
+      });
+
+      const manyTurns: LLMMessage[] = [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'first request' },
+        { role: 'assistant', content: 'I will do that. The answer is 42.' },
+        { role: 'user', content: 'second request' },
+        { role: 'assistant', content: 'Therefore the total is 100. Found the result.' },
+        { role: 'user', content: 'third request' },
+        { role: 'assistant', content: 'In conclusion, I determined the answer.' },
+        { role: 'user', content: 'final request' },
+        { role: 'assistant', content: 'The sum of all values is 500.' },
+      ];
+
+      // Code (detail) should produce longer summary than search (aggressive)
+      const codeResult = compactor.compact(manyTurns, undefined, 'code');
+      const searchResult = compactor.compact(manyTurns, undefined, 'search');
+
+      const codeSummary = codeResult.action.summary?.length ?? 0;
+      const searchSummary = searchResult.action.summary?.length ?? 0;
+
+      assert.ok(codeSummary >= searchSummary,
+        `Detail summary (${codeSummary} chars) should be >= aggressive (${searchSummary} chars)`);
+    });
+  });
+
+  describe('composition analysis', () => {
+    it('detects high tool density', () => {
+      const compactor = new ContextCompactor();
+      const messages: LLMMessage[] = [
+        { role: 'user', content: 'do something' },
+        { role: 'assistant', content: '', tool_calls: [{ id: '1', type: 'function', function: { name: 'search', arguments: '{}' } }] },
+        { role: 'tool', content: 'result', tool_call_id: '1' },
+        { role: 'assistant', content: '', tool_calls: [{ id: '2', type: 'function', function: { name: 'read', arguments: '{}' } }] },
+        { role: 'tool', content: 'data', tool_call_id: '2' },
+      ];
+      const composition = compactor.analyzeComposition(messages);
+      assert.ok(composition.toolDensity > 0.5);
+      assert.equal(composition.messageCount, 5);
+    });
+
+    it('detects high error density', () => {
+      const compactor = new ContextCompactor();
+      const messages: LLMMessage[] = [
+        { role: 'tool', content: 'ERROR: file not found', tool_call_id: '1' },
+        { role: 'tool', content: 'result ok', tool_call_id: '2' },
+        { role: 'tool', content: 'Traceback: TypeError at line 42', tool_call_id: '3' },
+      ];
+      const composition = compactor.analyzeComposition(messages);
+      assert.ok(composition.errorDensity > 0.5);
+    });
+
+    it('detects code blocks', () => {
+      const compactor = new ContextCompactor();
+      const messages: LLMMessage[] = [
+        { role: 'user', content: '```python\nprint("hello")\n```' },
+        { role: 'assistant', content: '```\nconst x = 1\n```' },
+        { role: 'user', content: 'no code here' },
+      ];
+      const composition = compactor.analyzeComposition(messages);
+      assert.equal(composition.codeBlockRatio, 2 / 3);
+    });
+
+    it('handles empty message list', () => {
+      const compactor = new ContextCompactor();
+      const composition = compactor.analyzeComposition([]);
+      assert.equal(composition.toolDensity, 0);
+      assert.equal(composition.errorDensity, 0);
+      assert.equal(composition.messageCount, 0);
+    });
+  });
+
+  describe('getEffectiveProfile', () => {
+    it('returns default profile without task type', () => {
+      const compactor = new ContextCompactor();
+      const profile = compactor.getEffectiveProfile();
+      assert.equal(profile.keepRecentTurns, 3);
+      assert.equal(profile.collapseVerbosity, 'balanced');
+    });
+
+    it('returns code profile with task type', () => {
+      const compactor = new ContextCompactor();
+      const profile = compactor.getEffectiveProfile('code');
+      assert.equal(profile.keepRecentTurns, 4);
+    });
+
+    it('composition adjusts high tool density profile', () => {
+      const compactor = new ContextCompactor();
+      const messages: LLMMessage[] = [
+        { role: 'user', content: 'do' },
+        { role: 'assistant', content: '', tool_calls: [{ id: '1', type: 'function', function: { name: 'search', arguments: '{}' } }] },
+        { role: 'tool', content: 'result', tool_call_id: '1' },
+      ];
+      // general + high tool density → keepRecentTurns should be boosted to at least 4
+      const profile = compactor.getEffectiveProfile('general', messages);
+      assert.ok(profile.keepRecentTurns >= 4);
+    });
+
+    it('config overrides take priority over profile', () => {
+      const compactor = new ContextCompactor({ keepRecentTurns: 5 });
+      const profile = compactor.getEffectiveProfile('search');
+      // search wants 2, but config says 5 → config wins
+      assert.equal(profile.keepRecentTurns, 5);
     });
   });
 });

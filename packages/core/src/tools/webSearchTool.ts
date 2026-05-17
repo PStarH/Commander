@@ -3,7 +3,7 @@ import type { Tool, ToolDefinition } from '../runtime/types';
 export class WebSearchTool implements Tool {
   definition: ToolDefinition = {
     name: 'web_search',
-    description: 'Search the web for current information. Returns relevant snippets and URLs. Use for fact-checking, research, and finding up-to-date information.',
+    description: 'Search the web via API for current information. Returns structured snippets and URLs. Best for: fact-checking, quick lookups, research queries. Does NOT render JavaScript. Use browser_search for JS-heavy or dynamic pages.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -1,0 +1,7 @@
+{
+  "total": 30,
+  "tool_selection_accuracy": "80.0%",
+  "parameter_accuracy": "80.0%",
+  "tool_correct": 24,
+  "param_correct": 24
+}
