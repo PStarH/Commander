@@ -1,25 +1,39 @@
 # Commander 基准测试报告
 
 > **生成日期**: 2026-05-17 | **底层模型**: MiMo (mimo-v2.5-pro)
-> **证据目录**: `benchmarks/` — 每个基准的原始结果和 LOG 文件
+> **证据文件**: `benchmarks/<bench>/` 目录，每个基准有独立结果文件
 
 ## 实测结果
 
-| 基准 | Commander | 竞品 | 增益 |
-|------|:---------:|:----:|:----:|
-| **HumanEval pass@1** | **96.3%** | o4 97.1% | 同梯队 |
-| **HumanEval+ pass@1** | **91.5%** | GPT-5 96.9% | 同梯队 |
-| **GAIA (Commander, 165题)** | **69.7%** | 裸MiMo 21.2% | +48.5pp |
-| **PinchBench (43 tasks)** | **97.7%** | MiMo+OpenClaw 89.5% | +8.2pp |
-| **BFCL 工具选择** | **91.7%** | Llama 405B 88.5% | +3.2pp |
-| **BFCL 参数生成** | **91.7%** | — | — |
-| **MT-Bench (7题)** | **8.0/10** | — | — |
+| 基准 | 规模 | Commander | 竞品 | 证据 |
+|------|:----:|:---------:|:----:|------|
+| **HumanEval+** | 164题 | **91.5%** | o4 97.1% | `/tmp/humaneval-audit/` |
+| **GAIA (Commander)** | 165题 | **69.7%** | 裸MiMo 21.2% | `benchmarks/gaia/` |
+| **BFCL (全量)** | 35场景 | 工具60.0% / 参数91.4% | — | `benchmarks/bfcl/results_full.json` |
+| **BFCL (核心)** | 12场景 | 工具91.7% / 参数91.7% | Llama 405B 88.5% | `benchmarks/bfcl/results.json` |
+| **MT-Bench (全量)** | 80题 | **6.6/10** | — | `benchmarks/mtbench/results_full.json` |
+| **MT-Bench (核心)** | 7题 | **8.0/10** | — | `benchmarks/mtbench/results.json` |
 
-## 证据文件
+## BFCL 全量 (35场景)
 
-| 基准 | 结果文件 | 响应数 |
-|------|----------|:------:|
-| GAIA Commander | `benchmarks/gaia/results.json` | 165 |
-| GAIA 裸API | `benchmarks/gaia/results_bare_api.json` | 165 |
-| BFCL | `benchmarks/bfcl/results.json` | 12 |
-| MT-Bench | `benchmarks/mtbench/results.json` | 7 |
+| 类别 | 场景 | 工具选择 | 参数准确 |
+|------|:----:|:--------:|:--------:|
+| Simple | 20 | 85.0% | 85.0% |
+| Irrelevance | 5 | 20.0% | 100.0% |
+| Multiple | 5 | 40.0% | 100.0% |
+| Parallel | 5 | 20.0% | 100.0% |
+| **Total** | **35** | **60.0%** | **91.4%** |
+
+## MT-Bench 全量 (80题)
+
+| 类别 | 得分 |
+|------|:----:|
+| Math | **8.3** |
+| Reasoning | **7.2** |
+| Coding | **7.0** |
+| Extraction | **6.7** |
+| Roleplay | **6.5** |
+| STEM | **6.3** |
+| Writing | **5.9** |
+| Humanities | **5.0** |
+| **平均** | **6.6** |
