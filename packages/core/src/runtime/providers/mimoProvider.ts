@@ -238,7 +238,7 @@ export class MiMoProvider implements LLMProvider {
  * Input:  "<tool_call>\n<function=web_search>\n<parameter=query>AI news</parameter>\n</function>\n</tool_call>"
  * Output: [{ id: "call_xxx", name: "web_search", arguments: { query: "AI news" } }]
  */
-function parseMiMoTextToolCalls(content: string): Array<{ id: string; name: string; arguments: Record<string, unknown> }> {
+export function parseMiMoTextToolCalls(content: string): Array<{ id: string; name: string; arguments: Record<string, unknown> }> {
   const results: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
   // Split by <tool_call> blocks
   const blocks = content.split('<tool_call>').slice(1);
