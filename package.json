@@ -27,9 +27,11 @@
     "typecheck": "cd packages/core && npx tsc --noEmit"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.6.0"
   },
   "dependencies": {
+    "js-yaml": "^4.1.1",
     "playwright": "^1.60.0",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
