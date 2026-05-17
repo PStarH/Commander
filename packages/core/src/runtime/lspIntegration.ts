@@ -243,7 +243,7 @@ let globalLSPEnabled = false;
 export function initLSP(serverCommand: string, serverArgs: string[], workspaceRoot?: string): Promise<void> {
   if (globalLSPClient) globalLSPClient.disconnect();
   globalLSPClient = new LSPClient(serverCommand, serverArgs, workspaceRoot ?? process.cwd());
-  return globalLSPClient.connect().then(() => { globalLSPEnabled = true; });
+  return globalLSPClient.connect().then(() => { globalLSPEnabled = true; }).catch(e => { console.debug('[LSP] connect failed:', e?.message); return; });
 }
 
 export function disconnectLSP(): void {
