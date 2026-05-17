@@ -45,6 +45,7 @@ import {
   detectProvider, getEffectiveModel, setConfig, showConfig, listProviders, listModels, resetConfig,
 } from './packages/core/src/config/commanderConfig';
 import type { ProviderInfo } from './packages/core/src/config/commanderConfig';
+import { main as benchmarkMain } from './packages/core/src/benchmark/benchmarkRunner';
 
 // ============================================================================
 // ANSI styling — zero dependencies
@@ -568,6 +569,7 @@ function cmdHelp() {
     ${$.cyan}commander status${$.reset}         System status
     ${$.cyan}commander config${$.reset}         View / change settings
     ${$.cyan}commander doctor${$.reset}         Run diagnostics
+    ${$.cyan}commander benchmark${$.reset}      Run benchmarks (config YAML)
 
   ${$.bold}API KEYS (set any one)${$.reset}
     ${$.cyan}OPENAI_API_KEY${$.reset}          OpenAI / DeepSeek / GLM / MiMo
@@ -635,6 +637,11 @@ async function main() {
     case 'doctor':
       cmdDoctor();
       break;
+    case 'benchmark':
+    case 'bench': {
+      await benchmarkMain(args.slice(1));
+      break;
+    }
     case 'workers': {
       const topics = args.slice(1);
       await cmdWorkers(topics);
