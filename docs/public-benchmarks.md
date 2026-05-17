@@ -19,7 +19,7 @@
 
 | 基准 | 结果文件 | 响应数 |
 |------|----------|:------:|
-| GAIA Commander | `benchmarks/gaia/results_165.json` | 165 |
+| GAIA Commander | `benchmarks/gaia/results.json` | 165 |
 | GAIA 裸API | `benchmarks/gaia/results_bare_api.json` | 165 |
 | BFCL | `benchmarks/bfcl/results.json` | 12 |
 | MT-Bench | `benchmarks/mtbench/results.json` | 7 |
