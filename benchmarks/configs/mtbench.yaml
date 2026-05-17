@@ -1,0 +1,9 @@
+benchmark:
+  name: mtbench
+  type: chat
+  dataset: /tmp/mtbench_questions.json
+  format: json
+  temperature: 0.5
+  evaluator: llm_judge
+  answer_key: "reference"
+  prompt_key: "question"
