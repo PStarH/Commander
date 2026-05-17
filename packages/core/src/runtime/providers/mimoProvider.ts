@@ -1,4 +1,5 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage, CacheConfig, ReasoningConfig } from '../types';
+import { FormatBridge } from '../formatBridge';
 
 interface OpenAICompletionUsage {
   prompt_tokens: number;
@@ -103,14 +104,7 @@ export class MiMoProvider implements LLMProvider {
     }
 
     if (request.tools && request.tools.length > 0) {
-      body.tools = request.tools.map(t => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.inputSchema,
-        },
-      }));
+      body.tools = FormatBridge.adaptToolsForProvider(request.tools, 'mimo');
       body.parallel_tool_calls = true;
     }
 

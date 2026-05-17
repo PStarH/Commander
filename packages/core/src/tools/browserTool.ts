@@ -63,7 +63,7 @@ async function fetchPage(url: string): Promise<string> {
 
 const SDEF: ToolDefinition = {
   name:'browser_search',
-  description:'Search the web (DuckDuckGo, no API key). Returns titles, URLs, snippets.',
+  description:'Search the web via headless browser (DuckDuckGo). Renders JavaScript, handles dynamic content. Best for: pages that require JS rendering, sites that block API scrapers. Use web_search for faster API-based lookups.',
   inputSchema:{type:'object',properties:{
     query:{type:'string',description:'Search query'},
     count:{type:'number',description:'Results (1-10, default 5)'},

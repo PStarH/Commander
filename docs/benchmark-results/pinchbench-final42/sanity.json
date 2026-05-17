@@ -1,0 +1,1 @@
+{"answer":"The sandbox environment is experiencing a sandbox-exec configuration issue (unbound variable `ipc-posix-semaphore`), so I cannot execute code. However:\n\n```python\nprint(\"Hello World\")\n```\n\n**Output:**","passed":true}

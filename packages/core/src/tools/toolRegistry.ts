@@ -1,4 +1,5 @@
-import type { Tool, ToolDefinition } from '../runtime/types';
+import type { Tool, ToolDefinition, CompiledSchema } from '../runtime/types';
+import { compileSchema } from '../runtime/toolCallValidator';
 
 /**
  * ToolRegistry — Auto-Discovery Tool Registry
@@ -21,6 +22,7 @@ export class ToolRegistry {
   private static instance: ToolRegistry;
   private tools: Map<string, Tool> = new Map();
   private categories: Map<string, string[]> = new Map();
+  private compiledSchemas: Map<string, CompiledSchema> = new Map();
 
   private constructor() {}
 
@@ -38,6 +40,14 @@ export class ToolRegistry {
   static register(tool: Tool, category?: string): void {
     const registry = ToolRegistry.getInstance();
     registry.tools.set(tool.definition.name, tool);
+
+    // Auto-compile schema for runtime validation
+    try {
+      const compiled = compileSchema(tool.definition.inputSchema);
+      registry.compiledSchemas.set(tool.definition.name, compiled);
+      tool.compiledSchema = compiled;
+    } catch { /* schema compilation is best-effort */ }
+
     if (category) {
       const existing = registry.categories.get(category) || [];
       existing.push(tool.definition.name);
@@ -80,6 +90,13 @@ export class ToolRegistry {
    */
   static getToolsByCategory(category: string): string[] {
     return ToolRegistry.getInstance().categories.get(category) || [];
+  }
+
+  /**
+   * Get compiled schema for a tool (for runtime validation).
+   */
+  static getCompiledSchema(name: string): CompiledSchema | undefined {
+    return ToolRegistry.getInstance().compiledSchemas.get(name);
   }
 
   /**

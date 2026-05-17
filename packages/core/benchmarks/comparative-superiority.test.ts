@@ -17,9 +17,13 @@ import assert from 'node:assert';
 // ============================================================================
 // Configuration
 // ============================================================================
+const MIMO_API_KEY = process.env.MIMO_API_KEY;
+if (!MIMO_API_KEY) {
+  throw new Error('MIMO_API_KEY environment variable is required. Set it via: MIMO_API_KEY=your_key npx tsx --test benchmarks/comparative-superiority.test.ts');
+}
 const MIMO_CONFIG = {
   baseUrl: 'https://token-plan-sgp.xiaomimimo.com/v1',
-  apiKey: 'tp-s4qm1wldsgs0jlichmolwlyvqg7vw2wivdze6in7amfka3zr',
+  apiKey: MIMO_API_KEY,
   model: 'mimo-v2.5-pro',
 };
 let totalTokens = 0;
