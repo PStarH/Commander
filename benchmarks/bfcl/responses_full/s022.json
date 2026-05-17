@@ -1,0 +1,10 @@
+{
+  "prompt": "What is the capital of France?",
+  "cat": "irrelevance",
+  "expected": null,
+  "response": {
+    "content": "The capital of France is **Paris**. \n\nParis is not only the political capital but also the cultural, economic, and artistic heart of France. It's famous for iconic landmarks like the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and its charming caf\u00e9s and boulevards. Often called the \"City of Light\" (*La Ville Lumi\u00e8re*), Paris has been a global center for art, fashion, gastronomy, and culture for centuries.",
+    "role": "assistant",
+    "tool_calls": null
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "prompt": "research company and send email summary",
+  "cat": "multiple",
+  "expected": null,
+  "response": {
+    "content": "I'd be happy to help you research a company and send an email summary! However, I need a bit more information to get started:\n\n1. **Which company** would you like me to research?\n2. **Who should I send the email to** (email address)?\n3. **Any specific aspects** of the company you're most interested in (e.g., financials, products, recent news, competitors, leadership)?\n\nLet me know these details and I'll get right on it!",
+    "role": "assistant",
+    "tool_calls": null
+  }
+}

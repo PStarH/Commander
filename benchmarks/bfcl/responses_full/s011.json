@@ -1,0 +1,19 @@
+{
+  "prompt": "read package.json",
+  "cat": "simple",
+  "expected": "file_read",
+  "response": {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "call_ff5c8251dba44a9caf06a03b",
+        "function": {
+          "arguments": "{\"path\": \"package.json\"}",
+          "name": "file_read"
+        },
+        "type": "function"
+      }
+    ]
+  }
+}

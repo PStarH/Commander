@@ -1,0 +1,19 @@
+{
+  "prompt": "list files in directory",
+  "cat": "simple",
+  "expected": "shell_execute",
+  "response": {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "call_e30180b99e9c4f53be3d2548",
+        "function": {
+          "arguments": "{\"command\": \"ls -la\"}",
+          "name": "shell_execute"
+        },
+        "type": "function"
+      }
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "cat": "Math",
+  "question": "Solve for x: x^2 - 5x + 6 = 0",
+  "answer": "Of course! Here is the step-by-step solution.\n\nWe need to solve the quadratic equation:\n**x\u00b2 - 5x + 6 = 0**\n\nThere are two common methods to solve this.\n\n### Method 1: Factoring\n\n1.  **Find two numbers that multiply to the constant term (6) and add up to the middle coefficient (-5).**\n    *   Factors of 6: (1, 6), (2, 3), (-1, -6), (-2, -3)\n    *   The pair that adds up to -5 is **-2** and **-3**. (-2 + -3 = -5 and -2 * -3 = 6).\n\n2.  **Rewrite the equation using these factors.**\n    (x - 2)(x - ",
+  "score": 1.0
+}

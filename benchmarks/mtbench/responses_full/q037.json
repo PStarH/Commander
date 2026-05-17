@@ -1,0 +1,6 @@
+{
+  "cat": "Math",
+  "question": "Convert binary 1011 to decimal.",
+  "answer": "Of course! To convert the binary number `1011` to decimal, you can use the positional value method.\n\nEach digit in a binary number represents a power of 2, starting from the rightmost digit (which is 2\u2070).\n\nHere's the breakdown:\n\n| Binary Digit | 1 | 0 | 1 | 1 |\n| :--- | :-: | :-: | :-: | :-: |\n| **Position (Power of 2)** | 2\u00b3 | 2\u00b2 | 2\u00b9 | 2\u2070 |\n| **Decimal Value** | 8 | 4 | 2 | 1 |\n\nNow, you multiply each binary digit by its corresponding decimal value and add the results:\n\n(1 \u00d7 8) + (0 \u00d7 4) + (1 ",
+  "score": 7.0
+}

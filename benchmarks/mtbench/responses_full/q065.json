@@ -1,0 +1,6 @@
+{
+  "cat": "STEM",
+  "question": "Explain how GPS works.",
+  "answer": "At its core, GPS (Global Positioning System) works using a mathematical principle called **trilateration**.\n\nTo understand it, you need to know that GPS does not actually track you. Instead, your GPS receiver (your phone or car) listens to signals from satellites to figure out where *it* is.\n\nHere is the step-by-step breakdown of how it works.\n\n### 1. The Setup\nThe system relies on a network of about 31 satellites orbiting the Earth. At any given time, no matter where you are on the planet, you ",
+  "score": 7.0
+}
