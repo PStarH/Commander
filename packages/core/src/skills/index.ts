@@ -44,7 +44,7 @@ export function createSkill(name: string, description: string, tools: string[], 
 export function loadSkill(name: string): SkillDef | null {
   try {
     return JSON.parse(fs.readFileSync(path.join(SKILLS_DIR, `${name}.json`), 'utf-8'));
-  } catch { return null; }
+  } catch(e) { console.debug('[skills] error:', (e as Error)?.message); return null; }
 }
 
 /**
@@ -59,7 +59,7 @@ export function listSkills(): SkillDef[] {
       try {
         const s: SkillDef = JSON.parse(fs.readFileSync(path.join(SKILLS_DIR, f), 'utf-8'));
         return s;
-      } catch { return null; }
+      } catch(e) { console.debug('[skills] error:', (e as Error)?.message); return null; }
     })
     .filter((s): s is SkillDef => s !== null)
     .sort((a, b) => b.usageCount - a.usageCount);

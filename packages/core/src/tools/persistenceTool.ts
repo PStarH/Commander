@@ -62,7 +62,7 @@ export class MemoryRecallTool implements Tool {
       const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, '_');
       const filePath = path.join(nsDir, `${safeKey}.json`);
       if (!fs.existsSync(filePath)) return `No memory for "${key}"`;
-      const d = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      let d; try { d = JSON.parse(fs.readFileSync(filePath, 'utf-8')); } catch { d = {}; }
       return `${d.key}: ${d.value}\n(updated: ${d.timestamp})`;
     }
 
@@ -70,7 +70,7 @@ export class MemoryRecallTool implements Tool {
     const results: Array<{ key: string; value: string; timestamp: string }> = [];
     for (const file of files) {
       try {
-        const d = JSON.parse(fs.readFileSync(path.join(nsDir, file), 'utf-8'));
+        let d; try { d = JSON.parse(fs.readFileSync(path.join(nsDir, file), 'utf-8')); } catch { d = {}; }
         if (!search || d.key.toLowerCase().includes(search) || d.value.toLowerCase().includes(search)) {
           results.push(d);
         }
