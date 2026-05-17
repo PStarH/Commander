@@ -1,0 +1,27 @@
+{
+  "prompt": "get weather in Tokyo and London",
+  "cat": "parallel",
+  "expected": null,
+  "response": {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "call_77cbc7dc5e2b4e3c84aaac52",
+        "function": {
+          "arguments": "{\"city\": \"Tokyo\"}",
+          "name": "get_weather"
+        },
+        "type": "function"
+      },
+      {
+        "id": "call_f15e910888744cfc9ad01069",
+        "function": {
+          "arguments": "{\"city\": \"London\"}",
+          "name": "get_weather"
+        },
+        "type": "function"
+      }
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "cat": "Math",
+  "question": "The sum of two numbers is 20. Their product is 91. What are they?",
+  "answer": "The two numbers are **7 and 13**.\n\nHere is the step-by-step breakdown:\n\n1.  **Find factors of 91:** The factors of 91 are 1, 7, 13, and 91.\n2.  **Check the sums:**\n    *   $1 + 91 = 92$\n    *   $7 + 13 = 20$\n\nSince $7 + 13 = 20$ and $7 \\times 13 = 91$, these are the correct numbers.",
+  "score": 10.0
+}

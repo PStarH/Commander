@@ -1,0 +1,6 @@
+{
+  "cat": "Math",
+  "question": "What's the probability of rolling two sixes?",
+  "answer": "Assuming you are rolling two standard 6-sided dice at the same time, the probability is **1 in 36** (or about **2.78%**).\n\nHere is the breakdown of how to calculate it:\n\n1.  **Total outcomes:** Each die has 6 sides. When you roll two dice, the total number of combinations is $6 \\times 6 = 36$.\n2.  **Desired outcome:** There is only one specific combination that results in two sixes (a 6 on the first die and a 6 on the second die).\n3.  **The Math:** $\\frac{1}{36}$\n\n**Alternatively, using independ",
+  "score": 10.0
+}

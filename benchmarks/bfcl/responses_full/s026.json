@@ -1,0 +1,10 @@
+{
+  "prompt": "search climate data and calculate average",
+  "cat": "multiple",
+  "expected": null,
+  "response": {
+    "content": "I'd be happy to help you search for climate data and calculate averages! However, I need a bit more information to assist you effectively:\n\n1. **What location** are you interested in? (e.g., a specific city, country, or region)\n2. **What time period** are you looking at? (e.g., current month, past year, historical averages)\n3. **What climate variables** do you want to analyze? (e.g., temperature, precipitation, humidity, wind speed)\n\nOnce you provide these details, I can search for the relevant climate data and calculate the averages for you.",
+    "role": "assistant",
+    "tool_calls": null
+  }
+}

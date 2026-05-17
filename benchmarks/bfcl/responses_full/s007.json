@@ -1,0 +1,19 @@
+{
+  "prompt": "weather in Tokyo?",
+  "cat": "simple",
+  "expected": "get_weather",
+  "response": {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "call_d40d6ffd01574c9fb388cbd5",
+        "function": {
+          "arguments": "{\"city\": \"Tokyo\"}",
+          "name": "get_weather"
+        },
+        "type": "function"
+      }
+    ]
+  }
+}
