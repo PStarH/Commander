@@ -1,0 +1,8 @@
+benchmark:
+  name: gaia
+  type: generation
+  dataset: ~/.cache/huggingface/datasets/gaia-benchmark___gaia/2023_all/0.0.0/682dd723ee1e1697e00360edccf2366dc8418dd9/gaia-validation.arrow
+  format: arrow
+  temperature: 0.2
+  answer_key: "Final answer"
+  prompt_key: "Question"
