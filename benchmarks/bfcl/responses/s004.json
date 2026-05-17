@@ -1,0 +1,37 @@
+{
+  "id": "8ee24a0222c84fe589feff40df451843",
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_78c6013069234431a04b6da1",
+            "function": {
+              "arguments": "{\"path\": \"greeting.txt\", \"content\": \"hello\"}",
+              "name": "file_write"
+            },
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": 1778999837,
+  "model": "mimo-v2.5-pro",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 31,
+    "prompt_tokens": 991,
+    "total_tokens": 1022,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 960
+    }
+  }
+}
