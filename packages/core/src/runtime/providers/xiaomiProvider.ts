@@ -1,5 +1,6 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage, CacheConfig } from '../types';
 import { FormatBridge } from '../formatBridge';
+import { parseMiMoTextToolCalls } from './mimoProvider';
 
 interface XiaomiCompletionUsage {
   prompt_tokens: number;
@@ -186,14 +187,20 @@ export class XiaomiProvider implements LLMProvider {
       totalTokens: data.usage?.total_tokens ?? 0,
     };
 
-    const toolCalls = message.tool_calls?.map((tc: any) => ({
+    // Parse text-format tool calls too
+  let content = message.content ?? '';
+  let toolCalls = message.tool_calls?.map((tc: any) => ({
       id: tc.id,
       name: tc.function.name,
       arguments: JSON.parse(tc.function.arguments || '{}'),
     }));
 
-    return {
-      content: message.content ?? '',
+      if ((!toolCalls || toolCalls.length === 0) && content.includes('<tool_call>')) {
+    const parsed = parseMiMoTextToolCalls(content);
+    if (parsed.length > 0) { toolCalls = parsed; content = ''; }
+  }
+  return {
+      content,
       model,
       usage: tokenUsage,
       finishReason: choice?.finish_reason ?? 'stop',

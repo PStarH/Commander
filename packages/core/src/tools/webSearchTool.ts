@@ -1,9 +1,11 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
 
+const SEARCH_TIMEOUT = 8000;
+
 export class WebSearchTool implements Tool {
   definition: ToolDefinition = {
     name: 'web_search',
-    description: 'Search the web via API for current information. Returns structured snippets and URLs. Best for: fact-checking, quick lookups, research queries. Does NOT render JavaScript. Use browser_search for JS-heavy or dynamic pages.',
+    description: 'Search the web for current information. Returns structured snippets and URLs. Best for: fact-checking, quick lookups, research queries.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -22,32 +24,59 @@ export class WebSearchTool implements Tool {
   async execute(args: Record<string, unknown>): Promise<string> {
     const query = String(args.query ?? '');
     const numResults = Math.min(Number(args.numResults ?? 5), 10);
-
     if (!query) return 'Error: query is required';
 
+    let results = await this.tryDuckDuckGo(query, numResults);
+    if (!results) {
+      results = await this.tryBing(query, numResults);
+    }
+
+    if (!results || results.length === 0) {
+      return `No results found for "${query}". Try a different query.`;
+    }
+
+    return results.map((r, i) =>
+      `[${i + 1}] ${r.title}\nURL: ${r.url}\n${r.snippet}\n`
+    ).join('\n');
+  }
+
+  private async tryDuckDuckGo(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }> | null> {
     try {
       const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000);
-
+      const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT);
       const response = await fetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CommanderBot; +https://github.com/sampan/commander)' },
         signal: controller.signal,
       });
       clearTimeout(timeout);
-
+      if (!response.ok) return null;
       const html = await response.text();
-      const results = this.parseDuckDuckGo(html, numResults);
+      const results = this.parseDuckDuckGo(html, maxResults);
+      return results.length > 0 ? results : null;
+    } catch {
+      return null;
+    }
+  }
 
-      if (results.length === 0) {
-        return `No results found for "${query}". Try a different query.`;
-      }
-
-      return results.map((r, i) =>
-        `[${i + 1}] ${r.title}\nURL: ${r.url}\n${r.snippet}\n`
-      ).join('\n');
-    } catch (err) {
-      return `Search failed: ${err instanceof Error ? err.message : String(err)}`;
+  private async tryBing(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }> | null> {
+    try {
+      const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&cc=us&mkt=en-US`;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT);
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!response.ok) return null;
+      const html = await response.text();
+      return this.parseBing(html, maxResults);
+    } catch {
+      return null;
     }
   }
 
@@ -80,12 +109,33 @@ export class WebSearchTool implements Tool {
     if (results.length === 0) {
       const fallbackRegex = /<a[^>]*class="[^"]*result[^"]*"[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
       while ((m = fallbackRegex.exec(html)) !== null && results.length < maxResults) {
-        results.push({
-          title: m[2].replace(/<[^>]*>/g, '').trim(),
-          url: m[1],
-          snippet: '',
-        });
+        results.push({ title: m[2].replace(/<[^>]*>/g, '').trim(), url: m[1], snippet: '' });
       }
+    }
+    return results;
+  }
+
+  private parseBing(html: string, maxResults: number): Array<{ title: string; url: string; snippet: string }> {
+    const results: Array<{ title: string; url: string; snippet: string }> = [];
+    const blocks: string[] = [];
+    let idx = 0;
+    while (true) {
+      const start = html.indexOf('<li class="b_algo"', idx);
+      if (start === -1) break;
+      const end = html.indexOf('</li>', start);
+      if (end === -1) break;
+      blocks.push(html.slice(start, end + 5));
+      idx = end + 5;
+    }
+    for (const block of blocks) {
+      if (results.length >= maxResults) break;
+      const urlMatch = block.match(/<h2[^>]*><a[^>]*href="(https?:\/\/[^"]+)"[^>]*>(.*?)<\/a><\/h2>/);
+      if (!urlMatch) continue;
+      const url = urlMatch[1];
+      const title = urlMatch[2].replace(/<[^>]*>/g, '').trim();
+      const snipMatch = block.match(/<p[^>]*class="b_lineclamp[^"]*"[^>]*>([\s\S]*?)<\/p>/);
+      const snippet = snipMatch ? snipMatch[1].replace(/<[^>]*>/g, '').trim() : '';
+      results.push({ title, url, snippet });
     }
     return results;
   }
