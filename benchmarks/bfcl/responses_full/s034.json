@@ -1,0 +1,10 @@
+{
+  "prompt": "send email to alice@x.com and bob@y.com",
+  "cat": "parallel",
+  "expected": null,
+  "response": {
+    "content": "I'd be happy to help you send an email to Alice and Bob! However, I need a bit more information:\n\n1. **Subject**: What should the subject line be?\n2. **Body**: What message would you like to include in the email?\n\nCould you please provide these details so I can send the email for you?",
+    "role": "assistant",
+    "tool_calls": null
+  }
+}

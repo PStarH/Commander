@@ -1,0 +1,6 @@
+{
+  "cat": "Writing",
+  "question": "Draft a CI/CD proposal for a legacy system.",
+  "answer": "Of course. Here is a comprehensive CI/CD proposal for a legacy system, designed to be presented to stakeholders, management, and technical teams. It is structured to address the specific challenges and risks associated with modernizing older software.\n\n---\n\n### **Proposal: Implementing a Phased CI/CD Pipeline for the [Legacy System Name]**\n\n**Date:** October 26, 2023\n**Author:** [Your Name/Team Name]\n**Version:** 1.0\n\n---\n\n### 1. Executive Summary\n\nThis proposal outlines a strategic plan to impl",
+  "score": 8.0
+}

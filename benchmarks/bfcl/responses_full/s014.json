@@ -1,0 +1,10 @@
+{
+  "prompt": "send meeting reminder",
+  "cat": "simple",
+  "expected": "send_email",
+  "response": {
+    "content": "I'd be happy to help you send a meeting reminder! To do that, I'll need a few details:\n\n1. **To:** Who should I send the reminder to? (email address)\n2. **Subject:** What's the meeting about?\n3. **Body:** What details should be included? (date, time, location, agenda, etc.)\n\nPlease share these details and I'll send the reminder right away!",
+    "role": "assistant",
+    "tool_calls": null
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "prompt": "write backup script",
+  "cat": "simple",
+  "expected": "file_write",
+  "response": {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "call_162d9897fd064822b4483a9d",
+        "function": {
+          "arguments": "{\"command\": \"uname -a\"}",
+          "name": "shell_execute"
+        },
+        "type": "function"
+      },
+      {
+        "id": "call_36da7081046d4742adbe0b9e",
+        "function": {
+          "arguments": "{\"command\": \"which rsync tar gzip bzip2 xz 2>/dev/null\"}",
+          "name": "shell_execute"
+        },
+        "type": "function"
+      }
+    ]
+  }
+}

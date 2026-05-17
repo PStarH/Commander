@@ -1,0 +1,27 @@
+{
+  "prompt": "calculate 15pct of 340 and 20pct of 500",
+  "cat": "parallel",
+  "expected": null,
+  "response": {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "call_b9f03b39b3d34a68814a6722",
+        "function": {
+          "arguments": "{\"expression\": \"15% of 340\"}",
+          "name": "calculate"
+        },
+        "type": "function"
+      },
+      {
+        "id": "call_1a858790342d457981575b6f",
+        "function": {
+          "arguments": "{\"expression\": \"20% of 500\"}",
+          "name": "calculate"
+        },
+        "type": "function"
+      }
+    ]
+  }
+}

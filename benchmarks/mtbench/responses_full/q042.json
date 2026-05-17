@@ -1,0 +1,6 @@
+{
+  "cat": "Coding",
+  "question": "Write a function to sort a list of numbers.",
+  "answer": "Since you didn't specify a programming language, I will provide the solution in **Python**, as it is the most common language for this type of task.\n\nI will show you two ways to do it: the **\"Pythonic\" way** (best for real-world use) and the **Algorithmic way** (best for understanding how sorting actually works).\n\n### Option 1: The \"Pythonic\" Way (Best Practice)\nIn Python, you should use the built-in sorting methods. They use an optimized algorithm called Timsort.\n\n```python\ndef sort_numbers(num",
+  "score": 5.0
+}

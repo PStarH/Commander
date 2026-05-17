@@ -1,0 +1,6 @@
+{
+  "cat": "Math",
+  "question": "A circle radius 5. What's its area?",
+  "answer": "The area of a circle with a radius of 5 is **25\u03c0**.\n\nIf you want a decimal approximation, that's approximately **78.54**.\n\nHere's the formula:\n*   Area = \u03c0 * r\u00b2\n*   Area = \u03c0 * (5)\u00b2\n*   Area = \u03c0 * 25\n*   Area = 25\u03c0",
+  "score": 10.0
+}

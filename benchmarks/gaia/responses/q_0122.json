@@ -1,0 +1,1 @@
+{"answer":"**6 more blocks.**\n\n- **BERT base** encoder: **12** layers (transformer blocks)\n- **Original Transformer** (\"Attention is All You Need\") encoder: **6** layers\n\n12 − 6 = **6**","steps":3,"toolCalls":2,"correct":true,"elapsed":"953.0s","status":"success"}
