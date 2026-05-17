@@ -206,6 +206,35 @@ export interface Tool {
   timeout?: number;
   /** Max output size in chars. Larger outputs are truncated and linked to file. Default: 10000 */
   maxOutputSize?: number;
+  /** Compiled schema for runtime validation (populated by ToolRegistry) */
+  compiledSchema?: CompiledSchema;
+}
+
+/**
+ * Compiled (pre-processed) JSON Schema for fast runtime validation.
+ * Created once at tool registration time via compileSchema().
+ */
+export interface CompiledSchema {
+  requiredFields: string[];
+  propertyTypes: Map<string, string>;
+  propertyEnums: Map<string, unknown[]>;
+  propertyConstraints: Map<string, { minimum?: number; maximum?: number }>;
+  defaults: Map<string, unknown>;
+  raw: Record<string, unknown>;
+}
+
+/**
+ * Result of validating tool call arguments against a compiled schema.
+ */
+export interface ValidationResult {
+  valid: boolean;
+  errors: Array<{
+    path: string;
+    message: string;
+    expectedType?: string;
+    actualValue?: unknown;
+  }>;
+  repairedArgs?: Record<string, unknown>;
 }
 
 // ============================================================================

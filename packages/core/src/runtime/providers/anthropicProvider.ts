@@ -1,4 +1,5 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage, CacheConfig } from '../types';
+import { FormatBridge } from '../formatBridge';
 
 interface AnthropicContent {
   type: string;
@@ -56,12 +57,12 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     if (request.tools && request.tools.length > 0) {
-      body.tools = request.tools.map(t => ({
-        name: t.name,
-        description: t.description,
-        input_schema: t.inputSchema,
-        ...(request.cacheConfig?.cacheTools ? { cache_control: { type: 'ephemeral' as const } } : {}),
-      }));
+      body.tools = FormatBridge.adaptToolsForProvider(request.tools, 'anthropic');
+      if (request.cacheConfig?.cacheTools) {
+        (body.tools as Record<string, unknown>[]).forEach((t: Record<string, unknown>) => {
+          t.cache_control = { type: 'ephemeral' };
+        });
+      }
     }
 
     const response = await fetch(`${this.baseUrl}/messages`, {

@@ -1,0 +1,26 @@
+{
+  "benchmark": "PinchBench",
+  "dataset": "43 agent tasks across 12 domains",
+  "model": "MiMo-V2.5-Pro via Commander pipeline",
+  "date": "2026-05-17",
+  "total": 43,
+  "passed": 42,
+  "accuracy": "97.7%",
+  "failed_tasks": [
+    "multifile.json"
+  ],
+  "domains": [
+    "coding",
+    "research",
+    "writing",
+    "data_analysis",
+    "log_analysis",
+    "meeting",
+    "memory",
+    "file_ops",
+    "devops",
+    "security",
+    "finance",
+    "multimodal"
+  ]
+}

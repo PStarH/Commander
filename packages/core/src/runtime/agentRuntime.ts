@@ -22,7 +22,7 @@ import { ContextCompactor } from './contextCompactor';
 import { classifyLLMError, computeBackoff } from './llmRetry';
 import { CircuitBreaker } from './circuitBreaker';
 import { createParameterControllerPlugin, applyControllerParams } from './parameterController';
-import { UnifiedVerificationPipeline, type UVPTaskContext, detectTaskType } from './unifiedVerification';
+import { UnifiedVerificationPipeline, type UVPTaskContext, detectTaskType, classifyProvisionIntent } from './unifiedVerification';
 import { TokenGovernor, type OptimizationStrategy } from './tokenGovernor';
 import { SamplesStore } from './samplesStore';
 import { captureProvenance } from './provenance';
@@ -42,6 +42,9 @@ import { ToolOrchestrator } from './toolOrchestrator';
 import { ToolApproval } from './toolApproval';
 import { ToolPlanner } from './toolPlanner';
 import { CycleDetector } from './cycleDetector';
+import { repairToolCallArguments } from './toolCallRepair';
+import { validateToolCall, formatValidationErrors } from './toolCallValidator';
+import { ToolRegistry } from '../tools/toolRegistry';
 import { parseStructuredOutput } from './structuredOutput';
 import { selectTools } from './toolRetriever';
 import { isConfidentResponse } from './entropyGater';
@@ -135,7 +138,7 @@ export class AgentRuntime {
     try { this.memory = getGlobalThreeLayerMemory(); } catch { /* ok */ }
     try { getTraceRecorder(this.traceStore); } catch { /* ok */ }
     // Tool calling infrastructure
-    this.toolCache = new ToolResultCache({ enabled: true, maxEntries: 256, defaultTtlMs: 300_000 });
+    this.toolCache = new ToolResultCache({ enabled: true, maxEntries: 512, defaultTtlMs: 1_800_000 });
     this.outputManager = new ToolOutputManager({ enabled: true, turnBudget: 32000 });
     // ToolApproval with auto-approve callback (semi_auto/manual policies still gate)
     const toolApproval = new ToolApproval(
@@ -709,7 +712,8 @@ export class AgentRuntime {
           const compactThreshold = compactDecision.apply ? 2 : 3;
           if (toolLoopCount > compactThreshold) {
             const tokensBefore = this.compactor.getUsage(request.messages).total;
-            const compactResult = this.compactor.compact(request.messages);
+            const taskType = detectTaskType(ctx.goal) as any; // Compatible with CompactTaskType
+            const compactResult = this.compactor.compact(request.messages, undefined, taskType);
             if (compactResult.action.droppedCount > 0) {
               request.messages = compactResult.messages;
               this.governor.recordOutcome('context_compaction', tokensBefore, this.compactor.getUsage(request.messages).total);
@@ -1079,6 +1083,14 @@ export class AgentRuntime {
       '## Constraints',
       `- Maximum ${this.config.maxStepsPerRun} steps`,
       '- Prioritize accuracy over completeness when budget is constrained.',
+      '',
+      '## Tool Calling Instructions',
+      '- Do NOT make assumptions about what values to plug into function arguments.',
+      '  If a tool argument value is ambiguous or not clearly specified, ask for clarification.',
+      '- Call one tool at a time unless the calls are clearly independent.',
+      '- Wait for tool results before making follow-up tool calls that depend on them.',
+      '- When a tool returns a validation error, correct your arguments and retry.',
+      '- Provide all required arguments. Do not omit required fields.',
     ];
 
     return parts.filter(Boolean).join('\n');
@@ -1172,6 +1184,26 @@ export class AgentRuntime {
 
     const effectiveTimeout = tool.timeout ?? this.config.timeoutMs;
 
+    // Validate and repair tool call arguments before execution
+    const { args: repairedArgs, repairs } = repairToolCallArguments(toolCall.arguments, toolCall.name);
+    const schema = tool.compiledSchema ?? ToolRegistry.getCompiledSchema(toolCall.name);
+    let validatedArgs = repairedArgs;
+    if (schema) {
+      const validation = validateToolCall(repairedArgs, schema);
+      if (!validation.valid) {
+        const errorFeedback = formatValidationErrors(validation.errors, toolCall.name, repairs);
+        tracer.recordToolExecution(runId, toolCall.name, toolCall.arguments, '', 0, errorFeedback);
+        return {
+          toolCallId: toolCall.id,
+          name: toolCall.name,
+          output: '',
+          error: errorFeedback,
+          durationMs: Date.now() - startTime,
+        };
+      }
+      validatedArgs = validation.repairedArgs ?? repairedArgs;
+    }
+
     // Wrap tool execution with StepErrorBoundary for per-step recovery
     const boundary = new StepErrorBoundary(runId, agentId, this.dlq, undefined, {
       maxRetries: 1,
@@ -1184,7 +1216,7 @@ export class AgentRuntime {
       toolCall.name,
       'tool',
       async () => {
-        const execPromise = tool.execute(toolCall.arguments);
+        const execPromise = tool.execute(validatedArgs);
         const timeoutPromise = new Promise<never>((_, reject) => {
           const timer = setTimeout(() => reject(new Error(`TOOL_TIMEOUT: "${toolCall.name}" exceeded ${effectiveTimeout}ms`)), effectiveTimeout);
           if (typeof timer.unref === 'function') (timer as ReturnType<typeof setTimeout> & { unref: () => void }).unref();
@@ -1265,45 +1297,80 @@ export class AgentRuntime {
   /**
    * Pre-LLM tool provisioning: detect tool needs, execute tools, inject results.
    * Bridges the GAIA gap where LLM answers without calling tools.
+   *
+   * Uses scored intent classification (not binary keyword matching) for accuracy.
+   * Each provision category has weighted patterns; the category with the highest
+   * cumulative score wins. This reduces false positives vs keyword matching.
    */
   private async provisionTools(goal: string, request: LLMRequest): Promise<boolean> {
     const lower = goal.toLowerCase();
     let provisioned = false;
 
-    // Detect calculation needs — route to python_execute before LLM answers
-    if ((lower.includes('calculate') || lower.includes('compute') || lower.includes('how many') ||
-         lower.includes('count') || lower.includes('sum') || lower.includes('average') ||
-         lower.includes('total') || lower.includes('distance') || lower.includes('volume') ||
-         /\d+/.test(goal)) && this.tools.has('python_execute')) {
-      const calcPrompt = `# Calculate the following. Output ONLY the numeric result, no explanation.\n${goal}`;
-      try {
-        const tool = this.tools.get('python_execute')!;
-        const calcResult = await tool.execute({ code: `import math\nprint(eval("""${goal.replace(/"/g, '\\"')}"""))` });
-        if (calcResult && !calcResult.startsWith('Error')) {
-          request.messages.push({
-            role: 'system',
-            content: `[Tool: Calculation result]\n${calcResult.slice(0, 500)}`,
-          });
-          provisioned = true;
-        }
-      } catch {}
+    // Use shared scored intent classification
+    const { bestIntent, scores } = classifyProvisionIntent(goal);
+    if (!bestIntent) return false;
+
+    // --- Provision based on best intent ---
+    if (bestIntent === 'calculation' && this.tools.has('python_execute')) {
+      const calcToolCall = { id: 'provision_calc', name: 'python_execute', arguments: { code: `import math\nprint(${goal.replace(/[^0-9+\-*/.() ]/g, '').trim()})` } };
+      const cached = this.toolCache.get(calcToolCall);
+      if (cached && !cached.error) {
+        request.messages.push({ role: 'system', content: `[Tool: Calculation result]\n${cached.output.slice(0, 500)}` });
+        provisioned = true;
+      } else {
+        try {
+          const calcResult = await this.tools.get('python_execute')!.execute({ code: `import math\nprint(${goal.replace(/[^0-9+\-*/.() ]/g, '').trim()})` });
+          if (calcResult && !calcResult.startsWith('Error')) {
+            const toolResult: ToolResult = { toolCallId: 'provision_calc', name: 'python_execute', output: calcResult, durationMs: 0 };
+            this.toolCache.set(calcToolCall, toolResult);
+            request.messages.push({ role: 'system', content: `[Tool: Calculation result]\n${calcResult.slice(0, 500)}` });
+            provisioned = true;
+          }
+        } catch {}
+      }
     }
 
-    // Detect web search needs
-    if ((lower.includes('search') || lower.includes('find') || lower.includes('look up') ||
-         lower.includes('what is') || lower.includes('who is') || lower.includes('latest') ||
-         lower.includes('current') || lower.includes('news')) && this.tools.has('web_search')) {
-      try {
-        const tool = this.tools.get('web_search')!;
-        const searchResult = await tool.execute({ query: goal.slice(0, 100), numResults: 3 });
-        if (searchResult && !searchResult.startsWith('Error')) {
-          request.messages.push({
-            role: 'system',
-            content: `[Tool: Web search results]\n${searchResult.slice(0, 1000)}`,
-          });
+    if (bestIntent === 'web_search' && this.tools.has('web_search')) {
+      const searchToolCall = { id: 'provision_search', name: 'web_search', arguments: { query: goal.slice(0, 100), numResults: 3 } };
+      const cached = this.toolCache.get(searchToolCall);
+      if (cached && !cached.error) {
+        request.messages.push({ role: 'system', content: `[Tool: Web search results]\n${cached.output.slice(0, 1000)}` });
+        provisioned = true;
+      } else {
+        try {
+          const searchResult = await this.tools.get('web_search')!.execute({ query: goal.slice(0, 100), numResults: 3 });
+          if (searchResult && !searchResult.startsWith('Error')) {
+            const toolResult: ToolResult = { toolCallId: 'provision_search', name: 'web_search', output: searchResult, durationMs: 0 };
+            this.toolCache.set(searchToolCall, toolResult);
+            request.messages.push({ role: 'system', content: `[Tool: Web search results]\n${searchResult.slice(0, 1000)}` });
+            provisioned = true;
+          }
+        } catch {}
+      }
+    }
+
+    // File read provisioning: if goal mentions a specific file path, pre-load it
+    if (bestIntent === 'file_read' && this.tools.has('file_read')) {
+      const fileMatch = goal.match(/(?:read|open|analyze|load|parse)\s+(?:the\s+)?(?:file\s+)?['"]?([\w./\\-]+\.[a-z]{2,4})['"]?/i);
+      const filePath = fileMatch?.[1];
+      if (filePath) {
+        const readToolCall = { id: 'provision_read', name: 'file_read', arguments: { path: filePath } };
+        const cached = this.toolCache.get(readToolCall);
+        if (cached && !cached.error) {
+          request.messages.push({ role: 'system', content: `[Tool: File content]\n${cached.output.slice(0, 2000)}` });
           provisioned = true;
+        } else {
+          try {
+            const readResult = await this.tools.get('file_read')!.execute({ path: filePath });
+            if (readResult && !readResult.startsWith('Error')) {
+              const toolResult: ToolResult = { toolCallId: 'provision_read', name: 'file_read', output: readResult, durationMs: 0 };
+              this.toolCache.set(readToolCall, toolResult);
+              request.messages.push({ role: 'system', content: `[Tool: File content]\n${readResult.slice(0, 2000)}` });
+              provisioned = true;
+            }
+          } catch {}
         }
-      } catch {}
+      }
     }
 
     return provisioned;
