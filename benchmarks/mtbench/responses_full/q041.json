@@ -1,0 +1,6 @@
+{
+  "cat": "Coding",
+  "question": "Write a function to find the factorial of n.",
+  "answer": "Here are examples of how to write a factorial function in **Python**, **JavaScript**, **Java**, and **C++**.\n\n### Mathematical Definition\nThe factorial of a non-negative integer $n$, denoted by $n!$, is the product of all positive integers less than or equal to $n$.\n*   $5! = 5 \\times 4 \\times 3 \\times 2 \\times 1 = 120$\n*   $0! = 1$\n\n---\n\n### 1. Python\n\n**Method A: Iterative (Best for performance)**\n```python\ndef factorial_iterative(n):\n    if n < 0:\n        return \"Factorial does not exist for ",
+  "score": 5.0
+}

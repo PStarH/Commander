@@ -1,0 +1,6 @@
+{
+  "cat": "Extraction",
+  "question": "Extract error codes from: 'Error 404: Not Found. Error 500: Server Error.'",
+  "answer": "The error codes extracted from the text are:\n\n*   **404**\n*   **500**",
+  "score": 5.0
+}

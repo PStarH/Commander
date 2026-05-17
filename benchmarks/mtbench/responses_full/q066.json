@@ -1,0 +1,6 @@
+{
+  "cat": "STEM",
+  "question": "What is machine learning?",
+  "answer": "**Machine Learning (ML)** is a subset of artificial intelligence (AI) that gives computers the ability to learn without being explicitly programmed.\n\nInstead of a human writing code to tell the computer exactly how to solve a problem step-by-step, the computer is fed large amounts of data and uses algorithms to figure out the rules and patterns on its own.\n\nHere is a breakdown of how it works, the types of learning, and examples.\n\n---\n\n### 1. The Core Concept: Traditional vs. ML\n\nTo understand M",
+  "score": 7.0
+}

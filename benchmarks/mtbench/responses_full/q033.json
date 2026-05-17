@@ -1,0 +1,6 @@
+{
+  "cat": "Math",
+  "question": "How many zeroes in 100! ?",
+  "answer": "To find the number of zeroes at the end of $100!$ (100 factorial), we need to find how many times the number 10 is a factor in the product.\n\nSince $10 = 2 \\times 5$, we need to count the pairs of prime factors 2 and 5. In any factorial, there are always more factors of 2 than factors of 5, so we only need to count the number of times **5** appears as a factor.\n\nWe can do this using **Legendre's Formula**:\n\n1.  **Divide 100 by 5:**\n    $$100 \\div 5 = 20$$\n    *(This counts numbers like 5, 10, 15.",
+  "score": 10.0
+}

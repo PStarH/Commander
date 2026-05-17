@@ -1,0 +1,19 @@
+{
+  "prompt": "calculate 2+2 using python",
+  "cat": "simple",
+  "expected": "python_execute",
+  "response": {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "call_2e49d1c6428145a58ffa6e70",
+        "function": {
+          "arguments": "{\"code\": \"result = 2 + 2\\nprint(f\\\"2 + 2 = {result}\\\")\"}",
+          "name": "python_execute"
+        },
+        "type": "function"
+      }
+    ]
+  }
+}
