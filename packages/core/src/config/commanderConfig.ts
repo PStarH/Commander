@@ -137,7 +137,7 @@ function loadSettings(): CommanderSettings {
   for (const p of CONFIG_PATHS) {
     try {
       if (fs.existsSync(p)) {
-        return JSON.parse(fs.readFileSync(p, 'utf-8'));
+        try { return JSON.parse(fs.readFileSync(p, 'utf-8')); } catch { return {}; }
       }
     } catch {}
   }
