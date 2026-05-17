@@ -71,42 +71,117 @@ const DEFAULT_UVP_CONFIG: UVPConfig = {
 // Task type detection
 // ============================================================================
 
-const CODE_SIGNALS = [
-  /\bdef\s+\w+\s*\(/,
-  /\bclass\s+\w+/,
-  /\bfunction\s+\w+\s*\(/,
-  /\b(const|let|var)\s+\w+\s*=/,
-  /\bimport\s+\w+/,
-  /\bfrom\s+['"][\w./]+['"]/,
-  /\basync\s+function\b/,
-  /\bawait\s+\w+/,
-  /```[\s\S]*?```/,
-  /\b(python|javascript|typescript|bash|shell|sql)\b/i,
-  /\b(run|execute|compile|debug|fix|refactor|implement)\b.*\b(code|script|function|module|bug|error)\b/i,
+interface TypedPattern {
+  type: TaskType;
+  weight: number;
+  pattern: RegExp;
+}
+
+const SCORED_PATTERNS: TypedPattern[] = [
+  // Code (high weight — code blocks and language keywords are strong signal)
+  { type: 'code', weight: 3, pattern: /\b(def|class|function|const|let|var|import|export)\s+\w+\s*\(/ },
+  { type: 'code', weight: 2, pattern: /\b(python|javascript|typescript|bash|shell|sql)\s+(code|script)\b/i },
+  { type: 'code', weight: 2, pattern: /```[\s\S]*?```/ },
+  { type: 'code', weight: 2, pattern: /\b(run|execute|compile|debug|fix|refactor)\b.*\b(code|script|function|module|bug|error)\b/i },
+  { type: 'code', weight: 1, pattern: /\b(generate|write|create|implement)\b.*\b(function|class|program|script|module)\b/i },
+
+  // Structured output
+  { type: 'structured', weight: 3, pattern: /\b(return|output)\s+(as|in)\s+(json|structured|xml|yaml|table)\b/i },
+  { type: 'structured', weight: 2, pattern: /\b(json|csv|xml|yaml|tsv)\s+(format|output|response|schema)\b/i },
+  { type: 'structured', weight: 1, pattern: /\b(format|convert|transform)\s+(as|to|into)\s+(json|csv|xml|yaml)\b/i },
+
+  // Search / fact retrieval
+  { type: 'search', weight: 3, pattern: /\b(search|look\s+up|find|retrieve|fetch|browse|scrape)\b.*\b(web|url|http|site|website|page|article)\b/i },
+  { type: 'search', weight: 2, pattern: /\b(what\s+is|who\s+is|where\s+is|when\s+(was|did)|how\s+many)\b.+\?/i },
+  { type: 'search', weight: 2, pattern: /\b(population|capital|located|founded|invented|discovered|president|prime minister)\b/i },
+  { type: 'search', weight: 1, pattern: /\b(fact|data|information|details|news|latest|current|recent)\b/i },
+
+  // Analysis
+  { type: 'analysis', weight: 3, pattern: /\b(analyze|analyse|evaluate|assess|compare|contrast)\b/i },
+  { type: 'analysis', weight: 2, pattern: /\b(determine|identify|classify|categorize|diagnose)\b/i },
+  { type: 'analysis', weight: 1, pattern: /\b(pros\s+(and|&)\s+cons|advantage|disadvantage|cause|impact|effect)\b/i },
+
+  // Calculation — must check before general since many calculation tasks have numbers
+  { type: 'code', weight: 2, pattern: /\b(calculate|compute|sum|total|average|percentage?|multiply|divide|subtract|add)\b/i },
+  { type: 'analysis', weight: 1, pattern: /\b(statistics|metrics|trends|correlation|distribution)\b/i },
 ];
 
-const SEARCH_SIGNALS = [
-  /\b(search|find|look up|query|fetch|browse|scrape|download)\b/i,
-  /\b(web|url|http|api|endpoint|website)\b/i,
-];
-
-const ANALYSIS_SIGNALS = [
-  /\b(analyze|compare|evaluate|assess|summarize|explain|describe)\b/i,
-  /\b(data|results|metrics|statistics|trends)\b/i,
-];
-
-const STRUCTURED_SIGNALS = [
-  /\b(json|csv|xml|yaml|format|structure|schema)\b/i,
-  /\b(return|output|respond)\s+(as|in|with)\s+(json|structured)\b/i,
-];
-
+/**
+ * Detect task type using scored pattern matching.
+ * Each matched pattern contributes its weight to the associated type.
+ * The type with the highest cumulative score wins.
+ * This is more accurate than first-match-wins binary matching.
+ */
 export function detectTaskType(goal: string): TaskType {
   const g = goal.toLowerCase();
-  if (CODE_SIGNALS.some(p => p.test(g))) return 'code';
-  if (STRUCTURED_SIGNALS.some(p => p.test(g))) return 'structured';
-  if (SEARCH_SIGNALS.some(p => p.test(g))) return 'search';
-  if (ANALYSIS_SIGNALS.some(p => p.test(g))) return 'analysis';
-  return 'general';
+  const scores: Record<string, number> = { code: 0, search: 0, analysis: 0, structured: 0, general: 0 };
+  let totalWeight = 0;
+
+  for (const { type, weight, pattern } of SCORED_PATTERNS) {
+    if (pattern.test(g)) {
+      scores[type] += weight;
+      totalWeight += weight;
+    }
+  }
+
+  // If no patterns matched, return general
+  if (totalWeight === 0) return 'general';
+
+  // Find type with highest score
+  let bestType: TaskType = 'general';
+  let bestScore = 0;
+  for (const [type, score] of Object.entries(scores)) {
+    if (score > bestScore) {
+      bestScore = score;
+      bestType = type as TaskType;
+    }
+  }
+
+  return bestType;
+}
+
+// ============================================================================
+// Provision intent classification (shared with provisionTools)
+// ============================================================================
+
+export interface ProvisionIntentScores {
+  calculation: number;
+  web_search: number;
+  file_read: number;
+  code_exec: number;
+}
+
+export function classifyProvisionIntent(goal: string): { bestIntent: keyof ProvisionIntentScores | null; scores: ProvisionIntentScores } {
+  const lower = goal.toLowerCase();
+  const scores: ProvisionIntentScores = { calculation: 0, web_search: 0, file_read: 0, code_exec: 0 };
+
+  if (/\b(calculate|compute|sum|total|average|percentage?|multiply|divide|subtract|add|count)\b/i.test(lower)) scores.calculation += 3;
+  if (/\b(distance|area|volume|rate|speed|perimeter|probability)\b/i.test(lower)) scores.calculation += 2;
+  if (/how (many|much|far|long|tall|fast)\b/i.test(lower)) scores.calculation += 1;
+  if (/\b\d+\s*[+\-*/.()]\s*\d+/.test(goal)) scores.calculation += 3;
+
+  if (/\b(search|look\s+up|find|retrieve|fetch|browse|scrape)\b/i.test(lower)) scores.web_search += 3;
+  if (/\b(what\s+is|who\s+is|where\s+is|when\s+(was|did)|which)\b/i.test(lower)) scores.web_search += 2;
+  if (/\b(population|capital|located|founded|invented|discovered|latest|news|current)\b/i.test(lower)) scores.web_search += 2;
+  if (/\?$/.test(goal.trim()) && !scores.calculation && !lower.includes('code')) scores.web_search += 1;
+
+  if (/\b(read|open|load|parse|analyze|examine)\b.*\b(file|data|csv|json|xml|txt|log|config)\b/i.test(lower)) scores.file_read += 3;
+  if (/\b(contents? of|list|show me|display)\b.*\b(file|directory|folder|path)\b/i.test(lower)) scores.file_read += 2;
+  if (/\.\w{2,4}\b/.test(goal) && /file|read|open|load/i.test(lower)) scores.file_read += 2;
+
+  if (/\b(run|execute|test|debug)\b.*\b(code|script|program|function|module)\b/i.test(lower)) scores.code_exec += 3;
+  if (/\b(compile|build|deploy)\b/i.test(lower)) scores.code_exec += 2;
+
+  let bestIntent: keyof ProvisionIntentScores | null = null;
+  let bestScore = 0;
+  for (const [intent, score] of Object.entries(scores) as [keyof ProvisionIntentScores, number][]) {
+    if (score > bestScore) {
+      bestScore = score;
+      bestIntent = intent;
+    }
+  }
+
+  return { bestIntent: bestScore >= 3 ? bestIntent : null, scores };
 }
 
 // ============================================================================
@@ -124,12 +199,18 @@ const HALLUCINATION_PATTERNS = {
   fabricatedRef: [
     /\b(?:a |the )?(?:recent |20\d{2} )?(?:study|research|paper)\s+(?:by|from|conducted by)\b/i,
     /\b(?:Dr\.|Professor)\s+[A-Z][a-z]+\s+(?:et al\.?|and (?:colleagues|team))?\s+(?:found|showed|discovered)\b/i,
+    /\baccording\s+to\s+(?:a\s+)?(?:recent\s+)?(?:study|survey|report|analysis)\s+(?:by|from)\b/i,
   ],
   temporalIssue: [
     /\b(?:as of|since|until|after|in)\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20[3-9]\d\b/i,
   ],
   numericAnomaly: [
     /\b\d{10,}\b/,
+  ],
+  // GAIA-specific: unrealistic population, area, or statistical values
+  unrealisticFact: [
+    /\b(population|area|distance|speed|weight|height)\s+(is|was|equals?|:)\s+\d{1,3}\b(?!\s*(million|billion|thousand|km|mi|kg|lb))/i,
+    /\b\d+(?:\.\d+)?\s*(?:million|billion|trillion)\s+(?:people|dollars|users|population)\b(?!\s*(?:in|of|across|worldwide|global))/i,
   ],
 };
 
@@ -169,7 +250,7 @@ function runStage0(ctx: UVPTaskContext, taskType: TaskType): { signals: Verifica
     for (const pattern of patterns) {
       const match = ctx.output.match(pattern);
       if (match) {
-        const severity = type === 'fabricatedRef' || type === 'temporalIssue' ? 'high' : 'medium';
+        const severity = type === 'fabricatedRef' || type === 'temporalIssue' || type === 'unrealisticFact' ? 'high' : 'medium';
         signals.push({
           stage: 0,
           source: `hallucination:${type}`,
@@ -663,6 +744,7 @@ export class UnifiedVerificationPipeline {
   /**
    * Convert verification report into actionable feedback.
    * Includes the problematic snippet so the LLM knows exactly what to fix.
+   * When confidence is very low, includes ALL signals (not just top 3).
    */
   toFeedback(report: VerificationReport): string | null {
     if (report.passed || report.signals.length === 0) return null;
@@ -672,8 +754,9 @@ export class UnifiedVerificationPipeline {
       return order[a.severity] - order[b.severity];
     });
 
-    // Take top 3 most severe issues
-    const topIssues = sorted.filter(s => s.severity !== 'low').slice(0, 3);
+    // When confidence is dangerously low, include ALL non-low signals
+    const maxSignals = report.confidence < 0.3 ? 10 : 3;
+    const topIssues = sorted.filter(s => s.severity !== 'low').slice(0, maxSignals);
     if (topIssues.length === 0) return null;
 
     const lines = topIssues.map(s => {

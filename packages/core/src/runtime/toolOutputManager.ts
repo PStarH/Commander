@@ -243,7 +243,9 @@ export class ToolOutputManager {
   }
 
   private truncateSearchOutput(output: string, maxChars: number): string {
-    // Try to preserve complete search results
+    if (output.length <= maxChars) return output;
+
+    // Try JSON first (some tools may return structured data)
     try {
       const results = JSON.parse(output);
       if (Array.isArray(results)) {
@@ -257,10 +259,35 @@ export class ToolOutputManager {
         }
         return JSON.stringify(kept, null, 2);
       }
-    } catch {
-      // Not JSON, truncate as text
+    } catch { /* not JSON — expected for most search tools */ }
+
+    // Text-based search results: truncate at result boundaries
+    // Pattern: numbered results like "[1] Title" or "1. Title" or "Result 1:"
+    const resultBoundary = /\n(?=\[\d+\]|\d+\.|Result \d+:|---)/;
+    const results = output.split(resultBoundary);
+
+    if (results.length > 1) {
+      const kept: string[] = [];
+      let used = 0;
+      for (const r of results) {
+        if (used + r.length + 1 > maxChars && kept.length > 0) break;
+        kept.push(r);
+        used += r.length + 1;
+      }
+      const truncated = results.length - kept.length;
+      return kept.join('\n') + (truncated > 0 ? `\n[... ${truncated} more results truncated ...]` : '');
     }
-    return output.slice(0, maxChars);
+
+    // Fallback: truncate at sentence/line boundary
+    const lines = output.split('\n');
+    const kept: string[] = [];
+    let used = 0;
+    for (const line of lines) {
+      if (used + line.length + 1 > maxChars && kept.length > 0) break;
+      kept.push(line);
+      used += line.length + 1;
+    }
+    return kept.join('\n') + (kept.length < lines.length ? `\n[... truncated ...]` : '');
   }
 
   private truncateFileOutput(lines: string[], maxChars: number): string {
