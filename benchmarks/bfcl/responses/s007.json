@@ -1,0 +1,28 @@
+{
+  "id": "6c0e0ead40674e9089717ed7f20f11d3",
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "I don't have access to your personal information, so I don't know your name. I'm designed to be helpful while respecting your privacy - I don't have access to any personal data about you unless you choose to share it with me.\n\nIf you'd like me to know your name, you're welcome to tell me! I'd be happy to use it in our conversation.",
+        "role": "assistant",
+        "tool_calls": null
+      }
+    }
+  ],
+  "created": 1778999849,
+  "model": "mimo-v2.5-pro",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 78,
+    "prompt_tokens": 989,
+    "total_tokens": 1067,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 960
+    }
+  }
+}
