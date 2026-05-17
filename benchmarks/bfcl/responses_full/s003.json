@@ -1,0 +1,19 @@
+{
+  "prompt": "read config.json",
+  "cat": "simple",
+  "expected": "file_read",
+  "response": {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "call_866cb2d9a55842b89341f29e",
+        "function": {
+          "arguments": "{\"path\": \"config.json\"}",
+          "name": "file_read"
+        },
+        "type": "function"
+      }
+    ]
+  }
+}

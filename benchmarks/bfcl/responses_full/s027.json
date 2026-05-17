@@ -1,0 +1,35 @@
+{
+  "prompt": "get weather in 3 cities and save to file",
+  "cat": "multiple",
+  "expected": null,
+  "response": {
+    "content": "I'll help you get the weather for 3 cities and save it to a file. Let me start by getting the weather for three major cities.",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "call_5f02644e17cd42e785ae31a3",
+        "function": {
+          "arguments": "{\"city\": \"Beijing\"}",
+          "name": "get_weather"
+        },
+        "type": "function"
+      },
+      {
+        "id": "call_27de0fd9d79a4eb5a76d11f3",
+        "function": {
+          "arguments": "{\"city\": \"Shanghai\"}",
+          "name": "get_weather"
+        },
+        "type": "function"
+      },
+      {
+        "id": "call_79e584652cc540d780d8d305",
+        "function": {
+          "arguments": "{\"city\": \"Guangzhou\"}",
+          "name": "get_weather"
+        },
+        "type": "function"
+      }
+    ]
+  }
+}

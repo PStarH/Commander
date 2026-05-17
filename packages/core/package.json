@@ -23,7 +23,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --test test/*.test.js && npx tsx --test tests/*.test.ts benchmarks/*.test.ts",
+    "test": "node --test test/*.test.js && npx tsx --test tests/*.test.ts && npx tsx --env-file=.env --test benchmarks/*.test.ts",
+"bench": "npx tsx --env-file=.env --test benchmarks/*.test.ts",
     "test:vitest": "vitest run",
     "test:vitest:watch": "vitest"
   },

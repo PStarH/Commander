@@ -1,0 +1,6 @@
+{
+  "cat": "Coding",
+  "question": "Write a function to validate balanced parentheses.",
+  "answer": "Here is a robust solution in **Python**.\n\nThis function uses a **Stack** data structure (implemented via a Python list) to track opening brackets. It handles three types of brackets: `()`, `{}`, and `[]`.\n\n### The Code\n\n```python\ndef is_valid_parentheses(s: str) -> bool:\n    # A stack to keep track of opening brackets\n    stack = []\n    \n    # A mapping of closing brackets to their corresponding opening brackets\n    bracket_map = {')': '(', '}': '{', ']': '['}\n    \n    for char in s:\n        # I",
+  "score": 8.0
+}
