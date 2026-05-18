@@ -549,6 +549,37 @@ async function cmdWorkers(topics: string[]) {
   console.log(`  ${$.dim}Sequential would be: ${seqTime.toFixed(1)}s | Speedup: ${(seqTime / parseFloat(wallTime)).toFixed(1)}x${$.reset}\n`);
 }
 
+async function cmdGui() {
+  section('GUI DASHBOARD');
+  const apiDir = path.join(process.cwd(), 'apps', 'api');
+  const webDir = path.join(process.cwd(), 'apps', 'web');
+
+  if (!fs.existsSync(path.join(apiDir, 'src', 'index.ts'))) {
+    console.log(`  ${$.red}API server not found at apps/api/${$.reset}`);
+    return;
+  }
+
+  console.log(`  ${$.green}Starting API server...${$.reset}`);
+  console.log(`  ${$.dim}API:${$.reset}  http://localhost:4000`);
+  console.log(`  ${$.dim}Web:${$.reset}  cd apps/web && npx vite\n`);
+
+  // Start API in foreground
+  const { spawn } = require('child_process');
+  const api = spawn('npx', ['tsx', 'src/index.ts'], {
+    cwd: apiDir,
+    stdio: 'inherit',
+    env: { ...process.env, PORT: '4000' },
+  });
+
+  api.on('exit', (code: number) => {
+    console.log(`\n  ${$.dim}API server exited (code ${code})${$.reset}`);
+    process.exit(code ?? 0);
+  });
+
+  // Keep running — don't exit main()
+  await new Promise(() => {});
+}
+
 function cmdHelp() {
   console.log(`
   ${$.bold}${$.blue}╭──────────────────────────────────────────────╮${$.reset}
@@ -569,6 +600,7 @@ function cmdHelp() {
     ${$.cyan}commander status${$.reset}         System status
     ${$.cyan}commander config${$.reset}         View / change settings
     ${$.cyan}commander doctor${$.reset}         Run diagnostics
+    ${$.cyan}commander gui${$.reset}            Start the Agent War Room dashboard
 
   ${$.bold}API KEYS (set any one)${$.reset}
     ${$.cyan}OPENAI_API_KEY${$.reset}          OpenAI / DeepSeek / GLM / MiMo
@@ -635,6 +667,9 @@ async function main() {
       break;
     case 'doctor':
       cmdDoctor();
+      break;
+    case 'gui':
+      await cmdGui();
       break;
     case 'workers': {
       const topics = args.slice(1);

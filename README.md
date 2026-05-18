@@ -34,6 +34,7 @@ npx tsx cli.ts watch "your task"    # Real-time SSE streaming
 | `commander status` | System status, provider, MetaLearner stats |
 | `commander config` | View or change settings |
 | `commander doctor` | Run diagnostics |
+| `commander gui` | Start the Agent War Room dashboard (API server + Web UI) |
 | `commander workers [topics]` | Parallel research workers |
 
 ## Providers
@@ -83,6 +84,28 @@ Run benchmarks with the unified runner:
 ```bash
 npx tsx packages/core/src/benchmark/benchmarkRunner.ts <config> [--max N] [--parallel N]
 ```
+
+## GUI Dashboard
+
+Start the Agent War Room — a React-based operations dashboard:
+
+```bash
+commander gui
+```
+
+This starts the API server on `http://localhost:4000`. The web frontend runs on Vite:
+
+```bash
+cd apps/web && npx vite
+```
+
+The dashboard includes:
+- **Battle Report** — project health, completion rate, top agents, narrative
+- **Agent Roster** — status, specialty, workload per agent
+- **Mission Board** — Kanban with PLANNED / RUNNING / BLOCKED / DONE lanes
+- **Execution Feed** — real-time operation logs with level filtering
+- **Memory Browser** — search/filter/tag across DECISION, ISSUE, LESSON, SUMMARY
+- **Governance** — risk alerts, approval flow for MANUAL mode
 
 ## Module Status
 
