@@ -1,3 +1,6 @@
+/**
+ * @experimental — Standalone verifier. Replaced by UnifiedVerificationPipeline.
+ */
 import type { LLMMessage, LLMProvider } from './types';
 import { ContextCompactor } from './contextCompactor';
 
