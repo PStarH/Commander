@@ -1,3 +1,6 @@
+/**
+ * @experimental — Test-only mock provider. Not part of the execution pipeline.
+ */
 import type { LLMProvider, LLMRequest, LLMResponse } from './types';
 
 export class MockLLMProvider implements LLMProvider {

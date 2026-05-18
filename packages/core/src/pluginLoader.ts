@@ -1,3 +1,6 @@
+/**
+ * @experimental — Plugin system scaffolding. Not wired into the main execution flow.
+ */
 import * as fs from 'fs';
 import * as path from 'path';
 import { getHookManager, type CommanderPlugin } from './pluginManager';
