@@ -83,7 +83,7 @@ export class CommanderAgentLoop {
         taskQueue: this.taskQueue,
         updatedAt: new Date().toISOString(),
       }, null, 2), 'utf-8');
-    } catch {}
+    } catch (e) { console.debug('[AgentLoop] saveState error:', (e as Error)?.message); }
   }
 
   addTask(goal: string, priority = 0): string {

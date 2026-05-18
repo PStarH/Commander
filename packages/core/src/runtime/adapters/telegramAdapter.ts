@@ -113,7 +113,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     if (!text) return;
     const userId = String(msg.from?.id ?? msg.chat.id);
     if (!this.isUserAllowed(userId)) {
-      this.sendMessage({ id: String(msg.message_id), role: 'user', content: '', channelId: '', userId, timestamp: new Date().toISOString() }, 'Access denied.' as unknown as string).catch(() => {});
+      this.sendMessage({ id: String(msg.message_id), role: 'user', content: '', channelId: '', userId, timestamp: new Date().toISOString() }, 'Access denied.' as unknown as string).catch(e => console.debug('[Telegram] send error:', (e as Error)?.message));
       return;
     }
     const channelMsg: ChannelMessage = {

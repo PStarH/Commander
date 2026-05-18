@@ -83,7 +83,7 @@ export class Scheduler {
     try {
       const p = path.join(STATE_DIR, 'schedules.json');
       if (fs.existsSync(p)) this.entries = JSON.parse(fs.readFileSync(p, 'utf-8'));
-    } catch {}
+    } catch (e) { console.debug('[Scheduler] load error:', (e as Error)?.message); }
   }
   private save() {
     fs.writeFileSync(path.join(STATE_DIR, 'schedules.json'), JSON.stringify(this.entries, null, 2), 'utf-8');
@@ -160,7 +160,7 @@ export class QualityPipeline {
       logs.push({ draftId: draft.id, type: draft.type, score: review.score, passed: review.passed, timestamp: new Date().toISOString() });
       if (logs.length > 1000) logs = logs.slice(-1000);
       fs.writeFileSync(logPath, JSON.stringify(logs, null, 2), 'utf-8');
-    } catch {}
+    } catch (e) { console.debug('[Quality] log error:', (e as Error)?.message); }
   }
 }
 
@@ -182,7 +182,7 @@ export class FeedbackLoop {
       logs.push(entry);
       if (logs.length > 500) logs = logs.slice(-500);
       fs.writeFileSync(p, JSON.stringify(logs, null, 2), 'utf-8');
-    } catch {}
+    } catch (e) { console.debug('[Feedback] record error:', (e as Error)?.message); }
   }
 
   getStats(): { total: number; avgScore: number; improvementRate: number; commonIssues: string[] } {
@@ -196,7 +196,7 @@ export class FeedbackLoop {
       for (const l of logs) for (const issue of l.issues) issueCount.set(issue, (issueCount.get(issue) || 0) + 1);
       const top = [...issueCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([i]) => i);
       return { total: logs.length, avgScore: avg, improvementRate: improved / logs.length, commonIssues: top };
-    } catch { return { total: 0, avgScore: 0, improvementRate: 0, commonIssues: [] }; }
+    } catch (e) { console.debug('[Feedback] getStats error:', (e as Error)?.message); return { total: 0, avgScore: 0, improvementRate: 0, commonIssues: [] }; }
   }
 }
 
