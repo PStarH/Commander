@@ -342,8 +342,10 @@ export class AgentRuntime {
       useCacheControl: true,
     };
 
+    // Strip internal @tier suffix (eco/standard/power/consensus) before sending to provider
+    const apiModel = (routing.modelId || '').replace(/@\w+$/, '') || routing.modelId;
     const baseRequest: LLMRequest = {
-      model: routing.modelId,
+      model: apiModel,
       // Order: [system (stable, cacheable), user (variable)]
       messages: [
         {
