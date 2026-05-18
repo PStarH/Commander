@@ -100,7 +100,7 @@ class LSPClient {
 
   disconnect(): void {
     if (this.process) {
-      this.sendNotification('shutdown', {}).catch(() => {});
+      this.sendNotification('shutdown', {}).catch(e => console.debug('[LSP] shutdown error:', (e as Error)?.message));
       this.process.kill();
       this.process = null;
       this.isConnected = false;
@@ -221,7 +221,7 @@ class LSPClient {
         version: 1,
         text,
       },
-    }).catch(() => {});
+    }).catch(e => console.debug('[LSP] didChange error:', (e as Error)?.message));
   }
 
   private getLanguageId(filePath: string): string {
