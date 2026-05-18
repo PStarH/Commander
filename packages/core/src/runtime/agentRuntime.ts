@@ -1326,7 +1326,7 @@ export class AgentRuntime {
             request.messages.push({ role: 'system', content: `[Tool: Calculation result]\n${calcResult.slice(0, 500)}` });
             provisioned = true;
           }
-        } catch {}
+        } catch (e) { console.debug('[Provision] python_execute error:', (e as Error)?.message); }
       }
     }
 
@@ -1345,7 +1345,7 @@ export class AgentRuntime {
             request.messages.push({ role: 'system', content: `[Tool: Web search results]\n${searchResult.slice(0, 1000)}` });
             provisioned = true;
           }
-        } catch {}
+        } catch (e) { console.debug('[Provision] web_search error:', (e as Error)?.message); }
       }
     }
 
@@ -1368,7 +1368,7 @@ export class AgentRuntime {
               request.messages.push({ role: 'system', content: `[Tool: File content]\n${readResult.slice(0, 2000)}` });
               provisioned = true;
             }
-          } catch {}
+          } catch (e) { console.debug('[Provision] file_read error:', (e as Error)?.message); }
         }
       }
     }
