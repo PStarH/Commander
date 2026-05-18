@@ -160,7 +160,7 @@ export class ThreeLayerMemory {
       const combined = `${content} ${context} ${tags.join(' ')}`;
       const result = this.embeddingFn.generate(combined);
       if (result instanceof Promise) {
-        result.then(emb => this.embedStore.setEmbedding(entry.id, emb)).catch(() => {});
+        result.then(emb => this.embedStore.setEmbedding(entry.id, emb)).catch(e => console.debug('[Memory] embedding error:', (e as Error)?.message));
       } else {
         this.embedStore.setEmbedding(entry.id, result);
       }
