@@ -48,3 +48,62 @@ temp/
 # Generated files
 apps/api/data/
 apps/api/dist/
+
+# Playwright MCP artifacts
+.playwright-mcp/
+
+# PB (noop) runner output — root-level artifacts only
+/blog.txt
+/boot.txt
+/boot_report.txt
+/command.sh
+/competitors.txt
+/contract_analysis.txt
+/crontab.txt
+/csv_analysis.txt
+/csv_result.txt
+/daily.txt
+/data.csv
+/earnings.txt
+/eli5.txt
+/email.txt
+/event.txt
+/events.txt
+/executive.txt
+/financial.txt
+/gdpr.txt
+/git_recovery.txt
+/humanized.txt
+/image_desc.txt
+/iris.csv
+/iris_count.txt
+/log_analysis.txt
+/meeting.txt
+/meeting_summary.txt
+/oss_alternatives.txt
+/pricing.txt
+/procurement.txt
+/quantum.txt
+/refined.txt
+/second_brain.txt
+/skill_result.txt
+/spreadsheet_summary.txt
+/stock.txt
+/subway.txt
+/summary.txt
+/todos.txt
+/votes.txt
+/workflow.txt
+/Dockerfile
+/hello.py
+/test.js
+/project/
+/weather.py
+
+# Benchmark runner intermediate files
+benchmarks/*/responses/
+benchmarks/*/results.json
+benchmarks/*/responses_full/
+
+# OS artifacts
+.DS_Store

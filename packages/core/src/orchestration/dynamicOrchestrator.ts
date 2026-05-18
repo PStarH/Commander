@@ -1,3 +1,6 @@
+/**
+ * @experimental — Orchestrator variant not connected to the main execution flow.
+ */
 import type { OrchestrationTopology } from '../ultimate/types';
 
 export interface TaskStep {
