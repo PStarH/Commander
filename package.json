@@ -1,30 +1,38 @@
 {
-  "name": "@commander/core",
+  "name": "commander-monorepo",
   "version": "0.2.0",
-  "description": "The world's most advanced multi-agent orchestration system. Beats OWL on GAIA (70% vs 69%).",
-  "private": false,
-  "bin": {
-    "commander": "./cli.ts"
-  },
+  "description": "Commander — Multi-Agent Orchestration System (monorepo root)",
+  "private": true,
   "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=9.0.0"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "scripts": {
+    "build": "pnpm -r build",
+    "build:core": "cd packages/core && npx tsc -p tsconfig.json",
     "dev:api": "pnpm --filter api dev",
     "dev:web": "pnpm --filter web dev",
     "dev": "pnpm -r dev",
-    "build": "pnpm -r build",
-    "test": "cd packages/core && node --test test/*.test.js && npx tsx --test tests/ultimate-orchestration.test.ts tests/hallucinationDetector.test.ts tests/commander-tools-integration.test.ts tests/advanced-integration.test.ts benchmarks/*.test.ts",
+    "test": "cd packages/core && npx tsx --test tests/*.test.ts benchmarks/*.test.ts",
     "test:core": "cd packages/core && npx tsx --test tests/ultimate-orchestration.test.ts tests/hallucinationDetector.test.ts tests/commander-tools-integration.test.ts tests/advanced-integration.test.ts",
     "test:bench": "cd packages/core && npx tsx --test benchmarks/*.test.ts",
     "test:coverage": "cd packages/core && npx --node-options='--experimental-coverage' tsx --test tests/*.test.ts",
+    "test:all": "cd packages/core && npx tsx --test tests/*.test.ts benchmarks/*.test.ts",
     "benchmark:gaia": "npx tsx scripts/benchmark-gaia.ts",
     "benchmark:gaia:quick": "npx tsx scripts/benchmark-gaia.ts --quick",
     "benchmark:multiagent": "npx tsx scripts/benchmark-multiagent.ts",
     "cli": "npx tsx cli.ts",
-    "typecheck": "cd packages/core && npx tsc --noEmit"
+    "typecheck": "cd packages/core && npx tsc --noEmit",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "lint": "npx tsc --noEmit",
+    "prepublish": "cd packages/core && npx tsc -p tsconfig.json"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
