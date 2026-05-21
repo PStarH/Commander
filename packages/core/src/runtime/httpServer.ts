@@ -1,8 +1,33 @@
 import * as crypto from 'crypto';
 import { IncomingMessage, ServerResponse, createServer } from 'http';
+import type { LLMProvider, MessageBusTopic } from './types';
 import { AgentRuntime } from './agentRuntime';
 import { SSEStream } from './sseStream';
 import { getMessageBus } from './messageBus';
+import { OpenAIProvider } from './providers/openaiProvider';
+import { AnthropicProvider } from './providers/anthropicProvider';
+import { GoogleProvider } from './providers/googleProvider';
+import { OpenRouterProvider } from './providers/openRouterProvider';
+import { DeepSeekProvider } from './providers/deepseekProvider';
+import { GLMProvider } from './providers/glmProvider';
+import { MiMoProvider } from './providers/mimoProvider';
+import { XiaomiProvider } from './providers/xiaomiProvider';
+import { OllamaProvider } from './providers/ollamaProvider';
+import { VLLMProvider } from './providers/vllmProvider';
+import { CohereProvider } from './providers/cohereProvider';
+import { MistralProvider } from './providers/mistralProvider';
+import { GroqProvider } from './providers/groqProvider';
+import { TogetherProvider } from './providers/togetherProvider';
+import { PerplexityProvider } from './providers/perplexityProvider';
+import { FireworksProvider } from './providers/fireworksProvider';
+import { ReplicateProvider } from './providers/replicateProvider';
+import { BedrockProvider } from './providers/bedrockProvider';
+import { XAIProvider } from './providers/xaiProvider';
+import { AnyscaleProvider } from './providers/anyscaleProvider';
+import { DeepInfraProvider } from './providers/deepinfraProvider';
+import { getGlobalLogger } from '../logging';
+import { getMetricsCollector } from './metricsCollector';
+import { openApiSpec } from './openapi';
 
 export interface HttpServerConfig {
   port: number;
@@ -29,7 +54,7 @@ function parseBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-    req.on('end', () => { try { resolve(body ? JSON.parse(body) : {}); } catch { reject(new Error('Invalid JSON')); } });
+    req.on('end', () => { try { resolve(body ? JSON.parse(body) : {}); } catch { getGlobalLogger().warn('HttpServer', 'Invalid JSON'); reject(new Error('Invalid JSON')); } });
     req.on('error', reject);
   });
 }
@@ -55,33 +80,65 @@ export class CommanderHttpServer {
   private bus = getMessageBus();
   // Rate limiting: IP → { count, resetAt }
   private rateLimitMap: Map<string, { count: number; resetAt: number }> = new Map();
+  // Graceful shutdown: track open connections
+  private connections: Set<import('net').Socket> = new Set();
+  private isShuttingDown = false;
 
   constructor(config?: Partial<HttpServerConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     // If no apiKey provided, generate one so the server isn't open by default
     if (this.config.apiKey === undefined) {
       this.config.apiKey = crypto.randomBytes(24).toString('hex');
-      console.log(`[HttpServer] Generated API key: ${this.config.apiKey}`);
-      console.log(`[HttpServer] Pass --api-key="" to disable auth (NOT recommended for production)`);
+      getGlobalLogger().info('HttpServer', 'Generated API key');
     }
   }
 
   async start(): Promise<void> {
     return new Promise((resolve) => {
-      this.server = createServer((req, res) => { this.handleRequest(req, res); });
+      this.server = createServer((req, res) => {
+        // Track connection for graceful shutdown
+        const socket = req.socket;
+        this.connections.add(socket);
+        res.on('finish', () => { this.connections.delete(socket); });
+        this.handleRequest(req, res);
+      });
       this.server.listen(this.config.port, this.config.host, () => {
-        console.log(`[HttpServer] Listening on http://${this.config.host}:${this.config.port}`);
-        if (this.config.apiKey) {
-          console.log(`[HttpServer] Authentication enabled (Bearer token required)`);
-        }
+        getGlobalLogger().info('HttpServer', 'Listening', { host: this.config.host, port: this.config.port, authEnabled: !!this.config.apiKey });
         resolve();
       });
     });
   }
 
-  async stop(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.server?.close((err) => { err ? reject(err) : resolve(); });
+  /** Return the port the server is actually listening on (useful when port=0). */
+  getPort(): number {
+    const addr = this.server?.address();
+    return addr && typeof addr === 'object' ? addr.port : this.config.port;
+  }
+
+  async stop(forceTimeoutMs: number = 10_000): Promise<void> {
+    return new Promise((resolve) => {
+      if (!this.server) { resolve(); return; }
+      this.isShuttingDown = true;
+      const remaining = this.connections.size;
+      if (remaining > 0) {
+        getGlobalLogger().info('HttpServer', 'Draining connections', { remaining });
+      }
+      // Stop accepting new connections, then resolve once drained
+      this.server.close(() => {
+        this.connections.clear();
+        resolve();
+      });
+      // Force-close remaining connections after timeout
+      if (remaining > 0) {
+        const timer = setTimeout(() => {
+          getGlobalLogger().warn('HttpServer', 'Force closing remaining connections', { remaining: this.connections.size });
+          for (const socket of this.connections) {
+            socket.destroy();
+          }
+          this.connections.clear();
+        }, forceTimeoutMs);
+        timer.unref();
+      }
     });
   }
 
@@ -107,23 +164,50 @@ export class CommanderHttpServer {
       return;
     }
 
-    // GAP-33: Metrics endpoint for monitoring
+    // GAP-33: Metrics endpoint for monitoring (JSON + OpenMetrics text)
     if (segments[0] === 'metrics' && (req.method ?? 'GET') === 'GET') {
+      const accept = req.headers.accept ?? '';
+      if (accept.includes('text/plain') || accept.includes('openmetrics')) {
+        res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4', 'Access-Control-Allow-Origin': '*' });
+        res.end(getMetricsCollector().exportOpenMetrics());
+      } else {
+        const mem = process.memoryUsage();
+        sendJson(res, 200, {
+          uptime: process.uptime(),
+          activeSessions: this.runtimes.size,
+          busTopics: this.bus.getActiveTopics(),
+          subscriberCounts: this.bus.getAllSubscriberCounts(),
+          rateLimitEntries: this.rateLimitMap.size,
+          memory: {
+            rss: mem.rss,
+            heapUsed: mem.heapUsed,
+            heapTotal: mem.heapTotal,
+            external: mem.external,
+          },
+          pid: process.pid,
+          nodeVersion: process.version,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      return;
+    }
+
+    // OpenAPI 3.0 specification
+    if (segments[0] === 'openapi.json' && (req.method ?? 'GET') === 'GET') {
+      sendJson(res, 200, openApiSpec);
+      return;
+    }
+
+    // Readiness probe (separate from health — checks deps)
+    if (segments[0] === 'ready' && (req.method ?? 'GET') === 'GET') {
       const mem = process.memoryUsage();
-      sendJson(res, 200, {
+      const healthy = true;
+      sendJson(res, healthy ? 200 : 503, {
+        status: healthy ? 'ready' : 'not_ready',
         uptime: process.uptime(),
         activeSessions: this.runtimes.size,
-        busTopics: this.bus.getActiveTopics(),
-        subscriberCounts: this.bus.getAllSubscriberCounts(),
-        rateLimitEntries: this.rateLimitMap.size,
-        memory: {
-          rss: mem.rss,
-          heapUsed: mem.heapUsed,
-          heapTotal: mem.heapTotal,
-          external: mem.external,
-        },
-        pid: process.pid,
-        nodeVersion: process.version,
+        busTopics: this.bus.getActiveTopics().length,
+        memory: { rss: mem.rss, heapUsed: mem.heapUsed },
         timestamp: new Date().toISOString(),
       });
       return;
@@ -152,7 +236,7 @@ export class CommanderHttpServer {
         sendJson(res, 404, { error: 'Not found' });
       }
     } catch (err) {
-      console.error('[HttpServer] Request error:', err);
+      getGlobalLogger().error('HttpServer', 'Request error', err instanceof Error ? err : new Error(String(err)));
       sendJson(res, 500, { error: String(err) });
     }
   }
@@ -209,7 +293,7 @@ export class CommanderHttpServer {
           const topic = queryStr ? new URLSearchParams(queryStr).get('topic') ?? undefined : undefined;
           sendJson(res, 200, {
             topics: this.bus.getActiveTopics(),
-            history: this.bus.getHistory(topic as any, 50).map(m => ({ topic: m.topic, source: m.source, timestamp: m.timestamp })),
+            history: this.bus.getHistory(topic as MessageBusTopic | undefined, 50).map(m => ({ topic: m.topic, source: m.source, timestamp: m.timestamp })),
           });
           return;
         }
@@ -259,11 +343,30 @@ export class CommanderHttpServer {
     return true;
   }
 
-  private getDefaultProvider(provider: string = 'openai'): any {
+  private getDefaultProvider(provider: string = 'openai'): LLMProvider {
     switch (provider) {
-      case 'openai': return new (require('./providers/openaiProvider').OpenAIProvider)({ apiKey: process.env.OPENAI_API_KEY });
-      case 'anthropic': return new (require('./providers/anthropicProvider').AnthropicProvider)({ apiKey: process.env.ANTHROPIC_API_KEY });
-      default: return new (require('./providers/openaiProvider').OpenAIProvider)({ apiKey: process.env.OPENAI_API_KEY });
+      case 'openai': return new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY ?? '' });
+      case 'anthropic': return new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' });
+      case 'google': return new GoogleProvider({ apiKey: process.env.GOOGLE_API_KEY ?? '' });
+      case 'openrouter': return new OpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY ?? '' });
+      case 'deepseek': return new DeepSeekProvider({ apiKey: process.env.DEEPSEEK_API_KEY ?? '' });
+      case 'glm': return new GLMProvider({ apiKey: process.env.ZHIPU_API_KEY ?? '' });
+      case 'mimo': return new MiMoProvider({ apiKey: process.env.MIMO_API_KEY ?? '' });
+      case 'xiaomi': return new XiaomiProvider({ apiKey: process.env.XIAOMI_API_KEY ?? '' });
+      case 'ollama': return new OllamaProvider({});
+      case 'vllm': return new VLLMProvider({});
+      case 'cohere': return new CohereProvider({ apiKey: (process.env.CO_API_KEY || process.env.COHERE_API_KEY) ?? '' });
+      case 'mistral': return new MistralProvider({ apiKey: process.env.MISTRAL_API_KEY ?? '' });
+      case 'groq': return new GroqProvider({ apiKey: process.env.GROQ_API_KEY ?? '' });
+      case 'together': return new TogetherProvider({ apiKey: process.env.TOGETHER_API_KEY ?? '' });
+      case 'perplexity': return new PerplexityProvider({ apiKey: (process.env.PERPLEXITY_API_KEY || process.env.PPLX_API_KEY) ?? '' });
+      case 'fireworks': return new FireworksProvider({ apiKey: process.env.FIREWORKS_API_KEY ?? '' });
+      case 'replicate': return new ReplicateProvider({ apiKey: (process.env.REPLICATE_API_TOKEN || process.env.REPLICATE_API_KEY) ?? '' });
+      case 'bedrock': return new BedrockProvider({});
+      case 'xai': return new XAIProvider({ apiKey: process.env.XAI_API_KEY ?? '' });
+      case 'anyscale': return new AnyscaleProvider({ apiKey: process.env.ANYSCALE_API_KEY ?? '' });
+      case 'deepinfra': return new DeepInfraProvider({ apiKey: process.env.DEEPINFRA_API_KEY ?? '' });
+      default: return new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY ?? '' });
     }
   }
 }
