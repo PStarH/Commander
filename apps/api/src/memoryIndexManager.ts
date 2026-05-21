@@ -67,7 +67,8 @@ export class MemoryIndexManager {
       try {
         const raw = fs.readFileSync(INDEX_FILE, 'utf8');
         this.index = JSON.parse(raw);
-      } catch {
+      } catch (e) {
+        process.stderr.write(`[MemoryIndexManager] Error: ${(e as Error)?.message ?? String(e)}\n`);
         this.index = null;
       }
     }
@@ -149,7 +150,8 @@ export class MemoryIndexManager {
     try {
       const raw = fs.readFileSync(filePath, 'utf8');
       return JSON.parse(raw);
-    } catch {
+    } catch (e) {
+      process.stderr.write(`[MemoryIndexManager] Error: ${(e as Error)?.message ?? String(e)}\n`);
       return null;
     }
   }
