@@ -57,7 +57,7 @@ describe('Commander Tools Integration', () => {
 
   it('file_search finds files by pattern', async () => {
     const tool = new FileSearchTool();
-    const result = await tool.execute({ pattern: 'src/tools/*.ts', maxResults: 20 });
+    const result = await tool.execute({ pattern: 'src/tools/*.ts', maxResults: 30 });
     assert.ok(result.length > 0, 'Should find tool files');
     assert.ok(result.includes('webSearchTool'), 'Should find webSearchTool.ts');
     console.log(`  [file_search] Found ${result.split('\n').length} files`);

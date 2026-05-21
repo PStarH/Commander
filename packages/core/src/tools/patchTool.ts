@@ -2,6 +2,8 @@ import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSandboxed } from './sandboxedExec';
+import { getGlobalLogger } from '../logging';
 
 const DEFINITION: ToolDefinition = {
   name: 'apply_patch',
@@ -81,7 +83,7 @@ export class ApplyPatchTool implements Tool {
           result2 = execSync(`patch -p0 --forward --unified < "${patchFile}" 2>&1`, {
             cwd, encoding: 'utf-8', timeout: 30000,
           });
-        } catch {}
+        } catch (e) { getGlobalLogger().warn('ApplyPatchTool', 'Patch retry failed', { error: (e as Error)?.message }); }
         if (!result2 || result2.includes('FAILED')) {
           return `Error: Patch application failed. The patch format may be invalid or the file content has changed.\n\nPatch content:\n${patchContent.slice(0, 1000)}`;
         }
@@ -95,13 +97,12 @@ export class ApplyPatchTool implements Tool {
         try {
           // Try TypeScript validation
           if (fileToPatch.endsWith('.ts')) {
-            const tscResult = execSync('npx tsc --noEmit 2>&1 || true', {
-              cwd, encoding: 'utf-8', timeout: 30000, maxBuffer: 5 * 1024 * 1024,
-            });
-            const errors = tscResult.split('\n').filter(l => l.includes('error TS')).length;
+            const tscResult = await execSandboxed('npx tsc --noEmit 2>&1 || true', 30, cwd);
+            const tscOutput = tscResult.stdout || tscResult.stderr;
+            const errors = tscOutput.split('\n').filter(l => l.includes('error TS')).length;
             if (errors > 0) {
               outputLines.push(`\n⚠️  TypeScript errors after patch: ${errors}`);
-              outputLines.push(tscResult.split('\n').slice(0, 10).join('\n'));
+              outputLines.push(tscOutput.split('\n').slice(0, 10).join('\n'));
             } else {
               outputLines.push('\n✅ TypeScript validation: clean');
             }
@@ -109,37 +110,42 @@ export class ApplyPatchTool implements Tool {
 
           // Run ESLint if available
           if (fs.existsSync(path.join(cwd, '.eslintrc'))) {
-            const lintResult = execSync('npx eslint --quiet . 2>&1 || true', {
-              cwd, encoding: 'utf-8', timeout: 30000,
-            });
-            if (lintResult.trim()) {
-              outputLines.push(`\n⚠️  Lint issues found:\n${lintResult.slice(0, 1000)}`);
+            const lintResult = await execSandboxed('npx eslint --quiet . 2>&1 || true', 30, cwd);
+            const lintOutput = lintResult.stdout || lintResult.stderr;
+            if (lintOutput.trim()) {
+              outputLines.push(`\n⚠️  Lint issues found:\n${lintOutput.slice(0, 1000)}`);
             }
           }
-        } catch {
-          // Validation tools may not be available
-        }
+        } catch (e) { getGlobalLogger().warn('ApplyPatchTool', 'Validation step failed', { error: (e as Error)?.message }); }
       }
 
       // Run verification command if provided
       if (verifyCommand) {
         outputLines.push(`\nRunning verification: ${verifyCommand}`);
         try {
-          const verifyResult = execSync(verifyCommand, {
-            cwd, encoding: 'utf-8', timeout: 60000, maxBuffer: 5 * 1024 * 1024,
-          });
-          outputLines.push(`✅ Verification passed:\n${verifyResult.slice(0, 500)}`);
-        } catch (err: any) {
-          const stderr = err.stderr?.toString()?.slice(0, 1000) || '';
-          const stdout = err.stdout?.toString()?.slice(0, 1000) || '';
-          outputLines.push(`❌ Verification failed:\n${stderr || stdout || err.message}`);
-          // Auto-revert on failure
-          try {
-            execSync(`git checkout -- "${fileToPatch}"`, { cwd, timeout: 10000 });
-            outputLines.push('\n↩️  Patch reverted automatically.');
-          } catch {
-            outputLines.push('\n⚠️  Could not auto-revert. Manual restore needed.');
+          const verifyResult = await execSandboxed(verifyCommand, 60, cwd);
+          if (verifyResult.exitCode === 0) {
+            outputLines.push(`✅ Verification passed:\n${verifyResult.stdout.slice(0, 500)}`);
+          } else {
+            const stderr = verifyResult.stderr?.slice(0, 1000) || '';
+            const stdout = verifyResult.stdout?.slice(0, 1000) || '';
+            outputLines.push(`❌ Verification failed:\n${stderr || stdout || 'Exit code ' + verifyResult.exitCode}`);
+            // Auto-revert on failure
+            try {
+              const revertRes = await execSandboxed(`git checkout -- "${fileToPatch}"`, 10, cwd);
+              if (revertRes.exitCode === 0) {
+                outputLines.push('\n↩️  Patch reverted automatically.');
+              } else {
+                outputLines.push('\n⚠️  Could not auto-revert. Manual restore needed.');
+                getGlobalLogger().warn('ApplyPatchTool', 'Auto-revert failed', { stderr: revertRes.stderr });
+              }
+            } catch (e) {
+              outputLines.push('\n⚠️  Could not auto-revert. Manual restore needed.');
+              getGlobalLogger().warn('ApplyPatchTool', 'Auto-revert exception', { error: (e as Error)?.message });
+            }
           }
+        } catch (err: any) {
+          outputLines.push(`❌ Verification error: ${err.message}`);
         }
       }
 
@@ -147,7 +153,7 @@ export class ApplyPatchTool implements Tool {
     } catch (err: any) {
       return `Patch failed: ${err.message?.slice(0, 300) || String(err)}`;
     } finally {
-      try { fs.unlinkSync(patchFile); } catch {}
+      try { fs.unlinkSync(patchFile); } catch (e) { getGlobalLogger().warn('ApplyPatchTool', 'Temp patch cleanup failed', { error: (e as Error)?.message }); }
     }
   }
 }

@@ -13,6 +13,7 @@
 import type { DeliberationPlan, OrchestrationTopology, EffortLevel } from './types';
 import type { LLMProvider, LLMRequest } from '../runtime/types';
 import { classifyEffortLevel } from './effortScaler';
+import { getGlobalLogger } from '../logging';
 
 export function deliberate(
   goal: string,
@@ -341,7 +342,8 @@ export async function deliberateWithLLM(
     };
 
     return plan;
-  } catch {
+  } catch (e) {
+    getGlobalLogger().warn('Deliberation', 'LLM deliberation failed, falling back to heuristic plan', { error: (e as Error)?.message });
     return deliberate(goal, context);
   }
 }

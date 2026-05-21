@@ -6,6 +6,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { getGlobalLogger } from '../logging';
 import type { TraceEvent } from './types';
 
 export interface TraceStore {
@@ -50,7 +51,7 @@ export class PersistentTraceStore implements TraceStore {
       const content = existing + buffer.join('\n') + '\n';
       fs.writeFileSync(tmpPath, content, 'utf-8');
       fs.renameSync(tmpPath, filePath);
-    } catch { /* ignore */ }
+    } catch (e) { getGlobalLogger().warn('TraceStore', 'Failed to flush trace buffer', { error: (e as Error)?.message, runId }); }
     this.buffers.set(runId, []);
   }
 
@@ -74,10 +75,11 @@ export class PersistentTraceStore implements TraceStore {
       if (!raw) return [];
       const events: TraceEvent[] = [];
       for (const line of raw.split('\n')) {
-        try { events.push(JSON.parse(line)); } catch { /* skip corrupt */ }
+        try { events.push(JSON.parse(line)); } catch (e) { getGlobalLogger().warn('TraceStore', 'Skipped corrupt trace line', { error: (e as Error)?.message, runId }); }
       }
       return events;
-    } catch {
+    } catch (e) {
+      getGlobalLogger().warn('TraceStore', 'Failed to read trace file', { error: (e as Error)?.message, runId });
       return [];
     }
   }

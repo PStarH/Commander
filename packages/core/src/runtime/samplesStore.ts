@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { getGlobalLogger } from '../logging';
 import type { LLMRequest, LLMResponse, ApiCallRecord } from './types';
 import { extractCode, extractTaskId, isValidSolution } from './codeExtractor';
 
@@ -194,8 +195,8 @@ export class SamplesStore {
     for (const line of lines) {
       try {
         records.push(JSON.parse(line) as ApiCallRecord);
-      } catch {
-        // Skip corrupt lines silently
+      } catch (e) {
+        getGlobalLogger().debug('SamplesStore', 'Skipped corrupt line', { error: (e as Error)?.message });
       }
     }
     return records;
@@ -240,7 +241,7 @@ export class SamplesStore {
           this.rotateFile(fileName);
         }
       }
-    } catch { /* proceed with append */ }
+    } catch (e) { getGlobalLogger().warn('SamplesStore', 'Failed to inspect sample file before append', { error: (e as Error)?.message, fileName }); }
     const line = JSON.stringify(data) + '\n';
     fs.appendFileSync(filePath, line, 'utf-8');
   }
@@ -252,19 +253,19 @@ export class SamplesStore {
     // Delete oldest rotation
     const oldest = `${base}.${this.MAX_ROTATED_FILES}`;
     if (fs.existsSync(oldest)) {
-      try { fs.unlinkSync(oldest); } catch { /* ok */ }
+      try { fs.unlinkSync(oldest); } catch (e) { getGlobalLogger().warn('SamplesStore', 'Failed to delete oldest rotated sample file', { error: (e as Error)?.message, oldest }); }
     }
     // Shift existing rotations: .2 → .3, .1 → .2
     for (let i = this.MAX_ROTATED_FILES - 1; i >= 1; i--) {
       const from = `${base}.${i}`;
       const to = `${base}.${i + 1}`;
       if (fs.existsSync(from)) {
-        try { fs.renameSync(from, to); } catch { /* ok */ }
+        try { fs.renameSync(from, to); } catch (e) { getGlobalLogger().warn('SamplesStore', 'Failed to rotate sample file', { error: (e as Error)?.message, from, to }); }
       }
     }
     // Current → .1
     if (fs.existsSync(base)) {
-      try { fs.renameSync(base, `${base}.1`); } catch { /* ok */ }
+      try { fs.renameSync(base, `${base}.1`); } catch (e) { getGlobalLogger().warn('SamplesStore', 'Failed to rotate current sample file', { error: (e as Error)?.message, base }); }
     }
   }
 

@@ -1,4 +1,5 @@
 import { CircuitBreaker, type CircuitState, type CircuitStats } from './circuitBreaker';
+import { getGlobalLogger } from '../logging';
 
 export interface BreakerConfig {
   threshold: number;
@@ -28,10 +29,10 @@ export class CircuitBreakerRegistry {
       merged.halfOpenMaxTests,
       (from, to) => {
         if (to === 'OPEN') {
-          console.warn(`[breaker] "${name}" opened (${from}→OPEN, ${this.getStats(name).failureCount} failures)`);
+          getGlobalLogger().warn('CircuitBreakerRegistry', `"${name}" opened (${from}→OPEN, ${this.getStats(name).failureCount} failures)`);
         }
         if (to === 'CLOSED') {
-          console.info(`[breaker] "${name}" closed (${from}→CLOSED)`);
+          getGlobalLogger().info('CircuitBreakerRegistry', `"${name}" closed (${from}→CLOSED)`);
         }
       },
     );

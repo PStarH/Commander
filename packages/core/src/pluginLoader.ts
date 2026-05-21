@@ -4,6 +4,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { getHookManager, type CommanderPlugin } from './pluginManager';
+import { getGlobalLogger } from './logging';
 
 interface PluginManifest {
   name: string;
@@ -76,7 +77,7 @@ export class PluginLoader {
     const manifest: PluginManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
 
     if (this.loaded.has(manifest.name)) {
-      console.warn(`[plugins] Plugin "${manifest.name}" already loaded, skipping`);
+      getGlobalLogger().warn('PluginLoader', `Plugin "${manifest.name}" already loaded, skipping`);
       return this.loaded.get(manifest.name)!;
     }
 
@@ -106,7 +107,7 @@ export class PluginLoader {
     this.loaded.set(manifest.name, pkg);
     await getHookManager().register(pluginInstance);
 
-    console.debug(`[plugins] Loaded: ${manifest.name}@${manifest.version}`);
+    getGlobalLogger().debug('PluginLoader', `Loaded: ${manifest.name}@${manifest.version}`);
     return pkg;
   }
 
@@ -117,7 +118,7 @@ export class PluginLoader {
       try {
         results.push(await this.loadPlugin(dir));
       } catch (err: any) {
-        console.warn(`[plugins] Failed to load from ${dir}: ${err.message}`);
+        getGlobalLogger().warn('PluginLoader', `Failed to load from ${dir}: ${err.message}`);
       }
     }
     return results;
