@@ -31,9 +31,29 @@ export {
 } from './a2aCompliance';
 export type {
   A2AAgentCard,
+  A2AAgentCapabilities,
+  A2AAgentSkill,
+  A2AAgentInterface,
   A2AJsonRpcRequest,
   A2AJsonRpcResponse,
   A2ATask,
   A2ATaskState,
+  A2ATaskStatus,
+  A2AArtifact,
   A2AMessage,
+  A2APart,
+  A2ASendMessageParams,
+  A2ATaskQueryParams,
+  A2AListTasksParams,
+  A2AListTasksResult,
 } from './a2aCompliance';
+export { A2A_TERMINAL_STATES, A2A_INTERRUPTED_STATES } from './a2aCompliance';
+
+export { A2AServer, createA2AServer } from './a2aServer';
+export type { A2AServerConfig } from './a2aServer';
+
+export { A2AClient, A2ADiscoveryManager, A2ARpcError, createA2AClient, createA2ADiscoveryManager } from './a2aClient';
+export type { A2ADiscoveredAgent } from './a2aClient';
+
+export { MCPToolAdapter, MCPIntegrationManager, readMCPConfig, readA2ADiscoveryConfig } from '../tools/mcpToolAdapter';
+export type { MCPIntegrationConfig, MCPIntegrationServerConfig } from '../tools/mcpToolAdapter';

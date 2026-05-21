@@ -6,6 +6,7 @@ export { GitTool } from './gitTool';
 export { BrowserSearchTool, BrowserFetchTool } from './browserTool';
 export { AgentTool } from './agentTool';
 export type { AgentDef } from './agentTool';
+export { A2ADelegateTool } from './a2aDelegateTool';
 export { MetaTool, getBuiltinMetaSpecs, findMatchingMetaSpec } from './metaTool';
 export type { MetaToolSpec, MetaToolStep } from './metaTool';
 export { ExecuteScriptTool } from './scriptTool';
@@ -18,6 +19,7 @@ export { ApplyPatchTool } from './patchTool';
 export { CodeRefinerTool } from './codeRefinerTool';
 export { AnswerFormatTool } from './answerFormatTool';
 export { CodeFixerTool } from './codeFixer';
+export { SkillViewTool } from '../skills/skillViewTool';
 export { ToolRegistry, TOOL_CATEGORIES } from './toolRegistry';
 
 import type { Tool } from '../runtime/types';
@@ -38,6 +40,7 @@ import { ApplyPatchTool } from './patchTool';
 import { CodeRefinerTool } from './codeRefinerTool';
 import { AnswerFormatTool } from './answerFormatTool';
 import { CodeFixerTool } from './codeFixer';
+import { SkillViewTool } from '../skills/skillViewTool';
 
 export function createAllTools(options?: { enableMetaTools?: boolean }): Map<string, Tool> {
   const tools = new Map<string, Tool>();
@@ -66,6 +69,7 @@ export function createAllTools(options?: { enableMetaTools?: boolean }): Map<str
     ['refine_code', new CodeRefinerTool()],
     ['verify_answer', new AnswerFormatTool()],
     ['fix_code', new CodeFixerTool()],
+    ['skill_view', new SkillViewTool()],
   ];
   for (const [name, tool] of instances) {
     tools.set(name, tool);
