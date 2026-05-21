@@ -12,6 +12,7 @@
 
 import type { LLMProvider } from './types';
 import { HallucinationDetector } from '../hallucinationDetector';
+import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // Types
@@ -104,6 +105,10 @@ const SCORED_PATTERNS: TypedPattern[] = [
   // Calculation — must check before general since many calculation tasks have numbers
   { type: 'code', weight: 2, pattern: /\b(calculate|compute|sum|total|average|percentage?|multiply|divide|subtract|add)\b/i },
   { type: 'analysis', weight: 1, pattern: /\b(statistics|metrics|trends|correlation|distribution)\b/i },
+
+  // Chit-chat / self-reference — offset broad question patterns (what is, who is) that would
+  // otherwise misclassify philosophical/personal questions as 'search'
+  { type: 'general', weight: 3, pattern: /\b(meaning of life|favorite|yourself|joke|poem)\b/i },
 ];
 
 /**
@@ -163,7 +168,7 @@ export function classifyProvisionIntent(goal: string): { bestIntent: keyof Provi
   if (/\b(search|look\s+up|find|retrieve|fetch|browse|scrape)\b/i.test(lower)) scores.web_search += 3;
   if (/\b(what\s+is|who\s+is|where\s+is|when\s+(was|did)|which)\b/i.test(lower)) scores.web_search += 2;
   if (/\b(population|capital|located|founded|invented|discovered|latest|news|current)\b/i.test(lower)) scores.web_search += 2;
-  if (/\?$/.test(goal.trim()) && !scores.calculation && !lower.includes('code')) scores.web_search += 1;
+  if (/\?$/.test(goal.trim()) && !scores.calculation && !lower.includes('code') && !/\b(you|your|meaning|opinion|think|believe|feel)\b/i.test(lower)) scores.web_search += 1;
 
   if (/\b(read|open|load|parse|analyze|examine)\b.*\b(file|data|csv|json|xml|txt|log|config)\b/i.test(lower)) scores.file_read += 3;
   if (/\b(contents? of|list|show me|display)\b.*\b(file|directory|folder|path)\b/i.test(lower)) scores.file_read += 2;
@@ -171,6 +176,14 @@ export function classifyProvisionIntent(goal: string): { bestIntent: keyof Provi
 
   if (/\b(run|execute|test|debug)\b.*\b(code|script|program|function|module)\b/i.test(lower)) scores.code_exec += 3;
   if (/\b(compile|build|deploy)\b/i.test(lower)) scores.code_exec += 2;
+
+  // Chit-chat deprioritization: self-referential phrases like "find yourself"
+  // shouldn't trigger provision tools even if individual keywords match
+  if (/\b(yourself)\b/i.test(lower)) {
+    for (const key of Object.keys(scores) as (keyof ProvisionIntentScores)[]) {
+      scores[key] = 0;
+    }
+  }
 
   let bestIntent: keyof ProvisionIntentScores | null = null;
   let bestScore = 0;
@@ -292,7 +305,9 @@ function runStage0(ctx: UVPTaskContext, taskType: TaskType): { signals: Verifica
     } else if (hReport.recommendation === 'flag_for_review') {
       confidence = Math.min(confidence, 0.5);
     }
-  } catch { /* hallucination detection is best-effort */ }
+  } catch {
+    getGlobalLogger().debug('UnifiedVerification', 'Hallucination detection failed');
+  }
 
   // --- Tool error detection (context-aware) ---
   if (ctx.toolsUsed && ctx.toolsUsed.length > 0) {
@@ -435,12 +450,14 @@ function runStage1(ctx: UVPTaskContext): { signals: VerificationSignal[]; confid
   try {
     parsed = JSON.parse(ctx.output);
   } catch {
+    getGlobalLogger().debug('UnifiedVerification', 'JSON parse failed in stage 1');
     // Try to extract JSON from markdown code blocks
     const jsonMatch = ctx.output.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
     if (jsonMatch) {
       try {
         parsed = JSON.parse(jsonMatch[1].trim());
       } catch {
+        getGlobalLogger().debug('UnifiedVerification', 'JSON parse failed for extracted code block');
         // Fall through
       }
     }
@@ -568,6 +585,7 @@ async function runStage2(
       return { signals, confidence, tokensUsed };
     }
   } catch {
+    getGlobalLogger().debug('UnifiedVerification', 'LLM verification failed');
     // LLM verification failure is non-fatal
   }
 

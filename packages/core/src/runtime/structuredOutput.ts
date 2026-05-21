@@ -9,6 +9,8 @@
  * Attempt to parse structured output from an LLM response.
  * Tries multiple extraction strategies in order of likelihood.
  */
+import { getGlobalLogger } from '../logging';
+
 export function parseStructuredOutput<T = unknown>(
   content: string,
   fallback?: T,
@@ -18,7 +20,7 @@ export function parseStructuredOutput<T = unknown>(
   if (jsonBlock !== null) {
     try {
       return { success: true, data: JSON.parse(jsonBlock) as T };
-    } catch { /* continue to next strategy */ }
+    } catch (e) { getGlobalLogger().debug('StructuredOutput', 'Failed to parse JSON code block', { error: (e as Error)?.message }); }
   }
 
   // Strategy 2: Extract JSON from raw response (strip leading/trailing non-JSON)
@@ -26,7 +28,7 @@ export function parseStructuredOutput<T = unknown>(
   if (rawJson !== null) {
     try {
       return { success: true, data: JSON.parse(rawJson) as T };
-    } catch { /* continue to next strategy */ }
+    } catch (e) { getGlobalLogger().debug('StructuredOutput', 'Failed to parse raw JSON', { error: (e as Error)?.message }); }
   }
 
   // Strategy 3: Extract JSON from `<output_json>...</output_json>` tags
@@ -34,7 +36,7 @@ export function parseStructuredOutput<T = unknown>(
   if (taggedJson !== null) {
     try {
       return { success: true, data: JSON.parse(taggedJson) as T };
-    } catch { /* continue to next strategy */ }
+    } catch (e) { getGlobalLogger().debug('StructuredOutput', 'Failed to parse tagged JSON', { error: (e as Error)?.message }); }
   }
 
   // Strategy 4: Extract XML-like structured content

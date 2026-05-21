@@ -4,6 +4,7 @@ import { MockLLMProvider } from '../../src/runtime/mockLLMProvider';
 import { ModelRouter, resetModelRouter } from '../../src/runtime/modelRouter';
 import { resetMessageBus } from '../../src/runtime/messageBus';
 import { resetTraceRecorder } from '../../src/runtime/executionTrace';
+import { resetGlobalThreeLayerMemory } from '../../src/threeLayerMemory';
 import type { AgentExecutionContext, Tool, ToolDefinition } from '../../src/runtime/types';
 
 describe('AgentRuntime', () => {
@@ -15,6 +16,7 @@ describe('AgentRuntime', () => {
     resetModelRouter();
     resetMessageBus();
     resetTraceRecorder();
+    resetGlobalThreeLayerMemory();
     router = new ModelRouter();
     runtime = new AgentRuntime({ maxRetries: 1, timeoutMs: 5000 }, router);
     mockProvider = new MockLLMProvider('openai', {

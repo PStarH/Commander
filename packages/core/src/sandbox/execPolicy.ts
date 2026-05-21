@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { getGlobalLogger } from '../logging';
 
 type PolicyDecision = 'allow' | 'prompt' | 'forbidden';
 
@@ -51,7 +52,7 @@ export class ExecPolicyEngine {
         } else {
           this.loadFile(loc);
         }
-      } catch {}
+      } catch (e) { getGlobalLogger().warn('ExecPolicyEngine', 'User rules load failed', { error: (e as Error)?.message, location: loc }); }
     }
   }
 
@@ -67,7 +68,7 @@ export class ExecPolicyEngine {
         this.loadedFiles.add(filepath);
       }
     } catch (err) {
-      console.warn(`[execpolicy] Failed to load ${filepath}:`, err);
+      getGlobalLogger().warn('ExecPolicyEngine', `Failed to load ${filepath}`, { error: (err as Error)?.message });
     }
   }
 

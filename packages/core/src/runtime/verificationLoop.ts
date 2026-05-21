@@ -3,6 +3,7 @@
  */
 import type { LLMMessage, LLMProvider } from './types';
 import { ContextCompactor } from './contextCompactor';
+import { getGlobalLogger } from '../logging';
 
 export interface FailureDetail {
   location: string;
@@ -107,10 +108,10 @@ class SchemaVerifier implements VerificationStrategy {
 
     let parsed: any;
     try { parsed = JSON.parse(ctx.output); }
-    catch { return { passed: false, failures: [{ location: 'parse', message: 'Invalid JSON output' }], suggestions: ['Output must be valid JSON'] }; }
+    catch (e) { getGlobalLogger().debug('VerificationLoop', 'Schema JSON parse failed', { error: (e as Error)?.message }); return { passed: false, failures: [{ location: 'parse', message: 'Invalid JSON output' }], suggestions: ['Output must be valid JSON'] }; }
 
     for (const [key, def] of Object.entries(schema.properties)) {
-      const defObj = def as any;
+      const defObj = def as { required?: boolean; type?: string };
       if (defObj.required && parsed[key] === undefined) {
         failures.push({ location: key, message: `Missing required field: ${key}`, expected: defObj.type });
       }
@@ -168,7 +169,7 @@ class LLMVerifier implements VerificationStrategy {
     this.tokenUsed += resp.usage?.totalTokens || 0;
 
     try { return JSON.parse(resp.content); }
-    catch { return { passed: true, failures: [], suggestions: [] }; }
+    catch (e) { getGlobalLogger().debug('VerificationLoop', 'LLM verification parse failed', { error: (e as Error)?.message }); return { passed: true, failures: [], suggestions: [] }; }
   }
   getTokenUsed(): number { return this.tokenUsed; }
 }

@@ -1,5 +1,5 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
-import { execSync } from 'child_process';
+import { execSandboxed } from './sandboxedExec';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -48,7 +48,7 @@ export class CodeRefinerTool implements Tool {
     if (testCommand) output.push(`Test command: ${testCommand}`);
 
     if (verifyOnly && testCommand) {
-      const testResult = this.runTests(testCommand, cwd);
+      const testResult = await this.runTests(testCommand, cwd);
       output.push(`\nVerification:\n${testResult}`);
       return output.join('\n');
     }
@@ -66,7 +66,7 @@ export class CodeRefinerTool implements Tool {
       if (codeFile && fs.existsSync(path.resolve(cwd, codeFile))) {
         // Code exists, just run tests
         if (testCommand) {
-          const testResult = this.runTests(testCommand, cwd);
+          const testResult = await this.runTests(testCommand, cwd);
           const passed = !testResult.includes('FAILED') && !testResult.includes('Error');
           output.push(`Tests: ${passed ? '✅ PASSED' : '❌ FAILED'}`);
           output.push(testResult.slice(0, 500));
@@ -85,12 +85,10 @@ export class CodeRefinerTool implements Tool {
     return output.join('\n');
   }
 
-  private runTests(command: string, cwd: string): string {
-    try {
-      return execSync(command, { cwd, encoding: 'utf-8', timeout: 60000, maxBuffer: 5 * 1024 * 1024 });
-    } catch (err: any) {
-      return err.stdout?.toString()?.slice(0, 3000) || err.message || 'Test execution failed';
-    }
+  private async runTests(command: string, cwd: string): Promise<string> {
+    const result = await execSandboxed(command, 60, cwd);
+    if (result.exitCode === 0) return result.stdout.slice(0, 3000);
+    return result.stdout?.slice(0, 3000) || result.stderr?.slice(0, 3000) || 'Test execution failed';
   }
 
   private getTemplate(language: string, task: string): string {

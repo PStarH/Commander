@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { getGlobalLogger } from '../logging';
 
 export type MessageStatus = 'unread' | 'read' | 'acknowledged';
 
@@ -153,7 +154,8 @@ export class AgentInbox {
       const raw = fs.readFileSync(filePath, 'utf-8').trim();
       if (!raw) return [];
       return raw.split('\n').map(line => JSON.parse(line) as InboxMessage);
-    } catch {
+    } catch (e) {
+      getGlobalLogger().warn('AgentInbox', 'Failed to load inbox from disk', { error: (e as Error)?.message, agentId });
       return [];
     }
   }
@@ -174,6 +176,6 @@ export class AgentInbox {
       const content = inbox.map(m => JSON.stringify(m)).join('\n') + '\n';
       fs.writeFileSync(tmpPath, content, 'utf-8');
       fs.renameSync(tmpPath, filePath);
-    } catch { /* ok — non-critical I/O */ }
+    } catch (e) { getGlobalLogger().warn('AgentInbox', 'Failed to flush inbox', { error: (e as Error)?.message, agentId }); }
   }
 }

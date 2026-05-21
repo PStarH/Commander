@@ -1,6 +1,7 @@
 import type { PlatformSandbox, SandboxProfile, SandboxMechanism, SandboxExecutionResult } from './types';
 import { discoverSandboxes, NoopSB } from './platforms';
 import { PROFILES } from './profiles';
+import { getGlobalLogger } from '../logging';
 
 export class SandboxManager {
   private sandboxes: PlatformSandbox[] = [];
@@ -9,7 +10,7 @@ export class SandboxManager {
   constructor() {
     this.sandboxes = discoverSandboxes();
     if (this.sandboxes.length === 0) {
-      console.debug('[sandbox] No OS-level sandbox available, using noop fallback');
+      getGlobalLogger().debug('SandboxManager', 'No OS-level sandbox available, using noop fallback');
     }
   }
 

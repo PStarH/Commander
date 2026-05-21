@@ -107,6 +107,7 @@ const DEFAULT_CONFIG: Record<MemoryLayer, LayerConfig> = {
 
 import { calculateMemoryScore, InMemoryEmbeddingStore } from './runtime/embedding';
 import type { EmbeddingFunction } from './runtime/embedding';
+import { getGlobalLogger } from './logging';
 
 export class ThreeLayerMemory {
   private memories: Map<string, MemoryEntry> = new Map();
@@ -160,7 +161,7 @@ export class ThreeLayerMemory {
       const combined = `${content} ${context} ${tags.join(' ')}`;
       const result = this.embeddingFn.generate(combined);
       if (result instanceof Promise) {
-        result.then(emb => this.embedStore.setEmbedding(entry.id, emb)).catch(e => console.debug('[Memory] embedding error:', (e as Error)?.message));
+        result.then(emb => this.embedStore.setEmbedding(entry.id, emb)).catch(e => getGlobalLogger().debug('ThreeLayerMemory', 'embedding error', { error: (e as Error)?.message }));
       } else {
         this.embedStore.setEmbedding(entry.id, result);
       }
@@ -449,6 +450,11 @@ export function getGlobalThreeLayerMemory(): ThreeLayerMemory {
     globalMemory = new ThreeLayerMemory();
   }
   return globalMemory;
+}
+
+/** Reset the global memory singleton (for test isolation) */
+export function resetGlobalThreeLayerMemory(): void {
+  globalMemory = null;
 }
 
 export function createThreeLayerMemory(
