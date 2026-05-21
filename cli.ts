@@ -4,12 +4,14 @@
  * Commander CLI — Multi-Agent Orchestration System
  *
  * Usage:
- *   commander "task"                    Quick plan (default)
- *   commander run "task"                Execute with full pipeline
- *   commander plan "task"               Show deliberation plan
- *   commander watch "task"              Execute with real-time streaming
- *   commander company "task"            Company mode execution
- *   commander status                    Show system status
+ *   commander <task>                    Quick plan (default)
+ *   commander run <task>                Execute with full pipeline
+ *   commander plan <task>               Show deliberation plan
+ *   commander watch <task>              Real-time execution stream
+ *   commander company <task>            Company mode execution
+ *   commander workers [topics]          Parallel research workers
+ *   commander review [options]          Code review (P0-P3 findings)
+ *   commander --version                 Show version
  *   commander help                      Show this help
  *
  * Configuration via environment:
@@ -31,8 +33,22 @@ import { DeepSeekProvider } from './packages/core/src/runtime/providers/deepseek
 import { GLMProvider } from './packages/core/src/runtime/providers/glmProvider';
 import { MiMoProvider } from './packages/core/src/runtime/providers/mimoProvider';
 import { XiaomiProvider } from './packages/core/src/runtime/providers/xiaomiProvider';
+import { OllamaProvider } from './packages/core/src/runtime/providers/ollamaProvider';
+import { VLLMProvider } from './packages/core/src/runtime/providers/vllmProvider';
+import { CohereProvider } from './packages/core/src/runtime/providers/cohereProvider';
+import { MistralProvider } from './packages/core/src/runtime/providers/mistralProvider';
+import { GroqProvider } from './packages/core/src/runtime/providers/groqProvider';
+import { TogetherProvider } from './packages/core/src/runtime/providers/togetherProvider';
+import { PerplexityProvider } from './packages/core/src/runtime/providers/perplexityProvider';
+import { FireworksProvider } from './packages/core/src/runtime/providers/fireworksProvider';
+import { ReplicateProvider } from './packages/core/src/runtime/providers/replicateProvider';
+import { BedrockProvider } from './packages/core/src/runtime/providers/bedrockProvider';
+import { XAIProvider } from './packages/core/src/runtime/providers/xaiProvider';
+import { AnyscaleProvider } from './packages/core/src/runtime/providers/anyscaleProvider';
+import { DeepInfraProvider } from './packages/core/src/runtime/providers/deepinfraProvider';
 import { getModelRouter } from './packages/core/src/runtime/modelRouter';
 import { createAllTools } from './packages/core/src/tools/index';
+import { executeReview, formatReviewOutput, reviewReportToJson, loadReviewGuidelines } from './packages/core/src/reviewAgent';
 import type { ModelConfig } from './packages/core/src/runtime/types';
 import { UltimateOrchestrator } from './packages/core/src/ultimate/orchestrator';
 import { TELOSOrchestrator } from './packages/core/src/telos/telosOrchestrator';
@@ -45,6 +61,17 @@ import {
   detectProvider, getEffectiveModel, setConfig, showConfig, listProviders, listModels, resetConfig,
 } from './packages/core/src/config/commanderConfig';
 import type { ProviderInfo } from './packages/core/src/config/commanderConfig';
+import { getApprovalSystem } from './packages/core/src/sandbox';
+import type { ApprovalMode } from './packages/core/src/sandbox';
+import { setGlobalLogLevel } from './packages/core/src/logging';
+import { StateCheckpointer } from './packages/core/src/runtime/stateCheckpointer';
+import { startTUI } from './packages/core/src/tui';
+import { spawn } from 'child_process';
+import { TaskPool } from './packages/core/src/orchestration/taskPool';
+import { GoalOrchestrator } from './packages/core/src/goal/goalOrchestrator';
+import type { GoalConfig } from './packages/core/src/goal/types';
+import { SwarmOrchestrator } from './packages/core/src/swarm/swarmOrchestrator';
+import type { SwarmConfig } from './packages/core/src/swarm/types';
 
 
 // ============================================================================
@@ -122,6 +149,16 @@ function onboardingMessage() {
     ['ZHIPU_API_KEY', 'GLM (Zhipu AI)'],
     ['MIMO_API_KEY', 'MiMo (dedicated)'],
     ['XIAOMI_API_KEY', 'Xiaomi MiMo'],
+    ['OLLAMA_HOST', 'Ollama (local) — http://localhost:11434/v1'],    // OLLAMA_BASE_URL also accepted
+    ['VLLM_BASE_URL', 'vLLM (local) — http://localhost:8000/v1'],
+    ['CO_API_KEY', 'Cohere'],                                          // COHERE_API_KEY also accepted
+    ['MISTRAL_API_KEY', 'Mistral AI'],
+    ['GROQ_API_KEY', 'Groq (fast inference)'],
+    ['TOGETHER_API_KEY', 'Together AI'],
+    ['PERPLEXITY_API_KEY', 'Perplexity'],                              // PPLX_API_KEY also accepted
+    ['FIREWORKS_API_KEY', 'Fireworks AI'],
+    ['REPLICATE_API_TOKEN', 'Replicate'],                              // REPLICATE_API_KEY also accepted
+    ['AWS_ACCESS_KEY_ID', 'AWS Bedrock (+ AWS_SECRET_ACCESS_KEY)'],
   ];
   for (const [key, desc] of vars) {
     console.log(`    ${$.cyan}${key.padEnd(22)}${$.reset} ${$.dim}${desc}${$.reset}`);
@@ -161,6 +198,19 @@ const ProviderMap: Record<string, any> = {
     glm: GLMProvider,
     mimo: MiMoProvider,
     xiaomi: XiaomiProvider,
+    ollama: OllamaProvider,
+    vllm: VLLMProvider,
+    cohere: CohereProvider,
+    mistral: MistralProvider,
+    groq: GroqProvider,
+    together: TogetherProvider,
+    perplexity: PerplexityProvider,
+    fireworks: FireworksProvider,
+    replicate: ReplicateProvider,
+    bedrock: BedrockProvider,
+    xai: XAIProvider,
+    anyscale: AnyscaleProvider,
+    deepinfra: DeepInfraProvider,
   };
   const ProviderClass = ProviderMap[provider.type] ?? OpenAIProvider;
 
@@ -369,6 +419,158 @@ async function cmdCompany(task: string) {
   engine.stop();
 }
 
+async function cmdGoal(task: string, flags: Record<string, string>) {
+  const provider = detectProvider();
+  const runtime = createRuntime();
+  if (!runtime || !provider) {
+    console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No API key found.\n`);
+    onboardingMessage();
+    process.exit(1);
+  }
+
+  cmdHeader(task);
+
+  const llmProvider = runtime.getProvider('openai')
+    ?? runtime.getProvider('anthropic')
+    ?? runtime.getProvider('openrouter')
+    ?? runtime.getProvider('mimo')
+    ?? runtime.getProvider('deepseek')
+    ?? runtime.getProvider('glm')
+    ?? runtime.getProvider('xiaomi')
+    ?? runtime.getProvider('google');
+
+  if (!llmProvider) {
+    console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No LLM provider available.\n`);
+    process.exit(1);
+  }
+
+  const config: Partial<GoalConfig> = {};
+  if (flags['--mode']) config.mode = flags['--mode'] as GoalConfig['mode'];
+  if (flags['--budget']) config.budgetTokens = parseInt(flags['--budget'], 10);
+  if (flags['--max-rounds']) config.maxRounds = parseInt(flags['--max-rounds'], 10);
+
+  const orch = new GoalOrchestrator(llmProvider, config);
+
+  console.log(`  ${$.dim}Mode:${$.reset} ${$.cyan}${config.mode ?? 'balanced'}${$.reset}  ${$.dim}Budget:${$.reset} ${$.cyan}${(config.budgetTokens ?? 500000).toLocaleString()} tok${$.reset}  ${$.dim}Max rounds:${$.reset} ${$.cyan}${config.maxRounds ?? 10}${$.reset}\n`);
+
+  const done = startSpinner('Goal loop running...');
+  const startTime = Date.now();
+  const result = await orch.execute(task);
+  done();
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+  section('GOAL RESULT');
+  const statusIcon = result.status === 'completed' ? '✅' : result.status === 'partial' ? '⚠️' : '❌';
+  const statusColor = result.status === 'completed' ? $.green : result.status === 'partial' ? $.yellow : $.red;
+  console.log(`  ${statusIcon} ${statusColor}${$.bold}${result.status.toUpperCase()}${$.reset}  ${$.dim}${elapsed}s · ${result.totalRounds} rounds · ${result.totalTokensUsed.toLocaleString()} tok${$.reset}\n`);
+
+  console.log(`  ${$.bold}Rounds:${$.reset} ${result.totalRounds}`);
+  console.log(`  ${$.bold}Tokens:${$.reset} ${result.totalTokensUsed.toLocaleString()}`);
+  console.log(`  ${$.bold}Duration:${$.reset} ${elapsed}s`);
+  console.log();
+
+  const lastRound = result.ledger[result.ledger.length - 1];
+  if (lastRound) {
+    console.log(`  ${$.bold}Stop reason:${$.reset} ${$.yellow}${lastRound.decisionReason}${$.reset}`);
+    if (lastRound.findingsTotal > 0) {
+      console.log(`  ${$.bold}Remaining findings:${$.reset} ${$.red}${lastRound.findingsTotal}${$.reset}`);
+    }
+    console.log(`  ${$.bold}Improvement trend:${$.reset} ${lastRound.improvementRate > 0.05 ? $.green + 'improving' : $.dim + 'plateaued'}${$.reset}`);
+  }
+
+  if (result.ledger.length > 1) {
+    console.log();
+    section('ROUND HISTORY');
+    for (const r of result.ledger) {
+      const icon = r.decision === 'continue' ? '↻' : r.decision.startsWith('stop_') ? '■' : '?';
+      const color = r.decision === 'continue' ? $.cyan : $.yellow;
+      console.log(`  ${color}${icon}${$.reset} Round ${r.round}: ${r.findingsTotal} findings · ${(r.improvementRate * 100).toFixed(0)}% improvement · ${r.decision}`);
+    }
+  }
+
+  console.log();
+}
+
+async function cmdSwarm(task: string, flags: Record<string, string>) {
+  const runtime = createRuntime();
+  if (!runtime) {
+    console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No API key found.\n`);
+    onboardingMessage();
+    process.exit(1);
+  }
+
+  cmdHeader(task);
+
+  const llmProvider = runtime.getProvider('openai')
+    ?? runtime.getProvider('anthropic')
+    ?? runtime.getProvider('openrouter')
+    ?? runtime.getProvider('mimo')
+    ?? runtime.getProvider('deepseek')
+    ?? runtime.getProvider('glm')
+    ?? runtime.getProvider('xiaomi')
+    ?? runtime.getProvider('google');
+
+  if (!llmProvider) {
+    console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No LLM provider available.\n`);
+    process.exit(1);
+  }
+
+  const swarmConfig: Partial<SwarmConfig> = {};
+  if (flags['--mode']) swarmConfig.goalConfig = { ...swarmConfig.goalConfig, mode: flags['--mode'] as GoalConfig['mode'] };
+  if (flags['--budget']) swarmConfig.goalConfig = { ...swarmConfig.goalConfig, budgetTokens: parseInt(flags['--budget'], 10) };
+  if (flags['--max-rounds']) swarmConfig.goalConfig = { ...swarmConfig.goalConfig, maxRounds: parseInt(flags['--max-rounds'], 10) };
+  if (flags['--max-depth']) swarmConfig.maxDepth = parseInt(flags['--max-depth'], 10);
+  if (flags['--max-workers']) swarmConfig.maxWorkers = parseInt(flags['--max-workers'], 10);
+
+  const orch = new SwarmOrchestrator(llmProvider, swarmConfig);
+
+  const modeLabel = flags['--mode'] ?? 'balanced';
+  const depthLabel = flags['--max-depth'] ?? '3';
+  console.log(`  ${$.dim}Mode:${$.reset} ${$.cyan}${modeLabel}${$.reset}  ${$.dim}Max depth:${$.reset} ${$.cyan}${depthLabel}${$.reset}  ${$.dim}Max workers:${$.reset} ${$.cyan}${flags['--max-workers'] ?? 10}${$.reset}\n`);
+
+  const done = startSpinner('Swarm loop running...');
+  const startTime = Date.now();
+  const result = await orch.execute(task);
+  done();
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+  section('SWARM RESULT');
+  const statusIcon = result.status === 'completed' ? '✅' : result.status === 'partial' ? '⚠️' : '❌';
+  const statusColor = result.status === 'completed' ? $.green : result.status === 'partial' ? $.yellow : $.red;
+  console.log(`  ${statusIcon} ${statusColor}${$.bold}${result.status.toUpperCase()}${$.reset}  ${$.dim}${elapsed}s · ${result.totalRounds} rounds · ${result.totalTokensUsed.toLocaleString()} tok${$.reset}\n`);
+
+  console.log(`  ${$.bold}Rounds:${$.reset} ${result.totalRounds}`);
+  console.log(`  ${$.bold}Tokens:${$.reset} ${result.totalTokensUsed.toLocaleString()}`);
+  console.log(`  ${$.bold}Duration:${$.reset} ${elapsed}s`);
+  console.log(`  ${$.bold}Tree depth:${$.reset} ${result.topology.depth}`);
+  console.log(`  ${$.bold}Managers:${$.reset} ${result.topology.managerCount}`);
+  console.log(`  ${$.bold}Total nodes:${$.reset} ${result.topology.totalNodes}`);
+  console.log(`  ${$.bold}Fusion conflicts:${$.reset} ${result.fusionReports.reduce((s, r) => s + r.conflicts.length, 0)}`);
+  console.log();
+
+  if (result.fusionReports.some(r => r.conflicts.length > 0)) {
+    section('FUSION CONFLICTS');
+    for (const report of result.fusionReports) {
+      for (const conflict of report.conflicts) {
+        const severityColor = conflict.severity === 'critical' ? $.red
+          : conflict.severity === 'high' ? $.yellow
+          : $.dim;
+        console.log(`  ${severityColor}⚠ ${conflict.type}${$.reset} ${conflict.description}`);
+        if (conflict.suggestedResolution) {
+          console.log(`    ${$.dim}→ ${conflict.suggestedResolution}${$.reset}`);
+        }
+      }
+    }
+    console.log();
+  }
+
+  section('TOPOLOGY');
+  console.log(`  ${$.bold}Levels:${$.reset} ${result.topology.levelBreaths.map((b, i) => `level ${i}: ${b} nodes`).join(' · ')}`);
+  console.log();
+}
+
 async function cmdStatus() {
   const provider = detectProvider();
 
@@ -421,7 +623,7 @@ async function cmdStatus() {
   }
 }
 
-function cmdConfig(args: string[]) {
+async function cmdConfig(args: string[]) {
   if (args.length === 0 || args[0] === 'show') {
     section('CONFIGURATION');
     showConfig();
@@ -429,6 +631,7 @@ function cmdConfig(args: string[]) {
     console.log(`  ${$.dim}      commander config set meta-tools on${$.reset}`);
     console.log(`  ${$.dim}      commander config list-providers${$.reset}`);
     console.log(`  ${$.dim}      commander config list-models${$.reset}`);
+    console.log(`  ${$.dim}      commander config test${$.reset}`);
     return;
   }
 
@@ -465,23 +668,24 @@ function cmdConfig(args: string[]) {
     section('TESTING');
     console.log(`  Provider: ${provider.type}`);
     console.log(`  URL:      ${provider.baseUrl}`);
-    console.log(`  Testing...`);
-    fetch(`${provider.baseUrl}/models`, {
-      headers: { 'Authorization': `Bearer ${provider.apiKey}` },
-      signal: AbortSignal.timeout(5000),
-    }).then(res => {
-      if (res.ok) console.log(`  ${$.green}✓ Connection OK${$.reset}`);
-      else console.log(`  ${$.red}✗ ${res.status}${$.reset}`);
-    }).catch(() => {
-      console.log(`  ${$.yellow}! Connection failed${$.reset}`);
-    });
+    process.stdout.write(`  Testing...`);
+    try {
+      const res = await fetch(`${provider.baseUrl}/models`, {
+        headers: { 'Authorization': `Bearer ${provider.apiKey}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) console.log(` ${$.green}✓ Connection OK${$.reset}`);
+      else console.log(` ${$.red}✗ ${res.status}${$.reset}`);
+    } catch {
+      console.log(` ${$.yellow}! Connection failed${$.reset}`);
+    }
     return;
   }
 
   console.log(`  ${$.red}Usage:${$.reset} commander config [show|set <key> <val>|list-providers|list-models|test]`);
 }
 
-function cmdDoctor() {
+async function cmdDoctor() {
   section('DOCTOR');
   const provider = detectProvider();
   const checks = [
@@ -496,22 +700,21 @@ function cmdDoctor() {
   }
   if (provider) {
     console.log(`  ${$.dim}Testing ${provider.type} at ${provider.baseUrl}...${$.reset}`);
-    fetch(`${provider.baseUrl}/models`, {
-      headers: { 'Authorization': `Bearer ${provider.apiKey}` },
-      signal: AbortSignal.timeout(5000),
-    }).then(res => {
+    try {
+      const res = await fetch(`${provider.baseUrl}/models`, {
+        headers: { 'Authorization': `Bearer ${provider.apiKey}` },
+        signal: AbortSignal.timeout(5000),
+      });
       console.log(`  ${res.ok ? $.green + '✓' : $.red + '✗'}${$.reset} API: ${res.status}`);
-    }).catch(() => {
+    } catch {
       console.log(`  ${$.yellow}!${$.reset} API unreachable`);
-    });
+    }
   }
   if (allOk) console.log(`\n  ${$.green}${$.bold}All checks passed${$.reset}`);
   else console.log(`\n  ${$.yellow}Some checks need attention${$.reset}`);
 }
 
 async function cmdWorkers(topics: string[]) {
-  const { TaskPool } = require('./packages/core/src/orchestration/taskPool');
-
   if (topics.length === 0) {
     topics = ['LangGraph', 'CrewAI', 'AutoGen', 'MCP', 'Pydantic', 'LlamaIndex', 'Ollama', 'vLLM'];
   }
@@ -563,8 +766,6 @@ async function cmdGui() {
   console.log(`  ${$.dim}API:${$.reset}  http://localhost:4000`);
   console.log(`  ${$.dim}Web:${$.reset}  cd apps/web && npx vite\n`);
 
-  // Start API in foreground
-  const { spawn } = require('child_process');
   const api = spawn('npx', ['tsx', 'src/index.ts'], {
     cwd: apiDir,
     stdio: 'inherit',
@@ -578,6 +779,292 @@ async function cmdGui() {
 
   // Keep running — don't exit main()
   await new Promise(() => {});
+}
+
+// ============================================================================
+// TUI — Terminal Dashboard
+// ============================================================================
+
+function cmdTUI() {
+  startTUI();
+}
+
+// ============================================================================
+// Skill CLI — manage skills
+// ============================================================================
+
+async function cmdSkill(subargs: string[]) {
+  const { getSkillSystem, SkillCurator } = await import('./packages/core/src/skills');
+  const system = getSkillSystem();
+
+  const sub = subargs[0] || 'help';
+
+  if (sub === 'list' || sub === 'ls') {
+    const catalog = await system.manager.list();
+    if (catalog.length === 0) {
+      console.log(`\n  ${$.dim}No skills found.${$.reset}\n`);
+      return;
+    }
+    section(`SKILLS (${catalog.length})`);
+    for (const entry of catalog) {
+      const pin = entry.pinned ? '📌' : '  ';
+      const qual = (entry.qualityScore * 100).toFixed(0);
+      const used = entry.usageCount;
+      console.log(`  ${pin} ${$.bold}${entry.name}${$.reset} ${$.dim}${entry.description.slice(0, 50)}${$.reset}`);
+      console.log(`      ${$.gray}quality: ${qual}% · uses: ${used} · ${entry.category} · [${entry.tags.join(', ')}]${$.reset}`);
+    }
+    console.log();
+    return;
+  }
+
+  if (sub === 'view') {
+    const name = subargs[1];
+    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill view <name>\n`); return; }
+    const skill = await system.manager.get(name);
+    if (!skill) { console.error(`  ${$.red}Skill "${name}" not found.${$.reset}\n`); return; }
+    section(`SKILL: ${skill.name}`);
+    kv('Description', skill.description);
+    kv('Category', skill.metadata.category);
+    kv('Tags', skill.metadata.tags.join(', '));
+    kv('Quality', `${(skill.metadata.qualityScore * 100).toFixed(0)}%`);
+    kv('Usage', `${skill.metadata.usageCount} · success rate: ${(skill.metadata.avgSuccessRate * 100).toFixed(0)}%`);
+    kv('Pinned', skill.metadata.pinned ? 'Yes' : 'No', skill.metadata.pinned ? $.green : $.dim);
+    kv('Source', skill.metadata.source);
+    kv('Created', skill.metadata.createdAt.slice(0, 10));
+    console.log(`\n  ${$.dim}${'-'.repeat(50)}${$.reset}`);
+    console.log(`  ${skill.content.slice(0, 1000)}${skill.content.length > 1000 ? '\n  ...' : ''}`);
+    console.log();
+    return;
+  }
+
+  if (sub === 'create') {
+    const name = subargs[1];
+    const desc = subargs[2] || name;
+    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill create <name> [description]\n`); return; }
+    const content = `# ${name}\n\n${desc}\n\n## Steps\n1. TBD`;
+    const skill = await system.manager.create(name, content, {
+      category: 'general', tags: [], source: 'user',
+    });
+    console.log(`  ${$.green}✓${$.reset} Created skill "${$.bold}${skill.name}${$.reset}"\n`);
+    return;
+  }
+
+  if (sub === 'pin') {
+    const name = subargs[1];
+    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill pin <name>\n`); return; }
+    await system.manager.setPinned(name, true);
+    console.log(`  ${$.green}✓${$.reset} Pinned "${$.bold}${name}${$.reset}"\n`);
+    return;
+  }
+
+  if (sub === 'unpin') {
+    const name = subargs[1];
+    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill unpin <name>\n`); return; }
+    await system.manager.setPinned(name, false);
+    console.log(`  ${$.green}✓${$.reset} Unpinned "${$.bold}${name}${$.reset}"\n`);
+    return;
+  }
+
+  if (sub === 'delete' || sub === 'rm') {
+    const name = subargs[1];
+    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill delete <name>\n`); return; }
+    await system.manager.delete(name);
+    console.log(`  ${$.green}✓${$.reset} Deleted "${$.bold}${name}${$.reset}"\n`);
+    return;
+  }
+
+  if (sub === 'curate') {
+    section('CURATE');
+    const done = startSpinner('Running curator...');
+    const curator = new SkillCurator(system.manager);
+    const report = await curator.curate();
+    done();
+    if (report.archived.length > 0) {
+      console.log(`  ${$.yellow}Archived:${$.reset} ${report.archived.join(', ')}`);
+    }
+    if (report.consolidated.length > 0) {
+      console.log(`  ${$.yellow}Consolidated:${$.reset} ${report.consolidated.join(', ')}`);
+    }
+    kv('Before', `${report.totalBefore}`, $.gray);
+    kv('After', `${report.totalAfter}`, $.gray);
+    kv('Archived', `${report.totalArchived}`, $.yellow);
+    console.log();
+    return;
+  }
+
+  // Default: help
+  console.log(`
+  ${$.bold}SKILL COMMANDS${$.reset}
+    ${$.cyan}commander skill list${$.reset}         List all skills
+    ${$.cyan}commander skill view <name>${$.reset}  View skill details
+    ${$.cyan}commander skill create <name>${$.reset} Create a new skill
+    ${$.cyan}commander skill pin <name>${$.reset}    Pin a skill (protect from curator)
+    ${$.cyan}commander skill unpin <name>${$.reset}  Unpin a skill
+    ${$.cyan}commander skill delete <name>${$.reset} Delete a skill
+    ${$.cyan}commander skill curate${$.reset}        Run curator (archive+consolidate)
+  `);
+}
+
+async function cmdReview(args: string[]) {
+  const scope = args.includes('--commit') ? 'commit' as const
+    : args.includes('--branch') ? 'branch' as const
+    : 'uncommitted' as const;
+
+  const baseIdx = args.indexOf('--base');
+  const baseRef = baseIdx >= 0 && baseIdx + 1 < args.length ? args[baseIdx + 1] : undefined;
+
+  const commitIdx = args.indexOf('--commit');
+  const commitSha = commitIdx >= 0 && commitIdx + 1 < args.length ? args[commitIdx + 1] : undefined;
+
+  const useJson = args.includes('--json');
+
+  const guidelines = loadReviewGuidelines();
+
+  const customGuidelineIdx = args.indexOf('--guidelines');
+  const customGuidelines = customGuidelineIdx >= 0 && customGuidelineIdx + 1 < args.length
+    ? args[customGuidelineIdx + 1].split('|')
+    : [];
+
+  section('CODE REVIEW');
+  bullet(`Scope: ${scope}${baseRef ? ` (base: ${baseRef})` : ''}${commitSha ? ` (commit: ${commitSha})` : ''}`);
+  if (guidelines.length > 0 || customGuidelines.length > 0) {
+    bullet(`Guidelines: ${[...guidelines, ...customGuidelines].length} rule(s)`);
+  }
+  console.log();
+
+  const done = startSpinner('Reviewing changes...');
+  try {
+    const report = await executeReview({
+      scope,
+      baseRef,
+      commitSha,
+      guidelines: [...guidelines, ...customGuidelines],
+      outputFormat: useJson ? 'json' : 'text',
+    });
+    done();
+
+    if (useJson) {
+      console.log(reviewReportToJson(report));
+    } else {
+      console.log(formatReviewOutput(report));
+    }
+
+    process.exit(report.passed ? 0 : 1);
+  } catch (err) {
+    done();
+    console.error(`\n  ${$.red}Review failed: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`);
+    process.exit(1);
+  }
+}
+
+async function cmdMode(modeArg?: string) {
+  const approval = getApprovalSystem();
+
+  if (!modeArg) {
+    const current = approval.getMode();
+    const modeLabels: Record<string, string> = {
+      'suggest': 'Suggest mode — prompts before risky operations',
+      'auto-edit': 'Auto-edit mode — allows most operations, flags sandbox escapes',
+      'full-auto': 'Full-auto mode — no approval gates',
+      'read-only': 'Read-only mode — no writes, no destructive ops',
+      'plan': 'Plan mode — analysis only, no modifications',
+    };
+    section('APPROVAL MODE');
+    kv('Mode', current, $.cyan);
+    console.log(`  ${$.dim}${modeLabels[current] ?? ''}${$.reset}`);
+    console.log(`\n  ${$.dim}Set:  commander mode <plan|read-only|auto-edit|full-auto|suggest>${$.reset}\n`);
+    return;
+  }
+
+  const validModes: ApprovalMode[] = ['suggest', 'auto-edit', 'full-auto', 'read-only', 'plan'];
+  if (!validModes.includes(modeArg as ApprovalMode)) {
+    console.log(`  ${$.red}Invalid mode:${$.reset} "${modeArg}"`);
+    console.log(`  ${$.dim}Valid modes:${$.reset} ${validModes.join(', ')}\n`);
+    return;
+  }
+
+  approval.setMode(modeArg as ApprovalMode);
+  console.log(`  ${$.green}✓${$.reset} Mode set to ${$.cyan}${modeArg}${$.reset}\n`);
+}
+
+// ============================================================================
+// History — past execution sessions
+// ============================================================================
+
+async function cmdHistory(subargs: string[]) {
+  if (subargs[0] === 'view' && subargs[1]) {
+    return cmdHistoryView(subargs[1]);
+  }
+  if (subargs[0] === 'delete' && subargs[1]) {
+    const checkpointer = new StateCheckpointer();
+    checkpointer.deleteCheckpoint(subargs[1]);
+    console.log(`  ${$.green}✓${$.reset} Deleted session ${$.bold}${subargs[1]}${$.reset}\n`);
+    return;
+  }
+  if (subargs[0] === 'prune' && subargs[1]) {
+    const keep = parseInt(subargs[1], 10);
+    if (isNaN(keep) || keep < 0) { console.error(`  ${$.red}Usage:${$.reset} commander history prune <keep-count>\n`); return; }
+    const checkpointer = new StateCheckpointer();
+    const before = checkpointer.listCheckpoints().length;
+    checkpointer.prune(keep);
+    console.log(`  ${$.green}✓${$.reset} Pruned to ${$.bold}${keep}${$.reset} sessions (removed ${before - Math.min(keep, before)})\n`);
+    return;
+  }
+
+  // Default: list all sessions
+  const checkpointer = new StateCheckpointer();
+  const entries = checkpointer.listCheckpoints();
+
+  section('SESSION HISTORY');
+  if (entries.length === 0) {
+    console.log(`  ${$.dim}No saved sessions found.${$.reset}`);
+    console.log(`  ${$.dim}Run a task first:${$.reset} ${$.cyan}commander run "<task>"${$.reset}\n`);
+    return;
+  }
+
+  kv('Total', `${entries.length}`, $.cyan);
+
+  for (const entry of entries) {
+    const ts = new Date(entry.timestamp).toLocaleString();
+    const phaseIcon: Record<string, string> = {
+      completed: '✅', failed: '❌', started: '📋',
+      llm_call: '🤖', tool_execution: '🔧', verification: '🔍',
+    };
+    const icon = phaseIcon[entry.phase] || '📄';
+    const runIdShort = entry.runId.length > 20 ? entry.runId.slice(0, 20) + '…' : entry.runId;
+    const statusColor = entry.phase === 'completed' ? $.green : entry.phase === 'failed' ? $.red : $.yellow;
+    console.log(`  ${icon} ${statusColor}${entry.phase.padEnd(14)}${$.reset} ${$.dim}${ts}${$.reset}`);
+    console.log(`      ${$.gray}${runIdShort}${$.reset}`);
+  }
+  console.log(`\n  ${$.dim}View:  commander history view <runId>${$.reset}`);
+  console.log(`  ${$.dim}Prune: commander history prune <keep-count>${$.reset}`);
+  console.log(`  ${$.dim}Del:   commander history delete <runId>${$.reset}\n`);
+}
+
+async function cmdHistoryView(runId: string) {
+  const checkpointer = new StateCheckpointer();
+  const state = checkpointer.resume(runId);
+  if (!state) {
+    console.error(`  ${$.red}Session not found:${$.reset} ${runId}\n`);
+    return;
+  }
+
+  section('SESSION DETAIL');
+  kv('Run ID', runId, $.cyan);
+  kv('Agent', state.agentId);
+  kv('Phase', state.phase, state.phase === 'completed' ? $.green : state.phase === 'failed' ? $.red : $.yellow);
+  kv('Goal', state.context.goal.slice(0, 120));
+  kv('Steps', `${state.stepNumber}`, $.yellow);
+  kv('Tokens', `${state.tokenUsage.totalTokens?.toLocaleString() ?? 'N/A'}`, $.yellow);
+  kv('Duration', `${(state.totalDurationMs / 1000).toFixed(1)}s`);
+  kv('Timestamp', new Date(state.timestamp).toLocaleString());
+  if (state.lastError) {
+    kv('Error', state.lastError.slice(0, 200), $.red);
+  }
+  if (state.context.availableTools.length > 0) {
+    kv('Tools', state.context.availableTools.slice(0, 8).join(', '));
+  }
+  console.log();
 }
 
 function cmdHelp() {
@@ -601,6 +1088,29 @@ function cmdHelp() {
     ${$.cyan}commander config${$.reset}         View / change settings
     ${$.cyan}commander doctor${$.reset}         Run diagnostics
     ${$.cyan}commander gui${$.reset}            Start the Agent War Room dashboard
+    ${$.cyan}commander tui${$.reset}            Terminal dashboard (live events, sessions)
+    ${$.cyan}commander workers <topics>${$.reset}  Parallel research workers
+    ${$.cyan}commander company <task>${$.reset}   Company mode execution
+    ${$.cyan}commander goal <task>${$.reset}      Multi-agent goal loop (decompose → execute → critique → repeat)
+    ${$.cyan}commander goal <task> --mode thorough${$.reset}  Keep going until near-zero findings
+    ${$.cyan}commander goal <task> --budget 200000${$.reset}  Set token budget
+    ${$.cyan}commander goal <task> --max-rounds 5${$.reset}   Limit rounds
+    ${$.cyan}commander swarm <task>${$.reset}     Recursive swarm (fission + fusion)
+    ${$.cyan}commander swarm <task> --mode thorough${$.reset}  Strict mode
+    ${$.cyan}commander swarm <task> --max-depth 4${$.reset}    Max recursion depth
+    ${$.cyan}commander swarm <task> --max-workers 15${$.reset} Max parallel workers
+    ${$.cyan}commander mode${$.reset}              Show/set approval mode (plan|read-only|auto-edit|full-auto|suggest)
+    ${$.cyan}commander review${$.reset}            Review uncommitted changes
+    ${$.cyan}commander review --base main${$.reset}  Review branch diff
+    ${$.cyan}commander review --commit <sha>${$.reset}  Review specific commit
+    ${$.cyan}commander review --json${$.reset}     JSON output for CI integration
+    ${$.cyan}commander review --guidelines "rule1|rule2"${$.reset}  Custom rules
+    ${$.cyan}commander history${$.reset}               List past execution sessions
+    ${$.cyan}commander history view <runId>${$.reset}  View session details
+    ${$.cyan}commander history prune <n>${$.reset}     Keep only N most recent sessions
+    ${$.cyan}commander history delete <runId>${$.reset} Delete a specific session
+    ${$.cyan}commander --debug${$.reset}               Enable debug logging (verbose output)
+    ${$.cyan}commander --verbose${$.reset}             Alias for --debug
 
   ${$.bold}API KEYS (set any one)${$.reset}
     ${$.cyan}OPENAI_API_KEY${$.reset}          OpenAI / DeepSeek / GLM / MiMo
@@ -621,63 +1131,126 @@ function cmdHelp() {
 async function main() {
   const args = process.argv.slice(2);
 
-  if (args.length === 0 || args[0] === 'help' || args[0] === '--help' || args[0] === '-h') {
+  // Handle --debug / --verbose flags before command parsing
+  const debugFlags = new Set(['--debug', '--verbose']);
+  const cleanArgs = args.filter(a => !debugFlags.has(a));
+  const debugMode = args.some(a => debugFlags.has(a));
+
+  if (debugMode) {
+    setGlobalLogLevel('debug');
+    console.log(`  ${$.dim}[debug] Logger level set to debug${$.reset}`);
+  }
+
+  if (cleanArgs.length === 0 || cleanArgs[0] === 'help' || cleanArgs[0] === '--help' || cleanArgs[0] === '-h') {
     cmdHelp();
     return;
   }
 
+  if (cleanArgs[0] === '--version' || cleanArgs[0] === '-v') {
+    console.log(`Commander v0.2.0`);
+    return;
+  }
+
   // First-run detection: no API key → show onboarding
-  if (!detectProvider() && args[0] !== 'config' && args[0] !== 'doctor' && args[0] !== 'status') {
+  if (!detectProvider() && cleanArgs[0] !== 'config' && cleanArgs[0] !== 'doctor' && cleanArgs[0] !== 'status') {
     onboardingMessage();
     return;
   }
 
-  const cmd = args[0];
+  const cmd = cleanArgs[0];
 
   switch (cmd) {
     case 'run': {
-      const task = args.slice(1).join(' ');
+      const task = cleanArgs.slice(1).join(' ');
       if (!task) { console.error(`  ${$.red}Usage:${$.reset} commander run "<task>"`); process.exit(1); }
       await cmdRun(task);
       break;
     }
     case 'plan': {
-      const task = args.slice(1).join(' ');
+      const task = cleanArgs.slice(1).join(' ');
       if (!task) { console.error(`  ${$.red}Usage:${$.reset} commander plan "<task>"`); process.exit(1); }
       await cmdPlan(task);
       break;
     }
     case 'watch': {
-      const task = args.slice(1).join(' ');
+      const task = cleanArgs.slice(1).join(' ');
       if (!task) { console.error(`  ${$.red}Usage:${$.reset} commander watch "<task>"`); process.exit(1); }
       await cmdWatch(task);
       break;
     }
     case 'company': {
-      const task = args.slice(1).join(' ');
+      const task = cleanArgs.slice(1).join(' ');
       if (!task) { console.error(`  ${$.red}Usage:${$.reset} commander company "<task>"`); process.exit(1); }
       await cmdCompany(task);
+      break;
+    }
+    case 'goal': {
+      const knownFlags = new Set(['--mode', '--budget', '--max-rounds']);
+      const goalArgs = cleanArgs.slice(1);
+      const flagMap: Record<string, string> = {};
+      const taskParts: string[] = [];
+      for (let i = 0; i < goalArgs.length; i++) {
+        if (knownFlags.has(goalArgs[i]) && i + 1 < goalArgs.length) {
+          flagMap[goalArgs[i]] = goalArgs[i + 1];
+          i++;
+        } else {
+          taskParts.push(goalArgs[i]);
+        }
+      }
+      const goalTask = taskParts.join(' ');
+      if (!goalTask) { console.error(`  ${$.red}Usage:${$.reset} commander goal "<task>" [--mode quick|balanced|thorough] [--budget N] [--max-rounds N]`); process.exit(1); }
+      await cmdGoal(goalTask, flagMap);
+      break;
+    }
+    case 'swarm': {
+      const knownFlags = new Set(['--mode', '--budget', '--max-rounds', '--max-depth', '--max-workers']);
+      const swarmArgs = cleanArgs.slice(1);
+      const flagMap: Record<string, string> = {};
+      const taskParts: string[] = [];
+      for (let i = 0; i < swarmArgs.length; i++) {
+        if (knownFlags.has(swarmArgs[i]) && i + 1 < swarmArgs.length) {
+          flagMap[swarmArgs[i]] = swarmArgs[i + 1];
+          i++;
+        } else {
+          taskParts.push(swarmArgs[i]);
+        }
+      }
+      const swarmTask = taskParts.join(' ');
+      if (!swarmTask) { console.error(`  ${$.red}Usage:${$.reset} commander swarm "<task>" [--mode quick|balanced|thorough] [--budget N] [--max-rounds N] [--max-depth N] [--max-workers N]`); process.exit(1); }
+      await cmdSwarm(swarmTask, flagMap);
       break;
     }
     case 'status':
       await cmdStatus();
       break;
     case 'config':
-      cmdConfig(args.slice(1));
+      await cmdConfig(cleanArgs.slice(1));
       break;
     case 'doctor':
-      cmdDoctor();
+      await cmdDoctor();
       break;
     case 'gui':
       await cmdGui();
       break;
+    case 'tui':
+      cmdTUI();
+      break;
+    case 'review':
+      await cmdReview(cleanArgs.slice(1));
+      break;
+    case 'mode':
+      await cmdMode(cleanArgs[1]);
+      break;
+    case 'history':
+      await cmdHistory(cleanArgs.slice(1));
+      break;
     case 'workers': {
-      const topics = args.slice(1);
+      const topics = cleanArgs.slice(1);
       await cmdWorkers(topics);
       break;
     }
     default:
-      await cmdPlan(args.join(' '));
+      await cmdPlan(cleanArgs.join(' '));
   }
 }
 
