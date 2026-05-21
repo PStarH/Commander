@@ -53,8 +53,8 @@ export function createRuntimeRouter(): Router {
             lessons: result.status === 'success' ? [] : [result.error ?? 'unknown error'],
             timestamp: new Date().toISOString(),
           });
-        } catch {
-          // non-critical
+        } catch (e) {
+          process.stderr.write(`[RuntimeEndpoints] Error: ${(e as Error)?.message ?? String(e)}\n`);
         }
       }
 

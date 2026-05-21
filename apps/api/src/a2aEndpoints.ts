@@ -322,8 +322,8 @@ export function startA2AServer(config: A2AServerConfig) {
   
   return new Promise<void>((resolve) => {
     app.listen(config.port, () => {
-      console.log(`A2A Server running on http://localhost:${config.port}`);
-      console.log(`Agent Card: http://localhost:${config.port}/a2a/.well-known/agent-card`);
+      process.stdout.write(`A2A Server running on http://localhost:${config.port}\n`);
+      process.stdout.write(`Agent Card: http://localhost:${config.port}/a2a/.well-known/agent-card\n`);
       resolve();
     });
   });

@@ -267,8 +267,8 @@ class SimpleVectorIndex {
       this.documentFrequency = new Map(data.documentFrequency);
       this.vectors = new Map(data.vectors);
       this.totalDocuments = data.totalDocuments;
-    } catch {
-      // Ignore load errors
+    } catch (e) {
+      process.stderr.write(`[EpisodicMemoryStore] Error: ${(e as Error)?.message ?? String(e)}\n`);
     }
   }
 }
@@ -648,9 +648,10 @@ export class EpisodicMemoryStore {
       try {
         const raw = fs.readFileSync(this.filePath, 'utf8');
         this.memories = JSON.parse(raw);
-      } catch {
-        this.memories = [];
-      }
+    } catch (e) {
+      process.stderr.write(`[EpisodicMemoryStore] Error: ${(e as Error)?.message ?? String(e)}\n`);
+      this.memories = [];
+    }
     }
     
     // Load vector index
@@ -658,7 +659,7 @@ export class EpisodicMemoryStore {
     
     // Rebuild index if needed
     if (this.vectorIndex['totalDocuments'] === 0 && this.memories.length > 0) {
-      console.log('Rebuilding vector index...');
+      process.stdout.write('[EpisodicMemoryStore] Rebuilding vector index...\n');
       for (const m of this.memories) {
         if (!m.supersededBy) {
           const indexText = `${m.title} ${m.content} ${m.tags.join(' ')}`;

@@ -130,7 +130,8 @@ export class ProjectMemoryStore {
         return parsed;
       }
       return [];
-    } catch {
+    } catch (e) {
+      process.stderr.write(`[MemoryStore] Error: ${(e as Error)?.message ?? String(e)}\n`);
       return [];
     }
   }

@@ -188,7 +188,8 @@ export class MemoryPoisoningDetector {
 
       // Unknown domain - moderate trust
       return 0.5;
-    } catch {
+    } catch (e) {
+      process.stderr.write(`[MemoryPoisoningDetector] Error: ${(e as Error)?.message ?? String(e)}\n`);
       // Invalid URL - lower trust
       return 0.3;
     }

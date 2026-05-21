@@ -294,8 +294,8 @@ export function startEvaluationServer(port: number) {
   
   return new Promise<void>((resolve) => {
     app.listen(port, () => {
-      console.log(`Evaluation Server running on http://localhost:${port}`);
-      console.log(`API: http://localhost:${port}/evaluation`);
+      process.stdout.write(`Evaluation Server running on http://localhost:${port}\n`);
+      process.stdout.write(`API: http://localhost:${port}/evaluation\n`);
       resolve();
     });
   });

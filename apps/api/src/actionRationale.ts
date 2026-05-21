@@ -256,7 +256,8 @@ export class ActionRationaleStore {
       const raw = fs.readFileSync(this.filePath, 'utf8');
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
-    } catch {
+    } catch (e) {
+      process.stderr.write(`[ActionRationale] Error: ${(e as Error)?.message ?? String(e)}\n`);
       return [];
     }
   }
