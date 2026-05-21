@@ -1,5 +1,6 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage, CacheConfig } from '../types';
 import { FormatBridge } from '../formatBridge';
+import { getGlobalLogger } from '../../logging';
 
 interface OpenAICompletionUsage {
   prompt_tokens: number;
@@ -96,7 +97,7 @@ export class OpenAIProvider implements LLMProvider {
 
   private async handleStreamingResponse(response: Response, model: string): Promise<LLMResponse> {
     const reader = response.body?.getReader();
-    if (!reader) throw new Error('No response body');
+    if (!reader) throw new Error('OpenAI: No response body from streaming endpoint');
 
     let content = '';
     let reasoningContent = '';
@@ -141,7 +142,7 @@ export class OpenAIProvider implements LLMProvider {
               }
             }
           }
-        } catch { /* skip malformed chunks */ }
+        } catch (e) { getGlobalLogger().debug('OpenAIProvider', 'Skipping malformed stream chunk', { error: (e as Error)?.message }); }
       }
     }
 
