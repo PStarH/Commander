@@ -1,4 +1,5 @@
 import type { LLMProvider, LLMRequest, LLMResponse } from '../types';
+import { getGlobalLogger } from '../../logging';
 
 interface OpenRouterCompletionUsage {
   prompt_tokens: number;
@@ -79,7 +80,7 @@ export class OpenRouterProvider implements LLMProvider {
       toolCalls: message.tool_calls?.map((tc: any) => ({
         id: tc.id,
         name: tc.function?.name ?? '',
-        arguments: (() => { try { return JSON.parse(tc.function?.arguments ?? '{}'); } catch { return {}; } })(),
+        arguments: (() => { try { return JSON.parse(tc.function?.arguments ?? '{}'); } catch (e) { getGlobalLogger().debug('OpenRouterProvider', 'Skipping malformed tool arguments', { error: (e as Error)?.message }); return {}; } })(),
       })),
       reasoning_content: message.reasoning,
     };
