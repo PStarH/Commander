@@ -18,6 +18,7 @@ import type {
   MCPServerCapabilities,
 } from './types';
 import { MCP_ERROR_CODES } from './types';
+import { getGlobalLogger } from '../logging';
 
 function uuid(): string {
   return `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -62,7 +63,9 @@ export class StdioClientTransport implements MCPTransport {
             p.resolve(parsed);
             this.pending.delete(id);
           }
-        } catch { /* ignore parse errors */ }
+        } catch {
+          getGlobalLogger().debug('MCPClient', 'Ignoring parse error in stdio response');
+        }
       }
     });
 

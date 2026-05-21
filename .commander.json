@@ -1,3 +1,12 @@
 {
-  "model": "openai/gpt-4o-mini"
+  "model": "mimo-v2.5-pro",
+  "mcpServers": [],
+  "a2a": {
+    "server": {
+      "enabled": false,
+      "port": 3002,
+      "host": "127.0.0.1"
+    },
+    "remoteAgents": []
+  }
 }
