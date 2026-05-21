@@ -1,6 +1,7 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage, CacheConfig } from '../types';
 import { FormatBridge } from '../formatBridge';
 import { parseMiMoTextToolCalls } from './mimoProvider';
+import { getGlobalLogger } from '../../logging';
 
 interface XiaomiCompletionUsage {
   prompt_tokens: number;
@@ -104,7 +105,7 @@ export class XiaomiProvider implements LLMProvider {
 
   private async handleStreamingResponse(response: Response, model: string): Promise<LLMResponse> {
     const reader = response.body?.getReader();
-    if (!reader) throw new Error('No response body');
+    if (!reader) throw new Error('Xiaomi MiMo: No response body from streaming endpoint');
 
     let content = '';
     let reasoningContent = '';
@@ -149,7 +150,7 @@ export class XiaomiProvider implements LLMProvider {
               }
             }
           }
-        } catch { /* skip malformed chunks */ }
+        } catch (e) { getGlobalLogger().debug('XiaomiProvider', 'Skipping malformed stream chunk', { error: (e as Error)?.message }); }
       }
     }
 

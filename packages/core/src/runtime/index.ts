@@ -50,6 +50,20 @@ export { DeepSeekProvider } from './providers/deepseekProvider';
 export { GLMProvider } from './providers/glmProvider';
 export { MiMoProvider } from './providers/mimoProvider';
 export { XiaomiProvider } from './providers/xiaomiProvider';
+export { OllamaProvider } from './providers/ollamaProvider';
+export { VLLMProvider } from './providers/vllmProvider';
+export { CohereProvider } from './providers/cohereProvider';
+export { MistralProvider } from './providers/mistralProvider';
+export { GroqProvider } from './providers/groqProvider';
+export { TogetherProvider } from './providers/togetherProvider';
+export { PerplexityProvider } from './providers/perplexityProvider';
+export { FireworksProvider } from './providers/fireworksProvider';
+export { ReplicateProvider } from './providers/replicateProvider';
+export { BedrockProvider } from './providers/bedrockProvider';
+export { XAIProvider } from './providers/xaiProvider';
+export { AnyscaleProvider } from './providers/anyscaleProvider';
+export { DeepInfraProvider } from './providers/deepinfraProvider';
+export { BaseOpenAICompatibleProvider, callOpenAICompatibleAPI, parseOpenAIStream, parseOpenAIResponse, buildOpenAIBody } from './providers/baseOpenAICompatible';
 export { MCPRemoteRuntime } from './mcpRemoteRuntime';
 export type { MCPRemoteRuntimeConfig } from './mcpRemoteRuntime';
 export { SSEStream } from './sseStream';
@@ -66,6 +80,8 @@ export {
   planSpeculativeExecution,
   isSpeculativelySafe,
 } from './speculativeExecutor';
+export { OpenTelemetryExporter, getOTelExporter, resetOTelExporter, executionTraceToOtlpSpans } from './openTelemetryExporter';
+export type { OTelExporterConfig, OTelSpan } from './openTelemetryExporter';
 export { UnifiedVerificationPipeline, detectTaskType } from './unifiedVerification';
 export type { VerificationSignal, VerificationReport, UVPTaskContext, UVPConfig, TaskType } from './unifiedVerification';
 export { StateCheckpointer } from './stateCheckpointer';

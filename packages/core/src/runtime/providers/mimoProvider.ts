@@ -1,5 +1,6 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage, CacheConfig, ReasoningConfig } from '../types';
 import { FormatBridge } from '../formatBridge';
+import { getGlobalLogger } from '../../logging';
 
 interface OpenAICompletionUsage {
   prompt_tokens: number;
@@ -113,7 +114,7 @@ export class MiMoProvider implements LLMProvider {
 
   private async handleStreamingResponse(response: Response, model: string): Promise<LLMResponse> {
     const reader = response.body?.getReader();
-    if (!reader) throw new Error('No response body');
+    if (!reader) throw new Error('MiMo: No response body from streaming endpoint');
 
     let content = '';
     let reasoningContent = '';
@@ -158,7 +159,7 @@ export class MiMoProvider implements LLMProvider {
               }
             }
           }
-        } catch { /* skip malformed chunks */ }
+        } catch (e) { getGlobalLogger().debug('MiMoProvider', 'Skipping malformed stream chunk', { error: (e as Error)?.message }); }
       }
     }
 
@@ -177,6 +178,12 @@ export class MiMoProvider implements LLMProvider {
         toolCalls = parsed.map(p => ({ id: p.id, name: p.name, arguments: JSON.stringify(p.arguments) }));
         content = '';
       }
+    }
+
+    // MiMo reasoning model sometimes puts everything in reasoning_content
+    // leaving content empty. Merge so AgentRuntime can read it.
+    if (!content && reasoningContent) {
+      content = reasoningContent;
     }
 
     return {
@@ -219,6 +226,12 @@ export class MiMoProvider implements LLMProvider {
         toolCalls = parsed;
         content = '';  // tool calls consumed, no text response
       }
+    }
+
+    // Same merge as in streaming handler: MiMo reasoning model puts
+    // output in reasoning_content leaving content empty.
+    if (!content && message.reasoning_content) {
+      content = message.reasoning_content;
     }
 
     return {
