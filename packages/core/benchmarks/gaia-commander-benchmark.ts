@@ -12,11 +12,52 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
+/**
+ * Load .env from CWD or nearest parent directory.
+ * Sets process.env variables so callers can use process.env.* directly.
+ */
+function loadEnv(): void {
+  let dir = process.cwd();
+  for (let i = 0; i < 5; i++) {
+    const envPath = path.join(dir, '.env');
+    if (fs.existsSync(envPath)) {
+      const lines = fs.readFileSync(envPath, 'utf-8').split('\n');
+      // Two-pass: first collect all key=val, then expand ${VAR} references
+      const vars: Array<[string, string]> = [];
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx === -1) continue;
+        const key = trimmed.slice(0, eqIdx).trim();
+        let val = trimmed.slice(eqIdx + 1).trim();
+        if (key && val) vars.push([key, val]);
+      }
+      for (const [key, rawVal] of vars) {
+        if (!process.env[key]) {
+          const expanded = rawVal.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] || '');
+          process.env[key] = expanded;
+        }
+      }
+      return;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+}
+
+loadEnv();
+
+const DEFAULT_BASE_URL = 'https://token-plan-sgp.xiaomimimo.com/v1';
 
 const MIMO_CONFIG = () => ({
-  baseUrl: process.env.MIMO_BASE_URL || 'https://api.openai.com/v1',
+  baseUrl: process.env.MIMO_BASE_URL || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL,
   apiKey: process.env.MIMO_API_KEY || process.env.OPENAI_API_KEY || '',
-  model: process.env.MIMO_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
+  model: process.env.MIMO_MODEL || process.env.OPENAI_MODEL || 'mimo-v2.5-pro',
 });
 let totalTokens = 0, totalCost = 0;
 const CI = 0.00001, CO = 0.00003;
