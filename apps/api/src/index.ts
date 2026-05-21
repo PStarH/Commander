@@ -459,7 +459,8 @@ app.patch('/missions/:missionId', (req, res) => {
             tags: ['mission', 'done', mission.priority.toLowerCase(), mission.riskLevel.toLowerCase()],
           });
         }
-      } catch {
+      } catch (e) {
+        process.stderr.write(`[MemorySummary] Failed to create auto-summary: ${(e as Error)?.message}\n`);
       }
     }
 
@@ -633,8 +634,8 @@ app.post('/projects/:projectId/memory-index/reconcile', (_req, res) => {
 DEFAULT_DOMAINS.forEach(({ domain, description }) => {
   try {
     memoryIndexManager.addDomain(domain, description);
-  } catch {
-    // Domain already exists
+  } catch (e) {
+    process.stderr.write(`[MemoryIndex] Domain already exists: ${domain}\n`);
   }
 });
 
@@ -780,8 +781,8 @@ app.get('/projects/:projectId/conflict-detection/summary', (req, res) => {
 
 const port = Number(process.env.PORT || 4000);
 app.listen(port, () => {
-  console.log(`API listening on http://localhost:${port}`);
-  console.log(`War room project ready at GET /projects/${PROJECT_ID}/war-room`);
+  process.stdout.write(`API listening on http://localhost:${port}\n`);
+  process.stdout.write(`War room project ready at GET /projects/${PROJECT_ID}/war-room\n`);
 });
 
 function isMissionStatus(value: string): value is MissionStatus {

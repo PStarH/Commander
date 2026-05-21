@@ -171,7 +171,8 @@ function loadState(taskId: string, config: PersistenceConfig): AgentState | null
   try {
     const raw = fs.readFileSync(stateFile, 'utf8');
     return JSON.parse(raw) as AgentState;
-  } catch {
+  } catch (e) {
+    process.stderr.write(`[StateMachine] Error: ${(e as Error)?.message ?? String(e)}\n`);
     return null;
   }
 }
@@ -205,7 +206,8 @@ function loadCheckpoint(checkpointId: string): AgentState | null {
   try {
     const raw = fs.readFileSync(checkpointFile, 'utf8');
     return JSON.parse(raw) as AgentState;
-  } catch {
+  } catch (e) {
+    process.stderr.write(`[StateMachine] Error: ${(e as Error)?.message ?? String(e)}\n`);
     return null;
   }
 }

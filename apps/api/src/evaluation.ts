@@ -366,7 +366,8 @@ export class LLMEvaluator {
         score: Math.max(1, Math.min(5, Math.round(parsed.score))) as EvaluationScore,
         explanation: parsed.explanation || ''
       };
-    } catch {
+    } catch (e) {
+      process.stderr.write(`[Evaluation] Error: ${(e as Error)?.message ?? String(e)}\n`);
       // Fallback: try to extract score from text
       const scoreMatch = response.match(/score[:\s]+([1-5])/i);
       const score = scoreMatch ? parseInt(scoreMatch[1]) as EvaluationScore : 3;
