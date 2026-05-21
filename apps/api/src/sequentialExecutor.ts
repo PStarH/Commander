@@ -392,8 +392,8 @@ export class SequentialExecutor {
     for (const handler of this.eventHandlers) {
       try {
         await handler(event);
-      } catch {
-        // Ignore handler errors
+      } catch (e) {
+        process.stderr.write(`[SequentialExecutor] Error: ${(e as Error)?.message ?? String(e)}\n`);
       }
     }
   }
@@ -443,7 +443,7 @@ export class SequentialExecutor {
  */
 export function createMockAgentExecutor(): AgentExecutor {
   return async ({ agentId, input }) => {
-    console.log(`[MockAgentExecutor] Agent ${agentId} called with:`, input);
+    process.stdout.write(`[SequentialExecutor] MockAgentExecutor agent ${agentId} called with: ${JSON.stringify(input)}\n`);
     
     // Simulate processing time
     await new Promise(resolve => setTimeout(resolve, 100));

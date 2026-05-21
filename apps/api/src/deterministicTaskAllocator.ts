@@ -405,7 +405,7 @@ allocation.status = 'released';
     }
 
     if (expired.length > 0) {
-      console.log(`[DeterministicTaskAllocator] Cleaned up ${expired.length} expired allocations`);
+      process.stdout.write(`[DeterministicTaskAllocator] Cleaned up ${expired.length} expired allocations\n`);
     }
   }
 
