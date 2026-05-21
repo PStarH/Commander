@@ -13,6 +13,42 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
+// ============================================================================
+// Load .env from project root (walk up from CWD)
+// ============================================================================
+function loadEnv(): void {
+  let dir = process.cwd();
+  for (let i = 0; i < 5; i++) {
+    const envPath = path.join(dir, '.env');
+    if (fs.existsSync(envPath)) {
+      const lines = fs.readFileSync(envPath, 'utf-8').split('\n');
+      const vars: Array<[string, string]> = [];
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx === -1) continue;
+        const key = trimmed.slice(0, eqIdx).trim();
+        let val = trimmed.slice(eqIdx + 1).trim();
+        if (key && val) vars.push([key, val]);
+      }
+      for (const [key, rawVal] of vars) {
+        if (!process.env[key]) {
+          const expanded = rawVal.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] || '');
+          process.env[key] = expanded;
+        }
+      }
+      return;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+}
+loadEnv();
 
 // ============================================================================
 // Configuration

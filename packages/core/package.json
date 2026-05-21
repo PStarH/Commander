@@ -2,10 +2,19 @@
   "name": "@commander/core",
   "version": "0.2.0",
   "description": "Multi-agent orchestration system. 70% on GAIA, dynamic topology, quality gates, 13 tools.",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
-  "bin": {
-    "commander": "../demo.ts"
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "keywords": [
     "multi-agent",
@@ -14,26 +23,45 @@
     "llm",
     "agents",
     "gaia",
-    "workflow"
+    "workflow",
+    "automation"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sampan/commander"
+    "url": "https://github.com/PStarH/Commander"
+  },
+  "bugs": {
+    "url": "https://github.com/PStarH/Commander/issues"
+  },
+  "homepage": "https://github.com/PStarH/Commander#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --test test/*.test.js && npx tsx --test tests/*.test.ts && npx tsx --env-file=.env --test benchmarks/*.test.ts",
-"bench": "npx tsx --env-file=.env --test benchmarks/*.test.ts",
+    "test": "cd ../.. && npx tsx --test packages/core/tests/*.test.ts packages/core/benchmarks/*.test.ts",
+    "bench": "cd ../.. && npx tsx --env-file=.env --test packages/core/benchmarks/*.test.ts",
     "test:vitest": "vitest run",
-    "test:vitest:watch": "vitest"
+    "test:vitest:watch": "vitest",
+    "prepublishOnly": "tsc -p tsconfig.json",
+    "prepack": "tsc -p tsconfig.json"
   },
   "devDependencies": {
+    "@types/blessed": "^0.1.27",
     "@types/node": "^25.6.0",
     "typescript": "^5.0.0",
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "blessed": "^0.1.81",
     "playwright": "^1.60.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.0.0"
   }
 }

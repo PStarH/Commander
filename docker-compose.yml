@@ -1,0 +1,49 @@
+# =============================================================================
+# Commander — Docker Compose
+# One-command deployment: docker compose up
+# =============================================================================
+
+services:
+  # API server — War Room backend + Commander execution engine
+  api:
+    build:
+      context: .
+      target: api
+      args:
+        - NODE_ENV=production
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+    volumes:
+      - commander_data:/app/.commander_state
+      - commander_data:/app/.commander_traces
+      - commander_data:/app/.commander_memory
+      - commander_data:/app/.commander_results
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Web GUI — Agent War Room dashboard
+  web:
+    build:
+      context: .
+      target: web
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  commander_data:
