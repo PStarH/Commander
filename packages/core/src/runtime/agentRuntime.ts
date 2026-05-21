@@ -40,17 +40,23 @@ import { ToolResultCache } from './toolResultCache';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
 import { ToolApproval } from './toolApproval';
+import { selectTools } from './toolRetriever';
 import { ToolPlanner } from './toolPlanner';
 import { CycleDetector } from './cycleDetector';
 import { repairToolCallArguments } from './toolCallRepair';
 import { validateToolCall, formatValidationErrors } from './toolCallValidator';
 import { ToolRegistry } from '../tools/toolRegistry';
 import { parseStructuredOutput } from './structuredOutput';
-import { selectTools } from './toolRetriever';
 import { isConfidentResponse } from './entropyGater';
 import { createContentScanner, type ContentScanner } from '../contentScanner';
 import type { TenantProvider, TenantConfig } from './tenantProvider';
 import { getGlobalTenantProvider, getGlobalMemoryRegistry } from './tenantProvider';
+import { createMemoryStore } from '../memory';
+import type { MemoryStore } from '../memory';
+import { OpenTelemetryExporter, getOTelExporter, executionTraceToOtlpSpans } from './openTelemetryExporter';
+import type { OTelSpan } from './openTelemetryExporter';
+import { getGlobalLogger } from '../logging';
+import type { CompactTaskType } from './contextCompactor';
 
 function generateId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -70,6 +76,9 @@ const DEFAULT_CONFIG: AgentRuntimeConfig = {
   observationMaskWindow: 10,
   enableDescendingScheduler: true,
   budgetHardCapTokens: 64000,
+  toolRetrieval: { enabled: false, minTools: 3, maxTools: 10, alwaysInclude: [] },
+  entropyGating: { enabled: false },
+  speculativeExecution: { enabled: false, maxPredictions: 2, minConfidence: 0.3 },
 };
 
 export class AgentRuntime {
@@ -93,6 +102,8 @@ export class AgentRuntime {
   private agentHandoff: AgentHandoff;
   private toolCache: ToolResultCache;
   private outputManager: ToolOutputManager;
+  private memoryStore: MemoryStore | null = null;
+  private otelExporter: OpenTelemetryExporter | null = null;
   private orchestrator: ToolOrchestrator;
   private planner: ToolPlanner;
   private cycleDetector: CycleDetector;
@@ -135,8 +146,30 @@ export class AgentRuntime {
     this.agentHandoff = new AgentHandoff(this.agentInbox, this.checkpointer);
     // Register default compensation handlers for mutation tools
     this.registerDefaultCompensation();
-    try { this.memory = getGlobalThreeLayerMemory(); } catch { /* ok */ }
-    try { getTraceRecorder(this.traceStore); } catch { /* ok */ }
+    try { this.memory = getGlobalThreeLayerMemory(); } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Failed to initialize global memory', { error: (e as Error)?.message }); }
+    try { getTraceRecorder(this.traceStore); } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Failed to initialize trace recorder', { error: (e as Error)?.message }); }
+    // Initialize memory store if configured
+    if (this.config.memoryStoreType) {
+      try {
+        this.memoryStore = createMemoryStore(this.config.memoryStoreType);
+      } catch (e) {
+        getGlobalLogger().warn('AgentRuntime', 'Failed to initialize memory store', { type: this.config.memoryStoreType, error: (e as Error)?.message });
+      }
+    }
+    // Initialize OTel exporter if configured
+    if (this.config.otelExporter?.enabled) {
+      try {
+        const exporter = getOTelExporter({
+          endpoint: this.config.otelExporter.endpoint,
+          serviceName: this.config.otelExporter.serviceName,
+          headers: this.config.otelExporter.headers,
+        });
+        exporter.start().catch(e => getGlobalLogger().warn('AgentRuntime', 'Failed to start OTel exporter', { error: (e as Error)?.message }));
+        this.otelExporter = exporter;
+      } catch (e) {
+        getGlobalLogger().warn('AgentRuntime', 'Failed to initialize OTel exporter', { error: (e as Error)?.message });
+      }
+    }
     // Tool calling infrastructure
     this.toolCache = new ToolResultCache({ enabled: true, maxEntries: 512, defaultTtlMs: 1_800_000 });
     this.outputManager = new ToolOutputManager({ enabled: true, turnBudget: 32000 });
@@ -149,7 +182,7 @@ export class AgentRuntime {
     this.cycleDetector = new CycleDetector();
     this.contentScanner = createContentScanner();
     // Auto-register adaptive parameter controller
-    getHookManager().register(createParameterControllerPlugin()).catch(e => console.debug("[runtime] hook:", e?.message));
+    getHookManager().register(createParameterControllerPlugin()).catch(e => getGlobalLogger().debug('AgentRuntime', 'Hook registration', { error: (e as Error)?.message }));
   }
 
   /** Invalidate read caches after mutation tools succeed */
@@ -185,6 +218,11 @@ export class AgentRuntime {
 
   getConfig(): AgentRuntimeConfig {
     return { ...this.config };
+  }
+
+  /** Access the persistent memory store (SqliteMemoryStore, JsonMemoryStore, etc.) or null if using default in-memory. */
+  getMemoryStore(): MemoryStore | null {
+    return this.memoryStore;
   }
 
   /** Access the state checkpointer for crash recovery and run inspection. */
@@ -331,9 +369,21 @@ export class AgentRuntime {
       }
     }
 
-    const toolDefs = ctx.availableTools
+    let toolDefs = ctx.availableTools
       .map(name => this.tools.get(name)?.definition)
       .filter((t): t is ToolDefinition => t !== undefined);
+
+    // Dynamic tool retrieval: filter to relevant tools when enabled
+    const retrieval = this.config.toolRetrieval;
+    if (retrieval?.enabled && toolDefs.length > retrieval.maxTools) {
+      const selectedNames = selectTools(ctx.goal, ctx.availableTools, {
+        minTools: retrieval.minTools,
+        maxTools: retrieval.maxTools,
+        alwaysInclude: retrieval.alwaysInclude,
+      });
+      const selected = new Set(selectedNames);
+      toolDefs = toolDefs.filter(t => selected.has(t.name));
+    }
 
     // Cache configuration: enable caching for system prompt + tools on providers that support it
     const cacheConfig: CacheConfig = {
@@ -371,7 +421,7 @@ export class AgentRuntime {
       if (provisioned) {
         bus.publish('system.alert', 'runtime', { type: 'tool_provisioned' });
       }
-    } catch { /* provisioning is best-effort */ }
+    } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Tool provisioning failed (best-effort)', { error: (e as Error)?.message }); }
 
     this.checkpointer.checkpoint({
       runId, agentId: ctx.agentId, missionId: ctx.missionId,
@@ -420,8 +470,22 @@ export class AgentRuntime {
             });
           }
         }
-      } catch { /* ok */ }
+      } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Memory initialization failed', { error: (e as Error)?.message }); }
     }
+
+    // Inject skills catalog (Level 0) into context
+    try {
+      const { SkillInjector, getSkillSystem } = await import('../skills');
+      const injector = new SkillInjector(getSkillSystem().manager);
+      const skillsBlock = await injector.buildSkillsBlock(ctx.goal, 0);
+      const instructions = injector.buildSkillUsageInstructions();
+      if (skillsBlock) {
+        request.messages.splice(request.messages.length - 1, 0, {
+          role: 'system' as const,
+          content: `${skillsBlock}\n\n${instructions}`,
+        });
+      }
+    } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Skills injection failed', { error: (e as Error)?.message }); }
 
     // 3. Emit started event
     bus.publish('agent.started', ctx.agentId, {
@@ -432,7 +496,7 @@ export class AgentRuntime {
     });
 
     // Fire plugin onAgentStart hooks
-    getHookManager().fireOnAgentStart({ ctx, runId }).catch(e => console.debug("[runtime] hook:", e?.message));
+    getHookManager().fireOnAgentStart({ ctx, runId }).catch(e => getGlobalLogger().debug('AgentRuntime', 'onAgentStart hook failed', { error: (e as Error)?.message }));
 
     // 4. Execute with retry and circuit breaker
     let lastError: string | undefined;
@@ -680,17 +744,16 @@ export class AgentRuntime {
             };
             steps.push(toolStep);
 
-            const assistantMsg: any = { role: 'assistant', content: response.content };
-            if ((response as any).reasoning_content) {
-              assistantMsg.reasoning_content = (response as any).reasoning_content;
-            }
-            if ((response as any).toolCalls) {
-              assistantMsg.tool_calls = (response as any).toolCalls.map((tc: any) => ({
+            const assistantMsg: import('./types').LLMMessage = {
+              role: 'assistant',
+              content: response.content,
+              ...(response.reasoning_content ? { reasoning_content: response.reasoning_content } : {}),
+              ...(response.toolCalls ? { tool_calls: response.toolCalls.map(tc => ({
                 id: tc.id,
-                type: 'function',
+                type: 'function' as const,
                 function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
-              }));
-            }
+              })) } : {}),
+            };
             request.messages.push(
               assistantMsg,
               { role: 'tool', content: masked.output, tool_call_id: masked.toolCallId },
@@ -714,7 +777,8 @@ export class AgentRuntime {
           const compactThreshold = compactDecision.apply ? 2 : 3;
           if (toolLoopCount > compactThreshold) {
             const tokensBefore = this.compactor.getUsage(request.messages).total;
-            const taskType = detectTaskType(ctx.goal) as any; // Compatible with CompactTaskType
+            const tt = detectTaskType(ctx.goal);
+            const taskType: CompactTaskType = tt === 'creative' ? 'general' : tt;
             const compactResult = this.compactor.compact(request.messages, undefined, taskType);
             if (compactResult.action.droppedCount > 0) {
               request.messages = compactResult.messages;
@@ -810,7 +874,7 @@ export class AgentRuntime {
               safeContent = `[Content blocked: ${criticalThreats.length} security threat(s) detected. Review and resubmit.]`;
             }
           }
-        } catch { /* content scanning is best-effort */ }
+        } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Content scan failed (best-effort)', { error: (e as Error)?.message }); }
 
         // If the final response has no text content (tool_call-only response),
         // find the last text response from the step history for the summary.
@@ -863,11 +927,11 @@ export class AgentRuntime {
               ['execution', 'success', ...ctx.availableTools.slice(0, 3)],
               { runId, goal: ctx.goal.slice(0, 500), tokenUsage: totalTokens, durationMs: totalDurationMs },
             );
-          } catch { /* ok */ }
+          } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Failed to record success memory', { error: (e as Error)?.message }); }
         }
 
         // Fire plugin onAgentComplete hooks
-        getHookManager().fireOnAgentComplete({ result, runId }).catch(e => console.debug("[runtime] hook:", e?.message));
+        getHookManager().fireOnAgentComplete({ result, runId }).catch(e => getGlobalLogger().debug('AgentRuntime', 'onAgentComplete hook failed', { error: (e as Error)?.message }));
 
         // Emit completed event
         getMetricsCollector().recordRunComplete('success', totalDurationMs, steps.length, tenantId);
@@ -901,7 +965,7 @@ export class AgentRuntime {
     tracer.recordError(runId, `All ${this.config.maxRetries + 1} attempts failed`, Date.now() - startTime);
 
     // Fire plugin onError hooks
-    getHookManager().fireOnError({ error: lastError ?? 'Unknown error', runId, agentId: ctx.agentId }).catch(e => console.debug("[runtime] hook:", e?.message));
+    getHookManager().fireOnError({ error: lastError ?? 'Unknown error', runId, agentId: ctx.agentId }).catch(e => getGlobalLogger().debug('AgentRuntime', 'onError hook failed', { error: (e as Error)?.message }));
 
     this.checkpointer.terminalCheckpoint({
       runId, agentId: ctx.agentId, missionId: ctx.missionId,
@@ -931,7 +995,7 @@ export class AgentRuntime {
           ['execution', 'failure', ...ctx.availableTools.slice(0, 3)],
           { runId, goal: ctx.goal.slice(0, 500), error: lastError },
         );
-      } catch { /* ok */ }
+      } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Failed to record failure memory', { error: (e as Error)?.message }); }
     }
 
     getMetricsCollector().recordRunComplete('failed', Date.now() - startTime, steps.length, tenantId);
@@ -963,9 +1027,23 @@ export class AgentRuntime {
         else this.tenantRunningCounts.set(tenantId, c);
       }
       this.releaseSlot();
-      try { tracer.completeRun(runId); } catch { /* ok */ }
-      try { await this.samplesStore.flush(); } catch { /* ok */ }
-      try { this.traceStore.flushAll(); } catch { /* ok */ }
+      try { tracer.completeRun(runId); } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Failed to complete trace', { runId, error: (e as Error)?.message }); }
+      // Export trace to OpenTelemetry if configured
+      if (this.otelExporter) {
+        try {
+          const trace = tracer.getTrace(runId);
+          if (trace) {
+            const otelSpans = executionTraceToOtlpSpans(trace);
+            for (const span of otelSpans) {
+              this.otelExporter.exportSpan(span);
+            }
+          }
+        } catch (e) {
+          getGlobalLogger().warn('AgentRuntime', 'Failed to export OTel spans', { runId, error: (e as Error)?.message });
+        }
+      }
+      try { await this.samplesStore.flush(); } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Failed to flush samples', { runId, error: (e as Error)?.message }); }
+      try { this.traceStore.flushAll(); } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Failed to flush traces', { runId, error: (e as Error)?.message }); }
       // Restore tenant-scoped overrides
       this.samplesStore = origSamplesStore;
       this.traceStore = origTraceStore;
@@ -1038,7 +1116,7 @@ export class AgentRuntime {
         error: String(err),
         taskId,
       });
-      console.error(`[AgentRuntime] provider call failed:`, err);
+      getGlobalLogger().error('AgentRuntime', 'Provider call failed', err as Error);
       return null;
     }
   }
@@ -1162,11 +1240,12 @@ export class AgentRuntime {
         recovered: false,
         tags: ['tool_not_found'],
       });
+      const errorMsg = `error: ${error}\nadvice: Check the tool name and try again with a registered tool.`;
       return {
         toolCallId: toolCall.id,
         name: toolCall.name,
-        output: '',
-        error: `error: ${error}\nadvice: Check the tool name and try again with a registered tool.`,
+        output: errorMsg,
+        error: errorMsg,
         durationMs: 0,
       };
     }
@@ -1240,7 +1319,7 @@ export class AgentRuntime {
       getMetricsCollector().recordError(boundaryResult.errorClass, tenantId);
 
       // Compensate side-effects from prior mutation tools in this run
-      this.compensationRegistry.compensate(actionId).catch(e => console.debug("[runtime] hook:", e?.message));
+      this.compensationRegistry.compensate(actionId).catch(e => getGlobalLogger().debug('AgentRuntime', 'Compensation failed', { actionId, error: (e as Error)?.message }));
 
       const structuredError = [
         `tool_error: "${toolCall.name}" failed after ${durationMs}ms`,
@@ -1328,7 +1407,7 @@ export class AgentRuntime {
             request.messages.push({ role: 'system', content: `[Tool: Calculation result]\n${calcResult.slice(0, 500)}` });
             provisioned = true;
           }
-        } catch (e) { console.debug('[Provision] python_execute error:', (e as Error)?.message); }
+        } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Provision python_execute failed', { error: (e as Error)?.message }); }
       }
     }
 
@@ -1347,7 +1426,7 @@ export class AgentRuntime {
             request.messages.push({ role: 'system', content: `[Tool: Web search results]\n${searchResult.slice(0, 1000)}` });
             provisioned = true;
           }
-        } catch (e) { console.debug('[Provision] web_search error:', (e as Error)?.message); }
+        } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Provision web_search failed', { error: (e as Error)?.message }); }
       }
     }
 
@@ -1370,7 +1449,7 @@ export class AgentRuntime {
               request.messages.push({ role: 'system', content: `[Tool: File content]\n${readResult.slice(0, 2000)}` });
               provisioned = true;
             }
-          } catch (e) { console.debug('[Provision] file_read error:', (e as Error)?.message); }
+          } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Provision file_read failed', { error: (e as Error)?.message }); }
         }
       }
     }
@@ -1418,7 +1497,7 @@ export class AgentRuntime {
           const fs = await import('fs');
           fs.unlinkSync(filePath);
           return { success: true };
-        } catch { /* file may already be deleted */ }
+        } catch (e) { getGlobalLogger().debug('AgentRuntime', 'File compensation: file may already be deleted', { filePath, error: (e as Error)?.message }); }
       }
       return { success: true };
     });
