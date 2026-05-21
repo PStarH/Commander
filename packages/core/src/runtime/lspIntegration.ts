@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
+import { getGlobalLogger } from '../logging';
 import type { Tool } from '../runtime/types';
 
 interface LSPDiagnostic {
@@ -60,7 +61,7 @@ class LSPClient {
       this.process.on('close', (code) => {
         this.isConnected = false;
         if (code !== 0 && code !== null) {
-          console.warn(`[LSP] Server exited with code ${code}`);
+          getGlobalLogger().warn('LSP', 'Server exited with non-zero code', { code });
         }
       });
 
@@ -75,7 +76,7 @@ class LSPClient {
       });
 
       this.process.stderr?.on('data', (chunk: Buffer) => {
-        console.warn(`[LSP stderr] ${chunk.toString().slice(0, 200)}`);
+        getGlobalLogger().warn('LSP', 'stderr output', { output: chunk.toString().slice(0, 200) });
       });
 
       this.sendRequest('initialize', {
@@ -100,7 +101,7 @@ class LSPClient {
 
   disconnect(): void {
     if (this.process) {
-      this.sendNotification('shutdown', {}).catch(e => console.debug('[LSP] shutdown error:', (e as Error)?.message));
+      this.sendNotification('shutdown', {}).catch(e => getGlobalLogger().debug('LSP', 'shutdown error', { error: (e as Error)?.message }));
       this.process.kill();
       this.process = null;
       this.isConnected = false;
@@ -209,7 +210,7 @@ class LSPClient {
           this.diagnosticsInsertOrder.push(filePath);
         }
       }
-    } catch {}
+    } catch (e) { getGlobalLogger().warn('LSP', 'Failed to handle message', { error: (e as Error)?.message }); }
   }
 
   openDocument(filePath: string, content?: string): void {
@@ -221,7 +222,7 @@ class LSPClient {
         version: 1,
         text,
       },
-    }).catch(e => console.debug('[LSP] didChange error:', (e as Error)?.message));
+    }).catch(e => getGlobalLogger().debug('LSP', 'didOpen error', { error: (e as Error)?.message }));
   }
 
   private getLanguageId(filePath: string): string {
@@ -243,7 +244,7 @@ let globalLSPEnabled = false;
 export function initLSP(serverCommand: string, serverArgs: string[], workspaceRoot?: string): Promise<void> {
   if (globalLSPClient) globalLSPClient.disconnect();
   globalLSPClient = new LSPClient(serverCommand, serverArgs, workspaceRoot ?? process.cwd());
-  return globalLSPClient.connect().then(() => { globalLSPEnabled = true; }).catch(e => { console.debug('[LSP] connect failed:', e?.message); return; });
+  return globalLSPClient.connect().then(() => { globalLSPEnabled = true; }).catch(e => { getGlobalLogger().debug('LSP', 'connect failed', { error: (e as Error)?.message }); return; });
 }
 
 export function disconnectLSP(): void {

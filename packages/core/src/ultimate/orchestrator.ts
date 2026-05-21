@@ -31,6 +31,7 @@ import { getEffortRules, classifyEffortLevel, selectTopologyForEffort } from './
 import { ReflexionTopologicalOptimizer } from './topologyOptimizer';
 import { getEvolutionEngine } from '../runtime/evolutionaryWorkflowEngine';
 import { COST_PER_TOKEN } from '../config/constants';
+import { getGlobalLogger } from '../logging';
 
 let executionCounter = 0;
 
@@ -362,6 +363,20 @@ if (topologyAction && 'to' in topologyAction) {
     // Self-optimize: apply meta-learner suggestions after each execution
     this.applyOptimizationSuggestions();
 
+    try {
+      const { MetaLearnerBridge, getSkillSystem } = await import('../skills');
+      const bridge = new MetaLearnerBridge(getMetaLearner(), getSkillSystem().manager);
+      const newSkills = await bridge.extractSkills();
+      if (newSkills.length > 0) {
+        bus.publish('skills.created', 'ultimate-orch', {
+          skills: newSkills.map(s => s.name),
+          execId,
+        });
+      }
+    } catch (e) {
+      getGlobalLogger().warn('UltimateOrchestrator', 'Skill extraction failed', { error: (e as Error)?.message });
+    }
+
 // Store execution result in vector memory for future retrieval
     try {
        const memory = getGlobalThreeLayerMemory();
@@ -374,7 +389,8 @@ if (topologyAction && 'to' in topologyAction) {
         [topology, effortLevel, allSuccess ? 'success' : 'failure', 'execution'],
         { execId, goal: params.goal.slice(0, 500) },
       );
-    } catch {
+    } catch (e) {
+      getGlobalLogger().warn('UltimateOrchestrator', 'Memory write failed', { error: (e as Error)?.message });
       // Memory is non-critical
     }
 
@@ -618,5 +634,3 @@ function flattenTree(node: TaskTreeNode): TaskTreeNode[] {
   }
   return nodes;
 }
-
-

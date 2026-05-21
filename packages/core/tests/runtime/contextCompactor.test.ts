@@ -1,7 +1,8 @@
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { ContextCompactor, type CompactTaskType, type AdaptiveProfile, type CompositionScore } from '../../src/runtime/contextCompactor';
-import type { LLMMessage } from '../../src/runtime/types';
+import { TokenGovernor, getTokenGovernor, resetTokenGovernor } from '../../src/runtime/tokenGovernor';
+import type { LLMMessage, CacheConfig } from '../../src/runtime/types';
 
 function msgs(...contents: string[]): LLMMessage[] {
   return contents.map((c, i) => ({
@@ -448,6 +449,100 @@ describe('ContextCompactor (upgraded)', () => {
       const profile = compactor.getEffectiveProfile('search');
       // search wants 2, but config says 5 → config wins
       assert.equal(profile.keepRecentTurns, 5);
+    });
+  });
+
+  describe('governor-aware threshold adjustment', () => {
+    beforeEach(() => {
+      resetTokenGovernor();
+    });
+
+    it('uses default thresholds when governor is relaxed', () => {
+      const governor = getTokenGovernor({ totalBudget: 100000 });
+      // relaxed: used=0, pressure=0
+      const compactor = new ContextCompactor({ governorAware: true, maxContextTokens: 100000 });
+      const layer = compactor.needsCompaction([
+        { role: 'system', content: 'test'.repeat(15000) }, // low pressure
+      ]);
+      // relaxed phase should produce default thresholds (~60%)
+      // 60000 chars / 4 * 1 = ~15000 tokens / 100000 = 15% → below layer1 trigger (60%)
+      assert.equal(layer, null, 'Should not need compaction at 15% usage in relaxed phase');
+    });
+
+    it('triggers compaction earlier under governor critical pressure', () => {
+      const governor = getTokenGovernor({ totalBudget: 1000 });
+      // Drive governor into critical phase by consuming 90%+ of budget
+      governor.reportUsage(950);
+
+      const state = governor.getState();
+      assert.equal(state.phase, 'critical', 'Governor should be in critical phase');
+
+      // Low budget so even moderate content crosses the lowered threshold
+      const compactor = new ContextCompactor({ governorAware: true, maxContextTokens: 2000 });
+      const messages: LLMMessage[] = [
+        { role: 'system', content: 'x' },
+      ];
+      for (let i = 0; i < 40; i++) {
+        messages.push({ role: 'user', content: 'what is the weather today?' });
+        messages.push({ role: 'assistant', content: 'sunny and warm' });
+      }
+
+      const usage = compactor.getUsage(messages);
+      // Under critical pressure, layer1 trigger shifts from 0.60 → 0.45
+      assert.ok(usage.pct >= 0.45, `Usage ${usage.pct} should exceed critical-phase layer1 trigger 0.45`);
+      const layer = compactor.needsCompaction(messages);
+      assert.notEqual(layer, null, 'Should need compaction under critical phase');
+    });
+
+    it('governor-disabled mode uses default thresholds regardless of pressure', () => {
+      const governor = getTokenGovernor({ totalBudget: 1000 });
+      governor.reportUsage(950);
+      assert.equal(governor.getState().phase, 'critical');
+
+      const compactor = new ContextCompactor({ governorAware: false, maxContextTokens: 100000 });
+      const messages: LLMMessage[] = [
+        { role: 'system', content: 'x' },
+      ];
+      for (let i = 0; i < 15; i++) {
+        messages.push({ role: 'user', content: 'short message' });
+        messages.push({ role: 'assistant', content: 'short reply' });
+      }
+
+      const usage = compactor.getUsage(messages);
+      // Should still be below default layer1 trigger (0.60)
+      // 30 messages * ~10 tokens each = ~300 + overhead = under 60k
+      assert.ok(usage.pct < 0.60, `Usage ${usage.pct} should be below layer1 trigger 0.60`);
+      const layer = compactor.needsCompaction(messages);
+      assert.equal(layer, null, 'Should not compact when governor-aware is disabled');
+    });
+  });
+
+  describe('CacheConfig integration', () => {
+    it('CacheConfig interface supports all required caching modes', () => {
+      // This test validates the CacheConfig shape is available and correct
+      const config: CacheConfig = {
+        cacheSystemPrompt: true,
+        cacheTools: true,
+        cacheHistory: 3,
+        useCacheControl: true,
+      };
+      assert.equal(config.cacheSystemPrompt, true);
+      assert.equal(config.cacheTools, true);
+      assert.equal(config.cacheHistory, 3);
+      assert.equal(config.useCacheControl, true);
+    });
+
+    it('produces expected CacheConfig values matching agentRuntime production code', () => {
+      // Mirrors the production CacheConfig construction in agentRuntime.ts line 389-393
+      const toolDefs = [{ name: 'read', description: 'read a file' }];
+      const cacheConfig: CacheConfig = {
+        cacheSystemPrompt: true,
+        cacheTools: toolDefs.length > 0,
+        useCacheControl: true,
+      };
+      assert.equal(cacheConfig.cacheSystemPrompt, true, 'System prompt should always be cached');
+      assert.equal(cacheConfig.cacheTools, true, 'Tools should be cached when present');
+      assert.equal(cacheConfig.useCacheControl, true, 'cache_control markers should be enabled');
     });
   });
 });

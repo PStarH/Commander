@@ -8,6 +8,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { getGlobalLogger } from '../logging';
 import type { LLMMessage, TokenUsage } from './types';
 
 export interface CheckpointState {
@@ -48,8 +49,10 @@ export class StateCheckpointer {
   checkpoint(state: CheckpointState): void {
     const tmpPath = path.join(this.baseDir, `${state.runId}.tmp`);
     const chkPath = path.join(this.baseDir, `${state.runId}.checkpoint`);
-    fs.writeFileSync(tmpPath, JSON.stringify(state), 'utf-8');
-    fs.renameSync(tmpPath, chkPath);
+    try {
+      fs.writeFileSync(tmpPath, JSON.stringify(state), 'utf-8');
+      fs.renameSync(tmpPath, chkPath);
+    } catch (e) { getGlobalLogger().warn('StateCheckpointer', 'Failed to write checkpoint', { error: (e as Error)?.message, runId: state.runId }); }
   }
 
   terminalCheckpoint(state: CheckpointState): void {
@@ -58,11 +61,17 @@ export class StateCheckpointer {
     const tmpPath = path.join(this.baseDir, `${state.runId}.tmp`);
 
     const writeTmp = path.join(this.baseDir, `${state.runId}.terminal.tmp`);
-    fs.writeFileSync(writeTmp, JSON.stringify(state), 'utf-8');
-    fs.renameSync(writeTmp, donePath);
+    try {
+      fs.writeFileSync(writeTmp, JSON.stringify(state), 'utf-8');
+      fs.renameSync(writeTmp, donePath);
+    } catch (e) { getGlobalLogger().warn('StateCheckpointer', 'Failed to write terminal checkpoint', { error: (e as Error)?.message, runId: state.runId }); }
 
-    if (fs.existsSync(chkPath)) fs.unlinkSync(chkPath);
-    if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    if (fs.existsSync(chkPath)) {
+      try { fs.unlinkSync(chkPath); } catch (e) { getGlobalLogger().warn('StateCheckpointer', 'Failed to remove checkpoint file', { error: (e as Error)?.message, runId: state.runId }); }
+    }
+    if (fs.existsSync(tmpPath)) {
+      try { fs.unlinkSync(tmpPath); } catch (e) { getGlobalLogger().warn('StateCheckpointer', 'Failed to remove temp file', { error: (e as Error)?.message, runId: state.runId }); }
+    }
   }
 
   resume(runId: string): CheckpointState | null {
@@ -71,8 +80,9 @@ export class StateCheckpointer {
       try {
         const raw = fs.readFileSync(chkPath, 'utf-8');
         return JSON.parse(raw) as CheckpointState;
-      } catch {
-        try { fs.unlinkSync(chkPath); } catch { /* ignore */ }
+      } catch (e) {
+        getGlobalLogger().warn('StateCheckpointer', 'Failed to resume from checkpoint', { error: (e as Error)?.message, runId });
+        try { fs.unlinkSync(chkPath); } catch (unlinkError) { getGlobalLogger().warn('StateCheckpointer', 'Failed to remove corrupt checkpoint', { error: (unlinkError as Error)?.message, runId }); }
         return null;
       }
     }
@@ -82,7 +92,8 @@ export class StateCheckpointer {
       try {
         const raw = fs.readFileSync(donePath, 'utf-8');
         return JSON.parse(raw) as CheckpointState;
-      } catch {
+      } catch (e) {
+        getGlobalLogger().warn('StateCheckpointer', 'Failed to read completed checkpoint', { error: (e as Error)?.message, runId });
         return null;
       }
     }
@@ -97,14 +108,16 @@ export class StateCheckpointer {
       try {
         const entries = fs.readdirSync(dir);
         for (const f of entries) {
+          // Skip non-checkpoint files and directories
           if (f.endsWith('.tmp')) continue;
+          if (!f.endsWith('.checkpoint') && !f.endsWith('.json')) continue;
           const state = this._readFile(path.join(dir, f));
-          if (state) {
+          if (state && typeof state.phase === 'string' && typeof state.timestamp === 'string') {
             const runId = f.replace(/\.(checkpoint|json)$/, '');
             results.push({ runId, phase: state.phase, timestamp: state.timestamp });
           }
         }
-      } catch { /* ignore */ }
+      } catch (e) { getGlobalLogger().warn('StateCheckpointer', 'Failed to list checkpoints', { error: (e as Error)?.message, dir }); }
     };
 
     addFromDir(this.baseDir);
@@ -120,7 +133,7 @@ export class StateCheckpointer {
       path.join(this.baseDir, 'completed', `${runId}.json`),
     ]) {
       if (fs.existsSync(p)) {
-        try { fs.unlinkSync(p); } catch { /* ignore */ }
+        try { fs.unlinkSync(p); } catch (e) { getGlobalLogger().warn('StateCheckpointer', 'Failed to delete checkpoint artifact', { error: (e as Error)?.message, path: p, runId }); }
       }
     }
   }
@@ -137,7 +150,8 @@ export class StateCheckpointer {
     try {
       const raw = fs.readFileSync(filePath, 'utf-8');
       return JSON.parse(raw) as CheckpointState;
-    } catch {
+    } catch (e) {
+      getGlobalLogger().warn('StateCheckpointer', 'Failed to read checkpoint file', { error: (e as Error)?.message, filePath });
       return null;
     }
   }

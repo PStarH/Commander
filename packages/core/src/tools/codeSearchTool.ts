@@ -1,5 +1,5 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
-import { execSync } from 'child_process';
+import { execSandboxed } from './sandboxedExec';
 
 const DEFINITION: ToolDefinition = {
   name: 'code_search',
@@ -58,16 +58,17 @@ export class CodeSearchTool implements Tool {
         cmd = `grep -rn -B ${contextLines} -A ${contextLines} "${grepPattern}" ${filePattern.includes('*') ? filePattern : `"${searchDir}/${filePattern}"`} 2>/dev/null | head -${maxResults * (contextLines * 2 + 2)}`;
       }
 
-      const output = execSync(cmd, { encoding: 'utf-8', timeout: 15000, maxBuffer: 10 * 1024 * 1024 });
+      const execRes = await execSandboxed(cmd, 15);
+      const output = execRes.stdout || execRes.stderr;
       const lines = output.trim().split('\n').filter(Boolean);
-      if (lines.length === 0) return `No results found for pattern: ${pattern}`;
+      if (lines.length === 0 || execRes.exitCode !== 0) return `No results found for pattern: ${pattern}`;
 
       const matchCount = lines.filter(l => l.includes(grepPattern) || l.includes(pattern)).length;
-      const result = lines.slice(0, maxResults * (contextLines * 2 + 2)).join('\n');
-      return `Found ${matchCount} matches in ${lines.length} lines:\n\n${result}`;
-    } catch (err: any) {
-      if (err.message?.includes('command failed')) return `No results found for pattern: ${pattern}`;
-      return `Search failed: ${err.message?.slice(0, 200) || String(err)}`;
+      const sliced = lines.slice(0, maxResults * (contextLines * 2 + 2)).join('\n');
+      return `Found ${matchCount} matches in ${lines.length} lines:\n\n${sliced}`;
+    } catch (searchErr: any) {
+      if (searchErr.message?.includes('command failed')) return `No results found for pattern: ${pattern}`;
+      return `Search failed: ${searchErr.message?.slice(0, 200) || String(searchErr)}`;
     }
   }
 }

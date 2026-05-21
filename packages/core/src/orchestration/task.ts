@@ -7,6 +7,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { getGlobalLogger } from '../logging';
 
 export type TaskType = 'local_agent' | 'local_shell' | 'remote_agent' | 'dream';
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'killed';
@@ -86,7 +87,8 @@ export function readTaskOutput(taskId: string, maxChars = 5000): string {
   try {
     const content = fs.readFileSync(task.outputFile, 'utf-8');
     return content.slice(-maxChars);
-  } catch {
+  } catch (e) {
+    getGlobalLogger().debug('TaskFramework', 'Failed to read task output', { error: (e as Error)?.message });
     return '';
   }
 }
@@ -111,7 +113,7 @@ export function listTasks(status?: TaskStatus): TaskHandle[] {
 export function cleanupTask(taskId: string): void {
   const task = activeTasks.get(taskId);
   if (task) {
-    try { fs.unlinkSync(task.outputFile); } catch {}
+    try { fs.unlinkSync(task.outputFile); } catch (e) { getGlobalLogger().warn('TaskFramework', 'Task cleanup failed', { error: (e as Error)?.message }); }
     activeTasks.delete(taskId);
   }
 }

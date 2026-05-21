@@ -1,4 +1,7 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { ExecPolicyEngine } from './execPolicy';
+import { getGlobalLogger } from '../logging';
 
 export type ApprovalMode = 'suggest' | 'auto-edit' | 'full-auto' | 'read-only' | 'plan';
 export type ApprovalCategory = 'sandbox_escape' | 'network' | 'file_write' | 'file_read' | 'shell_exec' | 'destructive' | 'mcp';
@@ -33,17 +36,41 @@ export class ApprovalSystem {
   private deniedForever: Map<string, number> = new Map();
   private execPolicy: ExecPolicyEngine;
   private static readonly DENIED_THRESHOLD = 3;
+  private persistFile: string;
 
-  constructor(execPolicy?: ExecPolicyEngine) {
+  constructor(execPolicy?: ExecPolicyEngine, persistDir?: string) {
     this.execPolicy = execPolicy ?? new ExecPolicyEngine();
+    this.persistFile = path.join(persistDir ?? process.cwd(), '.commander', 'approval-mode.json');
+    this.loadMode();
   }
 
   setMode(mode: ApprovalMode): void {
     this.mode = mode;
+    this.persistMode();
   }
 
   getMode(): ApprovalMode {
     return this.mode;
+  }
+
+  private persistMode(): void {
+    try {
+      const dir = path.dirname(this.persistFile);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(this.persistFile, JSON.stringify({ mode: this.mode }), 'utf-8');
+    } catch (e) { getGlobalLogger().debug('ApprovalSystem', 'Failed to persist mode', { error: (e as Error)?.message }); }
+  }
+
+  private loadMode(): void {
+    try {
+      if (fs.existsSync(this.persistFile)) {
+        const data = JSON.parse(fs.readFileSync(this.persistFile, 'utf-8'));
+        const validModes: ApprovalMode[] = ['suggest', 'auto-edit', 'full-auto', 'read-only', 'plan'];
+        if (validModes.includes(data.mode)) {
+          this.mode = data.mode;
+        }
+      }
+    } catch (e) { getGlobalLogger().debug('ApprovalSystem', 'Failed to load persisted mode, using default', { error: (e as Error)?.message }); }
   }
 
   setCallback(cb: ApprovalCallback): void {

@@ -6,6 +6,7 @@ import type {
   StrategyPerformance,
 } from '../runtime/types';
 import { getMessageBus } from '../runtime/messageBus';
+import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // Beta distribution for Thompson Sampling
@@ -395,8 +396,8 @@ export class MetaLearner {
       };
 
       fs.writeFileSync(this.persistPath, JSON.stringify(data, null, 2), 'utf-8');
-    } catch {
-      // Persistence is best-effort
+    } catch (e) {
+      getGlobalLogger().warn('MetaLearner', 'Persistence failed (best-effort)', { error: (e as Error)?.message });
     }
   }
 
@@ -424,8 +425,8 @@ export class MetaLearner {
           this.thompsonPriors.set(taskType, priors);
         }
       }
-    } catch {
-      // Load is best-effort
+    } catch (e) {
+      getGlobalLogger().warn('MetaLearner', 'Load failed (best-effort)', { error: (e as Error)?.message });
     }
   }
 }

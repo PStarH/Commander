@@ -1,8 +1,8 @@
-import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Tool, ToolDefinition } from '../runtime/types';
-import { getSandboxManager } from '../sandbox/manager';
+import { execSandboxed } from './sandboxedExec';
+import { getGlobalLogger } from '../logging';
 
 const TEMP_DIR = path.join(process.cwd(), '.commander_exec');
 
@@ -10,41 +10,13 @@ function ensureTempDir() {
   if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
 
-/**
- * Execute a command through the sandbox if available, falling back to execSync.
- * This ensures code execution is confined when an OS-level sandbox (Seatbelt/Bubblewrap/Docker) is present.
- */
-async function execSandboxed(command: string, timeoutSec: number, workdir?: string): Promise<string> {
-  const sandbox = getSandboxManager();
-  const timeout = timeoutSec * 1000;
-
-  if (sandbox.hasSandbox()) {
-    const profile = sandbox.getProfile('workspace-write');
-    const result = await sandbox.execute(command, { ...profile, timeout }, workdir);
-    const elapsed = result.durationMs;
-    if (result.exitCode === 0) {
-      return `[Exit: 0 | ${elapsed}ms]\n${result.stdout}`.trim();
-    }
-    if (result.stderr) return `[Exit: ${result.exitCode} | ${elapsed}ms]\nSTDERR:\n${result.stderr}`;
-    return `[Exit: ${result.exitCode} | ${elapsed}ms]`;
+function formatExecResult(r: { stdout: string; stderr: string; exitCode: number; durationMs: number; killed: boolean }): string {
+  if (r.exitCode === 0) {
+    return `[Exit: 0 | ${r.durationMs}ms]\n${r.stdout}`.trim();
   }
-
-  // Fallback: direct execSync (no sandbox available on this platform)
-  const start = Date.now();
-  try {
-    const stdout = execSync(command, {
-      timeout,
-      encoding: 'utf-8',
-      cwd: workdir ?? process.cwd(),
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    return `[Exit: 0 | ${Date.now() - start}ms]\n${stdout}`.trim();
-  } catch (err: any) {
-    const elapsed = Date.now() - start;
-    if (err.stderr) return `[Exit: ${err.status ?? 1} | ${elapsed}ms]\nSTDERR:\n${err.stderr}`;
-    if (err.killed) return `[Exit: SIGTERM | ${timeoutSec}s timeout exceeded]`;
-    return `[Error] ${err.message}`;
-  }
+  if (r.stderr) return `[Exit: ${r.exitCode} | ${r.durationMs}ms]\nSTDERR:\n${r.stderr}`;
+  if (r.killed) return `[Exit: SIGTERM | timeout exceeded]`;
+  return `[Error] Exit code ${r.exitCode}`;
 }
 
 export class PythonExecuteTool implements Tool {
@@ -72,9 +44,9 @@ export class PythonExecuteTool implements Tool {
 
     try {
       fs.writeFileSync(filePath, code, 'utf-8');
-      return await execSandboxed(`python3 "${filePath}"`, timeout);
+      return formatExecResult(await execSandboxed(`python3 "${filePath}"`, timeout));
     } finally {
-      try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+      try { fs.unlinkSync(filePath); } catch (e) { getGlobalLogger().warn('PythonExecuteTool', 'Temp file cleanup failed', { error: (e as Error)?.message }); }
     }
   }
 }
@@ -102,6 +74,6 @@ export class ShellExecuteTool implements Tool {
     if (!command) return 'Error: command is required';
 
     const resolvedWorkdir = path.resolve(process.cwd(), workdir);
-    return execSandboxed(command, timeout, resolvedWorkdir);
+    return formatExecResult(await execSandboxed(command, timeout, resolvedWorkdir));
   }
 }

@@ -6,6 +6,7 @@
  */
 
 import type { BusMessage, MessageBusTopic, MessageHandler, MessagePriority } from './types';
+import { getGlobalLogger } from '../logging';
 
 function generateId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -66,10 +67,10 @@ export class MessageBus {
         try {
           const result = handler(message);
           if (result instanceof Promise) {
-            result.catch(err => console.error(`[MessageBus] handler error on ${topic}:`, err));
+            result.catch(err => getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err));
           }
         } catch (err) {
-          console.error(`[MessageBus] handler error on ${topic}:`, err);
+          getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err as Error);
         }
       }
     }

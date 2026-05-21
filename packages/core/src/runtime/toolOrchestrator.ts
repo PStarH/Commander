@@ -14,6 +14,7 @@
 import type { ToolCall, ToolResult, Tool } from './types';
 import type { ToolApproval, ApprovalResult } from './toolApproval';
 import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
+import { getApprovalSystem } from '../sandbox/approval';
 
 // ============================================================================
 // Configuration
@@ -114,6 +115,8 @@ export class ToolOrchestrator {
     const skipped: ToolExecutionPlan['skipped'] = [];
     const circuitBroken: ToolExecutionPlan['circuitBroken'] = [];
 
+    const approvalSystem = getApprovalSystem();
+
     for (const tc of toolCalls) {
       // Check circuit breaker
       if (this.isCircuitOpen(tc.name)) {
@@ -121,7 +124,17 @@ export class ToolOrchestrator {
         continue;
       }
 
-      // Check approval
+      const modeCheck = this.checkApprovalMode(tc.name);
+      if (modeCheck === 'denied') {
+        const mode = approvalSystem.getMode();
+        skipped.push({
+          toolCall: tc,
+          reason: `Blocked by ${mode} mode: tool "${tc.name}" not allowed`,
+        });
+        continue;
+      }
+
+      // Check tool-level approval
       if (this.config.useApproval && this.approval) {
         const approvalResult = await this.approval.requestApproval(tc.name, tc.arguments);
         if (!approvalResult.approved) {
@@ -367,5 +380,28 @@ export class ToolOrchestrator {
 
   getBreakerRegistry(): CircuitBreakerRegistry {
     return this.breakerRegistry;
+  }
+
+  /**
+   * Check the current approval mode against a tool name.
+   * Returns 'denied' when the mode blocks this tool type, 'approved' otherwise.
+   */
+  private checkApprovalMode(toolName: string): 'approved' | 'denied' {
+    const mode = getApprovalSystem().getMode();
+    if (mode === 'full-auto') return 'approved';
+
+    const isWrite = /^(file_write|file_edit|write|edit|apply_patch|code_fixer|refine_code|execute_script|python_execute|shell_execute)$/i.test(toolName);
+    const isDestructive = /^(rm|rmdir|remove|delete)/i.test(toolName);
+    const isNetwork = /^(web_search|web_fetch|browser_search|browser_fetch|web_extract)/i.test(toolName);
+
+    if (mode === 'plan' || mode === 'read-only') {
+      if (isWrite || isDestructive) return 'denied';
+    }
+
+    if (mode === 'read-only') {
+      if (isNetwork) return 'denied';
+    }
+
+    return 'approved';
   }
 }

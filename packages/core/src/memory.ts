@@ -12,6 +12,7 @@
  */
 
 import { readFile, writeFile, mkdir } from 'fs/promises';
+import { getGlobalLogger } from './logging';
 
 // ============================================================================
 // Type Definitions
@@ -542,7 +543,8 @@ export class JsonMemoryStore implements MemoryStore {
           if (!isNaN(num) && num >= this.nextId) this.nextId = num + 1;
         }
       }
-    } catch {
+    } catch (e) {
+      getGlobalLogger().debug('JsonMemoryStore', 'Init load failed', { error: (e as Error)?.message });
       // File doesn't exist yet — start empty
     }
   }
@@ -804,16 +806,30 @@ function tokenize(text: string): string[] {
 /**
  * Create a default memory store instance
  */
-export function createMemoryStore(type: 'in-memory' | 'sqlite' = 'in-memory'): MemoryStore {
+export function createMemoryStore(type: 'in-memory' | 'sqlite' | 'json' = 'in-memory'): MemoryStore {
   switch (type) {
     case 'in-memory':
       return new InMemoryMemoryStore();
-    case 'sqlite':
+    case 'sqlite': {
+      // Lazy-import SqliteMemoryStore to avoid dependency issues at module load
+      try {
+        const { SqliteMemoryStore } = require('./runtime/sqliteMemoryStore');
+        const store = new SqliteMemoryStore('.commander/memory.db');
+        store.init().catch(() => {});
+        return store;
+      } catch {
+        getGlobalLogger().warn('createMemoryStore', 'SqliteMemoryStore not available, falling back to JSON store');
+        return new JsonMemoryStore('.commander/memory.json');
+      }
+    }
+    case 'json':
       return new JsonMemoryStore('.commander/memory.json');
     default:
       throw new Error(`Unknown memory store type: ${type}`);
   }
 }
+
+export { SqliteMemoryStore } from './runtime/sqliteMemoryStore';
 
 /**
  * Convert ProjectMemoryItem to EpisodicMemoryItem

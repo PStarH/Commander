@@ -16,6 +16,7 @@
 
 import type { LLMMessage, LLMProvider } from './types';
 import { TokenGovernor, getTokenGovernor } from './tokenGovernor';
+import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // Types
@@ -568,7 +569,8 @@ export class ContextCompactor {
       base.layer4 = Math.max(0.7, base.layer4 - shift);
 
       return base;
-    } catch {
+    } catch (e) {
+      getGlobalLogger().warn('ContextCompactor', 'Failed to adjust thresholds', { error: (e as Error)?.message });
       return base;
     }
   }
@@ -600,7 +602,7 @@ export class ContextCompactor {
               const args = JSON.parse(tc.function.arguments);
               if (args.path) files.push(args.path);
               if (args.file_path) files.push(args.file_path);
-            } catch {}
+            } catch (e) { getGlobalLogger().debug('ContextCompactor', 'Failed to parse tool call arguments', { error: (e as Error)?.message }); }
           }
         }
         if (msg.role === 'tool') {

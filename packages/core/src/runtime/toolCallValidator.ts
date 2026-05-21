@@ -13,6 +13,7 @@
  */
 
 import type { CompiledSchema, ValidationResult } from './types';
+import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // Schema Compilation
@@ -211,7 +212,7 @@ function tryCoerce(value: unknown, expectedType: string): unknown {
       try {
         const parsed = JSON.parse(value);
         if (Array.isArray(parsed)) return parsed;
-      } catch { /* not valid JSON */ }
+      } catch (e) { getGlobalLogger().debug('ToolCallValidator', 'Failed to parse array coercion JSON', { error: (e as Error)?.message }); }
     }
     // Wrap a single value in an array
     if (!Array.isArray(value) && value !== undefined && value !== null) return [value];

@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import type { PlatformSandbox, SandboxProfile, SandboxExecutionResult } from './types';
+import { getGlobalLogger } from '../logging';
 
 function filterEnv(p: SandboxProfile): Record<string, string> {
   const env: Record<string, string> = {};
@@ -35,7 +36,7 @@ class SeatbeltSB implements PlatformSandbox {
   readonly name = 'seatbelt' as const;
   readonly available: boolean;
   constructor() {
-    this.available = os.platform() === 'darwin' && (() => { try { execSync('which sandbox-exec 2>/dev/null', { timeout: 3000 }); return true; } catch { return false; } })();
+    this.available = os.platform() === 'darwin' && (() => { try { execSync('which sandbox-exec 2>/dev/null', { timeout: 3000 }); return true; } catch (e) { getGlobalLogger().debug('SeatbeltSB', 'sandbox-exec unavailable', { error: (e as Error)?.message }); return false; } })();
   }
   async execute(cmd: string, p: SandboxProfile, wd?: string): Promise<SandboxExecutionResult> {
     const profile = [
@@ -58,7 +59,7 @@ class SeatbeltSB implements PlatformSandbox {
     const env = filterEnv(p);
     return exec(`sandbox-exec -f "${tf}" ${cmd}`, wd ?? process.cwd(), env, p.timeout ?? 60000)
       .then(r => ({ ...r, sandboxMechanism: 'seatbelt' as const }))
-      .finally(() => { try { fs.unlinkSync(tf); } catch {} });
+      .finally(() => { try { fs.unlinkSync(tf); } catch (e) { getGlobalLogger().warn('SeatbeltSB', 'Temp sandbox profile cleanup failed', { error: (e as Error)?.message }); } });
   }
 }
 
@@ -67,7 +68,7 @@ class BwrapSB implements PlatformSandbox {
   readonly name = 'bwrap' as const;
   readonly available: boolean;
   constructor() {
-    this.available = os.platform() === 'linux' && (() => { try { execSync('which bwrap 2>/dev/null', { timeout: 3000 }); return true; } catch { return false; } })();
+    this.available = os.platform() === 'linux' && (() => { try { execSync('which bwrap 2>/dev/null', { timeout: 3000 }); return true; } catch (e) { getGlobalLogger().debug('BwrapSB', 'bwrap unavailable', { error: (e as Error)?.message }); return false; } })();
   }
   async execute(cmd: string, p: SandboxProfile, wd?: string): Promise<SandboxExecutionResult> {
     const start = Date.now();
@@ -111,7 +112,7 @@ class DockerSB implements PlatformSandbox {
   readonly name = 'docker' as const;
   readonly available: boolean;
   constructor() {
-    this.available = (() => { try { execSync('docker info 2>/dev/null', { timeout: 5000 }); return true; } catch { return false; } })();
+    this.available = (() => { try { execSync('docker info 2>/dev/null', { timeout: 5000 }); return true; } catch (e) { getGlobalLogger().debug('DockerSB', 'docker unavailable', { error: (e as Error)?.message }); return false; } })();
   }
   async execute(cmd: string, p: SandboxProfile, wd?: string): Promise<SandboxExecutionResult> {
     const start = Date.now();

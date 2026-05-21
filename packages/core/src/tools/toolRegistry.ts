@@ -1,5 +1,6 @@
 import type { Tool, ToolDefinition, CompiledSchema } from '../runtime/types';
 import { compileSchema } from '../runtime/toolCallValidator';
+import { getGlobalLogger } from '../logging';
 
 /**
  * ToolRegistry — Auto-Discovery Tool Registry
@@ -46,7 +47,7 @@ export class ToolRegistry {
       const compiled = compileSchema(tool.definition.inputSchema);
       registry.compiledSchemas.set(tool.definition.name, compiled);
       tool.compiledSchema = compiled;
-    } catch { /* schema compilation is best-effort */ }
+    } catch (e) { getGlobalLogger().warn('ToolRegistry', 'Schema compilation failed', { error: (e as Error)?.message, tool: tool.definition.name }); }
 
     if (category) {
       const existing = registry.categories.get(category) || [];
@@ -153,6 +154,7 @@ export const TOOL_CATEGORIES: Record<string, string> = {
   meta: 'development',
   lsp_diagnostics: 'development',
   lsp_attach: 'development',
+  skill_view: 'skills',
   vision_analyze: 'multimodal',
   pdf_extract: 'multimodal',
   screenshot_capture: 'multimodal',
