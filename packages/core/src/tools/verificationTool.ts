@@ -1,5 +1,6 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
-import { execSync } from 'child_process';
+import { execSandboxed } from './sandboxedExec';
+import { getGlobalLogger } from '../logging';
 
 const DEFINITION: ToolDefinition = {
   name: 'verify',
@@ -81,21 +82,17 @@ export class VerificationTool implements Tool {
   }
 
   private async runCommand(cmd: string, cwd: string, label: string): Promise<CheckResult> {
-    const start = Date.now();
-    try {
-      const output = execSync(cmd, { cwd, timeout: 120000, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    const result = await execSandboxed(cmd, 120, cwd);
+    const output = result.stdout || result.stderr;
+    if (result.exitCode === 0) {
       const lines = output.split('\n');
       const errorCount = lines.filter((l: string) => /error/i.test(l)).length;
       const warningCount = lines.filter((l: string) => /warning/i.test(l)).length;
-      return { name: label, passed: true, errors: errorCount, warnings: warningCount, output: output.slice(0, 3000), durationMs: Date.now() - start };
-    } catch (err: any) {
-      const stderr = err.stderr?.toString() ?? '';
-      const stdout = err.stdout?.toString() ?? '';
-      const output = stderr || stdout || err.message;
-      const lines = output.split('\n');
-      const errorCount = lines.filter((l: string) => /error/i.test(l)).length || 1;
-      return { name: label, passed: false, errors: errorCount, warnings: 0, output: output.slice(0, 3000), durationMs: Date.now() - start };
+      return { name: label, passed: true, errors: errorCount, warnings: warningCount, output: output.slice(0, 3000), durationMs: result.durationMs };
     }
+    const lines = output.split('\n');
+    const errorCount = lines.filter((l: string) => /error/i.test(l)).length || 1;
+    return { name: label, passed: false, errors: errorCount, warnings: 0, output: output.slice(0, 3000), durationMs: result.durationMs };
   }
 
   private async runLint(cwd: string, fix: boolean): Promise<CheckResult> {
@@ -131,10 +128,10 @@ export class VerificationTool implements Tool {
   }
 
   private hasTool(cwd: string, relPath: string): boolean {
-    try { return require('fs').existsSync(require('path').join(cwd, relPath)); } catch { return false; }
+    try { return require('fs').existsSync(require('path').join(cwd, relPath)); } catch (e) { getGlobalLogger().warn('VerificationTool', 'Tool check failed', { error: (e as Error)?.message, relPath }); return false; }
   }
 
   private hasFile(cwd: string, name: string): boolean {
-    try { return require('fs').existsSync(require('path').join(cwd, name)); } catch { return false; }
+    try { return require('fs').existsSync(require('path').join(cwd, name)); } catch (e) { getGlobalLogger().warn('VerificationTool', 'File check failed', { error: (e as Error)?.message, name }); return false; }
   }
 }

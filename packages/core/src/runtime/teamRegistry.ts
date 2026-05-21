@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { getGlobalLogger } from '../logging';
 
 export type TeamRole = 'lead' | 'worker' | 'observer' | 'reviewer';
 
@@ -134,7 +135,7 @@ export class TeamRegistry {
       for (const team of data) {
         this.teams.set(team.teamId, team);
       }
-    } catch { /* corrupt file — start fresh */ }
+    } catch (e) { getGlobalLogger().warn('TeamRegistry', 'Failed to load team manifest', { error: (e as Error)?.message, manifestPath: this.manifestPath }); }
   }
 
   private save(): void {
@@ -143,6 +144,6 @@ export class TeamRegistry {
       const content = JSON.stringify(Array.from(this.teams.values()), null, 2);
       fs.writeFileSync(tmpPath, content, 'utf-8');
       fs.renameSync(tmpPath, this.manifestPath);
-    } catch { /* ok */ }
+    } catch (e) { getGlobalLogger().warn('TeamRegistry', 'Failed to save team manifest', { error: (e as Error)?.message, manifestPath: this.manifestPath }); }
   }
 }

@@ -1,5 +1,6 @@
 import type { BusMessage, MessageBusTopic } from './types';
 import { getMessageBus } from './messageBus';
+import { getGlobalLogger } from '../logging';
 
 /**
  * Structured SSE event types for real-time agent execution visibility.
@@ -89,7 +90,7 @@ export class SSEStream {
 
   private dispatch(payload: string): void {
     for (const subscriber of this.subscribers) {
-      try { subscriber(payload); } catch { /* ignore */ }
+      try { subscriber(payload); } catch (e) { getGlobalLogger().warn('SSEStream', 'Subscriber dispatch failed', { error: (e as Error)?.message }); }
     }
   }
 
@@ -127,7 +128,7 @@ export class SSEStream {
   pipe(writable: { write(data: string): void }): void {
     const unsub = this.onEvent((event) => {
       if (!this.closed) {
-        try { writable.write(event); } catch { this.close(); }
+        try { writable.write(event); } catch (e) { getGlobalLogger().warn('SSEStream', 'Writable stream write failed', { error: (e as Error)?.message }); this.close(); }
       }
     });
     this.unsubscribers.push(unsub);
@@ -141,7 +142,7 @@ export class SSEStream {
       this.heartbeatTimer = null;
     }
     for (const unsub of this.unsubscribers) {
-      try { unsub(); } catch { /* ignore */ }
+      try { unsub(); } catch (e) { getGlobalLogger().warn('SSEStream', 'Unsubscribe failed', { error: (e as Error)?.message }); }
     }
     this.unsubscribers = [];
     this.subscribers = [];

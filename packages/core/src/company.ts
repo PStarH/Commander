@@ -7,6 +7,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { getGlobalLogger } from './logging';
 
 const STATE_DIR = path.join(process.cwd(), '.commander_state');
 if (!fs.existsSync(STATE_DIR)) fs.mkdirSync(STATE_DIR, { recursive: true });
@@ -71,7 +72,7 @@ export class Scheduler {
     this.timer = setInterval(() => {
       const due = this.getDue();
       for (const entry of due) {
-        console.log(`[Scheduler] Running: ${entry.name}`);
+        getGlobalLogger().info('Company', `Running: ${entry.name}`);
         this.markRun(entry.id);
       }
     }, intervalMs);
@@ -83,7 +84,7 @@ export class Scheduler {
     try {
       const p = path.join(STATE_DIR, 'schedules.json');
       if (fs.existsSync(p)) this.entries = JSON.parse(fs.readFileSync(p, 'utf-8'));
-    } catch (e) { console.debug('[Scheduler] load error:', (e as Error)?.message); }
+    } catch (e) { getGlobalLogger().debug('Company', 'Scheduler load error', { error: (e as Error)?.message }); }
   }
   private save() {
     fs.writeFileSync(path.join(STATE_DIR, 'schedules.json'), JSON.stringify(this.entries, null, 2), 'utf-8');
@@ -160,7 +161,7 @@ export class QualityPipeline {
       logs.push({ draftId: draft.id, type: draft.type, score: review.score, passed: review.passed, timestamp: new Date().toISOString() });
       if (logs.length > 1000) logs = logs.slice(-1000);
       fs.writeFileSync(logPath, JSON.stringify(logs, null, 2), 'utf-8');
-    } catch (e) { console.debug('[Quality] log error:', (e as Error)?.message); }
+    } catch (e) { getGlobalLogger().debug('Company', 'Quality log error', { error: (e as Error)?.message }); }
   }
 }
 
@@ -182,7 +183,7 @@ export class FeedbackLoop {
       logs.push(entry);
       if (logs.length > 500) logs = logs.slice(-500);
       fs.writeFileSync(p, JSON.stringify(logs, null, 2), 'utf-8');
-    } catch (e) { console.debug('[Feedback] record error:', (e as Error)?.message); }
+    } catch (e) { getGlobalLogger().debug('Company', 'Feedback record error', { error: (e as Error)?.message }); }
   }
 
   getStats(): { total: number; avgScore: number; improvementRate: number; commonIssues: string[] } {
@@ -196,7 +197,7 @@ export class FeedbackLoop {
       for (const l of logs) for (const issue of l.issues) issueCount.set(issue, (issueCount.get(issue) || 0) + 1);
       const top = [...issueCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([i]) => i);
       return { total: logs.length, avgScore: avg, improvementRate: improved / logs.length, commonIssues: top };
-    } catch (e) { console.debug('[Feedback] getStats error:', (e as Error)?.message); return { total: 0, avgScore: 0, improvementRate: 0, commonIssues: [] }; }
+    } catch (e) { getGlobalLogger().debug('Company', 'Feedback stats error', { error: (e as Error)?.message }); return { total: 0, avgScore: 0, improvementRate: 0, commonIssues: [] }; }
   }
 }
 
@@ -215,14 +216,14 @@ export class CompanyEngine {
     this.running = true;
     this.startTime = Date.now();
     this.scheduler.start();
-    console.log('[Company] Engine started — scheduled tasks active');
+    getGlobalLogger().info('Company', 'Engine started — scheduled tasks active');
   }
 
   stop() {
     this.running = false;
     this.scheduler.stop();
     const elapsed = ((Date.now() - this.startTime) / 1000 / 60).toFixed(1);
-    console.log(`[Company] Engine stopped. Ran ${this.taskCount} tasks in ${elapsed}min`);
+    getGlobalLogger().info('Company', `Engine stopped. Ran ${this.taskCount} tasks in ${elapsed}min`);
   }
 
   async submit(content: string, type: string, agentId: string): Promise<{

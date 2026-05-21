@@ -8,6 +8,8 @@
  * 3. 审批上下文传递给模型，让模型理解为什么需要等待
  */
 
+import { getGlobalLogger } from '../logging';
+
 // ============================================================================
 // 审批级别
 // ============================================================================
@@ -368,7 +370,8 @@ async requestApproval(
         this.pendingApprovals.set(pendingKey, approvalRequest);
         this.recordDecision(toolName, result.approved, policy.level);
         return result;
-      } catch {
+      } catch (e) {
+        getGlobalLogger().warn('ToolApproval', 'Approval callback failed', { error: (e as Error)?.message, toolName });
         // If callback fails, store as pending and return approval_failed
         this.pendingApprovals.set(pendingKey, approvalRequest);
         this.recordDecision(toolName, false, policy.level);

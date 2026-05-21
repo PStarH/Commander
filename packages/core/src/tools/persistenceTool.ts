@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Tool, ToolDefinition } from '../runtime/types';
+import { getGlobalLogger } from '../logging';
 
 const MEMORY_DIR = path.join(process.cwd(), '.commander_memory');
 if (!fs.existsSync(MEMORY_DIR)) fs.mkdirSync(MEMORY_DIR, { recursive: true });
@@ -62,7 +63,7 @@ export class MemoryRecallTool implements Tool {
       const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, '_');
       const filePath = path.join(nsDir, `${safeKey}.json`);
       if (!fs.existsSync(filePath)) return `No memory for "${key}"`;
-      let d; try { d = JSON.parse(fs.readFileSync(filePath, 'utf-8')); } catch { d = {}; }
+      let d; try { d = JSON.parse(fs.readFileSync(filePath, 'utf-8')); } catch (e) { getGlobalLogger().warn('MemoryRecallTool', 'Failed to parse memory file', { error: (e as Error)?.message }); d = {}; }
       return `${d.key}: ${d.value}\n(updated: ${d.timestamp})`;
     }
 
@@ -74,7 +75,7 @@ export class MemoryRecallTool implements Tool {
         if (!search || d.key.toLowerCase().includes(search) || d.value.toLowerCase().includes(search)) {
           results.push(d);
         }
-      } catch {}
+      } catch (e) { getGlobalLogger().warn('MemoryRecallTool', 'Failed to read memory entry', { error: (e as Error)?.message }); }
     }
     results.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     return results.slice(0, limit).map(r => `${r.key}: ${r.value.slice(0, 200)}`).join('\n') || 'No results';
@@ -91,7 +92,7 @@ export class MemoryListTool implements Tool {
   async execute(): Promise<string> {
     if (!fs.existsSync(MEMORY_DIR)) return 'No memory directory found';
     const namespaces = fs.readdirSync(MEMORY_DIR).filter(f => {
-      try { return fs.statSync(path.join(MEMORY_DIR, f)).isDirectory(); } catch { return false; }
+      try { return fs.statSync(path.join(MEMORY_DIR, f)).isDirectory(); } catch (e) { getGlobalLogger().warn('MemoryListTool', 'Failed to stat namespace', { error: (e as Error)?.message }); return false; }
     });
     if (namespaces.length === 0) return 'No memories stored';
     const parts = namespaces.map(ns => {

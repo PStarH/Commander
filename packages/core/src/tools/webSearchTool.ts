@@ -1,4 +1,5 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
+import { getGlobalLogger } from '../logging';
 
 const SEARCH_TIMEOUT = 8000;
 
@@ -54,7 +55,8 @@ export class WebSearchTool implements Tool {
       const html = await response.text();
       const results = this.parseDuckDuckGo(html, maxResults);
       return results.length > 0 ? results : null;
-    } catch {
+    } catch (e) {
+      getGlobalLogger().warn('WebSearchTool', 'DuckDuckGo search failed', { error: (e as Error)?.message, query });
       return null;
     }
   }
@@ -75,7 +77,8 @@ export class WebSearchTool implements Tool {
       if (!response.ok) return null;
       const html = await response.text();
       return this.parseBing(html, maxResults);
-    } catch {
+    } catch (e) {
+      getGlobalLogger().warn('WebSearchTool', 'Bing search failed', { error: (e as Error)?.message, query });
       return null;
     }
   }

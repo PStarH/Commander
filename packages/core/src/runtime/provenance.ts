@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
+import { getGlobalLogger } from '../logging';
 
 /**
  * Capture all metadata about an evaluation run that matters for
@@ -41,7 +42,7 @@ export function captureProvenance(): Omit<RunProvenance, 'runId' | 'timestamp' |
     const status = execSync('git status --porcelain', { encoding: 'utf-8', timeout: 3000 }).trim();
     dirty = status.length > 0;
   } catch {
-    // Not in a git repo or git not available
+    getGlobalLogger().debug('Provenance', 'Not in a git repo or git not available');
   }
 
   return {

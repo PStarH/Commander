@@ -13,6 +13,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { getGlobalLogger } from '../logging';
 import type { ToolCall, ToolResult } from './types';
 
 // ============================================================================
@@ -259,7 +260,7 @@ export class ToolOutputManager {
         }
         return JSON.stringify(kept, null, 2);
       }
-    } catch { /* not JSON — expected for most search tools */ }
+    } catch (e) { getGlobalLogger().debug('ToolOutputManager', 'Output was not JSON', { error: (e as Error)?.message }); }
 
     // Text-based search results: truncate at result boundaries
     // Pattern: numbered results like "[1] Title" or "1. Title" or "Result 1:"
@@ -330,7 +331,8 @@ export class ToolOutputManager {
 
       fs.writeFileSync(filepath, output, 'utf-8');
       return filepath;
-    } catch {
+    } catch (e) {
+      getGlobalLogger().warn('ToolOutputManager', 'Failed to persist tool output', { error: (e as Error)?.message, toolName: toolCall.name });
       return '';
     }
   }

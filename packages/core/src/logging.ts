@@ -78,6 +78,20 @@ export class Logger {
   }
 
   /**
+   * Set the log level at runtime.
+   */
+  setLevel(level: LogLevel): void {
+    this.config.level = level;
+  }
+
+  /**
+   * Get the current log level.
+   */
+  getLevel(): LogLevel {
+    return this.config.level;
+  }
+
+  /**
    * Log debug message
    */
   debug(component: string, message: string, context?: Record<string, any>): void {
@@ -536,6 +550,11 @@ export function getGlobalLogger(): Logger {
     globalLogger = new Logger();
   }
   return globalLogger;
+}
+
+export function setGlobalLogLevel(level: LogLevel): void {
+  const logger = getGlobalLogger();
+  logger.setLevel(level);
 }
 
 export function getGlobalMetrics(): MetricsCollector {

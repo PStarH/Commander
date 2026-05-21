@@ -1,5 +1,6 @@
 import { BaseChannelAdapter, type ChannelMessage, type SendOptions, type ChannelConfig } from '../channelAdapter';
 import type { CommanderAgentLoop } from '../../agentLoop';
+import { getGlobalLogger } from '../../logging';
 
 interface TelegramConfig {
   botToken?: string;
@@ -80,7 +81,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
       if (!data.ok) this.bus.publish('channel.error', this.config.channelId, { platform: this.platform, error: data.description });
       return data.result;
     } catch (err) {
-      console.error(`[Telegram] ${method} failed:`, err);
+      getGlobalLogger().error('Telegram', `${method} failed`, err instanceof Error ? err : new Error(String(err)));
       return null;
     }
   }
@@ -98,7 +99,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
           this.processUpdate(update);
         }
       }
-    } catch (err) { console.error('[Telegram] Poll error:', err); }
+    } catch (err) { getGlobalLogger().error('Telegram', 'Poll error', err instanceof Error ? err : new Error(String(err))); }
     this.longPollTimer = setTimeout(() => this.pollUpdates(), 1000);
   }
 
@@ -113,7 +114,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     if (!text) return;
     const userId = String(msg.from?.id ?? msg.chat.id);
     if (!this.isUserAllowed(userId)) {
-      this.sendMessage({ id: String(msg.message_id), role: 'user', content: '', channelId: '', userId, timestamp: new Date().toISOString() }, 'Access denied.' as unknown as string).catch(e => console.debug('[Telegram] send error:', (e as Error)?.message));
+      this.sendMessage({ id: String(msg.message_id), role: 'user', content: '', channelId: '', userId, timestamp: new Date().toISOString() }, 'Access denied.' as unknown as string).catch(e => getGlobalLogger().debug('Telegram', 'send error', { error: (e as Error)?.message }));
       return;
     }
     const channelMsg: ChannelMessage = {
