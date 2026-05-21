@@ -1,4 +1,5 @@
 import type { ToolCall, ToolResult, LLMRequest, LLMResponse, AgentExecutionContext, AgentExecutionResult } from './runtime/types';
+import { getGlobalLogger } from './logging';
 
 // ============================================================================
 // Hook Types
@@ -203,7 +204,9 @@ export class HookManager {
     const entry = this.plugins.get(name);
     if (!entry) return false;
     if (entry.plugin.onUnload) {
-      try { await entry.plugin.onUnload(); } catch { /* ok */ }
+      try { await entry.plugin.onUnload(); } catch {
+        getGlobalLogger().warn('PluginManager', `Plugin "${name}" onUnload failed`);
+      }
     }
     this.plugins.delete(name);
     return true;
@@ -316,7 +319,9 @@ export class HookManager {
         try {
           const result = await this.withTimeout(plugin.beforeToolCall(ctx), plugin.name, 'beforeToolCall');
           if (result !== null) return result;
-        } catch { /* skip */ }
+        } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeToolCall failed`);
+        }
       }
     }
     return null;
@@ -329,7 +334,9 @@ export class HookManager {
       if (plugin.afterToolCall) {
         try {
           currentResult = await this.withTimeout(plugin.afterToolCall({ ...ctx, result: currentResult }), plugin.name, 'afterToolCall');
-        } catch { /* keep previous */ }
+        } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterToolCall failed`);
+        }
       }
     }
     return currentResult;
@@ -342,7 +349,9 @@ export class HookManager {
       if (plugin.beforeLLMCall) {
         try {
           currentRequest = await this.withTimeout(plugin.beforeLLMCall({ ...ctx, request: currentRequest }), plugin.name, 'beforeLLMCall');
-        } catch { /* keep previous */ }
+        } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeLLMCall failed`);
+        }
       }
     }
     return currentRequest;
@@ -354,7 +363,9 @@ export class HookManager {
       if (plugin.afterLLMCall) {
         try {
           await this.withTimeout(plugin.afterLLMCall(ctx), plugin.name, 'afterLLMCall');
-        } catch { /* continue */ }
+        } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterLLMCall failed`);
+        }
       }
     }
   }
@@ -365,7 +376,9 @@ export class HookManager {
       if (plugin.onAgentStart) {
         try {
           await this.withTimeout(plugin.onAgentStart(ctx), plugin.name, 'onAgentStart');
-        } catch { /* continue */ }
+        } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" onAgentStart failed`);
+        }
       }
     }
   }
@@ -376,7 +389,9 @@ export class HookManager {
       if (plugin.onAgentComplete) {
         try {
           await this.withTimeout(plugin.onAgentComplete(ctx), plugin.name, 'onAgentComplete');
-        } catch { /* continue */ }
+        } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" onAgentComplete failed`);
+        }
       }
     }
   }
@@ -387,7 +402,9 @@ export class HookManager {
       if (plugin.onError) {
         try {
           await this.withTimeout(plugin.onError(ctx), plugin.name, 'onError');
-        } catch { /* continue */ }
+        } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" onError failed`);
+        }
       }
     }
   }
@@ -472,20 +489,20 @@ export function createLoggingPlugin(): CommanderPlugin {
     },
     onLoad: async (ctx) => {
       const prefix = (ctx.config.prefix as string) ?? '[Plugin:logger]';
-      console.log(`${prefix} loaded (verbose=${ctx.config.verbose})`);
+      getGlobalLogger().info('PluginManager', `${prefix} loaded (verbose=${ctx.config.verbose})`);
     },
     beforeToolCall: async (ctx) => {
-      console.log(`[Plugin:logger] beforeToolCall: ${ctx.toolName}`);
+      getGlobalLogger().info('PluginManager', `[Plugin:logger] beforeToolCall: ${ctx.toolName}`);
       return null;
     },
     onAgentStart: async (ctx) => {
-      console.log(`[Plugin:logger] Agent started: ${ctx.ctx.agentId}, goal: ${ctx.ctx.goal.slice(0, 60)}...`);
+      getGlobalLogger().info('PluginManager', `[Plugin:logger] Agent started: ${ctx.ctx.agentId}, goal: ${ctx.ctx.goal.slice(0, 60)}...`);
     },
     onAgentComplete: async (ctx) => {
-      console.log(`[Plugin:logger] Agent completed: ${ctx.result.status}`);
+      getGlobalLogger().info('PluginManager', `[Plugin:logger] Agent completed: ${ctx.result.status}`);
     },
     onError: async (ctx) => {
-      console.error(`[Plugin:logger] Error: ${ctx.error.slice(0, 100)}`);
+      getGlobalLogger().error('PluginManager', `[Plugin:logger] Error: ${ctx.error.slice(0, 100)}`);
     },
   };
 }

@@ -18,6 +18,7 @@ import type {
   TokenUsage,
   OrchestrationMetrics,
 } from './sequential';
+import { getGlobalLogger } from '../logging';
 
 /**
  * Agent execution interface.
@@ -324,10 +325,7 @@ export class SequentialPipelineExecutor {
 
         if (attempt < maxRetries) {
           // Retry
-          console.warn(
-            `Step ${stepId} failed (attempt ${attempt + 1}/${maxRetries}):`,
-            errorMessage
-          );
+          getGlobalLogger().warn('SequentialPipelineExecutor', `Step ${stepId} failed (attempt ${attempt + 1}/${maxRetries})`, { error: errorMessage });
           // Wait before retry (exponential backoff)
           await new Promise((resolve) =>
             setTimeout(resolve, Math.min(1000 * Math.pow(2, attempt), 10000))
@@ -394,7 +392,7 @@ export class SequentialPipelineExecutor {
             break;
         }
       } catch (error) {
-        console.error('Event handler error:', error);
+        getGlobalLogger().error('SequentialPipelineExecutor', 'Event handler error', error instanceof Error ? error : new Error(String(error)));
       }
     }
   }
@@ -426,9 +424,7 @@ export class InMemoryAgentExecutor implements AgentExecutor {
     context: SequentialContext
   ): Promise<{ output: unknown; tokenUsage: TokenUsage }> {
     // Simulate agent execution
-    console.log(
-      `[InMemoryAgentExecutor] Executing agent ${agentId} for step ${context.currentStepIndex}`
-    );
+    getGlobalLogger().info('InMemoryAgentExecutor', `Executing agent ${agentId} for step ${context.currentStepIndex}`);
 
     // Return mock output
     return {

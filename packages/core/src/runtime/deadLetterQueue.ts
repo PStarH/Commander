@@ -6,6 +6,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { getGlobalLogger } from '../logging';
 import type { ErrorClass } from './llmRetry';
 
 export type DLQCategory = 'llm' | 'tool' | 'execution' | 'verification';
@@ -67,7 +68,7 @@ export class DeadLetterQueue {
         const content = existing + buffer.join('\n') + '\n';
         fs.writeFileSync(tmpPath, content, 'utf-8');
         fs.renameSync(tmpPath, filePath);
-      } catch { /* ok */ }
+      } catch (e) { getGlobalLogger().warn('DeadLetterQueue', 'Failed to flush dead-letter entries', { error: (e as Error)?.message, category: cat }); }
       this.buffers.set(cat, []);
     }
   }
@@ -80,11 +81,12 @@ export class DeadLetterQueue {
       if (!raw) return [];
       const entries: DeadLetterEntry[] = [];
       for (const line of raw.split('\n').reverse()) {
-        try { entries.push(JSON.parse(line)); } catch { /* skip */ }
+        try { entries.push(JSON.parse(line)); } catch (e) { getGlobalLogger().warn('DeadLetterQueue', 'Skipped corrupt dead-letter entry', { error: (e as Error)?.message, category, line }); }
         if (entries.length >= limit) break;
       }
       return entries;
-    } catch {
+    } catch (e) {
+      getGlobalLogger().warn('DeadLetterQueue', 'Failed to read dead-letter entries', { error: (e as Error)?.message, category });
       return [];
     }
   }
@@ -100,7 +102,7 @@ export class DeadLetterQueue {
           results.push({ category: f.replace('.ndjson', ''), count });
         }
       }
-    } catch { /* ok */ }
+    } catch (e) { getGlobalLogger().warn('DeadLetterQueue', 'Failed to collect dead-letter stats', { error: (e as Error)?.message }); }
     return results;
   }
 }

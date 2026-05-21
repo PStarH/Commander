@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Tool, ToolDefinition } from '../runtime/types';
+import { getGlobalLogger } from '../logging';
 
 const SAFE_ROOT = process.env.COMMANDER_WORKSPACE || process.cwd();
 
@@ -26,7 +27,7 @@ function safePath(target: string): string {
         if (!realParent.startsWith(SAFE_ROOT)) {
           throw new Error(`Access denied: parent directory of "${target}" is outside workspace`);
         }
-      } catch { /* parent may not exist either — allow the write to fail naturally */ }
+      } catch (e) { getGlobalLogger().warn('FileSystemTool', 'Parent directory check failed', { error: (e as Error)?.message }); }
       return resolved;
     }
     throw err;
@@ -207,7 +208,7 @@ export class FileSearchTool implements Tool {
           results.push(relPath);
         }
       }
-    } catch { }
+    } catch (e) { getGlobalLogger().warn('FileSystemTool', 'Directory scan failed', { error: (e as Error)?.message }); }
   }
 
   private matchGlob(name: string, pattern: string): boolean {

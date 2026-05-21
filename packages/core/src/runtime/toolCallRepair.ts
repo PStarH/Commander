@@ -11,6 +11,7 @@
  * - Record all repairs for observability
  * - Stop at first successful parse
  */
+import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // Types
@@ -51,7 +52,7 @@ export function repairToolCallArguments(
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return { args: parsed, repairs: [] };
     }
-  } catch { /* continue to repair strategies */ }
+  } catch (e) { getGlobalLogger().debug('ToolCallRepair', 'Direct JSON parse failed', { error: (e as Error)?.message }); }
 
   // Strategy 3: Common-fix parse
   const fixed = applyCommonFixes(raw);
@@ -61,7 +62,7 @@ export function repairToolCallArguments(
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         return { args: parsed, repairs: describeFixes(raw, fixed) };
       }
-    } catch { /* continue */ }
+    } catch (e) { getGlobalLogger().debug('ToolCallRepair', 'Common-fix JSON parse failed', { error: (e as Error)?.message }); }
   }
 
   // Strategy 4: Regex extraction — find first {...} block
@@ -72,7 +73,7 @@ export function repairToolCallArguments(
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         return { args: parsed, repairs: ['extracted JSON object from surrounding text'] };
       }
-    } catch { /* continue */ }
+    } catch (e) { getGlobalLogger().debug('ToolCallRepair', 'Extracted JSON parse failed', { error: (e as Error)?.message }); }
   }
 
   // Strategy 5: XML-like tool call format (generalized MiMo pattern)

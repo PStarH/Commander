@@ -5,6 +5,8 @@
  * 提供统一的错误处理、恢复和重试机制
  */
 
+import { getGlobalLogger } from './logging';
+
 // ========================================
 // Error Types
 // ========================================
@@ -137,7 +139,7 @@ export class ErrorHandler {
             : this.config.retryDelayMs;
           
           if (this.config.enableLogging) {
-            console.warn(`Retry ${attempt + 1}/${this.config.maxRetries} for ${context.operation} after ${delay}ms`);
+            getGlobalLogger().warn('ErrorHandler', `Retry ${attempt + 1}/${this.config.maxRetries} for ${context.operation} after ${delay}ms`);
           }
           
           await this.sleep(delay);
@@ -253,7 +255,7 @@ export class ErrorHandler {
     // Log if enabled
     if (this.config.enableLogging) {
       const prefix = error.severity === 'critical' ? '❌' : error.severity === 'high' ? '⚠️' : '📋';
-      console.error(`${prefix} [${error.component}] ${error.code}: ${error.message}`);
+      getGlobalLogger().error('ErrorHandler', `${prefix} [${error.component}] ${error.code}: ${error.message}`);
     }
   }
 
