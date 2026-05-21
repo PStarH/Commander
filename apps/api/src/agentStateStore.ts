@@ -67,7 +67,8 @@ export class AgentStateStore {
         return parsed;
       }
       return [];
-    } catch {
+    } catch (e) {
+      process.stderr.write(`[AgentStateStore] Error: ${(e as Error)?.message ?? String(e)}\n`);
       return [];
     }
   }

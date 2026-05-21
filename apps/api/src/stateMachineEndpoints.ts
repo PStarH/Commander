@@ -46,7 +46,7 @@ router.post('/create', (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error creating state machine:', error);
+    process.stderr.write(`[StateMachineEndpoints] Error creating state machine: ${(error as Error)?.message ?? String(error)}\n`);
     res.status(500).json({ error: 'Failed to create state machine' });
   }
 });
@@ -85,7 +85,7 @@ router.get('/:taskId', (req, res) => {
       isTerminal: sm.isTerminal(),
     });
   } catch (error) {
-    console.error('Error getting state:', error);
+    process.stderr.write(`[StateMachineEndpoints] Error getting state: ${(error as Error)?.message ?? String(error)}\n`);
     res.status(500).json({ error: 'Failed to get state' });
   }
 });
@@ -141,7 +141,7 @@ router.post('/:taskId/transition', async (req, res) => {
       }
     }
   } catch (error) {
-    console.error('Error executing transition:', error);
+    process.stderr.write(`[StateMachineEndpoints] Error executing transition: ${(error as Error)?.message ?? String(error)}\n`);
     res.status(500).json({ error: 'Failed to execute transition' });
   }
 });
@@ -170,7 +170,7 @@ router.post('/:taskId/approve', (req, res) => {
       message: approved ? 'Checkpoint approved' : 'Checkpoint not found or already resolved'
     });
   } catch (error) {
-    console.error('Error approving checkpoint:', error);
+    process.stderr.write(`[StateMachineEndpoints] Error approving checkpoint: ${(error as Error)?.message ?? String(error)}\n`);
     res.status(500).json({ error: 'Failed to approve checkpoint' });
   }
 });
@@ -199,7 +199,7 @@ router.post('/:taskId/reject', (req, res) => {
       message: rejected ? 'Checkpoint rejected' : 'Checkpoint not found or already resolved'
     });
   } catch (error) {
-    console.error('Error rejecting checkpoint:', error);
+    process.stderr.write(`[StateMachineEndpoints] Error rejecting checkpoint: ${(error as Error)?.message ?? String(error)}\n`);
     res.status(500).json({ error: 'Failed to reject checkpoint' });
   }
 });
@@ -243,7 +243,7 @@ router.get('/:taskId/memory', (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error getting memory:', error);
+    process.stderr.write(`[StateMachineEndpoints] Error getting memory: ${(error as Error)?.message ?? String(error)}\n`);
     res.status(500).json({ error: 'Failed to get memory' });
   }
 });
@@ -273,7 +273,7 @@ router.post('/:taskId/memory', (req, res) => {
       message: 'Memory entry added'
     });
   } catch (error) {
-    console.error('Error adding memory:', error);
+    process.stderr.write(`[StateMachineEndpoints] Error adding memory: ${(error as Error)?.message ?? String(error)}\n`);
     res.status(500).json({ error: 'Failed to add memory' });
   }
 });
@@ -311,7 +311,7 @@ router.post('/:taskId/resume', (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error resuming from checkpoint:', error);
+    process.stderr.write(`[StateMachineEndpoints] Error resuming from checkpoint: ${(error as Error)?.message ?? String(error)}\n`);
     res.status(500).json({ error: 'Failed to resume from checkpoint' });
   }
 });
@@ -345,7 +345,7 @@ router.get('/:taskId/summary', (req, res) => {
       summary: sm.generateSummary()
     });
   } catch (error) {
-    console.error('Error getting summary:', error);
+    process.stderr.write(`[StateMachineEndpoints] Error getting summary: ${(error as Error)?.message ?? String(error)}\n`);
     res.status(500).json({ error: 'Failed to get summary' });
   }
 });
