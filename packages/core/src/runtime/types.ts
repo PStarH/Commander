@@ -417,8 +417,21 @@ export interface AgentRuntimeConfig {
    speculativeExecution?: SpeculativeExecutionConfig;
    /** Retry backoff configuration */
    retryConfig?: RetryConfig;
-   /** Observation feedback: feed tool results back as hints to improve LLM reasoning */
-   observationFeedback?: ObservationFeedbackConfig;
+    /** Observation feedback: feed tool results back as hints to improve LLM reasoning */
+    observationFeedback?: ObservationFeedbackConfig;
+    /** Memory store type for persistent storage. 'in-memory' (default) keeps data in process memory; 'sqlite' uses better-sqlite3; 'json' uses a flat file. */
+    memoryStoreType?: 'in-memory' | 'sqlite' | 'json';
+    /** OpenTelemetry exporter configuration. When enabled, execution traces are exported to an OTLP-compatible endpoint (Jaeger, Tempo, SigNoz, etc.). */
+    otelExporter?: {
+      /** Enable OTLP trace export (default: false) */
+      enabled: boolean;
+      /** OTLP HTTP endpoint (default: http://localhost:4318/v1/traces) */
+      endpoint?: string;
+      /** Service name for identifying traces (default: commander) */
+      serviceName?: string;
+      /** Additional HTTP headers (e.g. for auth tokens) */
+      headers?: Record<string, string>;
+    };
 }
 
 // ============================================================================
@@ -440,6 +453,7 @@ export type MessageBusTopic =
    | 'mission.blocked'
    | 'mission.completed'
    | 'memory.written'
+   | 'skills.created'
    | 'system.alert'
    | 'tool.executed'
    | 'trace.recorded'
@@ -448,7 +462,23 @@ export type MessageBusTopic =
    | 'channel.connected'
    | 'channel.disconnected'
    | 'channel.error'
-   | 'channel.interaction';
+    | 'channel.interaction'
+    | 'goal.started'
+    | 'goal.decomposed'
+    | 'goal.round_started'
+    | 'goal.round_completed'
+    | 'goal.worker_started'
+    | 'goal.worker_completed'
+    | 'goal.worker_failed'
+    | 'goal.critic_started'
+    | 'goal.critic_completed'
+    | 'goal.manager_review'
+    | 'goal.completed'
+    | 'swarm.started'
+    | 'swarm.fission'
+    | 'swarm.fusion_conflict'
+    | 'swarm.round_completed'
+    | 'swarm.completed';
 
 /**
  * Priority levels for messages.

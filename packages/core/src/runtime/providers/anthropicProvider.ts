@@ -1,5 +1,6 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage, CacheConfig } from '../types';
 import { FormatBridge } from '../formatBridge';
+import { getGlobalLogger } from '../../logging';
 
 interface AnthropicContent {
   type: string;
@@ -147,7 +148,7 @@ export class AnthropicProvider implements LLMProvider {
 
   private async handleStreamingResponse(response: Response, model: string): Promise<LLMResponse> {
     const reader = response.body?.getReader();
-    if (!reader) throw new Error('No response body');
+    if (!reader) throw new Error('Anthropic: No response body from streaming endpoint');
 
     let content = '';
     const toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
@@ -193,7 +194,7 @@ export class AnthropicProvider implements LLMProvider {
                   name: currentToolBlock.name,
                   arguments: JSON.parse(currentToolBlock.inputBuffer || '{}'),
                 });
-              } catch { /* skip malformed tool args */ }
+              } catch (e) { getGlobalLogger().debug('AnthropicProvider', 'Skipping malformed tool args', { error: (e as Error)?.message }); }
               currentToolBlock = null;
             }
             if (event.type === 'message_delta' && event.usage) {
@@ -202,7 +203,7 @@ export class AnthropicProvider implements LLMProvider {
             if (event.type === 'message_start' && event.message?.usage) {
               usage = event.message.usage;
             }
-          } catch { /* skip malformed events */ }
+          } catch (e) { getGlobalLogger().debug('AnthropicProvider', 'Skipping malformed stream event', { error: (e as Error)?.message }); }
         }
       }
     }

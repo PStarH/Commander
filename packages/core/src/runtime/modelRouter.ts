@@ -24,19 +24,45 @@ import { detectTaskType } from './unifiedVerification';
 // ============================================================================
 
 const DEFAULT_MODELS: ModelConfig[] = [
-  // Eco tier — cheap & fast
+  { id: 'grok-2-latest', provider: 'xai', tier: 'eco', costPer1KInput: 0.002, costPer1KOutput: 0.01, capabilities: ['code', 'analysis'], contextWindow: 131072, priority: 9 },
+  { id: 'mistralai/Mixtral-8x7B-Instruct-v0.1', provider: 'anyscale', tier: 'eco', costPer1KInput: 0.0005, costPer1KOutput: 0.0005, capabilities: ['analysis'], contextWindow: 32768, priority: 10 },
+  { id: 'mistralai/Mistral-7B-Instruct-v0.3', provider: 'deepinfra', tier: 'eco', costPer1KInput: 0.00013, costPer1KOutput: 0.00013, capabilities: ['analysis'], contextWindow: 32768, priority: 11 },
+
+  // ===== Eco tier — cheap & fast =====
   { id: 'claude-3-5-haiku', provider: 'anthropic', tier: 'eco', costPer1KInput: 0.0008, costPer1KOutput: 0.004, capabilities: ['code', 'analysis'], contextWindow: 200000, priority: 0 },
   { id: 'gpt-4o-mini', provider: 'openai', tier: 'eco', costPer1KInput: 0.00015, costPer1KOutput: 0.0006, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 1 },
   { id: 'gemini-2-flash', provider: 'google', tier: 'eco', costPer1KInput: 0.0001, costPer1KOutput: 0.0004, capabilities: ['analysis'], contextWindow: 1000000, priority: 2 },
+  { id: 'llama-3.3-70b-versatile', provider: 'groq', tier: 'eco', costPer1KInput: 0.00059, costPer1KOutput: 0.00079, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 3 },
+  { id: 'mistral-small-latest', provider: 'mistral', tier: 'eco', costPer1KInput: 0.001, costPer1KOutput: 0.001, capabilities: ['code', 'analysis'], contextWindow: 32000, priority: 4 },
+  { id: 'command-r-08-2024', provider: 'cohere', tier: 'eco', costPer1KInput: 0.0005, costPer1KOutput: 0.0015, capabilities: ['analysis'], contextWindow: 128000, priority: 5 },
+  { id: 'sonar', provider: 'perplexity', tier: 'eco', costPer1KInput: 0.001, costPer1KOutput: 0.001, capabilities: ['analysis'], contextWindow: 128000, priority: 6 },
+  // Local providers — effectively free
+  { id: 'llama3.2', provider: 'ollama', tier: 'eco', costPer1KInput: 0, costPer1KOutput: 0, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 7 },
+  { id: 'meta-llama/Llama-3.2-3B-Instruct', provider: 'vllm', tier: 'eco', costPer1KInput: 0, costPer1KOutput: 0, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 8 },
 
-  // Standard tier — balanced quality/cost
+  // ===== Standard tier — balanced quality/cost =====
   { id: 'claude-3-5-sonnet', provider: 'anthropic', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 200000, priority: 0 },
   { id: 'gpt-4o', provider: 'openai', tier: 'standard', costPer1KInput: 0.0025, costPer1KOutput: 0.01, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 1 },
   { id: 'gemini-2-pro', provider: 'google', tier: 'standard', costPer1KInput: 0.0015, costPer1KOutput: 0.0075, capabilities: ['reasoning', 'analysis'], contextWindow: 1000000, priority: 2 },
+  { id: 'mistral-large-latest', provider: 'mistral', tier: 'standard', costPer1KInput: 0.002, costPer1KOutput: 0.006, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 3 },
+  { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', provider: 'together', tier: 'standard', costPer1KInput: 0.0009, costPer1KOutput: 0.0009, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 131072, priority: 4 },
+  { id: 'grok-3', provider: 'xai', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 131072, priority: 11 },
+  { id: 'meta-llama/Llama-3.3-70B-Instruct', provider: 'anyscale', tier: 'standard', costPer1KInput: 0.0009, costPer1KOutput: 0.0009, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 12 },
+  { id: 'meta-llama/Llama-3.3-70B-Instruct', provider: 'deepinfra', tier: 'standard', costPer1KInput: 0.0009, costPer1KOutput: 0.0009, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 13 },
+  { id: 'sonar-pro', provider: 'perplexity', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['reasoning', 'analysis'], contextWindow: 128000, priority: 5 },
+  { id: 'accounts/fireworks/models/llama-v3p3-70b-instruct', provider: 'fireworks', tier: 'standard', costPer1KInput: 0.0009, costPer1KOutput: 0.0009, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 6 },
+  { id: 'llama3-70b-8192', provider: 'groq', tier: 'standard', costPer1KInput: 0.00059, costPer1KOutput: 0.00079, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 8192, priority: 7 },
+  { id: 'command-r-plus-08-2024', provider: 'cohere', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['reasoning', 'analysis'], contextWindow: 128000, priority: 8 },
+  { id: 'anthropic.claude-3-5-sonnet-20241022-v2:0', provider: 'bedrock', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 200000, priority: 9 },
+  { id: 'meta/meta-llama-3.3-70b-instruct', provider: 'replicate', tier: 'standard', costPer1KInput: 0.00065, costPer1KOutput: 0.00275, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 10 },
 
-  // Power tier — strongest reasoning
+  // ===== Power tier — strongest reasoning =====
   { id: 'claude-3-opus', provider: 'anthropic', tier: 'power', costPer1KInput: 0.015, costPer1KOutput: 0.075, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 200000, priority: 0 },
-  { id: 'gpt-5', provider: 'openai', tier: 'power', costPer1KInput: 0.01, costPer1KOutput: 0.04, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 256000, priority: 0 },
+  { id: 'gpt-5', provider: 'openai', tier: 'power', costPer1KInput: 0.01, costPer1KOutput: 0.04, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 256000, priority: 1 },
+  { id: 'claude-3-5-sonnet', provider: 'bedrock', tier: 'power', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 200000, priority: 2 },
+  { id: 'deepseek-v4-pro', provider: 'deepseek', tier: 'power', costPer1KInput: 0.002, costPer1KOutput: 0.008, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 128000, priority: 3 },
+  { id: 'mimo-v2.5-pro', provider: 'mimo', tier: 'power', costPer1KInput: 0.004, costPer1KOutput: 0.012, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 4 },
+  { id: 'glm-5.1', provider: 'glm', tier: 'power', costPer1KInput: 0.002, costPer1KOutput: 0.008, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 5 },
 ];
 
 // ============================================================================
