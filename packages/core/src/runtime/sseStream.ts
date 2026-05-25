@@ -15,6 +15,9 @@ export type StructuredSSEEventType =
   | 'tool_call.delta'
   | 'tool_call.started'
   | 'tool_call.completed'
+  | 'tool_call.timeout'
+  | 'tool_call.retry'
+  | 'tool_call.blocked'
   | 'output.delta'
   | 'output.completed'
   | 'diff.available'
@@ -48,6 +51,11 @@ export class SSEStream {
       'mission.completed',
       'system.alert',
       'tool.executed',
+      'tool.started',
+      'tool.completed',
+      'tool.timeout',
+      'tool.retry',
+      'tool.blocked',
     ];
 
     for (const topic of watchTopics) {
@@ -103,6 +111,18 @@ export class SSEStream {
       : status === 'completed' ? 'tool_call.completed'
       : 'tool_call.delta';
     this.emitStructured(eventType, { toolName, ...detail });
+  }
+
+  emitToolTimeout(toolName: string, detail?: Record<string, unknown>): void {
+    this.emitStructured('tool_call.timeout', { toolName, ...detail });
+  }
+
+  emitToolRetry(toolName: string, attempt: number, detail?: Record<string, unknown>): void {
+    this.emitStructured('tool_call.retry', { toolName, attempt, ...detail });
+  }
+
+  emitToolBlocked(toolName: string, reason: string, detail?: Record<string, unknown>): void {
+    this.emitStructured('tool_call.blocked', { toolName, reason, ...detail });
   }
 
   emitStatus(status: string, detail?: string): void {
