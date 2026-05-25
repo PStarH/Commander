@@ -15,6 +15,7 @@
  * 1. Keyword-based relevance scoring (fast, no LLM call)
  * 2. Conversation-aware refinement based on recent tool usage patterns
  */
+import type { ToolDefinition } from './types';
 const TOOL_RELEVANCE_KEYWORDS: Record<string, string[]> = {
   web_search: ['search web', 'search internet', 'look up', 'find online', 'google', 'what is', 'who is', 'web search', 'latest', 'news', 'current'],
   web_fetch: ['fetch url', 'get webpage', 'read url', 'http get', 'download page', 'scrape'],
@@ -69,6 +70,8 @@ const TOOL_CATEGORIES: Record<string, string> = {
   refine_code: 'code_execution',
   verify_answer: 'validation',
   fix_code: 'code_execution',
+  skill_view: 'knowledge',
+  a2a_delegate: 'orchestration',
 };
 
 /**
@@ -185,8 +188,44 @@ export function selectTools(
   return Array.from(result);
 }
 
+/**
+ * Stable sort priority for each tool category.
+ * Lower number = appears first in the prompt (higher cache stability).
+ * Categories with more frequently used tools come first.
+ */
+const CATEGORY_SORT_PRIORITY: Record<string, number> = {
+  file_system: 1,
+  code_execution: 2,
+  web_information: 3,
+  browser_automation: 4,
+  memory: 5,
+  version_control: 6,
+  orchestration: 7,
+  multimodal: 8,
+  knowledge: 9,
+  validation: 10,
+};
+
 export function getToolCategory(toolName: string): string {
   return TOOL_CATEGORIES[toolName] ?? 'other';
+}
+
+/**
+ * Sort tool definitions by a stable category+name order for maximum prompt cache hit rates.
+ * Cache-friendly ordering ensures the tool definition prefix is identical across LLM calls,
+ * regardless of the specific task goal.
+ *
+ * The order is: category priority (ascending) → tool name (alphabetical).
+ */
+export function sortToolDefinitionsForCache(
+  defs: ToolDefinition[],
+): ToolDefinition[] {
+  return [...defs].sort((a, b) => {
+    const catA = CATEGORY_SORT_PRIORITY[TOOL_CATEGORIES[a.name] ?? 'other'] ?? 99;
+    const catB = CATEGORY_SORT_PRIORITY[TOOL_CATEGORIES[b.name] ?? 'other'] ?? 99;
+    if (catA !== catB) return catA - catB;
+    return a.name.localeCompare(b.name);
+  });
 }
 
 export function getToolRelevanceScores(

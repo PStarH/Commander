@@ -71,6 +71,34 @@ export function validateStructuredOutput<T>(
 }
 
 /**
+ * Runtime type guard that validates a parsed value matches an expected shape.
+ * Use after parseStructuredOutput() to ensure the returned data actually has
+ * the expected keys and types — preventing `as T` from masking shape mismatches.
+ *
+ * @example
+ * const parsed = parseStructuredOutput(content);
+ * if (parsed.success && validateShape(parsed.data, { name: 'string', age: 'number' })) {
+ *   parsed.data.name; // string, safely narrowed
+ * }
+ */
+export function validateShape<T extends Record<string, unknown>>(
+  value: unknown,
+  shape: { [K in keyof T]: 'string' | 'number' | 'boolean' | 'object' | 'array' },
+): value is T {
+  if (typeof value !== 'object' || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  for (const [key, expectedType] of Object.entries(shape)) {
+    if (!(key in obj)) return false;
+    if (expectedType === 'array') {
+      if (!Array.isArray(obj[key])) return false;
+    } else if (typeof obj[key] !== expectedType) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Extract JSON from markdown code fences: ```json ... ```
  */
 function extractJsonBlock(content: string): string | null {
