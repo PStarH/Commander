@@ -1,7 +1,10 @@
 {
   "name": "@commander/core",
-  "version": "0.2.0",
+  "version": "1.0.0-alpha.1",
   "description": "Multi-agent orchestration system. 70% on GAIA, dynamic topology, quality gates, 13 tools.",
+  "bin": {
+    "commander": "./dist/cli.js"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -43,8 +46,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "cd ../.. && npx tsx --test packages/core/tests/*.test.ts packages/core/benchmarks/*.test.ts",
-    "bench": "cd ../.. && npx tsx --env-file=.env --test packages/core/benchmarks/*.test.ts",
+    "test": "pnpm test:node && pnpm test:vitest",
+    "test:node": "node scripts/run-node-tests.mjs",
+    "bench": "node scripts/run-node-tests.mjs benchmarks",
     "test:vitest": "vitest run",
     "test:vitest:watch": "vitest",
     "prepublishOnly": "tsc -p tsconfig.json",
@@ -57,11 +61,12 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "better-sqlite3": "^11.0.0",
-    "blessed": "^0.1.81",
-    "playwright": "^1.60.0"
+    "blessed": "^0.1.81"
   },
   "optionalDependencies": {
-    "better-sqlite3": "^11.0.0"
+    "better-sqlite3": "^11.0.0",
+    "playwright": "^1.60.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
   }
 }

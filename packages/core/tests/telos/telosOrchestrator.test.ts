@@ -1,5 +1,4 @@
-import { describe, it, before } from 'node:test';
-import assert from 'node:assert';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { TELOSOrchestrator } from '../../src/telos/telosOrchestrator';
 import { AgentRuntime } from '../../src/runtime/agentRuntime';
 import { ModelRouter, resetModelRouter } from '../../src/runtime/modelRouter';
