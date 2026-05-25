@@ -6,7 +6,7 @@ describe('TokenSentinel', () => {
 
   beforeEach(() => {
     resetTokenSentinel();
-    sentinel = new TokenSentinel(100, 50);
+    sentinel = new TokenSentinel(100, 1000, 50);
   });
 
   describe('estimateTokenCount', () => {
@@ -72,7 +72,7 @@ describe('TokenSentinel', () => {
     });
 
     it('denies requests exceeding monthly budget', () => {
-      const expensive = new TokenSentinel(100, 1.0);
+      const expensive = new TokenSentinel(100, 1000, 1.0);
       const result1 = expensive.check(
         [{ role: 'user', content: 'Hello' }],
         'gpt-4o',
