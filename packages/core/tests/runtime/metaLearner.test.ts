@@ -1,5 +1,4 @@
-import { describe, it, before } from 'node:test';
-import assert from 'node:assert';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { MetaLearner, resetMetaLearner } from '../../src/selfEvolution/metaLearner';
 import type { ExecutionExperience } from '../../src/runtime/types';
 
