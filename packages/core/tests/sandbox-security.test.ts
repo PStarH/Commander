@@ -32,6 +32,14 @@ describe('Sandbox security hardening', () => {
     assert.strictEqual(policy.evaluate('mycurl https://example.com').decision, 'allow');
   });
 
+  it('exec policy forbids destructive shell payloads and device writes', () => {
+    const policy = new ExecPolicyEngine();
+
+    assert.strictEqual(policy.evaluate(':(){ :|:& };:').decision, 'forbidden');
+    assert.strictEqual(policy.evaluate('dd if=/dev/zero of=/dev/sda').decision, 'forbidden');
+    assert.strictEqual(policy.evaluate('mkfs.ext4 /dev/sda1').decision, 'forbidden');
+  });
+
   it('exec policy resolves symlinked command paths before matching', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-policy-'));
     const curlTarget = path.join(tmpDir, 'curl');

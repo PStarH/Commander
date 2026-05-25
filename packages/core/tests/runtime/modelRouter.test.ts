@@ -1,5 +1,4 @@
-import { describe, it, before } from 'node:test';
-import assert from 'node:assert';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { ModelRouter, resetModelRouter } from '../../src/runtime/modelRouter';
 import type { AgentExecutionContext, ModelConfig } from '../../src/runtime/types';
 
