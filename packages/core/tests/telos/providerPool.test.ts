@@ -1,6 +1,25 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ProviderPool, resetProviderPool } from '../../src/telos/providerPool';
 import { MockLLMProvider } from '../../src/runtime/mockLLMProvider';
+import type { LLMProvider, LLMRequest, LLMStreamChunk } from '../../src/runtime/types';
+
+class StreamingProvider implements LLMProvider {
+  readonly name = 'streaming';
+  public callCount = 0;
+  public streamCount = 0;
+
+  async call() {
+    this.callCount++;
+    throw new Error('non-streaming call should not be used');
+  }
+
+  async *stream(_request: LLMRequest): AsyncIterable<LLMStreamChunk> {
+    this.streamCount++;
+    yield { contentDelta: 'hello ' };
+    yield { contentDelta: 'world', usage: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } };
+    yield { done: true };
+  }
+}
 
 describe('ProviderPool', () => {
   let pool: ProviderPool;
@@ -77,5 +96,23 @@ describe('ProviderPool', () => {
     const statuses = pool.getHealthStatus();
     const healthy = statuses.find(s => s.provider === 'test' && s.status === 'healthy');
     expect(healthy).toBeDefined();
+  });
+
+  it('executes provider-native streams and forwards chunks', async () => {
+    const provider = new StreamingProvider();
+    pool.registerProvider(provider);
+    pool.configureEndpoints([{ provider: 'streaming', modelId: '*', priority: 0, weight: 1, isEnabled: true }]);
+
+    const chunks: string[] = [];
+    const response = await pool.executeStreaming(
+      { model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'stream' }], maxTokens: 100 },
+      'eco',
+      chunk => chunks.push(chunk),
+    );
+
+    expect(response.content).toBe('hello world');
+    expect(chunks).toEqual(['hello ', 'world']);
+    expect(provider.streamCount).toBe(1);
+    expect(provider.callCount).toBe(0);
   });
 });
