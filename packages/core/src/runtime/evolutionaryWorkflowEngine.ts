@@ -364,9 +364,10 @@ class WorkflowPopulation {
       // 移除节点
       if (mutated.nodes.length > 2) {
         const removeIdx = Math.floor(Math.random() * (mutated.nodes.length - 2)) + 1;
+        const removedId = mutated.nodes[removeIdx].id;
         mutated.nodes.splice(removeIdx, 1);
         mutated.edges = mutated.edges.filter(
-          e => e.from !== mutated.nodes[removeIdx]?.id && e.to !== mutated.nodes[removeIdx]?.id
+          e => e.from !== removedId && e.to !== removedId
         );
       }
     } else if (mutationType < 0.7) {
@@ -395,9 +396,9 @@ class WorkflowPopulation {
 
     const splitPoint = Math.floor(Math.random() * Math.min(parent1.nodes.length, parent2.nodes.length));
 
-    // 前半部分来自parent1，后半部分来自parent2
-    childNodes.push(...parent1.nodes.slice(0, splitPoint));
-    childNodes.push(...parent2.nodes.slice(splitPoint));
+    // Deep clone parent nodes to avoid mutating originals in the population
+    childNodes.push(...parent1.nodes.slice(0, splitPoint).map(n => ({ ...n })));
+    childNodes.push(...parent2.nodes.slice(splitPoint).map(n => ({ ...n })));
 
     // 重新索引
     const nodeIdMap = new Map<string, string>();

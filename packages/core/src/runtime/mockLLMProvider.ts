@@ -1,5 +1,11 @@
 /**
- * @experimental — Test-only mock provider. Not part of the execution pipeline.
+ * Mock LLM Provider — Test-only provider for deterministic unit testing.
+ *
+ * Returns configurable responses based on input message content matching.
+ * Tracks call count and last request for test assertions. Not part of the
+ * production execution pipeline.
+ *
+ * @testing — Stable test utility.
  */
 import type { LLMProvider, LLMRequest, LLMResponse } from './types';
 
