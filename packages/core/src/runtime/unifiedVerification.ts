@@ -14,6 +14,17 @@ import type { LLMProvider } from './types';
 import { HallucinationDetector } from '../hallucinationDetector';
 import { getGlobalLogger } from '../logging';
 
+interface SchemaProperty {
+  required?: boolean;
+  type?: string;
+  description?: string;
+}
+
+interface SchemaDefinition {
+  properties?: Record<string, SchemaProperty>;
+  required?: string[];
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -475,7 +486,7 @@ function runStage1(ctx: UVPTaskContext): { signals: VerificationSignal[]; confid
     }
   }
 
-  const schema = ctx.schema as Record<string, any>;
+  const schema = ctx.schema as SchemaDefinition;
   if (!schema.properties) return { signals, confidence: 1.0 };
 
   const obj = parsed as Record<string, unknown>;

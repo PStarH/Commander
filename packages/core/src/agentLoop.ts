@@ -212,7 +212,7 @@ export class CommanderAgentLoop {
         taskQueue: this.taskQueue,
         updatedAt: new Date().toISOString(),
       }, null, 2), 'utf-8');
-    } catch (e) { console.debug('[AgentLoop] saveState error:', (e as Error)?.message); }
+    } catch (e) { this.logger.debug('AgentLoop', 'saveState error', { error: (e as Error)?.message }); }
   }
 
   addTask(goal: string, priority = 0): string {
@@ -405,7 +405,7 @@ export class CommanderAgentLoop {
         await this.a2aServer.stop();
         this.logger.info('AgentLoop', 'A2A server stopped');
       } catch (err) {
-        this.logger.warn('AgentLoop', 'Failed to stop A2A server', err instanceof Error ? err : new Error(String(err)));
+        this.logger.error('AgentLoop', 'Failed to stop A2A server', err instanceof Error ? err : new Error(String(err)));
       }
     }
 
@@ -414,7 +414,7 @@ export class CommanderAgentLoop {
         await this.mcpManager.disconnect();
         this.logger.info('AgentLoop', 'MCP servers disconnected');
       } catch (err) {
-        this.logger.warn('AgentLoop', 'Failed to disconnect MCP', err instanceof Error ? err : new Error(String(err)));
+        this.logger.error('AgentLoop', 'Failed to disconnect MCP', err instanceof Error ? err : new Error(String(err)));
       }
     }
 

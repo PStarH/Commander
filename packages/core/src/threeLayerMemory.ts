@@ -33,7 +33,7 @@ export interface MemoryEntry {
   accessCount: number;
   decayScore: number;      // 衰减分数 (episodic layer)
   tags: string[];
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   // L4 Procedural 层专用字段
   proceduralType?: 'sop' | 'tool' | 'workflow' | 'heuristic';
   successRate?: number;       // 使用成功率 0-1
@@ -137,7 +137,7 @@ export class ThreeLayerMemory {
     context: string = '',
     importance: number = 0.5,
     tags: string[] = [],
-    metadata: Record<string, any> = {}
+    metadata: Record<string, unknown> = {}
   ): MemoryEntry {
     const entry: MemoryEntry = {
       id: generateUUID(),

@@ -5,6 +5,7 @@
  * 提供统一的错误处理、恢复和重试机制
  */
 
+import { CircuitBreaker } from './runtime/circuitBreaker';
 import { getGlobalLogger } from './logging';
 
 // ========================================
@@ -17,7 +18,7 @@ export class CommanderError extends Error {
     public code: string,
     public component: string,
     public severity: 'low' | 'medium' | 'high' | 'critical',
-    public context?: Record<string, any>
+    public context?: Record<string, unknown>
   ) {
     super(message);
     this.name = 'CommanderError';
@@ -25,37 +26,37 @@ export class CommanderError extends Error {
 }
 
 export class TaskComplexityError extends CommanderError {
-  constructor(message: string, context?: Record<string, any>) {
+  constructor(message: string, context?: Record<string, unknown>) {
     super(message, 'TASK_COMPLEXITY', 'TaskComplexityAnalyzer', 'medium', context);
   }
 }
 
 export class OrchestrationError extends CommanderError {
-  constructor(message: string, context?: Record<string, any>) {
+  constructor(message: string, context?: Record<string, unknown>) {
     super(message, 'ORCHESTRATION', 'AdaptiveOrchestrator', 'high', context);
   }
 }
 
 export class BudgetExhaustedError extends CommanderError {
-  constructor(message: string, context?: Record<string, any>) {
+  constructor(message: string, context?: Record<string, unknown>) {
     super(message, 'BUDGET_EXHAUSTED', 'TokenBudgetAllocator', 'critical', context);
   }
 }
 
 export class MemoryError extends CommanderError {
-  constructor(message: string, context?: Record<string, any>) {
+  constructor(message: string, context?: Record<string, unknown>) {
     super(message, 'MEMORY', 'ThreeLayerMemory', 'medium', context);
   }
 }
 
 export class ConsensusError extends CommanderError {
-  constructor(message: string, context?: Record<string, any>) {
+  constructor(message: string, context?: Record<string, unknown>) {
     super(message, 'CONSENSUS', 'ConsensusChecker', 'high', context);
   }
 }
 
 export class InspectionError extends CommanderError {
-  constructor(message: string, context?: Record<string, any>) {
+  constructor(message: string, context?: Record<string, unknown>) {
     super(message, 'INSPECTION', 'InspectorAgent', 'medium', context);
   }
 }
@@ -69,6 +70,8 @@ export interface ErrorHandlerConfig {
   retryDelayMs: number;
   exponentialBackoff: boolean;
   circuitBreakerThreshold: number;
+  circuitBreakerCooldownMs: number;
+  maxErrors: number;
   enableLogging: boolean;
 }
 
@@ -77,13 +80,15 @@ const DEFAULT_CONFIG: ErrorHandlerConfig = {
   retryDelayMs: 1000,
   exponentialBackoff: true,
   circuitBreakerThreshold: 5,
+  circuitBreakerCooldownMs: 60000,
+  maxErrors: 1000,
   enableLogging: true
 };
 
 export class ErrorHandler {
   private config: ErrorHandlerConfig;
   private errors: Array<{ timestamp: string; error: CommanderError }> = [];
-  private circuitBreakerState: Map<string, { failures: number; lastFailure: string }> = new Map();
+  private circuitBreakers: Map<string, CircuitBreaker> = new Map();
   private errorListeners: Array<(error: CommanderError) => void> = [];
 
   constructor(config?: Partial<ErrorHandlerConfig>) {
@@ -99,38 +104,41 @@ export class ErrorHandler {
   ): Promise<T> {
     let lastError: Error | undefined;
     const component = context.component;
+    const cb = this.getOrCreateBreaker(component);
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
       try {
         // Check circuit breaker
-        if (this.isCircuitOpen(component)) {
+        if (!cb.isAvailable()) {
+          const stats = cb.getStats();
           throw new CommanderError(
             `Circuit breaker open for ${component}`,
             'CIRCUIT_OPEN',
             component,
             'high',
-            { failures: this.getFailureCount(component) }
+            { failures: stats.failureCount }
           );
         }
 
         const result = await operation();
         
         // Success - reset circuit breaker
-        this.resetCircuitBreaker(component);
+        cb.onSuccess();
         return result;
 
       } catch (error) {
         lastError = error as Error;
+        const commanderErr = error instanceof CommanderError ? error : this.wrapError(error as Error, component);
         
         // Check if it's a retryable error
-        if (!this.isRetryable(error as Error)) {
-          this.recordError(lastError as CommanderError);
+        if (!this.isRetryable(lastError)) {
+          this.recordError(commanderErr);
           throw error;
         }
 
         // Record failure
-        this.recordFailure(component);
-        this.recordError(this.wrapError(lastError, context.component));
+        cb.onFailure();
+        this.recordError(commanderErr);
 
         // Wait before retry
         if (attempt < this.config.maxRetries) {
@@ -168,91 +176,73 @@ export class ErrorHandler {
     );
   }
 
-  /**
-   * Check if error is retryable
-   */
   private isRetryable(error: Error): boolean {
-    // Network errors, timeouts are retryable
-    const retryablePatterns = [
-      'ECONNRESET',
-      'ETIMEDOUT',
-      'ENOTFOUND',
-      'network',
-      'timeout',
-      'temporary'
-    ];
+    if (error instanceof CommanderError) {
+      const retryableCodes = new Set([
+        'CIRCUIT_OPEN',
+        'TASK_COMPLEXITY',
+        'BUDGET_EXHAUSTED',
+      ]);
+      const nonRetryableCodes = new Set([
+        'INVALID_INPUT',
+        'VALIDATION_ERROR',
+        'PERMISSION_DENIED',
+        'NOT_FOUND',
+        'UNAUTHORIZED',
+      ]);
+      if (retryableCodes.has(error.code)) return true;
+      if (nonRetryableCodes.has(error.code)) return false;
+      return false;
+    }
+
+    const errCode = (error as NodeJS.ErrnoException).code;
+    if (errCode) {
+      const retryableNodeCodes = new Set([
+        'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND',
+        'ECONNREFUSED', 'EPIPE', 'EAI_AGAIN',
+      ]);
+      const nonRetryableNodeCodes = new Set([
+        'ERR_INVALID_ARG_TYPE', 'ERR_INVALID_ARG_VALUE',
+        'ERR_ASSERTION', 'MODULE_NOT_FOUND',
+      ]);
+      if (retryableNodeCodes.has(errCode)) return true;
+      if (nonRetryableNodeCodes.has(errCode)) return false;
+    }
 
     const message = error.message.toLowerCase();
+    const retryablePatterns = ['network', 'timeout', 'temporary', 'econnreset', 'etimedout'];
     const isNetworkError = retryablePatterns.some(p => message.includes(p));
-
-    // Don't retry validation errors or logic errors
     const nonRetryablePatterns = ['invalid', 'malformed', 'validation'];
     const isNonRetryable = nonRetryablePatterns.some(p => message.includes(p));
 
     return isNetworkError && !isNonRetryable;
   }
 
-  /**
-   * Circuit breaker: check if circuit is open
-   */
-  private isCircuitOpen(component: string): boolean {
-    const state = this.circuitBreakerState.get(component);
-    if (!state) return false;
-
-    const threshold = this.config.circuitBreakerThreshold;
-    if (state.failures < threshold) return false;
-
-    // Check if enough time has passed to try again
-    const lastFailure = new Date(state.lastFailure).getTime();
-    const now = Date.now();
-    const cooldownMs = 60000; // 1 minute cooldown
-
-    return now - lastFailure < cooldownMs;
-  }
-
-  /**
-   * Record failure for circuit breaker
-   */
-  private recordFailure(component: string): void {
-    const existing = this.circuitBreakerState.get(component);
-    if (existing) {
-      existing.failures++;
-      existing.lastFailure = new Date().toISOString();
-    } else {
-      this.circuitBreakerState.set(component, {
-        failures: 1,
-        lastFailure: new Date().toISOString()
-      });
+  private getOrCreateBreaker(component: string): CircuitBreaker {
+    let cb = this.circuitBreakers.get(component);
+    if (!cb) {
+      cb = new CircuitBreaker(
+        this.config.circuitBreakerThreshold,
+        this.config.circuitBreakerCooldownMs,
+        1,
+      );
+      this.circuitBreakers.set(component, cb);
     }
+    return cb;
   }
 
-  /**
-   * Reset circuit breaker on success
-   */
-  private resetCircuitBreaker(component: string): void {
-    this.circuitBreakerState.delete(component);
-  }
-
-  /**
-   * Get failure count for component
-   */
-  private getFailureCount(component: string): number {
-    return this.circuitBreakerState.get(component)?.failures || 0;
-  }
-
-  /**
-   * Record error
-   */
   private recordError(error: CommanderError): void {
     this.errors.push({
       timestamp: new Date().toISOString(),
       error
     });
 
-    // Notify listeners
+    if (this.errors.length > this.config.maxErrors) {
+      this.errors = this.errors.slice(-this.config.maxErrors);
+    }
+
     this.errorListeners.forEach(listener => listener(error));
 
-    // Log if enabled
     if (this.config.enableLogging) {
       const prefix = error.severity === 'critical' ? '❌' : error.severity === 'high' ? '⚠️' : '📋';
       getGlobalLogger().error('ErrorHandler', `${prefix} [${error.component}] ${error.code}: ${error.message}`);
@@ -312,10 +302,11 @@ export class ErrorHandler {
     }
 
     const circuitBreakerStatus: Record<string, { failures: number; open: boolean }> = {};
-    this.circuitBreakerState.forEach((state, component) => {
+    this.circuitBreakers.forEach((cb, component) => {
+      const stats = cb.getStats();
       circuitBreakerStatus[component] = {
-        failures: state.failures,
-        open: this.isCircuitOpen(component)
+        failures: stats.failureCount,
+        open: stats.state !== 'CLOSED'
       };
     });
 
