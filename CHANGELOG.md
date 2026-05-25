@@ -48,9 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - GAIA 69.7% benchmark (+48.5pp over bare MiMo 21.2%)
-- PinchBench 100.0% on core tasks (beat OpenClaw 89.5%)
-- BFCL full 35-scenario evaluation (91.4% parameter accuracy)
-- MT-Bench 80-question evaluation (6.6/10)
+- PinchBench 97.7% (42/43) on core tasks (beat OpenClaw 89.5%; multifile.json failed)
+- BFCL 30-task subset evaluation (80.0% tool/param accuracy; NOT official 2000+ leaderboard)
+- MT-Bench 5-question subset evaluation (7.8/10; NOT standard 80-question MT-Bench)
 - Unified benchmark runner with YAML config
 - CLI: `commander run`, `plan`, `watch`, `status`, `config`, `doctor`, `workers`
 - Adaptive temperature controller and codeFixer for syntax repair
@@ -112,8 +112,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 233+ tests across module, integration, E2E, and chaos tests
 - MIT License
 
-[Unreleased]: https://github.com/PStarH/Commander/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/PStarH/Commander/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/PStarH/Commander/compare/v0.0.2...v0.1.0
-[0.0.2]: https://github.com/PStarH/Commander/compare/v0.0.1...v0.0.2
-[0.0.1]: https://github.com/PStarH/Commander/releases/tag/v0.0.1
+[Unreleased]: https://github.com/PStarH/Commander/compare/main...HEAD
