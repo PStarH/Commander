@@ -462,7 +462,7 @@ export class ReflexionTopologicalOptimizer {
 
 return {
        tree,
-       result: { status: 'SUCCESS' as const, summary: '', id: '', synthesis: '', artifacts: [], executionTree: [], reasoning: [], metrics: {}, errors: [] } as any,
+        result: { status: 'SUCCESS' as const, summary: '', id: '', synthesis: '', artifacts: [], executionTree: [], reasoning: [], metrics: { totalTokens: 0, totalCostUsd: 0, totalDurationMs: 0, llmCalls: 0, toolCalls: 0, subAgentsSpawned: 0, artifactsCreated: 0, qualityScore: 0, topologyUsed: 'SINGLE' as const, effortLevelUsed: 'COMPLEX' as const }, errors:[] } as UltimateExecutionResult,
        metrics: {
          totalDurationMs: experience.durationMs,
          totalTokens: experience.tokenCost ?? 0,
@@ -525,16 +525,19 @@ return {
       });
     }
 
-    // 5. 基于历史经验调整模型层级
+    // 5. 基于历史经验调整模型层级（优先使用跨模型记忆）
     if (experience.modelUsed) {
       const metaLearner = getMetaLearner();
-      const scores = metaLearner.getStrategyScores(experience.taskType ?? 'general');
-      if (scores.length > 0 && scores[0].strategy !== 'SEQUENTIAL') {
+      const modelScores = metaLearner.getStrategyScoresForModel(experience.modelUsed);
+      const scores = modelScores.length > 0
+        ? modelScores
+        : metaLearner.getStrategyScores(experience.taskType ?? 'general');
+      if (scores.length > 0 && scores[0].strategy !== 'SEQUENTIAL' && scores[0].score >= 0.4) {
         actions.push({
           type: 'upgrade_model_tier',
-          nodeId: actions.length > 0 ? (actions[0] as any).nodeId ?? 'primary' : 'primary',
+          nodeId: actions.length > 0 && 'nodeId' in actions[0] ? actions[0].nodeId : 'primary',
           fromTier: 'standard',
-          toTier: scores[0].strategy.toLowerCase() as any,
+          toTier: scores[0].strategy.toLowerCase(),
           rationale: `MetaLearner 建议使用 ${scores[0].strategy} 策略（成功率: ${(scores[0].score * 100).toFixed(0)}%）`,
         });
       }

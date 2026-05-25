@@ -1,4 +1,4 @@
-import type { LLMProvider, LLMRequest, LLMResponse, ModelTier } from '../runtime/types';
+import type { LLMProvider, LLMRequest, LLMResponse, ModelTier, TokenUsage, ToolCall } from '../runtime/types';
 import type {
   ProviderEndpoint,
   ProviderHealth,
@@ -174,17 +174,96 @@ export class ProviderPool {
   }
 
   /**
-   * Execute with streaming — calls the provider and returns the first response chunk.
-   * Full streaming support requires the provider to implement streaming natively.
+   * Execute with provider-native streaming when available, with the same
+   * endpoint failover behavior as non-streaming calls.
    */
   async executeStreaming(
     request: LLMRequest,
     modelTier?: ModelTier,
     onChunk?: (chunk: string) => void,
   ): Promise<LLMResponse> {
-    // For now, calls the provider as-is.
-    // Streaming will be added when real providers are implemented.
-    return this.executeWithFailover(request, modelTier);
+    let lastError: Error | null = null;
+    const tried = new Set<string>();
+
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      const selection = this.select(modelTier);
+      const key = `${selection.provider}:${selection.modelId}`;
+      if (tried.has(key)) break;
+      tried.add(key);
+
+      const provider = this.providers.get(selection.provider);
+      if (!provider) {
+        lastError = new Error(`Provider ${selection.provider} not registered`);
+        continue;
+      }
+
+      const routedRequest = { ...request, model: selection.modelId };
+      try {
+        const response = provider.stream
+          ? await this.consumeStream(provider, routedRequest, onChunk)
+          : await provider.call(routedRequest);
+        if (!provider.stream && response.content && onChunk) onChunk(response.content);
+        this.recordSuccess(selection.provider, selection.modelId);
+        return response;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        this.recordFailure(selection.provider, selection.modelId);
+        if (attempt < this.maxRetries) {
+          await this.delay(this.retryDelayMs * Math.pow(2, attempt));
+        }
+      }
+    }
+
+    throw lastError ?? new Error('All providers failed');
+  }
+
+  private async consumeStream(
+    provider: LLMProvider,
+    request: LLMRequest,
+    onChunk?: (chunk: string) => void,
+  ): Promise<LLMResponse> {
+    if (!provider.stream) return provider.call(request);
+
+    let content = '';
+    let usage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const toolCalls = new Map<string, ToolCall>();
+
+    for await (const chunk of provider.stream(request)) {
+      if (chunk.contentDelta) {
+        content += chunk.contentDelta;
+        if (onChunk) onChunk(chunk.contentDelta);
+      }
+      if (chunk.usage) {
+        usage = {
+          promptTokens: chunk.usage.promptTokens ?? usage.promptTokens,
+          completionTokens: chunk.usage.completionTokens ?? usage.completionTokens,
+          totalTokens: chunk.usage.totalTokens ?? usage.totalTokens,
+        };
+      }
+      if (chunk.toolCallDelta?.id && chunk.toolCallDelta.name && chunk.toolCallDelta.arguments) {
+        toolCalls.set(chunk.toolCallDelta.id, {
+          id: chunk.toolCallDelta.id,
+          name: chunk.toolCallDelta.name,
+          arguments: chunk.toolCallDelta.arguments,
+        });
+      }
+    }
+
+    if (usage.totalTokens === 0) {
+      usage = {
+        promptTokens: JSON.stringify(request.messages).length,
+        completionTokens: content.length,
+        totalTokens: JSON.stringify(request.messages).length + content.length,
+      };
+    }
+
+    return {
+      content,
+      model: request.model,
+      usage,
+      finishReason: toolCalls.size > 0 ? 'tool_calls' : 'stop',
+      toolCalls: toolCalls.size > 0 ? Array.from(toolCalls.values()) : undefined,
+    };
   }
 
   // ========================================================================
