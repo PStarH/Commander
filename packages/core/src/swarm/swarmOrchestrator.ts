@@ -13,6 +13,7 @@ import { DEFAULT_SWARM_CONFIG } from './types';
 import { FusionEngine } from './fusionEngine';
 import { getMessageBus } from '../runtime/messageBus';
 import { getGlobalLogger } from '../logging';
+import { validateShape } from '../runtime/structuredOutput';
 
 // ============================================================================
 // Prompts — modified from goal/GoalOrchestrator with fission/fusion awareness
@@ -314,7 +315,7 @@ export class SwarmOrchestrator {
     });
 
     let round = 0;
-    let prevFindingsCount: number | null = null;
+    let prevFindingsSet: Set<string> | null = null;
     let plateauRounds = 0;
     const maxRounds = this.config.goalConfig.maxRounds ?? 10;
 
@@ -333,7 +334,7 @@ export class SwarmOrchestrator {
 
       // === WORKER execution (for non-fissioned nodes) ===
       const pending = this.getPendingNodes(goalTree);
-      for (const node of pending) {
+      for (const node of [...pending]) {
         node.status = 'in_progress';
 
         const depsBlocked = node.dependencies.some(depId => {
@@ -415,16 +416,32 @@ export class SwarmOrchestrator {
 
       // === CONTINUATION DECISION ===
       const totalFindings = allNodes.reduce((sum, n) => sum + (n.critique?.findings.length ?? 0), 0);
-      const resolvedFindings = prevFindingsCount !== null
-        ? Math.max(0, prevFindingsCount - totalFindings)
-        : 0;
-      const improvementRate = prevFindingsCount !== null && prevFindingsCount > 0
-        ? resolvedFindings / prevFindingsCount
+
+      // Build fingerprint set of current finding descriptions for accurate tracking
+      const currentFindingsSet = new Set<string>();
+      for (const n of allNodes) {
+        if (n.critique) {
+          for (const f of n.critique.findings) {
+            currentFindingsSet.add(f.description);
+          }
+        }
+      }
+
+      // Compute resolved via set difference (accurate even when resolution and addition happen together)
+      let resolvedFindings = 0;
+      if (prevFindingsSet !== null) {
+        for (const desc of prevFindingsSet) {
+          if (!currentFindingsSet.has(desc)) resolvedFindings++;
+        }
+      }
+
+      const improvementRate = prevFindingsSet !== null && prevFindingsSet.size > 0
+        ? resolvedFindings / prevFindingsSet.size
         : 1;
 
       if (improvementRate < 0.02) plateauRounds++;
       else plateauRounds = 0;
-      prevFindingsCount = totalFindings;
+      prevFindingsSet = currentFindingsSet;
 
       const decision = this.makeDecision(
         round, totalTokensUsed, totalFindings, plateauRounds, allNodes,
@@ -560,11 +577,16 @@ export class SwarmOrchestrator {
   // ========================================================================
 
   private async managerDecompose(goal: string): Promise<{ data: DecompositionOutput; tokens: number } | null> {
-    return callLLMJSON<DecompositionOutput>(
+    const result = await callLLMJSON<DecompositionOutput>(
       this.provider, this.model,
       MANAGER_DECOMPOSE_PROMPT,
       `Goal: ${goal}`,
     );
+    if (result && !validateShape(result.data, { subGoals: 'array', reasoning: 'string' })) {
+      getGlobalLogger().warn('SwarmOrchestrator', 'managerDecompose: LLM response failed shape validation');
+      return null;
+    }
+    return result;
   }
 
   private async managerReview(
@@ -603,11 +625,16 @@ export class SwarmOrchestrator {
       JSON.stringify(fusionReport, null, 2),
     ].join('\n');
 
-    return callLLMJSON<ReviewOutput>(
+    const result = await callLLMJSON<ReviewOutput>(
       this.provider, this.model,
       MANAGER_REVIEW_PROMPT,
       userMessage,
     );
+    if (result && !validateShape(result.data, { goalAssessments: 'array', newSubGoals: 'array', overallStatus: 'string', overallSummary: 'string' })) {
+      getGlobalLogger().warn('SwarmOrchestrator', 'managerReview: LLM response failed shape validation');
+      return null;
+    }
+    return result;
   }
 
   private async workerExecute(
@@ -646,11 +673,16 @@ export class SwarmOrchestrator {
     parentGoal: string,
   ): Promise<{ data: CriticOutput; tokens: number } | null> {
     const context = `Parent Goal: ${parentGoal}\nSub-Goal: ${node.goal}\n\nWorker Output:\n${node.workerOutput?.slice(0, 2000) ?? '(no output)'}`;
-    return callLLMJSON<CriticOutput>(
+    const result = await callLLMJSON<CriticOutput>(
       this.provider, this.model,
       CRITIC_PROMPT,
       context,
     );
+    if (result && !validateShape(result.data, { passed: 'boolean', findings: 'array', summary: 'string' })) {
+      getGlobalLogger().warn('SwarmOrchestrator', 'criticEvaluate: LLM response failed shape validation');
+      return null;
+    }
+    return result;
   }
 
   // ========================================================================

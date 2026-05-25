@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { env } from 'process';
+import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // Types
@@ -28,7 +29,7 @@ export interface BenchmarkConfig {
     answer_key?: string;
     prompt_key?: string;
     evaluator?: 'exact_match' | 'llm_judge';
-    tools?: any[];
+    tools?: string[];
   };
 }
 
@@ -39,7 +40,7 @@ export interface BenchmarkItem {
   question?: string;
   answer?: string;
   expected?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface BenchmarkResult {
@@ -74,7 +75,7 @@ function expandHome(p: string): string {
 export function loadConfig(configPath: string): BenchmarkConfig {
   const raw = fs.readFileSync(configPath, 'utf-8');
   if (configPath.endsWith('.json')) {
-    return JSON.parse(raw);
+    try { return JSON.parse(raw); } catch (e) { throw new Error(`Invalid JSON in config ${configPath}: ${(e as Error).message}`); }
   }
   return yaml.load(raw) as BenchmarkConfig;
 }
@@ -96,21 +97,27 @@ function loadDataset(cfg: BenchmarkConfig['benchmark']): BenchmarkItem[] {
   const fmt = cfg.format;
 
   if (!fs.existsSync(p)) {
-    console.error(`  Dataset not found: ${p}`);
+    getGlobalLogger().error('BenchmarkRunner', `Dataset not found: ${p}`);
     return [];
   }
 
   if (fmt === 'jsonl') {
-    return readTextFile(p)
+    const lines = readTextFile(p)
       .split('\n')
-      .filter((l: string) => l.trim())
-      .map((l: string) => JSON.parse(l));
+      .filter((l: string) => l.trim());
+    const items: BenchmarkItem[] = [];
+    for (const l of lines) {
+      try { items.push(JSON.parse(l)); } catch (e) { getGlobalLogger().error('BenchmarkRunner', `Skipping invalid JSONL line: ${(e as Error).message.slice(0, 80)}`); }
+    }
+    return items;
   }
 
   if (fmt === 'json') {
-    const d = JSON.parse(readTextFile(p));
-    if (Array.isArray(d)) return d;
-    return d.data || d.questions || d.tasks || [];
+    let d: unknown;
+    try { d = JSON.parse(readTextFile(p)); } catch (e) { getGlobalLogger().error('BenchmarkRunner', `Invalid JSON dataset: ${(e as Error).message.slice(0, 80)}`); return []; }
+    if (Array.isArray(d)) return d as BenchmarkItem[];
+    const obj = d as Record<string, unknown>;
+    return (obj.data ?? obj.questions ?? obj.tasks ?? []) as BenchmarkItem[];
   }
 
   if (fmt === 'csv') {
@@ -128,16 +135,15 @@ function loadDataset(cfg: BenchmarkConfig['benchmark']): BenchmarkItem[] {
   if (fmt === 'arrow') {
     // Arrow format — try to extract via Python helper
     if (!fs.existsSync(p)) {
-      console.error(`  Dataset not found: ${p}`);
+      getGlobalLogger().error('BenchmarkRunner', `Dataset not found: ${p}`);
       return [];
     }
     const jsonPath = p.replace(/\.arrow$/, '.json');
     if (fs.existsSync(jsonPath)) {
-      return JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+      try { return JSON.parse(fs.readFileSync(jsonPath, 'utf-8')); } catch (e) { getGlobalLogger().error('BenchmarkRunner', `Invalid JSON in ${jsonPath}: ${(e as Error).message.slice(0, 80)}`); return []; }
     }
     // Try to convert via Python
-    console.error(`  Arrow format requires conversion. Run:`);
-    console.error(`    python3 -c "import pyarrow; import json; t = pyarrow.feather.read_table('${p}'); print(json.dumps(t.to_pydict()))" > ${jsonPath}`);
+    getGlobalLogger().error('BenchmarkRunner', `Arrow format requires conversion. Run: python3 -c "import pyarrow; import json; t = pyarrow.feather.read_table('${p}'); print(json.dumps(t.to_pydict()))" > ${jsonPath}`);
     return [];
   }
 
@@ -154,7 +160,7 @@ function buildPrompt(bench: BenchmarkConfig['benchmark'], item: BenchmarkItem): 
     const toolsStr = JSON.stringify(bench.tools || [], null, 2);
     return `Available tools:\n${toolsStr}\n\nUser: ${item[promptKey] || item.prompt || item.question || ''}`;
   }
-  return item[promptKey] || item.prompt || item.question || '';
+  return String(item[promptKey] ?? item.prompt ?? item.question ?? '');
 }
 
 // ============================================================================
@@ -212,17 +218,17 @@ async function callModel(apiCfg: ApiConfig, prompt: string): Promise<string | nu
       clearTimeout(timer);
       if (!resp.ok) {
         const text = await resp.text();
-        console.error(`    API ${resp.status}: ${text.slice(0, 200)}`);
+        getGlobalLogger().error('BenchmarkRunner', `API ${resp.status}: ${text.slice(0, 200)}`);
         if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
         continue;
       }
-      const data = await resp.json() as any;
+      const data = await resp.json() as { choices?: Array<{ message?: { content?: string } }> };
       return data.choices?.[0]?.message?.content || null;
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (attempt < 2) {
         await new Promise(r => setTimeout(r, 3000));
       } else {
-        console.error(`    API error: ${err?.message || err}`);
+        getGlobalLogger().error('BenchmarkRunner', `API error: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   }
@@ -290,12 +296,12 @@ export async function runBenchmark(
   const results: BenchmarkResult[] = [];
   const startTime = Date.now();
 
-  console.log(`\n  ${'='.repeat(50)}`);
-  console.log(`  Benchmark: ${bench.name}`);
-  console.log(`  Dataset:   ${items.length} items`);
-  console.log(`  Model:     ${apiCfg.model}`);
-  console.log(`  Parallel:  ${parallel}`);
-  console.log(`  ${'='.repeat(50)}\n`);
+  getGlobalLogger().info('BenchmarkRunner', `\n  ${'='.repeat(50)}`);
+  getGlobalLogger().info('BenchmarkRunner', `  Benchmark: ${bench.name}`);
+  getGlobalLogger().info('BenchmarkRunner', `  Dataset:   ${items.length} items`);
+  getGlobalLogger().info('BenchmarkRunner', `  Model:     ${apiCfg.model}`);
+  getGlobalLogger().info('BenchmarkRunner', `  Parallel:  ${parallel}`);
+  getGlobalLogger().info('BenchmarkRunner', `  ${'='.repeat(50)}\n`);
 
   // Process in batches
   for (let i = 0; i < items.length; i += parallel) {
@@ -367,12 +373,12 @@ export async function runBenchmark(
   }, null, 2), 'utf-8');
 
   // Print summary
-  console.log(`\n  ${'='.repeat(50)}`);
-  console.log(`  ${bench.name}: ${accuracy}`);
-  console.log(`  ${correctCount}/${results.length} correct`);
-  console.log(`  Duration: ${(totalDurationMs / 1000).toFixed(1)}s`);
-  console.log(`  Results:  ${summaryPath}`);
-  console.log(`  ${'='.repeat(50)}\n`);
+  getGlobalLogger().info('BenchmarkRunner', `\n  ${'='.repeat(50)}`);
+  getGlobalLogger().info('BenchmarkRunner', `  ${bench.name}: ${accuracy}`);
+  getGlobalLogger().info('BenchmarkRunner', `  ${correctCount}/${results.length} correct`);
+  getGlobalLogger().info('BenchmarkRunner', `  Duration: ${(totalDurationMs / 1000).toFixed(1)}s`);
+  getGlobalLogger().info('BenchmarkRunner', `  Results:  ${summaryPath}`);
+  getGlobalLogger().info('BenchmarkRunner', `  ${'='.repeat(50)}\n`);
 
   return summary;
 }
@@ -391,20 +397,20 @@ export async function main(args: string[]): Promise<void> {
   if (args.includes('--list') || args.includes('-l')) {
     const configs = listConfigs();
     if (configs.length === 0) {
-      console.log('  No benchmark configs found in benchmarks/configs/');
+      getGlobalLogger().info('BenchmarkRunner', 'No benchmark configs found in benchmarks/configs/');
       return;
     }
-    console.log('\n  Available benchmarks:\n');
+    getGlobalLogger().info('BenchmarkRunner', '\n  Available benchmarks:\n');
     for (const c of configs) {
       const cfg = loadConfig(path.join(process.cwd(), 'benchmarks', 'configs', c));
-      console.log(`    ${c.padEnd(25)} ${cfg.benchmark.name} (${cfg.benchmark.type}, ${cfg.benchmark.format})`);
+      getGlobalLogger().info('BenchmarkRunner', `    ${c.padEnd(25)} ${cfg.benchmark.name} (${cfg.benchmark.type}, ${cfg.benchmark.format})`);
     }
-    console.log();
+    getGlobalLogger().info('BenchmarkRunner', '');
     return;
   }
 
   if (args.length === 0 || args[0] === 'help' || args[0] === '--help') {
-    console.log(`
+    process.stdout.write(`
   Usage:
     commander benchmark <config.yaml> [options]
 
@@ -431,7 +437,7 @@ export async function main(args: string[]): Promise<void> {
   }
 
   if (!fs.existsSync(configPath)) {
-    console.error(`  Config not found: ${configArg}`);
+    getGlobalLogger().error('BenchmarkRunner', `Config not found: ${configArg}`);
     process.exit(1);
   }
 
@@ -452,7 +458,7 @@ export async function main(args: string[]): Promise<void> {
 const isMain = process.argv[1]?.endsWith('benchmarkRunner.ts');
 if (isMain) {
   main(process.argv.slice(3)).catch(err => {
-    console.error(`\n  Fatal: ${err.message}\n`);
+    getGlobalLogger().error('BenchmarkRunner', `Fatal: ${err.message}`);
     process.exit(1);
   });
 }

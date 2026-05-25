@@ -74,7 +74,12 @@ export class PluginLoader {
       throw new Error(`No plugin.json found in ${resolvedDir}`);
     }
 
-    const manifest: PluginManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    let manifest: PluginManifest;
+    try {
+      manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    } catch (e) {
+      throw new Error(`Invalid plugin.json in ${resolvedDir}: ${(e as Error).message}`);
+    }
 
     if (this.loaded.has(manifest.name)) {
       getGlobalLogger().warn('PluginLoader', `Plugin "${manifest.name}" already loaded, skipping`);
@@ -92,8 +97,8 @@ export class PluginLoader {
         if (!pluginInstance.name) {
           pluginInstance.name = manifest.name;
         }
-      } catch (err: any) {
-        throw new Error(`Failed to load plugin "${manifest.name}" from ${mainPath}: ${err.message}`);
+      } catch (err: unknown) {
+        throw new Error(`Failed to load plugin "${manifest.name}" from ${mainPath}: ${err instanceof Error ? err.message : String(err)}`);
       }
     } else {
       pluginInstance = {
@@ -117,8 +122,8 @@ export class PluginLoader {
     for (const dir of dirs) {
       try {
         results.push(await this.loadPlugin(dir));
-      } catch (err: any) {
-        getGlobalLogger().warn('PluginLoader', `Failed to load from ${dir}: ${err.message}`);
+      } catch (err: unknown) {
+        getGlobalLogger().warn('PluginLoader', `Failed to load from ${dir}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     return results;

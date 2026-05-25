@@ -17,6 +17,7 @@ import type {
   MCPInitializeResult,
   MCPServerCapabilities,
 } from './types';
+import { ChildProcess } from 'child_process';
 import { MCP_ERROR_CODES } from './types';
 import { getGlobalLogger } from '../logging';
 
@@ -29,7 +30,7 @@ function uuid(): string {
 // ============================================================================
 
 export class StdioClientTransport implements MCPTransport {
-  private process: any = null;
+  private process: ChildProcess | null = null;
   private config: MCPClientConfig;
   private pending = new Map<string | number, { resolve: (v: JSONRPCResponse) => void; reject: (e: Error) => void }>();
   private buf = '';
@@ -49,7 +50,9 @@ export class StdioClientTransport implements MCPTransport {
       env: { ...safeEnv, ...this.config.env },
     });
 
-    this.process.stdout.on('data', (data: Buffer) => {
+    const stdout = this.process!.stdout;
+    if (!stdout) return;
+    stdout.on('data', (data: Buffer) => {
       this.buf += data.toString();
       const lines = this.buf.split('\n');
       this.buf = lines.pop() ?? '';
@@ -69,11 +72,15 @@ export class StdioClientTransport implements MCPTransport {
       }
     });
 
-    this.process.stderr.on('data', (_data: Buffer) => {
+    const stderr = this.process!.stderr;
+    if (!stderr) return;
+    stderr.on('data', (_data: Buffer) => {
       // MCP servers log to stderr — ignore in production, log in debug
     });
 
-    this.process.on('exit', () => {
+    const process = this.process!;
+    if (!process) return;
+    process.on('exit', () => {
       for (const [, p] of this.pending) {
         p.reject(new Error('MCP process exited'));
       }
@@ -86,7 +93,9 @@ export class StdioClientTransport implements MCPTransport {
       const id = request.id ?? ++this.msgId;
       const req = { ...request, id, jsonrpc: '2.0' as const };
       this.pending.set(id, { resolve, reject });
-      this.process!.stdin.write(JSON.stringify(req) + '\n');
+      const stdin = this.process!.stdin;
+    if (!stdin) throw new Error('MCP process stdin not available');
+    stdin.write(JSON.stringify(req) + '\n');
     });
   }
 
@@ -143,7 +152,11 @@ export class StreamableHTTPClientTransport implements MCPTransport {
     });
 
     const text = await res.text();
-    return JSON.parse(text) as JSONRPCResponse;
+    try {
+      return JSON.parse(text) as JSONRPCResponse;
+    } catch {
+      throw new Error(`MCP HTTP server returned invalid JSON (status ${res.status}): ${text.slice(0, 200)}`);
+    }
   }
 
   async close(): Promise<void> {

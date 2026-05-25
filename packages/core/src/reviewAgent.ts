@@ -465,13 +465,13 @@ function fallbackReview(patch: string): string {
       title: 'Debug logging left in code',
       message: `Console.${match[1]}() statement found. Remove before shipping.`,
       line: lineNum,
-      suggestion: 'Remove console.${match[1]}() or replace with a proper logger.',
+      suggestion: `Remove console.${match[1]}() or replace with a proper logger.`,
       confidence: 0.9,
     });
   }
 
   // Check for TODO/FIXME comments in added lines
-  const todoRegex = /^\+.*\b(TODO|FIXME|HACK|XXX)\b/i;
+  const todoRegex = /^\+.*\b(TODO|FIXME|HACK|XXX)\b/gi;
   while ((match = todoRegex.exec(patch)) !== null) {
     const lineNum = patch.slice(0, match.index).split('\n').length;
     findings.push({
@@ -487,7 +487,7 @@ function fallbackReview(patch: string): string {
   }
 
   // Check for hardcoded secrets/tokens
-  const secretRegex = /^\+.*['"](?:api_?key|secret|token|password|credential)['"]\s*[:=]\s*['"][^'"]+['"]/i;
+  const secretRegex = /^\+.*['"](?:api_?key|secret|token|password|credential)['"]\s*[:=]\s*['"][^'"]+['"]/gi;
   while ((match = secretRegex.exec(patch)) !== null) {
     const lineNum = patch.slice(0, match.index).split('\n').length;
     findings.push({
