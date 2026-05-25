@@ -15,6 +15,9 @@ import type { LLMProvider, LLMRequest } from '../runtime/types';
 import { classifyEffortLevel } from './effortScaler';
 import { getGlobalLogger } from '../logging';
 
+type DeliberationTaskType = DeliberationPlan['taskType'];
+const TASK_TYPES: readonly DeliberationTaskType[] = ['FACTUAL', 'REASONING', 'RESEARCH', 'ANALYSIS', 'CODING', 'CREATIVE'];
+
 export function deliberate(
   goal: string,
   context?: Record<string, unknown>,
@@ -74,7 +77,7 @@ export function deliberate(
   };
 }
 
-function classifyTaskType(goal: string): DeliberationPlan['taskType'] {
+function classifyTaskType(goal: string): DeliberationTaskType {
   const lower = goal.toLowerCase();
   // For short keywords (<= 3 chars), use word boundary to avoid substring false positives
   // For longer keywords, substring matching is safe
@@ -92,7 +95,7 @@ function classifyTaskType(goal: string): DeliberationPlan['taskType'] {
 
   const count = (kw: string[]) => kw.filter(w => wordMatch(w)).length;
 
-  const scores: Record<string, number> = {
+  const scores: Record<DeliberationTaskType, number> = {
     FACTUAL: count(factual),
     REASONING: count(reasoning),
     RESEARCH: count(research),
@@ -104,7 +107,10 @@ function classifyTaskType(goal: string): DeliberationPlan['taskType'] {
   const maxScore = Math.max(...Object.values(scores));
   if (maxScore === 0) return 'FACTUAL';
   // FACTUAL first in object, so ties default to FACTUAL
-  return (Object.entries(scores).find(([, v]) => v === maxScore)![0] as DeliberationPlan['taskType']);
+  for (const taskType of TASK_TYPES) {
+    if (scores[taskType] === maxScore) return taskType;
+  }
+  return 'FACTUAL';
 }
 
 function detectRequiresExternalInfo(goal: string, taskType: DeliberationPlan['taskType']): boolean {
