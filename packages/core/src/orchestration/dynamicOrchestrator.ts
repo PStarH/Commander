@@ -109,9 +109,9 @@ export class DynamicOrchestrator {
       step.status = 'completed';
       step.result = result;
       return result;
-    } catch (err: any) {
+    } catch (err: unknown) {
       step.status = 'failed';
-      step.error = err.message;
+      step.error = err instanceof Error ? err.message : String(err);
       throw err;
     }
   }

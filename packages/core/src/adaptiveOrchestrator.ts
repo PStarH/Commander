@@ -45,7 +45,7 @@ export interface Task {
   dependencies: string[]; // 依赖的 task IDs
   assignedAgent?: string;
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-  result?: any;
+  result?: unknown;
   error?: string;
   retryCount: number;
   maxRetries: number;
@@ -401,7 +401,7 @@ export class AdaptiveOrchestrator {
   ): Promise<void> {
     // 多模型投票
     for (const task of tasks) {
-      const votes: any[] = [];
+      const votes: Array<{ agentId: string; vote: string; confidence: number }> = [];
       
       // 并行让多个 agent 处理
       const votePromises = agents.slice(0, 3).map(agent => 
@@ -468,12 +468,12 @@ export class AdaptiveOrchestrator {
     }
   }
 
-  private async getAgentVote(task: Task, agent: Agent): Promise<any> {
+  private async getAgentVote(task: Task, agent: Agent): Promise<{ agentId: string; vote: string; confidence: number }> {
     // 模拟获取 agent 投票
     return { agentId: agent.id, vote: 'approve', confidence: 0.8 };
   }
 
-  private aggregateVotes(votes: any[]): any {
+  private aggregateVotes(votes: Array<{ agentId: string; vote: string; confidence: number }>): { decision: string; votes: Array<{ agentId: string; vote: string; confidence: number }>; confidence: number } {
     const approves = votes.filter(v => v.vote === 'approve').length;
     const disapproves = votes.filter(v => v.vote === 'disapprove').length;
     

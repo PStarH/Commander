@@ -47,12 +47,18 @@ export interface A2AServerConfig {
   shutdownTimeoutMs?: number;
   /** Max time in ms to wait for a task to complete (default: 120000). 0 = no limit. */
   taskTimeoutMs?: number;
+  /** Allowed CORS origins. Empty means no browser origins are allowed. */
+  corsAllowedOrigins?: string[];
+  /** Maximum JSON request body size in bytes. Default: 1 MiB. */
+  maxBodyBytes?: number;
 }
 
 const DEFAULT_CONFIG: Partial<A2AServerConfig> = {
   endpoint: '/',
   shutdownTimeoutMs: 5000,
   taskTimeoutMs: 120000,
+  corsAllowedOrigins: [],
+  maxBodyBytes: 1024 * 1024,
 };
 
 // ============================================================================
@@ -119,12 +125,9 @@ export class A2AServer {
   // ========================================================================
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    this.applyCommonHeaders(req, res);
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      });
+      res.writeHead(204);
       res.end();
       return;
     }
@@ -150,7 +153,8 @@ export class A2AServer {
         this.sendJson(res, response.error ? 400 : 200, response);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        this.sendJson(res, 500, this.makeErrorResponse(null, -32603, `Internal error: ${msg}`));
+        const status = msg.includes('Request body too large') ? 413 : 500;
+        this.sendJson(res, status, this.makeErrorResponse(null, -32603, `Internal error: ${msg}`));
       }
       return;
     }
@@ -248,9 +252,10 @@ export class A2AServer {
 
         let result;
         if (timeoutMs > 0) {
-          const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Task execution timed out after ${timeoutMs}ms`)), timeoutMs)
-          );
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            const timer = setTimeout(() => reject(new Error(`Task execution timed out after ${timeoutMs}ms`)), timeoutMs);
+            timer.unref();
+          });
           result = await Promise.race([execPromise, timeoutPromise]);
         } else {
           result = await execPromise;
@@ -362,8 +367,22 @@ export class A2AServer {
   private parseBody(req: IncomingMessage): Promise<unknown> {
     return new Promise((resolve, reject) => {
       let body = '';
-      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      let size = 0;
+      let rejected = false;
+      req.setEncoding('utf8');
+      req.on('data', (chunk: string) => {
+        if (rejected) return;
+        size += Buffer.byteLength(chunk);
+        if (size > (this.config.maxBodyBytes ?? 1024 * 1024)) {
+          rejected = true;
+          body = '';
+          reject(new Error(`Request body too large. Limit is ${this.config.maxBodyBytes} bytes.`));
+          return;
+        }
+        body += chunk;
+      });
       req.on('end', () => {
+        if (rejected) return;
         try {
           resolve(body ? JSON.parse(body) : {});
         } catch {
@@ -377,12 +396,21 @@ export class A2AServer {
   private sendJson(res: ServerResponse, status: number, data: unknown): void {
     res.writeHead(status, {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       [A2A_VERSION_HEADER]: A2A_PROTOCOL_VERSION,
     });
     res.end(JSON.stringify(data));
+  }
+
+  private applyCommonHeaders(req: IncomingMessage, res: ServerResponse): void {
+    const origin = req.headers.origin;
+    const allowedOrigins = this.config.corsAllowedOrigins ?? [];
+    const allowAll = allowedOrigins.includes('*');
+    if (origin && (allowAll || allowedOrigins.includes(origin))) {
+      res.setHeader('Access-Control-Allow-Origin', allowAll ? '*' : origin);
+      if (!allowAll) res.setHeader('Vary', 'Origin');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   }
 
   private makeSuccessResponse(id: string | number | null, result: unknown): A2AJsonRpcResponse {

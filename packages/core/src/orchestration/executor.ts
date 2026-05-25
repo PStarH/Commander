@@ -293,9 +293,10 @@ export class SequentialPipelineExecutor {
         );
 
         const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => {
+          const timer = setTimeout(() => {
             reject(new Error(`Step timeout after ${timeoutMs}ms`));
           }, timeoutMs);
+          timer.unref();
         });
 
         const { output, tokenUsage } = await Promise.race([

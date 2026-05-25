@@ -12,6 +12,7 @@ import type {
 import { DEFAULT_GOAL_CONFIG } from './types';
 import { getMessageBus } from '../runtime/messageBus';
 import { getGlobalLogger } from '../logging';
+import { validateShape } from '../runtime/structuredOutput';
 
 const MANAGER_DECOMPOSE_PROMPT = `You are a Manager Agent. Your job is to break down a complex goal into smaller, independent sub-goals that can be worked on in parallel.
 
@@ -200,7 +201,7 @@ export class GoalOrchestrator {
 
     const ledger: RoundLedger[] = [];
     let round = 0;
-    let prevFindingsCount: number | null = null;
+    let prevFindingsSet: Set<string> | null = null;
     let plateauRounds = 0;
 
     while (round < this.config.maxRounds) {
@@ -211,7 +212,7 @@ export class GoalOrchestrator {
       bus.publish('goal.round_started', 'goal-orch', { round, activeGoals: countActiveGoals(goalTree) });
 
       const pending = this.getPendingNodes(goalTree);
-      for (const node of pending) {
+      for (const node of [...pending]) {
         node.status = 'in_progress';
         node.roundAssigned = node.roundAssigned ?? round;
 
@@ -279,28 +280,49 @@ export class GoalOrchestrator {
 
       const allNodes = collectAllNodes(goalTree);
       const currentFindings = allNodes.reduce((sum, n) => sum + (n.critique?.findings.length ?? 0), 0);
-      const resolvedFindings = prevFindingsCount !== null
-        ? Math.max(0, prevFindingsCount - currentFindings)
-        : 0;
-      const improvementRate = prevFindingsCount !== null && prevFindingsCount > 0
-        ? resolvedFindings / prevFindingsCount
+
+      // Build fingerprint set of current finding descriptions for accurate tracking
+      const currentFindingsSet = new Set<string>();
+      for (const n of allNodes) {
+        if (n.critique) {
+          for (const f of n.critique.findings) {
+            currentFindingsSet.add(f.description);
+          }
+        }
+      }
+
+      // Compute resolved and new via set difference (accurate even when both happen)
+      let resolvedFindings = 0;
+      let findingsNew = 0;
+      if (prevFindingsSet !== null) {
+        for (const desc of prevFindingsSet) {
+          if (!currentFindingsSet.has(desc)) resolvedFindings++;
+        }
+        for (const desc of currentFindingsSet) {
+          if (!prevFindingsSet.has(desc)) findingsNew++;
+        }
+      }
+
+      const improvementRate = prevFindingsSet !== null && prevFindingsSet.size > 0
+        ? resolvedFindings / prevFindingsSet.size
         : 1;
 
       if (improvementRate < 0.02) plateauRounds++;
       else plateauRounds = 0;
-      prevFindingsCount = currentFindings;
 
       const decision = this.makeDecision(
         round, totalTokensUsed, currentFindings, plateauRounds,
         allNodes,
       );
 
+      prevFindingsSet = currentFindingsSet;
+
       ledger.push({
         round,
         goalSnapshot: cloneGoalTree(goalTree),
         findingsTotal: currentFindings,
         findingsResolved: resolvedFindings,
-        findingsNew: currentFindings + resolvedFindings - (prevFindingsCount ?? 0),
+        findingsNew,
         improvementRate,
         tokensUsed: roundTokens,
         totalTokensUsed,
@@ -329,11 +351,16 @@ export class GoalOrchestrator {
   }
 
   private async managerDecompose(goal: string): Promise<{ data: ManagerDecomposition; tokens: number } | null> {
-    return callLLMJSON<ManagerDecomposition>(
+    const result = await callLLMJSON<ManagerDecomposition>(
       this.provider, this.model,
       MANAGER_DECOMPOSE_PROMPT,
       `Goal: ${goal}`,
     );
+    if (result && !validateShape(result.data, { subGoals: 'array', reasoning: 'string' })) {
+      getGlobalLogger().warn('GoalOrchestrator', 'managerDecompose: LLM response failed shape validation');
+      return null;
+    }
+    return result;
   }
 
   private async managerReview(
@@ -352,11 +379,21 @@ export class GoalOrchestrator {
       critique: n.critique ?? { passed: true, findings: [], summary: 'No critique' },
     }));
 
-    return callLLMJSON<ManagerReview>(
+    const result = await callLLMJSON<ManagerReview>(
       this.provider, this.model,
       MANAGER_REVIEW_PROMPT,
       `Original Goal: ${goal}\nRound: ${round}\n\nCompleted work:\n${JSON.stringify(context, null, 2)}`,
     );
+    if (result && !validateShape(result.data, {
+      goalAssessments: 'array',
+      newSubGoals: 'array',
+      overallStatus: 'string',
+      overallSummary: 'string',
+    })) {
+      getGlobalLogger().warn('GoalOrchestrator', 'managerReview: LLM response failed shape validation');
+      return null;
+    }
+    return result;
   }
 
   private async workerExecute(
@@ -397,11 +434,16 @@ export class GoalOrchestrator {
     parentGoal: string,
   ): Promise<{ data: CriticOutput; tokens: number } | null> {
     const context = `Parent Goal: ${parentGoal}\nSub-Goal: ${node.goal}\n\nWorker Output:\n${node.workerOutput?.slice(0, 2000) ?? '(no output)'}`;
-    return callLLMJSON<CriticOutput>(
+    const result = await callLLMJSON<CriticOutput>(
       this.provider, this.model,
       CRITIC_PROMPT,
       context,
     );
+    if (result && !validateShape(result.data, { passed: 'boolean', findings: 'array', summary: 'string' })) {
+      getGlobalLogger().warn('GoalOrchestrator', 'criticEvaluate: LLM response failed shape validation');
+      return null;
+    }
+    return result;
   }
 
   private makeDecision(
