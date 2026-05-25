@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
 
@@ -52,7 +53,11 @@ export class ExecPolicyEngine {
         } else {
           this.loadFile(loc);
         }
-      } catch (e) { getGlobalLogger().warn('ExecPolicyEngine', 'User rules load failed', { error: (e as Error)?.message, location: loc }); }
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+          getGlobalLogger().warn('ExecPolicyEngine', 'User rules load failed', { error: (e as Error)?.message, location: loc });
+        }
+      }
     }
   }
 
@@ -73,18 +78,217 @@ export class ExecPolicyEngine {
   }
 
   evaluate(command: string): { decision: PolicyDecision; rule?: PolicyRule; matchedPattern?: string } {
-    const cmdLower = command.toLowerCase().trim();
+    const normalized = command.toLowerCase().trim();
+    const candidates = this.extractCommandCandidates(command);
     const sorted = [...this.rules].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 
     for (const rule of sorted) {
       for (const pattern of rule.pattern) {
-        const pLower = pattern.toLowerCase();
-        if (cmdLower.startsWith(pLower) || cmdLower.includes(` ${pLower}`) || cmdLower.includes(`${pLower} `)) {
+        if (this.matchesPattern(candidates, pattern)) {
           return { decision: rule.decision, rule, matchedPattern: pattern };
         }
       }
     }
+    if (this.hasCommandSubstitution(normalized)) {
+      return {
+        decision: 'prompt',
+        rule: {
+          id: 'implicit-command-substitution',
+          pattern: ['$('],
+          decision: 'prompt',
+          justification: 'Shell command substitution requires approval',
+          priority: 20,
+        },
+        matchedPattern: '$(',
+      };
+    }
     return { decision: 'allow' };
+  }
+
+  private matchesPattern(candidates: CommandCandidates, pattern: string): boolean {
+    const p = pattern.toLowerCase().trim();
+    if (!p) return false;
+    if (/^[a-z0-9._+-]+$/i.test(p)) {
+      return candidates.commandNames.has(p);
+    }
+    return Array.from(candidates.segments).some(segment => this.segmentMatches(segment, p));
+  }
+
+  private segmentMatches(segment: string, pattern: string): boolean {
+    if (segment === pattern) return true;
+    if (this.startsWithTokenBoundary(segment, pattern)) return true;
+    if (pattern.includes('/dev/') || pattern.includes('>')) {
+      return segment.includes(pattern);
+    }
+    return false;
+  }
+
+  private startsWithTokenBoundary(segment: string, pattern: string): boolean {
+    if (!segment.startsWith(pattern)) return false;
+    const next = segment.charAt(pattern.length);
+    return next === '' || /\s/.test(next);
+  }
+
+  private extractCommandCandidates(command: string): CommandCandidates {
+    const segments = new Set<string>();
+    const commandNames = new Set<string>();
+    const queue = [command, ...this.extractCommandSubstitutions(command)];
+
+    for (const source of queue) {
+      for (const rawSegment of this.splitCommandSegments(source)) {
+        const segment = rawSegment.trim().toLowerCase();
+        if (!segment) continue;
+        segments.add(segment);
+        const firstToken = this.firstCommandToken(rawSegment);
+        if (!firstToken) continue;
+        for (const name of this.commandNameAliases(firstToken)) {
+          commandNames.add(name);
+        }
+      }
+    }
+
+    return { segments, commandNames };
+  }
+
+  private splitCommandSegments(command: string): string[] {
+    const segments: string[] = [];
+    let current = '';
+    let quote: '"' | "'" | null = null;
+    let escaped = false;
+
+    for (let i = 0; i < command.length; i++) {
+      const ch = command[i];
+      const next = command[i + 1];
+
+      if (escaped) {
+        current += ch;
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        current += ch;
+        escaped = true;
+        continue;
+      }
+      if (quote) {
+        current += ch;
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        current += ch;
+        quote = ch;
+        continue;
+      }
+      if (ch === ';' || ch === '\n' || ch === '|') {
+        segments.push(current);
+        current = '';
+        if ((ch === '|' && next === '|')) i++;
+        continue;
+      }
+      if (ch === '&' && next === '&') {
+        segments.push(current);
+        current = '';
+        i++;
+        continue;
+      }
+      current += ch;
+    }
+    segments.push(current);
+    return segments;
+  }
+
+  private firstCommandToken(segment: string): string | null {
+    const tokens = this.tokenizeSegment(segment);
+    let idx = 0;
+    if (tokens[idx] === 'env') idx++;
+    while (idx < tokens.length) {
+      const token = tokens[idx];
+      if (/^[A-Za-z_][A-Za-z0-9_]*=.*/.test(token)) {
+        idx++;
+        continue;
+      }
+      if (tokens[0] === 'env' && token.startsWith('-')) {
+        idx++;
+        continue;
+      }
+      return token;
+    }
+    return null;
+  }
+
+  private tokenizeSegment(segment: string): string[] {
+    const trimmed = segment.trim();
+    if (!trimmed) return [];
+    const tokens: string[] = [];
+    let token = '';
+    let quote: '"' | "'" | null = null;
+    let escaped = false;
+
+    for (const ch of trimmed) {
+      if (escaped) {
+        token += ch;
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (quote) {
+        if (ch === quote) {
+          quote = null;
+        } else {
+          token += ch;
+        }
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        continue;
+      }
+      if (/\s/.test(ch)) {
+        if (token) {
+          tokens.push(token);
+          token = '';
+        }
+        continue;
+      }
+      token += ch;
+    }
+
+    if (token) tokens.push(token);
+    return tokens;
+  }
+
+  private commandNameAliases(token: string): string[] {
+    const aliases = new Set<string>();
+    const cleaned = token.toLowerCase();
+    aliases.add(path.basename(cleaned));
+
+    if (token.includes('/') && fs.existsSync(token)) {
+      try {
+        aliases.add(path.basename(fs.realpathSync(token)).toLowerCase());
+      } catch {
+        // Keep the syntactic basename if the path cannot be resolved.
+      }
+    }
+
+    return Array.from(aliases);
+  }
+
+  private extractCommandSubstitutions(command: string): string[] {
+    const extracted: string[] = [];
+    const regex = /\$\(([^()]*)\)|`([^`]*)`/g;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(command)) !== null) {
+      extracted.push(match[1] ?? match[2] ?? '');
+    }
+    return extracted;
+  }
+
+  private hasCommandSubstitution(normalized: string): boolean {
+    return normalized.includes('$(') || normalized.includes('`');
   }
 
   addRule(rule: Omit<PolicyRule, 'id'>): PolicyRule {
@@ -113,4 +317,7 @@ export class ExecPolicyEngine {
   }
 }
 
-import * as os from 'os';
+interface CommandCandidates {
+  segments: Set<string>;
+  commandNames: Set<string>;
+}

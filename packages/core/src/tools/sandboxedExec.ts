@@ -1,6 +1,4 @@
-import { execSync } from 'child_process';
-import { getSandboxManager } from '../sandbox/manager';
-import type { SandboxProfile } from '../sandbox/types';
+import { getExecutionRouter } from '../sandbox/executionRouter';
 
 export interface ExecResult {
   stdout: string;
@@ -10,51 +8,33 @@ export interface ExecResult {
   killed: boolean;
 }
 
+function formatResult(r: { stdout: string; stderr: string; exitCode: number; durationMs: number }): ExecResult {
+  return {
+    stdout: r.stdout ?? '',
+    stderr: r.stderr ?? '',
+    exitCode: r.exitCode,
+    durationMs: r.durationMs,
+    killed: false,
+  };
+}
+
 /**
- * Execute a command through the sandbox if available, falling back to execSync.
- * Returns structured result with stdout, stderr, exit code, and timing.
+ * Execute a command through the ExecutionRouter.
+ * The router picks the right backend (local/ssh/docker_exec) based on args.
+ *
+ * @param command  Shell command to execute
+ * @param timeoutSec  Timeout in seconds
+ * @param workdir  Working directory
+ * @param backendArgs  Tool call arguments for backend selection (backend, ssh_host, container, etc.)
  */
 export async function execSandboxed(
   command: string,
   timeoutSec: number,
   workdir?: string,
+  backendArgs?: Record<string, unknown>,
 ): Promise<ExecResult> {
-  const sandbox = getSandboxManager();
-  const start = Date.now();
-
-  if (sandbox.hasSandbox()) {
-    const profile: SandboxProfile = { ...sandbox.getProfile('workspace-write'), timeout: timeoutSec * 1000 };
-    const result = await sandbox.execute(command, profile, workdir);
-    return {
-      stdout: result.stdout ?? '',
-      stderr: result.stderr ?? '',
-      exitCode: result.exitCode,
-      durationMs: result.durationMs,
-      killed: false,
-    };
-  }
-
-  try {
-    const stdout = execSync(command, {
-      timeout: timeoutSec * 1000,
-      encoding: 'utf-8',
-      cwd: workdir ?? process.cwd(),
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    return {
-      stdout: stdout ?? '',
-      stderr: '',
-      exitCode: 0,
-      durationMs: Date.now() - start,
-      killed: false,
-    };
-  } catch (err: any) {
-    return {
-      stdout: err.stdout?.toString() ?? '',
-      stderr: err.stderr?.toString() ?? '',
-      exitCode: err.status ?? 1,
-      durationMs: Date.now() - start,
-      killed: !!err.killed,
-    };
-  }
+  const router = getExecutionRouter();
+  const args = { timeout: timeoutSec, ...backendArgs };
+  const result = await router.execute(command, args, workdir);
+  return formatResult(result);
 }

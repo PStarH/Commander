@@ -37,6 +37,8 @@ export const FULL_ACCESS: SandboxProfile = {
     protectedPaths: [],
     useStagingDir: false,
   },
+  envVarDenyList: ['API_KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL'],
+  envVarAllowList: ['PATH', 'HOME', 'USER', 'SHELL', 'TERM'],
   timeout: 300000,
 };
 

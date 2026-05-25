@@ -16,6 +16,12 @@ export class GitTool implements Tool {
       },
       required: ['command'],
     },
+    examples: [
+      { name: 'git', arguments: { command: 'status' } },
+      { name: 'git', arguments: { command: 'log --oneline -5' } },
+      { name: 'git', arguments: { command: 'diff --stat' } },
+    ],
+    category: 'development',
   };
 
   async execute(args: Record<string, unknown>): Promise<string> {
@@ -44,9 +50,9 @@ export class GitTool implements Tool {
       const elapsed = Date.now() - start;
       const output = stdout.trim();
       return output || `[Empty output | ${elapsed}ms]`;
-    } catch (err: any) {
-      if (err.stderr) return `[Error]\n${err.stderr}`;
-      return `[Error] ${err.message}`;
+    } catch (err: unknown) {
+      if (err instanceof Error && 'stderr' in err) return `[Error]\n${(err as { stderr: string }).stderr}`;
+      return `[Error] ${err instanceof Error ? err.message : String(err)}`;
     }
   }
 }

@@ -13,12 +13,18 @@
  */
 import type { Tool, ToolDefinition, AgentExecutionContext, AgentExecutionResult } from '../runtime/types';
 import type { AgentRuntime } from '../runtime/agentRuntime';
+import { getHookManager } from '../pluginManager';
+import { getGlobalLogger } from '../logging';
 
 export interface AgentDef {
   name: string;
   description: string;
   prompt: string;
   tools?: string[];
+  /** Hard whitelist of tools this agent is allowed to use.
+   *  If set, the sub-agent can ONLY use these tools, regardless of what the
+   *  parent agent requests. Use for security/isolation boundaries. */
+  allowedTools?: string[];
   model?: string;
 }
 
@@ -37,6 +43,11 @@ const DEFINITION: ToolDefinition = {
     },
     required: ['task'],
   },
+  examples: [
+    { name: 'agent', arguments: { task: 'Research the latest Python 3.13 features' } },
+    { name: 'agent', arguments: { task: 'Analyze the code in src/ for potential bugs', tools: ['file_read', 'code_search'] } },
+  ],
+  category: 'development',
 };
 
 export class AgentTool implements Tool {
@@ -72,17 +83,41 @@ export class AgentTool implements Tool {
       ? `${agentDef.prompt}\n\nTask: ${task}`
       : task;
 
+    // Resolve available tools: intersect agent definition's tools, caller's requested tools,
+    // and the agent's hard allowedTools whitelist. This ensures sub-agents cannot escalate
+    // privileges by requesting tools the agent definition does not permit.
+    const defTools = agentDef?.tools;
+    const allowedTools = agentDef?.allowedTools;
+    let availableTools = defTools || tools;
+
+    // Apply hard whitelist: if allowedTools is set, intersect with it
+    if (allowedTools && allowedTools.length > 0) {
+      availableTools = availableTools.filter(t => allowedTools.includes(t));
+      // Ensure there's at least one tool, or fall back to a safe default
+      if (availableTools.length === 0) {
+        availableTools = allowedTools;
+      }
+    }
+
     const ctx: AgentExecutionContext = {
       agentId: `subagent-${name}-${Date.now()}`,
       projectId: 'subagent',
       goal,
       contextData: {},
-      availableTools: agentDef?.tools || tools,
+      availableTools,
       maxSteps: 15,
       tokenBudget: 25000,
     };
 
     try {
+      // ── Hook: onSessionFork ──
+      getHookManager().fireOnSessionFork({
+        parentRunId: 'subagent-parent',
+        childRunId: `subagent-${name}-${Date.now()}`,
+        agentId: ctx.agentId,
+        goal,
+      }).catch(e => getGlobalLogger().debug('AgentTool', 'onSessionFork hook error', { error: (e as Error)?.message }));
+
       const result = await this.runtime.execute(ctx);
       if (result.status === 'success' && result.summary) {
         // Return condensed summary (Claude Code pattern: ~1-2K tokens)
@@ -90,8 +125,8 @@ export class AgentTool implements Tool {
         return `[Sub-agent "${name}" completed]\n\n${summary}`;
       }
       return `[Sub-agent "${name}" ${result.status}]\n${result.error || 'No output'}`;
-    } catch (err: any) {
-      return `[Sub-agent "${name}" error]\n${err.message || String(err)}`;
+    } catch (err: unknown) {
+      return `[Sub-agent "${name}" error]\n${err instanceof Error ? err.message : String(err)}`;
     }
   }
 }
