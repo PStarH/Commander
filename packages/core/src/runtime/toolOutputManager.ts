@@ -288,7 +288,11 @@ export class ToolOutputManager {
       kept.push(line);
       used += line.length + 1;
     }
-    return kept.join('\n') + (kept.length < lines.length ? `\n[... truncated ...]` : '');
+    const suffix = kept.length < lines.length ? `\n[... truncated ...]` : '';
+    const joined = kept.join('\n');
+    if (joined.length + suffix.length <= maxChars) return joined + suffix;
+    if (maxChars <= suffix.length) return joined.slice(0, maxChars);
+    return joined.slice(0, maxChars - suffix.length) + suffix;
   }
 
   private truncateFileOutput(lines: string[], maxChars: number): string {

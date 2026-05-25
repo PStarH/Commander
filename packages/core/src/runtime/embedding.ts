@@ -1,3 +1,13 @@
+/**
+ * Embedding Utilities — Vector embedding providers and similarity computation.
+ *
+ * Provides two embedding backends:
+ * - OpenAIEmbeddingFunction: Real API-based embeddings via text-embedding-3-small
+ * - MockEmbeddingFunction: Deterministic hash-based embeddings for tests
+ *
+ * Also includes similarity metrics (cosine similarity, L2 distance) and
+ * an in-memory embedding store with LRU-style eviction for ThreeLayerMemory.
+ */
 import type { MemoryEntry } from '../threeLayerMemory';
 
 export interface EmbeddingFunction {
