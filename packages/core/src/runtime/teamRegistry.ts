@@ -1,7 +1,18 @@
+/**
+ * Team Registry — Persistent agent team management.
+ *
+ * Manages named groups of agents with role-based membership (lead, worker,
+ * observer, reviewer). Teams are persisted to disk as a JSON manifest using
+ * atomic write-tmp-rename to prevent corruption.
+ *
+ * Used by AgentHandoff and orchestrator for team-based task routing and
+ * multi-agent coordination.
+ */
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
 
+/** Agent roles within a team. Lead coordinates, worker executes, observer monitors, reviewer evaluates. */
 export type TeamRole = 'lead' | 'worker' | 'observer' | 'reviewer';
 
 export interface TeamMember {
