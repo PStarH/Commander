@@ -324,6 +324,40 @@ describe('AgentRuntime - New Feature Integration', () => {
     const config = runtime.getConfig();
     expect(config.speculativeExecution?.enabled).toBe(false);
   });
+
+  it('passes outputSchema into runtime verification and retries invalid structured output', async () => {
+    resetModelRouter();
+    resetMessageBus();
+    resetTraceRecorder();
+    resetPatternTracker();
+
+    const localRouter = new ModelRouter();
+    const localRuntime = new AgentRuntime({ maxRetries: 1, timeoutMs: 5000 }, localRouter);
+    const provider = new ToolCallMockProvider([
+      {
+        response: 'not json',
+        finishReason: 'stop',
+      },
+      {
+        response: '{"answer":"ok"}',
+        finishReason: 'stop',
+      },
+    ]);
+    localRuntime.registerProvider('openai', provider);
+
+    const result = await localRuntime.execute(makeContext({
+      goal: 'Return output in JSON format matching the schema.',
+      outputSchema: {
+        properties: {
+          answer: { type: 'string', required: true },
+        },
+      },
+    }));
+
+    expect(result.status).toBe('success');
+    expect(result.summary).toContain('"answer":"ok"');
+    expect(provider.callCount).toBe(2);
+  });
 });
 
 describe('AgentRuntime - Tool Not Found Handling', () => {
@@ -351,6 +385,36 @@ describe('AgentRuntime - Tool Not Found Handling', () => {
     expect(result.status).toBe('success');
     expect(provider.callCount).toBe(2);
     // Second call should have the error about missing tool
+    const lastMsg = provider.lastRequest?.messages;
+    const toolResultMsg = lastMsg?.find(m => m.role === 'tool');
+    expect(toolResultMsg).toBeDefined();
+    expect(toolResultMsg?.content).toContain('TOOL_NOT_ALLOWED');
+  });
+
+  it('returns TOOL_NOT_FOUND when tool is allowed but not registered', async () => {
+    resetModelRouter();
+    resetMessageBus();
+    resetTraceRecorder();
+    resetPatternTracker();
+
+    const router = new ModelRouter();
+    const runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000 }, router);
+    const provider = new ToolCallMockProvider([
+      {
+        toolCalls: [{ id: 'call_unreg', name: 'unregistered_tool', arguments: {} }],
+        finishReason: 'tool_calls',
+      },
+      {
+        response: 'The tool was not found.',
+        finishReason: 'stop',
+      },
+    ]);
+    runtime.registerProvider('openai', provider);
+
+    // Tool is in the allowed list but NOT registered in the runtime
+    const result = await runtime.execute(makeContext({ availableTools: ['unregistered_tool'] }));
+    expect(result.status).toBe('success');
+    expect(provider.callCount).toBe(2);
     const lastMsg = provider.lastRequest?.messages;
     const toolResultMsg = lastMsg?.find(m => m.role === 'tool');
     expect(toolResultMsg).toBeDefined();

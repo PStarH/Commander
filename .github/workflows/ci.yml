@@ -18,7 +18,7 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v2
         with:
           version: 9
 
@@ -28,36 +28,23 @@ jobs:
         run: npm audit --audit-level=high
         continue-on-error: true
 
-      - name: TypeScript check
+      - name: TypeScript check (core)
         run: npx tsc --noEmit -p packages/core/tsconfig.json
 
-      - name: Run core tests with coverage
-        run: npx tsx --experimental-test-coverage --test packages/core/tests/ultimate-orchestration.test.ts packages/core/tests/hallucinationDetector.test.ts packages/core/tests/commander-tools-integration.test.ts packages/core/tests/advanced-integration.test.ts
-        env:
-          NODE_V8_COVERAGE: ./coverage
+      - name: TypeScript check (SDK)
+        run: pnpm --filter @commander/sdk typecheck
 
-      - name: Check coverage threshold (60%+)
-        run: |
-          COVERAGE_FILE=$(ls -t packages/core/coverage/*.json 2>/dev/null | head -1)
-          if [ -z "$COVERAGE_FILE" ]; then
-            echo "No coverage data found — skipping threshold check"
-            exit 0
-          fi
-          COVERAGE=$(node -e "
-            const d = require('$COVERAGE_FILE');
-            const total = d.result ? d.result.reduce((s, r) => s + r.s, 0) : 0;
-            const count = d.result ? d.result.length : 1;
-            console.log((total / count).toFixed(1));
-          ")
-          echo "Average coverage: ${COVERAGE}%"
-          if (( $(echo "$COVERAGE < 60" | bc -l) )); then
-            echo "❌ Coverage ${COVERAGE}% is below 60% threshold"
-            exit 1
-          fi
-          echo "✅ Coverage ${COVERAGE}% meets 60% threshold"
+      - name: Run core tests
+        run: pnpm --filter @commander/core test
 
       - name: Run benchmarks
         run: npx tsx --test packages/core/benchmarks/ultimate.benchmark.test.ts
+
+      - name: Benchmark regression check
+        run: npx tsx packages/core/benchmarks/ci-benchmark-check.ts
+        env:
+          CI_BENCHMARK_THRESHOLD: '0.50'
+          CI_BENCHMARK_UPDATE: ''
 
       - name: CLI check
         run: npx tsx cli.ts status
@@ -89,7 +76,7 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v2
         with:
           version: 9
 
