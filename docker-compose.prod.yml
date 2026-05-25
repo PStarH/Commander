@@ -1,0 +1,74 @@
+# =============================================================================
+# Commander — Production Docker Compose Overrides
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# =============================================================================
+
+services:
+  api:
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    # Production logging — structured JSON to stdout
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Restart more aggressively
+    restart: always
+    # Production env overrides
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      - CORS_ORIGINS=${CORS_ORIGINS:-https://app.commander.com}
+      - COMMANDER_API_KEY=${COMMANDER_API_KEY:?err}
+      # Rate limiting
+      - RATE_LIMIT_WINDOW_MS=${RATE_LIMIT_WINDOW_MS:-60000}
+      - RATE_LIMIT_MAX_REQUESTS=${RATE_LIMIT_MAX_REQUESTS:-100}
+      # Multi-tenant settings
+      - TENANT_PROVIDER=${TENANT_PROVIDER:-simple}
+      - TENANT_CONFIG_PATH=${TENANT_CONFIG_PATH:-/app/config/tenants.json}
+    volumes:
+      - commander_state:/app/.commander_state
+      - commander_traces:/app/.commander_traces
+      - commander_memory:/app/.commander_memory
+      - commander_results:/app/.commander_results
+      - ./config:/app/config:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  web:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: always
+
+volumes:
+  commander_state:
+    driver: local
+  commander_traces:
+    driver: local
+  commander_memory:
+    driver: local
+  commander_results:
+    driver: local
