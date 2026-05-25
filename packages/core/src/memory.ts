@@ -815,7 +815,7 @@ export function createMemoryStore(type: 'in-memory' | 'sqlite' | 'json' = 'in-me
       try {
         const { SqliteMemoryStore } = require('./runtime/sqliteMemoryStore');
         const store = new SqliteMemoryStore('.commander/memory.db');
-        store.init().catch(() => {});
+        store.init().catch((err: Error) => getGlobalLogger().warn('createMemoryStore', 'SqliteMemoryStore init failed', { error: err.message }));
         return store;
       } catch {
         getGlobalLogger().warn('createMemoryStore', 'SqliteMemoryStore not available, falling back to JSON store');
@@ -829,7 +829,8 @@ export function createMemoryStore(type: 'in-memory' | 'sqlite' | 'json' = 'in-me
   }
 }
 
-export { SqliteMemoryStore } from './runtime/sqliteMemoryStore';
+// SqliteMemoryStore is available via './runtime/sqliteMemoryStore' — import directly when needed.
+// Not re-exported here to preserve lazy-loading semantics (playwright/better-sqlite3 are optional deps).
 
 /**
  * Convert ProjectMemoryItem to EpisodicMemoryItem
