@@ -12,6 +12,10 @@ const DEFINITION: ToolDefinition = {
     },
     required: ['code'],
   },
+  examples: [
+    { name: 'fix_code', arguments: { code: 'def hello():\nprint("world")', entryPoint: 'hello' } },
+    { name: 'fix_code', arguments: { code: '"""missing close', error: 'SyntaxError: EOF while scanning triple-quoted string' } },
+  ],
   category: 'development',
 };
 

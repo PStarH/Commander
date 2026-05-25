@@ -23,6 +23,11 @@ const DEFINITION: ToolDefinition = {
     },
     required: ['source'],
   },
+  examples: [
+    { name: 'vision_analyze', arguments: { source: 'screenshots/dashboard.png', prompt: 'What metrics are shown on this dashboard?' } },
+    { name: 'vision_analyze', arguments: { source: 'diagram.png', detail: 'high' } },
+  ],
+  category: 'multimodal',
 };
 
 export class VisionAnalyzeTool implements Tool {
@@ -91,10 +96,10 @@ export class VisionAnalyzeTool implements Tool {
         return `Vision API error (${response.status}): ${text.slice(0, 500)}`;
       }
 
-      const data = await response.json() as any;
+      const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
       return data.choices?.[0]?.message?.content ?? 'No analysis returned.';
-    } catch (err: any) {
-      return `Vision analysis failed: ${err.message ?? String(err)}`;
+    } catch (err: unknown) {
+      return `Vision analysis failed: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
 }
