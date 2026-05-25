@@ -1,6 +1,9 @@
 import * as crypto from 'crypto';
-import { IncomingMessage, ServerResponse, createServer } from 'http';
+import { IncomingMessage, ServerResponse, createServer as createNodeHttpServer } from 'http';
+import { createServer as createHttpsServer, type ServerOptions as HttpsServerOptions } from 'https';
 import type { LLMProvider, MessageBusTopic } from './types';
+import type { Tool } from './types';
+import type { JSONRPCRequest } from '../mcp/types';
 import { AgentRuntime } from './agentRuntime';
 import { SSEStream } from './sseStream';
 import { getMessageBus } from './messageBus';
@@ -25,6 +28,7 @@ import { BedrockProvider } from './providers/bedrockProvider';
 import { XAIProvider } from './providers/xaiProvider';
 import { AnyscaleProvider } from './providers/anyscaleProvider';
 import { DeepInfraProvider } from './providers/deepinfraProvider';
+import { MCPServer } from '../mcp/server';
 import { getGlobalLogger } from '../logging';
 import { getMetricsCollector } from './metricsCollector';
 import { openApiSpec } from './openapi';
@@ -33,6 +37,12 @@ export interface HttpServerConfig {
   port: number;
   host: string;
   cors: boolean;
+  /** Allowed CORS origins. Use ['*'] only for trusted internal/dev deployments. */
+  corsAllowedOrigins: string[];
+  /** Maximum JSON request body size in bytes. Default: 1 MiB. */
+  maxBodyBytes: number;
+  /** Optional TLS options. When set, Commander serves HTTPS directly. */
+  https?: HttpsServerOptions;
   /** API key for Bearer auth. If undefined, a random key is generated at startup. Set to '' to explicitly disable auth (NOT recommended). */
   apiKey?: string;
   /** Max requests per minute per IP. 0 = no limit. Default: 120 */
@@ -47,20 +57,53 @@ const DEFAULT_CONFIG: HttpServerConfig = {
   port: 3001,
   host: '127.0.0.1', // Localhost-only by default (was 0.0.0.0 — GAP-12)
   cors: true,
+  corsAllowedOrigins: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+  maxBodyBytes: 1024 * 1024,
   rateLimitPerMinute: 120,
 };
 
-function parseBody(req: IncomingMessage): Promise<unknown> {
+class HttpRequestError extends Error {
+  constructor(readonly statusCode: number, message: string) {
+    super(message);
+  }
+}
+
+function parseBody(req: IncomingMessage, maxBytes: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-    req.on('end', () => { try { resolve(body ? JSON.parse(body) : {}); } catch { getGlobalLogger().warn('HttpServer', 'Invalid JSON'); reject(new Error('Invalid JSON')); } });
+    let size = 0;
+    let rejected = false;
+    let bodyError: HttpRequestError | null = null;
+    req.setEncoding('utf8');
+    req.on('data', (chunk: string) => {
+      if (rejected) return;
+      size += Buffer.byteLength(chunk);
+      if (size > maxBytes) {
+        rejected = true;
+        body = '';
+        bodyError = new HttpRequestError(413, `Request body too large. Limit is ${maxBytes} bytes.`);
+        return;
+      }
+      body += chunk;
+    });
+    req.on('end', () => {
+      if (bodyError) {
+        reject(bodyError);
+        return;
+      }
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch {
+        getGlobalLogger().warn('HttpServer', 'Invalid JSON');
+        reject(new HttpRequestError(400, 'Invalid JSON'));
+      }
+    });
     req.on('error', reject);
   });
 }
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization' });
+  res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
 }
 
@@ -75,9 +118,10 @@ function authenticate(req: IncomingMessage, config: HttpServerConfig): boolean {
 
 export class CommanderHttpServer {
   private config: HttpServerConfig;
-  private server: ReturnType<typeof createServer> | null = null;
+  private server: ReturnType<typeof createNodeHttpServer> | ReturnType<typeof createHttpsServer> | null = null;
   private runtimes: Map<string, AgentRuntime> = new Map();
   private bus = getMessageBus();
+  private mcpServer: MCPServer | null = null;
   // Rate limiting: IP → { count, resetAt }
   private rateLimitMap: Map<string, { count: number; resetAt: number }> = new Map();
   // Graceful shutdown: track open connections
@@ -95,15 +139,23 @@ export class CommanderHttpServer {
 
   async start(): Promise<void> {
     return new Promise((resolve) => {
-      this.server = createServer((req, res) => {
+      const handler = (req: IncomingMessage, res: ServerResponse) => {
         // Track connection for graceful shutdown
         const socket = req.socket;
         this.connections.add(socket);
         res.on('finish', () => { this.connections.delete(socket); });
         this.handleRequest(req, res);
-      });
+      };
+      this.server = this.config.https
+        ? createHttpsServer(this.config.https, handler)
+        : createNodeHttpServer(handler);
       this.server.listen(this.config.port, this.config.host, () => {
-        getGlobalLogger().info('HttpServer', 'Listening', { host: this.config.host, port: this.config.port, authEnabled: !!this.config.apiKey });
+        getGlobalLogger().info('HttpServer', 'Listening', {
+          protocol: this.config.https ? 'https' : 'http',
+          host: this.config.host,
+          port: this.config.port,
+          authEnabled: !!this.config.apiKey,
+        });
         resolve();
       });
     });
@@ -143,8 +195,9 @@ export class CommanderHttpServer {
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    this.applyCommonHeaders(req, res);
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' });
+      res.writeHead(204);
       res.end();
       return;
     }
@@ -168,7 +221,7 @@ export class CommanderHttpServer {
     if (segments[0] === 'metrics' && (req.method ?? 'GET') === 'GET') {
       const accept = req.headers.accept ?? '';
       if (accept.includes('text/plain') || accept.includes('openmetrics')) {
-        res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4', 'Access-Control-Allow-Origin': '*' });
+        res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' });
         res.end(getMetricsCollector().exportOpenMetrics());
       } else {
         const mem = process.memoryUsage();
@@ -228,6 +281,11 @@ export class CommanderHttpServer {
       }
     }
     try {
+      // MCP endpoint: POST /api/v1/mcp — JSON-RPC 2.0 for tool discovery and execution
+      if (segments[0] === 'api' && segments[1] === 'v1' && segments[2] === 'mcp') {
+        await this.handleMCPRequest(req, res);
+        return;
+      }
       if (segments[0] === 'api') {
         await this.handleApiRequest(req, res, segments.slice(1), queryStr);
       } else if (segments[0] === 'stream') {
@@ -236,9 +294,37 @@ export class CommanderHttpServer {
         sendJson(res, 404, { error: 'Not found' });
       }
     } catch (err) {
-      getGlobalLogger().error('HttpServer', 'Request error', err instanceof Error ? err : new Error(String(err)));
-      sendJson(res, 500, { error: String(err) });
+      const status = err instanceof HttpRequestError ? err.statusCode : 500;
+      if (err instanceof HttpRequestError) {
+        getGlobalLogger().warn('HttpServer', err.message);
+      } else {
+        getGlobalLogger().error('HttpServer', 'Request error', err instanceof Error ? err : new Error(String(err)));
+      }
+      sendJson(res, status, { error: err instanceof Error ? err.message : String(err) });
     }
+  }
+
+  private applyCommonHeaders(req: IncomingMessage, res: ServerResponse): void {
+    const requestId = this.getRequestId(req);
+    res.setHeader('X-Request-Id', requestId);
+    if (!this.config.cors) return;
+
+    const allowedOrigins = this.config.corsAllowedOrigins;
+    const origin = req.headers.origin;
+    const allowAll = allowedOrigins.includes('*');
+    if (origin && (allowAll || allowedOrigins.includes(origin))) {
+      res.setHeader('Access-Control-Allow-Origin', allowAll ? '*' : origin);
+      if (!allowAll) res.setHeader('Vary', 'Origin');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-Id');
+  }
+
+  private getRequestId(req: IncomingMessage): string {
+    const incoming = req.headers['x-request-id'];
+    if (typeof incoming === 'string' && incoming.trim()) return incoming;
+    if (Array.isArray(incoming) && incoming[0]?.trim()) return incoming[0];
+    return crypto.randomUUID();
   }
 
   private async handleApiRequest(req: IncomingMessage, res: ServerResponse, segments: string[], queryStr: string): Promise<void> {
@@ -247,7 +333,7 @@ export class CommanderHttpServer {
       const [, resource, id] = segments;
       if (resource === 'runtime') {
         if (method === 'POST') {
-          const body = await parseBody(req) as { sessionId?: string; provider?: string; model?: string };
+          const body = await parseBody(req, this.config.maxBodyBytes) as { sessionId?: string; provider?: string; model?: string };
           const sessionId = body.sessionId ?? `session_${Date.now()}`;
           const runtime = new AgentRuntime();
           runtime.registerProvider(body.provider ?? 'openai', this.getDefaultProvider(body.provider));
@@ -264,7 +350,7 @@ export class CommanderHttpServer {
       }
       if (resource === 'execute') {
         if (method === 'POST') {
-          const body = await parseBody(req) as { prompt: string; sessionId?: string; provider?: string; model?: string };
+          const body = await parseBody(req, this.config.maxBodyBytes) as { prompt: string; sessionId?: string; provider?: string; model?: string; outputSchema?: Record<string, unknown> };
           const sessionId = body.sessionId ?? `session_${Date.now()}`;
           // Derive tenantId from API key (never trust request body for tenant)
           const tenantId = this.resolveTenantFromAuth(req);
@@ -281,6 +367,7 @@ export class CommanderHttpServer {
             availableTools: ['web_search', 'web_fetch', 'file_read', 'file_write', 'file_edit', 'file_search', 'file_list', 'python_execute', 'shell_execute', 'memory_store', 'memory_recall', 'memory_list', 'git', 'browser_search', 'browser_fetch'],
             maxSteps: 50,
             tokenBudget: 100000,
+            outputSchema: body.outputSchema,
             contextData: {},
             tenantId,
           });
@@ -311,7 +398,7 @@ export class CommanderHttpServer {
     if (resource !== 'runtime' || !id) { sendJson(res, 404, { error: 'Not found' }); return; }
     const runtime = this.runtimes.get(id);
     if (!runtime) { sendJson(res, 404, { error: 'Session not found' }); return; }
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'Access-Control-Allow-Origin': '*' });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
     const stream = new SSEStream();
     stream.pipe(res);
     stream.emitStatus('session.started', id);
@@ -319,6 +406,43 @@ export class CommanderHttpServer {
     const unsubComplete = this.bus.subscribe('agent.completed', () => { stream.emitStatus('agent.completed'); });
     const unsubError = this.bus.subscribe('agent.failed', () => { stream.emitStatus('agent.error'); });
     req.on('close', () => { unsubStart(); unsubComplete(); unsubError(); stream.close(); });
+  }
+
+  /**
+   * Register Commander tools as MCP tools on an internal MCPServer.
+   * External clients can call these tools via POST /api/v1/mcp with JSON-RPC 2.0 requests.
+   */
+  registerMCPServer(name: string, tools: Map<string, Tool>): void {
+    const server = new MCPServer(name, '1.0.0');
+    server.registerCommanderTools(tools);
+    server.registerExecutionResource();
+    this.mcpServer = server;
+    getGlobalLogger().info('HttpServer', `MCP Server "${name}" registered with ${tools.size} tools`);
+  }
+
+  private async handleMCPRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if ((req.method ?? 'GET') !== 'POST') {
+      sendJson(res, 405, { error: 'Method not allowed. Use POST for MCP requests.' });
+      return;
+    }
+    if (!this.mcpServer) {
+      sendJson(res, 503, { error: 'MCP Server not initialized. Call registerMCPServer first.' });
+      return;
+    }
+    try {
+      const body = (await parseBody(req, this.config.maxBodyBytes)) as JSONRPCRequest;
+      const response = await this.mcpServer.handleRequest(body);
+      sendJson(res, 200, response);
+    } catch (err) {
+      if (err instanceof HttpRequestError && err.statusCode === 413) {
+        sendJson(res, 413, { error: err.message });
+        return;
+      }
+      sendJson(res, 400, {
+        jsonrpc: '2.0', id: null,
+        error: { code: -32700, message: `Parse error: ${err instanceof Error ? err.message : String(err)}` },
+      });
+    }
   }
 
   /** Resolve tenant ID from the Authorization header using configured API key mapping. */
