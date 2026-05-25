@@ -90,7 +90,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     try {
       const token = this.telegramConfig.botToken;
       if (!token) return;
-      const response = await fetch(`${this.apiBase}/bot${token}/getUpdates?offset=${this.offset}&timeout=30&allowed_updates=['message','edited_message','callback_query']`, { method: 'GET' });
+      const response = await fetch(`${this.apiBase}/bot${token}/getUpdates?offset=${this.offset}&timeout=30&allowed_updates=${encodeURIComponent(JSON.stringify(['message', 'edited_message', 'callback_query']))}`, { method: 'GET' });
       if (!response.ok) { this.longPollTimer = setTimeout(() => this.pollUpdates(), 5000); return; }
       const data: { ok: boolean; result?: TelegramUpdate[] } = await response.json() as { ok: boolean; result?: TelegramUpdate[] };
       if (data.result) {
@@ -114,7 +114,8 @@ export class TelegramAdapter extends BaseChannelAdapter {
     if (!text) return;
     const userId = String(msg.from?.id ?? msg.chat.id);
     if (!this.isUserAllowed(userId)) {
-      this.sendMessage({ id: String(msg.message_id), role: 'user', content: '', channelId: '', userId, timestamp: new Date().toISOString() }, 'Access denied.' as unknown as string).catch(e => getGlobalLogger().debug('Telegram', 'send error', { error: (e as Error)?.message }));
+      const denyMsg: ChannelMessage = { id: String(msg.message_id), role: 'user', content: '', channelId: '', userId, timestamp: new Date().toISOString() };
+      this.sendMessage(denyMsg, 'Access denied.').catch(e => getGlobalLogger().warn('Telegram', 'Failed to send access denied message', { error: (e as Error)?.message }));
       return;
     }
     const channelMsg: ChannelMessage = {

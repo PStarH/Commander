@@ -62,7 +62,7 @@ export class OpenRouterProvider implements LLMProvider {
     return this.parseResponse(data, model);
   }
 
-  private parseResponse(data: any, model: string): LLMResponse {
+  private parseResponse(data: { model?: string; choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>; reasoning?: string }; finish_reason?: string }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }, model: string): LLMResponse {
     const choice = data.choices?.[0];
     const message = choice?.message ?? {};
 
@@ -77,7 +77,7 @@ export class OpenRouterProvider implements LLMProvider {
       finishReason: choice?.finish_reason === 'stop' ? 'stop'
         : choice?.finish_reason === 'tool_calls' ? 'tool_calls'
         : choice?.finish_reason === 'length' ? 'length' : 'stop',
-      toolCalls: message.tool_calls?.map((tc: any) => ({
+      toolCalls: message.tool_calls?.map((tc: { id: string; function?: { name?: string; arguments?: string } }) => ({
         id: tc.id,
         name: tc.function?.name ?? '',
         arguments: (() => { try { return JSON.parse(tc.function?.arguments ?? '{}'); } catch (e) { getGlobalLogger().debug('OpenRouterProvider', 'Skipping malformed tool arguments', { error: (e as Error)?.message }); return {}; } })(),
