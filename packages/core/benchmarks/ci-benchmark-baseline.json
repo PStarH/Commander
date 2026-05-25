@@ -1,0 +1,94 @@
+{
+  "metrics": [
+    {
+      "name": "TaskComplexityAnalyzer.analyze",
+      "opsPerSecond": 99989.17,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "AdaptiveOrchestrator.createPlan",
+      "opsPerSecond": 62635.41,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "TokenBudgetAllocator.allocate",
+      "opsPerSecond": 357451.41,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "TokenBudgetAllocator.recordUsage",
+      "opsPerSecond": 443684.44,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "TokenBudgetAllocator.getUsageRate",
+      "opsPerSecond": 14669015.67,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "ThreeLayerMemory.add",
+      "opsPerSecond": 70865.23,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "ThreeLayerMemory.query",
+      "opsPerSecond": 80402.01,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "ThreeLayerMemory.getStats",
+      "opsPerSecond": 255544.81,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "ReflectionEngine.startSession",
+      "opsPerSecond": 52760.93,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "ReflectionEngine.addReflection",
+      "opsPerSecond": 24095.68,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "ReflectionEngine.getStats",
+      "opsPerSecond": 101312.81,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "ConsensusChecker.createCheck",
+      "opsPerSecond": 227602.49,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "ConsensusChecker.addVote",
+      "opsPerSecond": 155.96,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "ConsensusChecker.getResult",
+      "opsPerSecond": 2945143.75,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "InspectorAgent.updateComponent",
+      "opsPerSecond": 521195.18,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "InspectorAgent.autoDetect",
+      "opsPerSecond": 998668.77,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "InspectorAgent.inspect",
+      "opsPerSecond": 70513.56,
+      "date": "2026-05-25"
+    },
+    {
+      "name": "InspectorAgent.getStats",
+      "opsPerSecond": 1275306.87,
+      "date": "2026-05-25"
+    }
+  ]
+}
