@@ -23,6 +23,11 @@ const DEFINITION: ToolDefinition = {
       fullPage: { type: 'boolean', description: 'Capture full page (scrolling) if true (default: false)' },
     },
   },
+  examples: [
+    { name: 'screenshot_capture', arguments: { url: 'https://example.com' } },
+    { name: 'screenshot_capture', arguments: { url: 'https://github.com', fullPage: true, width: 1920 } },
+  ],
+  category: 'multimodal',
 };
 
 export class ScreenshotCaptureTool implements Tool {
@@ -55,8 +60,8 @@ export class ScreenshotCaptureTool implements Tool {
         return await this.captureUrl(url, resolvedPath, { width, height, fullPage, selector });
       }
       return await this.captureScreen(resolvedPath);
-    } catch (err: any) {
-      return `Screenshot failed: ${err.message ?? String(err)}`;
+    } catch (err: unknown) {
+      return `Screenshot failed: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
 
@@ -77,9 +82,10 @@ export class ScreenshotCaptureTool implements Tool {
       }
       await browser.close();
       return `Screenshot saved: ${outputPath} (${opts.width}x${opts.height})`;
-    } catch (err: any) {
-      if (err.message?.includes('Cannot find module')) {
-        return `URL screenshot requires playwright. Install: npm install playwright\n\nError: ${err.message}`;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('Cannot find module')) {
+        return `URL screenshot requires playwright. Install: npm install playwright\n\nError: ${msg}`;
       }
       throw err;
     }
@@ -100,8 +106,8 @@ export class ScreenshotCaptureTool implements Tool {
         return `Screen capture saved: ${outputPath}`;
       }
       return `Screen capture not supported on ${platform}. Use URL mode or provide a file path.`;
-    } catch (err: any) {
-      return `Screen capture failed: ${err.message}. Try URL mode instead.`;
+    } catch (err: unknown) {
+      return `Screen capture failed: ${err instanceof Error ? err.message : String(err)}. Try URL mode instead.`;
     }
   }
 }

@@ -144,14 +144,15 @@ export class ApplyPatchTool implements Tool {
               getGlobalLogger().warn('ApplyPatchTool', 'Auto-revert exception', { error: (e as Error)?.message });
             }
           }
-        } catch (err: any) {
-          outputLines.push(`❌ Verification error: ${err.message}`);
+        } catch (err: unknown) {
+          outputLines.push(`❌ Verification error: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 
       return outputLines.join('\n');
-    } catch (err: any) {
-      return `Patch failed: ${err.message?.slice(0, 300) || String(err)}`;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return `Patch failed: ${msg.slice(0, 300)}`;
     } finally {
       try { fs.unlinkSync(patchFile); } catch (e) { getGlobalLogger().warn('ApplyPatchTool', 'Temp patch cleanup failed', { error: (e as Error)?.message }); }
     }
