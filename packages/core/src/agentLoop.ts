@@ -342,7 +342,6 @@ export class CommanderAgentLoop {
       const task = this.taskQueue.shift();
       if (!task) continue;
 
-      this.saveState();
       this.executeTask(task).catch(err => {
         this.logger.error('AgentLoop', `Task ${task.id} failed`, err instanceof Error ? err : new Error(String(err)));
       });
@@ -354,6 +353,10 @@ export class CommanderAgentLoop {
   private async executeTask(task: { id: string; goal: string }) {
     const bus = getMessageBus();
     this.activeSessions.set(task.id, { startTime: Date.now(), goal: task.goal });
+    // Persist queue state now that the task is confirmed running.
+    // Must happen before any async yield point so that crash between
+    // shift() and execution start does not lose the task.
+    this.saveState();
 
     this.logger.info('AgentLoop', '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     this.logger.info('AgentLoop', `Executing: ${task.goal.slice(0, 80)}`);
