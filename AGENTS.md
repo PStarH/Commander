@@ -1,13 +1,13 @@
 # Commander — Architecture & Operator's Manual
 
-> 233 tests · 0 failures · 100+ modules · 8 topologies · 15 tools · multi-tenant
+> Full core test suite · TypeScript strict · 100+ modules · 8 topologies · multi-tenant
 
 ## Quick Start
 
 ```bash
 pnpm install
 cd packages/core
-npx tsx --test tests/*.test.ts   # 233 tests, must be ALL green
+pnpm test                        # node:test + vitest suites, must be ALL green
 npx tsc --noEmit                  # zero type errors
 npx tsx cli.ts plan "your task"   # deliberation plan only
 npx tsx cli.ts run "your task"    # full execution
@@ -197,11 +197,11 @@ Rules:
 - **Zero tolerance for failures**: `# fail 0` is non-negotiable
 - **New feature → new tests**: every addition needs isolation + integration coverage
 - **Chaos tests are first-class**: they must pass, not just "informational"
-- **`npx tsc --noEmit` must pass**: no `as any`, no `@ts-ignore`
+- **`npx tsc --noEmit` must pass**: avoid `as any` and `@ts-ignore` in production code
 
 ## Production Readiness Checklist
 
-- [ ] 233+ tests all green
+- [ ] Full core test suite green
 - [ ] TypeScript strict mode clean
 - [ ] Metrics exported via OpenMetrics (`getMetricsCollector().exportOpenMetrics()`)
 - [ ] Multi-tenant isolation active (NullTenantProvider for single, SimpleTenantProvider for multi)

@@ -22,7 +22,7 @@
 
 - [ ] `cd packages/core && npx tsx --test tests/*.test.ts` — all 293+ tests pass
 - [ ] `cd packages/core && npx tsc --noEmit` — zero compilation errors
-- [ ] Code follows TypeScript strict mode (no `as any`, no `@ts-ignore`)
+- [ ] Code follows TypeScript strict mode; avoid `as any` and `@ts-ignore` in production code
 - [ ] No empty `catch {}` blocks — all errors are logged via `getGlobalLogger()`
 - [ ] No `console.*` calls in production code (use `getGlobalLogger()` instead)
 - [ ] New functionality includes tests where applicable
