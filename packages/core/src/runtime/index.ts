@@ -70,7 +70,7 @@ export { SSEStream } from './sseStream';
 export type { StructuredSSEEventType, StructuredSSEEvent } from './sseStream';
 export { selectTools, getToolRelevanceScores, getToolCategory } from './toolRetriever';
 export { isConfidentResponse, hasInformationGain } from './entropyGater';
-export { parseStructuredOutput, validateStructuredOutput } from './structuredOutput';
+export { parseStructuredOutput, validateStructuredOutput, validateShape } from './structuredOutput';
 export { ContextWindowManager, estimateTotalTokens } from './contextWindow';
 export type { ContextWindowConfig, WindowAction } from './contextWindow';
 export {
