@@ -12,10 +12,13 @@ not official Berkeley Function Calling Leaderboard submissions.
 Verify the checked-in score files:
 
 ```bash
-cat benchmarks/bfcl/results_full.json
-cat docs/benchmark-results/bfcl/results.json
-cat benchmarks/bfcl/results.json
+pnpm --filter @commander/core benchmark:verify
 ```
+
+The verifier recomputes tool-selection and parameter percentages from the raw
+checked-in counts, then compares them with
+`docs/benchmark-results/bfcl/summary.json`. Any mismatch exits non-zero and is
+blocked by CI.
 
 Before publishing a leaderboard claim, run the official BFCL full suite and add
 the exact command, model, provider, date, and raw outputs here.
