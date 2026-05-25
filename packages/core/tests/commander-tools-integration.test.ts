@@ -59,7 +59,7 @@ describe('Commander Tools Integration', () => {
     const tool = new FileSearchTool();
     const result = await tool.execute({ pattern: 'src/tools/*.ts', maxResults: 30 });
     assert.ok(result.length > 0, 'Should find tool files');
-    assert.ok(result.includes('webSearchTool'), 'Should find webSearchTool.ts');
+    assert.ok(result.includes('webSearchTool.ts'), 'Should find webSearchTool.ts');
     console.log(`  [file_search] Found ${result.split('\n').length} files`);
   });
 
@@ -67,7 +67,7 @@ describe('Commander Tools Integration', () => {
     const tool = new FileListTool();
     const result = await tool.execute({ path: 'src/tools' });
     assert.ok(result.length > 0, 'Should list directory');
-    assert.ok(result.includes('webSearchTool') || result.includes('fileSystemTool'), 'Should show tool files');
+    assert.ok(result.includes('webSearchTool.ts') || result.includes('fileSystemTool.ts'), 'Should show tool files');
     console.log(`  [file_list] ${result.split('\n').length} entries`);
   });
 
