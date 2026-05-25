@@ -1,8 +1,16 @@
 import * as fs from 'fs';
 import * as nodePath from 'path';
 import type {
+  AnalysisMode,
+  EvolutionInsight,
+  EvolutionPrediction,
   ExecutionExperience,
+  FailureCategory,
+  MetaLearnerConfig,
   OptimizationSuggestion,
+  PredictionVerdict,
+  PerModelStrategyStats,
+  RegressionEvent,
   StrategyPerformance,
 } from '../runtime/types';
 import { getMessageBus } from '../runtime/messageBus';
@@ -109,6 +117,14 @@ function generateReflection(exp: ExecutionExperience): string {
 
 const STRATEGY_NAMES = ['SEQUENTIAL', 'PARALLEL', 'HANDOFF', 'MAGENTIC', 'CONSENSUS'];
 
+export const DEFAULT_META_LEARNER_CONFIG: MetaLearnerConfig = {
+  analysisMode: 'light',
+  enablePredictionLoop: true,
+  enableRegressionGate: true,
+  enableCrossModelMemory: true,
+  regressionThreshold: 0.15,
+};
+
 // ============================================================================
 // MetaLearner — enhanced with Reflexion + Thompson Sampling
 // ============================================================================
@@ -123,10 +139,42 @@ export class MetaLearner {
   private minSamplesForSuggestion: number;
   private persistPath: string | null;
 
-  constructor(maxExperiences = 500, minSamplesForSuggestion = 5, persistPath?: string) {
+  // ========================================================================
+  // Prediction loop — falsifiable edit contracts
+  // ========================================================================
+  private predictions: EvolutionPrediction[] = [];
+  private verdicts: PredictionVerdict[] = [];
+  /** Tracks last strategy selected per (modelId, taskType) for change detection */
+  private lastPredictedStrategy: Map<string, string> = new Map();
+
+  // ========================================================================
+  // Regression gate — automatic decline detection
+  // ========================================================================
+  private regressionEvents: RegressionEvent[] = [];
+  /** Rolling success rate history per strategy: Map<strategyName, number[]> */
+  private successRateHistory: Map<string, number[]> = new Map();
+
+  // ========================================================================
+  // Cross-model strategy memory
+  // ========================================================================
+  /** Per-model, per-strategy Thompson Sampling: Map<modelId, Map<strategyName, BetaDistribution>> */
+  private perModelPriors: Map<string, Map<string, BetaDistribution>> = new Map();
+
+  // ========================================================================
+  // Config
+  // ========================================================================
+  private config: MetaLearnerConfig;
+
+  constructor(
+    maxExperiences = 500,
+    minSamplesForSuggestion = 5,
+    persistPath?: string,
+    config?: Partial<MetaLearnerConfig>,
+  ) {
     this.maxExperiences = maxExperiences;
     this.minSamplesForSuggestion = minSamplesForSuggestion;
     this.persistPath = persistPath ?? null;
+    this.config = { ...DEFAULT_META_LEARNER_CONFIG, ...config };
     if (this.persistPath) {
       this.load();
     }
@@ -144,6 +192,21 @@ export class MetaLearner {
 
     this.updateStrategyPerformance(exp);
     this.updateThompsonPrior(exp);
+
+    // Cross-model: update per-model priors
+    if (this.config.enableCrossModelMemory) {
+      this.updatePerModelPrior(exp);
+    }
+
+    // Prediction loop: verify outstanding predictions for this model+taskType
+    if (this.config.enablePredictionLoop) {
+      this.verifyPrediction(exp);
+    }
+
+    // Regression gate: check for significant success rate drops
+    if (this.config.enableRegressionGate) {
+      this.detectRegression(exp);
+    }
 
     // Generate verbal reflection
     const reflection = generateReflection(exp);
@@ -171,13 +234,21 @@ export class MetaLearner {
 
   /**
    * Select the best strategy for a given task type using Thompson Sampling.
-   * This explores (tries untested strategies) while exploiting (prefers proven ones).
+   * If prediction loop is enabled, records the (model, taskType) → strategy mapping
+   * so that future strategy changes trigger a prediction.
    */
-  selectStrategy(taskType: string): string {
+  selectStrategy(taskType: string, modelId?: string): string {
     const priors = this.getOrCreatePriors(taskType);
     const samples = priors.map(p => p.sample());
     const bestIdx = samples.indexOf(Math.max(...samples));
-    return STRATEGY_NAMES[bestIdx];
+    const chosen = STRATEGY_NAMES[bestIdx];
+
+    if (this.config.enablePredictionLoop && modelId) {
+      const key = `${modelId}::${taskType}`;
+      this.lastPredictedStrategy.set(key, chosen);
+    }
+
+    return chosen;
   }
 
   /**
@@ -205,6 +276,211 @@ export class MetaLearner {
     if (idx >= 0) {
       priors[idx].update(exp.success);
     }
+  }
+
+  // ========================================================================
+  // Cross-model strategy memory
+  // ========================================================================
+
+  private getOrCreatePerModelPriors(modelId: string, strategy: string): BetaDistribution {
+    if (!this.perModelPriors.has(modelId)) {
+      this.perModelPriors.set(modelId, new Map());
+    }
+    const modelMap = this.perModelPriors.get(modelId)!;
+    if (!modelMap.has(strategy)) {
+      modelMap.set(strategy, new BetaDistribution());
+    }
+    return modelMap.get(strategy)!;
+  }
+
+  private updatePerModelPrior(exp: ExecutionExperience): void {
+    const prior = this.getOrCreatePerModelPriors(exp.modelUsed, exp.strategyUsed);
+    prior.update(exp.success);
+  }
+
+  /**
+   * Get strategy rankings specific to a model (cross-model memory).
+   * Falls back to global rankings when per-model data is insufficient.
+   */
+  getStrategyScoresForModel(modelId: string): Array<{ strategy: string; score: number; trials: number }> {
+    const modelMap = this.perModelPriors.get(modelId);
+    if (!modelMap) {
+      // No per-model data yet — return empty, caller can fall back to global
+      return [];
+    }
+    return Array.from(modelMap.entries()).map(([strategy, prior]) => ({
+      strategy,
+      score: prior.mean,
+      trials: prior.totalTrials,
+    })).sort((a, b) => b.score - a.score);
+  }
+
+  /**
+   * Get per-model strategy stats for external inspection.
+   */
+  getPerModelStats(): PerModelStrategyStats[] {
+    const stats: PerModelStrategyStats[] = [];
+    for (const [modelId, modelMap] of this.perModelPriors) {
+      for (const [strategy, prior] of modelMap) {
+        stats.push({
+          modelId,
+          strategy,
+          totalRuns: prior.totalTrials,
+          successCount: prior.alpha - 1,
+          successRate: prior.mean,
+          avgTokenCost: 0,
+          lastUsed: '',
+        });
+      }
+    }
+    return stats;
+  }
+
+  // ========================================================================
+  // Prediction loop — falsifiable edit contracts
+  // ========================================================================
+
+  /**
+   * Create a prediction for an upcoming strategy change.
+   * Called by the harness evolver (or externally) before deploying an edit.
+   */
+  createPrediction(
+    editId: string,
+    description: string,
+    targetStrategy: string,
+    sourceStrategy: string,
+    modelId: string,
+    taskTypes: string[],
+    predictedFixes: FailureCategory[] = [],
+    predictedRegressions: FailureCategory[] = [],
+  ): EvolutionPrediction {
+    const prediction: EvolutionPrediction = {
+      id: `pred_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      editId,
+      description,
+      predictedFixes,
+      predictedRegressions,
+      targetStrategy,
+      sourceStrategy,
+      modelId,
+      taskTypes,
+      timestamp: new Date().toISOString(),
+    };
+    this.predictions.push(prediction);
+    return prediction;
+  }
+
+  /**
+   * Verify outstanding predictions against incoming experience.
+   * Compares the experience's strategy vs the last selected strategy per (modelId, taskType)
+   * to detect strategy changes, then checks if predictions held.
+   */
+  private verifyPrediction(exp: ExecutionExperience): void {
+    if (!this.config.enablePredictionLoop) return;
+
+    const key = `${exp.modelUsed}::${exp.taskType}`;
+    const previousStrategy = this.lastPredictedStrategy.get(key);
+    if (!previousStrategy || previousStrategy === exp.strategyUsed) return;
+
+    // Strategy changed — find relevant prediction
+    const relevant = this.predictions.filter(
+      p => p.targetStrategy === exp.strategyUsed
+        && p.modelId === exp.modelUsed
+        && p.taskTypes.includes(exp.taskType),
+    );
+
+    for (const pred of relevant) {
+      const fixConfirmed = pred.predictedFixes.length === 0 ? exp.success : true;
+      const regressObserved = !exp.success && pred.predictedRegressions.length > 0;
+
+      const verdict: PredictionVerdict = {
+        predictionId: pred.id,
+        fixesConfirmed: fixConfirmed ? ['confirmed'] : [],
+        regressionsObserved: regressObserved ? ['observed'] : [],
+        netImpact: exp.success ? 'positive' : 'negative',
+        reverted: false,
+        verifiedAt: new Date().toISOString(),
+      };
+
+      this.verdicts.push(verdict);
+
+      const bus = getMessageBus();
+      bus.publish('memory.written', 'meta-learner', {
+        type: 'prediction_verdict',
+        predictionId: pred.id,
+        netImpact: verdict.netImpact,
+      });
+    }
+  }
+
+  getPredictions(): EvolutionPrediction[] {
+    return [...this.predictions];
+  }
+
+  getVerdicts(): PredictionVerdict[] {
+    return [...this.verdicts];
+  }
+
+  // ========================================================================
+  // Regression detection gate
+  // ========================================================================
+
+  /**
+   * Detect if a strategy's success rate drops significantly.
+   * Maintains a rolling window of recent outcomes per strategy
+   * and compares current rate against historical baseline.
+   */
+  private detectRegression(exp: ExecutionExperience): void {
+    const histKey = `${exp.strategyUsed}::${exp.modelUsed}`;
+    if (!this.successRateHistory.has(histKey)) {
+      this.successRateHistory.set(histKey, []);
+    }
+    const history = this.successRateHistory.get(histKey)!;
+    history.push(exp.success ? 1 : 0);
+
+    // Keep last 20 outcomes for the rolling window
+    if (history.length > 20) history.shift();
+
+    // Need at least 5 data points and a prior comparison window
+    if (history.length < 10) return;
+
+    const recentWindow = Math.min(5, Math.floor(history.length / 2));
+    const recent = history.slice(-recentWindow);
+    const prior = history.slice(0, history.length - recentWindow);
+
+    const recentRate = recent.reduce((s, v) => s + v, 0) / recent.length;
+    const priorRate = prior.reduce((s, v) => s + v, 0) / prior.length;
+
+    if (priorRate > 0 && recentRate < priorRate * (1 - this.config.regressionThreshold)) {
+      const dropRatio = priorRate > 0 ? (priorRate - recentRate) / priorRate : 0;
+      if (dropRatio >= this.config.regressionThreshold) {
+        const event: RegressionEvent = {
+          strategyName: exp.strategyUsed,
+          modelId: exp.modelUsed,
+          taskType: exp.taskType,
+          previousSuccessRate: priorRate,
+          currentSuccessRate: recentRate,
+          dropRatio,
+          triggeredAt: new Date().toISOString(),
+          autoReverted: false,
+        };
+        this.regressionEvents.push(event);
+
+        const bus = getMessageBus();
+        bus.publish('system.alert', 'meta-learner', {
+          type: 'regression_detected',
+          strategy: exp.strategyUsed,
+          modelId: exp.modelUsed,
+          dropRatio,
+          priorRate,
+          recentRate,
+        });
+      }
+    }
+  }
+
+  getRegressionEvents(limit = 20): RegressionEvent[] {
+    return this.regressionEvents.slice(-limit);
   }
 
   // ========================================================================
@@ -286,6 +562,50 @@ export class MetaLearner {
       });
     }
 
+    // Cross-model: per-model strategy suggestions
+    if (this.config.enableCrossModelMemory) {
+      for (const [modelId, modelMap] of this.perModelPriors) {
+        const entries = Array.from(modelMap.entries())
+          .map(([strategy, prior]) => ({ strategy, score: prior.mean, trials: prior.totalTrials }))
+          .sort((a, b) => b.score - a.score);
+
+        if (entries.length >= 2 && entries[0].score < 0.6 && entries[0].trials >= this.minSamplesForSuggestion) {
+          suggestions.push({
+            type: 'strategy_change',
+            target: modelId,
+            from: entries[0].strategy,
+            to: entries[1].strategy,
+            confidence: Math.round(entries[1].score * 100) / 100,
+            evidence: [
+              `model: ${modelId}`,
+              `top: ${entries[0].strategy} (${(entries[0].score * 100).toFixed(0)}%)`,
+              `alternative: ${entries[1].strategy} (${(entries[1].score * 100).toFixed(0)}%)`,
+            ],
+            impact: 'medium',
+          });
+        }
+      }
+    }
+
+    // Regression-based: flag strategies with recent drops
+    const recentRegressions = this.regressionEvents.slice(-5);
+    for (const re of recentRegressions) {
+      suggestions.push({
+        type: 'strategy_change',
+        target: re.strategyName,
+        from: re.strategyName,
+        to: '(revert)',
+        confidence: Math.min(1, re.dropRatio),
+        evidence: [
+          `regression on ${re.modelId}`,
+          `prior rate: ${(re.previousSuccessRate * 100).toFixed(0)}%`,
+          `current rate: ${(re.currentSuccessRate * 100).toFixed(0)}%`,
+          `drop: ${(re.dropRatio * 100).toFixed(0)}%`,
+        ],
+        impact: 'high',
+      });
+    }
+
     return suggestions;
   }
 
@@ -306,6 +626,19 @@ export class MetaLearner {
 
   getReflections(limit = 10): string[] {
     return this.reflections.slice(-limit);
+  }
+
+  /**
+   * Update the meta-learner config at runtime.
+   * Allows switching analysisMode (light/balanced/thorough) and toggling features.
+   */
+  setConfig(partial: Partial<MetaLearnerConfig>): void {
+    this.config = { ...this.config, ...partial };
+    this.persist();
+  }
+
+  getConfig(): MetaLearnerConfig {
+    return { ...this.config };
   }
 
   getStats(): {
@@ -388,14 +721,31 @@ export class MetaLearner {
         serializedPriors[taskType] = distributions.map(d => ({ alpha: d.alpha, beta: d.beta }));
       }
 
+      // Serialize cross-model priors
+      const serializedCrossModel: Record<string, Record<string, { alpha: number; beta: number }>> = {};
+      for (const [modelId, modelMap] of this.perModelPriors) {
+        serializedCrossModel[modelId] = {};
+        for (const [strategy, dist] of modelMap) {
+          serializedCrossModel[modelId][strategy] = { alpha: dist.alpha, beta: dist.beta };
+        }
+      }
+
       const data = {
         experiences: this.experiences,
         reflections: this.reflections.slice(-200),
         strategyPerformance: Array.from(this.strategyPerformance.entries()),
         thompsonPriors: serializedPriors,
+        predictions: this.predictions,
+        verdicts: this.verdicts,
+        regressionEvents: this.regressionEvents,
+        successRateHistory: Array.from(this.successRateHistory.entries()),
+        crossModelPriors: serializedCrossModel,
+        config: this.config,
       };
 
-      fs.writeFileSync(this.persistPath, JSON.stringify(data, null, 2), 'utf-8');
+      const tmpPath = this.persistPath + '.tmp';
+      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+      fs.renameSync(tmpPath, this.persistPath);
     } catch (e) {
       getGlobalLogger().warn('MetaLearner', 'Persistence failed (best-effort)', { error: (e as Error)?.message });
     }
@@ -424,6 +774,29 @@ export class MetaLearner {
           );
           this.thompsonPriors.set(taskType, priors);
         }
+      }
+
+      // Restore cross-model priors
+      if (data.crossModelPriors && typeof data.crossModelPriors === 'object') {
+        for (const [modelId, strategies] of Object.entries(data.crossModelPriors)) {
+          const modelMap = new Map<string, BetaDistribution>();
+          for (const [strategy, d] of Object.entries(strategies as Record<string, { alpha: number; beta: number }>)) {
+            modelMap.set(strategy, new BetaDistribution(d.alpha, d.beta));
+          }
+          this.perModelPriors.set(modelId, modelMap);
+        }
+      }
+
+      if (Array.isArray(data.predictions)) this.predictions = data.predictions;
+      if (Array.isArray(data.verdicts)) this.verdicts = data.verdicts;
+      if (Array.isArray(data.regressionEvents)) this.regressionEvents = data.regressionEvents;
+      if (Array.isArray(data.successRateHistory)) {
+        for (const [key, vals] of data.successRateHistory) {
+          this.successRateHistory.set(key, vals);
+        }
+      }
+      if (data.config && typeof data.config === 'object') {
+        this.config = { ...this.config, ...data.config };
       }
     } catch (e) {
       getGlobalLogger().warn('MetaLearner', 'Load failed (best-effort)', { error: (e as Error)?.message });

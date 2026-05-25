@@ -17,7 +17,11 @@ import { TELOSOrchestrator } from '../telos/telosOrchestrator';
 import { getMessageBus } from '../runtime/messageBus';
 import { getTraceRecorder } from '../runtime/executionTrace';
 import { getModelRouter } from '../runtime/modelRouter';
-import { getMetaLearner } from '../selfEvolution/metaLearner';
+import { getMetaLearner, DEFAULT_META_LEARNER_CONFIG } from '../selfEvolution/metaLearner';
+import { TrajectoryAnalyzer } from '../selfEvolution/trajectoryAnalyzer';
+import { getEvolverAgent } from '../selfEvolution/evolverAgent';
+import type { LLMProvider, AnalysisMode, ExecutionExperience, FailureCategory } from '../runtime/types';
+import type { OptimizationAction } from './topologyOptimizer';
 import { getGlobalThreeLayerMemory } from '../threeLayerMemory';
 import { deliberate, deliberateWithLLM } from './deliberation';
 import { RecursiveAtomizer } from './atomizer';
@@ -239,13 +243,13 @@ reasoning.push(`Synthesis quality: ${(synthesis.qualityScore * 100).toFixed(0)}%
              id: `exp-${execId}`,
              runId: execId,
              agentId: params.agentId,
-           } as any,
-           taskTree,
-           ctx,
+            },
+            taskTree,
+            ctx,
          );
          if (optimizationResult.proposal.actions.length > 0) {
            reasoning.push(`Topology optimized: ${optimizationResult.proposal.actions.length} actions`);
-           const topologyAction = optimizationResult.proposal.actions.find((a: any) => a.type === 'change_topology');
+           const topologyAction = optimizationResult.proposal.actions.find((a: OptimizationAction) => a.type === 'change_topology');
 if (topologyAction && 'to' in topologyAction) {
               ctx.topology = topologyAction.to as OrchestrationTopology;
             }
@@ -346,7 +350,7 @@ if (topologyAction && 'to' in topologyAction) {
     if (completedCount > 0 && failedCount > 0) {
       lessons.push(`${failedCount}/${countNodes(taskTree)} subtasks failed - partial completion`);
     }
-    getMetaLearner().recordExperience({
+    const exp: ExecutionExperience = {
       id: `exp-${execId}`,
       runId: execId,
       agentId: params.agentId,
@@ -358,10 +362,25 @@ if (topologyAction && 'to' in topologyAction) {
       tokenCost: totalTokens,
       lessons,
       timestamp: new Date().toISOString(),
-    });
+    };
+    getMetaLearner().recordExperience(exp);
+
+    // Trajectory analysis: classify failures for the meta-learner's next suggestions
+    if (!allSuccess) {
+      this.analyzeExecution(exp, effortLevel).catch(e =>
+        getGlobalLogger().warn('UltimateOrchestrator', 'Trajectory analysis failed', { error: (e as Error)?.message }),
+      );
+    }
 
     // Self-optimize: apply meta-learner suggestions after each execution
-    this.applyOptimizationSuggestions();
+    this.applyOptimizationSuggestions(exp);
+
+    // AHE Evolver: auto-tune config based on trajectory failure patterns
+    if (!allSuccess) {
+      this.runEvolutionCycle(exp, effortLevel, topology).catch(e =>
+        getGlobalLogger().warn('UltimateOrchestrator', 'Evolution cycle failed', { error: (e as Error)?.message }),
+      );
+    }
 
     try {
       const { MetaLearnerBridge, getSkillSystem } = await import('../skills');
@@ -508,8 +527,9 @@ if (topologyAction && 'to' in topologyAction) {
    * Close the meta-learning feedback loop.
    * Reads optimization suggestions from the MetaLearner and applies them
    * to the orchestrator's live config — making the system self-optimizing.
+   * When an experience is provided, creates a falsifiable prediction for each strategy change.
    */
-  applyOptimizationSuggestions(): void {
+  applyOptimizationSuggestions(exp?: ExecutionExperience): void {
     const suggestions = getMetaLearner().getSuggestions();
     for (const suggestion of suggestions) {
       if (suggestion.confidence < 0.3) continue;
@@ -531,29 +551,43 @@ if (topologyAction && 'to' in topologyAction) {
           break;
         }
 case 'strategy_change': {
-           // Adjust topology routing: prefer the suggested topology for compatible effort levels
-           const topologyMap: Record<string, OrchestrationTopology> = {
-             'SEQUENTIAL': 'SEQUENTIAL',
-             'PARALLEL': 'PARALLEL',
-             'HIERARCHICAL': 'HIERARCHICAL',
-             'HYBRID': 'HYBRID',
-           };
-           const preferredTopology = topologyMap[suggestion.to];
-           if (preferredTopology) {
-             this.config.defaultSynthesisConfig.qualityGates.forEach(g => {
-               if (g.name === 'consistency') {
-                 const thresholdAdjustment = suggestion.confidence * 0.1;
-                 g.threshold = Math.max(0.1, Math.min(1.0, g.threshold + (suggestion.to === 'HYBRID' || suggestion.to === 'PARALLEL' ? -thresholdAdjustment : thresholdAdjustment)));
-               }
-             });
-             getMessageBus().publish('system.alert', 'ultimate-orchestrator', {
-               type: 'self_optimization',
-               change: `strategy: prefer ${suggestion.to} over ${suggestion.from}`,
-               confidence: suggestion.confidence,
-               evidence: suggestion.evidence,
-             });
-           }
-           break;
+            // Adjust topology routing: prefer the suggested topology for compatible effort levels
+            const topologyMap: Record<string, OrchestrationTopology> = {
+              'SEQUENTIAL': 'SEQUENTIAL',
+              'PARALLEL': 'PARALLEL',
+              'HIERARCHICAL': 'HIERARCHICAL',
+              'HYBRID': 'HYBRID',
+            };
+            const preferredTopology = topologyMap[suggestion.to];
+            if (preferredTopology) {
+              this.config.defaultSynthesisConfig.qualityGates.forEach(g => {
+                if (g.name === 'consistency') {
+                  const thresholdAdjustment = suggestion.confidence * 0.1;
+                  g.threshold = Math.max(0.1, Math.min(1.0, g.threshold + (suggestion.to === 'HYBRID' || suggestion.to === 'PARALLEL' ? -thresholdAdjustment : thresholdAdjustment)));
+                }
+              });
+              getMessageBus().publish('system.alert', 'ultimate-orchestrator', {
+                type: 'self_optimization',
+                change: `strategy: prefer ${suggestion.to} over ${suggestion.from}`,
+                confidence: suggestion.confidence,
+                evidence: suggestion.evidence,
+              });
+
+              // Create a falsifiable prediction for the strategy change
+              if (exp) {
+                getMetaLearner().createPrediction(
+                  `opt-${Date.now()}`,
+                  `strategy change: ${suggestion.from} → ${suggestion.to}`,
+                  suggestion.to,
+                  suggestion.from,
+                  exp.modelUsed,
+                  [exp.taskType],
+                  [], // predicted fixes (filled from trajectory analysis)
+                  ['unclassified'], // predicted regressions to watch
+                );
+              }
+            }
+            break;
          }
         case 'prompt_template_change': {
           // Adjust quality gate thresholds based on prompt template suggestions
@@ -578,6 +612,90 @@ case 'strategy_change': {
           });
           break;
         }
+      }
+    }
+  }
+
+  /**
+   * Run trajectory analysis on a failed execution.
+   * Uses the configured analysis mode (light = zero extra LLM cost).
+   * Results are fed into the meta-learner's next suggestion cycle.
+   */
+  /**
+   * Run AHE evolution cycle: trajectory analysis → config mutations → predictions.
+   * Only triggers when there are failures and the evolver is active.
+   */
+  private async runEvolutionCycle(exp: ExecutionExperience, effortLevel?: string, taskType?: string): Promise<void> {
+    const config = getMetaLearner()['config'] ?? DEFAULT_META_LEARNER_CONFIG;
+    if (config.analysisMode === 'light' && this.config.qualityGates.every(g => !g.autoFix)) return;
+
+    const mode: AnalysisMode = config.analysisMode ?? 'light';
+    let provider: LLMProvider | undefined = undefined;
+    let model: string | undefined = undefined;
+    if (mode !== 'light' && this.runtime) {
+      provider = this.runtime.getProvider('openai')
+        ?? this.runtime.getProvider('anthropic')
+        ?? this.runtime.getProvider('openrouter')
+        ?? this.runtime.getProvider('mimo')
+        ?? this.runtime.getProvider('deepseek')
+        ?? this.runtime.getProvider('glm')
+        ?? this.runtime.getProvider('xiaomi')
+        ?? this.runtime.getProvider('google');
+      if (provider && effortLevel) {
+        model = this.config.modelTierMapping[effortLevel as EffortLevel] ?? 'gpt-4o-mini';
+      }
+    }
+
+    const analyzer = new TrajectoryAnalyzer(mode, provider, model);
+    const insights = await analyzer.analyze([exp]);
+    if (insights.length === 0) return;
+
+    const evolver = getEvolverAgent();
+    const cycle = evolver.runCycle(insights, this.config, exp, [taskType ?? 'general']);
+    if (cycle.applied > 0) {
+      const bus = getMessageBus();
+      bus.publish('system.alert', 'ultimate-orch', {
+        type: 'evolution_applied',
+        applied: cycle.applied,
+        details: cycle.mutations.map(m => `${m.domain}: ${m.description}`),
+      });
+    }
+  }
+
+  private async analyzeExecution(exp: ExecutionExperience, effortLevel?: string): Promise<void> {
+    const config = getMetaLearner()['config'] ?? DEFAULT_META_LEARNER_CONFIG;
+    const mode: AnalysisMode = config.analysisMode ?? 'light';
+
+    let provider: LLMProvider | undefined = undefined;
+    let model: string | undefined = undefined;
+    if (mode !== 'light' && this.runtime) {
+      provider = this.runtime.getProvider('openai')
+        ?? this.runtime.getProvider('anthropic')
+        ?? this.runtime.getProvider('openrouter')
+        ?? this.runtime.getProvider('mimo')
+        ?? this.runtime.getProvider('deepseek')
+        ?? this.runtime.getProvider('glm')
+        ?? this.runtime.getProvider('xiaomi')
+        ?? this.runtime.getProvider('google');
+      if (provider && effortLevel) {
+        model = this.config.modelTierMapping[effortLevel as EffortLevel] ?? 'gpt-4o-mini';
+      }
+    }
+
+    const analyzer = new TrajectoryAnalyzer(mode, provider, model);
+    const insights = await analyzer.analyze([exp]);
+
+    const bus = getMessageBus();
+    for (const insight of insights) {
+      if (!insight.success) {
+        bus.publish('memory.written', 'ultimate-orch', {
+          type: 'trajectory_insight',
+          runId: insight.runId,
+          category: insight.failureCategory,
+          confidence: insight.confidence,
+          evidence: insight.evidence,
+          analysisTokens: insight.analysisTokens,
+        });
       }
     }
   }
