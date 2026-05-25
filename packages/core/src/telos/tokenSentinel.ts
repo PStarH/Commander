@@ -98,17 +98,26 @@ export class TokenSentinel {
   private costRecords: CostRecord[] = [];
   private budgetAlerts: BudgetAlert[] = [];
   private maxRecords: number;
+  private maxAlerts: number;
   private monthlyCostLimitUsd: number;
   private monthlyCostUsd: number = 0;
   private monthlyResetDate: string;
 
   constructor(
     maxRecords = 10000,
+    maxAlerts = 1000,
     monthlyCostLimitUsd = 50.00,
   ) {
     this.maxRecords = maxRecords;
+    this.maxAlerts = maxAlerts;
     this.monthlyCostLimitUsd = monthlyCostLimitUsd;
     this.monthlyResetDate = new Date().toISOString().slice(0, 7); // YYYY-MM
+  }
+
+  private trimAlerts(): void {
+    while (this.budgetAlerts.length > this.maxAlerts) {
+      this.budgetAlerts.shift();
+    }
   }
 
   // ========================================================================
@@ -178,6 +187,7 @@ export class TokenSentinel {
         limit: budget.softCapTokens,
         message: `Estimated ${totalEstimated} tokens exceeds soft cap of ${budget.softCapTokens}`,
       });
+      this.trimAlerts();
     }
 
     return {
@@ -209,6 +219,7 @@ export class TokenSentinel {
         limit: this.monthlyCostLimitUsd,
         message: `Monthly cost $${this.monthlyCostUsd.toFixed(2)} exceeds limit $${this.monthlyCostLimitUsd}`,
       });
+      this.trimAlerts();
     }
   }
 
@@ -303,6 +314,7 @@ export class TokenSentinel {
         message: `Hard cap of ${budget.hardCapTokens} tokens reached (${currentTokens})`,
       };
       this.budgetAlerts.push(alert);
+      this.trimAlerts();
       return alert;
     }
     return null;
@@ -318,6 +330,7 @@ export class TokenSentinel {
         message: `Monthly budget exhausted: $${this.monthlyCostUsd.toFixed(2)} >= $${this.monthlyCostLimitUsd}`,
       };
       this.budgetAlerts.push(alert);
+      this.trimAlerts();
       return alert;
     }
     return null;
