@@ -126,6 +126,7 @@ these are official BFCL leaderboard runs.
 # Reproduce any benchmark
 pnpm benchmark:gaia              # Full GAIA (takes a while)
 pnpm benchmark:gaia:quick        # 5-task quick check
+pnpm --filter @commander/core benchmark:verify  # Recompute checked-in BFCL score claims
 pnpm test:core                   # Full core suite: node:test + vitest
 pnpm benchmark:multiagent        # Multi-agent orchestration benchmark
 ```
