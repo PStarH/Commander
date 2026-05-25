@@ -223,10 +223,10 @@ export class AnthropicProvider implements LLMProvider {
     };
   }
 
-  private parseResponse(data: any, model: string): LLMResponse {
+  private parseResponse(data: { content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>; usage?: { input_tokens?: number; output_tokens?: number } }, model: string): LLMResponse {
     const content = data.content ?? [];
-    const textBlocks = content.filter((c: any) => c.type === 'text');
-    const toolBlocks = content.filter((c: any) => c.type === 'tool_use');
+    const textBlocks = content.filter((c): c is typeof c & { text: string } => c.type === 'text');
+    const toolBlocks = content.filter((c): c is typeof c & { id: string; name: string; input: unknown } => c.type === 'tool_use');
 
     const usage: TokenUsage = {
       promptTokens: data.usage?.input_tokens ?? 0,
@@ -235,14 +235,14 @@ export class AnthropicProvider implements LLMProvider {
     };
 
     return {
-      content: textBlocks.map((b: any) => b.text).join(''),
+      content: textBlocks.map((b) => b.text).join(''),
       model,
       usage,
       finishReason: 'stop',
-      toolCalls: toolBlocks.map((b: any) => ({
+      toolCalls: toolBlocks.map((b) => ({
         id: b.id,
         name: b.name,
-        arguments: b.input ?? {},
+        arguments: (b.input ?? {}) as Record<string, unknown>,
       })),
     };
   }
