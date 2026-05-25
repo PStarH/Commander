@@ -1,3 +1,13 @@
+/**
+ * Circuit Breaker Registry — Named circuit breaker management for per-tool/per-provider fault isolation.
+ *
+ * Wraps individual CircuitBreaker instances with a registry that provides
+ * named access, lazy initialization, aggregated stats, and bulk reset.
+ * Each tool or provider gets its own breaker so a failure in one doesn't
+ * cascade to others.
+ *
+ * Used by ToolOrchestrator and AgentRuntime to track per-call reliability.
+ */
 import { CircuitBreaker, type CircuitState, type CircuitStats } from './circuitBreaker';
 import { getGlobalLogger } from '../logging';
 

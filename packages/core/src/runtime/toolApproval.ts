@@ -1,47 +1,51 @@
 /**
- * ToolApproval — 工具审批系统
+ * ToolApproval — tool approval system.
  *
- * 对标 OpenClaw 的工具审批流 + Hermes 的 approval.py 危险命令拦截
- * 但 Commander 的实现更进一步：
- * 1. 多层级审批（自动/半自动/手动）
- * 2. 基于风险的动态审批策略
- * 3. 审批上下文传递给模型，让模型理解为什么需要等待
+ * Inspired by OpenClaw's tool approval flow and Hermes's approval.py
+ * dangerous-command interception, but Commander goes further:
+ * 1. Multi-level approval (auto / semi-auto / manual)
+ * 2. Risk-based dynamic approval policies
+ * 3. Approval context is passed to the model so it understands why it must wait
  */
 
 import { getGlobalLogger } from '../logging';
 
 // ============================================================================
-// 审批级别
+// Approval levels
 // ============================================================================
 
+/** Approval level applied to a tool invocation. */
 export type ApprovalLevel = 'auto' | 'semi_auto' | 'manual';
 
+/**
+ * Approval policy for matching tool names and deciding whether approval is needed.
+ */
 export interface ApprovalPolicy {
-  /** 工具名称或模式（支持通配符 *） */
+  /** Tool name or pattern (supports wildcard *). */
   pattern: string | RegExp;
-  /** 审批级别 */
+  /** Approval level. */
   level: ApprovalLevel;
-  /** 风险等级 */
+  /** Risk level. */
   riskLevel: 'low' | 'medium' | 'high' | 'critical';
-  /** 描述 */
+  /** Description. */
   description: string;
-  /** 自动审批条件（仅 semi_auto 级别使用） */
+  /** Auto-approval conditions (used only for semi_auto). */
   autoApproveIf?: {
-    /** 参数匹配条件 */
+    /** Argument matching conditions. */
     argsMatch?: Record<string, unknown>;
-    /** 用户角色 */
+    /** User roles. */
     userRole?: string[];
-    /** 环境条件 */
+    /** Environment conditions. */
     env?: Record<string, string>;
   };
-  /** 超时时间（仅 manual 级别使用），默认 60s */
+  /** Timeout in milliseconds (manual only), default 60s. */
   timeoutMs?: number;
-  /** 最大等待次数 */
+  /** Maximum wait count. */
   maxWaitCount?: number;
 }
 
 // ============================================================================
-// 默认审批策略
+// Default approval policies
 // ============================================================================
 
 export const DEFAULT_APPROVAL_POLICIES: ApprovalPolicy[] = [
@@ -133,7 +137,7 @@ export const DEFAULT_APPROVAL_POLICIES: ApprovalPolicy[] = [
 ];
 
 // ============================================================================
-// 审批请求 & 结果
+// Approval requests & results
 // ============================================================================
 
 export interface ApprovalRequest {
@@ -148,6 +152,7 @@ export interface ApprovalRequest {
   waitCount: number;
 }
 
+/** Result returned after an approval decision is made. */
 export interface ApprovalResult {
   approved: boolean;
   requestId: string;
@@ -252,19 +257,20 @@ export class ToolApproval {
       for (const [key, expected] of Object.entries(conditions.argsMatch)) {
         const actual = args[key];
         if (typeof expected === 'object' && expected !== null) {
+          const opArgs = expected as { $lte?: number; $not?: RegExp; $length?: number };
           // 处理操作符条件
           if ('$lte' in expected) {
-            if (typeof actual !== 'number' || actual > (expected as any).$lte) {
+            if (typeof actual !== 'number' || actual > opArgs.$lte!) {
               return false;
             }
           }
           if ('$not' in expected) {
-            if (typeof actual === 'string' && (expected as any).$not instanceof RegExp) {
-              if ((expected as any).$not.test(actual)) return false;
+            if (typeof actual === 'string' && opArgs.$not instanceof RegExp) {
+              if (opArgs.$not.test(actual)) return false;
             }
           }
           if ('$length' in expected) {
-            if (Array.isArray(actual) && actual.length > (expected as any).$length) {
+            if (Array.isArray(actual) && actual.length > opArgs.$length!) {
               return false;
             }
           }

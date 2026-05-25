@@ -1,3 +1,18 @@
+/**
+ * Parameter Controller — Adaptive LLM sampling parameter selection.
+ *
+ * Dynamically selects temperature, topP, and other sampling parameters based
+ * on task type classification. Uses keyword/pattern matching to classify
+ * user messages into 8 task types (code_generation, code_review, tool_calling,
+ * reasoning, creative, conversation, planning, default).
+ *
+ * Features:
+ * - Task-type parameter profiles with per-type temperature/topP defaults
+ * - Self-correction retry loop (increase temp on first retry, decrease thereafter)
+ * - Lockable eval profile for deterministic evaluation runs
+ * - Plugin integration via beforeLLMCall hook
+ * - Parameter decision audit trail (last 1000 decisions)
+ */
 import type { LLMMessage, LLMRequest, ReasoningConfig } from './types';
 import type { CommanderPlugin, BeforeLLMCallContext } from '../pluginManager';
 

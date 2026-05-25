@@ -79,7 +79,7 @@ export class WebhookDispatcher {
     this.started = true;
     const bus = getMessageBus();
     // Subscribe to ALL topics — filter at dispatch time
-    const unsub = bus.subscribe('*' as any, (msg: any) => {
+    const unsub = bus.subscribe('*', (msg) => {
       const topic = typeof msg.topic === 'string' ? msg.topic : String(msg.topic);
       this.dispatch(topic, msg.payload ?? {}, msg.source ?? 'system');
     });
@@ -216,7 +216,11 @@ export class WebhookDispatcher {
       });
     });
 
+    // Prevent double-retry when timeout fires then req.destroy() triggers error event
+    let timedOut = false;
+
     req.on('error', (err: Error) => {
+      if (timedOut) return; // already handled by timeout handler
       this.logDelivery(wh.id, event.event, 'failed', undefined, attempt + 1, err.message);
       if (attempt < (wh.retryMax ?? DEFAULT_RETRY_MAX)) {
         const delay = RETRY_DELAYS_MS[attempt] ?? 15000;
@@ -232,6 +236,7 @@ export class WebhookDispatcher {
     });
 
     req.on('timeout', () => {
+      timedOut = true;
       req.destroy();
       this.logDelivery(wh.id, event.event, 'failed', undefined, attempt + 1, 'timeout');
       if (attempt < (wh.retryMax ?? DEFAULT_RETRY_MAX)) {

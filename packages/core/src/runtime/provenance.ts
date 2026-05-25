@@ -1,3 +1,11 @@
+/**
+ * Run Provenance — Reproducibility metadata capture.
+ *
+ * Collects git state (commit hash, branch, dirty status), system info
+ * (Node version, platform, arch), and model configuration at runtime.
+ * Used by SamplesStore and the evaluation framework to ensure every
+ * execution trace is reproducible.
+ */
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';

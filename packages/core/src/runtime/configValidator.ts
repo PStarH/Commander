@@ -48,15 +48,15 @@ export interface ConfigValidationError {
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function resolveNested(obj: any, path: string): { parent: any; key: string; value: unknown } | null {
+function resolveNested(obj: Record<string, unknown>, path: string): { parent: Record<string, unknown>; key: string; value: unknown } | null {
   const parts = path.split('.');
-  let current = obj;
+  let current: unknown = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     if (current == null || typeof current !== 'object') return null;
-    current = current[parts[i]];
+    current = (current as Record<string, unknown>)[parts[i]];
   }
   const key = parts[parts.length - 1];
-  return { parent: current, key, value: current?.[key] };
+  return { parent: current as Record<string, unknown>, key, value: (current as Record<string, unknown>)?.[key] };
 }
 
 function getTypeName(val: unknown): FieldType {
@@ -113,7 +113,7 @@ export function validateConfig<T extends Record<string, unknown>>(
   const input: Record<string, unknown> = config ?? {};
 
   for (const [key, field] of Object.entries(schema)) {
-    const value = (input as any)?.[key];
+    const value = input?.[key];
 
     // Check required
     if (value === undefined || value === null) {
@@ -244,6 +244,8 @@ export function validateHttpServerConfig(config: Record<string, unknown>): Confi
     port: { type: 'number', required: true, min: 1, max: 65535, default: 3001 },
     host: { type: 'string', default: '127.0.0.1' },
     cors: { type: 'boolean', default: true },
+    corsAllowedOrigins: { type: 'array', default: ['http://localhost:3000', 'http://127.0.0.1:3000'] },
+    maxBodyBytes: { type: 'number', min: 1024, max: 100 * 1024 * 1024, default: 1024 * 1024 },
     apiKey: { type: 'string' },
     rateLimitPerMinute: { type: 'number', min: 0, max: 100000, default: 120 },
   });

@@ -1,12 +1,12 @@
 /**
- * CycleDetector — 工具调用循环检测
+ * CycleDetector — tool call cycle detection
  *
- * 检测并中断工具调用中的重复模式，防止无限循环。
- * 基于 OpenClaw 的 loop-detection 设计，但更加智能化：
- * - 检测完全相同的工具调用（相同工具+相同参数）
- * - 检测交替循环模式（A→B→A→B）
- * - 检测缓慢漂移的循环（参数微调的重复）
- * - 提供结构化反馈给模型，让它知道为什么被中断
+ * Detects and interrupts repeating tool-call patterns to prevent infinite loops.
+ * Inspired by OpenClaw's loop-detection design, but more adaptive:
+ * - Detects consecutive identical tool calls (same tool + same args)
+ * - Detects alternating loops (A→B→A→B)
+ * - Detects slow-drift loops (repeated calls with small parameter changes)
+ * - Provides structured feedback so the model knows why execution was stopped
  */
 
 interface CycleDetectorConfig {

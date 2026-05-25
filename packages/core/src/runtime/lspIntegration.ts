@@ -1,3 +1,11 @@
+/**
+ * Language Server Protocol integration for real-time diagnostics.
+ * Spawns LSP servers over stdin/stdout JSON-RPC for TypeScript/JavaScript.
+ * Used to surface diagnostics, type checking, and code quality feedback.
+ * This module bridges editor-style analysis into the agent runtime.
+ * It supports on-demand inspection of source files during execution.
+ * The goal is fast, localized feedback without leaving the workflow.
+ */
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
@@ -51,11 +59,19 @@ class LSPClient {
         env: { ...process.env, NODE_ENV: 'development' },
       });
 
-      const timeout = setTimeout(() => reject(new Error('LSP connection timeout')), 10000);
+      // Guard against multiple resolve/reject calls (timeout + error + sendRequest can race)
+      let settled = false;
+      const settle = (fn: () => void): void => {
+        if (!settled) { settled = true; fn(); }
+      };
+
+      const timeout = setTimeout(() => settle(() => reject(new Error('LSP connection timeout'))), 10000);
 
       this.process.on('error', (err) => {
-        clearTimeout(timeout);
-        reject(new Error(`LSP process error: ${err.message}`));
+        settle(() => {
+          clearTimeout(timeout);
+          reject(new Error(`LSP process error: ${err.message}`));
+        });
       });
 
       this.process.on('close', (code) => {
@@ -90,12 +106,14 @@ class LSPClient {
         },
       })
         .then(() => {
-          clearTimeout(timeout);
-          this.isConnected = true;
-          this.sendNotification('initialized', {});
-          resolve();
+          settle(() => {
+            clearTimeout(timeout);
+            this.isConnected = true;
+            this.sendNotification('initialized', {});
+            resolve();
+          });
         })
-        .catch(reject);
+        .catch((e: Error) => settle(() => reject(e)));
     });
   }
 
