@@ -45,12 +45,15 @@ export interface HttpServerConfig {
   https?: HttpsServerOptions;
   /** API key for Bearer auth. If undefined, a random key is generated at startup. Set to '' to explicitly disable auth (NOT recommended). */
   apiKey?: string;
+  /** SHA-256 hash of the API key. Prefer this over apiKey in production config. */
+  apiKeyHash?: string;
   /** Max requests per minute per IP. 0 = no limit. Default: 120 */
   rateLimitPerMinute: number;
   /** Optional mapping of API key → tenant ID for multi-tenant deployments.
-   *  Keys are stored as-is (not hashed — use secure keys). When set, tenantId
-   *  is derived from the Authorization header instead of trusting request body. */
+   *  Raw keys are hashed at startup and then discarded. Prefer tenantApiKeyHashes in production config. */
   tenantApiKeys?: Record<string, string>;
+  /** Optional mapping of SHA-256 API key hash → tenant ID for multi-tenant deployments. */
+  tenantApiKeyHashes?: Record<string, string>;
 }
 
 const DEFAULT_CONFIG: HttpServerConfig = {
@@ -107,13 +110,29 @@ function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
-function authenticate(req: IncomingMessage, config: HttpServerConfig): boolean {
-  // If apiKey is explicitly empty string, auth is disabled (user opted in)
-  if (config.apiKey === '') return true;
-  // If apiKey is undefined (default), auth is required — key was generated at startup
-  if (!config.apiKey) return false;
+function hashSecret(secret: string): string {
+  return crypto.createHash('sha256').update(secret).digest('hex');
+}
+
+function timingSafeHexEqual(a: string, b: string): boolean {
+  if (!/^[a-f0-9]{64}$/i.test(a) || !/^[a-f0-9]{64}$/i.test(b)) return false;
+  const left = Buffer.from(a, 'hex');
+  const right = Buffer.from(b, 'hex');
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function extractAuthKey(req: IncomingMessage): string | undefined {
   const auth = req.headers.authorization;
-  return auth === `Bearer ${config.apiKey}` || auth === config.apiKey;
+  if (!auth) return undefined;
+  return auth.startsWith('Bearer ') ? auth.slice(7) : auth;
+}
+
+function authenticate(req: IncomingMessage, authDisabled: boolean, apiKeyHash?: string): boolean {
+  if (authDisabled) return true;
+  if (!apiKeyHash) return false;
+  const key = extractAuthKey(req);
+  if (!key) return false;
+  return timingSafeHexEqual(hashSecret(key), apiKeyHash);
 }
 
 export class CommanderHttpServer {
@@ -127,14 +146,37 @@ export class CommanderHttpServer {
   // Graceful shutdown: track open connections
   private connections: Set<import('net').Socket> = new Set();
   private isShuttingDown = false;
+  private authDisabled = false;
+  private apiKeyHash: string | undefined;
+  private tenantApiKeyHashes: Map<string, string> = new Map();
 
   constructor(config?: Partial<HttpServerConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
-    // If no apiKey provided, generate one so the server isn't open by default
-    if (this.config.apiKey === undefined) {
-      this.config.apiKey = crypto.randomBytes(24).toString('hex');
-      getGlobalLogger().info('HttpServer', 'Generated API key');
+    this.initializeAuth();
+  }
+
+  private initializeAuth(): void {
+    if (this.config.apiKey === '') {
+      this.authDisabled = true;
+    } else if (this.config.apiKeyHash) {
+      this.apiKeyHash = this.config.apiKeyHash;
+    } else if (this.config.apiKey !== undefined) {
+      this.apiKeyHash = hashSecret(this.config.apiKey);
+    } else {
+      this.apiKeyHash = hashSecret(crypto.randomBytes(24).toString('hex'));
+      getGlobalLogger().info('HttpServer', 'Generated ephemeral API key hash; configure apiKeyHash for externally accessible deployments');
     }
+
+    for (const [keyHash, tenantId] of Object.entries(this.config.tenantApiKeyHashes ?? {})) {
+      this.tenantApiKeyHashes.set(keyHash, tenantId);
+    }
+    for (const [rawKey, tenantId] of Object.entries(this.config.tenantApiKeys ?? {})) {
+      this.tenantApiKeyHashes.set(hashSecret(rawKey), tenantId);
+    }
+
+    // Drop raw secrets from retained server config after one-way hashing.
+    this.config.apiKey = undefined;
+    this.config.tenantApiKeys = undefined;
   }
 
   async start(): Promise<void> {
@@ -154,7 +196,7 @@ export class CommanderHttpServer {
           protocol: this.config.https ? 'https' : 'http',
           host: this.config.host,
           port: this.config.port,
-          authEnabled: !!this.config.apiKey,
+          authEnabled: !this.authDisabled,
         });
         resolve();
       });
@@ -266,7 +308,7 @@ export class CommanderHttpServer {
       return;
     }
 
-    if (!authenticate(req, this.config)) {
+    if (!authenticate(req, this.authDisabled, this.apiKeyHash)) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized. Provide Authorization: Bearer <api-key> header.' }));
       return;
@@ -447,12 +489,9 @@ export class CommanderHttpServer {
 
   /** Resolve tenant ID from the Authorization header using configured API key mapping. */
   private resolveTenantFromAuth(req: IncomingMessage): string | undefined {
-    if (!this.config.tenantApiKeys) return undefined;
-    const auth = req.headers.authorization;
-    if (!auth) return undefined;
-    // Strip "Bearer " prefix if present
-    const key = auth.startsWith('Bearer ') ? auth.slice(7) : auth;
-    return this.config.tenantApiKeys[key];
+    const key = extractAuthKey(req);
+    if (!key) return undefined;
+    return this.tenantApiKeyHashes.get(hashSecret(key));
   }
 
   private checkRateLimit(ip: string): boolean {

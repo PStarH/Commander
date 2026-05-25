@@ -111,16 +111,32 @@ export class ExecPolicyEngine {
     if (/^[a-z0-9._+-]+$/i.test(p)) {
       return candidates.commandNames.has(p);
     }
+    if (Array.from(candidates.rawCommands).some(command => this.rawCommandMatches(command, p))) {
+      return true;
+    }
     return Array.from(candidates.segments).some(segment => this.segmentMatches(segment, p));
+  }
+
+  private rawCommandMatches(command: string, pattern: string): boolean {
+    if (command === pattern) return true;
+    if (this.isShellPayloadPattern(pattern)) {
+      return command.includes(pattern);
+    }
+    return false;
   }
 
   private segmentMatches(segment: string, pattern: string): boolean {
     if (segment === pattern) return true;
+    if (pattern.endsWith('=') && segment.startsWith(pattern)) return true;
     if (this.startsWithTokenBoundary(segment, pattern)) return true;
     if (pattern.includes('/dev/') || pattern.includes('>')) {
       return segment.includes(pattern);
     }
     return false;
+  }
+
+  private isShellPayloadPattern(pattern: string): boolean {
+    return pattern.includes('|') || pattern.includes(';') || pattern.includes('&') || pattern.includes('>');
   }
 
   private startsWithTokenBoundary(segment: string, pattern: string): boolean {
@@ -130,11 +146,14 @@ export class ExecPolicyEngine {
   }
 
   private extractCommandCandidates(command: string): CommandCandidates {
+    const rawCommands = new Set<string>();
     const segments = new Set<string>();
     const commandNames = new Set<string>();
     const queue = [command, ...this.extractCommandSubstitutions(command)];
 
     for (const source of queue) {
+      const rawCommand = source.trim().toLowerCase();
+      if (rawCommand) rawCommands.add(rawCommand);
       for (const rawSegment of this.splitCommandSegments(source)) {
         const segment = rawSegment.trim().toLowerCase();
         if (!segment) continue;
@@ -147,7 +166,7 @@ export class ExecPolicyEngine {
       }
     }
 
-    return { segments, commandNames };
+    return { rawCommands, segments, commandNames };
   }
 
   private splitCommandSegments(command: string): string[] {
@@ -264,11 +283,19 @@ export class ExecPolicyEngine {
   private commandNameAliases(token: string): string[] {
     const aliases = new Set<string>();
     const cleaned = token.toLowerCase();
-    aliases.add(path.basename(cleaned));
+    const basename = path.basename(cleaned);
+    aliases.add(basename);
+    if (basename.startsWith('mkfs.')) {
+      aliases.add('mkfs');
+    }
 
     if (token.includes('/') && fs.existsSync(token)) {
       try {
-        aliases.add(path.basename(fs.realpathSync(token)).toLowerCase());
+        const realBasename = path.basename(fs.realpathSync(token)).toLowerCase();
+        aliases.add(realBasename);
+        if (realBasename.startsWith('mkfs.')) {
+          aliases.add('mkfs');
+        }
       } catch {
         // Keep the syntactic basename if the path cannot be resolved.
       }
@@ -318,6 +345,7 @@ export class ExecPolicyEngine {
 }
 
 interface CommandCandidates {
+  rawCommands: Set<string>;
   segments: Set<string>;
   commandNames: Set<string>;
 }

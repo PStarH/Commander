@@ -1,6 +1,7 @@
 import { describe, it, beforeAll as before, afterAll as after } from 'vitest';
 import assert from 'node:assert';
 import * as http from 'node:http';
+import * as crypto from 'node:crypto';
 import { CommanderHttpServer } from '../src/runtime/httpServer';
 
 const PORT = 0; // dynamic port
@@ -142,6 +143,38 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
         });
         assert.strictEqual(status, 401);
         assert.ok(body.error?.toLowerCase().includes('unauthorized'));
+      } finally {
+        await authServer.stop();
+      }
+    });
+
+    it('accepts hashed API key config without retaining the raw key', async () => {
+      const rawKey = 'hashed-test-key-123';
+      const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+      const authServer = new CommanderHttpServer({
+        port: 0,
+        host: '127.0.0.1',
+        apiKeyHash: keyHash,
+        tenantApiKeys: { 'tenant-raw-key': 'tenant-a' },
+        rateLimitPerMinute: 0,
+      });
+      await authServer.start();
+      const authBaseUrl = `http://127.0.0.1:${authServer.getPort()}`;
+
+      try {
+        const { status, body } = await requestJson('GET', `${authBaseUrl}/api/v1/status`, {
+          headers: { Authorization: `Bearer ${rawKey}` },
+        });
+        assert.strictEqual(status, 200);
+        assert.strictEqual(typeof body.activeSessions, 'number');
+
+        const retainedConfig = (authServer as unknown as { config: { apiKey?: string; tenantApiKeys?: Record<string, string> } }).config;
+        assert.strictEqual(retainedConfig.apiKey, undefined);
+        assert.strictEqual(retainedConfig.tenantApiKeys, undefined);
+
+        const tenantReq = { headers: { authorization: 'Bearer tenant-raw-key' } } as http.IncomingMessage;
+        const tenantId = (authServer as unknown as { resolveTenantFromAuth(req: http.IncomingMessage): string | undefined }).resolveTenantFromAuth(tenantReq);
+        assert.strictEqual(tenantId, 'tenant-a');
       } finally {
         await authServer.stop();
       }

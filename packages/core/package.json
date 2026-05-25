@@ -47,8 +47,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "pnpm test:node && pnpm test:vitest",
+    "test:inventory": "node scripts/test-inventory.mjs --verify",
     "test:node": "node scripts/run-node-tests.mjs",
     "bench": "node scripts/run-node-tests.mjs benchmarks",
+    "benchmark:verify": "node scripts/verify-benchmark-results.mjs",
     "test:vitest": "vitest run",
     "test:vitest:watch": "vitest",
     "prepublishOnly": "tsc -p tsconfig.json",
