@@ -521,16 +521,6 @@ export {
    resetTraceRecorder,
    /** Core runtime engine for agent execution. */
    AgentRuntime,
-   /** Mock implementation of an embedding function for testing. */
-   MockEmbeddingFunction,
-   /** Calculates cosine similarity between two vectors. */
-   cosineSimilarity,
-   /** Calculates L2 distance between two vectors. */
-   l2Distance,
-   /** Simple in-memory store for vector embeddings. */
-   InMemoryEmbeddingStore,
-   /** Calculates a relevance score for a memory item. */
-   calculateMemoryScore,
    /** Provider for OpenAI models. */
    OpenAIProvider,
    /** Provider for Anthropic Claude models. */
@@ -1091,9 +1081,4 @@ export {
   PluginLoader,
   getPluginLoader,
 } from './pluginLoader';
-export {
-  /** @testing Deterministic mock LLM provider for unit tests. */
-  MockLLMProvider,
-  createMockProvider,
-  createMockProviderWithTools,
-} from './runtime/mockLLMProvider';
+
