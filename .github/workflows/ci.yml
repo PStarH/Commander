@@ -28,11 +28,20 @@ jobs:
         run: npm audit --audit-level=high
         continue-on-error: true
 
+      - name: ESLint check (no-console rule)
+        run: npx eslint packages/core/src
+
       - name: TypeScript check (core)
         run: npx tsc --noEmit -p packages/core/tsconfig.json
 
       - name: TypeScript check (SDK)
         run: pnpm --filter @commander/sdk typecheck
+
+      - name: Verify core test inventory
+        run: pnpm --filter @commander/core test:inventory
+
+      - name: Verify benchmark result claims
+        run: pnpm --filter @commander/core benchmark:verify
 
       - name: Run core tests
         run: pnpm --filter @commander/core test

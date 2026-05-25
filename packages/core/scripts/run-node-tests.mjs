@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -6,7 +6,18 @@ const roots = process.argv.slice(2);
 if (roots.length === 0) roots.push('tests');
 const files = [];
 
-function collect(dir) {
+function collect(target) {
+  const stat = statSync(target);
+  if (stat.isFile()) {
+    if (target.endsWith('.test.ts')) {
+      const source = readFileSync(target, 'utf8');
+      if (!/from\s+['"]vitest['"]/.test(source)) {
+        files.push(target);
+      }
+    }
+    return;
+  }
+  const dir = target;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {

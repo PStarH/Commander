@@ -1,5 +1,4 @@
-import { describe, it, before } from 'node:test';
-import assert from 'node:assert';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { MessageBus, resetMessageBus } from '../../src/runtime/messageBus';
 
 describe('MessageBus', () => {
