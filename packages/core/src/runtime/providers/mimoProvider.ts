@@ -202,7 +202,7 @@ export class MiMoProvider implements LLMProvider {
     };
   }
 
-  private parseResponse(data: any, model: string): LLMResponse {
+  private parseResponse(data: { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>; reasoning_content?: string }; finish_reason?: string }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }, model: string): LLMResponse {
     const choice = data.choices?.[0];
     const message = choice?.message ?? {};
 
@@ -213,7 +213,7 @@ export class MiMoProvider implements LLMProvider {
     };
 
     let content = message.content ?? '';
-    let toolCalls = message.tool_calls?.map((tc: any) => ({
+    let toolCalls = message.tool_calls?.map((tc: { id: string; function: { name: string; arguments: string } }) => ({
       id: tc.id,
       name: tc.function.name,
       arguments: JSON.parse(tc.function.arguments || '{}'),
@@ -238,7 +238,10 @@ export class MiMoProvider implements LLMProvider {
       content,
       model,
       usage: tokenUsage,
-      finishReason: choice?.finish_reason ?? 'stop',
+      finishReason: choice?.finish_reason === 'stop' ? 'stop'
+        : choice?.finish_reason === 'tool_calls' ? 'tool_calls'
+        : choice?.finish_reason === 'length' ? 'length'
+        : 'stop',
       toolCalls,
       reasoning_content: message.reasoning_content,
     };
