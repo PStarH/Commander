@@ -63,7 +63,7 @@ function isoToNanos(iso: string): string {
 function toOtlpSpan(span: OTelSpan): Record<string, unknown> {
   const attrs: Array<{ key: string; value: { stringValue?: string; intValue?: string; boolValue?: boolean } }> = [];
   for (const [key, value] of Object.entries(span.attributes || {})) {
-    const attr: any = { key };
+    const attr: { key: string; value: { stringValue?: string; intValue?: string; boolValue?: boolean } } = { key, value: {} };
     if (typeof value === 'string') attr.value = { stringValue: value };
     else if (typeof value === 'boolean') attr.value = { boolValue: value };
     else attr.value = { intValue: String(value) };

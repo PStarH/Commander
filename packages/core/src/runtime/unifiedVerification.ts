@@ -87,12 +87,13 @@ const SCORED_PATTERNS: TypedPattern[] = [
   { type: 'code', weight: 1, pattern: /\b(generate|write|create|implement)\b.*\b(function|class|program|script|module)\b/i },
 
   // Structured output
-  { type: 'structured', weight: 3, pattern: /\b(return|output)\s+(as|in)\s+(json|structured|xml|yaml|table)\b/i },
+  { type: 'structured', weight: 3, pattern: /\b(return|output)\b.{0,60}\b(as|in)\s+(json|structured|xml|yaml|table)\b/i },
   { type: 'structured', weight: 2, pattern: /\b(json|csv|xml|yaml|tsv)\s+(format|output|response|schema)\b/i },
   { type: 'structured', weight: 1, pattern: /\b(format|convert|transform)\s+(as|to|into)\s+(json|csv|xml|yaml)\b/i },
 
   // Search / fact retrieval
   { type: 'search', weight: 3, pattern: /\b(search|look\s+up|find|retrieve|fetch|browse|scrape)\b.*\b(web|url|http|site|website|page|article)\b/i },
+  { type: 'search', weight: 3, pattern: /\bhttps?:\/\/\S+/i },
   { type: 'search', weight: 2, pattern: /\b(what\s+is|who\s+is|where\s+is|when\s+(was|did)|how\s+many)\b.+\?/i },
   { type: 'search', weight: 2, pattern: /\b(population|capital|located|founded|invented|discovered|president|prime minister)\b/i },
   { type: 'search', weight: 1, pattern: /\b(fact|data|information|details|news|latest|current|recent)\b/i },
