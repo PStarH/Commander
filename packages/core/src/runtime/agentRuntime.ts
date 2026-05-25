@@ -1,3 +1,19 @@
+/**
+ * Agent Runtime — Core execution engine for the Commander agent loop.
+ *
+ * The central orchestrator that drives the LLM → Tools → Verification → Retry
+ * cycle. Each call to execute() runs one full agent turn:
+ *   1. Model routing (eco → standard → power)
+ *   2. Tool selection & availability filtering
+ *   3. LLM provider call with timeout & retry
+ *   4. Tool execution with dependency-aware planning
+ *   5. Verification via UnifiedVerificationPipeline
+ *   6. State checkpointing (crash-safe atomic writes)
+ *   7. Metrics collection & trace recording
+ *
+ * Integrates CircuitBreaker, TokenGovernor, ContextCompactor, CompensationRegistry,
+ * DeadLetterQueue, CycleDetector, and all tool subsystems.
+ */
 import type {
   LLMProvider,
   LLMRequest,
@@ -40,7 +56,7 @@ import { ToolResultCache } from './toolResultCache';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
 import { ToolApproval } from './toolApproval';
-import { selectTools } from './toolRetriever';
+import { selectTools, sortToolDefinitionsForCache } from './toolRetriever';
 import { ToolPlanner } from './toolPlanner';
 import { CycleDetector } from './cycleDetector';
 import { repairToolCallArguments } from './toolCallRepair';
@@ -51,6 +67,7 @@ import { isConfidentResponse } from './entropyGater';
 import { createContentScanner, type ContentScanner } from '../contentScanner';
 import type { TenantProvider, TenantConfig } from './tenantProvider';
 import { getGlobalTenantProvider, getGlobalMemoryRegistry } from './tenantProvider';
+import { getLaneManager } from '../sandbox/lane';
 import { createMemoryStore } from '../memory';
 import type { MemoryStore } from '../memory';
 import { OpenTelemetryExporter, getOTelExporter, executionTraceToOtlpSpans } from './openTelemetryExporter';
@@ -310,6 +327,25 @@ export class AgentRuntime {
       this.memory = getGlobalMemoryRegistry().getOrCreate(tenantId);
     }
 
+    // Execution Lane: acquire a lane slot (concurrent execution isolation)
+    let currentLane: string;
+    try {
+      currentLane = await getLaneManager().acquireSlot({
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+        runId,
+        args: ctx.lane ? { lane: ctx.lane } : undefined,
+      });
+    } catch {
+      this.releaseSlot();
+      return {
+        runId, agentId: ctx.agentId, missionId: ctx.missionId,
+        status: 'failed', summary: 'Failed to acquire lane slot',
+        steps: [], totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        totalDurationMs: 0, error: 'LANE_ACQUISITION_FAILED',
+      };
+    }
+
     this.activeRuns.add(runId);
     tracer.startRun(runId, ctx.agentId, ctx.missionId);
     getMetricsCollector().setGauge('active_runs', 'Active concurrent runs', this.activeRuns.size);
@@ -372,6 +408,10 @@ export class AgentRuntime {
     let toolDefs = ctx.availableTools
       .map(name => this.tools.get(name)?.definition)
       .filter((t): t is ToolDefinition => t !== undefined);
+
+    // Stable category-based sort for maximum prompt cache hit rates.
+    // Cache-friendly ordering ensures the tool definition prefix is identical across LLM calls.
+    toolDefs = sortToolDefinitionsForCache(toolDefs);
 
     // Dynamic tool retrieval: filter to relevant tools when enabled
     const retrieval = this.config.toolRetrieval;
@@ -544,14 +584,21 @@ export class AgentRuntime {
         );
 
         // Record step
+        const stepNumber = steps.length + 1;
         const step: AgentExecutionStep = {
-          stepNumber: steps.length + 1,
+          stepNumber,
           timestamp: now(),
           type: 'response',
           content: response.content,
           tokenUsage: response.usage,
           durationMs: stepDuration,
         };
+
+        // ── Hook: onStepStart ──
+        getHookManager().fireOnStepStart({
+          runId, agentId: ctx.agentId, stepNumber, type: 'response', content: response.content,
+        }).catch(e => getGlobalLogger().debug('AgentRuntime', 'onStepStart hook failed', { error: (e as Error)?.message }));
+
         steps.push(step);
 
         // Entropy gating: if model is confident with no tool calls, log for observability
@@ -616,9 +663,11 @@ export class AgentRuntime {
 
               // Log skipped/circuit-broken tools
               for (const s of planResult.skipped) {
+                bus.publish('tool.blocked', ctx.agentId, { runId, toolName: s.toolCall.name, reason: 'orchestrator_skipped', detail: s.reason });
                 rawResults.push({ toolCallId: s.toolCall.id, name: s.toolCall.name, output: '', error: s.reason, durationMs: 0 });
               }
               for (const cb of planResult.circuitBroken) {
+                bus.publish('tool.blocked', ctx.agentId, { runId, toolName: cb.toolCall.name, reason: 'circuit_broken', detail: cb.toolName });
                 rawResults.push({ toolCallId: cb.toolCall.id, name: cb.toolCall.name, output: '', error: `CIRCUIT_OPEN: ${cb.toolName}`, durationMs: 0 });
               }
 
@@ -639,6 +688,7 @@ export class AgentRuntime {
                     const hookCtx = { toolName: tc.name, args: tc.arguments, agentId: ctx.agentId, runId };
                     const hookResult = await getHookManager().fireBeforeToolCall(hookCtx);
                     if (hookResult !== null) {
+                      bus.publish('tool.blocked', ctx.agentId, { runId, toolName: tc.name, reason: 'hook_denied', detail: hookResult.error ?? '' });
                       return { toolCallId: tc.id, name: tc.name, output: '', error: `Hook blocked: ${hookResult.error || 'denied'}`, durationMs: 0 };
                     }
 
@@ -648,10 +698,11 @@ export class AgentRuntime {
                     const cycleCheck = this.cycleDetector.check(tc.name, tc.arguments, toolLoopCount);
                     if (cycleCheck.detected) {
                       bus.publish('system.alert', 'runtime', { type: 'cycle_detected', toolName: tc.name, description: cycleCheck.description });
+                      bus.publish('tool.blocked', ctx.agentId, { runId, toolName: tc.name, reason: 'cycle_detected', detail: cycleCheck.description });
                       cycleDetected = true;
                       return { toolCallId: tc.id, name: tc.name, output: '', error: `Cycle detected: ${cycleCheck.description}`, durationMs: 0 };
                     }
-                    let toolResult = await this.executeTool(runId, tc, ctx.agentId, tenantId);
+                    let toolResult = await this.executeTool(runId, tc, ctx.agentId, tenantId, ctx.availableTools);
                     toolResult = await getHookManager().fireAfterToolCall({
                       toolName: tc.name, args: tc.arguments, result: toolResult, agentId: ctx.agentId, runId,
                     });
@@ -686,17 +737,19 @@ export class AgentRuntime {
                 const hookCtx = { toolName: tc.name, args: tc.arguments, agentId: ctx.agentId, runId };
                 const hookResult = await getHookManager().fireBeforeToolCall(hookCtx);
                 if (hookResult !== null) {
+                  bus.publish('tool.blocked', ctx.agentId, { runId, toolName: tc.name, reason: 'hook_denied', detail: hookResult.error ?? '' });
                   rawResults.push({ toolCallId: tc.id, name: tc.name, output: '', error: `Hook blocked: ${hookResult.error || 'denied'}`, durationMs: 0 });
                   continue;
                 }
                 const cycleCheck = this.cycleDetector.check(tc.name, tc.arguments, toolLoopCount);
                 if (cycleCheck.detected) {
                   bus.publish('system.alert', 'runtime', { type: 'cycle_detected', toolName: tc.name, description: cycleCheck.description });
+                  bus.publish('tool.blocked', ctx.agentId, { runId, toolName: tc.name, reason: 'cycle_detected', detail: cycleCheck.description });
                   rawResults.push({ toolCallId: tc.id, name: tc.name, output: '', error: `Cycle detected: ${cycleCheck.description}`, durationMs: 0 });
                   cycleDetected = true;
                   break;
                 }
-                let toolResult = await this.executeTool(runId, tc, ctx.agentId, tenantId);
+                let toolResult = await this.executeTool(runId, tc, ctx.agentId, tenantId, ctx.availableTools);
                 toolResult = await getHookManager().fireAfterToolCall({
                   toolName: tc.name, args: tc.arguments, result: toolResult, agentId: ctx.agentId, runId,
                 });
@@ -735,13 +788,20 @@ export class AgentRuntime {
           );
 
           for (const masked of maskedResults) {
+            const tsNum = steps.length + 1;
             const toolStep: AgentExecutionStep = {
-              stepNumber: steps.length + 1,
+              stepNumber: tsNum,
               timestamp: now(),
               type: 'tool_result',
               content: masked.output,
               durationMs: masked.durationMs,
             };
+
+            // ── Hook: onStepComplete ──
+            getHookManager().fireOnStepComplete({
+              runId, agentId: ctx.agentId, stepNumber: tsNum, type: 'tool_result', content: masked.output,
+            }).catch(e => getGlobalLogger().debug('AgentRuntime', 'onStepComplete hook failed', { error: (e as Error)?.message }));
+
             steps.push(toolStep);
 
             const assistantMsg: import('./types').LLMMessage = {
@@ -779,6 +839,14 @@ export class AgentRuntime {
             const tokensBefore = this.compactor.getUsage(request.messages).total;
             const tt = detectTaskType(ctx.goal);
             const taskType: CompactTaskType = tt === 'creative' ? 'general' : tt;
+
+            // ── Hook: beforeContextCompaction ──
+            getHookManager().fireBeforeContextCompaction({
+              messageCount: request.messages.length, totalTokens: tokensBefore,
+              budgetTokens: this.config.budgetHardCapTokens || 128000,
+              agentId: ctx.agentId, runId,
+            }).catch(e => getGlobalLogger().debug('AgentRuntime', 'beforeContextCompaction hook failed', { error: (e as Error)?.message }));
+
             const compactResult = this.compactor.compact(request.messages, undefined, taskType);
             if (compactResult.action.droppedCount > 0) {
               request.messages = compactResult.messages;
@@ -789,9 +857,22 @@ export class AgentRuntime {
                 droppedCount: compactResult.action.droppedCount,
                 tokensSaved: compactResult.action.tokensSaved,
               });
+
+              // ── Hook: afterContextCompaction ──
+              getHookManager().fireAfterContextCompaction({
+                messageCount: request.messages.length, totalTokens: this.compactor.getUsage(request.messages).total,
+                budgetTokens: this.config.budgetHardCapTokens || 128000,
+                agentId: ctx.agentId, runId,
+              }).catch(e => getGlobalLogger().debug('AgentRuntime', 'afterContextCompaction hook failed', { error: (e as Error)?.message }));
             }
           }
         }
+
+        // ── Hook: onSessionArchive (before checkpoint) ──
+        getHookManager().fireOnSessionArchive({
+          runId, phase: 'tool_execution', stepNumber: steps.length,
+          tokenUsage: { totalTokens: totalTokens.totalTokens },
+        }).catch(e => getGlobalLogger().debug('AgentRuntime', 'onSessionArchive hook failed', { error: (e as Error)?.message }));
 
         this.checkpointer.checkpoint({
           runId, agentId: ctx.agentId, missionId: ctx.missionId,
@@ -815,6 +896,7 @@ export class AgentRuntime {
           goal: ctx.goal,
           output: response.content,
           language: ctx.goal.toLowerCase().includes('python') ? 'python' : undefined,
+          schema: ctx.outputSchema,
           toolsUsed: ctx.availableTools,
           tokenBudgetRemaining: this.governor.getState().remainingTokens,
           previousFailures: lastError ? [lastError] : undefined,
@@ -1026,6 +1108,7 @@ export class AgentRuntime {
         if (c <= 0) this.tenantRunningCounts.delete(tenantId);
         else this.tenantRunningCounts.set(tenantId, c);
       }
+      getLaneManager().releaseSlot(currentLane);
       this.releaseSlot();
       try { tracer.completeRun(runId); } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Failed to complete trace', { runId, error: (e as Error)?.message }); }
       // Export trace to OpenTelemetry if configured
@@ -1141,6 +1224,21 @@ export class AgentRuntime {
       ? JSON.stringify(ctx.contextData.governanceProfile)
       : 'No governance constraints.';
 
+    const toolExamples = ctx.availableTools
+      .map(name => this.tools.get(name))
+      .filter((t): t is Tool => !!t)
+      .flatMap(t => (t.definition.examples ?? []))
+      .slice(0, 40);
+    const examplesSection = toolExamples.length > 0
+      ? '\n## Tool Usage Examples\n' +
+        toolExamples.map(ex => {
+          const args = Object.entries(ex.arguments)
+            .map(([k, v]) => `${k}=${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`)
+            .join(', ');
+          return `${ex.name}(${args})`;
+        }).join('\n') + '\n'
+      : '';
+
     const parts: string[] = [
       `You are agent ${ctx.agentId} on project ${ctx.projectId}.`,
       ctx.missionId ? `Mission: ${ctx.missionId}` : '',
@@ -1150,7 +1248,7 @@ export class AgentRuntime {
         const tool = this.tools.get(name);
         return tool ? `- ${tool.definition.name}: ${tool.definition.description}` : `- ${name}`;
       }).join('\n'),
-      '',
+      examplesSection,
       '## Governance',
       govProfile,
       '',
@@ -1214,12 +1312,45 @@ export class AgentRuntime {
     toolCall: ToolCall,
     agentId: string,
     tenantId?: string,
+    allowedTools?: string[],
   ): Promise<ToolResult> {
     const tracer = getTraceRecorder();
     const bus = getMessageBus();
     const startTime = Date.now();
 
+    // Sub-agent tool whitelist enforcement: if an allowlist is provided,
+    // reject any tool call outside the allowed set.
+    if (allowedTools && !allowedTools.includes(toolCall.name)) {
+      const errorMsg = `TOOL_NOT_ALLOWED: "${toolCall.name}" is not in the allowed tools list for this agent. Allowed: ${allowedTools.join(', ')}`;
+      bus.publish('tool.blocked', agentId, { runId, toolName: toolCall.name, reason: 'not_allowed', detail: errorMsg });
+      return {
+        toolCallId: toolCall.id,
+        name: toolCall.name,
+        output: errorMsg,
+        error: errorMsg,
+        durationMs: 0,
+      };
+    }
+
+    // ── Hook: beforeToolResolve (can block by returning ToolResult) ──
+    const resolveBlock = await getHookManager().fireBeforeToolResolve({
+      toolName: toolCall.name, args: toolCall.arguments, agentId, runId,
+    });
+    if (resolveBlock !== null) {
+      bus.publish('tool.blocked', agentId, { runId, toolName: toolCall.name, reason: 'hook_blocked', detail: resolveBlock.error ?? '' });
+      return resolveBlock;
+    }
+
     const tool = this.tools.get(toolCall.name);
+    const toolFound = !!tool;
+
+    // ── Hook: afterToolResolve ──
+    getHookManager().fireAfterToolResolve({
+      toolName: toolCall.name, args: toolCall.arguments,
+      tool: tool ? { name: tool.definition.name, category: tool.definition.category } : undefined,
+      notFound: !toolFound, agentId, runId,
+    }).catch(e => getGlobalLogger().debug('AgentRuntime', 'afterToolResolve hook failed', { error: (e as Error)?.message }));
+
     if (!tool) {
       const error = `TOOL_NOT_FOUND: "${toolCall.name}" is not registered. Available: ${Array.from(this.tools.keys()).join(', ')}`;
       tracer.recordToolExecution(runId, toolCall.name, toolCall.arguments, '', 0, error);
@@ -1285,7 +1416,8 @@ export class AgentRuntime {
       validatedArgs = validation.repairedArgs ?? repairedArgs;
     }
 
-    // Wrap tool execution with StepErrorBoundary for per-step recovery
+    bus.publish('tool.started', agentId, { runId, toolName: toolCall.name, args: toolCall.arguments });
+
     const boundary = new StepErrorBoundary(runId, agentId, this.dlq, undefined, {
       maxRetries: 1,
       retryDelayMs: this.config.retryDelayMs,
@@ -1310,6 +1442,10 @@ export class AgentRuntime {
       },
     );
 
+    if (boundaryResult.recovered) {
+      bus.publish('tool.retry', agentId, { runId, toolName: toolCall.name, attempts: boundaryResult.attempts });
+    }
+
     if (!boundaryResult.success) {
       const durationMs = Date.now() - startTime;
       const errorMsg = boundaryResult.error ?? 'Unknown tool error';
@@ -1318,8 +1454,18 @@ export class AgentRuntime {
       getMetricsCollector().recordToolCall(toolCall.name, durationMs, errorMsg, tenantId);
       getMetricsCollector().recordError(boundaryResult.errorClass, tenantId);
 
+      if (errorMsg.includes('TOOL_TIMEOUT')) {
+        bus.publish('tool.timeout', agentId, { runId, toolName: toolCall.name, timeoutMs: effectiveTimeout, durationMs });
+      }
+
       // Compensate side-effects from prior mutation tools in this run
-      this.compensationRegistry.compensate(actionId).catch(e => getGlobalLogger().debug('AgentRuntime', 'Compensation failed', { actionId, error: (e as Error)?.message }));
+      let compensateResult = await this.compensationRegistry.compensate(actionId);
+      if (!compensateResult.success) {
+        compensateResult = await this.compensationRegistry.compensate(actionId);
+      }
+      if (!compensateResult.success) {
+        getGlobalLogger().debug('AgentRuntime', 'Compensation failed after retry', { actionId, error: compensateResult.error });
+      }
 
       const structuredError = [
         `tool_error: "${toolCall.name}" failed after ${durationMs}ms`,
@@ -1345,6 +1491,8 @@ export class AgentRuntime {
     const durationMs = Date.now() - startTime;
 
     // Result budgeting: persist large outputs to disk, return reference
+    // Token-aware truncation: keep head (first ~60%) + tail (last ~40%) for maximum informational value.
+    // The head preserves context/setup; the tail preserves results/errors.
     const maxSize = tool.maxOutputSize ?? this.config.observationMaskWindow * 1000;
     if (typeof output === 'string' && output.length > maxSize && maxSize > 0) {
       const fs = require('fs');
@@ -1355,12 +1503,17 @@ export class AgentRuntime {
       if (!fs.existsSync(resultDir)) fs.mkdirSync(resultDir, { recursive: true });
       const resultFile = path.join(resultDir, `${toolCall.name}-${hash}.txt`);
       fs.writeFileSync(resultFile, output, 'utf-8');
-      output = `[Large output: ${output.length} chars. Saved to ${resultFile}.]\n${output.slice(0, maxSize / 2)}...\n[Truncated. Full output at ${resultFile}]`;
+      const headSize = Math.floor(maxSize * 0.6);
+      const tailSize = maxSize - headSize;
+      const head = output.slice(0, headSize);
+      const tail = output.length > headSize ? output.slice(-tailSize) : '';
+      output = `[Large output: ${output.length} chars. Saved to ${resultFile}.]\n${head}\n... [truncated, omitted ${output.length - maxSize} chars] ...\n${tail}\n[End. Full output at ${resultFile}]`;
     }
 
     tracer.recordToolExecution(runId, toolCall.name, toolCall.arguments, output, durationMs);
     getMetricsCollector().recordToolCall(toolCall.name, durationMs, undefined, tenantId);
     bus.publish('tool.executed', agentId, { toolName: toolCall.name, durationMs });
+    bus.publish('tool.completed', agentId, { runId, toolName: toolCall.name, durationMs });
 
     return {
       toolCallId: toolCall.id,
