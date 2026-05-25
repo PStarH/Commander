@@ -149,20 +149,23 @@ export class TaskPool {
         durationMs: execResult.totalDurationMs,
         error: execResult.error,
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
         taskId: task.id,
         status: 'failed',
         summary: '',
         tokens: 0,
         durationMs: Date.now() - startTime,
-        error: err.message || String(err),
+        error: err instanceof Error ? err.message : String(err),
       };
     }
   }
 
   private timeout(ms: number): Promise<'timeout'> {
-    return new Promise(resolve => setTimeout(() => resolve('timeout'), ms));
+    return new Promise(resolve => {
+      const timer = setTimeout(() => resolve('timeout'), ms);
+      timer.unref();
+    });
   }
 
   getStats() {
