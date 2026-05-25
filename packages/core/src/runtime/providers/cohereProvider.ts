@@ -135,17 +135,17 @@ export class CohereProvider implements LLMProvider {
     return defs;
   }
 
-  private parseResponse(data: any, model: string): LLMResponse {
+  private parseResponse(data: { finish_reason?: string; message?: { content?: Array<{ text?: string }> | string; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown }; name?: string; parameters?: unknown }> }; usage?: { input_tokens?: number; output_tokens?: number }; input_tokens?: number; output_tokens?: number; meta?: { billed_units?: { input_tokens?: number; output_tokens?: number } } }, model: string): LLMResponse {
     const message = data.message || {};
-    const content = message.content?.[0]?.text || message.content || '';
+    const content = Array.isArray(message.content) ? (message.content[0]?.text ?? '') : (typeof message.content === 'string' ? message.content : '');
 
     // Parse tool calls
-    const toolCalls: CohereToolCall[] = (message.tool_calls || []).map((tc: any) => ({
+    const toolCalls: CohereToolCall[] = (message.tool_calls || []).map((tc: { id?: string; function?: { name?: string; arguments?: unknown }; name?: string; parameters?: unknown }) => ({
       id: tc.id || `call_${Date.now()}`,
-      type: 'function',
+      type: 'function' as const,
       function: {
         name: tc.function?.name || tc.name || '',
-        arguments: tc.function?.arguments || tc.parameters || {},
+        arguments: (tc.function?.arguments || tc.parameters || {}) as Record<string, unknown>,
       },
     }));
 

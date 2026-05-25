@@ -132,8 +132,25 @@ export async function parseOpenAIStream(
 /**
  * Parse OpenAI non-streaming response into LLMResponse.
  */
+interface OpenAIResponseChoice {
+  message?: {
+    content?: string;
+    tool_calls?: Array<{
+      id: string;
+      function: { name: string; arguments: string };
+    }>;
+    reasoning_content?: string;
+  };
+  finish_reason?: string;
+}
+interface OpenAIResponseUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+}
+
 export function parseOpenAIResponse(
-  data: any,
+  data: { choices?: OpenAIResponseChoice[]; usage?: OpenAIResponseUsage },
   model: string,
   extractTextToolCalls?: (content: string) => Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null,
 ): LLMResponse {
@@ -147,7 +164,7 @@ export function parseOpenAIResponse(
   };
 
   let content = message.content ?? '';
-  let toolCalls = message.tool_calls?.map((tc: any) => ({
+  let toolCalls = message.tool_calls?.map((tc: { id: string; function: { name: string; arguments: string } }) => ({
     id: tc.id,
     name: tc.function.name,
     arguments: JSON.parse(tc.function.arguments || '{}'),
@@ -301,7 +318,7 @@ export abstract class BaseOpenAICompatibleProvider implements LLMProvider {
     };
     // Override config.name with the concrete class's name (avoid abstract in constructor)
     if (!config.name) {
-      this.config.name = (this.constructor as any).name?.replace('Provider', '').toLowerCase() || this.config.name;
+      this.config.name = (this.constructor as { name: string }).name?.replace('Provider', '').toLowerCase() || this.config.name;
     }
   }
 

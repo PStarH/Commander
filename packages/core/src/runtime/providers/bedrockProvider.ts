@@ -27,7 +27,11 @@ export class BedrockProvider implements LLMProvider {
   readonly name = 'bedrock';
   private region: string;
   private defaultModel: string;
-  private sdk: any = null;
+  private sdk: {
+    BedrockRuntimeClient: new (config: Record<string, unknown>) => { send: (command: unknown) => Promise<unknown> };
+    ConverseCommand: new (body: Record<string, unknown>) => unknown;
+    InvokeModelCommand: new (body: Record<string, unknown>) => unknown;
+  } | null = null;
   private sdkLoaded = false;
 
   constructor(config: {
@@ -85,27 +89,57 @@ export class BedrockProvider implements LLMProvider {
     }
 
     try {
+      if (!this.sdk) {
+        throw new Error('Bedrock SDK not loaded');
+      }
       const client = new this.sdk.BedrockRuntimeClient({
         region: this.region,
         requestHandler: { requestTimeout: 600_000 },
       });
       const command = new this.sdk.ConverseCommand(body);
-      const response = await client.send(command);
-
-      return this.parseResponse(response, model);
-    } catch (e: any) {
-      // Fall back to invokeModel for models that don't support Converse
-      // or when transient errors suggest Converse is unavailable
-      if (['AccessDeniedException', 'ValidationException', 'ModelErrorException', 'ModelTimeoutException'].includes(e.name)) {
-        getGlobalLogger().debug('BedrockProvider', 'Converse API failed, trying invokeModel', { error: e.message });
+      const response = await client.send(command) as { 
+        body?: Uint8Array;
+        output?: { 
+          message?: { 
+            content?: Array<{ 
+              text?: string; 
+              toolUse?: { toolUseId: string; name: string; input: unknown } 
+            }> | undefined; 
+          } | undefined; 
+        } | undefined; 
+        stopReason?: string | undefined; 
+        usage?: { 
+          inputTokens?: number; 
+          outputTokens?: number; 
+        } | undefined; 
+      };
+      return this.parseResponse(JSON.parse(new TextDecoder().decode(response.body ?? new Uint8Array())) as { 
+        output?: { 
+          message?: { 
+            content?: Array<{ 
+              text?: string; 
+              toolUse?: { toolUseId: string; name: string; input: unknown } 
+            }> | undefined; 
+          } | undefined; 
+        } | undefined; 
+        stopReason?: string | undefined; 
+        usage?: { 
+          inputTokens?: number; 
+          outputTokens?: number; 
+        } | undefined; 
+      }, model);
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      if (e instanceof Error && ['AccessDeniedException', 'ValidationException', 'ModelErrorException', 'ModelTimeoutException'].includes(e.name)) {
+        getGlobalLogger().debug('BedrockProvider', 'Converse API failed, trying invokeModel', { error: errMsg });
         return this.callInvokeModel(request, model);
       }
-      throw new Error(`Bedrock API error: ${e.message}`);
+      throw new Error(`Bedrock API error: ${errMsg}`);
     }
   }
 
-  private buildMessages(request: LLMRequest): any[] {
-    const messages: any[] = [];
+  private buildMessages(request: LLMRequest): Array<{ role: string; content: Array<{ text?: string; toolUse?: Record<string, unknown>; toolResult?: Record<string, unknown> }> }> {
+    const messages: Array<{ role: string; content: Array<{ text?: string; toolUse?: Record<string, unknown>; toolResult?: Record<string, unknown> }> }> = [];
     for (const m of request.messages) {
       if (m.role === 'system') continue;
 
@@ -125,7 +159,7 @@ export class BedrockProvider implements LLMProvider {
       }
 
       const role = m.role === 'assistant' ? 'assistant' : 'user';
-      const content: any[] = [];
+      const content: Array<{ text?: string; toolUse?: Record<string, unknown> }> = [];
 
       if (m.content) {
         content.push({ text: m.content });
@@ -154,12 +188,12 @@ export class BedrockProvider implements LLMProvider {
     return systemMsg ? [{ text: systemMsg.content }] : undefined;
   }
 
-  private parseResponse(response: any, model: string): LLMResponse {
+  private parseResponse(response: { output?: { message?: { content?: Array<{ text?: string; toolUse?: { toolUseId: string; name: string; input: unknown } }> } }; stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } }, model: string): LLMResponse {
     const output = response.output || {};
     const message = output.message || {};
     const content = message.content || [];
-    const textParts = content.filter((c: any) => c.text);
-    const toolUseParts = content.filter((c: any) => c.toolUse);
+    const textParts = content.filter((c): c is typeof c & { text: string } => !!c.text);
+    const toolUseParts = content.filter((c): c is typeof c & { toolUse: { toolUseId: string; name: string; input: unknown } } => !!c.toolUse);
 
     const stopReason = response.stopReason || 'end_turn';
 
@@ -170,7 +204,7 @@ export class BedrockProvider implements LLMProvider {
     };
 
     return {
-      content: textParts.map((c: any) => c.text).join(''),
+      content: textParts.map((c) => c.text).join(''),
       model,
       usage,
       finishReason: stopReason === 'end_turn' ? 'stop'
@@ -178,10 +212,10 @@ export class BedrockProvider implements LLMProvider {
         : stopReason === 'max_tokens' ? 'length'
         : 'stop',
       toolCalls: toolUseParts.length > 0
-        ? toolUseParts.map((c: any) => ({
+        ? toolUseParts.map((c) => ({
             id: c.toolUse.toolUseId,
             name: c.toolUse.name,
-            arguments: c.toolUse.input || {},
+            arguments: (c.toolUse.input ?? {}) as Record<string, unknown>,
           }))
         : undefined,
     };
@@ -211,14 +245,25 @@ export class BedrockProvider implements LLMProvider {
     };
 
     try {
+      if (!this.sdk) {
+        throw new Error('Bedrock SDK not loaded');
+      }
       const client = new this.sdk.BedrockRuntimeClient({
         region: this.region,
         requestHandler: { requestTimeout: 600_000 },
       });
       const command = new this.sdk.InvokeModelCommand(body);
-      const response = await client.send(command);
-
-      const data = JSON.parse(new TextDecoder().decode(response.body));
+      const response = await client.send(command) as { body?: Uint8Array };
+        const data = JSON.parse(new TextDecoder().decode(response.body ?? new Uint8Array())) as {
+         content?: Array<{ text?: string }> | undefined;
+         completion?: string | undefined;
+         generation?: string | undefined;
+         usage?: {
+           inputTokens?: number;
+           outputTokens?: number;
+         } | undefined;
+         stop_reason?: string | undefined;
+       };
 
       // Messages API response: data.content[0].text
       // Legacy Text Completions response: data.completion
@@ -228,16 +273,16 @@ export class BedrockProvider implements LLMProvider {
         content,
         model,
         usage: {
-          promptTokens: data.usage?.input_tokens ?? 0,
-          completionTokens: data.usage?.output_tokens ?? 0,
-          totalTokens: (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0),
+            promptTokens: data.usage?.inputTokens ?? 0,
+            completionTokens: data.usage?.outputTokens ?? 0,
+            totalTokens: ((data.usage?.inputTokens ?? 0) + (data.usage?.outputTokens ?? 0)),
         },
         finishReason: data.stop_reason === 'end_turn' ? 'stop'
           : data.stop_reason === 'max_tokens' ? 'length'
           : 'stop',
       };
-    } catch (e: any) {
-      throw new Error(`Bedrock invokeModel error: ${e.message}`);
+    } catch (e: unknown) {
+      throw new Error(`Bedrock invokeModel error: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 }
