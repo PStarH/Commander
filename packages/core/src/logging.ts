@@ -319,12 +319,23 @@ export class MetricsCollector {
   private config: MetricsConfig;
   private metrics: Map<string, Metric> = new Map();
   private listeners: Array<(name: string, point: MetricPoint) => void> = [];
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(config?: Partial<MetricsConfig>) {
     this.config = { ...DEFAULT_METRICS_CONFIG, ...config };
     
-    // Cleanup old data periodically
-    setInterval(() => this.cleanup(), this.config.retentionPeriod);
+    // Cleanup old data periodically — .unref() so it doesn't prevent process exit
+    this.cleanupTimer = setInterval(() => this.cleanup(), this.config.retentionPeriod);
+    this.cleanupTimer.unref();
+  }
+
+  dispose(): void {
+    if (this.cleanupTimer !== null) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    this.metrics.clear();
+    this.listeners.length = 0;
   }
 
   /**

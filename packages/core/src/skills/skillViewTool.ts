@@ -3,7 +3,7 @@ import { getGlobalLogger } from '../logging';
 
 const DEFINITION: ToolDefinition = {
   name: 'skill_view',
-  description: 'Load full skill instructions by name. Use this when a skill from the Available Skills catalog matches your current task. Returns the complete SKILL.md content with step-by-step instructions.',
+  description: 'Load full skill instructions by name. Use this when a skill from the Available Skills catalog matches your current task. Returns the complete skill content with step-by-step instructions.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -14,6 +14,7 @@ const DEFINITION: ToolDefinition = {
     },
     required: ['name'],
   },
+  category: 'knowledge',
 };
 
 export class SkillViewTool implements Tool {

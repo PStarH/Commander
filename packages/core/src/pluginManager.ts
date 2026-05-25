@@ -12,7 +12,20 @@ export type HookPoint =
   | 'afterLLMCall'
   | 'onAgentStart'
   | 'onAgentComplete'
-  | 'onError';
+  | 'onError'
+  // Sprint 3: Interceptor pipeline
+  | 'beforeToolResolve'
+  | 'afterToolResolve'
+  | 'onToolTimeout'
+  | 'onToolRetry'
+  | 'beforeContextCompaction'
+  | 'afterContextCompaction'
+  | 'onSessionFork'
+  | 'onSessionArchive'
+  | 'onStepStart'
+  | 'onStepComplete'
+  | 'beforeBackendSelect'
+  | 'afterBackendSelect';
 
 /** Context passed to beforeToolCall hooks */
 export interface BeforeToolCallContext {
@@ -65,6 +78,100 @@ export interface ErrorContext {
   agentId: string;
 }
 
+// ── Sprint 3: Extended hook contexts ──
+
+/** Context passed to beforeToolResolve hooks */
+export interface BeforeToolResolveContext {
+  toolName: string;
+  args: Record<string, unknown>;
+  agentId: string;
+  runId: string;
+}
+
+/** Context passed to afterToolResolve hooks */
+export interface AfterToolResolveContext {
+  toolName: string;
+  args: Record<string, unknown>;
+  /** The resolved tool, if found */
+  tool?: { name: string; category?: string };
+  /** If tool was not found */
+  notFound: boolean;
+  agentId: string;
+  runId: string;
+}
+
+/** Context passed to onToolTimeout hooks */
+export interface ToolTimeoutContext {
+  toolName: string;
+  args: Record<string, unknown>;
+  timeoutMs: number;
+  durationMs: number;
+  agentId: string;
+  runId: string;
+}
+
+/** Context passed to onToolRetry hooks */
+export interface ToolRetryContext {
+  toolName: string;
+  args: Record<string, unknown>;
+  attempt: number;
+  maxRetries: number;
+  lastError: string;
+  agentId: string;
+  runId: string;
+}
+
+/** Context passed to beforeContextCompaction / afterContextCompaction hooks */
+export interface ContextCompactionContext {
+  messageCount: number;
+  totalTokens: number;
+  budgetTokens: number;
+  agentId: string;
+  runId: string;
+}
+
+/** Context passed to onSessionFork hooks */
+export interface SessionForkContext {
+  parentRunId: string;
+  childRunId: string;
+  agentId: string;
+  goal: string;
+}
+
+/** Context passed to onSessionArchive hooks */
+export interface SessionArchiveContext {
+  runId: string;
+  phase: string;
+  stepNumber: number;
+  tokenUsage: { totalTokens: number };
+}
+
+/** Context passed to onStepStart / onStepComplete hooks */
+export interface StepLifecycleContext {
+  runId: string;
+  agentId: string;
+  stepNumber: number;
+  type: 'thought' | 'tool_call' | 'tool_result' | 'response';
+  content?: string;
+}
+
+/** Context passed to beforeBackendSelect hooks */
+export interface BeforeBackendSelectContext {
+  toolName: string;
+  args: Record<string, unknown>;
+  agentId: string;
+  runId: string;
+}
+
+/** Context passed to afterBackendSelect hooks */
+export interface AfterBackendSelectContext {
+  toolName: string;
+  args: Record<string, unknown>;
+  selectedBackend: string;
+  agentId: string;
+  runId: string;
+}
+
 /** Union of all hook contexts */
 export type HookContext =
   | BeforeToolCallContext
@@ -73,7 +180,17 @@ export type HookContext =
   | AfterLLMCallContext
   | AgentStartContext
   | AgentCompleteContext
-  | ErrorContext;
+  | ErrorContext
+  | BeforeToolResolveContext
+  | AfterToolResolveContext
+  | ToolTimeoutContext
+  | ToolRetryContext
+  | ContextCompactionContext
+  | SessionForkContext
+  | SessionArchiveContext
+  | StepLifecycleContext
+  | BeforeBackendSelectContext
+  | AfterBackendSelectContext;
 
 // ============================================================================
 // Plugin Config Schema
@@ -131,6 +248,33 @@ export interface CommanderPlugin {
   onAgentComplete?: (ctx: AgentCompleteContext) => Promise<void> | void;
   /** Called when an error occurs */
   onError?: (ctx: ErrorContext) => Promise<void> | void;
+
+  // ── Sprint 3: Interceptor hooks ──
+
+  /** Called before resolving a tool from the registry. Can short-circuit by returning a ToolResult to block. */
+  beforeToolResolve?: (ctx: BeforeToolResolveContext) => Promise<ToolResult | null> | ToolResult | null;
+  /** Called after a tool is resolved from the registry. Tool may be not found. */
+  afterToolResolve?: (ctx: AfterToolResolveContext) => Promise<void> | void;
+  /** Called when a tool execution times out. */
+  onToolTimeout?: (ctx: ToolTimeoutContext) => Promise<void> | void;
+  /** Called before retrying a failed tool call. */
+  onToolRetry?: (ctx: ToolRetryContext) => Promise<void> | void;
+  /** Called before context compaction (message trimming). */
+  beforeContextCompaction?: (ctx: ContextCompactionContext) => Promise<void> | void;
+  /** Called after context compaction is applied. */
+  afterContextCompaction?: (ctx: ContextCompactionContext) => Promise<void> | void;
+  /** Called when a sub-agent session is forked from the parent. */
+  onSessionFork?: (ctx: SessionForkContext) => Promise<void> | void;
+  /** Called when a session state is archived/checkpointed. */
+  onSessionArchive?: (ctx: SessionArchiveContext) => Promise<void> | void;
+  /** Called when a single execution step starts. */
+  onStepStart?: (ctx: StepLifecycleContext) => Promise<void> | void;
+  /** Called when a single execution step completes. */
+  onStepComplete?: (ctx: StepLifecycleContext) => Promise<void> | void;
+  /** Called before execution backend is selected for a tool call. Can override by returning a backend name. */
+  beforeBackendSelect?: (ctx: BeforeBackendSelectContext) => Promise<string | null> | string | null;
+  /** Called after execution backend is selected. */
+  afterBackendSelect?: (ctx: AfterBackendSelectContext) => Promise<void> | void;
 }
 
 // ============================================================================
@@ -409,6 +553,148 @@ export class HookManager {
     }
   }
 
+  // ── Sprint 3: Interceptor hook firing ──
+
+  async fireBeforeToolResolve(ctx: BeforeToolResolveContext): Promise<ToolResult | null> {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
+      if (plugin.beforeToolResolve) {
+        try {
+          const result = await this.withTimeout(plugin.beforeToolResolve(ctx), plugin.name, 'beforeToolResolve');
+          if (result !== null) return result;
+        } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeToolResolve failed`);
+        }
+      }
+    }
+    return null;
+  }
+
+  async fireAfterToolResolve(ctx: AfterToolResolveContext): Promise<void> {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
+      if (plugin.afterToolResolve) {
+        try { await this.withTimeout(plugin.afterToolResolve(ctx), plugin.name, 'afterToolResolve'); } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterToolResolve failed`);
+        }
+      }
+    }
+  }
+
+  async fireOnToolTimeout(ctx: ToolTimeoutContext): Promise<void> {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
+      if (plugin.onToolTimeout) {
+        try { await this.withTimeout(plugin.onToolTimeout(ctx), plugin.name, 'onToolTimeout'); } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" onToolTimeout failed`);
+        }
+      }
+    }
+  }
+
+  async fireOnToolRetry(ctx: ToolRetryContext): Promise<void> {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
+      if (plugin.onToolRetry) {
+        try { await this.withTimeout(plugin.onToolRetry(ctx), plugin.name, 'onToolRetry'); } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" onToolRetry failed`);
+        }
+      }
+    }
+  }
+
+  async fireBeforeContextCompaction(ctx: ContextCompactionContext): Promise<void> {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
+      if (plugin.beforeContextCompaction) {
+        try { await this.withTimeout(plugin.beforeContextCompaction(ctx), plugin.name, 'beforeContextCompaction'); } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeContextCompaction failed`);
+        }
+      }
+    }
+  }
+
+  async fireAfterContextCompaction(ctx: ContextCompactionContext): Promise<void> {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
+      if (plugin.afterContextCompaction) {
+        try { await this.withTimeout(plugin.afterContextCompaction(ctx), plugin.name, 'afterContextCompaction'); } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterContextCompaction failed`);
+        }
+      }
+    }
+  }
+
+  async fireOnSessionFork(ctx: SessionForkContext): Promise<void> {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
+      if (plugin.onSessionFork) {
+        try { await this.withTimeout(plugin.onSessionFork(ctx), plugin.name, 'onSessionFork'); } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" onSessionFork failed`);
+        }
+      }
+    }
+  }
+
+  async fireOnSessionArchive(ctx: SessionArchiveContext): Promise<void> {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
+      if (plugin.onSessionArchive) {
+        try { await this.withTimeout(plugin.onSessionArchive(ctx), plugin.name, 'onSessionArchive'); } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" onSessionArchive failed`);
+        }
+      }
+    }
+  }
+
+  async fireOnStepStart(ctx: StepLifecycleContext): Promise<void> {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
+      if (plugin.onStepStart) {
+        try { await this.withTimeout(plugin.onStepStart(ctx), plugin.name, 'onStepStart'); } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" onStepStart failed`);
+        }
+      }
+    }
+  }
+
+  async fireOnStepComplete(ctx: StepLifecycleContext): Promise<void> {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
+      if (plugin.onStepComplete) {
+        try { await this.withTimeout(plugin.onStepComplete(ctx), plugin.name, 'onStepComplete'); } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" onStepComplete failed`);
+        }
+      }
+    }
+  }
+
+  async fireBeforeBackendSelect(ctx: BeforeBackendSelectContext): Promise<string | null> {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
+      if (plugin.beforeBackendSelect) {
+        try {
+          const result = await this.withTimeout(plugin.beforeBackendSelect(ctx), plugin.name, 'beforeBackendSelect');
+          if (result !== null) return result;
+        } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeBackendSelect failed`);
+        }
+      }
+    }
+    return null;
+  }
+
+  async fireAfterBackendSelect(ctx: AfterBackendSelectContext): Promise<void> {
+    for (const name of this.getEnabledInOrder()) {
+      const plugin = this.plugins.get(name)!.plugin;
+      if (plugin.afterBackendSelect) {
+        try { await this.withTimeout(plugin.afterBackendSelect(ctx), plugin.name, 'afterBackendSelect'); } catch {
+          getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterBackendSelect failed`);
+        }
+      }
+    }
+  }
+
   // ── Config validation ──
 
   private validateAndMergeConfig(plugin: CommanderPlugin, config: Record<string, unknown>): Record<string, unknown> {
@@ -448,7 +734,8 @@ export class HookManager {
     return Promise.race([
       promise as Promise<T>,
       new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error(`Plugin "${pluginName}" hook "${hookName}" timed out after ${this.hookTimeoutMs}ms`)), this.hookTimeoutMs);
+        const timer = setTimeout(() => reject(new Error(`Plugin "${pluginName}" hook "${hookName}" timed out after ${this.hookTimeoutMs}ms`)), this.hookTimeoutMs);
+        timer.unref();
       }),
     ]);
   }

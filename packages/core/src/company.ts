@@ -156,7 +156,7 @@ export class QualityPipeline {
   private logQuality(draft: DraftOutput, review: ReviewResult) {
     try {
       const logPath = path.join(STATE_DIR, 'quality-log.json');
-      let logs: any[] = [];
+      let logs: Array<{ draftId: string; type: string; score: number; passed: boolean; timestamp: string }> = [];
       if (fs.existsSync(logPath)) logs = JSON.parse(fs.readFileSync(logPath, 'utf-8'));
       logs.push({ draftId: draft.id, type: draft.type, score: review.score, passed: review.passed, timestamp: new Date().toISOString() });
       if (logs.length > 1000) logs = logs.slice(-1000);
