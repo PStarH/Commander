@@ -28,16 +28,31 @@ import {
   OpenAIProvider,
   AnthropicProvider,
   GoogleProvider,
+  OpenRouterProvider,
   DeepSeekProvider,
   GLMProvider,
   MiMoProvider,
   XiaomiProvider,
+  OllamaProvider,
+  VLLMProvider,
+  CohereProvider,
+  MistralProvider,
+  GroqProvider,
+  TogetherProvider,
+  PerplexityProvider,
+  FireworksProvider,
+  ReplicateProvider,
+  BedrockProvider,
+  XAIProvider,
+  AnyscaleProvider,
+  DeepInfraProvider,
 } from '@commander/core';
 
 import type {
   CommanderClientConfig,
   ExecutionResult,
   ExecutionEvent,
+  ExecutionStepSummary,
   SessionSummary,
   SystemStatus,
 } from './types';
@@ -156,19 +171,33 @@ export class CommanderClient {
       },
     });
 
+    const status: ExecutionResult['status'] =
+      result.status === 'SUCCESS' ? 'SUCCESS'
+        : result.status === 'FAILED' ? 'FAILED'
+          : 'PARTIAL';
+
+    const steps: ExecutionStepSummary[] = (result.executionTree ?? []).map((node, i) => ({
+      stepNumber: i + 1,
+      action: node.goal ?? node.id ?? `Step ${i + 1}`,
+      status: 'completed',
+      tokenUsage: 0,
+      durationMs: 0,
+    }));
+
     this.sessions.push({
       runId: `run_${Date.now()}`,
       task: task.slice(0, 80),
-      status: result.status ?? 'unknown',
+      status: result.status,
       timestamp: new Date().toISOString(),
     });
 
     return {
-      status: result.status === 'SUCCESS' ? 'SUCCESS' : 'FAILED',
-      summary: result.summary ?? `Execution ${(result.status ?? 'unknown').toLowerCase()}`,
-      steps: [],
-      totalTokenUsage: 0,
-      totalDurationMs: Date.now() - startTime,
+      status,
+      summary: result.summary ?? `Execution ${result.status.toLowerCase()}`,
+      steps,
+      totalTokenUsage: result.metrics?.totalTokens ?? 0,
+      totalDurationMs: result.metrics?.totalDurationMs ?? (Date.now() - startTime),
+      error: result.errors?.[0]?.message,
     };
   }
 
@@ -228,6 +257,19 @@ export class CommanderClient {
       ZHIPU_API_KEY: 'glm',
       MIMO_API_KEY: 'mimo',
       XIAOMI_API_KEY: 'xiaomi',
+      OLLAMA_HOST: 'ollama',
+      VLLM_BASE_URL: 'vllm',
+      CO_API_KEY: 'cohere',
+      MISTRAL_API_KEY: 'mistral',
+      GROQ_API_KEY: 'groq',
+      TOGETHER_API_KEY: 'together',
+      PERPLEXITY_API_KEY: 'perplexity',
+      FIREWORKS_API_KEY: 'fireworks',
+      REPLICATE_API_TOKEN: 'replicate',
+      AWS_ACCESS_KEY_ID: 'bedrock',
+      XAI_API_KEY: 'xai',
+      ANYSCALE_API_KEY: 'anyscale',
+      DEEPINFRA_API_KEY: 'deepinfra',
     };
     for (const [envVar, provider] of Object.entries(keyMap)) {
       if (process.env[envVar]) return provider;
@@ -240,10 +282,24 @@ export class CommanderClient {
       openai: 'OPENAI_API_KEY',
       anthropic: 'ANTHROPIC_API_KEY',
       google: 'GOOGLE_API_KEY',
+      openrouter: 'OPENROUTER_API_KEY',
       deepseek: 'DEEPSEEK_API_KEY',
       glm: 'ZHIPU_API_KEY',
       mimo: 'MIMO_API_KEY',
       xiaomi: 'XIAOMI_API_KEY',
+      ollama: 'OLLAMA_HOST',
+      vllm: 'VLLM_BASE_URL',
+      cohere: 'CO_API_KEY',
+      mistral: 'MISTRAL_API_KEY',
+      groq: 'GROQ_API_KEY',
+      together: 'TOGETHER_API_KEY',
+      perplexity: 'PERPLEXITY_API_KEY',
+      fireworks: 'FIREWORKS_API_KEY',
+      replicate: 'REPLICATE_API_TOKEN',
+      bedrock: 'AWS_ACCESS_KEY_ID',
+      xai: 'XAI_API_KEY',
+      anyscale: 'ANYSCALE_API_KEY',
+      deepinfra: 'DEEPINFRA_API_KEY',
     };
     return process.env[envMap[provider]];
   }
@@ -253,10 +309,24 @@ export class CommanderClient {
       openai: 'gpt-4o',
       anthropic: 'claude-3-5-sonnet',
       google: 'gemini-2-pro',
+      openrouter: 'gpt-4o',
       deepseek: 'deepseek-chat',
       glm: 'glm-4-plus',
       mimo: 'mimo-pro',
       xiaomi: 'mimo-pro',
+      ollama: 'llama3',
+      vllm: 'default',
+      cohere: 'command-r-plus',
+      mistral: 'mistral-large',
+      groq: 'llama3-70b-8192',
+      together: 'mistralai/Mixtral-8x7B-Instruct-v0.1',
+      perplexity: 'sonar-pro',
+      fireworks: 'accounts/fireworks/models/llama-v3p1-70b-instruct',
+      replicate: 'meta/meta-llama-3-70b-instruct',
+      bedrock: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
+      xai: 'grok-beta',
+      anyscale: 'meta-llama/Meta-Llama-3.1-70B-Instruct',
+      deepinfra: 'meta-llama/Meta-Llama-3.1-70B-Instruct',
     };
     return models[provider] ?? 'gpt-4o';
   }
@@ -266,10 +336,24 @@ const PROVIDER_MAP: Record<string, ProviderConstructor> = {
   openai: OpenAIProvider,
   anthropic: AnthropicProvider,
   google: GoogleProvider,
+  openrouter: OpenRouterProvider,
   deepseek: DeepSeekProvider,
   glm: GLMProvider,
   mimo: MiMoProvider,
   xiaomi: XiaomiProvider,
+  ollama: OllamaProvider,
+  vllm: VLLMProvider,
+  cohere: CohereProvider,
+  mistral: MistralProvider,
+  groq: GroqProvider,
+  together: TogetherProvider,
+  perplexity: PerplexityProvider,
+  fireworks: FireworksProvider,
+  replicate: ReplicateProvider,
+  bedrock: BedrockProvider,
+  xai: XAIProvider,
+  anyscale: AnyscaleProvider,
+  deepinfra: DeepInfraProvider,
 };
 
 function resolveProviderClass(type: string): ProviderConstructor {

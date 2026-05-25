@@ -1,4 +1,4 @@
-import { describe, it, before, after } from 'node:test';
+import { describe, it, beforeAll as before, afterAll as after } from 'vitest';
 import assert from 'node:assert';
 import * as http from 'node:http';
 import { CommanderHttpServer } from '../src/runtime/httpServer';
@@ -7,23 +7,36 @@ const PORT = 0; // dynamic port
 let server: CommanderHttpServer | null = null;
 let baseUrl: string = '';
 
-async function fetchJson(path: string, options?: { accept?: string }): Promise<{ status: number; body: any; text?: string }> {
+async function requestJson(
+  method: 'GET' | 'POST',
+  url: string,
+  options?: { accept?: string; origin?: string; requestId?: string; body?: unknown; headers?: Record<string, string> },
+): Promise<{ status: number; body: any; text?: string; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (options?.accept) headers['Accept'] = options.accept;
-    const req = http.get(`${baseUrl}${path}`, { headers }, (res) => {
+    if (options?.origin) headers['Origin'] = options.origin;
+    if (options?.requestId) headers['X-Request-Id'] = options.requestId;
+    Object.assign(headers, options?.headers);
+    const req = http.request(url, { method, headers }, (res) => {
       let data = '';
       res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
       res.on('end', () => {
         try {
-          resolve({ status: res.statusCode ?? 500, body: JSON.parse(data), text: data });
+          resolve({ status: res.statusCode ?? 500, body: JSON.parse(data), text: data, headers: res.headers });
         } catch {
-          resolve({ status: res.statusCode ?? 500, body: null, text: data });
+          resolve({ status: res.statusCode ?? 500, body: null, text: data, headers: res.headers });
         }
       });
     });
+    if (options?.body !== undefined) req.write(typeof options.body === 'string' ? options.body : JSON.stringify(options.body));
+    req.end();
     req.on('error', reject);
   });
+}
+
+async function fetchJson(path: string, options?: { accept?: string; origin?: string; requestId?: string }): Promise<{ status: number; body: any; text?: string; headers: http.IncomingHttpHeaders }> {
+  return requestJson('GET', `${baseUrl}${path}`, options);
 }
 
 describe('CommanderHttpServer — Monitoring Endpoints', () => {
@@ -54,6 +67,12 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
     it('bypasses authentication', async () => {
       const { status } = await fetchJson('/health');
       assert.strictEqual(status, 200);
+    });
+
+    it('returns a request id header and preserves incoming request id', async () => {
+      const { status, headers } = await fetchJson('/health', { requestId: 'req-test-123' });
+      assert.strictEqual(status, 200);
+      assert.strictEqual(headers['x-request-id'], 'req-test-123');
     });
   });
 
@@ -125,6 +144,43 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
         assert.ok(body.error?.toLowerCase().includes('unauthorized'));
       } finally {
         await authServer.stop();
+      }
+    });
+  });
+
+  describe('HTTP hardening', () => {
+    it('does not emit wildcard CORS by default', async () => {
+      const { status, headers } = await fetchJson('/health', { origin: 'https://evil.example' });
+      assert.strictEqual(status, 200);
+      assert.notStrictEqual(headers['access-control-allow-origin'], '*');
+      assert.strictEqual(headers['access-control-allow-origin'], undefined);
+    });
+
+    it('allows configured CORS origins', async () => {
+      const { status, headers } = await fetchJson('/health', { origin: 'http://localhost:3000' });
+      assert.strictEqual(status, 200);
+      assert.strictEqual(headers['access-control-allow-origin'], 'http://localhost:3000');
+    });
+
+    it('rejects oversized JSON request bodies', async () => {
+      const smallServer = new CommanderHttpServer({
+        port: 0,
+        host: '127.0.0.1',
+        apiKey: '',
+        rateLimitPerMinute: 0,
+        maxBodyBytes: 32,
+      });
+      await smallServer.start();
+      const smallBaseUrl = `http://127.0.0.1:${smallServer.getPort()}`;
+
+      try {
+        const { status, body } = await requestJson('POST', `${smallBaseUrl}/api/v1/runtime`, {
+          body: { sessionId: 'x'.repeat(128) },
+        });
+        assert.strictEqual(status, 413);
+        assert.ok(body.error.includes('Request body too large'));
+      } finally {
+        await smallServer.stop();
       }
     });
   });
