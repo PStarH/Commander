@@ -5,7 +5,10 @@
  * Used for coordination, handoffs, alerts, and state synchronization.
  */
 
-import type { BusMessage, MessageBusTopic, MessageHandler, MessagePriority } from './types';
+import type {
+  BusMessage, MessageBusTopic, MessageHandler, MessagePriority,
+  BusPayloadMap, TypedBusMessage,
+} from './types';
 import { getGlobalLogger } from '../logging';
 
 function generateId(): string {
@@ -27,8 +30,31 @@ export class MessageBus {
   }
 
   /**
-   * Publish a message to a topic. All subscribers to that topic will be notified.
+   * Publish to a known topic — payload and return type are typed.
    */
+  publish<T extends keyof BusPayloadMap>(
+    topic: T,
+    source: string,
+    payload: BusPayloadMap[T],
+    options?: {
+      target?: string;
+      priority?: MessagePriority;
+      ttl?: number;
+    },
+  ): TypedBusMessage<T>;
+  /**
+   * Publish to an arbitrary topic — payload is unknown.
+   */
+  publish(
+    topic: MessageBusTopic,
+    source: string,
+    payload: unknown,
+    options?: {
+      target?: string;
+      priority?: MessagePriority;
+      ttl?: number;
+    },
+  ): BusMessage;
   publish(
     topic: MessageBusTopic,
     source: string,
@@ -75,13 +101,41 @@ export class MessageBus {
       }
     }
 
+    const wildcardHandlers = this.subscribers.get('*' as MessageBusTopic);
+    if (wildcardHandlers && topic !== '*') {
+      for (const handler of wildcardHandlers) {
+        try {
+          const result = handler(message);
+          if (result instanceof Promise) {
+            result.catch(err => getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err));
+          }
+        } catch (err) {
+          getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err as Error);
+        }
+      }
+    }
+
     return message;
   }
 
   /**
-   * Subscribe to a topic. Returns an unsubscribe function.
+   * Subscribe to a known topic — handler receives typed payload.
    */
-  subscribe(topic: MessageBusTopic, handler: MessageHandler): () => void {
+  subscribe<T extends keyof BusPayloadMap>(
+    topic: T,
+    handler: (message: TypedBusMessage<T>) => void | Promise<void>,
+  ): () => void;
+  /**
+   * Subscribe to an arbitrary topic — payload is unknown.
+   */
+  subscribe(
+    topic: MessageBusTopic,
+    handler: MessageHandler,
+  ): () => void;
+  subscribe(
+    topic: MessageBusTopic,
+    handler: MessageHandler,
+  ): () => void {
     if (!this.subscribers.has(topic)) {
       this.subscribers.set(topic, new Set());
     }
