@@ -52,7 +52,9 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
 
     let scores: Array<{ topology: OrchestrationTopology; score: number }> = [];
 
-    for (const [topology, perf] of Object.entries(this.topologyPerformance)) {
+    const topologies = Object.keys(this.topologyPerformance) as OrchestrationTopology[];
+    for (const topology of topologies) {
+      const perf = this.topologyPerformance[topology];
       let score = 0;
 
       if (taskType === 'RESEARCH' || taskType === 'ANALYSIS') {
@@ -100,7 +102,7 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
         }
       }
 
-      scores.push({ topology: topology as OrchestrationTopology, score });
+      scores.push({ topology, score });
     }
 
     scores.sort((a, b) => b.score - a.score);
