@@ -290,7 +290,7 @@ export class MultiAgentSynthesizer {
 
   private collectCompleted(node: TaskTreeNode): TaskTreeNode[] {
     const completed: TaskTreeNode[] = [];
-    if (node.status === 'COMPLETED' && node.result) {
+    if (node.status === 'COMPLETED' && node.result !== undefined && node.result !== null) {
       completed.push(node);
     }
     for (const sub of node.subtasks) {
@@ -323,8 +323,8 @@ export class MultiAgentSynthesizer {
     for (const sub of root.subtasks) {
       if (node.id === sub.id) return currentDepth + 1;
       const depth = this.getDepth(node, sub, currentDepth + 1);
-      if (depth > 0) return depth;
+      if (depth >= 0) return depth;
     }
-    return 0;
+    return -1; // not found — caller guarantees node is in tree, so this is defensive
   }
 }
