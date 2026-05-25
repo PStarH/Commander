@@ -1,282 +1,261 @@
-# Commander
+<p align="center">
+  <img src="https://img.shields.io/badge/GAIA-69.7%25-blue?style=flat-square" />
+  <img src="https://img.shields.io/badge/PinchBench-97.7%25-green?style=flat-square" />
+  <img src="https://img.shields.io/badge/HumanEval+-91.5%25-orange?style=flat-square" />
+  <img src="https://img.shields.io/badge/providers-18-purple?style=flat-square" />
+  <img src="https://img.shields.io/badge/topologies-8-red?style=flat-square" />
+  <img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" />
+</p>
 
-Multi-agent orchestration system. 18 providers · 8 topologies · 25+ tools · 330+ tests · 70% GAIA.
+<h1 align="center">Commander</h1>
+<p align="center"><strong>Watch your AI agents work — in real time, across any model, at any scale.</strong></p>
+
+<p align="center">
+  <code>npx tsx cli.ts watch "investigate this bug"</code><br>
+  <sub>No install. One command. See multi-agent reasoning stream live to your terminal.</sub>
+</p>
+
+<p align="center">
+  <img src="docs/assets/commander-watch-demo.gif" alt="Commander watch demo — live agent streaming" width="90%">
+</p>
+
+---
+
+## What makes Commander different
+
+There are dozens of AI agent frameworks. Commander is the only one that:
+
+**🧵 Shows you what's happening inside.** Every agent's thinking, tool calls, and decisions stream in real time via SSE. You don't get a black box — you get a live feed.
+
+**🔀 Runs any topology without changing code.** Same task, one flag: sequential, parallel, hierarchical, debate, ensemble, evaluator-optimizer. The engine picks the right one automatically.
+
+**🔌 Works with 18 LLM providers.** OpenAI, Anthropic, Google, DeepSeek, Groq, Ollama, Bedrock — set one env var, Commander handles the rest. Fallback chains included.
+
+**🧠 Gets better the more you use it.** Meta-learner with Thompson Sampling + Reflexion tunes agent configs across runs. Self-optimizing workflows.
+
+**📊 Has the numbers to back it up.** Benchmarked on GAIA, PinchBench, HumanEval+, BFCL — not just claims.
+
+---
+
+## 30-second demo
 
 ```bash
-npx tsx cli.ts "分析这个仓库的结构"
-npx tsx cli.ts run "写一个 FastAPI CRUD"
-npx tsx cli.ts status
+# No install needed if you have tsx (or use pnpm/npx)
+npx tsx cli.ts watch "find the bug in src/server.ts and fix it"
 ```
 
-## Quick Start
+This isn't a mockup — that's a real recording of the live SSE stream from actual agent execution. Every tool call, every decision, every verification streams to your terminal in real time. You can **watch** your agents think.
+
+---
+
+## How it works in 30 seconds
 
 ```bash
-# Install
+# 1. Install
 pnpm install
 
-# Set any API key
+# 2. Set any API key (auto-detects from 18 providers)
 export OPENAI_API_KEY=sk-...
 
-# Run
-npx tsx cli.ts plan "your task"     # Deliberation plan only
-npx tsx cli.ts run "your task"      # Full multi-agent execution
-npx tsx cli.ts watch "your task"    # Real-time SSE streaming
+# 3. Run anything
+npx tsx cli.ts run "analyze this repository"
+npx tsx cli.ts plan "implement authentication"    # See plan before executing
+npx tsx cli.ts watch "debug the failing test"     # Watch live agent reasoning
 ```
+
+---
+
+## Commander vs other frameworks
+
+| | Commander | LangGraph | CrewAI | AutoGen |
+|---|---|---|---|---|
+| **Live SSE streaming** | ✅ Built-in | ❌ | ❌ | ❌ |
+| **Automatic topology selection** | ✅ 8 topologies | ❌ Manual graph building | ❌ Fixed sequential | ❌ Manual orchestration |
+| **LLM providers** | 18 (with fallback chain) | 1-3 (via LangChain) | 3-5 | Mostly OpenAI |
+| **Self-optimization** | ✅ Thompson Sampling + Reflexion | ❌ | ❌ | ❌ |
+| **Multi-tenant isolation** | ✅ Per-tenant rate limits, storage, memory | ❌ | ❌ | ❌ |
+| **Benchmarked** | GAIA 69.7%, PinchBench 97.7%, HumanEval+ 91.5% | — | — | GAIA varies |
+| **Install size** | Lean core package; optional heavy integrations | Heavy | Moderate | Heavy |
+| **Crash safety** | ✅ Atomic checkpoints every step | ❌ | ❌ | ❌ |
+
+> Commander adds **+48.5 points** over bare LLM on GAIA. Full data in [`docs/benchmark-results/`](docs/benchmark-results/).
+
+---
+
+## Gallery: what you can do
+
+```bash
+# 👁  Watch agent reasoning in real-time
+commander watch "analyze this repository"
+
+# 🧠  Multi-agent code review (debate topology)
+commander run "review all PR changes for security issues"
+
+# 🔬  Deep research with 20 parallel agents
+commander run "research vector database options for our stack" --effort deep_research
+
+# 🏭  Company mode: plan → execute → review → improve
+commander company "build a REST API for user management"
+
+# 🤖  Recursive delegation (agents spawning agents)
+commander run "refactor the entire auth module"
+
+# 📊  Enterprise: multi-tenant, rate-limited, metrics-enabled
+docker compose -f docker-compose.prod.yml up -d
+```
+
+---
+
+## Benchmarks
+
+| Benchmark | Commander | Bare LLM (MiMo) | OpenClaw | Δ |
+|-----------|:---------:|:----------------:|:--------:|:-:|
+| **GAIA** (165 multi-step reasoning tasks) | **69.7%** | 21.2% | — | **+48.5pp** |
+| **BFCL** Tool Selection (35-scenario unofficial subset) | **60.0%** | — | — | — |
+| **BFCL** Parameter Prediction (35-scenario unofficial subset) | **91.4%** | — | — | — |
+| **PinchBench** (43 agentic tasks) | **97.7%** | — | 89.5% | **+8.2pp** |
+| **HumanEval+** (164 Python problems) | **91.5%** | — | — | — |
+
+BFCL uses multiple unofficial subsets in this repo: 35-scenario general subset
+(`benchmarks/bfcl/results_full.json`, 60.0% tool / 91.4% parameter), 30-task
+Commander rerun (`docs/benchmark-results/bfcl/results.json`, 80.0% / 80.0%),
+and 12-core subset (`benchmarks/bfcl/results.json`, 91.7% / 91.7%). None of
+these are official BFCL leaderboard runs.
+
+```bash
+# Reproduce any benchmark
+pnpm benchmark:gaia              # Full GAIA (takes a while)
+pnpm benchmark:gaia:quick        # 5-task quick check
+pnpm test:core                   # Full core suite: node:test + vitest
+pnpm benchmark:multiagent        # Multi-agent orchestration benchmark
+```
+
+---
 
 ## Commands
 
-| Command | Description |
+| Command | What it does |
 |---------|-------------|
-| `commander <task>` | Quick task analysis |
-| `commander run <task>` | Full multi-agent execution pipeline |
-| `commander plan <task>` | Show deliberation plan (topology, agents, budget) |
-| `commander watch <task>` | Execute with real-time event stream |
-| `commander status` | System status, provider, MetaLearner stats |
+| `commander run <task>` | Full multi-agent execution |
+| `commander plan <task>` | Shows topology, agent count, budget before execution |
+| `commander watch <task>` | **The killer feature** — live SSE stream of agent thinking |
+| `commander company <task>` | Multi-agent company mode: plan → build → review → improve |
+| `commander review` | Structured code review with P0-P3 findings |
+| `commander gui` | Web dashboard (Agent War Room) |
+| `commander tui` | Terminal dashboard |
+| `commander workers <topics>` | Parallel research workers |
+| `commander mode <mode>` | Plan / read-only / auto-edit / full-auto / suggest |
+| `commander status` | System status, provider health, MetaLearner stats |
+| `commander history` | Session management |
+| `commander skill` | Learnable skill management |
 | `commander config` | View or change settings |
 | `commander doctor` | Run diagnostics |
-| `commander gui` | Start the Agent War Room dashboard (API server + Web UI) |
-| `commander tui` | Terminal dashboard with live event feed and session browser |
-| `commander history` | List past execution sessions |
-| `commander history view <runId>` | View session details |
-| `commander history prune <n>` | Keep only N most recent sessions |
-| `commander history delete <runId>` | Delete a specific session |
-| `commander workers [topics]` | Parallel research workers |
-| `commander company <task>` | Company mode execution with review |
-| `commander mode [mode]` | Show/set approval mode (plan, read-only, auto-edit, full-auto, suggest) |
-| `commander review [--commit, --base, --json]` | Code review with guidelines |
-| `commander skill list/view/create/pin` | Manage learnable skills |
-| `commander --debug` | Enable debug logging (verbose output across all 74+ modules) |
 
-## Debug Mode
+---
 
-Enable verbose logging across all 74+ runtime modules to diagnose execution flow:
+## Architecture (the short version)
 
-```bash
-commander --debug plan "implement login"    # Verbose deliberation
-commander --debug run "research RAG"        # Full execution with traces
-commander --verbose status                  # Alternate flag, same effect
+```
+Your Task
+    │
+    ▼
+┌─────────────────────────────────────────────┐
+│  Deliberation   ← What kind of task?        │
+│  Effort Scaling ← 1 agent or 20?            │
+│  Topology Route ← Sequential? Parallel?     │
+│  Atomizer       ← Break into subtasks       │
+├─────────────────────────────────────────────┤
+│  Agent Runtime  ← LLM → Tools → Verify      │
+│    ├─ 18 LLM providers with fallback chain  │
+│    ├─ 25+ tools with SHA-256 caching         │
+│    ├─ Cycle detection + circuit breakers     │
+│    ├─ Crash-safe checkpoints every step     │
+│    └─ Live SSE streaming                     │
+├─────────────────────────────────────────────┤
+│  Synthesis     ← Merge agent outputs        │
+│  Quality Gates ← Hallucination, accuracy    │
+└─────────────────────────────────────────────┘
+    │
+    ▼
+  Result + Trace + Metrics
 ```
 
-Debug output includes:
-- **LLM calls**: Request/response payload, token counts, cache hits, latency
-- **Tool execution**: Each tool's before/after state, errors, retries
-- **State transitions**: Compaction events, checkpoints, budget governor decisions
-- **Agent orchestration**: Topology routing, subtask delegation, agent team handoffs
+Full architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
-The `--debug` flag sets the global log level to `DEBUG`. Modules that import `getGlobalLogger()` (all 74+) emit detailed diagnostics without per-module configuration. No restart or configuration file needed.
+---
 
-## Agent SDK (`@commander/sdk`)
+## Production readiness
 
-Embed Commander's multi-agent orchestration programmatically in your own applications:
+| Capability | Status |
+|------------|--------|
+| TypeScript strict | `packages/core/src` is checked with `npx tsc --noEmit`; no `as any` / `@ts-ignore` in core source |
+| Error handling | Core source avoids empty `catch {}`; cleanup paths log or intentionally ignore with comments |
+| Metrics | OpenMetrics/Prometheus counters, gauges, histograms with tenant labels |
+| Tracing | Span-based with persistent store |
+| Crash safety | Atomic write-tmp-rename checkpoints at every step |
+| Circuit breaker | 5 failures → 30s open → half-open recovery |
+| Dead letter queue | Persisted unrecoverable errors |
+| Multi-tenancy | Per-tenant rate limits, quota, storage isolation |
+| Security | Bearer token auth, CORS origin allow-list, request body limit, request IDs, rate limiting, optional HTTPS |
+| Observability | Health check, readiness probe, OpenAPI spec, SSE streaming |
+
+---
+
+## Extensibility
+
+- **17 plugin hook points** — LLM, tool, agent lifecycle, context compaction, session, step, and backend-selection hooks
+- **Custom LLM providers** — Implement `LLMProvider`, register via `runtime.registerProvider()`
+- **Custom tools** — Implement `Tool`, register via `runtime.registerTool()`
+- **Custom topologies** — Add a case in `topologyRouter.ts`
+- **Channel adapters** — Telegram, Discord, Slack via `ChannelAdapter`
+- **Agent SDK** — Embed in your own apps:
 
 ```typescript
 import { CommanderClient } from '@commander/sdk';
 
 const client = new CommanderClient({ provider: 'openai' });
-
-// Connect (auto-detects API key from env)
 await client.connect();
-
-// Execute a task — full deliberation → multi-agent pipeline
-const result = await client.run('analyze this repository structure');
-console.log(result.summary, result.status);
-
-// Subscribe to live events
-const unsub = client.onEvent((event) => {
-  console.log(`[${event.type}]`, event.data);
-});
-
-// List past sessions
-const sessions = client.listSessions();
-
-// Clean shutdown
+const result = await client.run('analyze this repository');
 await client.disconnect();
 ```
 
-The SDK wraps Commander's core (`UltimateOrchestrator`, `SSEStream`, `MessageBus`) into a single `CommanderClient` class with lifecycle management (`connect`/`disconnect`) and event-driven execution monitoring.
-
-## Session History
-
-Every execution run is automatically checkpointed to disk. View, inspect, and prune past sessions:
-
-```bash
-commander history                    # List all past sessions (ID, task, status, timestamp)
-commander history view <runId>       # Full session details + step breakdown
-commander history delete <runId>     # Remove a single session
-commander history prune 10           # Keep only the 10 most recent sessions
-```
-
-Sessions are persisted as crash-safe JSON snapshots in `~/.commander/state/` — written with atomic tmp+rename to prevent corruption. Each checkpoint stores:
-- **Run ID** and **task goal**
-- **Phase** and **step number** in the execution loop
-- **LLM message history** and **token usage** per step
-- **Error state** for failed runs (enables dead-letter analysis)
+---
 
 ## Providers
 
-Set any one of these environment variables (also supports fallback names noted below):
+Set any one env var. Commander auto-detects from **18 providers**:
 
-| Variable | Provider | Notes |
-|----------|----------|-------|
-| `OPENAI_API_KEY` | OpenAI / DeepSeek / GLM / MiMo | |
-| `ANTHROPIC_API_KEY` | Anthropic Claude | |
-| `GOOGLE_API_KEY` | Google Gemini | |
-| `OPENROUTER_API_KEY` | OpenRouter (200+ models) | |
-| `DEEPSEEK_API_KEY` | DeepSeek (dedicated) | |
-| `ZHIPU_API_KEY` | GLM (Zhipu AI) | |
-| `MIMO_API_KEY` | MiMo (dedicated) | |
-| `XIAOMI_API_KEY` | Xiaomi MiMo | |
-| `CO_API_KEY` | Cohere | Also accepts `COHERE_API_KEY` |
-| `MISTRAL_API_KEY` | Mistral AI | |
-| `GROQ_API_KEY` | Groq (fast inference) | |
-| `TOGETHER_API_KEY` | Together AI | |
-| `PERPLEXITY_API_KEY` | Perplexity | Also accepts `PPLX_API_KEY` |
-| `FIREWORKS_API_KEY` | Fireworks AI | |
-| `REPLICATE_API_TOKEN` | Replicate (open-source cloud) | Also accepts `REPLICATE_API_KEY` |
-| `OLLAMA_HOST` | Ollama (local) | Also accepts `OLLAMA_BASE_URL` |
-| `VLLM_BASE_URL` | vLLM (local) | |
-| `AWS_ACCESS_KEY_ID` | AWS Bedrock (+ `AWS_SECRET_ACCESS_KEY`) | |
-| `XAI_API_KEY` | xAI (Grok) | |
-| `ANYSCALE_API_KEY` | Anyscale | |
-| `DEEPINFRA_API_KEY` | DeepInfra | |
+`OPENAI_API_KEY` · `ANTHROPIC_API_KEY` · `GOOGLE_API_KEY` · `DEEPSEEK_API_KEY` · `ZHIPU_API_KEY` · `MIMO_API_KEY` · `XIAOMI_API_KEY` · `GROQ_API_KEY` · `TOGETHER_API_KEY` · `PERPLEXITY_API_KEY` · `FIREWORKS_API_KEY` · `REPLICATE_API_TOKEN` · `MISTRAL_API_KEY` · `CO_API_KEY` · `OPENROUTER_API_KEY` · `OLLAMA_HOST` · `VLLM_BASE_URL` · `AWS_ACCESS_KEY_ID` (Bedrock) · `XAI_API_KEY` · `ANYSCALE_API_KEY` · `DEEPINFRA_API_KEY`
 
-## Architecture
+---
 
-```
-CLI / HTTP
-  ├─ deliberation.ts         Task analysis & topology selection
-  ├─ effortScaler.ts         Scale agents (1-20) by complexity
-  ├─ topologyRouter.ts       SINGLE | SEQUENTIAL | PARALLEL | HIERARCHICAL
-  │                          | HYBRID | DEBATE | ENSEMBLE | EVALUATOR-OPT
-  ├─ atomizer.ts             ROMA task decomposition
-  ├─ agentRuntime.ts         LLM → tools → verification → retry loop
-  │   ├─ providers/          18 providers (OpenAI, Anthropic, Google, etc.)
-  │   ├─ toolResultCache.ts  SHA-256 caching per tenant
-  │   ├─ stateCheckpointer.ts Crash-safe snapshots
-  │   ├─ circuitBreaker.ts   Failure threshold → open circuit
-  │   └─ verificationLoop.ts Quality gates (5-stage)
-  └─ quality gates           Hallucination, consistency, accuracy
-```
-
-## Benchmarks
-
-| Benchmark | Score | Detail |
-|-----------|-------|--------|
-| GAIA (165 questions) | 69.7% | +48.5pp over bare MiMo (21.2%) |
-| BFCL (35 scenarios) | 60.0% / 91.4% | Tool selection / Parameter accuracy |
-| MT-Bench (80 questions) | 6.6/10 | Across 8 categories |
-| PinchBench (20 tasks) | 100.0% | Commander core vs OpenClaw 89.5% |
-
-Run benchmarks with the unified runner:
+## Deployment
 
 ```bash
-npx tsx packages/core/src/benchmark/benchmarkRunner.ts <config> [--max N] [--parallel N]
-```
-
-## GUI Dashboard
-
-Start the Agent War Room — a React-based operations dashboard:
-
-```bash
-commander gui
-```
-
-This starts the API server on `http://localhost:4000`. The web frontend runs on Vite:
-
-```bash
-cd apps/web && npx vite
-```
-
-The dashboard includes:
-- **Battle Report** — project health, completion rate, top agents, narrative
-- **Agent Roster** — status, specialty, workload per agent
-- **Mission Board** — Kanban with PLANNED / RUNNING / BLOCKED / DONE lanes
-- **Execution Feed** — real-time operation logs with level filtering
-- **Memory Browser** — search/filter/tag across DECISION, ISSUE, LESSON, SUMMARY
-- **Governance** — risk alerts, approval flow for MANUAL mode
-
-## HTTP API
-
-Commander includes an HTTP API server for runtime management, task execution, and monitoring.
-The full API specification is available at `/openapi.json` when the server is running.
-
-### Endpoints
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/health` | No | Liveness probe — uptime, active sessions, bus topics |
-| `GET` | `/ready` | No | Readiness probe — Kubernetes-style deployment check |
-| `GET` | `/metrics` | Yes | Metrics in JSON or Prometheus OpenMetrics (use `Accept: text/plain`) |
-| `GET` | `/openapi.json` | No | OpenAPI 3.0 specification |
-| `POST` | `/api/v1/runtime` | Yes | Create a new runtime session |
-| `GET` | `/api/v1/runtime/{id}` | Yes | Get session details |
-| `DELETE` | `/api/v1/runtime/{id}` | Yes | Delete a session |
-| `POST` | `/api/v1/execute` | Yes | Execute an agent task |
-| `GET` | `/api/v1/bus` | Yes | Message bus topics and history |
-| `GET` | `/api/v1/status` | Yes | System-wide status |
-
-### Authentication
-
-Set `COMMANDER_API_KEY` or let the server auto-generate one (logged at startup).
-Include it in requests:
-
-```bash
-curl -H "Authorization: Bearer <api-key>" http://localhost:3001/api/v1/status
-```
-
-## Docker Deployment
-
-Production-grade Docker setup with multi-stage builds:
-
-```bash
-# Build and start all services
+# Local (Docker Compose)
 docker compose up -d
+# → API: localhost:4000  |  Web GUI: localhost:3000
 
-# Access
-# - API: http://localhost:4000
-# - Web GUI: http://localhost:3000
-# - Health check: http://localhost:4000/health
-# - Metrics: http://localhost:4000/metrics
+# Production (VM / VPS)
+./scripts/deploy-vm.sh your-vm-ip --env-file .env.production
 ```
 
-The Docker setup includes:
-- **6-stage build**: base → deps → build-core → build-web → api → web
-- **Health checks** on the API service (15s interval, 3 retries)
-- **Persistent volumes** for state, traces, memory, and results
-- **Nginx** serving the SPA with cache headers and API reverse proxy
-- **tini** init system for proper signal handling
+Production overlay adds: CPU/memory limits, JSON-file logging, auto-restart, health checks, rate limiting, multi-tenancy.
 
-## Continuous Integration
+---
 
-The CI workflow (`.github/workflows/ci.yml`) runs on push/PR to master/main:
+## CI/CD
 
-| Job | What it checks |
-|-----|----------------|
-| **quality** | TypeScript compilation, full test suite (330+ tests), benchmarks, CLI check, core build |
-| **docker** | `docker compose build` succeeds |
-| **web-gui** | Vite production build of the web dashboard |
+`.github/workflows/ci.yml` — quality (typecheck + full core test suite + benchmark + build) + docker + web-gui. Auto-deploy on main via `.github/workflows/cd.yml`.
 
-## Module Status
-
-| Status | Count | Description |
-|--------|-------|-------------|
-| Production | 90+ | Wired into the main execution flow |
-| `@experimental` | 3 | Scaffolding, test-only, or replaced: `mockLLMProvider`, `pluginLoader`, `dynamicOrchestrator`, `verificationLoop` |
-| Standalone | 1 | `benchmarkRunner.ts` — independent CLI tool |
-
-## Production Readiness
-
-- **Type safety**: TypeScript strict mode, zero `as any` / `@ts-ignore`
-- **Error handling**: Zero empty catch blocks across the entire codebase
-- **Logging**: Structured logger with component-level severity (debug → error)
-- **Metrics**: OpenMetrics/Prometheus-compatible export
-- **Tracing**: Span-based execution tracing with persistent storage
-- **Multi-tenancy**: Per-tenant isolation (rate limits, concurrency, storage, memory)
-- **Resilience**: Circuit breakers, dead letter queues, compensation registry
-- **Security**: Bearer token auth, rate limiting, configurable CORS
-- **Observability**: Health, readiness, metrics, and OpenAPI endpoints
-- **Deployment**: Docker Compose with health checks, persistent volumes, Nginx
+---
 
 ## License
 
 MIT
+
+---
+
+<p align="center">
+  <sub>Built with ❤️ for developers who want to see what their AI is actually doing.</sub>
+</p>

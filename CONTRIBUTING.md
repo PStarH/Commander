@@ -30,13 +30,21 @@ npx tsc --noEmit                # Type check
 - **Showcases**: Build something cool with Commander and share it
 - **Tutorials**: Video tutorials, blog posts, example repos
 
+## Contributor License Agreement
+
+By submitting a pull request, you agree to the terms in [CLA.md](CLA.md). In short:
+- You grant the project license to use your contribution under the MIT license
+- You represent that you own the rights to your contribution
+- You acknowledge there is no obligation to accept your contribution
+
 ## Pull Request Process
 
 1. Fork the repo
 2. Create a feature branch
 3. Run `cd packages/core && npx tsx --test tests/*.test.ts` - all passing
 4. Run `npx tsc --noEmit` - clean
-5. Submit PR with description of changes
+5. Run `pnpm --filter @commander/sdk typecheck` - clean
+6. Submit PR with description of changes
 
 ## Code Style
 
