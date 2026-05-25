@@ -13,6 +13,11 @@ const DEFINITION: ToolDefinition = {
     },
     required: ['path'],
   },
+  examples: [
+    { name: 'pdf_extract', arguments: { path: 'docs/report.pdf' } },
+    { name: 'pdf_extract', arguments: { path: 'paper.pdf', pageStart: 3, pageEnd: 5 } },
+  ],
+  category: 'multimodal',
 };
 
 export class PdfExtractTool implements Tool {
@@ -39,37 +44,38 @@ export class PdfExtractTool implements Tool {
       if (!stat.isFile()) return `Error: Not a file: ${filePath}`;
       if (stat.size > 100 * 1024 * 1024) return `Error: PDF too large (${(stat.size / 1024 / 1024).toFixed(1)}MB). Max: 100MB.`;
 
-      const ext = path.extname(resolved).toLowerCase();
-      if (ext !== '.pdf') return `Error: Not a PDF file: ${filePath}`;
+       const ext = path.extname(resolved).toLowerCase();
+       if (ext !== '.pdf') return `Error: Not a PDF file: ${filePath}`;
 
-      try {
-        const pdfMod = 'pdfjs-dist';
-        const pdflib: any = await import(pdfMod);
-        const data = new Uint8Array(fs.readFileSync(resolved));
-        const doc = await pdflib.getDocument({ data }).promise;
-        const totalPages = doc.numPages;
-        const endPage = Math.min(pageEnd, totalPages);
-        const pages: string[] = [];
+        try {
+          const pdfMod = 'pdfjs-dist';
+          const pdflib = await import(pdfMod);
+          const data = new Uint8Array(fs.readFileSync(resolved));
+          const doc = await pdflib.getDocument({ data }).promise;
+          const totalPages = doc.numPages;
+          const endPage = Math.min(pageEnd, totalPages);
+          const pages: string[] = [];
 
-        for (let i = pageStart; i <= endPage; i++) {
-          const page = await doc.getPage(i);
-          const content = await page.getTextContent();
-          const text = content.items.map((item: any) => item.str).join(' ');
-          pages.push(`--- Page ${i}/${totalPages} ---\n${text}`);
+          for (let i = pageStart; i <= endPage; i++) {
+            const page = await doc.getPage(i);
+            const content = await page.getTextContent();
+            const text = content.items.map((item: { str: string }) => item.str).join(' ');
+            pages.push(`--- Page ${i}/${totalPages} ---\n${text}`);
+          }
+
+          await doc.destroy();
+          const result = pages.join('\n\n');
+          if (result.length <= maxChars) return result;
+          return `${result.slice(0, maxChars)}\n\n...[Truncated at ${maxChars} chars (${result.length} total)]`;
+        } catch (err: unknown) {
+          const innerMsg = err instanceof Error ? err.message : String(err);
+          if (innerMsg.includes('Cannot find module')) {
+            return `PDF extraction requires pdfjs-dist. Install: npm install pdfjs-dist\n\nError: ${innerMsg}`;
+          }
+          throw err;
         }
-
-        await doc.destroy();
-        const result = pages.join('\n\n');
-        if (result.length <= maxChars) return result;
-        return `${result.slice(0, maxChars)}\n\n...[Truncated at ${maxChars} chars (${result.length} total)]`;
-      } catch (err: any) {
-        if (err.message?.includes('Cannot find module')) {
-          return `PDF extraction requires pdfjs-dist. Install: npm install pdfjs-dist\n\nError: ${err.message}`;
-        }
-        throw err;
-      }
-    } catch (err: any) {
-      return `PDF extraction failed: ${err.message ?? String(err)}`;
+    } catch (err: unknown) {
+      return `PDF extraction failed: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
 }

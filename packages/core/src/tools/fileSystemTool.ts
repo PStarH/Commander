@@ -18,9 +18,8 @@ function safePath(target: string): string {
       throw new Error(`Access denied: symlink "${target}" points outside workspace`);
     }
     return real;
-  } catch (err: any) {
-    // If file doesn't exist yet (write), check the parent directory
-    if (err.code === 'ENOENT') {
+  } catch (err: unknown) {
+    if (err instanceof Error && 'code' in err && (err as { code: string }).code === 'ENOENT') {
       const parentDir = path.dirname(resolved);
       try {
         const realParent = fs.realpathSync(parentDir);
@@ -46,6 +45,11 @@ export class FileReadTool implements Tool {
       },
       required: ['path'],
     },
+    examples: [
+      { name: 'file_read', arguments: { path: 'package.json' } },
+      { name: 'file_read', arguments: { path: 'src/index.ts', maxChars: 5000 } },
+    ],
+    category: 'filesystem',
   };
 
   async execute(args: Record<string, unknown>): Promise<string> {
@@ -87,6 +91,11 @@ export class FileWriteTool implements Tool {
       },
       required: ['path', 'content'],
     },
+    examples: [
+      { name: 'file_write', arguments: { path: 'output.txt', content: 'Hello, world!' } },
+      { name: 'file_write', arguments: { path: 'src/config.json', content: '{"debug": true}' } },
+    ],
+    category: 'filesystem',
   };
 
   async execute(args: Record<string, unknown>): Promise<string> {
@@ -121,6 +130,11 @@ export class FileEditTool implements Tool {
       },
       required: ['path', 'oldString', 'newString'],
     },
+    examples: [
+      { name: 'file_edit', arguments: { path: 'src/config.ts', oldString: 'port: 3000', newString: 'port: 8080' } },
+      { name: 'file_edit', arguments: { path: 'README.md', oldString: '# Old Title', newString: '# New Title' } },
+    ],
+    category: 'filesystem',
   };
 
   async execute(args: Record<string, unknown>): Promise<string> {
@@ -159,6 +173,11 @@ export class FileSearchTool implements Tool {
       },
       required: ['pattern'],
     },
+    examples: [
+      { name: 'file_search', arguments: { pattern: 'src/**/*.ts' } },
+      { name: 'file_search', arguments: { pattern: '**/*.json', maxResults: 5 } },
+    ],
+    category: 'filesystem',
   };
 
   async execute(args: Record<string, unknown>): Promise<string> {
@@ -227,6 +246,11 @@ export class FileListTool implements Tool {
         path: { type: 'string', description: 'Directory path (relative to workspace, default: ".")', default: '.' },
       },
     },
+    examples: [
+      { name: 'file_list', arguments: { path: '.' } },
+      { name: 'file_list', arguments: { path: 'src' } },
+    ],
+    category: 'filesystem',
   };
 
   async execute(args: Record<string, unknown>): Promise<string> {

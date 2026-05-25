@@ -66,9 +66,10 @@ export class CodeSearchTool implements Tool {
       const matchCount = lines.filter(l => l.includes(grepPattern) || l.includes(pattern)).length;
       const sliced = lines.slice(0, maxResults * (contextLines * 2 + 2)).join('\n');
       return `Found ${matchCount} matches in ${lines.length} lines:\n\n${sliced}`;
-    } catch (searchErr: any) {
-      if (searchErr.message?.includes('command failed')) return `No results found for pattern: ${pattern}`;
-      return `Search failed: ${searchErr.message?.slice(0, 200) || String(searchErr)}`;
+    } catch (searchErr: unknown) {
+      const msg = searchErr instanceof Error ? searchErr.message : String(searchErr);
+      if (msg.includes('command failed')) return `No results found for pattern: ${pattern}`;
+      return `Search failed: ${msg.slice(0, 200)}`;
     }
   }
 }

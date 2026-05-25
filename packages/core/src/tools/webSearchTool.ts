@@ -156,6 +156,11 @@ export class WebFetchTool implements Tool {
       },
       required: ['url'],
     },
+    examples: [
+      { name: 'web_fetch', arguments: { url: 'https://example.com' } },
+      { name: 'web_fetch', arguments: { url: 'https://en.wikipedia.org/wiki/TypeScript', maxChars: 3000 } },
+    ],
+    category: 'web',
   };
 
   async execute(args: Record<string, unknown>): Promise<string> {
