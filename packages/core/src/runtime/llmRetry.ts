@@ -45,9 +45,10 @@ export function computeBackoff(attempt: number, baseMs: number = 1000, maxMs: nu
 
 function extractStatus(err: unknown): number | undefined {
   if (err && typeof err === 'object') {
-    if ('status' in err && typeof (err as any).status === 'number') return (err as any).status;
-    if ('statusCode' in err && typeof (err as any).statusCode === 'number') return (err as any).statusCode;
-    const msg = (err as any).message || '';
+    const e = err as { status?: unknown; statusCode?: unknown; message?: unknown };
+    if (typeof e.status === 'number') return e.status;
+    if (typeof e.statusCode === 'number') return e.statusCode;
+    const msg = typeof e.message === 'string' ? e.message : '';
     const m = msg.match(/\b(4\d{2}|5\d{2})\b/);
     if (m) return parseInt(m[1], 10);
   }
@@ -56,10 +57,12 @@ function extractStatus(err: unknown): number | undefined {
 
 function extractRetryAfter(err: unknown): number | undefined {
   if (err && typeof err === 'object') {
-    const headers = (err as any).headers || (err as any).response?.headers;
-    if (headers) {
-      const val = headers['retry-after'] || headers['Retry-After'];
-      if (val) return parseInt(val, 10) * 1000;
+    const e = err as { headers?: unknown; response?: { headers?: unknown } };
+    const hdrs = e.headers ?? e.response?.headers;
+    if (hdrs && typeof hdrs === 'object') {
+      const h = hdrs as Record<string, unknown>;
+      const val = h['retry-after'] ?? h['Retry-After'];
+      if (val) return parseInt(String(val), 10) * 1000;
     }
   }
   return undefined;
