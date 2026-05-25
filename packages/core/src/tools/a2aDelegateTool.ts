@@ -33,6 +33,11 @@ const DEFINITION: ToolDefinition = {
     },
     required: ['agent', 'task'],
   },
+  examples: [
+    { name: 'a2a_delegate', arguments: { agent: 'code-reviewer', task: 'Review the changes in src/runtime/ for potential issues' } },
+    { name: 'a2a_delegate', arguments: { agent: 'research-agent', task: 'Find best practices for implementing RAG', wait: true } },
+  ],
+  category: 'development',
 };
 
 export class A2ADelegateTool implements Tool {

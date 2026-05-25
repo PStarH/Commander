@@ -1,6 +1,20 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
 
-let stealthBrowser: any = null;
+interface StealthPlaywright {
+  launch(opts: Record<string, unknown>): Promise<StealthBrowser>;
+}
+interface StealthBrowser {
+  newPage(opts: Record<string, unknown>): Promise<StealthPage>;
+  close(): Promise<void>;
+}
+interface StealthPage {
+  goto(url: string, opts: Record<string, unknown>): Promise<void>;
+  waitForTimeout(ms: number): Promise<void>;
+  evaluate<T, A>(fn: (arg: A) => T, arg: A): Promise<T>;
+  close(): Promise<void>;
+}
+
+let stealthBrowser: StealthPlaywright | null = null;
 async function getStealth() {
   if (!stealthBrowser) {
     const { addExtra } = await import('playwright-extra');
@@ -8,7 +22,7 @@ async function getStealth() {
     const StealthPlugin = (await import('puppeteer-extra-plugin-stealth')).default;
     const pe = addExtra(chromium);
     pe.use(StealthPlugin());
-    stealthBrowser = pe;
+    stealthBrowser = pe as unknown as StealthPlaywright;
   }
   return stealthBrowser;
 }
@@ -50,13 +64,13 @@ async function fetchPage(url: string): Promise<string> {
     const page = await browser.newPage({viewport:{width:1280,height:800}});
     await page.goto(url, {waitUntil:'networkidle',timeout:30000});
     await page.waitForTimeout(1000);
-    const content = await page.evaluate(() => {
-      for (const s of ['script','style','nav','footer','header','aside','iframe']) {
-        document.querySelectorAll(s).forEach(e => e.remove());
-      }
-      const m = document.querySelector('main,article,.content,#content,.post')||document.body;
-      return (m.textContent||'').replace(/\s+/g,' ').trim().slice(0,10000);
-    });
+     const content = await page.evaluate((arg: undefined) => {
+       for (const s of ['script','style','nav','footer','header','aside','iframe']) {
+         document.querySelectorAll(s).forEach(e => e.remove());
+       }
+       const m = document.querySelector('main,article,.content,#content,.post')||document.body;
+       return (m.textContent||'').replace(/\s+/g,' ').trim().slice(0,10000);
+     }, undefined);
     return content || 'No readable content.';
   } finally { await browser.close(); }
 }
@@ -68,6 +82,11 @@ const SDEF: ToolDefinition = {
     query:{type:'string',description:'Search query'},
     count:{type:'number',description:'Results (1-10, default 5)'},
   },required:['query']},
+  examples:[
+    {name:'browser_search',arguments:{query:'React 19 release date'}},
+    {name:'browser_search',arguments:{query:'TypeScript best practices 2026',count:3}},
+  ],
+  category:'web',
 };
 
 export class BrowserSearchTool implements Tool {
@@ -78,16 +97,21 @@ export class BrowserSearchTool implements Tool {
   maxOutputSize = 50000;
   async execute(args: Record<string,unknown>): Promise<string> {
     try { return await searchDDG(String(args.query||''), Math.min(10,Math.max(1,Number(args.count)||5))); }
-    catch(err:any) { return 'Search failed: '+(err.message||'Unknown error'); }
+    catch(err) { return 'Search failed: '+(err instanceof Error ? err.message : 'Unknown error'); }
   }
 }
 
 const FDEF: ToolDefinition = {
   name:'browser_fetch',
-  description:'Fetch webpage content using a browser. Extracts main readable text.',
+  description:'Fetch webpage content using a browser. Renders JavaScript and extracts main readable text. Best for: SPAs, JS-heavy sites, pages behind client-side rendering. Use web_fetch for simpler server-rendered pages.',
   inputSchema:{type:'object',properties:{
     url:{type:'string',description:'Full URL'},
   },required:['url']},
+  examples:[
+    {name:'browser_fetch',arguments:{url:'https://example.com'}},
+    {name:'browser_fetch',arguments:{url:'https://news.ycombinator.com'}},
+  ],
+  category:'web',
 };
 
 export class BrowserFetchTool implements Tool {
@@ -96,6 +120,6 @@ export class BrowserFetchTool implements Tool {
     const url = String(args.url||'');
     if (!url.startsWith('http://')&&!url.startsWith('https://')) return 'Invalid URL. Must start with http:// or https://.';
     try { return 'Content from '+url+':\n'+await fetchPage(url); }
-    catch(err:any) { return 'Failed to fetch '+url+': '+(err.message||'Unknown error'); }
+    catch(err) { return 'Failed to fetch '+url+': '+(err instanceof Error ? err.message : 'Unknown error'); }
   }
 }

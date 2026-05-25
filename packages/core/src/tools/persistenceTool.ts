@@ -9,7 +9,7 @@ if (!fs.existsSync(MEMORY_DIR)) fs.mkdirSync(MEMORY_DIR, { recursive: true });
 export class MemoryStoreTool implements Tool {
   definition: ToolDefinition = {
     name: 'memory_store',
-    description: 'Store a key-value pair in persistent memory that survives across sessions.',
+    description: 'Store a key-value pair in persistent memory that survives across sessions. Retrieve later with memory_recall. Use for project context, user preferences, and cross-session state.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -19,6 +19,11 @@ export class MemoryStoreTool implements Tool {
       },
       required: ['key', 'value'],
     },
+    examples: [
+      { name: 'memory_store', arguments: { key: 'project/deadline', value: 'May 30th' } },
+      { name: 'memory_store', arguments: { key: 'config/theme', value: 'dark', namespace: 'preferences' } },
+    ],
+    category: 'memory',
   };
 
   async execute(args: Record<string, unknown>): Promise<string> {
@@ -49,6 +54,11 @@ export class MemoryRecallTool implements Tool {
         limit: { type: 'number', description: 'Max results (default: 10)', default: 10 },
       },
     },
+    examples: [
+      { name: 'memory_recall', arguments: { key: 'project/deadline' } },
+      { name: 'memory_recall', arguments: { search: 'config', namespace: 'preferences' } },
+    ],
+    category: 'memory',
   };
 
   async execute(args: Record<string, unknown>): Promise<string> {
@@ -87,6 +97,10 @@ export class MemoryListTool implements Tool {
     name: 'memory_list',
     description: 'List all namespaces and entry counts in persistent memory.',
     inputSchema: { type: 'object', properties: {} },
+    examples: [
+      { name: 'memory_list', arguments: {} },
+    ],
+    category: 'memory',
   };
 
   async execute(): Promise<string> {

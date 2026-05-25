@@ -27,6 +27,12 @@ const DEFINITION: ToolDefinition = {
       },
     },
   },
+  examples: [
+    { name: 'verify', arguments: { checks: ['lint', 'typecheck'] } },
+    { name: 'verify', arguments: { checks: ['test'], testPattern: 'tests/*.test.ts' } },
+    { name: 'verify', arguments: { checks: ['lint', 'build'], fix: true } },
+  ],
+  category: 'development',
 };
 
 interface CheckResult {

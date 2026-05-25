@@ -97,6 +97,16 @@ export class MetaTool implements Tool {
       }
     }
 
+    const examples: Array<{ name: string; arguments: Record<string, unknown> }> = [];
+    if (spec.name === 'research_topic') {
+      examples.push({ name: 'research_topic', arguments: { query: 'Latest AI research papers 2026' } });
+    } else if (spec.name === 'find_and_read') {
+      examples.push({ name: 'find_and_read', arguments: { pattern: 'src/**/*.ts', path: '.' } });
+      examples.push({ name: 'find_and_read', arguments: { pattern: 'package.json' } });
+    } else if (spec.name === 'research_and_save') {
+      examples.push({ name: 'research_and_save', arguments: { query: 'TypeScript performance tips', filePath: 'research.md' } });
+    }
+
     this.definition = {
       name: spec.name,
       description: spec.description,
@@ -105,6 +115,7 @@ export class MetaTool implements Tool {
         properties: inputProps,
         required: Object.keys(inputProps),
       },
+      examples: examples.length > 0 ? examples : undefined,
     };
   }
 

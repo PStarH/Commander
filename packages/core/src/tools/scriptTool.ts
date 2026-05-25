@@ -24,7 +24,12 @@ import type { Tool, ToolDefinition } from '../runtime/types';
 export class ExecuteScriptTool implements Tool {
   definition: ToolDefinition = {
     name: 'execute_script',
-    description: 'Execute a JavaScript/TypeScript script that can call other tools programmatically. The script has access to a `tools` object with all available tool functions. Only console.log output is returned to context — intermediate tool results never enter the LLM context window. Use this to collapse multi-step tool chains into a single efficient call.',
+    description:
+      'Execute a JavaScript/TypeScript script that can call other tools programmatically. ' +
+      'The script has access to a `tools` object with all available tool functions. ' +
+      'Only console.log output is returned to context — intermediate tool results never ' +
+      'enter the LLM context window. Use this to collapse multi-step tool chains into ' +
+      'a single efficient call.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -45,6 +50,11 @@ export class ExecuteScriptTool implements Tool {
       },
       required: ['script'],
     },
+    examples: [
+      { name: 'execute_script', arguments: { script: 'const files = await tools.file_search({ pattern: "src/**/*.ts" }); console.log("Found", files.length, "files");' } },
+      { name: 'execute_script', arguments: { script: 'const r = await tools.web_search({ query: "AI news" }); await tools.file_write({ path: "result.txt", content: r }); console.log("Saved");', tools: ['web_search', 'file_write'] } },
+    ],
+    category: 'code',
   };
 
   isConcurrencySafe = true;
@@ -112,10 +122,11 @@ export class ExecuteScriptTool implements Tool {
       const result = await Promise.race([
         executionPromise,
         new Promise<string>((_, reject) => {
-          setTimeout(() => {
+          const timer = setTimeout(() => {
             timedOut = true;
             reject(new Error(`Script execution timed out after ${timeout}s`));
           }, timeout * 1000);
+          timer.unref();
         }),
       ]);
 
