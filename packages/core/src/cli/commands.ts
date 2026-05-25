@@ -27,7 +27,7 @@ import { DeepInfraProvider } from '../runtime/providers/deepinfraProvider';
 import { getModelRouter } from '../runtime/modelRouter';
 import { createAllTools } from '../tools/index';
 import { executeReview, formatReviewOutput, reviewReportToJson, loadReviewGuidelines } from '../reviewAgent';
-import type { ModelConfig } from '../runtime/types';
+import type { LLMProvider, ModelConfig } from '../runtime/types';
 import type { EffortLevel, OrchestrationTopology } from '../ultimate/types';
 import { UltimateOrchestrator } from '../ultimate/orchestrator';
 import { TELOSOrchestrator } from '../telos/telosOrchestrator';
@@ -73,7 +73,14 @@ function createRuntime(): AgentRuntime | null {
     runtime.registerTool(name, tool);
   }
 
-  const ProviderMap: Record<string, any> = {
+  type ProviderConstructor = new (config: {
+    apiKey: string;
+    baseUrl?: string;
+    defaultModel?: string;
+    name?: string;
+  }) => LLMProvider;
+
+  const ProviderMap: Record<string, ProviderConstructor> = {
     openai: OpenAIProvider,
     anthropic: AnthropicProvider,
     google: GoogleProvider,
