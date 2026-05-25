@@ -17,7 +17,7 @@ export interface LogEntry {
   level: LogLevel;
   component: string;
   message: string;
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
   duration?: number;      // Operation duration in ms
   error?: {
     name: string;
@@ -94,28 +94,19 @@ export class Logger {
   /**
    * Log debug message
    */
-  debug(component: string, message: string, context?: Record<string, any>): void {
+  debug(component: string, message: string, context?: Record<string, unknown>): void {
     this.log('debug', component, message, context);
   }
 
-  /**
-   * Log info message
-   */
-  info(component: string, message: string, context?: Record<string, any>): void {
+  info(component: string, message: string, context?: Record<string, unknown>): void {
     this.log('info', component, message, context);
   }
 
-  /**
-   * Log warning
-   */
-  warn(component: string, message: string, context?: Record<string, any>): void {
+  warn(component: string, message: string, context?: Record<string, unknown>): void {
     this.log('warn', component, message, context);
   }
 
-  /**
-   * Log error
-   */
-  error(component: string, message: string, error?: Error, context?: Record<string, any>): void {
+  error(component: string, message: string, error?: Error, context?: Record<string, unknown>): void {
     const errorInfo = error ? {
       name: error.name,
       message: error.message,
@@ -124,21 +115,15 @@ export class Logger {
     this.log('error', component, message, context, errorInfo);
   }
 
-  /**
-   * Log critical message
-   */
-  critical(component: string, message: string, context?: Record<string, any>): void {
+  critical(component: string, message: string, context?: Record<string, unknown>): void {
     this.log('critical', component, message, context);
   }
 
-  /**
-   * Core log method
-   */
   private log(
     level: LogLevel,
     component: string,
     message: string,
-    context?: Record<string, any>,
+    context?: Record<string, unknown>,
     error?: LogEntry['error']
   ): void {
     // Check level threshold
