@@ -40,7 +40,7 @@ export function classifyLLMError(err: unknown): ClassifiedError {
 export function computeBackoff(attempt: number, baseMs: number = 1000, maxMs: number = 30000): number {
   const exponential = Math.min(baseMs * Math.pow(2, attempt), maxMs);
   const jitter = exponential * 0.2 * (Math.random() - 0.5);
-  return Math.round(exponential + jitter);
+  return Math.min(Math.round(exponential + jitter), maxMs);
 }
 
 function extractStatus(err: unknown): number | undefined {
