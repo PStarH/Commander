@@ -216,6 +216,10 @@ export function getHTMLReportRenderer(): HTMLReportRenderer {
   return globalRenderer;
 }
 
+export function resetHTMLReportRenderer(): void {
+  globalRenderer = null;
+}
+
 export function createWarRoomHTMLReport(params: {
   projectName: string;
   operationCodename: string;

@@ -311,11 +311,12 @@ export interface SynthesisConfig {
 // ============================================================================
 
 export interface QualityGateConfig {
+  [key: string]: unknown;
   name: string;
   type: 'HALLUCINATION_CHECK' | 'CONSISTENCY' | 'COMPLETENESS' | 'ACCURACY' | 'SAFETY';
   enabled: boolean;
-  threshold: number; // 0-1 pass threshold
-  autoFix: boolean;  // attempt auto-fix if fails
+  threshold: number;
+  autoFix: boolean;
 }
 
 // ============================================================================
@@ -481,6 +482,7 @@ export interface AdaptiveExecutionResult {
 // ============================================================================
 
 export interface UltimateOrchestratorConfig {
+  [key: string]: unknown;
   defaultBudget: TELOSBudget;
   defaultThinkingBudget: ThinkingBudget;
   defaultSynthesisConfig: SynthesisConfig;

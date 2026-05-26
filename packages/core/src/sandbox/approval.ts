@@ -184,3 +184,7 @@ export function getApprovalSystem(): ApprovalSystem {
   if (!globalApproval) globalApproval = new ApprovalSystem();
   return globalApproval;
 }
+
+export function resetApprovalSystem(): void {
+  globalApproval = null;
+}

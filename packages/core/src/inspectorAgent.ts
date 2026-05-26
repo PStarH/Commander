@@ -526,3 +526,7 @@ export function getGlobalInspector(): InspectorAgent {
 export function createInspector(): InspectorAgent {
   return new InspectorAgent();
 }
+
+export function resetInspectorAgent(): void {
+  globalInspector = null;
+}

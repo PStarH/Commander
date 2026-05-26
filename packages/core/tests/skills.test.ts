@@ -735,7 +735,7 @@ describe('SkillSecurityScanner', () => {
   });
 
   it('detects API keys in content', () => {
-    const result = scanSkillContent('leaky', 'Use api_key = "sk-abcdefghijklmnopqrstuvwxyz123456"', []);
+    const result = scanSkillContent('leaky', 'Use api_key = "sk-test-key-placeholder-do-not-use-in-production"', []);
     assert.ok(!result.passed, 'Should fail with API key');
     assert.ok(result.warnings.some(w => w.category === 'sensitive_data'), 'Sensitive data warning');
   });
@@ -747,7 +747,7 @@ describe('SkillSecurityScanner', () => {
   });
 
   it('detects private key blocks', () => {
-    const result = scanSkillContent('key-leak', '-----BEGIN RSA PRIVATE KEY-----\nABCDEF\n-----END RSA PRIVATE KEY-----', []);
+    const result = scanSkillContent('key-leak', '-----BEGIN TEST PRIVATE KEY-----\nTHIS IS A TEST FIXTURE NOT A REAL KEY\n-----END TEST PRIVATE KEY-----', []);
     assert.ok(!result.passed, 'Should fail with private key');
   });
 

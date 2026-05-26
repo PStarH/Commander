@@ -380,3 +380,7 @@ export function getGlobalBudgetAllocator(): TokenBudgetAllocator {
 export function createBudgetAllocator(config?: Partial<BudgetConfig>): TokenBudgetAllocator {
   return new TokenBudgetAllocator(config);
 }
+
+export function resetBudgetAllocator(): void {
+  globalAllocator = null;
+}

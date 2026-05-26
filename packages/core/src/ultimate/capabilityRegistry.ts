@@ -137,3 +137,7 @@ export function getCapabilityRegistry(): CapabilityRegistry {
   }
   return globalCapabilityRegistry;
 }
+
+export function resetCapabilityRegistry(): void {
+  globalCapabilityRegistry = null;
+}

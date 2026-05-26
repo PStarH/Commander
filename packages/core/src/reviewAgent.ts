@@ -6,7 +6,7 @@
  * from AGENTS.md or CLI arguments, and JSON output for CI integration.
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from './logging';
@@ -83,49 +83,59 @@ interface GitDiff {
  * Returns structured diff info including file list, line counts, and patch text.
  */
 function getGitDiff(scope: ReviewScope, baseRef?: string, commitSha?: string): GitDiff {
-  let cmd: string;
+  let diffRef: string;
+  let nameRef: string;
+  let statRef: string;
+
   switch (scope) {
     case 'uncommitted':
-      cmd = 'git diff HEAD --unified=5';
+      diffRef = 'HEAD';
+      nameRef = 'HEAD';
+      statRef = 'HEAD';
       break;
-    case 'branch':
-      cmd = `git diff origin/${baseRef ?? 'main'}...HEAD --unified=5`;
+    case 'branch': {
+      const ref = baseRef ?? 'main';
+      diffRef = `origin/${ref}...HEAD`;
+      nameRef = `origin/${ref}...HEAD`;
+      statRef = `origin/${ref}...HEAD`;
       break;
-    case 'commit':
-      cmd = `git diff ${commitSha}^..${commitSha} --unified=5`;
+    }
+    case 'commit': {
+      const sha = commitSha ?? '';
+      diffRef = `${sha}^..${sha}`;
+      nameRef = `${sha}^..${sha}`;
+      statRef = `${sha}^..${sha}`;
       break;
+    }
     default:
-      cmd = 'git diff HEAD --unified=5';
+      diffRef = 'HEAD';
+      nameRef = 'HEAD';
+      statRef = 'HEAD';
   }
 
-  const patch = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
-
-  // Parse file list
-  const filesCmd = scope === 'uncommitted'
-    ? 'git diff HEAD --name-only'
-    : scope === 'branch'
-      ? `git diff origin/${baseRef ?? 'main'}...HEAD --name-only`
-      : `git diff ${commitSha}^..${commitSha} --name-only`;
+  const patch = execFileSync('git', ['diff', diffRef, '--unified=5'], {
+    encoding: 'utf-8',
+    maxBuffer: 10 * 1024 * 1024,
+  });
 
   let files: string[];
   try {
-    const filesOutput = execSync(filesCmd, { encoding: 'utf-8', maxBuffer: 1024 * 1024 });
+    const filesOutput = execFileSync('git', ['diff', nameRef, '--name-only'], {
+      encoding: 'utf-8',
+      maxBuffer: 1024 * 1024,
+    });
     files = filesOutput.split('\n').filter(Boolean);
   } catch {
     files = [];
   }
 
-  // Count additions/deletions
-  const statCmd = scope === 'uncommitted'
-    ? 'git diff HEAD --shortstat'
-    : scope === 'branch'
-      ? `git diff origin/${baseRef ?? 'main'}...HEAD --shortstat`
-      : `git diff ${commitSha}^..${commitSha} --shortstat`;
-
   let totalAdditions = 0;
   let totalDeletions = 0;
   try {
-    const stat = execSync(statCmd, { encoding: 'utf-8', maxBuffer: 1024 * 1024 });
+    const stat = execFileSync('git', ['diff', statRef, '--shortstat'], {
+      encoding: 'utf-8',
+      maxBuffer: 1024 * 1024,
+    });
     const addMatch = stat.match(/(\d+) insertion/i);
     const delMatch = stat.match(/(\d+) deletion/i);
     totalAdditions = addMatch ? parseInt(addMatch[1], 10) : 0;

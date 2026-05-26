@@ -249,9 +249,8 @@ export class FormatBridge {
         const t = typeof entry.const;
         if (firstType === undefined) firstType = t;
         else if (t !== firstType) allSameType = false;
-      } else if (entry.type === 'string' && entry.enum) {
-        // Already an enum — merge
-        consts.push(...(entry.enum as unknown[]));
+      } else if (entry.type === 'string' && Array.isArray(entry.enum)) {
+        consts.push(...entry.enum);
         if (firstType === undefined) firstType = 'string';
         else if (firstType !== 'string') allSameType = false;
       } else {

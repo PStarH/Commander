@@ -20,7 +20,7 @@ import { getGlobalLogger } from '../logging';
  *   const allTools = ToolRegistry.getAllTools();
  */
 export class ToolRegistry {
-  private static instance: ToolRegistry;
+  private static instance: ToolRegistry | undefined;
   private tools: Map<string, Tool> = new Map();
   private categories: Map<string, string[]> = new Map();
   private compiledSchemas: Map<string, CompiledSchema> = new Map();
@@ -91,6 +91,11 @@ export class ToolRegistry {
    */
   static getToolsByCategory(category: string): string[] {
     return ToolRegistry.getInstance().categories.get(category) || [];
+  }
+
+  /** Reset the singleton instance (for test isolation). */
+  static resetInstance(): void {
+    ToolRegistry.instance = undefined;
   }
 
   /**

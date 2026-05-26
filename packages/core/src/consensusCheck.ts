@@ -452,3 +452,7 @@ export function getGlobalConsensusChecker(): ConsensusChecker {
 export function createConsensusChecker(config?: Partial<ConsensusConfig>): ConsensusChecker {
   return new ConsensusChecker(config);
 }
+
+export function resetConsensusChecker(): void {
+  globalChecker = null;
+}

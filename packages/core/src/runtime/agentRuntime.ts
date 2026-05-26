@@ -78,29 +78,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { getGlobalLogger } from '../logging';
 import type { CompactTaskType } from './contextCompactor';
-
-function generateId(): string {
-  return `run_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function now(): string {
-  return new Date().toISOString();
-}
-
-const DEFAULT_CONFIG: AgentRuntimeConfig = {
-  defaultModelTier: 'standard',
-  maxStepsPerRun: 20,
-  maxRetries: 2,
-  retryDelayMs: 1000,
-  timeoutMs: 120000,
-  maxConcurrency: 5,
-  observationMaskWindow: 10,
-  enableDescendingScheduler: true,
-  budgetHardCapTokens: 64000,
-  toolRetrieval: { enabled: false, minTools: 3, maxTools: 10, alwaysInclude: [] },
-  entropyGating: { enabled: false },
-  speculativeExecution: { enabled: false, maxPredictions: 2, minConfidence: 0.3 },
-};
+import { DEFAULT_CONFIG, generateId, now, delay, descendingToolOrder, applyObservationMask, isMutationTool } from './runtimeHelpers';
 
 export class AgentRuntime {
   private config: AgentRuntimeConfig;
@@ -658,7 +636,7 @@ export class AgentRuntime {
 
               // Apply descending scheduler if enabled (broad exploration first)
               const stageCalls = this.config.enableDescendingScheduler
-                ? this.descendingToolOrder(stage.toolCalls)
+                ? descendingToolOrder(stage.toolCalls)
                 : stage.toolCalls;
 
               // Check orchestration plan (circuit breakers, approvals)
@@ -783,7 +761,7 @@ export class AgentRuntime {
           const effectiveWindow = maskDecision.apply
             ? Math.max(2, Math.floor(this.config.observationMaskWindow * (1 - maskDecision.intensity * 0.7)))
             : this.config.observationMaskWindow;
-          const maskedResults = this.applyObservationMask(
+          const maskedResults = applyObservationMask(
             orderedResults.map((r, i) => ({
               ...r,
               output: managedOutputs[i]?.output ?? r.output,
@@ -1040,7 +1018,7 @@ export class AgentRuntime {
 
       if (ce.retryable && attempt < this.config.maxRetries) {
         const delayMs = ce.retryAfter ?? computeBackoff(attempt, this.config.retryDelayMs);
-        await this.delay(delayMs);
+        await delay(delayMs);
       } else if (!ce.retryable) {
         this.circuitBreaker.onFailure();
         break; // Don't retry permanent errors
@@ -1288,7 +1266,7 @@ export class AgentRuntime {
     }
 
     // Record compensable action for mutation tools before execution
-    const isMutation = this.isMutationTool(toolCall.name);
+    const isMutation = isMutationTool(toolCall.name);
     const actionId = this.generateActionId();
     if (isMutation) {
       this.compensationRegistry.recordAction({
@@ -1513,36 +1491,7 @@ export class AgentRuntime {
     return provisioned;
   }
 
-  private applyObservationMask(
-    toolResults: Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }>,
-    windowSize: number,
-  ): Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }> {
-    if (windowSize <= 0 || toolResults.length <= windowSize) return toolResults;
-    return toolResults.map((r, i) => {
-      if (i < toolResults.length - windowSize && !r.error && r.output.length > 100) {
-        return { ...r, output: `[observation masked: ${r.name} result (${r.output.length} chars)]` };
-      }
-      return r;
-    });
-  }
-
-  /**
-   * Descending scheduler: reorder tools so broad/capacity tools run first.
-   * "Descending" = broad exploration early, narrow focus later.
-   * Research finding (W&D, arXiv Feb 2026): +7.3% on BrowseComp.
-   */
-  private descendingToolOrder(toolCalls: ToolCall[]): ToolCall[] {
-    // Broad/capacity tools: search, list, read (high information gain)
-    // Narrow tools: write, edit, delete (specific mutations)
-    const broadKeywords = ['search', 'list', 'find', 'glob', 'grep', 'read', 'fetch', 'browse'];
-    const broad: ToolCall[] = [];
-    const narrow: ToolCall[] = [];
-    for (const tc of toolCalls) {
-      const isBroad = broadKeywords.some(k => tc.name.toLowerCase().includes(k));
-      (isBroad ? broad : narrow).push(tc);
-    }
-    return [...broad, ...narrow];
-  }
+  // applyObservationMask and descendingToolOrder extracted to runtimeHelpers.ts
 
   /** Register default compensation handlers for mutation tools */
   private registerDefaultCompensation(): void {
@@ -1563,18 +1512,8 @@ export class AgentRuntime {
     });
   }
 
-  /** Tools whose names match these keywords are considered mutation (side-effect) tools */
-  private isMutationTool(name: string): boolean {
-    const mutationKeywords = ['write', 'edit', 'delete', 'mkdir', 'mv', 'cp', 'bash', 'shell', 'git'];
-    return mutationKeywords.some(k => name.toLowerCase().includes(k));
-  }
-
   private generateActionId(): string {
     return `act_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-  }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   // ---------------------------------------------------------------------------
