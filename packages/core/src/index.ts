@@ -1073,11 +1073,13 @@ export {
 
 // Experimental — not yet wired into the main execution flow
 export {
-  /** @experimental Adaptive orchestrator with dynamic step planning. */
+  /** @deprecated Will be removed in v1.0. Use UltimateOrchestrator instead.
+   * @experimental Adaptive orchestrator with dynamic step planning. */
   DynamicOrchestrator,
 } from './orchestration/dynamicOrchestrator';
 export {
-  /** @experimental Plugin discovery and loading system. */
+  /** @deprecated Will be removed in v1.0. Plugin system pending redesign.
+   * @experimental Plugin discovery and loading system. */
   PluginLoader,
   getPluginLoader,
 } from './pluginLoader';
