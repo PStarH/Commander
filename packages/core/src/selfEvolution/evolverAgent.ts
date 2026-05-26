@@ -225,22 +225,22 @@ function setConfigValue(config: Record<string, unknown>, path: string, value: un
  * Resolve a path that may reference nested array fields (e.g. "qualityGates.hallucination.threshold").
  * qualityGates is a QualityGateConfig[] array, so we need to find the right entry by name.
  */
-function resolvePath(config: UltimateOrchestratorConfig, path: string): { parent: Record<string, unknown>; key: string } | null {
+function resolvePath(config: Record<string, unknown>, path: string): { parent: Record<string, unknown>; key: string } | null {
   const parts = path.split('.');
 
   // Handle qualityGates.{name}.{field} — look up by name in the array
   if (parts[0] === 'qualityGates' && parts.length >= 3) {
     const gateName = parts[1];
     const field = parts[2];
-    const gate = (config as unknown as Record<string, unknown>).qualityGates as QualityGateConfig[] | undefined;
+    const gate = config.qualityGates as QualityGateConfig[] | undefined;
     if (!gate) return null;
     const entry = gate.find((g: QualityGateConfig) => g.name === gateName);
     if (!entry) return null;
-    return { parent: entry as unknown as Record<string, unknown>, key: field };
+    return { parent: entry as Record<string, unknown>, key: field };
   }
 
   // Standard dot path traversal
-  let current: Record<string, unknown> = config as unknown as Record<string, unknown>;
+  let current: Record<string, unknown> = config;
   for (let i = 0; i < parts.length - 1; i++) {
     const val = current[parts[i]];
     if (val === undefined || val === null || typeof val !== 'object') return null;

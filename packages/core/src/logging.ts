@@ -559,3 +559,11 @@ export function getGlobalMetrics(): MetricsCollector {
   }
   return globalMetrics;
 }
+
+export function resetGlobalLogger(): void {
+  globalLogger = null;
+}
+
+export function resetGlobalMetrics(): void {
+  globalMetrics = null;
+}

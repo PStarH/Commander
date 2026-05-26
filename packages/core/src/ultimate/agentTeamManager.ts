@@ -194,3 +194,7 @@ export function getTeamManager(): AgentTeamManager {
   }
   return globalTeamManager;
 }
+
+export function resetTeamManager(): void {
+  globalTeamManager = null;
+}
