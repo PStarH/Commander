@@ -56,3 +56,7 @@ export function getSandboxManager(): SandboxManager {
   if (!globalManager) globalManager = new SandboxManager();
   return globalManager;
 }
+
+export function resetSandboxManager(): void {
+  globalManager = null;
+}

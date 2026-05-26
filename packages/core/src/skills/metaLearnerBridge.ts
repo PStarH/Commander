@@ -79,24 +79,12 @@ export class MetaLearnerBridge {
   }
 
   private getThompsonPriors(): Map<string, Array<{ mean: number; totalTrials: number }>> {
-    const methods = this.metaLearner as unknown as Record<string, unknown>;
-    const priors = methods['thompsonPriors'] as Map<string, BetaDistribution[]> | undefined;
-    if (!priors) return new Map();
-
     const result = new Map<string, Array<{ mean: number; totalTrials: number }>>();
-    for (const [taskType, distributions] of priors) {
-      result.set(taskType, distributions.map(d => ({
-        mean: d.mean,
-        totalTrials: d.totalTrials,
-      })));
+    const taskTypes = this.metaLearner.getTrackedTaskTypes();
+    for (const taskType of taskTypes) {
+      const scores = this.metaLearner.getStrategyScores(taskType);
+      result.set(taskType, scores.map(s => ({ mean: s.score, totalTrials: s.trials })));
     }
     return result;
   }
-}
-
-interface BetaDistribution {
-  mean: number;
-  totalTrials: number;
-  alpha: number;
-  beta: number;
 }
