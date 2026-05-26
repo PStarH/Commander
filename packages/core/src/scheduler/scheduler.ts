@@ -245,7 +245,7 @@ export class Scheduler {
         workflowId: entry.workflowId,
         runId: record.id,
       },
-      effortLevel: 'AUTO' as unknown as EffortLevel,
+      effortLevel: undefined,
     });
 
     record.completedAt = new Date().toISOString();

@@ -195,10 +195,9 @@ export function validateConfig<T extends Record<string, unknown>>(
       }
     }
 
-    if (field.type === 'array' && field.min !== undefined) {
-      const arr = value as unknown[];
-      if (arr.length < field.min) {
-        errors.push(formatError(key, `Field "${key}" must have at least ${field.min} items`, arr.length, `>= ${field.min}`));
+    if (field.type === 'array' && Array.isArray(value) && field.min !== undefined) {
+      if (value.length < field.min) {
+        errors.push(formatError(key, `Field "${key}" must have at least ${field.min} items`, value.length, `>= ${field.min}`));
       }
     }
 

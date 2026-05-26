@@ -372,3 +372,7 @@ export function getGlobalErrorHandler(): ErrorHandler {
   }
   return globalErrorHandler;
 }
+
+export function resetErrorHandler(): void {
+  globalErrorHandler = null;
+}

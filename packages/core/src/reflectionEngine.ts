@@ -498,3 +498,7 @@ export function getGlobalReflectionEngine(): ReflectionEngine {
 export function createReflectionEngine(): ReflectionEngine {
   return new ReflectionEngine();
 }
+
+export function resetReflectionEngine(): void {
+  globalEngine = null;
+}

@@ -197,3 +197,7 @@ export function getPluginLoader(): PluginLoader {
   if (!globalLoader) globalLoader = new PluginLoader();
   return globalLoader;
 }
+
+export function resetPluginLoader(): void {
+  globalLoader = null;
+}

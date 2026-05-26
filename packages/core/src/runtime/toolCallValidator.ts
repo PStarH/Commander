@@ -36,8 +36,8 @@ export function compileSchema(schema: Record<string, unknown>): CompiledSchema {
     if (propSchema.type) {
       propertyTypes.set(key, propSchema.type as string);
     }
-    if (propSchema.enum) {
-      propertyEnums.set(key, propSchema.enum as unknown[]);
+    if (Array.isArray(propSchema.enum)) {
+      propertyEnums.set(key, propSchema.enum);
     }
     if (propSchema.minimum !== undefined || propSchema.maximum !== undefined) {
       propertyConstraints.set(key, {

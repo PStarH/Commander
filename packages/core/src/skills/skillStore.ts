@@ -171,7 +171,7 @@ function frontmatterToSkill(name: string, fm: Record<string, unknown>, body: str
  * Convert internal Skill to SKILL.md format with YAML frontmatter.
  */
 function skillToMarkdown(skill: Skill): string {
-  const fm: SkillFrontmatter = {
+  const fm: Record<string, unknown> = {
     name: skill.name,
     description: skill.description,
     license: 'MIT',
@@ -191,7 +191,7 @@ function skillToMarkdown(skill: Skill): string {
     'allowed-tools': skill.tools.length > 0 ? skill.tools.join(' ') : undefined,
   };
 
-  const yaml = serializeToYaml(fm as unknown as Record<string, unknown>);
+  const yaml = serializeToYaml(fm);
   return `---\n${yaml}\n---\n\n${skill.content}`;
 }
 

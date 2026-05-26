@@ -1,0 +1,57 @@
+[
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779806706619_2d3wp8",
+    "secret": "b7e135ba48d0c4fc2ebaa1c32913cc57e72d3015d0b840331cd66f396e196b4d",
+    "retryMax": 3,
+    "createdAt": "2026-05-26T14:45:06.619Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779806814840_fbzr1m",
+    "secret": "3702a58b68c91b9ec3dd54a0d134e779565434f58a4cb933db91e02e2a9e9fb5",
+    "retryMax": 3,
+    "createdAt": "2026-05-26T14:46:54.840Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779806844029_osiu9v",
+    "secret": "719041b7598a88dfe75333afb9adad21ef8206396d9292c709cf04c49a9d4f52",
+    "retryMax": 3,
+    "createdAt": "2026-05-26T14:47:24.029Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779806938384_o4psjk",
+    "secret": "a02a9d95e449e9e1e40dca1d849a3e1cc92adbfa791b15ffb1017cd4286338c9",
+    "retryMax": 3,
+    "createdAt": "2026-05-26T14:48:58.384Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779807173855_tcpb45",
+    "secret": "027d2c2374a2d08b0bb47424dddcb54652eace9a29ad6bd3e9d01ba75dad7738",
+    "retryMax": 3,
+    "createdAt": "2026-05-26T14:52:53.855Z"
+  }
+]

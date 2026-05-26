@@ -269,6 +269,12 @@ export function disconnectLSP(): void {
   if (globalLSPClient) { globalLSPClient.disconnect(); globalLSPClient = null; globalLSPEnabled = false; }
 }
 
+export function resetLSP(): void {
+  if (globalLSPClient) { globalLSPClient.disconnect(); }
+  globalLSPClient = null;
+  globalLSPEnabled = false;
+}
+
 export function isLSPReady(): boolean {
   return globalLSPEnabled && (globalLSPClient?.isReady ?? false);
 }

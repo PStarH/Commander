@@ -263,6 +263,13 @@ export class MetaLearner {
     })).sort((a, b) => b.score - a.score);
   }
 
+  /**
+   * Returns all task types tracked by the Thompson Sampling priors.
+   */
+  getTrackedTaskTypes(): string[] {
+    return Array.from(this.thompsonPriors.keys());
+  }
+
   private getOrCreatePriors(taskType: string): BetaDistribution[] {
     if (!this.thompsonPriors.has(taskType)) {
       this.thompsonPriors.set(taskType, STRATEGY_NAMES.map(() => new BetaDistribution()));
