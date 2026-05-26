@@ -104,9 +104,9 @@ function classifyTaskType(goal: string): DeliberationTaskType {
     CREATIVE: count(creative),
   };
 
-  const maxScore = Math.max(...Object.values(scores));
+  // Use TASK_TYPES (readonly const array) for deterministic iteration order
+  const maxScore = Math.max(...TASK_TYPES.map(t => scores[t]));
   if (maxScore === 0) return 'FACTUAL';
-  // FACTUAL first in object, so ties default to FACTUAL
   for (const taskType of TASK_TYPES) {
     if (scores[taskType] === maxScore) return taskType;
   }
