@@ -70,6 +70,13 @@ export class MetricsCollector {
   private counters = new Map<string, CounterMetric>();
   private gauges = new Map<string, GaugeMetric>();
   private histograms = new Map<string, HistogramMetric>();
+  private readonly maxUniqueMetrics = 1000;
+
+  private enforceCap(map: Map<string, unknown>): void {
+    if (map.size < this.maxUniqueMetrics) return;
+    const firstKey = map.keys().next().value;
+    if (firstKey !== undefined) map.delete(firstKey);
+  }
 
   // ── Counters ──
 
@@ -77,6 +84,7 @@ export class MetricsCollector {
     const key = this.key(name, labels);
     let metric = this.counters.get(key);
     if (!metric) {
+      this.enforceCap(this.counters);
       metric = { type: 'counter', name, help, total: 0, labels };
       this.counters.set(key, metric);
     }
@@ -91,6 +99,9 @@ export class MetricsCollector {
 
   setGauge(name: string, help: string, value: number, labels: MetricLabel[] = []): void {
     const key = this.key(name, labels);
+    if (!this.gauges.has(key)) {
+      this.enforceCap(this.gauges);
+    }
     this.gauges.set(key, { type: 'gauge', name, help, value, labels });
   }
 
@@ -104,6 +115,7 @@ export class MetricsCollector {
     const key = this.key(name, labels);
     let metric = this.histograms.get(key);
     if (!metric) {
+      this.enforceCap(this.histograms);
       metric = {
         type: 'histogram', name, help, buckets,
         counts: new Array(buckets.length + 1).fill(0),
