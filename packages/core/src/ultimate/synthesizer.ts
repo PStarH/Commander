@@ -63,6 +63,10 @@ export class MultiAgentSynthesizer {
     config: SynthesisConfig,
   ): Promise<string> {
     const completedNodes = this.collectCompleted(taskTree);
+    if (completedNodes.length === 0) {
+      return '# Synthesis\n\nNo completed results to synthesize.';
+    }
+
     const parts: string[] = [];
 
     parts.push('# Synthesis\n');
