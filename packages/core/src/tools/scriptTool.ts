@@ -1,4 +1,5 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
+import vm from 'vm';
 
 /**
  * ExecuteScriptTool — Programmatic Tool Calling
@@ -154,15 +155,15 @@ export class ExecuteScriptTool implements Tool {
     tools: Record<string, (args: Record<string, unknown>) => Promise<string>>,
     console_: { log: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void },
   ): Promise<void> {
-    // Use new Function to create a sandboxed scope
-    // Only `tools` and `console` are accessible in the script
-    const fn = new Function('tools', 'console', 'setTimeout', 'clearTimeout', script);
+    const sandbox = {
+      tools,
+      console: console_,
+      setTimeout,
+      clearTimeout,
+    };
+    const context = vm.createContext(sandbox);
+    const result = vm.runInNewContext(script, context, { timeout: 120000 });
 
-    // Execute synchronously — the script uses async/await internally but
-    // new Function returns a Promise when the script is async
-    const result = fn(tools, console_, setTimeout, clearTimeout);
-
-    // If the result is a Promise (async script), await it
     if (result instanceof Promise) {
       await result;
     }
