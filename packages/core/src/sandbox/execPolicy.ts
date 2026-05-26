@@ -285,23 +285,34 @@ export class ExecPolicyEngine {
     const cleaned = token.toLowerCase();
     const basename = path.basename(cleaned);
     aliases.add(basename);
-    if (basename.startsWith('mkfs.')) {
-      aliases.add('mkfs');
-    }
+    if (basename.startsWith('mkfs.')) aliases.add('mkfs');
 
-    if (token.includes('/') && fs.existsSync(token)) {
-      try {
-        const realBasename = path.basename(fs.realpathSync(token)).toLowerCase();
-        aliases.add(realBasename);
-        if (realBasename.startsWith('mkfs.')) {
-          aliases.add('mkfs');
-        }
-      } catch {
-        // Keep the syntactic basename if the path cannot be resolved.
-      }
+    const resolved = this.resolveRealPath(cleaned);
+    if (resolved) {
+      const realBasename = path.basename(resolved).toLowerCase();
+      aliases.add(realBasename);
+      if (realBasename.startsWith('mkfs.')) aliases.add('mkfs');
     }
 
     return Array.from(aliases);
+  }
+
+  /** Resolve symlinks for any command path (by path or by PATH lookup). */
+  private resolveRealPath(token: string): string | null {
+    if (token.includes('/')) {
+      try {
+        if (fs.existsSync(token)) return fs.realpathSync(token);
+      } catch { return null; }
+    } else {
+      const pathDirs = (process.env.PATH || '').split(':');
+      for (const dir of pathDirs) {
+        const fullPath = path.join(dir, token);
+        try {
+          if (fs.existsSync(fullPath)) return fs.realpathSync(fullPath);
+        } catch { continue; }
+      }
+    }
+    return null;
   }
 
   private extractCommandSubstitutions(command: string): string[] {

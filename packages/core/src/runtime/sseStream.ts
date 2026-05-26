@@ -37,9 +37,10 @@ export class SSEStream {
   private seqCounter = 0;
   // GAP-28: Heartbeat to keep SSE connections alive through proxies
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private readonly HEARTBEAT_INTERVAL_MS = 30_000; // 30 seconds
+  private readonly heartbeatIntervalMs: number;
 
-  constructor(topics?: MessageBusTopic[]) {
+  constructor(topics?: MessageBusTopic[], heartbeatIntervalMs?: number) {
+    this.heartbeatIntervalMs = heartbeatIntervalMs ?? 30_000;
     const bus = getMessageBus();
     const watchTopics: MessageBusTopic[] = topics ?? [
       'agent.started',
@@ -73,12 +74,14 @@ export class SSEStream {
     }
 
     // GAP-28: Start heartbeat to prevent proxy/load-balancer timeouts
-    this.heartbeatTimer = setInterval(() => {
-      if (!this.closed) {
-        this.dispatch(': heartbeat\n\n');
-      }
-    }, this.HEARTBEAT_INTERVAL_MS);
-    if (this.heartbeatTimer.unref) this.heartbeatTimer.unref();
+    if (this.heartbeatIntervalMs > 0) {
+      this.heartbeatTimer = setInterval(() => {
+        if (!this.closed) {
+          this.dispatch(': heartbeat\n\n');
+        }
+      }, this.heartbeatIntervalMs);
+      if (this.heartbeatTimer.unref) this.heartbeatTimer.unref();
+    }
   }
 
   emitStructured(eventType: StructuredSSEEventType, data: Record<string, unknown>): void {
