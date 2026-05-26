@@ -1,0 +1,304 @@
+import { Router } from 'express';
+import type {
+  CommanderRunIntent, CommanderRunMeta, CommanderRunContextV2, CommanderAgentCard,
+  MissionStatus, MissionPriority, MissionRiskLevel, MissionGovernanceMode, ProjectMemoryKind,
+} from '@commander/core';
+import { createSlimSnapshot, getDefaultInvocationProfile, recommendStrategy } from '@commander/core';
+import type { WarRoomStore } from './store';
+import type { ProjectMemoryStore } from './memoryStore';
+import type { AgentStateStore } from './agentStateStore';
+import {
+  isMissionStatus, isMissionPriority, isMissionRiskLevel,
+  isMissionGovernanceMode, isProjectMemoryKind, isLogLevel,
+  mapErrorToStatusCode, toErrorMessage,
+} from './routeHelpers';
+import { calculateGovernanceStats, generateGovernanceAlerts, generateWeeklyGovernanceReport } from './governanceObserver';
+
+export function createProjectRouter(
+  store: WarRoomStore,
+  memoryStore: ProjectMemoryStore,
+  agentStateStore: AgentStateStore,
+): Router {
+  const router = Router();
+
+  router.get('/projects', (_req, res) => {
+    res.json(store.listProjects());
+  });
+
+  router.get('/projects/:projectId/agents', (req, res) => {
+    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    if (!snapshot) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    res.json(store.listAgents(req.params.projectId));
+  });
+
+  router.get('/projects/:projectId/agents/:agentId/state', (req, res) => {
+    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    if (!snapshot) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    const agent = snapshot.agents.find(a => a.agentId === req.params.agentId);
+    if (!agent) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+    const state = agentStateStore.get(req.params.projectId, req.params.agentId);
+    if (!state) {
+      return res.status(404).json({ error: 'Agent state not found' });
+    }
+    res.json(state);
+  });
+
+  router.patch('/projects/:projectId/agents/:agentId/state', (req, res) => {
+    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    if (!snapshot) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    const agent = snapshot.agents.find(a => a.agentId === req.params.agentId);
+    if (!agent) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+    const { summary, preferences, tags } = req.body as {
+      summary?: string; preferences?: string; tags?: string[];
+    };
+    try {
+      const state = agentStateStore.upsert({
+        projectId: req.params.projectId, agentId: req.params.agentId,
+        summary, preferences, tags,
+      });
+      res.json(state);
+    } catch (error) {
+      res.status(400).json({ error: toErrorMessage(error) });
+    }
+  });
+
+  router.get('/projects/:projectId/war-room', (req, res) => {
+    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    if (!snapshot) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    res.json(snapshot);
+  });
+
+  router.get('/projects/:projectId/run-context', (req, res) => {
+    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    if (!snapshot) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    const { agentId, missionId, memoryLimit, intent, runId, issuedByKind, issuedById, issuedByLabel } =
+      req.query as {
+        agentId?: string; missionId?: string; memoryLimit?: string;
+        intent?: CommanderRunIntent; runId?: string;
+        issuedByKind?: 'HUMAN' | 'AGENT' | 'SYSTEM';
+        issuedById?: string; issuedByLabel?: string;
+      };
+    const limit = memoryLimit ? Number(memoryLimit) : 12;
+    const memoryItems = memoryStore.search(req.params.projectId, { limit });
+    const recommendedMemorySelection = (() => {
+      if (!missionId) {
+        return { items: memoryItems, sourceTags: ['recent'] as string[] };
+      }
+      const lowerLimit = Math.min(limit, 12);
+      const missionScoped = memoryStore.search(req.params.projectId, { limit: lowerLimit, kind: undefined })
+        .filter(item => item.missionId === missionId);
+      if (missionScoped.length > 0) {
+        return { items: missionScoped, sourceTags: ['mission-scoped'] as string[] };
+      }
+      return { items: memoryItems, sourceTags: ['recent'] as string[] };
+    })();
+    const recommendedItems = recommendedMemorySelection.items;
+    const now = new Date().toISOString();
+    const runMeta: CommanderRunMeta = {
+      runId: runId || `${req.params.projectId}-${now}`,
+      issuedAt: now,
+      issuedBy: issuedByKind ? { kind: issuedByKind, id: issuedById, label: issuedByLabel } : undefined,
+    };
+    const slimSnapshot = createSlimSnapshot(snapshot, {
+      focusMissionId: missionId, maxMissionsPerBucket: 6, maxLogs: 8,
+    });
+    const roster: CommanderAgentCard[] = snapshot.agents.map(agent => ({
+      id: agent.agentId, projectId: req.params.projectId,
+      name: agent.agentName, callsign: agent.callsign,
+      status: agent.status, specialty: agent.specialty,
+      governanceRole: (() => {
+        const fullAgent = store.listAgents(req.params.projectId).find(a => a.id === agent.agentId);
+        return fullAgent?.governanceRole ?? 'EXECUTOR';
+      })(),
+    }));
+    const focusMission = missionId
+      ? slimSnapshot.focusMission?.id === missionId
+        ? slimSnapshot.focusMission
+        : [...slimSnapshot.missionBoard.running, ...slimSnapshot.missionBoard.blocked,
+           ...slimSnapshot.missionBoard.planned, ...slimSnapshot.missionBoard.done]
+          .find(mission => mission.id === missionId)
+      : undefined;
+    const effectiveIntent = intent || 'EXECUTE';
+    const focusAgent = (agentId ? roster.find(a => a.id === agentId) : undefined) ??
+      (focusMission ? roster.find(a => a.id === focusMission.assignedAgentId) : undefined);
+    const guidance = focusAgent ? {
+      invocationProfile: getDefaultInvocationProfile({
+        agent: focusAgent, mission: focusMission, intent: effectiveIntent,
+      }),
+      strategy: recommendStrategy({
+        projectId: req.params.projectId, run: runMeta,
+        focus: { agentId, missionId, intent: effectiveIntent },
+        slimSnapshot, recentMemory: memoryItems,
+        recommendedMemory: { items: recommendedItems, sourceTags: recommendedMemorySelection.sourceTags },
+        guidance: undefined, agentRoster: roster,
+      }),
+    } : undefined;
+    const context: CommanderRunContextV2 = {
+      projectId: req.params.projectId, run: runMeta,
+      focus: { agentId, missionId, intent: effectiveIntent },
+      slimSnapshot, recentMemory: memoryItems,
+      recommendedMemory: { items: recommendedItems, sourceTags: recommendedMemorySelection.sourceTags },
+      guidance, agentRoster: roster,
+    };
+    res.json(context);
+  });
+
+  router.get('/projects/:projectId/memory', (req, res) => {
+    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+    const limit = req.query.limit ? Number(req.query.limit) : 24;
+    res.json(memoryStore.list(req.params.projectId, limit));
+  });
+
+  router.get('/projects/:projectId/memory/overview', (req, res) => {
+    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+    res.json(memoryStore.overview(req.params.projectId));
+  });
+
+  router.get('/projects/:projectId/memory/search', (req, res) => {
+    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+    const { kind, tags, q, limit } = req.query as {
+      kind?: string; tags?: string; q?: string; limit?: string;
+    };
+    const parsedKind = kind && isProjectMemoryKind(kind) ? kind : undefined;
+    const parsedTags = tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : undefined;
+    const query = q?.trim() || undefined;
+    const items = memoryStore.search(req.params.projectId, {
+      kind: parsedKind, tags: parsedTags, query, limit: limit ? Number(limit) : undefined,
+    });
+    res.json(items);
+  });
+
+  router.post('/projects/:projectId/missions', (req, res) => {
+    const { title, objective, assignedAgentId, priority, riskLevel, governanceMode } = req.body as Record<string, string | undefined>;
+    if (!title?.trim()) return res.status(400).json({ error: 'title is required' });
+    if (!assignedAgentId?.trim()) return res.status(400).json({ error: 'assignedAgentId is required' });
+    const nextPriority = priority ?? 'MEDIUM';
+    if (!isMissionPriority(nextPriority)) return res.status(400).json({ error: 'Invalid priority' });
+    const nextRiskLevel = riskLevel && isMissionRiskLevel(riskLevel) ? (riskLevel as MissionRiskLevel) : undefined;
+    const nextGovernanceMode = governanceMode && isMissionGovernanceMode(governanceMode) ? (governanceMode as MissionGovernanceMode) : undefined;
+    try {
+      const mission = store.createMission({
+        projectId: req.params.projectId, title: title.trim(),
+        objective: objective?.trim() || 'No objective provided yet.',
+        assignedAgentId: assignedAgentId.trim(), priority: nextPriority as MissionPriority,
+        riskLevel: nextRiskLevel, governanceMode: nextGovernanceMode,
+      });
+      res.status(201).json(mission);
+    } catch (error) {
+      res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
+    }
+  });
+
+  router.patch('/missions/:missionId', (req, res) => {
+    const { status, priority, assignedAgentId, title, objective, riskLevel, governanceMode } = req.body as Record<string, string | undefined>;
+    if (status && !isMissionStatus(status)) return res.status(400).json({ error: 'Invalid status' });
+    if (priority && !isMissionPriority(priority)) return res.status(400).json({ error: 'Invalid priority' });
+    if (riskLevel && !isMissionRiskLevel(riskLevel)) return res.status(400).json({ error: 'Invalid riskLevel' });
+    if (governanceMode && !isMissionGovernanceMode(governanceMode)) return res.status(400).json({ error: 'Invalid governanceMode' });
+    try {
+      const mission = store.updateMission(req.params.missionId, {
+        status: status as MissionStatus | undefined,
+        priority: priority as MissionPriority | undefined,
+        assignedAgentId: assignedAgentId?.trim(),
+        title: title?.trim(), objective: objective?.trim(),
+        riskLevel: riskLevel as MissionRiskLevel | undefined,
+        governanceMode: governanceMode as MissionGovernanceMode | undefined,
+      });
+      if (mission.status === 'DONE') {
+        try {
+          const existingSummary = memoryStore.list(mission.projectId, 100)
+            .find(item => item.missionId === mission.id && item.kind === 'SUMMARY');
+          if (!existingSummary) {
+            memoryStore.append({
+              projectId: mission.projectId, missionId: mission.id,
+              agentId: mission.assignedAgentId, kind: 'SUMMARY',
+              title: `任务完成：${mission.title}`,
+              content: `任务「${mission.title}」已完成（优先级 ${mission.priority}，风险等级 ${mission.riskLevel}，治理模式 ${mission.governanceMode}）。目标：${mission.objective}`,
+              tags: ['mission', 'done', mission.priority.toLowerCase(), mission.riskLevel.toLowerCase()],
+            });
+          }
+        } catch (e) {
+          process.stderr.write(`[MemorySummary] Failed to create auto-summary: ${(e as Error)?.message}\n`);
+        }
+      }
+      res.json(mission);
+    } catch (error) {
+      res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
+    }
+  });
+
+  router.post('/projects/:projectId/memory', (req, res) => {
+    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+    const { title, content, kind, missionId, agentId, tags } = req.body as {
+      title?: string; content?: string; kind?: string;
+      missionId?: string; agentId?: string; tags?: string[];
+    };
+    if (!title?.trim()) return res.status(400).json({ error: 'title is required' });
+    if (!content?.trim()) return res.status(400).json({ error: 'content is required' });
+    const memoryKind: ProjectMemoryKind = isProjectMemoryKind(kind || 'SUMMARY') ? (kind || 'SUMMARY') as ProjectMemoryKind : 'SUMMARY';
+    const safeTags = Array.isArray(tags) ? tags.filter((t): t is string => typeof t === 'string').slice(0, 8) : [];
+    try {
+      const item = memoryStore.append({
+        projectId: req.params.projectId, missionId, agentId,
+        kind: memoryKind, title: title.trim(), content: content.trim(), tags: safeTags,
+      });
+      res.status(201).json(item);
+    } catch (error) {
+      res.status(400).json({ error: toErrorMessage(error) });
+    }
+  });
+
+  router.post('/missions/:missionId/logs', (req, res) => {
+    const { message, level } = req.body as { message?: string; level?: string };
+    if (!message?.trim()) return res.status(400).json({ error: 'message is required' });
+    const nextLevel = level ?? 'INFO';
+    if (!isLogLevel(nextLevel)) return res.status(400).json({ error: 'Invalid log level' });
+    try {
+      const log = store.createLog({ missionId: req.params.missionId, message: message.trim(), level: nextLevel });
+      res.status(201).json(log);
+    } catch (error) {
+      res.status(mapErrorToStatusCode(error)).json({ error: toErrorMessage(error) });
+    }
+  });
+
+  router.get('/projects/:projectId/governance/stats', (req, res) => {
+    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+    res.json(calculateGovernanceStats(snapshot.missions, snapshot.agents));
+  });
+
+  router.get('/projects/:projectId/governance/alerts', (req, res) => {
+    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+    const stats = calculateGovernanceStats(snapshot.missions, snapshot.agents);
+    res.json(generateGovernanceAlerts(stats));
+  });
+
+  router.get('/projects/:projectId/governance/weekly-report', (req, res) => {
+    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    if (!snapshot) return res.status(404).json({ error: 'Project not found' });
+    const stats = calculateGovernanceStats(snapshot.missions, snapshot.agents);
+    const alerts = generateGovernanceAlerts(stats);
+    res.type('text/markdown').send(generateWeeklyGovernanceReport(stats, alerts));
+  });
+
+  return router;
+}
