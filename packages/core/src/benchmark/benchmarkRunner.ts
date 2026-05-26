@@ -11,6 +11,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as zlib from 'zlib';
 import * as yaml from 'js-yaml';
 import { env } from 'process';
 import { getGlobalLogger } from '../logging';
@@ -86,7 +87,6 @@ export function loadConfig(configPath: string): BenchmarkConfig {
 
 function readTextFile(p: string): string {
   if (p.endsWith('.gz')) {
-    const zlib = require('zlib');
     return zlib.gunzipSync(fs.readFileSync(p)).toString('utf-8');
   }
   return fs.readFileSync(p, 'utf-8');
