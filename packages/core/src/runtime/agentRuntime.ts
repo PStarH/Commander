@@ -72,6 +72,10 @@ import { createMemoryStore } from '../memory';
 import type { MemoryStore } from '../memory';
 import { OpenTelemetryExporter, getOTelExporter, executionTraceToOtlpSpans } from './openTelemetryExporter';
 import type { OTelSpan } from './openTelemetryExporter';
+import { buildSystemPrompt, buildCacheAwareUserPrompt } from './promptBuilder';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as crypto from 'crypto';
 import { getGlobalLogger } from '../logging';
 import type { CompactTaskType } from './contextCompactor';
 
@@ -167,11 +171,11 @@ export class AgentRuntime {
     try { getTraceRecorder(this.traceStore); } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Failed to initialize trace recorder', { error: (e as Error)?.message }); }
     // Initialize memory store if configured
     if (this.config.memoryStoreType) {
-      try {
-        this.memoryStore = createMemoryStore(this.config.memoryStoreType);
-      } catch (e) {
+      createMemoryStore(this.config.memoryStoreType).then(store => {
+        this.memoryStore = store;
+      }).catch(e => {
         getGlobalLogger().warn('AgentRuntime', 'Failed to initialize memory store', { type: this.config.memoryStoreType, error: (e as Error)?.message });
-      }
+      });
     }
     // Initialize OTel exporter if configured
     if (this.config.otelExporter?.enabled) {
@@ -391,7 +395,7 @@ export class AgentRuntime {
     // 2. Build LLM request with cache-optimized prompt structure
     //    Stable content (system, tools) FIRST for maximum cache hits.
     //    Variable content (user message) LAST.
-    const systemPrompt = this.buildSystemPrompt(ctx, routing);
+    const systemPrompt = buildSystemPrompt(ctx, routing, this.config, this.tools, this.governor);
     // Score and reorder tools by goal relevance for better LLM focus
     // Most relevant tools first, then the rest sorted by relevance score
     if (ctx.availableTools.length > 3) {
@@ -444,7 +448,7 @@ export class AgentRuntime {
         },
         {
           role: 'user',
-          content: this.buildCacheAwareUserPrompt(ctx, routing),
+          content: buildCacheAwareUserPrompt(ctx, routing, this.governor),
         },
       ],
       maxTokens: routing.maxTokens,
@@ -1204,104 +1208,6 @@ export class AgentRuntime {
     }
   }
 
-  private buildSystemPrompt(ctx: AgentExecutionContext, routing: RoutingDecision): string {
-    const budgetState = this.governor.getState();
-    const isLowBudget = budgetState.phase === 'tight' || budgetState.phase === 'critical';
-
-    // Budget-aware verbosity: shorter system prompt when budget is tight
-    if (isLowBudget) {
-      return [
-        `Agent ${ctx.agentId} | Project ${ctx.projectId}`,
-        ctx.missionId ? `Mission: ${ctx.missionId}` : '',
-        `Budget: ${ctx.tokenBudget}t | Model: ${routing.modelId}`,
-        `Tools: ${ctx.availableTools.join(', ')}`,
-        `Steps: max ${this.config.maxStepsPerRun}`,
-        'Be terse. JSON/tool calls preferred over prose. Prioritize accuracy.',
-      ].filter(Boolean).join('\n');
-    }
-
-    const govProfile = ctx.contextData.governanceProfile
-      ? JSON.stringify(ctx.contextData.governanceProfile)
-      : 'No governance constraints.';
-
-    const toolExamples = ctx.availableTools
-      .map(name => this.tools.get(name))
-      .filter((t): t is Tool => !!t)
-      .flatMap(t => (t.definition.examples ?? []))
-      .slice(0, 40);
-    const examplesSection = toolExamples.length > 0
-      ? '\n## Tool Usage Examples\n' +
-        toolExamples.map(ex => {
-          const args = Object.entries(ex.arguments)
-            .map(([k, v]) => `${k}=${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`)
-            .join(', ');
-          return `${ex.name}(${args})`;
-        }).join('\n') + '\n'
-      : '';
-
-    const parts: string[] = [
-      `You are agent ${ctx.agentId} on project ${ctx.projectId}.`,
-      ctx.missionId ? `Mission: ${ctx.missionId}` : '',
-      '',
-      '## Available Tools',
-      ctx.availableTools.map(name => {
-        const tool = this.tools.get(name);
-        return tool ? `- ${tool.definition.name}: ${tool.definition.description}` : `- ${name}`;
-      }).join('\n'),
-      examplesSection,
-      '## Governance',
-      govProfile,
-      '',
-      '## Token Budget (self-aware)',
-      `- Total budget: ${ctx.tokenBudget} tokens`,
-      `- Model: ${routing.modelId} (tier: ${routing.tier})`,
-      '- Be concise. Every token costs money.',
-      '- Return structured output when possible (JSON, tool calls) instead of verbose prose.',
-      '',
-      '## Constraints',
-      `- Maximum ${this.config.maxStepsPerRun} steps`,
-      '- Prioritize accuracy over completeness when budget is constrained.',
-      '',
-      '## Tool Calling Instructions',
-      '- Do NOT make assumptions about what values to plug into function arguments.',
-      '  If a tool argument value is ambiguous or not clearly specified, ask for clarification.',
-      '- Call one tool at a time unless the calls are clearly independent.',
-      '- Wait for tool results before making follow-up tool calls that depend on them.',
-      '- When a tool returns a validation error, correct your arguments and retry.',
-      '- Provide all required arguments. Do not omit required fields.',
-    ];
-
-    return parts.filter(Boolean).join('\n');
-  }
-
-  /**
-   * Build cache-aware user prompt.
-   * Variable content — goes LAST for maximum cache hit ratio on preceding system block.
-   * Includes remaining budget context and governor-driven response format hints.
-   */
-  private buildCacheAwareUserPrompt(ctx: AgentExecutionContext, routing: RoutingDecision): string {
-    const budgetState = this.governor.getState();
-    const formatDecision = this.governor.shouldApply('response_format');
-
-    // Response format hints: more aggressive under budget pressure
-    let formatHint = 'Respond concisely. Use tools when appropriate.';
-    if (formatDecision.apply) {
-      if (formatDecision.intensity > 0.7) {
-        formatHint = 'RESPOND IN SHORTEST FORM POSSIBLE. JSON preferred. No preamble.';
-      } else if (formatDecision.intensity > 0.3) {
-        formatHint = 'Be brief. Use JSON/tool calls. Skip explanations unless asked.';
-      }
-    }
-
-    return [
-      `## Task (budget: ~${budgetState.remainingTokens}t)`,
-      '',
-      ctx.goal,
-      '',
-      formatHint,
-    ].join('\n');
-  }
-
   /**
    * Execute a tool call and return STRUCTURED error context to the model.
    * Instead of silently logging errors, the model receives enough context
@@ -1495,9 +1401,6 @@ export class AgentRuntime {
     // The head preserves context/setup; the tail preserves results/errors.
     const maxSize = tool.maxOutputSize ?? this.config.observationMaskWindow * 1000;
     if (typeof output === 'string' && output.length > maxSize && maxSize > 0) {
-      const fs = require('fs');
-      const path = require('path');
-      const crypto = require('crypto');
       const hash = crypto.createHash('md5').update(output).digest('hex').slice(0, 8);
       const resultDir = path.join(process.cwd(), '.commander_results');
       if (!fs.existsSync(resultDir)) fs.mkdirSync(resultDir, { recursive: true });
