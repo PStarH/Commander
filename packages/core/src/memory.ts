@@ -806,14 +806,14 @@ function tokenize(text: string): string[] {
 /**
  * Create a default memory store instance
  */
-export function createMemoryStore(type: 'in-memory' | 'sqlite' | 'json' = 'in-memory'): MemoryStore {
+export async function createMemoryStore(type: 'in-memory' | 'sqlite' | 'json' = 'in-memory'): Promise<MemoryStore> {
   switch (type) {
     case 'in-memory':
       return new InMemoryMemoryStore();
     case 'sqlite': {
-      // Lazy-import SqliteMemoryStore to avoid dependency issues at module load
+      // Dynamic import SqliteMemoryStore to avoid loading better-sqlite3 at module load
       try {
-        const { SqliteMemoryStore } = require('./runtime/sqliteMemoryStore');
+        const { SqliteMemoryStore } = await import('./runtime/sqliteMemoryStore');
         const store = new SqliteMemoryStore('.commander/memory.db');
         store.init().catch((err: Error) => getGlobalLogger().warn('createMemoryStore', 'SqliteMemoryStore init failed', { error: err.message }));
         return store;
