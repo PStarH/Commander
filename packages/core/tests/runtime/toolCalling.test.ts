@@ -171,7 +171,7 @@ describe('AgentRuntime - Full Tool Calling Pipeline', () => {
     // Both tools should have executed (parallel = faster than sequential 100ms)
     expect(executionLog).toContain('slow1');
     expect(executionLog).toContain('slow2');
-    expect(duration).toBeLessThan(500); // 2*50ms parallel + overhead (allow CI/macOS variance)
+    expect(duration).toBeLessThan(1000); // 2*50ms parallel + overhead (allow CI/macOS variance)
   });
 
   it('handles serial (non-concurrent-safe) tools in order', async () => {

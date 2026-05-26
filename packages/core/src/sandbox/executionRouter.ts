@@ -25,7 +25,7 @@ export class ExecutionRouter {
   private backends: Map<string, ExecutionBackend> = new Map();
 
   constructor() {
-    this.localBackend = new LocalBackend();
+    this.localBackend = new LocalBackend({ rejectOnNoSandbox: true });
   }
 
   /**
@@ -142,4 +142,8 @@ let globalRouter: ExecutionRouter | null = null;
 export function getExecutionRouter(): ExecutionRouter {
   if (!globalRouter) globalRouter = new ExecutionRouter();
   return globalRouter;
+}
+
+export function resetExecutionRouter(): void {
+  globalRouter = null;
 }
