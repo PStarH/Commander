@@ -29,6 +29,17 @@ export interface HallucinationReport {
 // Pattern Definitions
 // ============================================================================
 
+/** Self-contradiction markers — pairs of affirmative + negated claims */
+const CONTRADICTION_PATTERNS = [
+  /\b(?:however|but|yet|although|nevertheless)\b.*\b(?:on the other hand|conversely|in contrast)\b/i,
+];
+
+/** Confidence inconsistency — claims certitude while expressing uncertainty */
+const CONFIDENCE_CONSISTENCY = [
+  /\b(?:i('m| am) (?:absolutely |completely )?(?:certain|sure|confident)\b.{0,100}?\b(?:i('m| am) not sure|i('m| am) uncertain|i don't know|it's unclear)\b)/is,
+  /\b(?:it is (?:clearly|definitely|undoubtedly)\b.{0,100}?\b(?:might be|could be|perhaps|maybe)\b)/is,
+];
+
 /** Overconfidence markers (multilingual) */
 const OVERCONFIDENCE_PATTERNS = [
   // English
@@ -46,6 +57,12 @@ const OVERCONFIDENCE_PATTERNS = [
   /(?:一定|肯定)(?:是|会|能)/,
   // Common LLM hallucination patterns
   /\b(as (an AI|a language model),? I (can|do) (confirm|verify|assure))\b/i,
+  // Numerical guarantees
+  /\b(I can (guarantee|promise|assure) (you )?(that )?)/i,
+  /\b(it is (in)?disputably\b)/i,
+  /\b(I know for a fact\b)/i,
+  /\b(undeniably|irrefutably|incontestably)\b/i,
+  /\b(this (is|has) been (widely |conclusively )?(proven|established|verified))\b/i,
 ];
 
 /** Unsupported specificity — very precise claims without hedging */
@@ -56,6 +73,10 @@ const SPECIFICITY_PATTERNS = [
   /\b\d+(\.\d+)?%\s+(of|increase|decrease|growth|reduction)\b/i,
   // Named studies without citation
   /(?:according to|published in|study (by|from|in))\s+(?:the\s+)?[A-Z][a-z]+/g,
+  // Numerical ranges that look fabricated (e.g., "between 42-47%")
+  /\b(between\s+\d+\.?\d*\s*[-–]\s*\d+\.?\d*\s*(%|million|billion|thousand))\b/i,
+  // Suspiciously round numbers in specific claims
+  /\b(exactly\s+\d{4,}\b)/i,
 ];
 
 /** Fabricated reference patterns */
@@ -63,12 +84,22 @@ const FABRICATED_REF_PATTERNS = [
   /\b(?:a |the )?(?:recent |20\d{2} )?(?:study|research|paper|report|survey)\s+(?:by|from|conducted by|published in)\b/i,
   /\b(?:Dr\.|Professor|Prof\.)\s+[A-Z][a-z]+\s+(?:et al\.?|and (?:colleagues|team|researchers))?\s+(?:found|showed|discovered|demonstrated|proved)\b/i,
   /\b(?:Journal of|Proceedings of|IEEE|Nature|Science|Lancet|NEJM)\b/i,
+  // Vague attribution without specifics
+  /\b(studies show|research indicates|experts say|scientists believe|it is widely known)\b/i,
+  // Hallucinated URLs
+  /\bhttps?:\/\/(?:www\.)?[a-zA-Z0-9-]+\.(?:com|org|net)\/[^\s]{10,}\b(?![^<]*>)/gi,
+  // Specific-looking paper titles (quoted)
+  /["""](?:[A-Z][a-z]+ ){5,}["""]/g,
 ];
 
 /** Temporal markers that might be impossible */
 const TEMPORAL_PATTERNS = [
   /\b(?:as of|since|until|after|in)\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20[3-9]\d\b/i,
   /\b(?:yesterday|last week|last month|earlier today)\b/i,
+  // Vague relative time references
+  /\b(in recent (years|months|decades))\b/i,
+  /\b(over the past (few |couple of )?(years|months|decades))\b/i,
+  /\b(recently,?\s+it (has been|was))\b/i,
 ];
 
 // ============================================================================
