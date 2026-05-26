@@ -242,23 +242,22 @@ const HALLUCINATION_PATTERNS = {
 // Error signals that indicate actual tool/execution errors, not normal language.
 // These require prefix context to avoid false positives on sentences like
 // "The function cannot handle this case" which is valid analysis.
+// Patterns are ordered: specific (tool/execution errors) → broad (Python tracebacks).
 const TOOL_ERROR_PATTERNS = [
-  /(?:^|\n)\s*(?:error|Error|ERROR)\s*[:\-]/m,
-  /(?:^|\n)\s*(?:Traceback|traceback)\s+(?:\(most recent|call)/m,
-  /(?:^|\n)\s*(?:Exception|EXCEPTION)\s*[:\(]/m,
-  /\btool_error\b/,
+  // Specific runtime error markers — low false-positive risk
   /\bTOOL_TIMEOUT\b/,
   /\bTOOL_NOT_FOUND\b/,
+  /\bTOOL_NOT_ALLOWED\b/,
+  /\btool_error\b/,
   /\bExit code [1-9]\d*\b/,
   /\bcommand not found\b/i,
-  /\bPermissionError\b/,
-  /\bFileNotFoundError\b/,
-  /\bModuleNotFoundError\b/,
-  /\bSyntaxError\b/,
-  /\bTypeError\b/,
-  /\bNameError\b/,
-  /\bKeyError\b/,
-  /\bValueError\b/,
+  // Python/Node runtime errors — anchored to start of line or after newline to reduce FP
+  /(?:^|\n)\s*(?:Traceback|traceback)\s+(?:\(most recent|call)/m,
+  /(?:^|\n)\s*(?:Exception|EXCEPTION)\s*[:\(]/m,
+  // Specific Python error types — only match when preceded by whitespace or punctuation
+  /\b(?:Permission|FileNotFound|ModuleNotFound|Syntax|Type|Name|Key|Value|Index|Attribute|Import|Runtime|ZeroDivision|OS)Error\b/,
+  // Generic error prefix — anchored to reduce FP on sentences like "This error occurs when..."
+  /(?:^|\n)\s*(?:error|Error|ERROR)\s*[:\-]/m,
 ];
 
 // Weak error signals — only flag if surrounded by tool-output context

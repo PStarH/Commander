@@ -242,7 +242,13 @@ async function callLLMJSON<T>(
       maxTokens: 2048,
     });
     const cleaned = response.content.trim().replace(/^```(?:json)?\s*|```\s*$/g, '');
-    const data = JSON.parse(cleaned) as T;
+    let data: T;
+    try {
+      data = JSON.parse(cleaned) as T;
+    } catch {
+      getGlobalLogger().error('SwarmOrchestrator', 'Failed to parse LLM JSON response', undefined, { responseSnippet: cleaned.slice(0, 200) });
+      return null;
+    }
     return { data, tokens: response.usage?.totalTokens ?? 0 };
   } catch (err) {
     getGlobalLogger().error('SwarmOrchestrator', 'LLM call failed', err as Error);
