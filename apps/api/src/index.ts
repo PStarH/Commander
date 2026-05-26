@@ -1,26 +1,16 @@
 import express from 'express';
-import {
-  HallucinationDetector,
-  SequentialPipeline,
-} from '@commander/core';
+import { SequentialPipeline } from '@commander/core';
 import { WarRoomStore } from './store';
 import { ProjectMemoryStore } from './memoryStore';
 import { AgentStateStore } from './agentStateStore';
-import { contentScanner, ScanResult } from './contentScanner';
 import { MemoryIndexManager, DEFAULT_DOMAINS } from './memoryIndexManager';
 import { EpisodicMemoryStore } from './episodicMemoryStore';
-import {
-  proactiveConflictCheck,
-  reactiveConflictMonitor,
-  formatConflictSummary,
-  Conflict,
-  Agent as ConflictAgent,
-  ProposedAction,
-} from './conflictDetection';
 import { ActionRationaleStore } from './actionRationale';
 import { ConfidenceReporter, ConfidenceReport, ConfidenceAlert, DEFAULT_THRESHOLDS } from './confidenceReporter';
 import { createProjectRouter } from './projectEndpoints';
-import { toErrorMessage } from './routeHelpers';
+import { createConflictRouter } from './conflictEndpoints';
+import { createSecurityRouter } from './securityEndpoints';
+import { createQualityRouter } from './qualityEndpoints';
 
 const PROJECT_ID = 'project-war-room';
 const app = express();
@@ -138,141 +128,7 @@ DEFAULT_DOMAINS.forEach(({ domain, description }) => {
 // Conflict Detection API
 // ========================================
 
-app.post('/projects/:projectId/conflict-detection/proactive', (req, res) => {
-  const snapshot = store.getProjectSnapshot(req.params.projectId);
-  if (!snapshot) {
-    return res.status(404).json({ error: 'Project not found' });
-  }
-
-  const { agentId, proposedAction } = req.body as {
-    agentId: string;
-    proposedAction: ProposedAction;
-  };
-
-  if (!agentId || !proposedAction) {
-    return res.status(400).json({ error: 'agentId and proposedAction are required' });
-  }
-
-  const agent = snapshot.agents.find(a => a.agentId === agentId);
-  if (!agent) {
-    return res.status(404).json({ error: 'Agent not found' });
-  }
-
-  const conflictAgent: ConflictAgent = {
-    id: agent.agentId,
-    name: agent.agentName,
-    role: agent.status,
-    specialties: agent.specialty ? [agent.specialty] : undefined,
-    currentTaskId: snapshot.missions.find(m => m.assignedAgentId === agentId)?.id,
-  };
-
-  const otherAgents: ConflictAgent[] = snapshot.agents
-    .filter(a => a.agentId !== agentId)
-    .map(a => ({
-      id: a.agentId,
-      name: a.agentName,
-      role: a.status,
-      specialties: a.specialty ? [a.specialty] : undefined,
-    }));
-
-  const result = proactiveConflictCheck(conflictAgent, proposedAction, {
-    otherAgents,
-    activeMissions: snapshot.missions.map(m => ({
-      id: m.id,
-      assignedAgentId: m.assignedAgentId,
-      priority: m.priority,
-    })),
-    governanceMode: snapshot.missions.find(m => m.assignedAgentId === agentId)?.governanceMode as 'AUTO' | 'GUARDED' | 'MANUAL' | undefined,
-  });
-
-  res.json(result);
-});
-
-app.post('/projects/:projectId/conflict-detection/reactive', (req, res) => {
-  const snapshot = store.getProjectSnapshot(req.params.projectId);
-  if (!snapshot) {
-    return res.status(404).json({ error: 'Project not found' });
-  }
-
-  const { recentActions } = req.body as {
-    recentActions?: ProposedAction[];
-  };
-
-  if (!recentActions || !Array.isArray(recentActions)) {
-    return res.status(400).json({ error: 'recentActions array is required' });
-  }
-
-  const agents: ConflictAgent[] = snapshot.agents.map(a => ({
-    id: a.agentId,
-    name: a.agentName,
-    role: a.status,
-    specialties: a.specialty ? [a.specialty] : undefined,
-  }));
-
-  const conflicts = reactiveConflictMonitor(agents, recentActions);
-
-  res.json({
-    conflicts,
-    summary: conflicts.map(formatConflictSummary),
-  });
-});
-
-app.get('/projects/:projectId/conflict-detection/summary', (req, res) => {
-  const snapshot = store.getProjectSnapshot(req.params.projectId);
-  if (!snapshot) {
-    return res.status(404).json({ error: 'Project not found' });
-  }
-
-  // Generate a summary of potential conflict hotspots based on current state
-  const agentWorkloads = new Map<string, number>();
-  for (const mission of snapshot.missions) {
-    if (mission.status === 'RUNNING' || mission.status === 'PLANNED') {
-      const count = agentWorkloads.get(mission.assignedAgentId) || 0;
-      agentWorkloads.set(mission.assignedAgentId, count + 1);
-    }
-  }
-
-  const potentialConflicts: Array<{ type: string; description: string; severity: string }> = [];
-
-  // Check for overloaded agents
-  for (const [agentId, count] of agentWorkloads) {
-    if (count > 3) {
-      potentialConflicts.push({
-        type: 'RESOURCE',
-        description: `Agent ${agentId} has ${count} active missions - potential bottleneck`,
-        severity: count > 5 ? 'high' : 'medium',
-      });
-    }
-  }
-
-  // Check for mission priority conflicts
-  const highPriorityMissions = snapshot.missions.filter(m => m.priority === 'HIGH' || m.priority === 'CRITICAL');
-  if (highPriorityMissions.length > 3) {
-    potentialConflicts.push({
-      type: 'GOAL',
-      description: `${highPriorityMissions.length} high/critical priority missions - resource contention likely`,
-      severity: 'medium',
-    });
-  }
-
-  // Check for governance mode distribution
-  const manualMissions = snapshot.missions.filter(m => m.governanceMode === 'MANUAL' && m.status === 'RUNNING');
-  if (manualMissions.length > 2) {
-    potentialConflicts.push({
-      type: 'POLICY',
-      description: `${manualMissions.length} MANUAL governance missions running - approval bottleneck risk`,
-      severity: 'low',
-    });
-  }
-
-  res.json({
-    agentWorkloads: Object.fromEntries(agentWorkloads),
-    potentialConflicts,
-    recommendations: potentialConflicts.length > 0
-      ? ['Consider redistributing workload among agents', 'Review mission priorities', 'Evaluate governance mode settings']
-      : ['No immediate conflict risks detected'],
-  });
-});
+app.use(createConflictRouter(store));
 
 const port = Number(process.env.PORT || 4000);
 app.listen(port, () => {
@@ -280,82 +136,7 @@ app.listen(port, () => {
   process.stdout.write(`War room project ready at GET /projects/${PROJECT_ID}/war-room\n`);
 });
 
-// Content Scanner Endpoints
-app.post('/api/security/scan', async (req, res) => {
-  try {
-    const { content, contentType } = req.body;
-    
-    if (!content) {
-      return res.status(400).json({ error: 'Content is required' });
-    }
-    
-    const result: ScanResult = await contentScanner.scan(
-      content,
-      contentType || 'text'
-    );
-    
-    res.json({
-      safe: result.safe,
-      threats: result.threats,
-      sanitizedContent: result.sanitizedContent,
-      confidence: result.confidence,
-      summary: result.safe 
-        ? 'Content passed security scan'
-        : `Found ${result.threats.length} potential threat(s)`
-    });
-  } catch (error) {
-    res.status(500).json({ error: toErrorMessage(error) });
-  }
-});
-
-app.post('/api/security/scan/:contentType', async (req, res) => {
-  try {
-    const { contentType } = req.params;
-    const { content } = req.body;
-    
-    if (!['html', 'markdown', 'text', 'json'].includes(contentType)) {
-      return res.status(400).json({ 
-        error: 'Invalid contentType. Must be one of: html, markdown, text, json' 
-      });
-    }
-    
-    if (!content) {
-      return res.status(400).json({ error: 'Content is required' });
-    }
-    
-    const result: ScanResult = await contentScanner.scan(content, contentType as 'html' | 'markdown' | 'text' | 'json');
-    
-    res.json({
-      safe: result.safe,
-      threats: result.threats,
-      sanitizedContent: result.sanitizedContent,
-      confidence: result.confidence,
-      contentType,
-      scannedAt: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({ error: toErrorMessage(error) });
-  }
-});
-
-app.get('/api/security/stats', (_req, res) => {
-  res.json({
-    service: 'ContentScanner',
-    version: '1.0.0',
-    threatTypes: [
-      'hidden_html',
-      'hidden_css',
-      'metadata_injection',
-      'prompt_injection',
-      'javascript_url',
-      'data_url',
-      'svg_injection',
-      'unicode_obfuscation'
-    ],
-    supportedContentTypes: ['html', 'markdown', 'text', 'json'],
-    description: 'Agent Security Content Scanner based on arXiv:2510.23883v2'
-  });
-});
+app.use(createSecurityRouter());
 
 // ========================================
 // Confidence Reporter API (Explainability)
@@ -426,190 +207,14 @@ app.get('/api/confidence/thresholds', (_req, res) => {
 });
 
 // ============================================================================
-// Hallucination Detection API
+// Quality Gates — Hallucination Detection, Quality Check, Consistency Monitor
 // ============================================================================
 
-const hallucinationDetector = new HallucinationDetector();
+app.use(createQualityRouter());
 
-app.post('/api/quality/hallucination-check', (req, res) => {
-  const { input, output } = req.body;
-  if (!input || !output) {
-    return res.status(400).json({ error: 'Both input and output are required' });
-  }
-  const report = hallucinationDetector.analyze(
-    typeof input === 'string' ? input : JSON.stringify(input),
-    typeof output === 'string' ? output : JSON.stringify(output),
-  );
-  res.json(report);
-});
+// (memory poisoning routes live in securityEndpoints.ts via createSecurityRouter)
 
-app.get('/api/quality/hallucination-check/info', (_req, res) => {
-  res.json({
-    signals: [
-      'overconfidence',
-      'unsupported_specificity',
-      'fabricated_reference',
-      'temporal_impossibility',
-      'inconsistency',
-      'numeric_anomaly',
-    ],
-    thresholds: {
-      pass: 'riskScore < 0.3',
-      flag_for_review: '0.3 <= riskScore < 0.6',
-      reject: 'riskScore >= 0.6',
-    },
-  });
-});
-
-// ============================================================================
-// Quality Gate — Comprehensive check endpoint
-// ============================================================================
-
-app.post('/api/quality/check', (req, res) => {
-  const { input, output } = req.body ?? {};
-  if (!output) {
-    return res.status(400).json({ error: 'output is required' });
-  }
-
-  const inputStr = typeof input === 'string' ? input : JSON.stringify(input ?? '');
-  const outputStr = typeof output === 'string' ? output : JSON.stringify(output);
-
-  // 1. Hallucination check
-  const hallucinationReport = hallucinationDetector.analyze(inputStr, outputStr);
-
-  // 2. Consensus quality (signal-based)
-  let consensusScore = 1.0;
-  const consensusSignals: string[] = [];
-
-  const hasHedging = /\b(might|may|could|likely|possibly|approximately|around|I think|it seems)\b/i.test(outputStr);
-  if (hasHedging) consensusSignals.push('hedging_language');
-
-  const contradictions = (outputStr.match(/\bhowever\b|\bbut\b|\bon the other hand\b|\bcontrary to\b/gi) ?? []).length;
-  if (contradictions > 3) { consensusScore -= 0.2; consensusSignals.push(`contradiction_markers:${contradictions}`); }
-
-  const sentences = outputStr.split(/[.!?]+/).filter((s: string) => s.trim().length > 20);
-  const unique = new Set(sentences.map((s: string) => s.trim().toLowerCase()));
-  const repRate = 1 - (unique.size / Math.max(sentences.length, 1));
-  if (repRate > 0.3) { consensusScore -= 0.25; consensusSignals.push(`repetition:${(repRate * 100).toFixed(0)}%`); }
-  consensusScore = Math.max(0, Math.min(1, consensusScore));
-
-  // 3. Handoff verification
-  const handoffSignals: string[] = [];
-  let handoffPassed = true;
-  if (!input) { handoffPassed = false; handoffSignals.push('missing_input'); }
-
-  // 4. Output validation
-  const outputValid = output !== null && output !== undefined && outputStr.trim().length > 0;
-
-  res.json({
-    hallucination: hallucinationReport,
-    consensus: {
-      score: consensusScore,
-      passed: consensusScore >= 0.67,
-      signals: consensusSignals,
-    },
-    handoff: {
-      passed: handoffPassed,
-      signals: handoffSignals,
-    },
-    outputValidation: {
-      passed: outputValid,
-    },
-    overall: {
-      passed: hallucinationReport.recommendation !== 'reject' && consensusScore >= 0.67 && handoffPassed && outputValid,
-    },
-  });
-});
-
-// ============================================================================
-// Memory Poisoning Detection API
-// ============================================================================
-
-import { MemoryPoisoningDetector } from './memoryPoisoningDetector';
-const memoryPoisoningDetector = new MemoryPoisoningDetector();
-
-app.post('/api/memory/assess-credibility', async (req, res) => {
-  const { id, content, timestamp, source, embedding, metadata } = req.body ?? {};
-  if (!content || !source) {
-    return res.status(400).json({ error: 'content and source are required' });
-  }
-
-  const result = await memoryPoisoningDetector.assessCredibility({
-    id: id ?? `mem-${Date.now()}`,
-    content,
-    timestamp: timestamp ? new Date(timestamp) : new Date(),
-    source,
-    embedding,
-    metadata,
-  });
-
-  res.json(result);
-});
-
-app.post('/api/memory/detect-poisoning', async (req, res) => {
-  const { newMemories, existingMemories } = req.body ?? {};
-  if (!Array.isArray(newMemories)) {
-    return res.status(400).json({ error: 'newMemories array is required' });
-  }
-
-  const indicators = await memoryPoisoningDetector.detectPoisoning(
-    newMemories.map((m: any) => ({
-      id: m.id ?? `mem-${Date.now()}`,
-      content: m.content ?? '',
-      timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
-      source: m.source ?? 'unknown',
-      embedding: m.embedding,
-      metadata: m.metadata,
-    })),
-    (existingMemories ?? []).map((m: any) => ({
-      id: m.id ?? `mem-${Date.now()}`,
-      content: m.content ?? '',
-      timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
-      source: m.source ?? 'unknown',
-      embedding: m.embedding,
-      metadata: m.metadata,
-    })),
-  );
-
-  res.json({ indicators, count: indicators.length });
-});
-
-// ============================================================================
-// Consistency Monitor API
-// ============================================================================
-
-import { getConsistencyMonitorManager } from './consistencyMonitor';
-
-app.post('/api/consistency/record', (req, res) => {
-  const { missionId, agentId, outputType, content } = req.body ?? {};
-  if (!agentId || !content) {
-    return res.status(400).json({ error: 'agentId and content are required' });
-  }
-  const manager = getConsistencyMonitorManager();
-  manager.recordOutput(missionId ?? 'global', {
-    agentId,
-    type: outputType ?? 'analysis',
-    content,
-    timestamp: Date.now(),
-  });
-  res.json({ status: 'recorded' });
-});
-
-app.get('/api/consistency/check/:missionId', (req, res) => {
-  const manager = getConsistencyMonitorManager();
-  const report = manager.checkConsistency(req.params.missionId);
-  res.json(report);
-});
-
-app.get('/api/consistency/status', (_req, res) => {
-  const manager = getConsistencyMonitorManager();
-  const all = manager.getAllConsistencyStatus();
-  const result: Record<string, any> = {};
-  all.forEach((report, missionId) => {
-    result[missionId] = report;
-  });
-  res.json(result);
-});
+// (consistency monitor routes live in qualityEndpoints.ts via createQualityRouter)
 
 // ============================================================================
 // Agent Self-Assessment API
