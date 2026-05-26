@@ -51,6 +51,10 @@ export class ScreenshotCaptureTool implements Tool {
     if (!fs.existsSync(screenshotDir)) fs.mkdirSync(screenshotDir, { recursive: true });
     const hash = crypto.randomBytes(4).toString('hex');
     const outputPath = String(args.outputPath ?? path.join(screenshotDir, `screenshot-${Date.now()}-${hash}.png`));
+    // Validate output path: reject shell metacharacters to prevent injection (P1-15)
+    if (/[;&|`$(){}[\]!#~<>*\n\t'"\\]/.test(outputPath)) {
+      return `Error: outputPath contains shell-unsafe characters`;
+    }
     const resolvedPath = path.resolve(outputPath);
     const outDir = path.dirname(resolvedPath);
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
@@ -96,18 +100,18 @@ export class ScreenshotCaptureTool implements Tool {
     const platform = os.platform();
     try {
       if (platform === 'darwin') {
-        const { execSync } = await import('child_process');
-        execSync(`screencapture -x "${outputPath}"`, { timeout: 15000 });
+        const { execFileSync } = await import('child_process');
+        execFileSync('screencapture', ['-x', outputPath], { timeout: 15000 });
         return `Screen capture saved: ${outputPath}`;
       }
       if (platform === 'linux') {
-        const { execSync } = await import('child_process');
-        execSync(`import -window root "${outputPath}"`, { timeout: 15000 });
+        const { execFileSync } = await import('child_process');
+        execFileSync('import', ['-window', 'root', outputPath], { timeout: 15000 });
         return `Screen capture saved: ${outputPath}`;
       }
       return `Screen capture not supported on ${platform}. Use URL mode or provide a file path.`;
     } catch (err: unknown) {
-      return `Screen capture failed: ${err instanceof Error ? err.message : String(err)}. Try URL mode instead.`;
+      return `Screenshot failed: ${err instanceof Error ? err.message : String(err)}. Try URL mode instead.`;
     }
   }
 }

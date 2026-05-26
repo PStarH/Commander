@@ -1,9 +1,18 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSandboxed } from './sandboxedExec';
 import { getGlobalLogger } from '../logging';
+
+/** Reject paths containing shell metacharacters that could enable injection. */
+const SHELL_UNSAFE_RE = /[;&|`$(){}[\]!#~<>*\n\t'"\\\x00-\x1f]/;
+
+function assertShellSafePath(filePath: string, label: string): void {
+  if (SHELL_UNSAFE_RE.test(filePath)) {
+    throw new Error(`${label} contains shell-unsafe characters: ${filePath}`);
+  }
+}
 
 const DEFINITION: ToolDefinition = {
   name: 'apply_patch',
@@ -69,24 +78,26 @@ export class ApplyPatchTool implements Tool {
         }
       }
 
-      // Try applying the patch
-      const result = execSync(`patch --forward --unified "${targetPath}" "${patchFile}" 2>&1 || patch -p1 --forward --unified < "${patchFile}" 2>&1 || echo "PATCH_FAILED"`, {
-        cwd,
-        encoding: 'utf-8',
-        timeout: 30000,
-      });
+      assertShellSafePath(targetPath, 'targetPath');
+      assertShellSafePath(patchFile, 'patchFile');
 
-      if (result.includes('PATCH_FAILED')) {
-        // Try with -p0
-        let result2 = '';
+      const patchArgsList = [
+        ['--forward', '--unified', targetPath, '-i', patchFile],
+        ['-p1', '--forward', '--unified', targetPath, '-i', patchFile],
+        ['-p0', '--forward', '--unified', targetPath, '-i', patchFile],
+      ];
+      let patchApplied = false;
+      for (const args of patchArgsList) {
         try {
-          result2 = execSync(`patch -p0 --forward --unified < "${patchFile}" 2>&1`, {
-            cwd, encoding: 'utf-8', timeout: 30000,
+          execFileSync('patch', args, {
+            cwd, encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'],
           });
-        } catch (e) { getGlobalLogger().warn('ApplyPatchTool', 'Patch retry failed', { error: (e as Error)?.message }); }
-        if (!result2 || result2.includes('FAILED')) {
-          return `Error: Patch application failed. The patch format may be invalid or the file content has changed.\n\nPatch content:\n${patchContent.slice(0, 1000)}`;
-        }
+          patchApplied = true;
+          break;
+        } catch { /* try next variant */ }
+      }
+      if (!patchApplied) {
+        return `Error: Patch application failed. The patch format may be invalid or the file content has changed.\n\nPatch content:\n${patchContent.slice(0, 1000)}`;
       }
 
       const outputLines: string[] = [];
