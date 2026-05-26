@@ -82,8 +82,8 @@ export class StepErrorBoundary {
         const value = await fn();
         return { success: true, value, errorClass: 'transient', attempts, recovered: attempt > 0 };
       } catch (err) {
-        lastError = err instanceof Error ? err.message : String(err);
         const classified = classifyLLMError(err);
+        lastError = classified.message;
         lastErrorClass = classified.errorClass;
 
         this.recordToDLQ(operationName, category, lastError, lastErrorClass, classified.retryable, attempt, options);

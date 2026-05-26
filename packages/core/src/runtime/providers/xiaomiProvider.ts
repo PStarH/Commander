@@ -168,11 +168,11 @@ export class XiaomiProvider implements LLMProvider {
       usage: tokenUsage,
       finishReason: 'stop',
       toolCalls: toolCalls.length > 0
-        ? toolCalls.map(tc => ({
-            id: tc.id,
-            name: tc.name,
-            arguments: JSON.parse(tc.arguments || '{}'),
-          }))
+        ? toolCalls.map(tc => {
+            let args: Record<string, unknown> = {};
+            try { args = JSON.parse(tc.arguments || '{}'); } catch { args = {}; }
+            return { id: tc.id, name: tc.name, arguments: args };
+          })
         : undefined,
       reasoning_content: reasoningContent || undefined,
     };
@@ -190,11 +190,11 @@ export class XiaomiProvider implements LLMProvider {
 
     // Parse text-format tool calls too
   let content = message.content ?? '';
-  let toolCalls = message.tool_calls?.map((tc: { id: string; function: { name: string; arguments: string } }) => ({
-      id: tc.id,
-      name: tc.function.name,
-      arguments: JSON.parse(tc.function.arguments || '{}'),
-    }));
+  let toolCalls = message.tool_calls?.map((tc: { id: string; function: { name: string; arguments: string } }) => {
+    let args: Record<string, unknown> = {};
+    try { args = JSON.parse(tc.function.arguments || '{}'); } catch { args = {}; }
+    return { id: tc.id, name: tc.function.name, arguments: args };
+  });
 
       if ((!toolCalls || toolCalls.length === 0) && content.includes('<tool_call>')) {
     const parsed = parseMiMoTextToolCalls(content);
