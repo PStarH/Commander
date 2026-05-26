@@ -46,8 +46,9 @@ export class BedrockProvider implements LLMProvider {
   private async loadSDK(): Promise<void> {
     if (this.sdkLoaded) return;
     try {
-      // Dynamic eval import avoids compile-time module resolution (SDK is optional)
-      this.sdk = await eval('import("@aws-sdk/client-bedrock-runtime")');
+      // Dynamic import avoids compile-time module resolution (SDK is optional)
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      this.sdk = await import('@aws-sdk/client-bedrock-runtime');
       this.sdkLoaded = true;
     } catch {
       throw new Error(
