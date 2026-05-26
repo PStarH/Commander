@@ -109,10 +109,26 @@ export class WebSearchTool implements Tool {
       results.push({ title: titles[i], url: urls[i], snippet: snippets[i] });
     }
 
+    // Fallback 1: generic result links with URL
     if (results.length === 0) {
       const fallbackRegex = /<a[^>]*class="[^"]*result[^"]*"[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
       while ((m = fallbackRegex.exec(html)) !== null && results.length < maxResults) {
         results.push({ title: m[2].replace(/<[^>]*>/g, '').trim(), url: m[1], snippet: '' });
+      }
+    }
+    // Fallback 2: any link with a heading parent
+    if (results.length === 0) {
+      const headingLinkRegex = /<h[1-4][^>]*>.*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>.*?<\/h[1-4]>/gi;
+      while ((m = headingLinkRegex.exec(html)) !== null && results.length < maxResults) {
+        results.push({ title: m[2].replace(/<[^>]*>/g, '').trim(), url: m[1], snippet: '' });
+      }
+    }
+    // Fallback 3: any absolute link with visible text
+    if (results.length === 0) {
+      const anyLinkRegex = /<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+      while ((m = anyLinkRegex.exec(html)) !== null && results.length < maxResults) {
+        const text = m[2].replace(/<[^>]*>/g, '').trim();
+        if (text) results.push({ title: text, url: m[1], snippet: '' });
       }
     }
     return results;

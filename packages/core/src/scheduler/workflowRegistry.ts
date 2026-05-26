@@ -120,6 +120,10 @@ function parseSimpleYAML(text: string): Record<string, unknown> {
   let currentObj: Record<string, unknown> | null = null;
 
   for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    // Skip empty lines and comments
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
     const indent = line.match(/^(\s*)/)?.[1]?.length ?? 0;
 
     if (indent === 0) {
