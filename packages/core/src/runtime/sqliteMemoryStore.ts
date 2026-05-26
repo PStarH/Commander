@@ -7,6 +7,7 @@
  * Used to persist agent memories across sessions and process restarts.
  */
 import { getGlobalLogger } from '../logging';
+import { mkdirSync } from 'fs';
 import type {
   MemoryStore, MemoryWriteOptions, EpisodicMemoryItem,
   MemorySearchQuery, MemorySearchResult, MemoryManageOptions, MemoryStats,
@@ -84,7 +85,6 @@ export class SqliteMemoryStore implements MemoryStore {
     }
     const dir = this.filePath.includes('/') ? this.filePath.substring(0, this.filePath.lastIndexOf('/')) : '.';
     if (dir) {
-      const { mkdirSync } = require('fs');
       mkdirSync(dir, { recursive: true });
     }
     this.db = new BetterSqlite3(this.filePath);
@@ -158,6 +158,10 @@ export class SqliteMemoryStore implements MemoryStore {
   }
 
   private rowToItem(row: SqliteRow): EpisodicMemoryItem {
+    let tags: string[] = [];
+    let evidenceRefs: string[] = [];
+    try { tags = JSON.parse(row.tags || '[]'); } catch { tags = []; }
+    try { evidenceRefs = JSON.parse(row.evidence_refs || '[]'); } catch { evidenceRefs = []; }
     return {
       id: row.id,
       projectId: row.project_id,
@@ -167,13 +171,13 @@ export class SqliteMemoryStore implements MemoryStore {
       duration: row.duration as MemoryDuration,
       title: row.title,
       content: row.content,
-      tags: JSON.parse(row.tags || '[]'),
+      tags,
       priority: row.priority,
       confidence: row.confidence,
       createdAt: row.created_at,
       lastAccessedAt: row.last_accessed_at,
       expiresAt: row.expires_at ?? undefined,
-      evidenceRefs: JSON.parse(row.evidence_refs || '[]'),
+      evidenceRefs,
     };
   }
 
