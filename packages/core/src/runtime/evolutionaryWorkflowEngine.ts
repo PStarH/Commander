@@ -14,6 +14,8 @@
  * 4. 支持工作流拓扑+节点逻辑的联合优化
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import type {
   AgentExecutionContext,
   AgentExecutionResult,
@@ -22,6 +24,7 @@ import type {
 import type { OrchestrationTopology, TaskTreeNode, ROMARole } from '../ultimate/types';
 import { getMetaLearner } from '../selfEvolution/metaLearner';
 import { getGlobalReflectionEngine } from '../reflectionEngine';
+import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // 工作流基因编码
@@ -149,7 +152,12 @@ class WorkflowPopulation {
     // 评估所有个体
     for (const individual of this.individuals) {
       if (individual.executionCount === 0) {
-        individual.fitness = await evaluateFn(individual);
+        try {
+          individual.fitness = await evaluateFn(individual);
+        } catch (err) {
+          getGlobalLogger().warn('EvolutionaryWorkflowEngine', 'Individual evaluation failed', { error: (err as Error)?.message, individualId: individual.id });
+          individual.fitness = 0;
+        }
       }
     }
 
@@ -691,6 +699,49 @@ export class EvolutionaryWorkflowEngine {
   }
 
   /**
+   * Save the current population state to a JSON file.
+   * Enables crash recovery and workflow reuse across sessions.
+   */
+  saveToFile(filePath: string): void {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const data = {
+      config: this.config,
+      individuals: this.population['individuals'],
+      generation: this.population['generation'],
+      bestIndividual: this.population['bestIndividual'],
+      fitnessHistory: this.population['fitnessHistory'],
+    };
+    // Atomic write: write to tmp then rename
+    const tmpPath = filePath + '.tmp';
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tmpPath, filePath);
+  }
+
+  /**
+   * Load a previously saved population state from a JSON file.
+   * Returns true on success, false if the file does not exist or is corrupt.
+   */
+  loadFromFile(filePath: string): boolean {
+    try {
+      if (!fs.existsSync(filePath)) return false;
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      const data = JSON.parse(raw);
+      // Restore config
+      if (data.config) this.config = { ...this.config, ...data.config };
+      // Restore population internals
+      if (data.individuals) this.population['individuals'] = data.individuals;
+      if (data.generation !== undefined) this.population['generation'] = data.generation;
+      if (data.bestIndividual) this.population['bestIndividual'] = data.bestIndividual;
+      if (data.fitnessHistory) this.population['fitnessHistory'] = data.fitnessHistory;
+      return true;
+    } catch {
+      getGlobalLogger().warn('EvolutionaryWorkflowEngine', 'Failed to load population state', { filePath });
+      return false;
+    }
+  }
+
+  /**
    * 执行工作流进化过程
    */
   async evolve(options: EvolutionOptions): Promise<EvolutionResult> {
@@ -719,9 +770,23 @@ export class EvolutionaryWorkflowEngine {
         break;
       }
 
-      const best = await this.population.evolve(async (dag) => {
-        return this.evaluateDAG(dag, availableTools, taskType);
-      });
+      let best: WorkflowDAG;
+      try {
+        best = await this.population.evolve(async (dag) => {
+          return this.evaluateDAG(dag, availableTools, taskType);
+        });
+      } catch (err) {
+        getGlobalLogger().error(
+          'EvolutionaryWorkflowEngine',
+          'Population evolution iteration failed',
+          err instanceof Error ? err : new Error(String(err)),
+          { generation: gen },
+        );
+        improvements.push(`Gen ${gen}: evolution error, using previous best`);
+        const currentBest = this.population.getBest();
+        if (!currentBest) throw new Error('Evolution failed: no viable individuals');
+        best = currentBest;
+      }
 
       const stats = this.population.getStats();
 
