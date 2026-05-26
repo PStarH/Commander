@@ -1,6 +1,8 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSandboxed } from './sandboxedExec';
 import { getGlobalLogger } from '../logging';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const DEFINITION: ToolDefinition = {
   name: 'verify',
@@ -134,10 +136,10 @@ export class VerificationTool implements Tool {
   }
 
   private hasTool(cwd: string, relPath: string): boolean {
-    try { return require('fs').existsSync(require('path').join(cwd, relPath)); } catch (e) { getGlobalLogger().warn('VerificationTool', 'Tool check failed', { error: (e as Error)?.message, relPath }); return false; }
+    try { return fs.existsSync(path.join(cwd, relPath)); } catch (e) { getGlobalLogger().warn('VerificationTool', 'Tool check failed', { error: (e as Error)?.message, relPath }); return false; }
   }
 
   private hasFile(cwd: string, name: string): boolean {
-    try { return require('fs').existsSync(require('path').join(cwd, name)); } catch (e) { getGlobalLogger().warn('VerificationTool', 'File check failed', { error: (e as Error)?.message, name }); return false; }
+    try { return fs.existsSync(path.join(cwd, name)); } catch (e) { getGlobalLogger().warn('VerificationTool', 'File check failed', { error: (e as Error)?.message, name }); return false; }
   }
 }

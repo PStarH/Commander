@@ -13,6 +13,8 @@
  */
 
 import { createHash } from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import type { ToolCall, ToolResult } from './types';
 
@@ -320,9 +322,6 @@ export class ToolOutputManager {
    */
   private persistOutput(toolCall: ToolCall, output: string): string {
     try {
-      // Dynamic require to avoid top-level dependency
-      const fs = require('node:fs');
-      const path = require('node:path');
 
       const dir = path.resolve(this.config.persistDir);
       if (!fs.existsSync(dir)) {

@@ -6,6 +6,9 @@
  * from AGENTS.md or CLI arguments, and JSON output for CI integration.
  */
 
+import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 import { getGlobalLogger } from './logging';
 
 // ============================================================================
@@ -80,8 +83,6 @@ interface GitDiff {
  * Returns structured diff info including file list, line counts, and patch text.
  */
 function getGitDiff(scope: ReviewScope, baseRef?: string, commitSha?: string): GitDiff {
-  const { execSync } = require('child_process');
-
   let cmd: string;
   switch (scope) {
     case 'uncommitted':
@@ -592,9 +593,7 @@ export function loadReviewGuidelines(): string[] {
 
   for (const file of candidates) {
     try {
-      const fs = require('fs');
-      const p = require('path');
-      const fullPath = p.join(process.cwd(), file);
+      const fullPath = path.join(process.cwd(), file);
       if (fs.existsSync(fullPath)) {
         const content = fs.readFileSync(fullPath, 'utf-8');
         // Extract bullet points as guidelines
