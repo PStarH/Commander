@@ -2,7 +2,7 @@
   <img src="https://img.shields.io/badge/GAIA-69.7%25-blue?style=flat-square" />
   <img src="https://img.shields.io/badge/PinchBench-97.7%25-green?style=flat-square" />
   <img src="https://img.shields.io/badge/HumanEval+-91.5%25-orange?style=flat-square" />
-  <img src="https://img.shields.io/badge/providers-18-purple?style=flat-square" />
+  <img src="https://img.shields.io/badge/providers-21-purple?style=flat-square" />
   <img src="https://img.shields.io/badge/topologies-8-red?style=flat-square" />
   <img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" />
 </p>
@@ -29,7 +29,7 @@ There are dozens of AI agent frameworks. Commander is the only one that:
 
 **🔀 Runs any topology without changing code.** Same task, one flag: sequential, parallel, hierarchical, debate, ensemble, evaluator-optimizer. The engine picks the right one automatically.
 
-**🔌 Works with 18 LLM providers.** OpenAI, Anthropic, Google, DeepSeek, Groq, Ollama, Bedrock — set one env var, Commander handles the rest. Fallback chains included.
+**🔌 Works with 21 LLM providers.** OpenAI, Anthropic, Google, DeepSeek, Groq, Ollama, Bedrock — set one env var, Commander handles the rest. Fallback chains included.
 
 **🧠 Gets better the more you use it.** Meta-learner with Thompson Sampling + Reflexion tunes agent configs across runs. Self-optimizing workflows.
 
@@ -54,7 +54,7 @@ This isn't a mockup — that's a real recording of the live SSE stream from actu
 # 1. Install
 pnpm install
 
-# 2. Set any API key (auto-detects from 18 providers)
+# 2. Set any API key (auto-detects from 21 providers)
 export OPENAI_API_KEY=sk-...
 
 # 3. Run anything
@@ -71,7 +71,7 @@ npx tsx cli.ts watch "debug the failing test"     # Watch live agent reasoning
 |---|---|---|---|---|
 | **Live SSE streaming** | ✅ Built-in | ❌ | ❌ | ❌ |
 | **Automatic topology selection** | ✅ 8 topologies | ❌ Manual graph building | ❌ Fixed sequential | ❌ Manual orchestration |
-| **LLM providers** | 18 (with fallback chain) | 1-3 (via LangChain) | 3-5 | Mostly OpenAI |
+| **LLM providers** | 21 (with fallback chain) | 1-3 (via LangChain) | 3-5 | Mostly OpenAI |
 | **Self-optimization** | ✅ Thompson Sampling + Reflexion | ❌ | ❌ | ❌ |
 | **Multi-tenant isolation** | ✅ Per-tenant rate limits, storage, memory | ❌ | ❌ | ❌ |
 | **Benchmarked** | GAIA 69.7%, PinchBench 97.7%, HumanEval+ 91.5% | — | — | GAIA varies |
@@ -167,8 +167,8 @@ Your Task
 │  Atomizer       ← Break into subtasks       │
 ├─────────────────────────────────────────────┤
 │  Agent Runtime  ← LLM → Tools → Verify      │
-│    ├─ 18 LLM providers with fallback chain  │
-│    ├─ 25+ tools with SHA-256 caching         │
+│    ├─ 21 LLM providers with fallback chain  │
+│    ├─ 23 tools with SHA-256 caching           │
 │    ├─ Cycle detection + circuit breakers     │
 │    ├─ Crash-safe checkpoints every step     │
 │    └─ Live SSE streaming                     │
@@ -204,7 +204,7 @@ Full architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 ## Extensibility
 
-- **17 plugin hook points** — LLM, tool, agent lifecycle, context compaction, session, step, and backend-selection hooks
+- **19 plugin hook points** — LLM, tool, agent lifecycle, context compaction, session, step, and backend-selection hooks
 - **Custom LLM providers** — Implement `LLMProvider`, register via `runtime.registerProvider()`
 - **Custom tools** — Implement `Tool`, register via `runtime.registerTool()`
 - **Custom topologies** — Add a case in `topologyRouter.ts`
@@ -224,7 +224,7 @@ await client.disconnect();
 
 ## Providers
 
-Set any one env var. Commander auto-detects from **18 providers**:
+Set any one env var. Commander auto-detects from **21 providers**:
 
 `OPENAI_API_KEY` · `ANTHROPIC_API_KEY` · `GOOGLE_API_KEY` · `DEEPSEEK_API_KEY` · `ZHIPU_API_KEY` · `MIMO_API_KEY` · `XIAOMI_API_KEY` · `GROQ_API_KEY` · `TOGETHER_API_KEY` · `PERPLEXITY_API_KEY` · `FIREWORKS_API_KEY` · `REPLICATE_API_TOKEN` · `MISTRAL_API_KEY` · `CO_API_KEY` · `OPENROUTER_API_KEY` · `OLLAMA_HOST` · `VLLM_BASE_URL` · `AWS_ACCESS_KEY_ID` (Bedrock) · `XAI_API_KEY` · `ANYSCALE_API_KEY` · `DEEPINFRA_API_KEY`
 
