@@ -1,25 +1,4 @@
 import { AgentRuntime } from './runtime/agentRuntime';
-import { OpenAIProvider } from './runtime/providers/openaiProvider';
-import { AnthropicProvider } from './runtime/providers/anthropicProvider';
-import { GoogleProvider } from './runtime/providers/googleProvider';
-import { OpenRouterProvider } from './runtime/providers/openRouterProvider';
-import { DeepSeekProvider } from './runtime/providers/deepseekProvider';
-import { GLMProvider } from './runtime/providers/glmProvider';
-import { MiMoProvider } from './runtime/providers/mimoProvider';
-import { XiaomiProvider } from './runtime/providers/xiaomiProvider';
-import { OllamaProvider } from './runtime/providers/ollamaProvider';
-import { VLLMProvider } from './runtime/providers/vllmProvider';
-import { CohereProvider } from './runtime/providers/cohereProvider';
-import { MistralProvider } from './runtime/providers/mistralProvider';
-import { GroqProvider } from './runtime/providers/groqProvider';
-import { TogetherProvider } from './runtime/providers/togetherProvider';
-import { PerplexityProvider } from './runtime/providers/perplexityProvider';
-import { FireworksProvider } from './runtime/providers/fireworksProvider';
-import { ReplicateProvider } from './runtime/providers/replicateProvider';
-import { BedrockProvider } from './runtime/providers/bedrockProvider';
-import { XAIProvider } from './runtime/providers/xaiProvider';
-import { AnyscaleProvider } from './runtime/providers/anyscaleProvider';
-import { DeepInfraProvider } from './runtime/providers/deepinfraProvider';
 import { getMessageBus } from './runtime/messageBus';
 import { createAllTools } from './tools/index';
 import { UltimateOrchestrator } from './ultimate/orchestrator';
@@ -67,122 +46,7 @@ export class CommanderAgentLoop {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.runtime = new AgentRuntime();
 
-    // Register providers from environment
-    if (process.env.OPENAI_API_KEY) {
-      this.runtime.registerProvider('openai', new OpenAIProvider({
-        apiKey: process.env.OPENAI_API_KEY,
-        baseUrl: process.env.OPENAI_BASE_URL,
-        defaultModel: process.env.OPENAI_MODEL || 'gpt-4o',
-      }));
-    }
-    if (process.env.ANTHROPIC_API_KEY) {
-      this.runtime.registerProvider('anthropic', new AnthropicProvider({
-        apiKey: process.env.ANTHROPIC_API_KEY,
-      }));
-    }
-    if (process.env.GOOGLE_API_KEY) {
-      this.runtime.registerProvider('google', new GoogleProvider({
-        apiKey: process.env.GOOGLE_API_KEY,
-      }));
-    }
-    if (process.env.OPENROUTER_API_KEY) {
-      this.runtime.registerProvider('openrouter', new OpenRouterProvider({
-        apiKey: process.env.OPENROUTER_API_KEY,
-      }));
-    }
-    if (process.env.DEEPSEEK_API_KEY) {
-      this.runtime.registerProvider('deepseek', new DeepSeekProvider({
-        apiKey: process.env.DEEPSEEK_API_KEY,
-      }));
-    }
-    if (process.env.ZHIPU_API_KEY) {
-      this.runtime.registerProvider('glm', new GLMProvider({
-        apiKey: process.env.ZHIPU_API_KEY,
-      }));
-    }
-    if (process.env.MIMO_API_KEY) {
-      this.runtime.registerProvider('mimo', new MiMoProvider({
-        apiKey: process.env.MIMO_API_KEY,
-      }));
-    }
-    if (process.env.XIAOMI_API_KEY) {
-      this.runtime.registerProvider('xiaomi', new XiaomiProvider({
-        apiKey: process.env.XIAOMI_API_KEY,
-      }));
-    }
-    if (process.env.OLLAMA_HOST || process.env.OLLAMA_BASE_URL || process.env.OLLAMA_MODEL) {
-      this.runtime.registerProvider('ollama', new OllamaProvider({
-        baseUrl: process.env.OLLAMA_HOST || process.env.OLLAMA_BASE_URL,
-        defaultModel: process.env.OLLAMA_MODEL,
-      }));
-    }
-    if (process.env.VLLM_BASE_URL || process.env.VLLM_MODEL) {
-      this.runtime.registerProvider('vllm', new VLLMProvider({
-        baseUrl: process.env.VLLM_BASE_URL,
-        defaultModel: process.env.VLLM_MODEL,
-      }));
-    }
-    if (process.env.CO_API_KEY || process.env.COHERE_API_KEY) {
-      this.runtime.registerProvider('cohere', new CohereProvider({
-        apiKey: process.env.CO_API_KEY || process.env.COHERE_API_KEY || '',
-      }));
-    }
-    if (process.env.MISTRAL_API_KEY) {
-      this.runtime.registerProvider('mistral', new MistralProvider({
-        apiKey: process.env.MISTRAL_API_KEY,
-      }));
-    }
-    if (process.env.GROQ_API_KEY) {
-      this.runtime.registerProvider('groq', new GroqProvider({
-        apiKey: process.env.GROQ_API_KEY,
-      }));
-    }
-    if (process.env.TOGETHER_API_KEY) {
-      this.runtime.registerProvider('together', new TogetherProvider({
-        apiKey: process.env.TOGETHER_API_KEY,
-      }));
-    }
-    if (process.env.PERPLEXITY_API_KEY || process.env.PPLX_API_KEY) {
-      this.runtime.registerProvider('perplexity', new PerplexityProvider({
-        apiKey: process.env.PERPLEXITY_API_KEY || process.env.PPLX_API_KEY || '',
-      }));
-    }
-    if (process.env.FIREWORKS_API_KEY) {
-      this.runtime.registerProvider('fireworks', new FireworksProvider({
-        apiKey: process.env.FIREWORKS_API_KEY,
-      }));
-    }
-    if (process.env.REPLICATE_API_TOKEN || process.env.REPLICATE_API_KEY) {
-      this.runtime.registerProvider('replicate', new ReplicateProvider({
-        apiKey: process.env.REPLICATE_API_TOKEN || process.env.REPLICATE_API_KEY || '',
-      }));
-    }
-    if (process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE) {
-      this.runtime.registerProvider('bedrock', new BedrockProvider({}));
-    }
-    if (process.env.XAI_API_KEY) {
-      this.runtime.registerProvider('xai', new XAIProvider({
-        apiKey: process.env.XAI_API_KEY,
-        baseUrl: process.env.XAI_BASE_URL,
-        defaultModel: process.env.XAI_MODEL || 'grok-2-latest',
-      }));
-    }
-    if (process.env.ANYSCALE_API_KEY) {
-      this.runtime.registerProvider('anyscale', new AnyscaleProvider({
-        apiKey: process.env.ANYSCALE_API_KEY,
-        baseUrl: process.env.ANYSCALE_BASE_URL,
-        defaultModel: process.env.ANYSCALE_MODEL || 'meta-llama/Llama-3.3-70B-Instruct',
-      }));
-    }
-    if (process.env.DEEPINFRA_API_KEY) {
-      this.runtime.registerProvider('deepinfra', new DeepInfraProvider({
-        apiKey: process.env.DEEPINFRA_API_KEY,
-        baseUrl: process.env.DEEPINFRA_BASE_URL,
-        defaultModel: process.env.DEEPINFRA_MODEL || 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-      }));
-    }
-
-    // Register all tools
+    // Register all tools (synchronous, no dynamic imports needed)
     const allTools = createAllTools();
     for (const [name, tool] of allTools) {
       this.runtime.registerTool(name, tool);
@@ -191,6 +55,174 @@ export class CommanderAgentLoop {
     this.telos = new TELOSOrchestrator(this.runtime);
     this.orchestrator = new UltimateOrchestrator(this.telos, this.runtime);
     this.loadState();
+  }
+
+  /**
+   * Register LLM providers from environment variables.
+   * Uses dynamic imports to avoid loading all 21 provider modules at compile time.
+   * Called from start() before the main loop begins.
+   */
+  async registerProviders(): Promise<void> {
+    const registrations: Array<() => Promise<void>> = [];
+
+    if (process.env.OPENAI_API_KEY) {
+      const apiKey = process.env.OPENAI_API_KEY;
+      const baseUrl = process.env.OPENAI_BASE_URL;
+      const defaultModel = process.env.OPENAI_MODEL || 'gpt-4o';
+      registrations.push(async () => {
+        const { OpenAIProvider } = await import('./runtime/providers/openaiProvider');
+        this.runtime.registerProvider('openai', new OpenAIProvider({ apiKey, baseUrl, defaultModel }));
+      });
+    }
+    if (process.env.ANTHROPIC_API_KEY) {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      registrations.push(async () => {
+        const { AnthropicProvider } = await import('./runtime/providers/anthropicProvider');
+        this.runtime.registerProvider('anthropic', new AnthropicProvider({ apiKey }));
+      });
+    }
+    if (process.env.GOOGLE_API_KEY) {
+      const apiKey = process.env.GOOGLE_API_KEY;
+      registrations.push(async () => {
+        const { GoogleProvider } = await import('./runtime/providers/googleProvider');
+        this.runtime.registerProvider('google', new GoogleProvider({ apiKey }));
+      });
+    }
+    if (process.env.OPENROUTER_API_KEY) {
+      const apiKey = process.env.OPENROUTER_API_KEY;
+      registrations.push(async () => {
+        const { OpenRouterProvider } = await import('./runtime/providers/openRouterProvider');
+        this.runtime.registerProvider('openrouter', new OpenRouterProvider({ apiKey }));
+      });
+    }
+    if (process.env.DEEPSEEK_API_KEY) {
+      const apiKey = process.env.DEEPSEEK_API_KEY;
+      registrations.push(async () => {
+        const { DeepSeekProvider } = await import('./runtime/providers/deepseekProvider');
+        this.runtime.registerProvider('deepseek', new DeepSeekProvider({ apiKey }));
+      });
+    }
+    if (process.env.ZHIPU_API_KEY) {
+      const apiKey = process.env.ZHIPU_API_KEY;
+      registrations.push(async () => {
+        const { GLMProvider } = await import('./runtime/providers/glmProvider');
+        this.runtime.registerProvider('glm', new GLMProvider({ apiKey }));
+      });
+    }
+    if (process.env.MIMO_API_KEY) {
+      const apiKey = process.env.MIMO_API_KEY;
+      registrations.push(async () => {
+        const { MiMoProvider } = await import('./runtime/providers/mimoProvider');
+        this.runtime.registerProvider('mimo', new MiMoProvider({ apiKey }));
+      });
+    }
+    if (process.env.XIAOMI_API_KEY) {
+      const apiKey = process.env.XIAOMI_API_KEY;
+      registrations.push(async () => {
+        const { XiaomiProvider } = await import('./runtime/providers/xiaomiProvider');
+        this.runtime.registerProvider('xiaomi', new XiaomiProvider({ apiKey }));
+      });
+    }
+    if (process.env.OLLAMA_HOST || process.env.OLLAMA_BASE_URL || process.env.OLLAMA_MODEL) {
+      const baseUrl = process.env.OLLAMA_HOST || process.env.OLLAMA_BASE_URL || undefined;
+      const defaultModel = process.env.OLLAMA_MODEL || undefined;
+      registrations.push(async () => {
+        const { OllamaProvider } = await import('./runtime/providers/ollamaProvider');
+        this.runtime.registerProvider('ollama', new OllamaProvider({ baseUrl, defaultModel }));
+      });
+    }
+    if (process.env.VLLM_BASE_URL || process.env.VLLM_MODEL) {
+      const baseUrl = process.env.VLLM_BASE_URL || undefined;
+      const defaultModel = process.env.VLLM_MODEL || undefined;
+      registrations.push(async () => {
+        const { VLLMProvider } = await import('./runtime/providers/vllmProvider');
+        this.runtime.registerProvider('vllm', new VLLMProvider({ baseUrl, defaultModel }));
+      });
+    }
+    if (process.env.CO_API_KEY || process.env.COHERE_API_KEY) {
+      const apiKey = process.env.CO_API_KEY || process.env.COHERE_API_KEY || '';
+      registrations.push(async () => {
+        const { CohereProvider } = await import('./runtime/providers/cohereProvider');
+        this.runtime.registerProvider('cohere', new CohereProvider({ apiKey }));
+      });
+    }
+    if (process.env.MISTRAL_API_KEY) {
+      const apiKey = process.env.MISTRAL_API_KEY;
+      registrations.push(async () => {
+        const { MistralProvider } = await import('./runtime/providers/mistralProvider');
+        this.runtime.registerProvider('mistral', new MistralProvider({ apiKey }));
+      });
+    }
+    if (process.env.GROQ_API_KEY) {
+      const apiKey = process.env.GROQ_API_KEY;
+      registrations.push(async () => {
+        const { GroqProvider } = await import('./runtime/providers/groqProvider');
+        this.runtime.registerProvider('groq', new GroqProvider({ apiKey }));
+      });
+    }
+    if (process.env.TOGETHER_API_KEY) {
+      const apiKey = process.env.TOGETHER_API_KEY;
+      registrations.push(async () => {
+        const { TogetherProvider } = await import('./runtime/providers/togetherProvider');
+        this.runtime.registerProvider('together', new TogetherProvider({ apiKey }));
+      });
+    }
+    if (process.env.PERPLEXITY_API_KEY || process.env.PPLX_API_KEY) {
+      const apiKey = process.env.PERPLEXITY_API_KEY || process.env.PPLX_API_KEY || '';
+      registrations.push(async () => {
+        const { PerplexityProvider } = await import('./runtime/providers/perplexityProvider');
+        this.runtime.registerProvider('perplexity', new PerplexityProvider({ apiKey }));
+      });
+    }
+    if (process.env.FIREWORKS_API_KEY) {
+      const apiKey = process.env.FIREWORKS_API_KEY;
+      registrations.push(async () => {
+        const { FireworksProvider } = await import('./runtime/providers/fireworksProvider');
+        this.runtime.registerProvider('fireworks', new FireworksProvider({ apiKey }));
+      });
+    }
+    if (process.env.REPLICATE_API_TOKEN || process.env.REPLICATE_API_KEY) {
+      const apiKey = process.env.REPLICATE_API_TOKEN || process.env.REPLICATE_API_KEY || '';
+      registrations.push(async () => {
+        const { ReplicateProvider } = await import('./runtime/providers/replicateProvider');
+        this.runtime.registerProvider('replicate', new ReplicateProvider({ apiKey }));
+      });
+    }
+    if (process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE) {
+      registrations.push(async () => {
+        const { BedrockProvider } = await import('./runtime/providers/bedrockProvider');
+        this.runtime.registerProvider('bedrock', new BedrockProvider({}));
+      });
+    }
+    if (process.env.XAI_API_KEY) {
+      const apiKey = process.env.XAI_API_KEY;
+      const baseUrl = process.env.XAI_BASE_URL;
+      const defaultModel = process.env.XAI_MODEL || 'grok-2-latest';
+      registrations.push(async () => {
+        const { XAIProvider } = await import('./runtime/providers/xaiProvider');
+        this.runtime.registerProvider('xai', new XAIProvider({ apiKey, baseUrl, defaultModel }));
+      });
+    }
+    if (process.env.ANYSCALE_API_KEY) {
+      const apiKey = process.env.ANYSCALE_API_KEY;
+      const baseUrl = process.env.ANYSCALE_BASE_URL;
+      const defaultModel = process.env.ANYSCALE_MODEL || 'meta-llama/Llama-3.3-70B-Instruct';
+      registrations.push(async () => {
+        const { AnyscaleProvider } = await import('./runtime/providers/anyscaleProvider');
+        this.runtime.registerProvider('anyscale', new AnyscaleProvider({ apiKey, baseUrl, defaultModel }));
+      });
+    }
+    if (process.env.DEEPINFRA_API_KEY) {
+      const apiKey = process.env.DEEPINFRA_API_KEY;
+      const baseUrl = process.env.DEEPINFRA_BASE_URL;
+      const defaultModel = process.env.DEEPINFRA_MODEL || 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
+      registrations.push(async () => {
+        const { DeepInfraProvider } = await import('./runtime/providers/deepinfraProvider');
+        this.runtime.registerProvider('deepinfra', new DeepInfraProvider({ apiKey, baseUrl, defaultModel }));
+      });
+    }
+    await Promise.all(registrations.map(fn => fn()));
+    this.logger.info('AgentLoop', `Registered ${registrations.length} provider(s) from environment`);
   }
 
   private loadState() {
