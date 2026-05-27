@@ -440,13 +440,12 @@ export class ConsensusChecker {
 // Factory
 // ========================================
 
-let globalChecker: ConsensusChecker | null = null;
+import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
+
+const consensusCheckerSingleton = createTenantAwareSingleton(() => new ConsensusChecker());
 
 export function getGlobalConsensusChecker(): ConsensusChecker {
-  if (!globalChecker) {
-    globalChecker = new ConsensusChecker();
-  }
-  return globalChecker;
+  return consensusCheckerSingleton.get();
 }
 
 export function createConsensusChecker(config?: Partial<ConsensusConfig>): ConsensusChecker {
@@ -454,5 +453,5 @@ export function createConsensusChecker(config?: Partial<ConsensusConfig>): Conse
 }
 
 export function resetConsensusChecker(): void {
-  globalChecker = null;
+  consensusCheckerSingleton.reset();
 }

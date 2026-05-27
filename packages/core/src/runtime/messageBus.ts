@@ -226,16 +226,18 @@ export class MessageBus {
   }
 }
 
-// Global singleton
-let globalBus: MessageBus | null = null;
+import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
+const messageBusSingleton = createTenantAwareSingleton(() => new MessageBus(), {
+  dispose: (bus) => bus.clearSubscribers(),
+});
+
+/** Get the global MessageBus (single-tenant) or tenant-scoped (multi-tenant). */
 export function getMessageBus(): MessageBus {
-  if (!globalBus) {
-    globalBus = new MessageBus();
-  }
-  return globalBus;
+  return messageBusSingleton.get();
 }
 
+/** Reset the message bus singleton (for test isolation). */
 export function resetMessageBus(): void {
-  globalBus = null;
+  messageBusSingleton.reset();
 }

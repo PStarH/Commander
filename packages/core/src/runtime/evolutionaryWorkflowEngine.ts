@@ -1001,16 +1001,17 @@ export class EvolutionaryWorkflowEngine {
   }
 }
 
-// 导出单例
-let globalEngine: EvolutionaryWorkflowEngine | null = null;
+import { createTenantAwareSingleton } from './tenantAwareSingleton';
+
+let _evolutionConfig: Partial<EvolutionConfig> | undefined;
+
+const evolutionEngineSingleton = createTenantAwareSingleton(() => new EvolutionaryWorkflowEngine(_evolutionConfig));
 
 export function getEvolutionEngine(config?: Partial<EvolutionConfig>): EvolutionaryWorkflowEngine {
-  if (!globalEngine) {
-    globalEngine = new EvolutionaryWorkflowEngine(config);
-  }
-  return globalEngine;
+  if (config) _evolutionConfig = config;
+  return evolutionEngineSingleton.get();
 }
 
 export function resetEvolutionEngine(): void {
-  globalEngine = null;
+  evolutionEngineSingleton.reset();
 }

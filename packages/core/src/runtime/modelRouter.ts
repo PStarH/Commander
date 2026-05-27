@@ -455,16 +455,16 @@ export class ModelRouter {
 
 }
 
-// Singleton
-let globalRouter: ModelRouter | null = null;
+import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
+const routerSingleton = createTenantAwareSingleton(() => new ModelRouter());
+
+/** Get the global ModelRouter (single-tenant) or tenant-scoped (multi-tenant). */
 export function getModelRouter(): ModelRouter {
-  if (!globalRouter) {
-    globalRouter = new ModelRouter();
-  }
-  return globalRouter;
+  return routerSingleton.get();
 }
 
+/** Reset the model router singleton (for test isolation). */
 export function resetModelRouter(): void {
-  globalRouter = null;
+  routerSingleton.reset();
 }

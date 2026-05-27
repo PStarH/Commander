@@ -51,30 +51,30 @@ import { SkillCurator } from './skillCurator';
 import type { SkillDef as LegacySkillDef } from './types';
 import { MetaLearnerBridge } from './metaLearnerBridge';
 import { getMetaLearner } from '../selfEvolution/metaLearner';
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 const LEGACY_SKILLS_DIR = path.join(process.cwd(), '.commander', 'skills');
 
-let globalManager: SkillManager | null = null;
-let globalInjector: SkillInjector | null = null;
-let globalCurator: SkillCurator | null = null;
-let globalBridge: MetaLearnerBridge | null = null;
+const skillSystemSingleton = createTenantAwareSingleton(() => {
+  const store = new SkillStore();
+  const manager = new SkillManager(store);
+  store.migrateFromJson().catch(e =>
+    getGlobalLogger().warn('Skills', 'Migration failed', { error: (e as Error)?.message }),
+  );
+  return {
+    manager,
+    injector: new SkillInjector(manager),
+    curator: new SkillCurator(manager),
+    bridge: new MetaLearnerBridge(getMetaLearner(), manager),
+  };
+});
 
 function getManager(): SkillManager {
-  if (!globalManager) {
-    const store = new SkillStore();
-    globalManager = new SkillManager(store);
-    store.migrateFromJson().catch(e =>
-      getGlobalLogger().warn('Skills', 'Migration failed', { error: (e as Error)?.message }),
-    );
-  }
-  return globalManager;
+  return skillSystemSingleton.get().manager;
 }
 
 function getBridge(): MetaLearnerBridge {
-  if (!globalBridge) {
-    globalBridge = new MetaLearnerBridge(getMetaLearner(), getManager());
-  }
-  return globalBridge;
+  return skillSystemSingleton.get().bridge;
 }
 
 /** Legacy: create a skill from explicit fields. */
@@ -191,17 +191,15 @@ export function createSkillSystem(): SkillSystem {
 }
 
 export function getSkillSystem(): SkillSystem {
+  const sys = skillSystemSingleton.get();
   return {
-    manager: getManager(),
-    injector: globalInjector ?? (globalInjector = new SkillInjector(getManager())),
-    curator: globalCurator ?? (globalCurator = new SkillCurator(getManager())),
-    bridge: getBridge(),
+    manager: sys.manager,
+    injector: sys.injector,
+    curator: sys.curator,
+    bridge: sys.bridge,
   };
 }
 
 export function resetSkillSystem(): void {
-  globalManager = null;
-  globalInjector = null;
-  globalCurator = null;
-  globalBridge = null;
+  skillSystemSingleton.reset();
 }
