@@ -5513,3 +5513,84 @@ Trace → Spans → Token Count per Span → Cost per Agent → per Mission → 
 - Commander modules: logging.ts, reporting/, governanceObserver.ts
 
 *最后更新: 2026-05-27 14:39 (Asia/Shanghai)*
+
+---
+
+## 研究主题 22: Agent Memory Consolidation 与长期记忆
+
+### 背景
+人类大脑在睡眠期间将短期记忆转化为长期记忆（hippocampal replay）。
+AI Agent 也需要类似的"记忆巩固"机制：不是无限堆砌记忆，而是提炼、压缩、遗忘。
+
+### Commander 已实现的记忆架构
+
+1. **三层记忆系统** (memory.ts)
+   - WORKING: 当前任务上下文 (容量有限)
+   - EPISODIC: 事件记忆 (带 TTL 自动过期)
+   - SEMANTIC: 语义知识 (长期保留)
+
+2. **TF-IDF 语义搜索** (InMemoryMemoryStore)
+   - 不依赖外部向量数据库
+   - 纯本地 TF-IDF 实现
+   - 支持优先级 + 置信度加权
+
+3. **记忆投毒检测** (memoryPoisoningDetector.ts)
+   - 来源可信度评估
+   - 批量投毒指示器检测
+   - 可疑记忆隔离
+
+4. **反思写入** (reflectionEngine.ts)
+   - 任务完成后强制写入关键 lessons
+   - 不依赖 LLM 判断
+   - 结构化存储 (kind, tags, evidenceRefs)
+
+### 记忆巩固模式 (Memory Consolidation Patterns)
+
+**Pattern 1: Sleep-Wake Cycle（睡眠-唤醒循环）**
+```
+Wake: 工作记忆活跃，记录新事件
+Sleep: 批量处理 → 去重 → 压缩 → 遗忘过期
+```
+
+**Pattern 2: Importance Decay（重要性衰减）**
+```
+priority(t) = priority(0) * e^(-λt) + boost(access_count)
+```
+频繁访问的记忆获得更多 boost，从未访问的记忆逐渐衰减。
+
+**Pattern 3: Conflict Resolution（冲突解决）**
+```
+Memory A: "使用 Express.js"
+Memory B: "迁移到 Fastify" (更新)
+→ 检测冲突 → 标记旧记忆为 deprecated → 更新引用
+```
+
+**Pattern 4: Abstraction（抽象化）**
+```
+原始记忆: "在 line 42 修复了 null pointer，原因是 API 返回空"
+抽象记忆: "API 调用需要 null check" (通用 lesson)
+```
+
+### Commander vs 其他框架
+
+| 维度 | Commander | MemGPT | LangChain |
+|------|-----------|--------|-----------|
+| 三层记忆 | ✅ WORKING/EPISODIC/SEMANTIC | ✅ 两层 (core/archival) | ❌ 单层 |
+| 自动过期 | ✅ TTL + 优先级衰减 | ❌ 手动 | ❌ |
+| 语义搜索 | ✅ TF-IDF (本地) | ✅ 向量 (外部) | ✅ 向量 |
+| 投毒检测 | ✅ | ❌ | ❌ |
+| 反思写入 | ✅ reflectionEngine | ❌ | ❌ |
+| 冲突检测 | ⚠️ 部分 | ❌ | ❌ |
+
+### 建议改进
+1. **实现 Sleep-Wake Cycle**: 在 heartbeat 低活跃期触发记忆巩固
+2. **冲突自动检测**: 新记忆写入时与现有记忆比对
+3. **记忆压缩**: 将多条相关记忆合并为一条摘要
+
+### 参考
+- MemGPT: Towards LLMs as Operating Systems (Packer et al., 2023)
+- MemoryBank: Enhancing Large Language Models with Long-Term Memory (Zhong et al., 2024)
+- Human Memory Consolidation during Sleep (Diekelmann & Born, 2010)
+- Commander modules: memory.ts, memoryPoisoningDetector.ts, reflectionEngine.ts
+
+*最后更新: 2026-05-27 15:39 (Asia/Shanghai)*
