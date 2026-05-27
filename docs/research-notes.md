@@ -5594,3 +5594,92 @@ Memory B: "迁移到 Fastify" (更新)
 - Commander modules: memory.ts, memoryPoisoningDetector.ts, reflectionEngine.ts
 
 *最后更新: 2026-05-27 15:39 (Asia/Shanghai)*
+
+---
+
+## 研究主题 23: Agent Context Window Management
+
+### 背景
+LLM context window 是 Agent 最稀缺的资源。GPT-4o 128K, Claude 200K, Gemini 2M — 
+但更大的 window 不等于更好的性能。研究表明超过一定长度后，模型会出现 "lost in the middle" 效应。
+
+### 核心挑战
+
+**Challenge 1: 信息密度递减**
+```
+token 0-1K:   高注意力，信息利用 ~95%
+token 1-10K:  中等注意力，信息利用 ~75%
+token 10-50K: 注意力分散，信息利用 ~50%
+token 50K+:   "lost in the middle"，信息利用 ~30%
+```
+
+**Challenge 2: 多代理上下文爆炸**
+- 10 个子代理各 5K tokens = 50K 总 context
+- 重复信息压缩后仍有 30% 冗余
+- 时间敏感信息需要优先保留
+
+**Challenge 3: 对话历史管理**
+- 长对话中早期决策容易被遗忘
+- 关键指令在 context 首尾效应中波动
+- 压缩策略不当导致信息丢失
+
+### Commander 的 Context 管理策略
+
+1. **Token Budget Allocator** (tokenBudgetAllocator.ts)
+   - 动态分配：根据任务复杂度分配 token 预算
+   - 优先级队列：高优先信息优先保留
+   - 自适应压缩：根据使用频率调整压缩率
+
+2. **Three-Layer Memory** (memory.ts)
+   - Working Memory: 当前任务 context (<8K tokens)
+   - Short-term Memory: 最近决策和结果 (<50K tokens)
+   - Long-term Memory: 压缩后的关键知识 (按需加载)
+
+3. **Context Windowing**
+   - Sliding window: 保留首尾 + 最近中间
+   - Summary window: 旧 context 压缩为摘要
+   - Relevance window: 按查询相关性动态加载
+
+### Context 管理模式
+
+**Pattern 1: Hierarchical Compression（层次压缩）**
+```
+原始 10K → 摘要 2K → 关键点 500 tokens
+每层保留不同粒度的信息
+```
+
+**Pattern 2: Importance-Weighted Retention（重要性加权）**
+```
+decision_context: weight 1.0 (始终保留)
+recent_messages:  weight 0.8 (高保留)
+old_summaries:    weight 0.3 (可压缩)
+system_prompt:    weight 1.0 (始终保留)
+```
+
+**Pattern 3: Relevance-Based Retrieval（相关性检索）**
+```
+query → embedding → top-k from memory store
+只加载与当前任务相关的 context 片段
+```
+
+### Commander vs 其他框架
+
+| 维度 | Commander | LangGraph | CrewAI |
+|------|-----------|-----------|--------|
+| Token 预算管理 | ✅ TokenBudgetAllocator | ❌ | ❌ |
+| 三层记忆 | ✅ Working/Short/Long | ❌ | ❌ |
+| 动态压缩 | ✅ 自适应 | ❌ 手动 | ❌ |
+| Lost-in-Middle 缓解 | ✅ 首尾优先 | ❌ | ❌ |
+| Context 窗口管理 | ✅ Sliding+Summary | 部分 | ❌ |
+
+### 建议改进
+1. **Attention-Aware Placement**: 将关键信息放在 context 首尾
+2. **Semantic Deduplication**: 识别并去除重复语义信息
+3. **Adaptive Window Sizing**: 根据任务类型自动调整 window 大小
+
+### 参考
+- Lost in the Middle (Liu et al., 2023)
+- Retrieval-Augmented Generation for Knowledge-Intensive NLP (Lewis et al., 2020)
+- Commander modules: tokenBudgetAllocator.ts, memory.ts
+
+*最后更新: 2026-05-27 16:09 (Asia/Shanghai)*
