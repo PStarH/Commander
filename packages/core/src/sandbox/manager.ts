@@ -50,13 +50,14 @@ export class SandboxManager {
   }
 }
 
-let globalManager: SandboxManager | null = null;
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const sandboxManagerSingleton = createTenantAwareSingleton(() => new SandboxManager());
 
 export function getSandboxManager(): SandboxManager {
-  if (!globalManager) globalManager = new SandboxManager();
-  return globalManager;
+  return sandboxManagerSingleton.get();
 }
 
 export function resetSandboxManager(): void {
-  globalManager = null;
+  sandboxManagerSingleton.reset();
 }

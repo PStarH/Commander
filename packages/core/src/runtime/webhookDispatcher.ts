@@ -286,18 +286,16 @@ export class WebhookDispatcher {
 
 // ── Singleton ──────────────────────────────────────────────────────
 
-let globalDispatcher: WebhookDispatcher | null = null;
+import { createTenantAwareSingleton } from './tenantAwareSingleton';
+
+const dispatcherSingleton = createTenantAwareSingleton(() => new WebhookDispatcher(), {
+  dispose: (d) => d.stop(),
+});
 
 export function getWebhookDispatcher(): WebhookDispatcher {
-  if (!globalDispatcher) {
-    globalDispatcher = new WebhookDispatcher();
-  }
-  return globalDispatcher;
+  return dispatcherSingleton.get();
 }
 
 export function resetWebhookDispatcher(): void {
-  if (globalDispatcher) {
-    globalDispatcher.stop();
-    globalDispatcher = null;
-  }
+  dispatcherSingleton.reset();
 }

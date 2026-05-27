@@ -811,24 +811,27 @@ export class MetaLearner {
   }
 }
 
-let globalLearner: MetaLearner | null = null;
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+let _metaLearnerPath: string | undefined;
+
+const metaLearnerSingleton = createTenantAwareSingleton(() =>
+  new MetaLearner(500, 5, _metaLearnerPath ?? nodePath.join(process.cwd(), '.commander_memory', 'meta-learner.json')),
+);
 
 export function getMetaLearner(persistPath?: string): MetaLearner {
-  if (!globalLearner) {
-    globalLearner = new MetaLearner(500, 5, persistPath ?? nodePath.join(process.cwd(), '.commander_memory', 'meta-learner.json'));
-  }
-  return globalLearner;
+  if (persistPath) _metaLearnerPath = persistPath;
+  return metaLearnerSingleton.get();
 }
 
 export function resetMetaLearner(): void {
-  globalLearner = null;
+  metaLearnerSingleton.reset();
 }
 
 export function clearMetaLearnerState(): void {
-  if (globalLearner) {
-    globalLearner['experiences'] = [];
-    globalLearner['reflections'] = [];
-    globalLearner['strategyPerformance'].clear();
-    globalLearner['thompsonPriors'].clear();
-  }
+  const learner = metaLearnerSingleton.getGlobal();
+  learner['experiences'] = [];
+  learner['reflections'] = [];
+  learner['strategyPerformance'].clear();
+  learner['thompsonPriors'].clear();
 }

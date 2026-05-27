@@ -124,16 +124,15 @@ export class ArtifactSystem {
   }
 }
 
-let globalArtifactSystem: ArtifactSystem | null = null;
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const artifactSystemSingleton = createTenantAwareSingleton(() => new ArtifactSystem());
 
 export function getArtifactSystem(): ArtifactSystem {
-  if (!globalArtifactSystem) {
-    globalArtifactSystem = new ArtifactSystem();
-  }
-  return globalArtifactSystem;
+  return artifactSystemSingleton.get();
 }
 
 export function resetArtifactSystem(): void {
-  globalArtifactSystem = null;
+  artifactSystemSingleton.reset();
   ARTIFACT_STORE.clear();
 }

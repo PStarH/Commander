@@ -51,6 +51,7 @@ import { AgentInbox } from './agentInbox';
 import { TeamRegistry } from './teamRegistry';
 import { AgentHandoff } from './agentHandoff';
 import { getGlobalThreeLayerMemory } from '../threeLayerMemory';
+import { runWithTenant } from './tenantContext';
 import { getHookManager } from '../pluginManager';
 import { ToolResultCache } from './toolResultCache';
 import { ToolOutputManager } from './toolOutputManager';
@@ -333,6 +334,7 @@ export class AgentRuntime {
     getMetricsCollector().setGauge('active_runs', 'Active concurrent runs', this.activeRuns.size);
 
     try {
+      return await runWithTenant(ctx.tenantId, async () => {
 
     // Record run manifest (provenance, config, params)
     this.samplesStore.recordRunManifest(runId, {
@@ -1080,6 +1082,7 @@ export class AgentRuntime {
       totalDurationMs: Date.now() - startTime,
       error: lastError,
     };
+      });
 
     } finally {
       // GAP-02 + GAP-05: Guarantee cleanup on ALL exit paths (normal, error, exception)

@@ -191,13 +191,14 @@ export class PluginLoader {
 
 import * as os from 'os';
 
-let globalLoader: PluginLoader | null = null;
+import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
+
+const pluginLoaderSingleton = createTenantAwareSingleton(() => new PluginLoader());
 
 export function getPluginLoader(): PluginLoader {
-  if (!globalLoader) globalLoader = new PluginLoader();
-  return globalLoader;
+  return pluginLoaderSingleton.get();
 }
 
 export function resetPluginLoader(): void {
-  globalLoader = null;
+  pluginLoaderSingleton.reset();
 }
