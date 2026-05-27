@@ -5330,3 +5330,97 @@ Others → Support roles
 - Commander modules: agentTeamManager.ts, adaptiveOrchestrator.ts, dagConverter.ts
 
 *最后更新: 2026-05-27 12:35 (Asia/Shanghai)*
+
+---
+
+## 研究主题 21: Token Economics in Multi-Agent Systems
+
+### 背景
+Token 是 LLM 系统的核心货币。在多代理系统中，token 管理直接决定成本和质量。
+一个 10-agent 团队如果每个 agent 都用最大 context window，成本会爆炸。
+
+### 核心问题
+
+**Token 预算分配**
+- 总预算 B 需要分给 N 个 agent
+- 每个 agent 有不同的任务复杂度
+- 需要动态调整（不是固定分配）
+
+**Token 效率优化**
+- 压缩历史 context（摘要替代全文）
+- 选择性记忆召回（只拉相关记忆）
+- 分层 context（system > task > history > memory）
+
+### Commander 的 Token 管理
+
+1. **TokenBudgetAllocator** (tokenBudgetAllocator.ts)
+   - 总预算分配策略
+   - 按任务复杂度动态分配
+   - 监控实际消耗 vs 预算
+
+2. **三层记忆系统** (memory.ts)
+   - 工作记忆: 当前任务 context (最贵)
+   - 短期记忆: 最近对话摘要 (中等)
+   - 长期记忆: 持久化知识 (最便宜)
+
+3. **Context 压缩策略**
+   - 历史消息摘要（每 N 轮压缩一次）
+   - 选择性记忆加载（只加载相关记忆）
+   - 工具调用结果缓存（避免重复调用）
+
+### Token 成本模型
+
+```
+总成本 = Σ(agent_i.tokens × model_i.price_per_token)
+
+其中:
+  agent_i.tokens = system_prompt + task + context + memory + output
+```
+
+**优化策略:**
+
+| 策略 | 节省 | 质量影响 |
+|------|------|----------|
+| 摘要替代全文 | 40-60% | 低 |
+| 选择性记忆 | 20-30% | 中 |
+| 小模型替代 | 70-90% | 中-高 |
+| 缓存重复调用 | 10-20% | 无 |
+| 动态 max_tokens | 10-30% | 低 |
+
+### Commander 实现的优化
+
+**动态模型选择**
+```
+简单任务 → GPT-3.5 (便宜)
+中等任务 → GPT-4o-mini (平衡)
+复杂任务 → GPT-4o / Claude-3.5 (高质量)
+```
+
+**Context 窗口管理**
+```
+working_memory: 当前 5-10 轮对话
+recent_summary: 最近 50 轮的摘要
+long_term: 持久化记忆库
+```
+
+**预算告警**
+- 消耗 >80% 预算: 降级到更便宜模型
+- 消耗 >95% 预算: 停止非关键任务
+- 消耗 100%: 人类介入
+
+### Commander vs 其他框架
+
+| 维度 | Commander | LangGraph | CrewAI |
+|------|-----------|-----------|--------|
+| Token 预算分配 | ✅ TokenBudgetAllocator | ❌ | ❌ |
+| 动态模型选择 | ✅ | ❌ | ❌ |
+| 三层记忆压缩 | ✅ | ❌ | ❌ |
+| 预算告警 | ✅ | ❌ | ❌ |
+| 消耗追踪 | ✅ | ⚠️ 部分 | ❌ |
+
+### 参考
+- GPT-4 Pricing: OpenAI API pricing (2025)
+- "Efficient Prompting" research (various, 2024-2025)
+- Commander modules: tokenBudgetAllocator.ts, memory.ts
+
+*最后更新: 2026-05-27 14:09 (Asia/Shanghai)*
