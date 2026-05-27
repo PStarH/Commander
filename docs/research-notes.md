@@ -5062,3 +5062,78 @@ Agent 需要语义层可观测性。
 - 总计: ~17,000+ 行核心代码
 
 *最后更新: 2026-05-06 14:02 (Asia/Shanghai)*
+
+---
+
+## 研究主题 20: Agent Context Window 管理与 Token 经济学
+
+### 背景
+随着 Agent 系统复杂度增加，context window 管理成为核心挑战。
+Claude 的 200K context, GPT-4 的 128K, 以及长上下文模型的出现，
+改变了 Agent 系统的设计范式。
+
+### Token 经济学框架
+
+**Cost = tokens_per_step × steps_per_task × cost_per_token**
+
+在多代理系统中，这变成了：
+- **Sub-agent delegation**: 每次委派需要传递 context (500-2000 tokens)
+- **Memory retrieval**: 每次搜索返回 top-k 结果 (1000-5000 tokens)
+- **Reflection cycles**: 每次反思消耗 2000-8000 tokens
+- **Consensus checking**: 多模型投票，消耗 ×N
+
+### Commander 已实现的 Token 管理
+
+1. **tokenBudgetAllocator.ts** - Token 预算分配
+   - 按任务复杂度动态分配
+   - 子代理预算独立管理
+   - 超支预警和降级
+
+2. **ThreeLayerMemory** - 记忆分层管理
+   - WORKING: 当前任务上下文 (最贵)
+   - EPISODIC: 近期记忆 (按相关性检索)
+   - SEMANTIC: 长期知识 (按需加载)
+
+3. **AdaptiveOrchestrator** - 自适应编排
+   - 根据 token 预算选择模型
+   - 简单任务用小模型 (GPT-4o-mini)
+   - 复杂任务用大模型 (Claude Opus)
+
+### Context Window 优化策略
+
+| 策略 | 节省比例 | 复杂度 | Commander 实现 |
+|------|----------|--------|----------------|
+| 摘要压缩 | 60-80% | 低 | ✅ reflectionEngine |
+| 相关性过滤 | 40-60% | 中 | ✅ threeLayerMemory |
+| 结构化输出 | 20-30% | 低 | ✅ JSON mode |
+| 渐进式加载 | 50-70% | 高 | ✅ memory search |
+| 知识蒸馏 | 30-50% | 高 | ⚠️ 部分 (semantic layer) |
+
+### Token 预算分配模型
+
+```
+Total Budget = Base Budget × Complexity Multiplier × Urgency Factor
+
+Base Budget:        4000 tokens (default)
+Complexity Multiplier: 1.0-5.0 (from TaskComplexityAnalyzer)
+Urgency Factor:     0.5-2.0 (deadline pressure)
+
+Allocation:
+├── Planning:    15-25%
+├── Execution:   40-60%
+├── Memory:      10-20%
+├── Reflection:  5-15%
+└── Buffer:      5-10%
+```
+
+### 建议改进
+1. **Token 使用仪表盘**: 实时可视化 token 消耗
+2. **预测性预算**: 基于历史数据预测任务 token 需求
+3. **动态模型切换**: 根据剩余预算自动降级模型
+
+### 参考
+- LongRoPE: Extending LLM Context Window Beyond 2 Million Tokens (Ding et al., 2024)
+- RAG vs Long Context: A Survey (Xu et al., 2024)
+- Commander modules: tokenBudgetAllocator.ts, threeLayerMemory
+
+*最后更新: 2026-05-27 09:58 (Asia/Shanghai)*
