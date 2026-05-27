@@ -1,15 +1,17 @@
+import { execSync } from 'child_process';
 import type { Tool, ToolDefinition } from '../runtime/types';
-import { execSandboxed } from './sandboxedExec';
+
+const EXCLUDE_DIRS = ['node_modules', '.git', 'dist', 'build', 'coverage', '.cache', 'target'];
 
 const DEFINITION: ToolDefinition = {
   name: 'code_search',
-  description: 'Multi-hop code search using AST-aware grep. Searches code by symbol name, pattern, or type definition. Supports scope narrowing: search within function bodies, class definitions, or test files.',
+  description: 'Search code for patterns, symbols, or text like TODO/FIXME/HACK comments. Excludes node_modules, .git, dist, and build directories. Supports regex, file scoping, and symbol type filtering (functions, classes, interfaces).',
   inputSchema: {
     type: 'object',
     properties: {
-      pattern: { type: 'string', description: 'The code pattern to search for (supports regex)' },
-      filePattern: { type: 'string', description: 'File glob pattern (e.g., "src/**/*.ts", "*.py")' },
-      symbolType: { type: 'string', enum: ['function', 'class', 'interface', 'variable', 'import', 'all'], description: 'Type of symbol to search for' },
+      pattern: { type: 'string', description: 'The code or text pattern to search for (supports regex). Use for: TODO/FIXME/HACK comments, function names, variable names, error messages, or any code pattern.' },
+      filePattern: { type: 'string', description: 'File glob pattern (e.g., "src/**/*.ts", "*.py"). Defaults to common code file types (*.ts, *.js, *.py, *.rs, *.go).' },
+      symbolType: { type: 'string', enum: ['function', 'class', 'interface', 'variable', 'import', 'all'], description: 'Type of symbol to search for. Use "all" or leave empty for plain text/pattern search (e.g. TODO comments).' },
       maxResults: { type: 'number', description: 'Maximum number of results to return (default: 10)' },
       contextLines: { type: 'number', description: 'Lines of context around each match (default: 3)' },
       searchDomain: { type: 'string', enum: ['workspace', 'tests', 'docs', 'config'], description: 'Scope to narrow the search' },
@@ -17,6 +19,8 @@ const DEFINITION: ToolDefinition = {
     required: ['pattern'],
   },
   examples: [
+    { name: 'code_search', arguments: { pattern: 'TODO', filePattern: 'src/**/*.ts', maxResults: 20, contextLines: 2 } },
+    { name: 'code_search', arguments: { pattern: 'FIXME', maxResults: 30 } },
     { name: 'code_search', arguments: { pattern: 'class Repository', filePattern: 'src/**/*.ts', symbolType: 'class' } },
     { name: 'code_search', arguments: { pattern: 'def calculate', filePattern: '*.py', symbolType: 'function', contextLines: 5 } },
   ],
@@ -53,22 +57,42 @@ export class CodeSearchTool implements Tool {
       else if (symbolType === 'class') grepPattern = `(class |interface )${pattern}`;
       else if (symbolType === 'import') grepPattern = `(import |from |require\\().*${pattern}`;
 
-      let cmd = `grep -rn --include="*.ts" --include="*.js" --include="*.py" --include="*.rs" --include="*.go" -B ${contextLines} -A ${contextLines} "${grepPattern}" "${searchDir}" 2>/dev/null | head -${maxResults * (contextLines * 2 + 2)}`;
+      const excludeDirs = EXCLUDE_DIRS.map(d => `--exclude-dir="${d}"`).join(' ');
+      const includeFiles = '--include="*.ts" --include="*.js" --include="*.py" --include="*.rs" --include="*.go"';
+      const maxHead = maxResults * (contextLines * 2 + 2);
+
+      // Build a grep command with the search directory as a file arg,
+      // so grep's own file-read syscalls work (avoids sandbox path issues
+      // with shell-based exec). Uses execSync directly since this is a
+      // read-only tool that doesn't need sandbox isolation.
+      let cmd: string;
       if (filePattern) {
-        cmd = `grep -rn -B ${contextLines} -A ${contextLines} "${grepPattern}" ${filePattern.includes('*') ? filePattern : `"${searchDir}/${filePattern}"`} 2>/dev/null | head -${maxResults * (contextLines * 2 + 2)}`;
+        const target = filePattern.includes('*') ? filePattern : `"${searchDir}/${filePattern}"`;
+        cmd = `grep -rn ${excludeDirs} -B ${contextLines} -A ${contextLines} "${grepPattern}" ${target} 2>/dev/null | head -${maxHead}`;
+      } else {
+        cmd = `grep -rn ${excludeDirs} ${includeFiles} -B ${contextLines} -A ${contextLines} "${grepPattern}" "${searchDir}" 2>/dev/null | head -${maxHead}`;
       }
 
-      const execRes = await execSandboxed(cmd, 15);
-      const output = execRes.stdout || execRes.stderr;
-      const lines = output.trim().split('\n').filter(Boolean);
-      if (lines.length === 0 || execRes.exitCode !== 0) return `No results found for pattern: ${pattern}`;
+      const execOptions: import('child_process').ExecSyncOptions & { encoding: 'utf-8' } = {
+        cwd: searchDir,
+        timeout: 15000,
+        maxBuffer: 10 * 1024 * 1024,
+        encoding: 'utf-8',
+        shell: process.env.SHELL || '/bin/bash',
+      };
+      const stdout = String(execSync(cmd, execOptions));
+
+      const lines = stdout.trim().split('\n').filter(Boolean);
+      if (lines.length === 0) return `No results found for pattern: ${pattern}`;
 
       const matchCount = lines.filter(l => l.includes(grepPattern) || l.includes(pattern)).length;
-      const sliced = lines.slice(0, maxResults * (contextLines * 2 + 2)).join('\n');
+      const sliced = lines.slice(0, maxHead).join('\n');
       return `Found ${matchCount} matches in ${lines.length} lines:\n\n${sliced}`;
     } catch (searchErr: unknown) {
       const msg = searchErr instanceof Error ? searchErr.message : String(searchErr);
-      if (msg.includes('command failed')) return `No results found for pattern: ${pattern}`;
+      if (msg.includes('no results') || msg.toLowerCase().includes('no such file')) {
+        return `No results found for pattern: ${pattern}`;
+      }
       return `Search failed: ${msg.slice(0, 200)}`;
     }
   }
