@@ -183,20 +183,20 @@ export class CredentialManager {
   }
 }
 
-// Global singleton
-let globalCredentialManager: CredentialManager | null = null;
+import { createTenantAwareSingleton } from './tenantAwareSingleton';
+
+const credentialManagerSingleton = createTenantAwareSingleton(() => {
+  const cm = new CredentialManager();
+  cm.init();
+  return cm;
+}, {
+  dispose: (cm) => cm.clear(),
+});
 
 export function getCredentialManager(): CredentialManager {
-  if (!globalCredentialManager) {
-    globalCredentialManager = new CredentialManager();
-    globalCredentialManager.init();
-  }
-  return globalCredentialManager;
+  return credentialManagerSingleton.get();
 }
 
 export function resetCredentialManager(): void {
-  if (globalCredentialManager) {
-    globalCredentialManager.clear();
-    globalCredentialManager = null;
-  }
+  credentialManagerSingleton.reset();
 }

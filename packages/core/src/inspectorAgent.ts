@@ -514,13 +514,12 @@ export class InspectorAgent {
 // Factory
 // ========================================
 
-let globalInspector: InspectorAgent | null = null;
+import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
+
+const inspectorSingleton = createTenantAwareSingleton(() => new InspectorAgent());
 
 export function getGlobalInspector(): InspectorAgent {
-  if (!globalInspector) {
-    globalInspector = new InspectorAgent();
-  }
-  return globalInspector;
+  return inspectorSingleton.get();
 }
 
 export function createInspector(): InspectorAgent {
@@ -528,5 +527,5 @@ export function createInspector(): InspectorAgent {
 }
 
 export function resetInspectorAgent(): void {
-  globalInspector = null;
+  inspectorSingleton.reset();
 }

@@ -358,15 +358,16 @@ export class TokenSentinel {
 
 let globalSentinel: TokenSentinel | null = null;
 
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const sentinelSingleton = createTenantAwareSingleton(() => new TokenSentinel());
+
 export function getTokenSentinel(): TokenSentinel {
-  if (!globalSentinel) {
-    globalSentinel = new TokenSentinel();
-  }
-  return globalSentinel;
+  return sentinelSingleton.get();
 }
 
 export function resetTokenSentinel(): void {
-  globalSentinel = null;
+  sentinelSingleton.reset();
 }
 
 export { estimateTokenCount, estimateMessagesTokens, calculateCost };

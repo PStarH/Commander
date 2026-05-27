@@ -223,15 +223,14 @@ export class EvalSuite {
   }
 }
 
-let globalEvaluator: HeuristicEvaluator | null = null;
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const evaluatorSingleton = createTenantAwareSingleton(() => new HeuristicEvaluator());
 
 export function getHeuristicEvaluator(): HeuristicEvaluator {
-  if (!globalEvaluator) {
-    globalEvaluator = new HeuristicEvaluator();
-  }
-  return globalEvaluator;
+  return evaluatorSingleton.get();
 }
 
 export function resetHeuristicEvaluator(): void {
-  globalEvaluator = null;
+  evaluatorSingleton.reset();
 }

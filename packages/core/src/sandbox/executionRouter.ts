@@ -134,16 +134,14 @@ export class ExecutionRouter {
   }
 }
 
-let globalRouter: ExecutionRouter | null = null;
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-/**
- * Get the singleton ExecutionRouter instance.
- */
+const executionRouterSingleton = createTenantAwareSingleton(() => new ExecutionRouter());
+
 export function getExecutionRouter(): ExecutionRouter {
-  if (!globalRouter) globalRouter = new ExecutionRouter();
-  return globalRouter;
+  return executionRouterSingleton.get();
 }
 
 export function resetExecutionRouter(): void {
-  globalRouter = null;
+  executionRouterSingleton.reset();
 }

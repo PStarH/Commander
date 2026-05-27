@@ -121,8 +121,9 @@ export class ThreeLayerMemoryRegistry {
 // Global singleton
 // ============================================================================
 
+import { createTenantAwareSingleton } from './tenantAwareSingleton';
+
 let globalTenantProvider: TenantProvider = new NullTenantProvider();
-let globalMemoryRegistry: ThreeLayerMemoryRegistry | null = null;
 
 export function getGlobalTenantProvider(): TenantProvider {
   return globalTenantProvider;
@@ -136,13 +137,12 @@ export function resetGlobalTenantProvider(): void {
   globalTenantProvider = new NullTenantProvider();
 }
 
+const memoryRegistrySingleton = createTenantAwareSingleton(() => new ThreeLayerMemoryRegistry());
+
 export function getGlobalMemoryRegistry(): ThreeLayerMemoryRegistry {
-  if (!globalMemoryRegistry) {
-    globalMemoryRegistry = new ThreeLayerMemoryRegistry();
-  }
-  return globalMemoryRegistry;
+  return memoryRegistrySingleton.get();
 }
 
 export function resetGlobalMemoryRegistry(): void {
-  globalMemoryRegistry = null;
+  memoryRegistrySingleton.reset();
 }

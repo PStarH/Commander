@@ -520,18 +520,14 @@ this.adapter.recordWorkflowResult(prevDecision.subWorkflowId, {
 }
 
 // ============================================================================
-// 工厂方法
-// ============================================================================
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-let globalAdapter: RuntimeWorkflowAdapter | null = null;
+const workflowAdapterSingleton = createTenantAwareSingleton(() => new RuntimeWorkflowAdapter());
 
 export function getRuntimeWorkflowAdapter(): RuntimeWorkflowAdapter {
-  if (!globalAdapter) {
-    globalAdapter = new RuntimeWorkflowAdapter();
-  }
-  return globalAdapter;
+  return workflowAdapterSingleton.get();
 }
 
 export function resetRuntimeWorkflowAdapter(): void {
-  globalAdapter = null;
+  workflowAdapterSingleton.reset();
 }

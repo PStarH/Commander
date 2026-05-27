@@ -129,15 +129,14 @@ export class CapabilityRegistry {
   }
 }
 
-let globalCapabilityRegistry: CapabilityRegistry | null = null;
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const capabilityRegistrySingleton = createTenantAwareSingleton(() => new CapabilityRegistry());
 
 export function getCapabilityRegistry(): CapabilityRegistry {
-  if (!globalCapabilityRegistry) {
-    globalCapabilityRegistry = new CapabilityRegistry();
-  }
-  return globalCapabilityRegistry;
+  return capabilityRegistrySingleton.get();
 }
 
 export function resetCapabilityRegistry(): void {
-  globalCapabilityRegistry = null;
+  capabilityRegistrySingleton.reset();
 }

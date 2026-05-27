@@ -256,47 +256,72 @@ class LSPClient {
   }
 }
 
-let globalLSPClient: LSPClient | null = null;
+import { createTenantAwareSingleton } from './tenantAwareSingleton';
+
+let _lspConfig: { command: string; args: string[]; workspaceRoot: string } | null = null;
+
+const lspClientSingleton = createTenantAwareSingleton(() => {
+  if (!_lspConfig) throw new Error('LSP not initialized. Call initLSP() first.');
+  return new LSPClient(_lspConfig.command, _lspConfig.args, _lspConfig.workspaceRoot);
+}, {
+  dispose: (client) => client.disconnect(),
+});
+
 let globalLSPEnabled = false;
 
 export function initLSP(serverCommand: string, serverArgs: string[], workspaceRoot?: string): Promise<void> {
-  if (globalLSPClient) globalLSPClient.disconnect();
-  globalLSPClient = new LSPClient(serverCommand, serverArgs, workspaceRoot ?? process.cwd());
-  return globalLSPClient.connect().then(() => { globalLSPEnabled = true; }).catch(e => { getGlobalLogger().debug('LSP', 'connect failed', { error: (e as Error)?.message }); return; });
+  _lspConfig = { command: serverCommand, args: serverArgs, workspaceRoot: workspaceRoot ?? process.cwd() };
+  lspClientSingleton.reset();
+  const client = lspClientSingleton.get();
+  return client.connect().then(() => { globalLSPEnabled = true; }).catch(e => { getGlobalLogger().debug('LSP', 'connect failed', { error: (e as Error)?.message }); return; });
+}
+
+function getLSPClient(): LSPClient | null {
+  if (!_lspConfig) return null;
+  try { return lspClientSingleton.get(); } catch { return null; }
 }
 
 export function disconnectLSP(): void {
-  if (globalLSPClient) { globalLSPClient.disconnect(); globalLSPClient = null; globalLSPEnabled = false; }
+  const client = getLSPClient();
+  if (client) client.disconnect();
+  lspClientSingleton.reset();
+  globalLSPEnabled = false;
 }
 
 export function resetLSP(): void {
-  if (globalLSPClient) { globalLSPClient.disconnect(); }
-  globalLSPClient = null;
+  const client = getLSPClient();
+  if (client) client.disconnect();
+  lspClientSingleton.reset();
   globalLSPEnabled = false;
 }
 
 export function isLSPReady(): boolean {
-  return globalLSPEnabled && (globalLSPClient?.isReady ?? false);
+  const client = getLSPClient();
+  return globalLSPEnabled && (client?.isReady ?? false);
 }
 
 export function attachDiagnostics(content: string, filePath: string): string {
-  return globalLSPClient?.attachToContent(content, filePath) ?? content;
+  const client = getLSPClient();
+  return client?.attachToContent(content, filePath) ?? content;
 }
 
 export function getFileDiagnostics(filePath: string): LSPDiagnostic[] {
-  return globalLSPClient?.getFileDiagnostics(filePath) ?? [];
+  const client = getLSPClient();
+  return client?.getFileDiagnostics(filePath) ?? [];
 }
 
 export function hasLSErrors(filePath: string): boolean {
-  return globalLSPClient?.hasErrors(filePath) ?? false;
+  const client = getLSPClient();
+  return client?.hasErrors(filePath) ?? false;
 }
 
 export function getLSErrorCount(filePath: string): { errors: number; warnings: number } {
-  return globalLSPClient?.getErrorCount(filePath) ?? { errors: 0, warnings: 0 };
+  const client = getLSPClient();
+  return client?.getErrorCount(filePath) ?? { errors: 0, warnings: 0 };
 }
 
 export function openLSEDocument(filePath: string, content?: string): void {
-  globalLSPClient?.openDocument(filePath, content);
+  getLSPClient()?.openDocument(filePath, content);
 }
 
 export class LSPDiagnosticsTool implements Tool {

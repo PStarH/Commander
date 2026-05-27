@@ -339,18 +339,14 @@ export class LaneManager {
 }
 
 // ============================================================================
-// Global singleton
-// ============================================================================
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-let globalLaneManager: LaneManager | null = null;
+const laneManagerSingleton = createTenantAwareSingleton(() => new LaneManager());
 
 export function getLaneManager(): LaneManager {
-  if (!globalLaneManager) {
-    globalLaneManager = new LaneManager();
-  }
-  return globalLaneManager;
+  return laneManagerSingleton.get();
 }
 
 export function resetLaneManager(): void {
-  globalLaneManager = null;
+  laneManagerSingleton.reset();
 }

@@ -538,14 +538,13 @@ export class Timer {
 // Global Instances
 // ========================================
 
-let globalLogger: Logger | null = null;
-let globalMetrics: MetricsCollector | null = null;
+import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
+
+const loggerSingleton = createTenantAwareSingleton(() => new Logger());
+const metricsSingleton = createTenantAwareSingleton(() => new MetricsCollector());
 
 export function getGlobalLogger(): Logger {
-  if (!globalLogger) {
-    globalLogger = new Logger();
-  }
-  return globalLogger;
+  return loggerSingleton.get();
 }
 
 export function setGlobalLogLevel(level: LogLevel): void {
@@ -554,16 +553,13 @@ export function setGlobalLogLevel(level: LogLevel): void {
 }
 
 export function getGlobalMetrics(): MetricsCollector {
-  if (!globalMetrics) {
-    globalMetrics = new MetricsCollector();
-  }
-  return globalMetrics;
+  return metricsSingleton.get();
 }
 
 export function resetGlobalLogger(): void {
-  globalLogger = null;
+  loggerSingleton.reset();
 }
 
 export function resetGlobalMetrics(): void {
-  globalMetrics = null;
+  metricsSingleton.reset();
 }
