@@ -223,21 +223,21 @@ export {
   ToolApproval, ApprovalRequest, ApprovalResult, ApprovalLevel,
   ApprovalPolicy, DEFAULT_APPROVAL_POLICIES,
 } from './runtime/toolApproval';
-export {
-  EvolutionaryWorkflowEngine, WorkflowDAG, WorkflowNode, WorkflowEdge,
+export { EvolutionaryWorkflowEngine } from './runtime/evolutionaryWorkflowEngine';
+export type {
+  WorkflowNode, WorkflowEdge, WorkflowDAG,
   EvolutionResult, EvolutionOptions,
-} from './runtime/evolutionaryWorkflowEngine';
+} from './runtime/evolutionaryWorkflowTypes';
 export { CommanderHttpServer, createHttpServer } from './runtime/httpServer';
 export { BaseChannelAdapter } from './runtime/channelAdapter';
 
 // Unified Verification Pipeline
-export {
-  UnifiedVerificationPipeline, detectTaskType,
-} from './runtime/unifiedVerification';
+export { UnifiedVerificationPipeline } from './runtime/unifiedVerification';
+export { detectTaskType, classifyProvisionIntent } from './runtime/taskAnalyzer';
 export type {
   VerificationSignal, VerificationReport, UVPTaskContext,
-  UVPConfig, TaskType,
-} from './runtime/unifiedVerification';
+  UVPConfig, TaskType, ProvisionIntentScores,
+} from './runtime/unifiedVerificationTypes';
 
 // Token Budget Governor
 export {
