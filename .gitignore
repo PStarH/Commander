@@ -105,8 +105,7 @@ benchmarks/*/responses/
 benchmarks/*/results.json
 benchmarks/*/responses_full/
 
-# Internal audit/tracking — not for public repo
-AUDIT-REPORT.md
+
 .sisyphus/
 private/
 
