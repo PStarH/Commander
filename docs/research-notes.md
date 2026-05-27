@@ -5219,3 +5219,114 @@ tool_call → error → retry_with_different_params → error → fallback_tool
 - Commander modules: toolRegistry.ts, toolCallValidator.ts, executionRouter.ts
 
 *最后更新: 2026-05-27 11:00 (Asia/Shanghai)*
+
+---
+
+## 研究主题 22: Agent Collaboration 与 Swarm Intelligence
+
+### 背景
+多代理系统的核心挑战不是单个 agent 能力，而是如何协作。
+自然界中蚁群、蜂群、鸟群展示了去中心化协作的强大能力。
+AI Agent 协作面临类似挑战：通信开销、任务分配、冲突解决、涌现行为。
+
+### Commander 已实现的协作机制
+
+1. **AdaptiveOrchestrator** (adaptiveOrchestrator.ts)
+   - 任务分解：将复杂任务拆分为子任务 DAG
+   - 动态分配：基于 agent 能力匹配子任务
+   - 并行/串行：自动识别依赖关系
+   - 负载均衡：避免单 agent 过载
+
+2. **ConsensusCheck** (consensusCheck.ts)
+   - 多 agent 投票机制
+   - 加权共识（基于 agent 历史准确率）
+   - 冲突检测与仲裁
+
+3. **AgentTeamManager** (ultimate/agentTeamManager.ts)
+   - 团队组建：基于任务需求选择 agent 组合
+   - 角色分配：lead/scout/builder/reviewer
+   - 通信协议：结构化消息传递
+
+4. **Handoff Protocol** (ultimate.ts - verifyHandoff)
+   - Agent 间交接时的上下文验证
+   - 确保关键信息不丢失
+   - 交接质量评估
+
+### 协作模式 (Collaboration Patterns)
+
+**Pattern 1: Hierarchical（层级制）**
+```
+Lead Agent
+├── Scout Agent → 信息收集
+├── Builder Agent → 代码实现
+└── Reviewer Agent → 质量审查
+```
+
+**Pattern 2: Peer-to-Peer（对等）**
+```
+Agent A ←→ Agent B
+  ↕           ↕
+Agent C ←→ Agent D
+```
+
+**Pattern 3: Pipeline（流水线）**
+```
+Input → Agent 1 → Agent 2 → Agent 3 → Output
+```
+
+**Pattern 4: Debate（辩论）**
+```
+Agent A (Pro) → Argument
+Agent B (Con) → Counter
+Judge Agent → Decision
+```
+
+**Pattern 5: Magnetic（磁性吸引）**
+```
+Task needs attention → Multiple agents gravitate
+Most capable agent → Takes ownership
+Others → Support roles
+```
+
+### Commander 实现细节
+
+**DAG Converter (新增)**
+- 将线性任务转换为有向无环图
+- 自动识别可并行执行的子任务
+- 优化执行顺序，最小化总时间
+
+**Task Analyzer (新增)**
+- 分析任务复杂度
+- 推荐分解策略
+- 估算所需 token 预算
+
+**Tool Provisioner (新增)**
+- 按需分配工具给 agent
+- 防止工具冲突
+- 支持工具共享
+
+### Commander vs 其他框架
+
+| 维度 | Commander | CrewAI | AutoGen | LangGraph |
+|------|-----------|--------|---------|-----------|
+| DAG 编排 | ✅ | ❌ | ❌ | ✅ (Graph) |
+| 动态团队 | ✅ | ✅ | ✅ | ❌ |
+| 共识机制 | ✅ 加权投票 | ❌ | ❌ | ❌ |
+| 交接验证 | ✅ | ❌ | ❌ | ❌ |
+| 工具动态分配 | ✅ | 静态 | 静态 | ❌ |
+| Token 预算 | ✅ | ❌ | ❌ | ❌ |
+
+### 关键设计决策
+
+1. **编排粒度**: Commander 选择任务级编排（非 token 级），平衡灵活性和效率
+2. **通信协议**: 使用结构化 JSON 消息，非自由文本
+3. **失败处理**: 每个 agent 有独立断路器
+4. **资源隔离**: sandbox 执行确保 agent 间不干扰
+
+### 参考
+- Swarm Intelligence (Bonabeau et al., 1999)
+- AutoGen: Multi-Agent Conversation Framework (Wu et al., 2023)
+- CrewAI: Role-Playing Multi-Agent Framework (2024)
+- Commander modules: agentTeamManager.ts, adaptiveOrchestrator.ts, dagConverter.ts
+
+*最后更新: 2026-05-27 12:35 (Asia/Shanghai)*
