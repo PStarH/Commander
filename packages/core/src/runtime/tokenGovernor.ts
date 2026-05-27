@@ -277,13 +277,19 @@ export class TokenGovernor {
 // Singleton
 // ============================================================================
 
-let defaultGovernor: TokenGovernor | null = null;
+import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
+let _governorConfig: Partial<GovernorConfig> | undefined;
+
+const governorSingleton = createTenantAwareSingleton(() => new TokenGovernor(_governorConfig));
+
+/** Get the global TokenGovernor (single-tenant) or tenant-scoped (multi-tenant). */
 export function getTokenGovernor(config?: Partial<GovernorConfig>): TokenGovernor {
-  if (!defaultGovernor) defaultGovernor = new TokenGovernor(config);
-  return defaultGovernor;
+  if (config) _governorConfig = config;
+  return governorSingleton.get();
 }
 
+/** Reset the token governor singleton (for test isolation). */
 export function resetTokenGovernor(): void {
-  defaultGovernor = null;
+  governorSingleton.reset();
 }

@@ -186,15 +186,14 @@ export class AgentTeamManager {
   }
 }
 
-let globalTeamManager: AgentTeamManager | null = null;
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const teamManagerSingleton = createTenantAwareSingleton(() => new AgentTeamManager());
 
 export function getTeamManager(): AgentTeamManager {
-  if (!globalTeamManager) {
-    globalTeamManager = new AgentTeamManager();
-  }
-  return globalTeamManager;
+  return teamManagerSingleton.get();
 }
 
 export function resetTeamManager(): void {
-  globalTeamManager = null;
+  teamManagerSingleton.reset();
 }
