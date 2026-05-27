@@ -1,4 +1,5 @@
 import type { LLMProvider, LLMRequest, LLMResponse } from '../types';
+import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
 
 interface OpenRouterCompletionUsage {
@@ -39,7 +40,7 @@ export class OpenRouterProvider implements LLMProvider {
       temperature: request.temperature ?? 0.7,
     };
     if (request.tools && request.tools.length > 0) {
-      body.tools = request.tools;
+      body.tools = FormatBridge.adaptToolsForProvider(request.tools, 'openrouter');
     }
 
     const response = await fetch(`${this.baseUrl}/chat/completions`, {

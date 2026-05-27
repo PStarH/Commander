@@ -82,8 +82,9 @@ export {
 } from './speculativeExecutor';
 export { OpenTelemetryExporter, getOTelExporter, resetOTelExporter, executionTraceToOtlpSpans } from './openTelemetryExporter';
 export type { OTelExporterConfig, OTelSpan } from './openTelemetryExporter';
-export { UnifiedVerificationPipeline, detectTaskType } from './unifiedVerification';
-export type { VerificationSignal, VerificationReport, UVPTaskContext, UVPConfig, TaskType } from './unifiedVerification';
+export { UnifiedVerificationPipeline } from './unifiedVerification';
+export { detectTaskType, classifyProvisionIntent } from './taskAnalyzer';
+export type { VerificationSignal, VerificationReport, UVPTaskContext, UVPConfig, TaskType, ProvisionIntentScores } from './unifiedVerificationTypes';
 export { StateCheckpointer } from './stateCheckpointer';
 export type { CheckpointState } from './stateCheckpointer';
 export { PersistentTraceStore } from './traceStore';

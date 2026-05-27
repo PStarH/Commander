@@ -240,5 +240,71 @@
     "secret": "b684463f8ac26c9a33e5ed418af98b6240714d3b6a84973193da48722732dd50",
     "retryMax": 3,
     "createdAt": "2026-05-27T01:24:05.672Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779847004151_5j8fs3",
+    "secret": "aaaa63cd703dfdc7b221f152c56c1388cc0c63ddb1b4c2638024bf617dd5bca4",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T01:56:44.151Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779847120431_ytoggh",
+    "secret": "c046ce9a133ea6a813bdca68a9aa8d249145231ee70741e3da95914fe4bc1cfb",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T01:58:40.431Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779847239267_eqjxlm",
+    "secret": "a2364597b9afeeaaef4d1da430b03d52792b62543f54cabd8f76a07b06085d93",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T02:00:39.267Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779847241463_yzoy0t",
+    "secret": "7ff0b717bf9510fff5b34804ef5d8bbfe6cb3ba8ce8f4ae3ec4dbcd0b17e2303",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T02:00:41.463Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779847350425_yodmui",
+    "secret": "b4be251dc231ae295efc14674b842f0fcc6a81c31ce6804f47c6b9ea8ed421eb",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T02:02:30.425Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779850086533_687t6v",
+    "secret": "760df8acacbcec73bf39166d79f3cdfb87704bae63d5ec27d713c3ae1ff4f772",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T02:48:06.533Z"
   }
 ]

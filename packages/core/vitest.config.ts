@@ -22,6 +22,12 @@ export default defineConfig({
       'tests/telos/providerPool.test.ts',
       'tests/telos/telosOrchestrator.test.ts',
       'tests/telos/tokenSentinel.test.ts',
+      'tests/runtime/circuitBreaker.test.ts',
+      'tests/runtime/deadLetterQueue.test.ts',
+      'tests/runtime/cycleDetector.test.ts',
+      'tests/runtime/credentialManager.test.ts',
+      'tests/runtime/agentHandoff.test.ts',
+      'tests/runtime/agentInbox.test.ts',
     ],
     environment: 'node',
     coverage: {
