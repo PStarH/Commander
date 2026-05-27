@@ -5424,3 +5424,92 @@ long_term: 持久化记忆库
 - Commander modules: tokenBudgetAllocator.ts, memory.ts
 
 *最后更新: 2026-05-27 14:09 (Asia/Shanghai)*
+
+---
+
+## 研究主题 22: Agent Observability 与 Distributed Tracing
+
+### 背景
+当多代理系统规模扩大（>10 agents），调试变成噩梦。传统的日志系统不够——
+需要分布式追踪（Distributed Tracing）来理解 agent 之间的调用链。
+
+### Commander 已实现的可观测性
+
+1. **logging.ts** - 结构化日志
+   - JSON 格式日志，支持 agentId/missionId 上下文
+   - 日志级别: debug/info/warn/error/fatal
+   - 上下文传播: 每个日志条目携带 trace context
+
+2. **reporting/** - 报告系统
+   - HTML Report Renderer: 可视化执行报告
+   - Performance Report: 代理性能统计
+   - Weekly Governance Report: 治理周报
+
+3. **governanceObserver.ts** - 治理观察者
+   - 实时监控 agent 行为
+   - 异常检测 + 告警
+
+4. **inspectorAgent.ts** - 检查代理
+   - 健康检查
+   - 组件状态监控
+
+5. **/system/status** API 端点
+   - 实时系统健康状态
+   - 组件级健康检查
+
+### 分布式追踪模式 (Distributed Tracing Patterns)
+
+**Pattern 1: Trace Context Propagation**
+```
+User Request
+  └─ TraceId: abc-123
+     ├─ Agent A (SpanId: 1)
+     │  ├─ LLM Call (SpanId: 1.1, Duration: 2.3s)
+     │  └─ Tool Call (SpanId: 1.2, Duration: 0.5s)
+     └─ Agent B (SpanId: 2)
+        ├─ Memory Query (SpanId: 2.1, Duration: 0.1s)
+        └─ Sub-Agent C (SpanId: 3)
+           └─ LLM Call (SpanId: 3.1, Duration: 4.1s)
+```
+
+**Pattern 2: Anomaly Detection via Trace Analysis**
+```
+Normal: Agent → LLM → Tool → Done (3-5s)
+Anomaly: Agent → LLM → LLM → LLM → Tool → LLM → Done (30s)
+Detect: >3 LLM calls in single span = loop detection
+```
+
+**Pattern 3: Cost Attribution**
+```
+Trace → Spans → Token Count per Span → Cost per Agent → per Mission → per User
+```
+
+### OpenTelemetry 集成方案
+- `@opentelemetry/sdk-node`: Node.js tracing SDK
+- `@opentelemetry/auto-instrumentation-http`: HTTP 自动追踪
+- Custom spans for: LLM calls, tool invocations, memory operations
+- Exporters: Jaeger, Zipkin, or OTLP
+
+### Commander vs 行业
+
+| 维度 | Commander | LangGraph | CrewAI |
+|------|-----------|-----------|--------|
+| 结构化日志 | ✅ JSON | ⚠️ Basic | ❌ |
+| HTML 报告 | ✅ | ❌ | ❌ |
+| 治理观察者 | ✅ 实时 | ❌ | ❌ |
+| 系统状态 API | ✅ /system/status | ❌ | ❌ |
+| OTel 集成 | ⚠️ Planned | ❌ | ❌ |
+| 成本归因 | ✅ tokenBudgetAllocator | ❌ | ❌ |
+
+### 建议改进
+1. **OpenTelemetry 集成**: 标准化 trace/span 导出
+2. **实时 Dashboard**: Grafana/Prometheus 接入
+3. **异常检测 ML**: 用 trace 历史训练异常检测模型
+4. **成本告警**: 单任务/单 agent 成本超阈值告警
+
+### 参考
+- OpenTelemetry: https://opentelemetry.io
+- Google Dapper Paper (2010) - 原始分布式追踪论文
+- Commander modules: logging.ts, reporting/, governanceObserver.ts
+
+*最后更新: 2026-05-27 14:39 (Asia/Shanghai)*
