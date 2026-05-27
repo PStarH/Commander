@@ -248,15 +248,14 @@ export class AuthManager {
 
 // ── Singleton ──────────────────────────────────────────────────────
 
-let globalAuthManager: AuthManager | null = null;
+import { createTenantAwareSingleton } from './tenantAwareSingleton';
+
+const authManagerSingleton = createTenantAwareSingleton(() => new AuthManager());
 
 export function getAuthManager(): AuthManager {
-  if (!globalAuthManager) {
-    globalAuthManager = new AuthManager();
-  }
-  return globalAuthManager;
+  return authManagerSingleton.get();
 }
 
 export function resetAuthManager(): void {
-  globalAuthManager = null;
+  authManagerSingleton.reset();
 }

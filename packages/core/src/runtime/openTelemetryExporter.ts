@@ -358,17 +358,17 @@ function eventDataToSpanName(input: unknown, output: unknown, type: string): str
   return `decision.${String(output ?? 'unknown').slice(0, 60)}`;
 }
 
-// ── Singleton ──────────────────────────────────────────────────────
+import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-let globalOTelExporter: OpenTelemetryExporter | null = null;
+let _otelConfig: OTelExporterConfig | undefined;
+
+const otelExporterSingleton = createTenantAwareSingleton(() => new OpenTelemetryExporter(_otelConfig));
 
 export function getOTelExporter(config?: OTelExporterConfig): OpenTelemetryExporter {
-  if (!globalOTelExporter) {
-    globalOTelExporter = new OpenTelemetryExporter(config);
-  }
-  return globalOTelExporter;
+  if (config) _otelConfig = config;
+  return otelExporterSingleton.get();
 }
 
 export function resetOTelExporter(): void {
-  globalOTelExporter = null;
+  otelExporterSingleton.reset();
 }

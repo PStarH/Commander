@@ -356,15 +356,14 @@ export class ProviderPool {
   }
 }
 
-let globalPool: ProviderPool | null = null;
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const providerPoolSingleton = createTenantAwareSingleton(() => new ProviderPool());
 
 export function getProviderPool(): ProviderPool {
-  if (!globalPool) {
-    globalPool = new ProviderPool();
-  }
-  return globalPool;
+  return providerPoolSingleton.get();
 }
 
 export function resetProviderPool(): void {
-  globalPool = null;
+  providerPoolSingleton.reset();
 }

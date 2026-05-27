@@ -364,15 +364,14 @@ export async function safeExecute<T>(
 // Global Error Handler
 // ========================================
 
-let globalErrorHandler: ErrorHandler | null = null;
+import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
+
+const errorHandlerSingleton = createTenantAwareSingleton(() => new ErrorHandler());
 
 export function getGlobalErrorHandler(): ErrorHandler {
-  if (!globalErrorHandler) {
-    globalErrorHandler = new ErrorHandler();
-  }
-  return globalErrorHandler;
+  return errorHandlerSingleton.get();
 }
 
 export function resetErrorHandler(): void {
-  globalErrorHandler = null;
+  errorHandlerSingleton.reset();
 }

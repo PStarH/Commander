@@ -178,13 +178,14 @@ export class ApprovalSystem {
   }
 }
 
-let globalApproval: ApprovalSystem | null = null;
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const approvalSingleton = createTenantAwareSingleton(() => new ApprovalSystem());
 
 export function getApprovalSystem(): ApprovalSystem {
-  if (!globalApproval) globalApproval = new ApprovalSystem();
-  return globalApproval;
+  return approvalSingleton.get();
 }
 
 export function resetApprovalSystem(): void {
-  globalApproval = null;
+  approvalSingleton.reset();
 }

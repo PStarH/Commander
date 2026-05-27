@@ -486,13 +486,12 @@ export class ReflectionEngine {
 // Factory
 // ========================================
 
-let globalEngine: ReflectionEngine | null = null;
+import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
+
+const reflectionEngineSingleton = createTenantAwareSingleton(() => new ReflectionEngine());
 
 export function getGlobalReflectionEngine(): ReflectionEngine {
-  if (!globalEngine) {
-    globalEngine = new ReflectionEngine();
-  }
-  return globalEngine;
+  return reflectionEngineSingleton.get();
 }
 
 export function createReflectionEngine(): ReflectionEngine {
@@ -500,5 +499,5 @@ export function createReflectionEngine(): ReflectionEngine {
 }
 
 export function resetReflectionEngine(): void {
-  globalEngine = null;
+  reflectionEngineSingleton.reset();
 }

@@ -286,17 +286,21 @@ export class ExecutionTraceRecorder {
   }
 }
 
-let globalRecorder: ExecutionTraceRecorder | null = null;
+import { createTenantAwareSingleton } from './tenantAwareSingleton';
+
+let _traceStore: TraceStore | undefined;
+
+const traceRecorderSingleton = createTenantAwareSingleton(() => new ExecutionTraceRecorder(500, _traceStore));
 
 export function getTraceRecorder(store?: TraceStore): ExecutionTraceRecorder {
-  if (!globalRecorder) {
-    globalRecorder = new ExecutionTraceRecorder(500, store);
-  } else if (store && !globalRecorder.hasStore()) {
-    globalRecorder.setStore(store);
+  if (store) _traceStore = store;
+  const recorder = traceRecorderSingleton.get();
+  if (store && !recorder.hasStore()) {
+    recorder.setStore(store);
   }
-  return globalRecorder;
+  return recorder;
 }
 
 export function resetTraceRecorder(): void {
-  globalRecorder = null;
+  traceRecorderSingleton.reset();
 }

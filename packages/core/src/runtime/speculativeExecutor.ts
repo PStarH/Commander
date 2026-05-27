@@ -133,20 +133,16 @@ export class PatternTracker {
   }
 }
 
-/**
- * Global pattern tracker instance shared across executions.
- */
-let globalTracker: PatternTracker | null = null;
+import { createTenantAwareSingleton } from './tenantAwareSingleton';
+
+const patternTrackerSingleton = createTenantAwareSingleton(() => new PatternTracker());
 
 export function getPatternTracker(): PatternTracker {
-  if (!globalTracker) {
-    globalTracker = new PatternTracker();
-  }
-  return globalTracker;
+  return patternTrackerSingleton.get();
 }
 
 export function resetPatternTracker(): void {
-  globalTracker = null;
+  patternTrackerSingleton.reset();
 }
 
 /**

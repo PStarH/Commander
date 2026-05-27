@@ -266,17 +266,16 @@ export class MetricsCollector {
   }
 }
 
-// ── Global singleton ──
+import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-let globalMetrics: MetricsCollector | null = null;
+const metricsSingleton = createTenantAwareSingleton(() => new MetricsCollector());
 
+/** Get the global MetricsCollector (single-tenant) or tenant-scoped (multi-tenant). */
 export function getMetricsCollector(): MetricsCollector {
-  if (!globalMetrics) {
-    globalMetrics = new MetricsCollector();
-  }
-  return globalMetrics;
+  return metricsSingleton.get();
 }
 
+/** Reset the metrics collector singleton (for test isolation). */
 export function resetMetricsCollector(): void {
-  globalMetrics = null;
+  metricsSingleton.reset();
 }

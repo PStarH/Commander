@@ -207,17 +207,16 @@ export class HTMLReportRenderer {
   }
 }
 
-let globalRenderer: HTMLReportRenderer | null = null;
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const htmlReportRendererSingleton = createTenantAwareSingleton(() => new HTMLReportRenderer());
 
 export function getHTMLReportRenderer(): HTMLReportRenderer {
-  if (!globalRenderer) {
-    globalRenderer = new HTMLReportRenderer();
-  }
-  return globalRenderer;
+  return htmlReportRendererSingleton.get();
 }
 
 export function resetHTMLReportRenderer(): void {
-  globalRenderer = null;
+  htmlReportRendererSingleton.reset();
 }
 
 export function createWarRoomHTMLReport(params: {

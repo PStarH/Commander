@@ -443,18 +443,17 @@ export class ThreeLayerMemory {
 // Factory
 // ========================================
 
-let globalMemory: ThreeLayerMemory | null = null;
+import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
+
+const memorySingleton = createTenantAwareSingleton(() => new ThreeLayerMemory());
 
 export function getGlobalThreeLayerMemory(): ThreeLayerMemory {
-  if (!globalMemory) {
-    globalMemory = new ThreeLayerMemory();
-  }
-  return globalMemory;
+  return memorySingleton.get();
 }
 
 /** Reset the global memory singleton (for test isolation) */
 export function resetGlobalThreeLayerMemory(): void {
-  globalMemory = null;
+  memorySingleton.reset();
 }
 
 export function createThreeLayerMemory(

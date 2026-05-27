@@ -742,20 +742,16 @@ export class HookManager {
 }
 
 // ============================================================================
-// Global Singleton
-// ============================================================================
+import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
 
-let globalHookManager: HookManager | null = null;
+const hookManagerSingleton = createTenantAwareSingleton(() => new HookManager());
 
 export function getHookManager(): HookManager {
-  if (!globalHookManager) {
-    globalHookManager = new HookManager();
-  }
-  return globalHookManager;
+  return hookManagerSingleton.get();
 }
 
 export function resetHookManager(): void {
-  globalHookManager = null;
+  hookManagerSingleton.reset();
 }
 
 // ============================================================================

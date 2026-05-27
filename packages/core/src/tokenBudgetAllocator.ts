@@ -368,13 +368,12 @@ export class TokenBudgetAllocator {
 // Factory
 // ========================================
 
-let globalAllocator: TokenBudgetAllocator | null = null;
+import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
+
+const budgetAllocatorSingleton = createTenantAwareSingleton(() => new TokenBudgetAllocator());
 
 export function getGlobalBudgetAllocator(): TokenBudgetAllocator {
-  if (!globalAllocator) {
-    globalAllocator = new TokenBudgetAllocator();
-  }
-  return globalAllocator;
+  return budgetAllocatorSingleton.get();
 }
 
 export function createBudgetAllocator(config?: Partial<BudgetConfig>): TokenBudgetAllocator {
@@ -382,5 +381,5 @@ export function createBudgetAllocator(config?: Partial<BudgetConfig>): TokenBudg
 }
 
 export function resetBudgetAllocator(): void {
-  globalAllocator = null;
+  budgetAllocatorSingleton.reset();
 }
