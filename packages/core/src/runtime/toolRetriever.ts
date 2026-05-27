@@ -37,7 +37,7 @@ const TOOL_RELEVANCE_KEYWORDS: Record<string, string[]> = {
   vision_analyze: ['image', 'picture', 'photo', 'screenshot', 'visual', 'analyze image', 'describe image', 'ocr', 'what is in this image'],
   pdf_extract: ['pdf', 'extract pdf', 'read pdf', 'parse pdf', 'pdf text', 'pdf content'],
   screenshot_capture: ['screenshot', 'capture screen', 'take screenshot', 'screen capture', 'grab screen'],
-  code_search: ['search code', 'find code', 'grep code', 'code search', 'search repository', 'find function', 'find class', 'ripgrep'],
+  code_search: ['search code', 'find code', 'grep code', 'code search', 'search repository', 'find function', 'find class', 'ripgrep', 'find', 'search', 'locate', 'todo', 'fixme', 'hack', 'pattern', 'comment', 'count'],
   apply_patch: ['patch', 'apply patch', 'diff', 'unified diff', 'code patch', 'apply diff'],
   refine_code: ['refine', 'improve code', 'refactor', 'clean up code', 'code quality', 'code review', 'optimize code'],
   verify_answer: ['verify', 'check answer', 'validate answer', 'verify answer', 'format answer', 'answer quality'],
@@ -97,6 +97,7 @@ function scoreToolsByGoal(goal: string, availableTools: string[]): Map<string, n
     if (toolName === 'file_read') score += 0.5;
     if (toolName === 'shell_execute') score += 0.3;
     if (toolName === 'python_execute') score += 0.3;
+    if (toolName === 'code_search') score += 0.5;
 
     scores.set(toolName, score);
   }

@@ -139,7 +139,7 @@ export class CycleDetector {
   }
 
   private detectDrift(toolName: string, args: Record<string, unknown>): CycleDetectionResult {
-    const key = `${toolName}:${JSON.stringify(arguments)}`;
+    const key = `${toolName}:${JSON.stringify(args)}`;
     const count = (this.driftTracker.get(key) ?? 0) + 1;
     this.driftTracker.set(key, count);
 
