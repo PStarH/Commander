@@ -5137,3 +5137,85 @@ Allocation:
 - Commander modules: tokenBudgetAllocator.ts, threeLayerMemory
 
 *最后更新: 2026-05-27 09:58 (Asia/Shanghai)*
+
+---
+
+## 研究主题 20: Agent Tool Use 与 Tool Orchestration
+
+### 背景
+Tool Use 是 Agent 系统的核心能力。2026 年，主要框架（OpenAI, Anthropic, Google）
+都在 tool use 上投入大量精力。关键挑战：tool 选择、错误处理、组合编排。
+
+### Commander 已实现的 Tool 机制
+
+1. **toolRegistry.ts** - 工具注册中心
+   - 动态工具注册/注销
+   - 工具权限管理
+   - 工具版本控制
+
+2. **toolCallValidator.ts** - 工具调用验证
+   - 参数 Schema 验证
+   - 输入安全检查
+   - 调用频率限制
+
+3. **executionRouter.ts** - 执行路由
+   - 根据工具类型路由到不同后端
+   - 沙箱执行 vs 直接执行
+   - 结果后处理
+
+4. **codeSearchTool.ts** - 代码搜索工具
+   - 支持 regex 模式
+   - 符号搜索 (function/class/interface)
+   - 上下文行数控制
+
+### Tool Orchestration 模式
+
+**Pattern 1: Sequential Tool Chain（顺序工具链）**
+```
+search_code → read_file → edit_file → run_tests
+```
+
+**Pattern 2: Parallel Tool Fan-out（并行扇出）**
+```
+search_A + search_B + search_C → merge_results
+```
+
+**Pattern 3: Conditional Tool Selection（条件选择）**
+```
+if (needs_code_edit) → edit_tool
+else if (needs_analysis) → analysis_tool
+else → search_tool
+```
+
+**Pattern 4: Tool Composition（工具组合）**
+```
+macro_tool = compose(search, read, summarize)
+```
+
+**Pattern 5: Self-Healing Tool Call（自愈工具调用）**
+```
+tool_call → error → retry_with_different_params → error → fallback_tool
+```
+
+### Commander vs 其他框架
+
+| 维度 | Commander | LangChain | OpenAI Assistants |
+|------|-----------|-----------|-------------------|
+| 工具注册 | ✅ 动态 | ✅ 静态 | ❌ 预定义 |
+| 参数验证 | ✅ toolCallValidator | ❌ | ✅ Schema |
+| 沙箱执行 | ✅ executionRouter | ❌ | ❌ |
+| 权限控制 | ✅ toolRegistry | ❌ | ❌ |
+| 错误恢复 | ✅ 自愈链 | ❌ | ❌ |
+| 工具组合 | ⚠️ 部分 | ✅ Chain | ❌ |
+
+### 建议改进
+1. **工具组合 DSL**: 定义可复用的工具链
+2. **工具缓存**: 相同输入不重复调用
+3. **工具优先级**: 根据上下文自动选择最优工具
+
+### 参考
+- Toolformer (Schick et al., 2023)
+- Gorilla: Large Language Model Connected with APIs (Patil et al., 2023)
+- Commander modules: toolRegistry.ts, toolCallValidator.ts, executionRouter.ts
+
+*最后更新: 2026-05-27 11:00 (Asia/Shanghai)*
