@@ -225,11 +225,12 @@ export class CommanderAgentLoop {
     this.logger.info('AgentLoop', `Registered ${registrations.length} provider(s) from environment`);
   }
 
-  private loadState() {
+  private async loadState(): Promise<void> {
     try {
       if (fs.existsSync(this.config.stateFile)) {
-        const data = JSON.parse(fs.readFileSync(this.config.stateFile, 'utf-8'));
-        this.taskQueue = data.taskQueue || [];
+        const data = await fs.promises.readFile(this.config.stateFile, 'utf-8');
+        const parsed = JSON.parse(data);
+        this.taskQueue = parsed.taskQueue || [];
         this.logger.info('AgentLoop', `Loaded state: ${this.taskQueue.length} pending tasks`);
       }
     } catch (e) {
@@ -238,19 +239,35 @@ export class CommanderAgentLoop {
     }
   }
 
-  private saveState() {
-    try {
-      fs.writeFileSync(this.config.stateFile, JSON.stringify({
-        taskQueue: this.taskQueue,
-        updatedAt: new Date().toISOString(),
-      }, null, 2), 'utf-8');
-    } catch (e) { this.logger.debug('AgentLoop', 'saveState error', { error: (e as Error)?.message }); }
+  private saveState(): void {
+    // Fire-and-forget async write to avoid blocking the event loop
+    const data = JSON.stringify({
+      taskQueue: this.taskQueue,
+      updatedAt: new Date().toISOString(),
+    }, null, 2);
+    fs.promises.writeFile(this.config.stateFile, data, 'utf-8').catch(
+      (e) => this.logger.debug('AgentLoop', 'saveState error', { error: (e as Error)?.message })
+    );
   }
+
+  private static readonly MAX_QUEUE_SIZE = 1000;
 
   addTask(goal: string, priority = 0): string {
     const id = `task_${Date.now()}_${this.taskQueue.length}`;
-    this.taskQueue.push({ id, goal, priority, status: 'pending', createdAt: new Date().toISOString() });
-    this.taskQueue.sort((a, b) => b.priority - a.priority);
+    const newTask = { id, goal, priority, status: 'pending' as const, createdAt: new Date().toISOString() };
+    // Insertion sort: find correct position and insert (O(N) instead of O(N log N) full sort)
+    let insertIdx = this.taskQueue.length;
+    for (let i = 0; i < this.taskQueue.length; i++) {
+      if (priority > this.taskQueue[i].priority) {
+        insertIdx = i;
+        break;
+      }
+    }
+    this.taskQueue.splice(insertIdx, 0, newTask);
+    // Cap queue size to prevent unbounded growth in long sessions
+    if (this.taskQueue.length > CommanderAgentLoop.MAX_QUEUE_SIZE) {
+      this.taskQueue.length = CommanderAgentLoop.MAX_QUEUE_SIZE;
+    }
     this.saveState();
     this.logger.info('AgentLoop', `Task added: ${goal.slice(0, 60)}... (${id})`);
     return id;
@@ -264,17 +281,20 @@ export class CommanderAgentLoop {
    * Called once at the start of start() since connections are async.
    */
   private async initializeExternalIntegrations(): Promise<void> {
+    // Config reading (async to avoid blocking event loop)
+    const configPath = path.join(this.config.projectRoot, '.commander.json');
+    let commanderConfig: Record<string, unknown> | undefined;
     try {
-      const configPath = path.join(this.config.projectRoot, '.commander.json');
-      let commanderConfig: Record<string, unknown> | undefined;
-      try {
-        if (fs.existsSync(configPath)) {
-          commanderConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
-        }
-      } catch {
-        this.logger.warn('AgentLoop', 'Failed to read .commander.json config');
+      if (fs.existsSync(configPath)) {
+        const data = await fs.promises.readFile(configPath, 'utf-8');
+        commanderConfig = JSON.parse(data) as Record<string, unknown>;
       }
+    } catch {
+      this.logger.warn('AgentLoop', 'Failed to read .commander.json config');
+    }
 
+    // MCP integration
+    try {
       const mcpServers = readMCPConfig(commanderConfig as Parameters<typeof readMCPConfig>[0]);
       if (mcpServers.length > 0) {
         this.mcpManager = new MCPIntegrationManager();
@@ -284,8 +304,13 @@ export class CommanderAgentLoop {
           this.logger.info('AgentLoop', `Registered ${this.mcpManager.getToolCount()} MCP tools from ${this.mcpManager.getServerCount()} servers`);
         }
       }
+    } catch (err) {
+      this.logger.warn('AgentLoop', 'Failed to initialize MCP integration', { error: err instanceof Error ? err.message : String(err) });
+    }
 
-      const a2aConfig = commanderConfig?.a2a as Record<string, unknown> | undefined;
+    // A2A server
+    const a2aConfig = commanderConfig?.a2a as Record<string, unknown> | undefined;
+    try {
       if (a2aConfig?.server) {
         const serverCfg = a2aConfig.server as Record<string, unknown>;
         if (serverCfg.enabled !== false) {
@@ -321,7 +346,12 @@ export class CommanderAgentLoop {
           this.logger.info('AgentLoop', `A2A server started on ${serverCfg.host ?? '127.0.0.1'}:${serverCfg.port ?? 3002}`);
         }
       }
+    } catch (err) {
+      this.logger.warn('AgentLoop', 'Failed to start A2A server', { error: err instanceof Error ? err.message : String(err) });
+    }
 
+    // A2A discovery from config
+    try {
       if (a2aConfig?.remoteAgents && Array.isArray(a2aConfig.remoteAgents)) {
         this.a2aDiscoveryManager = new A2ADiscoveryManager();
         const remoteConfigs = a2aConfig.remoteAgents as Array<{ label: string; url: string; authToken?: string }>;
@@ -330,29 +360,32 @@ export class CommanderAgentLoop {
           this.logger.info('AgentLoop', `Connected to ${this.a2aDiscoveryManager.getAgentCount()} remote A2A agents`);
         }
       }
-
-      {
-        const dm = this.a2aDiscoveryManager ?? new A2ADiscoveryManager();
-        this.runtime.registerTool('a2a_delegate', new A2ADelegateTool(dm));
-      }
-
-      const envJson = process.env.COMMANDER_A2A_AGENTS;
-      if (envJson && !this.a2aDiscoveryManager) {
-        try {
-          const urls = JSON.parse(envJson) as string[];
-          if (Array.isArray(urls) && urls.length > 0) {
-            this.a2aDiscoveryManager = new A2ADiscoveryManager();
-            await this.a2aDiscoveryManager.discoverFromConfig(
-              urls.map((url, i) => ({ label: `a2a-env-${i}`, url })),
-            );
-            this.logger.info('AgentLoop', `Connected to ${this.a2aDiscoveryManager.getAgentCount()} env-configured A2A agents`);
-          }
-        } catch {
-          this.logger.warn('AgentLoop', 'Failed to parse COMMANDER_A2A_AGENTS env var');
-        }
-      }
     } catch (err) {
-      this.logger.error('AgentLoop', 'Failed to initialize external integrations', err instanceof Error ? err : new Error(String(err)));
+      this.logger.warn('AgentLoop', 'Failed to discover A2A agents from config', { error: err instanceof Error ? err.message : String(err) });
+      this.a2aDiscoveryManager = null;
+    }
+
+    // Register a2a_delegate tool
+    {
+      const dm = this.a2aDiscoveryManager ?? new A2ADiscoveryManager();
+      this.runtime.registerTool('a2a_delegate', new A2ADelegateTool(dm));
+    }
+
+    // A2A discovery from env var
+    const envJson = process.env.COMMANDER_A2A_AGENTS;
+    if (envJson && !this.a2aDiscoveryManager) {
+      try {
+        const urls = JSON.parse(envJson) as string[];
+        if (Array.isArray(urls) && urls.length > 0) {
+          this.a2aDiscoveryManager = new A2ADiscoveryManager();
+          await this.a2aDiscoveryManager.discoverFromConfig(
+            urls.map((url, i) => ({ label: `a2a-env-${i}`, url })),
+          );
+          this.logger.info('AgentLoop', `Connected to ${this.a2aDiscoveryManager.getAgentCount()} env-configured A2A agents`);
+        }
+      } catch {
+        this.logger.warn('AgentLoop', 'Failed to parse COMMANDER_A2A_AGENTS env var');
+      }
     }
   }
 
@@ -379,7 +412,12 @@ export class CommanderAgentLoop {
       });
     }
 
-    this.logger.info('AgentLoop', 'Queue empty. Waiting for active sessions...');
+    // Wait for active sessions to complete before exiting
+    while (this.activeSessions.size > 0) {
+      await this.sleep(1000);
+    }
+
+    this.logger.info('AgentLoop', 'Queue empty. All sessions complete.');
   }
 
   private async executeTask(task: { id: string; goal: string }) {
@@ -399,7 +437,7 @@ export class CommanderAgentLoop {
     try {
       // Phase 1: Deliberation
       const plan = deliberate(task.goal);
-       this.logger.info('AgentLoop', `Type: ${plan.taskType} | Agents: ${plan.estimatedAgentCount} | Topology: ${plan.recommendedTopology}`);
+       this.logger.info('AgentLoop', `Type: ${plan.taskType} | Agents: ${plan.estimatedAgentCount} | Topology: ${plan.recommendedTopology} | Nature: ${plan.taskNature} | Spec: ${plan.suitableForSpeculation} | Time/agent: ${(plan.timeBudgetPerAgentMs / 1000).toFixed(1)}s`);
 
       // Phase 2: Execute via orchestrator
       const result = await this.orchestrator.execute({
@@ -466,6 +504,6 @@ export class CommanderAgentLoop {
   }
 
   private sleep(ms: number): Promise<void> {
-    return new Promise(r => setTimeout(r, ms));
+    return new Promise(r => { const t = setTimeout(r, ms); t.unref(); });
   }
 }

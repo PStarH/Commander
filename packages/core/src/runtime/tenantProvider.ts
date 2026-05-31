@@ -89,6 +89,7 @@ export class SimpleTenantProvider implements TenantProvider {
 export class ThreeLayerMemoryRegistry {
   private instances: Map<string, ThreeLayerMemory> = new Map();
   private defaultInstance: ThreeLayerMemory | null = null;
+  private static readonly MAX_INSTANCES = 50;
 
   /** Get or create a memory instance for a tenant. */
   getOrCreate(tenantId?: string): ThreeLayerMemory {
@@ -100,6 +101,11 @@ export class ThreeLayerMemoryRegistry {
     }
     let mem = this.instances.get(tenantId);
     if (!mem) {
+      if (this.instances.size >= ThreeLayerMemoryRegistry.MAX_INSTANCES) {
+        // Evict the first (oldest) entry
+        const firstKey = this.instances.keys().next().value;
+        if (firstKey) this.instances.delete(firstKey);
+      }
       mem = new ThreeLayerMemory();
       this.instances.set(tenantId, mem);
     }

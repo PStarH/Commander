@@ -42,7 +42,7 @@ export interface OrchestratorConfig {
 const DEFAULT_CONFIG: OrchestratorConfig = {
   enabled: true,
   defaultToolTimeoutMs: 30_000,
-  turnTimeoutMs: 120_000,
+  turnTimeoutMs: 180_000,
   maxRetries: 1,
   useApproval: false,
   circuitBreakerThreshold: 3,
@@ -296,7 +296,7 @@ export class ToolOrchestrator {
         if (attempt < this.config.maxRetries) {
           retries++;
           // Brief delay before retry
-          await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+          await new Promise(r => { const t = setTimeout(r, 500 * (attempt + 1)); t.unref(); });
         } else {
           return {
             result: {

@@ -24,12 +24,8 @@ import { detectTaskType } from './unifiedVerification';
 // ============================================================================
 
 const DEFAULT_MODELS: ModelConfig[] = [
-  { id: 'grok-2-latest', provider: 'xai', tier: 'eco', costPer1KInput: 0.002, costPer1KOutput: 0.01, capabilities: ['code', 'analysis'], contextWindow: 131072, priority: 9 },
-  { id: 'mistralai/Mixtral-8x7B-Instruct-v0.1', provider: 'anyscale', tier: 'eco', costPer1KInput: 0.0005, costPer1KOutput: 0.0005, capabilities: ['analysis'], contextWindow: 32768, priority: 10 },
-  { id: 'mistralai/Mistral-7B-Instruct-v0.3', provider: 'deepinfra', tier: 'eco', costPer1KInput: 0.00013, costPer1KOutput: 0.00013, capabilities: ['analysis'], contextWindow: 32768, priority: 11 },
-
   // ===== Eco tier — cheap & fast =====
-  { id: 'claude-3-5-haiku', provider: 'anthropic', tier: 'eco', costPer1KInput: 0.0008, costPer1KOutput: 0.004, capabilities: ['code', 'analysis'], contextWindow: 200000, priority: 0 },
+  { id: 'claude-haiku-4-5', provider: 'anthropic', tier: 'eco', costPer1KInput: 0.0008, costPer1KOutput: 0.004, capabilities: ['code', 'analysis'], contextWindow: 200000, priority: 0 },
   { id: 'gpt-4o-mini', provider: 'openai', tier: 'eco', costPer1KInput: 0.00015, costPer1KOutput: 0.0006, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 1 },
   { id: 'gemini-2-flash', provider: 'google', tier: 'eco', costPer1KInput: 0.0001, costPer1KOutput: 0.0004, capabilities: ['analysis'], contextWindow: 1000000, priority: 2 },
   { id: 'llama-3.3-70b-versatile', provider: 'groq', tier: 'eco', costPer1KInput: 0.00059, costPer1KOutput: 0.00079, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 3 },
@@ -41,25 +37,23 @@ const DEFAULT_MODELS: ModelConfig[] = [
   { id: 'meta-llama/Llama-3.2-3B-Instruct', provider: 'vllm', tier: 'eco', costPer1KInput: 0, costPer1KOutput: 0, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 8 },
 
   // ===== Standard tier — balanced quality/cost =====
-  { id: 'claude-3-5-sonnet', provider: 'anthropic', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 200000, priority: 0 },
+  { id: 'claude-sonnet-4-6', provider: 'anthropic', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 200000, priority: 0 },
   { id: 'gpt-4o', provider: 'openai', tier: 'standard', costPer1KInput: 0.0025, costPer1KOutput: 0.01, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 1 },
   { id: 'gemini-2-pro', provider: 'google', tier: 'standard', costPer1KInput: 0.0015, costPer1KOutput: 0.0075, capabilities: ['reasoning', 'analysis'], contextWindow: 1000000, priority: 2 },
   { id: 'mistral-large-latest', provider: 'mistral', tier: 'standard', costPer1KInput: 0.002, costPer1KOutput: 0.006, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 3 },
   { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', provider: 'together', tier: 'standard', costPer1KInput: 0.0009, costPer1KOutput: 0.0009, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 131072, priority: 4 },
-  { id: 'grok-3', provider: 'xai', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 131072, priority: 11 },
-  { id: 'meta-llama/Llama-3.3-70B-Instruct', provider: 'anyscale', tier: 'standard', costPer1KInput: 0.0009, costPer1KOutput: 0.0009, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 12 },
-  { id: 'meta-llama/Llama-3.3-70B-Instruct', provider: 'deepinfra', tier: 'standard', costPer1KInput: 0.0009, costPer1KOutput: 0.0009, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 13 },
   { id: 'sonar-pro', provider: 'perplexity', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['reasoning', 'analysis'], contextWindow: 128000, priority: 5 },
   { id: 'accounts/fireworks/models/llama-v3p3-70b-instruct', provider: 'fireworks', tier: 'standard', costPer1KInput: 0.0009, costPer1KOutput: 0.0009, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 6 },
   { id: 'llama3-70b-8192', provider: 'groq', tier: 'standard', costPer1KInput: 0.00059, costPer1KOutput: 0.00079, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 8192, priority: 7 },
   { id: 'command-r-plus-08-2024', provider: 'cohere', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['reasoning', 'analysis'], contextWindow: 128000, priority: 8 },
-  { id: 'anthropic.claude-3-5-sonnet-20241022-v2:0', provider: 'bedrock', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 200000, priority: 9 },
+  { id: 'anthropic.claude-sonnet-4-6-v1:0', provider: 'bedrock', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 200000, priority: 9 },
   { id: 'meta/meta-llama-3.3-70b-instruct', provider: 'replicate', tier: 'standard', costPer1KInput: 0.00065, costPer1KOutput: 0.00275, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 10 },
+  { id: 'grok-3', provider: 'xai', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 131072, priority: 11 },
 
   // ===== Power tier — strongest reasoning =====
-  { id: 'claude-3-opus', provider: 'anthropic', tier: 'power', costPer1KInput: 0.015, costPer1KOutput: 0.075, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 200000, priority: 0 },
+  { id: 'claude-opus-4-8', provider: 'anthropic', tier: 'power', costPer1KInput: 0.015, costPer1KOutput: 0.075, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 200000, priority: 0 },
   { id: 'gpt-5', provider: 'openai', tier: 'power', costPer1KInput: 0.01, costPer1KOutput: 0.04, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 256000, priority: 1 },
-  { id: 'claude-3-5-sonnet', provider: 'bedrock', tier: 'power', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 200000, priority: 2 },
+  { id: 'claude-sonnet-4-6', provider: 'bedrock', tier: 'power', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 200000, priority: 2 },
   { id: 'deepseek-v4-pro', provider: 'deepseek', tier: 'power', costPer1KInput: 0.002, costPer1KOutput: 0.008, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 128000, priority: 3 },
   { id: 'mimo-v2.5-pro', provider: 'mimo', tier: 'power', costPer1KInput: 0.004, costPer1KOutput: 0.012, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 4 },
   { id: 'glm-5.1', provider: 'glm', tier: 'power', costPer1KInput: 0.002, costPer1KOutput: 0.008, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 5 },
@@ -133,6 +127,10 @@ function scoreComplexity(ctx: AgentExecutionContext): ComplexityScore {
 
 export class ModelRouter {
   private models: Map<string, ModelConfig> = new Map();
+  // Pre-indexed by tier for O(1) tier lookups (rebuilt on model changes)
+  private tierIndex: Map<ModelTier, ModelConfig[]> = new Map();
+  // Pre-indexed outcomes for O(1) model:taskType lookups
+  private outcomesIndex: Map<string, ModelOutcome[]> = new Map();
   private outcomes: ModelOutcome[] = [];
   private readonly maxOutcomes = 500;
   private readonly decayHalfLifeMs = 20 * 60 * 1000; // 20 minutes
@@ -142,10 +140,29 @@ export class ModelRouter {
     for (const m of allModels) {
       this.models.set(m.id, m);
     }
+    this.rebuildTierIndex();
+  }
+
+  /** Pre-index models by tier for O(1) lookups */
+  private rebuildTierIndex(): void {
+    this.tierIndex.clear();
+    for (const m of this.models.values()) {
+      let list = this.tierIndex.get(m.tier);
+      if (!list) {
+        list = [];
+        this.tierIndex.set(m.tier, list);
+      }
+      list.push(m);
+    }
+    // Sort each tier by priority
+    for (const list of this.tierIndex.values()) {
+      list.sort((a, b) => a.priority - b.priority);
+    }
   }
 
   registerModel(config: ModelConfig): void {
     this.models.set(config.id, config);
+    this.rebuildTierIndex();
   }
 
   getModel(modelId: string): ModelConfig | undefined {
@@ -153,8 +170,8 @@ export class ModelRouter {
   }
 
   listModels(tier?: ModelTier): ModelConfig[] {
-    const all = Array.from(this.models.values());
-    return tier ? all.filter(m => m.tier === tier) : all;
+    if (tier) return [...(this.tierIndex.get(tier) ?? [])];
+    return Array.from(this.models.values());
   }
 
   /**
@@ -213,7 +230,7 @@ export class ModelRouter {
       provider: model.provider,
       reasoning,
       estimatedCost: Math.round(estimatedCost * 100000) / 100000,
-      maxTokens: Math.min(estimatedOutputTokens, 64000),
+      maxTokens: Math.min(estimatedOutputTokens, 200000),
     };
   }
 
@@ -222,18 +239,35 @@ export class ModelRouter {
    * Call this after each successful or failed model execution.
    */
   recordOutcome(modelId: string, taskType: string, success: boolean, durationMs: number, tokensUsed: number): void {
-    this.outcomes.push({
+    const record: ModelOutcome = {
       modelId,
       taskType,
       success,
       durationMs,
       tokensUsed,
       timestamp: Date.now(),
-    });
+    };
+    this.outcomes.push(record);
+
+    // Update outcomes index for O(1) lookups
+    const key = `${modelId}:${taskType}`;
+    let list = this.outcomesIndex.get(key);
+    if (!list) {
+      list = [];
+      this.outcomesIndex.set(key, list);
+    }
+    list.push(record);
 
     // Prune old outcomes
     if (this.outcomes.length > this.maxOutcomes) {
-      this.outcomes = this.outcomes.slice(-this.maxOutcomes);
+      const evicted = this.outcomes.shift()!;
+      const evictedKey = `${evicted.modelId}:${evicted.taskType}`;
+      const evictedList = this.outcomesIndex.get(evictedKey);
+      if (evictedList) {
+        const idx = evictedList.indexOf(evicted);
+        if (idx !== -1) evictedList.splice(idx, 1);
+        if (evictedList.length === 0) this.outcomesIndex.delete(evictedKey);
+      }
     }
   }
 
@@ -247,28 +281,54 @@ export class ModelRouter {
 
     const requiredCaps = TASK_CAPABILITY_MAP[taskType ?? 'general'] ?? [];
 
-    // Try same tier, next priority
-    const sameTier = Array.from(this.models.values())
-      .filter(m => m.tier === failed.tier && m.id !== failedModelId)
-      .sort((a, b) => a.priority - b.priority);
-
+    // Try same tier, next priority (pre-sorted by priority)
+    const sameTier = (this.tierIndex.get(failed.tier) ?? []).filter(m => m.id !== failedModelId);
     for (const candidate of sameTier) {
       if (this.hasCapabilities(candidate, requiredCaps)) return candidate;
     }
 
-    // Step down tier
+    // Step down tier (pre-sorted by priority)
     const tierOrder: ModelTier[] = ['power', 'standard', 'eco'];
     const currentIdx = tierOrder.indexOf(failed.tier);
     for (let i = currentIdx + 1; i < tierOrder.length; i++) {
-      const lowerTier = Array.from(this.models.values())
-        .filter(m => m.tier === tierOrder[i])
-        .sort((a, b) => a.priority - b.priority);
+      const lowerTier = this.tierIndex.get(tierOrder[i]) ?? [];
       for (const candidate of lowerTier) {
         if (this.hasCapabilities(candidate, requiredCaps)) return candidate;
       }
     }
 
     return undefined;
+  }
+
+  /**
+   * Get a cascade chain: ordered list of models from cheapest to most capable.
+   * Implements FrugalGPT's LLM cascade pattern (arXiv:2305.05176):
+   * try cheap first, escalate on failure/low-confidence.
+   *
+   * @param taskType - The task type for capability filtering
+   * @param maxModels - Maximum models in the cascade (default: 3)
+   * @returns Ordered array of models: cheapest first, most capable last
+   */
+  getCascadeChain(taskType?: string, maxModels: number = 3): ModelConfig[] {
+    const requiredCaps = TASK_CAPABILITY_MAP[taskType ?? 'general'] ?? [];
+    const tierOrder: ModelTier[] = ['eco', 'standard', 'power', 'consensus'];
+    const chain: ModelConfig[] = [];
+
+    for (const tier of tierOrder) {
+      if (chain.length >= maxModels) break;
+      const tierModels = this.tierIndex.get(tier) ?? [];
+      for (const model of tierModels) {
+        if (chain.length >= maxModels) break;
+        if (this.hasCapabilities(model, requiredCaps)) {
+          // Avoid duplicates (same model can appear in multiple tiers like bedrock)
+          if (!chain.some(m => m.id === model.id && m.provider === model.provider)) {
+            chain.push(model);
+          }
+        }
+      }
+    }
+
+    return chain;
   }
 
   /**
@@ -285,26 +345,22 @@ export class ModelRouter {
    * Get learning stats for debugging.
    */
   getLearningStats(): { modelId: string; taskType: string; successRate: string; avgDuration: number; count: number }[] {
-    const groups = new Map<string, ModelOutcome[]>();
-    for (const o of this.outcomes) {
-      const key = `${o.modelId}:${o.taskType}`;
-      const arr = groups.get(key) ?? [];
-      arr.push(o);
-      groups.set(key, arr);
-    }
-
-    return Array.from(groups.entries()).map(([key, outcomes]) => {
-      const [modelId, taskType] = key.split(':');
+    const stats: { modelId: string; taskType: string; successRate: string; avgDuration: number; count: number }[] = [];
+    for (const [key, outcomes] of this.outcomesIndex) {
+      const colonIdx = key.lastIndexOf(':');
+      const modelId = colonIdx >= 0 ? key.slice(0, colonIdx) : key;
+      const taskType = colonIdx >= 0 ? key.slice(colonIdx + 1) : 'unknown';
       const successes = outcomes.filter(o => o.success).length;
       const avgDuration = outcomes.reduce((s, o) => s + o.durationMs, 0) / outcomes.length;
-      return {
+      stats.push({
         modelId,
         taskType,
         successRate: `${successes}/${outcomes.length}`,
         avgDuration: Math.round(avgDuration),
         count: outcomes.length,
-      };
-    });
+      });
+    }
+    return stats;
   }
 
   // ============================================================================
@@ -348,15 +404,14 @@ export class ModelRouter {
     taskType: string,
     ctx: AgentExecutionContext,
   ): ModelConfig[] {
-    let candidates = Array.from(this.models.values())
-      .filter(m => m.tier === tier);
+    let candidates = [...(this.tierIndex.get(tier) ?? [])];
 
     // Fallback chain if tier is empty
     if (candidates.length === 0) {
       const tierOrder: ModelTier[] = ['consensus', 'power', 'standard', 'eco'];
       const startIdx = tierOrder.indexOf(tier);
       for (let i = startIdx + 1; i < tierOrder.length; i++) {
-        candidates = Array.from(this.models.values()).filter(m => m.tier === tierOrder[i]);
+        candidates = [...(this.tierIndex.get(tierOrder[i]) ?? [])];
         if (candidates.length > 0) break;
       }
     }
@@ -386,7 +441,7 @@ export class ModelRouter {
       : requiredCaps.filter(c => model.capabilities.includes(c)).length / requiredCaps.length;
 
     // 2. Cost efficiency: cheaper is better (normalized against most expensive in same tier)
-    const tierModels = Array.from(this.models.values()).filter(m => m.tier === model.tier);
+    const tierModels = this.tierIndex.get(model.tier) ?? [];
     const maxCost = Math.max(...tierModels.map(m => m.costPer1KOutput), 0.001);
     const costEfficiency = 1 - (model.costPer1KOutput / maxCost) * 0.3; // 0.7-1.0 range
 
@@ -404,9 +459,8 @@ export class ModelRouter {
    * Uses time-decayed success rate. Returns 0.8-1.2 multiplier.
    */
   private getLearningBonus(modelId: string, taskType: string): number {
-    const relevant = this.outcomes.filter(o =>
-      o.modelId === modelId && o.taskType === taskType,
-    );
+    const key = `${modelId}:${taskType}`;
+    const relevant = this.outcomesIndex.get(key) ?? [];
 
     if (relevant.length === 0) return 1.0; // No data → neutral
 
@@ -444,7 +498,7 @@ export class ModelRouter {
     let currentIdx = tierOrder.indexOf(tier);
 
     while (currentIdx < tierOrder.length) {
-      const tierModels = Array.from(this.models.values()).filter(m => m.tier === tierOrder[currentIdx]);
+      const tierModels = this.tierIndex.get(tierOrder[currentIdx]) ?? [];
       const hasCapableModel = tierModels.some(m => this.hasCapabilities(m, requiredCaps));
       if (hasCapableModel) return tierOrder[currentIdx];
       currentIdx++;

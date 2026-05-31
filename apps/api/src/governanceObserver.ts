@@ -1,5 +1,50 @@
-// Governance Observer v1 - 治理观察者
+// Governance Observer v2 - 治理观察者
 // 统计高风险任务、审批率、风险 Agent 分布
+// v2: 增加磁盘持久化，治理证据不再仅存内存
+
+import * as fs from 'fs';
+import * as path from 'path';
+
+const PERSISTENCE_DIR = '.commander_governance';
+const SNAPSHOT_FILE = 'governance-snapshots.ndjson';
+
+/**
+ * Append a governance snapshot to disk (NDJSON format).
+ * Non-blocking — failures are silently caught so governance never breaks execution.
+ */
+export function persistGovernanceSnapshot(stats: GovernanceStats, alerts: GovernanceAlert[]): void {
+  try {
+    const dir = path.resolve(process.cwd(), PERSISTENCE_DIR);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const record = {
+      timestamp: new Date().toISOString(),
+      stats,
+      alerts,
+    };
+    const filePath = path.join(dir, SNAPSHOT_FILE);
+    fs.appendFileSync(filePath, JSON.stringify(record) + '\n', 'utf-8');
+  } catch {
+    /* best-effort persistence — never break governance flow */
+  }
+}
+
+/**
+ * Load persisted governance snapshots from disk.
+ * Returns newest-first, limited to `limit` entries.
+ */
+export function loadGovernanceSnapshots(limit = 100): Array<{ timestamp: string; stats: GovernanceStats; alerts: GovernanceAlert[] }> {
+  try {
+    const filePath = path.resolve(process.cwd(), PERSISTENCE_DIR, SNAPSHOT_FILE);
+    if (!fs.existsSync(filePath)) return [];
+    const lines = fs.readFileSync(filePath, 'utf-8').trim().split('\n').filter(Boolean);
+    const records = lines.map(line => JSON.parse(line));
+    return records.slice(-limit).reverse();
+  } catch {
+    return [];
+  }
+}
 
 export interface GovernanceStats {
   highRiskTasks: {
@@ -21,10 +66,10 @@ export interface GovernanceAlert {
 
 // 计算治理统计
 export function calculateGovernanceStats(
-  missions: any[],
-  agents: any[]
+  missions: Record<string, unknown>[],
+  agents: Record<string, unknown>[]
 ): GovernanceStats {
-  const highRiskMissions = missions.filter(m => m.riskLevel === 'HIGH');
+  const highRiskMissions = missions.filter(m => m.riskLevel === 'HIGH' || m.riskLevel === 'CRITICAL');
   
   const completed = highRiskMissions.filter(m => m.status === 'DONE').length;
   const pending = highRiskMissions.filter(m => m.status !== 'DONE').length;

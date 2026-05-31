@@ -5,7 +5,7 @@ Usage:
   python3 benchmark_runner.py <benchmark.yaml> [--output results/] [--model mimo-v2.5-pro]
 """
 
-import json, yaml, sys, os, time, requests
+import json, yaml, sys, os, time, re, requests
 from typing import Optional
 
 def load_config(path: str) -> dict:
@@ -92,13 +92,55 @@ def call_model(api_key: str, model: str, prompt: str, temp: float) -> Optional[s
             time.sleep(3)
     return None
 
+def extract_answer(response: str) -> str:
+    """Extract answer from LLM response. Tries FINAL ANSWER:, Answer:, JSON, last line."""
+    if not response:
+        return ''
+    text = response.strip()
+
+    # Pattern 1: FINAL ANSWER: (GAIA official)
+    m = re.search(r'FINAL\s*ANSWER:\s*(.+?)(?:\n|$)', text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+
+    # Pattern 2: Answer:
+    m = re.search(r'(?:^|\n)\s*Answer:\s*(.+?)(?:\n|$)', text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+
+    # Pattern 3: JSON with "answer" key
+    m = re.search(r'```json\s*(\{[\s\S]*?\})\s*```', text)
+    if m:
+        try:
+            parsed = json.loads(m.group(1))
+            if 'answer' in parsed:
+                return str(parsed['answer']).strip()
+        except json.JSONDecodeError:
+            pass
+
+    # Pattern 4: Short last line after long reasoning
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
+    if len(lines) >= 2 and len(lines[-1]) < 100 and len(text) > 200:
+        return lines[-1]
+
+    return text
+
 def score_response(bench: dict, item: dict, response: str) -> bool:
     expected = str(item.get('answer', item.get('expected', item.get('Final answer', '')))).strip().lower()
     if not expected:
-        return bool(response and len(response) > 10)
-    mc = response.strip().lower().rstrip('.!? ') if response else ''
+        # SECURITY FIX: empty expected field means we cannot validate — count as fail, not pass
+        # Previous bug: any response >10 chars was counted as correct, inflating GAIA to 69.7%
+        return False
+
+    extracted = extract_answer(response or '')
+    mc = extracted.strip().lower().rstrip('.!? ')
     ec = expected.rstrip('.!? ')
-    return mc == ec or ec in mc
+
+    # Normalize: strip non-alphanumeric for fuzzy match
+    mc_norm = re.sub(r'[^a-z0-9]', '', mc)
+    ec_norm = re.sub(r'[^a-z0-9]', '', ec)
+
+    return mc == ec or ec in mc or mc_norm == ec_norm
 
 if __name__ == '__main__':
     import argparse

@@ -26,14 +26,23 @@ export class SandboxManager {
     if (mechanism) {
       const found = this.sandboxes.find(s => s.name === mechanism);
       if (found) return found;
+      // SECURITY FIX: warn on silent fallback instead of quietly using NoopSB
+      getGlobalLogger().warn('SandboxManager', `Requested sandbox "${mechanism}" not available, falling back to ${this.sandboxes[0]?.name ?? 'none (UNSANDBOXED)'}`);
     }
-    return this.sandboxes[0] ?? this.noop;
+    const fallback = this.sandboxes[0] ?? this.noop;
+    if (fallback.name === 'none') {
+      getGlobalLogger().warn('SandboxManager', '⚠️  No OS-level sandbox available — commands will run UNSANDBOXED');
+    }
+    return fallback;
   }
 
   getProfile(name?: string): SandboxProfile {
     if (name && name in PROFILES) return PROFILES[name];
-    if (process.env.COMMANDER_SANDBOX_MODE && PROFILES[process.env.COMMANDER_SANDBOX_MODE]) {
-      return PROFILES[process.env.COMMANDER_SANDBOX_MODE];
+    // SECURITY FIX: env var can only select non-full-access profiles (prevents downgrade attack)
+    // To use full-access, must be explicitly requested via the `name` parameter
+    const envMode = process.env.COMMANDER_SANDBOX_MODE;
+    if (envMode && envMode in PROFILES && envMode !== 'full-access') {
+      return PROFILES[envMode];
     }
     return PROFILES['workspace-write'];
   }

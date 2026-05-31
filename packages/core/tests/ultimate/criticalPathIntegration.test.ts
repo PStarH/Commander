@@ -4,7 +4,7 @@ import { RecursiveAtomizer } from '../../src/ultimate/atomizer';
 import type { TaskTreeNode, DeliberationPlan } from '../../src/ultimate/types';
 
 function makeDeliberation(overrides?: Partial<DeliberationPlan>): DeliberationPlan {
-  return {
+  const base: DeliberationPlan = {
     requiresExternalInfo: false,
     taskType: 'CODING',
     recommendedTopology: 'SEQUENTIAL',
@@ -16,8 +16,20 @@ function makeDeliberation(overrides?: Partial<DeliberationPlan>): DeliberationPl
     capabilitiesNeeded: [],
     confidence: 0.8,
     reasoning: [],
-    ...overrides,
+    estimatedDurationMs: 60000,
+    suitableForSpeculation: false,
+    taskNature: 'COMPUTE_BOUND',
+    timeBudgetPerAgentMs: 60000,
   };
+  const merged = { ...base, ...overrides };
+  // Derive timeBudgetPerAgentMs from estimatedTokens if not explicitly overridden
+  if (!overrides?.timeBudgetPerAgentMs) {
+    merged.timeBudgetPerAgentMs = Math.round(merged.estimatedTokens * 5 + 10000);
+  }
+  if (!overrides?.estimatedDurationMs) {
+    merged.estimatedDurationMs = merged.timeBudgetPerAgentMs;
+  }
+  return merged;
 }
 
 describe('RecursiveAtomizer with estimatedDurationMs', () => {

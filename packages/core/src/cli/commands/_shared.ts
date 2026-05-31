@@ -55,7 +55,7 @@ import { DriveOrchestrator } from '../../drive/driveOrchestrator';
 import type { DriveConfig } from '../../drive/types';
 import { Scheduler, WorkflowRegistry } from '../../scheduler';
 import type { ScheduleEntry, WorkflowTrigger } from '../../scheduler';
-import { section, kv, bullet, cmdHeader, startSpinner, onboardingMessage, $ } from '../util';
+import { section, kv, bullet, cmdHeader, startSpinner, startSpinnerWithFailure, progressBar, StepProgress, onboardingMessage, $, parseFlags, fatalError, warn, setTheme, getThemeName, listThemes } from '../util';
 
 const DEFAULT_TOOLS = 'web_search,web_fetch,file_read,file_write,file_edit,file_search,file_list,python_execute,shell_execute,git';
 
@@ -68,7 +68,7 @@ export function createRuntime(): AgentRuntime | null {
   if (!provider) return null;
 
   const modelId = getEffectiveModel();
-  const runtime = new AgentRuntime({ budgetHardCapTokens: 64000 });
+  const runtime = new AgentRuntime({ budgetHardCapTokens: 200000 });
   const allTools = createAllTools();
   for (const [name, tool] of allTools) {
     runtime.registerTool(name, tool);
@@ -133,6 +133,9 @@ export type { EffortLevel, OrchestrationTopology };
 export {
   deliberate, deliberateWithLLM, classifyEffortLevel,
   detectProvider, getEffectiveModel, onboardingMessage, $, section, kv, bullet, cmdHeader, startSpinner,
+  startSpinnerWithFailure, progressBar, StepProgress,
+  parseFlags, fatalError, warn,
+  setTheme, getThemeName, listThemes,
   getGlobalLogger, getMetaLearner, getApprovalSystem, StateCheckpointer, spawn, TaskPool,
   GoalOrchestrator, GoalConfig, SwarmOrchestrator, SwarmConfig, DriveOrchestrator, DriveConfig,
   CompanyEngine, SSEStream, TELOSOrchestrator, UltimateOrchestrator,

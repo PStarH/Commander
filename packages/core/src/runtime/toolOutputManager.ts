@@ -109,6 +109,25 @@ export class ToolOutputManager {
   }
 
   /**
+   * Adjust turn budget based on governor pressure.
+   * Under tight/critical budget, reduce the output budget to save tokens.
+   * @param pressure - Governor pressure (0-1, where 1 = critical)
+   */
+  adjustBudgetForPressure(pressure: number): void {
+    const base = DEFAULT_CONFIG.turnBudget;
+    if (pressure > 0.85) {
+      // Critical: 40% of base budget
+      this.config.turnBudget = Math.floor(base * 0.4);
+    } else if (pressure > 0.65) {
+      // Tight: 70% of base budget
+      this.config.turnBudget = Math.floor(base * 0.7);
+    } else {
+      // Normal: full budget
+      this.config.turnBudget = base;
+    }
+  }
+
+  /**
    * Get current turn budget state.
    */
   getTurnBudget(): TurnBudgetState {
@@ -320,6 +339,8 @@ export class ToolOutputManager {
   /**
    * Persist output to disk and return the file path.
    */
+  private static readonly MAX_PERSISTED_FILES = 200;
+
   private persistOutput(toolCall: ToolCall, output: string): string {
     try {
 
@@ -333,11 +354,25 @@ export class ToolOutputManager {
       const filepath = path.join(dir, filename);
 
       fs.writeFileSync(filepath, output, 'utf-8');
+      this.cleanupPersistedDir(dir);
       return filepath;
     } catch (e) {
       getGlobalLogger().warn('ToolOutputManager', 'Failed to persist tool output', { error: (e as Error)?.message, toolName: toolCall.name });
       return '';
     }
+  }
+
+  private cleanupPersistedDir(dir: string): void {
+    try {
+      const files = fs.readdirSync(dir);
+      if (files.length <= ToolOutputManager.MAX_PERSISTED_FILES) return;
+      const sorted = files
+        .map(f => ({ name: f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+        .sort((a, b) => a.mtime - b.mtime);
+      for (const f of sorted.slice(0, sorted.length - ToolOutputManager.MAX_PERSISTED_FILES)) {
+        fs.unlinkSync(path.join(dir, f.name));
+      }
+    } catch (e) { getGlobalLogger().debug('ToolOutputManager', 'Best-effort cleanup failed', { error: (e as Error)?.message, dir }); }
   }
 
   private isShellTool(name: string): boolean {

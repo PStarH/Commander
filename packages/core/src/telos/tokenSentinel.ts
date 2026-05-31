@@ -114,6 +114,15 @@ export class TokenSentinel {
     this.monthlyResetDate = new Date().toISOString().slice(0, 7); // YYYY-MM
   }
 
+  /** Ensure monthly cost counter is current (auto-reset on month boundary). */
+  private ensureCurrentMonth(): void {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    if (currentMonth !== this.monthlyResetDate) {
+      this.monthlyCostUsd = 0;
+      this.monthlyResetDate = currentMonth;
+    }
+  }
+
   private trimAlerts(): void {
     while (this.budgetAlerts.length > this.maxAlerts) {
       this.budgetAlerts.shift();
@@ -140,6 +149,7 @@ export class TokenSentinel {
     modelId: string,
     budget: TELOSBudget,
   ): TokenCheckResult {
+    this.ensureCurrentMonth();
     const estimatedInput = estimateMessagesTokens(messages, modelId);
     const estimatedOutput = this.estimateOutputTokens(
       messages.find(m => m.role === 'user')?.content ?? '',
@@ -176,7 +186,7 @@ export class TokenSentinel {
 
     const remaining = budget.hardCapTokens > 0
       ? Math.max(0, budget.hardCapTokens - totalEstimated)
-      : totalEstimated;
+      : Infinity;
 
     // Soft cap warning — log but allow
     if (budget.softCapTokens > 0 && totalEstimated > budget.softCapTokens) {
@@ -204,6 +214,8 @@ export class TokenSentinel {
   // ========================================================================
 
   recordCost(record: CostRecord): void {
+    this.ensureCurrentMonth();
+
     this.costRecords.push(record);
     if (this.costRecords.length > this.maxRecords) {
       this.costRecords.shift();
@@ -305,7 +317,7 @@ export class TokenSentinel {
     currentTokens: number,
     budget: TELOSBudget,
   ): BudgetAlert | null {
-    if (budget.hardCapTokens > 0 && currentTokens >= budget.hardCapTokens) {
+    if (budget.hardCapTokens > 0 && currentTokens > budget.hardCapTokens) {
       const alert: BudgetAlert = {
         type: 'hard_cap_reached',
         runId,
@@ -321,6 +333,7 @@ export class TokenSentinel {
   }
 
   checkCostBudget(runId: string): BudgetAlert | null {
+    this.ensureCurrentMonth();
     if (this.monthlyCostLimitUsd > 0 && this.monthlyCostUsd >= this.monthlyCostLimitUsd) {
       const alert: BudgetAlert = {
         type: 'budget_exhausted',
@@ -341,6 +354,7 @@ export class TokenSentinel {
   }
 
   getMonthlyCostUsd(): number {
+    this.ensureCurrentMonth();
     return Math.round(this.monthlyCostUsd * 100000) / 100000;
   }
 

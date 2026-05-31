@@ -11,12 +11,22 @@ function ensureTempDir() {
 }
 
 function formatExecResult(r: { stdout: string; stderr: string; exitCode: number; durationMs: number; killed: boolean }): string {
+  // FIX: check killed FIRST — killed processes often have stderr and non-zero exit
+  // Also preserve stdout/stderr collected before the kill (partial output is better than none)
+  if (r.killed) {
+    const parts = [`[Exit: SIGTERM | timeout exceeded after ${r.durationMs}ms]`];
+    if (r.stdout) parts.push(`STDOUT:\n${r.stdout}`);
+    if (r.stderr) parts.push(`STDERR:\n${r.stderr}`);
+    return parts.join('\n');
+  }
   if (r.exitCode === 0) {
     return `[Exit: 0 | ${r.durationMs}ms]\n${r.stdout}`.trim();
   }
-  if (r.stderr) return `[Exit: ${r.exitCode} | ${r.durationMs}ms]\nSTDERR:\n${r.stderr}`;
-  if (r.killed) return `[Exit: SIGTERM | timeout exceeded]`;
-  return `[Error] Exit code ${r.exitCode}`;
+  // FIX: include both stdout AND stderr on non-zero exit (was losing stdout)
+  const parts = [`[Exit: ${r.exitCode} | ${r.durationMs}ms]`];
+  if (r.stdout) parts.push(`STDOUT:\n${r.stdout}`);
+  if (r.stderr) parts.push(`STDERR:\n${r.stderr}`);
+  return parts.join('\n');
 }
 
 export class PythonExecuteTool implements Tool {
@@ -73,30 +83,20 @@ function buildBackendDescriptions(): string {
 export class ShellExecuteTool implements Tool {
   definition: ToolDefinition = {
     name: 'shell_execute',
-    description: 'Execute a shell command. Returns stdout and stderr. Use for git operations, npm/pip commands, and system tasks.',
+    description: 'Execute a shell command in a sandboxed environment. Returns stdout, stderr, and exit code. Use for git operations, npm/pip commands, build scripts, and system tasks. Do NOT use for file reading (use file_read) or web searches (use web_search).',
     inputSchema: {
       type: 'object',
       properties: {
         command: { type: 'string', description: 'Shell command to execute' },
-        timeout: { type: 'number', description: 'Timeout in seconds (default: 30)', default: 30 },
-        workdir: { type: 'string', description: 'Working directory (default: workspace root)', default: '.' },
-        backend: { type: 'string', description: `Execution backend. Options: ${buildBackendDescriptions()}`, default: 'local' },
-        ssh_host: { type: 'string', description: 'SSH host for remote execution (also set via COMMANDER_SSH_HOST env)' },
-        ssh_user: { type: 'string', description: 'SSH user (default: current user, or COMMANDER_SSH_USER env)' },
-        ssh_port: { type: 'number', description: 'SSH port (default: 22, or COMMANDER_SSH_PORT env)', default: 22 },
-        ssh_key: { type: 'string', description: 'SSH identity file path (default: ~/.ssh/id_rsa, or COMMANDER_SSH_KEY env)' },
-        container: { type: 'string', description: 'Docker container name or ID for docker exec (also set via COMMANDER_DOCKER_CONTAINER env)' },
-        container_id: { type: 'string', description: 'Alias for container' },
-        docker_user: { type: 'string', description: 'User to run as inside the container (or COMMANDER_DOCKER_USER env)' },
-        backend_name: { type: 'string', description: 'Name of a pre-registered backend (set programmatically via ExecutionRouter.registerBackend())' },
+        timeout: { type: 'number', description: 'Timeout in seconds (default: 30, max: 120)', default: 30 },
+        workdir: { type: 'string', description: 'Working directory relative to workspace (default: ".")', default: '.' },
+        backend: { type: 'string', enum: ['local', 'ssh', 'docker'], description: `Execution backend (default: local). SSH/Docker configured via env vars: COMMANDER_SSH_HOST, COMMANDER_DOCKER_CONTAINER`, default: 'local' },
       },
       required: ['command'],
     },
     examples: [
       { name: 'shell_execute', arguments: { command: 'ls -la' } },
       { name: 'shell_execute', arguments: { command: 'npm test', timeout: 60 } },
-      { name: 'shell_execute', arguments: { command: 'uname -a', backend: 'ssh', ssh_host: 'prod-server-01' } },
-      { name: 'shell_execute', arguments: { command: 'ls /data', container: 'my-container', backend: 'docker' } },
     ],
     category: 'code',
   };

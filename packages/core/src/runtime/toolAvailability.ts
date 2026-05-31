@@ -98,9 +98,10 @@ export function budgetNotCritical(): AvailabilityExpression {
 
 /** Tool is available for specific task types */
 export function taskType(...types: string[]): AvailabilityExpression {
+  const typeSet = new Set(types);
   return {
     type: 'predicate',
-    predicate: (ctx) => types.includes(ctx.taskType),
+    predicate: (ctx) => typeSet.has(ctx.taskType),
     label: `taskType:${types.join('|')}`,
   };
 }
@@ -128,7 +129,11 @@ export function maxErrors(maxCount: number): AvailabilityExpression {
   return {
     type: 'predicate',
     predicate: (ctx) => {
-      const errorCount = ctx.toolsErrored.filter(t => t === ctx.toolsUsed[ctx.toolsUsed.length - 1]).length;
+      const target = ctx.toolsUsed[ctx.toolsUsed.length - 1];
+      let errorCount = 0;
+      for (const t of ctx.toolsErrored) {
+        if (t === target) errorCount++;
+      }
       return errorCount < maxCount;
     },
     label: `errors < ${maxCount}`,
@@ -197,15 +202,22 @@ export class ToolAvailabilityManager {
 
   /**
    * Add an availability rule.
+   * Uses insertion sort (O(N)) instead of full sort (O(N log N)).
    */
   addRule(rule: ToolAvailabilityRule): void {
-    this.rules.push(rule);
-    // Sort by priority descending
-    this.rules.sort((a, b) => b.priority - a.priority);
+    let insertIdx = this.rules.length;
+    for (let i = 0; i < this.rules.length; i++) {
+      if (rule.priority > this.rules[i].priority) {
+        insertIdx = i;
+        break;
+      }
+    }
+    this.rules.splice(insertIdx, 0, rule);
   }
 
   /**
    * Add multiple rules at once.
+   * Sorts once after all inserts instead of per-insert.
    */
   addRules(rules: ToolAvailabilityRule[]): void {
     for (const rule of rules) {

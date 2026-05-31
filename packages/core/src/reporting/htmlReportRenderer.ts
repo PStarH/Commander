@@ -129,7 +129,7 @@ export class HTMLReportRenderer {
 
     return `
       <div class="report-header">
-        <div class="report-eyebrow">${report.metadata['type'] ?? 'Report'}</div>
+        <div class="report-eyebrow">${this.escapeHtml(report.metadata['type'] ?? 'Report')}</div>
         <h1 class="report-title">${this.escapeHtml(report.title)}</h1>
         ${report.subtitle ? `<p class="report-subtitle">${this.escapeHtml(report.subtitle)}</p>` : ''}
         <div class="report-meta">
@@ -197,7 +197,7 @@ export class HTMLReportRenderer {
     return `<span class="tag tag-${variant}">${this.escapeHtml(label)}</span>`;
   }
 
-  private escapeHtml(str: string): string {
+  escapeHtml(str: string): string {
     return str
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
@@ -240,7 +240,7 @@ export function createWarRoomHTMLReport(params: {
     },
     {
       title: 'Battle Narrative',
-      content: `<p style="padding: 8px 12px; border-left: 2px solid #4de98c; background: rgba(7,16,12,0.96); line-height: 1.6;">${params.narrative}</p>`,
+      content: `<p style="padding: 8px 12px; border-left: 2px solid #4de98c; background: rgba(7,16,12,0.96); line-height: 1.6;">${renderer.escapeHtml(params.narrative)}</p>`,
       collapsible: true,
       priority: 1,
     },
@@ -269,10 +269,10 @@ export function createWarRoomHTMLReport(params: {
       content: params.recentEvents.map(e =>
         `<div class="trace-step">
           <div class="trace-header">
-            <span class="trace-type">${e.level}</span>
-            <span class="trace-tokens">${e.timestamp}</span>
+            <span class="trace-type">${renderer.escapeHtml(e.level)}</span>
+            <span class="trace-tokens">${renderer.escapeHtml(e.timestamp)}</span>
           </div>
-          <div class="trace-detail">${e.message}</div>
+          <div class="trace-detail">${renderer.escapeHtml(e.message)}</div>
         </div>`
       ).join(''),
       collapsible: true,

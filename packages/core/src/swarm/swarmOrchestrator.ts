@@ -13,6 +13,7 @@ import { DEFAULT_SWARM_CONFIG } from './types';
 import { FusionEngine } from './fusionEngine';
 import { getMessageBus } from '../runtime/messageBus';
 import { getGlobalLogger } from '../logging';
+import { callLLMJSON } from '../runtime/llmJsonExtractor';
 import { validateShape } from '../runtime/structuredOutput';
 
 // ============================================================================
@@ -139,9 +140,8 @@ interface CriticOutput {
   summary: string;
 }
 
-let nodeCounter = 0;
 function generateNodeId(): string {
-  return `swarm_${Date.now()}_${++nodeCounter}`;
+  return `swarm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
 function findNodeById(nodes: SwarmNode[], id: string): SwarmNode | undefined {
@@ -223,37 +223,6 @@ function computeTopology(nodes: SwarmNode[], depth = 0): SwarmTopology {
     depth: effectiveDepth,
     levelBreaths: levelBreaths.filter(b => b > 0),
   };
-}
-
-async function callLLMJSON<T>(
-  provider: LLMProvider,
-  model: string,
-  systemPrompt: string,
-  userMessage: string,
-): Promise<{ data: T; tokens: number } | null> {
-  try {
-    const response = await provider.call({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
-      ],
-      temperature: 0.2,
-      maxTokens: 2048,
-    });
-    const cleaned = response.content.trim().replace(/^```(?:json)?\s*|```\s*$/g, '');
-    let data: T;
-    try {
-      data = JSON.parse(cleaned) as T;
-    } catch {
-      getGlobalLogger().error('SwarmOrchestrator', 'Failed to parse LLM JSON response', undefined, { responseSnippet: cleaned.slice(0, 200) });
-      return null;
-    }
-    return { data, tokens: response.usage?.totalTokens ?? 0 };
-  } catch (err) {
-    getGlobalLogger().error('SwarmOrchestrator', 'LLM call failed', err as Error);
-    return null;
-  }
 }
 
 // ============================================================================
@@ -345,7 +314,8 @@ export class SwarmOrchestrator {
 
         const depsBlocked = node.dependencies.some(depId => {
           const dep = findNodeById(goalTree, depId);
-          return dep && dep.status !== 'completed';
+          if (!dep) return true;
+          return dep.status !== 'completed';
         });
         if (depsBlocked) continue;
 
@@ -388,6 +358,7 @@ export class SwarmOrchestrator {
       const allNodes = collectAllNodes(goalTree);
       const activeNodes = allNodes.filter(n => n.status === 'completed' || n.status === 'in_progress');
       const fusionReport = this.fusionEngine.analyze(activeNodes, round);
+      if (this.fusionReports.length > 200) this.fusionReports.shift();
       this.fusionReports.push(fusionReport);
 
       if (fusionReport.conflicts.length > 0) {

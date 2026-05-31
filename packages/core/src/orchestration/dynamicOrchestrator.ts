@@ -81,7 +81,7 @@ export class DynamicOrchestrator {
   }
 
   private getRecoveryStep(failedStep: TaskStep, context: ExecutionContext, availableTools: string[]): TaskStep | null {
-    const retryCount = context.stepHistory.filter(s => s.id === failedStep.id).length;
+    const retryCount = context.stepHistory.filter(s => s.id.startsWith(`${failedStep.id}-retry-`)).length;
     if (retryCount < this.maxRetriesPerStep && failedStep.fallbackStrategy === 'retry') {
       return { ...failedStep, id: `${failedStep.id}-retry-${retryCount + 1}`, status: 'pending', error: undefined };
     }

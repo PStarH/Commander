@@ -164,9 +164,9 @@ export interface TELOSConfig {
 
 export const DEFAULT_TELOS_CONFIG: TELOSConfig = {
   defaultBudget: {
-    hardCapTokens: 64000,
-    softCapTokens: 48000,
-    costCapUsd: 2.00,
+    hardCapTokens: 200000,   // Raised from 64K — most tasks need more headroom
+    softCapTokens: 150000,   // Warn at 75% of hard cap
+    costCapUsd: 5.00,        // Raised from $2 — allow more complex tasks
   },
   maxRetries: 2,
   retryDelayMs: 2000,

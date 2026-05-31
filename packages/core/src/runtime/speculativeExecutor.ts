@@ -178,13 +178,14 @@ export function planSpeculativeExecution(
 ): Array<{ name: string; arguments: Record<string, unknown>; confidence: number }> {
   const toolNames = recentToolCalls.map(tc => tc.name);
   const predictions = patternTracker.predictNext(toolNames);
+  const availableSet = new Set(availableTools);
 
   const result: Array<{ name: string; arguments: Record<string, unknown>; confidence: number }> = [];
 
   for (const pred of predictions) {
     if (result.length >= 2) break; // Max 2 speculative calls
     if (!isSpeculativelySafe(pred.toolName)) continue;
-    if (!availableTools.includes(pred.toolName)) continue;
+    if (!availableSet.has(pred.toolName)) continue;
 if (pred.confidence < 0.3) continue; // Minimum confidence threshold
 
     const lastCall = recentToolCalls.find(tc => tc.name === pred.toolName);

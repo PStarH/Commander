@@ -5,11 +5,11 @@ export const DEFAULT_CONFIG: AgentRuntimeConfig = {
   maxStepsPerRun: 20,
   maxRetries: 2,
   retryDelayMs: 1000,
-  timeoutMs: 120000,
+  timeoutMs: 180000,
   maxConcurrency: 5,
   observationMaskWindow: 10,
   enableDescendingScheduler: true,
-  budgetHardCapTokens: 64000,
+  budgetHardCapTokens: 200000,
   toolRetrieval: { enabled: false, minTools: 3, maxTools: 10, alwaysInclude: [] },
   entropyGating: { enabled: false },
   speculativeExecution: { enabled: false, maxPredictions: 2, minConfidence: 0.3 },
@@ -24,7 +24,7 @@ export function now(): string {
 }
 
 export function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise(resolve => { const t = setTimeout(resolve, ms); t.unref(); });
 }
 
 /**
@@ -36,7 +36,8 @@ export function descendingToolOrder(toolCalls: ToolCall[]): ToolCall[] {
   const broad: ToolCall[] = [];
   const narrow: ToolCall[] = [];
   for (const tc of toolCalls) {
-    const isBroad = broadKeywords.some(k => tc.name.toLowerCase().includes(k));
+    const lower = tc.name.toLowerCase();
+    const isBroad = broadKeywords.some(k => lower.includes(k));
     (isBroad ? broad : narrow).push(tc);
   }
   return [...broad, ...narrow];
@@ -57,5 +58,6 @@ export function applyObservationMask(
 
 export function isMutationTool(name: string): boolean {
   const mutationKeywords = ['write', 'edit', 'delete', 'mkdir', 'mv', 'cp', 'bash', 'shell', 'git'];
-  return mutationKeywords.some(k => name.toLowerCase().includes(k));
+  const lower = name.toLowerCase();
+  return mutationKeywords.some(k => lower.includes(k));
 }

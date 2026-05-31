@@ -1,9 +1,29 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import type { TaskTreeNode, ExecutionError } from './types';
 import type { AgentRuntime } from '../runtime/agentRuntime';
 import type { AgentExecutionContext, AgentExecutionResult } from '../runtime/types';
 import { ArtifactSystem, getArtifactSystem } from './artifactSystem';
 import { getTeamManager } from './agentTeamManager';
 import { getMessageBus } from '../runtime/messageBus';
+import { agentContext } from '../runtime/agentContext';
+import { getGlobalLogger } from '../logging';
+import { MIN_TOKENS_PER_AGENT, MAX_TOKENS_PER_AGENT, ESTIMATED_DURATION_DEFAULT } from '../config/constants';
+
+/** Critical path token budget multiplier (LAMaS: give critical tasks more resources) */
+const CRITICAL_PATH_TOKEN_MULTIPLIER = 1.5;
+
+/** Slack threshold in ms — nodes with less slack than this are considered critical */
+const CRITICAL_PATH_SLACK_THRESHOLD_MS = 100;
+
+/** Default estimated duration for nodes without explicit estimates */
+const DEFAULT_NODE_DURATION_MS = ESTIMATED_DURATION_DEFAULT;
+
+/** Maximum inbox messages to read per agent */
+const MAX_INBOX_MESSAGES = 20;
+
+/** Maximum characters from inbox messages to include in goal context */
+const MAX_INBOX_MESSAGE_CHARS = 500;
 
 export class SubAgentExecutor {
   private runtime: AgentRuntime;
@@ -46,6 +66,9 @@ export class SubAgentExecutor {
     if (node.subtasks.length > 0 && !node.isAtomic) {
       await this.synthesizeSubtasks(node, projectId, baseContext, errors);
     }
+
+    // Clean up per-agent output directory after all execution is done
+    this.cleanupOutputDir(node);
   }
 
   private async executeSubtasks(
@@ -71,7 +94,7 @@ export class SubAgentExecutor {
         // LAMaS: allocate more tokens to critical path tasks
         const adjustedBatch = batch.map(sub => {
           if (sub.isOnCriticalPath) {
-            sub.context.estimatedTokens = Math.round((sub.context.estimatedTokens ?? 5000) * 1.5);
+            sub.context.estimatedTokens = Math.round((sub.context.estimatedTokens ?? MIN_TOKENS_PER_AGENT) * CRITICAL_PATH_TOKEN_MULTIPLIER);
           }
           return sub;
         });
@@ -137,13 +160,14 @@ export class SubAgentExecutor {
       if (degree === 0) {
         queue.push(nodeId);
         est.set(nodeId, 0);
-        const dur = nodeMap.get(nodeId)?.estimatedDurationMs ?? 10000;
+        const dur = nodeMap.get(nodeId)?.estimatedDurationMs ?? DEFAULT_NODE_DURATION_MS;
         eft.set(nodeId, dur);
       }
     }
 
-    while (queue.length > 0) {
-      const current = queue.shift()!;
+    let qIdx = 0;
+    while (qIdx < queue.length) {
+      const current = queue[qIdx++];
       const currentEft = eft.get(current) ?? 0;
 
       for (const successor of (adjList.get(current) ?? [])) {
@@ -151,7 +175,7 @@ export class SubAgentExecutor {
         const currentEst = est.get(successor) ?? 0;
         if (newEst > currentEst) {
           est.set(successor, newEst);
-          const dur = nodeMap.get(successor)?.estimatedDurationMs ?? 10000;
+          const dur = nodeMap.get(successor)?.estimatedDurationMs ?? DEFAULT_NODE_DURATION_MS;
           eft.set(successor, newEst + dur);
         }
         inDegree.set(successor, (inDegree.get(successor) ?? 1) - 1);
@@ -189,9 +213,10 @@ export class SubAgentExecutor {
       }
     }
 
-    while (reverseQueue.length > 0) {
-      const current = reverseQueue.shift()!;
-      const currentLst = (lft.get(current) ?? projectFinish) - (nodeMap.get(current)?.estimatedDurationMs ?? 10000);
+    let rqIdx = 0;
+    while (rqIdx < reverseQueue.length) {
+      const current = reverseQueue[rqIdx++];
+      const currentLst = (lft.get(current) ?? projectFinish) - (nodeMap.get(current)?.estimatedDurationMs ?? DEFAULT_NODE_DURATION_MS);
       lst.set(current, currentLst);
 
       for (const dep of (dependencyMap.get(current) ?? [])) {
@@ -212,7 +237,7 @@ export class SubAgentExecutor {
       const nodeEst = est.get(node.id) ?? 0;
       const nodeLst = lst.get(node.id) ?? 0;
       const slack = Math.abs(nodeLst - nodeEst);
-      node.isOnCriticalPath = slack < 100; // sub-100ms slack = critical
+      node.isOnCriticalPath = slack < CRITICAL_PATH_SLACK_THRESHOLD_MS;
     }
   }
 
@@ -238,11 +263,11 @@ export class SubAgentExecutor {
       let inboxContext = '';
       if (this.currentTeamId && node.dependencies.length > 0) {
         const teamManager = getTeamManager();
-        const inboxMessages = teamManager.readMessages(this.currentTeamId, node.id, 20, false);
+        const inboxMessages = teamManager.readMessages(this.currentTeamId, node.id, MAX_INBOX_MESSAGES, false);
         if (inboxMessages.length > 0) {
           inboxContext = '\n\n=== Messages from team members ===\n' +
             inboxMessages.map(m =>
-              `[${m.from}] ${m.subject}: ${m.body.slice(0, 500)}`
+              `[${m.from}] ${m.subject}: ${m.body.slice(0, MAX_INBOX_MESSAGE_CHARS)}`
             ).join('\n---\n');
         }
       }
@@ -251,19 +276,33 @@ export class SubAgentExecutor {
         ? `${node.goal}\n\n${inboxContext}`
         : node.goal;
 
+      // Prefer the full tool list from baseContext (set by orchestrator/CLI)
+      // over the narrowed list the atomizer may have assigned to this node.
+      const fullTools = (baseContext?.availableTools as string[] | undefined);
+      const tools = fullTools?.length ? fullTools : node.context.availableTools;
+
+      // Per-agent output directory for file write isolation
+      const safeId = node.id.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const outputDir = path.join(process.cwd(), '.commander_output', safeId);
+      fs.mkdirSync(outputDir, { recursive: true });
+
       const ctx: AgentExecutionContext = {
         agentId: node.id,
         projectId,
         goal: enrichedGoal,
         contextData: baseContext as AgentExecutionContext['contextData'],
-        availableTools: node.context.availableTools,
+        availableTools: tools,
+        outputDir,
         maxSteps: 10,
-        tokenBudget: Math.max(2000, Math.min(50000, node.context.estimatedTokens)),
+        tokenBudget: Math.max(MIN_TOKENS_PER_AGENT, Math.min(MAX_TOKENS_PER_AGENT, node.context.estimatedTokens)),
       };
 
       let execResult: AgentExecutionResult;
       try {
-        execResult = await this.runtime.execute(ctx);
+        execResult = await agentContext.run(
+          { agentId: node.id, outputDir },
+          () => this.runtime.execute(ctx),
+        );
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         errors.push({
@@ -290,7 +329,27 @@ export class SubAgentExecutor {
           recovered: false,
         });
       } else {
-        node.result = execResult.summary;
+        // Prefer actual file content over chat summary
+        node.result = execResult.artifactContent || execResult.summary;
+
+        // Collect tool outputs (file_read content, etc.) for richer synthesis
+        const toolOutputs: string[] = [];
+        for (const step of execResult.steps) {
+          if (step.type === 'tool_result' && step.toolResult?.output && !step.toolResult.error) {
+            const output = step.toolResult.output;
+            // Only include substantial tool outputs (file reads, etc.)
+            if (output.length > 100) {
+              toolOutputs.push(`[${step.toolResult.name}] ${output.slice(0, 5000)}`);
+            }
+          }
+        }
+        if (toolOutputs.length > 0) {
+          const toolContent = toolOutputs.join('\n\n---\n\n');
+          // If tool outputs are richer than the summary, use them
+          if (toolContent.length > (node.result?.length ?? 0)) {
+            node.result = toolContent;
+          }
+        }
       }
 
       await this.artifactSystem.write(
@@ -340,11 +399,22 @@ export class SubAgentExecutor {
     baseContext: Record<string, unknown>,
     errors: ExecutionError[],
   ): Promise<void> {
+    // Merge per-agent output directories into the workspace before synthesis
+    this.mergeAgentOutputs(node);
+
     const completed = node.subtasks.filter(s => s.status === 'COMPLETED');
     const failed = node.subtasks.filter(s => s.status === 'FAILED');
 
+    // Preserve the FULL concatenated results before synthesis agent runs.
+    // This ensures the orchestrator's leadSynthesis always has access to complete data.
+    const fullResults = completed
+      .map(s => `### ${s.goal.slice(0, 120)}\n\n${s.result ?? ''}`)
+      .join('\n\n---\n\n');
+    node.fullSubtaskResults = fullResults;
+
+    // Pass full results to synthesis agent (no truncation)
     const summaries = completed
-      .map(s => `[${s.id}] ${s.goal.slice(0, 100)}: ${(s.result ?? '').slice(0, 200)}`)
+      .map(s => `[${s.id}] ${s.goal.slice(0, 100)}: ${s.result ?? ''}`)
       .join('\n\n');
 
     const synthesisGoal = [
@@ -355,18 +425,25 @@ export class SubAgentExecutor {
       summaries,
     ].filter(Boolean).join('\n');
 
+    const fullTools = (baseContext?.availableTools as string[] | undefined);
+    const tools = fullTools?.length ? fullTools : node.context.availableTools;
+
     const ctx: AgentExecutionContext = {
       agentId: `synthesizer-${node.id}`,
       projectId,
       goal: synthesisGoal,
       contextData: baseContext as AgentExecutionContext['contextData'],
-      availableTools: node.context.availableTools,
-      maxSteps: 5,
-      tokenBudget: Math.round(node.context.estimatedTokens * 0.3),
+      availableTools: tools,
+      maxSteps: 8,
+      tokenBudget: Math.max(MIN_TOKENS_PER_AGENT, Math.round(node.context.estimatedTokens * 0.5)),
     };
 
     try {
-      const result = await this.runtime.execute(ctx);
+      const result = await agentContext.run(
+        { agentId: `synthesizer-${node.id}` },
+        () => this.runtime.execute(ctx),
+      );
+      // Preserve original results: use synthesis as summary, keep full results accessible
       node.result = result.summary;
       node.status = result.status === 'success' ? 'COMPLETED' : 'PARTIAL';
 
@@ -387,6 +464,74 @@ export class SubAgentExecutor {
         recovered: false,
       });
       node.status = 'PARTIAL';
+    }
+  }
+
+  /**
+   * Merge per-agent output directories into the workspace.
+   * Later agents' files overwrite earlier ones for the same path.
+   * Cleans up the per-agent directories after merging.
+   */
+  private mergeAgentOutputs(node: TaskTreeNode): void {
+    const safeRoot = process.env.COMMANDER_WORKSPACE || process.cwd();
+    for (const sub of node.subtasks) {
+      const safeId = sub.id.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const outputDir = path.join(safeRoot, '.commander_output', safeId);
+      if (!fs.existsSync(outputDir)) continue;
+      try {
+        this.copyDirRecursive(outputDir, safeRoot);
+        fs.rmSync(outputDir, { recursive: true, force: true });
+      } catch (e) {
+        getGlobalLogger().warn('SubAgentExecutor', 'Failed to merge agent output', {
+          nodeId: sub.id, error: (e as Error)?.message,
+        });
+      }
+    }
+    // Clean up the .commander_output directory if empty
+    const commanderOutputDir = path.join(safeRoot, '.commander_output');
+    try {
+      if (fs.existsSync(commanderOutputDir)) {
+        const remaining = fs.readdirSync(commanderOutputDir);
+        if (remaining.length === 0) fs.rmSync(commanderOutputDir, { recursive: true });
+      }
+    } catch { /* ignore */ }
+  }
+
+  private copyDirRecursive(src: string, dest: string, safeRoot?: string): void {
+    const root = safeRoot ?? dest;
+    const entries = fs.readdirSync(src, { withFileTypes: true });
+    for (const entry of entries) {
+      const srcPath = path.join(src, entry.name);
+      const destPath = path.join(dest, entry.name);
+      // Prevent directory traversal: resolved dest must stay within root
+      const resolved = path.resolve(destPath);
+      if (!resolved.startsWith(path.resolve(root))) {
+        getGlobalLogger().warn('SubAgentExecutor', 'Blocked directory traversal', { destPath: resolved });
+        continue;
+      }
+      if (entry.isDirectory()) {
+        fs.mkdirSync(destPath, { recursive: true });
+        this.copyDirRecursive(srcPath, destPath, root);
+      } else {
+        fs.mkdirSync(path.dirname(destPath), { recursive: true });
+        fs.copyFileSync(srcPath, destPath);
+      }
+    }
+  }
+
+  /**
+   * Merge remaining per-agent output files into the workspace, then clean up.
+   */
+  private cleanupOutputDir(node: TaskTreeNode): void {
+    const safeRoot = process.env.COMMANDER_WORKSPACE || process.cwd();
+    const safeId = node.id.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const nodeOutputDir = path.join(safeRoot, '.commander_output', safeId);
+    try {
+      if (!fs.existsSync(nodeOutputDir)) return;
+      this.copyDirRecursive(nodeOutputDir, safeRoot);
+      fs.rmSync(nodeOutputDir, { recursive: true, force: true });
+    } catch (e) {
+      getGlobalLogger().warn('SubAgentExecutor', 'Failed to cleanup output dir', { nodeId: node.id, error: (e as Error)?.message });
     }
   }
 

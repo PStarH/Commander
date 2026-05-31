@@ -428,7 +428,7 @@ export class PatternStateMachine {
   /**
    * Add subagent result (for orchestrator-worker pattern)
    */
-  addSubagentResult(agentId: string, result: any): void {
+  addSubagentResult(agentId: string, result: unknown): void {
     if (!this.currentState.subagentResults) {
       this.currentState.subagentResults = {};
     }
@@ -534,7 +534,7 @@ export function createOrchestratorWorkerConfig(): PatternStateMachineConfig {
           condition: (state) => {
             // If all subagents succeeded, go to completed
             const results = state.subagentResults || {};
-            const allSuccess = Object.values(results).every((r: any) => r.result?.success);
+            const allSuccess = Object.values(results).every((r: unknown) => (r as Record<string, unknown>)?.result?.success);
             return allSuccess ? 'completed' : 'failed';
           },
           description: 'Check all subagent results'

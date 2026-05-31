@@ -14,6 +14,9 @@
  *   c             — Clear event log
  *   /             — Filter events
  *   1-4           — Switch tab in event panel
+ *   ?             — Show help
+ *   s             — Toggle session detail
+ *   Enter         — Apply filter (when filter input focused)
  */
 
 import * as blessed from 'blessed';
@@ -22,6 +25,7 @@ import { getMessageBus } from './runtime/messageBus';
 import type { MessageBusTopic, BusMessage } from './runtime/types';
 import { StateCheckpointer } from './runtime/stateCheckpointer';
 import { getGlobalLogger } from './logging';
+import { detectProvider, getEffectiveModel } from './config/commanderConfig';
 import * as path from 'path';
 import * as os from 'os';
 
@@ -52,10 +56,12 @@ export class CommanderTUI {
   private eventList: Widgets.ListElement;
   private sessionBox: Widgets.BoxElement;
   private sessionList: Widgets.ListElement;
+  private metricsBox: Widgets.BoxElement;
   private filterInput: Widgets.TextboxElement;
   private statusBar: Widgets.BoxElement;
   private headerBox: Widgets.BoxElement;
   private tabBar: Widgets.BoxElement;
+  private helpOverlay: Widgets.BoxElement | null = null;
 
   private logs: LogEntry[] = [];
   private filteredLogs: LogEntry[] = [];
@@ -66,6 +72,17 @@ export class CommanderTUI {
   private stateDir: string;
   private checkpointer: StateCheckpointer;
   private unsubBus: (() => void) | null = null;
+  private startTime = Date.now();
+
+  // Live metrics
+  private metrics = {
+    agentsStarted: 0,
+    agentsCompleted: 0,
+    agentsFailed: 0,
+    toolCalls: 0,
+    totalTokens: 0,
+    alerts: 0,
+  };
 
   // Labels for the event tabs
   private readonly TAB_LABELS = ['All', 'Agents', 'Tools', 'System'];
@@ -184,6 +201,24 @@ export class CommanderTUI {
       items: [' Loading sessions...'],
     });
 
+    // ── Metrics Panel (bottom-left) ──────────────────────────────────
+    this.metricsBox = blessed.box({
+      parent: this.screen,
+      bottom: 1,
+      left: 0,
+      width: '65%',
+      height: 3,
+      label: ' Metrics ',
+      border: { type: 'line' },
+      tags: true,
+      style: {
+        border: { fg: 'yellow' },
+        label: { fg: 'yellow', bold: true },
+        fg: 'white',
+        bg: 'black',
+      },
+    });
+
     // ── Filter input ────────────────────────────────────────────────
     this.filterInput = blessed.textbox({
       parent: this.screen,
@@ -224,8 +259,11 @@ export class CommanderTUI {
     this.screen.key(['2'], () => this.switchTab(1));
     this.screen.key(['3'], () => this.switchTab(2));
     this.screen.key(['4'], () => this.switchTab(3));
+    this.screen.key(['?'], () => this.toggleHelp());
     this.screen.key(['escape'], () => {
-      if (this.filterInput.hidden === false) {
+      if (this.helpOverlay) {
+        this.hideHelp();
+      } else if (this.filterInput.hidden === false) {
         this.hideFilter();
       }
     });
@@ -236,6 +274,7 @@ export class CommanderTUI {
       this.renderTabs();
       this.renderEvents();
       this.renderSessions();
+      this.renderMetrics();
       this.renderStatus();
       this.screen.render();
     });
@@ -249,6 +288,7 @@ export class CommanderTUI {
   start(): void {
     this.renderHeader();
     this.renderTabs();
+    this.renderMetrics();
     this.renderStatus();
     this.screen.render();
 
@@ -278,9 +318,11 @@ export class CommanderTUI {
         clearInterval(refreshInterval);
         return;
       }
+      this.renderMetrics();
       this.renderStatus();
       this.screen.render();
     }, 5000);
+    refreshInterval.unref();
 
     // Focus the event list by default
     this.eventList.focus();
@@ -317,12 +359,25 @@ export class CommanderTUI {
       priority: msg.priority ?? 'normal',
     };
 
+    // Track metrics
+    switch (msg.topic) {
+      case 'agent.started': this.metrics.agentsStarted++; break;
+      case 'agent.completed': this.metrics.agentsCompleted++; break;
+      case 'agent.failed': this.metrics.agentsFailed++; break;
+      case 'tool.executed': this.metrics.toolCalls++; break;
+      case 'system.alert': this.metrics.alerts++; break;
+    }
+    if (msg.payload && typeof msg.payload === 'object' && 'totalTokens' in msg.payload) {
+      this.metrics.totalTokens += (msg.payload as { totalTokens?: number }).totalTokens ?? 0;
+    }
+
     this.logs.push(entry);
     if (this.logs.length > 500) {
-      this.logs.shift();
+      this.logs.splice(0, this.logs.length - 300);
     }
 
     this.renderEvents();
+    this.renderMetrics();
     this.renderStatus();
     this.screen.render();
   }
@@ -403,10 +458,74 @@ export class CommanderTUI {
     this.sessionList.setItems(items);
   }
 
+  private renderMetrics(): void {
+    const m = this.metrics;
+    const uptime = ((Date.now() - this.startTime) / 1000).toFixed(0);
+    const agents = `{green-fg}${m.agentsCompleted}{/green-fg}/{cyan-fg}${m.agentsStarted}{/cyan-fg}` +
+      (m.agentsFailed > 0 ? ` {red-fg}${m.agentsFailed}✗{/red-fg}` : '');
+    const line1 = ` Agents: ${agents}  |  Tools: {yellow-fg}${m.toolCalls}{/yellow-fg}  |  Tokens: {yellow-fg}${m.totalTokens.toLocaleString()}{/yellow-fg}`;
+    const line2 = ` Alerts: ${m.alerts > 0 ? `{red-fg}${m.alerts}{/red-fg}` : '0'}  |  Uptime: ${uptime}s`;
+    this.metricsBox.setContent(line1 + '\n' + line2);
+  }
+
   private renderStatus(): void {
     const now = new Date();
-    const content = ` {bold}Keys:{/bold} [q]uit [t]abs [r]efresh [c]lear [/]filter  |  {bold}Events:{/bold} ${this.logs.length} (showing ${this.filteredLogs.length})  |  {bold}Sessions:{/bold} ${this.sessions.length}  |  ${now.toLocaleTimeString()}`;
+    const content = ` {bold}Keys:{/bold} [q]uit [1-4]tabs [r]efresh [c]lear [/]filter [?]help  |  {bold}Events:{/bold} ${this.logs.length}  |  {bold}Sessions:{/bold} ${this.sessions.length}  |  ${now.toLocaleTimeString()}`;
     this.statusBar.setContent(content);
+  }
+
+  private toggleHelp(): void {
+    if (this.helpOverlay) {
+      this.hideHelp();
+      return;
+    }
+    const provider = detectProvider();
+    const model = getEffectiveModel();
+    this.helpOverlay = blessed.box({
+      parent: this.screen,
+      top: 'center',
+      left: 'center',
+      width: 56,
+      height: 18,
+      label: ' Help ',
+      border: { type: 'line' },
+      tags: true,
+      style: {
+        border: { fg: 'cyan' },
+        label: { fg: 'cyan', bold: true },
+        fg: 'white',
+        bg: 'black',
+      },
+      content: [
+        '',
+        '  {bold}Commander TUI — Keyboard Shortcuts{/bold}',
+        '',
+        '  {cyan-fg}q / Ctrl+C{/cyan-fg}    Quit',
+        '  {cyan-fg}Tab{/cyan-fg}           Cycle panel focus',
+        '  {cyan-fg}1-4{/cyan-fg}           Switch event tab',
+        '  {cyan-fg}r{/cyan-fg}             Refresh sessions',
+        '  {cyan-fg}c{/cyan-fg}             Clear event log',
+        '  {cyan-fg}/{/cyan-fg}              Filter events',
+        '  {cyan-fg}?{/cyan-fg}              Toggle this help',
+        '  {cyan-fg}Escape{/cyan-fg}        Close overlay / filter',
+        '',
+        `  {bold}Provider:{/bold} ${provider?.type ?? 'none'} · ${model}`,
+        `  {bold}Events:{/bold} ${this.logs.length}  {bold}Sessions:{/bold} ${this.sessions.length}`,
+        '',
+        '  {dim}Press ? or Escape to close{/dim}',
+      ].join('\n'),
+    });
+    this.helpOverlay.focus();
+    this.screen.render();
+  }
+
+  private hideHelp(): void {
+    if (this.helpOverlay) {
+      this.helpOverlay.destroy();
+      this.helpOverlay = null;
+      this.eventList.focus();
+      this.screen.render();
+    }
   }
 
   // ======================================================================
@@ -438,7 +557,9 @@ export class CommanderTUI {
   private clearLogs(): void {
     this.logs = [];
     this.filteredLogs = [];
+    this.metrics = { agentsStarted: 0, agentsCompleted: 0, agentsFailed: 0, toolCalls: 0, totalTokens: 0, alerts: 0 };
     this.renderEvents();
+    this.renderMetrics();
     this.renderHeader();
     this.renderStatus();
     this.screen.render();

@@ -155,40 +155,82 @@ export class InMemoryEmbeddingStore implements EmbeddingStore {
   /** GAP-17: Evict oldest entries when over limit. */
   private evictIfNeeded(): void {
     if (this.entries.size < this.maxEntries) return;
-    // Evict 10% of oldest entries
     const toEvict = Math.max(1, Math.floor(this.maxEntries * 0.1));
-    const sorted = Array.from(this.entries.entries())
-      .sort((a, b) => {
-        const timeA = a[1].lastAccessedAt ? new Date(a[1].lastAccessedAt).getTime() : 0;
-        const timeB = b[1].lastAccessedAt ? new Date(b[1].lastAccessedAt).getTime() : 0;
-        return timeA - timeB; // oldest first
-      });
-    for (let i = 0; i < toEvict && i < sorted.length; i++) {
-      this.delete(sorted[i][0]);
+    // Single sort pass: collect all entries, sort by lastAccessedAt, delete oldest batch
+    const entries: Array<[string, number]> = [];
+    for (const [key, entry] of this.entries) {
+      const t = entry.lastAccessedAt ? new Date(entry.lastAccessedAt).getTime() : 0;
+      entries.push([key, t]);
+    }
+    entries.sort((a, b) => a[1] - b[1]);
+    for (let i = 0; i < toEvict && i < entries.length; i++) {
+      this.delete(entries[i][0]);
     }
   }
 }
 
+/**
+ * Memory scoring weights — configurable per use case.
+ * Based on Generative Agents (Park et al.) formula with enhancements:
+ *   score = w_r * recency + w_i * importance + w_rel * relevance + w_a * accessFrequency
+ */
+export interface MemoryScoreWeights {
+  recency: number;
+  importance: number;
+  relevance: number;
+  accessFrequency: number;
+}
+
+export const DEFAULT_SCORE_WEIGHTS: MemoryScoreWeights = {
+  recency: 0.5,
+  importance: 2.0,
+  relevance: 3.0,
+  accessFrequency: 0.8,
+};
+
+/**
+ * Calculate memory retrieval score using a four-factor formula.
+ *
+ * Factors:
+ * - Recency: exponential decay from last access (half-life configurable)
+ * - Importance: stored importance value (0-1)
+ * - Relevance: cosine similarity between query and memory embeddings
+ * - Access frequency: logarithmic boost for frequently-accessed memories
+ *
+ * Based on:
+ * - Generative Agents (Park et al., 2023): recency + importance + relevance
+ * - MemGPT/Letta: core memory always in context, archival searchable
+ * - Mem0: recency + importance + relevance composite scoring
+ */
 export function calculateMemoryScore(
   entry: MemoryEntry,
   queryEmbedding: number[] | undefined,
   entryEmbedding: number[] | undefined,
+  weights: MemoryScoreWeights = DEFAULT_SCORE_WEIGHTS,
+  recencyHalfLifeHours: number = 168, // 7 days default (was 24h — too aggressive)
 ): number {
-  const recencyWeight = 0.5;
-  const importanceWeight = 2.0;
-  const relevanceWeight = 3.0;
-
+  // Recency: exponential decay from last access
   const hoursSinceAccess = entry.lastAccessedAt
     ? (Date.now() - new Date(entry.lastAccessedAt).getTime()) / (1000 * 3600)
     : 0;
-  const recency = Math.exp(-hoursSinceAccess / 24);
+  const recency = Math.exp(-hoursSinceAccess / recencyHalfLifeHours);
 
+  // Importance: stored value (0-1)
   const importance = entry.importance;
 
+  // Relevance: cosine similarity (0-1)
   let relevance = 0;
   if (queryEmbedding && entryEmbedding) {
     relevance = Math.max(0, cosineSimilarity(queryEmbedding, entryEmbedding));
   }
 
-  return recencyWeight * recency + importanceWeight * importance + relevanceWeight * relevance;
+  // Access frequency: logarithmic boost (frequently accessed = more valuable)
+  const accessFrequency = Math.log(1 + (entry.accessCount ?? 0)) / 5; // Normalized to ~[0, 1]
+
+  return (
+    weights.recency * recency +
+    weights.importance * importance +
+    weights.relevance * relevance +
+    weights.accessFrequency * accessFrequency
+  );
 }

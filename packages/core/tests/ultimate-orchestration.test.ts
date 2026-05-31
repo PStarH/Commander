@@ -151,6 +151,10 @@ describe('RecursiveAtomizer', () => {
       capabilitiesNeeded: ['reasoning'],
       confidence: 0.9,
       reasoning: [],
+      estimatedDurationMs: 5000,
+      suitableForSpeculation: false,
+      taskNature: 'MIXED',
+      timeBudgetPerAgentMs: 5000,
     };
     const tree = atomizer.decompose('What is the capital of France?', deliberation);
     assert.ok(tree.isAtomic);
@@ -171,6 +175,10 @@ describe('RecursiveAtomizer', () => {
       capabilitiesNeeded: ['web_search', 'reasoning'],
       confidence: 0.7,
       reasoning: ['Decomposition recommended'],
+      estimatedDurationMs: 60000,
+      suitableForSpeculation: true,
+      taskNature: 'IO_BOUND',
+      timeBudgetPerAgentMs: 51000,
     };
     const tree = atomizer.decompose(
       'A'.repeat(300) + 'Research the impact of AI on healthcare including diagnostics, drug discovery, patient monitoring, treatment planning, medical imaging analysis, and personalized medicine approaches across different healthcare settings and regulatory frameworks.',
@@ -194,6 +202,10 @@ describe('RecursiveAtomizer', () => {
       capabilitiesNeeded: ['web_search', 'reasoning', 'code_understanding'],
       confidence: 0.6,
       reasoning: ['Deep research'],
+      estimatedDurationMs: 300000,
+      suitableForSpeculation: true,
+      taskNature: 'IO_BOUND',
+      timeBudgetPerAgentMs: 210000,
     };
     const tree = atomizer.decompose('A'.repeat(3000), deliberation);
     assert.ok(tree.isAtomic || tree.subtasks.length > 0);
@@ -218,6 +230,10 @@ describe('TopologyRouter', () => {
       capabilitiesNeeded: ['reasoning'],
       confidence: 0.9,
       reasoning: [],
+      estimatedDurationMs: 5000,
+      suitableForSpeculation: false,
+      taskNature: 'MIXED',
+      timeBudgetPerAgentMs: 5000,
     };
     const result = router.route(plan);
     assert.strictEqual(result.topology, 'SINGLE');

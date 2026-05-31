@@ -76,6 +76,7 @@ export class Scheduler {
         this.markRun(entry.id);
       }
     }, intervalMs);
+    if (typeof this.timer.unref === 'function') this.timer.unref();
   }
 
   stop() { if (this.timer) clearInterval(this.timer); }
@@ -87,7 +88,11 @@ export class Scheduler {
     } catch (e) { getGlobalLogger().debug('Company', 'Scheduler load error', { error: (e as Error)?.message }); }
   }
   private save() {
-    fs.writeFileSync(path.join(STATE_DIR, 'schedules.json'), JSON.stringify(this.entries, null, 2), 'utf-8');
+    // Fire-and-forget async write to avoid blocking the event loop
+    const data = JSON.stringify(this.entries, null, 2);
+    fs.promises.writeFile(path.join(STATE_DIR, 'schedules.json'), data, 'utf-8').catch(
+      (e) => getGlobalLogger().debug('Company', 'Scheduler save error', { error: (e as Error)?.message })
+    );
   }
 }
 
@@ -160,7 +165,10 @@ export class QualityPipeline {
       if (fs.existsSync(logPath)) logs = JSON.parse(fs.readFileSync(logPath, 'utf-8'));
       logs.push({ draftId: draft.id, type: draft.type, score: review.score, passed: review.passed, timestamp: new Date().toISOString() });
       if (logs.length > 1000) logs = logs.slice(-1000);
-      fs.writeFileSync(logPath, JSON.stringify(logs, null, 2), 'utf-8');
+      // Fire-and-forget async write
+      fs.promises.writeFile(logPath, JSON.stringify(logs, null, 2), 'utf-8').catch(
+        (e) => getGlobalLogger().debug('Company', 'Quality log write error', { error: (e as Error)?.message })
+      );
     } catch (e) { getGlobalLogger().debug('Company', 'Quality log error', { error: (e as Error)?.message }); }
   }
 }
@@ -182,7 +190,10 @@ export class FeedbackLoop {
       if (fs.existsSync(p)) logs = JSON.parse(fs.readFileSync(p, 'utf-8'));
       logs.push(entry);
       if (logs.length > 500) logs = logs.slice(-500);
-      fs.writeFileSync(p, JSON.stringify(logs, null, 2), 'utf-8');
+      // Fire-and-forget async write
+      fs.promises.writeFile(p, JSON.stringify(logs, null, 2), 'utf-8').catch(
+        (e) => getGlobalLogger().debug('Company', 'Feedback write error', { error: (e as Error)?.message })
+      );
     } catch (e) { getGlobalLogger().debug('Company', 'Feedback record error', { error: (e as Error)?.message }); }
   }
 
@@ -191,6 +202,7 @@ export class FeedbackLoop {
       const p = path.join(STATE_DIR, 'feedback.json');
       if (!fs.existsSync(p)) return { total: 0, avgScore: 0, improvementRate: 0, commonIssues: [] };
       const logs: FeedbackEntry[] = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      if (logs.length === 0) return { total: 0, avgScore: 0, improvementRate: 0, commonIssues: [] };
       const avg = logs.reduce((a, b) => a + b.score, 0) / logs.length;
       const improved = logs.filter(l => l.improved).length;
       const issueCount = new Map<string, number>();

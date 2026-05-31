@@ -112,6 +112,11 @@ export class AdaptiveOrchestrator {
     return id;
   }
 
+  /** Unregister an agent to prevent unbounded growth in long sessions */
+  unregisterAgent(agentId: string): boolean {
+    return this.agents.delete(agentId);
+  }
+
   /**
    * 创建编排计划
    */
@@ -168,8 +173,8 @@ export class AdaptiveOrchestrator {
     // 有依赖关系
     if (hasDependencies && avgComplexity > 30) return 'HANDOFF';
     
-    // 高优先级且复杂
-    if (highPriorityCount > tasks.length * 0.3 && avgComplexity > 40) return 'PARALLEL';
+    // 高优先级且复杂 (must not have dependencies to run in parallel)
+    if (!hasDependencies && highPriorityCount > tasks.length * 0.3 && avgComplexity > 40) return 'PARALLEL';
     
     // 简单并行
     if (!hasDependencies && avgComplexity < 30) return 'PARALLEL';
@@ -291,7 +296,7 @@ export class AdaptiveOrchestrator {
    */
   private estimateDuration(tasks: Task[], mode: OrchestrationMode): number {
     const avgTaskDuration = 60000; // 1 minute base
-    const complexityFactor = tasks.reduce((sum, t) => sum + t.complexity, 0) / tasks.length / 50;
+    const complexityFactor = tasks.length > 0 ? tasks.reduce((sum, t) => sum + t.complexity, 0) / tasks.length / 50 : 1;
     
     let duration = avgTaskDuration * tasks.length * complexityFactor;
 
@@ -335,6 +340,19 @@ export class AdaptiveOrchestrator {
       case 'CONSENSUS':
         await this.executeConsensus(plan.tasks, results, plan.agents);
         break;
+    }
+
+    // Evict completed tasks from the tasks Map to prevent unbounded growth
+    for (const [id, task] of this.tasks) {
+      if (task.status === 'completed' || task.status === 'failed') {
+        this.tasks.delete(id);
+      }
+    }
+
+    // Record execution metrics for throughput calculation
+    this.executionHistory.push(this.getMetrics());
+    if (this.executionHistory.length > 100) {
+      this.executionHistory.splice(0, this.executionHistory.length - 100);
     }
 
     return results;
@@ -437,8 +455,8 @@ export class AdaptiveOrchestrator {
     results: Map<string, Task>
   ): Promise<void> {
     try {
-      // 更新 agent 负载
-      agent.load = Math.min(1, agent.load + 0.2);
+      // 更新 agent 负载 (ref-counted by max concurrent tasks)
+      agent.load = Math.min(1, agent.load + 1 / Math.max(1, this.MAX_CONCURRENT_TASKS));
       
       task.status = 'running';
       task.assignedAgent = agent.id;
@@ -464,7 +482,7 @@ export class AdaptiveOrchestrator {
         results.set(task.id, task);
       }
     } finally {
-      agent.load = Math.max(0, agent.load - 0.2);
+      agent.load = Math.max(0, agent.load - 1 / Math.max(1, this.MAX_CONCURRENT_TASKS));
     }
   }
 
@@ -487,17 +505,22 @@ export class AdaptiveOrchestrator {
   private topologicalSort(tasks: Task[]): Task[] {
     const sorted: Task[] = [];
     const visited = new Set<string>();
+    const visiting = new Set<string>();
     const taskMap = new Map(tasks.map(t => [t.id, t]));
 
     const visit = (taskId: string) => {
       if (visited.has(taskId)) return;
-      visited.add(taskId);
-      
+      if (visiting.has(taskId)) throw new Error(`Circular dependency detected involving task: ${taskId}`);
+      visiting.add(taskId);
+
       const task = taskMap.get(taskId);
       if (task) {
         task.dependencies.forEach(depId => visit(depId));
         sorted.push(task);
       }
+
+      visiting.delete(taskId);
+      visited.add(taskId);
     };
 
     tasks.forEach(t => visit(t.id));

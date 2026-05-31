@@ -206,8 +206,11 @@ function findBalancedEnd(str: string, open: string, close: string): number {
     const ch = str[i];
 
     if (inString) {
-      if (ch === stringChar && str[i - 1] !== '\\') {
-        inString = false;
+      if (ch === stringChar) {
+        // Count consecutive backslashes before this quote
+        let bs = 0;
+        for (let j = i - 1; j >= 0 && str[j] === '\\'; j--) bs++;
+        if (bs % 2 === 0) inString = false; // Even backslashes = not escaped
       }
       continue;
     }

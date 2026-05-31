@@ -128,7 +128,9 @@ function refineScoresWithHistory(
     }
   }
 
-  for (const [toolName, score] of scores.entries()) {
+  const scoreEntries = Array.from(scores.entries());
+  for (let i = 0; i < scoreEntries.length; i++) {
+    const [toolName, score] = scoreEntries[i];
     const uses = usageCount.get(toolName) ?? 0;
     const errors = errorCount.get(toolName) ?? 0;
     refined.set(toolName, score + Math.min(uses, 5) * 1.5 - errors * 3);
@@ -164,19 +166,20 @@ export function selectTools(
   let scores = scoreToolsByGoal(goal, availableTools);
   scores = refineScoresWithHistory(scores, recentCalls);
 
+  const availableSet = new Set(availableTools);
   const result = new Set<string>();
 
   for (const tool of alwaysInclude) {
-    if (availableTools.includes(tool)) {
+    if (availableSet.has(tool)) {
       result.add(tool);
     }
   }
 
-  const sorted = [...scores.entries()].sort((a, b) => b[1] - a[1]);
+  const sorted = Array.from(scores.entries()).sort((a, b) => b[1] - a[1]);
 
-  for (const [toolName] of sorted) {
+  for (let i = 0; i < sorted.length; i++) {
     if (result.size >= maxTools) break;
-    result.add(toolName);
+    result.add(sorted[i][0]);
   }
 
   if (result.size < minTools) {
@@ -234,4 +237,200 @@ export function getToolRelevanceScores(
   availableTools: string[],
 ): Map<string, number> {
   return scoreToolsByGoal(goal, availableTools);
+}
+
+// ============================================================================
+// Two-Tier Tool Loading (Lazy Schema Loading)
+//
+// Research (arXiv:2604.21816): MCP eager schema injection costs 10k-60k tokens
+// per turn. Two-tier loading reduces this by ~80-95%.
+//
+// Tier 1 (Active): Full JSON schema injected as LLM tools (top-N relevant)
+// Tier 2 (Registry): Name + one-line description in system prompt (rest)
+//
+// The LLM can request Tier 2 tools on-demand via the `request_tool` tool.
+// ============================================================================
+
+export interface ToolTier {
+  /** Tools with full schema (injected as LLM tools array) */
+  active: ToolDefinition[];
+  /** Tools with compact summary only (injected as text in system prompt) */
+  registry: Array<{ name: string; description: string; category: string }>;
+}
+
+/**
+ * Build a two-tier tool layout for a given goal.
+ *
+ * @param goal - The current task goal
+ * @param allTools - All available tool definitions
+ * @param maxActive - Maximum tools to include with full schema (default: 8)
+ * @param recentToolCalls - Recent tool calls for history-aware scoring
+ * @returns Two-tier layout with active (full schema) and registry (compact) tools
+ */
+export function buildTwoTierTools(
+  goal: string,
+  allTools: ToolDefinition[],
+  maxActive: number = 8,
+  recentToolCalls?: Array<{ name: string; error?: string }>,
+): ToolTier {
+  if (allTools.length <= maxActive) {
+    // All tools fit — no need for tiering
+    return {
+      active: sortToolDefinitionsForCache(allTools),
+      registry: [],
+    };
+  }
+
+  const toolNames = allTools.map(t => t.name);
+  const scores = scoreToolsByGoal(goal, toolNames);
+  const refined = recentToolCalls
+    ? refineScoresWithHistory(scores, recentToolCalls)
+    : scores;
+
+  // Sort by relevance score descending
+  const sorted = Array.from(refined.entries()).sort((a, b) => b[1] - a[1]);
+
+  // Always-include tools (core utilities the LLM almost always needs)
+  const alwaysInclude = ['file_read', 'shell_execute'];
+  const activeNames = new Set<string>();
+  const registryEntries: ToolTier['registry'] = [];
+
+  // Phase 1: Add always-include tools
+  for (let i = 0; i < alwaysInclude.length; i++) {
+    if (toolNames.includes(alwaysInclude[i])) activeNames.add(alwaysInclude[i]);
+  }
+
+  // Phase 2: Add highest-scoring tools up to maxActive
+  for (let i = 0; i < sorted.length; i++) {
+    if (activeNames.size >= maxActive) break;
+    activeNames.add(sorted[i][0]);
+  }
+
+  // Phase 3: Build active and registry lists
+  const toolMap = new Map(allTools.map(t => [t.name, t]));
+  const active: ToolDefinition[] = [];
+  const activeNamesArray = Array.from(activeNames);
+  for (let i = 0; i < activeNamesArray.length; i++) {
+    const tool = toolMap.get(activeNamesArray[i]);
+    if (tool) active.push(tool);
+  }
+
+  for (const tool of allTools) {
+    if (!activeNames.has(tool.name)) {
+      registryEntries.push({
+        name: tool.name,
+        description: truncateDescription(tool.description, 80),
+        category: TOOL_CATEGORIES[tool.name] ?? 'other',
+      });
+    }
+  }
+
+  return {
+    active: sortToolDefinitionsForCache(active),
+    registry: registryEntries.sort((a, b) => {
+      const catA = CATEGORY_SORT_PRIORITY[a.category] ?? 99;
+      const catB = CATEGORY_SORT_PRIORITY[b.category] ?? 99;
+      if (catA !== catB) return catA - catB;
+      return a.name.localeCompare(b.name);
+    }),
+  };
+}
+
+/**
+ * Build a compact text summary of the tool registry (Tier 2 tools).
+ * This is injected into the system prompt so the LLM knows what tools exist
+ * without paying the full schema cost.
+ */
+export function buildRegistrySummary(registry: ToolTier['registry']): string {
+  if (registry.length === 0) return '';
+
+  const lines: string[] = [
+    '## Additional Tools (available on request)',
+    'The following tools are available but not loaded. To use one, call `request_tool` with the tool name.',
+    '',
+  ];
+
+  // Group by category
+  const byCategory = new Map<string, typeof registry>();
+  for (const tool of registry) {
+    const cat = tool.category;
+    if (!byCategory.has(cat)) byCategory.set(cat, []);
+    byCategory.get(cat)!.push(tool);
+  }
+
+  const categoryEntries = Array.from(byCategory.entries());
+  for (let i = 0; i < categoryEntries.length; i++) {
+    const [category, tools] = categoryEntries[i];
+    lines.push(`### ${category}`);
+    for (let j = 0; j < tools.length; j++) {
+      lines.push(`- **${tools[j].name}**: ${tools[j].description}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Truncate a tool description to a maximum length, preserving word boundaries.
+ */
+function truncateDescription(desc: string, maxLen: number): string {
+  if (desc.length <= maxLen) return desc;
+  const truncated = desc.substring(0, maxLen);
+  const lastSpace = truncated.lastIndexOf(' ');
+  return (lastSpace > maxLen * 0.6 ? truncated.substring(0, lastSpace) : truncated) + '…';
+}
+
+/**
+ * Estimate the token cost of tool schemas.
+ * Useful for logging and metrics.
+ */
+export function estimateToolTokenCost(tools: ToolDefinition[]): number {
+  let totalChars = 0;
+  for (const tool of tools) {
+    totalChars += (tool.name?.length ?? 0);
+    totalChars += (tool.description?.length ?? 0);
+    totalChars += JSON.stringify(tool.inputSchema).length;
+    // Examples cost
+    if (tool.examples) {
+      for (const ex of tool.examples) {
+        totalChars += JSON.stringify(ex).length;
+      }
+    }
+  }
+  // Rough estimate: ~4 chars per token for JSON content
+  return Math.ceil(totalChars / 4);
+}
+
+export interface TwoTierMetrics {
+  activeCount: number;
+  registryCount: number;
+  activeTokenEstimate: number;
+  registryTokenEstimate: number;
+  savingsPercent: number;
+}
+
+/**
+ * Calculate metrics for a two-tier tool layout.
+ * Useful for logging cost savings.
+ */
+export function calculateTierMetrics(
+  tier: ToolTier,
+  allToolsCount: number,
+): TwoTierMetrics {
+  const activeTokens = estimateToolTokenCost(tier.active);
+  // Registry is text, ~20 tokens per tool entry
+  const registryTokens = tier.registry.length * 20;
+  // What it would cost if we loaded ALL tools with full schema
+  const fullSchemaEstimate = activeTokens * (allToolsCount / Math.max(tier.active.length, 1));
+
+  return {
+    activeCount: tier.active.length,
+    registryCount: tier.registry.length,
+    activeTokenEstimate: activeTokens,
+    registryTokenEstimate: registryTokens,
+    savingsPercent: fullSchemaEstimate > 0
+      ? Math.round((1 - (activeTokens + registryTokens) / fullSchemaEstimate) * 100)
+      : 0,
+  };
 }

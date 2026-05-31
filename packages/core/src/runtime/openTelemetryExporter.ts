@@ -116,6 +116,7 @@ function toOtlpTraceRequest(spans: OTelSpan[], serviceName: string): Record<stri
 export class OpenTelemetryExporter {
   private config: Required<OTelExporterConfig>;
   private queue: OTelSpan[] = [];
+  private static readonly MAX_QUEUE_SIZE = 10000;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private totalExported = 0;
@@ -180,6 +181,9 @@ export class OpenTelemetryExporter {
   exportSpan(span: OTelSpan): void {
     if (!this.running) {
       getGlobalLogger().warn('OTelExporter', 'Exporter not started — queuing span');
+    }
+    if (this.queue.length >= OpenTelemetryExporter.MAX_QUEUE_SIZE) {
+      this.queue.shift(); // drop oldest to prevent unbounded memory growth
     }
     this.queue.push(span);
     // Send immediately if batch size reached
@@ -276,11 +280,16 @@ export class OpenTelemetryExporter {
         try {
           const data = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8'));
           if (Array.isArray(data)) {
-            this.queue.push(...data);
+            for (const span of data) {
+              if (this.queue.length < OpenTelemetryExporter.MAX_QUEUE_SIZE) {
+                this.queue.push(span);
+              }
+            }
           }
           fs.unlinkSync(path.join(dir, file));
         } catch {
-          // Skip corrupted files
+          // Delete corrupted files to prevent retry loop on every restart
+          try { fs.unlinkSync(path.join(dir, file)); } catch (e) { getGlobalLogger().debug('OTelExporter', 'Failed to delete corrupted file', { error: (e as Error)?.message, file }); }
         }
       }
       if (files.length > 0) {

@@ -8,8 +8,13 @@
  */
 import type { ArtifactReference } from './types';
 
-const ARTIFACT_STORE = new Map<string, { artifact: ArtifactReference; content: string }>();
+/** Maximum artifacts in the store before oldest are evicted */
+const MAX_ARTIFACTS = 500;
 
+/** Characters per token estimate for token counting */
+const CHARS_PER_TOKEN = 3.7;
+
+const ARTIFACT_STORE = new Map<string, { artifact: ArtifactReference; content: string }>();
 let artifactCounter = 0;
 
 export class ArtifactSystem {
@@ -40,6 +45,17 @@ export class ArtifactSystem {
 
     ARTIFACT_STORE.set(id, { artifact, content });
 
+    // Evict oldest entries when over capacity
+    if (ARTIFACT_STORE.size > MAX_ARTIFACTS) {
+      const evictCount = ARTIFACT_STORE.size - MAX_ARTIFACTS;
+      let evicted = 0;
+      for (const key of ARTIFACT_STORE.keys()) {
+        if (evicted >= evictCount) break;
+        ARTIFACT_STORE.delete(key);
+        evicted++;
+      }
+    }
+
     return artifact;
   }
 
@@ -59,12 +75,12 @@ export class ArtifactSystem {
   }
 
   async find(
-    query: { tags?: string[]; type?: ArtifactReference['type']; createdBy?: string; since?: string },
+    query: { tags?: string[]; type?: ArtifactReference['type']; createdBy?: string; since?: string; textSearch?: string },
     limit = 20,
   ): Promise<ArtifactReference[]> {
     const results: ArtifactReference[] = [];
 
-    for (const { artifact } of ARTIFACT_STORE.values()) {
+    for (const { artifact, content } of ARTIFACT_STORE.values()) {
       if (limit > 0 && results.length >= limit) break;
 
       if (query.tags && !query.tags.some(t => artifact.tags.includes(t))) continue;
@@ -72,12 +88,59 @@ export class ArtifactSystem {
       if (query.createdBy && artifact.createdBy !== query.createdBy) continue;
       if (query.since && artifact.createdAt < query.since) continue;
 
+      // Text search: match against title, summary, and content
+      if (query.textSearch) {
+        const searchLower = query.textSearch.toLowerCase();
+        const matchesTitle = artifact.title.toLowerCase().includes(searchLower);
+        const matchesSummary = artifact.summary.toLowerCase().includes(searchLower);
+        const matchesContent = content.toLowerCase().includes(searchLower);
+        if (!matchesTitle && !matchesSummary && !matchesContent) continue;
+      }
+
       results.push({ ...artifact });
     }
 
-    return results.sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
+    return results.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /**
+   * Search artifacts by text content with relevance scoring.
+   * Returns results sorted by relevance (how many times the search term appears).
+   */
+  async search(
+    query: string,
+    options?: { type?: ArtifactReference['type']; limit?: number },
+  ): Promise<Array<{ artifact: ArtifactReference; relevance: number }>> {
+    const limit = options?.limit ?? 20;
+    const queryLower = query.toLowerCase();
+    const queryTerms = queryLower.split(/\s+/).filter(t => t.length > 2);
+
+    const scored: Array<{ artifact: ArtifactReference; relevance: number }> = [];
+
+    for (const { artifact, content } of ARTIFACT_STORE.values()) {
+      if (options?.type && artifact.type !== options.type) continue;
+
+      const contentLower = content.toLowerCase();
+      let relevance = 0;
+
+      // Count term occurrences
+      for (const term of queryTerms) {
+        const titleMatches = (artifact.title.toLowerCase().match(new RegExp(term, 'g')) || []).length;
+        const summaryMatches = (artifact.summary.toLowerCase().match(new RegExp(term, 'g')) || []).length;
+        const contentMatches = (contentLower.match(new RegExp(term, 'g')) || []).length;
+
+        // Weight: title > summary > content
+        relevance += titleMatches * 3 + summaryMatches * 2 + contentMatches;
+      }
+
+      if (relevance > 0) {
+        scored.push({ artifact, relevance });
+      }
+    }
+
+    return scored
+      .sort((a, b) => b.relevance - a.relevance)
+      .slice(0, limit);
   }
 
   async delete(id: string): Promise<boolean> {
@@ -120,7 +183,7 @@ export class ArtifactSystem {
   }
 
   private estimateTokens(text: string): number {
-    return Math.ceil(text.length / 3.7);
+    return Math.ceil(text.length / CHARS_PER_TOKEN);
   }
 }
 

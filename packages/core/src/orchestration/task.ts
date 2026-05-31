@@ -63,12 +63,25 @@ export function createTask(spec: TaskSpec): TaskHandle {
   return handle;
 }
 
+const TERMINAL_TASK_TTL_MS = 10 * 60_000; // 10 minutes
+
 export function updateTaskStatus(taskId: string, status: TaskStatus): void {
   const task = activeTasks.get(taskId);
   if (task) {
     task.status = status;
     if (status === 'completed' || status === 'failed' || status === 'killed') {
       task.endTime = Date.now();
+      pruneTerminalTasks();
+    }
+  }
+}
+
+function pruneTerminalTasks(): void {
+  const now = Date.now();
+  for (const [id, task] of activeTasks) {
+    if (task.endTime && now - task.endTime > TERMINAL_TASK_TTL_MS) {
+      try { fs.unlinkSync(task.outputFile); } catch { /* already deleted */ }
+      activeTasks.delete(id);
     }
   }
 }

@@ -73,6 +73,7 @@ export class A2AServer {
   private connections: Set<import('net').Socket> = new Set();
   private logger = getGlobalLogger();
   private nextTaskId = 1;
+  private static readonly MAX_TASKS = 500;
 
   constructor(config: A2AServerConfig, runtime: AgentRuntime) {
     this.config = { ...DEFAULT_CONFIG, ...config } as A2AServerConfig;
@@ -220,6 +221,7 @@ export class A2AServer {
       metadata: { receivedAt: new Date().toISOString() },
     };
 
+    this.pruneCompletedTasks();
     this.tasks.set(taskId, task);
     this.updateTaskState(taskId, 'WORKING');
     this.logger.info('A2AServer', `Task ${taskId} submitted`);
@@ -252,11 +254,12 @@ export class A2AServer {
 
         let result;
         if (timeoutMs > 0) {
+          let timeoutTimer: ReturnType<typeof setTimeout>;
           const timeoutPromise = new Promise<never>((_, reject) => {
-            const timer = setTimeout(() => reject(new Error(`Task execution timed out after ${timeoutMs}ms`)), timeoutMs);
-            timer.unref();
+            timeoutTimer = setTimeout(() => reject(new Error(`Task execution timed out after ${timeoutMs}ms`)), timeoutMs);
+            timeoutTimer.unref();
           });
-          result = await Promise.race([execPromise, timeoutPromise]);
+          result = await Promise.race([execPromise.finally(() => clearTimeout(timeoutTimer)), timeoutPromise]);
         } else {
           result = await execPromise;
         }
@@ -362,6 +365,18 @@ export class A2AServer {
       timestamp: new Date().toISOString(),
       message,
     };
+  }
+
+  private static readonly TERMINAL_STATES: Set<A2ATaskState> = new Set(['COMPLETED', 'FAILED', 'CANCELED']);
+
+  private pruneCompletedTasks(): void {
+    if (this.tasks.size < A2AServer.MAX_TASKS) return;
+    for (const [id, task] of this.tasks) {
+      if (A2AServer.TERMINAL_STATES.has(task.status.state)) {
+        this.tasks.delete(id);
+        if (this.tasks.size < A2AServer.MAX_TASKS * 0.8) break;
+      }
+    }
   }
 
   private parseBody(req: IncomingMessage): Promise<unknown> {

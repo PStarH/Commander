@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ExecPolicyEngine } from './execPolicy';
 import { getGlobalLogger } from '../logging';
+import { getSecurityAuditLogger } from '../security/securityAuditLogger';
 
 export type ApprovalMode = 'suggest' | 'auto-edit' | 'full-auto' | 'read-only' | 'plan';
 export type ApprovalCategory = 'sandbox_escape' | 'network' | 'file_write' | 'file_read' | 'shell_exec' | 'destructive' | 'mcp';
@@ -34,6 +35,7 @@ export class ApprovalSystem {
   private callback: ApprovalCallback | null = null;
   private sessionApprovals: Set<string> = new Set();
   private deniedForever: Map<string, number> = new Map();
+  private static readonly MAX_CACHE_SIZE = 5000;
   private execPolicy: ExecPolicyEngine;
   private static readonly DENIED_THRESHOLD = 3;
   private persistFile: string;
@@ -82,25 +84,41 @@ export class ApprovalSystem {
   }
 
   async evaluate(req: ApprovalRequest): Promise<{ decision: ApprovalDecision; reason: string }> {
+    const audit = getSecurityAuditLogger();
     const cacheKey = `${req.toolName}:${JSON.stringify(req.toolArgs)}`;
+
     if (this.sessionApprovals.has(cacheKey)) {
       return { decision: 'approved_session', reason: 'Previously approved for session' };
     }
+
     const denyCount = this.deniedForever.get(cacheKey) ?? 0;
     if (denyCount >= ApprovalSystem.DENIED_THRESHOLD) {
+      audit.logExecPolicyForbidden('ApprovalSystem', `Blocked after ${denyCount} consecutive denials`, {
+        toolName: req.toolName, category: req.gate.category, denyCount,
+      });
       return { decision: 'denied', reason: `Blocked after ${denyCount} consecutive denials` };
     }
+
     const policyResult = this.evaluatePolicy(req);
     if (policyResult.decision === 'forbidden') {
+      audit.logExecPolicyForbidden('ApprovalSystem', policyResult.reason, {
+        toolName: req.toolName, category: req.gate.category,
+      });
       return { decision: 'denied', reason: policyResult.reason };
     }
+
     const modeResult = this.evaluateMode(req);
     if (modeResult.decision === 'approved') {
       return { decision: 'approved', reason: modeResult.reason };
     }
+
     if (modeResult.decision === 'denied') {
+      audit.logApprovalDenied('ApprovalSystem', modeResult.reason, {
+        toolName: req.toolName, category: req.gate.category, mode: this.mode,
+      });
       return { decision: 'denied', reason: modeResult.reason };
     }
+
     if (this.callback) {
       const cbDecision = await this.callback(req);
       if (cbDecision === 'approved_once') {
@@ -108,16 +126,30 @@ export class ApprovalSystem {
       }
       if (cbDecision === 'approved_session') {
         this.sessionApprovals.add(cacheKey);
+        if (this.sessionApprovals.size > ApprovalSystem.MAX_CACHE_SIZE) {
+          const first = this.sessionApprovals.values().next().value;
+          if (first) this.sessionApprovals.delete(first);
+        }
         return { decision: 'approved_session', reason: 'Approved for session' };
       }
       if (cbDecision === 'denied_forever') {
         this.deniedForever.set(cacheKey, denyCount + 1);
+        if (this.deniedForever.size > ApprovalSystem.MAX_CACHE_SIZE) {
+          const first = this.deniedForever.keys().next().value;
+          if (first) this.deniedForever.delete(first);
+        }
+        audit.logApprovalDenied('ApprovalSystem', 'Permanently denied by user callback', {
+          toolName: req.toolName, category: req.gate.category,
+        });
         return { decision: 'denied', reason: 'Denied by callback' };
       }
       return { decision: cbDecision, reason: 'Callback decision' };
     }
     // No callback and mode defers: safe default is deny
     if (modeResult.decision === 'defer') {
+      audit.logApprovalDenied('ApprovalSystem', `No approval callback: ${modeResult.reason}`, {
+        toolName: req.toolName, category: req.gate.category, mode: this.mode,
+      });
       return { decision: 'denied', reason: `No approval callback available: ${modeResult.reason}` };
     }
     return { decision: 'approved', reason: 'No approval required' };

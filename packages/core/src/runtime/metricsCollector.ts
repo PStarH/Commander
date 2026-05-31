@@ -261,7 +261,7 @@ export class MetricsCollector {
 
   private formatMetricLine(name: string, value: number, labels: MetricLabel[]): string {
     if (labels.length === 0) return `${name} ${value}`;
-    const labelStr = labels.map(l => `${l.name}="${l.value}"`).join(',');
+    const labelStr = labels.map(l => `${l.name}="${l.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`).join(',');
     return `${name}{${labelStr}} ${value}`;
   }
 }

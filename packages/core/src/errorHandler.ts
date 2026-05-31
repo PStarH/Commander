@@ -181,7 +181,6 @@ export class ErrorHandler {
       const retryableCodes = new Set([
         'CIRCUIT_OPEN',
         'TASK_COMPLEXITY',
-        'BUDGET_EXHAUSTED',
       ]);
       const nonRetryableCodes = new Set([
         'INVALID_INPUT',
@@ -189,6 +188,7 @@ export class ErrorHandler {
         'PERMISSION_DENIED',
         'NOT_FOUND',
         'UNAUTHORIZED',
+        'BUDGET_EXHAUSTED',
       ]);
       if (retryableCodes.has(error.code)) return true;
       if (nonRetryableCodes.has(error.code)) return false;
@@ -241,7 +241,9 @@ export class ErrorHandler {
       this.errors = this.errors.slice(-this.config.maxErrors);
     }
 
-    this.errorListeners.forEach(listener => listener(error));
+    for (const listener of this.errorListeners) {
+      try { listener(error); } catch { /* listener threw — don't propagate */ }
+    }
 
     if (this.config.enableLogging) {
       const prefix = error.severity === 'critical' ? '❌' : error.severity === 'high' ? '⚠️' : '📋';
@@ -323,6 +325,7 @@ export class ErrorHandler {
    */
   clear(): void {
     this.errors = [];
+    this.circuitBreakers.clear();
   }
 }
 

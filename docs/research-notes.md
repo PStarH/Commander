@@ -5683,3 +5683,175 @@ query → embedding → top-k from memory store
 - Commander modules: tokenBudgetAllocator.ts, memory.ts
 
 *最后更新: 2026-05-27 16:09 (Asia/Shanghai)*
+
+---
+
+## 2026-05-31 Static Role-Based Agents vs Dynamic Agent Creation in Multi-Agent Systems
+
+### 来源
+- Anthropic: "Building Effective Agents" (2024-2025)
+- Anthropic: "Multi-Agent Research System" (2025)
+- OpenAI: "A Practical Guide to Building Agents" (2024)
+- OpenAI: Swarm Framework & Agents SDK (2024-2025)
+- Microsoft Research: Magentic-One (arXiv:2411.04468, 2024)
+- AutoGen 0.4 Documentation (Microsoft)
+- CrewAI Documentation
+- LangGraph Multi-Agent Workflows (LangChain)
+- arXiv:2305.19118 — Multi-Agent Debate (MAD) Framework (EMNLP 2024)
+- arXiv:2402.01680 — Multi-Agent Systems Survey
+
+### 关键发现
+
+#### 1. 静态角色 Agent vs 动态创建的核心权衡
+
+**静态角色 (Role-Based) 方案** — 代表: CrewAI, AutoGen GroupChat
+- Agent 在编排前通过 YAML/代码定义，包含 role, goal, backstory
+- 优点: 可预测、易调试、prompt 可精细优化
+- 缺点: 缺乏灵活性，无法应对未预见的子任务
+- CrewAI 的 Agent 是 "autonomous unit"，每个 Agent 有固定的 role、goal、backstory，通过 tools 和 delegation 实现专业化
+
+**动态创建 (Dynamic Creation) 方案** — 代表: Anthropic Multi-Agent Research System, Magentic-One
+- Orchestrator 根据查询复杂度动态分解任务并 spawn 子 Agent
+- 优点: 适应性强，可按需扩展
+- 缺点: 行为不可预测，emergent behavior 难以调试
+- Anthropic 的系统: "lead agent analyzes queries, develops strategy, and delegates to subagents"，子 Agent 独立搜索并返回结果
+
+**混合方案 (Hybrid)** — 代表: OpenAI Swarm/Agents SDK, LangGraph Supervisor
+- 核心 team (triage + 常驻 specialist) + 按需创建的专家
+- OpenAI 的 triage 模式: triage agent 负责路由，specialist agents 按需接收 handoff
+- "a large number of independent capabilities and instructions that are difficult to encode into a single prompt"
+
+#### 2. Agent 专业化: 何时帮助 vs 何时伤害
+
+**专业化帮助的场景:**
+- 工具集差异大: "agents focused on narrower tool sets outperform those choosing from dozens" (LangGraph)
+- Prompt 差异大: 不同任务需要不同的 few-shot examples、system instructions
+- 可独立评估: "you can evaluate and improve each agent individually without breaking the larger application"
+- 需要不同模型: CrewAI 支持 per-agent LLM，Magentic-One 实验了 o1-preview + GPT-4o 混合
+
+**专业化伤害的场景:**
+- 所有 Agent 需要共享相同 context 的领域 (Anthropic)
+- 任务间高度 inter-dependent (Anthropic)
+- 编码任务: "LLM agents are not yet great at coordinating and delegating to other agents in real time" (Anthropic)
+- 过度拆分导致协调开销超过收益
+
+#### 3. 最优 Agent 数量与递减回报
+
+**Anthropic 的经验法则 (Effort Scaling Rules):**
+
+| 复杂度 | 资源分配 |
+|--------|---------|
+| Simple fact-finding | 1 agent, 3-10 tool calls |
+| Direct comparisons | 2-4 subagents, 10-15 calls each |
+| Complex research | 10+ subagents with divided responsibilities |
+
+**关键数据:**
+- Multi-agent 系统 vs 单 Agent: 在 BrowseComp 评估中 multi-agent "outperformed single-agent Claude Opus 4 by 90.2%"
+- 但 token 使用量: "agents use roughly 4x more tokens than chat interactions"，multi-agent 约 15x
+- "token usage by itself explains 80% of the variance" in performance
+- 升级模型收益 > 增加 Agent: "Upgrading to Sonnet 4 produced a larger performance gain than doubling the token budget on Claude Sonnet 3.7"
+
+**递减回报规律:**
+- 2-3 agents: 显著提升 (researcher + coder + reviewer)
+- 4-5 agents: 中等提升，适合复杂多步工作流
+- 6+ agents: 质量提升 plateau，成本和延迟显著增加
+- 协调开销随 Agent 数量增长: 更多 inter-agent communication = 更多 token 用于 routing/reasoning
+
+#### 4. Token 成本分析
+
+**系统 Prompt 开销:**
+- 每个 Agent 都需要独立的 system prompt (role, goal, backstory, tools description)
+- CrewAI 的 Agent 定义包含 role + goal + backstory + tool descriptions，每个 Agent 的 system prompt 可达数千 token
+- Anthropic 子 Agent 需要 "objective, output format, tool guidance, and clear boundaries"
+
+**Context 传递开销:**
+- Agent 间传递结果需要序列化/反序列化
+- Anthropic 的解决方案: "Subagents write outputs to external storage and pass lightweight references back, preventing information loss during multi-stage processing and reduces token overhead"
+- Swarm 的 handoff 机制: 完整 conversation history 传递给下一个 Agent
+
+**Break-even 分析:**
+- 单 Agent + tools 通常足够: "optimizing single LLM calls with retrieval and in-context examples is usually enough"
+- Multi-agent 适合: 超出单 context window 的信息、需要 heavy parallelization 的任务
+- 不适合 multi-agent: 需要共享 context 的领域、高度 inter-dependent 的任务
+
+#### 5. 混合架构模式
+
+**模式 1: Core Team + On-Demand Specialists**
+- OpenAI 的 Triage 模式: triage agent 常驻，specialists 按 handoff 创建
+- "an agent (or routine) handing off an active conversation to another agent, much like when you get transferred to someone else on a phone call"
+- Context variables 作为共享状态在 Agent 间传递
+
+**模式 2: Agent Pools with Capability Matching**
+- LangGraph 的 Supervisor 模式: supervisor 作为 router，Agent 作为 tools
+- "the supervisor itself is an agent whose tools are other agents"
+- 每个 Agent 有独立 scratchpad，只有 final responses 进入 global scratchpad
+
+**模式 3: Hierarchical Agent Teams**
+- LangGraph 的嵌套 LangGraph: 子图作为 self-contained "teams"
+- CrewAI 的 Hierarchical Process: "a manager agent coordinates the crew, delegating tasks and validating outcomes"
+- Magentic-One 的双循环: 外循环管理 Task Ledger，内循环管理 Progress Ledger
+
+**模式 4: "Hiring" Metaphor — 按需创建，完成后退役**
+- Anthropic 的做法: "When context limits approach, fresh subagents spawn with clean contexts via careful handoffs"
+- 早期版本 "over-invested in simple queries"，通过 scaling rules 解决
+- Agent 完成任务后 context 被丢弃，避免 context 膨胀
+
+#### 6. 生产环境洞察
+
+**Anthropic 的 Multi-Agent Research System 实践:**
+- 使用 orchestrator-worker 模式: lead agent (Opus 4) 协调 + 子 agents (Sonnet 4) 并行
+- 持久化研究计划到 external memory: "when the context window exceeds 200,000 tokens it will be truncated"
+- Rainbow deployments: "agents are highly stateful and run continuously, traffic shifts gradually"
+- 同步执行是当前限制: "lead agent waits for all subagents to finish before proceeding"
+
+**常见失败模式:**
+1. **Vague delegation**: 早期 lead agent 给出 "research the semiconductor shortage" 这样的模糊指令，导致子 Agent 重复工作
+2. **Agent behavior emergence**: "small lead agent changes unpredictably alter subagent behavior"
+3. **Tool misdesign**: Anthropic 在 SWE-bench agent 上 "spent more time optimizing our tools than the overall prompt"
+4. **Framework opacity**: 框架 "often create extra layers of abstraction that can obscure the underlying prompts and responses"
+5. **Agent contention**: 多个 Agent 争抢同一任务 — Commander 的 DeterministicTaskAllocator 专门解决此问题
+
+**什么时候单 Agent 更好:**
+- 编码任务: "LLM agents are not yet great at coordinating and delegating to other agents in real time"
+- 简单查询: 1 agent, 3-10 tool calls 足够
+- 需要共享 context 的任务
+- 对延迟敏感的场景
+
+#### 7. 框架设计哲学对比
+
+| 框架 | 核心抽象 | 动态创建 | 专业化机制 |
+|------|---------|---------|-----------|
+| **CrewAI** | Agent (role/goal/backstory) + Crew | YAML 定义，运行时实例化 | tools, LLM differentiation, delegation |
+| **AutoGen** | Agent + GroupChat | 预设或自定义 Agent | system message, tools, GroupChatManager |
+| **LangGraph** | Graph (nodes/edges) | Supervisor 动态路由 | tool grouping, prompt separation |
+| **OpenAI Swarm** | Agent + Handoff | 函数返回 Agent 实例 | instructions, functions, context_variables |
+| **OpenAI Agents SDK** | Agent + Handoff + Runner | agents-as-tools 或 handoff | instructions, tools, guardrails |
+| **Magentic-One** | Orchestrator + 4 specialists | 固定 team，模块化可增删 | 每个 Agent 专属 domain |
+
+### Commander 相关性
+
+Commander 当前实现采用 **orchestrator-worker 模式**:
+- `orchestrator.ts`: 基于 Anthropic 架构，lead agent 分解任务为 subtasks
+- `deterministicTaskAllocator.ts`: 防止 Agent 争抢，使用 Task ID + Owner + Release 协议
+- 复杂度评估: simple (1 agent) / moderate (2-4) / complex (8-12)
+
+**潜在改进方向:**
+1. **Hybrid architecture**: 核心 team (planner + executor) 常驻 + specialists 按需创建
+2. **Agent-as-tool pattern**: 参考 OpenAI Agents SDK，将 specialized agents 作为 tools 供 orchestrator 调用
+3. **Effort scaling rules**: 将 Anthropic 的复杂度-Agent数量映射硬编码到 orchestrator
+4. **External memory for plans**: 参考 Anthropic，将 delegation plan 存入 external memory 防止 context truncation
+5. **Async subagent execution**: 当前同步等待所有子 Agent，异步执行可减少延迟
+
+### 参考
+- Anthropic "Building Effective Agents": https://www.anthropic.com/engineering/building-effective-agents
+- Anthropic "Multi-Agent Research System": https://www.anthropic.com/engineering/multi-agent-research-system
+- OpenAI Swarm: https://github.com/openai/swarm
+- OpenAI Agents SDK: https://github.com/openai/openai-agents-python
+- AutoGen: https://microsoft.github.io/autogen/
+- CrewAI: https://docs.crewai.com/
+- LangGraph Multi-Agent: https://www.langchain.com/blog/langgraph-multi-agent-workflows
+- Magentic-One: https://arxiv.org/abs/2411.04468
+- MAD Framework: https://arxiv.org/abs/2305.19118
+- Commander modules: orchestrator.ts, deterministicTaskAllocator.ts
+
+*最后更新: 2026-05-31 12:00 (Asia/Shanghai)*

@@ -9,16 +9,26 @@ import type {
   MemorySearchResult, MemoryManageOptions, MemoryStats, MemoryStore,
 } from '../memory';
 import type { MemoryKind, MemoryDuration } from '../memory';
+import { BM25Scorer } from './ftsScorer';
 
 /**
  * JSON-file backed MemoryStore for simple persistence.
  * Falls back gracefully when SQLite is unavailable.
+ *
+ * Uses BM25 scoring (Okapi BM25) for high-quality full-text search,
+ * matching the search quality of SQLite FTS5.
  */
 export class JsonMemoryStore implements MemoryStore {
   private items: Map<string, EpisodicMemoryItem> = new Map();
   private filePath: string;
   private nextId = 1;
   private dirty = false;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  // BM25 scorer for full-text search (replaces basic inverted index)
+  private bm25: BM25Scorer = new BM25Scorer();
+  // Per-item token cache to avoid re-tokenizing on every search
+  private tokenCache: Map<string, string[]> = new Map();
+  private indexDirty = true;
 
   constructor(filePath: string) {
     this.filePath = filePath;
@@ -38,6 +48,8 @@ export class JsonMemoryStore implements MemoryStore {
     } catch {
       getGlobalLogger().debug('JsonMemoryStore', 'Init load failed — starting empty');
     }
+    // Rebuild inverted index after loading
+    this.rebuildIndex();
   }
 
   private async persist(): Promise<void> {
@@ -49,6 +61,11 @@ export class JsonMemoryStore implements MemoryStore {
   }
 
   async write(options: MemoryWriteOptions): Promise<EpisodicMemoryItem> {
+    // Auto-cleanup expired items periodically to prevent unbounded growth
+    if (this.items.size > 0 && this.items.size % 100 === 0) {
+      await this.deleteExpired(options.projectId || 'default');
+    }
+
     const now = new Date().toISOString();
     const id = `memory-${this.nextId++}`;
 
@@ -67,12 +84,13 @@ export class JsonMemoryStore implements MemoryStore {
       duration: options.duration ?? 'EPISODIC',
       title: options.title, content: options.content, tags: options.tags ?? [],
       priority, createdAt: now, lastAccessedAt: now,
-      expiresAt: options.duration === 'EPISODIC'
+      expiresAt: (options.duration ?? 'EPISODIC') === 'EPISODIC'
         ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() : undefined,
       evidenceRefs: options.evidenceRefs, confidence: options.confidence ?? 0.8,
     };
 
     this.items.set(id, item);
+    this.indexItem(item);
     this.dirty = true;
     await this.persist();
     return item;
@@ -80,21 +98,53 @@ export class JsonMemoryStore implements MemoryStore {
 
   async batchWrite(items: MemoryWriteOptions[]): Promise<EpisodicMemoryItem[]> {
     const results: EpisodicMemoryItem[] = [];
-    for (const item of items) results.push(await this.write(item));
+    for (const item of items) {
+      const now = new Date().toISOString();
+      const id = `memory-${this.nextId++}`;
+      const kindPriority: Record<MemoryKind, number> = { DECISION: 80, ISSUE: 70, LESSON: 90, SUMMARY: 50 };
+      let priority = item.priority ?? (kindPriority[item.kind] ?? 50);
+      if (item.missionId) priority += 5;
+      if (item.agentId) priority += 5;
+      if (item.evidenceRefs?.length) priority += Math.min(item.evidenceRefs.length * 5, 15);
+      priority = Math.min(priority, 100);
+
+      const entry: EpisodicMemoryItem = {
+        id, projectId: item.projectId, missionId: item.missionId,
+        agentId: item.agentId, kind: item.kind,
+        duration: item.duration ?? 'EPISODIC',
+        title: item.title, content: item.content, tags: item.tags ?? [],
+        priority, createdAt: now, lastAccessedAt: now,
+        expiresAt: (item.duration ?? 'EPISODIC') === 'EPISODIC'
+          ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() : undefined,
+        evidenceRefs: item.evidenceRefs, confidence: item.confidence ?? 0.8,
+      };
+      this.items.set(id, entry);
+      this.indexItem(entry);
+      results.push(entry);
+    }
+    this.dirty = true;
+    await this.persist();
     return results;
   }
 
   async update(options: MemoryManageOptions): Promise<EpisodicMemoryItem | null> {
     const item = this.items.get(options.id);
     if (!item || item.projectId !== options.projectId) return null;
-    if (options.delete) { this.items.delete(options.id); this.dirty = true; await this.persist(); return null; }
-    if (options.updates) { Object.assign(item, options.updates); item.lastAccessedAt = new Date().toISOString(); this.dirty = true; await this.persist(); }
+    if (options.delete) { this.deindexItem(options.id); this.items.delete(options.id); this.dirty = true; await this.persist(); return null; }
+    if (options.updates) {
+      this.deindexItem(options.id);
+      Object.assign(item, options.updates);
+      item.lastAccessedAt = new Date().toISOString();
+      this.indexItem(item);
+      this.dirty = true; await this.persist();
+    }
     return item;
   }
 
   async delete(id: string, projectId: string): Promise<boolean> {
     const item = this.items.get(id);
     if (!item || item.projectId !== projectId) return false;
+    this.deindexItem(id);
     this.items.delete(id); this.dirty = true; await this.persist();
     return true;
   }
@@ -102,7 +152,10 @@ export class JsonMemoryStore implements MemoryStore {
   async deleteByMission(missionId: string, projectId: string): Promise<number> {
     let count = 0;
     for (const [id, item] of this.items) {
-      if (item.projectId === projectId && item.missionId === missionId) { this.items.delete(id); count++; }
+      if (item.projectId === projectId && item.missionId === missionId) {
+        this.deindexItem(id);
+        this.items.delete(id); count++;
+      }
     }
     if (count > 0) { this.dirty = true; await this.persist(); }
     return count;
@@ -112,7 +165,10 @@ export class JsonMemoryStore implements MemoryStore {
     const now = new Date();
     let count = 0;
     for (const [id, item] of this.items) {
-      if (item.projectId === projectId && item.expiresAt && new Date(item.expiresAt) < now) { this.items.delete(id); count++; }
+      if (item.projectId === projectId && item.expiresAt && new Date(item.expiresAt) < now) {
+        this.deindexItem(id);
+        this.items.delete(id); count++;
+      }
     }
     if (count > 0) { this.dirty = true; await this.persist(); }
     return count;
@@ -122,59 +178,117 @@ export class JsonMemoryStore implements MemoryStore {
     const item = this.items.get(id);
     if (!item || item.projectId !== projectId) return null;
     item.lastAccessedAt = new Date().toISOString();
+    this.dirty = true;
+    this.schedulePersist();
     return item;
   }
 
+  private schedulePersist(): void {
+    if (this.persistTimer) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      this.persist().catch((err) => {
+        getGlobalLogger().warn('JsonMemoryStore', 'Deferred persist failed', { error: (err as Error)?.message });
+      });
+    }, 2000);
+    this.persistTimer.unref();
+  }
+
   async search(query: MemorySearchQuery): Promise<MemorySearchResult> {
-    let results = Array.from(this.items.values()).filter(item => item.projectId === query.projectId);
-    if (query.kind) results = results.filter(item => item.kind === query.kind);
-    if (query.missionId) results = results.filter(item => item.missionId === query.missionId);
-    if (query.agentId) results = results.filter(item => item.agentId === query.agentId);
-    if (query.tags?.length) results = results.filter(item => query.tags!.some(tag => item.tags.includes(tag)));
-    if (query.minPriority !== undefined) results = results.filter(item => item.priority >= query.minPriority!);
-    if (query.minConfidence !== undefined) results = results.filter(item => item.confidence >= query.minConfidence!);
+    // Use BM25 scorer to narrow candidates for text query
+    let candidateIds: Set<string> | null = null;
     if (query.query) {
-      const lower = query.query.toLowerCase();
-      results = results.filter(item => item.title.toLowerCase().includes(lower) || item.content.toLowerCase().includes(lower));
+      if (this.indexDirty) this.rebuildIndex();
+      const bm25Results = this.bm25.score(query.query, this.items.size);
+      candidateIds = new Set(bm25Results.map(r => r.id));
     }
+
+    // Single-pass filter: combine all conditions to avoid intermediate array allocations
+    const lowerQuery = query.query?.toLowerCase();
+    const hasTags = query.tags && query.tags.length > 0;
+    const results: EpisodicMemoryItem[] = [];
+
+    for (const item of this.items.values()) {
+      if (item.projectId !== query.projectId) continue;
+      if (candidateIds && !candidateIds.has(item.id)) continue;
+      if (query.kind && item.kind !== query.kind) continue;
+      if (query.missionId && item.missionId !== query.missionId) continue;
+      if (query.agentId && item.agentId !== query.agentId) continue;
+      if (hasTags && !query.tags!.some(tag => item.tags.includes(tag))) continue;
+      if (query.minPriority !== undefined && item.priority < query.minPriority) continue;
+      if (query.minConfidence !== undefined && item.confidence < query.minConfidence) continue;
+      if (lowerQuery && !item.title.toLowerCase().includes(lowerQuery) && !item.content.toLowerCase().includes(lowerQuery)) continue;
+      results.push(item);
+    }
+
+    // Sort by priority (descending) then by createdAt (descending, ISO string comparison)
     results.sort((a, b) => {
       if (b.priority !== a.priority) return b.priority - a.priority;
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      // ISO date strings are lexicographically comparable — no Date parsing needed
+      return b.createdAt < a.createdAt ? -1 : b.createdAt > a.createdAt ? 1 : 0;
     });
+
     const total = results.length;
     const limit = query.limit ?? 50;
     return { items: results.slice(0, limit), total, query };
   }
 
+  /** Rebuild BM25 index from all items. Called lazily on first search. */
+  private rebuildIndex(): void {
+    this.bm25 = new BM25Scorer();
+    this.tokenCache.clear();
+    for (const [id, item] of this.items) {
+      const fullText = `${item.title} ${item.content} ${item.tags.join(' ')}`;
+      const fieldTexts = new Map<string, string>();
+      fieldTexts.set('title', item.title);
+      this.bm25.addDocument(id, fullText, fieldTexts);
+      this.tokenCache.set(id, tokenize(item.title + ' ' + item.content));
+    }
+    this.indexDirty = false;
+  }
+
+  /** Add a single item to the BM25 index. */
+  private indexItem(item: EpisodicMemoryItem): void {
+    const fullText = `${item.title} ${item.content} ${item.tags.join(' ')}`;
+    const fieldTexts = new Map<string, string>();
+    fieldTexts.set('title', item.title);
+    this.bm25.addDocument(item.id, fullText, fieldTexts);
+    this.tokenCache.set(item.id, tokenize(item.title + ' ' + item.content));
+  }
+
+  /** Remove a single item from the BM25 index. */
+  private deindexItem(id: string): void {
+    this.bm25.removeDocument(id);
+    this.tokenCache.delete(id);
+  }
+
   async searchSemantic(query: string, projectId: string, limit = 10): Promise<EpisodicMemoryItem[]> {
+    // Lazy rebuild index if dirty
+    if (this.indexDirty) this.rebuildIndex();
+
     const projectItems = Array.from(this.items.values()).filter(item => item.projectId === projectId);
     if (projectItems.length === 0) return [];
 
-    const queryTerms = tokenize(query);
-    if (queryTerms.length === 0) return [];
+    // Use BM25 for high-quality full-text search
+    const bm25Results = this.bm25.score(query, projectItems.length);
+    const bm25ScoreMap = new Map(bm25Results.map(r => [r.id, r.score]));
 
-    const N = projectItems.length;
-    const idf = new Map<string, number>();
-    for (const term of queryTerms) {
-      const df = projectItems.filter(item => tokenize(item.title + ' ' + item.content).includes(term)).length;
-      idf.set(term, Math.log(N / (df + 1)) + 1);
+    // Score project items with BM25 + priority + confidence boost
+    const scored: Array<{ item: EpisodicMemoryItem; score: number }> = [];
+    for (const item of projectItems) {
+      const bm25Score = bm25ScoreMap.get(item.id) ?? 0;
+      // Combine BM25 score with priority and confidence
+      // Formula: bm25 * (1 + priority/100) * (0.5 + confidence)
+      const score = bm25Score * (1 + item.priority / 100) * (0.5 + item.confidence);
+      if (score > 0) {
+        scored.push({ item, score });
+      }
     }
 
-    const scored = projectItems.map(item => {
-      const docTerms = tokenize(item.title + ' ' + item.content);
-      const docLen = docTerms.length || 1;
-      let score = 0;
-      for (const term of queryTerms) {
-        const tf = docTerms.filter(t => t === term).length / docLen;
-        score += tf * (idf.get(term) ?? 1);
-      }
-      score *= (1 + item.priority / 100) * (0.5 + item.confidence);
-      return { item, score };
-    });
-
+    // ISO string comparison — no Date parsing needed
     scored.sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      return new Date(b.item.createdAt).getTime() - new Date(a.item.createdAt).getTime();
+      return b.item.createdAt < a.item.createdAt ? -1 : b.item.createdAt > a.item.createdAt ? 1 : 0;
     });
 
     return scored.slice(0, limit).map(s => {
@@ -209,6 +323,10 @@ export class JsonMemoryStore implements MemoryStore {
   }
 
   async close(): Promise<void> {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
     await this.persist();
   }
 }

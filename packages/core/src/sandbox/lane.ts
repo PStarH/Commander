@@ -242,7 +242,7 @@ export class LaneManager {
    * Acquire a slot in a lane. Waits if the lane is at max concurrency.
    * Returns the lane name.
    */
-  async acquireSlot(ctx: LaneContext): Promise<string> {
+  async acquireSlot(ctx: LaneContext, timeoutMs?: number): Promise<string> {
     const lane = this.selectLane(ctx);
     lane.totalEnqueued++;
 
@@ -251,19 +251,29 @@ export class LaneManager {
       return lane.config.name;
     }
 
-    // Lane is at capacity — wait
-    return new Promise<string>((resolve) => {
-      lane.waitingQueue.push(() => {
-        lane.runningCount++;
+    // Lane is at capacity — wait for a slot to be transferred
+    return new Promise<string>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const enqueue = () => {
+        if (timer) clearTimeout(timer);
         resolve(lane.config.name);
-      });
+      };
+      if (timeoutMs) {
+        timer = setTimeout(() => {
+          lane.totalRejected++;
+          lane.waitingQueue = lane.waitingQueue.filter(w => w !== enqueue);
+          reject(new Error(`Lane "${lane.config.name}" slot timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+        timer.unref();
+      }
+      lane.waitingQueue.push(enqueue);
     });
   }
 
   /**
    * Acquire a slot on a specific named lane (bypasses routing).
    */
-  async acquireNamedSlot(laneName: string): Promise<boolean> {
+  async acquireNamedSlot(laneName: string, timeoutMs?: number): Promise<boolean> {
     const lane = this.lanes.get(laneName);
     if (!lane) return false;
 
@@ -273,11 +283,21 @@ export class LaneManager {
       return true;
     }
 
-    return new Promise<boolean>((resolve) => {
-      lane.waitingQueue.push(() => {
-        lane.runningCount++;
+    return new Promise<boolean>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const enqueue = () => {
+        if (timer) clearTimeout(timer);
         resolve(true);
-      });
+      };
+      if (timeoutMs) {
+        timer = setTimeout(() => {
+          lane.totalRejected++;
+          lane.waitingQueue = lane.waitingQueue.filter(w => w !== enqueue);
+          reject(new Error(`Lane "${laneName}" slot timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+        timer.unref();
+      }
+      lane.waitingQueue.push(enqueue);
     });
   }
 
@@ -291,13 +311,15 @@ export class LaneManager {
       return;
     }
 
-    lane.runningCount--;
     lane.totalCompleted++;
 
     const next = lane.waitingQueue.shift();
     if (next) {
-      // Schedule next waiter on next tick to avoid deep stacks
+      // Keep runningCount — transfer the slot directly to the waiter.
+      // Schedule waiter resolve on next tick to avoid deep stacks.
       setImmediate(next);
+    } else {
+      lane.runningCount--;
     }
   }
 

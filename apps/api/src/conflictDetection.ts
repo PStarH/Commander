@@ -314,7 +314,7 @@ function detectResourceConflict(
   // Check target resource contention
   if (proposedAction.targetResource) {
     const agentsUsingResource = context.otherAgents.filter(
-      a => a.resourceUsage && proposedAction.targetResource!.includes(a.id)
+      a => a.currentTaskId === proposedAction.targetResource
     );
 
     if (agentsUsingResource.length > 0) {

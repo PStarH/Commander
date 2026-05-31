@@ -10,7 +10,7 @@ export const READ_ONLY: SandboxProfile = {
     useStagingDir: false,
   },
   envVarDenyList: ['API_KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL'],
-  envVarAllowList: ['PATH', 'HOME', 'USER', 'SHELL', 'TERM'],
+  envVarAllowList: ['PATH', 'HOME', 'USER', 'SHELL', 'TERM', 'LANG', 'LC_ALL', 'TMPDIR', 'HOSTNAME', 'PWD', 'NODE_ENV', 'PYTHONPATH', 'XDG_RUNTIME_DIR'],
   timeout: 30000,
 };
 
@@ -20,11 +20,13 @@ export const WORKSPACE_WRITE: SandboxProfile = {
   filesystem: {
     readablePaths: [process.cwd(), '/tmp'],
     writablePaths: [process.cwd(), '/tmp'],
-    protectedPaths: ['.git', '.commander', '.commander_state'],
+    // FIX: protect .commander_memory and .commander_results (was missing vs READ_ONLY)
+    protectedPaths: ['.git', '.commander', '.commander_state', '.commander_memory', '.commander_results'],
     useStagingDir: false,
   },
   envVarDenyList: ['API_KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL'],
-  envVarAllowList: ['PATH', 'HOME', 'USER', 'SHELL', 'TERM'],
+  // Expanded allow list — common variables needed by build tools and languages
+  envVarAllowList: ['PATH', 'HOME', 'USER', 'SHELL', 'TERM', 'LANG', 'LC_ALL', 'TMPDIR', 'HOSTNAME', 'PWD', 'NODE_ENV', 'PYTHONPATH', 'XDG_RUNTIME_DIR'],
   timeout: 60000,
 };
 
@@ -34,10 +36,16 @@ export const FULL_ACCESS: SandboxProfile = {
   filesystem: {
     readablePaths: ['/'],
     writablePaths: ['/'],
-    protectedPaths: [],
+    // Even full-access protects critical system dirs and credential stores
+    protectedPaths: [
+      '.git', '.commander', '.commander_state',
+      '/etc/shadow', '/etc/sudoers', '/etc/ssh',
+      '.ssh', '.gnupg', '.aws', '.config/gcloud',
+      '/root', '/var/run/docker.sock',
+    ],
     useStagingDir: false,
   },
-  envVarDenyList: ['API_KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL'],
+  envVarDenyList: ['API_KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL', 'PRIVATE', 'SIGNATURE'],
   envVarAllowList: ['PATH', 'HOME', 'USER', 'SHELL', 'TERM'],
   timeout: 300000,
 };

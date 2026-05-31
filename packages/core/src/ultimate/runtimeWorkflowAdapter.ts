@@ -339,6 +339,7 @@ export class RuntimeWorkflowAdapter {
   private rePlanningCount = 0;
   private stageDurations = new Map<string, number>();
   private stageResults: StepResult[] = [];
+  private lastRunId: string | null = null;
 
   constructor() {
     this.adapter = new WorkflowAdapter();
@@ -404,6 +405,16 @@ export class RuntimeWorkflowAdapter {
     completedStep: StepResult,
     elapsedMs: number,
   ): Promise<WorkflowDecision> {
+    // Reset stage results when starting a new execution
+    if (ctx.runId && ctx.runId !== this.lastRunId) {
+      this.stageResults = [];
+      this.decisions = [];
+      this.stagesTraversed = [];
+      this.rePlanningCount = 0;
+      this.stageDurations.clear();
+      this.lastRunId = ctx.runId;
+    }
+
     // 更新任务状态
     this.stageResults.push(completedStep);
     this.taskState = TaskStateConstructor.build(ctx, this.stageResults, elapsedMs);

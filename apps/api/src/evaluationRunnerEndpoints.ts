@@ -11,7 +11,7 @@ export function createEvaluationRunnerRouter(): Router {
     }
 
     const grader = graderType === 'outcome'
-      ? new OutcomeVerificationGrader('outcome-check', (t: any) => t.output?.status === 'success')
+      ? new OutcomeVerificationGrader('outcome-check', (t: unknown) => (t as Record<string, unknown>)?.output?.status === 'success')
       : new StringMatchGrader('string-match', expectedOutput ?? '');
 
     const runner = createEvaluationRunner();

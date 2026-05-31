@@ -70,6 +70,7 @@ export interface SkillCatalogEntry {
   usageCount: number;
   qualityScore: number;
   pinned: boolean;
+  source?: SkillSource;
 }
 
 export interface SkillSearchQuery {

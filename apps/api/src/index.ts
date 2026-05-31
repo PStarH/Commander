@@ -28,6 +28,12 @@ import { createRuntimeRouter } from './runtimeEndpoints';
 import { createSelfAssessmentRouter } from './selfAssessmentEndpoints';
 import { createAgentCardRouter } from './agentCardEndpoints';
 import { createReasoningConfigRouter } from './reasoningConfigEndpoints';
+import {
+  requestIdMiddleware,
+  securityHeaders,
+  rateLimitMiddleware,
+  errorHandler,
+} from './securityMiddleware';
 import { createEvaluationRunnerRouter } from './evaluationRunnerEndpoints';
 import { createOrchestratorRouter } from './orchestratorEndpoints';
 
@@ -53,12 +59,40 @@ const a2aTaskManager = new TaskManager();
 const a2aArtifactManager = new ArtifactManager();
 const a2aRouter = createA2ARouter(a2aTaskManager, a2aArtifactManager, agentCardRegistry);
 
-app.use(express.json());
+// ── Security middleware stack ────────────────────────────────────────────────
+// 1. Request ID tracking
+app.use(requestIdMiddleware);
+
+// 2. Security headers
+app.use(securityHeaders);
+
+// 3. API version header
 app.use((_req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
-  if (_req.method === 'OPTIONS') {
+  res.header('X-API-Version', '1.0.0');
+  next();
+});
+
+// 4. Rate limiting
+app.use(rateLimitMiddleware);
+
+// 4. CORS whitelist (not wildcard)
+const ALLOWED_ORIGINS = new Set([
+  'http://localhost:3000',
+  'http://localhost:4000',
+  'http://localhost:5173',
+  ...(process.env.CORS_ORIGINS?.split(',').map(s => s.trim()) ?? []),
+]);
+
+app.use(express.json({ limit: '1mb' }));
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,PUT,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
   }
   next();
@@ -75,7 +109,26 @@ DEFAULT_DOMAINS.forEach(({ domain, description }) => {
 
 // ── System ──────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, projectId: PROJECT_ID });
+  const memUsage = process.memoryUsage();
+  const heapUsedMB = Math.floor(memUsage.heapUsed / 1024 / 1024);
+  const heapTotalMB = Math.floor(memUsage.heapTotal / 1024 / 1024);
+
+  // Degraded if heap usage > 80%
+  const heapHealthy = heapUsedMB / heapTotalMB < 0.8;
+  const status = heapHealthy ? 'healthy' : 'degraded';
+
+  res.status(heapHealthy ? 200 : 503).json({
+    status,
+    projectId: PROJECT_ID,
+    uptime: Math.floor(process.uptime()),
+    memory: {
+      heapUsed: `${heapUsedMB}MB`,
+      heapTotal: `${heapTotalMB}MB`,
+      heapPercent: Math.round((heapUsedMB / heapTotalMB) * 100),
+    },
+    version: '0.2.0',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 app.get('/system/status', (_req, res) => {
@@ -124,6 +177,19 @@ app.use('/mcp', createMCPRouter());
 app.use('/mcp/client', createMCPClientRouter());
 app.use('/api/runtime', createRuntimeRouter());
 app.use('/api', createOrchestratorRouter());
+
+// ── API v1 versioned aliases (backward-compatible) ──────────────────────────
+// All routes are accessible under /api/v1/ prefix in addition to their original paths.
+// This provides explicit API versioning without breaking existing clients.
+app.use('/api/v1/evaluation', evaluationRouter);
+app.use('/api/v1/governance', governanceRouter);
+app.use('/api/v1/state-machine', stateMachineRouter);
+app.use('/api/v1', createSelfAssessmentRouter());
+app.use('/api/v1', createAgentCardRouter(agentCardRegistry));
+app.use('/api/v1', createReasoningConfigRouter());
+app.use('/api/v1', createEvaluationRunnerRouter());
+app.use('/api/v1/runtime', createRuntimeRouter());
+app.use('/api/v1', createOrchestratorRouter());
 
 // ── OpenAPI ─────────────────────────────────────────────────────────────────
 app.get('/api/openapi.json', (_req, res) => {
@@ -180,9 +246,42 @@ app.get('/api/openapi.json', (_req, res) => {
   });
 });
 
-// ── Startup ─────────────────────────────────────────────────────────────────
+// ── Error handler (must be last middleware) ──────────────────────────────────
+app.use(errorHandler);
+
+// ── Startup + Graceful Shutdown ──────────────────────────────────────────────
 const port = Number(process.env.PORT || 4000);
-app.listen(port, () => {
+const server = app.listen(port, () => {
   process.stdout.write(`API listening on http://localhost:${port}\n`);
   process.stdout.write(`War room project ready at GET /projects/${PROJECT_ID}/war-room\n`);
 });
+
+// P1: Graceful shutdown — drain connections, flush state, then exit
+let shuttingDown = false;
+function gracefulShutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  process.stdout.write(`\n[${signal}] Shutting down gracefully...\n`);
+
+  // Stop accepting new connections
+  server.close(() => {
+    process.stdout.write('[shutdown] HTTP server closed\n');
+
+    // Flush any pending state
+    try {
+      episodicMemoryStore['doPersist']?.();
+    } catch { /* best-effort */ }
+
+    process.stdout.write('[shutdown] Complete\n');
+    process.exit(0);
+  });
+
+  // Force exit after 10s if graceful shutdown hangs
+  setTimeout(() => {
+    process.stderr.write('[shutdown] Force exit after 10s timeout\n');
+    process.exit(1);
+  }, 10_000).unref();
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

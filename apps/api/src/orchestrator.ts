@@ -80,8 +80,8 @@ export function assessComplexity(query: string): TaskComplexity {
 export function calculateSubagentCount(complexity: TaskComplexity): number {
   switch (complexity) {
     case 'simple': return 1;
-    case 'moderate': return 2 + Math.floor(Math.random() * 2); // 2-4
-    case 'complex': return 8 + Math.floor(Math.random() * 4); // 8-12
+    case 'moderate': return 2 + Math.floor(Math.random() * 3); // 2-4
+    case 'complex': return 8 + Math.floor(Math.random() * 5); // 8-12
   }
 }
 
@@ -108,7 +108,7 @@ export function createDelegationPlan(request: DelegationRequest): OrchestratorPl
     // For moderate/complex, create specialized tasks
     // This is a placeholder - actual decomposition would use LLM
     const aspects = extractAspects(request.query);
-    aspects.slice(0, subagentCount).forEach(aspect => {
+    aspects.slice(0, Math.min(subagentCount, aspects.length)).forEach(aspect => {
       tasks.push({
         id: uuidv4(),
         objective: `Research: ${aspect}`,
@@ -352,17 +352,17 @@ export interface RunAgentStepInput {
 
 export interface RunAgentStepDeps {
   http: {
-    fetchJson(url: string): Promise<any>;
-    tryFetchJson(url: string): Promise<any>;
-    postJson(url: string, body: any): Promise<void>;
-    patchJson(url: string, body: any): Promise<void>;
+    fetchJson(url: string): Promise<unknown>;
+    tryFetchJson(url: string): Promise<unknown>;
+    postJson(url: string, body: unknown): Promise<void>;
+    patchJson(url: string, body: unknown): Promise<void>;
   };
-  invokeModel(args: { invocationProfile: any; context: string }): Promise<{
+  invokeModel(args: { invocationProfile: Record<string, unknown>; context: string }): Promise<{
     summary: string;
     logs?: string[];
-    missionPatch?: any;
+    missionPatch?: Record<string, unknown>;
     decisions?: { title: string; content: string }[];
-    agentStatePatch?: any;
+    agentStatePatch?: Record<string, unknown>;
   }>;
 }
 
@@ -398,8 +398,8 @@ export async function runAgentStep(
   const guidance = explicitGuidance ?? embeddedGuidance;
 
   // 3. Determine invocation profile — use guidance only when agentId matches
-  let invocationProfile: any;
-  let strategy: any;
+  let invocationProfile: Record<string, unknown> | undefined;
+  let strategy: string | undefined;
 
   if (guidance?.invocationProfile?.agentId === input.agentId) {
     invocationProfile = guidance.invocationProfile;

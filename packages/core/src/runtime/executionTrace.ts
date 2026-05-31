@@ -11,11 +11,31 @@ function generateTraceId(): string {
 
 export class ExecutionTraceRecorder {
   private traces: Map<string, ExecutionTrace> = new Map();
+  private traceInsertOrder: string[] = [];
   private maxTraces: number;
+  /** Maximum events per trace to prevent unbounded memory growth */
+  private readonly maxEventsPerTrace: number;
+
+  /** Evict the oldest completed trace to make room. Skips active traces. */
+  private evictOldestCompleted(): void {
+    // Use shift for O(1) on the common case (oldest is first inserted)
+    while (this.traceInsertOrder.length > 0) {
+      const key = this.traceInsertOrder[0];
+      const trace = this.traces.get(key);
+      if (trace?.completedAt) {
+        this.traceInsertOrder.shift();
+        this.traces.delete(key);
+        return;
+      }
+      // Oldest is still active — try the next one
+      break;
+    }
+  }
   private store: TraceStore | null;
 
-  constructor(maxTraces = 500, store?: TraceStore) {
+  constructor(maxTraces = 500, store?: TraceStore, maxEventsPerTrace = 5000) {
     this.maxTraces = maxTraces;
+    this.maxEventsPerTrace = maxEventsPerTrace;
     this.store = store ?? null;
   }
 
@@ -51,12 +71,10 @@ export class ExecutionTraceRecorder {
         modelUsed: '',
       },
     });
+    this.traceInsertOrder.push(runId);
 
     if (this.traces.size > this.maxTraces) {
-      const oldest = Array.from(this.traces.keys()).sort(
-        (a, b) => new Date(this.traces.get(a)!.startedAt).getTime() - new Date(this.traces.get(b)!.startedAt).getTime(),
-      )[0];
-      this.traces.delete(oldest);
+      this.evictOldestCompleted();
     }
   }
 
@@ -86,6 +104,12 @@ export class ExecutionTraceRecorder {
       timestamp: new Date().toISOString(),
     };
 
+    // Limit events per trace to prevent unbounded memory growth
+    if (trace.events.length >= this.maxEventsPerTrace) {
+      // Drop oldest events (keep most recent 80%)
+      const keepCount = Math.floor(this.maxEventsPerTrace * 0.8);
+      trace.events = trace.events.slice(-keepCount);
+    }
     trace.events.push(fullEvent);
 
     trace.summary.totalEvents++;
@@ -105,10 +129,7 @@ export class ExecutionTraceRecorder {
     this.store?.append(fullEvent);
 
     if (this.traces.size > this.maxTraces) {
-      const oldest = Array.from(this.traces.keys()).sort(
-        (a, b) => new Date(this.traces.get(a)!.startedAt).getTime() - new Date(this.traces.get(b)!.startedAt).getTime(),
-      )[0];
-      this.traces.delete(oldest);
+      this.evictOldestCompleted();
     }
 
     return fullEvent;
@@ -202,8 +223,9 @@ export class ExecutionTraceRecorder {
     if (agentId) {
       all = all.filter(t => t.agentId === agentId);
     }
+    // ISO string comparison — no Date parsing needed
     return all
-      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
+      .sort((a, b) => b.startedAt < a.startedAt ? -1 : b.startedAt > a.startedAt ? 1 : 0)
       .slice(0, limit);
   }
 
@@ -250,6 +272,7 @@ export class ExecutionTraceRecorder {
           llmCalls: 0, toolExecutions: 0, errors: 0, modelUsed: '',
         },
       });
+      this.traceInsertOrder.push(runId);
     }
 
     return {

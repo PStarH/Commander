@@ -2,6 +2,14 @@ import { spawn } from 'child_process';
 import * as path from 'path';
 import * as os from 'os';
 import type { ExecutionBackend, SSHConfig, SandboxExecutionResult } from '../types';
+import { getSecurityAuditLogger } from '../../security/securityAuditLogger';
+
+/** Validate that a path contains no shell metacharacters (prevents command injection via workdir). */
+function isValidShellPath(p: string): boolean {
+  // Allow only safe path characters: alphanumeric, /, -, _, ., ~, spaces
+  // Reject anything that could break out of quotes or chain commands
+  return /^[a-zA-Z0-9/_. ~@:-]+$/.test(p) && !p.includes('..');
+}
 
 function buildSshArgs(config: SSHConfig): string[] {
   const args: string[] = [
@@ -44,7 +52,23 @@ export class SSHBackend implements ExecutionBackend {
     timeout?: number,
   ): Promise<SandboxExecutionResult> {
     const start = Date.now();
-    const fullCommand = workdir ? `cd "${workdir}" && ${command}` : command;
+
+    // Security: validate workdir to prevent command injection via path
+    if (workdir && !isValidShellPath(workdir)) {
+      getSecurityAuditLogger().logCommandInjectionAttempt('SSHBackend', 'Rejected workdir with unsafe characters', { workdir });
+      return {
+        stdout: '',
+        stderr: `Rejected: workdir contains unsafe characters: ${workdir}`,
+        exitCode: 1,
+        durationMs: Date.now() - start,
+        sandboxMechanism: 'seatbelt',
+      };
+    }
+
+    // SECURITY FIX: use single quotes for workdir to prevent $() and backtick expansion
+    // Double quotes in bash still interpret $(), backticks, and ! — single quotes are literal
+    const escapedWorkdir = workdir ? workdir.replace(/'/g, "'\\''") : '';
+    const fullCommand = workdir ? `cd '${escapedWorkdir}' && ${command}` : command;
     const sshArgs = buildSshArgs(this.config);
 
     return new Promise((resolve) => {
@@ -55,11 +79,14 @@ export class SSHBackend implements ExecutionBackend {
 
       let stdout = '';
       let stderr = '';
+      const MAX_OUTPUT = 10 * 1024 * 1024;
       const stdoutTimer = setTimeout(() => { child.stdout?.destroy(); }, (timeout ?? 60) * 1000);
+      stdoutTimer.unref();
       const stderrTimer = setTimeout(() => { child.stderr?.destroy(); }, (timeout ?? 60) * 1000);
+      stderrTimer.unref();
 
-      child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
-      child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+      child.stdout?.on('data', (d: Buffer) => { if (stdout.length < MAX_OUTPUT) { stdout += d.toString(); if (stdout.length > MAX_OUTPUT) stdout = stdout.slice(0, MAX_OUTPUT); } });
+      child.stderr?.on('data', (d: Buffer) => { if (stderr.length < MAX_OUTPUT) { stderr += d.toString(); if (stderr.length > MAX_OUTPUT) stderr = stderr.slice(0, MAX_OUTPUT); } });
 
       child.on('close', (exitCode) => {
         clearTimeout(stdoutTimer);
@@ -98,13 +125,26 @@ export class SSHBackend implements ExecutionBackend {
  * 
  * Priority: explicit args > env vars > defaults
  */
+/** Validate SSH host — must be a hostname or IP, no shell metacharacters. */
+function isValidSshHost(host: string): boolean {
+  return /^[a-zA-Z0-9._-]+$/.test(host);
+}
+
 export function resolveSSHConfig(args: Record<string, unknown>): SSHConfig | null {
   const host = String(args.ssh_host ?? process.env.COMMANDER_SSH_HOST ?? '');
   if (!host) return null;
 
+  // Security: reject hosts with shell metacharacters
+  if (!isValidSshHost(host)) {
+    return null;
+  }
+
+  const port = Number(args.ssh_port ?? process.env.COMMANDER_SSH_PORT ?? 22);
+  if (port < 1 || port > 65535 || !Number.isFinite(port)) return null;
+
   return {
     host,
-    port: Number(args.ssh_port ?? process.env.COMMANDER_SSH_PORT ?? 22),
+    port,
     user: String(args.ssh_user ?? process.env.COMMANDER_SSH_USER ?? os.userInfo().username),
     identityFile: String(args.ssh_key ?? process.env.COMMANDER_SSH_KEY ?? path.join(os.homedir(), '.ssh', 'id_rsa')),
     connectTimeoutMs: Number(args.ssh_timeout ?? process.env.COMMANDER_SSH_CONNECT_TIMEOUT ?? 10000),

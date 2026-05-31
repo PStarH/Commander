@@ -315,6 +315,8 @@ export interface AgentExecutionContext {
 availableTools: string[];
     maxSteps: number;
     tokenBudget: number;
+    outputDir?: string;
+    abortSignal?: AbortSignal;
 }
 
 /**
@@ -370,6 +372,8 @@ export interface AgentExecutionResult {
   totalDurationMs: number;
   error?: string;
   outputData?: Record<string, unknown>;
+  /** Content written to files by file_write tool calls during this execution */
+  artifactContent?: string;
 }
 
 /**
@@ -743,6 +747,7 @@ export interface StrategyPerformance {
   totalRuns: number;
   successCount: number;
   avgDurationMs: number;
+  p95DurationMs: number; // 95th percentile duration — tracks tail latency
   avgTokenCost: number;
   successRate: number;
   lastUsed: string;
@@ -774,6 +779,10 @@ export type FailureCategory =
   | 'hallucination'
   | 'dependency_failure'
   | 'quality_gate'
+  | 'rate_limit'
+  | 'authentication'
+  | 'resource_exhaustion'
+  | 'data_validation'
   | 'unclassified';
 
 /**

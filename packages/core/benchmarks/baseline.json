@@ -1,8 +1,8 @@
 {
   "benchmarks": [
-    { "name": "GAIA", "score": 69.7, "date": "2026-05-18" },
-    { "name": "BFCL-Parameter", "score": 91.4, "date": "2026-05-17" },
-    { "name": "BFCL-Selection", "score": 60.0, "date": "2026-05-17" },
+    { "name": "GAIA", "score": 69.7, "date": "2026-05-18", "note": "Scoring was broken; needs re-run with proper answer extraction" },
+    { "name": "BFCL-Parameter", "score": 85.7, "date": "2026-05-29" },
+    { "name": "BFCL-Selection", "score": 85.7, "date": "2026-05-29" },
     { "name": "MT-Bench", "score": 6.6, "date": "2026-05-17" },
     { "name": "PinchBench", "score": 100.0, "date": "2026-05-17" },
     { "name": "HumanEval+", "score": 96.3, "date": "2026-05-16" }

@@ -49,7 +49,7 @@ interface CheckResult {
 export class VerificationTool implements Tool {
   readonly definition = DEFINITION;
   isConcurrencySafe = false;
-  isReadOnly = true;
+  isReadOnly = false; // lint --fix modifies files
   timeout = 300000;
   maxOutputSize = 50000;
 
@@ -119,11 +119,43 @@ export class VerificationTool implements Tool {
   }
 
   private async runTests(cwd: string, pattern: string): Promise<CheckResult> {
+    // SECURITY FIX: sanitize testPattern to prevent command injection
+    // Only allow alphanumeric, glob chars (*, ?, **), slashes, dots, dashes, underscores
+    const sanitizedPattern = pattern ? pattern.replace(/[^a-zA-Z0-9/*_?.\-[\]]/g, '') : '';
+    if (pattern && !sanitizedPattern) {
+      return { name: 'Tests', passed: false, errors: 1, warnings: 0, output: `Invalid test pattern: "${pattern}" contains disallowed characters`, durationMs: 0 };
+    }
+
     if (this.hasTool(cwd, 'node_modules/.bin/vitest')) {
-      return this.runCommand(`npx vitest run ${pattern} 2>&1 || true`, cwd, 'Vitest');
+      // SECURITY FIX: use execFileSync with argv array instead of shell interpolation
+      const args = ['vitest', 'run'];
+      if (sanitizedPattern) args.push(sanitizedPattern);
+      try {
+        const { execFileSync } = require('child_process');
+        const stdout = execFileSync('npx', args, { cwd, timeout: 120000, encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 });
+        return { name: 'Vitest', passed: true, errors: 0, warnings: 0, output: stdout.slice(0, 3000), durationMs: 0 };
+      } catch (e: unknown) {
+        const err = e as { stdout?: string; stderr?: string; message?: string };
+        const output = (err.stdout || err.stderr || err.message || '').slice(0, 3000);
+        const lines = output.split('\n');
+        const errorCount = lines.filter((l: string) => /error/i.test(l)).length || 1;
+        return { name: 'Vitest', passed: false, errors: errorCount, warnings: 0, output, durationMs: 0 };
+      }
     }
     if (this.hasTool(cwd, 'node_modules/.bin/jest')) {
-      return this.runCommand(`npx jest ${pattern} 2>&1 || true`, cwd, 'Jest');
+      const args = ['jest'];
+      if (sanitizedPattern) args.push(sanitizedPattern);
+      try {
+        const { execFileSync } = require('child_process');
+        const stdout = execFileSync('npx', args, { cwd, timeout: 120000, encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 });
+        return { name: 'Jest', passed: true, errors: 0, warnings: 0, output: stdout.slice(0, 3000), durationMs: 0 };
+      } catch (e: unknown) {
+        const err = e as { stdout?: string; stderr?: string; message?: string };
+        const output = (err.stdout || err.stderr || err.message || '').slice(0, 3000);
+        const lines = output.split('\n');
+        const errorCount = lines.filter((l: string) => /error/i.test(l)).length || 1;
+        return { name: 'Jest', passed: false, errors: errorCount, warnings: 0, output, durationMs: 0 };
+      }
     }
     return { name: 'Tests', passed: true, errors: 0, warnings: 0, output: 'No test runner config found (tried vitest, jest).', durationMs: 0 };
   }

@@ -218,7 +218,7 @@ export class CheckpointManager {
       requiredApprovals: type === 'automatic' ? [] : approvers,
       currentApprovals: [],
       createdAt: new Date().toISOString(),
-      expiresAt: timeout ? new Date(Date.now() + timeout).toISOString() : undefined,
+      expiresAt: new Date(Date.now() + (timeout ?? config.timeout ?? 3600000)).toISOString(),
       fallbackAction: config.fallbackOnTimeout,
       context: {
         trigger: `Task execution: ${taskDescription}`,

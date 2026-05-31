@@ -75,7 +75,9 @@ export function getParamDecisions(): readonly ParamDecision[] {
 
 function recordDecision(d: ParamDecision): void {
   paramDecisions.push(d);
-  if (paramDecisions.length > MAX_PARAM_DECISIONS) paramDecisions.shift();
+  if (paramDecisions.length > MAX_PARAM_DECISIONS) {
+    paramDecisions.splice(0, paramDecisions.length - MAX_PARAM_DECISIONS + 200);
+  }
 }
 
 export interface TaskProfile {
@@ -147,7 +149,7 @@ export function classifyTask(userMessage: string, history?: LLMMessage[]): TaskP
   for (const sig of TASK_SIGNATURES) {
     let score = 0;
     for (const kw of sig.keywords) {
-      if (text.includes(kw.toLowerCase())) score += 1;
+      if (text.includes(kw)) score += 1;
     }
     for (const pat of sig.patterns) {
       if (pat.test(text)) score += 2;
@@ -268,7 +270,7 @@ export function applyControllerParams(
 }
 
 export function createParameterControllerPlugin(overrides?: Partial<Record<TaskType, Partial<SamplingParams>>>): CommanderPlugin {
-  // Apply user overrides to defaults
+  // Apply user overrides to defaults (intentional module-level mutation — called once per process)
   if (overrides) {
     for (const [type, params] of Object.entries(overrides)) {
       if (TASK_PARAMS[type as TaskType]) {

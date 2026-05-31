@@ -43,6 +43,9 @@ export class MiMoProvider implements LLMProvider {
     this.defaultModel = config.defaultModel ?? 'mimo-v2.5';
   }
 
+  private static readonly MAX_RETRIES = 4;
+  private static readonly BASE_DELAY_MS = 2000;
+
   async call(request: LLMRequest): Promise<LLMResponse> {
     const model = this.defaultModel || request.model;
     const body = this.buildBody(request, model);
@@ -55,26 +58,42 @@ export class MiMoProvider implements LLMProvider {
 
     const useStreaming = request.cacheConfig?.useCacheControl ?? true;
 
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({ ...body, stream: useStreaming }),
-    });
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt <= MiMoProvider.MAX_RETRIES; attempt++) {
+      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({ ...body, stream: useStreaming }),
+      });
 
-    if (!response.ok) {
+      if (response.ok) {
+        if (useStreaming) {
+          return this.handleStreamingResponse(response, model);
+        }
+        const data = await response.json();
+        return this.parseResponse(data, model);
+      }
+
       const err = await response.text();
-      throw new Error(`MiMo API error ${response.status}: ${err}`);
+      lastError = new Error(`MiMo API error ${response.status}: ${err}`);
+
+      // Only retry on 429 (rate limit) and 503 (service unavailable)
+      if (response.status !== 429 && response.status !== 503) {
+        throw lastError;
+      }
+
+      if (attempt < MiMoProvider.MAX_RETRIES) {
+        // Exponential backoff with jitter: 2s, 4s, 8s, 16s + random 0-1s
+        const delay = MiMoProvider.BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 1000;
+        getGlobalLogger().warn('MiMoProvider', `Rate limited (${response.status}), retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${MiMoProvider.MAX_RETRIES})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
 
-    if (useStreaming) {
-      return this.handleStreamingResponse(response, model);
-    }
-
-    const data = await response.json();
-    return this.parseResponse(data, model);
+    throw lastError!;
   }
 
   private buildBody(request: LLMRequest, model: string): Record<string, unknown> {

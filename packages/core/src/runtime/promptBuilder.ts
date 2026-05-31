@@ -11,6 +11,8 @@ export function buildSystemPrompt(
   config: AgentRuntimeConfig,
   tools: Map<string, Tool>,
   governor: TokenGovernor,
+  registrySummary?: string,
+  activeToolNames?: string[],
 ): string {
   const budgetState = governor.getState();
   const isLowBudget = budgetState.phase === 'tight' || budgetState.phase === 'critical';
@@ -34,7 +36,7 @@ export function buildSystemPrompt(
     .map(name => tools.get(name))
     .filter((t): t is Tool => !!t)
     .flatMap(t => (t.definition.examples ?? []))
-    .slice(0, 40);
+    .slice(0, 8);
   const examplesSection = toolExamples.length > 0
     ? '\n## Tool Usage Examples\n' +
       toolExamples.map(ex => {
@@ -50,31 +52,42 @@ export function buildSystemPrompt(
     ctx.missionId ? `Mission: ${ctx.missionId}` : '',
     '',
     '## Available Tools',
-    ctx.availableTools.map(name => {
+    // Only list active (Tier 1) tools here; Tier 2 tools are in registrySummary below
+    (activeToolNames ?? ctx.availableTools).map(name => {
       const tool = tools.get(name);
       return tool ? `- ${tool.definition.name}: ${tool.definition.description}` : `- ${name}`;
     }).join('\n'),
     examplesSection,
+    // Tier 2: Registry summary (tools available on request)
+    registrySummary ? registrySummary : '',
     '## Governance',
     govProfile,
     '',
     '## Token Budget (self-aware)',
     `- Total budget: ${ctx.tokenBudget} tokens`,
     `- Model: ${routing.modelId} (tier: ${routing.tier})`,
-    '- Be concise. Every token costs money.',
+    isComplexTask(ctx.goal)
+      ? '- This is a complex task. Prioritize completeness and thoroughness. Provide detailed output with examples, analysis, and actionable content. Use your token budget wisely — quality over minimalism.'
+      : '- Be concise. Every token costs money.',
     '- Return structured output when possible (JSON, tool calls) instead of verbose prose.',
     '',
     '## Constraints',
-    `- Maximum ${config.maxStepsPerRun} steps`,
-    '- Prioritize accuracy over completeness when budget is constrained.',
+    `- Max ${config.maxStepsPerRun} steps. Prioritize accuracy when budget is constrained.`,
     '',
-    '## Tool Calling Instructions',
-    '- Do NOT make assumptions about what values to plug into function arguments.',
-    '  If a tool argument value is ambiguous or not clearly specified, ask for clarification.',
-    '- Call one tool at a time unless the calls are clearly independent.',
-    '- Wait for tool results before making follow-up tool calls that depend on them.',
-    '- When a tool returns a validation error, correct your arguments and retry.',
-    '- Provide all required arguments. Do not omit required fields.',
+    '## Tool Calling Rules',
+    '- All required arguments must be provided. Do NOT guess values — ask if ambiguous.',
+    '- Independent tools may be called in parallel; dependent calls must be sequential.',
+    '- On validation error: correct arguments and retry.',
+    '',
+    '## Output Format',
+    isComplexTask(ctx.goal)
+      ? '- Provide comprehensive, well-structured output. Use markdown with headers/code blocks. Include all relevant details. Do NOT truncate prematurely.'
+      : [
+          '- When you have enough information to answer, provide your FINAL answer in this exact format:',
+          '  FINAL ANSWER: <concise answer>',
+          '- The answer should be as short as possible (a number, a name, a word, a phrase).',
+          '- Once you provide FINAL ANSWER, stop — do not continue reasoning.',
+        ].join('\n'),
   ];
 
   return parts.filter(Boolean).join('\n');
@@ -108,5 +121,30 @@ export function buildCacheAwareUserPrompt(
     ctx.goal,
     '',
     formatHint,
-  ].join('\n');
+    '',
+    // Adaptive output guidance based on task complexity
+    isComplexTask(ctx.goal)
+      ? '## Output Quality\nThis is a complex task requiring comprehensive output. Provide detailed, thorough results with full explanations, code examples, and analysis. Do NOT truncate or summarize prematurely. Aim for completeness over brevity.'
+      : '',
+  ].filter(Boolean).join('\n');
+}
+
+/**
+ * Detect whether a task is complex enough to warrant comprehensive output.
+ * Complex tasks: analysis, audit, research, multi-file, refactor, design, implementation.
+ * Simple tasks: factual lookup, single question, short command.
+ */
+function isComplexTask(goal: string): boolean {
+  const complexPatterns = [
+    /\b(analyze|analysis|audit|review|refactor|redesign|implement|architect|design)\b/i,
+    /\b(research|investigate|compare|evaluate|assess|profiler?)\b/i,
+    /\b(multi[- ]?(?:file|module|step|layer))\b/i,
+    /\b(comprehensive|detailed|thorough|complete)\b/i,
+    /\b(security|performance|integration)\b.*\b(audit|test|profile|review)\b/i,
+    /\b(cross[- ]?module|end[- ]?to[- ]?end)\b/i,
+    /\b(write|create|generate|produce)\b.*\b(report|document|plan|strategy|guide)\b/i,
+  ];
+  // Tasks with longer descriptions are generally more complex
+  if (goal.length > 200) return true;
+  return complexPatterns.some(p => p.test(goal));
 }

@@ -50,7 +50,7 @@ export interface GovernorConfig {
 }
 
 const DEFAULT_CONFIG: GovernorConfig = {
-  totalBudget: 64000,
+  totalBudget: 200000,
   thresholds: {
     relaxed: 0.4,
     moderate: 0.65,
@@ -111,16 +111,27 @@ export class TokenGovernor {
   private config: GovernorConfig;
   private usedTokens = 0;
   private taskCategory: TaskCategory = 'general';
-  private history: Array<{ strategy: string; effective: boolean; timestamp: number }> = [];
+  // Ring buffer for history — O(1) insert, no allocation on overflow
+  private history: Array<{ strategy: string; effective: boolean; timestamp: number }>;
+  private historyHead = 0;
+  private historyCount = 0;
   private readonly maxHistory = 500;
   private readonly decayHalfLifeMs = 20 * 60 * 1000; // 20 minutes
+
+  // Pre-bucketed strategy index for O(1) lookups
+  private strategyIndex: Map<string, Array<{ strategy: string; effective: boolean; timestamp: number }>> = new Map();
 
   // Cache for recommendations (invalidated on reportUsage or setTaskCategory)
   private cachedPhase: string | null = null;
   private cachedRecommendations: GovernorDecision[] | null = null;
+  private cachedRecommendationsMap: Map<OptimizationStrategy, GovernorDecision> | null = null;
+
+  // Precompiled CJK regex for fast token estimation (g flag required for match() to return all occurrences)
+  private static readonly CJK_RE = /[一-鿿㐀-䶿]/g;
 
   constructor(config?: Partial<GovernorConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.history = new Array(this.maxHistory);
   }
 
   // ---------------------------------------------------------------------------
@@ -152,6 +163,10 @@ export class TokenGovernor {
     if (budget !== undefined) this.config.totalBudget = budget;
     this.cachedPhase = null;
     this.cachedRecommendations = null;
+    this.cachedRecommendationsMap = null;
+    this.historyHead = 0;
+    this.historyCount = 0;
+    this.strategyIndex.clear();
   }
 
   /** Set task category for strategy selection. Call before first shouldApply(). */
@@ -199,12 +214,15 @@ export class TokenGovernor {
 
     this.cachedPhase = state.phase;
     this.cachedRecommendations = decisions;
+    // Build O(1) lookup map
+    this.cachedRecommendationsMap = new Map(decisions.map(d => [d.strategy, d]));
     return decisions;
   }
 
   shouldApply(strategy: OptimizationStrategy): { apply: boolean; intensity: number } {
-    const recs = this.getRecommendations();
-    const decision = recs.find(d => d.strategy === strategy);
+    // Ensure recommendations are built
+    this.getRecommendations();
+    const decision = this.cachedRecommendationsMap?.get(strategy);
     return decision ? { apply: decision.apply, intensity: decision.intensity } : { apply: false, intensity: 0 };
   }
 
@@ -214,21 +232,44 @@ export class TokenGovernor {
 
   recordOutcome(strategy: string, tokensBefore: number, tokensAfter: number): void {
     if (!this.config.enableLearning) return;
-    this.history.push({
-      strategy,
-      effective: tokensBefore > tokensAfter,
-      timestamp: Date.now(),
-    });
-    if (this.history.length > this.maxHistory) {
-      this.history = this.history.slice(-this.maxHistory);
+    const now = Date.now();
+    const record = { strategy, effective: tokensBefore > tokensAfter, timestamp: now };
+
+    // Ring buffer: O(1) insert
+    if (this.historyCount < this.maxHistory) {
+      this.history[this.historyHead] = record;
+      this.historyHead = (this.historyHead + 1) % this.maxHistory;
+      this.historyCount++;
+    } else {
+      // Evict oldest from strategy index
+      const evicted = this.history[this.historyHead];
+      const evictedList = this.strategyIndex.get(evicted.strategy);
+      if (evictedList) {
+        const idx = evictedList.indexOf(evicted);
+        if (idx !== -1) evictedList.splice(idx, 1);
+        if (evictedList.length === 0) this.strategyIndex.delete(evicted.strategy);
+      }
+      this.history[this.historyHead] = record;
+      this.historyHead = (this.historyHead + 1) % this.maxHistory;
     }
+
+    // Update strategy index
+    let list = this.strategyIndex.get(strategy);
+    if (!list) {
+      list = [];
+      this.strategyIndex.set(strategy, list);
+    }
+    list.push(record);
+
     // Invalidate cache since learning may change decisions
     this.cachedPhase = null;
+    this.cachedRecommendationsMap = null;
   }
 
   private strategyEffectiveness(strategy: string): number {
-    const records = this.history.filter(r => r.strategy === strategy);
-    if (records.length < 3) return 0.5;
+    // O(1) lookup via strategy index instead of linear scan
+    const records = this.strategyIndex.get(strategy);
+    if (!records || records.length < 3) return 0.5;
     const now = Date.now();
     let weightedEffective = 0;
     let totalWeight = 0;
@@ -244,9 +285,15 @@ export class TokenGovernor {
   private adjustByLearning(decisions: GovernorDecision[]): GovernorDecision[] {
     return decisions.map(d => {
       const effectiveness = this.strategyEffectiveness(d.strategy);
-      if (effectiveness < 0.3 && d.intensity < 0.8) {
+      // Demote strategies that are consistently ineffective, regardless of intensity
+      if (effectiveness < 0.3) {
         return { ...d, apply: false, reason: `${d.reason} (demoted: ${(effectiveness * 100).toFixed(0)}% effective)` };
       }
+      // Gradually reduce intensity for moderately ineffective strategies
+      if (effectiveness < 0.5) {
+        return { ...d, intensity: Math.max(0.1, d.intensity * effectiveness * 2), reason: `${d.reason} (reduced: ${(effectiveness * 100).toFixed(0)}% effective)` };
+      }
+      // Boost consistently effective strategies
       if (effectiveness > 0.8) {
         return { ...d, intensity: Math.min(1, d.intensity + 0.1) };
       }
@@ -259,12 +306,8 @@ export class TokenGovernor {
   // ---------------------------------------------------------------------------
 
   static estimateTokens(text: string): number {
-    let cjkCount = 0;
-    for (let i = 0; i < text.length; i++) {
-      const code = text.charCodeAt(i);
-      if (code >= 0x4E00 && code <= 0x9FFF) cjkCount++;
-      if (code >= 0x3400 && code <= 0x4DBF) cjkCount++;
-    }
+    // Use precompiled regex for CJK detection — single pass, much faster than char-by-char
+    const cjkCount = (text.match(TokenGovernor.CJK_RE) ?? []).length;
     return Math.ceil((text.length - cjkCount) / 4 + cjkCount / 1.5);
   }
 

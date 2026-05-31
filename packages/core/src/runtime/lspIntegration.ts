@@ -44,6 +44,8 @@ class LSPClient {
   private readonly MAX_DIAGNOSTIC_FILES = 500;
   private readonly MAX_DIAGNOSTICS_PER_FILE = 200;
   private diagnosticsInsertOrder: string[] = [];
+  // O(1) membership check alongside the insert-order array
+  private diagnosticsFileSet: Set<string> = new Set();
 
   constructor(
     private serverCommand: string,
@@ -65,11 +67,17 @@ class LSPClient {
         if (!settled) { settled = true; fn(); }
       };
 
-      const timeout = setTimeout(() => settle(() => reject(new Error('LSP connection timeout'))), 10000);
+      const timeout = setTimeout(() => settle(() => {
+        this.process?.kill();
+        this.process = null;
+        reject(new Error('LSP connection timeout'));
+      }), 10000);
 
       this.process.on('error', (err) => {
         settle(() => {
           clearTimeout(timeout);
+          this.process?.kill();
+          this.process = null;
           reject(new Error(`LSP process error: ${err.message}`));
         });
       });
@@ -188,12 +196,13 @@ class LSPClient {
       this.pendingRequests.set(id, { resolve, reject });
       const msg: LSPMessage = { jsonrpc: '2.0', id, method, params };
       this.process.stdin.write(JSON.stringify(msg) + '\n');
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
           reject(new Error(`LSP request ${method} timed out`));
         }
       }, 15000);
+      if (typeof timer.unref === 'function') timer.unref();
     });
   }
 
@@ -221,11 +230,15 @@ class LSPClient {
         // GAP-20: Evict oldest file entries when map grows too large
         if (!this.diagnostics.has(filePath) && this.diagnostics.size >= this.MAX_DIAGNOSTIC_FILES) {
           const oldest = this.diagnosticsInsertOrder.shift();
-          if (oldest) this.diagnostics.delete(oldest);
+          if (oldest) {
+            this.diagnostics.delete(oldest);
+            this.diagnosticsFileSet.delete(oldest);
+          }
         }
         this.diagnostics.set(filePath, diags);
-        if (!this.diagnosticsInsertOrder.includes(filePath)) {
+        if (!this.diagnosticsFileSet.has(filePath)) {
           this.diagnosticsInsertOrder.push(filePath);
+          this.diagnosticsFileSet.add(filePath);
         }
       }
     } catch (e) { getGlobalLogger().warn('LSP', 'Failed to handle message', { error: (e as Error)?.message }); }

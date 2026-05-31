@@ -24,8 +24,8 @@ export function createPipelineRouter(): Router {
         pattern,
         currentState: machine.getCurrentState().currentStep,
       });
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
     }
   });
 
@@ -42,8 +42,8 @@ export function createPipelineRouter(): Router {
     try {
       const result = await machine.transition(targetState);
       res.json({ result, currentState: machine.getCurrentState() });
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
     }
   });
 
@@ -84,7 +84,7 @@ export function createPipelineRouter(): Router {
       id,
       name: name ?? id,
       projectId: projectId ?? 'default',
-      steps: steps.map((s: any, i: number) => ({
+      steps: steps.map((s: Record<string, unknown>, i: number) => ({
         id: s.id ?? `step-${i}`,
         agentId: s.agentId ?? 'agent-default',
         name: s.name ?? `Step ${i + 1}`,
@@ -128,8 +128,8 @@ export function createPipelineRouter(): Router {
       const result = await runner.run();
       const visualization = visualizeBenchmark(result);
       res.json({ result, visualization });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
     }
   });
 

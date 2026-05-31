@@ -4,3 +4,7 @@ export { cmdStatus, cmdConfig, cmdDoctor, cmdMode } from './commands/manage';
 export { cmdHistory, cmdHistoryView } from './commands/history';
 export { cmdWorkers, cmdGui, cmdSkill, cmdReview, cmdHelp } from './commands/misc';
 export { cmdWorkflow } from './commands/workflow';
+export { cmdBenchmark } from './commands/benchmark';
+export { cmdQuickstart } from './commands/quickstart';
+export { cmdCompletion } from './commands/completion';
+export { cmdFeedback } from './commands/feedback';

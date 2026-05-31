@@ -37,7 +37,18 @@ export function repairToolCallArguments(
 ): RepairResult {
   // Strategy 1: Already an object (Anthropic returns parsed objects)
   if (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)) {
-    return { args: rawArgs as Record<string, unknown>, repairs: [] };
+    // Guard against prototype pollution
+    const args = rawArgs as Record<string, unknown>;
+    if ('__proto__' in args || 'constructor' in args || 'prototype' in args) {
+      const sanitized: Record<string, unknown> = {};
+      for (const key of Object.keys(args)) {
+        if (key !== '__proto__' && key !== 'constructor' && key !== 'prototype') {
+          sanitized[key] = args[key];
+        }
+      }
+      return { args: sanitized, repairs: ['removed dangerous keys'] };
+    }
+    return { args, repairs: [] };
   }
 
   if (typeof rawArgs !== 'string') {

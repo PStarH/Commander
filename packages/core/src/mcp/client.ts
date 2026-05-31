@@ -89,13 +89,21 @@ export class StdioClientTransport implements MCPTransport {
   }
 
   async send(request: JSONRPCRequest): Promise<JSONRPCResponse> {
+    const stdin = this.process!.stdin;
+    if (!stdin) throw new Error('MCP process stdin not available');
     return new Promise((resolve, reject) => {
       const id = request.id ?? ++this.msgId;
       const req = { ...request, id, jsonrpc: '2.0' as const };
-      this.pending.set(id, { resolve, reject });
-      const stdin = this.process!.stdin;
-    if (!stdin) throw new Error('MCP process stdin not available');
-    stdin.write(JSON.stringify(req) + '\n');
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`MCP request timed out after 30s (id: ${id})`));
+      }, 30_000);
+      timeout.unref();
+      this.pending.set(id, {
+        resolve: (v) => { clearTimeout(timeout); resolve(v); },
+        reject: (e) => { clearTimeout(timeout); reject(e); },
+      });
+      stdin.write(JSON.stringify(req) + '\n');
     });
   }
 
@@ -109,12 +117,12 @@ export class StdioClientTransport implements MCPTransport {
    * Only passes safe system variables. Secrets (API_KEY, TOKEN, SECRET, etc.) are excluded.
    */
   private filterEnvironment(): Record<string, string> {
-    const safeVars = ['PATH', 'HOME', 'USER', 'SHELL', 'TERM', 'LANG', 'LC_ALL', 'TMPDIR', 'NODE_PATH', 'PYTHONPATH'];
+    const safeVars = new Set(['PATH', 'HOME', 'USER', 'SHELL', 'TERM', 'LANG', 'LC_ALL', 'TMPDIR', 'NODE_PATH', 'PYTHONPATH']);
     const denyPatterns = ['KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL', 'AUTH', 'PRIVATE'];
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) {
       if (v === undefined) continue;
-      if (safeVars.includes(k)) { env[k] = v; continue; }
+      if (safeVars.has(k)) { env[k] = v; continue; }
       const upper = k.toUpperCase();
       if (denyPatterns.some(p => upper.includes(p))) continue;
       env[k] = v;
@@ -306,6 +314,7 @@ export class MCPClient {
   async disconnect(): Promise<void> {
     await this.transport.close();
     this.initialized = false;
+    this.toolCache = null;
   }
 }
 

@@ -75,8 +75,7 @@ export class WarRoomStore {
            m.status !== 'DONE'
     ).length;
     const completed = missions.filter(m => m.status === 'DONE').length;
-    const manualOnly = manualGovernance > 0 ? manualGovernance : 1;
-    const manualApprovalRate = (manualGovernance / total) * 100;
+    const manualApprovalRate = total > 0 ? (manualGovernance / total) * 100 : 0;
 
     return {
       totalMissions: total,

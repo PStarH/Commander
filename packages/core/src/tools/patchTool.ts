@@ -110,10 +110,12 @@ export class ApplyPatchTool implements Tool {
           if (fileToPatch.endsWith('.ts')) {
             const tscResult = await execSandboxed('npx tsc --noEmit 2>&1 || true', 30, cwd);
             const tscOutput = tscResult.stdout || tscResult.stderr;
-            const errors = tscOutput.split('\n').filter(l => l.includes('error TS')).length;
+            // Split once and reuse
+            const tscLines = tscOutput.split('\n');
+            const errors = tscLines.filter(l => l.includes('error TS')).length;
             if (errors > 0) {
               outputLines.push(`\n⚠️  TypeScript errors after patch: ${errors}`);
-              outputLines.push(tscOutput.split('\n').slice(0, 10).join('\n'));
+              outputLines.push(tscLines.slice(0, 10).join('\n'));
             } else {
               outputLines.push('\n✅ TypeScript validation: clean');
             }

@@ -28,9 +28,27 @@ export class AgentHandoff {
   private checkpointer?: StateCheckpointer;
   private handoffs = new Map<string, HandoffRequest>();
 
+  private readonly UNRESOLVED_TTL_MS = 30 * 60 * 1000; // 30 minutes
+  private pruneTimer: ReturnType<typeof setInterval> | null = null;
+
   constructor(inbox: AgentInbox, checkpointer?: StateCheckpointer) {
     this.inbox = inbox;
     this.checkpointer = checkpointer;
+    this.pruneTimer = setInterval(() => this.pruneUnresolved(), this.UNRESOLVED_TTL_MS);
+    if (this.pruneTimer?.unref) this.pruneTimer.unref();
+  }
+
+  /** Prune handoffs that have been in a non-terminal state for too long */
+  private pruneUnresolved(): void {
+    const threshold = Date.now() - this.UNRESOLVED_TTL_MS;
+    for (const [id, h] of this.handoffs) {
+      if (h.status === 'requested' && new Date(h.createdAt).getTime() < threshold) {
+        h.status = 'failed';
+        h.resolvedAt = new Date().toISOString();
+        h.response = 'Timed out waiting for acceptance';
+      }
+    }
+    this.pruneResolved();
   }
 
   /** Agent A initiates a handoff to Agent B */
@@ -97,6 +115,7 @@ export class AgentHandoff {
       payload: { handoffId },
     });
 
+    this.pruneResolved();
     return handoff;
   }
 
@@ -107,6 +126,21 @@ export class AgentHandoff {
       handoff.status = 'completed';
       handoff.resolvedAt = new Date().toISOString();
     }
+    // Auto-prune resolved handoffs older than 10 minutes
+    this.pruneResolved();
+  }
+
+  /** Remove resolved handoffs older than 10 minutes to prevent unbounded growth */
+  pruneResolved(maxAgeMs: number = 600_000): number {
+    const threshold = Date.now() - maxAgeMs;
+    let removed = 0;
+    for (const [id, h] of this.handoffs) {
+      if (h.resolvedAt && new Date(h.resolvedAt).getTime() < threshold) {
+        this.handoffs.delete(id);
+        removed++;
+      }
+    }
+    return removed;
   }
 
   /** Get handoff details */

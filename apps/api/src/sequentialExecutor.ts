@@ -370,11 +370,12 @@ export class SequentialExecutor {
     promise: Promise<T>,
     timeoutMs: number
   ): Promise<T> {
+    let timer: ReturnType<typeof setTimeout>;
     return Promise.race([
-      promise,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Step timeout exceeded')), timeoutMs)
-      ),
+      promise.finally(() => clearTimeout(timer)),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Step timeout exceeded')), timeoutMs);
+      }),
     ]);
   }
 

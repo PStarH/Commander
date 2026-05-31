@@ -38,6 +38,7 @@ export interface CheckpointState {
 export class StateCheckpointer {
   private baseDir: string;
   private tenantId?: string;
+  private pruneCounter = 0;
 
   constructor(baseDir?: string, tenantId?: string) {
     this.tenantId = tenantId;
@@ -71,6 +72,13 @@ export class StateCheckpointer {
     }
     if (fs.existsSync(tmpPath)) {
       try { fs.unlinkSync(tmpPath); } catch (e) { getGlobalLogger().warn('StateCheckpointer', 'Failed to remove temp file', { error: (e as Error)?.message, runId: state.runId }); }
+    }
+
+    // Auto-prune completed checkpoints periodically (not every completion)
+    this.pruneCounter++;
+    if (this.pruneCounter >= 10) {
+      this.pruneCounter = 0;
+      this.prune(100);
     }
   }
 

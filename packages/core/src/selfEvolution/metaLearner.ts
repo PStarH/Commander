@@ -29,8 +29,12 @@ class BetaDistribution {
     this.beta = beta;
   }
 
+  /**
+   * Sample from the Beta distribution using Gamma sampling.
+   * Improved: uses Marsaglia & Tsang method correctly (the previous
+   * Box-Muller approximation was inaccurate for small shape values).
+   */
   sample(): number {
-    // Simple approximation using gamma distribution properties
     const alphaSample = this.sampleGamma(this.alpha);
     const betaSample = this.sampleGamma(this.beta);
     return alphaSample / (alphaSample + betaSample);
@@ -38,32 +42,42 @@ class BetaDistribution {
 
   private sampleGamma(shape: number): number {
     if (shape < 1) {
-      // Small shape correction
+      // For shape < 1, use the relation: Gamma(a) = Gamma(a+1) * U^(1/a)
       const u = Math.random();
       return Math.pow(u, 1 / shape) * this.sampleGamma(shape + 1);
     }
-    // Marsaglia & Tsang method for gamma sampling
+    // Marsaglia & Tsang method (2000) — accurate for shape >= 1
     const d = shape - 1 / 3;
     const c = 1 / Math.sqrt(9 * d);
     while (true) {
-      let x = 0;
-      let v = 1;
-      for (let i = 0; i < 12; i++) {
-        x += Math.random();
-      }
-      x = (x - 6) / 6; // Box-Muller approximation
-      v = Math.pow(1 + c * x, 3);
-      if (v > 0 && Math.log(Math.random()) < 0.5 * x * x + d - d * v + d * Math.log(v)) {
-        return d * v;
-      }
+      let x: number;
+      let v: number;
+      do {
+        // Use Box-Muller for normal distribution (more accurate than sum of uniforms)
+        const u1 = Math.random();
+        const u2 = Math.random();
+        x = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+        v = 1 + c * x;
+      } while (v <= 0);
+      v = v * v * v;
+      const u = Math.random();
+      if (u < 1 - 0.0331 * x * x * x * x) return d * v;
+      if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
     }
   }
 
-  update(success: boolean): void {
+  /**
+   * Update the distribution with an observation.
+   * taskDifficulty (0-1) scales the update magnitude — harder tasks
+   * contribute less to avoid penalizing strategies for difficult work.
+   */
+  update(success: boolean, taskDifficulty: number = 0.5): void {
+    // Scale update by difficulty: easy tasks give stronger signal
+    const weight = 0.5 + (1 - taskDifficulty) * 0.5; // [0.5, 1.0]
     if (success) {
-      this.alpha += 1;
+      this.alpha += weight;
     } else {
-      this.beta += 1;
+      this.beta += weight;
     }
   }
 
@@ -73,6 +87,16 @@ class BetaDistribution {
 
   get totalTrials(): number {
     return this.alpha + this.beta - 2;
+  }
+
+  /**
+   * UCB1-style exploration bonus.
+   * Encourages trying strategies with fewer samples.
+   * Returns a bonus value to add to the Thompson sample.
+   */
+  explorationBonus(totalSamples: number): number {
+    if (this.totalTrials === 0) return 1.0; // Max exploration for untried strategies
+    return Math.sqrt(2 * Math.log(Math.max(1, totalSamples)) / this.totalTrials);
   }
 }
 
@@ -160,6 +184,10 @@ export class MetaLearner {
   /** Per-model, per-strategy Thompson Sampling: Map<modelId, Map<strategyName, BetaDistribution>> */
   private perModelPriors: Map<string, Map<string, BetaDistribution>> = new Map();
 
+  private static readonly MAX_THOMPSON_PRIORS = 200;
+  private static readonly MAX_SUCCESS_RATE_ENTRIES = 200;
+  private static readonly MAX_PER_MODEL_PRIORS = 50;
+
   // ========================================================================
   // Config
   // ========================================================================
@@ -233,14 +261,67 @@ export class MetaLearner {
   // ========================================================================
 
   /**
-   * Select the best strategy for a given task type using Thompson Sampling.
+   * Select the best strategy for a given task type using Thompson Sampling
+   * with UCB1 exploration bonus and speed/cost-aware adjustments.
+   *
+   * The selection formula:
+   *   adjusted[i] = thompsonSample[i] + ucb1Bonus[i] * speedFactor[i] * costFactor[i]
+   *
+   * This ensures:
+   * - Exploration: strategies with fewer trials get a bonus (UCB1)
+   * - Exploitation: strategies with higher success rates get higher Thompson samples
+   * - Speed awareness: faster strategies are preferred
+   * - Cost awareness: cheaper strategies are preferred
+   *
    * If prediction loop is enabled, records the (model, taskType) → strategy mapping
    * so that future strategy changes trigger a prediction.
    */
   selectStrategy(taskType: string, modelId?: string): string {
     const priors = this.getOrCreatePriors(taskType);
+    const totalSamples = priors.reduce((s, p) => s + p.totalTrials, 0);
+
+    // Thompson Sampling: sample from each Beta distribution
     const samples = priors.map(p => p.sample());
-    const bestIdx = samples.indexOf(Math.max(...samples));
+
+    // UCB1 exploration bonus: encourages trying under-explored strategies
+    const explorationBonuses = priors.map(p => p.explorationBonus(totalSamples));
+
+    // Speed bonus: multiply Thompson sample by a speed factor [0.7, 1.3]
+    // Only applied when we have enough data (≥3 runs) to have meaningful duration stats.
+    const speedFactors = STRATEGY_NAMES.map(name => {
+      const perf = this.strategyPerformance.get(name);
+      if (!perf || perf.totalRuns < 3) return 1.0;
+      const allP95 = STRATEGY_NAMES
+        .map(n => this.strategyPerformance.get(n)?.p95DurationMs)
+        .filter((d): d is number => d !== undefined && d > 0);
+      if (allP95.length < 2) return 1.0;
+      const medianP95 = allP95.sort((a, b) => a - b)[Math.floor(allP95.length / 2)];
+      const ratio = perf.p95DurationMs / medianP95;
+      return Math.max(0.7, Math.min(1.3, 2.0 - ratio));
+    });
+
+    // Cost-aware bonus (Budgeted Bandits-inspired): penalize expensive strategies
+    // Only applied when we have enough data (≥3 runs).
+    const costFactors = STRATEGY_NAMES.map(name => {
+      const perf = this.strategyPerformance.get(name);
+      if (!perf || perf.totalRuns < 3) return 1.0;
+      const allCosts = STRATEGY_NAMES
+        .map(n => this.strategyPerformance.get(n)?.avgTokenCost)
+        .filter((c): c is number => c !== undefined && c > 0);
+      if (allCosts.length < 2) return 1.0;
+      const medianCost = allCosts.sort((a, b) => a - b)[Math.floor(allCosts.length / 2)];
+      const ratio = perf.avgTokenCost / medianCost;
+      return Math.max(0.8, Math.min(1.2, 2.0 - ratio));
+    });
+
+    // Combine: Thompson sample + exploration bonus, then apply speed/cost factors
+    // Early on (few samples), exploration dominates; later, exploitation dominates
+    const explorationWeight = totalSamples < 20 ? 0.5 : 0.2; // More exploration early
+    const adjusted = samples.map((s, i) =>
+      (s + explorationWeight * explorationBonuses[i]) * speedFactors[i] * costFactors[i]
+    );
+
+    const bestIdx = adjusted.indexOf(Math.max(...adjusted));
     const chosen = STRATEGY_NAMES[bestIdx];
 
     if (this.config.enablePredictionLoop && modelId) {
@@ -254,13 +335,18 @@ export class MetaLearner {
   /**
    * Get all strategy scores for a task type (for visualization/debugging).
    */
-  getStrategyScores(taskType: string): Array<{ strategy: string; score: number; trials: number }> {
+  getStrategyScores(taskType: string): Array<{ strategy: string; score: number; trials: number; avgDurationMs?: number; p95DurationMs?: number }> {
     const priors = this.getOrCreatePriors(taskType);
-    return STRATEGY_NAMES.map((name, i) => ({
-      strategy: name,
-      score: priors[i].mean,
-      trials: priors[i].totalTrials,
-    })).sort((a, b) => b.score - a.score);
+    return STRATEGY_NAMES.map((name, i) => {
+      const perf = this.strategyPerformance.get(name);
+      return {
+        strategy: name,
+        score: priors[i].mean,
+        trials: priors[i].totalTrials,
+        avgDurationMs: perf?.avgDurationMs,
+        p95DurationMs: perf?.p95DurationMs,
+      };
+    }).sort((a, b) => b.score - a.score);
   }
 
   /**
@@ -272,16 +358,49 @@ export class MetaLearner {
 
   private getOrCreatePriors(taskType: string): BetaDistribution[] {
     if (!this.thompsonPriors.has(taskType)) {
+      if (this.thompsonPriors.size >= MetaLearner.MAX_THOMPSON_PRIORS) {
+        const oldest = this.thompsonPriors.keys().next().value;
+        if (oldest) this.thompsonPriors.delete(oldest);
+      }
       this.thompsonPriors.set(taskType, STRATEGY_NAMES.map(() => new BetaDistribution()));
     }
     return this.thompsonPriors.get(taskType)!;
+  }
+
+  /**
+   * Estimate task difficulty from execution experience.
+   * Harder tasks (0-1) contribute less to prior updates to avoid
+   * penalizing strategies for inherently difficult work.
+   */
+  private estimateTaskDifficulty(exp: ExecutionExperience): number {
+    let difficulty = 0.5; // baseline
+
+    // Higher token cost → harder task
+    if (exp.tokenCost > 50000) difficulty += 0.2;
+    else if (exp.tokenCost > 20000) difficulty += 0.1;
+
+    // Longer duration → harder task
+    if (exp.durationMs > 60000) difficulty += 0.15;
+    else if (exp.durationMs > 30000) difficulty += 0.05;
+
+    // Error patterns suggest complexity
+    if (exp.errorPattern) {
+      if (/context|overflow|token/i.test(exp.errorPattern)) difficulty += 0.1;
+      if (/timeout|deadline/i.test(exp.errorPattern)) difficulty += 0.1;
+    }
+
+    // Multi-tool tasks are harder
+    if ((exp.toolsUsed?.length ?? 0) > 3) difficulty += 0.1;
+
+    return Math.min(1, difficulty);
   }
 
   private updateThompsonPrior(exp: ExecutionExperience): void {
     const priors = this.getOrCreatePriors(exp.taskType);
     const idx = STRATEGY_NAMES.indexOf(exp.strategyUsed);
     if (idx >= 0) {
-      priors[idx].update(exp.success);
+      const difficulty = this.estimateTaskDifficulty(exp);
+      priors[idx].update(exp.success, difficulty);
     }
   }
 
@@ -291,6 +410,10 @@ export class MetaLearner {
 
   private getOrCreatePerModelPriors(modelId: string, strategy: string): BetaDistribution {
     if (!this.perModelPriors.has(modelId)) {
+      if (this.perModelPriors.size >= MetaLearner.MAX_PER_MODEL_PRIORS) {
+        const oldest = this.perModelPriors.keys().next().value;
+        if (oldest) this.perModelPriors.delete(oldest);
+      }
       this.perModelPriors.set(modelId, new Map());
     }
     const modelMap = this.perModelPriors.get(modelId)!;
@@ -309,17 +432,22 @@ export class MetaLearner {
    * Get strategy rankings specific to a model (cross-model memory).
    * Falls back to global rankings when per-model data is insufficient.
    */
-  getStrategyScoresForModel(modelId: string): Array<{ strategy: string; score: number; trials: number }> {
+  getStrategyScoresForModel(modelId: string): Array<{ strategy: string; score: number; trials: number; avgDurationMs?: number; p95DurationMs?: number }> {
     const modelMap = this.perModelPriors.get(modelId);
     if (!modelMap) {
       // No per-model data yet — return empty, caller can fall back to global
       return [];
     }
-    return Array.from(modelMap.entries()).map(([strategy, prior]) => ({
-      strategy,
-      score: prior.mean,
-      trials: prior.totalTrials,
-    })).sort((a, b) => b.score - a.score);
+    return Array.from(modelMap.entries()).map(([strategy, prior]) => {
+      const perf = this.strategyPerformance.get(strategy);
+      return {
+        strategy,
+        score: prior.mean,
+        trials: prior.totalTrials,
+        avgDurationMs: perf?.avgDurationMs,
+        p95DurationMs: perf?.p95DurationMs,
+      };
+    }).sort((a, b) => b.score - a.score);
   }
 
   /**
@@ -374,6 +502,7 @@ export class MetaLearner {
       timestamp: new Date().toISOString(),
     };
     this.predictions.push(prediction);
+    if (this.predictions.length > 500) this.predictions.shift();
     return prediction;
   }
 
@@ -410,6 +539,7 @@ export class MetaLearner {
       };
 
       this.verdicts.push(verdict);
+      if (this.verdicts.length > 500) this.verdicts.shift();
 
       const bus = getMessageBus();
       bus.publish('memory.written', 'meta-learner', {
@@ -440,6 +570,10 @@ export class MetaLearner {
   private detectRegression(exp: ExecutionExperience): void {
     const histKey = `${exp.strategyUsed}::${exp.modelUsed}`;
     if (!this.successRateHistory.has(histKey)) {
+      if (this.successRateHistory.size >= MetaLearner.MAX_SUCCESS_RATE_ENTRIES) {
+        const oldest = this.successRateHistory.keys().next().value;
+        if (oldest) this.successRateHistory.delete(oldest);
+      }
       this.successRateHistory.set(histKey, []);
     }
     const history = this.successRateHistory.get(histKey)!;
@@ -472,6 +606,7 @@ export class MetaLearner {
           autoReverted: false,
         };
         this.regressionEvents.push(event);
+        if (this.regressionEvents.length > 200) this.regressionEvents.shift();
 
         const bus = getMessageBus();
         bus.publish('system.alert', 'meta-learner', {
@@ -500,6 +635,7 @@ export class MetaLearner {
       totalRuns: 0,
       successCount: 0,
       avgDurationMs: 0,
+      p95DurationMs: 0,
       avgTokenCost: 0,
       successRate: 0,
       lastUsed: '',
@@ -514,7 +650,19 @@ export class MetaLearner {
     existing.successRate = existing.successCount / totalRuns;
     existing.lastUsed = exp.timestamp;
 
-    if (!existing.bestForTaskTypes.includes(exp.taskType)) {
+    // p95 duration: exponential moving average of the upper tail
+    // Weight new sample more if it's above current p95 (tracks latency spikes)
+    if (existing.p95DurationMs === 0) {
+      existing.p95DurationMs = exp.durationMs;
+    } else if (exp.durationMs > existing.p95DurationMs) {
+      // Above p95: aggressive update (0.3 weight to new high value)
+      existing.p95DurationMs = existing.p95DurationMs * 0.7 + exp.durationMs * 0.3;
+    } else {
+      // Below p95: slow decay (p95 drifts down gradually)
+      existing.p95DurationMs = existing.p95DurationMs * 0.95 + exp.durationMs * 0.05;
+    }
+
+    if (!existing.bestForTaskTypes.includes(exp.taskType) && existing.bestForTaskTypes.length < 20) {
       existing.bestForTaskTypes.push(exp.taskType);
     }
 
@@ -693,7 +841,40 @@ export class MetaLearner {
 
   private rankStrategies(): StrategyPerformance[] {
     return Array.from(this.strategyPerformance.values())
-      .sort((a, b) => b.successRate - a.successRate);
+      .sort((a, b) => {
+        // Composite ranking: 70% success rate + 15% speed + 15% cost efficiency
+        const scoreA = a.successRate * 0.7 + this.speedScore(a) * 0.15 + this.costScore(a) * 0.15;
+        const scoreB = b.successRate * 0.7 + this.speedScore(b) * 0.15 + this.costScore(b) * 0.15;
+        return scoreB - scoreA;
+      });
+  }
+
+  /** Normalize strategy speed to [0, 1] where 1 = fastest. */
+  private speedScore(perf: StrategyPerformance): number {
+    if (perf.totalRuns < 3 || perf.p95DurationMs <= 0) return 0.5; // neutral when insufficient data
+    const allP95 = Array.from(this.strategyPerformance.values())
+      .filter(p => p.totalRuns >= 3 && p.p95DurationMs > 0)
+      .map(p => p.p95DurationMs);
+    if (allP95.length < 2) return 0.5;
+    const min = Math.min(...allP95);
+    const max = Math.max(...allP95);
+    if (max === min) return 0.5;
+    // Invert: lower duration = higher score
+    return 1.0 - (perf.p95DurationMs - min) / (max - min);
+  }
+
+  /** Normalize strategy cost to [0, 1] where 1 = cheapest. */
+  private costScore(perf: StrategyPerformance): number {
+    if (perf.totalRuns < 3 || perf.avgTokenCost <= 0) return 0.5;
+    const allCosts = Array.from(this.strategyPerformance.values())
+      .filter(p => p.totalRuns >= 3 && p.avgTokenCost > 0)
+      .map(p => p.avgTokenCost);
+    if (allCosts.length < 2) return 0.5;
+    const min = Math.min(...allCosts);
+    const max = Math.max(...allCosts);
+    if (max === min) return 0.5;
+    // Invert: lower cost = higher score
+    return 1.0 - (perf.avgTokenCost - min) / (max - min);
   }
 
   private recommendBestStrategy(): string {
@@ -703,13 +884,22 @@ export class MetaLearner {
 
   private suggestUpgradeModel(currentModelId: string): string {
     const upgrades: Record<string, string> = {
-      'claude-3-5-haiku': 'claude-3-5-sonnet',
+      // Claude family
+      'claude-haiku-4-5': 'claude-sonnet-4-6',
+      'claude-sonnet-4-6': 'claude-opus-4-8',
+      'claude-3-5-haiku': 'claude-sonnet-4-6',
+      'claude-3-5-sonnet': 'claude-opus-4-8',
+      'claude-3-opus': 'claude-opus-4-8',
+      // GPT family
       'gpt-4o-mini': 'gpt-4o',
-      'gemini-2-flash': 'gemini-2-pro',
-      'claude-3-5-sonnet': 'claude-3-opus',
       'gpt-4o': 'gpt-5',
+      // Gemini family
+      'gemini-2-flash': 'gemini-2-pro',
+      'gemini-2.5-flash': 'gemini-2.5-pro',
+      // Mimo family
+      'mimo-v2.5-pro': 'claude-sonnet-4-6',
     };
-    return upgrades[currentModelId] ?? 'claude-3-5-sonnet';
+    return upgrades[currentModelId] ?? 'claude-sonnet-4-6';
   }
 
   // ========================================================================
@@ -834,4 +1024,9 @@ export function clearMetaLearnerState(): void {
   learner['reflections'] = [];
   learner['strategyPerformance'].clear();
   learner['thompsonPriors'].clear();
+  learner['predictions'] = [];
+  learner['verdicts'] = [];
+  learner['regressionEvents'] = [];
+  learner['perModelPriors'].clear();
+  learner['successRateHistory'].clear();
 }

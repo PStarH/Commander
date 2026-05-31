@@ -292,15 +292,16 @@ export class SequentialPipelineExecutor {
           context
         );
 
+        let timeoutTimer: ReturnType<typeof setTimeout>;
         const timeoutPromise = new Promise<never>((_, reject) => {
-          const timer = setTimeout(() => {
+          timeoutTimer = setTimeout(() => {
             reject(new Error(`Step timeout after ${timeoutMs}ms`));
           }, timeoutMs);
-          timer.unref();
+          timeoutTimer.unref();
         });
 
         const { output, tokenUsage } = await Promise.race([
-          executionPromise,
+          executionPromise.finally(() => clearTimeout(timeoutTimer)),
           timeoutPromise,
         ]);
 
@@ -328,9 +329,10 @@ export class SequentialPipelineExecutor {
           // Retry
           getGlobalLogger().warn('SequentialPipelineExecutor', `Step ${stepId} failed (attempt ${attempt + 1}/${maxRetries})`, { error: errorMessage });
           // Wait before retry (exponential backoff)
-          await new Promise((resolve) =>
-            setTimeout(resolve, Math.min(1000 * Math.pow(2, attempt), 10000))
-          );
+          await new Promise((resolve) => {
+            const t = setTimeout(resolve, Math.min(1000 * Math.pow(2, attempt), 10000));
+            t.unref();
+          });
         } else {
           // Final failure
           const endTime = Date.now();

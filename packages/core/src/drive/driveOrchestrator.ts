@@ -7,6 +7,7 @@ import { DEFAULT_DRIVE_CONFIG } from './types';
 import { getMessageBus } from '../runtime/messageBus';
 import { getGlobalLogger } from '../logging';
 import { validateShape } from '../runtime/structuredOutput';
+import { callLLMJSON } from '../runtime/llmJsonExtractor';
 
 const PLAN_PROMPT = `You are a Drive Planner. Break the following goal into a sequence of concrete, actionable steps.
 
@@ -53,31 +54,6 @@ interface PlanOutput {
 let stepCounter = 0;
 function generateStepId(): string {
   return `step_${Date.now()}_${++stepCounter}`;
-}
-
-async function callLLMJSON<T>(
-  provider: LLMProvider,
-  model: string,
-  systemPrompt: string,
-  userMessage: string,
-): Promise<{ data: T; tokens: number } | null> {
-  try {
-    const response = await provider.call({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
-      ],
-      temperature: 0.2,
-      maxTokens: 2048,
-    });
-    const cleaned = response.content.trim().replace(/^```(?:json)?\s*|```\s*$/g, '');
-    const data = JSON.parse(cleaned) as T;
-    return { data, tokens: response.usage?.totalTokens ?? 0 };
-  } catch (err) {
-    getGlobalLogger().error('DriveOrchestrator', 'LLM call failed', err as Error);
-    return null;
-  }
 }
 
 export class DriveOrchestrator {

@@ -112,7 +112,6 @@ import { getGlobalLogger } from './logging';
 export class ThreeLayerMemory {
   private memories: Map<string, MemoryEntry> = new Map();
   private config: Record<MemoryLayer, LayerConfig>;
-  private accessOrder: string[] = []; // LRU 顺序
   private embeddingFn: EmbeddingFunction | null = null;
   private embedStore: InMemoryEmbeddingStore = new InMemoryEmbeddingStore();
 
@@ -154,7 +153,6 @@ export class ThreeLayerMemory {
     };
 
     this.memories.set(entry.id, entry);
-    this.accessOrder.push(entry.id);
 
     // Generate embedding if function is configured (fire-and-forget for async)
     if (this.embeddingFn && layer !== 'working') {
@@ -194,17 +192,18 @@ export class ThreeLayerMemory {
     // Episodic 层应用衰减
     if (entry.layer === 'episodic') {
       const config = this.config.episodic;
-      entry.decayScore = Math.max(0, 
+      entry.decayScore = Math.max(0,
         entry.decayScore - config.decayRate * (1 - entry.importance * config.importanceBoost)
       );
     }
 
-    // 更新 LRU 顺序
-    const idx = this.accessOrder.indexOf(entry.id);
-    if (idx > -1) {
-      this.accessOrder.splice(idx, 1);
+    // Procedural 层应用衰减
+    if (entry.layer === 'procedural') {
+      const config = this.config.procedural;
+      entry.decayScore = Math.max(0,
+        entry.decayScore - config.decayRate * (1 - entry.importance * config.importanceBoost)
+      );
     }
-    this.accessOrder.push(entry.id);
   }
 
   /**
@@ -282,10 +281,12 @@ export class ThreeLayerMemory {
    * 获取当前上下文 (working memory)
    */
   getWorkingContext(maxEntries: number = 10): MemoryEntry[] {
-    const working = this.getByLayer('working', maxEntries);
+    const workingSlots = Math.max(1, Math.ceil(maxEntries * 0.7));
+    const episodicSlots = Math.max(1, maxEntries - workingSlots);
+    const working = this.getByLayer('working', workingSlots);
     const recentEpisodic = this.query({
       layer: 'episodic',
-      limit: maxEntries,
+      limit: episodicSlots,
       importanceThreshold: 0.6
     });
     return [...working, ...recentEpisodic].slice(0, maxEntries);
@@ -299,10 +300,6 @@ export class ThreeLayerMemory {
     if (!entry) return false;
 
     this.memories.delete(id);
-    const idx = this.accessOrder.indexOf(id);
-    if (idx > -1) {
-      this.accessOrder.splice(idx, 1);
-    }
     // GAP-18: Also clean up the embedding store to prevent orphaned entries
     this.embedStore.delete(id);
     return true;
@@ -360,22 +357,21 @@ export class ThreeLayerMemory {
    * 应用时间衰减 (定时调用)
    */
   applyTimeDecay(hoursElapsed: number): number {
-    let decayed = 0;
+    const toDelete: string[] = [];
     for (const entry of this.memories.values()) {
-      if (entry.layer === 'episodic') {
-        const config = this.config.episodic;
-        const decay = config.baseDecayPerHour * hoursElapsed * 
+      if (entry.layer === 'episodic' || entry.layer === 'procedural') {
+        const config = this.config[entry.layer];
+        const decay = config.baseDecayPerHour * hoursElapsed *
           (1 - entry.importance * config.importanceBoost);
         entry.decayScore = Math.max(0, entry.decayScore - decay);
-        
-        // 衰减到 0 的记忆自动删除
+
         if (entry.decayScore <= 0) {
-          this.delete(entry.id);
-          decayed++;
+          toDelete.push(entry.id);
         }
       }
     }
-    return decayed;
+    for (const id of toDelete) this.delete(id);
+    return toDelete.length;
   }
 
   /**
@@ -412,11 +408,57 @@ export class ThreeLayerMemory {
   }
 
   /**
-   * 搜索相关记忆
+   * 搜索相关记忆 — combines keyword matching with embedding similarity
    */
   searchRelated(content: string, limit: number = 5): MemoryEntry[] {
-    // 简单的关键词匹配
-    const keywords = content.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    if (!content || !content.trim()) {
+      // Empty query → return most recent important entries
+      return Array.from(this.memories.values())
+        .sort((a, b) => b.importance - a.importance || b.createdAt.localeCompare(a.createdAt))
+        .slice(0, limit);
+    }
+
+    // Use tokenizer for better keyword extraction (handles stop words, min length 2)
+    const keywords = content
+      .toLowerCase()
+      .replace(/[^a-z0-9一-鿿]+/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length >= 2);
+
+    if (keywords.length === 0) {
+      return Array.from(this.memories.values())
+        .sort((a, b) => b.importance - a.importance)
+        .slice(0, limit);
+    }
+
+    // Try embedding-based search first
+    if (this.embeddingFn) {
+      const queryEmb = this.embeddingFn.generate(content);
+      if (!(queryEmb instanceof Promise)) {
+        // Score all entries using embedding similarity + recency + importance
+        const scored: Array<{ entry: MemoryEntry; score: number }> = [];
+        for (const entry of this.memories.values()) {
+          const entryEmb = this.embedStore.getEmbedding(entry.id);
+          const embScore = entryEmb
+            ? calculateMemoryScore(entry, queryEmb, entryEmb)
+            : 0;
+          // Fallback keyword score for entries without embeddings
+          const text = `${entry.content} ${entry.context} ${entry.tags.join(' ')}`.toLowerCase();
+          const kwHits = keywords.filter(kw => text.includes(kw)).length;
+          const kwScore = kwHits / keywords.length;
+          // Blend: 70% embedding if available, 30% keyword
+          const score = entryEmb ? embScore * 0.7 + kwScore * 0.3 : kwScore;
+          if (score > 0) scored.push({ entry, score });
+        }
+        scored.sort((a, b) => b.score - a.score);
+        return scored.slice(0, limit).map(s => {
+          this.updateAccess(s.entry);
+          return s.entry;
+        });
+      }
+    }
+
+    // Fallback: keyword-only search
     return this.query({ keywords, limit });
   }
 

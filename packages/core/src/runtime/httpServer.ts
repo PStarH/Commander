@@ -138,11 +138,14 @@ function authenticate(req: IncomingMessage, authDisabled: boolean, apiKeyHash?: 
 export class CommanderHttpServer {
   private config: HttpServerConfig;
   private server: ReturnType<typeof createNodeHttpServer> | ReturnType<typeof createHttpsServer> | null = null;
-  private runtimes: Map<string, AgentRuntime> = new Map();
+  private runtimes: Map<string, { runtime: AgentRuntime; lastAccessedAt: number }> = new Map();
   private bus = getMessageBus();
   private mcpServer: MCPServer | null = null;
   // Rate limiting: IP → { count, resetAt }
   private rateLimitMap: Map<string, { count: number; resetAt: number }> = new Map();
+  private static readonly SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+  private static readonly MAX_SESSIONS = 200;
+  private sessionCleanupTimer: ReturnType<typeof setInterval> | null = null;
   // Graceful shutdown: track open connections
   private connections: Set<import('net').Socket> = new Set();
   private isShuttingDown = false;
@@ -186,7 +189,10 @@ export class CommanderHttpServer {
         const socket = req.socket;
         this.connections.add(socket);
         res.on('finish', () => { this.connections.delete(socket); });
-        this.handleRequest(req, res);
+        this.handleRequest(req, res).catch(err => {
+          getGlobalLogger().error('HttpServer', 'Unhandled error in request handler', err instanceof Error ? err : new Error(String(err)));
+          if (!res.headersSent) { res.writeHead(500); res.end('Internal Server Error'); }
+        });
       };
       this.server = this.config.https
         ? createHttpsServer(this.config.https, handler)
@@ -200,6 +206,9 @@ export class CommanderHttpServer {
         });
         resolve();
       });
+      // Periodic cleanup of stale sessions and rate limit entries
+      this.sessionCleanupTimer = setInterval(() => this.evictStaleSessions(), 5 * 60_000);
+      if (typeof this.sessionCleanupTimer.unref === 'function') this.sessionCleanupTimer.unref();
     });
   }
 
@@ -209,7 +218,23 @@ export class CommanderHttpServer {
     return addr && typeof addr === 'object' ? addr.port : this.config.port;
   }
 
+  private evictStaleSessions(): void {
+    const now = Date.now();
+    // Evict stale sessions
+    for (const [id, entry] of this.runtimes) {
+      if (now - entry.lastAccessedAt > CommanderHttpServer.SESSION_TTL_MS) {
+        entry.runtime.dispose();
+        this.runtimes.delete(id);
+      }
+    }
+    // Evict stale rate limit entries
+    for (const [ip, entry] of this.rateLimitMap) {
+      if (now > entry.resetAt) this.rateLimitMap.delete(ip);
+    }
+  }
+
   async stop(forceTimeoutMs: number = 10_000): Promise<void> {
+    if (this.sessionCleanupTimer) { clearInterval(this.sessionCleanupTimer); this.sessionCleanupTimer = null; }
     return new Promise((resolve) => {
       if (!this.server) { resolve(); return; }
       this.isShuttingDown = true;
@@ -379,13 +404,14 @@ export class CommanderHttpServer {
           const sessionId = body.sessionId ?? `session_${Date.now()}`;
           const runtime = new AgentRuntime();
           runtime.registerProvider(body.provider ?? 'openai', this.getDefaultProvider(body.provider));
-          this.runtimes.set(sessionId, runtime);
+          this.runtimes.set(sessionId, { runtime, lastAccessedAt: Date.now() });
           sendJson(res, 201, { sessionId, status: 'created' });
           return;
         }
         if (id) {
-          const runtime = this.runtimes.get(id);
-          if (!runtime) { sendJson(res, 404, { error: 'Session not found' }); return; }
+          const entry = this.runtimes.get(id);
+          if (!entry) { sendJson(res, 404, { error: 'Session not found' }); return; }
+          entry.lastAccessedAt = Date.now();
           if (method === 'GET') { sendJson(res, 200, { sessionId: id, status: 'active', sessionCount: this.runtimes.size }); return; }
           if (method === 'DELETE') { this.runtimes.delete(id); sendJson(res, 200, { status: 'deleted' }); return; }
         }
@@ -396,13 +422,21 @@ export class CommanderHttpServer {
           const sessionId = body.sessionId ?? `session_${Date.now()}`;
           // Derive tenantId from API key (never trust request body for tenant)
           const tenantId = this.resolveTenantFromAuth(req);
-          let runtime = this.runtimes.get(sessionId);
-          if (!runtime) {
-            runtime = new AgentRuntime();
+          let entry = this.runtimes.get(sessionId);
+          if (!entry) {
+            // Enforce max sessions cap
+            if (this.runtimes.size >= CommanderHttpServer.MAX_SESSIONS) this.evictStaleSessions();
+            if (this.runtimes.size >= CommanderHttpServer.MAX_SESSIONS) {
+              sendJson(res, 429, { error: 'Maximum sessions reached. Please reuse an existing session.' });
+              return;
+            }
+            const runtime = new AgentRuntime();
             runtime.registerProvider(body.provider ?? 'openai', this.getDefaultProvider(body.provider));
-            this.runtimes.set(sessionId, runtime);
+            entry = { runtime, lastAccessedAt: Date.now() };
+            this.runtimes.set(sessionId, entry);
           }
-          const result = await runtime.execute({
+          entry.lastAccessedAt = Date.now();
+          const result = await entry.runtime.execute({
             agentId: `http-${sessionId}`,
             projectId: 'http-api',
             goal: body.prompt,
@@ -438,8 +472,9 @@ export class CommanderHttpServer {
   private async handleStreamRequest(req: IncomingMessage, res: ServerResponse, segments: string[]): Promise<void> {
     const [, resource, id] = segments;
     if (resource !== 'runtime' || !id) { sendJson(res, 404, { error: 'Not found' }); return; }
-    const runtime = this.runtimes.get(id);
-    if (!runtime) { sendJson(res, 404, { error: 'Session not found' }); return; }
+    const entry = this.runtimes.get(id);
+    if (!entry) { sendJson(res, 404, { error: 'Session not found' }); return; }
+    entry.lastAccessedAt = Date.now();
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
     const stream = new SSEStream();
     stream.pipe(res);

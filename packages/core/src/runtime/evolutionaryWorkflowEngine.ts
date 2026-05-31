@@ -237,16 +237,23 @@ export class EvolutionaryWorkflowEngine {
   ): Promise<number> {
     let score = 0.5;
 
+    // O(n) edge counting: build adjacency counts, check for shared endpoints
+    const endpointCounts = new Map<string, number>();
+    for (const e of dag.edges) {
+      endpointCounts.set(e.from, (endpointCounts.get(e.from) ?? 0) + 1);
+      endpointCounts.set(e.to, (endpointCounts.get(e.to) ?? 0) + 1);
+    }
     const hasParallelism = dag.edges.some(
-      e => dag.edges.filter(e2 => e2.from === e.from || e2.to === e.to).length > 1
+      e => (endpointCounts.get(e.from) ?? 0) > 1 || (endpointCounts.get(e.to) ?? 0) > 1
     );
     if (hasParallelism) score += 0.1;
 
     const nodeCount = dag.nodes.length;
     if (nodeCount >= 2 && nodeCount <= 6) score += 0.15;
 
+    const availableSet = new Set(availableTools);
     const usedTools = new Set(dag.nodes.flatMap(n => n.tools));
-    const validTools = usedTools.size > 0 && [...usedTools].every(t => availableTools.includes(t));
+    const validTools = usedTools.size > 0 && [...usedTools].every(t => availableSet.has(t));
     if (validTools) score += 0.1;
 
     const tiers = new Set(dag.nodes.map(n => n.modelTier));
@@ -272,15 +279,19 @@ export class EvolutionaryWorkflowEngine {
     const edgeRatio = dag.edges.length / Math.max(1, nodeCount);
     if (edgeRatio >= 0.5 && edgeRatio <= 2) score += 0.1;
 
+    const availableSet = new Set(availableTools);
     const allToolsValid = dag.nodes.every(n =>
-      n.tools.length === 0 || n.tools.every(t => availableTools.includes(t))
+      n.tools.length === 0 || n.tools.every(t => availableSet.has(t))
     );
     if (allToolsValid) score += 0.15;
 
     const tiers = new Set(dag.nodes.map(n => n.modelTier));
     if (tiers.size >= 2) score += 0.05;
 
-    const parallelNodes = dag.nodes.filter(n => n.parallelizable).length;
+    let parallelNodes = 0;
+    for (const n of dag.nodes) {
+      if (n.parallelizable) parallelNodes++;
+    }
     if (parallelNodes >= Math.ceil(nodeCount / 2)) score += 0.1;
 
     return Math.min(1, Math.max(0, score));

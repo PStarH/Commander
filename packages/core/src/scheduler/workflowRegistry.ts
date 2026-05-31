@@ -230,4 +230,8 @@ export class WorkflowRegistry {
     }
     return undefined;
   }
+
+  dispose(): void {
+    this.workflows.clear();
+  }
 }

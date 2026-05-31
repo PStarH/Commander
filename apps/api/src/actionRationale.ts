@@ -125,27 +125,29 @@ export class ActionRationaleStore {
    * Get all rationales for a mission
    */
   getByMission(missionId: string): ActionRationale[] {
+    // ISO string comparison — no Date parsing needed
     return this.items.filter(item => item.missionId === missionId)
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      .sort((a, b) => a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0);
   }
 
   /**
    * Get all rationales for an agent
    */
   getByAgent(projectId: string, agentId: string): ActionRationale[] {
-    return this.items.filter(item => 
+    // ISO string comparison — no Date parsing needed
+    return this.items.filter(item =>
       item.projectId === projectId && item.agentId === agentId
-    ).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    ).sort((a, b) => a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0);
   }
 
   /**
    * Get rationales in a time range
    */
   getByTimeRange(start: Date, end: Date): ActionRationale[] {
-    return this.items.filter(item => {
-      const ts = new Date(item.timestamp);
-      return ts >= start && ts <= end;
-    }).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    const startStr = start.toISOString();
+    const endStr = end.toISOString();
+    return this.items.filter(item => item.timestamp >= startStr && item.timestamp <= endStr)
+      .sort((a, b) => a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0);
   }
 
   /**

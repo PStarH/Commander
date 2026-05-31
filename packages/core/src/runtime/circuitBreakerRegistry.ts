@@ -26,6 +26,26 @@ const DEFAULT_BREAKER_CONFIG: BreakerConfig = {
 export class CircuitBreakerRegistry {
   private breakers = new Map<string, CircuitBreaker>();
   private configs = new Map<string, BreakerConfig>();
+  private lastAccess = new Map<string, number>();
+  private readonly MAX_IDLE_MS = 30 * 60 * 1000; // 30 minutes
+  private pruneTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor() {
+    this.pruneTimer = setInterval(() => this.pruneIdle(), this.MAX_IDLE_MS);
+    if (this.pruneTimer?.unref) this.pruneTimer.unref();
+  }
+
+  private pruneIdle(): void {
+    const now = Date.now();
+    for (const [name, breaker] of this.breakers) {
+      const last = this.lastAccess.get(name) ?? 0;
+      if (breaker.getState() === 'CLOSED' && now - last > this.MAX_IDLE_MS) {
+        this.breakers.delete(name);
+        this.configs.delete(name);
+        this.lastAccess.delete(name);
+      }
+    }
+  }
 
   register(name: string, config?: Partial<BreakerConfig>): CircuitBreaker {
     if (this.breakers.has(name)) {
@@ -51,7 +71,9 @@ export class CircuitBreakerRegistry {
   }
 
   get(name: string): CircuitBreaker | undefined {
-    return this.breakers.get(name);
+    const breaker = this.breakers.get(name);
+    if (breaker) this.lastAccess.set(name, Date.now());
+    return breaker;
   }
 
   isAvailable(name: string): boolean {
@@ -84,6 +106,12 @@ export class CircuitBreakerRegistry {
 
   reset(name: string): void {
     this.breakers.get(name)?.reset();
+  }
+
+  /** Remove a breaker from the registry */
+  deregister(name: string): boolean {
+    this.configs.delete(name);
+    return this.breakers.delete(name);
   }
 
   resetAll(): void {

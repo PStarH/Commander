@@ -114,12 +114,14 @@ export class AgentSelfAssessment {
     // 5. 决定拒绝原因
     let refusalReason: string | undefined;
     if (!canHandle) {
+      const reasons: string[] = [];
       if (confidence < this.selfModel.refuseThreshold) {
-        refusalReason = `Confidence ${confidence.toFixed(2)} below threshold ${this.selfModel.refuseThreshold}`;
+        reasons.push(`Confidence ${confidence.toFixed(2)} below threshold ${this.selfModel.refuseThreshold}`);
       }
       if (gaps.length > 0) {
-        refusalReason = `Missing capabilities: ${gaps.join(', ')}`;
+        reasons.push(`Missing capabilities: ${gaps.join(', ')}`);
       }
+      refusalReason = reasons.join('; ');
     }
 
     return {

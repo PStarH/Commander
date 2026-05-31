@@ -9,6 +9,9 @@ import type {
   DeliberationPlan,
   TaskTreeNode,
   ArtifactReference,
+  TaskDAG,
+  TaskDAGNode,
+  TaskDAGEdge,
 } from './types';
 import { DEFAULT_ULTIMATE_CONFIG } from './types';
 import type { ModelTier, TokenUsage } from '../runtime/types';
@@ -31,17 +34,39 @@ import { MultiAgentSynthesizer } from './synthesizer';
 import { ArtifactSystem, getArtifactSystem } from './artifactSystem';
 import { CapabilityRegistry, getCapabilityRegistry } from './capabilityRegistry';
 import { AgentTeamManager, getTeamManager } from './agentTeamManager';
-import { getEffortRules, classifyEffortLevel, selectTopologyForEffort } from './effortScaler';
+import { getEffortRules, classifyEffortLevel } from './effortScaler';
 import { ReflexionTopologicalOptimizer } from './topologyOptimizer';
 import { getEvolutionEngine } from '../runtime/evolutionaryWorkflowEngine';
 import { COST_PER_TOKEN } from '../config/constants';
 import { getGlobalLogger } from '../logging';
 
-let executionCounter = 0;
-
-function generateExecId(): string {
-  return `ultimate_${Date.now()}_${++executionCounter}`;
+function generateExecId(counter: { value: number }): string {
+  return `ultimate_${Date.now()}_${++counter.value}`;
 }
+
+/** Quality score threshold below which auto-fix attempts are worthwhile */
+const QUALITY_FIX_THRESHOLD = 0.7;
+
+/** Maximum auto-fix attempts for quality gate failures */
+const MAX_FIX_ATTEMPTS = 2;
+
+/** Token budget for quality fix agent (targeted fixes, not full regeneration) */
+const QUALITY_FIX_TOKEN_BUDGET = 2000;
+
+/** Maximum steps for quality fix agent */
+const QUALITY_FIX_MAX_STEPS = 2;
+
+/** Minimum synthesis length to accept a fix result */
+const MIN_FIX_RESULT_LENGTH = 50;
+
+/** Minimum ratio of agent-written content to synthesis to prefer agent output */
+const AGENT_CONTENT_PREF_RATIO = 1.2;
+
+/** Minimum agent-written file size to consider */
+const MIN_AGENT_FILE_SIZE = 200;
+
+/** Buffer time in ms before execution start for file modification detection */
+const FILE_DETECTION_BUFFER_MS = 1000;
 
 export class UltimateOrchestrator {
    private config: UltimateOrchestratorConfig;
@@ -57,6 +82,7 @@ export class UltimateOrchestrator {
    private topologyOptimizer: ReflexionTopologicalOptimizer;
    private evolutionEngine: ReturnType<typeof getEvolutionEngine> | null = null;
    private activeExecutions: Map<string, UltimateExecutionContext> = new Map();
+   private executionCounter = { value: 0 };
 
   constructor(
     telos: TELOSOrchestrator,
@@ -97,7 +123,7 @@ this.topologyRouter = new TopologyRouter();
     topology?: OrchestrationTopology;
     onProgress?: (phase: string, detail: string) => void;
   }): Promise<UltimateExecutionResult> {
-    const execId = generateExecId();
+    const execId = generateExecId(this.executionCounter);
     const startTime = Date.now();
     const bus = getMessageBus();
     const tracer = getTraceRecorder();
@@ -115,7 +141,8 @@ this.topologyRouter = new TopologyRouter();
     const ctx = this.buildContext(execId, params);
     this.activeExecutions.set(execId, ctx);
 
-// Phase 1: Deliberation (LLM-powered when a provider is registered)
+    try {
+    // Phase 1: Deliberation (LLM-powered when a provider is registered)
      emit('DELIBERATION', 'Analyzing task requirements...');
      const firstProvider = this.runtime.getProvider('openai')
        ?? this.runtime.getProvider('anthropic')
@@ -133,22 +160,30 @@ this.topologyRouter = new TopologyRouter();
     reasoning.push(...deliberation.reasoning);
     reasoning.push(`Confidence: ${(deliberation.confidence * 100).toFixed(0)}%`);
 
-    // Phase 2: Effort Scaling
+    // Phase 2: Effort Scaling — reuse from deliberation when available to avoid redundant classification
     emit('EFFORT_SCALING', `Classifying effort level...`);
-    const effortLevel = params.effortLevel ?? classifyEffortLevel(params.goal, {
-      toolCount: (params.contextData?.availableTools as string[] | undefined)?.length,
-      riskLevel: (params.contextData?.governanceProfile as Record<string, string> | undefined)?.riskLevel,
-    });
+    const effortLevel = params.effortLevel
+      ?? deliberation.effortLevel
+      ?? classifyEffortLevel(params.goal, {
+        toolCount: (params.contextData?.availableTools as string[] | undefined)?.length,
+        riskLevel: (params.contextData?.governanceProfile as Record<string, string> | undefined)?.riskLevel,
+      });
     ctx.effortLevel = effortLevel;
     const scalingRules = getEffortRules(effortLevel);
     ctx.scalingRules = scalingRules;
     reasoning.push(`Effort level: ${effortLevel} (${scalingRules.minSubAgents}-${scalingRules.maxSubAgents} agents)`);
 
-// Phase 3: Topology Routing
+// Phase 3: Topology Routing — use DAG-aware router when available
      emit('TOPOLOGY_ROUTING', `Selecting orchestration topology...`);
-     const topology = params.topology ?? selectTopologyForEffort(effortLevel);
+     // Build DAG from deliberation for topology-aware routing
+     const taskDAG = this.buildDAGFromDeliberation(deliberation);
+     const topologyResult = this.topologyRouter.route(deliberation, taskDAG);
+     const topology = params.topology
+       ?? (useLLM && deliberation.recommendedTopology ? deliberation.recommendedTopology : topologyResult.topology);
      ctx.topology = topology;
-     reasoning.push(`Topology: ${topology}`);
+     ctx.taskDAG = taskDAG;
+     reasoning.push(...topologyResult.reasoning);
+     reasoning.push(`Topology: ${topology}${useLLM && deliberation.recommendedTopology ? ' (from LLM deliberation)' : ` (from router, expected cost: $${topologyResult.expectedCost.toFixed(4)})`}`);
 
      // Phase 4: Recursive Task Decomposition
     emit('DECOMPOSITION', `Decomposing task into subtasks...`);
@@ -224,7 +259,7 @@ reasoning.push(`Synthesis quality: ${(synthesis.qualityScore * 100).toFixed(0)}%
 
      // Compute execution metrics early for Phase 7.5 optimization
      const totalDurationMs = Date.now() - startTime;
-     const allSuccess = errors.filter(e => !e.recovered).length === 0;
+     const allSuccess = errors.every(e => e.recovered);
      const totalTokens = this.sumTokenUsage(taskTree);
 
      // Phase 7.5: Post-Execution Reflexion Topology Optimization
@@ -260,14 +295,18 @@ if (topologyAction && 'to' in topologyAction) {
      }
 
      // Phase 8: Quality Gates with Reflexion-inspired auto-fix retry loop
+    // Optimized: early exit when score doesn't improve, reduced token budget for fixes
     let finalSynthesis = synthesis.synthesis;
     let finalQualityScore = synthesis.qualityScore;
     let finalGateResults = synthesis.gateResults;
     let previousAttemptSynth = '';
     let previousAttemptScore = 0;
-    for (let fixAttempt = 0; fixAttempt < 2; fixAttempt++) {
+    for (let fixAttempt = 0; fixAttempt < MAX_FIX_ATTEMPTS; fixAttempt++) {
       const failedGates = finalGateResults.filter(g => !g.passed);
       if (failedGates.length === 0) break;
+
+      // Early exit: if score is already above threshold, don't burn tokens on marginal improvements
+      if (finalQualityScore >= QUALITY_FIX_THRESHOLD && fixAttempt > 0) break;
 
       const autoFixGate = failedGates.find(g => {
         const gc = this.config.qualityGates.find(c => c.name === g.gate);
@@ -311,13 +350,13 @@ if (topologyAction && 'to' in topologyAction) {
           goal: fixGoal,
           contextData: params.contextData ?? {},
           availableTools: [],
-          maxSteps: 3,
-          tokenBudget: 4000,
+          maxSteps: QUALITY_FIX_MAX_STEPS,
+          tokenBudget: QUALITY_FIX_TOKEN_BUDGET,
         });
 
         if (fixResult.status === 'success') {
           const fixedSynth = fixResult.summary;
-          if (fixedSynth.length > 50 && fixedSynth !== previousAttemptSynth) {
+          if (fixedSynth.length > MIN_FIX_RESULT_LENGTH && fixedSynth !== previousAttemptSynth) {
             finalSynthesis = fixedSynth;
             // Re-run quality gates on the fixed synthesis
             const recheck = await this.synthesizer.runQualityGatesStrict(
@@ -328,6 +367,12 @@ if (topologyAction && 'to' in topologyAction) {
             finalGateResults = recheck;
             finalQualityScore = recheck.reduce((acc, g) => acc + (g.passed ? g.score : 0), 0) / Math.max(1, recheck.length);
             reasoning.push(`Auto-fix ${fixAttempt + 1}: quality score ${(finalQualityScore * 100).toFixed(0)}%`);
+
+            // Early exit: if fix didn't improve score, don't waste another attempt
+            if (finalQualityScore <= previousAttemptScore) {
+              reasoning.push(`Auto-fix ${fixAttempt + 1}: no score improvement, stopping fix loop`);
+              break;
+            }
           } else {
             reasoning.push(`Auto-fix ${fixAttempt + 1}: produced identical output, skipping`);
           }
@@ -344,7 +389,7 @@ if (topologyAction && 'to' in topologyAction) {
 
     // Record experience for self-evolution with real metrics
     const lessons: string[] = [];
-    for (const gate of synthesis.gateResults) {
+    for (const gate of finalGateResults) {
       if (!gate.passed) lessons.push(`Quality gate "${gate.gate}" scored ${(gate.score * 100).toFixed(0)}% (threshold: ${(this.config.qualityGates.find(g => g.name === gate.gate)?.threshold ?? 0.7) * 100}%)`);
     }
     if (completedCount > 0 && failedCount > 0) {
@@ -365,20 +410,13 @@ if (topologyAction && 'to' in topologyAction) {
     };
     getMetaLearner().recordExperience(exp);
 
-    // Trajectory analysis: classify failures for the meta-learner's next suggestions
-    if (!allSuccess) {
-      this.analyzeExecution(exp, effortLevel).catch(e =>
-        getGlobalLogger().warn('UltimateOrchestrator', 'Trajectory analysis failed', { error: (e as Error)?.message }),
-      );
-    }
-
     // Self-optimize: apply meta-learner suggestions after each execution
     this.applyOptimizationSuggestions(exp);
 
-    // AHE Evolver: auto-tune config based on trajectory failure patterns
+    // Unified trajectory analysis + evolution cycle (deduplicated: single TrajectoryAnalyzer call)
     if (!allSuccess) {
-      this.runEvolutionCycle(exp, effortLevel, topology).catch(e =>
-        getGlobalLogger().warn('UltimateOrchestrator', 'Evolution cycle failed', { error: (e as Error)?.message }),
+      this.analyzeAndEvolve(exp, effortLevel, topology).catch(e =>
+        getGlobalLogger().warn('UltimateOrchestrator', 'Trajectory analysis/evolution failed', { error: (e as Error)?.message }),
       );
     }
 
@@ -399,7 +437,7 @@ if (topologyAction && 'to' in topologyAction) {
 // Store execution result in vector memory for future retrieval
     try {
        const memory = getGlobalThreeLayerMemory();
-       const qualitySummary = synthesis.gateResults.map(g => `${g.gate}=${(g.score * 100).toFixed(0)}%`).join(', ');
+       const qualitySummary = finalGateResults.map(g => `${g.gate}=${(g.score * 100).toFixed(0)}%`).join(', ');
        memory.add(
          `[${allSuccess ? 'SUCCESS' : 'FAIL'}] ${params.goal.slice(0, 200)}`,
         'episodic',
@@ -423,11 +461,211 @@ if (topologyAction && 'to' in topologyAction) {
       startTime,
       topology,
       effortLevel,
-      synthesis.qualityScore,
+      finalQualityScore,
       artifactsCreated.length,
     );
 
-    this.activeExecutions.delete(execId);
+    // Collect actual file content written by agents during execution.
+    // Agents may write to workspace files, /tmp/, or per-agent output dirs.
+    let finalOutput = finalSynthesis;
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      const workspace = process.env.COMMANDER_WORKSPACE || process.cwd();
+      const startTimeMs = startTime - FILE_DETECTION_BUFFER_MS;
+
+      const agentWrittenFiles: Array<{ path: string; content: string; size: number }> = [];
+      const seenPaths = new Set<string>();
+
+      const tryAddFile = (fullPath: string): void => {
+        if (seenPaths.has(fullPath)) return;
+        try {
+          if (!fs.existsSync(fullPath)) return;
+          const stat = fs.statSync(fullPath);
+          if (stat.mtimeMs >= startTimeMs && stat.size > MIN_AGENT_FILE_SIZE) {
+            seenPaths.add(fullPath);
+            agentWrittenFiles.push({
+              path: fullPath,
+              content: fs.readFileSync(fullPath, 'utf-8'),
+              size: stat.size,
+            });
+          }
+        } catch { /* ignore */ }
+      }
+
+      // Method 1: Extract absolute file paths from node results
+      // Look for paths like /tmp/compare-*.md, /tmp/report.md, etc.
+      const completedNodes = this.collectCompletedNodes(taskTree);
+      for (const node of completedNodes) {
+        const resultText = node.fullSubtaskResults || node.result || '';
+        // Match absolute paths with known extensions
+        const absPathMatches = resultText.matchAll(/(?:^|\s)(\/[\w./-]+\.(?:md|txt|json|ts|js|py|html|css|yaml|yml|csv|xml|sh|sql))(?:\s|$|[.,:])/gm);
+        for (const match of absPathMatches) {
+          tryAddFile(match[1]);
+        }
+        // Match relative file names (workspace-relative)
+        const relPathMatches = resultText.matchAll(/(?:[\w.-]+\.(?:md|txt|json|ts|js|py|html|css|yaml|yml))/g);
+        for (const match of relPathMatches) {
+          tryAddFile(path.join(workspace, match[0]));
+        }
+      }
+
+      // Method 2: Extract target file path from the goal itself
+      const goalFilePath = extractOutputFilePath(params.goal);
+      if (goalFilePath) {
+        const resolvedGoal = goalFilePath.startsWith('/') || goalFilePath.startsWith('~')
+          ? goalFilePath.replace(/^~/, process.env.HOME || '')
+          : path.join(workspace, goalFilePath);
+        tryAddFile(resolvedGoal);
+      }
+
+      // Method 3: Scan workspace root for files created during execution
+      try {
+        const entries = fs.readdirSync(workspace, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isFile()) continue;
+          const ext = path.extname(entry.name).toLowerCase();
+          if (!['.md', '.txt', '.json', '.ts', '.js', '.py'].includes(ext)) continue;
+          if (entry.name.startsWith('.') || entry.name === 'package.json') continue;
+          tryAddFile(path.join(workspace, entry.name));
+        }
+      } catch { /* ignore */ }
+
+      // Method 4: Scan /tmp/ for files matching goal patterns
+      try {
+        const tmpFiles = fs.readdirSync('/tmp', { withFileTypes: true });
+        for (const entry of tmpFiles) {
+          if (!entry.isFile()) continue;
+          const ext = path.extname(entry.name).toLowerCase();
+          if (!['.md', '.txt', '.json'].includes(ext)) continue;
+          if (entry.name.startsWith('.') || entry.name.length < 5) continue;
+          tryAddFile(path.join('/tmp', entry.name));
+        }
+      } catch { /* ignore */ }
+
+      // Method 5: Scan per-agent output directories
+      try {
+        const commanderOutputDir = path.join(workspace, '.commander_output');
+        if (fs.existsSync(commanderOutputDir)) {
+          const agentDirs = fs.readdirSync(commanderOutputDir, { withFileTypes: true });
+          for (const agentDir of agentDirs) {
+            if (!agentDir.isDirectory()) continue;
+            const agentPath = path.join(commanderOutputDir, agentDir.name);
+            try {
+              const files = fs.readdirSync(agentPath, { withFileTypes: true });
+              for (const file of files) {
+                if (!file.isFile()) continue;
+                tryAddFile(path.join(agentPath, file.name));
+              }
+            } catch { /* ignore */ }
+          }
+        }
+      } catch { /* ignore */ }
+
+      // If agents wrote substantial content, use that instead of truncated synthesis
+      const totalAgentContent = agentWrittenFiles.reduce((s, f) => s + f.size, 0);
+      if (totalAgentContent > finalSynthesis.length * AGENT_CONTENT_PREF_RATIO && agentWrittenFiles.length > 0) {
+        const combined = agentWrittenFiles
+          .sort((a, b) => b.size - a.size)
+          .map(f => f.content)
+          .join('\n\n---\n\n');
+        finalOutput = combined;
+        reasoning.push(`Combined ${agentWrittenFiles.length} agent-written files (${totalAgentContent} bytes) instead of synthesis (${finalSynthesis.length} bytes)`);
+      }
+
+      // Aggressive fallback: ALWAYS collect ALL available data when output is thin
+      // This ensures we never lose sub-agent work, even when the model produces short summaries
+      {
+        const allResults: string[] = [];
+        const allNodes = flattenTree(taskTree);
+        for (const n of allNodes) {
+          if (n.status !== 'COMPLETED') continue;
+          // Include full subtask results OR result, preferring the longer one
+          const content = n.fullSubtaskResults || n.result;
+          if (content && content.length > 10) {
+            allResults.push(`### ${n.goal.slice(0, 150)}\n\n${content}`);
+          }
+        }
+        // Also include artifact content from the artifact system
+        for (const artifact of allArtifacts) {
+          if (artifact.content && artifact.content.length > 50) {
+            allResults.push(`### Artifact: ${artifact.title}\n\n${artifact.content}`);
+          }
+        }
+        if (allResults.length > 0) {
+          const combinedAll = allResults.join('\n\n---\n\n');
+          // Always use the combined version — it preserves all sub-agent work
+          finalOutput = `# Complete Results\n\n${combinedAll}`;
+          reasoning.push(`Combined ${allResults.length} data sources (${finalOutput.length} bytes)`);
+        }
+      }
+
+      // Deep synthesis: if output is STILL thin, run a dedicated synthesis agent
+      if (finalOutput.length < 5000) {
+        try {
+          const allNodes = flattenTree(taskTree);
+          const subtaskSummary = allNodes
+            .filter(n => n.status === 'COMPLETED')
+            .map(n => `[${n.id}] ${n.goal.slice(0, 150)}: ${(n.fullSubtaskResults || n.result || '').slice(0, 1000)}`)
+            .join('\n\n');
+
+          const deepSynthGoal = [
+            `You are a synthesis agent. Your job is to produce a comprehensive, detailed output based on the original task and sub-agent results.`,
+            ``,
+            `ORIGINAL TASK:`,
+            params.goal.slice(0, 2000),
+            ``,
+            `SUB-AGENT RESULTS:`,
+            subtaskSummary.slice(0, 8000),
+            ``,
+            `INSTRUCTIONS:`,
+            `- Produce a detailed, comprehensive output that addresses the original task`,
+            `- Include specific findings, code examples, and actionable recommendations`,
+            `- Structure the output with clear sections and headers`,
+            `- Write at least 2000 words of substantive content`,
+            `- If the task asks to write to a file, produce the content that should go in that file`,
+          ].join('\n');
+
+          const deepSynthResult = await this.runtime.execute({
+            agentId: `deep-synthesizer-${execId}`,
+            projectId: params.projectId,
+            goal: deepSynthGoal,
+            contextData: params.contextData ?? {},
+            availableTools: (params.contextData?.availableTools as string[]) || [],
+            maxSteps: 10,
+            tokenBudget: 50000,
+          });
+
+          if (deepSynthResult.status === 'success' && deepSynthResult.summary.length > finalOutput.length) {
+            finalOutput = deepSynthResult.summary;
+            reasoning.push(`Deep synthesis: produced ${finalOutput.length} bytes`);
+          }
+        } catch (e) {
+          reasoning.push(`Deep synthesis failed: ${e instanceof Error ? e.message : 'unknown'}`);
+        }
+      }
+    } catch (e) {
+      reasoning.push(`Agent file collection failed: ${e instanceof Error ? e.message : 'unknown'}`);
+    }
+
+    // Write synthesis output to target file if the goal specifies one.
+    // Always write to ensure the file has the full synthesized content.
+    try {
+      const fileIntent = extractOutputFilePath(params.goal);
+      if (fileIntent) {
+        const fs = await import('fs');
+        const path = await import('path');
+        const resolvedPath = fileIntent.startsWith('/') || fileIntent.startsWith('~')
+          ? fileIntent
+          : `${process.cwd()}/${fileIntent}`;
+        const dir = path.dirname(resolvedPath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(resolvedPath, finalOutput, 'utf-8');
+        reasoning.push(`Wrote synthesis output (${finalOutput.length} bytes) to ${resolvedPath}`);
+      }
+    } catch (e) {
+      reasoning.push(`File write failed: ${e instanceof Error ? e.message : 'unknown'}`);
+    }
 
     emit('COMPLETE', `Execution ${allSuccess ? 'succeeded' : 'completed with issues'} (${metrics.totalCostUsd.toFixed(4)} USD)`);
 
@@ -435,13 +673,16 @@ if (topologyAction && 'to' in topologyAction) {
       id: execId,
       status: allSuccess ? 'SUCCESS' : errors.length > 0 ? 'FAILED' : 'PARTIAL',
       summary: `${completedCount}/${countNodes(taskTree)} subtasks completed. ${errors.length} errors.`,
-      synthesis: synthesis.synthesis,
+      synthesis: finalSynthesis,
       artifacts: artifactsCreated,
       executionTree: flattenTree(taskTree),
       metrics,
       errors,
       reasoning,
     };
+    } finally {
+      this.activeExecutions.delete(execId);
+    }
   }
 
   private buildContext(
@@ -617,52 +858,11 @@ case 'strategy_change': {
   }
 
   /**
-   * Run trajectory analysis on a failed execution.
-   * Uses the configured analysis mode (light = zero extra LLM cost).
-   * Results are fed into the meta-learner's next suggestion cycle.
+   * Unified trajectory analysis + evolution cycle.
+   * Single TrajectoryAnalyzer call feeds both failure classification and evolver mutations,
+   * eliminating the duplicate LLM call that previously existed in analyzeExecution + runEvolutionCycle.
    */
-  /**
-   * Run AHE evolution cycle: trajectory analysis → config mutations → predictions.
-   * Only triggers when there are failures and the evolver is active.
-   */
-  private async runEvolutionCycle(exp: ExecutionExperience, effortLevel?: string, taskType?: string): Promise<void> {
-    const config = getMetaLearner()['config'] ?? DEFAULT_META_LEARNER_CONFIG;
-    if (config.analysisMode === 'light' && this.config.qualityGates.every(g => !g.autoFix)) return;
-
-    const mode: AnalysisMode = config.analysisMode ?? 'light';
-    let provider: LLMProvider | undefined = undefined;
-    let model: string | undefined = undefined;
-    if (mode !== 'light' && this.runtime) {
-      provider = this.runtime.getProvider('openai')
-        ?? this.runtime.getProvider('anthropic')
-        ?? this.runtime.getProvider('openrouter')
-        ?? this.runtime.getProvider('mimo')
-        ?? this.runtime.getProvider('deepseek')
-        ?? this.runtime.getProvider('glm')
-        ?? this.runtime.getProvider('xiaomi')
-        ?? this.runtime.getProvider('google');
-      if (provider && effortLevel) {
-        model = this.config.modelTierMapping[effortLevel as EffortLevel] ?? 'gpt-4o-mini';
-      }
-    }
-
-    const analyzer = new TrajectoryAnalyzer(mode, provider, model);
-    const insights = await analyzer.analyze([exp]);
-    if (insights.length === 0) return;
-
-    const evolver = getEvolverAgent();
-    const cycle = evolver.runCycle(insights, this.config, exp, [taskType ?? 'general']);
-    if (cycle.applied > 0) {
-      const bus = getMessageBus();
-      bus.publish('system.alert', 'ultimate-orch', {
-        type: 'evolution_applied',
-        applied: cycle.applied,
-        details: cycle.mutations.map(m => `${m.domain}: ${m.description}`),
-      });
-    }
-  }
-
-  private async analyzeExecution(exp: ExecutionExperience, effortLevel?: string): Promise<void> {
+  private async analyzeAndEvolve(exp: ExecutionExperience, effortLevel?: string, taskType?: string): Promise<void> {
     const config = getMetaLearner()['config'] ?? DEFAULT_META_LEARNER_CONFIG;
     const mode: AnalysisMode = config.analysisMode ?? 'light';
 
@@ -682,9 +882,11 @@ case 'strategy_change': {
       }
     }
 
+    // Single analyzer call — results feed both trajectory insights and evolution
     const analyzer = new TrajectoryAnalyzer(mode, provider, model);
     const insights = await analyzer.analyze([exp]);
 
+    // Publish trajectory insights
     const bus = getMessageBus();
     for (const insight of insights) {
       if (!insight.success) {
@@ -698,6 +900,23 @@ case 'strategy_change': {
         });
       }
     }
+
+    // Feed insights to evolver (previously a second TrajectoryAnalyzer call)
+    if (insights.length > 0) {
+      try {
+        const evolver = getEvolverAgent();
+        const cycle = evolver.runCycle(insights, this.config, exp, [taskType ?? 'general']);
+        if (cycle.applied > 0) {
+          bus.publish('system.alert', 'ultimate-orch', {
+            type: 'evolution_applied',
+            applied: cycle.applied,
+            details: cycle.mutations.map(m => `${m.domain}: ${m.description}`),
+          });
+        }
+      } catch (e) {
+        getGlobalLogger().warn('UltimateOrchestrator', 'Evolution cycle failed', { error: (e as Error)?.message });
+      }
+    }
   }
 
   private sumTokenUsage(taskTree: TaskTreeNode): number {
@@ -709,6 +928,71 @@ case 'strategy_change': {
       }
     }
     return total || Math.ceil(taskTree.goal.length / 3.7) * countNodes(taskTree);
+  }
+
+  private collectCompletedNodes(node: TaskTreeNode): TaskTreeNode[] {
+    const completed: TaskTreeNode[] = [];
+    if (node.status === 'COMPLETED' && node.result) {
+      completed.push(node);
+    }
+    for (const sub of node.subtasks) {
+      completed.push(...this.collectCompletedNodes(sub));
+    }
+    return completed;
+  }
+
+  /**
+   * Build a TaskDAG from the deliberation plan for topology-aware routing.
+   * Creates nodes based on estimated agent count and edges from decomposition strategy.
+   */
+  private buildDAGFromDeliberation(deliberation: DeliberationPlan): TaskDAG {
+    const nodeCount = Math.max(1, deliberation.estimatedAgentCount);
+    const nodes: TaskDAGNode[] = [];
+    const edges: TaskDAGEdge[] = [];
+
+    for (let i = 0; i < nodeCount; i++) {
+      nodes.push({
+        id: `dag_node_${i}`,
+        label: `Subtask ${i + 1}`,
+        estimatedComplexity: Math.ceil(deliberation.estimatedSteps / nodeCount),
+        estimatedTokens: Math.ceil(deliberation.estimatedTokens / nodeCount),
+        requiredCapabilities: deliberation.capabilitiesNeeded,
+        atomic: deliberation.decompositionStrategy === 'NONE',
+      });
+    }
+
+    // Build edges based on decomposition strategy
+    if (deliberation.decompositionStrategy === 'STEP') {
+      // Sequential chain
+      for (let i = 0; i < nodes.length - 1; i++) {
+        edges.push({
+          from: nodes[i].id,
+          to: nodes[i + 1].id,
+          type: 'SEQUENTIAL',
+          dataDependency: true,
+        });
+      }
+    } else if (deliberation.decompositionStrategy === 'ASPECT') {
+      // All independent (parallel)
+      // No edges needed — all nodes can run in parallel
+    } else if (deliberation.decompositionStrategy === 'RECURSIVE') {
+      // Tree structure: first node fans out to the rest
+      for (let i = 1; i < nodes.length; i++) {
+        edges.push({
+          from: nodes[0].id,
+          to: nodes[i].id,
+          type: 'PARALLEL',
+          dataDependency: false,
+        });
+      }
+    }
+
+    return this.topologyRouter.buildDAG(nodes, edges);
+  }
+
+  dispose(): void {
+    this.activeExecutions.clear();
+    this.evolutionEngine = null;
   }
 }
 
@@ -751,4 +1035,29 @@ function flattenTree(node: TaskTreeNode): TaskTreeNode[] {
     nodes.push(...flattenTree(sub));
   }
   return nodes;
+}
+
+/**
+ * Extract the output file path from a goal string, if the goal asks to write/create a file.
+ * Returns the file path or null.
+ */
+function extractOutputFilePath(goal: string): string | null {
+  const extRe = `(?:md|txt|json|ts|js|py|html|css|yaml|yml|csv|xml|sh|sql|go|rs|java|c|cpp|h)`;
+
+  // Pattern 1: verb + any words + "to" + path
+  const toPattern = new RegExp(`(?:write|create|generate|output|produce|save)\\b[^.]*?\\bto\\b\\s+([\\/\\.][\\S]+\\.${extRe})`, 'i');
+  const toMatch = goal.match(toPattern);
+  if (toMatch) return toMatch[1];
+
+  // Pattern 2: verb + path directly (e.g., "write /tmp/file.md")
+  const directPattern = new RegExp(`(?:write|create|generate|output|produce|save)\\s+([\\/\\.][\\S]+\\.${extRe})`, 'i');
+  const directMatch = goal.match(directPattern);
+  if (directMatch) return directMatch[1];
+
+  // Pattern 3: any absolute path with known extension at end of sentence/line
+  const pathPattern = new RegExp(`([\\/][\\S]+\\.${extRe})(?:\\s|$|[.])`, 'i');
+  const pathMatch = goal.match(pathPattern);
+  if (pathMatch) return pathMatch[1];
+
+  return null;
 }

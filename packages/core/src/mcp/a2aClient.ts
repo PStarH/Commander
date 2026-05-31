@@ -107,7 +107,7 @@ export class A2AClient {
       if (A2A_INTERRUPTED_STATES.has(task.status.state)) {
         throw new Error(`Task ${taskId} requires intervention (state: ${task.status.state}): ${task.status.message ?? 'no details'}`);
       }
-      await new Promise(r => setTimeout(r, pollIntervalMs));
+      await new Promise(r => { const t = setTimeout(r, pollIntervalMs); t.unref(); });
     }
     throw new Error(`Task ${taskId} did not complete within ${maxWaitMs}ms (last state: ${(await this.getTask(taskId)).status.state})`);
   }
@@ -178,6 +178,7 @@ export class A2AClient {
   private async fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    timer.unref();
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
       return response;
@@ -246,8 +247,11 @@ export class A2ADiscoveryManager {
     const results = await Promise.allSettled(
       configs.map(cfg => this.discoverAgent(cfg.label, cfg.url, cfg.authToken)),
     );
-    const succeeded = results.filter(r => r.status === 'fulfilled').length;
-    const failed = results.filter(r => r.status === 'rejected').length;
+    let succeeded = 0, failed = 0;
+    for (const r of results) {
+      if (r.status === 'fulfilled') succeeded++;
+      else failed++;
+    }
     if (failed > 0) {
       this.logger.warn('A2ADiscovery', `${failed}/${configs.length} A2A agents failed to connect`);
     }

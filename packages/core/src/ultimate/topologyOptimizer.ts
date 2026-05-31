@@ -365,8 +365,9 @@ class ExecutionAnalyzer {
 
     const visited = new Set<string>();
     const queue = [from];
-    while (queue.length > 0) {
-      const current = queue.shift()!;
+    let queueIdx = 0;
+    while (queueIdx < queue.length) {
+      const current = queue[queueIdx++];
       if (current === to) return true;
       if (visited.has(current)) continue;
       visited.add(current);
@@ -400,6 +401,7 @@ export interface OptimizationResult {
 export class ReflexionTopologicalOptimizer {
   private analyzer = new ExecutionAnalyzer();
   private history: OptimizationResult[] = [];
+  private static readonly MAX_HISTORY = 100;
   private reflectionEngine = getGlobalReflectionEngine();
 
   /**
@@ -438,6 +440,7 @@ export class ReflexionTopologicalOptimizer {
       applied: true,
     };
 
+    if (this.history.length >= ReflexionTopologicalOptimizer.MAX_HISTORY) this.history.shift();
     this.history.push(result);
     return result;
   }
@@ -569,8 +572,8 @@ return {
    * 应用优化操作到任务树
    */
   private applyActions(tree: TaskTreeNode, actions: OptimizationAction[]): TaskTreeNode {
-    // 深拷贝原始树
-    const newTree = JSON.parse(JSON.stringify(tree)) as TaskTreeNode;
+    // Deep clone — structuredClone is faster than JSON.parse(JSON.stringify())
+    const newTree = structuredClone(tree);
 
     for (const action of actions) {
       switch (action.type) {
@@ -662,16 +665,17 @@ for (let i = 0; i < into.length; i++) {
 
   private mergeNodes(tree: TaskTreeNode, nodeIds: string[], into: string): void {
     // 简化的合并：将多个子节点合并到一个
-    const findParent = (node: TaskTreeNode, targetIds: string[]): TaskTreeNode | null => {
+    const nodeIdSet = new Set(nodeIds);
+    const findParent = (node: TaskTreeNode): TaskTreeNode | null => {
       for (const sub of node.subtasks) {
-        if (targetIds.includes(sub.id)) return node;
-        const found = findParent(sub, targetIds);
+        if (nodeIdSet.has(sub.id)) return node;
+        const found = findParent(sub);
         if (found) return found;
       }
       return null;
     };
 
-    const parent = findParent(tree, nodeIds);
+    const parent = findParent(tree);
     if (!parent) return;
 
 const mergedNode: TaskTreeNode = {
@@ -689,14 +693,14 @@ const mergedNode: TaskTreeNode = {
      };
 
     parent.subtasks = [
-      ...parent.subtasks.filter(s => !nodeIds.includes(s.id)),
+      ...parent.subtasks.filter(s => !nodeIdSet.has(s.id)),
       mergedNode,
     ];
   }
 
   private addEdge(tree: TaskTreeNode, fromId: string, toId: string): void {
     const toNode = this.findNodeById(tree, toId);
-    if (toNode && !toNode.dependencies.includes(fromId)) {
+    if (toNode && !new Set(toNode.dependencies).has(fromId)) {
       toNode.dependencies.push(fromId);
     }
   }

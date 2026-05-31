@@ -1,37 +1,13 @@
 {
-  "id": "b25d876eaebf49f49626f5c9d291e89c",
-  "choices": [
-    {
-      "finish_reason": "tool_calls",
-      "index": 0,
-      "message": {
-        "content": "I'll search for TypeScript tutorials for you.",
-        "role": "assistant",
-        "tool_calls": [
-          {
-            "id": "call_d343e06775604b219b292a65",
-            "function": {
-              "arguments": "{\"query\": \"TypeScript tutorials\"}",
-              "name": "web_search"
-            },
-            "type": "function"
-          }
-        ]
-      }
-    }
-  ],
-  "created": 1778999853,
-  "model": "mimo-v2.5-pro",
-  "object": "chat.completion",
-  "usage": {
-    "completion_tokens": 31,
-    "prompt_tokens": 988,
-    "total_tokens": 1019,
-    "completion_tokens_details": {
-      "reasoning_tokens": 0
-    },
-    "prompt_tokens_details": {
-      "cached_tokens": 960
-    }
-  }
+  "input": {
+    "task_id": "s008",
+    "prompt": "search for TypeScript",
+    "cat": "simple",
+    "expected": "web_search"
+  },
+  "output": "{\"tool_calls\":[{\"id\":\"call_8467f400500a441993fea3be\",\"function\":{\"arguments\":\"{\\\"query\\\": \\\"TypeScript\\\"}\",\"name\":\"web_search\"},\"type\":\"function\"}]}",
+  "extracted_answer": "{\"tool_calls\":[{\"id\":\"call_8467f400500a441993fea3be\",\"function\":{\"arguments\":\"{\\\"query\\\": \\\"TypeScript\\\"}\",\"name\":\"web_search\"},\"type\":\"function\"}]}",
+  "correct": true,
+  "toolCorrect": true,
+  "paramCorrect": true
 }

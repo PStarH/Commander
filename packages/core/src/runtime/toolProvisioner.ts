@@ -10,6 +10,115 @@ import { classifyProvisionIntent } from './taskAnalyzer';
 import { ToolResultCache } from './toolResultCache';
 import { getGlobalLogger } from '../logging';
 
+// ============================================================================
+// Provisioned tool result injection config
+// ============================================================================
+
+interface ProvisionConfig {
+  toolName: string;
+  toolCallId: string;
+  label: string;
+  maxOutputChars: number;
+  buildArgs: (goal: string) => Record<string, unknown>;
+  validateOutput?: (output: string) => boolean;
+}
+
+// ============================================================================
+// Shared provisioning helper — eliminates duplicated cache-check-execute pattern
+// ============================================================================
+
+async function provisionTool(
+  config: ProvisionConfig,
+  goal: string,
+  request: LLMRequest,
+  tools: Map<string, Tool>,
+  toolCache: ToolResultCache,
+): Promise<boolean> {
+  const tool = tools.get(config.toolName);
+  if (!tool) return false;
+
+  const toolCall = { id: config.toolCallId, name: config.toolName, arguments: config.buildArgs(goal) };
+  const cached = toolCache.get(toolCall);
+
+  if (cached && !cached.error) {
+    request.messages.push({ role: 'system', content: `[Tool: ${config.label}]\n${cached.output.slice(0, config.maxOutputChars)}` });
+    return true;
+  }
+
+  try {
+    const result = await tool.execute(toolCall.arguments);
+    const isValid = config.validateOutput ? config.validateOutput(result) : (result && !result.startsWith('Error'));
+    if (isValid) {
+      const toolResult: ToolResult = { toolCallId: config.toolCallId, name: config.toolName, output: result, durationMs: 0 };
+      toolCache.set(toolCall, toolResult);
+      request.messages.push({ role: 'system', content: `[Tool: ${config.label}]\n${result.slice(0, config.maxOutputChars)}` });
+      return true;
+    }
+  } catch (e) {
+    getGlobalLogger().debug('AgentRuntime', `Provision ${config.toolName} failed`, { error: (e as Error)?.message });
+  }
+
+  return false;
+}
+
+// ============================================================================
+// Tool provisioning configs
+// ============================================================================
+
+const PROVISION_CONFIGS: ProvisionConfig[] = [
+  {
+    toolName: 'python_execute',
+    toolCallId: 'provision_calc',
+    label: 'Calculation result',
+    maxOutputChars: 500,
+    buildArgs: (goal) => ({ code: `import math\nprint(${goal.replace(/[^0-9+\-*/.() ]/g, '').trim()})` }),
+  },
+  {
+    toolName: 'web_search',
+    toolCallId: 'provision_search',
+    label: 'Web search results',
+    maxOutputChars: 1000,
+    buildArgs: (goal) => ({ query: goal.slice(0, 100), numResults: 3 }),
+  },
+  {
+    toolName: 'file_read',
+    toolCallId: 'provision_read',
+    label: 'File content',
+    maxOutputChars: 2000,
+    buildArgs: (goal) => {
+      const fileMatch = goal.match(/(?:read|open|analyze|load|parse)\s+(?:the\s+)?(?:file\s+)?['"]?([\w./\\-]+\.[a-z]{2,4})['"]?/i);
+      return { path: fileMatch?.[1] ?? '' };
+    },
+    validateOutput: (output) => {
+      // For file_read, we also check that we got a valid path
+      return !output.startsWith('Error') && output.length > 0;
+    },
+  },
+  {
+    toolName: 'code_search',
+    toolCallId: 'provision_search_code',
+    label: 'Code search results',
+    maxOutputChars: 2000,
+    buildArgs: (goal) => {
+      const patternMatch = goal.match(/(TODO|FIXME|HACK|XXX|comment)/i);
+      const pattern = patternMatch?.[1] ?? goal.replace(/count |find |search |all |the |in |this |project |code /gi, '').trim().slice(0, 50);
+      return { pattern, maxResults: 30, contextLines: 2 };
+    },
+    validateOutput: (output) => !output.startsWith('Error') && !output.startsWith('No results'),
+  },
+];
+
+// ============================================================================
+// Intent → config mapping
+// ============================================================================
+
+const INTENT_TO_CONFIG: Record<string, ProvisionConfig> = {
+  calculation: PROVISION_CONFIGS[0],
+  web_search: PROVISION_CONFIGS[1],
+  file_read: PROVISION_CONFIGS[2],
+  code_search: PROVISION_CONFIGS[3],
+};
+
 /**
  * Pre-LLM tool provisioning: detect tool needs and inject results before LLM sees the question.
  * Uses scored intent classification for accuracy.
@@ -20,98 +129,11 @@ export async function provisionTools(
   tools: Map<string, Tool>,
   toolCache: ToolResultCache,
 ): Promise<boolean> {
-  const lower = goal.toLowerCase();
-  let provisioned = false;
-
-  // Use shared scored intent classification
-  const { bestIntent, scores } = classifyProvisionIntent(goal);
+  const { bestIntent } = classifyProvisionIntent(goal);
   if (!bestIntent) return false;
 
-  // --- Calculation ---
-  if (bestIntent === 'calculation' && tools.has('python_execute')) {
-    const calcToolCall = { id: 'provision_calc', name: 'python_execute', arguments: { code: `import math\nprint(${goal.replace(/[^0-9+\-*/.() ]/g, '').trim()})` } };
-    const cached = toolCache.get(calcToolCall);
-    if (cached && !cached.error) {
-      request.messages.push({ role: 'system', content: `[Tool: Calculation result]\n${cached.output.slice(0, 500)}` });
-      provisioned = true;
-    } else {
-      try {
-        const calcResult = await tools.get('python_execute')!.execute({ code: `import math\nprint(${goal.replace(/[^0-9+\-*/.() ]/g, '').trim()})` });
-        if (calcResult && !calcResult.startsWith('Error')) {
-          const toolResult: ToolResult = { toolCallId: 'provision_calc', name: 'python_execute', output: calcResult, durationMs: 0 };
-          toolCache.set(calcToolCall, toolResult);
-          request.messages.push({ role: 'system', content: `[Tool: Calculation result]\n${calcResult.slice(0, 500)}` });
-          provisioned = true;
-        }
-      } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Provision python_execute failed', { error: (e as Error)?.message }); }
-    }
-  }
+  const config = INTENT_TO_CONFIG[bestIntent];
+  if (!config) return false;
 
-  // --- Web search ---
-  if (bestIntent === 'web_search' && tools.has('web_search')) {
-    const searchToolCall = { id: 'provision_search', name: 'web_search', arguments: { query: goal.slice(0, 100), numResults: 3 } };
-    const cached = toolCache.get(searchToolCall);
-    if (cached && !cached.error) {
-      request.messages.push({ role: 'system', content: `[Tool: Web search results]\n${cached.output.slice(0, 1000)}` });
-      provisioned = true;
-    } else {
-      try {
-        const searchResult = await tools.get('web_search')!.execute({ query: goal.slice(0, 100), numResults: 3 });
-        if (searchResult && !searchResult.startsWith('Error')) {
-          const toolResult: ToolResult = { toolCallId: 'provision_search', name: 'web_search', output: searchResult, durationMs: 0 };
-          toolCache.set(searchToolCall, toolResult);
-          request.messages.push({ role: 'system', content: `[Tool: Web search results]\n${searchResult.slice(0, 1000)}` });
-          provisioned = true;
-        }
-      } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Provision web_search failed', { error: (e as Error)?.message }); }
-    }
-  }
-
-  // --- File read ---
-  if (bestIntent === 'file_read' && tools.has('file_read')) {
-    const fileMatch = goal.match(/(?:read|open|analyze|load|parse)\s+(?:the\s+)?(?:file\s+)?['"]?([\w./\\-]+\.[a-z]{2,4})['"]?/i);
-    const filePath = fileMatch?.[1];
-    if (filePath) {
-      const readToolCall = { id: 'provision_read', name: 'file_read', arguments: { path: filePath } };
-      const cached = toolCache.get(readToolCall);
-      if (cached && !cached.error) {
-        request.messages.push({ role: 'system', content: `[Tool: File content]\n${cached.output.slice(0, 2000)}` });
-        provisioned = true;
-      } else {
-        try {
-          const readResult = await tools.get('file_read')!.execute({ path: filePath });
-          if (readResult && !readResult.startsWith('Error')) {
-            const toolResult: ToolResult = { toolCallId: 'provision_read', name: 'file_read', output: readResult, durationMs: 0 };
-            toolCache.set(readToolCall, toolResult);
-            request.messages.push({ role: 'system', content: `[Tool: File content]\n${readResult.slice(0, 2000)}` });
-            provisioned = true;
-          }
-        } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Provision file_read failed', { error: (e as Error)?.message }); }
-      }
-    }
-  }
-
-  // --- Code search ---
-    if (bestIntent === 'code_search' && tools.has('code_search')) {
-    const patternMatch = goal.match(/(TODO|FIXME|HACK|XXX|comment)/i);
-    const pattern = patternMatch?.[1] ?? goal.replace(/count |find |search |all |the |in |this |project |code /gi, '').trim().slice(0, 50);
-    const searchToolCall = { id: 'provision_search_code', name: 'code_search', arguments: { pattern, maxResults: 30, contextLines: 2 } };
-    const cached = toolCache.get(searchToolCall);
-    if (cached && !cached.error) {
-      request.messages.push({ role: 'system', content: `[Tool: Code search results for "${pattern}"]\n${cached.output.slice(0, 2000)}` });
-      provisioned = true;
-    } else {
-      try {
-        const searchResult = await tools.get('code_search')!.execute({ pattern, maxResults: 30, contextLines: 2 });
-        if (searchResult && !searchResult.startsWith('Error') && !searchResult.startsWith('No results')) {
-          const toolResult: ToolResult = { toolCallId: 'provision_search_code', name: 'code_search', output: searchResult, durationMs: 0 };
-          toolCache.set(searchToolCall, toolResult);
-          request.messages.push({ role: 'system', content: `[Tool: Code search results for "${pattern}"]\n${searchResult.slice(0, 2000)}` });
-          provisioned = true;
-        }
-      } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Provision code_search failed', { error: (e as Error)?.message }); }
-    }
-  }
-
-  return provisioned;
+  return provisionTool(config, goal, request, tools, toolCache);
 }

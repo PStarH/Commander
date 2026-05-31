@@ -22,10 +22,10 @@ export interface EvaluationTask {
   id: string;
   name: string;
   description: string;
-  input: any;
-  expectedOutcome?: any;
+  input: unknown;
+  expectedOutcome?: unknown;
   timeoutMs?: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface EvaluationTrial {
@@ -43,12 +43,12 @@ export interface EvaluationTrial {
 export interface TranscriptEntry {
   timestamp: string;
   type: 'input' | 'output' | 'tool_call' | 'tool_result' | 'state_change' | 'error';
-  data: any;
+  data: unknown;
 }
 
 export interface TrialOutcome {
   success: boolean;
-  result?: any;
+  result?: unknown;
   metrics: {
     durationMs: number;
     toolCalls: number;
@@ -63,7 +63,7 @@ export interface GraderResult {
   passed: boolean;
   score?: number;
   explanation?: string;
-  details?: any;
+  details?: unknown;
 }
 
 export interface Grader {
@@ -225,7 +225,7 @@ export class OutcomeVerificationGrader implements Grader {
   
   constructor(
     id: string,
-    private verifier: (outcome: any) => boolean | Promise<boolean>,
+    private verifier: (outcome: unknown) => boolean | Promise<boolean>,
     private description?: string
   ) {
     this.id = id;
@@ -289,7 +289,7 @@ export class EvaluationRunner {
    */
   async runTask(
     task: EvaluationTask,
-    agent: (input: any, transcript: TranscriptEntry[]) => Promise<any>,
+    agent: (input: unknown, transcript: TranscriptEntry[]) => Promise<unknown>,
     config: Partial<EvaluationRunConfig> = {}
   ): Promise<EvaluationTrial[]> {
     const cfg = { ...this.defaultConfig, ...config };
@@ -319,7 +319,7 @@ export class EvaluationRunner {
         
         // Run agent with timeout
         const startTime = Date.now();
-        let result: any;
+        let result: unknown;
         let timeoutReached = false;
         
         try {
@@ -529,14 +529,14 @@ export class TrialIsolation {
   /**
    * Save state before trial
    */
-  saveState(trialId: string, state: any): void {
+  saveState(trialId: string, state: unknown): void {
     this.snapshots.set(trialId, JSON.parse(JSON.stringify(state)));
   }
-  
+
   /**
    * Restore state after trial
    */
-  restoreState(trialId: string): any | null {
+  restoreState(trialId: string): unknown | null {
     const snapshot = this.snapshots.get(trialId);
     if (snapshot) {
       this.snapshots.delete(trialId);

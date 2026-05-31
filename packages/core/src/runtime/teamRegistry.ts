@@ -157,4 +157,8 @@ export class TeamRegistry {
       fs.renameSync(tmpPath, this.manifestPath);
     } catch (e) { getGlobalLogger().warn('TeamRegistry', 'Failed to save team manifest', { error: (e as Error)?.message, manifestPath: this.manifestPath }); }
   }
+
+  dispose(): void {
+    this.teams.clear();
+  }
 }

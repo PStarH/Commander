@@ -329,8 +329,10 @@ allocation.status = 'released';
         case 'completed': completedAllocations++; break;
         case 'failed': failedAllocations++; break;
       }
-      agentWorkloads.set(allocation.ownerId, 
-        (agentWorkloads.get(allocation.ownerId) || 0) + 1);
+      if (allocation.status === 'allocated') {
+        agentWorkloads.set(allocation.ownerId,
+          (agentWorkloads.get(allocation.ownerId) || 0) + 1);
+      }
     }
 
     return {

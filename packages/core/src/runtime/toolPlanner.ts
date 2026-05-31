@@ -14,6 +14,9 @@
 
 import type { ToolCall, Tool } from './types';
 
+const READ_ONLY_PATTERNS = ['read', 'search', 'list', 'fetch', 'browse', 'recall', 'get'];
+const EXPENSIVE_TOOLS = new Set(['shell_execute', 'python_execute', 'agent']);
+
 // ============================================================================
 // Dependency Edge
 // ============================================================================
@@ -335,8 +338,8 @@ export class ToolPlanner {
     if (tool?.isReadOnly) return true;
 
     // Heuristic: common read-only tools
-    const readOnlyPatterns = ['read', 'search', 'list', 'fetch', 'browse', 'recall', 'get'];
-    return readOnlyPatterns.some(p => tc.name.toLowerCase().includes(p));
+    const lower = tc.name.toLowerCase();
+    return READ_ONLY_PATTERNS.some(p => lower.includes(p));
   }
 
   /**
@@ -344,9 +347,7 @@ export class ToolPlanner {
    * Must be read-only AND not expensive.
    */
   private isSpeculativelySafe(tc: ToolCall): boolean {
-    // Don't speculate on tools that might be slow
-    const expensiveTools = ['shell_execute', 'python_execute', 'agent'];
-    return !expensiveTools.includes(tc.name);
+    return !EXPENSIVE_TOOLS.has(tc.name);
   }
 
   /**
@@ -354,10 +355,10 @@ export class ToolPlanner {
    */
   private findSharedResource(a: ToolCall, b: ToolCall): string | undefined {
     const aResources = this.extractResources(a);
-    const bResources = this.extractResources(b);
+    const bResources = new Set(this.extractResources(b));
 
     for (const r of aResources) {
-      if (bResources.includes(r)) return r;
+      if (bResources.has(r)) return r;
     }
     return undefined;
   }

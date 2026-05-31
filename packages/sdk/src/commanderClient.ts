@@ -68,6 +68,7 @@ export class CommanderClient {
   private connected = false;
   private startTime: number = 0;
   private runCount = 0;
+  private activeSessions = 0;
   private eventHandlers: Set<(event: ExecutionEvent) => void> = new Set();
   private unsubBus: (() => void) | null = null;
   private sessions: SessionSummary[] = [];
@@ -144,9 +145,9 @@ export class CommanderClient {
     });
 
     const bus = getMessageBus();
-    const unsub1 = bus.subscribe('agent.started', () => { this.runCount++; });
-    const unsub2 = bus.subscribe('agent.completed', () => { this.runCount++; });
-    const unsub3 = bus.subscribe('agent.failed', () => { this.runCount++; });
+    const unsub1 = bus.subscribe('agent.started', () => { this.activeSessions++; });
+    const unsub2 = bus.subscribe('agent.completed', () => { this.runCount++; this.activeSessions = Math.max(0, this.activeSessions - 1); });
+    const unsub3 = bus.subscribe('agent.failed', () => { this.runCount++; this.activeSessions = Math.max(0, this.activeSessions - 1); });
     this.unsubBus = () => { unsub1(); unsub2(); unsub3(); };
 
     this.connected = true;
@@ -222,7 +223,7 @@ export class CommanderClient {
       model: this.config.model ?? 'auto',
       uptime,
       totalRuns: this.runCount,
-      activeSessions: 1,
+      activeSessions: this.activeSessions,
       memoryUsage: process.memoryUsage().heapUsed,
     };
   }

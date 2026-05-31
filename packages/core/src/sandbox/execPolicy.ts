@@ -28,14 +28,43 @@ export class ExecPolicyEngine {
   }
 
   private loadDefaultRules(): void {
+    // Codex CLI command safety classification (from codex-rs/shell-command/src/command_safety/)
+    // Safe commands — auto-approved without prompting
+    const SAFE_READONLY = [
+      'cat', 'cd', 'cut', 'echo', 'grep', 'head', 'tail', 'less', 'more',
+      'ls', 'pwd', 'stat', 'wc', 'which', 'whoami', 'type', 'find', 'du',
+      'diff', 'sort', 'uniq', 'tr', 'tee', 'xargs', 'basename', 'dirname',
+      'realpath', 'readlink', 'file', 'md5sum', 'sha256sum',
+    ];
+    const SAFE_GIT = [
+      'git status', 'git diff', 'git log', 'git branch', 'git show', 'git blame',
+      'git remote', 'git tag', 'git stash list', 'git rev-parse',
+    ];
+    const SAFE_DEV = [
+      'npm', 'pnpm', 'yarn', 'npx', 'tsc', 'eslint', 'prettier',
+      'jest', 'vitest', 'mocha', 'node', 'python3', 'pip', 'cargo', 'go',
+    ];
+
     this.rules.push(
+      // Safe: read-only commands (priority 1 — lowest, easily overridden)
+      { id: 'allow-readonly', pattern: SAFE_READONLY, decision: 'allow', justification: 'Safe read-only commands (Codex classification)', priority: 1 },
+      { id: 'allow-git-read', pattern: SAFE_GIT, decision: 'allow', justification: 'Safe git read operations', priority: 2 },
+      { id: 'allow-dev', pattern: SAFE_DEV, decision: 'allow', justification: 'Development tooling', priority: 2 },
+
+      // Network: prompt required
       { id: 'default-deny-network', pattern: ['curl', 'wget', 'nc', 'telnet', 'ssh', 'sftp'], decision: 'prompt', justification: 'Network access requires approval', priority: 10 },
-      { id: 'allow-readonly', pattern: ['ls', 'cat', 'head', 'tail', 'less', 'more', 'echo', 'pwd', 'which', 'type'], decision: 'allow', justification: 'Safe read-only commands', priority: 1 },
-      { id: 'allow-dev', pattern: ['npm', 'pnpm', 'yarn', 'npx', 'tsc', 'eslint', 'prettier', 'jest', 'vitest', 'mocha'], decision: 'allow', justification: 'Development tooling', priority: 2 },
-      { id: 'allow-git', pattern: ['git status', 'git diff', 'git log', 'git branch', 'git show', 'git blame'], decision: 'allow', justification: 'Safe git read operations', priority: 2 },
-      { id: 'prompt-destructive', pattern: ['rm -rf', 'rm -r', 'rm -f', 'chmod -R', 'chown -R'], decision: 'prompt', justification: 'Destructive operation requires approval', priority: 30 },
+
+      // Destructive: always prompt
+      { id: 'prompt-destructive', pattern: ['rm -rf', 'rm -r', 'rm -f', 'chmod -R', 'chown -R', 'git reset --hard', 'git clean -f'], decision: 'prompt', justification: 'Destructive operation requires approval', priority: 30 },
+
+      // Dangerous: prompt with strong warning
+      { id: 'forbid-secrets', pattern: ['chmod 777', 'git push --force', 'git push -f'], decision: 'prompt', justification: 'Potentially dangerous operations', priority: 40 },
+
+      // Banned prefixes (from Codex CLI) — inline code execution never auto-approved
+      { id: 'ban-inline-exec', pattern: ['python3 -c', 'python -c', 'bash -lc', 'sh -c', 'node -e', 'perl -e', 'ruby -e', 'osascript', 'php -r'], decision: 'prompt', justification: 'Inline code execution requires approval (Codex banned prefix)', priority: 50 },
+
+      // Forbidden: always blocked
       { id: 'forbid-dangerous', pattern: ['sudo', 'su ', 'passwd', 'mkfs', 'dd if=', '> /dev/', ':(){ :|:& };:'], decision: 'forbidden', justification: 'Dangerous commands are blocked', priority: 100 },
-      { id: 'forbid-secrets', pattern: ['chmod 777', 'git push --force', 'git push -f'], decision: 'prompt', justification: 'Potentially dangerous git operations', priority: 40 },
     );
   }
 
@@ -77,14 +106,35 @@ export class ExecPolicyEngine {
     }
   }
 
+  // Process wrapper prefixes to strip before matching (from Claude Code's permission system)
+  // e.g., "timeout 30 npm test" should match the "npm" rule
+  private static readonly WRAPPER_PREFIXES = ['timeout', 'time', 'nice', 'nohup', 'stdbuf', 'env'];
+
   evaluate(command: string): { decision: PolicyDecision; rule?: PolicyRule; matchedPattern?: string } {
     const normalized = command.toLowerCase().trim();
-    const candidates = this.extractCommandCandidates(command);
+
+    // Strip process wrapper prefixes for matching (Claude Code pattern)
+    let strippedCommand = command;
+    for (const wrapper of ExecPolicyEngine.WRAPPER_PREFIXES) {
+      const re = new RegExp(`^${wrapper}(\\s+(-[a-zA-Z]+|\\d+))*\\s+`, 'i');
+      const match = strippedCommand.match(re);
+      if (match) {
+        strippedCommand = strippedCommand.slice(match[0].length);
+        break; // only strip one wrapper level
+      }
+    }
+
+    const candidates = this.extractCommandCandidates(strippedCommand);
     const sorted = [...this.rules].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+
+    // Evaluate each rule against the (possibly wrapper-stripped) command
+    const effectiveCandidates = strippedCommand !== command
+      ? this.extractCommandCandidates(strippedCommand)
+      : candidates;
 
     for (const rule of sorted) {
       for (const pattern of rule.pattern) {
-        if (this.matchesPattern(candidates, pattern)) {
+        if (this.matchesPattern(candidates, pattern) || this.matchesPattern(effectiveCandidates, pattern)) {
           return { decision: rule.decision, rule, matchedPattern: pattern };
         }
       }
@@ -102,7 +152,17 @@ export class ExecPolicyEngine {
         matchedPattern: '$(',
       };
     }
-    return { decision: 'allow' };
+    // Security: default to 'prompt' for unmatched commands (fail-safe)
+    return {
+      decision: 'prompt',
+      rule: {
+        id: 'default-unknown-command',
+        pattern: ['*'],
+        decision: 'prompt',
+        justification: 'Unknown command — requires review before execution',
+        priority: 0,
+      },
+    };
   }
 
   private matchesPattern(candidates: CommandCandidates, pattern: string): boolean {

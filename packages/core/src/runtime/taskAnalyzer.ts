@@ -62,33 +62,63 @@ export function detectTaskType(goal: string): TaskType {
 // Provision intent classification (shared with provisionTools)
 // ============================================================================
 
+// ============================================================================
+// Precompiled regex for classifyProvisionIntent (avoid per-call RegExp creation)
+// ============================================================================
+
+const RE_CALC_BASIC = /\b(calculate|compute|sum|total|average|percentage?|multiply|divide|subtract|add)\b/i;
+const RE_CALC_UNITS = /\b(distance|area|volume|rate|speed|perimeter|probability)\b/i;
+const RE_CALC_HOW = /how (many|much|far|long|tall|fast)\b/i;
+const RE_CALC_EXPR = /\b\d+\s*[+\-*/.()]\s*\d+/;
+
+const RE_SEARCH_ACTION = /\b(search|look\s+up|retrieve|fetch|browse|scrape)\b/i;
+const RE_SEARCH_WHAT = /\b(what\s+is|who\s+is|where\s+is|when\s+(was|did)|which)\b/i;
+const RE_SEARCH_FACTS = /\b(population|capital|located|founded|invented|discovered|latest|news|current)\b/i;
+const RE_SEARCH_OPINION = /\b(you|your|meaning|opinion|think|believe|feel)\b/i;
+
+const RE_FILE_ACTION = /\b(read|open|load|parse|analyze|examine)\b.*\b(file|data|csv|json|xml|txt|log|config)\b/i;
+const RE_FILE_CONTENTS = /\b(contents? of|list|show me|display)\b.*\b(file|directory|folder|path)\b/i;
+const RE_FILE_EXT = /\.\w{2,4}\b/;
+const RE_FILE_KEYWORDS = /file|read|open|load/i;
+
+const RE_CODE_ACTION = /\b(run|execute|test|debug)\b.*\b(code|script|program|function|module)\b/i;
+const RE_CODE_BUILD = /\b(compile|build|deploy)\b/i;
+
+const RE_CODESEARCH_MARKER = /(TODO|FIXME|HACK|XXX|comment)/i;
+const RE_CODESEARCH_ACTION = /\b(find|search|locate|count|list)\b.*\b(comment|code|pattern|symbol|function|class|import)\b/i;
+const RE_CODESEARCH_SPECIFIC = /\b(count|search|find)\b.*\b(TODO|FIXME|HACK)\b/i;
+const RE_CODESEARCH_REPO = /\b(search|find|look for)\b.*\b(code|in code|in the code|repository)\b/i;
+
+const RE_YOURSELF = /\b(yourself)\b/i;
+const RE_QUESTION_END = /\?$/;
+
 export function classifyProvisionIntent(goal: string): { bestIntent: keyof ProvisionIntentScores | null; scores: ProvisionIntentScores } {
   const lower = goal.toLowerCase();
   const scores: ProvisionIntentScores = { calculation: 0, web_search: 0, file_read: 0, code_exec: 0, code_search: 0 };
 
-  if (/\b(calculate|compute|sum|total|average|percentage?|multiply|divide|subtract|add)\b/i.test(lower)) scores.calculation += 3;
-  if (/\b(distance|area|volume|rate|speed|perimeter|probability)\b/i.test(lower)) scores.calculation += 2;
-  if (/how (many|much|far|long|tall|fast)\b/i.test(lower)) scores.calculation += 1;
-  if (/\b\d+\s*[+\-*/.()]\s*\d+/.test(goal)) scores.calculation += 3;
+  if (RE_CALC_BASIC.test(lower)) scores.calculation += 3;
+  if (RE_CALC_UNITS.test(lower)) scores.calculation += 2;
+  if (RE_CALC_HOW.test(lower)) scores.calculation += 1;
+  if (RE_CALC_EXPR.test(goal)) scores.calculation += 3;
 
-  if (/\b(search|look\s+up|retrieve|fetch|browse|scrape)\b/i.test(lower)) scores.web_search += 3;
-  if (/\b(what\s+is|who\s+is|where\s+is|when\s+(was|did)|which)\b/i.test(lower)) scores.web_search += 2;
-  if (/\b(population|capital|located|founded|invented|discovered|latest|news|current)\b/i.test(lower)) scores.web_search += 2;
-  if (/\?$/.test(goal.trim()) && !scores.calculation && !lower.includes('code') && !/\b(you|your|meaning|opinion|think|believe|feel)\b/i.test(lower)) scores.web_search += 1;
+  if (RE_SEARCH_ACTION.test(lower)) scores.web_search += 3;
+  if (RE_SEARCH_WHAT.test(lower)) scores.web_search += 2;
+  if (RE_SEARCH_FACTS.test(lower)) scores.web_search += 2;
+  if (RE_QUESTION_END.test(goal.trim()) && !scores.calculation && !lower.includes('code') && !RE_SEARCH_OPINION.test(lower)) scores.web_search += 1;
 
-  if (/\b(read|open|load|parse|analyze|examine)\b.*\b(file|data|csv|json|xml|txt|log|config)\b/i.test(lower)) scores.file_read += 3;
-  if (/\b(contents? of|list|show me|display)\b.*\b(file|directory|folder|path)\b/i.test(lower)) scores.file_read += 2;
-  if (/\.\w{2,4}\b/.test(goal) && /file|read|open|load/i.test(lower)) scores.file_read += 2;
+  if (RE_FILE_ACTION.test(lower)) scores.file_read += 3;
+  if (RE_FILE_CONTENTS.test(lower)) scores.file_read += 2;
+  if (RE_FILE_EXT.test(goal) && RE_FILE_KEYWORDS.test(lower)) scores.file_read += 2;
 
-  if (/\b(run|execute|test|debug)\b.*\b(code|script|program|function|module)\b/i.test(lower)) scores.code_exec += 3;
-  if (/\b(compile|build|deploy)\b/i.test(lower)) scores.code_exec += 2;
+  if (RE_CODE_ACTION.test(lower)) scores.code_exec += 3;
+  if (RE_CODE_BUILD.test(lower)) scores.code_exec += 2;
 
-  if (/(TODO|FIXME|HACK|XXX|comment)/i.test(lower)) scores.code_search += 4;
-  if (/\b(find|search|locate|count|list)\b.*\b(comment|code|pattern|symbol|function|class|import)\b/i.test(lower)) scores.code_search += 3;
-  if (/\b(count|search|find)\b.*\b(TODO|FIXME|HACK)\b/i.test(lower)) scores.code_search += 4;
-  if (/\b(search|find|look for)\b.*\b(code|in code|in the code|repository)\b/i.test(lower)) scores.code_search += 3;
+  if (RE_CODESEARCH_MARKER.test(lower)) scores.code_search += 4;
+  if (RE_CODESEARCH_ACTION.test(lower)) scores.code_search += 3;
+  if (RE_CODESEARCH_SPECIFIC.test(lower)) scores.code_search += 4;
+  if (RE_CODESEARCH_REPO.test(lower)) scores.code_search += 3;
 
-  if (/\b(yourself)\b/i.test(lower)) {
+  if (RE_YOURSELF.test(lower)) {
     for (const key of Object.keys(scores) as (keyof ProvisionIntentScores)[]) {
       scores[key] = 0;
     }

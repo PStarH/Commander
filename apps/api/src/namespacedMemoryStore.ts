@@ -247,13 +247,15 @@ export class NamespacedMemoryStore {
       let sortedItems: NamespacedMemoryItem[];
       switch (config.retentionPolicy) {
         case 'fifo':
-          sortedItems = namespaceItems.sort((a, b) => 
-            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          // ISO string comparison — no Date parsing needed
+          sortedItems = namespaceItems.sort((a, b) =>
+            a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0
           );
           break;
         case 'lru':
-          sortedItems = namespaceItems.sort((a, b) => 
-            new Date(a.lastAccessedAt).getTime() - new Date(b.lastAccessedAt).getTime()
+          // ISO string comparison — no Date parsing needed
+          sortedItems = namespaceItems.sort((a, b) =>
+            a.lastAccessedAt < b.lastAccessedAt ? -1 : a.lastAccessedAt > b.lastAccessedAt ? 1 : 0
           );
           break;
         case 'priority':
@@ -370,8 +372,8 @@ export class NamespacedMemoryStore {
       return null;
     }
 
-    // Check expiration
-    if (new Date(item.expiresAt) < new Date()) {
+    // Check expiration (use timestamp to avoid extra Date allocation)
+    if (new Date(item.expiresAt).getTime() < Date.now()) {
       this.items.delete(id);
       this.logAudit({
         action: 'delete',
@@ -500,16 +502,17 @@ export class NamespacedMemoryStore {
       ? query.namespaces.filter(n => accessibleNamespaces.includes(n))
       : accessibleNamespaces;
 
+    const now = Date.now();
     let results = Array.from(this.items.values())
       .filter(item => {
         // Filter by accessible namespaces
         if (!searchNamespaces.includes(item.namespace)) return false;
-        
+
         // Filter by project
         if (item.projectId !== query.projectId) return false;
-        
-        // Filter by expiration
-        if (new Date(item.expiresAt) < new Date()) return false;
+
+        // Filter by expiration (use timestamp comparison to avoid Date allocations)
+        if (new Date(item.expiresAt).getTime() < now) return false;
         
         // Filter by kind
         if (query.kind && item.kind !== query.kind) return false;

@@ -3,7 +3,7 @@ import * as path from 'path';
 import { spawn } from 'child_process';
 import { TaskPool } from '../../orchestration/taskPool';
 import { executeReview, formatReviewOutput, reviewReportToJson, loadReviewGuidelines } from '../../reviewAgent';
-import { createRuntime, loadTools, $, section, kv, bullet, cmdHeader, startSpinner, onboardingMessage } from './_shared';
+import { createRuntime, loadTools, $, section, kv, bullet, cmdHeader, startSpinner, onboardingMessage, fatalError } from './_shared';
 
 export async function cmdWorkers(topics: string[]) {
   if (topics.length === 0) {
@@ -11,7 +11,7 @@ export async function cmdWorkers(topics: string[]) {
   }
 
   const runtime = createRuntime();
-  if (!runtime) { console.error(`  ${$.red}No provider configured${$.reset}`); process.exit(1); }
+  if (!runtime) { fatalError('No API key found.', 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider env var. Run: commander quickstart'); }
 
   const pool = new TaskPool(runtime, {
     maxWorkers: topics.length,
@@ -236,39 +236,56 @@ export async function cmdReview(args: string[]) {
 
 export function cmdHelp() {
   console.log(`
-  ${$.bold}${$.blue}╭──────────────────────────────────────────────╮${$.reset}
-  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander${$.reset} — multi-agent orchestration      ${$.bold}${$.blue}│${$.reset}
-  ${$.bold}${$.blue}│${$.reset}  ${$.dim}619+ tests · 20 providers · GAIA 69.7%${$.reset}       ${$.bold}${$.blue}│${$.reset}
-  ${$.bold}${$.blue}╰──────────────────────────────────────────────╯${$.reset}
+  ${$.bold}${$.blue}╭──────────────────────────────────────────────────╮${$.reset}
+  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander${$.reset} — multi-agent orchestration          ${$.bold}${$.blue}│${$.reset}
+  ${$.bold}${$.blue}│${$.reset}  ${$.dim}619+ tests · 20 providers · GAIA 69.7%${$.reset}           ${$.bold}${$.blue}│${$.reset}
+  ${$.bold}${$.blue}╰──────────────────────────────────────────────────╯${$.reset}
 
-  ${$.bold}GET STARTED${$.reset}
-    Set an API key and run:
+  ${$.bold}QUICK START${$.reset}
     ${$.gray}$ export OPENAI_API_KEY=sk-...${$.reset}
-    ${$.gray}$ commander "Hello, world!"${$.reset}
+    ${$.gray}$ commander quickstart${$.reset}               ${$.dim}Interactive setup guide${$.reset}
+    ${$.gray}$ commander "Hello, world!"${$.reset}           ${$.dim}Quick task analysis${$.reset}
 
-  ${$.bold}COMMANDS${$.reset}
-    ${$.cyan}commander <task>${$.reset}        Quick task analysis
-    ${$.cyan}commander run <task>${$.reset}     Full multi-agent execution
-    ${$.cyan}commander plan <task>${$.reset}    Show deliberation plan
-    ${$.cyan}commander watch <task>${$.reset}   Real-time execution stream
-    ${$.cyan}commander status${$.reset}         System status
-    ${$.cyan}commander config${$.reset}         View / change settings
-    ${$.cyan}commander doctor${$.reset}         Run diagnostics
-    ${$.cyan}commander gui${$.reset}            Start the Agent War Room dashboard
-    ${$.cyan}commander tui${$.reset}            Terminal dashboard (live events, sessions)
-    ${$.cyan}commander workers <topics>${$.reset}  Parallel research workers
-    ${$.cyan}commander company <task>${$.reset}   Company mode execution
-    ${$.cyan}commander goal <task>${$.reset}      Multi-agent goal loop
-    ${$.cyan}commander swarm <task>${$.reset}     Recursive swarm (fission + fusion)
-    ${$.cyan}commander drive <task>${$.reset}     Autonomous drive
-    ${$.cyan}commander skill${$.reset}             Manage learnable skills
-    ${$.cyan}commander mode${$.reset}              Show/set approval mode
-    ${$.cyan}commander review${$.reset}            Review code changes
-    ${$.cyan}commander workflow${$.reset}            Schedule and run repeatable workflows
-    ${$.cyan}commander history${$.reset}           List past execution sessions
+  ${$.bold}CORE${$.reset}
+    ${$.cyan}<task>${$.reset}                     Quick task analysis (default)
+    ${$.cyan}run <task>${$.reset}              Full multi-agent execution
+    ${$.cyan}plan <task>${$.reset}             Show deliberation plan
+    ${$.cyan}watch <task>${$.reset}            Real-time execution stream
+    ${$.cyan}company <task>${$.reset}          Company mode (capability matching + quality gating)
+
+  ${$.bold}ORCHESTRATION${$.reset}
+    ${$.cyan}goal <task>${$.reset}             Multi-agent goal loop (--mode, --budget, --max-rounds)
+    ${$.cyan}swarm <task>${$.reset}            Recursive swarm: fission + fusion (--max-depth, --max-workers)
+    ${$.cyan}drive <task>${$.reset}            Autonomous drive loop (--iterations, --verbose)
+    ${$.cyan}workers [topics]${$.reset}        Parallel research workers (default: 8 AI topics)
+
+  ${$.bold}MANAGEMENT${$.reset}
+    ${$.cyan}status${$.reset}                  System status & active provider
+    ${$.cyan}config${$.reset}                  View/change settings (set, list-providers, list-models, test)
+    ${$.cyan}doctor${$.reset}                  Run diagnostics
+    ${$.cyan}mode [mode]${$.reset}             Show/set approval mode (plan|read-only|suggest|auto-edit|full-auto)
+    ${$.cyan}history${$.reset}                 List past sessions (view, delete, prune)
+
+  ${$.bold}WORKFLOWS${$.reset}
+    ${$.cyan}workflow ls${$.reset}             List available & scheduled workflows
+    ${$.cyan}workflow run <id>${$.reset}       Execute a workflow
+    ${$.cyan}workflow schedule <id>${$.reset}  Schedule (--cron="0 6 * * *" --interval=30m)
+    ${$.cyan}workflow daemon${$.reset}         Start scheduler daemon
+
+  ${$.bold}TOOLS${$.reset}
+    ${$.cyan}skill${$.reset}                   Manage learnable skills (list, view, create, pin, curate)
+    ${$.cyan}review${$.reset}                  Review code changes (--commit, --branch, --json)
+    ${$.cyan}benchmark${$.reset}               A/B benchmark: optimized vs baseline (--tasks, --repeats)
+    ${$.cyan}completion${$.reset}              Shell autocompletion (bash, zsh, fish)
+    ${$.cyan}feedback${$.reset}                Submit feedback (--rating, --bug, --feature)
+    ${$.cyan}gui${$.reset}                     Start Agent War Room dashboard
+    ${$.cyan}tui${$.reset}                     Terminal dashboard (live events, sessions)
 
   ${$.bold}OPTIONS${$.reset}
-    ${$.cyan}--version${$.reset}              Show version
-    ${$.cyan}--help${$.reset}                 Show this help
+    ${$.cyan}--version${$.reset}               Show version
+    ${$.cyan}--help${$.reset}                  Show this help
+    ${$.cyan}--json${$.reset}                  Structured output (review)
+
+  ${$.dim}Run ${$.cyan}commander <command> --help${$.reset}${$.dim} for command-specific help.${$.reset}
   `);
 }

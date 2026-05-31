@@ -38,9 +38,16 @@ export class SSEStream {
   // GAP-28: Heartbeat to keep SSE connections alive through proxies
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private readonly heartbeatIntervalMs: number;
+  /** Reconnection interval in ms (sent to client via `retry:` field) */
+  private readonly retryMs: number;
+  /** Buffer of recent events for Last-Event-ID replay (ring buffer) */
+  private eventBuffer: Array<{ id: number; payload: string }> = [];
+  private readonly maxBufferSize: number;
 
-  constructor(topics?: MessageBusTopic[], heartbeatIntervalMs?: number) {
+  constructor(topics?: MessageBusTopic[], heartbeatIntervalMs?: number, options?: { retryMs?: number; maxBufferSize?: number }) {
     this.heartbeatIntervalMs = heartbeatIntervalMs ?? 30_000;
+    this.retryMs = options?.retryMs ?? 5000;
+    this.maxBufferSize = options?.maxBufferSize ?? 100;
     const bus = getMessageBus();
     const watchTopics: MessageBusTopic[] = topics ?? [
       'agent.started',
@@ -82,17 +89,27 @@ export class SSEStream {
       }, this.heartbeatIntervalMs);
       if (this.heartbeatTimer.unref) this.heartbeatTimer.unref();
     }
+
+    // Send retry interval on connection so clients know how long to wait before reconnecting
+    this.dispatch(`retry: ${this.retryMs}\n\n`);
   }
 
   emitStructured(eventType: StructuredSSEEventType, data: Record<string, unknown>): void {
     if (this.closed) return;
+    const seq = ++this.seqCounter;
     const event: StructuredSSEEvent = {
       event: eventType,
       data,
       timestamp: new Date().toISOString(),
-      seq: ++this.seqCounter,
+      seq,
     };
-    this.dispatch(`event: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`);
+    const payload = `id: ${seq}\nevent: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`;
+    // Buffer for Last-Event-ID replay
+    this.eventBuffer.push({ id: seq, payload });
+    if (this.eventBuffer.length > this.maxBufferSize) {
+      this.eventBuffer.shift();
+    }
+    this.dispatch(payload);
   }
 
   private emitRaw(data: Record<string, unknown>): void {
@@ -128,6 +145,14 @@ export class SSEStream {
     this.emitStructured('tool_call.blocked', { toolName, reason, ...detail });
   }
 
+  /**
+   * Emit an abort event with reason.
+   * Follows Vercel AI SDK pattern for stream abortion.
+   */
+  emitAbort(reason: string): void {
+    this.emitStructured('error.occurred', { type: 'abort', reason });
+  }
+
   emitStatus(status: string, detail?: string): void {
     this.emitStructured('agent.status', { status, detail: detail ?? '' });
   }
@@ -137,6 +162,18 @@ export class SSEStream {
       this.emitStructured('output.completed', { content });
     } else {
       this.emitStructured('output.delta', { content });
+    }
+  }
+
+  /**
+   * Replay events since a given Last-Event-ID.
+   * Used for SSE reconnection — client sends Last-Event-ID header,
+   * server replays missed events to close the gap.
+   */
+  replaySince(lastEventId: number): void {
+    const missed = this.eventBuffer.filter(e => e.id > lastEventId);
+    for (const e of missed) {
+      this.dispatch(e.payload);
     }
   }
 
@@ -159,6 +196,8 @@ export class SSEStream {
 
   close(): void {
     this.closed = true;
+    // Send [DONE] marker (Vercel AI SDK pattern) to signal stream completion
+    this.dispatch('data: [DONE]\n\n');
     // GAP-28: Stop heartbeat timer on close
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);

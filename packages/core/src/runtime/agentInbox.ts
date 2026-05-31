@@ -51,6 +51,7 @@ export class AgentInbox {
     const inbox = this.getOrCreateInbox(msg.to);
     inbox.push(full);
     this.dirtyAgents.add(msg.to);
+    this.autoPruneIfNeeded(msg.to);
   }
 
   /** Get all messages for an agent, optionally filtered by status */
@@ -147,13 +148,40 @@ export class AgentInbox {
     return inbox;
   }
 
+  /** Auto-prune acknowledged/expired messages from an inbox if it exceeds the threshold */
+  private autoPruneIfNeeded(agentId: string): void {
+    const inbox = this.inboxes.get(agentId);
+    if (!inbox || inbox.length < 200) return;
+    const now = Date.now();
+    const before = inbox.length;
+    const pruned = inbox.filter(m => {
+      if (m.status === 'acknowledged') return false;
+      if (m.ttlMs) {
+        const age = now - new Date(m.timestamp).getTime();
+        if (age > m.ttlMs) return false;
+      }
+      return true;
+    });
+    this.inboxes.set(agentId, pruned);
+    if (pruned.length < before) this.dirtyAgents.add(agentId);
+  }
+
   private loadFromDisk(agentId: string): InboxMessage[] {
     const filePath = path.join(this.baseDir, `${agentId}.ndjson`);
     if (!fs.existsSync(filePath)) return [];
     try {
       const raw = fs.readFileSync(filePath, 'utf-8').trim();
       if (!raw) return [];
-      return raw.split('\n').map(line => JSON.parse(line) as InboxMessage);
+      const messages: InboxMessage[] = [];
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          messages.push(JSON.parse(line) as InboxMessage);
+        } catch {
+          getGlobalLogger().warn('AgentInbox', 'Skipping corrupt inbox line', { agentId });
+        }
+      }
+      return messages;
     } catch (e) {
       getGlobalLogger().warn('AgentInbox', 'Failed to load inbox from disk', { error: (e as Error)?.message, agentId });
       return [];

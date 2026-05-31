@@ -1,0 +1,14 @@
+{
+  "benchmark": "swebench",
+  "subset": "verified",
+  "model": "mimo-v2.5",
+  "total": 10,
+  "resolved": 0,
+  "failed": 8,
+  "errors": 2,
+  "resolve_rate": "0.0%",
+  "total_tokens": 193546,
+  "total_duration_ms": 1589055,
+  "avg_duration_ms": 158906,
+  "timestamp": "2026-05-31T07:50:03.277Z"
+}

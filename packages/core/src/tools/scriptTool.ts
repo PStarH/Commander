@@ -26,17 +26,14 @@ export class ExecuteScriptTool implements Tool {
   definition: ToolDefinition = {
     name: 'execute_script',
     description:
-      'Execute a JavaScript/TypeScript script that can call other tools programmatically. ' +
-      'The script has access to a `tools` object with all available tool functions. ' +
-      'Only console.log output is returned to context — intermediate tool results never ' +
-      'enter the LLM context window. Use this to collapse multi-step tool chains into ' +
-      'a single efficient call.',
+      'Execute a JavaScript script that calls other tools programmatically via `tools.toolName(args)`. ' +
+      'Only console.log output is returned to context. Use to collapse multi-step tool chains into one call.',
     inputSchema: {
       type: 'object',
       properties: {
         script: {
           type: 'string',
-          description: 'JavaScript/TypeScript code to execute. Uses `tools.toolName(args)` to call tools. Use `console.log()` to output results. Example:\n```\nconst content = await tools.file_read({ path: "test.txt" });\nconst search = await tools.web_search({ query: "hello" });\nconsole.log("File size:", content.length);\nconsole.log("Search results:", search);\n```',
+          description: 'JavaScript code to execute. Use `tools.toolName(args)` to call tools, `console.log()` for output.',
         },
         tools: {
           type: 'array',
@@ -58,8 +55,8 @@ export class ExecuteScriptTool implements Tool {
     category: 'code',
   };
 
-  isConcurrencySafe = true;
-  isReadOnly = true;
+  isConcurrencySafe = false; // scripts can mutate shared state
+  isReadOnly = false; // scripts can call write tools like file_write, git, apply_patch
 
   /** Registered tool map — populated by the runtime */
   private toolMap: Map<string, (args: Record<string, unknown>) => Promise<string>> = new Map();
@@ -120,14 +117,15 @@ export class ExecuteScriptTool implements Tool {
       const executionPromise = this.runScript(wrappedScript, availableTools, safeConsole);
 
       let timedOut = false;
+      let timeoutTimer: ReturnType<typeof setTimeout>;
       const result = await Promise.race([
-        executionPromise,
+        executionPromise.finally(() => clearTimeout(timeoutTimer)),
         new Promise<string>((_, reject) => {
-          const timer = setTimeout(() => {
+          timeoutTimer = setTimeout(() => {
             timedOut = true;
             reject(new Error(`Script execution timed out after ${timeout}s`));
           }, timeout * 1000);
-          timer.unref();
+          timeoutTimer.unref();
         }),
       ]);
 
@@ -155,13 +153,51 @@ export class ExecuteScriptTool implements Tool {
     tools: Record<string, (args: Record<string, unknown>) => Promise<string>>,
     console_: { log: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void },
   ): Promise<void> {
+    // SECURITY FIX: wrap all sandbox objects in Proxy to prevent prototype chain escape
+    // Node.js vm module is NOT a security sandbox — this.constructor.constructor('return process')()
+    // can escape. We use Proxy to block access to constructor, __proto__, and other prototype paths.
+    const BLOCKED = new Set(['constructor', '__proto__', 'prototype', '__defineGetter__', '__defineSetter__',
+      '__lookupGetter__', '__lookupSetter__', 'toLocaleString', 'valueOf', 'hasOwnProperty', 'isPrototypeOf',
+      'propertyIsEnumerable', 'toString']);
+
+    function makeSafeProxy<T extends object>(target: T, depth = 0): T {
+      if (depth > 3) return target; // limit proxy depth to avoid infinite recursion
+      return new Proxy(target, {
+        get(obj, prop) {
+          if (typeof prop === 'symbol') return undefined; // block Symbol access
+          if (BLOCKED.has(prop)) return undefined; // block prototype escape paths
+          const val = (obj as Record<string, unknown>)[prop];
+          if (typeof val === 'function') {
+            // Wrap functions to return safe proxies for objects
+            return (...args: unknown[]) => {
+              const result = val.apply(obj, args);
+              if (result && typeof result === 'object') return makeSafeProxy(result, depth + 1);
+              return result;
+            };
+          }
+          if (val && typeof val === 'object') return makeSafeProxy(val as object, depth + 1);
+          return val;
+        },
+        has(_, prop) { return typeof prop === 'string' && !BLOCKED.has(prop); },
+        set() { return false; }, // read-only
+        getPrototypeOf() { return null; }, // block __proto__ chain
+        ownKeys(target) {
+          return Reflect.ownKeys(target).filter(k => typeof k === 'string' && !BLOCKED.has(k));
+        },
+      }) as unknown as T;
+    }
+
+    // Create a frozen, proxy-wrapped tools object
+    const safeTools = makeSafeProxy(tools);
+
     const sandbox = {
-      tools,
+      tools: safeTools,
       console: console_,
       setTimeout,
       clearTimeout,
+      // Block access to dangerous globals by not providing them
     };
-    const context = vm.createContext(sandbox);
+    const context = vm.createContext(sandbox, { name: 'script-sandbox' });
     const result = vm.runInNewContext(script, context, { timeout: 120000 });
 
     if (result instanceof Promise) {

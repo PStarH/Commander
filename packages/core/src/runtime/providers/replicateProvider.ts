@@ -124,14 +124,14 @@ export class ReplicateProvider implements LLMProvider {
     const result = await this.pollPrediction(prediction.id);
 
     return {
-      content: result.output?.join('') || result.output || '',
+      content: Array.isArray(result.output) ? result.output.join('') : (result.output ?? ''),
       model,
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       finishReason: result.status === 'succeeded' ? 'stop' : 'error',
     };
   }
 
-  private async pollPrediction(id: string, maxAttempts = 60): Promise<any> {
+  private async pollPrediction(id: string, maxAttempts = 60): Promise<{ status: string; output?: string[]; error?: string }> {
     const logger = getGlobalLogger();
     for (let i = 0; i < maxAttempts; i++) {
       const res = await fetch(`${this.baseUrl}/predictions/${id}`, {

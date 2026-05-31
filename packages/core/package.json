@@ -1,7 +1,7 @@
 {
   "name": "@commander/core",
-  "version": "1.0.0-alpha.1",
-  "description": "Multi-agent orchestration system. 70% on GAIA, dynamic topology, quality gates, 13 tools.",
+  "version": "0.2.0",
+  "description": "Multi-agent orchestration system. Dynamic topology, quality gates, 26 tools, 21 LLM providers.",
   "bin": {
     "commander": "./dist/cli.js"
   },
@@ -25,7 +25,7 @@
     "orchestration",
     "llm",
     "agents",
-    "gaia",
+    
     "workflow",
     "automation"
   ],
@@ -53,6 +53,8 @@
     "benchmark:verify": "node scripts/verify-benchmark-results.mjs",
     "test:vitest": "vitest run",
     "test:vitest:watch": "vitest",
+    "docs": "typedoc",
+    "docs:serve": "typedoc --watch",
     "prepublishOnly": "tsc -p tsconfig.json",
     "prepack": "tsc -p tsconfig.json"
   },
@@ -60,6 +62,7 @@
     "@types/blessed": "^0.1.27",
     "@types/node": "^25.6.0",
     "@vitest/coverage-v8": "^3.2.4",
+    "typedoc": "^0.28.19",
     "typescript": "^5.0.0",
     "vitest": "^3.2.4"
   },

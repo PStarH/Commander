@@ -8,25 +8,29 @@ on:
 
 jobs:
   quality:
-    name: Quality Gates
-    runs-on: ubuntu-latest
+    name: Quality Gates (${{ matrix.os }}, Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node-version: ['20', '22']
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'pnpm'
 
       - uses: pnpm/action-setup@v2
         with:
           version: 9
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
       - run: pnpm install
 
       - name: Security audit
         run: npm audit --audit-level=high
-        continue-on-error: true
 
       - name: ESLint check (no-console rule)
         run: npx eslint packages/core/src
@@ -80,14 +84,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'pnpm'
-
-      - uses: pnpm/action-setup@v2
-        with:
-          version: 9
 
       - run: pnpm install
 

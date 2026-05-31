@@ -91,7 +91,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
       const token = this.telegramConfig.botToken;
       if (!token) return;
       const response = await fetch(`${this.apiBase}/bot${token}/getUpdates?offset=${this.offset}&timeout=30&allowed_updates=${encodeURIComponent(JSON.stringify(['message', 'edited_message', 'callback_query']))}`, { method: 'GET' });
-      if (!response.ok) { this.longPollTimer = setTimeout(() => this.pollUpdates(), 5000); return; }
+      if (!response.ok) { this.longPollTimer = setTimeout(() => this.pollUpdates(), 5000); this.longPollTimer?.unref(); return; }
       const data: { ok: boolean; result?: TelegramUpdate[] } = await response.json() as { ok: boolean; result?: TelegramUpdate[] };
       if (data.result) {
         for (const update of data.result) {
@@ -101,6 +101,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
       }
     } catch (err) { getGlobalLogger().error('Telegram', 'Poll error', err instanceof Error ? err : new Error(String(err))); }
     this.longPollTimer = setTimeout(() => this.pollUpdates(), 1000);
+    this.longPollTimer?.unref();
   }
 
   private processUpdate(update: TelegramUpdate): void {

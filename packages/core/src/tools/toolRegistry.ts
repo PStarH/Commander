@@ -50,6 +50,14 @@ export class ToolRegistry {
     } catch (e) { getGlobalLogger().warn('ToolRegistry', 'Schema compilation failed', { error: (e as Error)?.message, tool: tool.definition.name }); }
 
     if (category) {
+      // Remove from old category if re-registering
+      for (const [cat, names] of registry.categories) {
+        const idx = names.indexOf(tool.definition.name);
+        if (idx !== -1) {
+          names.splice(idx, 1);
+          if (names.length === 0) registry.categories.delete(cat);
+        }
+      }
       const existing = registry.categories.get(category) || [];
       existing.push(tool.definition.name);
       registry.categories.set(category, existing);
@@ -130,7 +138,17 @@ export class ToolRegistry {
    * Unregister a tool by name.
    */
   static unregister(name: string): boolean {
-    return ToolRegistry.getInstance().tools.delete(name);
+    const registry = ToolRegistry.getInstance();
+    const existed = registry.tools.delete(name);
+    if (existed) {
+      registry.compiledSchemas.delete(name);
+      for (const [cat, names] of registry.categories) {
+        const idx = names.indexOf(name);
+        if (idx !== -1) names.splice(idx, 1);
+        if (names.length === 0) registry.categories.delete(cat);
+      }
+    }
+    return existed;
   }
 }
 

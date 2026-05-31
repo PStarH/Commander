@@ -121,6 +121,9 @@ export class MCPServer {
 
       case 'tools/call': {
         const p = params as { name: string; arguments?: Record<string, unknown> };
+        if (!p || typeof p.name !== 'string' || !p.name) {
+          return { jsonrpc: '2.0', id, error: { code: MCP_ERROR_CODES.INVALID_PARAMS, message: 'Missing or invalid "name" parameter for tools/call' } };
+        }
         const reg = this.tools.get(p.name);
         if (!reg) {
           return { jsonrpc: '2.0', id, error: { code: MCP_ERROR_CODES.METHOD_NOT_FOUND, message: `Tool not found: ${p.name}` } };
@@ -142,6 +145,9 @@ export class MCPServer {
 
       case 'resources/read': {
         const rp = params as { uri: string };
+        if (!rp || typeof rp.uri !== 'string' || !rp.uri) {
+          return { jsonrpc: '2.0', id, error: { code: MCP_ERROR_CODES.INVALID_PARAMS, message: 'Missing or invalid "uri" parameter for resources/read' } };
+        }
         const rreg = this.resources.get(rp.uri);
         if (!rreg) {
           return { jsonrpc: '2.0', id, error: { code: MCP_ERROR_CODES.METHOD_NOT_FOUND, message: `Resource not found: ${rp.uri}` } };
@@ -160,6 +166,9 @@ export class MCPServer {
 
       case 'prompts/get': {
         const pp = params as { name: string; arguments?: Record<string, string> };
+        if (!pp || typeof pp.name !== 'string' || !pp.name) {
+          return { jsonrpc: '2.0', id, error: { code: MCP_ERROR_CODES.INVALID_PARAMS, message: 'Missing or invalid "name" parameter for prompts/get' } };
+        }
         const preg = this.prompts.get(pp.name);
         if (!preg) {
           return { jsonrpc: '2.0', id, error: { code: MCP_ERROR_CODES.METHOD_NOT_FOUND, message: `Prompt not found: ${pp.name}` } };

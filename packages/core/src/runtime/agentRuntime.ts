@@ -58,7 +58,8 @@ import { ToolResultCache } from './toolResultCache';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
 import { ToolApproval } from './toolApproval';
-import { selectTools, sortToolDefinitionsForCache } from './toolRetriever';
+import { selectTools, sortToolDefinitionsForCache, buildTwoTierTools, buildRegistrySummary, calculateTierMetrics } from './toolRetriever';
+import { createRequestToolTool } from '../tools/requestToolTool';
 import { ToolPlanner } from './toolPlanner';
 import { CycleDetector } from './cycleDetector';
 import { repairToolCallArguments } from './toolCallRepair';
@@ -81,6 +82,24 @@ import * as crypto from 'crypto';
 import { getGlobalLogger } from '../logging';
 import type { CompactTaskType } from './contextCompactor';
 import { DEFAULT_CONFIG, generateId, now, delay, descendingToolOrder, applyObservationMask, isMutationTool } from './runtimeHelpers';
+
+// ============================================================================
+// Tenant context resolution — extracted from execute() for clarity
+// ============================================================================
+
+interface TenantOverrides {
+  origSamplesStore: SamplesStore;
+  origTraceStore: PersistentTraceStore;
+  origCheckpointer: StateCheckpointer;
+  origMemory: import('../threeLayerMemory').ThreeLayerMemory | null;
+  origGovernor: TokenGovernor;
+}
+
+interface TenantResolutionResult {
+  allowed: boolean;
+  error?: string;
+  overrides?: TenantOverrides;
+}
 
 export class AgentRuntime {
   private config: AgentRuntimeConfig;
@@ -131,7 +150,7 @@ export class AgentRuntime {
     this.tenantProvider = tenantProvider ?? getGlobalTenantProvider();
     this.compactor = new ContextCompactor({ maxContextTokens: this.config.budgetHardCapTokens || 128000 });
     this.circuitBreaker = new CircuitBreaker(5, 30000);
-    this.governor = new TokenGovernor({ totalBudget: this.config.budgetHardCapTokens || 64000 });
+    this.governor = new TokenGovernor({ totalBudget: this.config.budgetHardCapTokens || 200000 });
     this.verificationPipeline = new UnifiedVerificationPipeline({
       enabled: true,
       budgetFloorTokens: 1500,
@@ -236,12 +255,109 @@ export class AgentRuntime {
   getHandoff(): AgentHandoff { return this.agentHandoff; }
 
   /**
+   * Resolve tenant context: enforce rate limits, concurrency limits, and set up
+   * tenant-scoped storage instances. Returns overrides that must be restored in finally.
+   */
+  private resolveTenantContext(
+    tenantId: string | undefined,
+    tenantCfg: TenantConfig | undefined,
+    runId: string,
+    agentId: string,
+    missionId?: string,
+  ): TenantResolutionResult {
+    if (!tenantId || !tenantCfg?.enabled) {
+      return { allowed: true };
+    }
+
+    // Enforce per-tenant rate limit
+    if (tenantCfg.maxRunsPerMinute > 0) {
+      if (this.tenantRateLimits.size > 100) {
+        const now = Date.now();
+        for (const [tid, entry] of this.tenantRateLimits) {
+          if (now > entry.resetAt) this.tenantRateLimits.delete(tid);
+        }
+      }
+      const rateEntry = this.tenantRateLimits.get(tenantId);
+      const now = Date.now();
+      if (rateEntry && now < rateEntry.resetAt && rateEntry.count >= tenantCfg.maxRunsPerMinute) {
+        return {
+          allowed: false,
+          error: 'TENANT_RATE_LIMIT: too many runs per minute',
+        };
+      }
+      if (!rateEntry || now > rateEntry.resetAt) {
+        this.tenantRateLimits.set(tenantId, { count: 1, resetAt: now + 60_000 });
+      } else {
+        rateEntry.count++;
+      }
+    }
+
+    // Enforce per-tenant concurrency limit
+    if (tenantCfg.maxConcurrency > 0) {
+      const current = this.tenantRunningCounts.get(tenantId) ?? 0;
+      if (current >= tenantCfg.maxConcurrency) {
+        return {
+          allowed: false,
+          error: 'TENANT_CONCURRENCY_LIMIT: too many concurrent runs',
+        };
+      }
+      this.tenantRunningCounts.set(tenantId, current + 1);
+    }
+
+    // Save original values for restore
+    const overrides: TenantOverrides = {
+      origSamplesStore: this.samplesStore,
+      origTraceStore: this.traceStore,
+      origCheckpointer: this.checkpointer,
+      origMemory: this.memory,
+      origGovernor: this.governor,
+    };
+
+    // Evict oldest tenant stores if too many accumulate
+    const MAX_TENANT_STORES = 50;
+    if (this.tenantSamplesStores.size >= MAX_TENANT_STORES && !this.tenantSamplesStores.has(tenantId)) {
+      const oldestKey = this.tenantSamplesStores.keys().next().value;
+      if (oldestKey) {
+        this.tenantSamplesStores.delete(oldestKey);
+        this.tenantTraceStores.delete(oldestKey);
+        this.tenantCheckpointers.delete(oldestKey);
+      }
+    }
+    if (!this.tenantSamplesStores.has(tenantId)) {
+      this.tenantSamplesStores.set(tenantId, new SamplesStore(undefined, tenantId));
+    }
+    if (!this.tenantTraceStores.has(tenantId)) {
+      this.tenantTraceStores.set(tenantId, new PersistentTraceStore(undefined, tenantId));
+    }
+    if (!this.tenantCheckpointers.has(tenantId)) {
+      this.tenantCheckpointers.set(tenantId, new StateCheckpointer(undefined, tenantId));
+    }
+    this.samplesStore = this.tenantSamplesStores.get(tenantId)!;
+    this.traceStore = this.tenantTraceStores.get(tenantId)!;
+    this.checkpointer = this.tenantCheckpointers.get(tenantId)!;
+    this.memory = getGlobalMemoryRegistry().getOrCreate(tenantId);
+
+    return { allowed: true, overrides };
+  }
+
+  /**
+   * Restore tenant overrides after run completes or fails.
+   */
+  private restoreTenantOverrides(overrides: TenantOverrides | undefined, tenantId: string | undefined): void {
+    if (!overrides) return;
+    this.samplesStore = overrides.origSamplesStore;
+    this.traceStore = overrides.origTraceStore;
+    this.checkpointer = overrides.origCheckpointer;
+    this.memory = overrides.origMemory;
+    this.governor = overrides.origGovernor;
+  }
+
+  /**
    * Execute an agent task end-to-end.
    * Wraps entire body in try/finally to guarantee cleanup (GAP-02, GAP-05).
    * Enforces maxConcurrency via semaphore (GAP-07).
    */
   async execute(ctx: AgentExecutionContext): Promise<AgentExecutionResult> {
-    // Concurrency semaphore: wait if at maxConcurrency
     await this.acquireSlot();
 
     const runId = generateId();
@@ -252,64 +368,17 @@ export class AgentRuntime {
     const tenantId = ctx.tenantId;
     const tenantCfg = tenantId ? this.tenantProvider.getTenantConfig(tenantId) : undefined;
 
-    // GAP-09: Enforce per-tenant rate limit
-    if (tenantCfg?.enabled && tenantCfg.maxRunsPerMinute > 0) {
-      const rateEntry = this.tenantRateLimits.get(tenantId!);
-      const now = Date.now();
-      if (rateEntry && now < rateEntry.resetAt && rateEntry.count >= tenantCfg.maxRunsPerMinute) {
-        this.releaseSlot();
-        return {
-          runId, agentId: ctx.agentId, missionId: ctx.missionId,
-          status: 'failed', summary: 'Tenant rate limit exceeded',
-          steps: [], totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-          totalDurationMs: 0, error: 'TENANT_RATE_LIMIT: too many runs per minute',
-        };
-      }
-      if (!rateEntry || now > rateEntry.resetAt) {
-        this.tenantRateLimits.set(tenantId!, { count: 1, resetAt: now + 60_000 });
-      } else {
-        rateEntry.count++;
-      }
+    const tenantResolution = this.resolveTenantContext(tenantId, tenantCfg, runId, ctx.agentId, ctx.missionId);
+    if (!tenantResolution.allowed) {
+      this.releaseSlot();
+      return {
+        runId, agentId: ctx.agentId, missionId: ctx.missionId,
+        status: 'failed', summary: tenantResolution.error!,
+        steps: [], totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        totalDurationMs: 0, error: tenantResolution.error!,
+      };
     }
-
-    // GAP-09: Enforce per-tenant concurrency limit
-    if (tenantCfg?.enabled && tenantCfg.maxConcurrency > 0) {
-      const current = this.tenantRunningCounts.get(tenantId!) ?? 0;
-      if (current >= tenantCfg.maxConcurrency) {
-        this.releaseSlot();
-        return {
-          runId, agentId: ctx.agentId, missionId: ctx.missionId,
-          status: 'failed', summary: 'Tenant concurrency limit exceeded',
-          steps: [], totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-          totalDurationMs: 0, error: 'TENANT_CONCURRENCY_LIMIT: too many concurrent runs',
-        };
-      }
-      this.tenantRunningCounts.set(tenantId!, current + 1);
-    }
-
-    // GAP-09: Resolve tenant-scoped storage and memory
-    // Override class fields to tenant-scoped instances for this run's duration.
-    // Safe because acquireSlot() limits concurrency to maxConcurrentRuns,
-    // and tenant concurrency is enforced separately.
-    const origSamplesStore = this.samplesStore;
-    const origTraceStore = this.traceStore;
-    const origCheckpointer = this.checkpointer;
-    const origMemory = this.memory;
-    if (tenantId && tenantCfg?.enabled) {
-      if (!this.tenantSamplesStores.has(tenantId)) {
-        this.tenantSamplesStores.set(tenantId, new SamplesStore(undefined, tenantId));
-      }
-      if (!this.tenantTraceStores.has(tenantId)) {
-        this.tenantTraceStores.set(tenantId, new PersistentTraceStore(undefined, tenantId));
-      }
-      if (!this.tenantCheckpointers.has(tenantId)) {
-        this.tenantCheckpointers.set(tenantId, new StateCheckpointer(undefined, tenantId));
-      }
-      this.samplesStore = this.tenantSamplesStores.get(tenantId)!;
-      this.traceStore = this.tenantTraceStores.get(tenantId)!;
-      this.checkpointer = this.tenantCheckpointers.get(tenantId)!;
-      this.memory = getGlobalMemoryRegistry().getOrCreate(tenantId);
-    }
+    const tenantOverrides = tenantResolution.overrides;
 
     // Execution Lane: acquire a lane slot (concurrent execution isolation)
     let currentLane: string;
@@ -321,6 +390,12 @@ export class AgentRuntime {
         args: ctx.lane ? { lane: ctx.lane } : undefined,
       });
     } catch {
+      // Decrement tenant running count on lane acquisition failure
+      if (tenantId && tenantCfg?.enabled) {
+        const c = (this.tenantRunningCounts.get(tenantId) ?? 1) - 1;
+        if (c <= 0) this.tenantRunningCounts.delete(tenantId);
+        else this.tenantRunningCounts.set(tenantId, c);
+      }
       this.releaseSlot();
       return {
         runId, agentId: ctx.agentId, missionId: ctx.missionId,
@@ -333,6 +408,7 @@ export class AgentRuntime {
     this.activeRuns.add(runId);
     tracer.startRun(runId, ctx.agentId, ctx.missionId);
     getMetricsCollector().setGauge('active_runs', 'Active concurrent runs', this.activeRuns.size);
+    let circuitReleased = false;
 
     try {
       return await runWithTenant(ctx.tenantId, async () => {
@@ -351,7 +427,7 @@ export class AgentRuntime {
     });
 
     // Per-run governor to prevent concurrent run corruption (was shared instance)
-    this.governor = new TokenGovernor({ totalBudget: ctx.tokenBudget || this.config.budgetHardCapTokens || 64000 });
+    this.governor = new TokenGovernor({ totalBudget: ctx.tokenBudget || this.config.budgetHardCapTokens || 200000 });
     // Detect task type for strategy selection
     const taskType = detectTaskType(ctx.goal);
     this.governor.setTaskCategory(taskType === 'code' ? 'code' : taskType === 'search' ? 'search' : taskType === 'analysis' ? 'analysis' : taskType === 'structured' ? 'structured' : 'general');
@@ -370,45 +446,50 @@ export class AgentRuntime {
     }
 
     // 1. Route to optimal model (pass per-run governor phase, not global singleton)
-    const routing: RoutingDecision = this.router.route(ctx, this.governor.getState().phase);
+    let routing: RoutingDecision = this.router.route(ctx, this.governor.getState().phase);
     tracer.recordDecision(runId, `routed to ${routing.modelId} (${routing.tier})`, 0);
 
     // 2. Build LLM request with cache-optimized prompt structure
     //    Stable content (system, tools) FIRST for maximum cache hits.
     //    Variable content (user message) LAST.
-    const systemPrompt = buildSystemPrompt(ctx, routing, this.config, this.tools, this.governor);
-    // Score and reorder tools by goal relevance for better LLM focus
-    // Most relevant tools first, then the rest sorted by relevance score
-    if (ctx.availableTools.length > 3) {
-      const relevantTools = selectTools(ctx.goal, ctx.availableTools);
-      if (relevantTools.length > 0) {
-        const seen = new Set(relevantTools);
-        ctx.availableTools = [
-          ...relevantTools,
-          ...ctx.availableTools.filter(t => !seen.has(t)),
-        ];
-      }
-    }
+    // --- Two-Tier Tool Loading (Lazy Schema Loading) ---
+    // Research (arXiv:2604.21816): Eager schema injection costs 10k-60k tokens/turn.
+    // Two-tier loading: Tier 1 (full schema for top-N) + Tier 2 (compact registry for rest).
+    // Estimated savings: 60-80% of tool-related token cost.
 
-    let toolDefs = ctx.availableTools
+    const allToolDefs = ctx.availableTools
       .map(name => this.tools.get(name)?.definition)
       .filter((t): t is ToolDefinition => t !== undefined);
 
-    // Stable category-based sort for maximum prompt cache hit rates.
-    // Cache-friendly ordering ensures the tool definition prefix is identical across LLM calls.
-    toolDefs = sortToolDefinitionsForCache(toolDefs);
+    const maxActiveTools = this.config.toolRetrieval?.maxTools ?? 8;
+    const twoTier = buildTwoTierTools(ctx.goal, allToolDefs, maxActiveTools);
+    const tierMetrics = calculateTierMetrics(twoTier, allToolDefs.length);
 
-    // Dynamic tool retrieval: filter to relevant tools when enabled
-    const retrieval = this.config.toolRetrieval;
-    if (retrieval?.enabled && toolDefs.length > retrieval.maxTools) {
-      const selectedNames = selectTools(ctx.goal, ctx.availableTools, {
-        minTools: retrieval.minTools,
-        maxTools: retrieval.maxTools,
-        alwaysInclude: retrieval.alwaysInclude,
-      });
-      const selected = new Set(selectedNames);
-      toolDefs = toolDefs.filter(t => selected.has(t.name));
+    // Log token savings
+    if (tierMetrics.registryCount > 0) {
+      getGlobalLogger().debug('AgentRuntime', `Two-tier tools: ${tierMetrics.activeCount} active (${tierMetrics.activeTokenEstimate} tok), ${tierMetrics.registryCount} registry (~${tierMetrics.registryTokenEstimate} tok), ~${tierMetrics.savingsPercent}% savings`);
     }
+
+    // Tier 1: Active tools with full schema
+    let toolDefs = twoTier.active;
+
+    // Register request_tool for Tier 2 tools (if there are registry tools)
+    if (twoTier.registry.length > 0) {
+      const registryNames = twoTier.registry.map(t => t.name);
+      const requestTool = createRequestToolTool(
+        (name) => allToolDefs.find(t => t.name === name),
+        registryNames,
+      );
+      // Add request_tool to active tools
+      toolDefs = [...toolDefs, requestTool.definition];
+      // Register for execution
+      this.tools.set('request_tool', requestTool);
+    }
+
+    // Build registry summary for system prompt
+    const registrySummary = buildRegistrySummary(twoTier.registry);
+
+    const systemPrompt = buildSystemPrompt(ctx, routing, this.config, this.tools, this.governor, registrySummary, twoTier.active.map(t => t.name));
 
     // Cache configuration: enable caching for system prompt + tools on providers that support it
     const cacheConfig: CacheConfig = {
@@ -464,16 +545,26 @@ export class AgentRuntime {
       totalDurationMs: 0,
     });
 
+    // Context injection with token budget cap to prevent pre-prompt bloat.
+    // Cap injected context at 20% of total budget to leave room for actual execution.
+    const contextTokenCap = Math.max(2000, Math.floor((ctx.tokenBudget || 200000) * 0.2));
+    let injectedContextTokens = 0;
+    const estimateTokens = (text: string) => Math.ceil(text.length / 3.5); // ~3.5 chars/token for mixed content
+
     // Check agent inbox for pending messages before execution
     const inboxMessages = this.agentInbox.pollInbox(ctx.agentId);
     if (inboxMessages.length > 0) {
       const inboxBlock = inboxMessages.map(m =>
         `[from:${m.from}] ${m.subject}: ${m.body.slice(0, 300)}`
       ).join('\n');
-      request.messages.splice(request.messages.length - 1, 0, {
-        role: 'system' as const,
-        content: `## Pending Messages\n${inboxBlock}\n\nAddress these messages as part of your execution.`,
-      });
+      const inboxTokens = estimateTokens(inboxBlock);
+      if (injectedContextTokens + inboxTokens < contextTokenCap) {
+        request.messages.splice(request.messages.length - 1, 0, {
+          role: 'system' as const,
+          content: `## Pending Messages\n${inboxBlock}\n\nAddress these messages as part of your execution.`,
+        });
+        injectedContextTokens += inboxTokens;
+      }
       // Send read receipts
       for (const msg of inboxMessages) {
         this.agentInbox.acknowledge(ctx.agentId, msg.id);
@@ -489,10 +580,14 @@ export class AgentRuntime {
             const memoryBlock = memories.map(m =>
               `[${m.layer}] ${m.content.slice(0, 300)} (importance:${m.importance.toFixed(2)}, tags:${m.tags.join(',')})`
             ).join('\n');
-            request.messages.splice(request.messages.length - 1, 0, {
-              role: 'system' as const,
-              content: `## Relevant Past Experiences\n${memoryBlock}\n\nLearn from these past experiences when working on the current task.`,
-            });
+            const memoryTokens = estimateTokens(memoryBlock);
+            if (injectedContextTokens + memoryTokens < contextTokenCap) {
+              request.messages.splice(request.messages.length - 1, 0, {
+                role: 'system' as const,
+                content: `## Relevant Past Experiences\n${memoryBlock}\n\nLearn from these past experiences when working on the current task.`,
+              });
+              injectedContextTokens += memoryTokens;
+            }
           }
         }
       } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Memory initialization failed', { error: (e as Error)?.message }); }
@@ -505,10 +600,14 @@ export class AgentRuntime {
       const skillsBlock = await injector.buildSkillsBlock(ctx.goal, 0);
       const instructions = injector.buildSkillUsageInstructions();
       if (skillsBlock) {
-        request.messages.splice(request.messages.length - 1, 0, {
-          role: 'system' as const,
-          content: `${skillsBlock}\n\n${instructions}`,
-        });
+        const skillsTokens = estimateTokens(skillsBlock + instructions);
+        if (injectedContextTokens + skillsTokens < contextTokenCap) {
+          request.messages.splice(request.messages.length - 1, 0, {
+            role: 'system' as const,
+            content: `${skillsBlock}\n\n${instructions}`,
+          });
+          injectedContextTokens += skillsTokens;
+        }
       }
     } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Skills injection failed', { error: (e as Error)?.message }); }
 
@@ -528,6 +627,9 @@ export class AgentRuntime {
     let lastErrorIsPermanent = false;
     const steps: AgentExecutionStep[] = [];
     let totalTokens: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    // Track content written by file_write tool calls for artifact propagation
+    let largestFileWriteContent = '';
+    let largestFileWritePath = '';
 
     // Check circuit breaker before first attempt
     if (!this.circuitBreaker.isAvailable()) {
@@ -574,7 +676,7 @@ export class AgentRuntime {
           stepNumber,
           timestamp: now(),
           type: 'response',
-          content: response.content,
+          content: response.content || (response as { reasoning_content?: string }).reasoning_content || '',
           tokenUsage: response.usage,
           durationMs: stepDuration,
         };
@@ -603,11 +705,13 @@ export class AgentRuntime {
         let toolLoopCount = 0;
         this.cycleDetector.reset();
         let cycleDetected = false;
-        while (response.toolCalls && response.toolCalls.length > 0 && toolLoopCount < maxIterations && !cycleDetected) {
+        while (response.toolCalls && response.toolCalls.length > 0 && toolLoopCount < maxIterations && !cycleDetected
+          && this.governor.getState().phase !== 'critical') {
           toolLoopCount++;
 
-          // Reset output manager turn budget
+          // Reset output manager turn budget (governor-aware: shrink under pressure)
           this.outputManager.resetTurn();
+          this.outputManager.adjustBudgetForPressure(this.governor.getState().pressure);
 
           // Check cache for all tool calls first (zero-cost on hit)
           const calls = response.toolCalls;
@@ -698,6 +802,14 @@ export class AgentRuntime {
                       this.toolCache.set(tc, toolResult, tenantId);
                       this.invalidateMutationCache(tc.name);
                     }
+                    // Capture file_write content for artifact propagation
+                    if (tc.name === 'file_write' && !toolResult.error) {
+                      const writtenContent = String(tc.arguments?.content ?? '');
+                      if (writtenContent.length > largestFileWriteContent.length) {
+                        largestFileWriteContent = writtenContent;
+                        largestFileWritePath = String(tc.arguments?.path ?? '');
+                      }
+                    }
                     return { toolCallId: tc.id, name: tc.name, output: toolResult.output, error: toolResult.error, durationMs: toolResult.durationMs };
                   })
                 );
@@ -741,6 +853,14 @@ export class AgentRuntime {
                 if (!toolResult.error) {
                   this.toolCache.set(tc, toolResult, tenantId);
                   this.invalidateMutationCache(tc.name);
+                }
+                // Capture file_write content for artifact propagation
+                if (tc.name === 'file_write' && !toolResult.error) {
+                  const writtenContent = String(tc.arguments?.content ?? '');
+                  if (writtenContent.length > largestFileWriteContent.length) {
+                    largestFileWriteContent = writtenContent;
+                    largestFileWritePath = String(tc.arguments?.path ?? '');
+                  }
                 }
                 rawResults.push({ toolCallId: tc.id, name: tc.name, output: toolResult.output, error: toolResult.error, durationMs: toolResult.durationMs });
               }
@@ -817,10 +937,10 @@ export class AgentRuntime {
           this.governor.reportUsage(followUp.usage.totalTokens);
           response = followUp;
 
-          // Context compaction: governor-driven, triggered earlier under pressure
-          const compactDecision = this.governor.shouldApply('context_compaction');
-          const compactThreshold = compactDecision.apply ? 2 : 3;
-          if (toolLoopCount > compactThreshold) {
+          // Context compaction: check every iteration after the first.
+          // The compactor's own layer thresholds (60%/70%/82%/92% full) decide whether to act.
+          // This prevents context bloat before the LLM call that would waste tokens.
+          if (toolLoopCount > 1) {
             const tokensBefore = this.compactor.getUsage(request.messages).total;
             const tt = detectTaskType(ctx.goal);
             const taskType: CompactTaskType = tt === 'creative' ? 'general' : tt;
@@ -922,13 +1042,50 @@ export class AgentRuntime {
           if (feedback) {
             lastError = feedback;
             tracer.recordDecision(runId, `verification (attempt ${attempt + 1}, confidence ${verifReport.confidence.toFixed(2)}): ${feedback.slice(0, 100)}`, 0);
+
+            // Compact context before retry to avoid replaying bloated history
+            const tokensBeforeRetry = this.compactor.getUsage(request.messages).total;
+            const tt = detectTaskType(ctx.goal);
+            const taskType: CompactTaskType = tt === 'creative' ? 'general' : tt;
+            const retryCompact = this.compactor.compact(request.messages, undefined, taskType);
+            if (retryCompact.action.droppedCount > 0) {
+              request.messages = retryCompact.messages;
+              this.governor.recordOutcome('context_compaction', tokensBeforeRetry, this.compactor.getUsage(request.messages).total);
+              bus.publish('system.alert', 'runtime', {
+                type: 'context_compaction',
+                layer: retryCompact.action.layer,
+                droppedCount: retryCompact.action.droppedCount,
+                tokensSaved: retryCompact.action.tokensSaved,
+              });
+            }
+
+            // Cascade escalation: try a more capable model on verification failure
+            // FrugalGPT pattern: escalate to stronger model when quality is insufficient
+            const fallbackModel = this.router.getFallbackModel(routing.modelId, tt);
+            if (fallbackModel && fallbackModel.tier !== routing.tier) {
+              const newRouting: RoutingDecision = {
+                modelId: fallbackModel.id,
+                tier: fallbackModel.tier,
+                provider: fallbackModel.provider,
+                reasoning: [...routing.reasoning, `cascade_escalation: ${routing.modelId} → ${fallbackModel.id} (verification failed)`],
+                estimatedCost: routing.estimatedCost * 1.5,
+                maxTokens: routing.maxTokens,
+              };
+              routing = newRouting;
+              request.model = (fallbackModel.id || '').replace(/@\w+$/, '') || fallbackModel.id;
+              tracer.recordDecision(runId, `cascade escalation: ${routing.modelId} (${routing.tier})`, 0);
+              bus.publish('system.alert', 'runtime', { type: 'cascade_escalation', from: routing.modelId, to: fallbackModel.id });
+            }
+
             request.messages.push({ role: 'user', content: feedback });
             continue;
           }
         }
 
         // Content safety scan before returning result
-        let safeContent = response.content;
+        // Reasoning models (MiMo, DeepSeek-R) put output in reasoning_content.
+        // Merge so downstream code (synthesis, summary) can read it.
+        let safeContent = response.content || (response as { reasoning_content?: string }).reasoning_content || '';
         try {
           const scanResult = await this.contentScanner.scan(safeContent);
           if (!scanResult.isSafe) {
@@ -989,10 +1146,11 @@ export class AgentRuntime {
           agentId: ctx.agentId,
           missionId: ctx.missionId,
           status: 'success',
-          summary: safeContent.slice(0, 2000),
+          summary: safeContent.slice(0, 8000),
           steps,
           totalTokenUsage: totalTokens,
           totalDurationMs,
+          artifactContent: largestFileWriteContent || undefined,
         };
 
         this.checkpointer.terminalCheckpoint({
@@ -1038,6 +1196,8 @@ export class AgentRuntime {
           durationMs: totalDurationMs,
         });
 
+        this.circuitBreaker.onSuccess();
+        circuitReleased = true;
         return result;
       }
 
@@ -1052,6 +1212,7 @@ export class AgentRuntime {
         await delay(delayMs);
       } else if (!ce.retryable) {
         this.circuitBreaker.onFailure();
+        circuitReleased = true;
         break; // Don't retry permanent errors
       }
     }
@@ -1111,9 +1272,11 @@ export class AgentRuntime {
       totalDurationMs: Date.now() - startTime,
       error: lastError,
     };
-      });
+    });
 
     } finally {
+      // Release circuit breaker if neither onSuccess nor onFailure was called
+      if (!circuitReleased) this.circuitBreaker.release();
       // GAP-02 + GAP-05: Guarantee cleanup on ALL exit paths (normal, error, exception)
       this.activeRuns.delete(runId);
       getMetricsCollector().setGauge('active_runs', 'Active concurrent runs', this.activeRuns.size);
@@ -1141,11 +1304,7 @@ export class AgentRuntime {
       }
       try { await this.samplesStore.flush(); } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Failed to flush samples', { runId, error: (e as Error)?.message }); }
       try { this.traceStore.flushAll(); } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Failed to flush traces', { runId, error: (e as Error)?.message }); }
-      // Restore tenant-scoped overrides
-      this.samplesStore = origSamplesStore;
-      this.traceStore = origTraceStore;
-      this.checkpointer = origCheckpointer;
-      this.memory = origMemory;
+      this.restoreTenantOverrides(tenantOverrides, tenantId);
     }
   }
 
@@ -1345,10 +1504,11 @@ export class AgentRuntime {
       toolCall.name,
       'tool',
       async () => {
-        const execPromise = tool.execute(validatedArgs);
+        let timer: ReturnType<typeof setTimeout>;
+        const execPromise = tool.execute(validatedArgs).finally(() => clearTimeout(timer));
         const timeoutPromise = new Promise<never>((_, reject) => {
-          const timer = setTimeout(() => reject(new Error(`TOOL_TIMEOUT: "${toolCall.name}" exceeded ${effectiveTimeout}ms`)), effectiveTimeout);
-          if (typeof timer.unref === 'function') (timer as ReturnType<typeof setTimeout> & { unref: () => void }).unref();
+          timer = setTimeout(() => reject(new Error(`TOOL_TIMEOUT: "${toolCall.name}" exceeded ${effectiveTimeout}ms`)), effectiveTimeout);
+          if (typeof timer.unref === 'function') timer.unref();
         });
         return Promise.race([execPromise, timeoutPromise]);
       },
@@ -1413,14 +1573,23 @@ export class AgentRuntime {
     if (typeof output === 'string' && output.length > maxSize && maxSize > 0) {
       const hash = crypto.createHash('md5').update(output).digest('hex').slice(0, 8);
       const resultDir = path.join(process.cwd(), '.commander_results');
-      if (!fs.existsSync(resultDir)) fs.mkdirSync(resultDir, { recursive: true });
-      const resultFile = path.join(resultDir, `${toolCall.name}-${hash}.txt`);
-      fs.writeFileSync(resultFile, output, 'utf-8');
-      const headSize = Math.floor(maxSize * 0.6);
-      const tailSize = maxSize - headSize;
-      const head = output.slice(0, headSize);
-      const tail = output.length > headSize ? output.slice(-tailSize) : '';
-      output = `[Large output: ${output.length} chars. Saved to ${resultFile}.]\n${head}\n... [truncated, omitted ${output.length - maxSize} chars] ...\n${tail}\n[End. Full output at ${resultFile}]`;
+      try {
+        await fs.promises.mkdir(resultDir, { recursive: true });
+        const resultFile = path.join(resultDir, `${toolCall.name}-${hash}.txt`);
+        await fs.promises.writeFile(resultFile, output, 'utf-8');
+        const headSize = Math.floor(maxSize * 0.6);
+        const tailSize = maxSize - headSize;
+        const head = output.slice(0, headSize);
+        const tail = output.length > headSize ? output.slice(-tailSize) : '';
+        output = `[Large output: ${output.length} chars. Saved to ${resultFile}.]\n${head}\n... [truncated, omitted ${output.length - maxSize} chars] ...\n${tail}\n[End. Full output at ${resultFile}]`;
+      } catch (e) {
+        getGlobalLogger().warn('AgentRuntime', 'Failed to persist large output', { error: (e as Error)?.message });
+        // Fall through with truncated output
+        const headSize = Math.floor(maxSize * 0.6);
+        const head = output.slice(0, headSize);
+        const tail = output.length > headSize ? output.slice(-(maxSize - headSize)) : '';
+        output = `${head}\n... [truncated, omitted ${output.length - maxSize} chars] ...\n${tail}`;
+      }
     }
 
     tracer.recordToolExecution(runId, toolCall.name, toolCall.arguments, output, durationMs);
@@ -1511,5 +1680,25 @@ export class AgentRuntime {
 
   isRunActive(runId: string): boolean {
     return this.activeRuns.has(runId);
+  }
+
+  /** Dispose sub-resources (timers, file handles) when this runtime is discarded */
+  dispose(): void {
+    this.toolCache.dispose();
+    this.agentInbox.dispose();
+    // Shutdown trace store to flush pending buffers
+    if (typeof this.traceStore.shutdown === 'function') this.traceStore.shutdown();
+    // Stop OpenTelemetry exporter if running
+    if (this.otelExporter) { this.otelExporter.stop().catch((err) => { getGlobalLogger().debug('AgentRuntime', 'OTel exporter stop failed (non-critical)', { error: (err as Error)?.message }); }); }
+    // Dispose tenant-scoped stores
+    for (const store of this.tenantSamplesStores.values()) {
+      try { store.flush(); } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Failed to flush tenant samples store during dispose', { error: (e as Error)?.message }); }
+    }
+    for (const store of this.tenantTraceStores.values()) {
+      try { store.shutdown(); } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Failed to shutdown tenant trace store during dispose', { error: (e as Error)?.message }); }
+    }
+    this.tenantSamplesStores.clear();
+    this.tenantTraceStores.clear();
+    this.tenantCheckpointers.clear();
   }
 }

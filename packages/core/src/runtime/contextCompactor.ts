@@ -136,6 +136,29 @@ const ADAPTIVE_PROFILES: Record<CompactTaskType, AdaptiveProfile> = {
 };
 
 // ============================================================================
+// Precompiled regex — avoid re-creating RegExp objects in hot loops
+// ============================================================================
+
+const RE_QUESTION_INSTRUCTION = /\?|please|do|write|create|fix|implement|analyze/i;
+const RE_DECISION_PATTERN = /I will|I'll|going to|plan to|the answer|in conclusion|therefore/i;
+const RE_ERROR_CONTENT = /error|fail|exception|cannot|unable/i;
+const RE_ERROR_MULTILINE = /(?:^|\n)\s*(?:error|Error|ERROR|fail|Fail|FAIL|exception|Exception|traceback|Traceback|cannot|Cannot|unable|Unable)/m;
+const RE_HAS_DIGIT = /\d/;
+const RE_FINDING_KEYWORDS = /result|found|output|answer|total|sum|count/i;
+const RE_ERROR_LINE = /^(error|warning|fail|exception|traceback|cannot|unable)/i;
+const RE_KV_PAIR = /^["']?\w+["']?\s*[:=]/;
+const RE_NEWLINE = /\n/g;
+
+const DECISION_PATTERNS: RegExp[] = [
+  /(?:^|\n)(?:I will|Let me|Going to|Plan to|Need to|I'll|I'm going to) .{10,100}/i,
+  /(?:The answer is|The result is|In conclusion|Therefore|Thus|So)[,:]? .{10,100}/i,
+  /(?:Found|Discovered|Confirmed|Determined|Calculated) that .{10,100}/i,
+  /(?:This means|This suggests|This indicates) .{10,100}/i,
+  /(?:The (?:total|sum|count|average|final)) .{10,80}/i,
+  /(?:^|\n)\d+[\.\)]\s+.{10,80}/m,
+];
+
+// ============================================================================
 // Compaction marker — prevents double-compaction
 // ============================================================================
 
@@ -206,14 +229,14 @@ function scoreMessageImportance(
     const content = typeof msg.content === 'string' ? msg.content : '';
     if (content.length > 20) score += importanceConfig.userInstructionBonus;
     // Questions and instructions
-    if (/\?|please|do|write|create|fix|implement|analyze/i.test(content)) score += 0.1;
+    if (RE_QUESTION_INSTRUCTION.test(content)) score += 0.1;
   }
 
   // Assistant messages with decisions are important
   if (msg.role === 'assistant') {
     const content = typeof msg.content === 'string' ? msg.content : '';
     // Decision patterns
-    if (/I will|I'll|going to|plan to|the answer|in conclusion|therefore/i.test(content)) {
+    if (RE_DECISION_PATTERN.test(content)) {
       score += importanceConfig.decisionBonus;
     }
     // Tool calls are somewhat important (they show what was done)
@@ -223,7 +246,7 @@ function scoreMessageImportance(
   // Tool results with errors are very important
   if (msg.role === 'tool') {
     const content = typeof msg.content === 'string' ? msg.content : '';
-    if (/error|fail|exception|cannot|unable/i.test(content)) {
+    if (RE_ERROR_CONTENT.test(content)) {
       score += importanceConfig.errorBonus;
     }
   }
@@ -249,7 +272,7 @@ function analyzeComposition(messages: LLMMessage[]): CompositionScore {
     if (msg.role === 'tool') toolMessages++;
     if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) assistantWithTools++;
     const content = typeof msg.content === 'string' ? msg.content : '';
-    if (/(?:^|\n)\s*(?:error|Error|ERROR|fail|Fail|FAIL|exception|Exception|traceback|Traceback|cannot|Cannot|unable|Unable)/m.test(content)) {
+    if (RE_ERROR_MULTILINE.test(content)) {
       errorMessages++;
     }
     if (content.includes('```')) codeBlockMessages++;
@@ -330,6 +353,14 @@ export class ContextCompactor {
   }
 
   compact(messages: LLMMessage[], provider?: LLMProvider, taskType?: CompactTaskType): { messages: LLMMessage[]; action: CompactAction } {
+    // Provider-aware context limit adjustment (research: Anthropic 200k, OpenAI 128k, smaller 32k)
+    if (provider && this.config.maxContextTokens === DEFAULT_CONFIG.maxContextTokens) {
+      const providerLimit = this.getProviderContextLimit(provider);
+      if (providerLimit !== this.config.maxContextTokens) {
+        this.config = { ...this.config, maxContextTokens: providerLimit };
+      }
+    }
+
     const layer = this.needsCompaction(messages, taskType);
     if (!layer) {
       return { messages, action: { layer: 1, droppedCount: 0, tokensSaved: 0, description: 'No compaction needed', taskTypeApplied: taskType ?? null } };
@@ -376,6 +407,24 @@ export class ContextCompactor {
    */
   analyzeComposition(messages: LLMMessage[]): CompositionScore {
     return analyzeComposition(messages);
+  }
+
+  /**
+   * Get provider-specific context window limit.
+   * Research: Anthropic 200k, OpenAI 128k, Gemini 1M, smaller models 32k.
+   * Uses provider.maxContextTokens if available, otherwise infers from model ID.
+   */
+  private getProviderContextLimit(provider: LLMProvider): number {
+    // Use explicit limit from provider if available (some providers expose this)
+    const p = provider as unknown as Record<string, unknown>;
+    if (p.maxContextTokens && typeof p.maxContextTokens === 'number') return p.maxContextTokens as number;
+    // Infer from model ID if available
+    const model = (p.modelId as string)?.toLowerCase?.() ?? '';
+    if (model.includes('opus') || model.includes('sonnet') || model.includes('claude')) return 200000;
+    if (model.includes('gpt-5') || model.includes('gpt-4')) return 128000;
+    if (model.includes('gemini')) return 1000000;
+    if (model.includes('haiku')) return 200000;
+    return 128000; // safe default
   }
 
   // Layer 1: Remove oldest turn-pairs, keeping recent turns
@@ -529,10 +578,11 @@ export class ContextCompactor {
       importance: scoreMessageImportance(msg, i, allMsgs.length, profile.importanceConfig),
     }));
 
-    // Keep messages with importance > 0.7 (errors, decisions, user instructions)
+    // Keep messages with importance > 0.6 (errors, decisions, user instructions)
+    // Lowered from 0.7 to preserve early user instructions that get low recency bonus
     // Cap at 5 messages to avoid blowing the budget
     return scored
-      .filter(s => s.importance > 0.7 && !isCompacted(s.msg))
+      .filter(s => s.importance > 0.6 && !isCompacted(s.msg))
       .sort((a, b) => b.importance - a.importance)
       .slice(0, 5)
       .map(s => s.msg);
@@ -611,16 +661,19 @@ export class ContextCompactor {
             errors.push(c.split('\n')[0].slice(0, 120));
           } else {
             const lines = c.split('\n');
+            let foundFinding = false;
             for (const line of lines) {
               const trimmed = line.trim();
               if (trimmed.length > 20 && trimmed.length < 150) {
-                if (/\d/.test(trimmed) || /result|found|output|answer|total|sum|count/i.test(trimmed)) {
+                if (RE_HAS_DIGIT.test(trimmed) || RE_FINDING_KEYWORDS.test(trimmed)) {
                   keyFindings.push(trimmed.slice(0, 100));
+                  foundFinding = true;
                   break;
                 }
               }
             }
-            if (keyFindings.length === 0) {
+            // Per-message fallback: extract first long line if no keyword match found
+            if (!foundFinding && keyFindings.length < maxFindings) {
               const first = lines.find(l => l.trim().length > 20);
               if (first) keyFindings.push(first.trim().slice(0, 100));
             }
@@ -628,18 +681,10 @@ export class ContextCompactor {
         }
         if (msg.role === 'assistant' && !msg.tool_calls) {
           const text = typeof msg.content === 'string' ? msg.content : '';
-          const decisionPatterns = [
-            /(?:^|\n)(?:I will|Let me|Going to|Plan to|Need to|I'll|I'm going to) .{10,100}/i,
-            /(?:The answer is|The result is|In conclusion|Therefore|Thus|So)[,:]? .{10,100}/i,
-            /(?:Found|Discovered|Confirmed|Determined|Calculated) that .{10,100}/i,
-            /(?:This means|This suggests|This indicates) .{10,100}/i,
-            /(?:The (?:total|sum|count|average|final)) .{10,80}/i,
-            /(?:^|\n)\d+[\.\)]\s+.{10,80}/m,
-          ];
-          for (const pattern of decisionPatterns) {
+          for (const pattern of DECISION_PATTERNS) {
             const match = text.match(pattern);
             if (match) {
-              decisions.push(match[0].replace(/\n/g, ' ').trim().slice(0, 120));
+              decisions.push(match[0].replace(RE_NEWLINE, ' ').trim().slice(0, 120));
               if (decisions.length >= maxDecisions) break;
             }
           }
@@ -672,9 +717,9 @@ export class ContextCompactor {
     for (let i = 0; i < lineCount; i++) {
       const line = lines[i];
       const trimmed = line.trim();
-      if (/^(error|warning|fail|exception|traceback|cannot|unable)/i.test(trimmed)) {
+      if (RE_ERROR_LINE.test(trimmed)) {
         important.push(line);
-      } else if (/^["']?\w+["']?\s*[:=]/.test(trimmed) && trimmed.length < 120) {
+      } else if (RE_KV_PAIR.test(trimmed) && trimmed.length < 120) {
         important.push(line);
       } else if (i < 2 || i > lineCount - 3) {
         important.push(line);

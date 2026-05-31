@@ -8,6 +8,8 @@ export interface ClassifiedError {
   retryAfter?: number;
 }
 
+const RE_NETWORK_ERROR = /timeout|timed out|econnrefused|econnreset|enotfound|connection refused|network|fetch failed|abort|econnaborted|esockettimedout/i;
+
 export function classifyLLMError(err: unknown): ClassifiedError {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   const statusCode = extractStatus(err);
@@ -30,7 +32,7 @@ export function classifyLLMError(err: unknown): ClassifiedError {
   if (statusCode === 408) return { retryable: true, errorClass: 'transient', message: truncate(msg, 200), statusCode: 408 };
 
   // Network/timeout errors: transient (GAP-26: added ECONNABORTED, ESOCKETTIMEDOUT)
-  if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('econnrefused') || msg.includes('econnreset') || msg.includes('enotfound') || msg.includes('connection refused') || msg.includes('network') || msg.includes('fetch failed') || msg.includes('abort') || msg.includes('econnaborted') || msg.includes('esockettimedout')) {
+  if (RE_NETWORK_ERROR.test(msg)) {
     return { retryable: true, errorClass: 'transient', message: truncate(msg, 200) };
   }
 

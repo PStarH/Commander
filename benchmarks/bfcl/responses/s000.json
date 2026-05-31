@@ -1,37 +1,13 @@
 {
-  "id": "4dc55357054f4626b8699166c37462a5",
-  "choices": [
-    {
-      "finish_reason": "tool_calls",
-      "index": 0,
-      "message": {
-        "content": "I'll search for the latest AI news for you.",
-        "role": "assistant",
-        "tool_calls": [
-          {
-            "id": "call_31312a2163cf4462afa544ca",
-            "function": {
-              "arguments": "{\"query\": \"AI news latest developments 2024\"}",
-              "name": "web_search"
-            },
-            "type": "function"
-          }
-        ]
-      }
-    }
-  ],
-  "created": 1778999822,
-  "model": "mimo-v2.5-pro",
-  "object": "chat.completion",
-  "usage": {
-    "completion_tokens": 40,
-    "prompt_tokens": 988,
-    "total_tokens": 1028,
-    "completion_tokens_details": {
-      "reasoning_tokens": 0
-    },
-    "prompt_tokens_details": {
-      "cached_tokens": 192
-    }
-  }
+  "input": {
+    "task_id": "s000",
+    "prompt": "search the web for AI news",
+    "cat": "simple",
+    "expected": "web_search"
+  },
+  "output": "{\"tool_calls\":[{\"id\":\"call_4a6760287f0a4fdbac743aff\",\"function\":{\"arguments\":\"{\\\"query\\\": \\\"AI news\\\", \\\"num_results\\\": 10}\",\"name\":\"web_search\"},\"type\":\"function\"}]}",
+  "extracted_answer": "{\"tool_calls\":[{\"id\":\"call_4a6760287f0a4fdbac743aff\",\"function\":{\"arguments\":\"{\\\"query\\\": \\\"AI news\\\", \\\"num_results\\\": 10}\",\"name\":\"web_search\"},\"type\":\"function\"}]}",
+  "correct": true,
+  "toolCorrect": true,
+  "paramCorrect": true
 }

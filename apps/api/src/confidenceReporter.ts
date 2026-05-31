@@ -99,13 +99,14 @@ export class ConfidenceReporter {
     const rationales = this.store.getByMission(missionId);
     const alerts: ConfidenceAlert[] = [];
 
-    // Find decisions below warning threshold
-    const lowConfidence = rationales.filter(r => r.confidence.score < this.thresholds.warning);
+    // Find decisions below target threshold
+    const lowConfidence = rationales.filter(r => r.confidence.score < this.thresholds.target);
 
     for (const r of lowConfidence) {
       const severity: 'low' | 'medium' | 'high' =
-        r.confidence.score < this.thresholds.low ? 'high' :
-        r.confidence.score < this.thresholds.warning ? 'medium' : 'low';
+        r.confidence.score < this.thresholds.low ? 'high'
+          : r.confidence.score < this.thresholds.warning ? 'medium'
+            : 'low';
 
       alerts.push({
         actionId: r.id,
@@ -162,7 +163,7 @@ export class ConfidenceReporter {
 
   // Private methods
 
-  private buildReport(rationales: ActionRationale[], missionId: string, agentId?: string): ConfidenceReport {
+  buildReport(rationales: ActionRationale[], missionId: string, agentId?: string): ConfidenceReport {
     const totalDecisions = rationales.length;
 
     if (totalDecisions === 0) {
@@ -343,8 +344,5 @@ export function createConfidenceReport(
   missionId: string
 ): ConfidenceReport {
   const reporter = new ConfidenceReporter();
-  // Create a temporary store with the rationales
-  const tempStore = new ActionRationaleStore();
-  // Use the buildReport logic directly
-  return reporter.generateMissionReport(missionId);
+  return reporter.buildReport(rationales, missionId);
 }

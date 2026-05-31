@@ -5,7 +5,7 @@ import { getMetaLearner } from '../../selfEvolution/metaLearner';
 import { getApprovalSystem } from '../../sandbox';
 import type { ApprovalMode } from '../../sandbox';
 import { getGlobalLogger } from '../../logging';
-import { createRuntime, $, section, kv, bullet, cmdHeader, startSpinner, onboardingMessage } from './_shared';
+import { createRuntime, $, section, kv, bullet, cmdHeader, startSpinner, onboardingMessage, setTheme, getThemeName, listThemes } from './_shared';
 
 export async function cmdStatus() {
   const provider = detectProvider();
@@ -64,6 +64,7 @@ export async function cmdConfig(args: string[]) {
     section('CONFIGURATION');
     showConfig();
     console.log(`\n  ${$.dim}Set:  commander config set model <model-id>${$.reset}`);
+    console.log(`  ${$.dim}      commander config set theme <dark|light|minimal>${$.reset}`);
     console.log(`  ${$.dim}      commander config set meta-tools on${$.reset}`);
     console.log(`  ${$.dim}      commander config list-providers${$.reset}`);
     console.log(`  ${$.dim}      commander config list-models${$.reset}`);
@@ -72,9 +73,27 @@ export async function cmdConfig(args: string[]) {
   }
 
   if (args[0] === 'set' && args.length >= 3) {
+    const key = args[1];
+    const value = args.slice(2).join(' ');
+
+    // Handle theme specially (local config, not persisted via setConfig)
+    if (key === 'theme') {
+      const themes = listThemes();
+      if (!themes.includes(value)) {
+        console.log(`  ${$.red}Unknown theme:${$.reset} "${value}"`);
+        console.log(`  ${$.dim}Available: ${themes.join(', ')}${$.reset}`);
+        console.log(`  ${$.dim}NO_COLOR=1 disables all colors (https://no-color.org)${$.reset}\n`);
+        return;
+      }
+      setTheme(value);
+      console.log(`  ${$.green}✓${$.reset} theme = ${$.cyan}${value}${$.reset}`);
+      console.log(`  ${$.dim}Colors updated for this session. Persist with: export COMMANDER_THEME=${value}${$.reset}\n`);
+      return;
+    }
+
     try {
-      setConfig(args[1], args.slice(2).join(' '));
-      console.log(`  ${$.green}✓${$.reset} ${args[1]} = ${args.slice(2).join(' ')}`);
+      setConfig(key, value);
+      console.log(`  ${$.green}✓${$.reset} ${key} = ${value}`);
     } catch (e) {
       console.log(`  ${$.red}✗${$.reset} ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -124,30 +143,119 @@ export async function cmdConfig(args: string[]) {
 export async function cmdDoctor() {
   section('DOCTOR');
   const provider = detectProvider();
-  const checks = [
-    { label: 'Node.js v20+', pass: process.version.startsWith('v22') || process.version.startsWith('v20'), msg: '' },
-    { label: `API key ${provider ? '✓' : '✗'}`, pass: !!provider, msg: 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.' },
-    { label: 'Packages installed', pass: fs.existsSync(path.join(process.cwd(), 'node_modules')) || fs.existsSync(path.join(__dirname, '..', 'node_modules')), msg: 'Run: pnpm install' },
-  ];
+  const major = parseInt(process.version.slice(1), 10);
+
+  // Core checks
+  const checks: Array<{ label: string; pass: boolean; msg: string; section?: string }> = [];
+
+  // Environment
+  checks.push({ label: 'Node.js v20+', pass: major >= 20, msg: major < 20 ? `Current: ${process.version}. Install from https://nodejs.org` : '', section: 'ENVIRONMENT' });
+
+  // Git
+  let gitVersion = '';
+  try {
+    const { execSync } = require('child_process');
+    gitVersion = execSync('git --version', { stdio: 'pipe', encoding: 'utf-8' }).trim();
+    checks.push({ label: 'Git', pass: true, msg: gitVersion });
+  } catch {
+    checks.push({ label: 'Git', pass: false, msg: 'Not found. Install: https://git-scm.com' });
+  }
+
+  // Package manager
+  let pm = 'unknown';
+  try {
+    const { execSync } = require('child_process');
+    if (fs.existsSync(path.join(process.cwd(), 'pnpm-lock.yaml'))) pm = 'pnpm';
+    else if (fs.existsSync(path.join(process.cwd(), 'yarn.lock'))) pm = 'yarn';
+    else if (fs.existsSync(path.join(process.cwd(), 'package-lock.json'))) pm = 'npm';
+    checks.push({ label: 'Package manager', pass: pm !== 'unknown', msg: pm !== 'unknown' ? pm : 'No lockfile found' });
+  } catch {
+    checks.push({ label: 'Package manager', pass: false, msg: 'Unknown' });
+  }
+
+  // Provider
+  checks.push({ label: 'API key', pass: !!provider, msg: provider ? `${provider.type} · ${getEffectiveModel()}` : 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.', section: 'PROVIDER' });
+
+  // Packages
+  const nodeModulesExists = fs.existsSync(path.join(process.cwd(), 'node_modules')) || fs.existsSync(path.join(__dirname, '..', '..', '..', 'node_modules'));
+  checks.push({ label: 'Packages installed', pass: nodeModulesExists, msg: nodeModulesExists ? '' : 'Run: pnpm install' });
+
+  // Workspace
+  const cwd = process.cwd();
+  const hasCommanderDir = fs.existsSync(path.join(cwd, '.commander'));
+  checks.push({ label: '.commander/ dir', pass: true, msg: hasCommanderDir ? 'Found' : 'Not found (will be created on first run)', section: 'WORKSPACE' });
+
+  // Tools config
+  const tools = (process.env.COMMANDER_TOOLS || 'web_search,web_fetch,file_read,file_write,file_edit,file_search,file_list,python_execute,shell_execute,git').split(',');
+  checks.push({ label: 'Tools configured', pass: true, msg: `${tools.length} tools` });
+
+  // Disk space
+  try {
+    const { execSync } = require('child_process');
+    const df = execSync('df -h . | tail -1', { encoding: 'utf-8' }).trim();
+    const parts = df.split(/\s+/);
+    const avail = parts[3] || 'unknown';
+    const usePercent = parseInt(parts[4] || '0', 10);
+    checks.push({ label: 'Disk space', pass: usePercent < 95, msg: `${avail} available (${parts[4]} used)${usePercent >= 95 ? ' — LOW SPACE' : ''}` });
+  } catch {
+    // Non-critical
+  }
+
+  // Print checks
+  let lastSection = '';
   let allOk = true;
   for (const c of checks) {
     if (!c.pass) allOk = false;
-    console.log(`  ${c.pass ? $.green + '✓' : $.red + '✗'}${$.reset} ${c.label}${c.msg ? ' — ' + $.yellow + c.msg + $.reset : ''}`);
+    if (c.section && c.section !== lastSection) {
+      lastSection = c.section;
+      console.log(`\n  ${$.dim}${c.section}${$.reset}`);
+    }
+    console.log(`  ${c.pass ? $.green + '✓' : $.red + '✗'}${$.reset} ${c.label}${c.msg ? ' — ' + (c.pass ? $.dim : $.yellow) + c.msg + $.reset : ''}`);
   }
+
+  // Connectivity test
   if (provider) {
+    console.log(`\n  ${$.dim}CONNECTIVITY${$.reset}`);
     console.log(`  ${$.dim}Testing ${provider.type} at ${provider.baseUrl}...${$.reset}`);
     try {
       const res = await fetch(`${provider.baseUrl}/models`, {
         headers: { 'Authorization': `Bearer ${provider.apiKey}` },
         signal: AbortSignal.timeout(5000),
       });
-      console.log(`  ${res.ok ? $.green + '✓' : $.red + '✗'}${$.reset} API: ${res.status}`);
-    } catch {
-      console.log(`  ${$.yellow}!${$.reset} API unreachable`);
+      if (res.ok) {
+        console.log(`  ${$.green}✓${$.reset} API reachable (HTTP ${res.status})`);
+        try {
+          const data = await res.json() as { data?: Array<{ id: string }> };
+          const modelCount = data.data?.length ?? 0;
+          if (modelCount > 0) {
+            console.log(`  ${$.green}✓${$.reset} ${modelCount} models available`);
+          }
+        } catch { /* ignore */ }
+      } else {
+        console.log(`  ${$.red}✗${$.reset} API returned HTTP ${res.status}`);
+        if (res.status === 401) console.log(`    ${$.yellow}→ Invalid API key. Check your credentials.${$.reset}`);
+        if (res.status === 429) console.log(`    ${$.yellow}→ Rate limited. Try again later.${$.reset}`);
+      }
+    } catch (err) {
+      console.log(`  ${$.red}✗${$.reset} API unreachable`);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('ENOTFOUND')) console.log(`    ${$.yellow}→ DNS resolution failed. Check your internet connection.${$.reset}`);
+      else if (msg.includes('ECONNREFUSED')) console.log(`    ${$.yellow}→ Connection refused. Is the server running?${$.reset}`);
+      else if (msg.includes('timeout')) console.log(`    ${$.yellow}→ Connection timed out. Check network/firewall.${$.reset}`);
+      else console.log(`    ${$.dim}${msg.slice(0, 100)}${$.reset}`);
     }
   }
-  if (allOk) console.log(`\n  ${$.green}${$.bold}All checks passed${$.reset}`);
-  else console.log(`\n  ${$.yellow}Some checks need attention${$.reset}`);
+
+  // Summary
+  console.log();
+  if (allOk) {
+    console.log(`  ${$.green}${$.bold}All checks passed ✓${$.reset}`);
+    console.log(`  ${$.dim}Run ${$.cyan}commander quickstart${$.reset}${$.dim} for usage tips.${$.reset}`);
+  } else {
+    console.log(`  ${$.yellow}Some checks need attention${$.reset}`);
+    console.log(`  ${$.dim}Run ${$.cyan}commander quickstart${$.reset}${$.dim} for setup guidance.${$.reset}`);
+  }
+  console.log();
 }
 
 export async function cmdMode(modeArg?: string) {

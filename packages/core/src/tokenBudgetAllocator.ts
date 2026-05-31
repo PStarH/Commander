@@ -58,6 +58,7 @@ export class TokenBudgetAllocator {
   private totalBudget: number;
   private usedBudget: number = 0;
   private agentBudgets: Map<string, number> = new Map();
+  private agentUsage: Map<string, number> = new Map();
   private phaseAllocations: Map<string, BudgetAllocation> = new Map();
   private history: BudgetSnapshot[] = [];
 
@@ -81,6 +82,7 @@ export class TokenBudgetAllocator {
     this.usedBudget = 0;
     this.agentBudgets.clear();
     this.phaseAllocations.clear();
+    this.agentUsage.clear();
   }
 
   /**
@@ -94,11 +96,12 @@ export class TokenBudgetAllocator {
     // 根据模式调整分配比例
     const ratios = this.getAllocationRatios(mode);
 
-    // 计算各部分预算
-    const leadAgent = Math.floor(baseBudget * ratios.lead);
-    const specialistAgents = Math.floor(baseBudget * ratios.specialists);
-    const evaluation = Math.floor(baseBudget * ratios.evaluation);
-    const overhead = Math.floor(baseBudget * ratios.overhead);
+    // 计算各部分预算 (subtract reserve first to avoid over-allocation)
+    const allocatableBudget = baseBudget * (1 - this.config.reserveRatio);
+    const leadAgent = Math.floor(allocatableBudget * ratios.lead);
+    const specialistAgents = Math.floor(allocatableBudget * ratios.specialists);
+    const evaluation = Math.floor(allocatableBudget * ratios.evaluation);
+    const overhead = Math.floor(allocatableBudget * ratios.overhead);
     const reserved = Math.floor(baseBudget * this.config.reserveRatio);
 
     const budget: TokenBudget = {
@@ -198,9 +201,9 @@ export class TokenBudgetAllocator {
   recordUsage(agentId: string, tokens: number, phase?: string): void {
     this.usedBudget += tokens;
 
-    // 更新 agent 使用
-    const current = this.agentBudgets.get(agentId) || 0;
-    this.agentBudgets.set(agentId, current + tokens);
+    // 更新 agent 使用 (tracked separately from allocation)
+    const currentUsage = this.agentUsage.get(agentId) || 0;
+    this.agentUsage.set(agentId, currentUsage + tokens);
 
     // 更新阶段使用
     if (phase) {
@@ -246,9 +249,8 @@ export class TokenBudgetAllocator {
    */
   getAgentRemaining(agentId: string): number {
     const allocated = this.agentBudgets.get(agentId) || 0;
-    // 简单估算：假设已使用 allocated * usageRate
-    const estimatedUsed = allocated * this.getUsageRate();
-    return Math.max(0, allocated - estimatedUsed);
+    const used = this.agentUsage.get(agentId) || 0;
+    return Math.max(0, allocated - used);
   }
 
   /**
@@ -317,7 +319,7 @@ export class TokenBudgetAllocator {
       phaseEfficiency[phase.phase] = phase.efficiency;
     }
 
-    const overall = phases.reduce((sum, p) => sum + p.efficiency, 0) / phases.length;
+    const overall = phases.length > 0 ? phases.reduce((sum, p) => sum + p.efficiency, 0) / phases.length : 0;
 
     // 计算趋势
     let trend: 'improving' | 'declining' | 'stable' = 'stable';
@@ -353,6 +355,7 @@ export class TokenBudgetAllocator {
     this.usedBudget = 0;
     this.agentBudgets.clear();
     this.phaseAllocations.clear();
+    this.agentUsage.clear();
     this.history = [];
   }
 

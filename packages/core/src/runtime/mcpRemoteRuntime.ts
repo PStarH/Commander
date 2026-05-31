@@ -103,7 +103,7 @@ export class MCPRemoteRuntime {
         status: 'success',
         summary: outputText.slice(0, 500),
         steps,
-        totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: outputText.length },
+        totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: Math.ceil(outputText.length / 4) },
         totalDurationMs: durationMs,
       };
     } catch (err) {

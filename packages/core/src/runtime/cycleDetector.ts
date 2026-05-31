@@ -14,17 +14,36 @@ interface CycleDetectorConfig {
   maxConsecutiveSameTool: number;
   /** 检测交替模式的窗口大小 (默认: 6) */
   alternatingPatternWindow: number;
-  /** 参数相似度阈值，低于此值视为"相同"调用 (默认: 0.9) */
-  paramSimilarityThreshold: number;
   /** 漂移检测：允许参数微调的最大次数 (默认: 5) */
   maxDriftIterations: number;
+  /** 漂移追踪器最大条目数 (默认: 200) */
+  maxDriftEntries: number;
 }
 
 const DEFAULT_CONFIG: CycleDetectorConfig = {
   maxConsecutiveSameTool: 3,
   alternatingPatternWindow: 6,
-  paramSimilarityThreshold: 0.9,
   maxDriftIterations: 5,
+  maxDriftEntries: 200,
+};
+
+/**
+ * Parameter key that distinguishes consecutive calls to the same tool.
+ * If the value of this parameter differs between calls, it's not a cycle.
+ */
+const DIFFERENTIATING_PARAM: Record<string, string> = {
+  file_write: 'path',
+  file_edit: 'path',
+  file_read: 'path',
+  file_list: 'path',
+  file_search: 'pattern',
+  web_search: 'query',
+  web_fetch: 'url',
+  web_scrape: 'url',
+  shell_execute: 'command',
+  bash: 'command',
+  git: 'command',
+  python_execute: 'code',
 };
 
 type ToolCallRecord = {
@@ -44,13 +63,21 @@ export type CycleDetectionResult =
 
 export class CycleDetector {
   private config: CycleDetectorConfig;
-  private history: ToolCallRecord[] = [];
+  // Ring buffer for history — O(1) insert, no allocation on overflow
+  private history: ToolCallRecord[];
+  private historyHead = 0;
+  private historyCount = 0;
+  private readonly maxHistory: number;
   private consecutiveSameToolCount = 0;
   private lastToolName: string | null = null;
+  private lastDiffParamValue: string | null = null;
+  private lastStepNumber = -1;
   private driftTracker: Map<string, number> = new Map();
 
   constructor(config?: Partial<CycleDetectorConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.maxHistory = this.config.alternatingPatternWindow * 3;
+    this.history = new Array(this.maxHistory);
   }
 
   /**
@@ -58,15 +85,13 @@ export class CycleDetector {
    */
   check(toolName: string, args: Record<string, unknown>, stepNumber: number): CycleDetectionResult {
     const record: ToolCallRecord = { name: toolName, args, stepNumber };
-    this.history.push(record);
-
-    // 保持历史记录在合理范围
-    if (this.history.length > this.config.alternatingPatternWindow * 3) {
-      this.history = this.history.slice(-this.config.alternatingPatternWindow * 3);
-    }
+    // Ring buffer: O(1) insert, no allocation
+    this.history[this.historyHead] = record;
+    this.historyHead = (this.historyHead + 1) % this.maxHistory;
+    if (this.historyCount < this.maxHistory) this.historyCount++;
 
     // 1. 检测连续相同工具调用
-    const consecutive = this.detectConsecutive(toolName);
+    const consecutive = this.detectConsecutive(toolName, args, stepNumber);
     if (consecutive.detected) return consecutive;
 
     // 2. 检测交替模式 (A→B→A→B)
@@ -84,18 +109,43 @@ export class CycleDetector {
    * 重置检测器状态（用于新任务）
    */
   reset(): void {
-    this.history = [];
+    this.historyHead = 0;
+    this.historyCount = 0;
     this.consecutiveSameToolCount = 0;
     this.lastToolName = null;
+    this.lastDiffParamValue = null;
+    this.lastStepNumber = -1;
     this.driftTracker.clear();
   }
 
-  private detectConsecutive(toolName: string): CycleDetectionResult {
+  private detectConsecutive(toolName: string, args?: Record<string, unknown>, stepNumber?: number): CycleDetectionResult {
+    // Concurrent calls from the same LLM turn share the same step number.
+    // These are parallel tool invocations, not consecutive loops — skip tracking.
+    if (stepNumber !== undefined && stepNumber === this.lastStepNumber) {
+      return { detected: false };
+    }
+    if (stepNumber !== undefined) this.lastStepNumber = stepNumber;
+
+    // For tools with differentiating parameters, consecutive calls with
+    // different values are not cycles (e.g., searching different queries,
+    // fetching different URLs, writing different files).
+    const diffParam = DIFFERENTIATING_PARAM[toolName];
+    if (diffParam && args?.[diffParam] !== undefined) {
+      const currentVal = String(args[diffParam]);
+      if (this.lastToolName === toolName && this.lastDiffParamValue && this.lastDiffParamValue !== currentVal) {
+        this.consecutiveSameToolCount = 1;
+        this.lastDiffParamValue = currentVal;
+        return { detected: false };
+      }
+      this.lastDiffParamValue = currentVal;
+    }
+
     if (toolName === this.lastToolName) {
       this.consecutiveSameToolCount++;
     } else {
       this.consecutiveSameToolCount = 1;
       this.lastToolName = toolName;
+      this.lastDiffParamValue = null;
     }
 
     if (this.consecutiveSameToolCount >= this.config.maxConsecutiveSameTool) {
@@ -112,26 +162,42 @@ export class CycleDetector {
 
   private detectAlternating(): CycleDetectionResult {
     const window = this.config.alternatingPatternWindow;
-    if (this.history.length < window) return { detected: false };
+    if (this.historyCount < window) return { detected: false };
 
-    const recent = this.history.slice(-window);
-    const toolNames = recent.map(r => r.name);
+    // Read last `window` entries from ring buffer
+    const entries: Array<{ name: string; diffVal: string | null }> = [];
+    for (let i = 0; i < window; i++) {
+      const idx = (this.historyHead - window + i + this.maxHistory) % this.maxHistory;
+      const rec = this.history[idx];
+      const diffParam = DIFFERENTIATING_PARAM[rec.name];
+      const diffVal = diffParam && rec.args?.[diffParam] != null ? String(rec.args[diffParam]) : null;
+      entries.push({ name: rec.name, diffVal });
+    }
 
     // 检查 A→B→A→B 模式
-    if (toolNames.length >= 4) {
-      const evenTools = toolNames.filter((_, i) => i % 2 === 0);
-      const oddTools = toolNames.filter((_, i) => i % 2 === 1);
+    if (entries.length >= 4) {
+      const evenEntries = entries.filter((_, i) => i % 2 === 0);
+      const oddEntries = entries.filter((_, i) => i % 2 === 1);
 
-      const evenSame = evenTools.every(t => t === evenTools[0]);
-      const oddSame = oddTools.every(t => t === oddTools[0]);
+      const evenSame = evenEntries.every(e => e.name === evenEntries[0].name);
+      const oddSame = oddEntries.every(e => e.name === oddEntries[0].name);
 
-      if (evenSame && oddSame && evenTools[0] !== oddTools[0]) {
-        return {
-          detected: true,
-          type: 'alternating',
-          description: `Alternating pattern detected: "${evenTools[0]}" ↔ "${oddTools[0]}"`,
-          advice: `Tools are alternating in a fixed pattern. This usually means the agent is stuck in a retry loop. Try combining both operations into a single call, or re-examine the overall approach.`,
-        };
+      if (evenSame && oddSame && evenEntries[0].name !== oddEntries[0].name) {
+        // Not a cycle if the differentiating parameter values are changing
+        // (e.g., file_read → file_edit on different files is a legitimate workflow)
+        const evenDiffVals = evenEntries.map(e => e.diffVal).filter(Boolean);
+        const oddDiffVals = oddEntries.map(e => e.diffVal).filter(Boolean);
+        const evenVaries = evenDiffVals.length > 1 && !evenDiffVals.every(v => v === evenDiffVals[0]);
+        const oddVaries = oddDiffVals.length > 1 && !oddDiffVals.every(v => v === oddDiffVals[0]);
+
+        if (!evenVaries && !oddVaries) {
+          return {
+            detected: true,
+            type: 'alternating',
+            description: `Alternating pattern detected: "${evenEntries[0].name}" ↔ "${oddEntries[0].name}"`,
+            advice: `Tools are alternating in a fixed pattern. This usually means the agent is stuck in a retry loop. Try combining both operations into a single call, or re-examine the overall approach.`,
+          };
+        }
       }
     }
 
@@ -139,21 +205,34 @@ export class CycleDetector {
   }
 
   private detectDrift(toolName: string, args: Record<string, unknown>): CycleDetectionResult {
-    const key = `${toolName}:${JSON.stringify(args)}`;
+    // Fast hash instead of JSON.stringify — sort top-level keys for determinism
+    const keys = Object.keys(args).sort();
+    let argsHash = '';
+    for (let i = 0; i < keys.length; i++) {
+      const v = args[keys[i]];
+      const val = typeof v === 'string' ? v : JSON.stringify(v);
+      argsHash += `${keys[i]}=${val};`;
+      if (argsHash.length > 200) { argsHash = argsHash.slice(0, 200); break; }
+    }
+    const key = `${toolName}:${argsHash}`;
     const count = (this.driftTracker.get(key) ?? 0) + 1;
     this.driftTracker.set(key, count);
 
-    // 清理与当前调用差异太大的旧记录
-    for (const [existingKey] of this.driftTracker) {
-      if (existingKey !== key) {
-        const existingCount = this.driftTracker.get(existingKey) ?? 0;
-        if (existingCount < 2) {
-          this.driftTracker.delete(existingKey);
-        }
+    // Evict entries to prevent unbounded memory growth.
+    // Strategy: when over limit, remove all entries with count < 2 first,
+    // then if still over, remove oldest entries (Map insertion order).
+    if (this.driftTracker.size > this.config.maxDriftEntries) {
+      for (const [k, v] of this.driftTracker) {
+        if (v < 2) this.driftTracker.delete(k);
+      }
+      // If still over limit after low-count eviction, trim oldest
+      while (this.driftTracker.size > this.config.maxDriftEntries) {
+        const firstKey = this.driftTracker.keys().next().value;
+        if (firstKey !== undefined) this.driftTracker.delete(firstKey);
+        else break;
       }
     }
 
-    // 如果同一个调用多次出现但参数微变
     if (count >= this.config.maxDriftIterations) {
       return {
         detected: true,
@@ -171,7 +250,7 @@ export class CycleDetector {
    */
   getDebugInfo() {
     return {
-      historyLength: this.history.length,
+      historyLength: this.historyCount,
       consecutiveSameToolCount: this.consecutiveSameToolCount,
       lastToolName: this.lastToolName,
       driftEntries: Object.fromEntries(this.driftTracker),

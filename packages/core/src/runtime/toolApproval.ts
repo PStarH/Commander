@@ -374,12 +374,14 @@ async requestApproval(
       try {
         const result = await this.approvalCallback(approvalRequest);
         this.pendingApprovals.set(pendingKey, approvalRequest);
+        this.pruneStaleApprovals();
         this.recordDecision(toolName, result.approved, policy.level);
         return result;
       } catch (e) {
         getGlobalLogger().warn('ToolApproval', 'Approval callback failed', { error: (e as Error)?.message, toolName });
         // If callback fails, store as pending and return approval_failed
         this.pendingApprovals.set(pendingKey, approvalRequest);
+        this.pruneStaleApprovals();
         this.recordDecision(toolName, false, policy.level);
         return {
           approved: false,
@@ -425,7 +427,10 @@ async requestApproval(
     const total = this.decisionHistory.length;
     if (total === 0) return { total: 0, approved: 0, rejected: 0, approvalRate: 0 };
 
-    const approved = this.decisionHistory.filter(d => d.approved).length;
+    let approved = 0;
+    for (const d of this.decisionHistory) {
+      if (d.approved) approved++;
+    }
     return {
       total,
       approved,
@@ -459,24 +464,50 @@ async requestApproval(
    * 手动批准待处理的请求
    */
   async approvePending(requestId: string): Promise<boolean> {
-    const request = this.pendingApprovals.get(requestId);
-    if (!request) return false;
-
-    this.pendingApprovals.delete(requestId);
-    this.recordDecision(request.toolName, true, request.policy.level);
-    return true;
+    for (const [key, request] of this.pendingApprovals) {
+      if (request.id === requestId) {
+        this.pendingApprovals.delete(key);
+        this.recordDecision(request.toolName, true, request.policy.level);
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
    * 手动拒绝待处理的请求
    */
   async rejectPending(requestId: string, reason?: string): Promise<boolean> {
-    const request = this.pendingApprovals.get(requestId);
-    if (!request) return false;
+    for (const [key, request] of this.pendingApprovals) {
+      if (request.id === requestId) {
+        this.pendingApprovals.delete(key);
+        this.recordDecision(request.toolName, false, request.policy.level);
+        return true;
+      }
+    }
+    return false;
+  }
 
-    this.pendingApprovals.delete(requestId);
-    this.recordDecision(request.toolName, false, request.policy.level);
-    return true;
+  private static readonly MAX_PENDING = 200;
+
+  private pruneStaleApprovals(): void {
+    if (this.pendingApprovals.size <= ToolApproval.MAX_PENDING) return;
+    const now = Date.now();
+    // Remove expired entries first
+    for (const [key, req] of this.pendingApprovals) {
+      if (req.timeoutAt && new Date(req.timeoutAt).getTime() < now) {
+        this.pendingApprovals.delete(key);
+      }
+    }
+    // If still over cap, remove oldest entries
+    if (this.pendingApprovals.size > ToolApproval.MAX_PENDING) {
+      const entries = Array.from(this.pendingApprovals.entries());
+      entries.sort((a, b) => a[1].requestTime.localeCompare(b[1].requestTime));
+      const removeCount = this.pendingApprovals.size - ToolApproval.MAX_PENDING;
+      for (let i = 0; i < removeCount; i++) {
+        this.pendingApprovals.delete(entries[i][0]);
+      }
+    }
   }
 
   /**

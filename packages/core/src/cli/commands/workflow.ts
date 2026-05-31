@@ -7,7 +7,7 @@ import { AgentRuntime } from '../../runtime/agentRuntime';
 import type { EffortLevel, OrchestrationTopology } from '../../ultimate/types';
 import { Scheduler, WorkflowRegistry } from '../../scheduler';
 import type { ScheduleEntry, WorkflowTrigger } from '../../scheduler';
-import { createRuntime, loadTools, $, section, kv, bullet, cmdHeader, startSpinner, onboardingMessage } from './_shared';
+import { createRuntime, loadTools, $, section, kv, bullet, cmdHeader, startSpinner, onboardingMessage, fatalError } from './_shared';
 
 export async function cmdWorkflow(subargs: string[]) {
   const subcmd = subargs[0];
@@ -64,8 +64,9 @@ export async function cmdWorkflow(subargs: string[]) {
       const provider = detectProvider();
       const runtime = createRuntime();
       if (!runtime || !provider) {
-        console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No API key found.\n`);
-        onboardingMessage();
+        console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No API key found.`);
+        console.error(`  ${$.dim}→ Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider env var.${$.reset}`);
+        console.error(`  ${$.dim}→ Run ${$.cyan}commander quickstart${$.reset}${$.dim} for setup guidance.${$.reset}\n`);
         break;
       }
 
@@ -281,8 +282,9 @@ depends-on: [execution]
       const provider = detectProvider();
       const runtime = createRuntime();
       if (!runtime || !provider) {
-        console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No API key found.\n`);
-        onboardingMessage();
+        console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No API key found.`);
+        console.error(`  ${$.dim}→ Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider env var.${$.reset}`);
+        console.error(`  ${$.dim}→ Run ${$.cyan}commander quickstart${$.reset}${$.dim} for setup guidance.${$.reset}\n`);
         break;
       }
 
@@ -292,8 +294,9 @@ depends-on: [execution]
       scheduler.setOrchestrator(orch);
 
       const watchDir = path.join(process.cwd(), '.commander', 'workflows');
+      let watcher: ReturnType<typeof fs.watch> | null = null;
       if (fs.existsSync(watchDir)) {
-        fs.watch(watchDir, (eventType, filename) => {
+        watcher = fs.watch(watchDir, (eventType, filename) => {
           if (filename?.endsWith('.md')) {
             const wfId = filename.replace(/\.md$/, '');
             const reloaded = registry.reload(wfId);
@@ -310,15 +313,14 @@ depends-on: [execution]
       console.log(`  ${$.dim}  State: ${path.join(process.cwd(), '.commander', 'scheduler')}${$.reset}`);
       console.log(`  ${$.dim}  Workflows: ${registry.list().length} loaded${$.reset}\n`);
 
-      process.on('SIGINT', () => {
+      const shutdown = () => {
+        watcher?.close();
         scheduler.stop();
         console.log(`\n  ${$.yellow}○ Scheduler daemon stopped${$.reset}\n`);
         process.exit(0);
-      });
-      process.on('SIGTERM', () => {
-        scheduler.stop();
-        process.exit(0);
-      });
+      };
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
 
       await new Promise(() => {});
       break;

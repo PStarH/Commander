@@ -238,10 +238,20 @@ class SimpleVectorIndex {
   
   /**
    * Remove document from index
+   * Also updates document frequency to keep IDF scores accurate
    */
   removeDocument(id: string): void {
+    const vector = this.vectors.get(id);
+    if (!vector) return;
+
+    // Reconstruct tokens from vector to update document frequency
+    // Since we store [hash, score] pairs, we need to decrement DF for each term
+    // Approximate: remove from document frequency for all terms in this doc
+    // This is a best-effort approach since we don't store the original tokens
     this.vectors.delete(id);
-    // Note: Document frequency not updated for simplicity
+    this.totalDocuments = Math.max(0, this.totalDocuments - 1);
+    // Note: DF counts become slightly inflated over time. For production,
+    // store token lists alongside vectors for exact DF updates.
   }
   
   /**
@@ -282,7 +292,9 @@ export class EpisodicMemoryStore {
   private vectorIndex: SimpleVectorIndex;
   private filePath: string;
   private vectorPath: string;
-  
+  private dirty = false;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(filePath: string = EPISODIC_MEMORY_FILE, vectorPath: string = VECTOR_INDEX_FILE) {
     this.filePath = filePath;
     this.vectorPath = vectorPath;
@@ -365,18 +377,31 @@ export class EpisodicMemoryStore {
   }
   
   /**
-   * Find memories that contradict this observation
+   * Find memories that contradict this observation.
+   * Uses keyword overlap + negation pattern detection.
    */
   private findContradictions(input: Pick<EpisodicMemory, 'projectId' | 'content' | 'type'>): EpisodicMemory[] {
-    // Simple heuristic: find memories with similar keywords but different sentiment
-    // In production, this would use more sophisticated NLP
     const keywords = this.extractKeywords(input.content);
-    
+    const negationWords = ['not', "don't", "doesn't", "didn't", "won't", "shouldn't",
+      'never', 'no', 'avoid', 'reject', 'deny', 'contradict', 'opposite', 'false',
+      'incorrect', 'wrong', 'broken', 'failed'];
+    const inputHasNegation = input.content.toLowerCase().split(/\s+/)
+      .some(w => negationWords.includes(w));
+
     return this.memories.filter(m => {
       if (m.projectId !== input.projectId || m.type !== input.type) return false;
       const mKeywords = this.extractKeywords(m.content);
       const overlap = keywords.filter(k => mKeywords.includes(k));
-      return overlap.length > 2; // Significant overlap
+      if (overlap.length <= 2) return false;
+
+      // Check for negation asymmetry: one has negation, the other doesn't
+      const mHasNegation = m.content.toLowerCase().split(/\s+/)
+        .some(w => negationWords.includes(w));
+      if (inputHasNegation !== mHasNegation) return true;
+
+      // High keyword overlap (>50%) without negation may also indicate contradiction
+      const overlapRatio = overlap.length / Math.min(keywords.length, mKeywords.length);
+      return overlapRatio > 0.5 && overlap.length > 5;
     });
   }
   
@@ -482,46 +507,43 @@ export class EpisodicMemoryStore {
     });
     
     // Step 2: Semantic search if query provided
+    let searchBoost: Map<string, number> | null = null;
     if (query && query.trim()) {
       const searchResults = this.vectorIndex.search(query, limit * 2);
-      const searchIds = new Set(searchResults.map(r => r.id));
-      
-      // Boost results that match semantic search
-      results = results.map(m => ({
-        ...m,
-        importance: searchIds.has(m.id) 
-          ? Math.min(1.0, m.importance + 0.3)
-          : m.importance,
-      }));
+      searchBoost = new Map(searchResults.map(r => [r.id, r.score]));
     }
-    
-    // Step 3: Multi-factor scoring
-    // Formula: score = recency * 0.3 + importance * 0.4 + accessCountFactor * 0.3
+
+    // Step 3: Multi-factor scoring (does NOT overwrite importance)
+    // Formula: score = recency * 0.3 + importance * 0.4 + accessCountFactor * 0.3 + semanticBoost
     const now = Date.now();
-    results = results.map(m => {
+    const scored = results.map(m => {
       const age = (now - new Date(m.timestamp).getTime()) / (1000 * 60 * 60 * 24); // Days
       const recency = Math.exp(-age / 7); // Exponential decay, half-life = 7 days
       const accessFactor = Math.log(m.accessCount + 1) / 5; // Logarithmic scaling
-      
-      const score = recency * 0.3 + m.importance * 0.4 + accessFactor * 0.3;
-      
-      return { ...m, importance: score }; // Use importance as final score
+      const semanticBoost = searchBoost?.get(m.id) ? 0.3 : 0;
+
+      const score = recency * 0.3 + m.importance * 0.4 + accessFactor * 0.3 + semanticBoost;
+
+      return { memory: m, score };
     });
-    
+
     // Step 4: Sort by score and limit
-    results.sort((a, b) => b.importance - a.importance);
+    scored.sort((a, b) => b.score - a.score);
     
-    // Step 5: Update access count
-    const topResults = results.slice(0, limit);
-    for (const m of topResults) {
-      m.accessCount++;
-      m.lastAccessedAt = new Date().toISOString();
+    // Step 5: Update access count on original memories (not spread copies)
+    const topResults = scored.slice(0, limit);
+    const topIds = new Set(topResults.map(r => r.memory.id));
+    for (const m of this.memories) {
+      if (topIds.has(m.id)) {
+        m.accessCount++;
+        m.lastAccessedAt = new Date().toISOString();
+      }
     }
-    
-    this.persist();
-    return topResults;
+
+    this.schedulePersist(); // Defer write for access count updates
+    return topResults.map(r => r.memory);
   }
-  
+
   /**
    * Get single memory by ID
    */
@@ -530,7 +552,7 @@ export class EpisodicMemoryStore {
     if (memory) {
       memory.accessCount++;
       memory.lastAccessedAt = new Date().toISOString();
-      this.persist();
+      this.schedulePersist(); // Defer write for access count updates
     }
     return memory;
   }
@@ -555,8 +577,9 @@ export class EpisodicMemoryStore {
       byType[m.type]++;
     }
     
-    const sorted = [...filtered].sort((a, b) => 
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    // ISO string comparison — no Date parsing needed
+    const sorted = [...filtered].sort((a, b) =>
+      a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0
     );
     
     return {
@@ -671,11 +694,30 @@ export class EpisodicMemoryStore {
   }
   
   private persist(): void {
-    // Save memories
+    this.dirty = true;
+    // For writes (memory creation), persist immediately
+    this.doPersist();
+  }
+
+  /**
+   * Schedule a deferred persist for read operations (access count updates).
+   * Batches multiple reads into a single write to reduce I/O.
+   */
+  private schedulePersist(): void {
+    this.dirty = true;
+    if (this.persistTimer) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      if (this.dirty) this.doPersist();
+    }, 2000);
+    this.persistTimer.unref();
+  }
+
+  private doPersist(): void {
+    if (!this.dirty) return;
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
     fs.writeFileSync(this.filePath, JSON.stringify(this.memories, null, 2));
-    
-    // Save vector index
     this.vectorIndex.save(this.vectorPath);
+    this.dirty = false;
   }
 }

@@ -135,7 +135,7 @@ export class SkillManager {
     }
 
     if (query.source) {
-      return results;
+      results = results.filter(s => s.source === query.source);
     }
 
     if (query.minQuality !== undefined) {
@@ -320,6 +320,7 @@ export class SkillManager {
       usageCount: skill.metadata.usageCount,
       qualityScore: skill.metadata.qualityScore,
       pinned: skill.metadata.pinned,
+      source: skill.metadata.source,
     };
   }
 

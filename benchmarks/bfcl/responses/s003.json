@@ -1,37 +1,13 @@
 {
-  "id": "08e85d43740146cc9aa2264b7d4ab1c0",
-  "choices": [
-    {
-      "finish_reason": "tool_calls",
-      "index": 0,
-      "message": {
-        "content": "",
-        "role": "assistant",
-        "tool_calls": [
-          {
-            "id": "call_66d8d77e46314cf6bcca6966",
-            "function": {
-              "arguments": "{\"path\": \"config.json\"}",
-              "name": "file_read"
-            },
-            "type": "function"
-          }
-        ]
-      }
-    }
-  ],
-  "created": 1778999834,
-  "model": "mimo-v2.5-pro",
-  "object": "chat.completion",
-  "usage": {
-    "completion_tokens": 21,
-    "prompt_tokens": 987,
-    "total_tokens": 1008,
-    "completion_tokens_details": {
-      "reasoning_tokens": 0
-    },
-    "prompt_tokens_details": {
-      "cached_tokens": 960
-    }
-  }
+  "input": {
+    "task_id": "s003",
+    "prompt": "read config.json",
+    "cat": "simple",
+    "expected": "file_read"
+  },
+  "output": "{\"tool_calls\":[{\"id\":\"call_f8b5b463284044f68f9e66b4\",\"function\":{\"arguments\":\"{\\\"path\\\": \\\"config.json\\\"}\",\"name\":\"file_read\"},\"type\":\"function\"}]}",
+  "extracted_answer": "{\"tool_calls\":[{\"id\":\"call_f8b5b463284044f68f9e66b4\",\"function\":{\"arguments\":\"{\\\"path\\\": \\\"config.json\\\"}\",\"name\":\"file_read\"},\"type\":\"function\"}]}",
+  "correct": true,
+  "toolCorrect": true,
+  "paramCorrect": true
 }

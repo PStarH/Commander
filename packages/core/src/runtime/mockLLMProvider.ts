@@ -62,6 +62,7 @@ export class MockLLMProvider implements LLMProvider {
   reset(): void {
     this.callCount = 0;
     this.lastRequest = null;
+    this.responseMap.clear();
   }
 }
 

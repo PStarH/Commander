@@ -14,7 +14,7 @@ function parseYamlFrontmatter(yaml: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   const lines = yaml.split('\n');
   const stack: Array<{ obj: Record<string, unknown>; indent: number }> = [{ obj: result, indent: -1 }];
-  const arrayStack: Array<{ arr: unknown[]; key: string }> = [];
+  const arrayStack: Array<{ arr: unknown[]; key: string; _indent: number }> = [];
 
   for (const rawLine of lines) {
     const line = rawLine.replace(/\s+$/, '');
@@ -41,12 +41,32 @@ function parseYamlFrontmatter(yaml: string): Record<string, unknown> {
       stack.pop();
     }
 
+    // Pop stale array context when indentation decreases
+    while (arrayStack.length > 0 && indent <= (arrayStack[arrayStack.length - 1] as unknown as { _indent: number })._indent) {
+      arrayStack.pop();
+    }
+
     const currentObj = stack[stack.length - 1].obj;
 
     if (valueStr === '') {
-      const nested: Record<string, unknown> = {};
-      currentObj[key] = nested;
-      stack.push({ obj: nested, indent });
+      // Peek at next non-empty line to decide if this is an array or object
+      let nextLine = '';
+      for (let li = lines.indexOf(rawLine) + 1; li < lines.length; li++) {
+        const nl = lines[li].replace(/\s+$/, '');
+        if (nl.trim() && !nl.trim().startsWith('#')) { nextLine = nl; break; }
+      }
+      const nextIndent = nextLine.search(/\S/);
+      const nextTrimmed = nextLine.trim();
+      if (nextTrimmed.startsWith('- ') && nextIndent > indent) {
+        // This key starts an array
+        const arr: unknown[] = [];
+        currentObj[key] = arr;
+        arrayStack.push({ arr, key, _indent: indent });
+      } else {
+        const nested: Record<string, unknown> = {};
+        currentObj[key] = nested;
+        stack.push({ obj: nested, indent });
+      }
     } else if (valueStr.startsWith('[') && valueStr.endsWith(']')) {
       currentObj[key] = valueStr.slice(1, -1).split(',').map(s => parseYamlValue(s.trim())).filter(s => s !== '');
     } else {

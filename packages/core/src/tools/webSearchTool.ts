@@ -1,7 +1,10 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
 
-const SEARCH_TIMEOUT = 8000;
+const SEARCH_TIMEOUT = 15000;
+const CHROME_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+
+type SearchResult = { title: string; url: string; snippet: string };
 
 export class WebSearchTool implements Tool {
   definition: ToolDefinition = {
@@ -27,10 +30,10 @@ export class WebSearchTool implements Tool {
     const numResults = Math.min(Number(args.numResults ?? 5), 10);
     if (!query) return 'Error: query is required';
 
-    let results = await this.tryDuckDuckGo(query, numResults);
-    if (!results) {
-      results = await this.tryBing(query, numResults);
-    }
+    // Bing is most reliable for scraping; try it first, then others
+    let results = await this.tryBing(query, numResults);
+    if (!results) results = await this.tryDuckDuckGo(query, numResults);
+    if (!results) results = await this.tryGoogle(query, numResults);
 
     if (!results || results.length === 0) {
       return `No results found for "${query}". Try a different query.`;
@@ -41,18 +44,24 @@ export class WebSearchTool implements Tool {
     ).join('\n');
   }
 
-  private async tryDuckDuckGo(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }> | null> {
+  private async tryDuckDuckGo(query: string, maxResults: number): Promise<SearchResult[] | null> {
     try {
       const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT);
+      timeout.unref();
       const response = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CommanderBot; +https://github.com/sampan/commander)' },
+        headers: { 'User-Agent': CHROME_UA, 'Accept': 'text/html', 'Accept-Language': 'en-US,en;q=0.9' },
         signal: controller.signal,
       });
       clearTimeout(timeout);
       if (!response.ok) return null;
       const html = await response.text();
+      // DuckDuckGo returns CAPTCHA/challenge pages for bots — detect and bail
+      if (html.includes('anomaly-modal') || html.includes('challenge-form') || html.includes('Unfortunately, bots')) {
+        getGlobalLogger().warn('WebSearchTool', 'DuckDuckGo returned CAPTCHA, skipping');
+        return null;
+      }
       const results = this.parseDuckDuckGo(html, maxResults);
       return results.length > 0 ? results : null;
     } catch (e) {
@@ -61,26 +70,93 @@ export class WebSearchTool implements Tool {
     }
   }
 
-  private async tryBing(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }> | null> {
+  private async tryBing(query: string, maxResults: number): Promise<SearchResult[] | null> {
     try {
-      const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&cc=us&mkt=en-US`;
+      const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&cc=us&mkt=en-US&setlang=en`;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT);
+      timeout.unref();
       const response = await fetch(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'User-Agent': CHROME_UA,
+          'Accept': 'text/html,application/xhtml+xml',
           'Accept-Language': 'en-US,en;q=0.9',
+          'Cookie': 'SRCHD=AF=NOFORM; SRCHHPGUSR=ADLT=MODERATE&NRSLT=10&SRCHLANG=en; _EDGE_S=mkt=en-us',
         },
         signal: controller.signal,
       });
       clearTimeout(timeout);
       if (!response.ok) return null;
       const html = await response.text();
-      return this.parseBing(html, maxResults);
+      const results = this.parseBing(html, maxResults);
+      return results.length > 0 ? results : null;
     } catch (e) {
       getGlobalLogger().warn('WebSearchTool', 'Bing search failed', { error: (e as Error)?.message, query });
       return null;
     }
+  }
+
+  private async tryGoogle(query: string, maxResults: number): Promise<SearchResult[] | null> {
+    try {
+      const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${maxResults}&hl=en`;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT);
+      timeout.unref();
+      const response = await fetch(url, {
+        headers: { 'User-Agent': CHROME_UA, 'Accept': 'text/html', 'Accept-Language': 'en-US,en;q=0.9' },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!response.ok) return null;
+      const html = await response.text();
+      // Google CAPTCHA detection
+      if (html.includes('captcha') || html.includes('unusual traffic') || html.includes('sorry/index')) {
+        getGlobalLogger().warn('WebSearchTool', 'Google returned CAPTCHA, skipping');
+        return null;
+      }
+      const results = this.parseGoogle(html, maxResults);
+      return results.length > 0 ? results : null;
+    } catch (e) {
+      getGlobalLogger().warn('WebSearchTool', 'Google search failed', { error: (e as Error)?.message, query });
+      return null;
+    }
+  }
+
+  private parseGoogle(html: string, maxResults: number): Array<{ title: string; url: string; snippet: string }> {
+    const results: Array<{ title: string; url: string; snippet: string }> = [];
+    // Google result links are in <a> tags with href containing /url?q=
+    const linkRegex = /<a[^>]*href="\/url\?q=([^&"]+)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+    const snippetRegex = /<span[^>]*class="[^"]*"[^>]*>([\s\S]*?)<\/span>/gi;
+    let match;
+    const urls: string[] = [];
+    const titles: string[] = [];
+
+    while ((match = linkRegex.exec(html)) !== null && urls.length < maxResults) {
+      const rawUrl = decodeURIComponent(match[1]);
+      // Skip Google's own pages
+      if (rawUrl.includes('google.com') || rawUrl.includes('youtube.com/results')) continue;
+      urls.push(rawUrl);
+      // Strip HTML tags from title
+      titles.push(match[2].replace(/<[^>]+>/g, '').trim());
+    }
+
+    // Try to extract snippets (best-effort)
+    const snippets: string[] = [];
+    while ((match = snippetRegex.exec(html)) !== null && snippets.length < urls.length) {
+      const text = match[1].replace(/<[^>]+>/g, '').trim();
+      if (text.length > 30 && !text.includes('Sign in') && !text.includes('Settings')) {
+        snippets.push(text);
+      }
+    }
+
+    for (let i = 0; i < urls.length; i++) {
+      results.push({
+        title: titles[i] || `Result ${i + 1}`,
+        url: urls[i],
+        snippet: snippets[i] || '',
+      });
+    }
+    return results;
   }
 
   private parseDuckDuckGo(html: string, maxResults: number): Array<{ title: string; url: string; snippet: string }> {
@@ -134,8 +210,8 @@ export class WebSearchTool implements Tool {
     return results;
   }
 
-  private parseBing(html: string, maxResults: number): Array<{ title: string; url: string; snippet: string }> {
-    const results: Array<{ title: string; url: string; snippet: string }> = [];
+  private parseBing(html: string, maxResults: number): SearchResult[] {
+    const results: SearchResult[] = [];
     const blocks: string[] = [];
     let idx = 0;
     while (true) {
@@ -148,12 +224,24 @@ export class WebSearchTool implements Tool {
     }
     for (const block of blocks) {
       if (results.length >= maxResults) break;
-      const urlMatch = block.match(/<h2[^>]*><a[^>]*href="(https?:\/\/[^"]+)"[^>]*>(.*?)<\/a><\/h2>/);
+      // Match both direct URLs and Bing redirect URLs (/ck/a?...&u=...)
+      const urlMatch = block.match(/<h2[^>]*><a[^>]*href="([^"]+)"[^>]*>(.*?)<\/a><\/h2>/);
       if (!urlMatch) continue;
-      const url = urlMatch[1];
+      let url = urlMatch[1].replace(/&amp;/g, '&');
+      // Decode Bing redirect URLs: extract actual URL from u= parameter
+      const redirectMatch = url.match(/[?&]u=([^&]+)/);
+      if (redirectMatch) {
+        try {
+          // u= param is base64 with optional 'a1' prefix
+          const encoded = redirectMatch[1].replace(/^a1/, '');
+          url = Buffer.from(encoded, 'base64').toString('utf-8');
+        } catch { /* keep original URL on decode failure */ }
+      }
       const title = urlMatch[2].replace(/<[^>]*>/g, '').trim();
-      const snipMatch = block.match(/<p[^>]*class="b_lineclamp[^"]*"[^>]*>([\s\S]*?)<\/p>/);
-      const snippet = snipMatch ? snipMatch[1].replace(/<[^>]*>/g, '').trim() : '';
+      // Try multiple snippet patterns
+      const snipMatch = block.match(/<p[^>]*class="b_lineclamp[^"]*"[^>]*>([\s\S]*?)<\/p>/)
+        ?? block.match(/<p[^>]*>([\s\S]*?)<\/p>/);
+      const snippet = snipMatch ? snipMatch[1].replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&#\d+;/g, '').trim() : '';
       results.push({ title, url, snippet });
     }
     return results;
@@ -188,6 +276,7 @@ export class WebFetchTool implements Tool {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15000);
+      timeout.unref();
 
       const response = await fetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CommanderBot; +https://github.com/sampan/commander)' },

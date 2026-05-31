@@ -18,6 +18,7 @@ export type CompensationHandler = (
 export class CompensationRegistry {
   private handlers = new Map<string, CompensationHandler>();
   private pendingActions = new Map<string, CompensableAction>();
+  private compensationAttempts = new Map<string, number>();
   private compensated = new Set<string>();
 
   register(toolName: string, handler: CompensationHandler): void {
@@ -35,14 +36,15 @@ export class CompensationRegistry {
     const handler = this.handlers.get(action.toolName);
     if (!handler) {
       this.pendingActions.delete(actionId);
-      this.compensated.add(actionId);
+      this.addToCompensated(actionId);
       return { success: true };
     }
     try {
       const result = await handler(action);
       if (result.success) {
         this.pendingActions.delete(actionId);
-        this.compensated.add(actionId);
+        this.compensationAttempts.delete(actionId);
+        this.addToCompensated(actionId);
       }
       return result;
     } catch (err) {
@@ -50,18 +52,38 @@ export class CompensationRegistry {
     }
   }
 
-  /** Compensate ALL pending actions (in reverse order) */
+  /** Compensate ALL pending actions (in reverse order, max 3 attempts each) */
   async compensateAll(): Promise<{ succeeded: number; failed: number; errors: string[] }> {
     const ids = Array.from(this.pendingActions.keys()).reverse();
     let succeeded = 0;
     let failed = 0;
     const errors: string[] = [];
     for (const id of ids) {
+      const action = this.pendingActions.get(id);
+      if (!action) continue;
+      const attempts = this.compensationAttempts.get(id) ?? 0;
+      if (attempts >= 3) {
+        this.pendingActions.delete(id);
+        this.compensationAttempts.delete(id);
+        failed++;
+        errors.push(`Compensation exhausted after 3 attempts: ${action.toolName}`);
+        continue;
+      }
+      this.compensationAttempts.set(id, attempts + 1);
       const result = await this.compensate(id);
-      if (result.success) succeeded++;
+      if (result.success) { this.compensationAttempts.delete(id); succeeded++; }
       else { failed++; if (result.error) errors.push(result.error); }
     }
     return { succeeded, failed, errors };
+  }
+
+  private addToCompensated(actionId: string): void {
+    this.compensated.add(actionId);
+    // Cap at 1000 entries — drop oldest to prevent unbounded growth in long sessions
+    if (this.compensated.size > 1000) {
+      const first = this.compensated.values().next().value;
+      if (first) this.compensated.delete(first);
+    }
   }
 
   getPendingCount(): number { return this.pendingActions.size; }
@@ -69,5 +91,6 @@ export class CompensationRegistry {
   clear(): void {
     this.pendingActions.clear();
     this.compensated.clear();
+    this.compensationAttempts.clear();
   }
 }

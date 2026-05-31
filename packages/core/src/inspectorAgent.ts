@@ -124,6 +124,15 @@ export class InspectorAgent {
     };
 
     this.issues.set(issue.id, issue);
+
+    // Cap issues to prevent unbounded growth in long sessions
+    if (this.issues.size > 500) {
+      const sorted = [...this.issues.entries()]
+        .sort((a, b) => a[1].detectedAt.localeCompare(b[1].detectedAt));
+      const toEvict = sorted.slice(0, sorted.length - 500 + 1);
+      for (const [id] of toEvict) this.issues.delete(id);
+    }
+
     return issue;
   }
 

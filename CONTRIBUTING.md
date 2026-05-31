@@ -5,12 +5,15 @@ We love contributions! Here's how to get started.
 ## Quick Start
 
 ```bash
-git clone https://github.com/sampan/commander.git
-cd commander
+git clone https://github.com/PStarH/Commander.git
+cd Commander
 pnpm install
 cd packages/core
-npx tsx --test tests/*.test.ts  # Run tests
-npx tsc --noEmit                # Type check
+pnpm test              # Run all tests (node:test + vitest)
+pnpm test:core         # Core package tests only
+npx tsc --noEmit       # Type check
+pnpm lint              # ESLint check
+pnpm build:core        # Build the core package
 ```
 
 ## What We Need Help With
@@ -53,6 +56,41 @@ By submitting a pull request, you agree to the terms in [CLA.md](CLA.md). In sho
 - Tests for new features
 - Keep it simple
 
+## Development Workflow
+
+### Branch Strategy
+
+1. Fork the repository
+2. Create a feature branch from `main`: `git checkout -b feat/your-feature`
+3. Make your changes with conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`
+4. Push and create a PR against `main`
+
+### Quality Gates (all must pass before merge)
+
+- `pnpm typecheck` — TypeScript strict mode, zero errors
+- `pnpm lint` — ESLint with no-console enforcement
+- `pnpm test` — All tests passing (node:test + vitest)
+- `pnpm build:core` — Core package builds successfully
+- CI cross-platform matrix: Ubuntu, macOS, Windows × Node 20, 22
+
+### Adding New Tests
+
+Tests use two runners:
+- **node:test** for most tests in `packages/core/tests/` — use `describe`/`it` from `node:test` and `assert` from `node:assert`
+- **Vitest** for runtime tests in `packages/core/tests/runtime/` — use `describe`/`it`/`expect` from `vitest`
+
+When adding a new source module, add a corresponding test file following the naming convention: `src/foo.ts` → `tests/foo.test.ts`.
+
+### Architecture
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system architecture overview.
+
+## Community
+
+- **GitHub Discussions**: Ask questions, share ideas, show what you've built
+- **Issues**: Report bugs or request features using the issue templates
+- **Security**: Report vulnerabilities privately per [SECURITY.md](SECURITY.md) — never through public issues
+
 ## Questions?
 
-Open an issue or join the community.
+Open an issue or start a discussion on GitHub.

@@ -22,6 +22,9 @@ export type { TaskType, VerificationSignal, VerificationReport, UVPTaskContext, 
 export { DEFAULT_UVP_CONFIG } from './unifiedVerificationTypes';
 export { detectTaskType, classifyProvisionIntent } from './taskAnalyzer';
 
+const TRIPLE_SINGLE_RE = /'''/g;
+const TRIPLE_DOUBLE_RE = /"""/g;
+
 interface SchemaProperty {
   required?: boolean;
   type?: string;
@@ -201,7 +204,7 @@ function runStage0(ctx: UVPTaskContext, taskType: TaskType): { signals: Verifica
       confidence -= 0.2;
     }
     for (const q of ["'''", '"""']) {
-      const count = (ctx.output.match(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length;
+      const count = (ctx.output.match(q === "'''" ? TRIPLE_SINGLE_RE : TRIPLE_DOUBLE_RE) ?? []).length;
       if (count % 2 !== 0) {
         signals.push({
           stage: 0,
@@ -447,7 +450,7 @@ class VerificationMemory {
   record(outcome: VerificationOutcome): void {
     this.outcomes.push(outcome);
     if (this.outcomes.length > this.maxSize) {
-      this.outcomes = this.outcomes.slice(-this.maxSize);
+      this.outcomes.splice(0, this.outcomes.length - this.maxSize);
     }
   }
 

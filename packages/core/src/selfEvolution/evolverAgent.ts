@@ -184,6 +184,59 @@ const MUTATION_RULES: Record<FailureCategory, MutationRule[]> = {
       condition: (v) => typeof v === 'number' && v > 2,
     },
   ],
+  rate_limit: [
+    {
+      domain: 'runtime',
+      configPath: 'maxParallelSubAgents',
+      mode: 'delta',
+      value: 0.5,
+      minConfidence: 0.5,
+      description: 'Reduce parallel agents from {old} to {new} after rate limiting',
+      condition: (v) => typeof v === 'number' && v > 1,
+    },
+  ],
+  authentication: [
+    {
+      domain: 'model_tier',
+      configPath: 'modelTierMapping.MODERATE',
+      mode: 'absolute',
+      value: 'power',
+      minConfidence: 0.5,
+      description: 'Upgrade model tier from {old} to {new} after auth failures (may need stronger model)',
+      condition: (v) => v !== 'power' && v !== 'consensus',
+    },
+  ],
+  resource_exhaustion: [
+    {
+      domain: 'thinking_budget',
+      configPath: 'defaultThinkingBudget.maxThinkingTokens',
+      mode: 'delta',
+      value: 0.6,
+      minConfidence: 0.5,
+      description: 'Reduce thinking budget from {old} to {new} after resource exhaustion',
+      condition: (v) => typeof v === 'number' && v > 512,
+    },
+    {
+      domain: 'runtime',
+      configPath: 'maxParallelSubAgents',
+      mode: 'delta',
+      value: 0.5,
+      minConfidence: 0.5,
+      description: 'Reduce parallel agents from {old} to {new} after resource exhaustion',
+      condition: (v) => typeof v === 'number' && v > 1,
+    },
+  ],
+  data_validation: [
+    {
+      domain: 'quality_gate',
+      configPath: 'qualityGates.accuracy.threshold',
+      mode: 'delta',
+      value: 1.05,
+      minConfidence: 0.5,
+      description: 'Tighten accuracy gate from {old} to {new} after data validation failures',
+      condition: (v) => typeof v === 'number' && v < 0.95,
+    },
+  ],
   unclassified: [],
 };
 
@@ -448,18 +501,16 @@ export class EvolverAgent {
   }
 }
 
-// Singleton
-let activeEvolver: EvolverAgent | null = null;
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const evolverSingleton = createTenantAwareSingleton(() => new EvolverAgent());
 
 export function getEvolverAgent(): EvolverAgent {
-  if (!activeEvolver) {
-    activeEvolver = new EvolverAgent();
-  }
-  return activeEvolver;
+  return evolverSingleton.get();
 }
 
 export function resetEvolverAgent(): void {
-  activeEvolver = null;
+  evolverSingleton.reset();
 }
 
 // Circular-safe import (messageBus is imported at the bottom to avoid circular deps)

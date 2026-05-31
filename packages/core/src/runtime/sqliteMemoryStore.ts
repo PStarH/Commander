@@ -72,6 +72,8 @@ export class SqliteMemoryStore implements MemoryStore {
   private stmtStats: BetterSqlite3Stmt | null = null;
   private stmtDeleteExpired: BetterSqlite3Stmt | null = null;
   private stmtDeleteByMission: BetterSqlite3Stmt | null = null;
+  private stmtFtsSearch: BetterSqlite3Stmt | null = null;
+  private stmtFtsCount: BetterSqlite3Stmt | null = null;
 
   constructor(filePath: string = '.commander/memory.db') {
     this.filePath = filePath;
@@ -123,7 +125,46 @@ export class SqliteMemoryStore implements MemoryStore {
        CREATE INDEX IF NOT EXISTS idx_memories_project_created ON memories(project_id, created_at DESC);
        CREATE INDEX IF NOT EXISTS idx_memories_project_priority ON memories(project_id, priority DESC);
        CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at) WHERE expires_at IS NOT NULL;
+
+       -- FTS5 full-text search index for fast semantic search
+       CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+         title, content, tags,
+         content='memories',
+         content_rowid='rowid'
+       );
+
+       -- Triggers to keep FTS5 index in sync with the memories table
+       CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+         INSERT INTO memories_fts(rowid, title, content, tags)
+         VALUES (new.rowid, new.title, new.content, new.tags);
+       END;
+
+       CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+         INSERT INTO memories_fts(memories_fts, rowid, title, content, tags)
+         VALUES ('delete', old.rowid, old.title, old.content, old.tags);
+       END;
+
+       CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+         INSERT INTO memories_fts(memories_fts, rowid, title, content, tags)
+         VALUES ('delete', old.rowid, old.title, old.content, old.tags);
+         INSERT INTO memories_fts(rowid, title, content, tags)
+         VALUES (new.rowid, new.title, new.content, new.tags);
+       END;
      `);
+
+     // Backfill FTS5 index from existing data (idempotent)
+     const ftsCount = this.db.prepare(
+       "SELECT COUNT(*) as cnt FROM memories_fts"
+     ).get<{ cnt: number }>();
+     const memCount = this.db.prepare(
+       "SELECT COUNT(*) as cnt FROM memories"
+     ).get<{ cnt: number }>();
+     if ((ftsCount?.cnt ?? 0) === 0 && (memCount?.cnt ?? 0) > 0) {
+       this.db.exec(`
+         INSERT INTO memories_fts(rowid, title, content, tags)
+         SELECT rowid, title, content, tags FROM memories;
+       `);
+     }
    }
 
    private prepareStatements(): void {
@@ -150,6 +191,35 @@ export class SqliteMemoryStore implements MemoryStore {
      this.stmtDeleteByMission = this.db.prepare(
        'DELETE FROM memories WHERE project_id = ? AND mission_id = ?'
      );
+     // FTS5 search — joins against memories table for filtering
+     // Use rank for BM25 ordering if available, fall back to rowid
+     try {
+       this.stmtFtsSearch = this.db.prepare(`
+         SELECT m.* FROM memories m
+         INNER JOIN memories_fts fts ON m.rowid = fts.rowid
+         WHERE memories_fts MATCH ? AND m.project_id = ?
+         ORDER BY rank
+         LIMIT ?
+       `);
+     } catch {
+       this.stmtFtsSearch = this.db.prepare(`
+         SELECT m.* FROM memories m
+         INNER JOIN memories_fts fts ON m.rowid = fts.rowid
+         WHERE memories_fts MATCH ? AND m.project_id = ?
+         ORDER BY m.rowid DESC
+         LIMIT ?
+       `);
+     }
+     try {
+       this.stmtFtsCount = this.db.prepare(`
+         SELECT COUNT(*) as cnt FROM memories m
+         INNER JOIN memories_fts fts ON m.rowid = fts.rowid
+         WHERE memories_fts MATCH ? AND m.project_id = ?
+       `);
+     } catch {
+       // FTS5 not available — stmtFtsCount will be null, search will fall back to LIKE
+       this.stmtFtsCount = null;
+     }
    }
 
   private nextId = 1;
@@ -218,36 +288,7 @@ export class SqliteMemoryStore implements MemoryStore {
        evidenceRefs: JSON.stringify(options.evidenceRefs ?? []),
      };
 
-     this.db!.exec(`
-       CREATE TABLE IF NOT EXISTS memories (
-         id TEXT PRIMARY KEY,
-         project_id TEXT NOT NULL,
-         mission_id TEXT,
-         agent_id TEXT,
-         kind TEXT NOT NULL CHECK(kind IN ('DECISION','ISSUE','LESSON','SUMMARY')),
-         duration TEXT NOT NULL DEFAULT 'EPISODIC' CHECK(duration IN ('EPISODIC','LONG_TERM')),
-         title TEXT NOT NULL,
-         content TEXT NOT NULL,
-         tags TEXT NOT NULL DEFAULT '[]',
-         priority REAL NOT NULL DEFAULT 50,
-         confidence REAL NOT NULL DEFAULT 0.8,
-         created_at TEXT NOT NULL,
-         last_accessed_at TEXT NOT NULL,
-         expires_at TEXT,
-         evidence_refs TEXT DEFAULT '[]'
-       );
-     `);
-
-     this.stmtWrite = this.db!.prepare(`
-       INSERT INTO memories (id, project_id, mission_id, agent_id, kind, duration,
-         title, content, tags, priority, confidence, created_at, last_accessed_at,
-         expires_at, evidence_refs)
-       VALUES (@id, @projectId, @missionId, @agentId, @kind, @duration,
-         @title, @content, @tags, @priority, @confidence, @createdAt, @lastAccessedAt,
-         @expiresAt, @evidenceRefs)
-     `);
-
-     this.stmtWrite.run({
+     this.stmtWrite!.run({
        id: item.id,
        projectId: item.projectId,
        missionId: item.missionId ?? null,
@@ -339,23 +380,74 @@ export class SqliteMemoryStore implements MemoryStore {
      await this.init();
      const conditions: string[] = ['project_id = ?'];
      const params: unknown[] = [query.projectId];
- 
+
      if (query.kind) { conditions.push('kind = ?'); params.push(query.kind); }
      if (query.missionId) { conditions.push('mission_id = ?'); params.push(query.missionId); }
      if (query.agentId) { conditions.push('agent_id = ?'); params.push(query.agentId); }
      if (query.minPriority !== undefined) { conditions.push('priority >= ?'); params.push(query.minPriority); }
      if (query.minConfidence !== undefined) { conditions.push('confidence >= ?'); params.push(query.minConfidence); }
+
+     let useFts = false;
+     let ftsQuery = '';
      if (query.query) {
-       const like = `%${query.query.toLowerCase()}%`;
-       conditions.push('(LOWER(title) LIKE ? OR LOWER(content) LIKE ?)');
-       params.push(like, like);
+       // Try FTS5 first for better ranking; fall back to LIKE on error
+       try {
+         ftsQuery = this.buildFtsQuery(query.query);
+         useFts = true;
+       } catch {
+         const like = `%${query.query.toLowerCase()}%`;
+         conditions.push('(LOWER(title) LIKE ? OR LOWER(content) LIKE ?)');
+         params.push(like, like);
+       }
      }
- 
+
+      const limit = query.limit ?? 50;
+
+      if (useFts && ftsQuery) {
+        // FTS5-powered search with BM25 ranking, filtered by metadata conditions
+        const metaConditions = conditions.filter(c => !c.includes('LIKE'));
+        const metaParams = params.filter(p => typeof p !== 'string' || !p.startsWith('%'));
+
+        let ftsWhere = `memories_fts MATCH ?`;
+        let ftsParams: unknown[] = [ftsQuery];
+
+        if (metaConditions.length > 0) {
+          // Join with memories table for metadata filtering
+          const countSql = `
+            SELECT COUNT(*) as cnt FROM memories m
+            INNER JOIN memories_fts fts ON m.rowid = fts.rowid
+            WHERE fts.${ftsWhere} AND ${metaConditions.map(c => c.replace(/project_id|m\.kind|m\.mission_id|m\.agent_id|m\.priority|m\.confidence/g, (match) => `m.${match.replace('m.', '')}`)).join(' AND ')}
+          `;
+          // Simplify: use subquery approach
+          const countRow = this.db!.prepare(`
+            SELECT COUNT(*) as cnt FROM memories m
+            WHERE m.rowid IN (SELECT rowid FROM memories_fts WHERE ${ftsWhere})
+            AND ${metaConditions.join(' AND ')}
+          `).get<{ cnt: number }>(...ftsParams, ...metaParams);
+          const total = countRow?.cnt ?? 0;
+
+          const rows = this.db!.prepare(`
+            SELECT m.* FROM memories m
+            WHERE m.rowid IN (SELECT rowid FROM memories_fts WHERE ${ftsWhere})
+            AND ${metaConditions.join(' AND ')}
+            ORDER BY m.priority DESC, m.created_at DESC
+            LIMIT ?
+          `).all<SqliteRow>(...ftsParams, ...metaParams, limit);
+
+          return { items: rows.map((r: SqliteRow) => this.rowToItem(r)), total, query };
+        } else {
+          const countRow = this.stmtFtsCount!.get<{ cnt: number }>(ftsQuery, query.projectId);
+          const total = countRow?.cnt ?? 0;
+          const rows = this.stmtFtsSearch!.all<SqliteRow>(ftsQuery, query.projectId, limit);
+          return { items: rows.map((r: SqliteRow) => this.rowToItem(r)), total, query };
+        }
+      }
+
+      // Fallback: LIKE-based search
       const where = conditions.join(' AND ');
       const countRow = this.db!.prepare(`SELECT COUNT(*) as cnt FROM memories WHERE ${where}`).get<{ cnt: number }>(...params);
       const total = countRow?.cnt ?? 0;
 
-      const limit = query.limit ?? 50;
       const rows = this.db!.prepare(
         `SELECT * FROM memories WHERE ${where} ORDER BY priority DESC, created_at DESC LIMIT ?`
       ).all<SqliteRow>(...params, limit);
@@ -369,14 +461,55 @@ export class SqliteMemoryStore implements MemoryStore {
 
   async searchSemantic(_query: string, _projectId: string, _limit = 10): Promise<EpisodicMemoryItem[]> {
     await this.init();
-    // SQLite FTS5 would be ideal here. For now, fall back to LIKE-based search
-    // Full FTS5 integration is a future enhancement
-    const result = await this.search({
-      projectId: _projectId,
-      query: _query,
-      limit: _limit,
-    });
-    return result.items;
+    if (!_query || !_query.trim()) return [];
+
+    // Use FTS5 MATCH for full-text search with BM25 ranking
+    const ftsQuery = this.buildFtsQuery(_query);
+    try {
+      const rows = this.stmtFtsSearch!.all<SqliteRow>(ftsQuery, _projectId, _limit);
+      // Update last_accessed_at for retrieved items
+      const now = new Date().toISOString();
+      for (const row of rows) {
+        this.db!.prepare('UPDATE memories SET last_accessed_at = ? WHERE id = ?').run(now, row.id);
+      }
+      return rows.map((r: SqliteRow) => this.rowToItem(r));
+    } catch {
+      // Fallback to LIKE-based search if FTS5 query syntax fails
+      const result = await this.search({ projectId: _projectId, query: _query, limit: _limit });
+      return result.items;
+    }
+  }
+
+  /**
+   * Build an FTS5-compatible query string from user input.
+   * Handles special characters, quotes multi-word phrases, and adds prefix matching.
+   */
+  private buildFtsQuery(input: string): string {
+    // Strip FTS5 special characters that could cause syntax errors
+    const cleaned = input.replace(/[^\w\s\-_.]/g, ' ').trim();
+    if (!cleaned) return '""';
+
+    const words = cleaned.split(/\s+/).filter(w => w.length > 1);
+    if (words.length === 0) return '""';
+
+    // For multi-word queries, search for all words (AND logic) with prefix matching
+    if (words.length === 1) {
+      // Single word: prefix match for autocomplete-like behavior
+      return `"${words[0]}"*`;
+    }
+
+    // Multi-word: require all words present, with prefix match on last word
+    const terms = words.slice(0, -1).map(w => `"${w}"`);
+    terms.push(`"${words[words.length - 1]}"*`);
+    return terms.join(' ');
+  }
+
+  /**
+   * Search conversation history (FTS5-powered cross-session recall).
+   * Searches across all persisted conversations for matching content.
+   */
+  async searchConversations(query: string, projectId: string, limit = 20): Promise<EpisodicMemoryItem[]> {
+    return this.searchSemantic(query, projectId, limit);
   }
 
     async getStats(projectId: string): Promise<MemoryStats> {

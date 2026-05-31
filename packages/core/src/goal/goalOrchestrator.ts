@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import type { LLMProvider } from '../runtime/types';
 import type {
   GoalNode,
@@ -13,6 +15,7 @@ import { DEFAULT_GOAL_CONFIG } from './types';
 import { getMessageBus } from '../runtime/messageBus';
 import { getGlobalLogger } from '../logging';
 import { validateShape } from '../runtime/structuredOutput';
+import { callLLMJSON } from '../runtime/llmJsonExtractor';
 
 const MANAGER_DECOMPOSE_PROMPT = `You are a Manager Agent. Your job is to break down a complex goal into smaller, independent sub-goals that can be worked on in parallel.
 
@@ -91,9 +94,8 @@ Return:
   "summary": "brief assessment"
 }`;
 
-let nodeCounter = 0;
 function generateNodeId(): string {
-  return `goal_${Date.now()}_${++nodeCounter}`;
+  return `goal_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function countActiveGoals(nodes: GoalNode[]): number {
@@ -131,37 +133,13 @@ function cloneGoalTree(nodes: GoalNode[]): GoalNode[] {
   }));
 }
 
-async function callLLMJSON<T>(
-  provider: LLMProvider,
-  model: string,
-  systemPrompt: string,
-  userMessage: string,
-): Promise<{ data: T; tokens: number } | null> {
-  try {
-    const response = await provider.call({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
-      ],
-      temperature: 0.2,
-      maxTokens: 2048,
-    });
-    const cleaned = response.content.trim().replace(/^```(?:json)?\s*|```\s*$/g, '');
-    const data = JSON.parse(cleaned) as T;
-    return { data, tokens: response.usage?.totalTokens ?? 0 };
-  } catch (err) {
-    getGlobalLogger().error('GoalOrchestrator', 'LLM call failed', err as Error);
-    return null;
-  }
-}
-
 export class GoalOrchestrator {
   private provider: LLMProvider;
   private config: GoalConfig;
   private model: string;
   private rootNodes: GoalNode[] = [];
   private currentRound = 0;
+  private checkpointPath: string | null = null;
 
   constructor(
     provider: LLMProvider,
@@ -170,6 +148,113 @@ export class GoalOrchestrator {
     this.provider = provider;
     this.config = { ...DEFAULT_GOAL_CONFIG, ...config };
     this.model = this.config.model ?? DEFAULT_GOAL_CONFIG.model!;
+  }
+
+  // --------------------------------------------------------------------------
+  // Persistence: Checkpoint to disk
+  // --------------------------------------------------------------------------
+
+  /**
+   * Set the checkpoint path for persistence.
+   * State is saved after each round and can be resumed.
+   */
+  setCheckpointPath(filePath: string): void {
+    this.checkpointPath = filePath;
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  }
+
+  /**
+   * Save current state to disk (atomic write-tmp-rename).
+   */
+  private checkpoint(goal: string, ledger: RoundLedger[], plateauRounds: number): void {
+    if (!this.checkpointPath) return;
+
+    const state = {
+      version: 1,
+      timestamp: new Date().toISOString(),
+      goal,
+      rootNodes: this.rootNodes,
+      currentRound: this.currentRound,
+      ledger,
+      plateauRounds,
+      config: this.config,
+    };
+
+    const tmpPath = this.checkpointPath + '.tmp';
+    try {
+      fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf-8');
+      fs.renameSync(tmpPath, this.checkpointPath);
+      getGlobalLogger().debug('GoalOrchestrator', `Checkpoint saved: round ${this.currentRound}`);
+    } catch (err) {
+      getGlobalLogger().warn('GoalOrchestrator', `Checkpoint failed: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Resume from a checkpoint file.
+   * Returns the saved state or null if no checkpoint exists.
+   */
+  resumeFromCheckpoint(): {
+    goal: string;
+    rootNodes: GoalNode[];
+    currentRound: number;
+    ledger: RoundLedger[];
+    plateauRounds: number;
+  } | null {
+    if (!this.checkpointPath || !fs.existsSync(this.checkpointPath)) {
+      return null;
+    }
+
+    try {
+      const data = JSON.parse(fs.readFileSync(this.checkpointPath, 'utf-8'));
+      if (data.version !== 1) {
+        getGlobalLogger().warn('GoalOrchestrator', 'Incompatible checkpoint version, ignoring');
+        return null;
+      }
+
+      this.rootNodes = data.rootNodes;
+      this.currentRound = data.currentRound;
+
+      getGlobalLogger().info('GoalOrchestrator', `Resumed from checkpoint: round ${this.currentRound}`);
+      return {
+        goal: data.goal,
+        rootNodes: data.rootNodes,
+        currentRound: data.currentRound,
+        ledger: data.ledger,
+        plateauRounds: data.plateauRounds,
+      };
+    } catch (err) {
+      getGlobalLogger().warn('GoalOrchestrator', `Failed to resume: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Clear the checkpoint file.
+   */
+  clearCheckpoint(): void {
+    if (this.checkpointPath && fs.existsSync(this.checkpointPath)) {
+      try {
+        fs.unlinkSync(this.checkpointPath);
+      } catch { /* ignore */ }
+    }
+  }
+
+  /**
+   * Get the current goal tree (for status display).
+   */
+  getGoalTree(): GoalNode[] {
+    return this.rootNodes;
+  }
+
+  /**
+   * Get the current round number.
+   */
+  getCurrentRound(): number {
+    return this.currentRound;
   }
 
   async execute(goal: string): Promise<GoalResult> {
@@ -203,11 +288,14 @@ export class GoalOrchestrator {
     let round = 0;
     let prevFindingsSet: Set<string> | null = null;
     let plateauRounds = 0;
+    let consecutiveFailedRounds = 0;
+    const MAX_CONSECUTIVE_FAILURES = 3; // Stop after 3 rounds with zero progress due to LLM failures
 
     while (round < this.config.maxRounds) {
       round++;
       this.currentRound = round;
       let roundTokens = 0;
+      let roundFailures = 0;
 
       bus.publish('goal.round_started', 'goal-orch', { round, activeGoals: countActiveGoals(goalTree) });
 
@@ -230,6 +318,7 @@ export class GoalOrchestrator {
           bus.publish('goal.worker_completed', 'goal-orch', { goalId: node.id });
         } else {
           node.status = 'failed';
+          roundFailures++;
           continue;
         }
 
@@ -277,6 +366,19 @@ export class GoalOrchestrator {
       }
 
       totalTokensUsed += roundTokens;
+
+      // Track consecutive failed rounds (all workers failed = no progress)
+      const pendingCount = this.getPendingNodes(goalTree).length;
+      if (roundFailures > 0 && roundTokens === 0) {
+        consecutiveFailedRounds++;
+      } else {
+        consecutiveFailedRounds = 0;
+      }
+
+      if (consecutiveFailedRounds >= MAX_CONSECUTIVE_FAILURES) {
+        getGlobalLogger().error('GoalOrchestrator', `Stopping after ${consecutiveFailedRounds} consecutive failed rounds (LLM calls failing)`);
+        break;
+      }
 
       const allNodes = collectAllNodes(goalTree);
       const currentFindings = allNodes.reduce((sum, n) => sum + (n.critique?.findings.length ?? 0), 0);
@@ -334,6 +436,9 @@ export class GoalOrchestrator {
 
       bus.publish('goal.round_completed', 'goal-orch', { round, decision: decision.decision });
 
+      // Checkpoint state after each round for crash recovery
+      this.checkpoint(goal, ledger, plateauRounds);
+
       if (decision.decision.startsWith('stop_')) break;
     }
 
@@ -343,6 +448,11 @@ export class GoalOrchestrator {
     const resultStatus = completedCount === finalAll.length && finalAll.length > 0
       ? 'completed'
       : completedCount > 0 ? 'partial' : 'failed';
+
+    // Clear checkpoint on successful completion
+    if (resultStatus === 'completed') {
+      this.clearCheckpoint();
+    }
 
     return {
       goal, status: resultStatus, totalRounds: round, totalTokensUsed, totalDurationMs: elapsed,

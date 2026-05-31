@@ -33,8 +33,6 @@
     "test:bench": "pnpm --filter @commander/core bench",
     "test:coverage": "cd packages/core && npx --node-options='--experimental-coverage' tsx --test tests/*.test.ts",
     "test:all": "cd packages/core && npx tsx --test tests/*.test.ts benchmarks/*.test.ts",
-    "benchmark:gaia": "npx tsx scripts/benchmark-gaia.ts",
-    "benchmark:gaia:quick": "npx tsx scripts/benchmark-gaia.ts --quick",
     "benchmark:multiagent": "npx tsx scripts/benchmark-multiagent.ts",
     "cli": "npx tsx cli.ts",
     "typecheck": "cd packages/core && npx tsc --noEmit",

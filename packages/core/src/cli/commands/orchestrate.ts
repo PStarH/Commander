@@ -1,31 +1,43 @@
 import { detectProvider } from '../../config/commanderConfig';
+import type { LLMProvider } from '../../runtime/types';
 import type { GoalConfig } from '../../goal/types';
 import { GoalOrchestrator } from '../../goal/goalOrchestrator';
 import { SwarmOrchestrator } from '../../swarm/swarmOrchestrator';
 import type { SwarmConfig } from '../../swarm/types';
 import { DriveOrchestrator } from '../../drive/driveOrchestrator';
 import type { DriveConfig } from '../../drive/types';
-import { createRuntime, $, section, kv, bullet, cmdHeader, startSpinner, onboardingMessage } from './_shared';
+import { createRuntime, $, section, kv, bullet, cmdHeader, startSpinner, onboardingMessage, fatalError } from './_shared';
 
 export async function cmdGoal(task: string, flags: Record<string, string>) {
   const provider = detectProvider();
   const runtime = createRuntime();
   if (!runtime || !provider) {
-    console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No API key found.\n`);
-    onboardingMessage();
-    process.exit(1);
+    fatalError('No API key found.', 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider env var. Run: commander quickstart');
   }
 
   cmdHeader(task);
 
-  const llmProvider = runtime.getProvider('openai')
-    ?? runtime.getProvider('anthropic')
-    ?? runtime.getProvider('openrouter')
-    ?? runtime.getProvider('mimo')
-    ?? runtime.getProvider('deepseek')
-    ?? runtime.getProvider('glm')
-    ?? runtime.getProvider('xiaomi')
-    ?? runtime.getProvider('google');
+  // Support --provider flag to force a specific provider
+  // Note: parseFlags strips the leading --, so flags.provider not flags['--provider']
+  const forcedProvider = flags.provider?.toLowerCase();
+  let llmProvider: LLMProvider | undefined;
+
+  if (forcedProvider) {
+    llmProvider = runtime.getProvider(forcedProvider);
+    if (!llmProvider) {
+      console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} Provider "${forcedProvider}" not available. Check your API key.\n`);
+      process.exit(1);
+    }
+  } else {
+    llmProvider = runtime.getProvider('openai')
+      ?? runtime.getProvider('anthropic')
+      ?? runtime.getProvider('openrouter')
+      ?? runtime.getProvider('mimo')
+      ?? runtime.getProvider('deepseek')
+      ?? runtime.getProvider('glm')
+      ?? runtime.getProvider('xiaomi')
+      ?? runtime.getProvider('google');
+  }
 
   if (!llmProvider) {
     console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No LLM provider available.\n`);
@@ -33,13 +45,13 @@ export async function cmdGoal(task: string, flags: Record<string, string>) {
   }
 
   const config: Partial<GoalConfig> = {};
-  if (flags['--mode']) config.mode = flags['--mode'] as GoalConfig['mode'];
-  if (flags['--budget']) config.budgetTokens = parseInt(flags['--budget'], 10);
-  if (flags['--max-rounds']) config.maxRounds = parseInt(flags['--max-rounds'], 10);
+  if (flags.mode) config.mode = flags.mode as GoalConfig['mode'];
+  if (flags.budget) config.budgetTokens = parseInt(flags.budget, 10);
+  if (flags['max-rounds']) config.maxRounds = parseInt(flags['max-rounds'], 10);
 
   const orch = new GoalOrchestrator(llmProvider, config);
 
-  console.log(`  ${$.dim}Mode:${$.reset} ${$.cyan}${config.mode ?? 'balanced'}${$.reset}  ${$.dim}Budget:${$.reset} ${$.cyan}${(config.budgetTokens ?? 500000).toLocaleString()} tok${$.reset}  ${$.dim}Max rounds:${$.reset} ${$.cyan}${config.maxRounds ?? 10}${$.reset}\n`);
+  console.log(`  ${$.dim}Provider:${$.reset} ${$.cyan}${forcedProvider ?? 'auto'}${$.reset}  ${$.dim}Mode:${$.reset} ${$.cyan}${config.mode ?? 'balanced'}${$.reset}  ${$.dim}Budget:${$.reset} ${$.cyan}${(config.budgetTokens ?? 100000).toLocaleString()} tok${$.reset}  ${$.dim}Max rounds:${$.reset} ${$.cyan}${config.maxRounds ?? 10}${$.reset}\n`);
 
   const done = startSpinner('Goal loop running...');
   const startTime = Date.now();
@@ -83,21 +95,30 @@ export async function cmdGoal(task: string, flags: Record<string, string>) {
 export async function cmdSwarm(task: string, flags: Record<string, string>) {
   const runtime = createRuntime();
   if (!runtime) {
-    console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No API key found.\n`);
-    onboardingMessage();
-    process.exit(1);
+    fatalError('No API key found.', 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider env var. Run: commander quickstart');
   }
 
   cmdHeader(task);
 
-  const llmProvider = runtime.getProvider('openai')
-    ?? runtime.getProvider('anthropic')
-    ?? runtime.getProvider('openrouter')
-    ?? runtime.getProvider('mimo')
-    ?? runtime.getProvider('deepseek')
-    ?? runtime.getProvider('glm')
-    ?? runtime.getProvider('xiaomi')
-    ?? runtime.getProvider('google');
+  const forcedProvider = flags.provider?.toLowerCase();
+  let llmProvider: LLMProvider | undefined;
+
+  if (forcedProvider) {
+    llmProvider = runtime.getProvider(forcedProvider);
+    if (!llmProvider) {
+      console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} Provider "${forcedProvider}" not available.\n`);
+      process.exit(1);
+    }
+  } else {
+    llmProvider = runtime.getProvider('openai')
+      ?? runtime.getProvider('anthropic')
+      ?? runtime.getProvider('openrouter')
+      ?? runtime.getProvider('mimo')
+      ?? runtime.getProvider('deepseek')
+      ?? runtime.getProvider('glm')
+      ?? runtime.getProvider('xiaomi')
+      ?? runtime.getProvider('google');
+  }
 
   if (!llmProvider) {
     console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No LLM provider available.\n`);
@@ -105,10 +126,10 @@ export async function cmdSwarm(task: string, flags: Record<string, string>) {
   }
 
   const swarmConfig: Partial<SwarmConfig> = {};
-  if (flags['--mode']) swarmConfig.goalConfig = { ...swarmConfig.goalConfig, mode: flags['--mode'] as GoalConfig['mode'] };
-  if (flags['--budget']) swarmConfig.goalConfig = { ...swarmConfig.goalConfig, budgetTokens: parseInt(flags['--budget'], 10) };
-  if (flags['--max-rounds']) swarmConfig.goalConfig = { ...swarmConfig.goalConfig, maxRounds: parseInt(flags['--max-rounds'], 10) };
-  if (flags['--max-depth']) swarmConfig.maxDepth = parseInt(flags['--max-depth'], 10);
+  if (flags.mode) swarmConfig.goalConfig = { ...swarmConfig.goalConfig, mode: flags.mode as GoalConfig['mode'] };
+  if (flags.budget) swarmConfig.goalConfig = { ...swarmConfig.goalConfig, budgetTokens: parseInt(flags.budget, 10) };
+  if (flags['max-rounds']) swarmConfig.goalConfig = { ...swarmConfig.goalConfig, maxRounds: parseInt(flags['max-rounds'], 10) };
+  if (flags['max-depth']) swarmConfig.maxDepth = parseInt(flags['max-depth'], 10);
   if (flags['--max-workers']) swarmConfig.maxWorkers = parseInt(flags['--max-workers'], 10);
 
   const orch = new SwarmOrchestrator(llmProvider, swarmConfig);
@@ -162,9 +183,7 @@ export async function cmdSwarm(task: string, flags: Record<string, string>) {
 export async function cmdDrive(task: string, flags: Record<string, string>) {
   const runtime = createRuntime();
   if (!runtime) {
-    console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No API key found.\n`);
-    onboardingMessage();
-    process.exit(1);
+    fatalError('No API key found.', 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider env var. Run: commander quickstart');
   }
 
   cmdHeader(task);

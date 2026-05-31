@@ -1,5 +1,5 @@
 export { WebSearchTool, WebFetchTool } from './webSearchTool';
-export { FileReadTool, FileWriteTool, FileEditTool, FileSearchTool, FileListTool } from './fileSystemTool';
+export { FileReadTool, FileWriteTool, FileEditTool, FileSearchTool, FileListTool, GlobTool } from './fileSystemTool';
 export { PythonExecuteTool, ShellExecuteTool } from './codeExecutionTool';
 export { MemoryStoreTool, MemoryRecallTool, MemoryListTool } from './persistenceTool';
 export { GitTool } from './gitTool';
@@ -24,7 +24,7 @@ export { ToolRegistry, TOOL_CATEGORIES } from './toolRegistry';
 
 import type { Tool } from '../runtime/types';
 import { WebSearchTool, WebFetchTool } from './webSearchTool';
-import { FileReadTool, FileWriteTool, FileEditTool, FileSearchTool, FileListTool } from './fileSystemTool';
+import { FileReadTool, FileWriteTool, FileEditTool, FileSearchTool, FileListTool, GlobTool } from './fileSystemTool';
 import { PythonExecuteTool, ShellExecuteTool } from './codeExecutionTool';
 import { MemoryStoreTool, MemoryRecallTool, MemoryListTool } from './persistenceTool';
 import { GitTool } from './gitTool';
@@ -54,6 +54,7 @@ export function createAllTools(options?: { enableMetaTools?: boolean }): Map<str
     ['file_edit', new FileEditTool()],
     ['file_search', new FileSearchTool()],
     ['file_list', new FileListTool()],
+    ['glob', new GlobTool()],
     ['python_execute', new PythonExecuteTool()],
     ['shell_execute', new ShellExecuteTool()],
     ['memory_store', new MemoryStoreTool()],

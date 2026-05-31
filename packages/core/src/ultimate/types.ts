@@ -71,9 +71,12 @@ export interface DeliberationPlan {
   requiresExternalInfo: boolean;
   taskType: 'FACTUAL' | 'REASONING' | 'CREATIVE' | 'RESEARCH' | 'CODING' | 'ANALYSIS';
   recommendedTopology: OrchestrationTopology;
+  /** Pre-computed effort level from deliberation (avoids redundant re-classification) */
+  effortLevel?: EffortLevel;
   estimatedAgentCount: number; // Anthropic effort scaling
   estimatedSteps: number;
   estimatedTokens: number;
+  estimatedDurationMs: number; // Time budget for the entire execution
   tokenBudget: {
     thinking: number;   // tokens for reasoning/planning
     execution: number;  // tokens for tool use
@@ -83,6 +86,12 @@ export interface DeliberationPlan {
   capabilitiesNeeded: string[];
   confidence: number; // 0-1, how well the system understands the task
   reasoning: string[];
+  /** SPAgent-inspired: true if early steps are simple evidence-gathering suitable for speculation */
+  suitableForSpeculation: boolean;
+  /** Astraea-inspired: classify task as I/O-bound (waiting for external data) or compute-bound (LLM reasoning) */
+  taskNature: 'IO_BOUND' | 'COMPUTE_BOUND' | 'MIXED';
+  /** Chimera-inspired: per-agent time budget in ms, derived from estimatedDurationMs × topology factor */
+  timeBudgetPerAgentMs: number;
 }
 
 // ============================================================================
@@ -115,6 +124,8 @@ context: {
   artifact?: ArtifactReference;
   status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PARTIAL';
   result?: string;
+  /** Full concatenated subtask results (preserved before synthesis agent overwrites result) */
+  fullSubtaskResults?: string;
   tokenUsage?: TokenUsage;
   durationMs?: number;
   /** LAMaS: estimated execution duration in ms (for critical path scheduling) */

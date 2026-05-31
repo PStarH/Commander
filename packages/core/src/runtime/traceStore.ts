@@ -17,7 +17,10 @@ export interface TraceStore {
 export class PersistentTraceStore implements TraceStore {
   private baseDir: string;
   private buffers: Map<string, string[]> = new Map();
+  private bufferTimestamps: Map<string, number> = new Map();
+  private static readonly BUFFER_TTL_MS = 5 * 60_000; // 5 minutes
   private tenantId?: string;
+  private staleFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(baseDir?: string, tenantId?: string) {
     this.tenantId = tenantId;
@@ -33,10 +36,26 @@ export class PersistentTraceStore implements TraceStore {
       buffer.push(JSON.stringify(event));
     } else {
       this.buffers.set(key, [JSON.stringify(event)]);
+      this.bufferTimestamps.set(key, Date.now());
     }
 
     if (buffer && buffer.length >= 10) {
       this.flush(key);
+    }
+
+    // Flush stale buffers periodically (not on every append to avoid O(n) scan)
+    if (!this.staleFlushTimer) {
+      this.staleFlushTimer = setTimeout(() => { this.staleFlushTimer = null; this.flushStaleBuffers(); }, 60_000);
+      if (this.staleFlushTimer?.unref) this.staleFlushTimer.unref();
+    }
+  }
+
+  private flushStaleBuffers(): void {
+    const now = Date.now();
+    for (const [key, timestamp] of this.bufferTimestamps) {
+      if (now - timestamp > PersistentTraceStore.BUFFER_TTL_MS) {
+        this.flush(key);
+      }
     }
   }
 
@@ -45,14 +64,12 @@ export class PersistentTraceStore implements TraceStore {
     if (!buffer || buffer.length === 0) return;
 
     const filePath = path.join(this.baseDir, `${runId}.ndjson`);
-    const tmpPath = path.join(this.baseDir, `${runId}.tmp`);
     try {
-      const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : '';
-      const content = existing + buffer.join('\n') + '\n';
-      fs.writeFileSync(tmpPath, content, 'utf-8');
-      fs.renameSync(tmpPath, filePath);
+      // Append-only: avoids reading the entire growing file on every flush
+      fs.appendFileSync(filePath, buffer.join('\n') + '\n', 'utf-8');
     } catch (e) { getGlobalLogger().warn('TraceStore', 'Failed to flush trace buffer', { error: (e as Error)?.message, runId }); }
-    this.buffers.set(runId, []);
+    this.buffers.delete(runId);
+    this.bufferTimestamps.delete(runId);
   }
 
   flushAll(): void {
@@ -65,6 +82,7 @@ export class PersistentTraceStore implements TraceStore {
   shutdown(): void {
     this.flushAll();
     this.buffers.clear();
+    this.bufferTimestamps.clear();
   }
 
   readTrace(runId: string): TraceEvent[] {

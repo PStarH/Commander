@@ -179,6 +179,7 @@ export class Scheduler {
     if (this.tickTimer) return;
     getGlobalLogger().info('Scheduler', `Starting scheduler (tick=${this.config.tickIntervalMs}ms)`);
     this.tickTimer = setInterval(() => this.tick(), this.config.tickIntervalMs);
+    if (typeof this.tickTimer.unref === 'function') this.tickTimer.unref();
     // Fire an immediate tick
     setImmediate(() => this.tick());
   }
@@ -195,7 +196,12 @@ export class Scheduler {
   // Tick — check and fire due workflows
   // ========================================================================
 
+  private ticking = false;
+
   private async tick(): Promise<void> {
+    if (this.ticking) return;
+    this.ticking = true;
+    try {
     const now = new Date();
 
     for (const [id, entry] of this.schedules) {
@@ -225,6 +231,9 @@ export class Scheduler {
           this.saveState();
           this.persistRecord(record);
         });
+    }
+    } finally {
+      this.ticking = false;
     }
   }
 

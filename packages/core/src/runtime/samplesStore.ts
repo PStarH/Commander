@@ -118,11 +118,16 @@ export class SamplesStore {
   async flush(): Promise<void> {
     if (this.flushing) return;
     this.flushing = true;
-    while (this.writeQueue.length > 0) {
-      const task = this.writeQueue.shift();
-      if (task) await task();
+    try {
+      let idx = 0;
+      while (idx < this.writeQueue.length) {
+        const task = this.writeQueue[idx++];
+        if (task) await task();
+      }
+    } finally {
+      this.writeQueue.length = 0;
+      this.flushing = false;
     }
-    this.flushing = false;
   }
 
   /** Get total record count for llm_calls (approximate). */
@@ -219,14 +224,26 @@ export class SamplesStore {
   private enqueueWrite(task: () => Promise<void>): void {
     this.writeQueue.push(task);
     if (!this.flushing) {
+      this.flushing = true;
       this.drainQueue();
     }
   }
 
   private async drainQueue(): Promise<void> {
-    while (this.writeQueue.length > 0) {
-      const task = this.writeQueue.shift();
-      if (task) await task();
+    try {
+      let idx = 0;
+      while (idx < this.writeQueue.length) {
+        const task = this.writeQueue[idx++];
+        if (task) await task();
+      }
+      this.writeQueue.length = 0;
+    } finally {
+      this.flushing = false;
+      // If new items were enqueued while draining, start another drain
+      if (this.writeQueue.length > 0) {
+        this.flushing = true;
+        this.drainQueue();
+      }
     }
   }
 

@@ -1,0 +1,24 @@
+[
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1780103938178_al2ulc",
+    "secret": "c246e067de6a0374226e4c7e25a8680766663c3877e2d5b854b0c6c62257f7c9",
+    "retryMax": 3,
+    "createdAt": "2026-05-30T01:18:58.179Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1780103949478_ebjtfq",
+    "secret": "35fdf38891f01156d6af81997c45d7dd575fe24a3fe4ddcd767eb3da23af3023",
+    "retryMax": 3,
+    "createdAt": "2026-05-30T01:19:09.478Z"
+  }
+]

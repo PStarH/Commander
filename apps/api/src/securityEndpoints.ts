@@ -95,21 +95,21 @@ export function createSecurityRouter(): Router {
       return res.status(400).json({ error: 'newMemories array is required' });
     }
     const indicators = await memoryPoisoningDetector.detectPoisoning(
-      newMemories.map((m: any) => ({
-        id: m.id ?? `mem-${Date.now()}`,
-        content: m.content ?? '',
-        timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
-        source: m.source ?? 'unknown',
-        embedding: m.embedding,
-        metadata: m.metadata,
+      newMemories.map((m: Record<string, unknown>) => ({
+        id: (m.id as string) ?? `mem-${Date.now()}`,
+        content: (m.content as string) ?? '',
+        timestamp: m.timestamp ? new Date(m.timestamp as string) : new Date(),
+        source: (m.source as string) ?? 'unknown',
+        embedding: m.embedding as number[] | undefined,
+        metadata: m.metadata as Record<string, unknown> | undefined,
       })),
-      (existingMemories ?? []).map((m: any) => ({
-        id: m.id ?? `mem-${Date.now()}`,
-        content: m.content ?? '',
-        timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
-        source: m.source ?? 'unknown',
-        embedding: m.embedding,
-        metadata: m.metadata,
+      (existingMemories ?? []).map((m: Record<string, unknown>) => ({
+        id: (m.id as string) ?? `mem-${Date.now()}`,
+        content: (m.content as string) ?? '',
+        timestamp: m.timestamp ? new Date(m.timestamp as string) : new Date(),
+        source: (m.source as string) ?? 'unknown',
+        embedding: m.embedding as number[] | undefined,
+        metadata: m.metadata as Record<string, unknown> | undefined,
       })),
     );
     res.json({ indicators, count: indicators.length });

@@ -202,7 +202,7 @@ export class InMemoryMemoryStore implements MemoryStore {
       priority: options.priority ?? this.calculateDefaultPriority(options),
       createdAt: now,
       lastAccessedAt: now,
-      expiresAt: options.duration === 'EPISODIC'
+      expiresAt: (options.duration ?? 'EPISODIC') === 'EPISODIC'
         ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 days for episodic
         : undefined,
       evidenceRefs: options.evidenceRefs,
@@ -254,30 +254,34 @@ export class InMemoryMemoryStore implements MemoryStore {
   }
 
   async deleteByMission(missionId: string, projectId: string): Promise<number> {
-    let count = 0;
+    const toDelete: string[] = [];
     for (const [id, item] of this.items) {
       if (item.projectId === projectId && item.missionId === missionId) {
-        this.items.delete(id);
-        this.accessOrderMap.delete(id);
-        count++;
+        toDelete.push(id);
       }
     }
-    return count;
+    for (const id of toDelete) {
+      this.items.delete(id);
+      this.accessOrderMap.delete(id);
+    }
+    return toDelete.length;
   }
 
   async deleteExpired(projectId: string): Promise<number> {
     const now = new Date();
-    let count = 0;
+    const toDelete: string[] = [];
     for (const [id, item] of this.items) {
       if (item.projectId === projectId && item.expiresAt) {
         if (new Date(item.expiresAt) < now) {
-          this.items.delete(id);
-          this.accessOrderMap.delete(id);
-          count++;
+          toDelete.push(id);
         }
       }
     }
-    return count;
+    for (const id of toDelete) {
+      this.items.delete(id);
+      this.accessOrderMap.delete(id);
+    }
+    return toDelete.length;
   }
 
   async read(id: string, projectId: string): Promise<EpisodicMemoryItem | null> {
@@ -293,60 +297,34 @@ export class InMemoryMemoryStore implements MemoryStore {
   }
 
   async search(query: MemorySearchQuery): Promise<MemorySearchResult> {
-    let results = Array.from(this.items.values())
-      .filter(item => item.projectId === query.projectId);
-    
-    // Filter by kind
-    if (query.kind) {
-      results = results.filter(item => item.kind === query.kind);
+    // Single-pass filter: combine all conditions to avoid intermediate array allocations
+    const lowerQuery = query.query?.toLowerCase();
+    const hasTags = query.tags && query.tags.length > 0;
+    const results: EpisodicMemoryItem[] = [];
+
+    for (const item of this.items.values()) {
+      if (item.projectId !== query.projectId) continue;
+      if (query.kind && item.kind !== query.kind) continue;
+      if (query.missionId && item.missionId !== query.missionId) continue;
+      if (query.agentId && item.agentId !== query.agentId) continue;
+      if (hasTags && !query.tags!.some(tag => item.tags.includes(tag))) continue;
+      if (query.minPriority !== undefined && item.priority < query.minPriority) continue;
+      if (query.minConfidence !== undefined && item.confidence < query.minConfidence) continue;
+      if (lowerQuery && !item.title.toLowerCase().includes(lowerQuery) && !item.content.toLowerCase().includes(lowerQuery)) continue;
+      results.push(item);
     }
-    
-    // Filter by mission
-    if (query.missionId) {
-      results = results.filter(item => item.missionId === query.missionId);
-    }
-    
-    // Filter by agent
-    if (query.agentId) {
-      results = results.filter(item => item.agentId === query.agentId);
-    }
-    
-    // Filter by tags
-    if (query.tags && query.tags.length > 0) {
-      results = results.filter(item => 
-        query.tags!.some(tag => item.tags.includes(tag))
-      );
-    }
-    
-    // Filter by priority
-    if (query.minPriority !== undefined) {
-      results = results.filter(item => item.priority >= query.minPriority!);
-    }
-    
-    // Filter by confidence
-    if (query.minConfidence !== undefined) {
-      results = results.filter(item => item.confidence >= query.minConfidence!);
-    }
-    
-    // Text search (simple contains check)
-    if (query.query) {
-      const lowerQuery = query.query.toLowerCase();
-      results = results.filter(item => 
-        item.title.toLowerCase().includes(lowerQuery) ||
-        item.content.toLowerCase().includes(lowerQuery)
-      );
-    }
-    
-    // Sort by priority (descending) then by createdAt (descending)
+
+    // Sort by priority (descending) then by createdAt (descending, ISO string comparison)
     results.sort((a, b) => {
       if (b.priority !== a.priority) return b.priority - a.priority;
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      // ISO date strings are lexicographically comparable — no Date parsing needed
+      return b.createdAt < a.createdAt ? -1 : b.createdAt > a.createdAt ? 1 : 0;
     });
-    
+
     const total = results.length;
     const limit = query.limit ?? 50;
     const items = results.slice(0, limit);
-    
+
     return { items, total, query };
   }
 
@@ -389,10 +367,10 @@ export class InMemoryMemoryStore implements MemoryStore {
       return { item, score };
     });
 
-    // Sort by score descending, then recency
+    // Sort by score descending, then recency (ISO string comparison — no Date parsing needed)
     scored.sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      return new Date(b.item.createdAt).getTime() - new Date(a.item.createdAt).getTime();
+      return b.item.createdAt < a.item.createdAt ? -1 : b.item.createdAt > a.item.createdAt ? 1 : 0;
     });
 
     return scored.slice(0, limit).map(s => {

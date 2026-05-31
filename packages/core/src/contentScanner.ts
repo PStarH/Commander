@@ -169,8 +169,12 @@ export class DefaultContentScanner implements ContentScanner {
     '\uFFF9-\uFFFC', // 特殊字符
   ];
   
+  // Pre-compiled regex for invisible Unicode characters (avoids recompilation on every scan)
+  private invisibleCharPattern: RegExp;
+
   constructor(config: Partial<ContentScannerConfig> = {}) {
     this.config = { ...DEFAULT_SCANNER_CONFIG, ...config };
+    this.invisibleCharPattern = new RegExp(`[${this.invisibleUnicodeRanges.join('')}]`, 'g');
   }
   
   async scan(content: string, config?: Partial<ContentScannerConfig>): Promise<ScanResult> {
@@ -264,8 +268,9 @@ export class DefaultContentScanner implements ContentScanner {
   
   private scanHiddenHtml(content: string): ContentThreat[] {
     const threats: ContentThreat[] = [];
-    
+
     for (const pattern of this.hiddenHtmlPatterns) {
+      pattern.lastIndex = 0;
       let match;
       while ((match = pattern.exec(content)) !== null) {
         threats.push({
@@ -283,8 +288,9 @@ export class DefaultContentScanner implements ContentScanner {
   
   private scanCssInjection(content: string): ContentThreat[] {
     const threats: ContentThreat[] = [];
-    
+
     for (const pattern of this.cssInjectionPatterns) {
+      pattern.lastIndex = 0;
       let match;
       while ((match = pattern.exec(content)) !== null) {
         threats.push({
@@ -302,8 +308,9 @@ export class DefaultContentScanner implements ContentScanner {
   
   private scanPromptInjection(content: string): ContentThreat[] {
     const threats: ContentThreat[] = [];
-    
+
     for (const pattern of this.promptInjectionPatterns) {
+      pattern.lastIndex = 0;
       let match;
       while ((match = pattern.exec(content)) !== null) {
         threats.push({
@@ -321,12 +328,11 @@ export class DefaultContentScanner implements ContentScanner {
   
   private scanUnicodeObfuscation(content: string): ContentThreat[] {
     const threats: ContentThreat[] = [];
-    
-    // 构建正则表达式匹配所有隐藏 Unicode 范围
-    const invisibleCharPattern = new RegExp(`[${this.invisibleUnicodeRanges.join('')}]`, 'g');
-    
+
+    // Use pre-compiled regex (reset lastIndex for reuse)
+    this.invisibleCharPattern.lastIndex = 0;
     let match;
-    while ((match = invisibleCharPattern.exec(content)) !== null) {
+    while ((match = this.invisibleCharPattern.exec(content)) !== null) {
       threats.push({
         type: 'invisible_characters',
         severity: 'MEDIUM',
@@ -351,6 +357,7 @@ export class DefaultContentScanner implements ContentScanner {
     ];
     
     for (const pattern of metadataPatterns) {
+      pattern.lastIndex = 0;
       let match;
       while ((match = pattern.exec(content)) !== null) {
         threats.push({

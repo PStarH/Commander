@@ -15,6 +15,47 @@ interface StealthPage {
 }
 
 let stealthBrowser: StealthPlaywright | null = null;
+const MAX_CONCURRENT_BROWSERS = 3;
+let activeBrowsers = 0;
+const browserQueue: Array<() => void> = [];
+
+// SECURITY FIX: blocklist for SSRF prevention
+const BLOCKED_HOSTS = new Set([
+  'localhost', '127.0.0.1', '::1', '0.0.0.0',
+  '169.254.169.254',  // AWS metadata
+  'metadata.google.internal',  // GCP metadata
+]);
+const BLOCKED_CIDRS = [/^10\./, /^172\.(1[6-9]|2[0-9]|3[01])\./, /^192\.168\./, /^169\.254\./];
+
+function isBlockedUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (BLOCKED_HOSTS.has(parsed.hostname)) return true;
+    if (BLOCKED_CIDRS.some(re => re.test(parsed.hostname))) return true;
+    // Block non-standard ports commonly used for internal services
+    const port = parsed.port ? parseInt(parsed.port) : (parsed.protocol === 'https:' ? 443 : 80);
+    if ([6379, 27017, 5432, 9200, 11211, 8500, 8300, 8501].includes(port)) return true;
+    return false;
+  } catch { return true; } // block unparseable URLs
+}
+
+async function acquireBrowserSlot(): Promise<void> {
+  if (activeBrowsers < MAX_CONCURRENT_BROWSERS) {
+    activeBrowsers++;
+    return;
+  }
+  await new Promise<void>(resolve => browserQueue.push(resolve));
+  activeBrowsers++;
+}
+
+function releaseBrowserSlot(): void {
+  activeBrowsers--;
+  if (browserQueue.length > 0) {
+    const next = browserQueue.shift()!;
+    next();
+  }
+}
+
 async function getStealth() {
   if (!stealthBrowser) {
     const { addExtra } = await import('playwright-extra');
@@ -28,6 +69,7 @@ async function getStealth() {
 }
 
 async function searchDDG(query: string, count: number): Promise<string> {
+  await acquireBrowserSlot();
   const pe = await getStealth();
   const browser = await pe.launch({headless:true,args:['--no-sandbox']});
   try {
@@ -54,10 +96,13 @@ async function searchDDG(query: string, count: number): Promise<string> {
     }, count);
 
     return results.length > 0 ? 'Search results for "'+query+'":\n'+results.join('\n') : 'No results found.';
-  } finally { await browser.close(); }
+  } finally { await browser.close(); releaseBrowserSlot(); }
 }
 
 async function fetchPage(url: string): Promise<string> {
+  // SECURITY FIX: SSRF prevention — block internal/private network access
+  if (isBlockedUrl(url)) throw new Error(`Blocked: ${url} targets internal/private network`);
+  await acquireBrowserSlot();
   const pe = await getStealth();
   const browser = await pe.launch({headless:true,args:['--no-sandbox']});
   try {
@@ -72,7 +117,7 @@ async function fetchPage(url: string): Promise<string> {
        return (m.textContent||'').replace(/\s+/g,' ').trim().slice(0,10000);
      }, undefined);
     return content || 'No readable content.';
-  } finally { await browser.close(); }
+  } finally { await browser.close(); releaseBrowserSlot(); }
 }
 
 const SDEF: ToolDefinition = {
@@ -116,6 +161,10 @@ const FDEF: ToolDefinition = {
 
 export class BrowserFetchTool implements Tool {
   readonly definition = FDEF;
+  isReadOnly = true;
+  isConcurrencySafe = true;
+  timeout = 60000;
+  maxOutputSize = 50000;
   async execute(args: Record<string,unknown>): Promise<string> {
     const url = String(args.url||'');
     if (!url.startsWith('http://')&&!url.startsWith('https://')) return 'Invalid URL. Must start with http:// or https://.';

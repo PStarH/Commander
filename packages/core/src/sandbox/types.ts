@@ -100,34 +100,3 @@ export interface ExecutionBackend {
     timeout?: number,
   ): Promise<SandboxExecutionResult>;
 }
-
-export interface SandboxProfile {
-  mode: SandboxMode;
-  network: NetworkPolicy;
-  filesystem: FileAccessPolicy;
-  allowedDomains?: string[];
-  envVarDenyList?: string[];
-  envVarAllowList?: string[];
-  timeout?: number;
-  memoryLimitMB?: number;
-  runAs?: string;
-}
-
-export interface SandboxExecutionResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  durationMs: number;
-  sandboxMechanism: SandboxMechanism;
-  violated?: string[];
-}
-
-export interface PlatformSandbox {
-  readonly name: SandboxMechanism;
-  readonly available: boolean;
-  execute(
-    command: string,
-    profile: SandboxProfile,
-    workdir?: string,
-  ): Promise<SandboxExecutionResult>;
-}

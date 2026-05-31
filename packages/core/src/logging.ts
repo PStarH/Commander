@@ -205,7 +205,11 @@ export class Logger {
   /**
    * Add log listener
    */
+  private static readonly MAX_LISTENERS = 50;
   onLog(listener: (entry: LogEntry) => void): void {
+    if (this.listeners.length >= Logger.MAX_LISTENERS) {
+      this.listeners.shift();
+    }
     this.listeners.push(listener);
   }
 
@@ -309,8 +313,9 @@ export class MetricsCollector {
   constructor(config?: Partial<MetricsConfig>) {
     this.config = { ...DEFAULT_METRICS_CONFIG, ...config };
     
-    // Cleanup old data periodically — .unref() so it doesn't prevent process exit
-    this.cleanupTimer = setInterval(() => this.cleanup(), this.config.retentionPeriod);
+    // Cleanup old data periodically — run at half the retention period so stale
+    // data is evicted promptly instead of sitting around for up to 2x retention.
+    this.cleanupTimer = setInterval(() => this.cleanup(), this.config.retentionPeriod / 2);
     this.cleanupTimer.unref();
   }
 
@@ -380,7 +385,11 @@ export class MetricsCollector {
     };
 
     metric.values.push(point);
-    
+    // Cap per-metric values to prevent unbounded growth within retention window
+    if (metric.values.length > 5000) {
+      metric.values = metric.values.slice(-3000);
+    }
+
     // Notify listeners
     this.listeners.forEach(listener => listener(name, point));
   }

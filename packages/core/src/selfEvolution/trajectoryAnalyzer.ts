@@ -23,60 +23,91 @@ const CLASSIFIER_RULES: ClassifierRule[] = [
   {
     category: 'tool_misuse',
     keywords: ['tool error', 'tool not found', 'invalid tool', 'tool failed', 'missing tool',
-      'unknown tool', 'tool call', 'no such tool', 'permission denied to tool'],
+      'unknown tool', 'tool call', 'no such tool', 'permission denied to tool',
+      'tool timeout', 'tool crashed', 'malformed tool'],
     confidence: 0.7,
   },
   {
     category: 'context_overflow',
     keywords: ['context length', 'token limit', 'too many tokens', 'max tokens',
       'context window', 'truncated', 'token budget exceeded', 'context overflow',
-      'maximum context'],
+      'maximum context', 'prompt too long', 'input too large'],
     confidence: 0.8,
   },
   {
     category: 'timeout',
     keywords: ['timeout', 'timed out', 'deadline', 'took too long', 'exceeded time',
-      'execution timeout', 'request timed out', 'duration limit'],
+      'execution timeout', 'request timed out', 'duration limit', 'operation expired',
+      'connection timeout', 'read timeout'],
     confidence: 0.8,
   },
   {
     category: 'model_refusal',
     keywords: ['cannot', 'unable to', 'i cannot', 'i am not able', 'don\'t have access',
       'not implemented', 'i don\'t', 'i won\'t', 'sorry, i cannot', 'as an ai',
-      'i\'m not able', 'i\'m sorry'],
+      'i\'m not able', 'i\'m sorry', 'refused', 'declined', 'not allowed'],
     confidence: 0.65,
   },
   {
     category: 'missing_capability',
     keywords: ['not supported', 'not available', 'not installed', 'command not found',
       'no such file', 'dependency', 'not found', 'missing requirement',
-      'does not exist', 'not configured'],
+      'does not exist', 'not configured', 'module not found', 'package not found'],
     confidence: 0.6,
   },
   {
     category: 'planning_error',
     keywords: ['plan changed', 'unexpected', 'wrong approach', 'strategy failed',
       'incorrect plan', 'misunderstood', 'wrong direction', 'not what was asked',
-      'redundant', 'circular'],
+      'redundant', 'circular', 'backtrack', 're-plan', 'went off track'],
     confidence: 0.55,
   },
   {
     category: 'hallucination',
     keywords: ['fabricated', 'doesn\'t exist', 'made up', 'hallucination',
-      'incorrect information', 'not real', 'invented', 'never existed'],
+      'incorrect information', 'not real', 'invented', 'never existed',
+      'fake reference', 'nonexistent', 'phantom'],
     confidence: 0.7,
   },
   {
     category: 'dependency_failure',
     keywords: ['dependency failed', 'subtask failed', 'child task', 'prerequisite',
-      'dependency error', 'chain failed', 'upstream'],
+      'dependency error', 'chain failed', 'upstream', 'cascade failure',
+      'blocked by', 'waiting on'],
     confidence: 0.65,
   },
   {
     category: 'quality_gate',
     keywords: ['quality gate', 'gate failed', 'verification failed', 'hallucination detected',
-      'consistency check', 'safety check', 'score threshold'],
+      'consistency check', 'safety check', 'score threshold', 'review rejected',
+      'below threshold', 'quality check'],
     confidence: 0.75,
+  },
+  {
+    category: 'rate_limit',
+    keywords: ['rate limit', 'rate limited', 'too many requests', '429', 'throttled',
+      'quota exceeded', 'retry after', 'back off', 'slow down'],
+    confidence: 0.85,
+  },
+  {
+    category: 'authentication',
+    keywords: ['authentication', 'unauthorized', '401', '403', 'forbidden', 'invalid token',
+      'expired token', 'access denied', 'permission denied', 'invalid credentials',
+      'api key', 'auth failed'],
+    confidence: 0.8,
+  },
+  {
+    category: 'resource_exhaustion',
+    keywords: ['out of memory', 'oom', 'disk full', 'no space', 'resource exhausted',
+      'memory limit', 'heap', 'stack overflow', 'file descriptor', 'too many open'],
+    confidence: 0.8,
+  },
+  {
+    category: 'data_validation',
+    keywords: ['validation error', 'invalid format', 'malformed', 'parse error',
+      'schema violation', 'type mismatch', 'invalid input', 'bad request',
+      'unexpected format', 'encoding error'],
+    confidence: 0.7,
   },
 ];
 
@@ -131,6 +162,10 @@ const CLASSIFY_PROMPT = [
   '- hallucination: made-up content or references',
   '- dependency_failure: a subtask or dependency failed',
   '- quality_gate: quality/verification gate rejected output',
+  '- rate_limit: API rate limiting or throttling',
+  '- authentication: auth/permission failures',
+  '- resource_exhaustion: memory/disk/CPU limits hit',
+  '- data_validation: invalid input/output format or schema',
   '- unclassified: does not fit any above category',
   '',
   'Return a JSON object with: category (string), confidence (0-1), evidence (string[]), suggestion (string).',
@@ -167,7 +202,7 @@ async function classifyWithLLM(
         maxTokens: 300,
       });
 
-      const cleaned = response.content.trim().replace(/^```(?:json)?\s*|```\s*$/g, '');
+      const cleaned = response.content.trim().replace(/^```(?:json)?\s*/, '').replace(/```\s*$/, '');
       const raw = JSON.parse(cleaned);
       if (!validateShape<{
         category: string;
@@ -216,7 +251,8 @@ async function classifyWithLLM(
 function isValidCategory(s: string): s is FailureCategory {
   return ['tool_misuse', 'context_overflow', 'timeout', 'model_refusal',
     'missing_capability', 'planning_error', 'hallucination', 'dependency_failure',
-    'quality_gate', 'unclassified'].includes(s);
+    'quality_gate', 'rate_limit', 'authentication', 'resource_exhaustion',
+    'data_validation', 'unclassified'].includes(s);
 }
 
 // ============================================================================

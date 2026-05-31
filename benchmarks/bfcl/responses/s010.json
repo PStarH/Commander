@@ -1,37 +1,13 @@
 {
-  "id": "69911371866541c7bf378017b38a4901",
-  "choices": [
-    {
-      "finish_reason": "tool_calls",
-      "index": 0,
-      "message": {
-        "content": "I'll run `npm install` for you to install the dependencies.",
-        "role": "assistant",
-        "tool_calls": [
-          {
-            "id": "call_2400ac8068d04d8697f2d12e",
-            "function": {
-              "arguments": "{\"command\": \"npm install\"}",
-              "name": "shell_execute"
-            },
-            "type": "function"
-          }
-        ]
-      }
-    }
-  ],
-  "created": 1778999857,
-  "model": "mimo-v2.5-pro",
-  "object": "chat.completion",
-  "usage": {
-    "completion_tokens": 37,
-    "prompt_tokens": 987,
-    "total_tokens": 1024,
-    "completion_tokens_details": {
-      "reasoning_tokens": 0
-    },
-    "prompt_tokens_details": {
-      "cached_tokens": 960
-    }
-  }
+  "input": {
+    "task_id": "s010",
+    "prompt": "run python fibonacci",
+    "cat": "simple",
+    "expected": "python_execute"
+  },
+  "output": "{\"tool_calls\":[{\"id\":\"call_07f25ab964924169a187797c\",\"function\":{\"arguments\":\"{\\\"code\\\": \\\"def fibonacci(n):\\\\n    \\\\\\\"\\\\\\\"\\\\\\\"Generate Fibonacci sequence up to n terms\\\\\\\"\\\\\\\"\\\\\\\"\\\\n    fib_sequence = []\\\\n    a, b = 0, 1\\\\n    for _ in range(n):\\\\n        fib_sequence.append(a)\\\\n        a, b = b, a + b\\\\n    return fib_sequence\\\\n\\\\n# Generate first 20 Fibonacci numbers\\\\nn = 20\\\\nfib_numbers = fibonacci(n)\\\\nprint(f\\\\\\\"First {n} Fibonacci numbers:\\\\\\\")\\\\nprint(fib_numbers)\\\\n\\\\n# Also show some additional info\\\\nprint(f\\\\\\\"\\\\\\\\nAdditional information:\\\\\\\")\\\\nprint(f\\\\\\\"Sum of first {n} Fibonacci numbers: {sum(fib_numbers)}\\\\\\\")\\\\nprint(f\\\\\\\"Last number in sequence: {fib_numbers[-1]}\\\\\\\")\\\\nprint(f\\\\\\\"Ratio between consecutive numbers (last two): {fib_numbers[-1]/fib_numbers[-2]:.6f}\\\\\\\")\\\"}\",\"name\":\"python_execute\"},\"type\":\"function\"}]}",
+  "extracted_answer": "{\"tool_calls\":[{\"id\":\"call_07f25ab964924169a187797c\",\"function\":{\"arguments\":\"{\\\"code\\\": \\\"def fibonacci(n):\\\\n    \\\\\\\"\\\\\\\"\\\\\\\"Generate Fibonacci sequence up to n terms\\\\\\\"\\\\\\\"\\\\\\\"\\\\n    fib_sequence = []\\\\n    a, b = 0, 1\\\\n    for _ in range(n):\\\\n        fib_sequence.append(a)\\\\n        a, b = b, a + b\\\\n    return fib_sequence\\\\n\\\\n# Generate first 20 Fibonacci numbers\\\\nn = 20\\\\nfib_numbers = fibonacci(n)\\\\nprint(f\\\\\\\"First {n} Fibonacci numbers:\\\\\\\")\\\\nprint(fib_numbers)\\\\n\\\\n# Also show some additional info\\\\nprint(f\\\\\\\"\\\\\\\\nAdditional information:\\\\\\\")\\\\nprint(f\\\\\\\"Sum of first {n} Fibonacci numbers: {sum(fib_numbers)}\\\\\\\")\\\\nprint(f\\\\\\\"Last number in sequence: {fib_numbers[-1]}\\\\\\\")\\\\nprint(f\\\\\\\"Ratio between consecutive numbers (last two): {fib_numbers[-1]/fib_numbers[-2]:.6f}\\\\\\\")\\\"}\",\"name\":\"python_execute\"},\"type\":\"function\"}]}",
+  "correct": false,
+  "toolCorrect": false,
+  "paramCorrect": false
 }

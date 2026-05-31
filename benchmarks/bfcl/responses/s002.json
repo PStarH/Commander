@@ -1,37 +1,13 @@
 {
-  "id": "05574483811c4cf28c2e1e097abf8e53",
-  "choices": [
-    {
-      "finish_reason": "tool_calls",
-      "index": 0,
-      "message": {
-        "content": "",
-        "role": "assistant",
-        "tool_calls": [
-          {
-            "id": "call_9c8d6fa2b93b46a29fafad87",
-            "function": {
-              "arguments": "{\"code\": \"result = 2 + 2\\nprint(f\\\"2 + 2 = {result}\\\")\"}",
-              "name": "python_execute"
-            },
-            "type": "function"
-          }
-        ]
-      }
-    }
-  ],
-  "created": 1778999829,
-  "model": "mimo-v2.5-pro",
-  "object": "chat.completion",
-  "usage": {
-    "completion_tokens": 40,
-    "prompt_tokens": 993,
-    "total_tokens": 1033,
-    "completion_tokens_details": {
-      "reasoning_tokens": 0
-    },
-    "prompt_tokens_details": {
-      "cached_tokens": 960
-    }
-  }
+  "input": {
+    "task_id": "s002",
+    "prompt": "calculate 2+2 using python",
+    "cat": "simple",
+    "expected": "python_execute"
+  },
+  "output": "{\"tool_calls\":[{\"id\":\"call_f083ea4da2da474bbf050761\",\"function\":{\"arguments\":\"{\\\"code\\\": \\\"print(2 + 2)\\\"}\",\"name\":\"python_execute\"},\"type\":\"function\"}]}",
+  "extracted_answer": "{\"tool_calls\":[{\"id\":\"call_f083ea4da2da474bbf050761\",\"function\":{\"arguments\":\"{\\\"code\\\": \\\"print(2 + 2)\\\"}\",\"name\":\"python_execute\"},\"type\":\"function\"}]}",
+  "correct": true,
+  "toolCorrect": true,
+  "paramCorrect": true
 }

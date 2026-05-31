@@ -22,12 +22,22 @@ export class CircuitBreaker {
   private halfOpenInFlight = 0;
   private openCount = 0;
   private onStateChange?: (from: CircuitState, to: CircuitState) => void;
+  /** Sliding window of failure timestamps for windowed failure counting */
+  private failureTimestamps: number[] = [];
+  /** Sliding window of all request timestamps for volume threshold (Hystrix pattern) */
+  private requestTimestamps: number[] = [];
+  /** Minimum requests in window before circuit can trip (Hystrix: circuitBreakerRequestVolumeThreshold) */
+  private volumeThreshold: number;
+  /** Error rate threshold (0-1) to trip circuit (Hystrix: circuitBreakerErrorThresholdPercentage) */
+  private errorRateThreshold: number;
 
-  constructor(threshold = 5, recoveryTimeMs = 30000, halfOpenMaxTests = 1, onStateChange?: (from: CircuitState, to: CircuitState) => void) {
+  constructor(threshold = 5, recoveryTimeMs = 30000, halfOpenMaxTests = 1, onStateChange?: (from: CircuitState, to: CircuitState) => void, options?: { volumeThreshold?: number; errorRateThreshold?: number }) {
     this.threshold = threshold;
     this.recoveryTimeMs = recoveryTimeMs;
     this.halfOpenMaxTests = halfOpenMaxTests;
     this.onStateChange = onStateChange;
+    this.volumeThreshold = options?.volumeThreshold ?? 0;
+    this.errorRateThreshold = options?.errorRateThreshold ?? 0.5;
   }
 
   getState(): CircuitState { return this.state; }
@@ -50,7 +60,7 @@ export class CircuitBreaker {
       if (Date.now() - this.lastFailureTime >= this.recoveryTimeMs) {
         this.transitionTo('HALF_OPEN');
         this.halfOpenTests = 0;
-        this.halfOpenInFlight = 0;
+        this.halfOpenInFlight = 1;
         return true;
       }
       return false;
@@ -65,20 +75,45 @@ export class CircuitBreaker {
   onSuccess(): void {
     this.successCount++;
     this.failureCount = 0;
+    this.requestTimestamps.push(Date.now());
     if (this.state === 'HALF_OPEN') {
-      this.transitionTo('CLOSED');
-      this.halfOpenTests = 0;
-      this.halfOpenInFlight = 0;
+      this.halfOpenTests++;
+      // Only close circuit after enough consecutive successes (multi-probe recovery)
+      if (this.halfOpenTests >= this.halfOpenMaxTests) {
+        this.transitionTo('CLOSED');
+        this.halfOpenTests = 0;
+        this.halfOpenInFlight = 0;
+      }
+    }
+  }
+
+  /** Decrement halfOpenInFlight without recording success/failure (for callers that throw before reporting). */
+  release(): void {
+    if (this.state === 'HALF_OPEN') {
+      this.halfOpenInFlight = Math.max(0, this.halfOpenInFlight - 1);
     }
   }
 
   onFailure(): void {
+    const now = Date.now();
     this.failureCount++;
-    this.lastFailureTime = Date.now();
+    this.lastFailureTime = now;
+    // Track failure in sliding window (prune entries older than recoveryTimeMs)
+    this.failureTimestamps.push(now);
+    this.requestTimestamps.push(now);
+    const windowStart = now - this.recoveryTimeMs;
+    this.failureTimestamps = this.failureTimestamps.filter(t => t > windowStart);
+    this.requestTimestamps = this.requestTimestamps.filter(t => t > windowStart);
     if (this.state === 'HALF_OPEN') {
       this.halfOpenInFlight = Math.max(0, this.halfOpenInFlight - 1);
     }
-    if (this.state === 'HALF_OPEN' || this.failureCount >= this.threshold) {
+    // Hystrix pattern: trip when BOTH volume threshold AND error rate are met
+    const windowedFailures = this.failureTimestamps.length;
+    const windowedRequests = this.requestTimestamps.length;
+    const volumeMet = windowedRequests >= this.volumeThreshold;
+    const errorRate = windowedRequests > 0 ? windowedFailures / windowedRequests : 0;
+    const errorRateMet = errorRate >= this.errorRateThreshold;
+    if (this.state === 'HALF_OPEN' || (volumeMet && errorRateMet && windowedFailures >= this.threshold)) {
       if (this.state !== 'OPEN') {
         this.transitionTo('OPEN');
         this.openCount++;
@@ -93,6 +128,8 @@ export class CircuitBreaker {
     this.successCount = 0;
     this.halfOpenTests = 0;
     this.halfOpenInFlight = 0;
+    this.failureTimestamps = [];
+    this.requestTimestamps = [];
     if (was !== 'CLOSED') this.onStateChange?.(was, 'CLOSED');
   }
 

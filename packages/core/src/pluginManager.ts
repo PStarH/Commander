@@ -246,6 +246,9 @@ export interface CommanderPlugin {
   onAgentStart?: (ctx: AgentStartContext) => Promise<void> | void;
   /** Called when an agent completes execution */
   onAgentComplete?: (ctx: AgentCompleteContext) => Promise<void> | void;
+  /** If true, plugin hook failures will abort the operation instead of being silently swallowed. */
+  required?: boolean;
+
   /** Called when an error occurs */
   onError?: (ctx: ErrorContext) => Promise<void> | void;
 
@@ -409,7 +412,10 @@ export class HookManager {
     if (!entry) throw new Error(`Plugin "${name}" not found`);
     const merged = this.validateAndMergeConfig(entry.plugin, config);
     entry.config = merged;
-    // Re-trigger onLoad so plugin can react to config changes
+    // Unload old config first, then re-load with new config
+    if (entry.plugin.onUnload) {
+      await entry.plugin.onUnload();
+    }
     if (entry.plugin.onLoad) {
       await entry.plugin.onLoad({ config: merged, hookManager: this });
     }
@@ -463,7 +469,8 @@ export class HookManager {
         try {
           const result = await this.withTimeout(plugin.beforeToolCall(ctx), plugin.name, 'beforeToolCall');
           if (result !== null) return result;
-        } catch {
+        } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeToolCall failed`);
         }
       }
@@ -478,7 +485,8 @@ export class HookManager {
       if (plugin.afterToolCall) {
         try {
           currentResult = await this.withTimeout(plugin.afterToolCall({ ...ctx, result: currentResult }), plugin.name, 'afterToolCall');
-        } catch {
+        } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterToolCall failed`);
         }
       }
@@ -493,7 +501,8 @@ export class HookManager {
       if (plugin.beforeLLMCall) {
         try {
           currentRequest = await this.withTimeout(plugin.beforeLLMCall({ ...ctx, request: currentRequest }), plugin.name, 'beforeLLMCall');
-        } catch {
+        } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeLLMCall failed`);
         }
       }
@@ -507,7 +516,8 @@ export class HookManager {
       if (plugin.afterLLMCall) {
         try {
           await this.withTimeout(plugin.afterLLMCall(ctx), plugin.name, 'afterLLMCall');
-        } catch {
+        } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterLLMCall failed`);
         }
       }
@@ -520,7 +530,8 @@ export class HookManager {
       if (plugin.onAgentStart) {
         try {
           await this.withTimeout(plugin.onAgentStart(ctx), plugin.name, 'onAgentStart');
-        } catch {
+        } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onAgentStart failed`);
         }
       }
@@ -533,7 +544,8 @@ export class HookManager {
       if (plugin.onAgentComplete) {
         try {
           await this.withTimeout(plugin.onAgentComplete(ctx), plugin.name, 'onAgentComplete');
-        } catch {
+        } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onAgentComplete failed`);
         }
       }
@@ -546,7 +558,8 @@ export class HookManager {
       if (plugin.onError) {
         try {
           await this.withTimeout(plugin.onError(ctx), plugin.name, 'onError');
-        } catch {
+        } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onError failed`);
         }
       }
@@ -562,7 +575,8 @@ export class HookManager {
         try {
           const result = await this.withTimeout(plugin.beforeToolResolve(ctx), plugin.name, 'beforeToolResolve');
           if (result !== null) return result;
-        } catch {
+        } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeToolResolve failed`);
         }
       }
@@ -574,7 +588,8 @@ export class HookManager {
     for (const name of this.getEnabledInOrder()) {
       const plugin = this.plugins.get(name)!.plugin;
       if (plugin.afterToolResolve) {
-        try { await this.withTimeout(plugin.afterToolResolve(ctx), plugin.name, 'afterToolResolve'); } catch {
+        try { await this.withTimeout(plugin.afterToolResolve(ctx), plugin.name, 'afterToolResolve'); } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterToolResolve failed`);
         }
       }
@@ -585,7 +600,8 @@ export class HookManager {
     for (const name of this.getEnabledInOrder()) {
       const plugin = this.plugins.get(name)!.plugin;
       if (plugin.onToolTimeout) {
-        try { await this.withTimeout(plugin.onToolTimeout(ctx), plugin.name, 'onToolTimeout'); } catch {
+        try { await this.withTimeout(plugin.onToolTimeout(ctx), plugin.name, 'onToolTimeout'); } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onToolTimeout failed`);
         }
       }
@@ -596,7 +612,8 @@ export class HookManager {
     for (const name of this.getEnabledInOrder()) {
       const plugin = this.plugins.get(name)!.plugin;
       if (plugin.onToolRetry) {
-        try { await this.withTimeout(plugin.onToolRetry(ctx), plugin.name, 'onToolRetry'); } catch {
+        try { await this.withTimeout(plugin.onToolRetry(ctx), plugin.name, 'onToolRetry'); } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onToolRetry failed`);
         }
       }
@@ -607,7 +624,8 @@ export class HookManager {
     for (const name of this.getEnabledInOrder()) {
       const plugin = this.plugins.get(name)!.plugin;
       if (plugin.beforeContextCompaction) {
-        try { await this.withTimeout(plugin.beforeContextCompaction(ctx), plugin.name, 'beforeContextCompaction'); } catch {
+        try { await this.withTimeout(plugin.beforeContextCompaction(ctx), plugin.name, 'beforeContextCompaction'); } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeContextCompaction failed`);
         }
       }
@@ -618,7 +636,8 @@ export class HookManager {
     for (const name of this.getEnabledInOrder()) {
       const plugin = this.plugins.get(name)!.plugin;
       if (plugin.afterContextCompaction) {
-        try { await this.withTimeout(plugin.afterContextCompaction(ctx), plugin.name, 'afterContextCompaction'); } catch {
+        try { await this.withTimeout(plugin.afterContextCompaction(ctx), plugin.name, 'afterContextCompaction'); } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterContextCompaction failed`);
         }
       }
@@ -629,7 +648,8 @@ export class HookManager {
     for (const name of this.getEnabledInOrder()) {
       const plugin = this.plugins.get(name)!.plugin;
       if (plugin.onSessionFork) {
-        try { await this.withTimeout(plugin.onSessionFork(ctx), plugin.name, 'onSessionFork'); } catch {
+        try { await this.withTimeout(plugin.onSessionFork(ctx), plugin.name, 'onSessionFork'); } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onSessionFork failed`);
         }
       }
@@ -640,7 +660,8 @@ export class HookManager {
     for (const name of this.getEnabledInOrder()) {
       const plugin = this.plugins.get(name)!.plugin;
       if (plugin.onSessionArchive) {
-        try { await this.withTimeout(plugin.onSessionArchive(ctx), plugin.name, 'onSessionArchive'); } catch {
+        try { await this.withTimeout(plugin.onSessionArchive(ctx), plugin.name, 'onSessionArchive'); } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onSessionArchive failed`);
         }
       }
@@ -651,7 +672,8 @@ export class HookManager {
     for (const name of this.getEnabledInOrder()) {
       const plugin = this.plugins.get(name)!.plugin;
       if (plugin.onStepStart) {
-        try { await this.withTimeout(plugin.onStepStart(ctx), plugin.name, 'onStepStart'); } catch {
+        try { await this.withTimeout(plugin.onStepStart(ctx), plugin.name, 'onStepStart'); } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onStepStart failed`);
         }
       }
@@ -662,7 +684,8 @@ export class HookManager {
     for (const name of this.getEnabledInOrder()) {
       const plugin = this.plugins.get(name)!.plugin;
       if (plugin.onStepComplete) {
-        try { await this.withTimeout(plugin.onStepComplete(ctx), plugin.name, 'onStepComplete'); } catch {
+        try { await this.withTimeout(plugin.onStepComplete(ctx), plugin.name, 'onStepComplete'); } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onStepComplete failed`);
         }
       }
@@ -676,7 +699,8 @@ export class HookManager {
         try {
           const result = await this.withTimeout(plugin.beforeBackendSelect(ctx), plugin.name, 'beforeBackendSelect');
           if (result !== null) return result;
-        } catch {
+        } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeBackendSelect failed`);
         }
       }
@@ -688,7 +712,8 @@ export class HookManager {
     for (const name of this.getEnabledInOrder()) {
       const plugin = this.plugins.get(name)!.plugin;
       if (plugin.afterBackendSelect) {
-        try { await this.withTimeout(plugin.afterBackendSelect(ctx), plugin.name, 'afterBackendSelect'); } catch {
+        try { await this.withTimeout(plugin.afterBackendSelect(ctx), plugin.name, 'afterBackendSelect'); } catch (err) {
+          if (plugin.required) throw err;
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterBackendSelect failed`);
         }
       }
@@ -707,6 +732,9 @@ export class HookManager {
     for (const [key, field] of Object.entries(schema.properties)) {
       const value = key in merged ? merged[key] : field.default;
       if (value !== undefined) {
+        if (field.type === 'array' && !Array.isArray(value)) {
+          throw new Error(`Plugin "${plugin.name}" config "${key}": expected array, got ${typeof value}`);
+        }
         if (typeof value !== field.type && field.type !== 'array' && field.type !== 'object') {
           throw new Error(`Plugin "${plugin.name}" config "${key}": expected ${field.type}, got ${typeof value}`);
         }
@@ -731,10 +759,11 @@ export class HookManager {
     if (typeof promise !== 'object' || promise === null || !('then' in promise)) {
       return Promise.resolve(promise);
     }
+    let timer: ReturnType<typeof setTimeout>;
     return Promise.race([
-      promise as Promise<T>,
+      (promise as Promise<T>).finally(() => clearTimeout(timer)),
       new Promise<never>((_, reject) => {
-        const timer = setTimeout(() => reject(new Error(`Plugin "${pluginName}" hook "${hookName}" timed out after ${this.hookTimeoutMs}ms`)), this.hookTimeoutMs);
+        timer = setTimeout(() => reject(new Error(`Plugin "${pluginName}" hook "${hookName}" timed out after ${this.hookTimeoutMs}ms`)), this.hookTimeoutMs);
         timer.unref();
       }),
     ]);

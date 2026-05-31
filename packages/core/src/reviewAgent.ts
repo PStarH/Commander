@@ -125,7 +125,8 @@ function getGitDiff(scope: ReviewScope, baseRef?: string, commitSha?: string): G
       maxBuffer: 1024 * 1024,
     });
     files = filesOutput.split('\n').filter(Boolean);
-  } catch {
+  } catch (e) {
+    // Git diff may fail if ref doesn't exist — fallback to empty
     files = [];
   }
 

@@ -89,6 +89,7 @@ export class WorkflowPopulation {
       this.bestIndividual = { ...currentBest };
     }
 
+    if (this.fitnessHistory.length > 1000) this.fitnessHistory.splice(0, this.fitnessHistory.length - 1000);
     this.fitnessHistory.push(currentBest.fitness);
 
     // Check for stagnation
@@ -244,7 +245,7 @@ export class WorkflowPopulation {
   }
 
   private mutateDAG(dag: WorkflowDAG, index: number): WorkflowDAG {
-    const mutated = JSON.parse(JSON.stringify(dag)) as WorkflowDAG;
+    const mutated = structuredClone(dag);
     mutated.id = `dag-mutated-${index}`;
 
     const mutationType = Math.random();

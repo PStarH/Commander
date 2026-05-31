@@ -20,6 +20,7 @@ function generateId(): string {
 interface TaskProfile {
   mode: TELOSOrchestrationMode;
   complexity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   estimatedSubtasks: number;
   requiresConsensus: boolean;
   requiresApproval: boolean;
@@ -68,6 +69,7 @@ function analyzeTask(
   return {
     mode,
     complexity: level as TaskProfile['complexity'],
+    riskLevel: riskLevel as TaskProfile['riskLevel'],
     estimatedSubtasks: Math.max(1, Math.ceil(complexity / 2)),
     requiresConsensus: mode === 'CONSENSUS',
     requiresApproval: riskLevel === 'CRITICAL' || riskLevel === 'HIGH',
@@ -151,9 +153,9 @@ function buildPlanContext(
       availableToolNames: (contextData.availableTools as string[] | undefined) ?? [],
       estimatedContextTokens,
       budget: {
-        hardCapTokens: profile.complexity === 'CRITICAL' ? 128000 : profile.complexity === 'HIGH' ? 64000 : 32000,
-        softCapTokens: profile.complexity === 'CRITICAL' ? 96000 : profile.complexity === 'HIGH' ? 48000 : 24000,
-        costCapUsd: profile.complexity === 'CRITICAL' ? 5.00 : profile.complexity === 'HIGH' ? 2.00 : 0.50,
+        hardCapTokens: profile.complexity === 'CRITICAL' ? 400000 : profile.complexity === 'HIGH' ? 200000 : 100000,
+        softCapTokens: profile.complexity === 'CRITICAL' ? 300000 : profile.complexity === 'HIGH' ? 150000 : 75000,
+        costCapUsd: profile.complexity === 'CRITICAL' ? 10.00 : profile.complexity === 'HIGH' ? 5.00 : 2.00,
       },
     },
     governance: {
@@ -352,17 +354,17 @@ export class TELOSOrchestrator {
 
         const execResult = await this.runtime.execute(ctx);
 
-        // Track cost
-if (execResult.status === 'success') {
-           this.sentinel.recordCostFromUsage(
-             planId,
-             assignment.agentId,
-             routing.modelId,
-             execResult.totalTokenUsage,
-           );
-         }
+        // Track cost using per-record cost to avoid cross-plan misattribution
+        if (execResult.status === 'success') {
+          const costRecord = this.sentinel.recordCostFromUsage(
+            planId,
+            assignment.agentId,
+            routing.modelId,
+            execResult.totalTokenUsage,
+          );
+          totalCostUsd += costRecord.costUsd;
+        }
 
-        totalCostUsd += 0;
         totalTokens += execResult.totalTokenUsage.totalTokens;
         results.push({
           agentId: assignment.agentId,
@@ -377,9 +379,7 @@ if (execResult.status === 'success') {
       }
     }
 
-    // Get final cost
-    const costSummary = this.sentinel.getCostSummary();
-    totalCostUsd = costSummary.totalCostUsd;
+    // totalCostUsd already accumulated via per-record cost tracking
 
     // Record experience
     getMetaLearner().recordExperience({
@@ -405,6 +405,10 @@ if (execResult.status === 'success') {
     });
 
     const allSuccess = results.every(r => r.status === 'success');
+
+    // Clean up completed plan to prevent unbounded activePlans growth
+    this.activePlans.delete(planId);
+
     return {
       status: allSuccess ? 'success' : 'failed',
       results,

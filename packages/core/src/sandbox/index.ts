@@ -10,3 +10,5 @@ export { SSHBackend, resolveSSHConfig } from './backends/sshBackend';
 export { DockerExecBackend, resolveDockerExecConfig } from './backends/dockerExecBackend';
 export { LaneManager, getLaneManager, resetLaneManager } from './lane';
 export type { ExecutionLaneConfig, ExecutionLane, LaneContext, LaneStats, LaneSelector } from './lane';
+export { buildSeccompFilter, writeSeccompFilterToFile, countAllowedSyscalls } from './seccompBpf';
+export type { SeccompFilterOptions } from './seccompBpf';

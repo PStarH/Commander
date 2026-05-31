@@ -85,7 +85,7 @@ export function createSchema<T>(schema: ConfigSchema<T>): ConfigSchema<T> {
  */
 export function mergeWithDefaults<T extends Record<string, unknown>>(
   partial: Partial<T>,
-  schema: ConfigSchema<any>,
+  schema: ConfigSchema<Record<string, unknown>>,
 ): T {
   const result: Record<string, unknown> = {};
   for (const [key, field] of Object.entries(schema)) {
@@ -106,7 +106,7 @@ export function mergeWithDefaults<T extends Record<string, unknown>>(
  */
 export function validateConfig<T extends Record<string, unknown>>(
   config: Partial<T> | undefined,
-  schema: ConfigSchema<any>,
+  schema: ConfigSchema<Record<string, unknown>>,
 ): ConfigValidationResult<T> {
   const errors: ConfigValidationError[] = [];
   const data: Record<string, unknown> = {};
@@ -225,7 +225,7 @@ export function validateRuntimeConfig(config: Record<string, unknown>): ConfigVa
   const schema = createSchema({
     maxStepsPerRun: { type: 'number', required: true, min: 1, max: 1000, default: 50 },
     maxRetries: { type: 'number', required: true, min: 0, max: 10, default: 3 },
-    timeoutMs: { type: 'number', required: true, min: 1000, max: 600000, default: 120000 },
+    timeoutMs: { type: 'number', required: true, min: 1000, max: 600000, default: 180000 },
     maxConcurrency: { type: 'number', required: true, min: 1, max: 100, default: 10 },
     budgetHardCapTokens: { type: 'number', required: true, min: 1000, max: 10000000, default: 100000 },
     enableCache: { type: 'boolean', default: true },
