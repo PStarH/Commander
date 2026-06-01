@@ -61,3 +61,19 @@ export type { BM25Config, BM25Document, BM25Result } from './ftsScorer';
 
 // SQLite-backed memory store (production-grade)
 export { SqliteMemoryStore } from './sqliteMemoryStore';
+
+// Thompson Memory Scorer - Beta distribution based usefulness tracking (0 tokens)
+export { ThompsonMemoryScorer } from './thompsonMemoryScorer';
+export type { ThompsonScorerConfig } from './thompsonMemoryScorer';
+
+// Memory Quality Gate - Multi-layer quality filtering (0 tokens)
+export { MemoryQualityGate, quickQualityCheck } from './memoryQualityGate';
+export type { QualityGateConfig, QualityGateResult, ConsensusVote } from './memoryQualityGate';
+
+// Reflexion Injector - Sliding window reflection injection (~100 tokens/retry)
+export { ReflexionInjector, createReflexionInjector } from './reflexionInjector';
+export type { ReflexionInjectorConfig, ReflectionEntry } from './reflexionInjector';
+
+// Reflection Pipeline - Synthesis of episodic memories into long-term insights (~40 tokens/experience)
+export { ReflectionPipeline } from './reflectionPipeline';
+export type { ReflectionPipelineConfig, ReflectionInsight } from './reflectionPipeline';

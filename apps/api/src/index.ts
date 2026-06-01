@@ -1,5 +1,5 @@
 import express from 'express';
-import { WarRoomStore } from './store';
+import { createWarRoomStore } from './store';
 import { ProjectMemoryStore } from './memoryStore';
 import { AgentStateStore } from './agentStateStore';
 import { MemoryIndexManager, DEFAULT_DOMAINS } from './memoryIndexManager';
@@ -41,7 +41,7 @@ const PROJECT_ID = 'project-war-room';
 const app = express();
 
 // ── Shared state ────────────────────────────────────────────────────────────
-const store = new WarRoomStore();
+const store = createWarRoomStore();
 const memoryStore = new ProjectMemoryStore();
 const agentStateStore = new AgentStateStore();
 const memoryIndexManager = new MemoryIndexManager(PROJECT_ID);
@@ -270,7 +270,16 @@ function gracefulShutdown(signal: string) {
     // Flush any pending state
     try {
       episodicMemoryStore['doPersist']?.();
-    } catch { /* best-effort */ }
+    } catch (persistErr) {
+      process.stderr.write(`[shutdown] Failed to persist episodic memory: ${persistErr}\n`);
+    }
+
+    // Close database connections (no-op for JSON store)
+    try {
+      store.close();
+    } catch (closeErr) {
+      process.stderr.write(`[shutdown] Failed to close store: ${closeErr}\n`);
+    }
 
     process.stdout.write('[shutdown] Complete\n');
     process.exit(0);

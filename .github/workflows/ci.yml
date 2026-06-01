@@ -35,6 +35,9 @@ jobs:
       - name: ESLint check (no-console rule)
         run: npx eslint packages/core/src
 
+      - name: Prettier format check
+        run: npx prettier --check "packages/core/src/**/*.ts" "apps/api/src/**/*.ts" "apps/web/src/**/*.{ts,tsx}"
+
       - name: TypeScript check (core)
         run: npx tsc --noEmit -p packages/core/tsconfig.json
 

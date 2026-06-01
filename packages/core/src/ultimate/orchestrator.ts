@@ -573,20 +573,17 @@ if (topologyAction && 'to' in topologyAction) {
         reasoning.push(`Combined ${agentWrittenFiles.length} agent-written files (${totalAgentContent} bytes) instead of synthesis (${finalSynthesis.length} bytes)`);
       }
 
-      // Aggressive fallback: ALWAYS collect ALL available data when output is thin
-      // This ensures we never lose sub-agent work, even when the model produces short summaries
+      // Aggressive fallback: collect ALL available data, but only use if larger
       {
         const allResults: string[] = [];
         const allNodes = flattenTree(taskTree);
         for (const n of allNodes) {
           if (n.status !== 'COMPLETED') continue;
-          // Include full subtask results OR result, preferring the longer one
           const content = n.fullSubtaskResults || n.result;
           if (content && content.length > 10) {
             allResults.push(`### ${n.goal.slice(0, 150)}\n\n${content}`);
           }
         }
-        // Also include artifact content from the artifact system
         for (const artifact of allArtifacts) {
           if (artifact.content && artifact.content.length > 50) {
             allResults.push(`### Artifact: ${artifact.title}\n\n${artifact.content}`);
@@ -594,54 +591,49 @@ if (topologyAction && 'to' in topologyAction) {
         }
         if (allResults.length > 0) {
           const combinedAll = allResults.join('\n\n---\n\n');
-          // Always use the combined version — it preserves all sub-agent work
-          finalOutput = `# Complete Results\n\n${combinedAll}`;
-          reasoning.push(`Combined ${allResults.length} data sources (${finalOutput.length} bytes)`);
+          // Only use combined version if it's larger than current output
+          if (combinedAll.length > finalOutput.length) {
+            finalOutput = `# Complete Results\n\n${combinedAll}`;
+            reasoning.push(`Combined ${allResults.length} data sources (${finalOutput.length} bytes)`);
+          }
         }
       }
 
-      // Deep synthesis: if output is STILL thin, run a dedicated synthesis agent
+      // Output generator: if output is STILL thin, run a dedicated agent that
+      // reads files and produces detailed output (like Claude Code does)
       if (finalOutput.length < 5000) {
         try {
-          const allNodes = flattenTree(taskTree);
-          const subtaskSummary = allNodes
-            .filter(n => n.status === 'COMPLETED')
-            .map(n => `[${n.id}] ${n.goal.slice(0, 150)}: ${(n.fullSubtaskResults || n.result || '').slice(0, 1000)}`)
-            .join('\n\n');
-
-          const deepSynthGoal = [
-            `You are a synthesis agent. Your job is to produce a comprehensive, detailed output based on the original task and sub-agent results.`,
+          const outputGoal = [
+            `You are an expert analyst. Your job is to produce a comprehensive, detailed output.`,
             ``,
-            `ORIGINAL TASK:`,
-            params.goal.slice(0, 2000),
-            ``,
-            `SUB-AGENT RESULTS:`,
-            subtaskSummary.slice(0, 8000),
+            `TASK: ${params.goal}`,
             ``,
             `INSTRUCTIONS:`,
-            `- Produce a detailed, comprehensive output that addresses the original task`,
-            `- Include specific findings, code examples, and actionable recommendations`,
-            `- Structure the output with clear sections and headers`,
-            `- Write at least 2000 words of substantive content`,
-            `- If the task asks to write to a file, produce the content that should go in that file`,
+            `1. Use file_read to read ALL relevant source files mentioned in the task`,
+            `2. Analyze each file in detail — include specific code snippets, line numbers, and examples`,
+            `3. Produce a comprehensive analysis with clear headers and sections`,
+            `4. Include actionable recommendations with code examples`,
+            `5. Write at least 2000 words of substantive content`,
+            `6. If the task asks to write to a file, use file_write to write the complete output`,
+            `7. Do NOT just describe what you will do — actually read the files and produce the analysis`,
           ].join('\n');
 
-          const deepSynthResult = await this.runtime.execute({
-            agentId: `deep-synthesizer-${execId}`,
+          const outputResult = await this.runtime.execute({
+            agentId: `output-generator-${execId}`,
             projectId: params.projectId,
-            goal: deepSynthGoal,
+            goal: outputGoal,
             contextData: params.contextData ?? {},
             availableTools: (params.contextData?.availableTools as string[]) || [],
-            maxSteps: 10,
-            tokenBudget: 50000,
+            maxSteps: 15,
+            tokenBudget: 80000,
           });
 
-          if (deepSynthResult.status === 'success' && deepSynthResult.summary.length > finalOutput.length) {
-            finalOutput = deepSynthResult.summary;
-            reasoning.push(`Deep synthesis: produced ${finalOutput.length} bytes`);
+          if (outputResult.status === 'success' && outputResult.summary.length > finalOutput.length) {
+            finalOutput = outputResult.summary;
+            reasoning.push(`Output generator: produced ${finalOutput.length} bytes`);
           }
         } catch (e) {
-          reasoning.push(`Deep synthesis failed: ${e instanceof Error ? e.message : 'unknown'}`);
+          reasoning.push(`Output generator failed: ${e instanceof Error ? e.message : 'unknown'}`);
         }
       }
     } catch (e) {

@@ -127,6 +127,8 @@ export class AgentRuntime {
   private orchestrator: ToolOrchestrator;
   private planner: ToolPlanner;
   private cycleDetector: CycleDetector;
+  /** Tools promoted to Tier 1 (full schema) in the current turn — for hallucination rejection gate */
+  private promotedTools: Set<string> = new Set();
   private contentScanner: ContentScanner;
   // Concurrency semaphore (GAP-07)
   private runningCount = 0;
@@ -472,6 +474,9 @@ export class AgentRuntime {
 
     // Tier 1: Active tools with full schema
     let toolDefs = twoTier.active;
+    // Track promoted tools for hallucination rejection gate
+    this.promotedTools = new Set(twoTier.active.map(t => t.name));
+    this.promotedTools.add('request_tool'); // always allow request_tool
 
     // Register request_tool for Tier 2 tools (if there are registry tools)
     if (twoTier.registry.length > 0) {
@@ -547,9 +552,14 @@ export class AgentRuntime {
 
     // Context injection with token budget cap to prevent pre-prompt bloat.
     // Cap injected context at 20% of total budget to leave room for actual execution.
+    // Cache-stable context injection: consolidate all dynamic context into a single system message.
+    // Research: Anthropic/OpenAI prompt caching requires stable prefixes for cache hits.
+    // Multiple splice operations create variable-length arrays, reducing cache hit rates.
+    // Solution: build a single context block and insert it once.
     const contextTokenCap = Math.max(2000, Math.floor((ctx.tokenBudget || 200000) * 0.2));
     let injectedContextTokens = 0;
-    const estimateTokens = (text: string) => Math.ceil(text.length / 3.5); // ~3.5 chars/token for mixed content
+    const estimateTokens = (text: string) => Math.ceil(text.length / 3.5);
+    const contextParts: string[] = [];
 
     // Check agent inbox for pending messages before execution
     const inboxMessages = this.agentInbox.pollInbox(ctx.agentId);
@@ -559,13 +569,9 @@ export class AgentRuntime {
       ).join('\n');
       const inboxTokens = estimateTokens(inboxBlock);
       if (injectedContextTokens + inboxTokens < contextTokenCap) {
-        request.messages.splice(request.messages.length - 1, 0, {
-          role: 'system' as const,
-          content: `## Pending Messages\n${inboxBlock}\n\nAddress these messages as part of your execution.`,
-        });
+        contextParts.push(`## Pending Messages\n${inboxBlock}\n\nAddress these messages as part of your execution.`);
         injectedContextTokens += inboxTokens;
       }
-      // Send read receipts
       for (const msg of inboxMessages) {
         this.agentInbox.acknowledge(ctx.agentId, msg.id);
       }
@@ -582,10 +588,7 @@ export class AgentRuntime {
             ).join('\n');
             const memoryTokens = estimateTokens(memoryBlock);
             if (injectedContextTokens + memoryTokens < contextTokenCap) {
-              request.messages.splice(request.messages.length - 1, 0, {
-                role: 'system' as const,
-                content: `## Relevant Past Experiences\n${memoryBlock}\n\nLearn from these past experiences when working on the current task.`,
-              });
+              contextParts.push(`## Relevant Past Experiences\n${memoryBlock}\n\nLearn from these past experiences when working on the current task.`);
               injectedContextTokens += memoryTokens;
             }
           }
@@ -602,14 +605,19 @@ export class AgentRuntime {
       if (skillsBlock) {
         const skillsTokens = estimateTokens(skillsBlock + instructions);
         if (injectedContextTokens + skillsTokens < contextTokenCap) {
-          request.messages.splice(request.messages.length - 1, 0, {
-            role: 'system' as const,
-            content: `${skillsBlock}\n\n${instructions}`,
-          });
+          contextParts.push(`${skillsBlock}\n\n${instructions}`);
           injectedContextTokens += skillsTokens;
         }
       }
     } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Skills injection failed', { error: (e as Error)?.message }); }
+
+    // Single splice for cache stability — all dynamic context in one system message
+    if (contextParts.length > 0) {
+      request.messages.splice(request.messages.length - 1, 0, {
+        role: 'system' as const,
+        content: contextParts.join('\n\n---\n\n'),
+      });
+    }
 
     // 3. Emit started event
     bus.publish('agent.started', ctx.agentId, {
@@ -1146,7 +1154,7 @@ export class AgentRuntime {
           agentId: ctx.agentId,
           missionId: ctx.missionId,
           status: 'success',
-          summary: safeContent.slice(0, 8000),
+          summary: safeContent,
           steps,
           totalTokenUsage: totalTokens,
           totalDurationMs,
@@ -1456,6 +1464,22 @@ export class AgentRuntime {
       };
     }
 
+    // Hallucination rejection gate (arXiv:2604.21816):
+    // If the tool was not promoted to Tier 1 (full schema), the model shouldn't call it directly.
+    // Reject with guidance to use request_tool first. This prevents hallucinated tool calls.
+    if (this.promotedTools.size > 0 && !this.promotedTools.has(toolCall.name)) {
+      const available = Array.from(this.promotedTools).filter(n => n !== 'request_tool').join(', ');
+      const errorMsg = `TOOL_NOT_PROMOTED: "${toolCall.name}" was not in the active tool set for this turn. Use request_tool to load it first, or use one of: ${available}`;
+      getGlobalLogger().debug('AgentRuntime', `Hallucination gate: rejected call to non-promoted tool "${toolCall.name}"`);
+      return {
+        toolCallId: toolCall.id,
+        name: toolCall.name,
+        output: errorMsg,
+        error: errorMsg,
+        durationMs: 0,
+      };
+    }
+
     // Record compensable action for mutation tools before execution
     const isMutation = isMutationTool(toolCall.name);
     const actionId = this.generateActionId();
@@ -1489,6 +1513,31 @@ export class AgentRuntime {
         };
       }
       validatedArgs = validation.repairedArgs ?? repairedArgs;
+    }
+
+    // ExecPolicy gate: evaluate shell/Python commands before execution
+    // Research backing: Codex CLI command safety classification, Claude Code deny-first evaluation
+    if (toolCall.name === 'shell_execute' || toolCall.name === 'python_execute') {
+      const command = String(validatedArgs.command ?? validatedArgs.code ?? '');
+      if (command) {
+        try {
+          const { ExecPolicyEngine } = await import('../sandbox/execPolicy');
+          const policy = new ExecPolicyEngine();
+          const decision = policy.evaluate(command);
+          if (decision.decision === 'forbidden') {
+            const errorMsg = `EXEC_POLICY_FORBIDDEN: Command blocked by security policy. Rule: ${decision.rule?.id ?? 'unknown'}. Justification: ${decision.rule?.justification ?? 'dangerous command'}`;
+            bus.publish('tool.blocked', agentId, { runId, toolName: toolCall.name, reason: 'exec_policy_forbidden', detail: errorMsg });
+            return { toolCallId: toolCall.id, name: toolCall.name, output: errorMsg, error: errorMsg, durationMs: 0 };
+          }
+          if (decision.decision === 'prompt') {
+            // Log the policy decision but allow execution (approval system handles prompting)
+            getGlobalLogger().debug('AgentRuntime', `ExecPolicy: "${command.slice(0, 80)}..." requires approval (rule: ${decision.rule?.id})`);
+          }
+        } catch (e) {
+          // Policy engine load failure — proceed without gating (fail-open for availability)
+          getGlobalLogger().warn('AgentRuntime', 'ExecPolicy load failed, proceeding without gate', { error: (e as Error)?.message });
+        }
+      }
     }
 
     bus.publish('tool.started', agentId, { runId, toolName: toolCall.name, args: toolCall.arguments });

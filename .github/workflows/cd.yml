@@ -6,11 +6,71 @@ on:
     tags: ['v*']
 
 jobs:
+  staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    environment: staging
+    if: |
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+      && secrets.STAGING_HOST != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare Docker Compose files
+        run: |
+          mkdir -p deploy
+          cp docker-compose.yml deploy/
+          cp docker-compose.prod.yml deploy/
+          cp Dockerfile deploy/
+          cp apps/web/nginx.conf deploy/ 2>/dev/null || true
+
+      - name: Deploy to staging via SSH
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_KEY }}
+          source: "deploy/*"
+          target: "/opt/commander-staging"
+          strip_components: 1
+
+      - name: Restart staging services
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_KEY }}
+          script: |
+            cd /opt/commander-staging
+            if [ ! -f .env ]; then
+              cp .env.example .env
+              NEW_KEY=$(openssl rand -hex 32)
+              sed -i "s/COMMANDER_API_KEY=.*/COMMANDER_API_KEY=${NEW_KEY}/" .env
+            fi
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+            sleep 15
+            curl -sf http://localhost:4000/health || { echo "Staging health check FAILED"; exit 1; }
+
+      - name: Smoke tests against staging
+        run: |
+          STAGING_URL="http://${{ secrets.STAGING_HOST }}:4000"
+          echo "Running smoke tests against ${STAGING_URL}..."
+          # Health endpoint returns JSON with status
+          HEALTH=$(curl -sf "${STAGING_URL}/health" | jq -r '.status // empty')
+          [ "$HEALTH" = "ok" ] || { echo "FAIL: health status=${HEALTH}"; exit 1; }
+          # System status endpoint
+          curl -sf "${STAGING_URL}/system/status" | jq -e '.uptime' > /dev/null || { echo "FAIL: /system/status"; exit 1; }
+          # OpenAPI spec is served
+          curl -sf "${STAGING_URL}/api/openapi.json" | jq -e '.openapi' > /dev/null || { echo "FAIL: /api/openapi.json"; exit 1; }
+          echo "All staging smoke tests passed"
+
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
     environment: production
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    needs: [staging]
+    # Run even if staging is skipped (no staging secrets configured)
+    if: always() && (needs.staging.result == 'success' || needs.staging.result == 'skipped')
     steps:
       - uses: actions/checkout@v4
 
@@ -40,8 +100,31 @@ jobs:
           key: ${{ secrets.DEPLOY_KEY }}
           script: |
             cd /opt/commander
-            cp .env.example .env 2>/dev/null || true
+            # Generate .env from example only if it doesn't exist (preserve existing config)
+            if [ ! -f .env ]; then
+              cp .env.example .env
+              # Generate cryptographically secure API key — never use the example default
+              NEW_KEY=$(openssl rand -hex 32)
+              sed -i "s/COMMANDER_API_KEY=.*/COMMANDER_API_KEY=${NEW_KEY}/" .env
+              echo "Generated new API key (first run)"
+            fi
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
             sleep 10
-            curl -sf http://localhost:4000/health || echo "Health check deferred"
+            curl -sf http://localhost:4000/health || { echo "Health check FAILED"; exit 1; }
             docker image prune -f
+
+      - name: Post-deploy smoke tests
+        run: |
+          PROD_URL="http://${{ secrets.DEPLOY_HOST }}:4000"
+          echo "Running post-deploy smoke tests..."
+          # Health endpoint
+          HEALTH=$(curl -sf "${PROD_URL}/health" | jq -r '.status // empty')
+          [ "$HEALTH" = "ok" ] || { echo "FAIL: health status=${HEALTH}"; exit 1; }
+          # System status
+          curl -sf "${PROD_URL}/system/status" | jq -e '.uptime' > /dev/null || { echo "FAIL: /system/status"; exit 1; }
+          # OpenAPI spec
+          curl -sf "${PROD_URL}/api/openapi.json" | jq -e '.openapi' > /dev/null || { echo "FAIL: /api/openapi.json"; exit 1; }
+          # Security headers present
+          HEADERS=$(curl -sI "${PROD_URL}/health")
+          echo "$HEADERS" | grep -qi "x-content-type-options" || echo "WARN: missing X-Content-Type-Options header"
+          echo "All production smoke tests passed"

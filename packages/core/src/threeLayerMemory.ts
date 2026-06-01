@@ -1,12 +1,20 @@
 /**
  * Three-Layer Memory System
  * 基于 ULTIMATE-FRAMEWORK.md 设计
- * 
+ *
  * Core insight: 模拟人类记忆的三个层次
  * - Working Memory: 当前上下文，快速但有限
  * - Episodic Memory: 近期经验，会逐渐遗忘
  * - Long-term Memory: 持久知识，稳定但需要检索
+ *
+ * Enhanced with:
+ * - MemoryQualityGate: Multi-layer quality filtering (Self-RAG, Liang 2023)
+ * - ThompsonMemoryScorer: Usefulness tracking (Schaul et al., 2015)
+ * - Spreading activation: ACT-R style decay (Sumers et al., 2023)
  */
+
+import { MemoryQualityGate, quickQualityCheck } from './memory/memoryQualityGate.js';
+import { ThompsonMemoryScorer } from './memory/thompsonMemoryScorer.js';
 
 function generateUUID(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -115,8 +123,15 @@ export class ThreeLayerMemory {
   private embeddingFn: EmbeddingFunction | null = null;
   private embedStore: InMemoryEmbeddingStore = new InMemoryEmbeddingStore();
 
+  /** Quality gate for memory storage decisions (0 tokens per check) */
+  private qualityGate: MemoryQualityGate;
+  /** Thompson scorer for memory usefulness tracking (0 tokens per check) */
+  private thompsonScorer: ThompsonMemoryScorer;
+
   constructor(config?: Partial<Record<MemoryLayer, LayerConfig>>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.qualityGate = new MemoryQualityGate();
+    this.thompsonScorer = new ThompsonMemoryScorer();
   }
 
   setEmbeddingFunction(fn: EmbeddingFunction): void {
@@ -128,7 +143,10 @@ export class ThreeLayerMemory {
   }
 
   /**
-   * 添加记忆 (with optional embedding)
+   * 添加记忆 (with optional embedding and quality gate)
+   *
+   * Quality gate (0 tokens): rule filter + quality checks
+   * Embedding (0 tokens): fire-and-forget for async
    */
   add(
     content: string,
@@ -138,6 +156,29 @@ export class ThreeLayerMemory {
     tags: string[] = [],
     metadata: Record<string, unknown> = {}
   ): MemoryEntry {
+    // Quality gate: fast path (0 tokens)
+    if (layer !== 'working' && !quickQualityCheck(content, importance)) {
+      getGlobalLogger().debug('ThreeLayerMemory', 'Memory rejected by quality gate', {
+        contentLength: content.length,
+        importance,
+        layer,
+      });
+      // Return a dummy entry but don't store it
+      return {
+        id: 'rejected',
+        layer,
+        content,
+        context,
+        importance,
+        createdAt: new Date().toISOString(),
+        lastAccessedAt: new Date().toISOString(),
+        accessCount: 0,
+        decayScore: 0,
+        tags,
+        metadata: { ...metadata, rejected: true },
+      };
+    }
+
     const entry: MemoryEntry = {
       id: generateUUID(),
       layer,
@@ -331,6 +372,8 @@ export class ThreeLayerMemory {
 
   /**
    * 驱逐过期的记忆
+   *
+   * Uses Thompson scorer for better eviction decisions (0 tokens)
    */
   evictIfNeeded(layer: MemoryLayer): void {
     const config = this.config[layer];
@@ -339,16 +382,31 @@ export class ThreeLayerMemory {
 
     // 超出数量限制
     if (layerMemories.length > config.maxEntries) {
-      // 按分数排序，低分优先驱逐
+      // 按综合分数排序，低分优先驱逐
+      // Combines: importance, access count, decay score, and Thompson usefulness
       layerMemories.sort((a, b) => {
-        const scoreA = a.importance * a.accessCount - a.decayScore * 10;
-        const scoreB = b.importance * b.accessCount - b.decayScore * 10;
+        const thompsonA = this.thompsonScorer.getMeanUsefulness(a.id);
+        const thompsonB = this.thompsonScorer.getMeanUsefulness(b.id);
+
+        const scoreA = (a.importance * 2 + a.accessCount + thompsonA * 3) - a.decayScore * 5;
+        const scoreB = (b.importance * 2 + b.accessCount + thompsonB * 3) - b.decayScore * 5;
         return scoreA - scoreB;
       });
 
       const toRemove = layerMemories.slice(0, layerMemories.length - config.maxEntries);
       for (const entry of toRemove) {
+        this.thompsonScorer.remove(entry.id);
         this.delete(entry.id);
+      }
+    }
+
+    // Also evict Thompson-scorer eviction candidates (0 tokens)
+    const thompsonEvictionCandidates = this.thompsonScorer.getEvictionCandidates();
+    for (const id of thompsonEvictionCandidates) {
+      const entry = this.memories.get(id);
+      if (entry && entry.layer === layer) {
+        this.delete(id);
+        this.thompsonScorer.remove(id);
       }
     }
   }
@@ -478,6 +536,60 @@ export class ThreeLayerMemory {
    */
   getAll(): MemoryEntry[] {
     return Array.from(this.memories.values());
+  }
+
+  /**
+   * Get the Thompson memory scorer
+   *
+   * Use to update usefulness after memory retrieval
+   */
+  getThompsonScorer(): ThompsonMemoryScorer {
+    return this.thompsonScorer;
+  }
+
+  /**
+   * Get the quality gate
+   *
+   * Use for custom quality checks
+   */
+  getQualityGate(): MemoryQualityGate {
+    return this.qualityGate;
+  }
+
+  /**
+   * Update memory usefulness (Thompson scoring)
+   *
+   * Call this after retrieving a memory to track if it was useful.
+   * Token cost: 0 (pure computation)
+   */
+  updateMemoryUsefulness(memoryId: string, wasUseful: boolean): void {
+    this.thompsonScorer.updateUsefulness(memoryId, wasUseful);
+  }
+
+  /**
+   * Get spreading activation score for a memory
+   *
+   * ACT-R style activation: B + exp(-t/S) + log(1 + accessCount)
+   * Token cost: 0 (pure computation)
+   */
+  getActivationScore(entry: MemoryEntry): number {
+    const now = Date.now();
+    const lastAccess = new Date(entry.lastAccessedAt).getTime();
+    const hoursSinceAccess = (now - lastAccess) / 3600000;
+
+    // Base activation from importance
+    const B = Math.log(Math.max(entry.importance, 0.01));
+
+    // Stability increases with access count
+    const stability = entry.accessCount + 1;
+
+    // Exponential decay (ACT-R style)
+    const decay = Math.exp(-hoursSinceAccess / stability);
+
+    // Frequency bonus (logarithmic)
+    const frequencyBonus = Math.log(1 + entry.accessCount);
+
+    return B + decay + frequencyBonus;
   }
 }
 

@@ -339,7 +339,7 @@ export class SubAgentExecutor {
             const output = step.toolResult.output;
             // Only include substantial tool outputs (file reads, etc.)
             if (output.length > 100) {
-              toolOutputs.push(`[${step.toolResult.name}] ${output.slice(0, 5000)}`);
+              toolOutputs.push(`[${step.toolResult.name}] ${output}`);
             }
           }
         }
@@ -356,7 +356,7 @@ export class SubAgentExecutor {
         node.id,
         'RESEARCH_FINDING',
         `Result: ${node.goal.slice(0, 60)}`,
-        execResult.summary.slice(0, 200),
+        execResult.summary.slice(0, 500),
         execResult.summary,
         ['completed', node.role.toLowerCase(), ...(execResult.status === 'success' ? ['success'] : ['partial'])],
       );

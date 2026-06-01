@@ -43,6 +43,7 @@ docker compose logs -f api
 | `CORS_ORIGINS` | No | `localhost:3000,4000,5173` | Comma-separated allowed origins |
 | `API_RATE_LIMIT` | No | `120` | Requests per minute per IP |
 | `COMMANDER_API_KEY` | Yes | - | API authentication key |
+| `WARROOM_STORAGE` | No | `json` | Storage backend: `json` or `sqlite` |
 | `OPENAI_API_KEY` | No | - | OpenAI API key for LLM |
 | `OPENAI_BASE_URL` | No | - | Custom OpenAI-compatible endpoint |
 | `OPENAI_MODEL` | No | - | Default model to use |

@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import type { WarRoomStore } from './store';
+import type { IWarRoomStore } from './store';
 import type { ConfidenceReporter, ConfidenceReport, ConfidenceAlert } from './confidenceReporter';
 import { DEFAULT_THRESHOLDS } from './confidenceReporter';
 
-export function createConfidenceRouter(store: WarRoomStore, confidenceReporter: ConfidenceReporter): Router {
+export function createConfidenceRouter(store: IWarRoomStore, confidenceReporter: ConfidenceReporter): Router {
   const router = Router();
 
   router.get('/projects/:projectId/missions/:missionId/confidence', (req, res) => {

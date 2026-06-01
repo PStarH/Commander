@@ -11,7 +11,7 @@
 <p align="center"><strong>See what your AI is doing. Trust the results. Pay less.</strong></p>
 
 <p align="center">
-  <code>npx tsx cli.ts watch "investigate this bug"</code><br>
+  <code>npx tsx cli.ts run "investigate this bug" --stream</code><br>
   <sub>No install. One command. See multi-agent reasoning stream live to your terminal.</sub>
 </p>
 
@@ -52,13 +52,21 @@ This isn't a mockup — that's a real recording of the live SSE stream from actu
 # 1. Install
 pnpm install
 
-# 2. Set any API key (auto-detects from 21 providers)
+# 2. Set any API key (auto-detects from 22 providers)
 export OPENAI_API_KEY=sk-...
+# Or use mimo: export MIMO_API_KEY=your-key
 
 # 3. Run anything
-npx tsx cli.ts run "analyze this repository"
-npx tsx cli.ts plan "implement authentication"    # See plan before executing
-npx tsx cli.ts watch "debug the failing test"     # Watch live agent reasoning
+npx tsx cli.ts run "analyze this repository"              # Execute
+npx tsx cli.ts run "implement auth" --dry-run             # See plan first
+npx tsx cli.ts run "debug the failing test" --stream      # Watch live
+npx tsx cli.ts run "research state mgmt" --mode=goal      # Multi-round convergence
+
+# 4. Other modes
+npx tsx cli.ts company "build a CLI tool"    # Enterprise: quality gating + memory
+npx tsx cli.ts swarm "audit security"        # Recursive decomposition
+npx tsx cli.ts drive "set up CI/CD"          # Autonomous step-by-step
+npx tsx cli.ts review --commit               # Code review
 ```
 
 ---
@@ -81,11 +89,26 @@ npx tsx cli.ts watch "debug the failing test"     # Watch live agent reasoning
 
 ---
 
-## Gallery: what you can do
+## 5 Modes
+
+Commander has 5 execution modes (consolidated from 11 for simplicity):
+
+| Mode | Command | When to use |
+|------|---------|-------------|
+| **run** | `commander run "task"` | Default. Full pipeline execution. |
+| **run --dry-run** | `commander run "task" --dry-run` | Preview plan without executing. |
+| **run --stream** | `commander run "task" --stream` | Real-time SSE progress streaming. |
+| **run --mode=goal** | `commander run "task" --mode=goal` | Multi-round convergence loop. |
+| **company** | `commander company "task"` | Enterprise: quality gating + memory. |
+| **swarm** | `commander swarm "task"` | Recursive decomposition + parallel. |
+| **drive** | `commander drive "task"` | Autonomous step-by-step execution. |
+| **review** | `commander review --commit` | Code review with AI analysis. |
+
+### Gallery: what you can do
 
 ```bash
 # 👁  Watch agent reasoning in real-time
-commander watch "analyze this repository"
+commander run "analyze this repository" --stream
 
 # 🧠  Multi-agent code review (debate topology)
 commander run "review all PR changes for security issues"
@@ -168,6 +191,28 @@ Commander adds ~50% overhead for deliberation + quality gates. That's ~$0.05 ext
 ```bash
 npx commander benchmark    # A/B test: optimized vs baseline
 ```
+
+---
+
+## Migration from v0.x (11 modes → 5 modes)
+
+Commander consolidated 11 execution modes into 5 for simplicity. Old commands still work but show deprecation warnings.
+
+| Old command | New command | Notes |
+|-------------|-------------|-------|
+| `commander plan "task"` | `commander run "task" --dry-run` | Plan without executing |
+| `commander watch "task"` | `commander run "task" --stream` | Real-time SSE streaming |
+| `commander goal "task"` | `commander run "task" --mode=goal` | Multi-round convergence |
+| `commander workers topic1 topic2` | `commander swarm "task"` | Parallel research |
+| `commander workflow run id` | `commander company "task"` | Enterprise engine |
+| `commander benchmark` | `commander run "task" --benchmark` | A/B testing |
+
+### Why consolidate?
+
+1. **Less cognitive load** — 5 commands instead of 11
+2. **Flags > commands** — `--dry-run`, `--stream`, `--mode=goal` are more composable
+3. **No functionality lost** — every old command maps to a new one
+4. **Backward compatible** — old commands still work with deprecation warnings
 
 ---
 
@@ -303,6 +348,18 @@ pnpm dev
 # → Web GUI: http://localhost:3000
 # → Health check: http://localhost:4000/health
 # → OpenAPI spec: http://localhost:4000/openapi.json
+```
+
+### Storage Options
+
+Commander supports two storage backends for the API server:
+
+```bash
+# JSON file (default) — simple, no dependencies
+# Data stored in apps/api/data/
+
+# SQLite (recommended for production) — WAL mode, indexes, transactions
+WARROOM_STORAGE=sqlite
 ```
 
 ### Step 5: Run tests (for contributors)

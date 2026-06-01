@@ -9,7 +9,7 @@ export default tseslint.config(
     rules: {
       'no-console': ['error', { allow: ['warn', 'error'] }],
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
-      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-require-imports': 'off',
       'prefer-const': 'warn',
     },
@@ -51,5 +51,15 @@ export default tseslint.config(
   {
     files: ['packages/sdk/**/*.ts', 'apps/**/*.ts'],
     rules: { 'no-console': 'off' },
+  },
+  // Legacy files with known `any` usage — TODO: refactor to remove `any`
+  {
+    files: [
+      'packages/core/src/benchmark/benchmarkRunner.ts',
+      'packages/core/src/tools/webSearchTool.ts',
+      'packages/core/src/runtime/distributedTracing.ts',
+      'packages/core/src/ultimate/orchestrator.ts',
+    ],
+    rules: { '@typescript-eslint/no-explicit-any': 'warn' },
   },
 );

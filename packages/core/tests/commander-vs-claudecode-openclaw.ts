@@ -151,7 +151,7 @@ async function runCommander(task: ComparisonTask): Promise<TaskResult> {
 
     const provider = new MiMoProvider({
       apiKey: 'tp-sfcjofksj8sn63244lzc1hxzzb8mz03hty5afetx0aafsetx',
-      baseUrl: 'https://token-plan-sgp.xiaomimimo.com/anthropic',
+      baseUrl: 'https://token-plan-sgp.xiaomimimo.com/v1',
       defaultModel: 'mimo-v2.5-pro',
     });
 

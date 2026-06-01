@@ -238,26 +238,29 @@ export function cmdHelp() {
   console.log(`
   ${$.bold}${$.blue}╭──────────────────────────────────────────────────╮${$.reset}
   ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander${$.reset} — multi-agent orchestration          ${$.bold}${$.blue}│${$.reset}
-  ${$.bold}${$.blue}│${$.reset}  ${$.dim}619+ tests · 20 providers · GAIA 69.7%${$.reset}           ${$.bold}${$.blue}│${$.reset}
+  ${$.bold}${$.blue}│${$.reset}  ${$.dim}5 modes · 22 providers · verified output${$.reset}        ${$.bold}${$.blue}│${$.reset}
   ${$.bold}${$.blue}╰──────────────────────────────────────────────────╯${$.reset}
 
   ${$.bold}QUICK START${$.reset}
-    ${$.gray}$ export OPENAI_API_KEY=sk-...${$.reset}
+    ${$.gray}$ export OPENAI_API_KEY=sk-...${$.reset}       ${$.dim}(or MIMO_API_KEY, ANTHROPIC_API_KEY, etc.)${$.reset}
     ${$.gray}$ commander quickstart${$.reset}               ${$.dim}Interactive setup guide${$.reset}
-    ${$.gray}$ commander "Hello, world!"${$.reset}           ${$.dim}Quick task analysis${$.reset}
+    ${$.gray}$ commander "Hello, world!"${$.reset}           ${$.dim}Quick task execution${$.reset}
 
-  ${$.bold}CORE${$.reset}
-    ${$.cyan}<task>${$.reset}                     Quick task analysis (default)
-    ${$.cyan}run <task>${$.reset}              Full multi-agent execution
-    ${$.cyan}plan <task>${$.reset}             Show deliberation plan
-    ${$.cyan}watch <task>${$.reset}            Real-time execution stream
-    ${$.cyan}company <task>${$.reset}          Company mode (capability matching + quality gating)
+  ${$.bold}5 EXECUTION MODES${$.reset}
+    ${$.cyan}run <task>${$.reset}              Execute with full pipeline
+    ${$.cyan}run <task> --dry-run${$.reset}    Show plan without executing
+    ${$.cyan}run <task> --stream${$.reset}     Real-time SSE progress streaming
+    ${$.cyan}run <task> --mode=goal${$.reset}  Multi-round convergence loop
+    ${$.cyan}company <task>${$.reset}          Enterprise: quality gating + memory
+    ${$.cyan}swarm <task>${$.reset}            Recursive decomposition + parallel
+    ${$.cyan}drive <task>${$.reset}            Autonomous step-by-step execution
+    ${$.cyan}review${$.reset}                  Code review (--commit, --branch)
 
-  ${$.bold}ORCHESTRATION${$.reset}
-    ${$.cyan}goal <task>${$.reset}             Multi-agent goal loop (--mode, --budget, --max-rounds)
-    ${$.cyan}swarm <task>${$.reset}            Recursive swarm: fission + fusion (--max-depth, --max-workers)
-    ${$.cyan}drive <task>${$.reset}            Autonomous drive loop (--iterations, --verbose)
-    ${$.cyan}workers [topics]${$.reset}        Parallel research workers (default: 8 AI topics)
+  ${$.bold}RUN FLAGS${$.reset}
+    ${$.cyan}--provider=<name>${$.reset}       Force provider (mimo, openai, anthropic, etc.)
+    ${$.cyan}--budget=<tokens>${$.reset}       Token budget (default: 100000)
+    ${$.cyan}--mode=<mode>${$.reset}           balanced (default), fast, thorough, goal
+    ${$.cyan}--max-rounds=<n>${$.reset}        Max rounds (goal mode only)
 
   ${$.bold}MANAGEMENT${$.reset}
     ${$.cyan}status${$.reset}                  System status & active provider
@@ -265,17 +268,9 @@ export function cmdHelp() {
     ${$.cyan}doctor${$.reset}                  Run diagnostics
     ${$.cyan}mode [mode]${$.reset}             Show/set approval mode (plan|read-only|suggest|auto-edit|full-auto)
     ${$.cyan}history${$.reset}                 List past sessions (view, delete, prune)
-
-  ${$.bold}WORKFLOWS${$.reset}
-    ${$.cyan}workflow ls${$.reset}             List available & scheduled workflows
-    ${$.cyan}workflow run <id>${$.reset}       Execute a workflow
-    ${$.cyan}workflow schedule <id>${$.reset}  Schedule (--cron="0 6 * * *" --interval=30m)
-    ${$.cyan}workflow daemon${$.reset}         Start scheduler daemon
-
-  ${$.bold}TOOLS${$.reset}
     ${$.cyan}skill${$.reset}                   Manage learnable skills (list, view, create, pin, curate)
-    ${$.cyan}review${$.reset}                  Review code changes (--commit, --branch, --json)
-    ${$.cyan}benchmark${$.reset}               A/B benchmark: optimized vs baseline (--tasks, --repeats)
+
+  ${$.bold}OTHER${$.reset}
     ${$.cyan}completion${$.reset}              Shell autocompletion (bash, zsh, fish)
     ${$.cyan}feedback${$.reset}                Submit feedback (--rating, --bug, --feature)
     ${$.cyan}gui${$.reset}                     Start Agent War Room dashboard
@@ -284,8 +279,8 @@ export function cmdHelp() {
   ${$.bold}OPTIONS${$.reset}
     ${$.cyan}--version${$.reset}               Show version
     ${$.cyan}--help${$.reset}                  Show this help
-    ${$.cyan}--json${$.reset}                  Structured output (review)
 
   ${$.dim}Run ${$.cyan}commander <command> --help${$.reset}${$.dim} for command-specific help.${$.reset}
+  ${$.dim}Deprecated: plan, watch, goal, workers, workflow, benchmark → use run/swarm/company instead.${$.reset}
   `);
 }

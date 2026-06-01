@@ -4,7 +4,7 @@ import type {
   MissionStatus, MissionPriority, MissionRiskLevel, MissionGovernanceMode, ProjectMemoryKind,
 } from '@commander/core';
 import { createSlimSnapshot, getDefaultInvocationProfile, recommendStrategy } from '@commander/core';
-import type { WarRoomStore } from './store';
+import type { IWarRoomStore } from './store';
 import type { ProjectMemoryStore } from './memoryStore';
 import type { AgentStateStore } from './agentStateStore';
 import {
@@ -15,7 +15,7 @@ import {
 import { calculateGovernanceStats, generateGovernanceAlerts, generateWeeklyGovernanceReport } from './governanceObserver';
 
 export function createProjectRouter(
-  store: WarRoomStore,
+  store: IWarRoomStore,
   memoryStore: ProjectMemoryStore,
   agentStateStore: AgentStateStore,
 ): Router {

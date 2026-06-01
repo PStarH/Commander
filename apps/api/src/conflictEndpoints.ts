@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { WarRoomStore } from './store';
+import type { IWarRoomStore } from './store';
 import {
   proactiveConflictCheck,
   reactiveConflictMonitor,
@@ -8,7 +8,7 @@ import {
   ProposedAction,
 } from './conflictDetection';
 
-export function createConflictRouter(store: WarRoomStore): Router {
+export function createConflictRouter(store: IWarRoomStore): Router {
   const router = Router();
 
   router.post('/projects/:projectId/conflict-detection/proactive', (req, res) => {

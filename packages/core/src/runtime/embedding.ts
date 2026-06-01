@@ -152,6 +152,11 @@ export class InMemoryEmbeddingStore implements EmbeddingStore {
     return this.entries.size;
   }
 
+  /** Get all entries (for dedup and quality gate checks) */
+  getAllEntries(): MemoryEntry[] {
+    return Array.from(this.entries.values());
+  }
+
   /** GAP-17: Evict oldest entries when over limit. */
   private evictIfNeeded(): void {
     if (this.entries.size < this.maxEntries) return;
