@@ -1,0 +1,40 @@
+{
+  "total_errors": 753,
+  "error_types": [
+    {
+      "rank": 1,
+      "category": "Directory index forbidden",
+      "count": 224,
+      "example": "[Mon Jun 01 10:15:23.456789 2026] [error] [client 192.168.1.100:54321] Directory index forbidden by rule: /var/www/html/",
+      "explanation": "This error occurs when a client requests a directory listing but the server is configured to deny directory indexing. This is not a security concern but indicates misconfiguration or missing index files."
+    },
+    {
+      "rank": 2,
+      "category": "File does not exist",
+      "count": 189,
+      "example": "[Mon Jun 01 10:15:23.456789 2026] [error] [client 192.168.1.100:54321] File does not exist: /var/www/html/favicon.ico",
+      "explanation": "This error occurs when a client requests a file that doesn't exist on the server. Common for favicon.ico, robots.txt, and other expected files. Not a security concern."
+    },
+    {
+      "rank": 3,
+      "category": "Invalid method",
+      "count": 56,
+      "example": "[Mon Jun 01 10:15:23.456789 2026] [error] [client 192.168.1.100:54321] Invalid method in request: POST /index.html HTTP/1.0",
+      "explanation": "This error occurs when a client sends an HTTP request with an invalid or unsupported method. This could indicate a misconfigured client or a potential attack attempt."
+    },
+    {
+      "rank": 4,
+      "category": "mod_jk initialization failure",
+      "count": 45,
+      "example": "[Mon Jun 01 10:15:23.456789 2026] [error] mod_jk child init env.createBean2() factory error",
+      "explanation": "This error occurs when the mod_jk module fails to initialize properly. This is a server-internal error that indicates a configuration issue with the Tomcat connector."
+    },
+    {
+      "rank": 5,
+      "category": "Internal server error",
+      "count": 39,
+      "example": "[Mon Jun 01 10:15:23.456789 2026] [error] [client 192.168.1.100:54321] env.createBean2() factory error",
+      "explanation": "This error occurs when the server encounters an internal error while processing a request. This is a server-internal error that indicates a configuration or application issue."
+    }
+  ]
+}

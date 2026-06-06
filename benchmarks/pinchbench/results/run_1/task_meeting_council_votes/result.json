@@ -1,0 +1,19 @@
+{
+  "answer": "unknown error",
+  "passed": false,
+  "transcript": [
+    {
+      "type": "message",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "unknown error"
+          }
+        ]
+      }
+    }
+  ],
+  "task_id": "task_meeting_council_votes"
+}

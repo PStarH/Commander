@@ -1,0 +1,68 @@
+============================================================
+              APPLE INC. (AAPL) — STOCK REPORT
+============================================================
+
+Date:           June 3, 2026
+Exchange:       NASDAQ
+Ticker:         AAPL
+
+------------------------------------------------------------
+PRICE SUMMARY
+------------------------------------------------------------
+Current Price:       $312.24
+Previous Close:      $315.20
+Change:              -$2.96 (-0.94%)
+Day's Open:          $314.18
+Day's Range:         $314.00 – $316.94
+52-Week Range:       $195.07 – $316.70
+
+------------------------------------------------------------
+KEY METRICS
+------------------------------------------------------------
+Market Cap:          $4.59 Trillion
+Revenue (TTM):       $451.44 Billion (+12.8% YoY)
+Net Income:          $122.58 Billion (+26.0% YoY)
+EPS (TTM):           $8.25 (+28.9% YoY)
+P/E Ratio:           38.21
+Forward P/E:         34.58
+Shares Outstanding:  14.69 Billion
+Beta:                1.09
+Dividend:            $1.04/share (0.33% yield)
+Ex-Dividend Date:    May 11, 2026
+
+------------------------------------------------------------
+ANALYST CONSENSUS
+------------------------------------------------------------
+Rating:              Buy (48 analysts)
+12-Month Target:     $310.51 (-0.55% downside from current)
+Last Earnings:       April 30, 2026
+
+------------------------------------------------------------
+MARKET SUMMARY
+------------------------------------------------------------
+Apple stock is trading near its all-time high of $316.70,
+down slightly (-0.94%) on the day. The company continues to
+benefit from strong fundamentals: revenue grew 12.8% and net
+income surged 26% year-over-year, driven by robust iPhone
+sales and expanding services revenue. The stock has rallied
+significantly from its 52-week low of $195.07, representing
+a gain of approximately 60% over the past year.
+
+Key near-term catalyst include Apple's WWDC 2026 developer
+conference kicking off June 8, where investors expect major
+AI-related announcements. UBS notes that while AI features
+may initially launch in beta, the long-term product roadmap
+is generating significant investor enthusiasm. The MacBook
+Neo, launched in early 2026, is already proving to be a
+commercial success, expanding Apple's addressable market.
+
+Apple's market capitalization of $4.59 trillion reflects
+its position as one of the most valuable companies in the
+world. The forward P/E of 34.58 suggests analysts expect
+continued earnings growth, supported by the company's
+diversified product ecosystem and growing services segment.
+
+============================================================
+Report generated: June 3, 2026
+Source: stockanalysis.com (real-time market data)
+============================================================

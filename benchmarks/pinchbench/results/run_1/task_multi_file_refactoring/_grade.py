@@ -1,0 +1,109 @@
+
+import json, os, sys
+
+workspace_path = '/Users/sampan/Documents/GitHub/Commander/benchmarks/pinchbench/results/run_1/task_multi_file_refactoring'
+transcript = [{"type":"tool_result","tool":{"name":"unknown"},"result":"📄 _grade.py\n📄 api.py\n📄 orders.py\n📄 reports.py\n📄 result.json\n📄 utils.py"},{"type":"tool_result","tool":{"name":"unknown"},"result":"¶/Users/sampan/Documents/GitHub/Commander/benchmarks/pinchbench/results/run_1/task_multi_file_refactoring/utils.py#943B\n1:\"\"\"Utility functions for order processing.\"\"\"\n2:\n3:EXPORTED_FUNCTIONS = [\"calculate_total_price\", \"apply_discount\", \"format_receipt\"]\n4:\n5:\n6:def calculate_total_price(items: list[dict], tax_rate: float = 0.08) -> float:\n7:    \"\"\"Calculate the total price for a list of items with tax.\n8:\n9:    Each item should have 'price' and 'quantity' keys.\n10:    The tax_rate is applied to the subtotal.\n11:    \"\"\"\n12:    subtotal = sum(item[\"price\"] * item[\"quantity\"] for item in items)\n13:    tax = subtotal * tax_rate\n14:    total = subtotal + tax\n15:    return round(total, 2)\n16:\n17:\n18:def apply_discount(total: float, discount_pct: float) -> float:\n19:    \"\"\"Apply a percentage discount to the total.\"\"\"\n20:    if not 0 <= discount_pct <= 100:\n21:        raise ValueError(\"Discount must be between 0 and 100\")\n22:    return round(total * (1 - discount_pct / 100), 2)\n23:\n24:\n25:de"},{"type":"tool_result","tool":{"name":"unknown"},"result":"¶/Users/sampan/Documents/GitHub/Commander/benchmarks/pinchbench/results/run_1/task_multi_file_refactoring/orders.py#A082\n1:\"\"\"Order management module.\"\"\"\n2:\n3:from utils import calculate_total_price, apply_discount\n4:\n5:\n6:def create_order(customer_id: str, items: list[dict]) -> dict:\n7:    \"\"\"Create a new order for a customer.\"\"\"\n8:    # Calculate the total using the utility function\n9:    total = calculate_total_price(items)\n10:\n11:    return {\n12:        \"customer_id\": customer_id,\n13:        \"items\": items,\n14:        \"total\": total,\n15:        \"status\": \"pending\",\n16:    }\n17:\n18:\n19:def create_discounted_order(\n20:    customer_id: str, items: list[dict], discount_pct: float\n21:) -> dict:\n22:    \"\"\"Create an order with a discount applied.\"\"\"\n23:    # First calculate_total_price, then apply discount\n24:    subtotal = calculate_total_price(items)\n25:    final_total = apply_discount(subtotal, discount_pct)\n26:\n27:    return {\n28:        \"customer_id\": customer_id,\n29:        \"items\":"},{"type":"tool_result","tool":{"name":"unknown"},"result":"¶/Users/sampan/Documents/GitHub/Commander/benchmarks/pinchbench/results/run_1/task_multi_file_refactoring/reports.py#6D34\n1:\"\"\"Reporting module for sales analytics.\"\"\"\n2:\n3:from utils import calculate_total_price\n4:\n5:\n6:def generate_daily_report(orders: list[dict]) -> dict:\n7:    \"\"\"Generate a daily sales report from a list of orders.\n8:\n9:    Uses calculate_total_price to verify order totals.\n10:    \"\"\"\n11:    total_revenue = 0\n12:    for order in orders:\n13:        # Recalculate to verify\n14:        verified_total = calculate_total_price(order[\"items\"])\n15:        total_revenue += verified_total\n16:\n17:    return {\n18:        \"order_count\": len(orders),\n19:        \"total_revenue\": total_revenue,\n20:        \"average_order\": total_revenue / len(orders) if orders else 0,\n21:    }\n22:\n23:\n24:def generate_monthly_summary(daily_reports: list[dict]) -> dict:\n25:    \"\"\"Aggregate daily reports into a monthly summary.\"\"\"\n26:    total_revenue = sum(r[\"total_revenue\"] for r in daily_reports)\n27"},{"type":"tool_result","tool":{"name":"unknown"},"result":"¶/Users/sampan/Documents/GitHub/Commander/benchmarks/pinchbench/results/run_1/task_multi_file_refactoring/api.py#4EE2\n1:\"\"\"REST API endpoints for the order system.\"\"\"\n2:\n3:from utils import calculate_total_price\n4:from orders import create_order, create_discounted_order\n5:\n6:\n7:def handle_create_order(request_data: dict) -> dict:\n8:    \"\"\"API endpoint: create a new order.\"\"\"\n9:    customer_id = request_data[\"customer_id\"]\n10:    items = request_data[\"items\"]\n11:\n12:    # Calculate total for validation\n13:    expected_total = calculate_total_price(items)\n14:\n15:    order = create_order(customer_id, items)\n16:\n17:    # Verify the total matches - uses calculate_total_price\n18:    assert abs(order[\"total\"] - expected_total) < 0.01\n19:\n20:    return {\"status\": \"success\", \"order\": order}\n21:\n22:\n23:def handle_discount_order(request_data: dict) -> dict:\n24:    \"\"\"API endpoint: create a discounted order.\"\"\"\n25:    customer_id = request_data[\"customer_id\"]\n26:    items = request_data[\"items\"]\n2"},{"type":"tool_result","tool":{"name":"unknown"},"result":"[observation masked: file_edit result (266 chars)]"},{"type":"tool_result","tool":{"name":"unknown"},"result":""},{"type":"tool_result","tool":{"name":"unknown"},"result":"[observation masked: file_edit result (267 chars)]"},{"type":"tool_result","tool":{"name":"unknown"},"result":""},{"type":"tool_result","tool":{"name":"unknown"},"result":""},{"type":"tool_result","tool":{"name":"unknown"},"result":""},{"type":"tool_result","tool":{"name":"unknown"},"result":"Edited /Users/sampan/Documents/GitHub/Commander/benchmarks/pinchbench/results/run_1/task_multi_file_refactoring/reports.py: replaced 1 occurrence(s) of \"from utils import calculate_total_price...\" with \"from utils import compute_order_total...\""},{"type":"tool_result","tool":{"name":"unknown"},"result":""},{"type":"tool_result","tool":{"name":"unknown"},"result":""},{"type":"tool_result","tool":{"name":"unknown"},"result":"Edited /Users/sampan/Documents/GitHub/Commander/benchmarks/pinchbench/results/run_1/task_multi_file_refactoring/api.py: replaced 1 occurrence(s) of \"from utils import calculate_total_price...\" with \"from utils import compute_order_total...\""},{"type":"tool_result","tool":{"name":"unknown"},"result":""},{"type":"tool_result","tool":{"name":"unknown"},"result":""},{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"## Data Sources\n\n### Source 1\n\n¶/Users/sampan/Documents/GitHub/Commander/benchmarks/pinchbench/results/run_1/task_multi_file_refactoring/utils.py#943B\n1:\"\"\"Utility functions for order processing.\"\"\"\n2:\n3:EXPORTED_FUNCTIONS = [\"calculate_total_price\", \"apply_discount\", \"format_receipt\"]\n4:\n5:\n6:def calculate_total_price(items: list[dict], tax_rate: float = 0.08) -> float:\n7:    \"\"\"Calculate the total price for a list of items with tax.\n8:\n9:    Each item should have 'price' and 'quantity' keys.\n10:    The tax_rate is applied to the subtotal.\n11:    \"\"\"\n12:    subtotal = sum(item[\"price\"] * item[\"quantity\"] for item in items)\n13:    tax = subtotal * tax_rate\n14:    total = subtotal + tax\n15:    return round(total, 2)\n16:\n17:\n18:def apply_discount(total: float, discount_pct: float) -> float:\n19:    \"\"\"Apply a percentage discount to the total.\"\"\"\n20:    if not 0 <= discount_pct <= 100:\n21:        raise ValueError(\"Discount must be between 0 and 100\")\n22:    return round(total * (1 - discount_pct / 100), 2)\n23:\n24:\n25:def format_receipt(total: float, currency: str = \"USD\") -> str:\n26:    \"\"\"Format the total as a receipt string.\"\"\"\n27:    return f\"Total: {total:.2f} {currency}\"\n28:\n### Source 2\n\n¶/Users/sampan/Documents/GitHub/Commander/benchmarks/pinchbench/results/run_1/task_multi_file_refactoring/orders.py#A082\n1:\"\"\"Order management module.\"\"\"\n2:\n3:from utils import calculate_total_price, apply_discount\n4:\n5:\n6:def create_order(customer_id: str, items: list[dict]) -> dict:\n7:    \"\"\"Create a new order for a customer.\"\"\"\n8:    # Calculate the total using the utility function\n9:    total = calculate_total_price(items)\n10:\n11:    return {\n12:        \"customer_id\": customer_id,\n13:        \"items\": items,\n14:        \"total\": total,\n15:        \"status\": \"pending\",\n16:    }\n17:\n18:\n19:def create_discounted_order(\n20:    customer_id: str, items: list[dict], discount_pct: float\n21:) -> dict:\n22:    \"\"\"Create an order with a discount applied.\"\"\"\n23:    # First calculate_total_price, then apply discount\n24:    subtotal = calculate_total_price(items)\n25:    final_total = apply_discount(subtotal, discount_pct)\n26:\n27:    return {\n28:        \"customer_id\": customer_id,\n29:        \"items\": items,\n30:        \"subtotal\": subtotal,\n31:        \"discount_pct\": discount_pct,\n32:        \"total\": final_total,\n33:        \"status\": \"pending\",\n34:    }\n35:\n36:\n37:def summarize_order(order: dict) -> str:\n38:    \"\"\"Generate a human-readable summary of an order.\"\"\"\n39:    # Docstring reference: uses calculate_total_price internally\n40:    return f\"Order for {order['customer_id']}: {len(order['items'])} items, total ${order['total']:.2f}\"\n41:\n### Source 3\n\n¶/Users/sampan/Documents/GitHub/Commander/benchmarks/pinchbench/results/run_1/task_multi_file_refactoring/reports.py#6D34\n1:\"\"\"Reporting module for sales analytics.\"\"\"\n2:\n3:from utils import calculate_total_price\n4:\n5:\n6:def generate_daily_report(orders: list[dict]) -> dict:\n7:    \"\"\"Generate a daily sales report from a list of orders.\n8:\n9:    Uses calculate_total_price to verify order totals.\n10:    \"\"\"\n11:    total_revenue = 0\n12:    for order in orders:\n13:        # Recalculate to verify\n14:        verified_total = calculate_total_price(order[\"items\"])\n15:        total_revenue += verified_total\n16:\n17:    return {\n18:        \"order_count\": len(orders),\n19:        \"total_revenue\": total_revenue,\n20:        \"average_order\": total_revenue / len(orders) if orders else 0,\n21:    }\n22:\n23:\n24:def generate_monthly_summary(daily_reports: list[dict]) -> dict:\n25:    \"\"\"Aggregate daily reports into a monthly summary.\"\"\"\n26:    total_revenue = sum(r[\"total_revenue\"] for r in daily_reports)\n27:    total_orders = sum(r[\"order_count\"] for r in daily_reports)\n28:\n29:    return {\n30:        \"total_orders\": total_orders,\n31:        \"total_revenue\": total_revenue,\n32:        \"daily_average\": total_revenue / len(daily_reports) if daily_reports else 0,\n33:    }\n34:\n### Source 4\n\n¶/Users/sampan/Documents/GitHub/Commander/benchmarks/pinchbench/results/run_1/task_multi_file_refactoring/api.py#4EE2\n1:\"\"\"REST API endpoints for the order system.\"\"\"\n2:\n3:from utils import calculate_total_price\n4:from orders import create_order, create_discounted_order\n5:\n6:\n7:def handle_create_order(request_data: dict) -> dict:\n8:    \"\"\"API endpoint: create a new order.\"\"\"\n9:    customer_id = request_data[\"customer_id\"]\n10:    items = request_data[\"items\"]\n11:\n12:    # Calculate total for validation\n13:    expected_total = calculate_total_price(items)\n14:\n15:    order = create_order(customer_id, items)\n16:\n17:    # Verify the total matches - uses calculate_total_price\n18:    assert abs(order[\"total\"] - expected_total) < 0.01\n19:\n20:    return {\"status\": \"success\", \"order\": order}\n21:\n22:\n23:def handle_discount_order(request_data: dict) -> dict:\n24:    \"\"\"API endpoint: create a discounted order.\"\"\"\n25:    customer_id = request_data[\"customer_id\"]\n26:    items = request_data[\"items\"]\n27:    discount = request_data.get(\"discount_pct\", 0)\n28:\n29:    order = create_discounted_order(customer_id, items, discount)\n30:\n31:    return {\"status\": \"success\", \"order\": order}\n32:\n### Source 5\n\nEdited /Users/sampan/Documents/GitHub/Commander/benchmarks/pinchbench/results/run_1/task_multi_file_refactoring/reports.py: replaced 1 occurrence(s) of \"from utils import calculate_total_price...\" with \"from utils import compute_order_total...\"\n### Source 6\n\nEdited /Users/sampan/Documents/GitHub/Commander/benchmarks/pinchbench/results/run_1/task_multi_file_refactoring/api.py: replaced 1 occurrence(s) of \"from utils import calculate_total_price...\" with \"from utils import compute_order_total...\""}]}}]
+
+def grade(transcript: list, workspace_path: str) -> dict:
+    """
+    Grade the multi-file refactoring task.
+
+    Checks that calculate_total_price has been renamed to compute_order_total
+    across all four files, with imports, call sites, string literals, comments,
+    and docstrings updated correctly.
+    """
+    from pathlib import Path
+    import ast
+
+    scores = {}
+    workspace = Path(workspace_path)
+
+    old_name = "calculate_total_price"
+    new_name = "compute_order_total"
+
+    # --- utils.py checks ---
+    utils_file = workspace / "utils.py"
+    if utils_file.exists():
+        content = utils_file.read_text()
+
+        # Check function definition renamed
+        try:
+            tree = ast.parse(content)
+            func_names = [
+                node.name
+                for node in ast.walk(tree)
+                if isinstance(node, ast.FunctionDef)
+            ]
+            scores["utils_def_renamed"] = 1.0 if new_name in func_names else 0.0
+            scores["utils_no_old_name"] = 0.0 if old_name in content else 1.0
+            scores["utils_valid_python"] = 1.0
+        except SyntaxError:
+            scores["utils_def_renamed"] = 0.0
+            scores["utils_no_old_name"] = 0.0
+            scores["utils_valid_python"] = 0.0
+    else:
+        scores["utils_def_renamed"] = 0.0
+        scores["utils_no_old_name"] = 0.0
+        scores["utils_valid_python"] = 0.0
+
+    # --- Helper to check consumer files ---
+    def check_consumer(filename):
+        prefix = filename.replace(".py", "")
+        fpath = workspace / filename
+        if not fpath.exists():
+            return {
+                f"{prefix}_import_updated": 0.0,
+                f"{prefix}_calls_updated": 0.0,
+                f"{prefix}_no_old_name": 0.0,
+                f"{prefix}_valid_python": 0.0,
+            }
+
+        content = fpath.read_text()
+        result = {}
+
+        try:
+            tree = ast.parse(content)
+            result[f"{prefix}_valid_python"] = 1.0
+        except SyntaxError:
+            return {
+                f"{prefix}_import_updated": 0.0,
+                f"{prefix}_calls_updated": 0.0,
+                f"{prefix}_no_old_name": 0.0,
+                f"{prefix}_valid_python": 0.0,
+            }
+
+        # Check import statement references new name
+        import_ok = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                imported_names = [alias.name for alias in node.names]
+                if new_name in imported_names:
+                    import_ok = True
+        result[f"{prefix}_import_updated"] = 1.0 if import_ok else 0.0
+
+        # Check call sites use new name
+        calls_ok = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id == new_name:
+                    calls_ok = True
+                elif isinstance(func, ast.Attribute) and func.attr == new_name:
+                    calls_ok = True
+        result[f"{prefix}_calls_updated"] = 1.0 if calls_ok else 0.0
+
+        # Ensure old name is fully gone (covers comments, docstrings, strings)
+        result[f"{prefix}_no_old_name"] = 0.0 if old_name in content else 1.0
+
+        return result
+
+    for fname in ["orders.py", "reports.py", "api.py"]:
+        scores.update(check_consumer(fname))
+
+    return scores
+
+try:
+    result = grade(transcript, workspace_path)
+    print(json.dumps(result))
+except Exception as e:
+    print(json.dumps({"error": str(e), "passed": False}))

@@ -1,0 +1,484 @@
+# Commander General User Scenarios (Non-Coding)
+# Based on user research: what regular people actually use AI agents for
+# These are the TOP 20 most common non-coding tasks
+
+scenarios:
+  # ============================================
+  # Category 1: Research & Analysis (Most Common)
+  # ============================================
+  - id: research-01
+    name: "Research a topic and write a summary"
+    category: research
+    difficulty: simple
+    description: "User wants to understand a complex topic quickly"
+    goal: "Research 'quantum computing applications in 2026' and write a 500-word summary with key points"
+    expected_actions:
+      - web_search
+      - read_articles
+      - synthesize_information
+      - write_summary
+    success_criteria:
+      - Summary is accurate and well-structured
+      - Key points are covered
+      - Sources are cited
+      - No hallucinated facts
+    estimated_tokens: 5000-10000
+    estimated_time: 30-60s
+
+  - id: research-02
+    name: "Compare options and make a recommendation"
+    category: research
+    difficulty: medium
+    description: "User needs to choose between several options"
+    goal: "Compare React, Vue, and Svelte for a new project. Consider performance, learning curve, ecosystem, and job market. Make a recommendation."
+    expected_actions:
+      - web_search
+      - read_comparison_articles
+      - analyze_tradeoffs
+      - write_comparison
+      - make_recommendation
+    success_criteria:
+      - Fair comparison of all options
+      - Clear criteria used
+      - Recommendation is justified
+      - No bias toward one option
+    estimated_tokens: 8000-15000
+    estimated_time: 45-90s
+
+  - id: research-03
+    name: "Deep dive research report"
+    category: research
+    difficulty: hard
+    description: "User needs a comprehensive research report"
+    goal: "Write a comprehensive report on the current state of AI regulation worldwide. Cover US, EU, China, and other major regions. Include key legislation, enforcement actions, and future trends."
+    expected_actions:
+      - web_search_multiple_queries
+      - read_government_documents
+      - read_news_articles
+      - organize_findings
+      - write_report
+      - add_citations
+    success_criteria:
+      - Covers all major regions
+      - Accurate legislation references
+      - Balanced perspective
+      - Proper citations
+      - Well-structured (intro, body, conclusion)
+    estimated_tokens: 20000-40000
+    estimated_time: 120-300s
+
+  # ============================================
+  # Category 2: Writing & Content Creation
+  # ============================================
+  - id: writing-01
+    name: "Write a professional email"
+    category: writing
+    difficulty: simple
+    description: "User needs to write a professional email"
+    goal: "Write a professional email to a client explaining a project delay. Be apologetic but confident, provide a new timeline, and offer a discount."
+    expected_actions:
+      - understand_context
+      - draft_email
+      - review_tone
+    success_criteria:
+      - Professional tone
+      - Clear explanation
+      - Actionable next steps
+      - No grammatical errors
+    estimated_tokens: 2000-4000
+    estimated_time: 10-20s
+
+  - id: writing-02
+    name: "Write a blog post"
+    category: writing
+    difficulty: medium
+    description: "User wants to write a blog post"
+    goal: "Write a 1500-word blog post about 'Why Every Developer Should Learn System Design'. Include examples, personal anecdotes style, and a call to action."
+    expected_actions:
+      - outline_structure
+      - write_introduction
+      - write_body_sections
+      - write_conclusion
+      - add_examples
+      - review_flow
+    success_criteria:
+      - Engaging introduction
+      - Clear structure with headers
+      - Relevant examples
+      - Strong conclusion
+      - SEO-friendly (if applicable)
+    estimated_tokens: 10000-20000
+    estimated_time: 60-120s
+
+  - id: writing-03
+    name: "Rewrite text for different audience"
+    category: writing
+    difficulty: simple
+    description: "User has technical text that needs to be simplified"
+    goal: "Rewrite this technical documentation for a non-technical audience: [paste technical text about Kubernetes]"
+    expected_actions:
+      - read_original
+      - identify_technical_terms
+      - simplify_language
+      - add_analogies
+      - rewrite
+    success_criteria:
+      - Non-technical audience can understand
+      - Key concepts preserved
+      - No jargon
+      - Engaging and clear
+    estimated_tokens: 3000-6000
+    estimated_time: 15-30s
+
+  # ============================================
+  # Category 3: Data Analysis
+  # ============================================
+  - id: data-01
+    name: "Analyze CSV data and create insights"
+    category: data-analysis
+    difficulty: medium
+    description: "User has a CSV file with sales data"
+    goal: "Analyze the sales data in data/sales.csv. Find trends, top products, seasonal patterns, and create a summary report with actionable insights."
+    expected_actions:
+      - read_csv
+      - calculate_statistics
+      - identify_trends
+      - create_visualizations
+      - write_insights
+    success_criteria:
+      - Correct calculations
+      - Meaningful insights
+      - Clear visualizations
+      - Actionable recommendations
+    estimated_tokens: 8000-15000
+    estimated_time: 45-90s
+
+  - id: data-02
+    name: "Clean and transform messy data"
+    category: data-analysis
+    difficulty: medium
+    description: "User has messy data that needs cleaning"
+    goal: "Clean the data in data/raw-customers.csv. Fix formatting issues, remove duplicates, standardize phone numbers and addresses, and output a clean version."
+    expected_actions:
+      - read_data
+      - identify_issues
+      - standardize_formats
+      - remove_duplicates
+      - validate_data
+      - write_clean_file
+    success_criteria:
+      - No duplicates
+      - Consistent formats
+      - Valid data types
+      - Data integrity preserved
+    estimated_tokens: 5000-10000
+    estimated_time: 30-60s
+
+  # ============================================
+  # Category 4: Education & Learning
+  # ============================================
+  - id: education-01
+    name: "Explain a complex concept simply"
+    category: education
+    difficulty: simple
+    description: "User wants to understand a complex concept"
+    goal: "Explain machine learning to a 10-year-old. Use simple analogies and examples they can relate to."
+    expected_actions:
+      - understand_audience
+      - find_analogies
+      - simplify_explanation
+      - add_examples
+    success_criteria:
+      - Age-appropriate language
+      - Relatable analogies
+      - Accurate explanation
+      - Engaging tone
+    estimated_tokens: 2000-4000
+    estimated_time: 10-20s
+
+  - id: education-02
+    name: "Create a study plan"
+    category: education
+    difficulty: medium
+    description: "User wants to learn a new subject"
+    goal: "Create a 3-month study plan for learning data science. Include weekly topics, resources, projects, and milestones."
+    expected_actions:
+      - assess_current_level
+      - identify_topics
+      - organize_sequence
+      - find_resources
+      - create_timeline
+      - add_milestones
+    success_criteria:
+      - Realistic timeline
+      - Progressive difficulty
+      - Practical projects
+      - Measurable milestones
+    estimated_tokens: 5000-10000
+    estimated_time: 30-60s
+
+  - id: education-03
+    name: "Generate practice questions"
+    category: education
+    difficulty: simple
+    description: "User wants practice questions for studying"
+    goal: "Generate 20 practice questions for a Python programming exam. Include multiple choice, true/false, and short answer. Provide answer key."
+    expected_actions:
+      - identify_topics
+      - generate_questions
+      - vary_difficulty
+      - create_answer_key
+    success_criteria:
+      - Questions are clear
+      - Answers are correct
+      - Difficulty varies
+      - Covers key topics
+    estimated_tokens: 5000-8000
+    estimated_time: 20-40s
+
+  # ============================================
+  # Category 5: Business & Professional
+  # ============================================
+  - id: business-01
+    name: "Create a project proposal"
+    category: business
+    difficulty: medium
+    description: "User needs to write a project proposal"
+    goal: "Create a project proposal for a mobile app development project. Include executive summary, scope, timeline, budget, team, and risk assessment."
+    expected_actions:
+      - understand_requirements
+      - create_outline
+      - write_sections
+      - estimate_budget
+      - identify_risks
+    success_criteria:
+      - Professional format
+      - Clear scope
+      - Realistic budget
+      - Risk mitigation plan
+    estimated_tokens: 10000-20000
+    estimated_time: 60-120s
+
+  - id: business-02
+    name: "Analyze competitor landscape"
+    category: business
+    difficulty: medium
+    description: "User wants to understand their competition"
+    goal: "Analyze the competitor landscape for a project management SaaS tool. Identify top 5 competitors, their strengths, weaknesses, pricing, and market positioning."
+    expected_actions:
+      - web_search_competitors
+      - read_websites
+      - compare_features
+      - analyze_pricing
+      - identify_gaps
+    success_criteria:
+      - Accurate competitor info
+      - Fair comparison
+      - Clear positioning
+      - Actionable insights
+    estimated_tokens: 10000-20000
+    estimated_time: 60-120s
+
+  - id: business-03
+    name: "Draft meeting agenda"
+    category: business
+    difficulty: simple
+    description: "User needs a meeting agenda"
+    goal: "Create a meeting agenda for a quarterly review meeting. Include time blocks, topics, presenters, and action items template."
+    expected_actions:
+      - understand_purpose
+      - create_structure
+      - allocate_time
+      - add_templates
+    success_criteria:
+      - Clear structure
+      - Realistic timing
+      - Actionable items
+      - Professional format
+    estimated_tokens: 2000-4000
+    estimated_time: 10-20s
+
+  # ============================================
+  # Category 6: Creative Tasks
+  # ============================================
+  - id: creative-01
+    name: "Generate creative ideas"
+    category: creative
+    difficulty: simple
+    description: "User needs creative ideas"
+    goal: "Generate 10 creative marketing campaign ideas for a new coffee brand targeting Gen Z. Include social media strategies."
+    expected_actions:
+      - understand_brand
+      - research_trends
+      - brainstorm_ideas
+      - develop_concepts
+    success_criteria:
+      - Ideas are creative and unique
+      - Targeted to audience
+      - Feasible to execute
+      - Include social media
+    estimated_tokens: 3000-6000
+    estimated_time: 15-30s
+
+  - id: creative-02
+    name: "Write a story or creative piece"
+    category: creative
+    difficulty: medium
+    description: "User wants creative writing"
+    goal: "Write a short story (1000 words) about a robot that discovers it can dream. Make it thought-provoking and emotional."
+    expected_actions:
+      - develop_concept
+      - create_characters
+      - write_narrative
+      - build_tension
+      - resolve_story
+    success_criteria:
+      - Engaging narrative
+      - Well-developed characters
+      - Emotional impact
+      - Thought-provoking theme
+    estimated_tokens: 8000-15000
+    estimated_time: 45-90s
+
+  # ============================================
+  # Category 7: Personal Tasks
+  # ============================================
+  - id: personal-01
+    name: "Plan a trip itinerary"
+    category: personal
+    difficulty: medium
+    description: "User wants to plan a vacation"
+    goal: "Plan a 7-day trip to Japan for a couple. Budget $3000. Include Tokyo, Kyoto, and Osaka. Mix of culture, food, and nature."
+    expected_actions:
+      - research_destinations
+      - find_flights
+      - find_accommodations
+      - plan_daily_itinerary
+      - estimate_costs
+    success_criteria:
+      - Realistic itinerary
+      - Within budget
+      - Good mix of activities
+      - Practical logistics
+    estimated_tokens: 10000-20000
+    estimated_time: 60-120s
+
+  - id: personal-02
+    name: "Create a meal plan"
+    category: personal
+    difficulty: simple
+    description: "User wants a weekly meal plan"
+    goal: "Create a 7-day meal plan for a vegetarian family of 4. Budget $100/week. Include breakfast, lunch, dinner, and shopping list."
+    expected_actions:
+      - understand_dietary_needs
+      - plan_meals
+      - estimate_costs
+      - create_shopping_list
+    success_criteria:
+      - Nutritious meals
+      - Within budget
+      - Varied meals
+      - Complete shopping list
+    estimated_tokens: 5000-10000
+    estimated_time: 30-60s
+
+  # ============================================
+  # Category 8: Technical (Non-Coding)
+  # ============================================
+  - id: technical-01
+    name: "Explain a technical architecture"
+    category: technical
+    difficulty: medium
+    description: "User needs to understand a system architecture"
+    goal: "Explain how a microservices architecture works. Use a real-world example (e-commerce platform). Include diagrams description."
+    expected_actions:
+      - explain_concepts
+      - use_real_example
+      - describe_components
+      - explain_communication
+    success_criteria:
+      - Clear explanation
+      - Real-world example
+      - Covers key concepts
+      - Accessible to non-experts
+    estimated_tokens: 5000-10000
+    estimated_time: 30-60s
+
+  - id: technical-02
+    name: "Troubleshoot a technical issue"
+    category: technical
+    difficulty: medium
+    description: "User has a technical problem"
+    goal: "My website is loading slowly. Help me diagnose the issue and provide a step-by-step optimization guide."
+    expected_actions:
+      - ask_diagnostic_questions
+      - identify_common_causes
+      - provide_solutions
+      - prioritize_fixes
+    success_criteria:
+      - Systematic diagnosis
+      - Actionable solutions
+      - Prioritized by impact
+      - Clear steps
+    estimated_tokens: 5000-10000
+    estimated_time: 30-60s
+
+  # ============================================
+  # Category 9: Communication
+  # ============================================
+  - id: communication-01
+    name: "Translate text between languages"
+    category: communication
+    difficulty: simple
+    description: "User needs translation"
+    goal: "Translate this business email from English to Japanese. Maintain formal tone and cultural appropriateness."
+    expected_actions:
+      - read_original
+      - translate_text
+      - review_cultural_fit
+      - verify_accuracy
+    success_criteria:
+      - Accurate translation
+      - Cultural appropriateness
+      - Formal tone maintained
+      - No meaning loss
+    estimated_tokens: 3000-6000
+    estimated_time: 15-30s
+
+  - id: communication-02
+    name: "Summarize a long document"
+    category: communication
+    difficulty: simple
+    description: "User has a long document to summarize"
+    goal: "Summarize this 50-page research paper into a 1-page executive summary. Key findings, methodology, and implications."
+    expected_actions:
+      - read_document
+      - identify_key_points
+      - write_summary
+    success_criteria:
+      - Captures main points
+      - Concise
+      - Accurate
+      - Professional format
+    estimated_tokens: 5000-10000
+    estimated_time: 30-60s
+
+# Metadata
+metadata:
+  total_scenarios: 20
+  categories:
+    - research: 3
+    - writing: 3
+    - data-analysis: 2
+    - education: 3
+    - business: 3
+    - creative: 2
+    - personal: 2
+    - technical: 2
+    - communication: 2
+  difficulty_distribution:
+    simple: 9
+    medium: 9
+    hard: 2
+  estimated_total_tokens: 100000-200000
+  estimated_total_time: 600-1500s

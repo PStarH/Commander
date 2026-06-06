@@ -1,0 +1,547 @@
+# Commander Common User Scenarios
+# Based on user research: Reddit, Hacker News, GitHub Issues, Stack Overflow
+# These are the TOP 15 tasks users actually do with AI coding agents
+
+scenarios:
+  # ============================================
+  # Category 1: Bug Fixing (Most Common)
+  # ============================================
+  - id: bug-fix-01
+    name: "Fix a TypeError in Express middleware"
+    category: bug-fixing
+    difficulty: simple
+    description: "User has a TypeError when accessing req.body in Express middleware"
+    goal: "Fix the TypeError in src/middleware/auth.ts - req.body is undefined"
+    files:
+      - src/middleware/auth.ts
+      - src/routes/api.ts
+    expected_actions:
+      - read_file
+      - identify_missing_body_parser
+      - add_middleware
+      - verify_fix
+    success_criteria:
+      - No TypeError when accessing req.body
+      - Middleware order is correct
+      - No security vulnerabilities introduced
+    common_failures:
+      - Adding body parser AFTER the middleware that needs it
+      - Breaking existing middleware chain
+      - Not handling edge cases (empty body, malformed JSON)
+    estimated_tokens: 2000-5000
+    estimated_time: 10-30s
+
+  - id: bug-fix-02
+    name: "Fix async/await race condition"
+    category: bug-fixing
+    difficulty: medium
+    description: "User has a race condition in database operations"
+    goal: "Fix the race condition in src/services/userService.ts - concurrent updates lose data"
+    files:
+      - src/services/userService.ts
+      - src/models/user.ts
+    expected_actions:
+      - read_file
+      - identify_race_condition
+      - add_locking_or_transaction
+      - write_test
+      - verify_fix
+    success_criteria:
+      - No data loss on concurrent updates
+      - Proper error handling
+      - Test passes
+    common_failures:
+      - Using global locks instead of row-level locks
+      - Not handling deadlock scenarios
+      - Breaking existing API contract
+    estimated_tokens: 5000-10000
+    estimated_time: 30-60s
+
+  - id: bug-fix-03
+    name: "Fix memory leak in event listener"
+    category: bug-fixing
+    difficulty: medium
+    description: "User's Node.js app has a memory leak from event listeners"
+    goal: "Find and fix the memory leak in src/services/eventService.ts"
+    files:
+      - src/services/eventService.ts
+    expected_actions:
+      - read_file
+      - identify_missing_cleanup
+      - add_removeListener
+      - verify_fix
+    success_criteria:
+      - Event listeners are properly cleaned up
+      - No memory growth over time
+      - Existing functionality preserved
+    common_failures:
+      - Removing listeners too early
+      - Breaking event handling
+      - Not testing with long-running processes
+    estimated_tokens: 3000-8000
+    estimated_time: 20-45s
+
+  # ============================================
+  # Category 2: Feature Implementation
+  # ============================================
+  - id: feature-01
+    name: "Add user authentication with JWT"
+    category: feature-implementation
+    difficulty: medium
+    description: "User wants to add JWT authentication to their API"
+    goal: "Implement JWT authentication with login, register, and middleware"
+    files:
+      - src/auth/jwt.ts
+      - src/middleware/auth.ts
+      - src/routes/auth.ts
+      - src/models/user.ts
+    expected_actions:
+      - create_files
+      - implement_jwt_logic
+      - add_routes
+      - add_middleware
+      - write_tests
+      - verify_integration
+    success_criteria:
+      - Login returns valid JWT
+      - Protected routes reject invalid tokens
+      - Password is hashed (not plaintext)
+      - No SQL injection in queries
+    common_failures:
+      - Storing passwords in plaintext
+      - Not validating JWT signature
+      - Hardcoding JWT secret
+      - Not handling token expiration
+    estimated_tokens: 8000-15000
+    estimated_time: 60-120s
+
+  - id: feature-02
+    name: "Add pagination to REST API"
+    category: feature-implementation
+    difficulty: simple
+    description: "User wants to add pagination to their list endpoint"
+    goal: "Add pagination with page, limit, and total count to GET /api/users"
+    files:
+      - src/routes/users.ts
+      - src/services/userService.ts
+    expected_actions:
+      - read_file
+      - add_pagination_params
+      - update_query
+      - add_total_count
+      - verify_response
+    success_criteria:
+      - Returns correct page of results
+      - Includes total count in response
+      - Handles invalid page/limit gracefully
+      - No N+1 query issues
+    common_failures:
+      - Not handling page > total pages
+      - Missing total count
+      - Off-by-one errors
+      - Not indexing the query
+    estimated_tokens: 3000-6000
+    estimated_time: 15-30s
+
+  - id: feature-03
+    name: "Add file upload with validation"
+    category: feature-implementation
+    difficulty: medium
+    description: "User wants to add file upload with size and type validation"
+    goal: "Implement file upload endpoint with size limit (10MB) and type validation (images only)"
+    files:
+      - src/routes/upload.ts
+      - src/middleware/upload.ts
+    expected_actions:
+      - create_upload_middleware
+      - add_size_validation
+      - add_type_validation
+      - handle_errors
+      - write_tests
+    success_criteria:
+      - Rejects files > 10MB
+      - Rejects non-image files
+      - Stores files securely
+      - Returns file URL
+    common_failures:
+      - Not validating MIME type (just extension)
+      - Storing files in public directory
+      - Not handling upload errors
+      - Path traversal vulnerability
+    estimated_tokens: 5000-10000
+    estimated_time: 30-60s
+
+  # ============================================
+  # Category 3: Code Refactoring
+  # ============================================
+  - id: refactor-01
+    name: "Extract service from controller"
+    category: refactoring
+    difficulty: medium
+    description: "User has business logic in controller, wants to extract to service"
+    goal: "Refactor src/controllers/userController.ts to use UserService"
+    files:
+      - src/controllers/userController.ts
+      - src/services/userService.ts (new)
+    expected_actions:
+      - read_controller
+      - identify_business_logic
+      - create_service
+      - move_logic
+      - update_controller
+      - verify_tests_pass
+    success_criteria:
+      - Controller only handles HTTP concerns
+      - Service contains business logic
+      - All existing tests pass
+      - No functionality changes
+    common_failures:
+      - Breaking API contract
+      - Not moving all business logic
+      - Creating circular dependencies
+      - Not updating imports
+    estimated_tokens: 5000-12000
+    estimated_time: 30-90s
+
+  - id: refactor-02
+    name: "Convert callbacks to async/await"
+    category: refactoring
+    difficulty: simple
+    description: "User has callback-style code, wants to modernize to async/await"
+    goal: "Convert src/utils/fileUtils.js from callbacks to async/await"
+    files:
+      - src/utils/fileUtils.js
+    expected_actions:
+      - read_file
+      - identify_callbacks
+      - convert_to_async
+      - add_error_handling
+      - verify_tests_pass
+    success_criteria:
+      - All functions use async/await
+      - Proper error handling with try/catch
+      - No callback hell
+      - All tests pass
+    common_failures:
+      - Not handling errors properly
+      - Breaking callback-based callers
+      - Not awaiting promises
+      - Changing function signatures
+    estimated_tokens: 3000-6000
+    estimated_time: 15-30s
+
+  # ============================================
+  # Category 4: Testing
+  # ============================================
+  - id: test-01
+    name: "Write unit tests for existing function"
+    category: testing
+    difficulty: simple
+    description: "User wants unit tests for a utility function"
+    goal: "Write comprehensive tests for src/utils/validateEmail.ts"
+    files:
+      - src/utils/validateEmail.ts
+      - src/utils/__tests__/validateEmail.test.ts (new)
+    expected_actions:
+      - read_function
+      - identify_edge_cases
+      - write_test_cases
+      - run_tests
+    success_criteria:
+      - Tests cover happy path
+      - Tests cover edge cases (empty, null, invalid)
+      - Tests cover boundary conditions
+      - All tests pass
+    common_failures:
+      - Missing edge cases
+      - Not testing error cases
+      - Testing implementation instead of behavior
+      - Brittle tests
+    estimated_tokens: 3000-6000
+    estimated_time: 15-30s
+
+  - id: test-02
+    name: "Write integration tests for API endpoint"
+    category: testing
+    difficulty: medium
+    description: "User wants integration tests for a REST endpoint"
+    goal: "Write integration tests for POST /api/users endpoint"
+    files:
+      - src/routes/users.ts
+      - src/__tests__/users.integration.test.ts (new)
+    expected_actions:
+      - read_endpoint
+      - identify_test_scenarios
+      - setup_test_database
+      - write_tests
+      - run_tests
+    success_criteria:
+      - Tests create user successfully
+      - Tests handle validation errors
+      - Tests handle duplicate email
+      - Tests clean up after themselves
+    common_failures:
+      - Not cleaning up test data
+      - Testing against production database
+      - Not testing error responses
+      - Flaky tests
+    estimated_tokens: 5000-10000
+    estimated_time: 30-60s
+
+  # ============================================
+  # Category 5: Documentation
+  # ============================================
+  - id: docs-01
+    name: "Generate API documentation"
+    category: documentation
+    difficulty: simple
+    description: "User wants to generate API docs from their code"
+    goal: "Generate OpenAPI documentation for all endpoints in src/routes/"
+    files:
+      - src/routes/*.ts
+      - docs/api.yaml (new)
+    expected_actions:
+      - read_all_routes
+      - extract_parameters
+      - generate_openapi_spec
+      - validate_spec
+    success_criteria:
+      - All endpoints documented
+      - Request/response schemas defined
+      - Examples included
+      - Valid OpenAPI spec
+    common_failures:
+      - Missing endpoints
+      - Incorrect schemas
+      - No examples
+      - Invalid spec format
+    estimated_tokens: 5000-10000
+    estimated_time: 30-60s
+
+  - id: docs-02
+    name: "Add JSDoc comments to functions"
+    category: documentation
+    difficulty: simple
+    description: "User wants JSDoc comments for all exported functions"
+    goal: "Add JSDoc comments to all exported functions in src/utils/"
+    files:
+      - src/utils/*.ts
+    expected_actions:
+      - read_files
+      - identify_exported_functions
+      - add_jsdoc_comments
+      - verify_format
+    success_criteria:
+      - All exported functions documented
+      - Parameters documented
+      - Return types documented
+      - Examples included where helpful
+    common_failures:
+      - Missing parameters
+      - Incorrect types
+      - No examples for complex functions
+      - Generic descriptions
+    estimated_tokens: 3000-8000
+    estimated_time: 15-45s
+
+  # ============================================
+  # Category 6: Debugging
+  # ============================================
+  - id: debug-01
+    name: "Debug why tests are failing"
+    category: debugging
+    difficulty: medium
+    description: "User has failing tests after a refactor"
+    goal: "Fix the failing tests in src/__tests__/userService.test.ts"
+    files:
+      - src/__tests__/userService.test.ts
+      - src/services/userService.ts
+    expected_actions:
+      - run_tests
+      - read_error_messages
+      - identify_root_cause
+      - fix_tests_or_code
+      - verify_all_pass
+    success_criteria:
+      - All tests pass
+      - No test code changes (unless tests were wrong)
+      - Fix addresses root cause
+    common_failures:
+      - Changing tests to make them pass (instead of fixing code)
+      - Not understanding the root cause
+      - Breaking other tests while fixing
+    estimated_tokens: 5000-12000
+    estimated_time: 30-90s
+
+  - id: debug-02
+    name: "Debug production error from logs"
+    category: debugging
+    difficulty: hard
+    description: "User has an error in production logs they can't reproduce locally"
+    goal: "Investigate and fix the error from production logs: 'TypeError: Cannot read property id of undefined' in src/services/orderService.ts:45"
+    files:
+      - src/services/orderService.ts
+      - production-logs.txt
+    expected_actions:
+      - read_logs
+      - read_source
+      - identify_null_check_missing
+      - add_null_check
+      - add_error_handling
+      - write_test
+    success_criteria:
+      - Error no longer occurs
+      - Proper error handling for null cases
+      - Test covers the edge case
+    common_failures:
+      - Just adding optional chaining without understanding why
+      - Not handling the root cause
+      - Breaking other code paths
+    estimated_tokens: 8000-15000
+    estimated_time: 60-120s
+
+  # ============================================
+  # Category 7: Performance
+  # ============================================
+  - id: perf-01
+    name: "Optimize slow database query"
+    category: performance
+    difficulty: medium
+    description: "User has a slow API endpoint due to N+1 query"
+    goal: "Optimize the slow GET /api/posts endpoint (currently 2s response time)"
+    files:
+      - src/services/postService.ts
+      - src/models/post.ts
+    expected_actions:
+      - read_code
+      - identify_n_plus_1
+      - add_eager_loading
+      - verify_performance
+    success_criteria:
+      - Response time < 200ms
+      - No N+1 queries
+      - Same data returned
+    common_failures:
+      - Over-fetching data
+      - Breaking existing queries
+      - Not testing with realistic data
+    estimated_tokens: 5000-10000
+    estimated_time: 30-60s
+
+  # ============================================
+  # Category 8: Security
+  # ============================================
+  - id: security-01
+    name: "Fix SQL injection vulnerability"
+    category: security
+    difficulty: medium
+    description: "User has SQL injection in their search endpoint"
+    goal: "Fix SQL injection in GET /api/search?q= endpoint"
+    files:
+      - src/routes/search.ts
+      - src/services/searchService.ts
+    expected_actions:
+      - read_code
+      - identify_injection
+      - add_parameterized_queries
+      - add_input_validation
+      - write_security_test
+    success_criteria:
+      - No SQL injection possible
+      - Input properly sanitized
+      - Existing functionality preserved
+    common_failures:
+      - Just escaping special characters (not enough)
+      - Breaking search functionality
+      - Not testing with malicious input
+    estimated_tokens: 5000-10000
+    estimated_time: 30-60s
+
+  # ============================================
+  # Category 9: DevOps
+  # ============================================
+  - id: devops-01
+    name: "Add Docker support"
+    category: devops
+    difficulty: medium
+    description: "User wants to containerize their Node.js app"
+    goal: "Create Dockerfile and docker-compose.yml for the project"
+    files:
+      - Dockerfile (new)
+      - docker-compose.yml (new)
+      - .dockerignore (new)
+    expected_actions:
+      - read_package_json
+      - create_dockerfile
+      - create_docker_compose
+      - create_dockerignore
+      - test_build
+    success_criteria:
+      - Docker image builds successfully
+      - App runs in container
+      - Hot reload works in development
+      - Production image is optimized
+    common_failures:
+      - Not using multi-stage builds
+      - Including node_modules in image
+      - Not handling environment variables
+      - Running as root
+    estimated_tokens: 5000-10000
+    estimated_time: 30-60s
+
+  # ============================================
+  # Category 10: Multi-file Complex Tasks
+  # ============================================
+  - id: complex-01
+    name: "Add full CRUD with validation and tests"
+    category: multi-file
+    difficulty: hard
+    description: "User wants a complete CRUD feature with validation, error handling, and tests"
+    goal: "Implement full CRUD for Products with Joi validation, error handling, and integration tests"
+    files:
+      - src/routes/products.ts (new)
+      - src/services/productService.ts (new)
+      - src/models/product.ts (new)
+      - src/validations/product.ts (new)
+      - src/__tests__/products.integration.test.ts (new)
+    expected_actions:
+      - create_model
+      - create_service
+      - create_validation
+      - create_routes
+      - create_tests
+      - verify_integration
+    success_criteria:
+      - All CRUD operations work
+      - Validation rejects invalid data
+      - Proper error responses
+      - All tests pass
+      - No security vulnerabilities
+    common_failures:
+      - Missing validation
+      - Inconsistent error responses
+      - Not handling edge cases
+      - Tests don't cover all scenarios
+    estimated_tokens: 15000-25000
+    estimated_time: 120-300s
+
+# Metadata
+metadata:
+  total_scenarios: 15
+  categories:
+    - bug-fixing: 3
+    - feature-implementation: 3
+    - refactoring: 2
+    - testing: 2
+    - documentation: 2
+    - debugging: 2
+    - performance: 1
+    - security: 1
+    - devops: 1
+    - multi-file: 1
+  difficulty_distribution:
+    simple: 5
+    medium: 7
+    hard: 3
+  estimated_total_tokens: 75000-150000
+  estimated_total_time: 600-1500s

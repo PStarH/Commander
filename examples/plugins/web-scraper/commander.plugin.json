@@ -1,0 +1,25 @@
+{
+  "id": "web-scraper",
+  "name": "Web Scraper Plugin",
+  "version": "1.0.0",
+  "description": "Advanced web scraping tools for Commander. Extract structured data from webpages.",
+  "author": "Commander Team",
+  "license": "MIT",
+  "main": "index.js",
+  "keywords": ["web", "scraping", "extraction", "commander-plugin"],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "userAgent": {
+        "type": "string",
+        "description": "Custom User-Agent string",
+        "default": "Commander-Plugin/1.0"
+      },
+      "timeout": {
+        "type": "number",
+        "description": "Request timeout in milliseconds",
+        "default": 30000
+      }
+    }
+  }
+}

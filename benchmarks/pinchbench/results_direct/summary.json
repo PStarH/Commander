@@ -1,0 +1,13 @@
+{
+  "benchmark": "PinchBench",
+  "model": "mimo-v2.5-pro",
+  "runs": 1,
+  "avg_score": 60.86956521739131,
+  "min_score": 60.86956521739131,
+  "max_score": 60.86956521739131,
+  "avg_passed": 14,
+  "avg_total": 23,
+  "all_scores": [
+    60.86956521739131
+  ]
+}
