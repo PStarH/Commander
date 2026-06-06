@@ -71,23 +71,92 @@ function estimateMessagesTokens(
 
 // ============================================================================
 // Cost Calculator
+//
+// Single source of truth for cost calculation. All other modules
+// (cmdCost, CostPredictor, agentRuntime, etc.) must call into here
+// instead of hardcoding rates.
 // ============================================================================
+
+/** Per-provider cache pricing multipliers (applied to costPer1KInput). */
+const CACHE_MULTIPLIERS: Record<string, { read: number; write: number }> = {
+  anthropic: { read: 0.1, write: 1.25 },  // 90% off reads, 1.25x write (5min TTL)
+  openai: { read: 0.5, write: 1.0 },       // 50% off reads, automatic (no explicit write cost)
+  google: { read: 0.1, write: 1.0 },        // Gemini cachedContent ~90% off reads
+  default: { read: 1.0, write: 1.0 },       // No caching benefit assumed
+};
+
+export interface CostBreakdown {
+  inputCostUsd: number;
+  outputCostUsd: number;
+  cacheReadCostUsd: number;
+  cacheWriteCostUsd: number;
+  totalUsd: number;
+  /** Tokens that were served from cache (saved money) */
+  cacheSavingsUsd: number;
+}
+
+export function calculateCostBreakdown(
+  modelId: string,
+  inputTokens: number,
+  outputTokens: number,
+  cacheReadTokens: number = 0,
+  cacheWriteTokens: number = 0,
+): CostBreakdown {
+  const router = getModelRouter();
+  const model = router.getModel(modelId);
+  const provider = model?.provider ?? 'unknown';
+
+  // No model in router → use conservative $2/M fallback (split 80/20 input/output)
+  if (!model) {
+    const fallbackRate = 0.002;
+    const inputRate = fallbackRate * 0.8;
+    const outputRate = fallbackRate * 0.2;
+    const total = ((inputTokens + cacheReadTokens + cacheWriteTokens) / 1000) * inputRate
+      + (outputTokens / 1000) * outputRate;
+    return {
+      inputCostUsd: (inputTokens / 1000) * inputRate,
+      outputCostUsd: (outputTokens / 1000) * outputRate,
+      cacheReadCostUsd: (cacheReadTokens / 1000) * inputRate,
+      cacheWriteCostUsd: (cacheWriteTokens / 1000) * inputRate,
+      totalUsd: total,
+      cacheSavingsUsd: 0,
+    };
+  }
+
+  const multipliers = CACHE_MULTIPLIERS[provider] ?? CACHE_MULTIPLIERS.default;
+  const inputRate = model.costPer1KInput;
+  const outputRate = model.costPer1KOutput;
+
+  const inputCostUsd = (inputTokens / 1000) * inputRate;
+  const outputCostUsd = (outputTokens / 1000) * outputRate;
+  const cacheReadCostUsd = (cacheReadTokens / 1000) * inputRate * multipliers.read;
+  const cacheWriteCostUsd = (cacheWriteTokens / 1000) * inputRate * multipliers.write;
+
+  const totalUsd = inputCostUsd + outputCostUsd + cacheReadCostUsd + cacheWriteCostUsd;
+
+  // What we WOULD have paid for cache reads at full input price
+  const cacheSavingsUsd = (cacheReadTokens / 1000) * inputRate * (1 - multipliers.read);
+
+  return {
+    inputCostUsd,
+    outputCostUsd,
+    cacheReadCostUsd,
+    cacheWriteCostUsd,
+    totalUsd,
+    cacheSavingsUsd,
+  };
+}
 
 function calculateCost(
   modelId: string,
   inputTokens: number,
   outputTokens: number,
+  cacheReadTokens: number = 0,
+  cacheWriteTokens: number = 0,
 ): number {
-  const router = getModelRouter();
-  const model = router.getModel(modelId);
-  if (!model) {
-    // Fallback: default rates
-    return ((inputTokens + outputTokens) / 1000) * 0.002;
-  }
-  return (
-    (inputTokens / 1000) * model.costPer1KInput +
-    (outputTokens / 1000) * model.costPer1KOutput
-  );
+  return calculateCostBreakdown(
+    modelId, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens,
+  ).totalUsd;
 }
 
 // ============================================================================
@@ -243,7 +312,13 @@ export class TokenSentinel {
   ): CostRecord {
     const router = getModelRouter();
     const model = router.getModel(modelId);
-    const costUsd = calculateCost(modelId, usage.promptTokens, usage.completionTokens);
+    const breakdown = calculateCostBreakdown(
+      modelId,
+      usage.promptTokens,
+      usage.completionTokens,
+      usage.cacheReadTokens ?? 0,
+      usage.cacheWriteTokens ?? 0,
+    );
 
     const record: CostRecord = {
       runId,
@@ -253,7 +328,10 @@ export class TokenSentinel {
       inputTokens: usage.promptTokens,
       outputTokens: usage.completionTokens,
       totalTokens: usage.totalTokens,
-      costUsd: Math.round(costUsd * 100000) / 100000,
+      cacheReadTokens: usage.cacheReadTokens ?? 0,
+      cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+      costUsd: Math.round(breakdown.totalUsd * 100000) / 100000,
+      cacheSavingsUsd: Math.round(breakdown.cacheSavingsUsd * 100000) / 100000,
       timestamp: new Date().toISOString(),
       agentId,
     };
@@ -382,4 +460,4 @@ export function resetTokenSentinel(): void {
   sentinelSingleton.reset();
 }
 
-export { estimateTokenCount, estimateMessagesTokens, calculateCost };
+export { estimateTokenCount, estimateMessagesTokens, calculateCost, CACHE_MULTIPLIERS };
