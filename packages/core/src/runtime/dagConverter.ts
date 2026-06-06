@@ -95,7 +95,11 @@ function topologicalSort(dag: WorkflowDAG): WorkflowNode[] {
 
   function visit(nodeId: string, stack: Set<string>) {
     if (visited.has(nodeId)) return;
-    if (stack.has(nodeId)) return; // cycle detected
+    if (stack.has(nodeId)) {
+      const cyclePath = Array.from(stack).concat(nodeId);
+      const named = cyclePath.map(id => nodeMap.get(id)?.id ?? id).join(' → ');
+      throw new Error(`dagConverter.topologicalSort: cyclic DAG detected (${named}). Workflow DAGs must be acyclic.`);
+    }
 
     stack.add(nodeId);
 

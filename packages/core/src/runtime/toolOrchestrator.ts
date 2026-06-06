@@ -15,6 +15,9 @@ import type { ToolCall, ToolResult, Tool } from './types';
 import type { ToolApproval, ApprovalResult } from './toolApproval';
 import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
 import { getApprovalSystem } from '../sandbox/approval';
+import { getIdempotencyStore } from '../atr/idempotencyStore';
+import { generateIdempotencyKey } from '../atr/canonicalJson';
+import { getIntentLog } from './intentLog';
 
 // ============================================================================
 // Configuration
@@ -58,6 +61,7 @@ export interface ToolExecutionContext {
   runId: string;
   agentId: string;
   stepNumber: number;
+  tenantId?: string;
 }
 
 // ============================================================================
@@ -238,7 +242,7 @@ export class ToolOrchestrator {
   private async executeSingleWithRetry(
     toolCall: ToolCall,
     tools: Map<string, Tool>,
-    _context: ToolExecutionContext,
+    context: ToolExecutionContext,
   ): Promise<{ result: ToolResult; retries: number }> {
     const tool = tools.get(toolCall.name);
     if (!tool) {
@@ -254,12 +258,52 @@ export class ToolOrchestrator {
       };
     }
 
+    const store = getIdempotencyStore();
+    const idempotencyKey = this.computeIdempotencyKey(tool, toolCall, context);
+
+    if (store && idempotencyKey) {
+      const cached = store.get(idempotencyKey);
+      if (cached?.state === 'completed') {
+        return {
+          result: {
+            toolCallId: toolCall.id,
+            name: toolCall.name,
+            output: typeof cached.result === 'string' ? cached.result : JSON.stringify(cached.result),
+            durationMs: 0,
+            fromCache: true,
+          },
+          retries: 0,
+        };
+      }
+      if (cached?.state === 'failed') {
+        return {
+          result: {
+            toolCallId: toolCall.id,
+            name: toolCall.name,
+            output: '',
+            error: cached.error ?? 'Prior attempt failed (cached)',
+            durationMs: 0,
+            fromCache: true,
+          },
+          retries: 0,
+        };
+      }
+    }
+
     const timeout = this.config.toolTimeouts[toolCall.name] ?? this.config.defaultToolTimeoutMs;
     let lastError: string | undefined;
     let retries = 0;
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
       const startTime = Date.now();
+
+      if (store && idempotencyKey && attempt === 0) {
+        store.begin(idempotencyKey, {
+          runId: context.runId,
+          toolName: toolCall.name,
+          tenantId: undefined,
+        });
+      }
 
       try {
         const execPromise = tool.execute(toolCall.arguments);
@@ -274,8 +318,13 @@ export class ToolOrchestrator {
         const output = await Promise.race([execPromise, timeoutPromise]);
         const durationMs = Date.now() - startTime;
 
-        // Success — reset circuit breaker
         this.recordSuccess(toolCall.name);
+
+        if (store && idempotencyKey) {
+          store.complete(idempotencyKey, output);
+        }
+
+        try { getIntentLog(context.tenantId).write({ schemaVersion: 1, runId: context.runId ?? 'tool-orchestrator', capturedAt: new Date().toISOString(), stage: 'tool.execute', decision: 'success', reason: `${toolCall.name} completed`, payload: { toolName: toolCall.name, toolCallId: toolCall.id, durationMs, outputLength: typeof output === 'string' ? output.length : JSON.stringify(output).length, attempt: attempt + 1 } }); } catch { /* best-effort */ }
 
         return {
           result: {
@@ -290,14 +339,17 @@ export class ToolOrchestrator {
         const durationMs = Date.now() - startTime;
         lastError = err instanceof Error ? err.message : String(err);
 
-        // Record failure in circuit breaker
         this.recordFailure(toolCall.name);
+
+        try { getIntentLog(context.tenantId).write({ schemaVersion: 1, runId: context.runId ?? 'tool-orchestrator', capturedAt: new Date().toISOString(), stage: 'tool.execute', decision: 'failed', reason: lastError.slice(0, 200), payload: { toolName: toolCall.name, toolCallId: toolCall.id, durationMs, attempt: attempt + 1, willRetry: attempt < this.config.maxRetries } }); } catch { /* best-effort */ }
 
         if (attempt < this.config.maxRetries) {
           retries++;
-          // Brief delay before retry
           await new Promise(r => { const t = setTimeout(r, 500 * (attempt + 1)); t.unref(); });
         } else {
+          if (store && idempotencyKey) {
+            store.fail(idempotencyKey, this.formatError(toolCall, lastError, durationMs, attempt + 1));
+          }
           return {
             result: {
               toolCallId: toolCall.id,
@@ -323,6 +375,31 @@ export class ToolOrchestrator {
       },
       retries,
     };
+  }
+
+  private computeIdempotencyKey(
+    tool: Tool,
+    toolCall: ToolCall,
+    context: ToolExecutionContext,
+  ): string | null {
+    if (tool.idempotencyKey) {
+      if (typeof tool.idempotencyKey === 'function') {
+        return tool.idempotencyKey(toolCall.arguments, {
+          runId: context.runId,
+          stepId: `step-${context.stepNumber}`,
+        });
+      }
+      return tool.idempotencyKey;
+    }
+    if (tool.isIdempotent !== true) return null;
+    return generateIdempotencyKey({
+      externalSystem: tool.externalSystem ?? 'unknown',
+      toolName: toolCall.name,
+      args: toolCall.arguments,
+      intentHash: context.runId,
+      runId: context.runId,
+      stepId: `step-${context.stepNumber}`,
+    });
   }
 
   /**

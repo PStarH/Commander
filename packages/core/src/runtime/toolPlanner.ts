@@ -295,16 +295,14 @@ export class ToolPlanner {
       currentLayer = nextLayer;
     }
 
-    // Handle any remaining nodes (circular dependencies — force into last stage)
     const remaining = toolCalls.filter(tc => !processed.has(tc.id));
     if (remaining.length > 0) {
-      stages.push({
-        index: stages.length,
-        toolCalls: remaining,
-        estimatedDurationMs: Math.max(
-          ...remaining.map(tc => this.estimateDuration(tc, tools)),
-        ),
-      });
+      const named = remaining.map(tc => `${tc.id}(${tc.name})`).join(' → ');
+      throw new Error(
+        `ToolPlanner.buildStages: cyclic tool-call dependency (${named}). ` +
+        `Tool-call graphs must be acyclic — a cycle means the same tool's ` +
+        `output feeds back into its own input. Fix the dependency.`,
+      );
     }
 
     return stages;

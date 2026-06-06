@@ -390,7 +390,7 @@ export function estimateToolTokenCost(tools: ToolDefinition[]): number {
   for (const tool of tools) {
     totalChars += (tool.name?.length ?? 0);
     totalChars += (tool.description?.length ?? 0);
-    totalChars += JSON.stringify(tool.inputSchema).length;
+    totalChars += JSON.stringify(tool.inputSchema ?? {}).length;
     // Examples cost
     if (tool.examples) {
       for (const ex of tool.examples) {
