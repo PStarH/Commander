@@ -1,5 +1,6 @@
 import type { ToolCall, ToolResult, LLMRequest, LLMResponse, AgentExecutionContext, AgentExecutionResult } from './runtime/types';
 import { getGlobalLogger } from './logging';
+import { getMetricsCollector } from './runtime/metricsCollector';
 
 // ============================================================================
 // Hook Types
@@ -471,6 +472,7 @@ export class HookManager {
           if (result !== null) return result;
         } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('beforeToolCall', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeToolCall failed`);
         }
       }
@@ -487,6 +489,7 @@ export class HookManager {
           currentResult = await this.withTimeout(plugin.afterToolCall({ ...ctx, result: currentResult }), plugin.name, 'afterToolCall');
         } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('afterToolCall', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterToolCall failed`);
         }
       }
@@ -503,6 +506,7 @@ export class HookManager {
           currentRequest = await this.withTimeout(plugin.beforeLLMCall({ ...ctx, request: currentRequest }), plugin.name, 'beforeLLMCall');
         } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('beforeLLMCall', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeLLMCall failed`);
         }
       }
@@ -518,6 +522,7 @@ export class HookManager {
           await this.withTimeout(plugin.afterLLMCall(ctx), plugin.name, 'afterLLMCall');
         } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('afterLLMCall', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterLLMCall failed`);
         }
       }
@@ -532,6 +537,7 @@ export class HookManager {
           await this.withTimeout(plugin.onAgentStart(ctx), plugin.name, 'onAgentStart');
         } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('onAgentStart', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onAgentStart failed`);
         }
       }
@@ -546,6 +552,7 @@ export class HookManager {
           await this.withTimeout(plugin.onAgentComplete(ctx), plugin.name, 'onAgentComplete');
         } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('onAgentComplete', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onAgentComplete failed`);
         }
       }
@@ -560,6 +567,7 @@ export class HookManager {
           await this.withTimeout(plugin.onError(ctx), plugin.name, 'onError');
         } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('onError', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onError failed`);
         }
       }
@@ -577,6 +585,7 @@ export class HookManager {
           if (result !== null) return result;
         } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('beforeToolResolve', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeToolResolve failed`);
         }
       }
@@ -590,6 +599,7 @@ export class HookManager {
       if (plugin.afterToolResolve) {
         try { await this.withTimeout(plugin.afterToolResolve(ctx), plugin.name, 'afterToolResolve'); } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('afterToolResolve', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterToolResolve failed`);
         }
       }
@@ -602,6 +612,7 @@ export class HookManager {
       if (plugin.onToolTimeout) {
         try { await this.withTimeout(plugin.onToolTimeout(ctx), plugin.name, 'onToolTimeout'); } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('onToolTimeout', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onToolTimeout failed`);
         }
       }
@@ -614,6 +625,7 @@ export class HookManager {
       if (plugin.onToolRetry) {
         try { await this.withTimeout(plugin.onToolRetry(ctx), plugin.name, 'onToolRetry'); } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('onToolRetry', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onToolRetry failed`);
         }
       }
@@ -626,6 +638,7 @@ export class HookManager {
       if (plugin.beforeContextCompaction) {
         try { await this.withTimeout(plugin.beforeContextCompaction(ctx), plugin.name, 'beforeContextCompaction'); } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('beforeContextCompaction', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeContextCompaction failed`);
         }
       }
@@ -638,6 +651,7 @@ export class HookManager {
       if (plugin.afterContextCompaction) {
         try { await this.withTimeout(plugin.afterContextCompaction(ctx), plugin.name, 'afterContextCompaction'); } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('afterContextCompaction', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterContextCompaction failed`);
         }
       }
@@ -650,6 +664,7 @@ export class HookManager {
       if (plugin.onSessionFork) {
         try { await this.withTimeout(plugin.onSessionFork(ctx), plugin.name, 'onSessionFork'); } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('onSessionFork', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onSessionFork failed`);
         }
       }
@@ -662,6 +677,7 @@ export class HookManager {
       if (plugin.onSessionArchive) {
         try { await this.withTimeout(plugin.onSessionArchive(ctx), plugin.name, 'onSessionArchive'); } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('onSessionArchive', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onSessionArchive failed`);
         }
       }
@@ -674,6 +690,7 @@ export class HookManager {
       if (plugin.onStepStart) {
         try { await this.withTimeout(plugin.onStepStart(ctx), plugin.name, 'onStepStart'); } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('onStepStart', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onStepStart failed`);
         }
       }
@@ -686,6 +703,7 @@ export class HookManager {
       if (plugin.onStepComplete) {
         try { await this.withTimeout(plugin.onStepComplete(ctx), plugin.name, 'onStepComplete'); } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('onStepComplete', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" onStepComplete failed`);
         }
       }
@@ -701,6 +719,7 @@ export class HookManager {
           if (result !== null) return result;
         } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('beforeBackendSelect', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" beforeBackendSelect failed`);
         }
       }
@@ -714,6 +733,7 @@ export class HookManager {
       if (plugin.afterBackendSelect) {
         try { await this.withTimeout(plugin.afterBackendSelect(ctx), plugin.name, 'afterBackendSelect'); } catch (err) {
           if (plugin.required) throw err;
+          getMetricsCollector().recordHookFailure('afterBackendSelect', name);
           getGlobalLogger().warn('PluginManager', `Plugin "${name}" afterBackendSelect failed`);
         }
       }

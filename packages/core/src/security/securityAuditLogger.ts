@@ -91,6 +91,15 @@ export interface SecurityStats {
   topSources: Array<{ source: string; count: number }>;
 }
 
+export interface SecurityEventQuery {
+  type?: string;
+  severity?: SecuritySeverity;
+  tenantId?: string;
+  runId?: string;
+  since?: number;
+  limit?: number;
+}
+
 // ============================================================================
 // SecurityAuditLogger
 // ============================================================================
@@ -117,6 +126,24 @@ export class SecurityAuditLogger {
   }
 
   // ── Core API ──────────────────────────────────────────────────────
+
+  queryEvents(q: SecurityEventQuery = {}): SecurityEvent[] {
+    const limit = Math.max(1, Math.min(q.limit ?? 100, 5000));
+    const since = q.since ?? 0;
+    const out: SecurityEvent[] = [];
+    for (let i = this.events.length - 1; i >= 0; i--) {
+      const e = this.events[i];
+      if (!e) continue;
+      if (Date.parse(e.timestamp) < since) continue;
+      if (q.type && e.type !== q.type) continue;
+      if (q.severity && e.severity !== q.severity) continue;
+      if (q.tenantId && e.context?.tenantId !== q.tenantId) continue;
+      if (q.runId && e.context?.runId !== q.runId) continue;
+      out.push(e);
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
 
   /**
    * Log a security event. This is the primary entry point.
