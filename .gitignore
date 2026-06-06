@@ -45,6 +45,13 @@ temp/
 .commander_state
 .commander_memory
 
+# Commander root-state runtime data (config files inside .commander/ ARE tracked)
+/.commander/*.db
+/.commander/*.db-shm
+/.commander/*.db-wal
+/.commander/scheduler/
+/.commander/webhooks/
+
 # Generated files
 apps/api/data/
 apps/api/dist/
@@ -99,6 +106,38 @@ apps/api/dist/
 /test.js
 /project/
 /weather.py
+
+# Capability / comparison test runner output dirs (root-level)
+.capability-test-output/
+.capability-test-workspace/
+.combined-test-output/
+.openclaw-comparison-output/
+.compare-capability-output/
+.compare-three-output/
+
+# Root-level test artifacts (PB / harness / sandbox runs)
+/analyze.py
+/apple_stock_2014.csv
+/broken.ts
+/calculation.txt
+/email_draft.txt
+/generate_data.py
+/iris_flowers.csv
+/password_gen.py
+/project_sync.ics
+/sim.py
+/simulate.py
+/test.txt
+/test_output.txt
+
+# Local secrets (DO NOT commit)
+/.secrets/
+
+# Personal design notes / review docs (kept local, not for version control)
+/HARNESS.md
+/notes.md
+/quality-commander.md
+/error-handling-comparison.md
 
 # Benchmark runner intermediate files
 benchmarks/*/responses/
