@@ -19,6 +19,33 @@ export {
 } from './subAgentExecutor';
 
 export {
+  WorkCoordinator,
+  getWorkCoordinator,
+  resetWorkCoordinator,
+} from './workCoordinator';
+export type {
+  WorkItem,
+  WorkStatus,
+  WorkEvent,
+  WorkEventHandler,
+  EnqueueInput,
+  ClaimFilter,
+  TeamStatus,
+  WorkCoordinatorConfig,
+} from './workCoordinator';
+
+export type { WorkQueueStore } from './workQueueStore';
+export { InMemoryWorkQueueStore } from './inMemoryWorkQueueStore';
+export { SqliteWorkQueueStore } from './sqliteWorkQueueStore';
+export type { SqliteWorkQueueStoreConfig } from './sqliteWorkQueueStore';
+
+export {
+  TenantWorkCoordinatorRegistry,
+  getTenantWorkCoordinatorRegistry,
+  resetTenantWorkCoordinatorRegistry,
+} from './tenantWorkCoordinatorRegistry';
+
+export {
   MultiAgentSynthesizer,
 } from './synthesizer';
 

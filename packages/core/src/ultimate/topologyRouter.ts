@@ -178,10 +178,18 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
     };
   }
 
+  /**
+   * Build a TaskDAG from nodes and edges, with cycle detection.
+   *
+   * Throws on cyclic task graphs — a task DAG with cycles is a logic bug
+   * that would silently produce incorrect critical-path / parallelism metrics.
+   * Surface it instead of returning garbage.
+   */
   buildDAG(
     nodes: TaskDAGNode[],
     edges: TaskDAGEdge[],
   ): TaskDAG {
+    this.assertAcyclic(nodes, edges);
     const nodeSet = new Set(nodes.map(n => n.id));
 
     // Build adjacency list for topological sort
@@ -298,6 +306,45 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
       maxDepth = Math.max(maxDepth, dfs(node.id));
     }
     return maxDepth;
+  }
+
+  private assertAcyclic(nodes: TaskDAGNode[], edges: TaskDAGEdge[]): void {
+    const WHITE = 0, GRAY = 1, BLACK = 2;
+    const color = new Map<string, number>();
+    for (const n of nodes) color.set(n.id, WHITE);
+    const adjList = new Map<string, string[]>();
+    for (const n of nodes) adjList.set(n.id, []);
+    for (const e of edges) {
+      if (adjList.has(e.from) && adjList.has(e.to)) {
+        adjList.get(e.from)!.push(e.to);
+      }
+    }
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+
+    const path: string[] = [];
+    const visit = (nodeId: string): void => {
+      const c = color.get(nodeId) ?? WHITE;
+      if (c === BLACK) return;
+      if (c === GRAY) {
+        const startIdx = path.indexOf(nodeId);
+        const cycleOnly = path.slice(startIdx);
+        const named = cycleOnly.map(id => nodeMap.get(id)?.label ?? id).join(' → ');
+        throw new Error(
+          `TopologyRouter.buildDAG: cyclic task graph detected (${named}). ` +
+          `Task DAGs must be acyclic — fix the dependency declarations.`,
+        );
+      }
+      color.set(nodeId, GRAY);
+      path.push(nodeId);
+      for (const neighbor of adjList.get(nodeId) ?? []) {
+        visit(neighbor);
+      }
+      path.pop();
+      color.set(nodeId, BLACK);
+    };
+    for (const node of nodes) {
+      if ((color.get(node.id) ?? WHITE) === WHITE) visit(node.id);
+    }
   }
 
   private classifyEffort(estimatedAgentCount: number): EffortLevel {

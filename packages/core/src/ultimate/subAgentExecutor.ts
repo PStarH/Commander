@@ -8,7 +8,13 @@ import { getTeamManager } from './agentTeamManager';
 import { getMessageBus } from '../runtime/messageBus';
 import { agentContext } from '../runtime/agentContext';
 import { getGlobalLogger } from '../logging';
+import { getDeadLetterQueue } from '../runtime/deadLetterQueueSingleton';
+import { getExecutionScheduler } from '../atr/scheduler';
+import type { RunHandle } from '../atr/scheduler';
+import { getWorkCoordinator } from './workCoordinator';
 import { MIN_TOKENS_PER_AGENT, MAX_TOKENS_PER_AGENT, ESTIMATED_DURATION_DEFAULT } from '../config/constants';
+import { getIntentLog } from '../runtime/intentLog';
+import { getMetricsCollector } from '../runtime/metricsCollector';
 
 /** Critical path token budget multiplier (LAMaS: give critical tasks more resources) */
 const CRITICAL_PATH_TOKEN_MULTIPLIER = 1.5;
@@ -30,6 +36,8 @@ export class SubAgentExecutor {
   private artifactSystem: ArtifactSystem;
   private maxParallel: number;
   private currentTeamId: string | null = null;
+  private currentRunId: string | null = null;
+  private currentRunHandle: RunHandle | null = null;
 
   constructor(
     runtime: AgentRuntime,
@@ -43,6 +51,14 @@ export class SubAgentExecutor {
 
   setTeam(teamId: string | null): void {
     this.currentTeamId = teamId;
+  }
+
+  setRunId(runId: string | null): void {
+    this.currentRunId = runId;
+  }
+
+  setRunHandle(handle: RunHandle | null): void {
+    this.currentRunHandle = handle;
   }
 
   async executeNode(
@@ -247,6 +263,32 @@ export class SubAgentExecutor {
     baseContext: Record<string, unknown>,
     errors: ExecutionError[],
   ): Promise<void> {
+    if (this.currentRunId) {
+      const workCoord = getWorkCoordinator();
+      const existing = workCoord
+        .list({ runId: this.currentRunId })
+        .find(i => i.parentNodeId === node.id);
+      if (!existing) {
+        workCoord.enqueue({
+          runId: this.currentRunId,
+          parentNodeId: node.id,
+          goal: node.goal,
+          tools: node.context.availableTools ?? [],
+          tokenBudget: node.context.estimatedTokens ?? MIN_TOKENS_PER_AGENT,
+          maxAttempts: 2,
+        });
+      }
+      const claimed = workCoord.claim(node.id, {
+        runId: this.currentRunId,
+        parentNodeId: node.id,
+      });
+      if (!claimed) {
+        node.status = 'COMPLETED';
+        node.result = '[WorkCoordinator] work already claimed by another instance';
+        return;
+      }
+    }
+
     try {
       await this.artifactSystem.write(
         node.id,
@@ -295,7 +337,12 @@ export class SubAgentExecutor {
         outputDir,
         maxSteps: 10,
         tokenBudget: Math.max(MIN_TOKENS_PER_AGENT, Math.min(MAX_TOKENS_PER_AGENT, node.context.estimatedTokens)),
+        parentRunId: this.currentRunId ?? undefined,
+        subAgentRole: node.role ?? 'sub-agent',
+        subAgentDepth: (baseContext as { __depth?: number }).__depth ?? 1,
       };
+      try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId: this.currentRunId ?? ctx.runId ?? node.id, capturedAt: new Date().toISOString(), stage: 'subAgentExecutor.spawn', decision: 'spawn', reason: 'sub-agent execution started', payload: { agentId: node.id, parentRunId: this.currentRunId, subAgentRole: node.role, depth: (baseContext as { __depth?: number }).__depth ?? 1 } }); } catch { /* best-effort */ }
+      try { getMetricsCollector().recordSubAgentOutcome(node.id, 'success', (baseContext as { __depth?: number }).__depth ?? 1, ctx.tenantId); } catch { /* best-effort */ }
 
       let execResult: AgentExecutionResult;
       try {
@@ -313,6 +360,8 @@ export class SubAgentExecutor {
         });
         node.status = 'FAILED';
         node.durationMs = Date.now() - startTime;
+        try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId: this.currentRunId ?? ctx.runId ?? node.id, capturedAt: new Date().toISOString(), stage: 'subAgentExecutor.complete', decision: 'failed', reason: errorMsg.slice(0, 200), payload: { agentId: node.id, status: 'failed', parentRunId: this.currentRunId } }); } catch { /* best-effort */ }
+        try { getMetricsCollector().recordSubAgentOutcome(node.id, 'failed', (baseContext as { __depth?: number }).__depth ?? 1, ctx.tenantId); } catch { /* best-effort */ }
         return;
       }
 
@@ -331,6 +380,9 @@ export class SubAgentExecutor {
       } else {
         // Prefer actual file content over chat summary
         node.result = execResult.artifactContent || execResult.summary;
+        try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId: this.currentRunId ?? ctx.runId ?? node.id, capturedAt: new Date().toISOString(), stage: 'subAgentExecutor.complete', decision: 'success', reason: 'sub-agent execution succeeded', payload: { agentId: node.id, status: 'success', parentRunId: this.currentRunId, durationMs: node.durationMs, tokenUsage: node.tokenUsage } }); } catch { /* best-effort */ }
+        try { getMetricsCollector().recordSubAgentOutcome(node.id, 'success', (baseContext as { __depth?: number }).__depth ?? 1, ctx.tenantId); } catch { /* best-effort */ }
+
 
         // Collect tool outputs (file_read content, etc.) for richer synthesis
         const toolOutputs: string[] = [];
@@ -390,6 +442,77 @@ export class SubAgentExecutor {
         recovered: false,
       });
       node.status = 'FAILED';
+      try {
+        const compResult = await this.runtime.getCompensationRegistry().compensateAll();
+        for (const compError of compResult.errors) {
+          getDeadLetterQueue().record({
+            id: `compensation-${node.id}-${Date.now()}`,
+            category: 'execution',
+            runId: node.id,
+            agentId: node.id,
+            missionId: projectId,
+            timestamp: new Date().toISOString(),
+            errorClass: 'permanent',
+            errorMessage: compError,
+            retryable: false,
+            attemptNumber: 1,
+            operationName: 'subagent.compensation_exhausted',
+            compensated: true,
+            recovered: false,
+            tags: ['sub_agent', 'compensation_failed', `node:${node.id}`],
+          });
+        }
+      } catch (compErr) {
+        getGlobalLogger().warn('subAgentExecutor', 'compensateAll failed', { nodeId: node.id, error: (compErr as Error)?.message });
+      }
+      // Phase 3: notify the centralized ExecutionScheduler that this sub-agent run failed
+      try {
+        getExecutionScheduler().abortRun({
+          runId: `subagent:${node.id}`,
+          leaseToken: 'n/a',
+          fencingEpoch: 0,
+          reason: errorMsg,
+        });
+      } catch (schedErr) {
+        getGlobalLogger().debug('subAgentExecutor', 'scheduler abortRun no-op for sub-agent', { nodeId: node.id, error: (schedErr as Error).message });
+      }
+    }
+
+    if (this.currentRunId) {
+      const workCoord = getWorkCoordinator();
+      const myItem = workCoord
+        .list({ runId: this.currentRunId })
+        .find(i => i.parentNodeId === node.id);
+      if (myItem) {
+        if (node.status === 'COMPLETED') {
+          workCoord.complete(myItem.id, node.id);
+        } else {
+          const lastError = errors[errors.length - 1]?.message ?? 'sub-agent execution failed';
+          const reassignResult = workCoord.fail(myItem.id, node.id, lastError);
+          if (reassignResult === null && this.currentRunHandle) {
+            try {
+              await getExecutionScheduler().abortRun({
+                runId: this.currentRunHandle.runId,
+                leaseToken: this.currentRunHandle.leaseToken,
+                fencingEpoch: this.currentRunHandle.fencingEpoch,
+                reason: `terminal work failure: ${lastError.slice(0, 200)}`,
+              });
+            } catch (abortErr) {
+              getGlobalLogger().debug('subAgentExecutor', 'ATR abortRun on terminal failure no-op', { nodeId: node.id, error: (abortErr as Error).message });
+            }
+            try {
+              const compResult = await this.runtime.getCompensationRegistry().compensateAll();
+              getGlobalLogger().info('subAgentExecutor', 'compensateAll on terminal failure', {
+                nodeId: node.id,
+                succeeded: compResult.succeeded,
+                failed: compResult.failed,
+              });
+            } catch (compErr) {
+              getGlobalLogger().debug('subAgentExecutor', 'compensateAll failed', { nodeId: node.id, error: (compErr as Error).message });
+            }
+          }
+        }
+      }
     }
   }
 
@@ -436,7 +559,11 @@ export class SubAgentExecutor {
       availableTools: tools,
       maxSteps: 8,
       tokenBudget: Math.max(MIN_TOKENS_PER_AGENT, Math.round(node.context.estimatedTokens * 0.5)),
+      parentRunId: this.currentRunId ?? undefined,
+      subAgentRole: 'synthesizer',
+      subAgentDepth: ((baseContext as { __depth?: number }).__depth ?? 1) + 1,
     };
+    try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId: this.currentRunId ?? ctx.runId ?? node.id, capturedAt: new Date().toISOString(), stage: 'subAgentExecutor.synthesize', decision: 'spawn', reason: 'synthesizer sub-agent spawned', payload: { agentId: ctx.agentId, parentRunId: this.currentRunId, subAgentRole: 'synthesizer' } }); } catch { /* best-effort */ }
 
     try {
       const result = await agentContext.run(

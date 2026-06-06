@@ -19,6 +19,8 @@ import type { AgentRuntime } from '../runtime/agentRuntime';
 import { TELOSOrchestrator } from '../telos/telosOrchestrator';
 import { getMessageBus } from '../runtime/messageBus';
 import { getTraceRecorder } from '../runtime/executionTrace';
+import { getIntentLog } from '../runtime/intentLog';
+import { getMetricsCollector } from '../runtime/metricsCollector';
 import { getModelRouter } from '../runtime/modelRouter';
 import { getMetaLearner, DEFAULT_META_LEARNER_CONFIG } from '../selfEvolution/metaLearner';
 import { TrajectoryAnalyzer } from '../selfEvolution/trajectoryAnalyzer';
@@ -136,6 +138,8 @@ this.topologyRouter = new TopologyRouter();
       params.onProgress?.(phase, detail);
     };
 
+    try { getIntentLog(undefined).write({ schemaVersion: 1, runId: execId, capturedAt: new Date().toISOString(), stage: 'ultimate.execute', decision: 'enter', reason: 'orchestrator.execute() entered', payload: { agentId: params.agentId, goal: params.goal.slice(0, 200), effortLevel: params.effortLevel, requestedTopology: params.topology } }); } catch { /* best-effort */ }
+
     emit('INIT', `Starting execution: ${params.goal.slice(0, 100)}...`);
 
     const ctx = this.buildContext(execId, params);
@@ -184,6 +188,8 @@ this.topologyRouter = new TopologyRouter();
      ctx.taskDAG = taskDAG;
      reasoning.push(...topologyResult.reasoning);
      reasoning.push(`Topology: ${topology}${useLLM && deliberation.recommendedTopology ? ' (from LLM deliberation)' : ` (from router, expected cost: $${topologyResult.expectedCost.toFixed(4)})`}`);
+     try { getIntentLog(undefined).write({ schemaVersion: 1, runId: execId, capturedAt: new Date().toISOString(), stage: 'ultimate.routing', decision: 'topology_selected', reason: 'topology chosen', payload: { topology, taskType: deliberation.taskType, expectedCost: topologyResult.expectedCost, expectedLatency: topologyResult.expectedLatency } }); } catch { /* best-effort */ }
+     try { getMetricsCollector().recordTopoChoice(topology, deliberation.taskType); } catch { /* best-effort */ }
 
      // Phase 4: Recursive Task Decomposition
     emit('DECOMPOSITION', `Decomposing task into subtasks...`);
