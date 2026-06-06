@@ -126,7 +126,11 @@ export function traceLog(
     } : {}),
   };
 
-  logger[level](component, message, enrichedContext);
+  if (level === 'error') {
+    (logger.error as (c: string, m: string, ctx?: Record<string, unknown>) => void)(component, message, enrichedContext);
+  } else {
+    logger[level](component, message, enrichedContext);
+  }
 }
 
 // ============================================================================
@@ -192,8 +196,8 @@ export function injectTraceIntoHeaders(headers: Record<string, string>, context?
  */
 export function enrichWithTrace<T>(event: T): T & { trace?: TraceContext } {
   const trace = getCurrentTraceContext();
-  if (!trace) return event;
-  return { ...event as any, trace };
+  if (!trace) return event as T & { trace?: TraceContext };
+  return { ...event, trace };
 }
 
 /**

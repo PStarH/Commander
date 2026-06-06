@@ -52,6 +52,7 @@ export class ExecutionTraceRecorder {
     agentId: string,
     missionId?: string,
     traceId?: string,
+    context?: { tenantId?: string; parentRunId?: string; subAgentDepth?: number; subAgentRole?: string },
   ): void {
     const tid = traceId ?? generateTraceId();
     this.traces.set(runId, {
@@ -59,6 +60,10 @@ export class ExecutionTraceRecorder {
       traceId: tid,
       agentId,
       missionId,
+      tenantId: context?.tenantId,
+      parentRunId: context?.parentRunId,
+      subAgentDepth: context?.subAgentDepth,
+      subAgentRole: context?.subAgentRole,
       startedAt: new Date().toISOString(),
       events: [],
       summary: {
@@ -204,6 +209,36 @@ export class ExecutionTraceRecorder {
     });
   }
 
+  /**
+   * Record a critical event with fsync durability. Use sparingly: circuit-breaker
+   * transitions, compensation exhaustion, intent-log writes, run manifest commits.
+   * Higher latency than recordEvent() because it fsyncs the file descriptor.
+   */
+  recordCriticalEvent(
+    runId: string,
+    event: Omit<TraceEvent, 'id' | 'spanId' | 'traceId' | 'runId' | 'timestamp' | 'agentId'>,
+  ): TraceEvent | null {
+    const trace = this.traces.get(runId);
+    const fullEvent: TraceEvent = {
+      ...event,
+      id: generateId(),
+      spanId: generateId(),
+      traceId: trace?.traceId ?? generateTraceId(),
+      runId,
+      agentId: trace?.agentId ?? 'unknown',
+      timestamp: new Date().toISOString(),
+    };
+    if (trace) {
+      trace.events.push(fullEvent);
+    }
+    if (this.store && typeof (this.store as { appendCritical?: (e: TraceEvent) => void }).appendCritical === 'function') {
+      (this.store as { appendCritical: (e: TraceEvent) => void }).appendCritical(fullEvent);
+    } else {
+      this.store?.append(fullEvent);
+    }
+    return fullEvent;
+  }
+
   completeRun(runId: string): ExecutionTrace {
     const trace = this.traces.get(runId);
     if (!trace) {
@@ -274,6 +309,9 @@ export class ExecutionTraceRecorder {
       });
       this.traceInsertOrder.push(runId);
     }
+
+    // Re-fetch after potential fallback creation
+    const finalTrace = this.traces.get(runId)!;
 
     return {
       spanId,

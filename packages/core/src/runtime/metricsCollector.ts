@@ -249,6 +249,108 @@ export class MetricsCollector {
     return Array.from(names).sort();
   }
 
+  // ── Observability Gap Methods (P0–P2) ──
+
+  recordCircuitTransition(from: string, to: string, provider: string, tenantId?: string): void {
+    const labels: MetricLabel[] = [
+      { name: 'from', value: from },
+      { name: 'to', value: to },
+      { name: 'provider', value: provider },
+    ];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('circuit_transitions_total', 'Circuit breaker state transitions', 1, labels);
+  }
+
+  recordCompensation(toolName: string, outcome: 'success' | 'failed' | 'exhausted', tenantId?: string): void {
+    const labels: MetricLabel[] = [
+      { name: 'tool', value: toolName },
+      { name: 'outcome', value: outcome },
+    ];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('compensation_total', 'Compensation action outcomes', 1, labels);
+  }
+
+  recordVerificationResult(confidence: number, passed: boolean, signalCount: number, signalSources: string[], tenantId?: string): void {
+    const labels: MetricLabel[] = [
+      { name: 'passed', value: passed ? 'true' : 'false' },
+      { name: 'signal_count', value: signalCount.toString() },
+    ];
+    if (signalSources.length > 0) labels.push({ name: 'sources', value: signalSources.slice(0, 3).join(',') });
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('verification_results_total', 'Verification pipeline outcomes', 1, labels);
+    this.recordHistogram('verification_confidence', 'Verification confidence score', confidence, [0, 0.3, 0.5, 0.7, 0.9, 1.0], labels);
+  }
+
+  recordCascadeEscalation(from: string, to: string, reason: string, tenantId?: string): void {
+    const labels: MetricLabel[] = [
+      { name: 'from', value: from },
+      { name: 'to', value: to },
+      { name: 'reason', value: reason },
+    ];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('cascade_escalations_total', 'Model cascade escalations', 1, labels);
+  }
+
+  recordTopoChoice(topology: string, taskType: string, tenantId?: string): void {
+    const labels: MetricLabel[] = [
+      { name: 'topology', value: topology },
+      { name: 'task_type', value: taskType },
+    ];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('topology_choices_total', 'Orchestration topology selections', 1, labels);
+  }
+
+  recordSubAgentOutcome(agentId: string, status: 'success' | 'failed' | 'partial', depth: number, tenantId?: string): void {
+    const labels: MetricLabel[] = [
+      { name: 'agent', value: agentId },
+      { name: 'status', value: status },
+      { name: 'depth', value: depth.toString() },
+    ];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('sub_agent_outcomes_total', 'Sub-agent execution outcomes', 1, labels);
+  }
+
+  recordHookFailure(hook: string, pluginName: string, tenantId?: string): void {
+    const labels: MetricLabel[] = [
+      { name: 'hook', value: hook },
+      { name: 'plugin', value: pluginName },
+    ];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('hook_failures_total', 'Plugin hook failures', 1, labels);
+  }
+
+  recordDLQEntry(category: string, tenantId?: string): void {
+    const labels: MetricLabel[] = [
+      { name: 'category', value: category },
+    ];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('dlq_entries_total', 'Dead letter queue entries by category', 1, labels);
+  }
+
+  recordIntentEscalation(fromStage: string, toStage: string, reason: string, tenantId?: string): void {
+    const labels: MetricLabel[] = [
+      { name: 'from', value: fromStage },
+      { name: 'to', value: toStage },
+      { name: 'reason', value: reason },
+    ];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('intent_escalations_total', 'Intent stage escalations', 1, labels);
+  }
+
+  recordCheckpointFlush(reason: string, tenantId?: string): void {
+    const labels: MetricLabel[] = [
+      { name: 'reason', value: reason },
+    ];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('checkpoint_flushes_total', 'Checkpoint flushes by reason', 1, labels);
+  }
+
+  recordPartialRun(tenantId?: string): void {
+    const labels: MetricLabel[] = [];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('partial_runs_total', 'Runs that ended without terminal state', 1, labels);
+  }
+
   private key(name: string, labels: MetricLabel[]): string {
     if (labels.length === 0) return name;
     const labelStr = labels.map(l => `${l.name}=${l.value}`).join(',');
