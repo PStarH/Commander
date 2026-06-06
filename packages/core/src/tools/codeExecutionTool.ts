@@ -1,13 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSandboxed } from './sandboxedExec';
 import { getGlobalLogger } from '../logging';
 
 const TEMP_DIR = path.join(process.cwd(), '.commander_exec');
 
-function ensureTempDir() {
-  if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
+async function ensureTempDir(): Promise<void> {
+  await fs.promises.mkdir(TEMP_DIR, { recursive: true });
 }
 
 function formatExecResult(r: { stdout: string; stderr: string; exitCode: number; durationMs: number; killed: boolean }): string {
@@ -54,14 +55,18 @@ export class PythonExecuteTool implements Tool {
 
     if (!code) return 'Error: code is required';
 
-    ensureTempDir();
-    const filePath = path.join(TEMP_DIR, `exec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.py`);
+    await ensureTempDir();
+    const filePath = path.join(TEMP_DIR, `exec_${randomUUID()}.py`);
 
     try {
-      fs.writeFileSync(filePath, code, 'utf-8');
+      await fs.promises.writeFile(filePath, code, 'utf-8');
       return formatExecResult(await execSandboxed(`python3 "${filePath}"`, timeout));
     } finally {
-      try { fs.unlinkSync(filePath); } catch (e) { getGlobalLogger().warn('PythonExecuteTool', 'Temp file cleanup failed', { error: (e as Error)?.message }); }
+      try {
+        await fs.promises.unlink(filePath);
+      } catch (e) {
+        getGlobalLogger().warn('PythonExecuteTool', 'Temp file cleanup failed', { error: (e as Error)?.message });
+      }
     }
   }
 }
@@ -80,10 +85,76 @@ function buildBackendDescriptions(): string {
   return parts.join('; ');
 }
 
+// ============================================================================
+// Bash Interception — Tool Priority Enforcement
+//
+// Inspired by oh-my-pi's approach: specialized tools are ALWAYS better than
+// shell equivalents. When the model tries to use bash for operations that
+// have dedicated tools, we intercept and redirect.
+//
+// This saves tokens (specialized tools produce cleaner output), improves
+// reliability (dedicated tools have better error handling), and enables
+// hashline integration (search results with anchors for direct edit use).
+// ============================================================================
+
+/** Patterns that should be redirected to specialized tools */
+const INTERCEPTED_PATTERNS: Array<{
+  pattern: RegExp;
+  tool: string;
+  reason: string;
+  /** If true, only intercept when the target tool is available */
+  requiresTool?: boolean;
+}> = [
+  // File reads → file_read
+  { pattern: /\b(cat|less|more|head|tail)\s+/, tool: 'file_read', reason: 'Use file_read instead — it returns hashline-anchored output for direct use with file_edit' },
+  { pattern: /\bsed\s+-n\s+/, tool: 'file_read', reason: 'Use file_read with offset/limit instead of sed -n' },
+  // Search → code_search (only when code_search is available)
+  { pattern: /\bgrep\b/, tool: 'code_search', reason: 'Use code_search instead — it returns hashline-anchored results for direct use with file_edit', requiresTool: true },
+  { pattern: /\brg\b/, tool: 'code_search', reason: 'Use code_search instead — it returns hashline-anchored results', requiresTool: true },
+  { pattern: /\bag\b/, tool: 'code_search', reason: 'Use code_search instead', requiresTool: true },
+  // Find → file_search / glob (only when glob is available)
+  { pattern: /\bfind\s+.*-name\b/, tool: 'glob', reason: 'Use glob or file_search instead of find', requiresTool: true },
+  { pattern: /\bfd\b/, tool: 'glob', reason: 'Use glob instead of fd', requiresTool: true },
+  // Edit → file_edit
+  { pattern: /\bsed\s+-i\b/, tool: 'file_edit', reason: 'Use file_edit with hashline format instead of sed -i' },
+  { pattern: /\bawk\s+-i\b/, tool: 'file_edit', reason: 'Use file_edit instead of awk -i' },
+  // Write → file_write
+  { pattern: /\btee\s+/, tool: 'file_write', reason: 'Use file_write instead of tee' },
+];
+
+/**
+ * Check if a shell command should be intercepted.
+ * Returns null if the command is allowed, or an error message with guidance.
+ *
+ * @param command - The shell command to check
+ * @param availableTools - Set of available tool names (if provided, only intercept when target tool is available)
+ */
+function interceptBashCommand(command: string, availableTools?: Set<string>): string | null {
+  // Only intercept the FIRST meaningful command (handle pipes and chains)
+  const firstCmd = command.trim().split(/[;&|]/)[0]?.trim() ?? '';
+
+  for (const { pattern, tool, reason, requiresTool } of INTERCEPTED_PATTERNS) {
+    if (pattern.test(firstCmd)) {
+      // If requiresTool is set, only intercept when the target tool is available
+      if (requiresTool && availableTools && !availableTools.has(tool)) {
+        continue; // Target tool not available, allow the command
+      }
+      return `TOOL_PRIORITY: This command is intercepted. ${reason}\n\nCommand blocked: "${firstCmd.slice(0, 80)}"\nUse the \`${tool}\` tool instead.`;
+    }
+  }
+
+  return null;
+}
+
 export class ShellExecuteTool implements Tool {
   definition: ToolDefinition = {
     name: 'shell_execute',
-    description: 'Execute a shell command in a sandboxed environment. Returns stdout, stderr, and exit code. Use for git operations, npm/pip commands, build scripts, and system tasks. Do NOT use for file reading (use file_read) or web searches (use web_search).',
+    description: `Execute a shell command in a sandboxed environment. Returns stdout, stderr, and exit code.
+
+ALLOWED: git operations, npm/pip commands, build scripts, system tasks, compilation.
+BLOCKED: cat, head, tail, grep, rg, find, fd, sed -i, awk -i, tee — these are intercepted and redirected to specialized tools (file_read, code_search, glob, file_edit, file_write).
+
+Using specialized tools is REQUIRED because they return hashline-anchored output for direct use with file_edit.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -107,6 +178,12 @@ export class ShellExecuteTool implements Tool {
     const workdir = String(args.workdir ?? '.');
 
     if (!command) return 'Error: command is required';
+
+    // ── Bash Interception: redirect to specialized tools ──
+    // Only intercept when the target tool is actually available
+    const availableTools = args._availableTools as Set<string> | undefined;
+    const interceptResult = interceptBashCommand(command, availableTools);
+    if (interceptResult) return interceptResult;
 
     const resolvedWorkdir = path.resolve(process.cwd(), workdir);
     // Pass full args as backendArgs so the router can pick the right backend

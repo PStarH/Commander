@@ -1,7 +1,8 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
+import { isUrlSafe } from './_utils/urlSafety';
+import { safeFetch, SafeFetchError } from './_utils/httpClient';
 
-const SEARCH_TIMEOUT = 15000;
 const CHROME_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
 type SearchResult = { title: string; url: string; snippet: string };
@@ -30,7 +31,6 @@ export class WebSearchTool implements Tool {
     const numResults = Math.min(Number(args.numResults ?? 5), 10);
     if (!query) return 'Error: query is required';
 
-    // Bing is most reliable for scraping; try it first, then others
     let results = await this.tryBing(query, numResults);
     if (!results) results = await this.tryDuckDuckGo(query, numResults);
     if (!results) results = await this.tryGoogle(query, numResults);
@@ -39,7 +39,12 @@ export class WebSearchTool implements Tool {
       return `No results found for "${query}". Try a different query.`;
     }
 
-    return results.map((r, i) =>
+    const filtered = results.filter(r => isUrlSafe(r.url).safe);
+    if (filtered.length === 0) {
+      return `No results found for "${query}" (all URLs blocked by security policy).`;
+    }
+
+    return filtered.map((r, i) =>
       `[${i + 1}] ${r.title}\nURL: ${r.url}\n${r.snippet}\n`
     ).join('\n');
   }
@@ -47,17 +52,10 @@ export class WebSearchTool implements Tool {
   private async tryDuckDuckGo(query: string, maxResults: number): Promise<SearchResult[] | null> {
     try {
       const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT);
-      timeout.unref();
-      const response = await fetch(url, {
+      const { body: html, status } = await safeFetch(url, {
         headers: { 'User-Agent': CHROME_UA, 'Accept': 'text/html', 'Accept-Language': 'en-US,en;q=0.9' },
-        signal: controller.signal,
       });
-      clearTimeout(timeout);
-      if (!response.ok) return null;
-      const html = await response.text();
-      // DuckDuckGo returns CAPTCHA/challenge pages for bots — detect and bail
+      if (status !== 200) return null;
       if (html.includes('anomaly-modal') || html.includes('challenge-form') || html.includes('Unfortunately, bots')) {
         getGlobalLogger().warn('WebSearchTool', 'DuckDuckGo returned CAPTCHA, skipping');
         return null;
@@ -73,21 +71,15 @@ export class WebSearchTool implements Tool {
   private async tryBing(query: string, maxResults: number): Promise<SearchResult[] | null> {
     try {
       const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&cc=us&mkt=en-US&setlang=en`;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT);
-      timeout.unref();
-      const response = await fetch(url, {
+      const { body: html, status } = await safeFetch(url, {
         headers: {
           'User-Agent': CHROME_UA,
           'Accept': 'text/html,application/xhtml+xml',
           'Accept-Language': 'en-US,en;q=0.9',
           'Cookie': 'SRCHD=AF=NOFORM; SRCHHPGUSR=ADLT=MODERATE&NRSLT=10&SRCHLANG=en; _EDGE_S=mkt=en-us',
         },
-        signal: controller.signal,
       });
-      clearTimeout(timeout);
-      if (!response.ok) return null;
-      const html = await response.text();
+      if (status !== 200) return null;
       const results = this.parseBing(html, maxResults);
       return results.length > 0 ? results : null;
     } catch (e) {
@@ -99,17 +91,10 @@ export class WebSearchTool implements Tool {
   private async tryGoogle(query: string, maxResults: number): Promise<SearchResult[] | null> {
     try {
       const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${maxResults}&hl=en`;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT);
-      timeout.unref();
-      const response = await fetch(url, {
+      const { body: html, status } = await safeFetch(url, {
         headers: { 'User-Agent': CHROME_UA, 'Accept': 'text/html', 'Accept-Language': 'en-US,en;q=0.9' },
-        signal: controller.signal,
       });
-      clearTimeout(timeout);
-      if (!response.ok) return null;
-      const html = await response.text();
-      // Google CAPTCHA detection
+      if (status !== 200) return null;
       if (html.includes('captcha') || html.includes('unusual traffic') || html.includes('sorry/index')) {
         getGlobalLogger().warn('WebSearchTool', 'Google returned CAPTCHA, skipping');
         return null;
@@ -124,7 +109,6 @@ export class WebSearchTool implements Tool {
 
   private parseGoogle(html: string, maxResults: number): Array<{ title: string; url: string; snippet: string }> {
     const results: Array<{ title: string; url: string; snippet: string }> = [];
-    // Google result links are in <a> tags with href containing /url?q=
     const linkRegex = /<a[^>]*href="\/url\?q=([^&"]+)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
     const snippetRegex = /<span[^>]*class="[^"]*"[^>]*>([\s\S]*?)<\/span>/gi;
     let match;
@@ -133,14 +117,11 @@ export class WebSearchTool implements Tool {
 
     while ((match = linkRegex.exec(html)) !== null && urls.length < maxResults) {
       const rawUrl = decodeURIComponent(match[1]);
-      // Skip Google's own pages
       if (rawUrl.includes('google.com') || rawUrl.includes('youtube.com/results')) continue;
       urls.push(rawUrl);
-      // Strip HTML tags from title
       titles.push(match[2].replace(/<[^>]+>/g, '').trim());
     }
 
-    // Try to extract snippets (best-effort)
     const snippets: string[] = [];
     while ((match = snippetRegex.exec(html)) !== null && snippets.length < urls.length) {
       const text = match[1].replace(/<[^>]+>/g, '').trim();
@@ -185,21 +166,18 @@ export class WebSearchTool implements Tool {
       results.push({ title: titles[i], url: urls[i], snippet: snippets[i] });
     }
 
-    // Fallback 1: generic result links with URL
     if (results.length === 0) {
       const fallbackRegex = /<a[^>]*class="[^"]*result[^"]*"[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
       while ((m = fallbackRegex.exec(html)) !== null && results.length < maxResults) {
         results.push({ title: m[2].replace(/<[^>]*>/g, '').trim(), url: m[1], snippet: '' });
       }
     }
-    // Fallback 2: any link with a heading parent
     if (results.length === 0) {
       const headingLinkRegex = /<h[1-4][^>]*>.*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>.*?<\/h[1-4]>/gi;
       while ((m = headingLinkRegex.exec(html)) !== null && results.length < maxResults) {
         results.push({ title: m[2].replace(/<[^>]*>/g, '').trim(), url: m[1], snippet: '' });
       }
     }
-    // Fallback 3: any absolute link with visible text
     if (results.length === 0) {
       const anyLinkRegex = /<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
       while ((m = anyLinkRegex.exec(html)) !== null && results.length < maxResults) {
@@ -224,21 +202,17 @@ export class WebSearchTool implements Tool {
     }
     for (const block of blocks) {
       if (results.length >= maxResults) break;
-      // Match both direct URLs and Bing redirect URLs (/ck/a?...&u=...)
       const urlMatch = block.match(/<h2[^>]*><a[^>]*href="([^"]+)"[^>]*>(.*?)<\/a><\/h2>/);
       if (!urlMatch) continue;
       let url = urlMatch[1].replace(/&amp;/g, '&');
-      // Decode Bing redirect URLs: extract actual URL from u= parameter
       const redirectMatch = url.match(/[?&]u=([^&]+)/);
       if (redirectMatch) {
         try {
-          // u= param is base64 with optional 'a1' prefix
           const encoded = redirectMatch[1].replace(/^a1/, '');
           url = Buffer.from(encoded, 'base64').toString('utf-8');
-        } catch { /* keep original URL on decode failure */ }
+        } catch {}
       }
       const title = urlMatch[2].replace(/<[^>]*>/g, '').trim();
-      // Try multiple snippet patterns
       const snipMatch = block.match(/<p[^>]*class="b_lineclamp[^"]*"[^>]*>([\s\S]*?)<\/p>/)
         ?? block.match(/<p[^>]*>([\s\S]*?)<\/p>/);
       const snippet = snipMatch ? snipMatch[1].replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&#\d+;/g, '').trim() : '';
@@ -273,18 +247,14 @@ export class WebFetchTool implements Tool {
 
     if (!url) return 'Error: url is required';
 
+    const safety = isUrlSafe(url);
+    if (!safety.safe) return `Blocked: ${url} (${safety.reason})`;
+
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
-      timeout.unref();
-
-      const response = await fetch(url, {
+      const { body: html, truncated } = await safeFetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CommanderBot; +https://github.com/sampan/commander)' },
-        signal: controller.signal,
       });
-      clearTimeout(timeout);
 
-      const html = await response.text();
       const text = html
         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
         .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -293,8 +263,14 @@ export class WebFetchTool implements Tool {
         .replace(/\s+/g, ' ')
         .trim();
 
-      return text.slice(0, maxChars) + (text.length > maxChars ? '\n\n[Content truncated...]' : '');
+      let result = text.slice(0, maxChars);
+      if (text.length > maxChars) result += '\n\n[Content truncated...]';
+      if (truncated) result += '\n[Response body truncated by safety limit]';
+      return result;
     } catch (err) {
+      if (err instanceof SafeFetchError) {
+        return `Failed to fetch ${url}: ${err.message}`;
+      }
       return `Failed to fetch ${url}: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
