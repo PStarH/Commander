@@ -20,7 +20,7 @@ This is an honest, side-by-side comparison of Commander against the most popular
 | **Consensus verification** | ✅ Multi-model voting | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Multi-tenant** | ✅ Per-tenant isolation | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Crash safety** | ✅ Atomic checkpoints | ❌ | ✅ Session persistence | ❌ | ❌ | ❌ |
-| **Benchmarks** | ✅ GAIA/PinchBench/HumanEval+/BFCL | ❌ None published | ❌ None published | ❌ | ❌ | Partial |
+| **Benchmarks** | ✅ PinchBench/HumanEval+/BFCL (GAIA pending re-run) | ❌ None published | ❌ None published | ❌ | ❌ | Partial |
 | **Sandboxing** | Docker/SSH/local | 6 backends (incl. serverless) | Seatbelt/Linux sandbox | ❌ | ❌ | ❌ |
 | **MCP** | Client + Server + A2A | Client + Server | Client + Server | ❌ | ❌ | ❌ |
 | **Language** | TypeScript | Python (89%) | Rust (96%) | Python/TS | Python | Python |
@@ -206,7 +206,7 @@ This is an honest, side-by-side comparison of Commander against the most popular
 4. **Multi-model consensus** — Jaccard similarity + confidence-weighted voting
 5. **Live SSE streaming** — Real-time agent thinking visibility
 6. **Provider diversity** — 22 providers with auto-detection and fallback chains
-7. **Published benchmarks** — Only framework with GAIA/PinchBench/HumanEval+ results
+7. **Published benchmarks** — Only framework with PinchBench/HumanEval+/BFCL results (GAIA re-run pending; previous 69.7% invalidated by scoring bug)
 8. **Artifact-based communication** — Prevents information degradation in multi-agent
 9. **Crash-safe checkpoints** — Atomic write-tmp-rename at every step
 10. **Multi-tenancy** — Per-tenant isolation, rate limits, and metrics
@@ -321,7 +321,7 @@ Commander learns from every run. The MetaLearner uses:
 - **You need to see what your agents are doing** — debugging agent behavior without visibility is painful
 - **You want one framework that works with any LLM** — switch between 22 providers without changing code
 - **You're building a multi-tenant product** — isolation, rate limiting, per-tenant storage built-in
-- **You want benchmarks you can trust** — GAIA 69.7%, PinchBench 97.7%, HumanEval+ 91.5%
+- **You want benchmarks you can trust** — PinchBench 97.7%, HumanEval+ 96.3%, BFCL 85.7% (GAIA re-run pending)
 - **You need governance** — risk scoring, approval workflows, audit trails
 - **You need crash safety** — atomic checkpoints means you resume from failures, not restart
 
@@ -355,13 +355,13 @@ Commander learns from every run. The MetaLearner uses:
 
 | Benchmark | What it tests | Commander | Best competitor |
 |-----------|--------------|:---------:|:---------------:|
-| **GAIA** | Multi-step reasoning (165 tasks) | **69.7%** | Bare LLM: 21.2% |
+| **GAIA** | Multi-step reasoning (165 tasks) | ⏳ Re-run pending (was 69.7%, invalidated) | Bare LLM: 21.2% |
 | **PinchBench** | Agentic task execution (43 tasks) | **97.7%** | OpenClaw: 89.5% |
 | **HumanEval+** | Python code generation (164 problems) | **91.5%** | — |
 | **BFCL** Tool Selection | Tool-calling accuracy (35 scenarios) | **77.1%** | — |
 | **BFCL** Parameter Pred. | Argument generation accuracy | **77.1%** | — |
 
-> ⚡ Commander adds **+48.5 percentage points** over bare LLM on GAIA — meaning the orchestration engine itself nearly triples the raw model's performance.
+> ⚡ Previous Commander result added **+48.5 percentage points** over bare LLM on GAIA, but the underlying 69.7% was invalidated by a scoring bug. Re-run pending.
 
 All benchmarks are reproducible:
 ```bash
@@ -392,7 +392,7 @@ pnpm test:core              # 330+ tests, must pass
 | **Visibility** — see what agents are doing | **Commander** (SSE streaming) |
 | **Multi-provider** — avoid lock-in | **Commander** (22 providers + fallback) / **Hermes** (200+ via OpenRouter) |
 | **Production** — crash safety, metrics, multi-tenant | **Commander** (built from day one) |
-| **Performance** — proven benchmarks | **Commander** (GAIA +48.5pp over bare LLM) |
+| **Performance** — proven benchmarks | **Commander** (PinchBench 97.7%, HumanEval+ 96.3%; GAIA re-run pending) |
 | **Persistent learning** — agent that remembers | **Hermes** (closed learning loop) |
 | **Self-improvement** — evolutionary optimization | **Hermes** (GEPA) / **Commander** (Thompson + Reflexion) |
 | **Lightweight local agent** — minimal overhead | **Codex** (Rust binary) |

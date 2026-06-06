@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/GAIA-69.7%25-blue?style=flat-square" />
+  <img src="https://img.shields.io/badge/GAIA-TBD-lightgrey?style=flat-square" />
   <img src="https://img.shields.io/badge/PinchBench-97.7%25-green?style=flat-square" />
   <img src="https://img.shields.io/badge/HumanEval+-91.5%25-orange?style=flat-square" />
   <img src="https://img.shields.io/badge/providers-21-purple?style=flat-square" />
@@ -122,7 +122,7 @@ src/
 ├── meta-learner/      # 自动调优（Thompson Sampling + Reflexion）
 ├── cli/               # 14 个 CLI 命令
 ├── web/               # Agent War Room 仪表盘
-└── benchmarks/        # GAIA、BFCL、PinchBench、HumanEval+
+└── benchmarks/        # BFCL、PinchBench、HumanEval+（GAIA 待重跑）
 ```
 
 ---
@@ -196,7 +196,7 @@ npx commander benchmark    # A/B 测试：优化版 vs 基线版
 
 | 基准测试 | Commander | 裸 LLM (MiMo) | OpenClaw | Δ |
 |-----------|:---------:|:----------------:|:--------:|:-:|
-| **GAIA**（165 个多步推理任务） | **69.7%** | 21.2% | — | **+48.5pp** |
+| **GAIA**（165 个多步推理任务） | ⏳ 待重跑 | 21.2% | — | — |
 | **BFCL** 工具选择（35 场景非官方子集） | **77.1%** | — | — | — |
 | **BFCL** 参数预测（35 场景非官方子集） | **77.1%** | — | — | — |
 | **PinchBench**（43 个智能体任务） | **100.0%** | — | 89.5% | **+10.5pp** |

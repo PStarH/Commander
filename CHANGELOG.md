@@ -74,6 +74,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Silent catch blocks in skills, codeFixer, JSON.parse, LSP rejection handlers
 - GAIA evidence audit trail (broken 10-task run replaced with real 165-task results)
 
+### Removed
+- **GAIA benchmark content** — Previous 69.7% result was invalidated by a scoring
+  bug (empty `expected` field marked responses as correct). Scoring fixed, full
+  re-run pending. All claim/badge references removed from `README*.md`.
+
 ## [0.1.0] — 2026-05-18
 
 ### Added

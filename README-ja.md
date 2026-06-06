@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/GAIA-69.7%25-blue?style=flat-square" />
+  <img src="https://img.shields.io/badge/GAIA-TBD-lightgrey?style=flat-square" />
   <img src="https://img.shields.io/badge/PinchBench-97.7%25-green?style=flat-square" />
   <img src="https://img.shields.io/badge/HumanEval+-91.5%25-orange?style=flat-square" />
   <img src="https://img.shields.io/badge/providers-21-purple?style=flat-square" />
@@ -122,7 +122,7 @@ src/
 ├── meta-learner/      # 自動チューニング（Thompson Sampling + Reflexion）
 ├── cli/               # 14 CLI コマンド
 ├── web/               # Agent War Room ダッシュボード
-└── benchmarks/        # GAIA、BFCL、PinchBench、HumanEval+
+└── benchmarks/        # BFCL、PinchBench、HumanEval+（GAIA は再実行待ち）
 ```
 
 ---
@@ -196,7 +196,7 @@ npx commander benchmark    # A/B テスト：最適版 vs ベースライン
 
 | ベンチマーク | Commander | ベア LLM (MiMo) | OpenClaw | Δ |
 |-----------|:---------:|:----------------:|:--------:|:-:|
-| **GAIA**（165 の多段階推論タスク） | **69.7%** | 21.2% | — | **+48.5pp** |
+| **GAIA**（165 の多段階推論タスク） | ⏳ 再実行待ち | 21.2% | — | — |
 | **BFCL** ツール選択（35 シナリオ非公式サブセット） | **77.1%** | — | — | — |
 | **BFCL** パラメータ予測（35 シナリオ非公式サブセット） | **77.1%** | — | — | — |
 | **PinchBench**（43 のエージェントタスク） | **100.0%** | — | 89.5% | **+10.5pp** |

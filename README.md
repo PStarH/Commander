@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/GAIA-25%25-blue?style=flat-square" />
+  <img src="https://img.shields.io/badge/GAIA-TBD-lightgrey?style=flat-square" />
   <img src="https://img.shields.io/badge/PinchBench-97.7%25-green?style=flat-square" />
   <img src="https://img.shields.io/badge/HumanEval+-91.5%25-orange?style=flat-square" />
   <img src="https://img.shields.io/badge/providers-21-purple?style=flat-square" />
@@ -81,11 +81,11 @@ npx tsx cli.ts review --commit               # Code review
 | **Cost per task** | ~$0.10 (verified output) | Unknown | Unknown | Unknown |
 | **Self-optimization** | ✅ Thompson Sampling + Reflexion | ❌ | ❌ | ❌ |
 | **Multi-tenant isolation** | ✅ Per-tenant rate limits, storage, memory | ❌ | ❌ | ❌ |
-| **Benchmarked** | PinchBench 97.7%, HumanEval+ 96.3%, BFCL 85.7% | — | — | GAIA varies |
+| **Benchmarked** | PinchBench 97.7%, HumanEval+ 96.3%, BFCL 85.7% | — | — | GAIA pending re-run |
 | **Install size** | Lean core package; optional heavy integrations | Heavy | Moderate | Heavy |
 | **Crash safety** | ✅ Atomic checkpoints every step | ❌ | ❌ | ❌ |
 
-> Commander adds **+48.5 points** over bare LLM on GAIA. Full data in [`docs/benchmark-results/`](docs/benchmark-results/).
+> Previous GAIA result of **+48.5pp** over bare LLM was invalidated by a scoring bug and has been removed; re-run pending. Full data in [`docs/benchmark-results/`](docs/benchmark-results/).
 
 ---
 
