@@ -381,9 +381,9 @@ export function DAGVisualization({ missions, agents, agentNameById }: DAGVisuali
           }}
         />
         <MiniMap
-          nodeColor={n => {
-            const data = n.data as MissionNodeData;
-            return STATUS_COLORS[data?.status]?.border || '#4d9eff';
+          nodeColor={(n: { data?: MissionNodeData }) => {
+            const status = (n.data as MissionNodeData | undefined)?.status;
+            return STATUS_COLORS[status ?? 'PLANNED'].border;
           }}
           style={{
             background: '#04070f',

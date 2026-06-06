@@ -148,3 +148,138 @@ export function formatTimestamp(value: string): string {
     minute: '2-digit',
   }).format(date);
 }
+
+export interface ConfidenceAction {
+  actionType: string;
+  confidenceScore: number;
+  rationale: string;
+  recommendation?: string;
+}
+
+export interface ConfidenceTrend {
+  direction: 'improving' | 'declining' | 'stable';
+  changeRate: number;
+}
+
+export interface ConfidenceReport {
+  overallScore: number;
+  averageConfidence: number;
+  totalDecisions: number;
+  totalActions: number;
+  trend: ConfidenceTrend;
+  distribution: {
+    low: number;
+    medium: number;
+    high: number;
+    veryHigh: number;
+  };
+  lowConfidenceActions: ConfidenceAction[];
+  recommendations: string[];
+  missionId?: string;
+  agentId?: string;
+  generatedAt: string;
+}
+
+export interface CostRecord {
+  runId: string;
+  modelId: string;
+  provider: string;
+  tier: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+  cacheSavingsUsd: number;
+  timestamp: string;
+  agentId: string;
+}
+
+export interface CostSummary {
+  totalCostUsd: number;
+  totalTokens: number;
+  totalCalls: number;
+  perModel: Record<string, { calls: number; tokens: number; costUsd: number }>;
+  perAgent: Record<string, { calls: number; tokens: number; costUsd: number }>;
+}
+
+export interface BudgetAlert {
+  type: 'soft_cap_warning' | 'hard_cap_reached' | 'cost_cap_reached' | 'budget_exhausted';
+  runId: string;
+  current: number;
+  limit: number;
+  message: string;
+}
+
+export interface BudgetStatus {
+  monthlyUsed: number;
+  monthlyLimit: number;
+  usagePercent: number;
+  alertCount: number;
+  alerts: BudgetAlert[];
+}
+
+export interface CostRecordsResponse {
+  records: CostRecord[];
+  total: number;
+}
+
+// Pause / Resume panel types
+export interface ActiveRun {
+  runId: string;
+  paused: boolean;
+  checkpointPhase?: string;
+}
+
+export interface ActiveRunsResponse {
+  runs: ActiveRun[];
+  total: number;
+}
+
+export interface PauseResumeResponse {
+  status: string;
+  message: string;
+  fromPhase?: string;
+  stepNumber?: number;
+  injectedInstructions?: boolean;
+}
+
+export interface ReplayRun {
+  runId: string;
+  agentId: string;
+  missionId?: string;
+  goal?: string;
+  model?: string;
+  status: 'completed' | 'failed';
+  phase: string;
+  startedAt: string;
+  completedAt?: string;
+  totalEvents: number;
+  totalTokens: number;
+  durationMs: number;
+  stepCount: number;
+}
+
+export interface ReplayEvent {
+  id: string;
+  spanId: string;
+  traceId: string;
+  runId: string;
+  agentId: string;
+  type: string;
+  timestamp: string;
+  durationMs: number;
+  data: { [key: string]: any };
+  parentSpanId?: string;
+}
+
+export interface ReplayRunsResponse {
+  runs: ReplayRun[];
+  total: number;
+}
+
+export interface ReplayEventsResponse {
+  events: ReplayEvent[];
+  total: number;
+}
