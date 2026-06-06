@@ -9,7 +9,7 @@ import * as path from 'path';
 import { getGlobalLogger } from '../logging';
 import type { ErrorClass } from './llmRetry';
 
-export type DLQCategory = 'llm' | 'tool' | 'execution' | 'verification';
+export type DLQCategory = 'llm' | 'tool' | 'execution' | 'verification' | 'circuit_breaker' | 'compensation';
 
 export interface DeadLetterEntry {
   id: string;
@@ -58,10 +58,51 @@ export class DeadLetterQueue {
     }
   }
 
+  /**
+   * Convenience: enqueue from partial spec. Fills sensible defaults for
+   * the DeadLetterEntry required fields. Used by observability hooks
+   * (circuit breaker, compensation, sub-agent) that don't have a full
+   * run context.
+   */
+  enqueue(spec: {
+    category: DLQCategory;
+    runId?: string;
+    agentId?: string;
+    missionId?: string;
+    operationName: string;
+    errorMessage: string;
+    errorClass?: ErrorClass;
+    retryable?: boolean;
+    attemptNumber?: number;
+    compensated?: boolean;
+    recovered?: boolean;
+    tags?: string[];
+    payload?: Record<string, unknown>;
+  }): void {
+    const entry: DeadLetterEntry = {
+      id: `${spec.category}-${spec.operationName}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      category: spec.category,
+      runId: spec.runId ?? 'unknown',
+      agentId: spec.agentId ?? 'unknown',
+      missionId: spec.missionId,
+      timestamp: new Date().toISOString(),
+      errorClass: spec.errorClass ?? 'permanent',
+      errorMessage: spec.errorMessage,
+      retryable: spec.retryable ?? false,
+      attemptNumber: spec.attemptNumber ?? 1,
+      operationName: spec.operationName,
+      inputSnapshot: spec.payload ? JSON.stringify(spec.payload) : undefined,
+      compensated: spec.compensated ?? false,
+      recovered: spec.recovered ?? false,
+      tags: spec.tags ?? [],
+    };
+    this.record(entry);
+  }
+
   private static readonly MAX_ENTRIES_PER_FILE = 1000;
 
   flush(category?: DLQCategory): void {
-    const cats = category ? [category] : (['llm', 'tool', 'execution', 'verification'] as DLQCategory[]);
+    const cats = category ? [category] : (['llm', 'tool', 'execution', 'verification', 'circuit_breaker', 'compensation'] as DLQCategory[]);
     for (const cat of cats) {
       // Atomic swap: take the buffer out first so concurrent record() calls
       // go into a fresh buffer instead of getting lost when we clear below.

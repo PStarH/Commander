@@ -22,6 +22,8 @@ export class CircuitBreaker {
   private halfOpenInFlight = 0;
   private openCount = 0;
   private onStateChange?: (from: CircuitState, to: CircuitState) => void;
+  private observability?: { onTransition?: (from: CircuitState, to: CircuitState, provider?: string) => void };
+  private providerName?: string;
   /** Sliding window of failure timestamps for windowed failure counting */
   private failureTimestamps: number[] = [];
   /** Sliding window of all request timestamps for volume threshold (Hystrix pattern) */
@@ -38,6 +40,14 @@ export class CircuitBreaker {
     this.onStateChange = onStateChange;
     this.volumeThreshold = options?.volumeThreshold ?? 0;
     this.errorRateThreshold = options?.errorRateThreshold ?? 0.5;
+  }
+
+  setProviderName(name: string): void {
+    this.providerName = name;
+  }
+
+  setObservability(obs: { onTransition?: (from: CircuitState, to: CircuitState, provider?: string) => void }): void {
+    this.observability = obs;
   }
 
   getState(): CircuitState { return this.state; }
@@ -138,6 +148,7 @@ export class CircuitBreaker {
     if (old !== newState) {
       this.state = newState;
       this.onStateChange?.(old, newState);
+      try { this.observability?.onTransition?.(old, newState, this.providerName); } catch { /* best-effort */ }
     }
   }
 }

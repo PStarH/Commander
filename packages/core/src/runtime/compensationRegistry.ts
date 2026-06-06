@@ -20,9 +20,22 @@ export class CompensationRegistry {
   private pendingActions = new Map<string, CompensableAction>();
   private compensationAttempts = new Map<string, number>();
   private compensated = new Set<string>();
+  private observability?: {
+    onSuccess?: (action: CompensableAction) => void;
+    onFailed?: (action: CompensableAction, err: string) => void;
+    onExhausted?: (action: CompensableAction, err: string) => void;
+  };
 
   register(toolName: string, handler: CompensationHandler): void {
     this.handlers.set(toolName, handler);
+  }
+
+  setObservability(obs: {
+    onSuccess?: (action: CompensableAction) => void;
+    onFailed?: (action: CompensableAction, err: string) => void;
+    onExhausted?: (action: CompensableAction, err: string) => void;
+  }): void {
+    this.observability = obs;
   }
 
   recordAction(action: CompensableAction): void {
@@ -45,10 +58,15 @@ export class CompensationRegistry {
         this.pendingActions.delete(actionId);
         this.compensationAttempts.delete(actionId);
         this.addToCompensated(actionId);
+        try { this.observability?.onSuccess?.(action); } catch { /* best-effort */ }
+      } else {
+        try { this.observability?.onFailed?.(action, result.error ?? 'unknown'); } catch { /* best-effort */ }
       }
       return result;
     } catch (err) {
-      return { success: false, error: String(err) };
+      const errStr = String(err);
+      try { this.observability?.onFailed?.(action, errStr); } catch { /* best-effort */ }
+      return { success: false, error: errStr };
     }
   }
 
@@ -66,7 +84,9 @@ export class CompensationRegistry {
         this.pendingActions.delete(id);
         this.compensationAttempts.delete(id);
         failed++;
-        errors.push(`Compensation exhausted after 3 attempts: ${action.toolName}`);
+        const errMsg = `Compensation exhausted after 3 attempts: ${action.toolName}`;
+        errors.push(errMsg);
+        try { this.observability?.onExhausted?.(action, errMsg); } catch { /* best-effort */ }
         continue;
       }
       this.compensationAttempts.set(id, attempts + 1);
