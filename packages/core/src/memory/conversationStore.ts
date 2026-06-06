@@ -19,7 +19,7 @@
  */
 
 import { getGlobalLogger } from '../logging';
-import { mkdirSync } from 'fs';
+import { mkdirSync, chmodSync } from 'fs';
 
 // ============================================================================
 // Types
@@ -150,9 +150,13 @@ export class ConversationStore {
     const dir = this.config.dbPath!.includes('/')
       ? this.config.dbPath!.substring(0, this.config.dbPath!.lastIndexOf('/'))
       : '.';
-    if (dir) mkdirSync(dir, { recursive: true });
+    if (dir) {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      try { chmodSync(dir, 0o700); } catch { /* best-effort */ }
+    }
 
     this.db = new BetterSqlite3(this.config.dbPath!);
+    try { chmodSync(this.config.dbPath!, 0o600); } catch { /* best-effort */ }
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('synchronous = NORMAL');
 

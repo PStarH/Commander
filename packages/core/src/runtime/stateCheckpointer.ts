@@ -58,7 +58,10 @@ export class StateCheckpointer {
     this.leaseManager = options?.leaseManager;
     const base = baseDir ?? path.join(process.cwd(), '.commander_state');
     this.baseDir = tenantId ? path.join(base, `tenant_${tenantId}`) : base;
-    fs.mkdirSync(path.join(this.baseDir, 'completed'), { recursive: true });
+    fs.mkdirSync(this.baseDir, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(this.baseDir, 0o700); } catch { /* best-effort */ }
+    fs.mkdirSync(path.join(this.baseDir, 'completed'), { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(path.join(this.baseDir, 'completed'), 0o700); } catch { /* best-effort */ }
   }
 
   setLeaseManager(leaseManager: LeaseManager | undefined): void {
@@ -101,8 +104,10 @@ export class StateCheckpointer {
     const tmpPath = path.join(this.baseDir, `${state.runId}.tmp`);
     const chkPath = path.join(this.baseDir, `${state.runId}.checkpoint`);
     try {
-      fs.writeFileSync(tmpPath, JSON.stringify(state), 'utf-8');
+      fs.writeFileSync(tmpPath, JSON.stringify(state), { encoding: 'utf-8', mode: 0o600 });
+      try { fs.chmodSync(tmpPath, 0o600); } catch { /* best-effort */ }
       fs.renameSync(tmpPath, chkPath);
+      try { fs.chmodSync(chkPath, 0o600); } catch { /* best-effort */ }
       try { getMetricsCollector().recordCheckpointFlush(state.phase ?? 'unknown'); } catch { /* best-effort */ }
     } catch (e) { getGlobalLogger().warn('StateCheckpointer', 'Failed to write checkpoint', { error: (e as Error)?.message, runId: state.runId }); }
   }
@@ -115,8 +120,10 @@ export class StateCheckpointer {
 
     const writeTmp = path.join(this.baseDir, `${state.runId}.terminal.tmp`);
     try {
-      fs.writeFileSync(writeTmp, JSON.stringify(state), 'utf-8');
+      fs.writeFileSync(writeTmp, JSON.stringify(state), { encoding: 'utf-8', mode: 0o600 });
+      try { fs.chmodSync(writeTmp, 0o600); } catch { /* best-effort */ }
       fs.renameSync(writeTmp, donePath);
+      try { fs.chmodSync(donePath, 0o600); } catch { /* best-effort */ }
       try { getMetricsCollector().recordCheckpointFlush('terminal'); } catch { /* best-effort */ }
     } catch (e) { getGlobalLogger().warn('StateCheckpointer', 'Failed to write terminal checkpoint', { error: (e as Error)?.message, runId: state.runId }); }
 

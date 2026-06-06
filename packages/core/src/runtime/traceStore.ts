@@ -35,7 +35,8 @@ export class PersistentTraceStore implements TraceStore {
     this.tenantId = tenantId;
     const base = baseDir ?? path.join(process.cwd(), '.commander_traces');
     this.baseDir = tenantId ? path.join(base, `tenant_${tenantId}`) : base;
-    fs.mkdirSync(this.baseDir, { recursive: true });
+    fs.mkdirSync(this.baseDir, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(this.baseDir, 0o700); } catch { /* best-effort */ }
   }
 
   append(event: TraceEvent): void {
@@ -69,7 +70,8 @@ export class PersistentTraceStore implements TraceStore {
     const filePath = path.join(this.baseDir, `${key}.ndjson`);
     const line = JSON.stringify(event) + '\n';
     try {
-      const fd = fs.openSync(filePath, 'a');
+      const fd = fs.openSync(filePath, 'a', 0o600);
+      try { fs.fchmodSync(fd, 0o600); } catch { /* best-effort */ }
       try {
         fs.writeSync(fd, line);
         fs.fsyncSync(fd);
@@ -95,8 +97,13 @@ export class PersistentTraceStore implements TraceStore {
 
     const filePath = path.join(this.baseDir, `${key}.ndjson`);
     try {
-      // Append-only: avoids reading the entire growing file on every flush
-      fs.appendFileSync(filePath, buffer.join('\n') + '\n', 'utf-8');
+      if (!fs.existsSync(filePath)) {
+        fs.writeFileSync(filePath, buffer.join('\n') + '\n', { encoding: 'utf-8', mode: 0o600 });
+        try { fs.chmodSync(filePath, 0o600); } catch { /* best-effort */ }
+      } else {
+        try { fs.chmodSync(filePath, 0o600); } catch { /* best-effort */ }
+        fs.appendFileSync(filePath, buffer.join('\n') + '\n', 'utf-8');
+      }
     } catch (e) { getGlobalLogger().warn('TraceStore', 'Failed to flush trace buffer', { error: (e as Error)?.message, runId: key }); }
     this.buffers.delete(key);
     this.bufferTimestamps.delete(key);
