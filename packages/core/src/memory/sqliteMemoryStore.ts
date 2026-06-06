@@ -17,8 +17,8 @@ import { getGlobalLogger } from '../logging';
 import type {
   EpisodicMemoryItem, MemoryWriteOptions, MemorySearchQuery,
   MemorySearchResult, MemoryManageOptions, MemoryStats, MemoryStore,
-} from './types';
-import type { MemoryKind, MemoryDuration } from './types';
+} from '../memory';
+import type { MemoryKind, MemoryDuration } from '../memory';
 
 // ============================================================================
 // SQLite Types
@@ -299,7 +299,9 @@ export class SqliteMemoryStore implements MemoryStore {
     await this.init();
     const results: EpisodicMemoryItem[] = [];
 
-    const insertMany = this.db!.transaction((batch: MemoryWriteOptions[]) => {
+    type BatchTx = (fn: (batch: MemoryWriteOptions[]) => void) => (batch: MemoryWriteOptions[]) => void;
+    const txFn = this.db!.transaction as BatchTx;
+    const insertMany = txFn((batch: MemoryWriteOptions[]) => {
       for (const options of batch) {
         // Reuse write logic inline for transaction
         const now = new Date().toISOString();
@@ -418,14 +420,14 @@ export class SqliteMemoryStore implements MemoryStore {
       items = items.filter(item =>
         item.title.toLowerCase().includes(lowerQuery) ||
         item.content.toLowerCase().includes(lowerQuery) ||
-        item.tags.some(t => t.toLowerCase().includes(lowerQuery))
+        item.tags.some((t: string) => t.toLowerCase().includes(lowerQuery))
       );
     }
 
     // Tag filter
     if (query.tags && query.tags.length > 0) {
       items = items.filter(item =>
-        query.tags!.some(tag => item.tags.includes(tag))
+        query.tags!.some((tag: string) => item.tags.includes(tag))
       );
     }
 

@@ -7,6 +7,7 @@
  *  - SimpleTenantProvider: static config map for multi-tenant deployments
  */
 import { ThreeLayerMemory, getGlobalThreeLayerMemory } from '../threeLayerMemory';
+import { getCurrentTenantId as readCurrentTenantId } from './tenantContext';
 
 // ============================================================================
 // Types
@@ -39,6 +40,8 @@ export interface TenantProvider {
   getTenantConfig(tenantId: string): TenantConfig | undefined;
   /** List all known tenant IDs. */
   getKnownTenants(): string[];
+  /** Current tenant ID from tenant context (single-tenant returns undefined). */
+  getCurrentTenantId(): string | undefined;
 }
 
 // ============================================================================
@@ -51,6 +54,9 @@ export class NullTenantProvider implements TenantProvider {
   }
   getKnownTenants(): string[] {
     return [];
+  }
+  getCurrentTenantId(): string | undefined {
+    return readCurrentTenantId();
   }
 }
 
@@ -71,6 +77,10 @@ export class SimpleTenantProvider implements TenantProvider {
 
   getKnownTenants(): string[] {
     return Array.from(this.tenants.keys());
+  }
+
+  getCurrentTenantId(): string | undefined {
+    return readCurrentTenantId();
   }
 
   addTenant(config: TenantConfig): void {

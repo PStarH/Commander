@@ -12,6 +12,15 @@ import type { TraceEvent } from './types';
 export interface TraceStore {
   append(event: TraceEvent): void;
   flush(runId: string): void;
+  appendCritical?(event: TraceEvent): void;
+}
+
+/**
+ * Sanitize a runId for safe use as a file path component.
+ * Strips path traversal sequences and limits length.
+ */
+export function sanitizeRunId(runId: string): string {
+  return runId.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 200);
 }
 
 export class PersistentTraceStore implements TraceStore {
@@ -30,7 +39,7 @@ export class PersistentTraceStore implements TraceStore {
   }
 
   append(event: TraceEvent): void {
-    const key = event.runId;
+    const key = sanitizeRunId(event.runId);
     const buffer = this.buffers.get(key);
     if (buffer) {
       buffer.push(JSON.stringify(event));
@@ -50,6 +59,26 @@ export class PersistentTraceStore implements TraceStore {
     }
   }
 
+  /**
+   * Append a critical event with fsync — guarantees the bytes are on disk
+   * before returning. Use sparingly: e.g. circuit-breaker transitions,
+   * compensation exhaustion, intent-log writes. Higher latency than append().
+   */
+  appendCritical(event: TraceEvent): void {
+    const key = sanitizeRunId(event.runId);
+    const filePath = path.join(this.baseDir, `${key}.ndjson`);
+    const line = JSON.stringify(event) + '\n';
+    try {
+      const fd = fs.openSync(filePath, 'a');
+      try {
+        fs.writeSync(fd, line);
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch (e) { getGlobalLogger().warn('TraceStore', 'Failed to append critical trace', { error: (e as Error)?.message, runId: key }); }
+  }
+
   private flushStaleBuffers(): void {
     const now = Date.now();
     for (const [key, timestamp] of this.bufferTimestamps) {
@@ -60,16 +89,17 @@ export class PersistentTraceStore implements TraceStore {
   }
 
   flush(runId: string): void {
-    const buffer = this.buffers.get(runId);
+    const key = sanitizeRunId(runId);
+    const buffer = this.buffers.get(key);
     if (!buffer || buffer.length === 0) return;
 
-    const filePath = path.join(this.baseDir, `${runId}.ndjson`);
+    const filePath = path.join(this.baseDir, `${key}.ndjson`);
     try {
       // Append-only: avoids reading the entire growing file on every flush
       fs.appendFileSync(filePath, buffer.join('\n') + '\n', 'utf-8');
-    } catch (e) { getGlobalLogger().warn('TraceStore', 'Failed to flush trace buffer', { error: (e as Error)?.message, runId }); }
-    this.buffers.delete(runId);
-    this.bufferTimestamps.delete(runId);
+    } catch (e) { getGlobalLogger().warn('TraceStore', 'Failed to flush trace buffer', { error: (e as Error)?.message, runId: key }); }
+    this.buffers.delete(key);
+    this.bufferTimestamps.delete(key);
   }
 
   flushAll(): void {
@@ -86,18 +116,19 @@ export class PersistentTraceStore implements TraceStore {
   }
 
   readTrace(runId: string): TraceEvent[] {
-    const filePath = path.join(this.baseDir, `${runId}.ndjson`);
+    const key = sanitizeRunId(runId);
+    const filePath = path.join(this.baseDir, `${key}.ndjson`);
     if (!fs.existsSync(filePath)) return [];
     try {
       const raw = fs.readFileSync(filePath, 'utf-8').trim();
       if (!raw) return [];
       const events: TraceEvent[] = [];
       for (const line of raw.split('\n')) {
-        try { events.push(JSON.parse(line)); } catch (e) { getGlobalLogger().warn('TraceStore', 'Skipped corrupt trace line', { error: (e as Error)?.message, runId }); }
+        try { events.push(JSON.parse(line)); } catch (e) { getGlobalLogger().warn('TraceStore', 'Skipped corrupt trace line', { error: (e as Error)?.message, runId: key }); }
       }
       return events;
     } catch (e) {
-      getGlobalLogger().warn('TraceStore', 'Failed to read trace file', { error: (e as Error)?.message, runId });
+      getGlobalLogger().warn('TraceStore', 'Failed to read trace file', { error: (e as Error)?.message, runId: key });
       return [];
     }
   }

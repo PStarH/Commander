@@ -11,12 +11,12 @@
  * Extracted from agentRuntime.ts for better separation of concerns.
  */
 
-import type { TenantConfig } from './types';
+import type { TenantConfig } from './tenantProvider';
 import { SamplesStore } from './samplesStore';
 import { PersistentTraceStore } from './traceStore';
 import { StateCheckpointer } from './stateCheckpointer';
 import { TokenGovernor } from './tokenGovernor';
-import { getGlobalMemoryRegistry } from '../memoryRegistry';
+import { getGlobalMemoryRegistry } from './tenantProvider';
 import type { ThreeLayerMemory } from '../threeLayerMemory';
 import { getGlobalLogger } from '../logging';
 

@@ -48,12 +48,24 @@ export class SamplesStore {
       taskId?: string;
       /** Pre-extracted solution code (skips auto-extraction) */
       extractedCode?: string;
+      /** Run ID for sub-agent correlation */
+      runId?: string;
+      /** Agent ID */
+      agentId?: string;
+      /** Tenant ID for multi-tenant isolation */
+      tenantId?: string;
+      /** Parent runId when this is a sub-agent call */
+      parentRunId?: string;
     },
   ): Promise<string> {
     const callId = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const content = response?.content ?? params.error ?? '';
     const record: ApiCallRecord = {
       callId,
+      runId: params.runId,
+      agentId: params.agentId,
+      tenantId: params.tenantId,
+      parentRunId: params.parentRunId,
       model: request.model,
       provider: params.provider,
       temperature: request.temperature,
@@ -66,6 +78,9 @@ export class SamplesStore {
       finishReason: response?.finishReason ?? 'error',
       attemptNumber: params.attemptNumber,
       contentPrefix: content.slice(0, 500),
+      fullMessages: request.messages as unknown[],
+      fullResponse: response,
+      reasoningContent: (response as unknown as { reasoningContent?: string })?.reasoningContent,
       extractedCode: params.extractedCode ?? (params.taskId ? extractCode(content) : undefined),
       error: params.error,
       taskId: params.taskId,
