@@ -24,7 +24,8 @@ import {
   cmdPlan, cmdRun, cmdWatch, cmdCompany, cmdGoal, cmdSwarm, cmdDrive,
   cmdStatus, cmdConfig, cmdDoctor, cmdGui, cmdWorkers, cmdSkill,
   cmdMode, cmdReview, cmdHistory, cmdWorkflow, cmdHelp, cmdBenchmark,
-  cmdQuickstart, cmdCompletion, cmdFeedback,
+  cmdQuickstart, cmdCompletion, cmdFeedback, cmdSaga,
+  cmdCost,
 } from './cli/commands';
 import { startTUI } from './tui';
 
@@ -47,6 +48,7 @@ const COMMAND_HELP: Record<string, string> = {
   quickstart: `  ${$.bold}commander quickstart [--check]${$.reset}\n\n  Interactive setup guide for first-time users.\n\n  ${$.bold}Flags:${$.reset}\n    --check     Check prerequisites only (non-interactive)\n`,
   completion: `  ${$.bold}commander completion [shell]${$.reset}\n\n  Generate shell autocompletion scripts.\n\n  ${$.bold}Shells:${$.reset}\n    bash      Generate bash completion\n    zsh       Generate zsh completion\n    fish      Generate fish completion\n    install   Auto-detect shell and install (default)\n\n  ${$.dim}Example:${$.reset}\n    commander completion install\n    source <(commander completion bash)\n`,
   feedback:   `  ${$.bold}commander feedback [flags]${$.reset}\n\n  Submit feedback to help improve Commander.\n\n  ${$.bold}Flags:${$.reset}\n    --rating=<1-5>        Rate your experience\n    --message="<text>"    General feedback\n    --bug="<text>"        Report a bug\n    --feature="<text>"    Request a feature\n\n  ${$.bold}Subcommands:${$.reset}\n    stats                 View feedback summary\n\n  ${$.dim}Example:${$.reset}\n    commander feedback --rating=5 --message="Great tool!"\n    commander feedback --bug="crash on empty input"\n`,
+  saga:       `  ${$.bold}commander saga <subcommand>${$.reset}\n\n  Manage saga runs (durable, compensating transactions).\n\n  ${$.bold}Subcommands:${$.reset}\n    run <name>            Run a built-in example saga\n    list                  List all runs (committed/aborted/in-progress)\n    status <runId>        Show a run's snapshot\n    resume <runId>        Inspect a resumable run\n    approve <runId> <nodeId>    Approve a pending approval\n    reject  <runId> <nodeId>    Reject a pending approval\n    examples              List built-in example sagas\n\n  ${$.bold}Run flags:${$.reset}\n    --input=<json>        Saga input (JSON)\n    --run-id=<id>         Custom run ID (default: <name>-<timestamp>)\n    --timeout=<ms>        Total timeout (default: 60000)\n    --in-memory           Use in-memory stores (no disk persistence)\n\n  ${$.dim}Examples:${$.reset}\n    commander saga examples\n    commander saga run order-fulfillment --input='{"orderId":"o_42","amount":100}'\n    commander saga run refund-approval --input='{"refundId":"r_1","amount":600}'\n    commander saga list\n    commander saga status order-fulfillment-1717523456\n    commander saga approve <runId> <nodeId> --by=alice\n`,
   // Deprecated aliases
   plan:       `  ${$.yellow}⚠ DEPRECATED${$.reset} — Use ${$.bold}commander run <task> --dry-run${$.reset} instead.\n`,
   watch:      `  ${$.yellow}⚠ DEPRECATED${$.reset} — Use ${$.bold}commander run <task> --stream${$.reset} instead.\n`,
@@ -191,6 +193,14 @@ async function main() {
     case 'feedback':
       await cmdFeedback(rest);
       break;
+    case 'saga':
+      await cmdSaga(rest);
+      break;
+    case 'cost': {
+      const { flags } = parseFlags(rest);
+      await cmdCost(flags);
+      break;
+    }
 
     default:
       // Treat as a task — quick run
