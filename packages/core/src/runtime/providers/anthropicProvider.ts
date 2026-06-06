@@ -212,6 +212,8 @@ export class AnthropicProvider implements LLMProvider {
       promptTokens: usage?.input_tokens ?? 0,
       completionTokens: usage?.output_tokens ?? 0,
       totalTokens: (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0),
+      cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
     };
 
     return {
@@ -223,7 +225,7 @@ export class AnthropicProvider implements LLMProvider {
     };
   }
 
-  private parseResponse(data: { content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>; usage?: { input_tokens?: number; output_tokens?: number } }, model: string): LLMResponse {
+  private parseResponse(data: { content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>; usage?: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } }, model: string): LLMResponse {
     const content = data.content ?? [];
     const textBlocks = content.filter((c): c is typeof c & { text: string } => c.type === 'text');
     const toolBlocks = content.filter((c): c is typeof c & { id: string; name: string; input: unknown } => c.type === 'tool_use');
@@ -232,6 +234,8 @@ export class AnthropicProvider implements LLMProvider {
       promptTokens: data.usage?.input_tokens ?? 0,
       completionTokens: data.usage?.output_tokens ?? 0,
       totalTokens: (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0),
+      cacheReadTokens: data.usage?.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: data.usage?.cache_creation_input_tokens ?? 0,
     };
 
     return {

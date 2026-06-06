@@ -147,6 +147,7 @@ interface OpenAIResponseUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number };
 }
 
 export function parseOpenAIResponse(
@@ -161,6 +162,7 @@ export function parseOpenAIResponse(
     promptTokens: data.usage?.prompt_tokens ?? 0,
     completionTokens: data.usage?.completion_tokens ?? 0,
     totalTokens: data.usage?.total_tokens ?? 0,
+    cacheReadTokens: data.usage?.prompt_tokens_details?.cached_tokens ?? 0,
   };
 
   let content = message.content ?? '';
@@ -277,6 +279,7 @@ export async function callOpenAICompatibleAPI(
           promptTokens: streamed.usage.prompt_tokens,
           completionTokens: streamed.usage.completion_tokens,
           totalTokens: streamed.usage.total_tokens,
+          cacheReadTokens: streamed.usage.prompt_tokens_details?.cached_tokens ?? 0,
         }
       : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 

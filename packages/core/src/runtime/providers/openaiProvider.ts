@@ -151,6 +151,7 @@ export class OpenAIProvider implements LLMProvider {
           promptTokens: usage.prompt_tokens,
           completionTokens: usage.completion_tokens,
           totalTokens: usage.total_tokens,
+          cacheReadTokens: usage.prompt_tokens_details?.cached_tokens ?? 0,
         }
       : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
@@ -170,7 +171,7 @@ export class OpenAIProvider implements LLMProvider {
     };
   }
 
-  private parseResponse(data: { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>; reasoning_content?: string }; finish_reason?: string }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }, model: string): LLMResponse {
+  private parseResponse(data: { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>; reasoning_content?: string }; finish_reason?: string }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } }, model: string): LLMResponse {
     const choice = data.choices?.[0];
     const message = choice?.message ?? {};
 
@@ -178,6 +179,7 @@ export class OpenAIProvider implements LLMProvider {
       promptTokens: data.usage?.prompt_tokens ?? 0,
       completionTokens: data.usage?.completion_tokens ?? 0,
       totalTokens: data.usage?.total_tokens ?? 0,
+      cacheReadTokens: data.usage?.prompt_tokens_details?.cached_tokens ?? 0,
     };
 
     const toolCalls = message.tool_calls?.map((tc: { id: string; function: { name: string; arguments: string } }) => ({
