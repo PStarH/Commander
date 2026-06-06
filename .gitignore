@@ -139,6 +139,12 @@ apps/api/dist/
 /quality-commander.md
 /error-handling-comparison.md
 
+# Runtime state for apps/memory (War Room persistence lives in SQLite, not these JSON files)
+/apps/memory/
+
+# Stray scratch files at repo root
+/src/main.py
+
 # Benchmark runner intermediate files
 benchmarks/*/responses/
 benchmarks/*/results.json
