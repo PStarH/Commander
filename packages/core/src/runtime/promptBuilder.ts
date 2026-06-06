@@ -134,7 +134,7 @@ export function buildCacheAwareUserPrompt(
  * Complex tasks: analysis, audit, research, multi-file, refactor, design, implementation.
  * Simple tasks: factual lookup, single question, short command.
  */
-function isComplexTask(goal: string): boolean {
+export function isComplexTask(goal: string): boolean {
   const complexPatterns = [
     /\b(analyze|analysis|audit|review|refactor|redesign|implement|architect|design)\b/i,
     /\b(research|investigate|compare|evaluate|assess|profiler?)\b/i,
