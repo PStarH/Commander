@@ -91,6 +91,16 @@ export interface ApiCallRecord {
   error?: string;
   /** Evaluation task ID (e.g. "HumanEval/64") */
   taskId?: string;
+  /** Full request messages for full prompt/response replay (debugging) */
+  fullMessages?: unknown[];
+  /** Full LLM response object (replay/audit) */
+  fullResponse?: unknown;
+  /** Reasoning / chain-of-thought content from extended-thinking providers */
+  reasoningContent?: string;
+  /** Tenant that owns this call (multi-tenant isolation) */
+  tenantId?: string;
+  /** Parent runId for sub-agent correlation */
+  parentRunId?: string;
   /** ISO timestamp */
   timestamp: string;
 }
@@ -146,11 +156,19 @@ export interface LLMStreamChunk {
 
 /**
  * Token usage tracking.
+ *
+ * Cache fields are optional — only providers that support prompt caching
+ * (Anthropic, OpenAI, Gemini) populate them. Cost calculation must apply
+ * provider-specific multipliers (see TokenSentinel.calculateCost).
  */
 export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** Tokens served from prompt cache (Anthropic cache_read, OpenAI cached_tokens, Gemini cachedContent) */
+  cacheReadTokens?: number;
+  /** Tokens written to prompt cache (Anthropic cache_creation, OpenAI implicit on first hit) */
+  cacheWriteTokens?: number;
 }
 
 /**
@@ -201,12 +219,19 @@ export interface ToolResult {
   output: string;
   error?: string;
   durationMs: number;
+  /** True if this result was served from idempotency cache, not freshly executed. */
+  fromCache?: boolean;
 }
 
 /**
  * Interface for a tool that can be executed.
  * Safety flags control concurrent execution and execution behavior.
  */
+export interface IdempotencyKeyContext {
+  runId: string;
+  stepId: string;
+}
+
 export interface Tool {
   definition: ToolDefinition;
   execute(args: Record<string, unknown>): Promise<string>;
@@ -220,6 +245,16 @@ export interface Tool {
   maxOutputSize?: number;
   /** Compiled schema for runtime validation (populated by ToolRegistry) */
   compiledSchema?: CompiledSchema;
+  /** True if tool call is safe to replay: same args + same run + same step → cached result. */
+  isIdempotent?: boolean;
+  /** Static or function-derivable key for ATR idempotency cache. Overrides default SHA-256 derivation. */
+  idempotencyKey?: string | ((args: Record<string, unknown>, ctx: IdempotencyKeyContext) => string);
+  /** External system this tool touches (e.g. 'github', 'stripe', 'shell'). For audit + safety gates. */
+  externalSystem?: string;
+  /** Risk level: 'low' (read), 'medium' (idempotent write), 'high' (destructive). Default: 'medium'. */
+  riskLevel?: 'low' | 'medium' | 'high';
+  /** If true, tool can have irreversible side effects and requires explicit user approval. Default: false */
+  destructive?: boolean;
 }
 
 /**
@@ -302,6 +337,12 @@ export interface AgentExecutionContext {
     tenantId?: string;
     /** GAP-09: User isolation — user who initiated this execution */
     userId?: string;
+    /** Parent runId for sub-agent correlation (multi-agent hierarchy) */
+    parentRunId?: string;
+    /** Sub-agent recursion depth (0 = root agent) */
+    subAgentDepth?: number;
+    /** Sub-agent role label (e.g., 'planner', 'coder', 'verifier') */
+    subAgentRole?: string;
     /** Execution lane for concurrency isolation. If set, routes to this named lane. */
     lane?: string;
    /** Optional JSON schema for validating the final assistant output. */
@@ -441,6 +482,10 @@ export interface AgentRuntimeConfig {
     observationFeedback?: ObservationFeedbackConfig;
     /** Memory store type for persistent storage. 'in-memory' (default) keeps data in process memory; 'sqlite' uses better-sqlite3; 'json' uses a flat file. */
     memoryStoreType?: 'in-memory' | 'sqlite' | 'json';
+  /** Enable compensation tracking for mutation tools (defaults to true). */
+  enableCompensation?: boolean;
+  /** Enable ToolResultCache for read-only tool results (defaults to true). */
+  enableToolCaching?: boolean;
     /** OpenTelemetry exporter configuration. When enabled, execution traces are exported to an OTLP-compatible endpoint (Jaeger, Tempo, SigNoz, etc.). */
     otelExporter?: {
       /** Enable OTLP trace export (default: false) */
@@ -653,6 +698,14 @@ export interface ExecutionTrace {
   traceId: string;
   agentId: string;
   missionId?: string;
+  /** Tenant that owns this run (for multi-tenant isolation) */
+  tenantId?: string;
+  /** Parent runId when this is a sub-agent run */
+  parentRunId?: string;
+  /** Sub-agent depth (0 = root, 1 = first-level sub-agent, etc.) */
+  subAgentDepth?: number;
+  /** Role of this sub-agent within the agent team */
+  subAgentRole?: string;
   startedAt: string;
   completedAt?: string;
   events: TraceEvent[];

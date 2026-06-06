@@ -30,7 +30,13 @@ export interface CostRecord {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  /** Tokens served from prompt cache (provider-multiplier priced) */
+  cacheReadTokens: number;
+  /** Tokens written to prompt cache (provider-multiplier priced) */
+  cacheWriteTokens: number;
   costUsd: number;
+  /** Money saved by cache reads vs full-price input tokens */
+  cacheSavingsUsd: number;
   timestamp: string;
   agentId: string;
 }
