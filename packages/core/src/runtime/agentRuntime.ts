@@ -43,6 +43,9 @@ import { provisionTools } from './toolProvisioner';
 import { TokenGovernor, type OptimizationStrategy } from './tokenGovernor';
 import { SamplesStore } from './samplesStore';
 import { captureProvenance } from './provenance';
+import { getIntentLog } from './intentLog';
+import { getVerificationReportStore } from './verificationReportStore';
+import { getDeadLetterQueue } from './deadLetterQueueSingleton';
 import { StateCheckpointer, type CheckpointState } from './stateCheckpointer';
 import { DeadLetterQueue } from './deadLetterQueue';
 import { StepErrorBoundary } from './stepErrorBoundary';
@@ -55,6 +58,8 @@ import { getGlobalThreeLayerMemory } from '../threeLayerMemory';
 import { runWithTenant } from './tenantContext';
 import { getHookManager } from '../pluginManager';
 import { ToolResultCache } from './toolResultCache';
+import { SemanticCache } from './semanticCache';
+import { MockEmbeddingFunction } from './embedding';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
 import { ToolApproval } from './toolApproval';
@@ -65,6 +70,8 @@ import { CycleDetector } from './cycleDetector';
 import { repairToolCallArguments } from './toolCallRepair';
 import { validateToolCall, formatValidationErrors } from './toolCallValidator';
 import { ToolRegistry } from '../tools/toolRegistry';
+import { getExecutionScheduler, type RunHandle } from '../atr/scheduler';
+import { generateIdempotencyKey } from '../atr/canonicalJson';
 import { parseStructuredOutput } from './structuredOutput';
 import { isConfidentResponse } from './entropyGater';
 import { createContentScanner, type ContentScanner } from '../contentScanner';
@@ -107,6 +114,7 @@ export class AgentRuntime {
   private tools: Map<string, Tool> = new Map();
   private router: ModelRouter;
   private activeRuns: Set<string> = new Set();
+  private pausedRuns: Set<string> = new Set();
   private compactor: ContextCompactor;
   private circuitBreaker: CircuitBreaker;
   private verificationPipeline: UnifiedVerificationPipeline;
@@ -121,6 +129,7 @@ export class AgentRuntime {
   private teamRegistry: TeamRegistry;
   private agentHandoff: AgentHandoff;
   private toolCache: ToolResultCache;
+  private semanticCache: SemanticCache;
   private outputManager: ToolOutputManager;
   private memoryStore: MemoryStore | null = null;
   private otelExporter: OpenTelemetryExporter | null = null;
@@ -129,6 +138,8 @@ export class AgentRuntime {
   private cycleDetector: CycleDetector;
   /** Tools promoted to Tier 1 (full schema) in the current turn — for hallucination rejection gate */
   private promotedTools: Set<string> = new Set();
+  // Phase 3 — ExecutionScheduler handle for the currently executing run
+  private runHandle: RunHandle | null = null;
   private contentScanner: ContentScanner;
   // Concurrency semaphore (GAP-07)
   private runningCount = 0;
@@ -152,6 +163,14 @@ export class AgentRuntime {
     this.tenantProvider = tenantProvider ?? getGlobalTenantProvider();
     this.compactor = new ContextCompactor({ maxContextTokens: this.config.budgetHardCapTokens || 128000 });
     this.circuitBreaker = new CircuitBreaker(5, 30000);
+    this.circuitBreaker.setProviderName('agentRuntime');
+    this.circuitBreaker.setObservability({
+      onTransition: (from, to, provider) => {
+        try { getMetricsCollector().recordCircuitTransition(from, to, provider ?? 'agentRuntime'); } catch { /* best-effort */ }
+        try { this.dlq.enqueue({ category: 'circuit_breaker', operationName: 'circuit.transition', errorMessage: `${from}->${to}`, tags: [`from:${from}`, `to:${to}`, `provider:${provider ?? 'agentRuntime'}`] }); } catch { /* best-effort */ }
+        try { getIntentLog(undefined).write({ schemaVersion: 1, runId: 'circuit-breaker', capturedAt: new Date().toISOString(), stage: 'agentRuntime.circuit', decision: 'transition', reason: `circuit ${from}->${to}`, payload: { from, to, provider: provider ?? 'agentRuntime' } }); } catch { /* best-effort */ }
+      },
+    });
     this.governor = new TokenGovernor({ totalBudget: this.config.budgetHardCapTokens || 200000 });
     this.verificationPipeline = new UnifiedVerificationPipeline({
       enabled: true,
@@ -163,6 +182,15 @@ export class AgentRuntime {
     this.checkpointer = new StateCheckpointer();
     this.dlq = new DeadLetterQueue();
     this.compensationRegistry = new CompensationRegistry();
+    this.compensationRegistry.setObservability({
+      onSuccess: (action) => { try { getMetricsCollector().recordCompensation(action.toolName, 'success'); } catch { /* best-effort */ } },
+      onFailed: (action, err) => { try { getMetricsCollector().recordCompensation(action.toolName, 'failed'); } catch { /* best-effort */ } try { getIntentLog(undefined).write({ schemaVersion: 1, runId: 'compensation', capturedAt: new Date().toISOString(), stage: 'agentRuntime.compensation', decision: 'failed', reason: err.slice(0, 200), payload: { toolName: action.toolName, actionId: action.actionId, args: JSON.stringify(action.args).slice(0, 500) } }); } catch { /* best-effort */ } },
+      onExhausted: (action, err) => {
+        try { getMetricsCollector().recordCompensation(action.toolName, 'exhausted'); } catch { /* best-effort */ }
+        try { this.dlq.enqueue({ category: 'compensation', operationName: 'compensation.exhausted', errorMessage: err, tags: [action.toolName] }); } catch { /* best-effort */ }
+        try { getIntentLog(undefined).write({ schemaVersion: 1, runId: 'compensation', capturedAt: new Date().toISOString(), stage: 'agentRuntime.compensation', decision: 'exhausted', reason: err.slice(0, 200), payload: { toolName: action.toolName, actionId: action.actionId } }); } catch { /* best-effort */ }
+      },
+    });
     this.agentInbox = new AgentInbox();
     this.teamRegistry = new TeamRegistry();
     this.agentHandoff = new AgentHandoff(this.agentInbox, this.checkpointer);
@@ -194,6 +222,7 @@ export class AgentRuntime {
     }
     // Tool calling infrastructure
     this.toolCache = new ToolResultCache({ enabled: true, maxEntries: 512, defaultTtlMs: 1_800_000 });
+    this.semanticCache = new SemanticCache(new MockEmbeddingFunction(), { enabled: false, pruneIntervalMs: 0 });
     this.outputManager = new ToolOutputManager({ enabled: true, turnBudget: 32000 });
     // ToolApproval with auto-approve callback (semi_auto/manual policies still gate)
     const toolApproval = new ToolApproval(
@@ -255,6 +284,8 @@ export class AgentRuntime {
   getInbox(): AgentInbox { return this.agentInbox; }
   getTeamRegistry(): TeamRegistry { return this.teamRegistry; }
   getHandoff(): AgentHandoff { return this.agentHandoff; }
+  getExecutionScheduler() { return getExecutionScheduler(); }
+  getCompensationRegistry(): CompensationRegistry { return this.compensationRegistry; }
 
   /**
    * Resolve tenant context: enforce rate limits, concurrency limits, and set up
@@ -367,7 +398,7 @@ export class AgentRuntime {
     const tracer = getTraceRecorder();
     const startTime = Date.now();
 
-    const tenantId = ctx.tenantId;
+    const tenantId = getGlobalTenantProvider().getCurrentTenantId() ?? undefined;
     const tenantCfg = tenantId ? this.tenantProvider.getTenantConfig(tenantId) : undefined;
 
     const tenantResolution = this.resolveTenantContext(tenantId, tenantCfg, runId, ctx.agentId, ctx.missionId);
@@ -386,7 +417,7 @@ export class AgentRuntime {
     let currentLane: string;
     try {
       currentLane = await getLaneManager().acquireSlot({
-        tenantId: ctx.tenantId,
+        tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
         agentId: ctx.agentId,
         runId,
         args: ctx.lane ? { lane: ctx.lane } : undefined,
@@ -408,12 +439,28 @@ export class AgentRuntime {
     }
 
     this.activeRuns.add(runId);
-    tracer.startRun(runId, ctx.agentId, ctx.missionId);
+    tracer.startRun(runId, ctx.agentId, ctx.missionId, undefined, { tenantId: ctx.tenantId, parentRunId: ctx.parentRunId, subAgentDepth: ctx.subAgentDepth, subAgentRole: ctx.subAgentRole });
+    try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId, capturedAt: new Date().toISOString(), stage: 'agentRuntime.execute', decision: 'start', reason: 'execute() entered', payload: { agentId: ctx.agentId, goal: ctx.goal.slice(0, 200), parentRunId: ctx.parentRunId, subAgentDepth: ctx.subAgentDepth } }); } catch { /* best-effort */ }
     getMetricsCollector().setGauge('active_runs', 'Active concurrent runs', this.activeRuns.size);
     let circuitReleased = false;
 
+    // Phase 3: register this run with the centralized ExecutionScheduler
     try {
-      return await runWithTenant(ctx.tenantId, async () => {
+      this.runHandle = getExecutionScheduler().beginRun({
+        runId,
+        goal: ctx.goal,
+        tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
+        metadata: { agentId: ctx.agentId, missionId: ctx.missionId },
+        holder: 'agent-runtime',
+      });
+    } catch (e) {
+      getGlobalLogger().warn('AgentRuntime', 'Scheduler beginRun failed; running without ATR registration', {
+        runId, error: (e as Error).message,
+      });
+    }
+
+    try {
+      return await runWithTenant(getGlobalTenantProvider().getCurrentTenantId() ?? undefined, async () => {
 
     // Record run manifest (provenance, config, params)
     this.samplesStore.recordRunManifest(runId, {
@@ -1026,6 +1073,8 @@ export class AgentRuntime {
           stagesRun: verifReport.stagesRun,
           skipReason: verifReport.skipReason,
         });
+        try { getMetricsCollector().recordVerificationResult(verifReport.confidence, verifReport.passed, verifReport.signals.length, verifReport.signals.map(s => (s as { type?: string }).type ?? (s as { name?: string }).name ?? 'unknown'), getGlobalTenantProvider().getCurrentTenantId() ?? undefined); } catch { /* best-effort */ }
+        try { getVerificationReportStore(ctx.tenantId).write({ schemaVersion: 1, runId, agentId: ctx.agentId, capturedAt: new Date().toISOString(), attempt, passed: verifReport.passed, confidence: verifReport.confidence, skipReason: verifReport.skipReason, outputPrefix: response.content.slice(0, 5000), goal: ctx.goal.slice(0, 1000), report: verifReport }); } catch { /* best-effort */ }
 
         this.checkpointer.checkpoint({
           runId, agentId: ctx.agentId, missionId: ctx.missionId,
@@ -1083,6 +1132,8 @@ export class AgentRuntime {
               request.model = (fallbackModel.id || '').replace(/@\w+$/, '') || fallbackModel.id;
               tracer.recordDecision(runId, `cascade escalation: ${routing.modelId} (${routing.tier})`, 0);
               bus.publish('system.alert', 'runtime', { type: 'cascade_escalation', from: routing.modelId, to: fallbackModel.id });
+              try { getMetricsCollector().recordCascadeEscalation(routing.modelId, fallbackModel.id, 'verification_failed', getGlobalTenantProvider().getCurrentTenantId() ?? undefined); } catch { /* best-effort */ }
+              try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId, capturedAt: new Date().toISOString(), stage: 'agentRuntime.cascade', decision: 'escalate', reason: 'verification_failed', payload: { from: routing.modelId, to: fallbackModel.id } }); } catch { /* best-effort */ }
             }
 
             request.messages.push({ role: 'user', content: feedback });
@@ -1206,6 +1257,16 @@ export class AgentRuntime {
 
         this.circuitBreaker.onSuccess();
         circuitReleased = true;
+        if (this.runHandle) {
+          try {
+            getExecutionScheduler().commitRun({
+              runId, leaseToken: this.runHandle.leaseToken, fencingEpoch: this.runHandle.fencingEpoch,
+              tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
+            });
+          } catch (e) {
+            getGlobalLogger().debug('AgentRuntime', 'Scheduler commitRun failed', { runId, error: (e as Error).message });
+          }
+        }
         return result;
       }
 
@@ -1281,6 +1342,18 @@ export class AgentRuntime {
       error: lastError,
     };
     });
+
+    if (this.runHandle) {
+      const handle = this.runHandle as RunHandle;
+      try {
+        await getExecutionScheduler().abortRun({
+          runId, leaseToken: handle.leaseToken, fencingEpoch: handle.fencingEpoch,
+          tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined, reason: 'execution failed',
+        });
+      } catch (e) {
+        getGlobalLogger().debug('AgentRuntime', 'Scheduler abortRun failed', { runId, error: (e as Error).message });
+      }
+    }
 
     } finally {
       // Release circuit breaker if neither onSuccess nor onFailure was called
@@ -1361,11 +1434,17 @@ export class AgentRuntime {
       });
 
       let result: LLMResponse;
+      const cached = await this.semanticCache.lookup(request);
+      if (cached) {
+        clearTimeout(timeoutId);
+        return cached;
+      }
       try {
         result = await Promise.race([provider.call(request), abortPromise]);
       } finally {
         clearTimeout(timeoutId);
       }
+      this.semanticCache.store(request, result);
 
       this.samplesStore.recordLLMCall(request, result, {
         provider: providerName, durationMs: Date.now() - startMs,
@@ -1491,6 +1570,17 @@ export class AgentRuntime {
         description: `${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 200)})`,
         tags: ['tool', toolCall.name],
       });
+      const filePath = toolCall.arguments.filePath ?? toolCall.arguments.path;
+      if (typeof filePath === 'string' && toolCall.name !== 'file_delete') {
+        try {
+          const fs = await import('fs');
+          if (fs.existsSync(filePath)) {
+            fs.copyFileSync(filePath, `${filePath}.atr-snapshot.${actionId}`);
+          }
+        } catch (err) {
+          getGlobalLogger().debug('AgentRuntime', 'Snapshot pre-mutation failed', { filePath, actionId, error: (err as Error).message });
+        }
+      }
     }
 
     const effectiveTimeout = tool.timeout ?? this.config.timeoutMs;
@@ -1513,6 +1603,66 @@ export class AgentRuntime {
         };
       }
       validatedArgs = validation.repairedArgs ?? repairedArgs;
+    }
+
+    // C2/Phase 3: Schedule tool call through ExecutionScheduler for idempotency + replay
+    let schedulerActionId: string | null = null;
+    if (this.runHandle) {
+      try {
+        const idempotencyKey = generateIdempotencyKey({
+          externalSystem: tool.externalSystem ?? toolCall.name,
+          toolName: toolCall.name,
+          args: validatedArgs as Record<string, unknown>,
+          intentHash: this.runHandle.intentHash,
+          runId,
+          stepId: toolCall.id ?? actionId,
+        });
+        const scheduleResult = getExecutionScheduler().scheduleAction({
+          runId,
+          leaseToken: this.runHandle.leaseToken,
+          fencingEpoch: this.runHandle.fencingEpoch,
+          toolName: toolCall.name,
+          externalSystem: tool.externalSystem ?? toolCall.name,
+          args: validatedArgs as Record<string, unknown>,
+          idempotencyKey,
+          compensable: isMutation,
+          tags: ['tool_execution', toolCall.name],
+          description: `${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 200)})`,
+          tenantId,
+        });
+        if (scheduleResult) {
+          schedulerActionId = scheduleResult.actionId;
+          if (scheduleResult.replayed) {
+            const durationMs = Date.now() - startTime;
+            const cachedOutput = scheduleResult.cachedResult;
+            if (cachedOutput !== undefined) {
+              tracer.recordToolExecution(runId, toolCall.name, toolCall.arguments, cachedOutput, durationMs);
+              getMetricsCollector().recordToolCall(toolCall.name, durationMs, undefined, tenantId);
+              bus.publish('tool.completed', agentId, { runId, toolName: toolCall.name, durationMs });
+              return {
+                toolCallId: toolCall.id,
+                name: toolCall.name,
+                output: cachedOutput,
+                durationMs,
+              };
+            }
+            const cachedError = scheduleResult.cachedError;
+            if (cachedError) {
+              tracer.recordToolExecution(runId, toolCall.name, toolCall.arguments, '', durationMs, cachedError);
+              getMetricsCollector().recordToolCall(toolCall.name, durationMs, cachedError, tenantId);
+              return {
+                toolCallId: toolCall.id,
+                name: toolCall.name,
+                output: '',
+                error: cachedError,
+                durationMs,
+              };
+            }
+          }
+        }
+      } catch (e) {
+        getGlobalLogger().debug('AgentRuntime', 'Scheduler scheduleAction failed; running without ATR ledger', { runId, toolName: toolCall.name, error: (e as Error).message });
+      }
     }
 
     // ExecPolicy gate: evaluate shell/Python commands before execution
@@ -1592,6 +1742,21 @@ export class AgentRuntime {
         getGlobalLogger().debug('AgentRuntime', 'Compensation failed after retry', { actionId, error: compensateResult.error });
       }
 
+      if (schedulerActionId && this.runHandle) {
+        try {
+          getExecutionScheduler().recordError({
+            runId,
+            leaseToken: this.runHandle.leaseToken,
+            fencingEpoch: this.runHandle.fencingEpoch,
+            actionId: schedulerActionId,
+            error: errorMsg,
+            tenantId,
+          });
+        } catch (e) {
+          getGlobalLogger().debug('AgentRuntime', 'Scheduler recordError failed', { runId, toolName: toolCall.name, error: (e as Error).message });
+        }
+      }
+
       const structuredError = [
         `tool_error: "${toolCall.name}" failed after ${durationMs}ms`,
         `  reason: ${errorMsg}`,
@@ -1646,6 +1811,21 @@ export class AgentRuntime {
     bus.publish('tool.executed', agentId, { toolName: toolCall.name, durationMs });
     bus.publish('tool.completed', agentId, { runId, toolName: toolCall.name, durationMs });
 
+    if (schedulerActionId && this.runHandle) {
+      try {
+        getExecutionScheduler().recordResult({
+          runId,
+          leaseToken: this.runHandle.leaseToken,
+          fencingEpoch: this.runHandle.fencingEpoch,
+          actionId: schedulerActionId,
+          result: output,
+          tenantId,
+        });
+      } catch (e) {
+        getGlobalLogger().debug('AgentRuntime', 'Scheduler recordResult failed', { runId, toolName: toolCall.name, error: (e as Error).message });
+      }
+    }
+
     return {
       toolCallId: toolCall.id,
       name: toolCall.name,
@@ -1656,20 +1836,59 @@ export class AgentRuntime {
 
   /** Register default compensation handlers for mutation tools */
   private registerDefaultCompensation(): void {
-    this.compensationRegistry.register('file_write', async (action) => {
+    const reg = this.compensationRegistry;
+    const restoreFromSnapshot = async (action: { actionId: string; args: Record<string, unknown> }) => {
       const filePath = action.args.filePath ?? action.args.path;
-      if (typeof filePath === 'string') {
-        try {
-          const fs = await import('fs');
-          fs.unlinkSync(filePath);
+      if (typeof filePath !== 'string') return { success: true };
+      const snapshotPath = `${filePath}.atr-snapshot.${action.actionId}`;
+      try {
+        const fs = await import('fs');
+        if (!fs.existsSync(snapshotPath)) {
+          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
           return { success: true };
-        } catch (e) { getGlobalLogger().debug('AgentRuntime', 'File compensation: file may already be deleted', { filePath, error: (e as Error)?.message }); }
+        }
+        const original = fs.readFileSync(snapshotPath, 'utf-8');
+        fs.writeFileSync(filePath, original, 'utf-8');
+        fs.unlinkSync(snapshotPath);
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: (err as Error).message };
       }
-      return { success: true };
+    };
+    reg.register('file_write', restoreFromSnapshot);
+    reg.register('file_edit', restoreFromSnapshot);
+    reg.register('apply_patch', restoreFromSnapshot);
+    reg.register('code_fixer', restoreFromSnapshot);
+    reg.register('code_refiner', restoreFromSnapshot);
+    reg.register('file_delete', restoreFromSnapshot);
+    reg.register('mkdir', async (action) => {
+      const dir = action.args.path ?? action.args.dir;
+      if (typeof dir !== 'string') return { success: true };
+      try {
+        const fs = await import('fs');
+        if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) {
+          fs.rmdirSync(dir);
+        }
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: (err as Error).message };
+      }
     });
-    this.compensationRegistry.register('file_edit', async () => {
-      // file_edit is append-only in this codebase — no undo without snapshot
-      return { success: true };
+    reg.register('memory_store', async (action) => {
+      const key = action.args.key;
+      if (typeof key !== 'string') return { success: true };
+      try {
+        const fs = await import('fs');
+        const path = await import('path');
+        const memoryPath = path.join(process.cwd(), '.commander', 'memory.json');
+        if (!fs.existsSync(memoryPath)) return { success: true };
+        const data = JSON.parse(fs.readFileSync(memoryPath, 'utf-8')) as Array<{ key: string }>;
+        const filtered = data.filter((e) => e.key !== key);
+        fs.writeFileSync(memoryPath, JSON.stringify(filtered, null, 2), 'utf-8');
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: (err as Error).message };
+      }
     });
   }
 
@@ -1721,6 +1940,44 @@ export class AgentRuntime {
    */
   resume(runId: string): CheckpointState | null {
     return this.checkpointer.resume(runId);
+  }
+
+  /**
+   * Signal a running execution to pause at the next checkpoint boundary.
+   * Returns true if the run was active and pause was signaled, false otherwise.
+   */
+  pauseRun(runId: string): boolean {
+    if (!this.activeRuns.has(runId)) {
+      return false;
+    }
+    this.pausedRuns.add(runId);
+    return true;
+  }
+
+  /**
+   * Clear the pause flag for a run (e.g., after resume).
+   */
+  unpauseRun(runId: string): void {
+    this.pausedRuns.delete(runId);
+  }
+
+  isPaused(runId: string): boolean {
+    return this.pausedRuns.has(runId);
+  }
+
+  /**
+   * List all active runs with their pause state.
+   * Returns an array of { runId, paused, checkpointPhase }.
+   */
+  getActiveRuns(): Array<{ runId: string; paused: boolean; checkpointPhase?: string }> {
+    return Array.from(this.activeRuns).map(runId => {
+      const checkpoint = this.checkpointer.resume(runId);
+      return {
+        runId,
+        paused: this.pausedRuns.has(runId),
+        checkpointPhase: checkpoint?.phase,
+      };
+    });
   }
 
   getActiveRunCount(): number {

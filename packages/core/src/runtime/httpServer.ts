@@ -32,6 +32,11 @@ import { MCPServer } from '../mcp/server';
 import { getGlobalLogger } from '../logging';
 import { getMetricsCollector } from './metricsCollector';
 import { openApiSpec } from './openapi';
+import { handleAtrHttpRequest, type AtrHttpDeps } from '../atr/atrHttp';
+import { getExecutionScheduler } from '../atr/scheduler';
+import { handleObservabilityRequest, type ObservabilityDeps } from '../observability/httpApi';
+import { getTraceRecorder } from './executionTrace';
+import { PersistentTraceStore } from './traceStore';
 
 export interface HttpServerConfig {
   port: number;
@@ -464,6 +469,26 @@ export class CommanderHttpServer {
       if (resource === 'status') {
         sendJson(res, 200, { activeSessions: this.runtimes.size, busTopics: this.bus.getActiveTopics(), subscriberCounts: this.bus.getAllSubscriberCounts() });
         return;
+      }
+      if (resource === 'atr') {
+        const atrDeps: AtrHttpDeps = {
+          scheduler: getExecutionScheduler(),
+          resolveTenant: (r) => this.resolveTenantFromAuth(r),
+        };
+        const atrSegments = segments.slice(2);
+        const r = await handleAtrHttpRequest(req, res, atrDeps, atrSegments, queryStr, { maxBodyBytes: this.config.maxBodyBytes });
+        if (r.handled) return;
+      }
+      if (resource === 'observability') {
+        const traceStore = new PersistentTraceStore();
+        const obsDeps: ObservabilityDeps = {
+          recorder: getTraceRecorder(traceStore),
+          traceStore,
+          resolveTenant: (r) => this.resolveTenantFromAuth(r),
+        };
+        const obsSegments = segments.slice(1);
+        const r = await handleObservabilityRequest(req, res, obsDeps, obsSegments, queryStr);
+        if (r.handled) return;
       }
     }
     sendJson(res, 404, { error: 'Unknown endpoint' });
