@@ -25,6 +25,10 @@ import { TaskManager, ArtifactManager } from './a2aTask';
 import { createA2AV2Router } from './a2aV2Endpoints';
 import { createMCPRouter, createMCPClientRouter } from './mcpEndpoints';
 import { createRuntimeRouter } from './runtimeEndpoints';
+import { createCostRouter } from './costEndpoints';
+import { createPauseRouter } from './pauseEndpoints';
+import { createReplayRouter } from './replayEndpoints';
+import { createTeamRouter } from './teamEndpoints';
 import { createSelfAssessmentRouter } from './selfAssessmentEndpoints';
 import { createAgentCardRouter } from './agentCardEndpoints';
 import { createReasoningConfigRouter } from './reasoningConfigEndpoints';
@@ -176,7 +180,11 @@ app.use('/a2a/v2', createA2AV2Router());
 app.use('/mcp', createMCPRouter());
 app.use('/mcp/client', createMCPClientRouter());
 app.use('/api/runtime', createRuntimeRouter());
+app.use('/', createCostRouter());
+app.use('/', createPauseRouter());
+app.use('/', createReplayRouter());
 app.use('/api', createOrchestratorRouter());
+app.use('/api', createTeamRouter());
 
 // ── API v1 versioned aliases (backward-compatible) ──────────────────────────
 // All routes are accessible under /api/v1/ prefix in addition to their original paths.
