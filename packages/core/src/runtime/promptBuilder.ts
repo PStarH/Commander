@@ -3,7 +3,12 @@ import type { TokenGovernor } from './tokenGovernor';
 
 /**
  * Build system prompt with budget-aware verbosity.
- * Stable content goes FIRST for maximum LLM provider cache hits.
+ *
+ * KV-cache strategy: the prompt is split into a STABLE PREFIX (cacheable
+ * across calls) and a DYNAMIC SUFFIX (varies per call). Anthropic, OpenAI,
+ * and other providers cache the system prompt based on content identity
+ * (byte-for-byte match of the prefix). Manus (2025) reports that
+ * cache-hit rate is the #1 cost metric; this layout maximizes it.
  */
 export function buildSystemPrompt(
   ctx: AgentExecutionContext,
@@ -28,75 +33,131 @@ export function buildSystemPrompt(
     ].filter(Boolean).join('\n');
   }
 
-  const govProfile = ctx.contextData.governanceProfile
-    ? JSON.stringify(ctx.contextData.governanceProfile)
-    : 'No governance constraints.';
+  const governanceProfile = ctx.contextData.governanceProfile;
+  const prefix = buildStableSystemPrefix(config, tools, governanceProfile, registrySummary, activeToolNames);
+  const suffix = buildDynamicContext(ctx, routing, config);
 
-  const toolExamples = ctx.availableTools
-    .map(name => tools.get(name))
-    .filter((t): t is Tool => !!t)
-    .flatMap(t => (t.definition.examples ?? []))
-    .slice(0, 8);
-  const examplesSection = toolExamples.length > 0
-    ? '\n## Tool Usage Examples\n' +
-      toolExamples.map(ex => {
-        const args = Object.entries(ex.arguments)
-          .map(([k, v]) => `${k}=${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`)
-          .join(', ');
-        return `${ex.name}(${args})`;
-      }).join('\n') + '\n'
-    : '';
+  return [prefix, suffix].filter(Boolean).join('\n\n');
+}
 
-  const parts: string[] = [
-    `You are agent ${ctx.agentId} on project ${ctx.projectId}.`,
-    ctx.missionId ? `Mission: ${ctx.missionId}` : '',
+/**
+ * Build the cache-stable system-prompt prefix. Returned string is
+ * byte-identical across calls that share the same tool set, governance
+ * profile, and runtime config — making it eligible for provider-level
+ * prompt caching.
+ *
+ * Do not add fields that vary per call (agent ID, goal, budget, model).
+ */
+export function buildStableSystemPrefix(
+  config: AgentRuntimeConfig,
+  tools: Map<string, Tool>,
+  governanceProfile: unknown,
+  registrySummary?: string,
+  activeToolNames?: string[],
+): string {
+  const sortedTools = sortToolsForCache(activeToolNames ?? [...tools.keys()], tools);
+  const toolBlock = sortedTools.length > 0
+    ? sortedTools.map(name => {
+        const t = tools.get(name);
+        return t ? `- ${t.definition.name}: ${t.definition.description}` : `- ${name}`;
+      }).join('\n')
+    : '(no tools registered)';
+
+  const examplesBlock = buildExamplesBlock(sortedTools, tools);
+  const governanceBlock = stableStringify(governanceProfile) ?? 'No governance constraints.';
+
+  const sections: string[] = [
+    'You are an agent in the Commander multi-agent system.',
+    '',
+    '## Preamble: Think Before Acting',
+    '- Before calling any tool, reason in 1\u20132 sentences of plain text about what you are about to do and why.',
     '',
     '## Available Tools',
-    // Only list active (Tier 1) tools here; Tier 2 tools are in registrySummary below
-    (activeToolNames ?? ctx.availableTools).map(name => {
-      const tool = tools.get(name);
-      return tool ? `- ${tool.definition.name}: ${tool.definition.description}` : `- ${name}`;
-    }).join('\n'),
-    examplesSection,
-    // Tier 2: Registry summary (tools available on request)
+    toolBlock,
+    examplesBlock,
     registrySummary ? registrySummary : '',
     '## Governance',
-    govProfile,
-    '',
-    '## Token Budget (self-aware)',
-    `- Total budget: ${ctx.tokenBudget} tokens`,
-    `- Model: ${routing.modelId} (tier: ${routing.tier})`,
-    isComplexTask(ctx.goal)
-      ? '- This is a complex task. Prioritize completeness and thoroughness. Provide detailed output with examples, analysis, and actionable content. Use your token budget wisely — quality over minimalism.'
-      : '- Be concise. Every token costs money.',
-    '- Return structured output when possible (JSON, tool calls) instead of verbose prose.',
+    governanceBlock,
     '',
     '## Constraints',
-    `- Max ${config.maxStepsPerRun} steps. Prioritize accuracy when budget is constrained.`,
+    `- Max ${config.maxStepsPerRun} steps per run. Prioritize accuracy when budget is constrained.`,
     '',
     '## Tool Calling Rules',
     '- All required arguments must be provided. Do NOT guess values — ask if ambiguous.',
     '- Independent tools may be called in parallel; dependent calls must be sequential.',
     '- On validation error: correct arguments and retry.',
     '',
+    '## Pre-yield checklist',
+    '- Goal coverage: have all sub-goals of the task been addressed?',
+    '- Artifact propagation: did the relevant tool results get carried into the next step?',
+    '- Evidence: are the claims in the summary backed by tool output, not asserted from prior knowledge?',
+    '',
     '## Output Format',
-    isComplexTask(ctx.goal)
-      ? '- Provide comprehensive, well-structured output. Use markdown with headers/code blocks. Include all relevant details. Do NOT truncate prematurely.'
-      : [
-          '- When you have enough information to answer, provide your FINAL answer in this exact format:',
-          '  FINAL ANSWER: <concise answer>',
-          '- The answer should be as short as possible (a number, a name, a word, a phrase).',
-          '- Once you provide FINAL ANSWER, stop — do not continue reasoning.',
-        ].join('\n'),
+    '- Prefer structured output (JSON, tool calls) over verbose prose.',
+    '- Match output verbosity to the task: short answers for simple questions, structured detail for complex work.',
+    '- Include all relevant details, examples, and code blocks. Do NOT truncate prematurely.',
   ];
 
-  return parts.filter(Boolean).join('\n');
+  return sections.filter(s => s !== '').join('\n');
+}
+
+/** Per-call dynamic context. Appended after the stable prefix. */
+export function buildDynamicContext(
+  ctx: AgentExecutionContext,
+  routing: RoutingDecision,
+  config: AgentRuntimeConfig,
+): string {
+  const lines: string[] = [
+    '## Run Context',
+    `- Agent: ${ctx.agentId}`,
+    `- Project: ${ctx.projectId}`,
+  ];
+  if (ctx.missionId) lines.push(`- Mission: ${ctx.missionId}`);
+  lines.push(
+    `- Budget: ${ctx.tokenBudget} tokens`,
+    `- Model: ${routing.modelId} (tier: ${routing.tier})`,
+    `- Max steps: ${config.maxStepsPerRun}`,
+  );
+  if (isComplexTask(ctx.goal)) {
+    lines.push(
+      '',
+      '## Multi-File Refactoring Workflow',
+      '- Enumerate: list every file you expect to touch before editing.',
+      '- Read all first: load each file completely before making changes.',
+      '- Cross-file verification: after editing, verify downstream consumers still compile and pass tests.',
+    );
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Cache key for the stable system-prompt prefix. Two calls with the same
+ * key produce the same prefix; the provider cache will hit.
+ */
+export function computePrefixCacheKey(
+  config: AgentRuntimeConfig,
+  tools: Map<string, Tool>,
+  governanceProfile: unknown,
+  registrySummary?: string,
+  activeToolNames?: string[],
+): string {
+  const sortedTools = sortToolsForCache(activeToolNames ?? [...tools.keys()], tools);
+  const toolFingerprint = sortedTools.map(name => {
+    const t = tools.get(name);
+    return t ? `${t.definition.name}|${t.definition.description}` : name;
+  });
+  const input = JSON.stringify({
+    toolDefs: toolFingerprint,
+    governance: stableStringify(governanceProfile) ?? 'none',
+    registrySummary: registrySummary ?? '',
+    maxSteps: config.maxStepsPerRun,
+  });
+  return sha256Hex(input);
 }
 
 /**
  * Build cache-aware user prompt.
  * Variable content goes LAST for maximum cache hit ratio on preceding system block.
- * Includes remaining budget context and governor-driven response format hints.
  */
 export function buildCacheAwareUserPrompt(
   ctx: AgentExecutionContext,
@@ -121,11 +182,6 @@ export function buildCacheAwareUserPrompt(
     ctx.goal,
     '',
     formatHint,
-    '',
-    // Adaptive output guidance based on task complexity
-    isComplexTask(ctx.goal)
-      ? '## Output Quality\nThis is a complex task requiring comprehensive output. Provide detailed, thorough results with full explanations, code examples, and analysis. Do NOT truncate or summarize prematurely. Aim for completeness over brevity.'
-      : '',
   ].filter(Boolean).join('\n');
 }
 
@@ -144,7 +200,52 @@ export function isComplexTask(goal: string): boolean {
     /\b(cross[- ]?module|end[- ]?to[- ]?end)\b/i,
     /\b(write|create|generate|produce)\b.*\b(report|document|plan|strategy|guide)\b/i,
   ];
-  // Tasks with longer descriptions are generally more complex
   if (goal.length > 200) return true;
   return complexPatterns.some(p => p.test(goal));
+}
+
+// ── internal helpers ──
+
+function sortToolsForCache(names: string[], tools: Map<string, Tool>): string[] {
+  return [...new Set(names)].sort((a, b) => {
+    const da = tools.get(a)?.definition.description ?? '';
+    const db = tools.get(b)?.definition.description ?? '';
+    if (da !== db) return da.localeCompare(db);
+    return a.localeCompare(b);
+  });
+}
+
+function buildExamplesBlock(sortedTools: string[], tools: Map<string, Tool>): string {
+  const examples = sortedTools
+    .map(name => tools.get(name))
+    .filter((t): t is Tool => !!t)
+    .flatMap(t => (t.definition.examples ?? []))
+    .slice(0, 8);
+  if (examples.length === 0) return '';
+  const body = examples.map(ex => {
+    const args = Object.entries(ex.arguments)
+      .map(([k, v]) => `${k}=${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`)
+      .join(', ');
+    return `${ex.name}(${args})`;
+  }).join('\n');
+  return `\n## Tool Usage Examples\n${body}`;
+}
+
+function stableStringify(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return '[' + value.map(stableStringify).join(',') + ']';
+  }
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  const body = keys
+    .map(k => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`)
+    .join(',');
+  return '{' + body + '}';
+}
+
+let cryptoModule: typeof import('crypto') | null = null;
+function sha256Hex(input: string): string {
+  if (!cryptoModule) cryptoModule = require('crypto') as typeof import('crypto');
+  return cryptoModule.createHash('sha256').update(input).digest('hex');
 }
