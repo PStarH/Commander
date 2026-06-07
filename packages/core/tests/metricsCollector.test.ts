@@ -232,3 +232,27 @@ describe('getMetricsCollector (singleton)', () => {
     assert.strictEqual(b.getCounter('test_total'), 0);
   });
 });
+
+describe('MetricsCollector prompt prefix cache', () => {
+  let mc: MetricsCollector;
+
+  beforeEach(() => {
+    mc = new MetricsCollector();
+  });
+
+  it('recordPromptPrefixCache(true) increments the hit counter', () => {
+    mc.recordPromptPrefixCache(true);
+    assert.strictEqual(mc.getCounter('prompt_prefix_cache_total', [{ name: 'outcome', value: 'hit' }]), 1);
+  });
+
+  it('recordPromptPrefixCache(false) increments the miss counter', () => {
+    mc.recordPromptPrefixCache(false);
+    assert.strictEqual(mc.getCounter('prompt_prefix_cache_total', [{ name: 'outcome', value: 'miss' }]), 1);
+  });
+
+  it('setPromptPrefixCacheKey writes a numeric gauge', () => {
+    mc.setPromptPrefixCacheKey('aabbccddeeff00112233445566778899');
+    const gauge = mc.getGauge('prompt_prefix_cache_key');
+    assert.ok(typeof gauge === 'number' && gauge > 0, 'expected positive numeric gauge');
+  });
+});
