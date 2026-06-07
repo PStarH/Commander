@@ -9,6 +9,7 @@ export default defineConfig({
       'tests/runtime/criticalPath.test.ts',
       'tests/runtime/entropyGater.test.ts',
       'tests/runtime/e2e.test.ts',
+      'tests/runtime/geminiCacheManager.test.ts',
       'tests/runtime/htmlReport.test.ts',
       'tests/runtime/metaTool.test.ts',
       'tests/runtime/metaLearner.test.ts',

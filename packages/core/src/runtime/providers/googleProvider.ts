@@ -1,5 +1,17 @@
 import type { LLMProvider, LLMRequest, LLMResponse } from '../types';
 
+/**
+ * Optional Google Gemini cachedContent wiring.
+ * When `cachedContentName` is present in `request.cacheConfig`, the provider references
+ * the server-side cached content resource (created via POST /v1beta/cachedContents) in the
+ * generateContent body, achieving 90% cost reduction on cached tokens (>4K token payloads).
+ * See geminiCacheManager.ts for the lifecycle manager that creates these names.
+ */
+export interface GeminiCacheConfig {
+  /** Server-side cached content resource name (e.g. "cachedContents/abc123"). */
+  cachedContentName?: string;
+}
+
 interface GeminiContent {
   role: string;
   parts: Array<{ text?: string; inlineData?: unknown }>;
@@ -51,6 +63,15 @@ export class GoogleProvider implements LLMProvider {
     };
     if (systemInstruction) {
       body.system_instruction = { parts: [{ text: systemInstruction }] };
+    }
+
+    // Gemini cachedContent wiring: when a server-side cached content name is provided in
+    // cacheConfig, reference it instead of inline contents. This is a >4K token optimization;
+    // cached tokens are billed at 90% discount. The system instruction and tools can stay
+    // inline as well — Gemini deduplicates them against the cached content.
+    const cachedContentName = request.cacheConfig?.geminiCachedContentName;
+    if (cachedContentName) {
+      body.cachedContent = cachedContentName;
     }
 
     const response = await fetch(url, {

@@ -127,6 +127,12 @@ export interface CacheConfig {
   cacheTtl?: '5m' | '1h';
   /** OpenAI prompt_cache_key for routing stickiness across requests */
   promptCacheKey?: string;
+  /**
+   * Google Gemini server-side cachedContent resource name (e.g. "cachedContents/abc123").
+   * When set, the provider references the pre-created cached content and Gemini bills
+   * cached tokens at 90% discount on payloads >4K tokens. See geminiCacheManager.ts.
+   */
+  geminiCachedContentName?: string;
 }
 
 export interface SemanticCacheRuntimeConfig {
@@ -146,6 +152,22 @@ export interface SemanticCacheRuntimeConfig {
 export interface SingleFlightRuntimeConfig {
   enabled: boolean;
   maxInFlight?: number;
+}
+
+/**
+ * Configuration for the Google Gemini cachedContent manager.
+ * Manages server-side cached content resource lifecycle (create + LRU + eviction).
+ * Default: enabled with 100 max entries, 5-minute TTL.
+ */
+export interface GeminiCacheRuntimeConfig {
+  /** When false, getOrCreate is a no-op (no network call, no cached name returned). */
+  enabled?: boolean;
+  /** LRU cap on cached content names. Default 100. */
+  maxEntries?: number;
+  /** TTL sent to Gemini at create time. Default 300s (5m). Max 86400 (24h). */
+  defaultTtlSeconds?: number;
+  /** Per-create request timeout in ms. Default 30s. */
+  fetchTimeoutMs?: number;
 }
 
 export interface CacheUsage {
@@ -519,6 +541,8 @@ export interface AgentRuntimeConfig {
   promptCacheKey?: string;
   /** Single-flight request dedup: collapse concurrent identical LLM requests into one provider call. Default: enabled. */
   singleFlight?: SingleFlightRuntimeConfig;
+  /** Google Gemini cachedContent lifecycle manager. 90% off reads on >4K token payloads. Default: enabled. */
+  geminiCache?: GeminiCacheRuntimeConfig;
     /** OpenTelemetry exporter configuration. When enabled, execution traces are exported to an OTLP-compatible endpoint (Jaeger, Tempo, SigNoz, etc.). */
     otelExporter?: {
       /** Enable OTLP trace export (default: false) */

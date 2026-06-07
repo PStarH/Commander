@@ -53,6 +53,7 @@ import { StepTimeoutManager, StepTimeoutError } from './stepTimeoutManager';
 import { ProviderFallbackChain, FallbackChainExhaustedError, type ProviderEntry } from './providerFallbackChain';
 import { getCompensationQueue } from '../atr/compensationQueue';
 import { ReflexionInjector, type ReflectionEntry } from '../memory/reflexionInjector';
+import { failureModeTag, type FailureMode } from './deadLetterQueue';
 import { DeadLetterQueue } from './deadLetterQueue';
 import { StepErrorBoundary } from './stepErrorBoundary';
 import { getMetricsCollector } from './metricsCollector';
@@ -182,7 +183,7 @@ export class AgentRuntime {
     this.circuitBreaker.setObservability({
       onTransition: (from, to, provider) => {
         try { getMetricsCollector().recordCircuitTransition(from, to, provider ?? 'agentRuntime'); } catch { /* best-effort */ }
-        try { this.dlq.enqueue({ category: 'circuit_breaker', operationName: 'circuit.transition', errorMessage: `${from}->${to}`, tags: [`from:${from}`, `to:${to}`, `provider:${provider ?? 'agentRuntime'}`] }); } catch { /* best-effort */ }
+        try { this.dlq.enqueue({ category: 'circuit_breaker', operationName: 'circuit.transition', errorMessage: `${from}->${to}`, tags: [`from:${from}`, `to:${to}`, `provider:${provider ?? 'agentRuntime'}`], failureMode: 'circuit_open' }); } catch { /* best-effort */ }
         try { getIntentLog(undefined).write({ schemaVersion: 1, runId: 'circuit-breaker', capturedAt: new Date().toISOString(), stage: 'agentRuntime.circuit', decision: 'transition', reason: `circuit ${from}->${to}`, payload: { from, to, provider: provider ?? 'agentRuntime' } }); } catch { /* best-effort */ }
       },
     });
@@ -203,7 +204,7 @@ export class AgentRuntime {
       onFailed: (action, err) => { try { getMetricsCollector().recordCompensation(action.toolName, 'failed'); } catch { /* best-effort */ } try { getIntentLog(undefined).write({ schemaVersion: 1, runId: 'compensation', capturedAt: new Date().toISOString(), stage: 'agentRuntime.compensation', decision: 'failed', reason: err.slice(0, 200), payload: { toolName: action.toolName, actionId: action.actionId, args: JSON.stringify(action.args).slice(0, 500) } }); } catch { /* best-effort */ } },
       onExhausted: (action, err) => {
         try { getMetricsCollector().recordCompensation(action.toolName, 'exhausted'); } catch { /* best-effort */ }
-        try { this.dlq.enqueue({ category: 'compensation', operationName: 'compensation.exhausted', errorMessage: err, tags: [action.toolName] }); } catch { /* best-effort */ }
+        try { this.dlq.enqueue({ category: 'compensation', operationName: 'compensation.exhausted', errorMessage: err, tags: [action.toolName], failureMode: 'compensation_exhausted' }); } catch { /* best-effort */ }
         try { getIntentLog(undefined).write({ schemaVersion: 1, runId: 'compensation', capturedAt: new Date().toISOString(), stage: 'agentRuntime.compensation', decision: 'exhausted', reason: err.slice(0, 200), payload: { toolName: action.toolName, actionId: action.actionId } }); } catch { /* best-effort */ }
       },
     });
