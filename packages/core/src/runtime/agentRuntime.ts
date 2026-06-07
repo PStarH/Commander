@@ -52,6 +52,7 @@ import { RunRecovery, type RunRecoveryResult } from './runRecovery';
 import { StepTimeoutManager, StepTimeoutError } from './stepTimeoutManager';
 import { ProviderFallbackChain, FallbackChainExhaustedError, type ProviderEntry } from './providerFallbackChain';
 import { getCompensationQueue } from '../atr/compensationQueue';
+import { ReflexionInjector, type ReflectionEntry } from '../memory/reflexionInjector';
 import { DeadLetterQueue } from './deadLetterQueue';
 import { StepErrorBoundary } from './stepErrorBoundary';
 import { getMetricsCollector } from './metricsCollector';
@@ -65,6 +66,7 @@ import { getHookManager } from '../pluginManager';
 import { ToolResultCache } from './toolResultCache';
 import { SemanticCache } from './semanticCache';
 import { SingleFlightRequestCache, type SingleFlightStats } from './singleFlightRequestCache';
+import { GeminiCacheManager, type GeminiCacheStats } from './geminiCacheManager';
 import { MockEmbeddingFunction, OpenAIEmbeddingFunction } from './embedding';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
@@ -89,7 +91,8 @@ import { createMemoryStore } from '../memory';
 import type { MemoryStore } from '../memory';
 import { OpenTelemetryExporter, getOTelExporter, executionTraceToOtlpSpans } from './openTelemetryExporter';
 import type { OTelSpan } from './openTelemetryExporter';
-import { buildSystemPrompt, buildCacheAwareUserPrompt } from './promptBuilder';
+import { buildSystemPrompt, buildCacheAwareUserPrompt, computePrefixCacheKey } from './promptBuilder';
+import { ReflexionGenerator, type Reflexion, type ReflexionContext } from './reflexionGenerator';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -125,12 +128,15 @@ export class AgentRuntime {
   private compactor: ContextCompactor;
   private circuitBreaker: CircuitBreaker;
   private verificationPipeline: UnifiedVerificationPipeline;
+  private reflexionInjector: ReflexionInjector;
   private governor: TokenGovernor;
   private samplesStore: SamplesStore;
   private memory: import('../threeLayerMemory').ThreeLayerMemory | null = null;
   private traceStore: PersistentTraceStore;
   private checkpointer: StateCheckpointer;
   private dlq: DeadLetterQueue;
+  private reflexionGenerator: ReflexionGenerator = new ReflexionGenerator();
+  private lastPrefixCacheKey?: string;
   private compensationRegistry: CompensationRegistry;
   private agentInbox: AgentInbox;
   private teamRegistry: TeamRegistry;
@@ -138,6 +144,7 @@ export class AgentRuntime {
   private toolCache: ToolResultCache;
   private semanticCache: SemanticCache;
   private singleFlight: SingleFlightRequestCache;
+  private geminiCache: GeminiCacheManager;
   private outputManager: ToolOutputManager;
   private memoryStore: MemoryStore | null = null;
   private otelExporter: OpenTelemetryExporter | null = null;
@@ -185,6 +192,7 @@ export class AgentRuntime {
       budgetFloorTokens: 1500,
       llmVerificationBudget: 300,
     });
+    this.reflexionInjector = new ReflexionInjector({ maxReflections: 3, maxTokensPerReflection: 50 });
     this.samplesStore = new SamplesStore();
     this.traceStore = new PersistentTraceStore();
     this.checkpointer = new StateCheckpointer();
@@ -234,6 +242,12 @@ export class AgentRuntime {
     this.singleFlight = new SingleFlightRequestCache({
       enabled: this.config.singleFlight?.enabled ?? true,
       maxInFlight: this.config.singleFlight?.maxInFlight ?? 1000,
+    });
+    this.geminiCache = new GeminiCacheManager({
+      enabled: this.config.geminiCache?.enabled ?? true,
+      maxEntries: this.config.geminiCache?.maxEntries ?? 100,
+      defaultTtlSeconds: this.config.geminiCache?.defaultTtlSeconds ?? 300,
+      fetchTimeoutMs: this.config.geminiCache?.fetchTimeoutMs ?? 30_000,
     });
     this.outputManager = new ToolOutputManager({ enabled: true, turnBudget: 32000 });
     // ToolApproval with auto-approve callback (semi_auto/manual policies still gate)
@@ -554,6 +568,20 @@ export class AgentRuntime {
     const registrySummary = buildRegistrySummary(twoTier.registry);
 
     const systemPrompt = buildSystemPrompt(ctx, routing, this.config, this.tools, this.governor, registrySummary, twoTier.active.map(t => t.name));
+
+    // KV-cache: track whether the stable system-prompt prefix changed
+    // since the prior call. The prefix is tool-list + governance +
+    // registry summary + max-steps — all cacheable across requests.
+    // A hit lets the provider reuse prefix tokens, cutting cost and
+    // latency (Anthropic reports 5x cost reduction on cached prefixes).
+    const activeToolNames = twoTier.active.map(t => t.name);
+    const newPrefixKey = computePrefixCacheKey(this.config, this.tools, this.governor, registrySummary, activeToolNames);
+    const cacheHit = this.lastPrefixCacheKey !== undefined && this.lastPrefixCacheKey === newPrefixKey;
+    this.lastPrefixCacheKey = newPrefixKey;
+    try {
+      getMetricsCollector().recordPromptPrefixCache(cacheHit, ctx.tenantId);
+      getMetricsCollector().setPromptPrefixCacheKey(newPrefixKey, ctx.tenantId);
+    } catch { /* best-effort */ }
 
     // Cache configuration: enable caching for system prompt + tools on providers that support it
     // 1h TTL is 2x write premium — only worth it on multi-step/long sessions, and the governor
@@ -1113,6 +1141,13 @@ export class AgentRuntime {
           totalDurationMs: Date.now() - startTime,
         });
 
+        // Tier 3.2: Record reflection from this verification attempt so future
+        // retries can learn from prior outcomes (Reflexion: Shinn et al., 2023).
+        const reflectionInsight: ReflectionEntry = verifReport.passed
+          ? { id: `${runId}-${attempt}-ok`, insight: `Attempt ${attempt + 1} passed verification with confidence ${verifReport.confidence.toFixed(2)}.`, type: 'success', timestamp: Date.now() }
+          : { id: `${runId}-${attempt}-fail`, insight: `Attempt ${attempt + 1} failed verification: ${(verifReport.signals[0] && ((verifReport.signals[0] as { type?: string }).type ?? (verifReport.signals[0] as { name?: string }).name)) || 'unknown'} signal.`, type: 'failure', timestamp: Date.now() };
+        this.reflexionInjector.addReflection(reflectionInsight);
+
         if (!verifReport.passed && attempt < this.config.maxRetries) {
           const feedback = this.verificationPipeline.toFeedback(verifReport);
           if (feedback) {
@@ -1155,7 +1190,11 @@ export class AgentRuntime {
               try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId, capturedAt: new Date().toISOString(), stage: 'agentRuntime.cascade', decision: 'escalate', reason: 'verification_failed', payload: { from: routing.modelId, to: fallbackModel.id } }); } catch { /* best-effort */ }
             }
 
-            request.messages.push({ role: 'user', content: feedback });
+            const reflections = this.reflexionInjector.getRecentReflections(3);
+            const augmentedFeedback = reflections.length > 0
+              ? `${feedback}\n\n[Recent reflections — use these to avoid repeating mistakes]:\n${reflections.map((r, i) => `${i + 1}. ${r.insight}`).join('\n')}`
+              : feedback;
+            request.messages.push({ role: 'user', content: augmentedFeedback });
             continue;
           }
         }
@@ -1472,6 +1511,38 @@ export class AgentRuntime {
           getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
         );
       } catch { /* best-effort */ }
+
+      // Google Gemini cachedContent wiring: when the provider is Google and the request carries
+      // a system prompt, try to attach a server-side cached content name. Failures fall through
+      // (cachedContent is a cost optimization, not a correctness requirement).
+      if (providerName === 'google' && request.cacheConfig) {
+        const systemMsg = request.messages.find((m) => m.role === 'system');
+        const tenantForGemini = getGlobalTenantProvider().getCurrentTenantId() ?? undefined;
+        try {
+          const lookup = await this.geminiCache.getOrCreate({
+            systemInstruction: systemMsg?.content,
+            tools: request.tools,
+            model: request.model,
+            apiKey: process.env.GOOGLE_API_KEY ?? '',
+            baseUrl: process.env.GOOGLE_BASE_URL,
+            tenantId: tenantForGemini,
+          });
+          if (lookup.cachedContentName) {
+            request.cacheConfig.geminiCachedContentName = lookup.cachedContentName;
+            try {
+              getMetricsCollector().recordGeminiCacheEvent(
+                lookup.createdNow ? 'create' : 'hit',
+                tenantForGemini,
+              );
+            } catch { /* best-effort */ }
+          }
+        } catch {
+          try {
+            getMetricsCollector().recordGeminiCacheEvent('error', tenantForGemini);
+          } catch { /* best-effort */ }
+        }
+      }
+
       const tenantIdForFlight = getGlobalTenantProvider().getCurrentTenantId() ?? undefined;
       const flightKey = SingleFlightRequestCache.computeKey(request, tenantIdForFlight);
       const evictionsBefore = this.singleFlight.getStats().evictions;
@@ -1762,7 +1833,10 @@ export class AgentRuntime {
       retryDelayMs: this.config.retryDelayMs,
       onExhausted: 'skip',
       onPermanent: 'abort',
-    });
+    }, this.reflexionGenerator);
+
+    let latestReflexion: Reflexion | null = null;
+    let lastReflexionAttempt = 0;
 
     const boundaryResult = await boundary.execute<string>(
       toolCall.name,
@@ -1779,6 +1853,10 @@ export class AgentRuntime {
       {
         tags: ['tool_execution', toolCall.name],
         inputSnapshot: JSON.stringify(toolCall.arguments).slice(0, 1000),
+        onReflexion: (reflexion: Reflexion, ctx: ReflexionContext) => {
+          latestReflexion = reflexion;
+          lastReflexionAttempt = ctx.attemptNumber;
+        },
       },
     );
 
@@ -1827,6 +1905,12 @@ export class AgentRuntime {
         `  reason: ${errorMsg}`,
         `  errorClass: ${boundaryResult.errorClass}`,
         `  args: ${JSON.stringify(toolCall.arguments)}`,
+        ...(latestReflexion
+          ? [ReflexionGenerator.formatForContext(
+              { goal: '', attemptedAction: toolCall.name, actionResult: '', error: errorMsg, errorClass: boundaryResult.errorClass, attemptNumber: lastReflexionAttempt },
+              latestReflexion,
+            )]
+          : []),
         `advice: `,
         `  - If this is a transient error, retry the call`,
         `  - If the arguments are invalid, correct them and retry`,
@@ -2059,6 +2143,10 @@ export class AgentRuntime {
 
   getSingleFlightStats(): SingleFlightStats {
     return this.singleFlight.getStats();
+  }
+
+  getGeminiCacheStats(): GeminiCacheStats {
+    return this.geminiCache.getStats();
   }
 
   /** Dispose sub-resources (timers, file handles) when this runtime is discarded */
