@@ -5,6 +5,7 @@ import { ModelRouter, resetModelRouter } from '../../src/runtime/modelRouter';
 import { resetMessageBus } from '../../src/runtime/messageBus';
 import { resetTraceRecorder } from '../../src/runtime/executionTrace';
 import { resetGlobalThreeLayerMemory } from '../../src/threeLayerMemory';
+import { SingleFlightRequestCache } from '../../src/runtime/singleFlightRequestCache';
 import type { AgentExecutionContext, Tool, ToolDefinition } from '../../src/runtime/types';
 
 describe('AgentRuntime', () => {

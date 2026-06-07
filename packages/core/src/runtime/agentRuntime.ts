@@ -65,7 +65,7 @@ import { getHookManager } from '../pluginManager';
 import { ToolResultCache } from './toolResultCache';
 import { SemanticCache } from './semanticCache';
 import { SingleFlightRequestCache, type SingleFlightStats } from './singleFlightRequestCache';
-import { MockEmbeddingFunction } from './embedding';
+import { MockEmbeddingFunction, OpenAIEmbeddingFunction } from './embedding';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
 import { ToolApproval } from './toolApproval';

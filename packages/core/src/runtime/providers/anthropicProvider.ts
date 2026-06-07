@@ -8,7 +8,7 @@ interface AnthropicContent {
   name?: string;
   id?: string;
   input?: Record<string, unknown>;
-  cache_control?: { type: 'ephemeral' };
+  cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
   tool_use_id?: string;
   content?: string;
 }
