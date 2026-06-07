@@ -373,6 +373,15 @@ export class MetricsCollector {
     this.incrementCounter('single_flight_events_total', 'Single-flight request dedup events by outcome', 1, labels);
   }
 
+  recordGeminiCacheEvent(
+    outcome: 'hit' | 'create' | 'evict' | 'error',
+    tenantId?: string,
+  ): void {
+    const labels: MetricLabel[] = [{ name: 'outcome', value: outcome }];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('gemini_cache_events_total', 'Google Gemini cachedContent events by outcome', 1, labels);
+  }
+
   private key(name: string, labels: MetricLabel[]): string {
     if (labels.length === 0) return name;
     const labelStr = labels.map(l => `${l.name}=${l.value}`).join(',');
@@ -381,6 +390,29 @@ export class MetricsCollector {
 
   private extractName(key: string): string {
     return key.split('{')[0];
+  }
+
+  /**
+   * Record whether the system-prompt prefix was identical to the prior
+   * call's prefix (cache hit) or differed (cache miss). Pair this with
+   * `setPromptPrefixCacheKey` so the cumulative cache key is observable
+   * and the hit rate is computable.
+   */
+  recordPromptPrefixCache(hit: boolean, tenantId?: string): void {
+    const labels: MetricLabel[] = [{ name: 'outcome', value: hit ? 'hit' : 'miss' }];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('prompt_prefix_cache_total', 'System-prompt prefix cache events (hit|miss)', 1, labels);
+  }
+
+  /**
+   * Track the SHA-256 hash of the most recent stable system-prompt
+   * prefix as a numeric gauge. The hash is converted to a 32-bit integer
+   * to avoid Prometheus label-cardinality explosion (full hex keys as
+   * labels would be unbounded).
+   */
+  setPromptPrefixCacheKey(key: string, tenantId?: string): void {
+    const labels: MetricLabel[] = tenantId ? [{ name: 'tenant', value: tenantId }] : [];
+    this.setGauge('prompt_prefix_cache_key', 'Hash of the most recent stable system-prompt prefix', hashToGauge(key), labels);
   }
 
   private formatMetricLine(name: string, value: number, labels: MetricLabel[]): string {
@@ -393,6 +425,19 @@ export class MetricsCollector {
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
 const metricsSingleton = createTenantAwareSingleton(() => new MetricsCollector());
+
+/**
+ * Map a 32-char hex cache key to a numeric gauge value. Hash bytes are
+ * big-endian 16-bit words; the first 4 bytes produce a 32-bit integer
+ * suitable for `setGauge`. Avoids the Prometheus convention of string
+ * labels for cache keys (which would explode label cardinality).
+ */
+function hashToGauge(hexKey: string): number {
+  if (hexKey.length < 8) return 0;
+  const hi = parseInt(hexKey.slice(0, 4), 16);
+  const lo = parseInt(hexKey.slice(4, 8), 16);
+  return hi * 0x10000 + lo;
+}
 
 /** Get the global MetricsCollector (single-tenant) or tenant-scoped (multi-tenant). */
 export function getMetricsCollector(): MetricsCollector {
