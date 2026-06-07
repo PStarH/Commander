@@ -47,6 +47,11 @@ import { getIntentLog } from './intentLog';
 import { getVerificationReportStore } from './verificationReportStore';
 import { getDeadLetterQueue } from './deadLetterQueueSingleton';
 import { StateCheckpointer, type CheckpointState } from './stateCheckpointer';
+import { installProcessCrashHandlers } from './processCrashSafety';
+import { RunRecovery, type RunRecoveryResult } from './runRecovery';
+import { StepTimeoutManager, StepTimeoutError } from './stepTimeoutManager';
+import { ProviderFallbackChain, FallbackChainExhaustedError, type ProviderEntry } from './providerFallbackChain';
+import { getCompensationQueue } from '../atr/compensationQueue';
 import { DeadLetterQueue } from './deadLetterQueue';
 import { StepErrorBoundary } from './stepErrorBoundary';
 import { getMetricsCollector } from './metricsCollector';
@@ -59,6 +64,7 @@ import { runWithTenant } from './tenantContext';
 import { getHookManager } from '../pluginManager';
 import { ToolResultCache } from './toolResultCache';
 import { SemanticCache } from './semanticCache';
+import { SingleFlightRequestCache, type SingleFlightStats } from './singleFlightRequestCache';
 import { MockEmbeddingFunction } from './embedding';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
@@ -68,7 +74,8 @@ import { createRequestToolTool } from '../tools/requestToolTool';
 import { ToolPlanner } from './toolPlanner';
 import { CycleDetector } from './cycleDetector';
 import { repairToolCallArguments } from './toolCallRepair';
-import { validateToolCall, formatValidationErrors } from './toolCallValidator';
+import { validateToolCall, formatValidationErrors, formatValidationErrorsJson } from './toolCallValidator';
+import { suggestRepairsForValidationErrors } from './toolCallRepair';
 import { ToolRegistry } from '../tools/toolRegistry';
 import { getExecutionScheduler, type RunHandle } from '../atr/scheduler';
 import { generateIdempotencyKey } from '../atr/canonicalJson';
@@ -130,6 +137,7 @@ export class AgentRuntime {
   private agentHandoff: AgentHandoff;
   private toolCache: ToolResultCache;
   private semanticCache: SemanticCache;
+  private singleFlight: SingleFlightRequestCache;
   private outputManager: ToolOutputManager;
   private memoryStore: MemoryStore | null = null;
   private otelExporter: OpenTelemetryExporter | null = null;
@@ -222,7 +230,11 @@ export class AgentRuntime {
     }
     // Tool calling infrastructure
     this.toolCache = new ToolResultCache({ enabled: true, maxEntries: 512, defaultTtlMs: 1_800_000 });
-    this.semanticCache = new SemanticCache(new MockEmbeddingFunction(), { enabled: false, pruneIntervalMs: 0 });
+    this.semanticCache = resolveSemanticCache(this.config);
+    this.singleFlight = new SingleFlightRequestCache({
+      enabled: this.config.singleFlight?.enabled ?? true,
+      maxInFlight: this.config.singleFlight?.maxInFlight ?? 1000,
+    });
     this.outputManager = new ToolOutputManager({ enabled: true, turnBudget: 32000 });
     // ToolApproval with auto-approve callback (semi_auto/manual policies still gate)
     const toolApproval = new ToolApproval(
@@ -544,10 +556,17 @@ export class AgentRuntime {
     const systemPrompt = buildSystemPrompt(ctx, routing, this.config, this.tools, this.governor, registrySummary, twoTier.active.map(t => t.name));
 
     // Cache configuration: enable caching for system prompt + tools on providers that support it
+    // 1h TTL is 2x write premium — only worth it on multi-step/long sessions, and the governor
+    // forces 5m in 'critical' phase to avoid paying the write premium on tight budgets.
+    const governorPhase = this.governor.getState().phase;
+    const cacheTtl: '5m' | '1h' =
+      this.config.promptCacheTtl === '1h' && governorPhase !== 'critical' ? '1h' : '5m';
     const cacheConfig: CacheConfig = {
       cacheSystemPrompt: true,
       cacheTools: toolDefs.length > 0,
       useCacheControl: true,
+      cacheTtl,
+      promptCacheKey: this.config.promptCacheKey ?? derivePromptCacheKey(ctx, tenantId),
     };
 
     // Strip internal @tier suffix (eco/standard/power/consensus) before sending to provider
@@ -1436,15 +1455,56 @@ export class AgentRuntime {
       let result: LLMResponse;
       const cached = await this.semanticCache.lookup(request);
       if (cached) {
+        try {
+          getMetricsCollector().recordSemanticCacheEvent(
+            'hit',
+            0,
+            getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
+          );
+        } catch { /* best-effort */ }
         clearTimeout(timeoutId);
         return cached;
       }
       try {
-        result = await Promise.race([provider.call(request), abortPromise]);
-      } finally {
-        clearTimeout(timeoutId);
+        getMetricsCollector().recordSemanticCacheEvent(
+          'miss',
+          0,
+          getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
+        );
+      } catch { /* best-effort */ }
+      const tenantIdForFlight = getGlobalTenantProvider().getCurrentTenantId() ?? undefined;
+      const flightKey = SingleFlightRequestCache.computeKey(request, tenantIdForFlight);
+      const evictionsBefore = this.singleFlight.getStats().evictions;
+      const inflightBefore = this.singleFlight.inflightCount();
+      result = await this.singleFlight.dedupe(
+        flightKey,
+        async () => {
+          try {
+            return await Promise.race([provider.call(request), abortPromise]);
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        },
+        tenantIdForFlight,
+      );
+      const recentEvictionDelta = this.singleFlight.getStats().evictions - evictionsBefore;
+      const wasHit = this.singleFlight.inflightCount() === inflightBefore;
+      try {
+        getMetricsCollector().recordSingleFlightEvent(wasHit ? 'hit' : 'miss', tenantIdForFlight);
+      } catch { /* best-effort */ }
+      if (recentEvictionDelta > 0) {
+        try {
+          getMetricsCollector().recordSingleFlightEvent('eviction', tenantIdForFlight);
+        } catch { /* best-effort */ }
       }
       this.semanticCache.store(request, result);
+      try {
+        getMetricsCollector().recordSemanticCacheEvent(
+          'store',
+          0,
+          getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
+        );
+      } catch { /* best-effort */ }
 
       this.samplesStore.recordLLMCall(request, result, {
         provider: providerName, durationMs: Date.now() - startMs,
@@ -1593,11 +1653,16 @@ export class AgentRuntime {
       const validation = validateToolCall(repairedArgs, schema);
       if (!validation.valid) {
         const errorFeedback = formatValidationErrors(validation.errors, toolCall.name, repairs);
-        tracer.recordToolExecution(runId, toolCall.name, toolCall.arguments, '', 0, errorFeedback);
+        const structuredFeedback = formatValidationErrorsJson(validation.errors, toolCall.name, validation.repairs ?? repairs, validation.repairedArgs);
+        structuredFeedback.errors = structuredFeedback.errors.map((e, i) => ({
+          ...e,
+          suggestion: e.suggestion ?? suggestRepairsForValidationErrors([validation.errors[i]])[0] ?? `Adjust '${e.path}' to match the expected schema.`,
+        }));
+        tracer.recordToolExecution(runId, toolCall.name, toolCall.arguments, errorFeedback, 0, errorFeedback);
         return {
           toolCallId: toolCall.id,
           name: toolCall.name,
-          output: '',
+          output: JSON.stringify(structuredFeedback),
           error: errorFeedback,
           durationMs: Date.now() - startTime,
         };
@@ -1988,6 +2053,14 @@ export class AgentRuntime {
     return this.activeRuns.has(runId);
   }
 
+  getSemanticCacheStats() {
+    return this.semanticCache.getStats();
+  }
+
+  getSingleFlightStats(): SingleFlightStats {
+    return this.singleFlight.getStats();
+  }
+
   /** Dispose sub-resources (timers, file handles) when this runtime is discarded */
   dispose(): void {
     this.toolCache.dispose();
@@ -2007,4 +2080,52 @@ export class AgentRuntime {
     this.tenantTraceStores.clear();
     this.tenantCheckpointers.clear();
   }
+}
+
+function resolveSemanticCache(config: AgentRuntimeConfig): SemanticCache {
+  const cfg = config.semanticCache;
+  if (!cfg?.enabled) {
+    return new SemanticCache(new MockEmbeddingFunction(), { enabled: false, pruneIntervalMs: 0 });
+  }
+  const apiKey = cfg.openaiApiKey ?? process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    getGlobalLogger().warn(
+      'AgentRuntime',
+      'semanticCache.enabled=true but no OPENAI_API_KEY available; cache is disabled. Set OPENAI_API_KEY or pass config.semanticCache.openaiApiKey.',
+    );
+    return new SemanticCache(new MockEmbeddingFunction(), { enabled: false, pruneIntervalMs: 0 });
+  }
+  getGlobalLogger().info(
+    'AgentRuntime',
+    `Semantic cache enabled with OpenAI embeddings (model=${cfg.embeddingModel ?? 'text-embedding-3-small'}, threshold=${cfg.similarityThreshold ?? 0.92})`,
+  );
+  return new SemanticCache(
+    new OpenAIEmbeddingFunction({
+      apiKey,
+      model: cfg.embeddingModel,
+      baseUrl: cfg.embeddingBaseUrl,
+    }),
+    {
+      enabled: true,
+      similarityThreshold: cfg.similarityThreshold ?? 0.92,
+      maxEntries: cfg.maxEntries ?? 10_000,
+      defaultTtlMs: cfg.defaultTtlMs ?? 86_400_000,
+      maxBucketSize: cfg.maxBucketSize ?? 64,
+      cacheStochastic: cfg.cacheStochastic ?? false,
+      cacheToolCalls: cfg.cacheToolCalls ?? false,
+      pruneIntervalMs: cfg.pruneIntervalMs ?? 60_000,
+    },
+  );
+}
+
+function derivePromptCacheKey(ctx: AgentExecutionContext, tenantId: string | undefined): string {
+  const goal = ctx.goal ?? '';
+  let hash = 0;
+  for (let i = 0; i < goal.length; i++) {
+    hash = ((hash << 5) - hash + goal.charCodeAt(i)) | 0;
+  }
+  const goalTag = Math.abs(hash).toString(36).slice(0, 12);
+  const tenantTag = tenantId ?? 'default';
+  const agentTag = ctx.agentId ?? 'shared';
+  return `${tenantTag}:${agentTag}:${goalTag}`.slice(0, 64);
 }

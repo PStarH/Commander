@@ -60,8 +60,10 @@ export class AnthropicProvider implements LLMProvider {
     if (request.tools && request.tools.length > 0) {
       body.tools = FormatBridge.adaptToolsForProvider(request.tools, 'anthropic');
       if (request.cacheConfig?.cacheTools) {
+        const toolCacheControl: { type: 'ephemeral'; ttl?: '5m' | '1h' } = { type: 'ephemeral' };
+        if (request.cacheConfig?.cacheTtl) toolCacheControl.ttl = request.cacheConfig.cacheTtl;
         (body.tools as Record<string, unknown>[]).forEach((t: Record<string, unknown>) => {
-          t.cache_control = { type: 'ephemeral' };
+          t.cache_control = toolCacheControl;
         });
       }
     }
@@ -141,6 +143,7 @@ export class AnthropicProvider implements LLMProvider {
 
     if (request.cacheConfig?.cacheSystemPrompt) {
       blocks[0].cache_control = { type: 'ephemeral' };
+      if (request.cacheConfig?.cacheTtl) blocks[0].cache_control!.ttl = request.cacheConfig.cacheTtl;
     }
 
     return blocks;

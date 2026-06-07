@@ -123,6 +123,29 @@ export interface CacheConfig {
   cacheHistory?: number;
   /** Explicit cache_control markers (Anthropic-style) */
   useCacheControl: boolean;
+  /** Anthropic cache TTL: '5m' (default, 1.25x write) or '1h' (2x write, 90% off reads) */
+  cacheTtl?: '5m' | '1h';
+  /** OpenAI prompt_cache_key for routing stickiness across requests */
+  promptCacheKey?: string;
+}
+
+export interface SemanticCacheRuntimeConfig {
+  enabled: boolean;
+  similarityThreshold?: number;
+  maxEntries?: number;
+  defaultTtlMs?: number;
+  maxBucketSize?: number;
+  cacheStochastic?: boolean;
+  cacheToolCalls?: boolean;
+  pruneIntervalMs?: number;
+  openaiApiKey?: string;
+  embeddingModel?: string;
+  embeddingBaseUrl?: string;
+}
+
+export interface SingleFlightRuntimeConfig {
+  enabled: boolean;
+  maxInFlight?: number;
 }
 
 export interface CacheUsage {
@@ -280,8 +303,10 @@ export interface ValidationResult {
     message: string;
     expectedType?: string;
     actualValue?: unknown;
+    suggestion?: string;
   }>;
   repairedArgs?: Record<string, unknown>;
+  repairs?: string[];
 }
 
 // ============================================================================
@@ -486,6 +511,14 @@ export interface AgentRuntimeConfig {
   enableCompensation?: boolean;
   /** Enable ToolResultCache for read-only tool results (defaults to true). */
   enableToolCaching?: boolean;
+  /** Semantic (embedding-similarity) response cache. Defaults to disabled. */
+  semanticCache?: SemanticCacheRuntimeConfig;
+  /** Provider prompt-cache TTL override (Anthropic). '1h' = 2x write premium but 90% off reads. Forced to '5m' in critical governor phase. */
+  promptCacheTtl?: '5m' | '1h';
+  /** OpenAI prompt_cache_key override. Default auto-derived from tenant+agent+goal-hash for routing stickiness. */
+  promptCacheKey?: string;
+  /** Single-flight request dedup: collapse concurrent identical LLM requests into one provider call. Default: enabled. */
+  singleFlight?: SingleFlightRuntimeConfig;
     /** OpenTelemetry exporter configuration. When enabled, execution traces are exported to an OTLP-compatible endpoint (Jaeger, Tempo, SigNoz, etc.). */
     otelExporter?: {
       /** Enable OTLP trace export (default: false) */
@@ -672,6 +705,18 @@ export interface TraceEvent {
     tokenUsage?: TokenUsage;
     error?: string;
     stateTransition?: { from: string; to: string };
+    /** OTel convention: gen_ai.response.id */
+    responseId?: string;
+    /** OTel convention: gen_ai.output.type */
+    outputType?: 'text' | 'json' | 'tool_call' | 'image' | 'audio' | 'video';
+    /** OTel convention: gen_ai.usage.reasoning.output_tokens */
+    reasoningTokens?: number;
+    /** OTel convention: gen_ai.response.finish_reasons */
+    finishReason?: 'stop' | 'length' | 'tool_calls' | 'error' | 'content_filter' | 'other';
+    /** OTel convention: server.address */
+    serverAddress?: string;
+    /** OTel convention: gen_ai.tool.call.id */
+    toolCallId?: string;
   };
   /** Parent span ID for creating trace trees */
   parentSpanId?: string;

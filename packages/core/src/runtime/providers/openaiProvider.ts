@@ -91,6 +91,9 @@ export class OpenAIProvider implements LLMProvider {
       // OpenAI's prompt caching is automatic for repeated prefixes
       // System prompt at the start ensures cache hits
     }
+    if (request.cacheConfig?.promptCacheKey) {
+      body.prompt_cache_key = request.cacheConfig.promptCacheKey;
+    }
 
     return body;
   }

@@ -351,6 +351,28 @@ export class MetricsCollector {
     this.incrementCounter('partial_runs_total', 'Runs that ended without terminal state', 1, labels);
   }
 
+  recordSemanticCacheEvent(
+    outcome: 'hit' | 'miss' | 'store' | 'embedding_error',
+    costSavedUsd: number = 0,
+    tenantId?: string,
+  ): void {
+    const labels: MetricLabel[] = [{ name: 'outcome', value: outcome }];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('semantic_cache_events_total', 'Semantic cache events by outcome', 1, labels);
+    if (outcome === 'hit' && costSavedUsd > 0) {
+      this.incrementCounter('semantic_cache_cost_saved_usd_total', 'Estimated cost saved by semantic cache hits (USD)', costSavedUsd, labels);
+    }
+  }
+
+  recordSingleFlightEvent(
+    outcome: 'hit' | 'miss' | 'eviction',
+    tenantId?: string,
+  ): void {
+    const labels: MetricLabel[] = [{ name: 'outcome', value: outcome }];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('single_flight_events_total', 'Single-flight request dedup events by outcome', 1, labels);
+  }
+
   private key(name: string, labels: MetricLabel[]): string {
     if (labels.length === 0) return name;
     const labelStr = labels.map(l => `${l.name}=${l.value}`).join(',');
