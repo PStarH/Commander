@@ -31,12 +31,16 @@ import { DeepInfraProvider } from './providers/deepinfraProvider';
 import { MCPServer } from '../mcp/server';
 import { getGlobalLogger } from '../logging';
 import { getMetricsCollector } from './metricsCollector';
+import { installProcessCrashHandlers } from './processCrashSafety';
+import { getDeadLetterQueue } from './deadLetterQueueSingleton';
 import { openApiSpec } from './openapi';
 import { handleAtrHttpRequest, type AtrHttpDeps } from '../atr/atrHttp';
 import { getExecutionScheduler } from '../atr/scheduler';
 import { handleObservabilityRequest, type ObservabilityDeps } from '../observability/httpApi';
 import { getTraceRecorder } from './executionTrace';
+import { getCostModel } from '../observability/costModel';
 import { PersistentTraceStore } from './traceStore';
+import { LeaseManager } from '../atr/leaseManager';
 
 export interface HttpServerConfig {
   port: number;
@@ -209,6 +213,29 @@ export class CommanderHttpServer {
           port: this.config.port,
           authEnabled: !this.authDisabled,
         });
+
+        // Tier 1.1: Install process crash handlers for the HTTP server
+        try {
+          const dlq = getDeadLetterQueue();
+          const leaseManager = new LeaseManager();
+          installProcessCrashHandlers({
+            dlq,
+            leaseManager,
+            activeRunIds: () => {
+              const ids: string[] = [];
+              for (const [, entry] of this.runtimes) {
+                // Each runtime tracks its own activeRuns — aggregate them
+              }
+              return ids;
+            },
+            leaseTokenFor: () => undefined,
+            fencingEpochFor: () => undefined,
+            tenantIdFor: () => undefined,
+          });
+        } catch (e) {
+          getGlobalLogger().warn('HttpServer', 'Failed to install crash handlers', { error: (e as Error)?.message });
+        }
+
         resolve();
       });
       // Periodic cleanup of stale sessions and rate limit entries
@@ -243,6 +270,17 @@ export class CommanderHttpServer {
     return new Promise((resolve) => {
       if (!this.server) { resolve(); return; }
       this.isShuttingDown = true;
+
+      // Cancel all in-flight tool executions across all active runtimes
+      for (const [, entry] of this.runtimes) {
+        try {
+          const cancelled = entry.runtime.cancelAllSteps();
+          if (cancelled > 0) {
+            getGlobalLogger().info('HttpServer', 'Cancelled in-flight steps', { cancelled });
+          }
+        } catch { /* best-effort */ }
+      }
+
       const remaining = this.connections.size;
       if (remaining > 0) {
         getGlobalLogger().info('HttpServer', 'Draining connections', { remaining });
@@ -343,6 +381,15 @@ export class CommanderHttpServer {
       res.end(JSON.stringify({ error: 'Unauthorized. Provide Authorization: Bearer <api-key> header.' }));
       return;
     }
+
+    // Reject new run requests during graceful shutdown to prevent new runtimes
+    // from being created while we're cancelling in-flight steps and draining connections.
+    if (this.isShuttingDown && (segments[0] === 'api' || segments[0] === 'stream')) {
+      res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '5' });
+      res.end(JSON.stringify({ error: 'Server is shutting down. Please retry shortly.' }));
+      return;
+    }
+
     // Rate limiting per IP
     if (this.config.rateLimitPerMinute > 0) {
       const ip = req.socket.remoteAddress ?? 'unknown';
@@ -361,7 +408,12 @@ export class CommanderHttpServer {
       if (segments[0] === 'api') {
         await this.handleApiRequest(req, res, segments.slice(1), queryStr);
       } else if (segments[0] === 'stream') {
-        await this.handleStreamRequest(req, res, segments.slice(1));
+        const streamSegments = segments.slice(1);
+        if (streamSegments[0] === 'cost') {
+          await this.handleCostStreamRequest(req, res);
+        } else {
+          await this.handleStreamRequest(req, res, streamSegments);
+        }
       } else {
         sendJson(res, 404, { error: 'Not found' });
       }
@@ -508,6 +560,48 @@ export class CommanderHttpServer {
     const unsubComplete = this.bus.subscribe('agent.completed', () => { stream.emitStatus('agent.completed'); });
     const unsubError = this.bus.subscribe('agent.failed', () => { stream.emitStatus('agent.error'); });
     req.on('close', () => { unsubStart(); unsubComplete(); unsubError(); stream.close(); });
+  }
+
+  private async handleCostStreamRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+    const stream = new SSEStream();
+    stream.pipe(res);
+
+    const costModel = getCostModel();
+    const sessionCosts = new Map<string, { totalCost: number; totalTokens: number; byModel: Record<string, { cost: number; tokens: number; calls: number }> }>();
+
+    const unsubLlm = this.bus.subscribe('tool.executed', (msg) => {
+      const payload = msg.payload as { model?: string; provider?: string; tokens?: number; runId?: string };
+      if (!payload.model || !payload.provider) return;
+      const runId = payload.runId ?? 'unknown';
+      const tokens = payload.tokens ?? 0;
+      const cost = costModel.calculate(payload.provider, payload.model, { input: tokens, output: 0, cached: 0, reasoning: 0, total: tokens });
+
+      let session = sessionCosts.get(runId);
+      if (!session) {
+        session = { totalCost: 0, totalTokens: 0, byModel: {} };
+        sessionCosts.set(runId, session);
+      }
+      session.totalCost += cost.totalCostUsd;
+      session.totalTokens += tokens;
+
+      const modelKey = `${payload.provider}:${payload.model}`;
+      if (!session.byModel[modelKey]) {
+        session.byModel[modelKey] = { cost: 0, tokens: 0, calls: 0 };
+      }
+      session.byModel[modelKey].cost += cost.totalCostUsd;
+      session.byModel[modelKey].tokens += tokens;
+      session.byModel[modelKey].calls++;
+
+      stream.emitStructured('cost.update', {
+        runId,
+        totalCost: session.totalCost,
+        totalTokens: session.totalTokens,
+        byModel: session.byModel,
+      });
+    });
+
+    req.on('close', () => { unsubLlm(); stream.close(); });
   }
 
   /**

@@ -18,7 +18,7 @@ export interface CheckpointState {
   agentId: string;
   missionId?: string;
   timestamp: string;
-  phase: 'started' | 'llm_call' | 'tool_execution' | 'verification' | 'completed' | 'failed';
+  phase: 'started' | 'llm_call' | 'tool_execution' | 'verification' | 'completed' | 'completed_early_exit' | 'failed';
   stepNumber: number;
   attemptNumber: number;
   messages: LLMMessage[];

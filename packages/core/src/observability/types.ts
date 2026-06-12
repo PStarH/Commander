@@ -69,13 +69,19 @@ export interface TimelineNode {
   toolCategory?: string;
   model?: string;
   provider?: string;
+  tier?: string;
+  taskCategory?: string;
   tokens?: TokenBreakdown;
   cost?: CostBreakdown;
   reasoning?: string;
+  promptContent?: string;
+  completionContent?: string;
   toolInputPreview?: string;
   toolOutputPreview?: string;
   decision?: string;
   stateTransition?: { from: string; to: string };
+  evaluationScore?: number;
+  evaluationPassed?: boolean;
   hasChildren: boolean;
 }
 
@@ -175,6 +181,8 @@ export interface ReplaySpec {
     value: unknown;
   }>;
   reExecuteLlm: boolean;
+  modelOverride?: string;
+  onlySpanIds?: string[];
 }
 
 export interface ReplayResult {
@@ -189,6 +197,31 @@ export interface ReplayResult {
     tokenDelta: number;
   };
   replayedNodes: TimelineNode[];
+}
+
+export interface ExecutiveSummary {
+  runId: string;
+  traceId: string;
+  status: 'success' | 'error' | 'partial';
+  durationMs: number;
+  totalCostUsd: number;
+  totalTokens: number;
+  llmCalls: number;
+  toolCalls: number;
+  errors: number;
+  modelsUsed: string[];
+  toolsUsed: string[];
+  topology?: string;
+  taskCategory?: string;
+  narrative: string;
+  highlights: string[];
+  timeline: Array<{
+    timestamp: string;
+    label: string;
+    detail: string;
+    durationMs?: number;
+    costUsd?: number;
+  }>;
 }
 
 export const SPAN_KIND_TO_OPERATION: Record<SpanKind, OtelGenAiOperation> = {
@@ -212,4 +245,5 @@ export const COMMANDER_TYPE_TO_SPAN_KIND: Record<string, SpanKind> = {
   decision: 'DECISION',
   error: 'ERROR',
   state_change: 'STATE_CHANGE',
+  verification: 'EVALUATOR',
 };

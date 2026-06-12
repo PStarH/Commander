@@ -279,7 +279,7 @@ export interface IdempotencyKeyContext {
 
 export interface Tool {
   definition: ToolDefinition;
-  execute(args: Record<string, unknown>): Promise<string>;
+  execute(args: Record<string, unknown>, ctx?: AgentExecutionContext): Promise<string>;
   /** If true, tool can run in parallel with other concurrent-safe tools. Default: false */
   isConcurrencySafe?: boolean;
   /** If true, tool only reads state (no side effects). Allows speculative execution. Default: false */
@@ -403,9 +403,14 @@ export interface AgentExecutionContext {
 availableTools: string[];
     maxSteps: number;
     tokenBudget: number;
-    outputDir?: string;
-    abortSignal?: AbortSignal;
-}
+    outputDir?: string;    abortSignal?: AbortSignal;
+    /** SubAgentGuard for enforcing per-step limits during sub-agent execution.
+     *  When set, agentRuntime calls guard.check() at each step boundary and
+     *  guard.recordTokens() after each LLM call. Violations throw SubAgentLimitError. */
+     guard?: import('../ultimate/subAgentGuard').SubAgentGuard;
+     /** Human input to resume after interrupt. When set, the runtime returns this as the interrupt's value instead of pausing. */
+     resumeWith?: unknown;
+   }
 
 /**
  * A step in agent execution.
@@ -453,7 +458,7 @@ export interface AgentExecutionResult {
   runId: string;
   agentId: string;
   missionId?: string;
-  status: 'success' | 'failed' | 'partial' | 'cancelled';
+  status: 'success' | 'failed' | 'partial' | 'cancelled' | 'interrupted';
   summary: string;
   steps: AgentExecutionStep[];
   totalTokenUsage: TokenUsage;
@@ -462,6 +467,8 @@ export interface AgentExecutionResult {
   outputData?: Record<string, unknown>;
   /** Content written to files by file_write tool calls during this execution */
   artifactContent?: string;
+  /** Present when status is 'interrupted' — contains the interrupt payload */
+  interrupt?: { reason: string; value: unknown };
 }
 
 /**
@@ -717,7 +724,7 @@ export interface TraceEvent {
   traceId: string;
   runId: string;
   agentId: string;
-  type: 'llm_call' | 'tool_execution' | 'decision' | 'error' | 'state_change';
+  type: 'llm_call' | 'tool_execution' | 'decision' | 'error' | 'state_change' | 'verification';
   timestamp: string;
   durationMs: number;
   data: {
@@ -741,6 +748,23 @@ export interface TraceEvent {
     serverAddress?: string;
     /** OTel convention: gen_ai.tool.call.id */
     toolCallId?: string;
+    /** Verification pipeline: confidence score [0-1] */
+    evaluationScore?: number;
+    /** Verification pipeline: whether the verification passed */
+    evaluationPassed?: boolean;
+    /** Task category from deliberation (coding, research, reasoning, etc.) */
+    taskCategory?: string;
+    /** Model tier (budget, standard, premium) */
+    tier?: string;
+    /** OTel convention: gen_ai.conversation.id — links spans across a multi-turn conversation */
+    conversationId?: string;
+    /** Human feedback attached to this trace event */
+    feedback?: {
+      rating?: 'positive' | 'negative' | 'neutral';
+      comment?: string;
+      tags?: string[];
+      timestamp: string;
+    };
   };
   /** Parent span ID for creating trace trees */
   parentSpanId?: string;

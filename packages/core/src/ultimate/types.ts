@@ -331,6 +331,57 @@ export interface QualityGateConfig {
 }
 
 // ============================================================================
+// Shared State with Per-Key Reducers (LangGraph-inspired)
+// ============================================================================
+
+/**
+ * Reducer function: merges current value with update value.
+ * Each state key independently defines how concurrent writes merge.
+ */
+export type StateReducer<V> = (current: V, update: V) => V;
+
+/**
+ * State field definition: value type + optional reducer.
+ * Fields without reducer use LastValue semantics (overwrite).
+ * Fields with reducer use BinaryOperatorAggregate semantics (merge).
+ */
+export interface StateFieldDef<V> {
+  defaultValue: () => V;
+  reducer?: StateReducer<V>;
+}
+
+/**
+ * Typed shared state between agents. Each key has:
+ * - A typed value
+ * - An optional reducer for merge semantics
+ * - A default value factory
+ *
+ * Accumulating fields (findings, errors, messages) use append reducers.
+ * Overwrite fields (currentStep, topology) use LastValue semantics.
+ */
+export interface SharedStateSchema {
+  findings: StateFieldDef<string[]>;
+  errors: StateFieldDef<string[]>;
+  messages: StateFieldDef<Array<{ from: string; subject: string; body: string }>>;
+  artifacts: StateFieldDef<string[]>;
+  costAccumulator: StateFieldDef<number>;
+  currentStep: StateFieldDef<string>;
+}
+
+/** The concrete shared state type (inferred from schema) */
+export interface SharedState {
+  findings: string[];
+  errors: string[];
+  messages: Array<{ from: string; subject: string; body: string }>;
+  artifacts: string[];
+  costAccumulator: number;
+  currentStep: string;
+}
+
+/** Partial update returned by agents — only fields they changed */
+export type SharedStateUpdate = Partial<SharedState>;
+
+// ============================================================================
 // Ultimate Execution Context
 // ============================================================================
 
@@ -342,6 +393,7 @@ export interface UltimateExecutionContext {
   projectId: string;
   goal: string;
   context: Record<string, unknown>;
+  sharedState: SharedState;
 
   // Deliberation phase output
   deliberation?: DeliberationPlan;

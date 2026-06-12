@@ -21,7 +21,8 @@ export type StructuredSSEEventType =
   | 'output.delta'
   | 'output.completed'
   | 'diff.available'
-  | 'error.occurred';
+  | 'error.occurred'
+  | 'cost.update';
 
 export interface StructuredSSEEvent {
   event: StructuredSSEEventType;

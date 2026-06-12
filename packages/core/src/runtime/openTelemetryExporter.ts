@@ -21,6 +21,7 @@ import * as https from 'https';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
+import { eventToOtelAttrs, spanNameForEvent } from '../observability/otelSemConv';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -305,8 +306,9 @@ export class OpenTelemetryExporter {
 
 /**
  * Convert an ExecutionTrace into an array of OTelSpan objects for export.
- * Each TraceEvent becomes one OTelSpan, with the trace-level metadata
- * (agentId, runId) attached as span attributes.
+ * Each TraceEvent becomes one OTelSpan. OTel GenAI attributes are produced
+ * via the shared `eventToOtelAttrs` mapping so HTTP and OTLP exports stay
+ * in sync (P1: OTel GenAI 1.36+ compliance).
  */
 export function executionTraceToOtlpSpans(trace: import('./types').ExecutionTrace): OTelSpan[] {
   const spans: OTelSpan[] = [];
@@ -317,31 +319,22 @@ export function executionTraceToOtlpSpans(trace: import('./types').ExecutionTrac
   if (trace.missionId) baseAttrs['commander.mission_id'] = trace.missionId;
 
   for (const event of trace.events) {
+    const otelAttrs = eventToOtelAttrs(event, {});
     const attrs: Record<string, string | number | boolean> = { ...baseAttrs };
-    if (event.data.modelInfo) {
-      attrs['gen_ai.request.model'] = event.data.modelInfo.model;
-      attrs['gen_ai.request.provider'] = event.data.modelInfo.provider;
-    }
-    if (event.data.tokenUsage) {
-      attrs['gen_ai.usage.prompt_tokens'] = event.data.tokenUsage.promptTokens;
-      attrs['gen_ai.usage.completion_tokens'] = event.data.tokenUsage.completionTokens;
-      attrs['gen_ai.usage.total_tokens'] = event.data.tokenUsage.totalTokens;
-    }
-    if (event.data.error) {
-      attrs['error.message'] = String(event.data.error);
+    for (const [k, v] of Object.entries(otelAttrs)) {
+      if (v === undefined) continue;
+      attrs[k] = typeof v === 'boolean' ? v : v as string | number;
     }
     if (event.data.stateTransition) {
       attrs['state.from'] = event.data.stateTransition.from;
       attrs['state.to'] = event.data.stateTransition.to;
     }
 
-    const name = eventDataToSpanName(event.data.input, event.data.output, event.type);
-
     const span: OTelSpan = {
       traceId: event.traceId,
       spanId: event.spanId,
       parentSpanId: event.parentSpanId,
-      name,
+      name: spanNameForEvent(event),
       kind: 0,
       startTime: event.timestamp,
       endTime: new Date(new Date(event.timestamp).getTime() + event.durationMs).toISOString(),

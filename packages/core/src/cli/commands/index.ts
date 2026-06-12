@@ -9,6 +9,7 @@ export { cmdPlugin } from './plugin';
 export { cmdHistory } from './history';
 export { cmdWorkflow } from './workflow';
 export { cmdBenchmark } from './benchmark';
+export { cmdMultiAgentBenchmark } from './multiAgentBenchmark';
 export { cmdQuickstart } from './quickstart';
 export { cmdCompletion } from './completion';
 export { cmdFeedback } from './feedback';

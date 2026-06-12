@@ -1,4 +1,4 @@
-import type { ExecutionTrace } from '../runtime/types';
+import type { ExecutionTrace, TraceEvent } from '../runtime/types';
 import type { ReplayResult, ReplaySpec, TimelineView, TimelineNode } from './types';
 import { buildTimeline } from './timelineBuilder';
 
@@ -55,6 +55,120 @@ export function dryReplay(trace: ExecutionTrace, spec: ReplaySpec): ReplayResult
     diff: { newSpans, changedSpans, costDeltaUsd: costDelta, tokenDelta },
     replayedNodes,
   };
+}
+
+export interface LiveReplayContext {
+  invokeLlm: (args: {
+    spanId: string;
+    model: string;
+    prompt: string;
+    originalTokens: { promptTokens: number; completionTokens: number; totalTokens: number };
+  }) => Promise<{
+    text: string;
+    tokens: { promptTokens: number; completionTokens: number; totalTokens: number };
+    costUsd: number;
+  }>;
+  signal?: AbortSignal;
+}
+
+export interface LiveReplayOptions {
+  modelOverride?: string;
+  onlySpanIds?: string[];
+}
+
+export async function liveReplay(
+  trace: ExecutionTrace,
+  spec: ReplaySpec,
+  ctx: LiveReplayContext,
+  options: LiveReplayOptions = {},
+): Promise<ReplayResult & { mode: 'live' | 'dry'; reExecutedSpans: string[] }> {
+  if (!spec.reExecuteLlm) {
+    return { ...dryReplay(trace, spec), mode: 'dry', reExecutedSpans: [] };
+  }
+  const originalTimeline = buildTimeline(trace);
+  const replayedNodes: TimelineNode[] = [];
+  const reExecutedSpans: string[] = [];
+
+  for (const originalNode of originalTimeline.nodes) {
+    if (originalNode.type !== 'LLM') {
+      replayedNodes.push(applySubstitution(originalNode, spec));
+      continue;
+    }
+    if (options.onlySpanIds && !options.onlySpanIds.includes(originalNode.spanId)) {
+      replayedNodes.push(applySubstitution(originalNode, spec));
+      continue;
+    }
+    const model = options.modelOverride ?? originalNode.model ?? 'unknown';
+    const prompt = originalNode.toolInputPreview || originalNode.reasoning || '';
+    const originalEvent = findEventForNode(trace, originalNode.spanId);
+    const originalTokens = {
+      promptTokens: originalNode.tokens?.input ?? 0,
+      completionTokens: originalNode.tokens?.output ?? 0,
+      totalTokens: originalNode.tokens?.total ?? 0,
+    };
+    try {
+      if (ctx.signal?.aborted) throw new Error('replay aborted');
+      const result = await ctx.invokeLlm({
+        spanId: originalNode.spanId,
+        model,
+        prompt,
+        originalTokens,
+      });
+      const substituted = applySubstitution(
+        { ...originalNode, reasoning: result.text },
+        spec,
+      );
+      replayedNodes.push({
+        ...substituted,
+        model,
+        tokens: {
+          input: result.tokens.promptTokens,
+          output: result.tokens.completionTokens,
+          cached: substituted.tokens?.cached ?? 0,
+          reasoning: originalEvent?.data.reasoningTokens ?? 0,
+          total: result.tokens.totalTokens,
+        },
+        cost: {
+          totalCostUsd: result.costUsd,
+          inputCostUsd: 0,
+          outputCostUsd: result.costUsd,
+        },
+      });
+      reExecutedSpans.push(originalNode.spanId);
+    } catch (err) {
+      replayedNodes.push(applySubstitution(originalNode, spec));
+    }
+  }
+
+  const replaySummary = recomputeSummary(replayedNodes);
+  const newSpans = replayedNodes.filter((n) => !originalTimeline.nodes.some((o) => o.spanId === n.spanId)).length;
+  const changedSpans = replayedNodes.filter((n) => {
+    const o = originalTimeline.nodes.find((x) => x.spanId === n.spanId);
+    if (!o) return false;
+    return (
+      o.reasoning !== n.reasoning ||
+      o.toolOutputPreview !== n.toolOutputPreview ||
+      o.toolInputPreview !== n.toolInputPreview ||
+      o.model !== n.model
+    );
+  }).length;
+  const costDelta = replaySummary.totalCost.totalCostUsd - originalTimeline.summary.totalCost.totalCostUsd;
+  const tokenDelta = replaySummary.totalTokens.total - originalTimeline.summary.totalTokens.total;
+
+  return {
+    runId: trace.runId,
+    traceId: trace.traceId,
+    originalSummary: originalTimeline.summary,
+    replaySummary,
+    diff: { newSpans, changedSpans, costDeltaUsd: costDelta, tokenDelta },
+    replayedNodes,
+    mode: 'live',
+    reExecutedSpans,
+  };
+}
+
+function findEventForNode(trace: ExecutionTrace, spanId: string): TraceEvent | undefined {
+  return trace.events.find((e) => e.spanId === spanId);
 }
 
 function recomputeSummary(nodes: TimelineNode[]): TimelineView['summary'] {

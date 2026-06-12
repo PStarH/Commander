@@ -14,6 +14,7 @@
  */
 
 import type { ToolCall, ToolResult } from './types';
+import { getMetricsCollector } from './metricsCollector';
 
 // FNV-1a hash — fast, non-cryptographic, sufficient for in-memory cache keys
 function fnv1a(str: string): string {
@@ -77,7 +78,7 @@ export interface ToolCacheConfig {
 }
 
 const DEFAULT_CONFIG: ToolCacheConfig = {
-  enabled: false,
+  enabled: true,
   maxEntries: 256,
   defaultTtlMs: 300_000,
   toolTtls: {},
@@ -172,6 +173,7 @@ export class ToolResultCache {
 
     if (!entry) {
       this.stats.misses++;
+      try { getMetricsCollector().recordToolCacheEvent('miss', tenantId); } catch { /* best-effort */ }
       return undefined;
     }
 
@@ -180,6 +182,7 @@ export class ToolResultCache {
       this.memoryEstimateBytes -= 500 + (entry.result.output?.length ?? 0) * 2;
       this.cache.delete(key);
       this.stats.misses++;
+      try { getMetricsCollector().recordToolCacheEvent('miss', tenantId); } catch { /* best-effort */ }
       return undefined;
     }
 
@@ -188,6 +191,11 @@ export class ToolResultCache {
     entry.lastAccessAt = Date.now();
     entry.accessOrder = ++this.accessCounter;
     this.stats.hits++;
+
+    // Record metrics
+    try {
+      getMetricsCollector().recordToolCacheEvent('hit', tenantId);
+    } catch { /* best-effort */ }
 
     // Return a copy to prevent callers from corrupting the cached entry
     return { ...entry.result, durationMs: 0 };
@@ -223,6 +231,9 @@ export class ToolResultCache {
       accessOrder: ++this.accessCounter,
     });
     this.memoryEstimateBytes += entrySize;
+
+    // Record metrics
+    try { getMetricsCollector().recordToolCacheEvent('store', tenantId); } catch { /* best-effort */ }
   }
 
   /**

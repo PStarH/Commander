@@ -76,7 +76,7 @@ const TASK_CAPABILITY_MAP: Record<string, string[]> = {
 // Outcome tracking for learning
 // ============================================================================
 
-interface ModelOutcome {
+export interface ModelOutcome {
   modelId: string;
   taskType: string;
   success: boolean;
@@ -332,6 +332,86 @@ export class ModelRouter {
   }
 
   /**
+   * Route with FrugalGPT cascade: start with the cheapest capable model,
+   * escalate on failure. Returns both the initial routing AND the escalation chain.
+   *
+   * Evidence:
+   * - FrugalGPT (arXiv:2305.05176): try cheap first, escalate on failure/low-confidence
+   *   achieves 2-8x cost reduction with <1% quality loss
+   * - OpenAI: cascade routing reduces cost by 50-70% on easy tasks
+   *
+   * @param governorPhase - When 'tight' or 'critical', always use cascade (start cheap).
+   *   When 'relaxed' or 'moderate', use standard routing (start optimal).
+   */
+  routeWithCascade(
+    ctx: AgentExecutionContext,
+    governorPhase?: string,
+  ): { initial: RoutingDecision; escalationChain: ModelConfig[] } {
+    const governor = governorPhase ?? 'relaxed';
+    const taskType = detectTaskType(ctx.goal);
+
+    // In relaxed/moderate mode, use standard routing (start optimal)
+    if (governor === 'relaxed' || governor === 'moderate') {
+      const initial = this.route(ctx, governor);
+      const chain = this.getCascadeChain(taskType, 3);
+      return { initial, escalationChain: chain };
+    }
+
+    // In tight/critical mode, start with cheapest capable model (FrugalGPT pattern)
+    const requiredCaps = TASK_CAPABILITY_MAP[taskType] ?? [];
+    const chain = this.getCascadeChain(taskType, 3);
+
+    if (chain.length === 0) {
+      // Fallback to standard routing
+      return { initial: this.route(ctx, governor), escalationChain: [] };
+    }
+
+    // Start with the cheapest model in the chain
+    const cheapest = chain[0];
+    const complexity = scoreComplexity(ctx);
+    const estimatedInputTokens = Math.ceil(ctx.goal.length / 4) + 2048;
+    const estimatedOutputTokens = Math.min(ctx.tokenBudget, cheapest.contextWindow - estimatedInputTokens);
+
+    const initial: RoutingDecision = {
+      modelId: cheapest.id,
+      tier: cheapest.tier,
+      provider: cheapest.provider,
+      reasoning: [
+        `frugal_cascade: starting with cheapest model (${cheapest.id})`,
+        `complexity: ${complexity.score}/10`,
+        `task_type: ${taskType}`,
+        `governor_phase: ${governor}`,
+        `escalation_chain: ${chain.map(m => m.id).join(' → ')}`,
+      ],
+      estimatedCost: (estimatedInputTokens / 1000) * cheapest.costPer1KInput
+        + (estimatedOutputTokens / 1000) * cheapest.costPer1KOutput,
+      maxTokens: Math.min(estimatedOutputTokens, 200000),
+    };
+
+    // Escalation chain is the remaining models (skip the first one we're already using)
+    const escalationChain = chain.slice(1);
+
+    return { initial, escalationChain };
+  }
+
+  /**
+   * Get the next escalation model from the chain after a failure.
+   * Returns the next more capable model, or undefined if chain is exhausted.
+   */
+  getNextEscalation(
+    currentModelId: string,
+    escalationChain: ModelConfig[],
+  ): ModelConfig | undefined {
+    const currentIdx = escalationChain.findIndex(m => m.id === currentModelId);
+    if (currentIdx === -1) {
+      // Current model not in chain; return the first escalation model
+      return escalationChain[0];
+    }
+    // Return the next model in the chain
+    return escalationChain[currentIdx + 1];
+  }
+
+  /**
    * Estimate cost for a given context and expected output length.
    */
   estimateCost(modelId: string, inputTokens: number, outputTokens: number): number {
@@ -428,6 +508,12 @@ export class ModelRouter {
 
   /**
    * Score a model candidate: capability fit (0-1) × cost efficiency × learning bonus.
+   * Now cost-efficiency uses cost-per-successful-task, not just raw cost.
+   *
+   * Evidence:
+   * - FrugalGPT (arXiv:2305.05176): cost-aware routing considers both cost AND quality
+   * - OpenAI: cheapest model that succeeds is always best; cheapest model that fails is waste
+   * - Cost per successful task = raw cost / success_rate
    */
   private scoreCandidate(
     model: ModelConfig,
@@ -440,10 +526,24 @@ export class ModelRouter {
       ? 1.0
       : requiredCaps.filter(c => model.capabilities.includes(c)).length / requiredCaps.length;
 
-    // 2. Cost efficiency: cheaper is better (normalized against most expensive in same tier)
+    // 2. Cost efficiency: use cost-per-successful-task (raw cost / success rate)
+    //    A model that costs $0.001 but fails 50% of the time effectively costs $0.002/task
+    //    A model that costs $0.003 but succeeds 99% of the time effectively costs $0.003/task
+    //    The second model is actually cheaper per successful task!
     const tierModels = this.tierIndex.get(model.tier) ?? [];
     const maxCost = Math.max(...tierModels.map(m => m.costPer1KOutput), 0.001);
-    const costEfficiency = 1 - (model.costPer1KOutput / maxCost) * 0.3; // 0.7-1.0 range
+    const rawCostRatio = model.costPer1KOutput / maxCost;
+
+    // Get success rate from learning data (0.5 = no data = neutral)
+    const successRate = this.getSuccessRate(model.id, taskType);
+
+    // Cost per successful task: lower is better
+    // If success rate is 0.5 (no data), treat as 1.0 (assume success)
+    const effectiveSuccessRate = Math.max(0.5, successRate);
+    const costPerSuccess = rawCostRatio / effectiveSuccessRate;
+
+    // Map to 0.7-1.0 range (lower cost per success = higher score)
+    const costEfficiency = 1 - Math.min(0.3, costPerSuccess * 0.3);
 
     // 3. Learning bonus: models that succeeded for this task type get a boost
     const learningBonus = this.getLearningBonus(model.id, taskType);
@@ -483,6 +583,32 @@ export class ModelRouter {
   }
 
   /**
+   * Get the time-decayed success rate for a model on a task type.
+   * Returns 0-1 (0.5 = no data = neutral assumption).
+   * Used by cost-per-successful-task calculation.
+   */
+  private getSuccessRate(modelId: string, taskType: string): number {
+    const key = `${modelId}:${taskType}`;
+    const relevant = this.outcomesIndex.get(key) ?? [];
+
+    if (relevant.length === 0) return 0.5; // No data → neutral
+
+    const now = Date.now();
+    let weightedSuccess = 0;
+    let totalWeight = 0;
+
+    for (const o of relevant) {
+      const age = now - o.timestamp;
+      const weight = Math.exp(-age / this.decayHalfLifeMs);
+      weightedSuccess += (o.success ? 1 : 0) * weight;
+      totalWeight += weight;
+    }
+
+    if (totalWeight === 0) return 0.5;
+    return weightedSuccess / totalWeight;
+  }
+
+  /**
    * Check if a model has the required capabilities.
    */
   private hasCapabilities(model: ModelConfig, requiredCaps: string[]): boolean {
@@ -510,8 +636,20 @@ export class ModelRouter {
 }
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
+import { getModelPerformanceStore } from './modelPerformanceStore';
 
-const routerSingleton = createTenantAwareSingleton(() => new ModelRouter());
+const routerSingleton = createTenantAwareSingleton(() => {
+  const router = new ModelRouter();
+  // Seed with cross-session historical outcomes
+  try {
+    const store = getModelPerformanceStore();
+    const historical = store.getAll();
+    for (const outcome of historical) {
+      router.recordOutcome(outcome.modelId, outcome.taskType, outcome.success, outcome.durationMs, outcome.tokensUsed);
+    }
+  } catch { /* best-effort: don't crash if store unavailable */ }
+  return router;
+});
 
 /** Get the global ModelRouter (single-tenant) or tenant-scoped (multi-tenant). */
 export function getModelRouter(): ModelRouter {

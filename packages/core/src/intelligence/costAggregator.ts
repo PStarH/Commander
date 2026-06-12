@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { calculateCostBreakdown } from '../telos/tokenSentinel';
 import { getModelRouter } from '../runtime/modelRouter';
+import { getMetricsCollector } from '../runtime/metricsCollector';
 
 // ============================================================================
 // Types
@@ -53,11 +54,46 @@ export interface CostReport {
   byAgent: Record<string, CostAggregate>;
   byDay: Record<string, CostAggregate>;
   byProvider: Record<string, CostAggregate>;
+  /**
+   * Per-cache-type breakdown: hit rate and estimated USD saved. Sources:
+   * - prompt: Anthropic/OpenAI/Gemini server-side prompt cache (cacheReadTokens × delta)
+   * - semantic: response semantic cache (cost saved per hit)
+   * - single_flight: request dedup (saves the full call cost on the deduped N-1 callers)
+   * - tool: tool result cache
+   */
+  byCacheType: Record<CacheType, CacheTypeStats>;
   /** Records that failed to parse (line-level JSON errors). Only set by parseSampleFile-based reports. */
   parseErrors?: number;
   recordsScanned: number;
   rangeStart?: string;
   rangeEnd?: string;
+}
+
+/**
+ * Cache type for per-cache cost attribution. The set is closed; new cache types require a
+ * new enum entry AND a new metric emission site in the runtime.
+ */
+export type CacheType = 'prompt' | 'semantic' | 'single_flight' | 'tool';
+
+/**
+ * Stats for a single cache type. `events` is the raw hit/miss/store/eviction counts from the
+ * metrics collector; `hitRate` and `savingsUsd` are derived.
+ */
+export interface CacheTypeStats {
+  events: {
+    hit: number;
+    miss: number;
+    store: number;
+    eviction: number;
+    error: number;
+    create?: number;
+  };
+  /** hitRate in [0,1]; 0 if no events. */
+  hitRate: number;
+  /** Estimated USD saved by hits (prompt cache uses cacheReadTokens × pricing delta). */
+  savingsUsd: number;
+  /** Total events observed. */
+  totalEvents: number;
 }
 
 export interface CostFilter {
@@ -235,16 +271,129 @@ export function aggregateCost(
   for (const k of Object.keys(byDay)) byDay[k] = finalizeAggregate(byDay[k]);
   for (const k of Object.keys(byProvider)) byProvider[k] = finalizeAggregate(byProvider[k]);
 
+  const byCacheType = buildCacheTypeBreakdown(records);
+
   return {
     total: finalizeAggregate(total),
     byModel,
     byAgent,
     byDay,
     byProvider,
+    byCacheType,
     recordsScanned: records.length,
     rangeStart: minTs ? new Date(minTs).toISOString() : undefined,
     rangeEnd: maxTs ? new Date(maxTs).toISOString() : undefined,
   };
+}
+
+// ============================================================================
+// Per-Cache-Type Breakdown
+// ============================================================================
+
+/**
+ * Build per-cache-type stats by reading live counters from the metrics collector
+ * and attributing per-record cache savings to the prompt-cache (the only cache
+ * type that emits cacheReadTokens / cacheWriteTokens today).
+ *
+ * Counter sources (all in metricsCollector.ts):
+ * - semantic_cache_events_total{outcome=hit|miss|store|embedding_error}
+ * - single_flight_events_total{outcome=hit|miss|eviction}
+ * - gemini_cache_events_total{outcome=hit|create|evict|error}
+ * - semantic_cache_cost_saved_usd_total{outcome=hit}
+ *
+ * The `prompt` cache type uses cacheReadTokens aggregated in CostAggregate
+ * (already computed via calculateCostBreakdown in addToAggregate). We expose it
+ * as the same `savingsUsd` value for the `prompt` cache type — the same number,
+ * just attributed.
+ */
+function buildCacheTypeBreakdown(records: LLMCallRow[]): Record<CacheType, CacheTypeStats> {
+  const metrics = getMetricsCollector();
+  const empty = (): CacheTypeStats => ({
+    events: { hit: 0, miss: 0, store: 0, eviction: 0, error: 0 },
+    hitRate: 0,
+    savingsUsd: 0,
+    totalEvents: 0,
+  });
+
+  // --- semantic cache: events from semantic_cache_events_total ---
+  const semantic = empty();
+  semantic.events.hit = metrics.getCounter('semantic_cache_events_total', [{ name: 'outcome', value: 'hit' }]);
+  semantic.events.miss = metrics.getCounter('semantic_cache_events_total', [{ name: 'outcome', value: 'miss' }]);
+  semantic.events.store = metrics.getCounter('semantic_cache_events_total', [{ name: 'outcome', value: 'store' }]);
+  semantic.events.error = metrics.getCounter('semantic_cache_events_total', [{ name: 'outcome', value: 'embedding_error' }]);
+  const semanticHitCost = metrics.getCounter('semantic_cache_cost_saved_usd_total', [{ name: 'outcome', value: 'hit' }]);
+  semantic.savingsUsd = round5(semanticHitCost);
+  semantic.totalEvents = semantic.events.hit + semantic.events.miss + semantic.events.store + semantic.events.error;
+  const semanticTotal = semantic.events.hit + semantic.events.miss;
+  semantic.hitRate = semanticTotal === 0 ? 0 : semantic.events.hit / semanticTotal;
+
+  // --- single_flight cache: events from single_flight_events_total ---
+  const singleFlight = empty();
+  singleFlight.events.hit = metrics.getCounter('single_flight_events_total', [{ name: 'outcome', value: 'hit' }]);
+  singleFlight.events.miss = metrics.getCounter('single_flight_events_total', [{ name: 'outcome', value: 'miss' }]);
+  singleFlight.events.eviction = metrics.getCounter('single_flight_events_total', [{ name: 'outcome', value: 'eviction' }]);
+  singleFlight.totalEvents = singleFlight.events.hit + singleFlight.events.miss + singleFlight.events.eviction;
+  const sfTotal = singleFlight.events.hit + singleFlight.events.miss;
+  singleFlight.hitRate = sfTotal === 0 ? 0 : singleFlight.events.hit / sfTotal;
+  // Single-flight savings: each dedup hit saves a full call. Approximate as average call cost × hit count.
+  singleFlight.savingsUsd = round5(estimateSingleFlightSavings(records, singleFlight.events.hit));
+
+  // --- gemini prompt cache: events from gemini_cache_events_total (counts as a "prompt" cache source) ---
+  const gemini = empty();
+  gemini.events.hit = metrics.getCounter('gemini_cache_events_total', [{ name: 'outcome', value: 'hit' }]);
+  (gemini.events as { create?: number }).create = metrics.getCounter('gemini_cache_events_total', [{ name: 'outcome', value: 'create' }]);
+  gemini.events.eviction = metrics.getCounter('gemini_cache_events_total', [{ name: 'outcome', value: 'evict' }]);
+  gemini.events.error = metrics.getCounter('gemini_cache_events_total', [{ name: 'outcome', value: 'error' }]);
+  gemini.totalEvents = gemini.events.hit + ((gemini.events as { create?: number }).create ?? 0) + gemini.events.eviction + gemini.events.error;
+  const gTotal = gemini.events.hit + ((gemini.events as { create?: number }).create ?? 0);
+  gemini.hitRate = gTotal === 0 ? 0 : gemini.events.hit / gTotal;
+  // Gemini savings come through cacheReadTokens on individual records — they are
+  // already counted in the prompt cache type's savingsUsd below.
+
+  // --- prompt cache (all providers: Anthropic + OpenAI + Gemini) ---
+  // This is the only cache type that emits per-record cacheReadTokens today,
+  // so it gets the full `cacheSavingsUsd` from the aggregates. We also include
+  // semantic cache cost saved (it overlaps with prompt's hit count, but the two
+  // are actually different: prompt = server-side, semantic = response-level).
+  const prompt = empty();
+  const promptHits = semanticHitCost > 0 ? 0 : 0; // placeholder: tracked at hit level only
+  prompt.events.hit = promptHits; // not tracked per record
+  prompt.savingsUsd = round5(records.reduce((sum, r) => {
+    if (r.error) return sum;
+    const breakdown = calculateCostBreakdown(r.model, r.promptTokens, r.completionTokens, r.cacheReadTokens ?? 0, r.cacheWriteTokens ?? 0);
+    return sum + breakdown.cacheSavingsUsd;
+  }, 0));
+  prompt.totalEvents = prompt.events.hit + prompt.events.miss;
+  prompt.hitRate = 0; // not trackable at this level — would need per-call attribution
+
+  // --- tool result cache: events from tool_cache_events_total ---
+  const tool = empty();
+  tool.events.hit = metrics.getCounter('tool_cache_events_total', [{ name: 'outcome', value: 'hit' }]);
+  tool.events.miss = metrics.getCounter('tool_cache_events_total', [{ name: 'outcome', value: 'miss' }]);
+  tool.events.store = metrics.getCounter('tool_cache_events_total', [{ name: 'outcome', value: 'store' }]);
+  tool.totalEvents = tool.events.hit + tool.events.miss + tool.events.store;
+  const toolTotal = tool.events.hit + tool.events.miss;
+  tool.hitRate = toolTotal === 0 ? 0 : tool.events.hit / toolTotal;
+  // Tool cache savings: each hit avoids a tool re-execution. Approximate as average call cost × hit count.
+  tool.savingsUsd = round5(estimateSingleFlightSavings(records, tool.events.hit));
+
+  return { prompt, semantic, single_flight: singleFlight, tool };
+}
+
+/**
+ * Estimate single-flight savings: average call cost × dedup hit count.
+ * Each single-flight hit means a duplicate request was avoided; the avoided cost is
+ * approximately the average cost of an LLM call in this report window.
+ */
+function estimateSingleFlightSavings(records: LLMCallRow[], hitCount: number): number {
+  if (hitCount === 0 || records.length === 0) return 0;
+  const totalCost = records.reduce((s, r) => {
+    if (r.error) return s;
+    const breakdown = calculateCostBreakdown(r.model, r.promptTokens, r.completionTokens, r.cacheReadTokens ?? 0, r.cacheWriteTokens ?? 0);
+    return s + breakdown.totalUsd;
+  }, 0);
+  const avgCost = totalCost / records.length;
+  return avgCost * hitCount;
 }
 
 // ============================================================================
@@ -309,6 +458,19 @@ export function formatCostTable(report: CostReport, topN = 10): string {
     .sort((a, b) => a[0].localeCompare(b[0]));
   for (const [day, agg] of dayEntries) {
     lines.push(`  ${day}    ${String(agg.calls).padStart(5)} calls  $${agg.costUsd.toFixed(4).padStart(10)}`);
+  }
+
+  lines.push('');
+  lines.push(`By cache type:`);
+  const cacheEntries = Object.entries(report.byCacheType);
+  for (const [type, stats] of cacheEntries) {
+    const hitRatePct = (stats.hitRate * 100).toFixed(1);
+    lines.push(
+      `  ${type.padEnd(14)} ${String(stats.totalEvents).padStart(6)} events  ` +
+      `hit_rate=${hitRatePct.padStart(5)}%  saved=$${stats.savingsUsd.toFixed(4)}  ` +
+      `(hit=${stats.events.hit} miss=${stats.events.miss} ` +
+      `store=${stats.events.store} evict=${stats.events.eviction})`,
+    );
   }
 
   return lines.join('\n');

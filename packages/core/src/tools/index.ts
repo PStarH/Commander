@@ -21,6 +21,7 @@ export { AnswerFormatTool } from './answerFormatTool';
 export { CodeFixerTool } from './codeFixer';
 export { SkillViewTool } from '../skills/skillViewTool';
 export { ToolRegistry, TOOL_CATEGORIES } from './toolRegistry';
+export { requestHumanInputTool } from './requestHumanInputTool';
 
 import type { Tool } from '../runtime/types';
 import { WebSearchTool, WebFetchTool } from './webSearchTool';

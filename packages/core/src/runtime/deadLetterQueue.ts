@@ -11,6 +11,29 @@ import type { ErrorClass } from './llmRetry';
 
 export type DLQCategory = 'llm' | 'tool' | 'execution' | 'verification' | 'circuit_breaker' | 'compensation';
 
+/**
+ * Tier 4.1: Standardized failure-mode discriminator. Each DLQ entry should
+ * include a `mode:<FailureMode>` tag so operators can filter by cause
+ * (timeout, rate_limit, auth, etc.) rather than parsing free-form messages.
+ */
+export type FailureMode =
+  | 'timeout'
+  | 'rate_limit'
+  | 'auth'
+  | 'validation'
+  | 'compilation'
+  | 'execution'
+  | 'provider_unavailable'
+  | 'budget_exceeded'
+  | 'verification'
+  | 'compensation_exhausted'
+  | 'cascade_escalation'
+  | 'subagent_limit'
+  | 'circuit_open'
+  | 'unknown';
+
+export const failureModeTag = (mode: FailureMode): string => `mode:${mode}`;
+
 export interface DeadLetterEntry {
   id: string;
   category: DLQCategory;
@@ -77,8 +100,11 @@ export class DeadLetterQueue {
     compensated?: boolean;
     recovered?: boolean;
     tags?: string[];
+    failureMode?: FailureMode;
     payload?: Record<string, unknown>;
   }): void {
+    const tags = [...(spec.tags ?? [])];
+    if (spec.failureMode) tags.push(failureModeTag(spec.failureMode));
     const entry: DeadLetterEntry = {
       id: `${spec.category}-${spec.operationName}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       category: spec.category,
@@ -94,7 +120,7 @@ export class DeadLetterQueue {
       inputSnapshot: spec.payload ? JSON.stringify(spec.payload) : undefined,
       compensated: spec.compensated ?? false,
       recovered: spec.recovered ?? false,
-      tags: spec.tags ?? [],
+      tags,
     };
     this.record(entry);
   }

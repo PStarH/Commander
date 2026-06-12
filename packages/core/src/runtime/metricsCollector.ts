@@ -180,6 +180,19 @@ export class MetricsCollector {
     this.recordHistogram('run_tool_count', 'Tools per run', toolCount, [1, 5, 10, 20, 50, 100], labels);
   }
 
+  /**
+   * Tier 4.2: Record per-step latency with a step_type label. Used by the
+   * agentRuntime step loop to track which pipeline phases are slow.
+   *
+   * stepType: 'planning' | 'tool_execution' | 'verification' | 'reflexion' |
+   *           'compensation' | 'cascade_escalation'
+   */
+  recordStepLatency(stepType: string, durationMs: number, tenantId?: string): void {
+    const labels: MetricLabel[] = [{ name: 'step_type', value: stepType }];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.recordHistogram('step_latency_ms', 'Per-step latency in ms (Tier 4.2)', durationMs, LATENCY_BUCKETS_MS, labels);
+  }
+
   // ── Export ──
 
   /** Export metrics as OpenMetrics (Prometheus-compatible) text format */
@@ -380,6 +393,15 @@ export class MetricsCollector {
     const labels: MetricLabel[] = [{ name: 'outcome', value: outcome }];
     if (tenantId) labels.push({ name: 'tenant', value: tenantId });
     this.incrementCounter('gemini_cache_events_total', 'Google Gemini cachedContent events by outcome', 1, labels);
+  }
+
+  recordToolCacheEvent(
+    outcome: 'hit' | 'miss' | 'store',
+    tenantId?: string,
+  ): void {
+    const labels: MetricLabel[] = [{ name: 'outcome', value: outcome }];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('tool_cache_events_total', 'Tool result cache events by outcome', 1, labels);
   }
 
   private key(name: string, labels: MetricLabel[]): string {

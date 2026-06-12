@@ -13,7 +13,7 @@ export const DEFAULT_CONFIG: AgentRuntimeConfig = {
   toolRetrieval: { enabled: false, minTools: 3, maxTools: 10, alwaysInclude: [] },
   entropyGating: { enabled: false },
   speculativeExecution: { enabled: false, maxPredictions: 2, minConfidence: 0.3 },
-  semanticCache: { enabled: false, similarityThreshold: 0.92, maxEntries: 10_000, defaultTtlMs: 86_400_000, maxBucketSize: 64, cacheStochastic: false, cacheToolCalls: false, pruneIntervalMs: 60_000 },
+  semanticCache: { enabled: true, similarityThreshold: 0.92, maxEntries: 10_000, defaultTtlMs: 86_400_000, maxBucketSize: 64, cacheStochastic: false, cacheToolCalls: false, pruneIntervalMs: 60_000 },
   singleFlight: { enabled: true, maxInFlight: 1000 },
 };
 

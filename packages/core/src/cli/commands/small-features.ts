@@ -340,6 +340,147 @@ export async function cmdIntelligence(flags: Record<string, string>): Promise<vo
 /**
  * commander trace — View execution traces
  */
+// ============================================================================
+// 11. commander resume — Resume a crashed run from checkpoint
+// ============================================================================
+
+export async function cmdResume(args: string[], flags: Record<string, string>): Promise<void> {
+  console.log(`\n  ${$.cyan}${$.bold}Commander Resume${$.reset} — Crash Recovery\n`);
+
+  try {
+    const { AgentRuntime } = await import('../../runtime/agentRuntime');
+    const runtime = new AgentRuntime();
+
+    if (args.length === 0 || args[0] === '--list') {
+      // List resumable runs
+      const runs = runtime.listResumableRuns();
+      if (runs.length === 0) {
+        console.log(`  ${$.dim}No resumable runs found.${$.reset}`);
+        console.log(`  ${$.dim}Run a task first: ${$.cyan}commander run "<task>"${$.reset}\n`);
+        return;
+      }
+      console.log(`  ${$.bold}Resumable runs:${$.reset}`);
+      for (const run of runs) {
+        console.log(`    ${$.cyan}${run.runId}${$.reset}  ${$.dim}phase=${run.phase}  ${run.timestamp}${$.reset}`);
+      }
+      console.log(`\n  ${$.dim}To resume: ${$.cyan}commander resume <runId>${$.reset}\n`);
+      return;
+    }
+
+    const runId = args[0];
+    console.log(`  ${$.dim}Attempting to resume run ${$.cyan}${runId}${$.reset}${$.dim}...${$.reset}\n`);
+
+    const result = await runtime.resume(runId);
+    if (!result) {
+      console.log(`  ${$.red}✗${$.reset} Recovery failed. The checkpoint may not exist or the lease was lost.`);
+      console.log(`  ${$.dim}Run ${$.cyan}commander resume --list${$.reset}${$.dim} to see available checkpoints.${$.reset}\n`);
+      return;
+    }
+
+    console.log(`  ${$.green}✓${$.reset} Run recovered from checkpoint`);
+    console.log(`  ${$.dim}Status:${$.reset} ${result.status}`);
+    console.log(`  ${$.dim}Resume from step:${$.reset} ${result.resumeFromStep ?? 'N/A'}`);
+    console.log(`  ${$.dim}Completed tool calls:${$.reset} ${result.completedToolCallIds.size}`);
+    if (result.state) {
+      console.log(`  ${$.dim}Phase:${$.reset} ${result.state.phase}`);
+      console.log(`  ${$.dim}Goal:${$.reset} ${result.state.context?.goal?.slice(0, 120) ?? 'N/A'}`);
+    }
+    console.log(`\n  ${$.dim}Use ${$.cyan}commander run "<continue>"${$.reset}${$.dim} to continue execution.${$.reset}\n`);
+  } catch (err) {
+    console.log(`  ${$.red}Error: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`);
+  }
+}
+
+// ============================================================================
+// 12. commander compensation — Manage durable compensation queue
+// ============================================================================
+
+export async function cmdCompensation(args: string[], flags: Record<string, string>): Promise<void> {
+  console.log(`
+  ${$.cyan}${$.bold}Commander Compensation${$.reset} — Durable Retry Queue
+`);
+
+  try {
+    const { getCompensationQueue } = await import('../../atr/compensationQueue');
+    const queue = getCompensationQueue();
+
+    if (args.length === 0 || args[0] === 'status') {
+      const counts = queue.countByStatus();
+      console.log(`  ${$.bold}Queue Summary:${$.reset}`);
+      console.log(`    ${$.yellow}Pending:${$.reset}     ${counts.pending}`);
+      console.log(`    ${$.cyan}In Progress:${$.reset} ${counts.in_progress}`);
+      console.log(`    ${$.red}Escalated:${$.reset}   ${counts.escalated}`);
+      console.log(`
+  ${$.dim}Commands:${$.reset}`);
+      console.log(`    ${$.cyan}commander compensation list${$.reset}         ${$.dim}View all queue items${$.reset}`);
+      console.log(`    ${$.cyan}commander compensation retry <id>${$.reset}    ${$.dim}Retry an escalated item${$.reset}
+`);
+      return;
+    }
+
+    if (args[0] === 'list') {
+      const parsed = parseInt(flags['limit'] ?? '50', 10);
+      const limit = isNaN(parsed) ? 50 : parsed;
+      const status = flags['status'] as 'pending' | 'in_progress' | 'escalated' | undefined;
+      const items = queue.list({ limit, status });
+      if (items.length === 0) {
+        console.log(`  ${$.dim}No items in the compensation queue.${$.reset}
+`);
+        return;
+      }
+      console.log(`  ${$.bold}Compensation Queue Items (${items.length}):${$.reset}
+`);
+      for (const item of items) {
+        const statusIcon = item.status === 'escalated' ? `${$.red}⬆${$.reset}`
+          : item.status === 'in_progress' ? `${$.cyan}↻${$.reset}`
+          : `${$.yellow}○${$.reset}`;
+        const age = getAge(item.enqueuedAt);
+        console.log(`    ${statusIcon} ${$.cyan}${item.id}${$.reset}`);
+        console.log(`      ${$.dim}Tool:${$.reset} ${item.toolName}  ${$.dim}Run:${$.reset} ${item.runId}`);
+        console.log(`      ${$.dim}Attempts:${$.reset} ${item.attemptCount}/${item.maxAttempts}  ${$.dim}Age:${$.reset} ${age}  ${$.dim}Status:${$.reset} ${item.status}`);
+        if (item.lastError) console.log(`      ${$.dim}Error:${$.reset} ${item.lastError.slice(0, 100)}`);
+        if (item.nextAttemptAt && item.status === 'pending') console.log(`      ${$.dim}Next attempt:${$.reset} ${item.nextAttemptAt}`);
+        console.log('');
+      }
+      return;
+    }
+
+    if (args[0] === 'retry' && !args[1]) {
+      console.log(`  ${$.red}Missing item ID.${$.reset} Usage: ${$.cyan}commander compensation retry <id>${$.reset}\n`);
+      return;
+    }
+
+    if (args[0] === 'retry' && args[1]) {
+      const id = args[1];
+      const ok = queue.retry(id);
+      if (ok) {
+        console.log(`  ${$.green}✓${$.reset} Item ${$.cyan}${id}${$.reset} reset to pending for immediate retry.
+`);
+      } else {
+        console.log(`  ${$.red}✗${$.reset} Item ${$.cyan}${id}${$.reset} not found or not in escalated status.
+`);
+      }
+      return;
+    }
+
+    console.log(`  ${$.yellow}Unknown subcommand: ${args[0]}${$.reset}`);
+    console.log(`  ${$.dim}Usage: commander compensation [list|retry <id>|status]${$.reset}
+`);
+  } catch (err) {
+    console.log(`  ${$.red}Error: ${err instanceof Error ? err.message : String(err)}${$.reset}`);
+    console.log(`  ${$.dim}Compensation queue requires better-sqlite3.${$.reset}
+`);
+  }
+}
+
+function getAge(isoStr: string): string {
+  const ms = Date.now() - new Date(isoStr).getTime();
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h`;
+  return `${Math.round(ms / 86_400_000)}d`;
+}
+
 export async function cmdTrace(flags: Record<string, string>): Promise<void> {
   console.log(`\n  ${$.cyan}${$.bold}Commander Traces${$.reset}\n`);
 
@@ -375,7 +516,13 @@ export async function cmdTrace(flags: Record<string, string>): Promise<void> {
     console.log(`\n  ${$.dim}Total: ${files.length} traces${$.reset}`);
     console.log(`  ${$.dim}View OpenTelemetry: ${$.bold}http://localhost:16686${$.reset}${$.dim} (Jaeger)${$.reset}`);
   } catch (err) {
-    console.log(`  ${$.red}Error: ${err}${$.reset}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(`  ${$.red}Error: ${msg}${$.reset}`);
+    if (msg.includes('better-sqlite3') || msg.includes('Cannot find module')) {
+      console.log(`  ${$.dim}Compensation queue requires better-sqlite3. Install: pnpm add better-sqlite3${$.reset}\n`);
+    } else {
+      console.log(`  ${$.dim}Run ${$.cyan}commander doctor${$.reset}${$.dim} to diagnose.${$.reset}\n`);
+    }
   }
 
   console.log('');

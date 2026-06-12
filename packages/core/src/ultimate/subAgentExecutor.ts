@@ -15,6 +15,7 @@ import { getWorkCoordinator } from './workCoordinator';
 import { MIN_TOKENS_PER_AGENT, MAX_TOKENS_PER_AGENT, ESTIMATED_DURATION_DEFAULT } from '../config/constants';
 import { getIntentLog } from '../runtime/intentLog';
 import { getMetricsCollector } from '../runtime/metricsCollector';
+import { SubAgentGuard, SubAgentLimitError } from './subAgentGuard';
 
 /** Critical path token budget multiplier (LAMaS: give critical tasks more resources) */
 const CRITICAL_PATH_TOKEN_MULTIPLIER = 1.5;
@@ -30,6 +31,14 @@ const MAX_INBOX_MESSAGES = 20;
 
 /** Maximum characters from inbox messages to include in goal context */
 const MAX_INBOX_MESSAGE_CHARS = 500;
+
+/**
+ * Fresh-context fields: only pass these to sub-agents.
+ * Everything else (memoryItems, agentState, full history) is orchestrator-level
+ * state that bloats sub-agent prompts without improving their output.
+ * See: Anthropic "How we built our multi-agent research system" (June 2025).
+ */
+const FRESH_CONTEXT_FIELDS = ['governanceProfile', 'warRoomSnapshot'] as const;
 
 export class SubAgentExecutor {
   private runtime: AgentRuntime;
@@ -318,21 +327,37 @@ export class SubAgentExecutor {
         ? `${node.goal}\n\n${inboxContext}`
         : node.goal;
 
-      // Prefer the full tool list from baseContext (set by orchestrator/CLI)
-      // over the narrowed list the atomizer may have assigned to this node.
-      const fullTools = (baseContext?.availableTools as string[] | undefined);
-      const tools = fullTools?.length ? fullTools : node.context.availableTools;
+      // Anthropic fresh-context: structured task brief with output format + constraints
+      const taskBrief = [
+        `## Task`,
+        enrichedGoal,
+        '',
+        `## Expected Output`,
+        `Return a concise summary of your findings (under 2000 tokens).`,
+        `Include specific file paths, line numbers, and code snippets where relevant.`,
+        `Do NOT include intermediate tool calls or reasoning in your final output.`,
+        '',
+        `## Constraints`,
+        `- Complete only the assigned subtask — do not expand scope.`,
+        `- Use file_read to read relevant source files before analyzing.`,
+        `- Report outcomes faithfully: if something fails, say so.`,
+      ].join('\n');
+
+      // Filter tools per role — sub-agents don't need all tools
+      const fullTools = (baseContext?.availableTools as string[] | undefined) ?? node.context.availableTools ?? [];
+      const tools = this.filterToolsForRole(fullTools, node.role);
 
       // Per-agent output directory for file write isolation
       const safeId = node.id.replace(/[^a-zA-Z0-9_-]/g, '_');
       const outputDir = path.join(process.cwd(), '.commander_output', safeId);
       fs.mkdirSync(outputDir, { recursive: true });
 
+      const narrowContext = this.buildNarrowContext(baseContext);
       const ctx: AgentExecutionContext = {
         agentId: node.id,
         projectId,
-        goal: enrichedGoal,
-        contextData: baseContext as AgentExecutionContext['contextData'],
+        goal: taskBrief,
+        contextData: narrowContext as AgentExecutionContext['contextData'],
         availableTools: tools,
         outputDir,
         maxSteps: 10,
@@ -345,13 +370,37 @@ export class SubAgentExecutor {
       try { getMetricsCollector().recordSubAgentOutcome(node.id, 'success', (baseContext as { __depth?: number }).__depth ?? 1, ctx.tenantId); } catch { /* best-effort */ }
 
       let execResult: AgentExecutionResult;
+      // Create per-node sub-agent guard to enforce limits (steps, tokens, wall clock)
+      const guard = new SubAgentGuard({
+        maxSteps: 10,
+        maxTokens: Math.max(MIN_TOKENS_PER_AGENT, Math.min(MAX_TOKENS_PER_AGENT, node.context.estimatedTokens)),
+        maxWallClockMs: 5 * 60 * 1000,
+      });
+      // Pass guard into execution context so agentRuntime enforces limits per-step
+      ctx.guard = guard;
+
       try {
         execResult = await agentContext.run(
           { agentId: node.id, outputDir },
           () => this.runtime.execute(ctx),
         );
-      } catch (err) {
+
+      } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : String(err);
+        if (err instanceof SubAgentLimitError) {
+          node.status = 'FAILED';
+          node.result = `Sub-agent limit exceeded (${err.reason}): ${err.observed} >= ${err.limit}`;
+          node.durationMs = Date.now() - startTime;
+          try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId: this.currentRunId ?? ctx.runId ?? node.id, capturedAt: new Date().toISOString(), stage: 'subAgentExecutor.complete', decision: 'failed', reason: `limit_exceeded: ${err.reason}`, payload: { agentId: node.id, status: 'failed', parentRunId: this.currentRunId, limitReason: err.reason, observed: err.observed, limit: err.limit } }); } catch { /* best-effort */ }
+          try { getMetricsCollector().recordSubAgentOutcome(node.id, 'failed', (baseContext as { __depth?: number }).__depth ?? 1, ctx.tenantId); } catch { /* best-effort */ }
+          errors.push({
+            nodeId: node.id,
+            agentId: node.id,
+            message: `Sub-agent limit exceeded (${err.reason}): ${err.observed} >= ${err.limit}`,
+            recovered: false,
+          });
+          return;
+        }
         errors.push({
           nodeId: node.id,
           agentId: node.id,
@@ -378,30 +427,12 @@ export class SubAgentExecutor {
           recovered: false,
         });
       } else {
-        // Prefer actual file content over chat summary
-        node.result = execResult.artifactContent || execResult.summary;
+        // Anthropic fresh-context: return only the condensed summary, not raw tool outputs.
+        // This prevents context pollution — the parent sees distilled findings, not the
+        // sub-agent's full conversation history.
+        node.result = execResult.summary;
         try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId: this.currentRunId ?? ctx.runId ?? node.id, capturedAt: new Date().toISOString(), stage: 'subAgentExecutor.complete', decision: 'success', reason: 'sub-agent execution succeeded', payload: { agentId: node.id, status: 'success', parentRunId: this.currentRunId, durationMs: node.durationMs, tokenUsage: node.tokenUsage } }); } catch { /* best-effort */ }
         try { getMetricsCollector().recordSubAgentOutcome(node.id, 'success', (baseContext as { __depth?: number }).__depth ?? 1, ctx.tenantId); } catch { /* best-effort */ }
-
-
-        // Collect tool outputs (file_read content, etc.) for richer synthesis
-        const toolOutputs: string[] = [];
-        for (const step of execResult.steps) {
-          if (step.type === 'tool_result' && step.toolResult?.output && !step.toolResult.error) {
-            const output = step.toolResult.output;
-            // Only include substantial tool outputs (file reads, etc.)
-            if (output.length > 100) {
-              toolOutputs.push(`[${step.toolResult.name}] ${output}`);
-            }
-          }
-        }
-        if (toolOutputs.length > 0) {
-          const toolContent = toolOutputs.join('\n\n---\n\n');
-          // If tool outputs are richer than the summary, use them
-          if (toolContent.length > (node.result?.length ?? 0)) {
-            node.result = toolContent;
-          }
-        }
       }
 
       await this.artifactSystem.write(
@@ -551,11 +582,12 @@ export class SubAgentExecutor {
     const fullTools = (baseContext?.availableTools as string[] | undefined);
     const tools = fullTools?.length ? fullTools : node.context.availableTools;
 
+    const narrowContext = this.buildNarrowContext(baseContext);
     const ctx: AgentExecutionContext = {
       agentId: `synthesizer-${node.id}`,
       projectId,
       goal: synthesisGoal,
-      contextData: baseContext as AgentExecutionContext['contextData'],
+      contextData: narrowContext as AgentExecutionContext['contextData'],
       availableTools: tools,
       maxSteps: 8,
       tokenBudget: Math.max(MIN_TOKENS_PER_AGENT, Math.round(node.context.estimatedTokens * 0.5)),
@@ -709,6 +741,43 @@ export class SubAgentExecutor {
     }
 
     return levels;
+  }
+
+  /**
+   * Build a narrow context for sub-agents (Anthropic fresh-context pattern).
+   * Only includes governanceProfile and warRoomSnapshot — drops memoryItems,
+   * agentState, and full orchestrator history that bloats sub-agent prompts.
+   */
+  private buildNarrowContext(baseContext: Record<string, unknown>): Record<string, unknown> {
+    const narrow: Record<string, unknown> = {};
+    for (const field of FRESH_CONTEXT_FIELDS) {
+      if (field in baseContext) {
+        narrow[field] = baseContext[field];
+      }
+    }
+    return narrow;
+  }
+
+  /**
+   * Filter tools per role — sub-agents don't need all tools.
+   * Researchers need search/read; coders need read/write/edit/bash; etc.
+   */
+  private filterToolsForRole(allTools: string[], role?: string): string[] {
+    const roleLower = (role ?? '').toLowerCase();
+
+    const roleToolHints: Record<string, string[]> = {
+      researcher: ['webSearch', 'web_search', 'file_read', 'read_file', 'grep', 'file_search'],
+      coder: ['file_read', 'read_file', 'file_write', 'write_file', 'file_edit', 'edit_file', 'bash', 'grep'],
+      reviewer: ['file_read', 'read_file', 'grep', 'file_search', 'diff'],
+      synthesizer: ['file_read', 'read_file', 'file_write', 'write_file'],
+      planner: ['file_read', 'read_file', 'grep', 'file_search'],
+    };
+
+    const hints = roleToolHints[roleLower];
+    if (!hints) return allTools;
+
+    const filtered = hints.filter(t => allTools.includes(t));
+    return filtered.length > 0 ? filtered : allTools;
   }
 
   private chunkArray<T>(arr: T[], size: number): T[][] {

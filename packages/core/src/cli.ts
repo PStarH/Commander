@@ -23,9 +23,10 @@ if (process.env.COMMANDER_THEME) {
 import {
   cmdPlan, cmdRun, cmdWatch, cmdCompany, cmdGoal, cmdSwarm, cmdDrive,
   cmdStatus, cmdConfig, cmdDoctor, cmdGui, cmdWorkers, cmdSkill,
-  cmdMode, cmdReview, cmdHistory, cmdWorkflow, cmdHelp, cmdBenchmark,
+  cmdMode, cmdReview, cmdHistory, cmdWorkflow, cmdHelp,   cmdBenchmark, cmdMultiAgentBenchmark,
   cmdQuickstart, cmdCompletion, cmdFeedback, cmdSaga,
-  cmdCost,
+  cmdCost, cmdResume,
+  cmdCompensation,
 } from './cli/commands';
 import { startTUI } from './tui';
 
@@ -49,6 +50,8 @@ const COMMAND_HELP: Record<string, string> = {
   completion: `  ${$.bold}commander completion [shell]${$.reset}\n\n  Generate shell autocompletion scripts.\n\n  ${$.bold}Shells:${$.reset}\n    bash      Generate bash completion\n    zsh       Generate zsh completion\n    fish      Generate fish completion\n    install   Auto-detect shell and install (default)\n\n  ${$.dim}Example:${$.reset}\n    commander completion install\n    source <(commander completion bash)\n`,
   feedback:   `  ${$.bold}commander feedback [flags]${$.reset}\n\n  Submit feedback to help improve Commander.\n\n  ${$.bold}Flags:${$.reset}\n    --rating=<1-5>        Rate your experience\n    --message="<text>"    General feedback\n    --bug="<text>"        Report a bug\n    --feature="<text>"    Request a feature\n\n  ${$.bold}Subcommands:${$.reset}\n    stats                 View feedback summary\n\n  ${$.dim}Example:${$.reset}\n    commander feedback --rating=5 --message="Great tool!"\n    commander feedback --bug="crash on empty input"\n`,
   saga:       `  ${$.bold}commander saga <subcommand>${$.reset}\n\n  Manage saga runs (durable, compensating transactions).\n\n  ${$.bold}Subcommands:${$.reset}\n    run <name>            Run a built-in example saga\n    list                  List all runs (committed/aborted/in-progress)\n    status <runId>        Show a run's snapshot\n    resume <runId>        Inspect a resumable run\n    approve <runId> <nodeId>    Approve a pending approval\n    reject  <runId> <nodeId>    Reject a pending approval\n    examples              List built-in example sagas\n\n  ${$.bold}Run flags:${$.reset}\n    --input=<json>        Saga input (JSON)\n    --run-id=<id>         Custom run ID (default: <name>-<timestamp>)\n    --timeout=<ms>        Total timeout (default: 60000)\n    --in-memory           Use in-memory stores (no disk persistence)\n\n  ${$.dim}Examples:${$.reset}\n    commander saga examples\n    commander saga run order-fulfillment --input='{"orderId":"o_42","amount":100}'\n    commander saga run refund-approval --input='{"refundId":"r_1","amount":600}'\n    commander saga list\n    commander saga status order-fulfillment-1717523456\n    commander saga approve <runId> <nodeId> --by=alice\n`,
+  resume:     `  ${$.bold}commander resume [runId]${$.reset}\n\n  Resume a crashed run from its last checkpoint.\n\n  ${$.bold}Usage:${$.reset}\n    commander resume              List all resumable runs\n    commander resume <runId>      Resume a specific run from checkpoint\n\n  ${$.dim}Examples:${$.reset}\n    commander resume\n    commander resume run_abc123\n\n  ${$.dim}Tier 1.2: Crash recovery via RunRecovery pipeline. Validates\n  the lease, reconstructs completed tool calls, and returns\n  resume state for continuation.${$.reset}\n`,
+  compensation: `  ${$.bold}commander compensation [subcommand]${$.reset}\n\n  Manage durable compensation queue (crash-safe retry).\n\n  ${$.bold}Subcommands:${$.reset}\n    status               Show queue summary (pending/in-progress/escalated)\n    list                 List all queue items with details\n    retry <id>           Reset escalated item to pending for retry\n\n  ${$.bold}Flags (list):${$.reset}\n    --limit=<n>          Max items to show (default: 50)\n    --status=<s>         Filter by status (pending/in_progress/escalated)\n\n  ${$.dim}Examples:${$.reset}\n    commander compensation\n    commander compensation list --status=escalated\n    commander compensation retry <id>\n`,
   // Deprecated aliases
   plan:       `  ${$.yellow}⚠ DEPRECATED${$.reset} — Use ${$.bold}commander run <task> --dry-run${$.reset} instead.\n`,
   watch:      `  ${$.yellow}⚠ DEPRECATED${$.reset} — Use ${$.bold}commander run <task> --stream${$.reset} instead.\n`,
@@ -56,6 +59,7 @@ const COMMAND_HELP: Record<string, string> = {
   workers:    `  ${$.yellow}⚠ DEPRECATED${$.reset} — Use ${$.bold}commander swarm${$.reset} instead.\n`,
   workflow:   `  ${$.yellow}⚠ DEPRECATED${$.reset} — Use ${$.bold}commander company${$.reset} instead.\n`,
   benchmark:  `  ${$.yellow}⚠ DEPRECATED${$.reset} — Use ${$.bold}commander run --benchmark${$.reset} instead.\n`,
+  'multi-benchmark': `  ${$.bold}commander multi-benchmark [flags]${$.reset}\n\n  A/B benchmark: single-agent vs multi-agent orchestration.\n\n  ${$.bold}Flags:${$.reset}\n    --tasks=<n>         Limit to N tasks (smoke test)\n    --tier=<tier>       Run only simple, moderate, or complex tasks\n    --topology=<topo>   Force multi-agent topology (PARALLEL, SEQUENTIAL, etc.)\n\n  ${$.dim}Examples:${$.reset}\n    commander multi-benchmark --tasks=10\n    commander multi-benchmark --tier=complex\n    commander multi-benchmark --topology=PARALLEL\n`,
 };
 
 function showCommandHelp(cmd: string): boolean {
@@ -159,6 +163,10 @@ async function main() {
       await cmdBenchmark(rest);
       break;
 
+    case 'multi-benchmark':
+      await cmdMultiAgentBenchmark(rest);
+      break;
+
     // ── Management commands ──
     case 'status':
       await cmdStatus();
@@ -196,6 +204,16 @@ async function main() {
     case 'saga':
       await cmdSaga(rest);
       break;
+    case 'resume': {
+      const { positional, flags } = parseFlags(rest);
+      await cmdResume(positional, flags);
+      break;
+    }
+    case 'compensation': {
+      const { positional, flags } = parseFlags(rest);
+      await cmdCompensation(positional, flags);
+      break;
+    }
     case 'cost': {
       const { flags } = parseFlags(rest);
       await cmdCost(flags);

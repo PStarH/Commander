@@ -49,6 +49,7 @@ export default defineConfig({
       'tests/ultimate/chaos/m2-6-crash-resume.test.ts',
       'tests/ultimate/chaos/m2-6-compensation-fail.test.ts',
       'tests/ultimate/chaos/m2-6-tenant-independence.test.ts',
+      'tests/observabilityP1.test.ts',
     ],
     environment: 'node',
     coverage: {

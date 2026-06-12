@@ -150,6 +150,7 @@ export class ExecutionTraceRecorder {
     tokenUsage: TokenUsage,
     durationMs: number,
     parentSpanId?: string,
+    metadata?: { taskCategory?: string },
   ): TraceEvent {
     return this.recordEvent(runId, {
       type: 'llm_call',
@@ -159,6 +160,8 @@ export class ExecutionTraceRecorder {
         output,
         modelInfo: { model, provider, tier },
         tokenUsage,
+        tier,
+        taskCategory: metadata?.taskCategory,
       },
       parentSpanId,
     });
@@ -205,6 +208,27 @@ export class ExecutionTraceRecorder {
       type: 'error',
       durationMs,
       data: { error },
+      parentSpanId,
+    });
+  }
+
+  recordVerification(
+    runId: string,
+    passed: boolean,
+    confidence: number,
+    signalCount: number,
+    durationMs: number,
+    parentSpanId?: string,
+  ): TraceEvent {
+    return this.recordEvent(runId, {
+      type: 'verification',
+      durationMs,
+      data: {
+        input: { passed, confidence, signalCount },
+        output: { passed, confidence, signalCount },
+        evaluationScore: confidence,
+        evaluationPassed: passed,
+      },
       parentSpanId,
     });
   }

@@ -4,8 +4,13 @@ import { PersistentTraceStore, type TraceStore } from '../runtime/traceStore';
 import type { ExecutionTraceRecorder } from '../runtime/executionTrace';
 import { buildTimeline, buildSpanTree } from './timelineBuilder';
 import { buildDecisions, decisionsSummary } from './decisionProvenance';
+import { buildExecutiveSummary } from './executiveSummary';
 import { getCostModel } from './costModel';
-import { dryReplay } from './replay';
+import { dryReplay, liveReplay, type LiveReplayContext } from './replay';
+import { ToolMetricsCollector } from './toolMetrics';
+import { compareTraces } from './traceComparison';
+import { PromptVersionTracker } from './promptVersioning';
+import { SLOManager } from './sloManager';
 import type { CostReport } from './types';
 import { getGlobalLogger } from '../logging';
 
@@ -15,6 +20,7 @@ export interface ObservabilityDeps {
   recorder: ExecutionTraceRecorder;
   traceStore: TraceStore;
   resolveTenant: (req: IncomingMessage) => string | undefined;
+  liveReplayContext?: LiveReplayContext;
 }
 
 export interface ObservabilityResult {
@@ -181,6 +187,10 @@ export async function handleObservabilityRequest(
 
   try {
     if (segments[0] === 'runs' && segments.length === 1) {
+      if (method !== 'GET') {
+        sendJson(res, 405, { error: 'Method not allowed' });
+        return { handled: true, status: 405 };
+      }
       const runs = listAllTraces(deps.recorder, tenantId);
       sendJson(res, 200, { count: runs.length, runs });
       return { handled: true, status: 200 };
@@ -226,11 +236,25 @@ export async function handleObservabilityRequest(
         return { handled: true, status: 200 };
       }
 
+      if (method === 'GET' && action === 'summary') {
+        const trace = loadTrace(deps.recorder, runId, deps.traceStore);
+        if (!trace) { sendJson(res, 404, { error: 'Run not found' }); return { handled: true, status: 404 }; }
+        sendJson(res, 200, buildExecutiveSummary(trace));
+        return { handled: true, status: 200 };
+      }
+
       if (method === 'POST' && action === 'replay') {
         const body = await readBody(req);
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
         if (!trace) { sendJson(res, 404, { error: 'Run not found' }); return { handled: true, status: 404 }; }
-        const result = dryReplay(trace, body);
+        const liveCtx = deps.liveReplayContext;
+        const useLive = !!body?.reExecuteLlm && !!liveCtx;
+        const result = useLive && liveCtx
+          ? await liveReplay(trace, body, liveCtx, {
+              ...(body?.modelOverride ? { modelOverride: body.modelOverride } : {}),
+              ...(body?.onlySpanIds?.length ? { onlySpanIds: body.onlySpanIds } : {}),
+            })
+          : dryReplay(trace, body);
         sendJson(res, 200, result);
         return { handled: true, status: 200 };
       }
@@ -247,6 +271,56 @@ export async function handleObservabilityRequest(
       return { handled: true, status: 200 };
     }
 
+    if (segments[0] === 'conversations' && segments.length >= 2 && method === 'GET') {
+      const conversationId = segments[1]!;
+      const all = deps.recorder.listTraces(undefined, 1000);
+      const matching = all.filter((t) => {
+        const hasConversationEvent = t.events.some((e) => e.data.conversationId === conversationId);
+        return hasConversationEvent && (!tenantId || t.tenantId === tenantId);
+      });
+
+      const costModel = getCostModel();
+      let totalCost = costModel.emptyCost();
+      let totalTokens = costModel.emptyTokens();
+      const runs = matching.map((t) => {
+        let runCost = costModel.emptyCost();
+        let runTokens = costModel.emptyTokens();
+        for (const e of t.events) {
+          if (e.type === 'llm_call' && e.data.tokenUsage && e.data.modelInfo) {
+            const tokens = {
+              input: e.data.tokenUsage.promptTokens ?? 0,
+              output: e.data.tokenUsage.completionTokens ?? 0,
+              cached: 0, reasoning: 0,
+              total: e.data.tokenUsage.totalTokens ?? 0,
+            };
+            const cost = costModel.calculate(e.data.modelInfo.provider, e.data.modelInfo.model, tokens);
+            runCost = costModel.addCost(runCost, cost);
+            runTokens = costModel.addTokens(runTokens, tokens);
+          }
+        }
+        totalCost = costModel.addCost(totalCost, runCost);
+        totalTokens = costModel.addTokens(totalTokens, runTokens);
+        return {
+          runId: t.runId,
+          agentId: t.agentId,
+          traceId: t.traceId,
+          startedAt: t.startedAt,
+          completedAt: t.completedAt,
+          totalCost: runCost,
+          totalTokens: runTokens,
+        };
+      });
+
+      sendJson(res, 200, {
+        conversationId,
+        count: runs.length,
+        runs,
+        totalCost,
+        totalTokens,
+      });
+      return { handled: true, status: 200 };
+    }
+
     if (segments[0] === 'search' && method === 'GET') {
       const since = q.get('since') ? Date.parse(q.get('since')!) : undefined;
       const limit = Math.min(parseInt(q.get('limit') ?? '50', 10) || 50, 500);
@@ -255,6 +329,64 @@ export async function handleObservabilityRequest(
         .filter((t) => !since || new Date(t.startedAt).getTime() >= since)
         .slice(0, limit);
       sendJson(res, 200, { count: all.length, runs: all.map((t) => ({ runId: t.runId, traceId: t.traceId, agentId: t.agentId, startedAt: t.startedAt })) });
+      return { handled: true, status: 200 };
+    }
+
+    if (segments[0] === 'runs' && segments.length === 3 && segments[2] === 'feedback' && method === 'POST') {
+      const runId = segments[1]!;
+      const body = await readFeedbackBody(req);
+      const trace = deps.recorder.getTrace(runId);
+      if (!trace) { sendJson(res, 404, { error: 'Run not found' }); return { handled: true, status: 404 }; }
+      deps.recorder.recordEvent(runId, {
+        type: 'state_change',
+        durationMs: 0,
+        data: {
+          input: 'feedback',
+          output: body,
+          feedback: {
+            rating: body.rating,
+            comment: body.comment,
+            tags: body.tags,
+            timestamp: new Date().toISOString(),
+          },
+        },
+      });
+      sendJson(res, 200, { ok: true, runId, feedback: body });
+      return { handled: true, status: 200 };
+    }
+
+    if (segments[0] === 'tools' && segments.length === 1 && method === 'GET') {
+      const all = deps.recorder.listTraces(undefined, 1000)
+        .filter((t) => !tenantId || t.tenantId === tenantId);
+      const collector = new ToolMetricsCollector();
+      for (const trace of all) collector.recordFromTrace(trace.events);
+      sendJson(res, 200, collector.getSummary());
+      return { handled: true, status: 200 };
+    }
+
+    if (segments[0] === 'compare' && segments.length === 3 && method === 'GET') {
+      const runIdA = segments[1]!;
+      const runIdB = segments[2]!;
+      const traceA = loadTrace(deps.recorder, runIdA, deps.traceStore);
+      const traceB = loadTrace(deps.recorder, runIdB, deps.traceStore);
+      if (!traceA) { sendJson(res, 404, { error: `Run ${runIdA} not found` }); return { handled: true, status: 404 }; }
+      if (!traceB) { sendJson(res, 404, { error: `Run ${runIdB} not found` }); return { handled: true, status: 404 }; }
+      sendJson(res, 200, compareTraces(traceA, traceB));
+      return { handled: true, status: 200 };
+    }
+
+    if (segments[0] === 'prompts' && segments.length === 1 && method === 'GET') {
+      const all = deps.recorder.listTraces(undefined, 1000)
+        .filter((t) => !tenantId || t.tenantId === tenantId);
+      const tracker = new PromptVersionTracker();
+      for (const trace of all) tracker.recordFromTrace(trace);
+      sendJson(res, 200, tracker.getSummary());
+      return { handled: true, status: 200 };
+    }
+
+    if (segments[0] === 'slos' && segments.length === 1 && method === 'GET') {
+      const manager = new SLOManager();
+      sendJson(res, 200, { slos: manager.listSLOs(), status: manager.getStatus() });
       return { handled: true, status: 200 };
     }
 
@@ -267,7 +399,20 @@ export async function handleObservabilityRequest(
   }
 }
 
-async function readBody(req: IncomingMessage): Promise<{ runId: string; substitutions: Array<{ target: 'tool_output' | 'llm_response' | 'tool_input'; spanId: string; field?: string; value: unknown }>; reExecuteLlm: boolean }> {
+async function readFeedbackBody(req: IncomingMessage): Promise<{ rating?: 'positive' | 'negative' | 'neutral'; comment?: string; tags?: string[] }> {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', (chunk: Buffer) => { data += chunk.toString('utf-8'); });
+    req.on('end', () => {
+      try {
+        resolve(data ? JSON.parse(data) : {});
+      } catch { reject(new Error('Invalid JSON')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+async function readBody(req: IncomingMessage): Promise<{ runId: string; substitutions: Array<{ target: 'tool_output' | 'llm_response' | 'tool_input'; spanId: string; field?: string; value: unknown }>; reExecuteLlm: boolean; modelOverride?: string; onlySpanIds?: string[] }> {
   return new Promise((resolve, reject) => {
     let data = '';
     req.on('data', (chunk: Buffer) => { data += chunk.toString('utf-8'); });
@@ -287,7 +432,14 @@ export const OBSERVABILITY_HTTP_ROUTES = [
   'GET /api/v1/observability/runs/:runId/tree',
   'GET /api/v1/observability/runs/:runId/cost',
   'GET /api/v1/observability/runs/:runId/decisions',
+  'GET /api/v1/observability/runs/:runId/summary',
   'POST /api/v1/observability/runs/:runId/replay',
+  'POST /api/v1/observability/runs/:runId/feedback',
   'GET /api/v1/observability/agents/:agentId',
+  'GET /api/v1/observability/conversations/:conversationId',
+  'GET /api/v1/observability/tools',
+  'GET /api/v1/observability/compare/:runIdA/:runIdB',
+  'GET /api/v1/observability/prompts',
+  'GET /api/v1/observability/slos',
   'GET /api/v1/observability/search',
 ] as const;

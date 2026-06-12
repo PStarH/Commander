@@ -4,6 +4,7 @@ export { buildTimeline, buildSpanTree } from './timelineBuilder';
 export { buildDecisions, decisionsSummary } from './decisionProvenance';
 export { eventToOtelAttrs, spanNameForEvent, SPAN_KIND_TO_OTEL_KIND } from './otelSemConv';
 export { dryReplay } from './replay';
+export { buildExecutiveSummary } from './executiveSummary';
 export {
   handleObservabilityRequest,
   OBSERVABILITY_HTTP_ROUTES,

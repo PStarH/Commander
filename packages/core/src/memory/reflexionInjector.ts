@@ -72,6 +72,16 @@ export class ReflexionInjector {
   }
 
   /**
+   * Get the most recent N reflections from the in-process buffer.
+   *
+   * Tier 3.2: used by AgentRuntime to inject prior attempts into retry prompts
+   * without requiring a MetaLearner instance.
+   */
+  getRecentReflections(limit: number = this.config.maxReflections): ReflectionEntry[] {
+    return this.reflectionBuffer.slice(-limit);
+  }
+
+  /**
    * Get recent reflections from MetaLearner
    *
    * Token cost: 0 (reads existing data)

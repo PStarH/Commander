@@ -97,6 +97,37 @@ export function repairToolCallArguments(
   return { args: {}, repairs: ['all repair strategies failed'] };
 }
 
+/**
+ * Tier 3.1: produce concrete suggestions for repairing validation errors.
+ * Each suggestion is a one-sentence hint the LLM can use to self-correct.
+ */
+export function suggestRepairsForValidationErrors(
+  errors: Array<{ path: string; message: string; expectedType?: string; actualValue?: unknown }>,
+): string[] {
+  return errors.map(e => {
+    if (e.message.includes('required')) {
+      return `Add the required argument "${e.path}" with an appropriate value.`;
+    }
+    if (e.expectedType === 'string' && typeof e.actualValue !== 'string') {
+      return `Change "${e.path}" to a string. Try: "${String(e.actualValue ?? '')}".`;
+    }
+    if (e.expectedType === 'number' && typeof e.actualValue === 'string') {
+      const n = Number(e.actualValue);
+      return `Change "${e.path}" to a number. Try: ${Number.isFinite(n) ? n : 0}.`;
+    }
+    if (e.expectedType === 'boolean' && typeof e.actualValue !== 'boolean') {
+      return `Change "${e.path}" to a boolean (true or false).`;
+    }
+    if (e.expectedType === 'array' && !Array.isArray(e.actualValue)) {
+      return `Wrap "${e.path}" in an array: [${JSON.stringify(e.actualValue)}].`;
+    }
+    if (e.message.includes('enum')) {
+      return `Choose a valid value for "${e.path}" from the tool's allowed enum values.`;
+    }
+    return `Fix "${e.path}" to match the expected schema.`;
+  });
+}
+
 // ============================================================================
 // Strategy 3: Common-Fix Parse
 // ============================================================================

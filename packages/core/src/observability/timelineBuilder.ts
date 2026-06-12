@@ -48,6 +48,23 @@ function nodeFromEvent(e: TraceEvent, childSpanIds: Set<string>): TimelineNode {
       ? getCostModel().calculate(e.data.modelInfo.provider, e.data.modelInfo.model, tokens)
       : undefined;
   const endedAt = new Date(new Date(e.timestamp).getTime() + e.durationMs).toISOString();
+
+  let promptContent: string | undefined;
+  let completionContent: string | undefined;
+  if (e.type === 'llm_call') {
+    if (e.data.input && typeof e.data.input === 'object') {
+      const req = e.data.input as Record<string, unknown>;
+      if (typeof req['messages'] === 'string') promptContent = req['messages'];
+      else if (Array.isArray(req['messages'])) promptContent = JSON.stringify(req['messages']);
+    }
+    if (typeof e.data.output === 'string') completionContent = e.data.output;
+    else if (e.data.output && typeof e.data.output === 'object') {
+      const out = e.data.output as Record<string, unknown>;
+      if (typeof out['content'] === 'string') completionContent = out['content'];
+      else completionContent = JSON.stringify(e.data.output);
+    }
+  }
+
   return {
     spanId: e.spanId,
     parentSpanId: e.parentSpanId,
@@ -67,13 +84,19 @@ function nodeFromEvent(e: TraceEvent, childSpanIds: Set<string>): TimelineNode {
     agentId: e.agentId,
     model: e.data.modelInfo?.model,
     provider: e.data.modelInfo?.provider,
+    tier: e.data.tier ?? e.data.modelInfo?.tier,
+    taskCategory: e.data.taskCategory,
     tokens,
     cost,
     reasoning: e.type === 'llm_call' ? preview(e.data.output) : undefined,
+    promptContent,
+    completionContent,
     toolInputPreview: e.type === 'tool_execution' ? preview(e.data.input) : undefined,
     toolOutputPreview: e.type === 'tool_execution' ? preview(e.data.output) : undefined,
     decision: e.type === 'decision' ? (typeof e.data.output === 'string' ? e.data.output : preview(e.data.output)) : undefined,
     stateTransition: e.data.stateTransition,
+    evaluationScore: e.data.evaluationScore,
+    evaluationPassed: e.data.evaluationPassed,
     hasChildren: childSpanIds.has(e.spanId),
   };
 }

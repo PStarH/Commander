@@ -1450,5 +1450,71 @@
     "secret": "ab31457b5354bda033258f7c28279d28a66c310b2c7709382de1a5a5d01ee264",
     "retryMax": 3,
     "createdAt": "2026-06-05T07:37:56.620Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1780812958807_ouc76x",
+    "secret": "004083de20a3dc05cd8c9bd4d6a6f14bb145d05c1e67d3f6577456cf0a7da095",
+    "retryMax": 3,
+    "createdAt": "2026-06-07T06:15:58.807Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1780813157142_35gt02",
+    "secret": "e6f80cd2e7fcfa33c58db5de831bd8f84b85f0c49f97241195403d16654ffed0",
+    "retryMax": 3,
+    "createdAt": "2026-06-07T06:19:17.142Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1780813799299_r2ermv",
+    "secret": "1ad90eb28411dc4d715a30aec7f43d603dc95399a3d96efec87c8c24145e7e09",
+    "retryMax": 3,
+    "createdAt": "2026-06-07T06:29:59.300Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1780814011961_6dkbc5",
+    "secret": "206ea54a4b451ebb5c366af93c774645ecce9b4c72a69ba719fd039b358224f6",
+    "retryMax": 3,
+    "createdAt": "2026-06-07T06:33:31.961Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1780814244990_sekqs6",
+    "secret": "1ec53770b9155a2daf0380517d6bdc262e20f1046e4547acc50a3c0497b45089",
+    "retryMax": 3,
+    "createdAt": "2026-06-07T06:37:24.990Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1780814824050_78xgtv",
+    "secret": "7fa7f42074be706fb666c2302f2af0ec573f6723728550003480c26f032885a7",
+    "retryMax": 3,
+    "createdAt": "2026-06-07T06:47:04.050Z"
   }
 ]

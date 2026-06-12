@@ -1,6 +1,6 @@
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
-import { eventToOtelAttrs, spanNameForEvent, SPAN_KIND_TO_OTEL_KIND } from '../../src/observability/otelSemConv';
+import { eventToOtelAttrs, spanNameForEvent, SPAN_KIND_TO_OTEL_KIND, isGenAiSemConvOptIn } from '../../src/observability/otelSemConv';
 import type { TraceEvent } from '../../src/runtime/types';
 
 function makeEvent(overrides: Partial<TraceEvent> = {}): TraceEvent {
@@ -48,6 +48,86 @@ describe('eventToOtelAttrs', () => {
   it('includes conversation.id when provided', () => {
     const attrs = eventToOtelAttrs(makeEvent(), { conversationId: 'conv-1' });
     assert.strictEqual(attrs['gen_ai.conversation.id'], 'conv-1');
+  });
+});
+
+describe('eventToOtelAttrs (OTel GenAI 1.36+ compliance)', () => {
+  it('emits gen_ai.response.id when responseId is set', () => {
+    const e = makeEvent({ data: { responseId: 'resp-abc-123', modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'premium' as any } } });
+    const attrs = eventToOtelAttrs(e, {});
+    assert.strictEqual(attrs['gen_ai.response.id'], 'resp-abc-123');
+  });
+
+  it('emits gen_ai.output.type when outputType is set', () => {
+    const e = makeEvent({ data: { outputType: 'tool_call' } });
+    const attrs = eventToOtelAttrs(e, {});
+    assert.strictEqual(attrs['gen_ai.output.type'], 'tool_call');
+  });
+
+  it('emits gen_ai.usage.reasoning.output_tokens when reasoningTokens is set', () => {
+    const e = makeEvent({ data: { reasoningTokens: 2500 } });
+    const attrs = eventToOtelAttrs(e, {});
+    assert.strictEqual(attrs['gen_ai.usage.reasoning.output_tokens'], 2500);
+  });
+
+  it('emits gen_ai.response.finish_reasons when finishReason is set', () => {
+    const e = makeEvent({ data: { finishReason: 'tool_calls' } });
+    const attrs = eventToOtelAttrs(e, {});
+    assert.strictEqual(attrs['gen_ai.response.finish_reasons'], 'tool_calls');
+  });
+
+  it('emits server.address when serverAddress is set', () => {
+    const e = makeEvent({ data: { serverAddress: 'api.openai.com' } });
+    const attrs = eventToOtelAttrs(e, {});
+    assert.strictEqual(attrs['server.address'], 'api.openai.com');
+  });
+
+  it('emits gen_ai.tool.call.id for tool events when toolCallId is set', () => {
+    const e = makeEvent({ type: 'tool_execution', data: { input: 'web_search', toolCallId: 'call_42' } });
+    const attrs = eventToOtelAttrs(e, {});
+    assert.strictEqual(attrs['gen_ai.tool.call.id'], 'call_42');
+  });
+
+  it('emits gen_ai.usage.cached_input_tokens when cacheReadTokens > 0', () => {
+    const e = makeEvent({ data: { tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150, cacheReadTokens: 80 } as any } });
+    const attrs = eventToOtelAttrs(e, {});
+    assert.strictEqual(attrs['gen_ai.usage.cached_input_tokens'], 80);
+  });
+
+  it('omits cached_input_tokens when cacheReadTokens is 0 or missing', () => {
+    const attrs = eventToOtelAttrs(makeEvent(), {});
+    assert.strictEqual(attrs['gen_ai.usage.cached_input_tokens'], undefined);
+  });
+});
+
+describe('isGenAiSemConvOptIn', () => {
+  const original = process.env.OTEL_SEMCONV_STABILITY_OPT_IN;
+  before(() => { delete process.env.OTEL_SEMCONV_STABILITY_OPT_IN; });
+  after(() => { if (original !== undefined) process.env.OTEL_SEMCONV_STABILITY_OPT_IN = original; });
+
+  it('defaults to enabled (true) when env var is unset', () => {
+    delete process.env.OTEL_SEMCONV_STABILITY_OPT_IN;
+    assert.strictEqual(isGenAiSemConvOptIn(), true);
+  });
+
+  it('returns true when env var contains "gen_ai"', () => {
+    process.env.OTEL_SEMCONV_STABILITY_OPT_IN = 'gen_ai';
+    assert.strictEqual(isGenAiSemConvOptIn(), true);
+  });
+
+  it('returns true when env var contains "all"', () => {
+    process.env.OTEL_SEMCONV_STABILITY_OPT_IN = 'all';
+    assert.strictEqual(isGenAiSemConvOptIn(), true);
+  });
+
+  it('returns true when env var lists gen_ai among multiple', () => {
+    process.env.OTEL_SEMCONV_STABILITY_OPT_IN = 'http,gen_ai,database';
+    assert.strictEqual(isGenAiSemConvOptIn(), true);
+  });
+
+  it('returns false when env var is set to a non-matching value', () => {
+    process.env.OTEL_SEMCONV_STABILITY_OPT_IN = 'http,database';
+    assert.strictEqual(isGenAiSemConvOptIn(), false);
   });
 });
 

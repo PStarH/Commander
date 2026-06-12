@@ -41,6 +41,7 @@ import { ReflexionTopologicalOptimizer } from './topologyOptimizer';
 import { getEvolutionEngine } from '../runtime/evolutionaryWorkflowEngine';
 import { COST_PER_TOKEN } from '../config/constants';
 import { getGlobalLogger } from '../logging';
+import { createInitialSharedState, mergeSharedState } from './stateManager';
 
 function generateExecId(counter: { value: number }): string {
   return `ultimate_${Date.now()}_${++counter.value}`;
@@ -250,6 +251,16 @@ this.topologyRouter = new TopologyRouter();
     const completedCount = countCompleted(taskTree);
     const failedCount = countFailed(taskTree);
     reasoning.push(`Execution: ${completedCount} completed, ${failedCount} failed`);
+
+    // Merge sub-agent results into shared state using per-key reducers
+    const completedNodes = flattenTree(taskTree).filter(n => n.status === 'COMPLETED' && n.result);
+    const failedNodes = flattenTree(taskTree).filter(n => n.status === 'FAILED');
+    ctx.sharedState = mergeSharedState(ctx.sharedState, {
+      findings: completedNodes.map(n => `[${n.goal.slice(0, 80)}] ${n.result!.slice(0, 500)}`),
+      errors: failedNodes.map(n => `[${n.goal.slice(0, 80)}] ${n.result ?? 'failed'}`),
+      artifacts: allArtifacts.map(a => a.id),
+      costAccumulator: this.sumTokenUsage(taskTree) * COST_PER_TOKEN,
+    });
 
     // Phase 7: Multi-Agent Synthesis
     emit('SYNTHESIS', `Synthesizing results from ${completedCount} completed subtasks...`);
@@ -696,6 +707,7 @@ if (topologyAction && 'to' in topologyAction) {
       projectId: params.projectId,
       goal: params.goal,
       context: params.contextData ?? {},
+      sharedState: createInitialSharedState(),
       effortLevel: this.config.defaultEffortLevel,
       scalingRules: getEffortRules(this.config.defaultEffortLevel),
       topology: 'SINGLE',
