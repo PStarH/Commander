@@ -47,6 +47,9 @@ jobs:
       - name: Verify core test inventory
         run: pnpm --filter @commander/core test:inventory
 
+      - name: Audit reversibility wiring
+        run: pnpm audit:wiring
+
       - name: Run core tests
         run: pnpm --filter @commander/core test
 
