@@ -224,6 +224,7 @@ export class InspectorAgent {
       case 'medium': return 3;
       case 'low': return 2;
       case 'info': return 1;
+      default: return 1;
     }
   }
 
@@ -362,6 +363,7 @@ export class InspectorAgent {
       case 'memory': return 'Memory';
       case 'coordination': return 'Coordination';
       case 'configuration': return 'Configuration';
+      default: return String(category);
     }
   }
 

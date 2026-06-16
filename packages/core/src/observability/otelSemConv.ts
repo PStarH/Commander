@@ -45,6 +45,12 @@ export interface OtelGenAiAttrs {
   'server.address'?: string;
   'error.type'?: string;
   'error.message'?: string;
+  // Error classification fields (custom attributes, not standard OTel semconv)
+  'error.class'?: string;
+  'error.retryable'?: boolean;
+  'error.retrying'?: boolean;
+  'error.attempts'?: number;
+  'http.response.status_code'?: number;
 }
 
 export function isGenAiSemConvOptIn(): boolean {
@@ -94,13 +100,33 @@ export function eventToOtelAttrs(
   if (ctx.agentName) attrs['gen_ai.agent.name'] = ctx.agentName;
   if (ctx.conversationId) attrs['gen_ai.conversation.id'] = ctx.conversationId;
   if (e.type === 'tool_execution') {
-    attrs['gen_ai.tool.name'] = String(e.data.input ?? 'unknown');
-    if (e.data.input) attrs['gen_ai.tool.call.arguments'] = previewJson(e.data.input);
+    // The exporter stashes the original tool name in `data.toolName` before
+    // redacting `data.input` to '[redacted]'. Check `toolName` first, then
+    // fall back to `input` for backward compat.
+    const toolName = String((e.data as Record<string, unknown>).toolName ?? e.data.input ?? 'unknown');
+    attrs['gen_ai.tool.name'] = toolName;
     if (e.data.toolCallId) attrs['gen_ai.tool.call.id'] = e.data.toolCallId;
   }
   if (e.data.error) {
     attrs['error.type'] = e.type;
     attrs['error.message'] = String(e.data.error);
+  }
+  // Pass through classification fields for error events
+  const dataEx = e.data as Record<string, unknown>;
+  if (dataEx.errorClass !== undefined) {
+    attrs['error.class'] = String(dataEx.errorClass);
+  }
+  if (dataEx.retryable !== undefined) {
+    attrs['error.retryable'] = Boolean(dataEx.retryable);
+  }
+  if (dataEx.retrying !== undefined) {
+    attrs['error.retrying'] = Boolean(dataEx.retrying);
+  }
+  if (dataEx.attempts !== undefined) {
+    attrs['error.attempts'] = Number(dataEx.attempts);
+  }
+  if (dataEx.statusCode !== undefined) {
+    attrs['http.response.status_code'] = Number(dataEx.statusCode);
   }
   return attrs;
 }
@@ -114,11 +140,3 @@ export function spanNameForEvent(e: TraceEvent): string {
   return `${op} ${e.type}`;
 }
 
-function previewJson(v: unknown, n = 500): string {
-  try {
-    const s = JSON.stringify(v);
-    return s.length > n ? s.slice(0, n) + '…' : s;
-  } catch {
-    return String(v).slice(0, n);
-  }
-}

@@ -10,6 +10,17 @@
 import { getGlobalLogger } from '../logging';
 
 // ============================================================================
+// Skill Decay Configuration
+// ============================================================================
+
+/** Days of inactivity before a skill starts decaying */
+const DECAY_DAYS = 30;
+/** Confidence below which a skill is auto-pruned */
+const MIN_CONFIDENCE = 0.2;
+/** Per-day confidence reduction after decay threshold */
+const DECAY_RATE = 0.05;
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -26,6 +37,12 @@ export interface ExtractedSkill {
   successRate: number;
   lastUsed: string;
   createdAt: string;
+  /** The runId of the execution that produced this skill */
+  sourceRunId?: string;
+  /** Whether this skill has decayed (stale/inactive) */
+  decayed: boolean;
+  /** When the skill was last decay-checked */
+  decayedAt?: string;
   examples: Array<{
     task: string;
     result: string;
@@ -45,6 +62,10 @@ export interface ExtractionResult {
 export class SkillExtractor {
   private skills: Map<string, ExtractedSkill> = new Map();
   private skillsPath: string;
+  /** Timestamp of last purge to throttle decay checks */
+  private lastPurgeMs = 0;
+  /** Minimum interval between decay checks (ms) */
+  private static readonly PURGE_COOLDOWN_MS = 60_000;
 
   constructor(baseDir?: string) {
     this.skillsPath = baseDir
@@ -59,8 +80,12 @@ export class SkillExtractor {
       if (fs.existsSync(this.skillsPath)) {
         const data = JSON.parse(fs.readFileSync(this.skillsPath, 'utf-8'));
         for (const skill of data) {
+          // Default decayed to false for skills loaded from disk
+          if (skill.decayed === undefined) skill.decayed = false;
           this.skills.set(skill.id, skill);
         }
+        // Run decay check on load
+        this.purgeStaleSkills();
       }
     } catch { /* ignore */ }
   }
@@ -83,6 +108,8 @@ export class SkillExtractor {
     steps: Array<{ action: string; tool: string; result: string }>;
     tokens: number;
     success: boolean;
+    /** The runId that produced this skill */
+    runId?: string;
   }): ExtractionResult {
     if (!params.success) return { skills: [], summary: 'Task failed, no skills extracted' };
 
@@ -130,6 +157,8 @@ export class SkillExtractor {
       successRate: 1.0,
       lastUsed: new Date().toISOString(),
       createdAt: new Date().toISOString(),
+      sourceRunId: params.runId,
+      decayed: false,
       examples: [{
         task: params.task,
         result: 'success',
@@ -150,6 +179,9 @@ export class SkillExtractor {
    * Find matching skill for a task.
    */
   findMatchingSkill(task: string): ExtractedSkill | undefined {
+    // Run decay check before recall
+    this.purgeStaleSkills();
+
     const taskLower = task.toLowerCase();
 
     let bestMatch: ExtractedSkill | undefined;
@@ -170,6 +202,9 @@ export class SkillExtractor {
    * Get all extracted skills.
    */
   getSkills(): ExtractedSkill[] {
+    // Run decay check before listing
+    this.purgeStaleSkills();
+
     return Array.from(this.skills.values())
       .sort((a, b) => b.usageCount - a.usageCount);
   }
@@ -181,6 +216,64 @@ export class SkillExtractor {
     return Array.from(this.skills.values())
       .filter(s => s.category === category)
       .sort((a, b) => b.usageCount - a.usageCount);
+  }
+
+  /**
+   * Get all decayed/stale skills.
+   */
+  getDecayedSkills(): ExtractedSkill[] {
+    return Array.from(this.skills.values())
+      .filter(s => s.decayed)
+      .sort((a, b) => b.lastUsed.localeCompare(a.lastUsed));
+  }
+
+  /**
+   * Purge stale skills that haven't been used in DECAY_DAYS days.
+   * Decays confidence gradually; skills below MIN_CONFIDENCE are removed.
+   * Called on load and before each recall.
+   */
+  purgeStaleSkills(): { decayed: number; pruned: number } {
+    const now = Date.now();
+    // Throttle: only run decay check once per PURGE_COOLDOWN_MS
+    if (now - this.lastPurgeMs < SkillExtractor.PURGE_COOLDOWN_MS) {
+      return { decayed: 0, pruned: 0 };
+    }
+    this.lastPurgeMs = now;
+
+    const decayThreshold = DECAY_DAYS * 24 * 60 * 60 * 1000;
+    let decayed = 0;
+    let pruned = 0;
+
+    for (const [id, skill] of this.skills) {
+      const daysSinceLastUse = (now - new Date(skill.lastUsed).getTime()) / (24 * 60 * 60 * 1000);
+
+      if (daysSinceLastUse > DECAY_DAYS) {
+        // Decay confidence: each day past threshold reduces confidence by DECAY_RATE
+        const extraDays = daysSinceLastUse - DECAY_DAYS;
+        const decayAmount = extraDays * DECAY_RATE;
+        skill.confidence = Math.max(MIN_CONFIDENCE, skill.confidence - decayAmount);
+        skill.decayed = true;
+        skill.decayedAt = new Date().toISOString();
+        decayed++;
+
+        // Auto-prune skills that dropped below minimum confidence
+        if (skill.confidence <= MIN_CONFIDENCE) {
+          this.skills.delete(id);
+          pruned++;
+          getGlobalLogger().info('SkillExtractor', `Pruned stale skill: ${skill.name}`, {
+            skillId: id,
+            daysSinceLastUse: Math.round(daysSinceLastUse),
+            confidence: skill.confidence,
+          });
+        }
+      }
+    }
+
+    if (decayed > 0 || pruned > 0) {
+      this.saveSkills();
+    }
+
+    return { decayed, pruned };
   }
 
   /**

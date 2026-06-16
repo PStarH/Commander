@@ -417,3 +417,40 @@ export async function scanContent(content: string, config?: Partial<ContentScann
   const scanner = createContentScanner(config);
   return scanner.scan(content);
 }
+
+// Pre-compiled regex for lightweight tool output injection scanning.
+// Only checks for the most critical patterns — full ContentScanner.scan()
+// is used for final output; this is for in-line filtering of tool results.
+const TOOL_OUTPUT_INJECTION_PATTERNS = [
+  /ignore\s+(all\s+)?previous\s+instructions?/gi,
+  /disregard\s+(all\s+)?(previous\s+)?instructions?/gi,
+  /system\s*:\s*you\s+are\s+now/gi,
+  /you\s+are\s+now\s+a\s+/gi,
+  /forget\s+(all\s+)?(previous\s+)?(rules|instructions)/gi,
+  /new\s+instruction\s*:/gi,
+  /override\s+(default\s+)?(rules|behavior)/gi,
+  /忽略(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi,
+  /无视(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi,
+  /你现在(是|变成|扮演)/gi,
+];
+
+/**
+ * Lightweight injection check for tool output.
+ * Scans for known prompt injection patterns before tool results enter the LLM context.
+ * Zero allocation, returns early on first match.
+ * Used as a defense-in-depth layer alongside the full ContentScanner.
+ */
+export function scanToolOutputForInjection(output: string): { blocked: boolean; reason?: string } {
+  if (!output || output.length === 0) return { blocked: false };
+  for (const pattern of TOOL_OUTPUT_INJECTION_PATTERNS) {
+    pattern.lastIndex = 0;
+    const match = pattern.exec(output);
+    if (match) {
+      return {
+        blocked: true,
+        reason: `Injection pattern detected in tool output: "${match[0].slice(0, 60)}"`,
+      };
+    }
+  }
+  return { blocked: false };
+}

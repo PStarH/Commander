@@ -104,6 +104,44 @@ export class CostModel {
     };
   }
 
+  /**
+   * Pure function: compute the dollar savings from cached tokens.
+   * Returns clamped count + uncached equivalent + dollars saved.
+   * Used by tests and the promptCacheSavings metric recording path.
+   *
+   * @param provider - provider name (e.g. 'anthropic')
+   * @param model - model name (e.g. 'claude-3-5-sonnet')
+   * @param cachedTokens - number of tokens reported as cache reads
+   * @param inputTokens - total input tokens (used to clamp over-reports)
+   */
+  getSavingsForCachedReads(
+    provider: string,
+    model: string,
+    cachedTokens: number,
+    inputTokens: number,
+  ): { cachedClamped: number; dollarsSaved: number; dollarsUncachedEquivalent: number } {
+    if (cachedTokens <= 0) {
+      return { cachedClamped: 0, dollarsSaved: 0, dollarsUncachedEquivalent: 0 };
+    }
+    const pricing = this.getPricing(provider, this.stripTierSuffix(model));
+    const clamped = Math.min(cachedTokens, inputTokens);
+    const uncachedEquivalent = (clamped / 1000) * pricing.inputPer1k;
+    const cachedCost = pricing.cachedInputPer1k
+      ? (clamped / 1000) * pricing.cachedInputPer1k
+      : 0;
+    const dollarsSaved = uncachedEquivalent - cachedCost;
+    return { cachedClamped: clamped, dollarsSaved, dollarsUncachedEquivalent: uncachedEquivalent };
+  }
+
+  /**
+   * Strip the @tier suffix from modelId before looking up pricing.
+   * e.g. 'claude-3-5-sonnet@eco' → 'claude-3-5-sonnet'
+   */
+  private stripTierSuffix(model: string): string {
+    const atIdx = model.indexOf('@');
+    return atIdx > 0 ? model.slice(0, atIdx) : model;
+  }
+
   private key(provider: string, model: string): string {
     return `${provider.toLowerCase()}:${model.toLowerCase()}`;
   }

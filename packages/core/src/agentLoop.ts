@@ -1,6 +1,6 @@
 import { AgentRuntime } from './runtime/agentRuntime';
 import { getMessageBus } from './runtime/messageBus';
-import { createAllTools } from './tools/index';
+import { createAllTools, wireResourceToolDependencies } from './tools/index';
 import { UltimateOrchestrator } from './ultimate/orchestrator';
 import { TELOSOrchestrator } from './telos/telosOrchestrator';
 import { deliberate } from './ultimate/deliberation';
@@ -26,7 +26,7 @@ const DEFAULT_CONFIG: AgentLoopConfig = {
   maxConcurrentTasks: 5,
   sessionTimeoutMs: 3600000,
   stateFile: '.commander_state.json',
-  tools: ['web_search', 'web_fetch', 'file_read', 'file_write', 'file_edit', 'file_search', 'file_list', 'python_execute', 'shell_execute'],
+  tools: ['web', 'file', 'exec', 'git'],
 };
 
 export class CommanderAgentLoop {
@@ -51,6 +51,11 @@ export class CommanderAgentLoop {
     for (const [name, tool] of allTools) {
       this.runtime.registerTool(name, tool);
     }
+    wireResourceToolDependencies(allTools, {
+      handoff: { handoff: this.runtime.getHandoff(), agentId: 'commander' },
+      toolResolver: (name) => this.runtime.getTool(name)?.definition,
+      registryTools: [],
+    });
 
     this.telos = new TELOSOrchestrator(this.runtime);
     this.orchestrator = new UltimateOrchestrator(this.telos, this.runtime);
@@ -225,10 +230,10 @@ export class CommanderAgentLoop {
     this.logger.info('AgentLoop', `Registered ${registrations.length} provider(s) from environment`);
   }
 
-  private async loadState(): Promise<void> {
+  private loadState(): void {
     try {
       if (fs.existsSync(this.config.stateFile)) {
-        const data = await fs.promises.readFile(this.config.stateFile, 'utf-8');
+        const data = fs.readFileSync(this.config.stateFile, 'utf-8');
         const parsed = JSON.parse(data);
         this.taskQueue = parsed.taskQueue || [];
         this.logger.info('AgentLoop', `Loaded state: ${this.taskQueue.length} pending tasks`);
@@ -240,14 +245,17 @@ export class CommanderAgentLoop {
   }
 
   private saveState(): void {
-    // Fire-and-forget async write to avoid blocking the event loop
+    // Synchronous write — the state file is small (<1KB) and must be consistent
+    // for crash recovery. Async writes create races on process exit and test assertions.
     const data = JSON.stringify({
       taskQueue: this.taskQueue,
       updatedAt: new Date().toISOString(),
     }, null, 2);
-    fs.promises.writeFile(this.config.stateFile, data, 'utf-8').catch(
-      (e) => this.logger.debug('AgentLoop', 'saveState error', { error: (e as Error)?.message })
-    );
+    try {
+      fs.writeFileSync(this.config.stateFile, data, 'utf-8');
+    } catch (e) {
+      this.logger.debug('AgentLoop', 'saveState error', { error: (e as Error)?.message });
+    }
   }
 
   private static readonly MAX_QUEUE_SIZE = 1000;

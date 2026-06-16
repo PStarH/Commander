@@ -269,9 +269,11 @@ export class ConversationStore {
       SELECT t.*, s.project_id, s.goal, s.summary, s.user_id
       FROM conversation_turns t
       INNER JOIN conversation_sessions s ON t.session_id = s.id
-      WHERE t.rowid IN (SELECT rowid FROM conversation_fts WHERE conversation_fts MATCH ?)
+      WHERE t.rowid IN (
+        SELECT rowid FROM conversation_fts WHERE conversation_fts MATCH ?
+        ORDER BY rank
+      )
       AND s.project_id = ?
-      ORDER BY rank
       LIMIT ?
     `);
 

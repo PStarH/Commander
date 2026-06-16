@@ -14,7 +14,7 @@ import { getCostPredictor, type CostEstimate } from './costPredictor';
 import { getFailurePatternLearner, type FailureWarning } from './failurePatterns';
 import { getImpactAnalyzer } from './impactAnalyzer';
 import { getSkillExtractor } from './skillExtractor';
-import { getGlobalLogger } from '../logging';
+import { getMetricsCollector } from '../runtime/metricsCollector';
 
 // ============================================================================
 // Types
@@ -102,6 +102,8 @@ export class AgentIntelligence {
     success: boolean;
     steps: Array<{ action: string; tool: string; result: string }>;
     error?: string;
+    /** The runId for skill provenance tracking */
+    runId?: string;
   }): Promise<PostTaskIntelligence> {
     const costPredictor = getCostPredictor();
     const failureLearner = getFailurePatternLearner();
@@ -128,7 +130,16 @@ export class AgentIntelligence {
         steps: params.steps,
         tokens: params.tokens,
         success: true,
+        runId: params.runId,
       });
+
+      // Record extraction metric
+      try {
+        const outcome = result.skills.length > 0
+          ? (result.skills[0].usageCount > 1 ? 'updated' : 'extracted')
+          : 'rejected';
+        getMetricsCollector().recordSkillExtraction(outcome, result.skills[0]?.category);
+      } catch { /* best-effort */ }
 
       if (result.skills.length > 0) {
         extractedSkill = {

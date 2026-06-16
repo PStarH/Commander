@@ -115,14 +115,14 @@ function getGitDiff(scope: ReviewScope, baseRef?: string, commitSha?: string): G
 
   const patch = execFileSync('git', ['diff', diffRef, '--unified=5'], {
     encoding: 'utf-8',
-    maxBuffer: 10 * 1024 * 1024,
+    maxBuffer: 50 * 1024 * 1024,
   });
 
   let files: string[];
   try {
     const filesOutput = execFileSync('git', ['diff', nameRef, '--name-only'], {
       encoding: 'utf-8',
-      maxBuffer: 1024 * 1024,
+      maxBuffer: 50 * 1024 * 1024,
     });
     files = filesOutput.split('\n').filter(Boolean);
   } catch (e) {

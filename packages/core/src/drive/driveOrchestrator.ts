@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { LLMProvider } from '../runtime/types';
-import type { AgentRuntime } from '../runtime/agentRuntime';
+import type { AgentRuntimeInterface } from '../runtime';
 import type { DriveConfig, DriveStep, DriveState, DriveResult } from './types';
 import { DEFAULT_DRIVE_CONFIG } from './types';
 import { getMessageBus } from '../runtime/messageBus';
@@ -58,14 +58,14 @@ function generateStepId(): string {
 
 export class DriveOrchestrator {
   private provider: LLMProvider;
-  private runtime: AgentRuntime | null;
+  private runtime: AgentRuntimeInterface | null;
   private config: DriveConfig;
   private model: string;
   private state!: DriveState;
 
   constructor(
     provider: LLMProvider,
-    runtime?: AgentRuntime | null,
+    runtime?: AgentRuntimeInterface | null,
     config?: Partial<DriveConfig>,
   ) {
     this.provider = provider;
@@ -143,7 +143,7 @@ export class DriveOrchestrator {
       bus.publish('drive.step_started', 'drive-orch', { stepId: step.id, description: step.description });
 
       if (this.runtime) {
-        // Execute with real tool access via AgentRuntime
+        // Execute with real tool access via AgentRuntimeInterface
         const agentResult = await this.executeWithRuntime(step, goal);
         if (agentResult) {
           step.agentResult = agentResult;
@@ -246,7 +246,7 @@ export class DriveOrchestrator {
   private async executeWithRuntime(
     step: DriveStep,
     goal: string,
-  ): Promise<Awaited<ReturnType<AgentRuntime['execute']>>> {
+  ): Promise<Awaited<ReturnType<AgentRuntimeInterface['execute']>>> {
     if (!this.runtime) throw new Error('DriveRuntime not initialized');
 
     return this.runtime.execute({

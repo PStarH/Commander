@@ -2,11 +2,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
 
-export type ProviderType = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'mimo' | 'deepseek' | 'glm' | 'xiaomi' | 'ollama' | 'vllm' | 'cohere' | 'mistral' | 'groq' | 'together' | 'perplexity' | 'fireworks' | 'replicate' | 'bedrock' | 'xai' | 'anyscale' | 'deepinfra';
+export type ProviderType = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'mimo' | 'deepseek' | 'glm' | 'xiaomi' | 'ollama' | 'vllm' | 'cohere' | 'mistral' | 'groq' | 'together' | 'perplexity' | 'fireworks' | 'replicate' | 'bedrock' | 'xai' | 'anyscale' | 'deepinfra' | 'agnes';
 
 export const PROVIDER_ORDER: ProviderType[] = [
   'ollama', 'vllm', 'deepinfra', 'anyscale', 'replicate', 'cohere', 'mistral', 'groq', 'together', 'perplexity', 'fireworks',
-  'xiaomi', 'mimo', 'deepseek', 'glm', 'xai', 'bedrock', 'openrouter', 'anthropic', 'google', 'openai',
+  'xiaomi', 'mimo', 'deepseek', 'glm', 'xai', 'bedrock', 'agnes', 'openrouter', 'anthropic', 'google', 'openai',
 ];
 
 export const ENV_MAP: Record<ProviderType, { key: string; url: string; model: string }> = {
@@ -31,6 +31,7 @@ export const ENV_MAP: Record<ProviderType, { key: string; url: string; model: st
   xai: { key: 'XAI_API_KEY', url: 'XAI_BASE_URL', model: 'XAI_MODEL' },
   anyscale: { key: 'ANYSCALE_API_KEY', url: 'ANYSCALE_BASE_URL', model: 'ANYSCALE_MODEL' },
   deepinfra: { key: 'DEEPINFRA_API_KEY', url: 'DEEPINFRA_BASE_URL', model: 'DEEPINFRA_MODEL' },
+  agnes: { key: 'AGNES_API_KEY', url: 'AGNES_BASE_URL', model: 'AGNES_MODEL' },
 };
 
 export const DEFAULT_URLS: Record<ProviderType, string> = {
@@ -55,6 +56,7 @@ export const DEFAULT_URLS: Record<ProviderType, string> = {
   xai: 'https://api.x.ai/v1',
   anyscale: 'https://api.endpoints.anyscale.com/v1',
   deepinfra: 'https://api.deepinfra.com/v1/openai',
+  agnes: 'https://apihub.agnes-ai.com/v1',
 };
 
 export const DEFAULT_MODELS: Record<ProviderType, string> = {
@@ -79,6 +81,7 @@ export const DEFAULT_MODELS: Record<ProviderType, string> = {
   xai: 'grok-2-latest',
   anyscale: 'meta-llama/Llama-3.3-70B-Instruct',
   deepinfra: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+  agnes: 'agnes-2.0-flash',
 };
 
 const DISPLAY_NAMES: Record<ProviderType, string> = {
@@ -103,6 +106,7 @@ const DISPLAY_NAMES: Record<ProviderType, string> = {
   xai: 'xAI (Grok)',
   anyscale: 'Anyscale',
   deepinfra: 'DeepInfra',
+  agnes: 'Agnes AI',
 };
 
 export const API_TYPE: Record<ProviderType, 'openai' | 'anthropic' | 'google'> = {
@@ -127,6 +131,7 @@ export const API_TYPE: Record<ProviderType, 'openai' | 'anthropic' | 'google'> =
   xai: 'openai',
   anyscale: 'openai',
   deepinfra: 'openai',
+  agnes: 'openai',
 };
 
 export interface ProviderInfo {

@@ -24,20 +24,20 @@ import type {
   StopMessage,
   WorkerAgentMessage,
 } from './types';
-import type { AgentRuntime } from '../runtime/agentRuntime';
+import type { AgentRuntimeInterface } from '../runtime';
 import type { AgentExecutionContext, AgentExecutionResult } from '../runtime/types';
-import type { TaskTreeNode } from '../ultimate/types';
+import type { TaskTreeNode } from '../runtime/types';
 
 /**
  * WorkerAgent executes subtasks as an actor.
  */
 export class WorkerAgent {
-  private readonly agentRuntime: AgentRuntime;
+  private readonly agentRuntime: AgentRuntimeInterface;
   private readonly config: WorkerAgentConfig;
 
   constructor(config: WorkerAgentConfig) {
     this.config = config;
-    this.agentRuntime = config.agentRuntime as AgentRuntime;
+    this.agentRuntime = config.agentRuntime as AgentRuntimeInterface;
   }
 
   get definition(): ActorDefinition<WorkerAgentState> {

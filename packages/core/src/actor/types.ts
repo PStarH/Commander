@@ -11,7 +11,7 @@
  */
 
 import type { AgentExecutionContext, AgentExecutionResult } from '../runtime/types';
-import type { TaskTreeNode } from '../ultimate/types';
+import type { TaskTreeNode } from '../runtime/types';
 
 // ============================================================================
 // Actor Core Interfaces

@@ -12,6 +12,10 @@ import { compareTraces } from './traceComparison';
 import { PromptVersionTracker } from './promptVersioning';
 import { SLOManager } from './sloManager';
 import type { CostReport } from './types';
+import type { DatasetStore } from './dataset';
+import type { ExperimentRunner, CaseExecutor } from './experimentRunner';
+import type { AutoScorer } from './autoScorer';
+import type { EvalScorer, EvalRubric } from './evalScorer';
 import { getGlobalLogger } from '../logging';
 
 const log = getGlobalLogger();
@@ -21,6 +25,13 @@ export interface ObservabilityDeps {
   traceStore: TraceStore;
   resolveTenant: (req: IncomingMessage) => string | undefined;
   liveReplayContext?: LiveReplayContext;
+  // P-obs-3: dataset eval system
+  datasetStore?: DatasetStore;
+  experimentRunner?: ExperimentRunner;
+  autoScorer?: AutoScorer;
+  evalScorer?: EvalScorer;
+  /** Factory that creates a CaseExecutor for the experiment runner. */
+  caseExecutorFactory?: () => CaseExecutor;
 }
 
 export interface ObservabilityResult {
@@ -177,7 +188,9 @@ export async function handleObservabilityRequest(
   queryStr: string,
 ): Promise<ObservabilityResult> {
   const method = req.method ?? 'GET';
-  if (method !== 'GET' && method !== 'POST') {
+  // Allow GET, POST, PUT, DELETE for CRUD routes. Individual handlers
+  // reject methods they don't support.
+  if (method !== 'GET' && method !== 'POST' && method !== 'PUT' && method !== 'DELETE') {
     sendJson(res, 405, { error: 'Method not allowed' });
     return { handled: true, status: 405 };
   }
@@ -390,6 +403,149 @@ export async function handleObservabilityRequest(
       return { handled: true, status: 200 };
     }
 
+    // ────────── P-obs-3: Dataset eval routes ──────────
+
+    if (segments[0] === 'datasets') {
+      const ds = deps.datasetStore;
+      const runner = deps.experimentRunner;
+      if (!ds) { sendJson(res, 501, { error: 'DatasetStore not configured' }); return { handled: true, status: 501 }; }
+
+      if (segments.length === 1 && method === 'GET') {
+        const datasets = ds.list();
+        sendJson(res, 200, { count: datasets.length, datasets });
+        return { handled: true, status: 200 };
+      }
+
+      if (segments.length === 1 && method === 'POST') {
+        const body = await readJsonBody(req);
+        if (!body || typeof body.name !== 'string' || typeof body.rubricId !== 'string') {
+          sendJson(res, 400, { error: 'Missing required fields: name, rubricId' });
+          return { handled: true, status: 400 };
+        }
+        const dataset = ds.create({
+          name: body.name as string,
+          description: body.description as string | undefined,
+          rubricId: body.rubricId as string,
+          cases: (body.cases ?? []) as Array<{ id: string; input: { goal: string } }>,
+          id: body.id as string | undefined,
+        });
+        sendJson(res, 201, { id: dataset.id, name: dataset.name, rubricId: dataset.rubricId });
+        return { handled: true, status: 201 };
+      }
+
+      if (segments.length === 2) {
+        const datasetId = segments[1]!;
+        if (method === 'GET') {
+          const dataset = ds.get(datasetId);
+          if (!dataset) { sendJson(res, 404, { error: 'Dataset not found' }); return { handled: true, status: 404 }; }
+          sendJson(res, 200, dataset);
+          return { handled: true, status: 200 };
+        }
+        if (method === 'PUT') {
+          const body = await readJsonBody(req);
+          const updated = ds.update(datasetId, body ?? {});
+          if (!updated) { sendJson(res, 404, { error: 'Dataset not found' }); return { handled: true, status: 404 }; }
+          sendJson(res, 200, updated);
+          return { handled: true, status: 200 };
+        }
+        if (method === 'DELETE') {
+          const ok = ds.delete(datasetId);
+          if (!ok) { sendJson(res, 404, { error: 'Dataset not found' }); return { handled: true, status: 404 }; }
+          sendJson(res, 200, { ok: true });
+          return { handled: true, status: 200 };
+        }
+      }
+
+      if (segments.length === 3 && segments[2] === 'run' && method === 'POST') {
+        const datasetId = segments[1]!;
+        const body = await readJsonBody(req);
+        if (!ds.get(datasetId)) { sendJson(res, 404, { error: 'Dataset not found' }); return { handled: true, status: 404 }; }
+        if (!runner) { sendJson(res, 501, { error: 'ExperimentRunner not configured' }); return { handled: true, status: 501 }; }
+
+        const runId = runner.allocateRunId();
+        const passThreshold = (body?.passThreshold as number) ?? 0.5;
+        const caseExecutor = deps.caseExecutorFactory?.() ?? defaultCaseExecutor;
+
+        // Fire-and-forget: start the experiment asynchronously, return 202 immediately
+        runner.runWithId(runId, datasetId, caseExecutor, { passThreshold }).then(
+          () => { /* completed */ },
+          () => { /* best-effort */ },
+        );
+
+        sendJson(res, 202, { runId, datasetId, status: 'running' });
+        return { handled: true, status: 202 };
+      }
+    }
+
+    if (segments[0] === 'experiments') {
+      const runner = deps.experimentRunner;
+      if (!runner) { sendJson(res, 501, { error: 'ExperimentRunner not configured' }); return { handled: true, status: 501 }; }
+
+      if (segments.length === 1 && method === 'GET') {
+        const runs = runner.listRuns(50);
+        sendJson(res, 200, { count: runs.length, runs });
+        return { handled: true, status: 200 };
+      }
+
+      if (segments.length === 2 && method === 'GET') {
+        const run = runner.getRun(segments[1]!);
+        if (!run) { sendJson(res, 404, { error: 'Experiment not found' }); return { handled: true, status: 404 }; }
+        sendJson(res, 200, run);
+        return { handled: true, status: 200 };
+      }
+    }
+
+    if (segments[0] === 'auto-score') {
+      const as = deps.autoScorer;
+      if (!as) { sendJson(res, 501, { error: 'AutoScorer not configured' }); return { handled: true, status: 501 }; }
+
+      if (segments[1] === 'config' && method === 'GET') {
+        sendJson(res, 200, as.getConfig());
+        return { handled: true, status: 200 };
+      }
+
+      if (segments[1] === 'config' && method === 'POST') {
+        const body = await readJsonBody(req);
+        const applied = as.configure(body ?? {});
+        sendJson(res, 200, { applied });
+        return { handled: true, status: 200 };
+      }
+
+      if (segments[1] === 'results' && method === 'GET') {
+        const results = as.getResults(100);
+        sendJson(res, 200, { count: results.length, results });
+        return { handled: true, status: 200 };
+      }
+
+      if (segments[1] === 'results' && method === 'DELETE') {
+        as.clearResults();
+        sendJson(res, 200, { ok: true });
+        return { handled: true, status: 200 };
+      }
+    }
+
+    if (segments[0] === 'rubrics') {
+      const es = deps.evalScorer;
+      if (!es) { sendJson(res, 501, { error: 'EvalScorer not configured' }); return { handled: true, status: 501 }; }
+
+      if (segments.length === 1 && method === 'GET') {
+        const rubrics = es.listRubrics();
+        sendJson(res, 200, { rubrics });
+        return { handled: true, status: 200 };
+      }
+
+      if (segments.length === 1 && method === 'POST') {
+        const body = await readJsonBody(req);
+        if (!body || typeof body.id !== 'string' || typeof body.promptTemplate !== 'string') {
+          sendJson(res, 400, { error: 'Missing required fields: id, promptTemplate' });
+          return { handled: true, status: 400 };
+        }
+        es.registerRubric(body as unknown as EvalRubric);
+        sendJson(res, 201, { id: body.id, status: 'registered' });
+        return { handled: true, status: 201 };
+      }
+    }
+
     sendJson(res, 404, { error: 'Not found' });
     return { handled: true, status: 404 };
   } catch (err) {
@@ -424,6 +580,28 @@ async function readBody(req: IncomingMessage): Promise<{ runId: string; substitu
     req.on('error', reject);
   });
 }
+
+/** Generic JSON body parser for non-feedback routes. */
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | undefined> {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', (chunk: Buffer) => { data += chunk.toString('utf-8'); });
+    req.on('end', () => {
+      if (data.length === 0) { resolve(undefined); return; }
+      try { resolve(JSON.parse(data)); } catch { reject(new Error('Invalid JSON')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+/** Default case executor that returns a simple result. */
+const defaultCaseExecutor: CaseExecutor = async () => ({
+  output: '',
+  toolCallsMade: [],
+  tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+  costUsd: 0,
+  durationMs: 0,
+});
 
 export const OBSERVABILITY_HTTP_ROUTES = [
   'GET /api/v1/observability/runs',

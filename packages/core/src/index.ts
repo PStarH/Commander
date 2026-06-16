@@ -84,7 +84,7 @@ export type {
 
 // ContentScanner exports - Agent Security Layer
 export {
-  ContentScanner, DefaultContentScanner, createContentScanner, scanContent,
+  ContentScanner, DefaultContentScanner, createContentScanner, scanContent, scanToolOutputForInjection,
 } from './contentScanner';
 
 // Configuration Validation
@@ -121,7 +121,7 @@ export type {
 } from './runtime/openTelemetryExporter';
 
 // ThreeLayerMemory
-export { ThreeLayerMemory } from './threeLayerMemory';
+export { ThreeLayerMemory, getGlobalThreeLayerMemory, resetGlobalThreeLayerMemory, createThreeLayerMemory } from './threeLayerMemory';
 
 // Logging & Metrics
 export {
@@ -152,13 +152,72 @@ export {
   updateComponentHealth, runInspection,
 } from './frameworkIntegration';
 
+// Shell & Runner exports
+export {
+  getSandboxManager,
+  SandboxManager,
+  ExecPolicyEngine,
+} from './sandbox';
+export type {
+  SandboxMode, SandboxProfile, SandboxMechanism, NetworkPolicy,
+  FileAccessPolicy, SandboxExecutionResult, PlatformSandbox,
+} from './sandbox';
+
+// Credential Manager
+export {
+  CredentialManager, getCredentialManager, resetCredentialManager,
+} from './runtime/credentialManager';
+
 // Hallucination Detector
 export {
   HallucinationDetector, getHallucinationDetector,
 } from './hallucinationDetector';
+
 export type {
   HallucinationSignal, HallucinationReport,
 } from './hallucinationDetector';
+
+// Security Subsystem
+export {
+  SecurityMonitor, getSecurityMonitor, resetSecurityMonitor,
+} from './security/securityMonitor';
+export {
+  GuardianAgent, getGuardianAgent, resetGuardianAgent,
+} from './security/guardianAgent';
+export {
+  SecurityAuditLogger, getSecurityAuditLogger, resetSecurityAuditLogger,
+} from './security/securityAuditLogger';
+
+// Cost Estimation
+export {
+  CostEstimator, getCostEstimator, resetCostEstimator,
+} from './runtime/costEstimator';
+export type { CostEstimatorConfig } from './runtime/costEstimator';
+
+// Anomaly Detection
+export {
+  getAnomalyDetector,
+} from './observability/anomalyDetector';
+
+// SLO Management
+export {
+  SLOManager, getSLOManager,
+} from './observability/sloManager';
+
+// Decision Provenance
+export {
+  buildDecisions, decisionsSummary,
+} from './observability/decisionProvenance';
+
+// Execution Provenance
+export {
+  captureProvenance,
+} from './runtime/provenance';
+
+// Metrics (from metricsCollector, not the logging re-export)
+export {
+  getMetricsCollector, resetMetricsCollector,
+} from './runtime/metricsCollector';
 
 // Runtime System — Agent Execution Engine
 export type {
@@ -183,15 +242,24 @@ export {
   CohereProvider, MistralProvider, GroqProvider,
   TogetherProvider, PerplexityProvider, FireworksProvider,
   ReplicateProvider, BedrockProvider, XAIProvider,
-  AnyscaleProvider, DeepInfraProvider,
+  AnyscaleProvider, DeepInfraProvider, AgnesProvider,
   MCPRemoteRuntime, SSEStream,
   selectTools, getToolRelevanceScores, getToolCategory,
   isConfidentResponse, hasInformationGain,
   PatternTracker, getPatternTracker, resetPatternTracker,
   planSpeculativeExecution, isSpeculativelySafe,
+  // SOP generation & dashboard
+  exportSOPFromTrace, exportSOPFromResult,
+  formatSOPAsMarkdown, formatSOPAsContext,
+  listSOPs, getSOP, getSOPMarkdown,
+  getSOPDashboardData, renderSOPDashboardHtml,
 } from './runtime';
+export type { AgentRuntimeInterface } from './runtime';
 export type {
   EmbeddingFunction, ToolRetrievalConfig, EntropyGatingConfig, SpeculativeExecutionConfig,
+  // SOP types
+  SOPListItem, SOPDashboardData, SOPTemplate,
+  SOPPhase, SOPDecision, SOPToolCall, SOPFileAccess,
 } from './runtime';
 
 // HTML Reporting
@@ -246,6 +314,14 @@ export type {
 export {
   TokenGovernor, getTokenGovernor, resetTokenGovernor,
 } from './runtime/tokenGovernor';
+
+// Token Budget Manager — per-run proportional sub-agent allocation
+export {
+  TokenBudgetManager, getTokenBudgetManager, resetTokenBudgetManager,
+} from './runtime/tokenBudgetManager';
+export type {
+  SubAgentAllocation, RunBudgetStatus, TokenBudgetConfig,
+} from './runtime/tokenBudgetManager';
 export type {
   OptimizationStrategy, BudgetState, GovernorDecision,
   GovernorConfig, TaskCategory,
@@ -340,8 +416,21 @@ export {
 } from './drive';
 
 // Experimental — not yet wired into the main execution flow
-export { DynamicOrchestrator } from './orchestration/dynamicOrchestrator';
 export { PluginLoader, getPluginLoader } from './pluginLoader';
+
+// Reliability Engine — Unified resilience facade (circuit breaker + DLQ + compensation + checkpoints)
+export { ReliabilityEngine } from './runtime/reliabilityEngine';
+export type { ReliabilityEngineConfig, ReliabilityStats } from './runtime/reliabilityEngine';
+
+// Commander Core — tiered auto-configuration control center (recommended entry)
+export { Commander } from './commander';
+export type { CommanderResult, CommanderStatus } from './commander';
+export type { CommanderOptions, DeploymentTier, ResolvedConfig } from './commander/tier';
+export type { ProbeResult } from './commander/probe';
+
+// PrivacyRouter — Sensitive content detection + local model fallback
+export { PrivacyRouter, getPrivacyRouter, resetPrivacyRouter } from './runtime/privacyRouter';
+export type { PrivacyRouterConfig, PrivacyDecision, PrivacyRoute, SensitivityMatch, SensitivityCategory } from './runtime/privacyRouter';
 
 // Saga Runtime — durable compensating transactions
 export {

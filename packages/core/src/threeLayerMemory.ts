@@ -179,18 +179,52 @@ export class ThreeLayerMemory {
       };
     }
 
+    // Contradiction detection: check if new content conflicts with existing memories.
+    // Uses text similarity to find potentially conflicting entries, then lowers
+    // importance of the new entry. Zero-token cost (pure computation).
+    let adjustedImportance = importance;
+    const contradictionIds: string[] = [];
+    if (layer !== 'working' && content.length > 20) {
+      try {
+        const similar = this.searchRelated(content, 5);
+        for (const existing of similar) {
+          if (existing.id === 'rejected') continue;
+          const textSim = this.textSimilarity(content, existing.content);
+          if (textSim > 0.7 && Math.abs(existing.importance - importance) > 0.4) {
+            contradictionIds.push(existing.id);
+          }
+        }
+        if (contradictionIds.length > 0) {
+          adjustedImportance *= 0.5;
+          getGlobalLogger().debug('ThreeLayerMemory', 'Contradiction detected in memory write', {
+            contradictionCount: contradictionIds.length,
+            originalImportance: importance,
+            adjustedImportance,
+          });
+        }
+      } catch (e) {
+        getGlobalLogger().debug('ThreeLayerMemory', 'Contradiction check failed (best-effort)', {
+          error: (e as Error)?.message,
+        });
+      }
+    }
+
+    const entryMetadata: Record<string, unknown> = contradictionIds.length > 0
+      ? { ...metadata, contradictions: contradictionIds }
+      : metadata;
+
     const entry: MemoryEntry = {
       id: generateUUID(),
       layer,
       content,
       context,
-      importance,
+      importance: adjustedImportance,
       createdAt: new Date().toISOString(),
       lastAccessedAt: new Date().toISOString(),
       accessCount: 0,
       decayScore: layer === 'episodic' ? 1.0 : 0,
       tags,
-      metadata
+      metadata: entryMetadata
     };
 
     this.memories.set(entry.id, entry);
@@ -554,6 +588,20 @@ export class ThreeLayerMemory {
    */
   getQualityGate(): MemoryQualityGate {
     return this.qualityGate;
+  }
+
+  /**
+   * Simple text similarity measure (Jaccard index on word bigrams).
+   * Fast and zero-token — used for contradiction detection.
+   * Returns 0-1 score where 1 = identical word content.
+   */
+  private textSimilarity(a: string, b: string): number {
+    const wordsA = new Set(a.toLowerCase().split(/\s+/).filter(w => w.length > 1));
+    const wordsB = new Set(b.toLowerCase().split(/\s+/).filter(w => w.length > 1));
+    if (wordsA.size === 0 || wordsB.size === 0) return 0;
+    const intersection = new Set([...wordsA].filter(x => wordsB.has(x)));
+    const union = new Set([...wordsA, ...wordsB]);
+    return intersection.size / union.size;
   }
 
   /**

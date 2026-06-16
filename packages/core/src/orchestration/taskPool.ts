@@ -8,7 +8,7 @@
  * This is Commander's killer feature vs OpenClaw/Hermes:
  * they execute one task at a time; Commander runs N tasks across M agents.
  */
-import type { AgentRuntime } from '../runtime/agentRuntime';
+import type { AgentRuntimeInterface } from '../runtime';
 import type { AgentExecutionContext, AgentExecutionResult } from '../runtime/types';
 
 export interface PoolTask {
@@ -47,12 +47,12 @@ const DEFAULT_CONFIG: PoolConfig = {
 };
 
 export class TaskPool {
-  private runtime: AgentRuntime;
+  private runtime: AgentRuntimeInterface;
   private config: PoolConfig;
   private activeWorkers: Map<string, Promise<PoolResult>> = new Map();
   private totalTokensUsed = 0;
 
-  constructor(runtime: AgentRuntime, config?: Partial<PoolConfig>) {
+  constructor(runtime: AgentRuntimeInterface, config?: Partial<PoolConfig>) {
     this.runtime = runtime;
     this.config = { ...DEFAULT_CONFIG, ...config };
   }

@@ -5,10 +5,10 @@
  * A2A JSON-RPC methods: message/send, tasks/get, tasks/list, tasks/cancel.
  *
  * Flow:
- *   Remote Agent → HTTP POST / → A2A JSON-RPC → A2AServer → AgentRuntime → Response
+ *   Remote Agent → HTTP POST / → A2A JSON-RPC → A2AServer → AgentRuntimeInterface → Response
  */
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import type { AgentRuntime } from '../runtime/agentRuntime';
+import type { AgentRuntimeInterface } from '../runtime';
 import type {
   A2AAgentCard,
   A2AJsonRpcRequest,
@@ -67,7 +67,7 @@ const DEFAULT_CONFIG: Partial<A2AServerConfig> = {
 
 export class A2AServer {
   private config: A2AServerConfig;
-  private runtime: AgentRuntime;
+  private runtime: AgentRuntimeInterface;
   private server: ReturnType<typeof createServer> | null = null;
   private tasks: Map<string, A2ATask> = new Map();
   private connections: Set<import('net').Socket> = new Set();
@@ -75,7 +75,7 @@ export class A2AServer {
   private nextTaskId = 1;
   private static readonly MAX_TASKS = 500;
 
-  constructor(config: A2AServerConfig, runtime: AgentRuntime) {
+  constructor(config: A2AServerConfig, runtime: AgentRuntimeInterface) {
     this.config = { ...DEFAULT_CONFIG, ...config } as A2AServerConfig;
     this.runtime = runtime;
   }
@@ -457,6 +457,6 @@ class A2AError extends Error {
 // Factory
 // ============================================================================
 
-export function createA2AServer(config: A2AServerConfig, runtime: AgentRuntime): A2AServer {
+export function createA2AServer(config: A2AServerConfig, runtime: AgentRuntimeInterface): A2AServer {
   return new A2AServer(config, runtime);
 }
