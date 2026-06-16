@@ -24,8 +24,9 @@ import { BedrockProvider } from '../../runtime/providers/bedrockProvider';
 import { XAIProvider } from '../../runtime/providers/xaiProvider';
 import { AnyscaleProvider } from '../../runtime/providers/anyscaleProvider';
 import { DeepInfraProvider } from '../../runtime/providers/deepinfraProvider';
+import { AgnesProvider } from '../../runtime/providers/agnesProvider';
 import { getModelRouter } from '../../runtime/modelRouter';
-import { createAllTools } from '../../tools/index';
+import { createAllTools, wireResourceToolDependencies } from '../../tools/index';
 import { executeReview, formatReviewOutput, reviewReportToJson, loadReviewGuidelines } from '../../reviewAgent';
 import type { LLMProvider, ModelConfig } from '../../runtime/types';
 import type { EffortLevel, OrchestrationTopology } from '../../ultimate/types';
@@ -57,7 +58,7 @@ import { Scheduler, WorkflowRegistry } from '../../scheduler';
 import type { ScheduleEntry, WorkflowTrigger } from '../../scheduler';
 import { section, kv, bullet, cmdHeader, startSpinner, startSpinnerWithFailure, progressBar, StepProgress, onboardingMessage, $, parseFlags, fatalError, warn, setTheme, getThemeName, listThemes } from '../util';
 
-const DEFAULT_TOOLS = 'web_search,web_fetch,file_read,file_write,file_edit,file_search,file_list,python_execute,shell_execute,git';
+const DEFAULT_TOOLS = 'web,file,exec,git';
 
 export function loadTools(): string[] {
   return (process.env.COMMANDER_TOOLS || DEFAULT_TOOLS).split(',').map(s => s.trim());
@@ -68,11 +69,16 @@ export function createRuntime(): AgentRuntime | null {
   if (!provider) return null;
 
   const modelId = getEffectiveModel();
-  const runtime = new AgentRuntime({ budgetHardCapTokens: 200000 });
+  const runtime = new AgentRuntime({ budgetHardCapTokens: 200000, smartModelRouter: { enabled: true } });
   const allTools = createAllTools();
   for (const [name, tool] of allTools) {
     runtime.registerTool(name, tool);
   }
+  wireResourceToolDependencies(allTools, {
+    handoff: { handoff: runtime.getHandoff(), agentId: 'commander' },
+    toolResolver: (name) => runtime.getTool(name)?.definition,
+    registryTools: [],
+  });
 
   type ProviderConstructor = new (config: {
     apiKey: string;
@@ -103,6 +109,7 @@ export function createRuntime(): AgentRuntime | null {
     xai: XAIProvider,
     anyscale: AnyscaleProvider,
     deepinfra: DeepInfraProvider,
+    agnes: AgnesProvider,
   };
   const ProviderClass = ProviderMap[provider.type] ?? OpenAIProvider;
 

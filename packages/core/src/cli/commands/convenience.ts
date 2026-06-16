@@ -8,7 +8,7 @@
  * 4. commander explain [file] — Explain code
  * 5. commander test --fix — Run tests and auto-fix failures
  * 6. commander refactor "description" — One-command refactor
- * 7. commander watch [dir] — Watch for changes and auto-run
+ * 7. commander monitor [dir] — Watch for changes and auto-run
  * 8. commander learn — Learn from codebase patterns
  */
 
@@ -364,8 +364,8 @@ export async function cmdLearn(flags: Record<string, string>): Promise<void> {
 // 8. commander watch — Watch for changes
 // ============================================================================
 
-export async function cmdWatch(dir: string, flags: Record<string, string>): Promise<void> {
-  console.log(`\n  ${$.cyan}${$.bold}Commander Watch${$.reset} — File Watcher\n`);
+export async function cmdMonitor(dir: string, flags: Record<string, string>): Promise<void> {
+  console.log(`\n  ${$.cyan}${$.bold}Commander Monitor${$.reset} — File Watcher\n`);
   console.log(`  ${$.dim}Directory:${$.reset} ${dir || '.'}`);
   console.log(`  ${$.dim}Watching for changes...${$.reset}\n`);
 

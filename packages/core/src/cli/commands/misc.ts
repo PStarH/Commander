@@ -1,47 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
-import { TaskPool } from '../../orchestration/taskPool';
 import { executeReview, formatReviewOutput, reviewReportToJson, loadReviewGuidelines } from '../../reviewAgent';
-import { createRuntime, loadTools, $, section, kv, bullet, cmdHeader, startSpinner, onboardingMessage, fatalError } from './_shared';
-
-export async function cmdWorkers(topics: string[]) {
-  if (topics.length === 0) {
-    topics = ['LangGraph', 'CrewAI', 'AutoGen', 'MCP', 'Pydantic', 'LlamaIndex', 'Ollama', 'vLLM'];
-  }
-
-  const runtime = createRuntime();
-  if (!runtime) { fatalError('No API key found.', 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider env var. Run: commander quickstart'); }
-
-  const pool = new TaskPool(runtime, {
-    maxWorkers: topics.length,
-    defaultTokenBudget: 15000,
-    globalTokenBudget: 300000,
-    taskTimeoutMs: 120000,
-  });
-
-  const tasks = topics.map((topic, i) => ({
-    id: 'worker-' + (i + 1),
-    goal: 'Use browser_search to research: ' + topic + '. What is it? Key features? GitHub stars?',
-    agentId: 'worker-' + (i + 1),
-  }));
-
-  console.log(`\n  ${$.bold}Spawning ${tasks.length} workers...${$.reset}\n`);
-  const t0 = Date.now();
-  const results = await pool.dispatch(tasks);
-  const wallTime = ((Date.now() - t0) / 1000).toFixed(1);
-
-  console.log(`\n  ${$.bold}Results (${wallTime}s):${$.reset}\n`);
-  for (const r of results) {
-    const icon = r.status === 'success' ? '✅' : '❌';
-    const summary = (r.summary || '').replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim().slice(0, 100);
-    console.log(`  ${icon} ${r.taskId}: ${(r.durationMs / 1000).toFixed(1)}s, ${r.tokens} tok`);
-    if (summary) console.log(`     ${summary}`);
-    console.log();
-  }
-  const seqTime = results.reduce((s, r) => s + r.durationMs, 0) / 1000;
-  console.log(`  ${$.dim}Sequential would be: ${seqTime.toFixed(1)}s | Speedup: ${(seqTime / parseFloat(wallTime)).toFixed(1)}x${$.reset}\n`);
-}
+import { $, section, kv, bullet, startSpinner } from './_shared';
 
 export async function cmdGui() {
   section('GUI DASHBOARD');
@@ -54,8 +15,9 @@ export async function cmdGui() {
   }
 
   console.log(`  ${$.green}Starting API server...${$.reset}`);
+  console.log(`  ${$.green}Starting Web dashboard...${$.reset}`);
   console.log(`  ${$.dim}API:${$.reset}  http://localhost:4000`);
-  console.log(`  ${$.dim}Web:${$.reset}  cd apps/web && npx vite\n`);
+  console.log(`  ${$.dim}Web:${$.reset}  http://localhost:5173\n`);
 
   const api = spawn('npx', ['tsx', 'src/index.ts'], {
     cwd: apiDir,
@@ -63,10 +25,22 @@ export async function cmdGui() {
     env: { ...process.env, PORT: '4000' },
   });
 
-  api.on('exit', (code: number) => {
-    console.log(`\n  ${$.dim}API server exited (code ${code})${$.reset}`);
-    process.exit(code ?? 0);
+  const web = spawn('npx', ['vite', '--port', '5173'], {
+    cwd: webDir,
+    stdio: 'inherit',
   });
+
+  setTimeout(() => {
+    const url = 'http://localhost:5173';
+    const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+    spawn(cmd, [url], { stdio: 'ignore', detached: true }).unref();
+  }, 3000);
+
+  const cleanup = () => { api.kill(); web.kill(); process.exit(0); };
+  api.on('exit', cleanup);
+  web.on('exit', cleanup);
+  process.on('SIGINT', cleanup);
+  process.on('SIGTERM', cleanup);
 
   await new Promise(() => {});
 }
@@ -234,53 +208,61 @@ export async function cmdReview(args: string[]) {
   }
 }
 
-export function cmdHelp() {
+export function cmdHelp(showAll = false) {
   console.log(`
   ${$.bold}${$.blue}╭──────────────────────────────────────────────────╮${$.reset}
   ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander${$.reset} — multi-agent orchestration          ${$.bold}${$.blue}│${$.reset}
-  ${$.bold}${$.blue}│${$.reset}  ${$.dim}5 modes · 22 providers · verified output${$.reset}        ${$.bold}${$.blue}│${$.reset}
+  ${$.bold}${$.blue}│${$.reset}  ${$.dim}one command · 10 topologies · 22 providers${$.reset}       ${$.bold}${$.blue}│${$.reset}
   ${$.bold}${$.blue}╰──────────────────────────────────────────────────╯${$.reset}
 
-  ${$.bold}QUICK START${$.reset}
-    ${$.gray}$ export OPENAI_API_KEY=sk-...${$.reset}       ${$.dim}(or MIMO_API_KEY, ANTHROPIC_API_KEY, etc.)${$.reset}
-    ${$.gray}$ commander quickstart${$.reset}               ${$.dim}Interactive setup guide${$.reset}
-    ${$.gray}$ commander "Hello, world!"${$.reset}           ${$.dim}Quick task execution${$.reset}
+  ${$.bold}GETTING STARTED${$.reset}
+    ${$.gray}$ commander init${$.reset}                      ${$.dim}Zero-config setup + provider scan${$.reset}
+    ${$.gray}$ commander run "Hello, world!"${$.reset}        ${$.dim}Your first task${$.reset}
+    ${$.gray}$ commander run showcase${$.reset}               ${$.dim}3-agent code audit demo${$.reset}
 
-  ${$.bold}5 EXECUTION MODES${$.reset}
-    ${$.cyan}run <task>${$.reset}              Execute with full pipeline
-    ${$.cyan}run <task> --dry-run${$.reset}    Show plan without executing
-    ${$.cyan}run <task> --stream${$.reset}     Real-time SSE progress streaming
-    ${$.cyan}run <task> --mode=goal${$.reset}  Multi-round convergence loop
-    ${$.cyan}company <task>${$.reset}          Enterprise: quality gating + memory
-    ${$.cyan}swarm <task>${$.reset}            Recursive decomposition + parallel
-    ${$.cyan}drive <task>${$.reset}            Autonomous step-by-step execution
-    ${$.cyan}review${$.reset}                  Code review (--commit, --branch)
+  ${$.bold}CORE COMMANDS${$.reset}
+    ${$.cyan}run <task> [flags]${$.reset}           Execute with full multi-agent pipeline
+    ${$.cyan}review [--commit|--branch]${$.reset}   AI code review
+    ${$.cyan}fix${$.reset}                           Auto-fix lint, formatting & type errors
+    ${$.cyan}status${$.reset}                        System status & active provider
+    ${$.cyan}config [sub]${$.reset}                  View/change settings
+    ${$.cyan}history${$.reset}                       List past sessions
 
   ${$.bold}RUN FLAGS${$.reset}
-    ${$.cyan}--provider=<name>${$.reset}       Force provider (mimo, openai, anthropic, etc.)
-    ${$.cyan}--budget=<tokens>${$.reset}       Token budget (default: 100000)
-    ${$.cyan}--mode=<mode>${$.reset}           balanced (default), fast, thorough, goal
-    ${$.cyan}--max-rounds=<n>${$.reset}        Max rounds (goal mode only)
+    ${$.cyan}--dry-run${$.reset}              Show plan without executing
+    ${$.cyan}--stream${$.reset}               Real-time SSE progress
+    ${$.cyan}--tui${$.reset}                  Terminal dashboard with live topology
+    ${$.cyan}--mode=<mode>${$.reset}          balanced (default), fast, thorough, goal
+    ${$.cyan}--provider=<name>${$.reset}      Force provider (openai, anthropic, etc.)
+    ${$.cyan}--budget=<tokens>${$.reset}      Token budget (default: 100000)
 
   ${$.bold}MANAGEMENT${$.reset}
-    ${$.cyan}status${$.reset}                  System status & active provider
-    ${$.cyan}config${$.reset}                  View/change settings (set, list-providers, list-models, test)
+    ${$.cyan}init${$.reset}                    Scan env, test providers, save fallback chain
     ${$.cyan}doctor${$.reset}                  Run diagnostics
-    ${$.cyan}mode [mode]${$.reset}             Show/set approval mode (plan|read-only|suggest|auto-edit|full-auto)
-    ${$.cyan}history${$.reset}                 List past sessions (view, delete, prune)
-    ${$.cyan}skill${$.reset}                   Manage learnable skills (list, view, create, pin, curate)
+    ${$.cyan}mode [mode]${$.reset}             Approval mode (plan|read-only|suggest|auto-edit|full-auto)
+    ${$.cyan}skill [sub]${$.reset}             Manage learnable skills (list, view, create, curate)
+    ${$.cyan}gui${$.reset}                     Start Agent War Room web dashboard${showAll ? `
 
-  ${$.bold}OTHER${$.reset}
-    ${$.cyan}completion${$.reset}              Shell autocompletion (bash, zsh, fish)
-    ${$.cyan}feedback${$.reset}                Submit feedback (--rating, --bug, --feature)
-    ${$.cyan}gui${$.reset}                     Start Agent War Room dashboard
-    ${$.cyan}tui${$.reset}                     Terminal dashboard (live events, sessions)
+  ${$.bold}ADVANCED EXECUTION${$.reset}
+    ${$.cyan}company <task>${$.reset}          Enterprise: quality gating + memory
+    ${$.cyan}swarm <task> [flags]${$.reset}    Recursive decomposition + parallel
+    ${$.cyan}drive <task> [flags]${$.reset}    Autonomous step-by-step loop
+
+  ${$.bold}INFRASTRUCTURE${$.reset}
+    ${$.cyan}saga [sub]${$.reset}              Durable compensating transactions
+    ${$.cyan}resume [runId]${$.reset}          Resume a crashed run from checkpoint
+    ${$.cyan}compensation [sub]${$.reset}      Durable retry queue
+    ${$.cyan}cost [--since]${$.reset}          Token usage & cost reports
+
+  ${$.bold}MISC${$.reset}
+    ${$.cyan}completion [shell]${$.reset}      Shell autocompletion (bash, zsh, fish)
+    ${$.cyan}feedback [--rating|--bug]${$.reset} Submit feedback to improve Commander` : ''}
 
   ${$.bold}OPTIONS${$.reset}
     ${$.cyan}--version${$.reset}               Show version
     ${$.cyan}--help${$.reset}                  Show this help
+    ${$.cyan}--help --all${$.reset}            Show all commands
 
   ${$.dim}Run ${$.cyan}commander <command> --help${$.reset}${$.dim} for command-specific help.${$.reset}
-  ${$.dim}Deprecated: plan, watch, goal, workers, workflow, benchmark → use run/swarm/company instead.${$.reset}
   `);
 }

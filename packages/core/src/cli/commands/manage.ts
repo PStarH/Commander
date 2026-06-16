@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { detectProvider, getEffectiveModel, setConfig, showConfig, listProviders, listModels } from '../../config/commanderConfig';
 import { getMetaLearner } from '../../selfEvolution/metaLearner';
+import { getEvolverAgent } from '../../selfEvolution/evolverAgent';
 import { getApprovalSystem } from '../../sandbox';
 import type { ApprovalMode } from '../../sandbox';
 import { getGlobalLogger } from '../../logging';
@@ -47,6 +48,22 @@ export async function cmdStatus() {
       for (const s of suggestions.slice(0, 3)) {
         console.log(`  ${$.yellow}!${$.reset} ${s.type}: ${s.from} → ${s.to} (${(s.confidence * 100).toFixed(0)}%)`);
       }
+    }
+
+    // Shadow mode stats
+    const shadows = learner.getShadowComparisons(5);
+    if (shadows.length > 0) {
+      section('SHADOW MODE');
+      const lastShadow = shadows[shadows.length - 1];
+      const betterStrategy = lastShadow.shadowSuccess && !lastShadow.mainSuccess ? lastShadow.shadowStrategy :
+        !lastShadow.shadowSuccess && lastShadow.mainSuccess ? lastShadow.mainStrategy : null;
+      kv('Last run', `${lastShadow.mainStrategy} vs ${$.cyan}${lastShadow.shadowStrategy}${$.reset}`);
+      kv('Main result', lastShadow.mainSuccess ? `${$.green}✓${$.reset}` : `${$.red}✗${$.reset}`, $.dim);
+      kv('Shadow result', lastShadow.shadowSuccess ? `${$.green}✓${$.reset}` : `${$.red}✗${$.reset}`, $.dim);
+      if (betterStrategy) {
+        console.log(`  ${$.yellow}💡${$.reset} ${$.cyan}${betterStrategy}${$.reset} would have performed better in the last run`);
+      }
+      kv('Total shadows', `${shadows.length}`, $.dim);
     }
   } catch (err) {
     getGlobalLogger().debug('CLI', 'Failed to load MetaLearner stats', { error: err instanceof Error ? err.message : String(err) });
@@ -137,7 +154,40 @@ export async function cmdConfig(args: string[]) {
     return;
   }
 
-  console.log(`  ${$.red}Usage:${$.reset} commander config [show|set <key> <val>|list-providers|list-models|test]`);
+  if (args[0] === 'canary-status') {
+    section('CANARY DEPLOYMENT');
+    const evolver = getEvolverAgent();
+    const status = evolver.getCanaryStatus();
+
+    if (!status.active) {
+      console.log(`\n  ${$.dim}No active canary deployment.${$.reset}`);
+      console.log(`  ${$.dim}Canary deployments are created automatically when the EvolverAgent${$.reset}`);
+      console.log(`  ${$.dim}detects failure patterns and proposes config mutations.${$.reset}`);
+      console.log(`  ${$.dim}A 10% canary rollout is used to safely verify config changes.${$.reset}\n`);
+      return;
+    }
+
+    kv('Status', status.decided
+      ? (status.successRate >= 0.5 ? `${$.green}Promoted${$.reset}` : `${$.red}Rejected${$.reset}`)
+      : `${$.yellow}Active${$.reset}`);
+    kv('Mutations', `${status.mutations}`, $.cyan);
+    kv('Runs', `${status.runCount}`, $.dim);
+    kv('Rollout', `${(status.rolloutFraction * 100).toFixed(0)}%`, $.yellow);
+    kv('Success rate', `${(status.successRate * 100).toFixed(0)}%`,
+      status.successRate >= 0.5 ? $.green : $.red);
+
+    if (!status.decided && status.pendingRuns > 0) {
+      kv('Pending runs', `${status.pendingRuns} more needed for auto-decision`, $.dim);
+    }
+
+    const elapsed = Date.now() - status.startedAt;
+    kv('Running for', `${(elapsed / 1000).toFixed(0)}s`, $.dim);
+
+    console.log();
+    return;
+  }
+
+  console.log(`  ${$.red}Usage:${$.reset} commander config [show|set <key> <val>|list-providers|list-models|test|canary-status]`);
 }
 
 export async function cmdDoctor() {

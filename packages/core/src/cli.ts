@@ -21,45 +21,50 @@ if (process.env.COMMANDER_THEME) {
   setTheme(process.env.COMMANDER_THEME);
 }
 import {
-  cmdPlan, cmdRun, cmdWatch, cmdCompany, cmdGoal, cmdSwarm, cmdDrive,
-  cmdStatus, cmdConfig, cmdDoctor, cmdGui, cmdWorkers, cmdSkill,
-  cmdMode, cmdReview, cmdHistory, cmdWorkflow, cmdHelp,   cmdBenchmark, cmdMultiAgentBenchmark,
-  cmdQuickstart, cmdCompletion, cmdFeedback, cmdSaga,
+  cmdRun, cmdCompany, cmdSwarm, cmdDrive,
+  cmdStatus, cmdConfig, cmdDoctor, cmdGui, cmdSkill,
+  cmdMode, cmdReview, cmdHistory, cmdHelp,
+  cmdCompletion, cmdFeedback, cmdSaga,
   cmdCost, cmdResume,
   cmdCompensation,
+  cmdInit,
+  cmdIntelligence,
+  cmdExperience,
+  cmdDebugIntent,
+  cmdBudget,
 } from './cli/commands';
-import { startTUI } from './tui';
+import { cmdFix } from './cli/commands/convenience';
 
 // ============================================================================
 // Per-command help text
 // ============================================================================
 
 const COMMAND_HELP: Record<string, string> = {
-  run:        `  ${$.bold}commander run <task> [flags]${$.reset}\n\n  Execute a task with the full multi-agent pipeline.\n\n  ${$.bold}Flags:${$.reset}\n    --dry-run              Show plan without executing (replaces 'plan')\n    --stream               Real-time SSE progress (replaces 'watch')\n    --mode=<mode>          Execution mode: balanced (default), fast, thorough, goal\n    --provider=<name>      Force provider (mimo, openai, anthropic, etc.)\n    --budget=<tokens>      Token budget (default: 100000)\n    --max-rounds=<n>       Max rounds (goal mode only, default: 10)\n\n  ${$.dim}Examples:${$.reset}\n    commander run "Fix all TypeScript errors in src/"\n    commander run "Analyze auth module" --dry-run\n    commander run "Refactor auth" --stream\n    commander run "Research state management" --mode=goal --provider=mimo\n`,
+  run:        `  ${$.bold}commander run <task> [flags]${$.reset}\n\n  Execute a task with the full multi-agent pipeline.\n\n  ${$.bold}Flags:${$.reset}\n    --dry-run              Show plan without executing\n    --stream               Real-time SSE progress streaming\n    --tui                  Terminal dashboard with live topology view\n    --mode=<mode>          Execution mode: balanced (default), fast, thorough, goal\n    --provider=<name>      Force provider (openai, anthropic, deepseek, etc.)\n    --budget=<tokens>      Token budget (default: 100000)\n    --max-rounds=<n>       Max rounds (goal mode only, default: 10)\n\n  ${$.dim}Examples:${$.reset}\n    commander run "Fix all TypeScript errors in src/"\n    commander run "Analyze auth module" --dry-run\n    commander run "Refactor auth" --stream\n    commander run showcase\n`,
+  review:     `  ${$.bold}commander review [flags]${$.reset}\n\n  Review code changes with AI-powered analysis.\n\n  ${$.bold}Flags:${$.reset}\n    --commit [sha]     Review a specific commit (or latest)\n    --branch           Review entire branch vs main\n    --base <ref>       Compare against a specific ref\n    --json             Output as JSON\n    --guidelines <r>   Custom rules (pipe-separated)\n\n  ${$.dim}Example:${$.reset}\n    commander review --commit\n    commander review --branch --json\n`,
+  fix:        `  ${$.bold}commander fix [flags]${$.reset}\n\n  Auto-fix lint, formatting, and type errors.\n\n  ${$.bold}Flags:${$.reset}\n    --test              Also run tests after fixing\n\n  ${$.dim}Example:${$.reset}\n    commander fix\n    commander fix --test\n`,
+  init:       `  ${$.bold}commander init [flags]${$.reset}\n\n  Zero-config environment scan + fallback chain setup.\n  Scans API keys, tests connectivity to all providers, measures latency,\n  and saves the optimal fallback chain to .commander.json.\n\n  ${$.bold}Flags:${$.reset}\n    --skip-tests    Skip connectivity tests (scan keys only)\n    --timeout=<ms>  Per-provider test timeout (default: 5000)\n    --save          Save config only, skip getting-started guide\n\n  ${$.dim}Example:${$.reset}\n    commander init\n    commander init --timeout=3000\n`,
+  status:     `  ${$.bold}commander status${$.reset}\n\n  Show system status: provider, API keys, runtime, meta-learner stats.\n`,
+  config:     `  ${$.bold}commander config [subcommand]${$.reset}\n\n  ${$.bold}Subcommands:${$.reset}\n    show              Show current configuration\n    set <key> <val>   Set a config value\n    list-providers    List all available providers\n    list-models       List available models\n    test              Test API connection\n\n  ${$.dim}Example:${$.reset}\n    commander config set model gpt-4o\n    commander config test\n`,
+  history:    `  ${$.bold}commander history [subcommand]${$.reset}\n\n  ${$.bold}Subcommands:${$.reset}\n    (none)            List all sessions\n    view <runId>      View session details\n    delete <runId>    Delete a session\n    prune <keep>      Keep only the last N sessions\n`,
+  doctor:     `  ${$.bold}commander doctor${$.reset}\n\n  Run diagnostics: Node.js, API key, packages, git, workspace, connectivity.\n`,
+  gui:        `  ${$.bold}commander gui${$.reset}\n\n  Start the Agent War Room web dashboard (API + Web UI).\n`,
+  // ── Enterprise / Advanced ─────────────────────────────────────────
   company:    `  ${$.bold}commander company <task>${$.reset}\n\n  Execute with Company Engine (capability matching + quality gating + memory).\n\n  ${$.dim}Example:${$.reset}\n    commander company "Build a CLI tool"\n`,
   swarm:      `  ${$.bold}commander swarm <task> [flags]${$.reset}\n\n  Recursive swarm: fission (decompose) + fusion (merge).\n\n  ${$.bold}Flags:${$.reset}\n    --max-depth=<n>                    Max tree depth (default: 3)\n    --max-workers=<n>                  Max parallel workers (default: 10)\n    --mode=<balanced|thorough|fast>    Execution mode\n\n  ${$.dim}Example:${$.reset}\n    commander swarm "Audit this codebase for security issues"\n`,
   drive:      `  ${$.bold}commander drive <task> [flags]${$.reset}\n\n  Autonomous drive loop with step-by-step execution.\n\n  ${$.bold}Flags:${$.reset}\n    --mode=<auto|supervised>           Drive mode\n    --iterations=<n>                   Max iterations (default: 20)\n    --verbose                          Show detailed output\n\n  ${$.dim}Example:${$.reset}\n    commander drive "Set up CI/CD pipeline" --verbose\n`,
-  review:     `  ${$.bold}commander review [flags]${$.reset}\n\n  Review code changes with AI-powered analysis.\n\n  ${$.bold}Flags:${$.reset}\n    --commit [sha]     Review a specific commit (or latest)\n    --branch           Review entire branch vs main\n    --base <ref>       Compare against a specific ref\n    --json             Output as JSON\n    --guidelines <r>   Custom rules (pipe-separated)\n\n  ${$.dim}Example:${$.reset}\n    commander review --commit\n    commander review --branch --json\n`,
-  status:     `  ${$.bold}commander status${$.reset}\n\n  Show system status: provider, API keys, runtime, meta-learner stats.\n`,
-  config:     `  ${$.bold}commander config [subcommand]${$.reset}\n\n  ${$.bold}Subcommands:${$.reset}\n    show              Show current configuration\n    set <key> <val>   Set a config value\n    list-providers    List all available providers\n    list-models       List available models\n    test              Test API connection\n\n  ${$.dim}Example:${$.reset}\n    commander config set model gpt-4o\n    commander config test\n`,
-  doctor:     `  ${$.bold}commander doctor${$.reset}\n\n  Run diagnostics: Node.js, API key, packages, git, workspace, connectivity.\n`,
   mode:       `  ${$.bold}commander mode [mode]${$.reset}\n\n  Show or set the approval mode.\n\n  ${$.bold}Modes:${$.reset}\n    plan         Analysis only, no modifications\n    read-only    No writes, no destructive ops\n    suggest      Prompts before risky operations\n    auto-edit    Allows most operations, flags sandbox escapes\n    full-auto    No approval gates\n\n  ${$.dim}Example:${$.reset}\n    commander mode auto-edit\n`,
-  history:    `  ${$.bold}commander history [subcommand]${$.reset}\n\n  ${$.bold}Subcommands:${$.reset}\n    (none)            List all sessions\n    view <runId>      View session details\n    delete <runId>    Delete a session\n    prune <keep>      Keep only the last N sessions\n`,
   skill:      `  ${$.bold}commander skill [subcommand]${$.reset}\n\n  ${$.bold}Subcommands:${$.reset}\n    list (ls)         List all skills\n    view <name>       View skill details\n    create <name>     Create a new skill\n    pin <name>        Pin a skill (protect from curator)\n    unpin <name>      Unpin a skill\n    delete (rm)       Delete a skill\n    curate            Run curator (archive + consolidate)\n`,
-  quickstart: `  ${$.bold}commander quickstart [--check]${$.reset}\n\n  Interactive setup guide for first-time users.\n\n  ${$.bold}Flags:${$.reset}\n    --check     Check prerequisites only (non-interactive)\n`,
-  completion: `  ${$.bold}commander completion [shell]${$.reset}\n\n  Generate shell autocompletion scripts.\n\n  ${$.bold}Shells:${$.reset}\n    bash      Generate bash completion\n    zsh       Generate zsh completion\n    fish      Generate fish completion\n    install   Auto-detect shell and install (default)\n\n  ${$.dim}Example:${$.reset}\n    commander completion install\n    source <(commander completion bash)\n`,
-  feedback:   `  ${$.bold}commander feedback [flags]${$.reset}\n\n  Submit feedback to help improve Commander.\n\n  ${$.bold}Flags:${$.reset}\n    --rating=<1-5>        Rate your experience\n    --message="<text>"    General feedback\n    --bug="<text>"        Report a bug\n    --feature="<text>"    Request a feature\n\n  ${$.bold}Subcommands:${$.reset}\n    stats                 View feedback summary\n\n  ${$.dim}Example:${$.reset}\n    commander feedback --rating=5 --message="Great tool!"\n    commander feedback --bug="crash on empty input"\n`,
-  saga:       `  ${$.bold}commander saga <subcommand>${$.reset}\n\n  Manage saga runs (durable, compensating transactions).\n\n  ${$.bold}Subcommands:${$.reset}\n    run <name>            Run a built-in example saga\n    list                  List all runs (committed/aborted/in-progress)\n    status <runId>        Show a run's snapshot\n    resume <runId>        Inspect a resumable run\n    approve <runId> <nodeId>    Approve a pending approval\n    reject  <runId> <nodeId>    Reject a pending approval\n    examples              List built-in example sagas\n\n  ${$.bold}Run flags:${$.reset}\n    --input=<json>        Saga input (JSON)\n    --run-id=<id>         Custom run ID (default: <name>-<timestamp>)\n    --timeout=<ms>        Total timeout (default: 60000)\n    --in-memory           Use in-memory stores (no disk persistence)\n\n  ${$.dim}Examples:${$.reset}\n    commander saga examples\n    commander saga run order-fulfillment --input='{"orderId":"o_42","amount":100}'\n    commander saga run refund-approval --input='{"refundId":"r_1","amount":600}'\n    commander saga list\n    commander saga status order-fulfillment-1717523456\n    commander saga approve <runId> <nodeId> --by=alice\n`,
-  resume:     `  ${$.bold}commander resume [runId]${$.reset}\n\n  Resume a crashed run from its last checkpoint.\n\n  ${$.bold}Usage:${$.reset}\n    commander resume              List all resumable runs\n    commander resume <runId>      Resume a specific run from checkpoint\n\n  ${$.dim}Examples:${$.reset}\n    commander resume\n    commander resume run_abc123\n\n  ${$.dim}Tier 1.2: Crash recovery via RunRecovery pipeline. Validates\n  the lease, reconstructs completed tool calls, and returns\n  resume state for continuation.${$.reset}\n`,
+  saga:       `  ${$.bold}commander saga <subcommand>${$.reset}\n\n  Manage saga runs (durable, compensating transactions).\n\n  ${$.bold}Subcommands:${$.reset}\n    run <name>            Run a built-in example saga\n    list                  List all runs (committed/aborted/in-progress)\n    status <runId>        Show a run's snapshot\n    resume <runId>        Inspect a resumable run\n    approve <runId> <nodeId>    Approve a pending approval\n    reject  <runId> <nodeId>    Reject a pending approval\n    examples              List built-in example sagas\n\n  ${$.bold}Run flags:${$.reset}\n    --input=<json>        Saga input (JSON)\n    --run-id=<id>         Custom run ID (default: <name>-<timestamp>)\n    --timeout=<ms>        Total timeout (default: 60000)\n    --in-memory           Use in-memory stores (no disk persistence)\n\n  ${$.dim}Examples:${$.reset}\n    commander saga examples\n    commander saga run order-fulfillment --input='{"orderId":"o_42","amount":100}'\n    commander saga list\n`,
+  resume:     `  ${$.bold}commander resume [runId]${$.reset}\n\n  Resume a crashed run from its last checkpoint.\n\n  ${$.bold}Usage:${$.reset}\n    commander resume              List all resumable runs\n    commander resume <runId>      Resume a specific run from checkpoint\n\n  ${$.dim}Examples:${$.reset}\n    commander resume\n    commander resume run_abc123\n`,
   compensation: `  ${$.bold}commander compensation [subcommand]${$.reset}\n\n  Manage durable compensation queue (crash-safe retry).\n\n  ${$.bold}Subcommands:${$.reset}\n    status               Show queue summary (pending/in-progress/escalated)\n    list                 List all queue items with details\n    retry <id>           Reset escalated item to pending for retry\n\n  ${$.bold}Flags (list):${$.reset}\n    --limit=<n>          Max items to show (default: 50)\n    --status=<s>         Filter by status (pending/in_progress/escalated)\n\n  ${$.dim}Examples:${$.reset}\n    commander compensation\n    commander compensation list --status=escalated\n    commander compensation retry <id>\n`,
-  // Deprecated aliases
-  plan:       `  ${$.yellow}⚠ DEPRECATED${$.reset} — Use ${$.bold}commander run <task> --dry-run${$.reset} instead.\n`,
-  watch:      `  ${$.yellow}⚠ DEPRECATED${$.reset} — Use ${$.bold}commander run <task> --stream${$.reset} instead.\n`,
-  goal:       `  ${$.yellow}⚠ DEPRECATED${$.reset} — Use ${$.bold}commander run <task> --mode=goal${$.reset} instead.\n`,
-  workers:    `  ${$.yellow}⚠ DEPRECATED${$.reset} — Use ${$.bold}commander swarm${$.reset} instead.\n`,
-  workflow:   `  ${$.yellow}⚠ DEPRECATED${$.reset} — Use ${$.bold}commander company${$.reset} instead.\n`,
-  benchmark:  `  ${$.yellow}⚠ DEPRECATED${$.reset} — Use ${$.bold}commander run --benchmark${$.reset} instead.\n`,
-  'multi-benchmark': `  ${$.bold}commander multi-benchmark [flags]${$.reset}\n\n  A/B benchmark: single-agent vs multi-agent orchestration.\n\n  ${$.bold}Flags:${$.reset}\n    --tasks=<n>         Limit to N tasks (smoke test)\n    --tier=<tier>       Run only simple, moderate, or complex tasks\n    --topology=<topo>   Force multi-agent topology (PARALLEL, SEQUENTIAL, etc.)\n\n  ${$.dim}Examples:${$.reset}\n    commander multi-benchmark --tasks=10\n    commander multi-benchmark --tier=complex\n    commander multi-benchmark --topology=PARALLEL\n`,
+  cost:       `  ${$.bold}commander cost [flags]${$.reset}\n\n  View token usage and cost reports.\n\n  ${$.bold}Flags:${$.reset}\n    --format=<table|json|csv>   Output format (default: table)\n    --since=<date>              Filter by date (e.g., 2026-01-01)\n    --model=<name>              Filter by model\n    --provider=<name>           Filter by provider\n\n  ${$.dim}Example:${$.reset}\n    commander cost\n    commander cost --since=2026-06-01 --format=json\n`,
+  completion: `  ${$.bold}commander completion [shell]${$.reset}\n\n  Generate shell autocompletion scripts.\n\n  ${$.bold}Shells:${$.reset}\n    bash      Generate bash completion\n    zsh       Generate zsh completion\n    fish      Generate fish completion\n    install   Auto-detect shell and install (default)\n\n  ${$.dim}Example:${$.reset}\n    commander completion install\n    source <(commander completion bash)\n`,
+  intelligence: `  ${$.bold}commander intelligence [flags]${$.reset}\n\n  Show what Commander has learned from your usage.\n\n  ${$.bold}Flags:${$.reset}\n    (none)       Dashboard summary — key stats at a glance\n    --stats      MetaLearner: Thompson Sampling scores, regression alerts, suggestions\n    --skills     Extracted skills: auto-learned patterns from successful runs\n    --patterns   Failure patterns: repeated mistakes and warnings\n    --all        Show everything\n\n  ${$.dim}Examples:${$.reset}\n    commander intelligence\n    commander intelligence --stats\n    commander i --all\n`,
+  feedback:   `  ${$.bold}commander feedback [flags]${$.reset}\n\n  Submit feedback to help improve Commander.\n\n  ${$.bold}Flags:${$.reset}\n    --rating=<1-5>        Rate your experience\n    --message="<text>"    General feedback\n    --bug="<text>"        Report a bug\n    --feature="<text>"    Request a feature\n\n  ${$.bold}Subcommands:${$.reset}\n    stats                 View feedback summary\n\n  ${$.dim}Example:${$.reset}\n    commander feedback --rating=5 --message="Great tool!"\n    commander feedback --bug="crash on empty input"\n`,
+  experience: `  ${$.bold}commander experience [subcommand] [flags]${$.reset}\n\n  Manage Commander's learned experience — skills, patterns, and MetaLearner.\n\n  ${$.bold}Subcommands:${$.reset}\n    status               Show what's currently learned (default)\n    reset                Reset learned experience\n\n  ${$.bold}Reset flags:${$.reset}\n    --skills             Reset extracted skills only\n    --patterns           Reset failure patterns only\n    --meta               Reset MetaLearner state only\n    --force              Skip confirmation prompt\n    (no flag)            Reset ALL experience\n\n  ${$.dim}Examples:${$.reset}\n    commander experience\n    commander experience reset --skills\n    commander experience reset --force\n`,
+  debug:      `  ${$.bold}commander debug intent [runId]${$.reset}\n\n  Show why the agent made a specific decision — the full decision chain.\n\n  ${$.bold}Usage:${$.reset}\n    commander debug intent              List all intent-captured runs\n    commander debug intent <runId>      Show decision chain tree\n\n  ${$.bold}Renders:${$.reset}\n    Goal → Model Selection → Thompson Sample → Strategy → Tool Choice → Verification Result\n\n  ${$.dim}Example:${$.reset}\n    commander debug intent\n    commander debug intent run_abc123\n`,
+  budget:     `  ${$.bold}commander budget [runId]${$.reset}\n\n  View real-time token budget status across active runs.\n\n  ${$.bold}Usage:${$.reset}\n    commander budget                    List all active token budgets\n    commander budget <runId>            Detailed budget breakdown for a run\n\n  ${$.bold}Shows:${$.reset}\n    Per-run: phase (relaxed/moderate/tight/critical/exceeded), utilization bar chart\n    Per-sub-agent: allocated vs used tokens, over-budget warnings\n\n  ${$.dim}Example:${$.reset}\n    commander budget\n    commander budget ultimate_1718_42\n`,
 };
 
 function showCommandHelp(cmd: string): boolean {
@@ -76,12 +81,17 @@ function showCommandHelp(cmd: string): boolean {
 async function main() {
   const args = process.argv.slice(2);
   if (args.length === 0 || args[0] === '--help' || args[0] === 'help') {
-    cmdHelp();
+    cmdHelp(args.includes('--all'));
     process.exit(0);
   }
 
   if (args[0] === '--version' || args[0] === 'version') {
-    console.log('1.0.0-alpha.1');
+    try {
+      const pkgPath = require.resolve('../../package.json');
+      console.log(require(pkgPath).version);
+    } catch {
+      console.log('unknown');
+    }
     process.exit(0);
   }
 
@@ -94,61 +104,11 @@ async function main() {
   }
 
   switch (cmd) {
-    // ── Core execution (unified: replaces plan, watch, goal) ──
+    // ── Core execution ──
     case 'run': {
       const { positional, flags } = parseFlags(rest);
       if (positional.length === 0 || rest.includes('--help')) { showCommandHelp('run'); process.exit(rest.includes('--help') ? 0 : 1); }
       await cmdRun(positional.join(' '), flags);
-      break;
-    }
-
-    // ── Deprecated aliases → redirect to run ──
-    case 'plan':
-      console.log(`  ${$.yellow}⚠${$.reset} ${$.dim}"plan" is deprecated. Use "run --dry-run" instead.${$.reset}\n`);
-      await cmdRun(rest.join(' '), { '--dry-run': '' });
-      break;
-    case 'watch':
-      console.log(`  ${$.yellow}⚠${$.reset} ${$.dim}"watch" is deprecated. Use "run --stream" instead.${$.reset}\n`);
-      await cmdRun(rest.join(' '), { '--stream': '' });
-      break;
-    case 'goal': {
-      const { positional, flags } = parseFlags(rest);
-      if (positional.length === 0) { showCommandHelp('goal'); process.exit(1); }
-      await cmdRun(positional.join(' '), { ...flags, mode: 'goal' });
-      break;
-    }
-
-    // ── Enterprise engine (unified: replaces workflow) ──
-    case 'company':
-      if (rest.length === 0 || rest[0] === '--help') { showCommandHelp('company'); process.exit(rest.length === 0 ? 1 : 0); }
-      await cmdCompany(rest.join(' '));
-      break;
-
-    // ── Deprecated alias → redirect to company ──
-    case 'workflow':
-      console.log(`  ${$.yellow}⚠${$.reset} ${$.dim}"workflow" is deprecated. Use "company" instead.${$.reset}\n`);
-      await cmdCompany(rest.join(' '));
-      break;
-
-    // ── Recursive swarm (unified: replaces workers) ──
-    case 'swarm': {
-      const { positional, flags } = parseFlags(rest);
-      if (positional.length === 0) { showCommandHelp('swarm'); process.exit(1); }
-      await cmdSwarm(positional.join(' '), flags);
-      break;
-    }
-
-    // ── Deprecated alias → redirect to swarm ──
-    case 'workers':
-      console.log(`  ${$.yellow}⚠${$.reset} ${$.dim}"workers" is deprecated. Use "swarm" instead.${$.reset}\n`);
-      await cmdWorkers(rest.length > 0 ? rest : []);
-      break;
-
-    // ── Autonomous drive ──
-    case 'drive': {
-      const { positional, flags } = parseFlags(rest);
-      if (positional.length === 0) { showCommandHelp('drive'); process.exit(1); }
-      await cmdDrive(positional.join(' '), flags);
       break;
     }
 
@@ -157,17 +117,21 @@ async function main() {
       await cmdReview(rest);
       break;
 
-    // ── Deprecated alias → redirect to run ──
-    case 'benchmark':
-      console.log(`  ${$.yellow}⚠${$.reset} ${$.dim}"benchmark" is deprecated. Use "run --benchmark" instead.${$.reset}\n`);
-      await cmdBenchmark(rest);
+    // ── Auto-fix ──
+    case 'fix':
+      await cmdFix(parseFlags(rest).flags);
       break;
 
-    case 'multi-benchmark':
-      await cmdMultiAgentBenchmark(rest);
+    // ── Setup ──
+    case 'init':
+      await cmdInit(parseFlags(rest).flags);
+      break;
+    case 'quickstart':
+      console.log(`\n  ${$.yellow}💡 Tip:${$.reset} 'quickstart' has been upgraded to ${$.cyan}commander init${$.reset}\n`);
+      await cmdInit(parseFlags(rest).flags);
       break;
 
-    // ── Management commands ──
+    // ── Management ──
     case 'status':
       await cmdStatus();
       break;
@@ -180,27 +144,35 @@ async function main() {
     case 'gui':
       await cmdGui();
       break;
-    case 'tui':
-      startTUI();
-      break;
-    case 'skill':
-      await cmdSkill(rest);
-      break;
     case 'mode':
       await cmdMode(rest[0]);
       break;
     case 'history':
       await cmdHistory(rest);
       break;
-    case 'quickstart':
-      await cmdQuickstart(rest);
+    case 'skill':
+      await cmdSkill(rest);
       break;
-    case 'completion':
-      await cmdCompletion(rest);
+
+    // ── Advanced execution ──
+    case 'company':
+      if (rest.length === 0 || rest[0] === '--help') { showCommandHelp('company'); process.exit(rest.length === 0 ? 1 : 0); }
+      await cmdCompany(rest.join(' '));
       break;
-    case 'feedback':
-      await cmdFeedback(rest);
+    case 'swarm': {
+      const { positional, flags } = parseFlags(rest);
+      if (positional.length === 0) { showCommandHelp('swarm'); process.exit(1); }
+      await cmdSwarm(positional.join(' '), flags);
       break;
+    }
+    case 'drive': {
+      const { positional, flags } = parseFlags(rest);
+      if (positional.length === 0) { showCommandHelp('drive'); process.exit(1); }
+      await cmdDrive(positional.join(' '), flags);
+      break;
+    }
+
+    // ── Infrastructure ──
     case 'saga':
       await cmdSaga(rest);
       break;
@@ -220,10 +192,51 @@ async function main() {
       break;
     }
 
-    default:
-      // Treat as a task — quick run
-      await cmdRun(args.join(' '));
+    // ── Misc ──
+    case 'completion':
+      await cmdCompletion(rest);
       break;
+    // ── Intelligence ──
+    case 'intelligence':
+    case 'i': {
+      const { flags } = parseFlags(rest);
+      await cmdIntelligence(flags);
+      break;
+    }
+
+    case 'feedback':
+      await cmdFeedback(rest);
+      break;
+
+    // ── Experience ──
+    case 'experience': {
+      const { positional, flags } = parseFlags(rest);
+      await cmdExperience(positional, flags);
+      break;
+    }
+
+    // ── Debug ──
+    case 'debug': {
+      const { positional, flags } = parseFlags(rest);
+      await cmdDebugIntent(positional, flags);
+      break;
+    }
+
+    // ── Budget ──
+    case 'budget': {
+      const { positional, flags } = parseFlags(rest);
+      await cmdBudget(positional, flags);
+      break;
+    }
+
+    default: {
+      const validCmds = ['run', 'review', 'fix', 'init', 'status', 'config', 'doctor', 'gui', 'mode', 'history', 'skill', 'intelligence', 'experience', 'debug', 'budget', 'company', 'swarm', 'drive', 'saga', 'resume', 'compensation', 'cost', 'completion', 'feedback'];
+      const didYouMean = validCmds.filter(c => c.startsWith(cmd.toLowerCase()));
+      const hint = didYouMean.length > 0 ? ` Did you mean ${$.cyan}${didYouMean[0]}${$.reset}?` : '';
+      console.error(`\n  ${$.red}${$.bold}Unknown command:${$.reset} ${cmd}${hint}\n\n  Run ${$.cyan}commander help${$.reset} to see available commands.\n`);
+      process.exit(1);
+      break;
+    }
   }
 }
 

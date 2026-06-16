@@ -291,51 +291,8 @@ export function addHistoryExportFlags(): string[] {
 // Intelligence commands (user-facing views)
 // ============================================================================
 
-/**
- * commander intelligence — Show intelligence data
- */
-export async function cmdIntelligence(flags: Record<string, string>): Promise<void> {
-  console.log(`\n  ${$.cyan}${$.bold}Commander Intelligence${$.reset}\n`);
-
-  try {
-    const { getCostPredictor } = await import('../../intelligence/costPredictor');
-    const { getFailurePatternLearner } = await import('../../intelligence/failurePatterns');
-    const { getSkillExtractor } = await import('../../intelligence/skillExtractor');
-
-    // Cost history
-    const costPredictor = getCostPredictor();
-    console.log(`  ${$.bold}成本预测:${$.reset} 已学习历史数据`);
-
-    // Failure patterns
-    const failureLearner = getFailurePatternLearner();
-    const patterns = failureLearner.getPatterns();
-    if (patterns.length > 0) {
-      console.log(`\n  ${$.bold}失败模式 (${patterns.length}):${$.reset}`);
-      for (const pattern of patterns.slice(0, 5)) {
-        const icon = pattern.occurrences.length >= 5 ? '🔴' : pattern.occurrences.length >= 3 ? '🟡' : '🟢';
-        console.log(`    ${icon} ${pattern.description} (${pattern.occurrences.length}次)`);
-      }
-    } else {
-      console.log(`\n  ${$.dim}失败模式: 暂无数据${$.reset}`);
-    }
-
-    // Extracted skills
-    const skillExtractor = getSkillExtractor();
-    const skills = skillExtractor.getSkills();
-    if (skills.length > 0) {
-      console.log(`\n  ${$.bold}已学技能 (${skills.length}):${$.reset}`);
-      for (const skill of skills.slice(0, 5)) {
-        console.log(`    💡 ${skill.name} (使用${skill.usageCount}次, 成功率${(skill.successRate * 100).toFixed(0)}%)`);
-      }
-    } else {
-      console.log(`\n  ${$.dim}已学技能: 暂无数据${$.reset}`);
-    }
-  } catch (err) {
-    console.log(`  ${$.red}Error: ${err}${$.reset}`);
-  }
-
-  console.log('');
-}
+// Re-export from the dedicated intelligence command module
+export { cmdIntelligence } from './intelligence';
 
 /**
  * commander trace — View execution traces

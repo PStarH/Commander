@@ -32,7 +32,7 @@ const COMMANDS: Record<string, string[]> = {
   'skill': ['list', 'ls', 'view', 'create', 'pin', 'unpin', 'delete', 'rm', 'curate'],
   'review': ['--commit', '--branch', '--json', '--base=', '--guidelines='],
   'workflow': ['ls', 'list', 'run', 'schedule', 'unschedule', 'pause', 'resume', 'history', 'log', 'create', 'daemon', 'start', 'stop'],
-  'benchmark': ['--tasks=', '--task=', '--repeats='],
+
   'quickstart': ['--check'],
   'completion': ['bash', 'zsh', 'fish', 'install'],
   'gui': [],

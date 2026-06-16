@@ -2,7 +2,7 @@ import { TELOSOrchestrator } from '../../telos/telosOrchestrator';
 import { UltimateOrchestrator } from '../../ultimate/orchestrator';
 import { SSEStream } from '../../runtime/sseStream';
 import { AgentRuntime } from '../../runtime/agentRuntime';
-import { deliberateWithLLM, deliberate } from '../../ultimate/deliberation';
+import { deliberate } from '../../ultimate/deliberation';
 import { classifyEffortLevel } from '../../ultimate/effortScaler';
 import { getGlobalLogger } from '../../logging';
 import { CompanyEngine as LegacyCompanyEngine } from '../../company';
@@ -11,6 +11,9 @@ import { detectProvider } from '../../config/commanderConfig';
 import { GoalOrchestrator } from '../../goal/goalOrchestrator';
 import type { GoalConfig } from '../../goal/types';
 import { createRuntime, loadTools, $, section, kv, bullet, cmdHeader, startSpinner, onboardingMessage, fatalError } from './_shared';
+import { runShowcase } from '../../showcase/showcaseRunner';
+import { startTUI } from '../../tui';
+import { getMetaLearner } from '../../selfEvolution/metaLearner';
 
 /**
  * Unified run command — replaces plan, watch, and goal.
@@ -27,6 +30,29 @@ import { createRuntime, loadTools, $, section, kv, bullet, cmdHeader, startSpinn
  *   --max-rounds=N   Max rounds (goal mode only)
  */
 export async function cmdRun(task: string, flags: Record<string, string> = {}) {
+  // Reject empty or whitespace-only tasks
+  if (!task || !task.trim()) {
+    console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} No task provided.\n\n  Usage: ${$.cyan}commander run "<task>"${$.reset}\n  Example: ${$.cyan}commander run "analyze this codebase"${$.reset}\n`);
+    process.exit(1);
+  }
+  task = task.trim();
+
+  // ── Special: showcase ─────────────────────────────────────────────
+  if (task.toLowerCase() === 'showcase') {
+    return cmdShowcase();
+  }
+
+  // ── --tui: terminal dashboard (runs alongside execution) ──────────
+  if ('tui' in flags) {
+    // Start TUI in background — it subscribes to the message bus
+    // so any concurrent execution will appear in the dashboard
+    startTUI();
+    // startTUI() blocks indefinitely with the blessed event loop,
+    // so this effectively makes --tui a monitoring-only mode.
+    // For task execution with TUI, open a second terminal.
+    return;
+  }
+
   const dryRun = 'dry-run' in flags;
   const stream = 'stream' in flags;
   const mode = flags.mode || 'balanced';
@@ -36,7 +62,7 @@ export async function cmdRun(task: string, flags: Record<string, string> = {}) {
 
   // --dry-run: show plan only (replaces `plan` command)
   if (dryRun) {
-    return cmdPlanInternal(task, providerFlag);
+    return cmdPlanInternal(task);
   }
 
   // --mode=goal: multi-agent goal loop (replaces `goal` command)
@@ -54,26 +80,102 @@ export async function cmdRun(task: string, flags: Record<string, string> = {}) {
 }
 
 // ============================================================================
+// Showcase: 3-agent DEBATE topology code audit
+// ============================================================================
+
+async function cmdShowcase() {
+  const provider = detectProvider();
+  const runtime = createRuntime();
+  if (!runtime || !provider) {
+    fatalError('No API key found.', 'Set an API key (e.g., OPENAI_API_KEY) and run: commander init');
+  }
+
+  // ── Header ────────────────────────────────────────────────────────
+  console.log(`\n  ${$.bold}${$.blue}╭──────────────────────────────────────────────────────────╮${$.reset}`);
+  console.log(`  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander Showcase${$.reset} — 3-Agent DEBATE Code Audit              ${$.bold}${$.blue}│${$.reset}`);
+  console.log(`  ${$.bold}${$.blue}╰──────────────────────────────────────────────────────────╯${$.reset}\n`);
+
+  section('TOPOLOGY');
+  console.log(`  ${$.cyan}🔴 红队${$.reset} ${$.dim}(攻击方)${$.reset}  →  找Bug、漏洞、反模式`);
+  console.log(`  ${$.cyan}🔵 蓝队${$.reset} ${$.dim}(防守方)${$.reset}  →  架构优点、设计合理性`);
+  console.log(`  ${$.cyan}🟡 裁判${$.reset} ${$.dim}(仲裁方)${$.reset}  →  综合评分、输出体检报告`);
+
+  kv('Provider', `${provider.type} · ${provider.defaultModel}`, $.cyan);
+  console.log();
+
+  // ── Phase 1: Execution ─────────────────────────────────────────────
+  let result;
+  try {
+    console.log(`  ${$.dim}🔴 红队 (攻击方)  →  找Bug、漏洞、反模式${$.reset}`);
+    console.log(`  ${$.dim}🔵 蓝队 (防守方)  →  架构优点、设计合理性${$.reset}`);
+    console.log(`  ${$.dim}🟡 裁判 (仲裁方)  →  综合评分、体检报告${$.reset}\n`);
+    const agentDone = startSpinner('Scanning codebase + running 3-agent debate...');
+    result = await runShowcase(runtime);
+    agentDone();
+  } catch (err) {
+    console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} Showcase failed: ${(err as Error).message}`);
+    console.error(`  ${$.dim}Check your API key and network connection.${$.reset}`);
+    console.error(`  ${$.dim}Run ${$.cyan}commander init${$.reset}${$.dim} to verify provider connectivity.${$.reset}\n`);
+    return;
+  }
+
+  if (result.metrics.filesScanned === 0) {
+    console.log(`\n  ${$.yellow}当前目录未找到可扫描的代码文件。${$.reset}`);
+    console.log(`  ${$.dim}请在有代码文件的目录下运行 ${$.cyan}commander run showcase${$.reset}\n`);
+    return;
+  }
+
+  // ── Results ───────────────────────────────────────────────────────
+  section('EXECUTION COMPLETE');
+  kv('Files scanned', `${result.metrics.filesScanned}`, $.cyan);
+  kv('Red team', result.redTeamRaw.length > 0 ? `${$.green}completed${$.reset} (${result.metrics.redTeamTokens.toLocaleString()} tok)` : `${$.red}failed${$.reset}`, result.redTeamRaw.length > 0 ? $.green : $.red);
+  kv('Blue team', result.blueTeamRaw.length > 0 ? `${$.green}completed${$.reset} (${result.metrics.blueTeamTokens.toLocaleString()} tok)` : `${$.red}failed${$.reset}`, result.blueTeamRaw.length > 0 ? $.green : $.red);
+  kv('Judge', result.judgeRaw.length > 0 ? `${$.green}completed${$.reset} (${result.metrics.judgeTokens.toLocaleString()} tok)` : `${$.red}failed${$.reset}`, result.judgeRaw.length > 0 ? $.green : $.red);
+  kv('Total tokens', `${result.metrics.totalTokens.toLocaleString()}`, $.yellow);
+  kv('Duration', `${(result.metrics.durationMs / 1000).toFixed(1)}s`, $.yellow);
+
+  // ── Scores ────────────────────────────────────────────────────────
+  section('CODE HEALTH SCORES');
+  const scoreColor = (s: number) => s >= 90 ? $.green : s >= 70 ? $.yellow : $.red;
+  const grade = (s: number) => s >= 90 ? 'S' : s >= 80 ? 'A' : s >= 70 ? 'B' : s >= 60 ? 'C' : 'D';
+
+  console.log(`  🔒 ${$.bold}Security${$.reset}      ${scoreColor(result.metrics.securityScore)}${result.metrics.securityScore}/100${$.reset} ${$.dim}(${grade(result.metrics.securityScore)})${$.reset}`);
+  console.log(`  📝 ${$.bold}Code Quality${$.reset}   ${scoreColor(result.metrics.qualityScore)}${result.metrics.qualityScore}/100${$.reset} ${$.dim}(${grade(result.metrics.qualityScore)})${$.reset}`);
+  console.log(`  🏗️ ${$.bold}Architecture${$.reset}  ${scoreColor(result.metrics.architectureScore)}${result.metrics.architectureScore}/100${$.reset} ${$.dim}(${grade(result.metrics.architectureScore)})${$.reset}`);
+  console.log(`  ${$.dim}${'─'.repeat(30)}${$.reset}`);
+  console.log(`  ${$.bold}⭐ Overall${$.reset}       ${scoreColor(result.metrics.overallScore)}${result.metrics.overallScore}/100${$.reset} ${$.dim}(${grade(result.metrics.overallScore)})${$.reset}\n`);
+
+  // ── Findings summary ─────────────────────────────────────────────
+  const { critical, high, medium, low } = result.findings;
+  if (critical.length > 0) {
+    section(`🔴 CRITICAL (${critical.length})`);
+    for (const f of critical.slice(0, 3)) {
+      console.log(`  ${$.red}•${$.reset} ${f.slice(0, 120)}`);
+    }
+    if (critical.length > 3) console.log(`  ${$.dim}  ... and ${critical.length - 3} more${$.reset}`);
+  }
+  if (high.length > 0) {
+    section(`🟠 HIGH (${high.length})`);
+    for (const f of high.slice(0, 3)) {
+      console.log(`  ${$.yellow}•${$.reset} ${f.slice(0, 120)}`);
+    }
+    if (high.length > 3) console.log(`  ${$.dim}  ... and ${high.length - 3} more${$.reset}`);
+  }
+
+  // ── Full report ───────────────────────────────────────────────────
+  section('FULL REPORT');
+  console.log(result.report);
+  console.log();
+}
+
+// ============================================================================
 // Internal implementations
 // ============================================================================
 
-async function cmdPlanInternal(task: string, providerFlag?: string) {
+async function cmdPlanInternal(task: string) {
   cmdHeader(task);
   const done = startSpinner('Analyzing task...');
-  const runtime = createRuntime();
-  const provider = providerFlag
-    ? runtime?.getProvider(providerFlag)
-    : (runtime?.getProvider('openai')
-      ?? runtime?.getProvider('anthropic')
-      ?? runtime?.getProvider('openrouter')
-      ?? runtime?.getProvider('mimo')
-      ?? runtime?.getProvider('deepseek')
-      ?? runtime?.getProvider('glm')
-      ?? runtime?.getProvider('xiaomi')
-      ?? runtime?.getProvider('google'));
-  const plan = runtime
-    ? await deliberateWithLLM(task, provider ?? runtime.getProvider('openai')!)
-    : deliberate(task);
+  const plan = deliberate(task);
   const effort = classifyEffortLevel(task);
   done();
 
@@ -153,6 +255,10 @@ async function cmdRunInternal(task: string) {
     const totalLines = result.synthesis.split('\n').filter(l => l.trim()).length;
     if (totalLines > 8) console.log(`  ${$.dim}... (${totalLines - 8} more lines)${$.reset}`);
   }
+
+  // ── Human feedback ──────────────────────────────────────────────
+  await promptHumanFeedback(result.status === 'SUCCESS', task);
+
   console.log();
 }
 
@@ -296,6 +402,64 @@ async function cmdWatchInternal(task: string) {
     if (totalLines > 6) console.log(`  ${$.dim}... (${totalLines - 6} more lines)${$.reset}`);
   }
   console.log();
+}
+
+// ============================================================================
+// Human-in-the-Loop Feedback
+// ============================================================================
+
+async function promptHumanFeedback(success: boolean, task: string): Promise<void> {
+  // Only prompt in interactive TTY mode
+  if (!process.stdin.isTTY) return;
+
+  console.log(`  ${$.dim}Was this helpful?${$.reset} ${$.green}[👍 Good]${$.reset} ${$.red}[👎 Wrong]${$.reset} ${$.dim}[Enter skip]${$.reset}`);
+
+  try {
+    const answer = await new Promise<string>(resolve => {
+      const timer = setTimeout(() => resolve(''), 15000); // Auto-skip after 15s
+      const onData = (data: Buffer) => {
+        clearTimeout(timer);
+        process.stdin.removeListener('data', onData);
+        if (process.stdin.isTTY) process.stdin.pause();
+        resolve(data.toString().trim().toLowerCase());
+      };
+      process.stdin.resume();
+      process.stdin.on('data', onData);
+    });
+
+    if (!answer) return; // Skip / timeout
+
+    const ratedGood = answer.includes('👍') || answer.includes('good') || answer === 'y' || answer === 'yes' || answer === '1';
+    const ratedBad = answer.includes('👎') || answer.includes('wrong') || answer.includes('bad') || answer === 'n' || answer === 'no' || answer === '2';
+
+    if (ratedGood || ratedBad) {
+      try {
+        const ml = getMetaLearner();
+        // Human feedback carries 2x weight compared to automatic signals
+        const exp = {
+          runId: `human_feedback_${Date.now()}`,
+          agentId: 'human-feedback',
+          taskType: 'general',
+          strategyUsed: 'UNKNOWN',
+          success: ratedGood,
+          durationMs: 0,
+          tokenCost: 0,
+          lessons: ratedGood ? ['Human rated this as helpful'] : ['Human rated this as incorrect'],
+          errorPattern: ratedBad ? 'human_negative_feedback' : undefined,
+          timestamp: new Date().toISOString(),
+          modelUsed: 'human',
+          id: `hf_${Date.now()}`,
+          toolsUsed: [],
+          topology: undefined,
+        } as import('../../runtime/types').ExecutionExperience;
+        ml.recordExperience(exp);
+      } catch { /* best-effort */ }
+      const result = ratedGood ? `${$.green}👍 Thanks!${$.reset}` : `${$.red}👎 Noted. Will improve.${$.reset}`;
+      console.log(`  ${result}`);
+    }
+  } catch {
+    // Timeout or read error — silently skip
+  }
 }
 
 async function cmdGoalInternal(task: string, config: Partial<GoalConfig> & { provider?: string }) {
@@ -454,6 +618,4 @@ export async function cmdCompany(task: string, options?: { mode?: string; budget
   }
 }
 
-// Keep legacy exports for backward compatibility (deprecated)
-export const cmdPlan = (task: string) => cmdRun(task, { '--dry-run': '' });
-export const cmdWatch = (task: string) => cmdRun(task, { '--stream': '' });
+
