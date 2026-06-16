@@ -1,7 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
-import { executeReview, formatReviewOutput, reviewReportToJson, loadReviewGuidelines } from '../../reviewAgent';
+import {
+  executeReview,
+  formatReviewOutput,
+  reviewReportToJson,
+  loadReviewGuidelines,
+} from '../../reviewAgent';
 import { $, section, kv, bullet, startSpinner } from './_shared';
 
 export async function cmdGui() {
@@ -32,11 +37,16 @@ export async function cmdGui() {
 
   setTimeout(() => {
     const url = 'http://localhost:5173';
-    const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+    const cmd =
+      process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
     spawn(cmd, [url], { stdio: 'ignore', detached: true }).unref();
   }, 3000);
 
-  const cleanup = () => { api.kill(); web.kill(); process.exit(0); };
+  const cleanup = () => {
+    api.kill();
+    web.kill();
+    process.exit(0);
+  };
   api.on('exit', cleanup);
   web.on('exit', cleanup);
   process.on('SIGINT', cleanup);
@@ -62,8 +72,12 @@ export async function cmdSkill(subargs: string[]) {
       const pin = entry.pinned ? '📌' : '  ';
       const qual = (entry.qualityScore * 100).toFixed(0);
       const used = entry.usageCount;
-      console.log(`  ${pin} ${$.bold}${entry.name}${$.reset} ${$.dim}${entry.description.slice(0, 50)}${$.reset}`);
-      console.log(`      ${$.gray}quality: ${qual}% · uses: ${used} · ${entry.category} · [${entry.tags.join(', ')}]${$.reset}`);
+      console.log(
+        `  ${pin} ${$.bold}${entry.name}${$.reset} ${$.dim}${entry.description.slice(0, 50)}${$.reset}`,
+      );
+      console.log(
+        `      ${$.gray}quality: ${qual}% · uses: ${used} · ${entry.category} · [${entry.tags.join(', ')}]${$.reset}`,
+      );
     }
     console.log();
     return;
@@ -71,15 +85,24 @@ export async function cmdSkill(subargs: string[]) {
 
   if (sub === 'view') {
     const name = subargs[1];
-    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill view <name>\n`); return; }
+    if (!name) {
+      console.error(`  ${$.red}Usage:${$.reset} commander skill view <name>\n`);
+      return;
+    }
     const skill = await system.manager.get(name);
-    if (!skill) { console.error(`  ${$.red}Skill "${name}" not found.${$.reset}\n`); return; }
+    if (!skill) {
+      console.error(`  ${$.red}Skill "${name}" not found.${$.reset}\n`);
+      return;
+    }
     section(`SKILL: ${skill.name}`);
     kv('Description', skill.description);
     kv('Category', skill.metadata.category);
     kv('Tags', skill.metadata.tags.join(', '));
     kv('Quality', `${(skill.metadata.qualityScore * 100).toFixed(0)}%`);
-    kv('Usage', `${skill.metadata.usageCount} · success rate: ${(skill.metadata.avgSuccessRate * 100).toFixed(0)}%`);
+    kv(
+      'Usage',
+      `${skill.metadata.usageCount} · success rate: ${(skill.metadata.avgSuccessRate * 100).toFixed(0)}%`,
+    );
     kv('Pinned', skill.metadata.pinned ? 'Yes' : 'No', skill.metadata.pinned ? $.green : $.dim);
     kv('Source', skill.metadata.source);
     kv('Created', skill.metadata.createdAt.slice(0, 10));
@@ -92,10 +115,15 @@ export async function cmdSkill(subargs: string[]) {
   if (sub === 'create') {
     const name = subargs[1];
     const desc = subargs[2] || name;
-    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill create <name> [description]\n`); return; }
+    if (!name) {
+      console.error(`  ${$.red}Usage:${$.reset} commander skill create <name> [description]\n`);
+      return;
+    }
     const content = `# ${name}\n\n${desc}\n\n## Steps\n1. TBD`;
     const skill = await system.manager.create(name, content, {
-      category: 'general', tags: [], source: 'user',
+      category: 'general',
+      tags: [],
+      source: 'user',
     });
     console.log(`  ${$.green}✓${$.reset} Created skill "${$.bold}${skill.name}${$.reset}"\n`);
     return;
@@ -103,7 +131,10 @@ export async function cmdSkill(subargs: string[]) {
 
   if (sub === 'pin') {
     const name = subargs[1];
-    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill pin <name>\n`); return; }
+    if (!name) {
+      console.error(`  ${$.red}Usage:${$.reset} commander skill pin <name>\n`);
+      return;
+    }
     await system.manager.setPinned(name, true);
     console.log(`  ${$.green}✓${$.reset} Pinned "${$.bold}${name}${$.reset}"\n`);
     return;
@@ -111,7 +142,10 @@ export async function cmdSkill(subargs: string[]) {
 
   if (sub === 'unpin') {
     const name = subargs[1];
-    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill unpin <name>\n`); return; }
+    if (!name) {
+      console.error(`  ${$.red}Usage:${$.reset} commander skill unpin <name>\n`);
+      return;
+    }
     await system.manager.setPinned(name, false);
     console.log(`  ${$.green}✓${$.reset} Unpinned "${$.bold}${name}${$.reset}"\n`);
     return;
@@ -119,7 +153,10 @@ export async function cmdSkill(subargs: string[]) {
 
   if (sub === 'delete' || sub === 'rm') {
     const name = subargs[1];
-    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill delete <name>\n`); return; }
+    if (!name) {
+      console.error(`  ${$.red}Usage:${$.reset} commander skill delete <name>\n`);
+      return;
+    }
     await system.manager.delete(name);
     console.log(`  ${$.green}✓${$.reset} Deleted "${$.bold}${name}${$.reset}"\n`);
     return;
@@ -157,9 +194,11 @@ export async function cmdSkill(subargs: string[]) {
 }
 
 export async function cmdReview(args: string[]) {
-  const scope = args.includes('--commit') ? 'commit' as const
-    : args.includes('--branch') ? 'branch' as const
-    : 'uncommitted' as const;
+  const scope = args.includes('--commit')
+    ? ('commit' as const)
+    : args.includes('--branch')
+      ? ('branch' as const)
+      : ('uncommitted' as const);
 
   const baseIdx = args.indexOf('--base');
   const baseRef = baseIdx >= 0 && baseIdx + 1 < args.length ? args[baseIdx + 1] : undefined;
@@ -172,12 +211,15 @@ export async function cmdReview(args: string[]) {
   const guidelines = loadReviewGuidelines();
 
   const customGuidelineIdx = args.indexOf('--guidelines');
-  const customGuidelines = customGuidelineIdx >= 0 && customGuidelineIdx + 1 < args.length
-    ? args[customGuidelineIdx + 1].split('|')
-    : [];
+  const customGuidelines =
+    customGuidelineIdx >= 0 && customGuidelineIdx + 1 < args.length
+      ? args[customGuidelineIdx + 1].split('|')
+      : [];
 
   section('CODE REVIEW');
-  bullet(`Scope: ${scope}${baseRef ? ` (base: ${baseRef})` : ''}${commitSha ? ` (commit: ${commitSha})` : ''}`);
+  bullet(
+    `Scope: ${scope}${baseRef ? ` (base: ${baseRef})` : ''}${commitSha ? ` (commit: ${commitSha})` : ''}`,
+  );
   if (guidelines.length > 0 || customGuidelines.length > 0) {
     bullet(`Guidelines: ${[...guidelines, ...customGuidelines].length} rule(s)`);
   }
@@ -203,7 +245,9 @@ export async function cmdReview(args: string[]) {
     process.exit(report.passed ? 0 : 1);
   } catch (err) {
     done();
-    console.error(`\n  ${$.red}Review failed: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`);
+    console.error(
+      `\n  ${$.red}Review failed: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`,
+    );
     process.exit(1);
   }
 }
@@ -241,7 +285,9 @@ export function cmdHelp(showAll = false) {
     ${$.cyan}doctor${$.reset}                  Run diagnostics
     ${$.cyan}mode [mode]${$.reset}             Approval mode (plan|read-only|suggest|auto-edit|full-auto)
     ${$.cyan}skill [sub]${$.reset}             Manage learnable skills (list, view, create, curate)
-    ${$.cyan}gui${$.reset}                     Start Agent War Room web dashboard${showAll ? `
+    ${$.cyan}gui${$.reset}                     Start Agent War Room web dashboard${
+      showAll
+        ? `
 
   ${$.bold}ADVANCED EXECUTION${$.reset}
     ${$.cyan}company <task>${$.reset}          Enterprise: quality gating + memory
@@ -256,7 +302,9 @@ export function cmdHelp(showAll = false) {
 
   ${$.bold}MISC${$.reset}
     ${$.cyan}completion [shell]${$.reset}      Shell autocompletion (bash, zsh, fish)
-    ${$.cyan}feedback [--rating|--bug]${$.reset} Submit feedback to improve Commander` : ''}
+    ${$.cyan}feedback [--rating|--bug]${$.reset} Submit feedback to improve Commander`
+        : ''
+    }
 
   ${$.bold}OPTIONS${$.reset}
     ${$.cyan}--version${$.reset}               Show version

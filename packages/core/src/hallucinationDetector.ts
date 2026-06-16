@@ -138,8 +138,19 @@ const FABRICATED_REF_PATTERNS = [
 
 /** Well-known journal names that might be real citations */
 const KNOWN_JOURNALS = new Set([
-  'nature', 'science', 'lancet', 'nejm', 'ieee', 'acm', 'pnas',
-  'cell', 'jama', 'bmj', 'plos', 'arxiv', 'biorxiv',
+  'nature',
+  'science',
+  'lancet',
+  'nejm',
+  'ieee',
+  'acm',
+  'pnas',
+  'cell',
+  'jama',
+  'bmj',
+  'plos',
+  'arxiv',
+  'biorxiv',
 ]);
 
 /** Temporal markers that might be impossible */
@@ -152,9 +163,7 @@ const TEMPORAL_PATTERNS = [
 ];
 
 /** Relative time references that are always risky for LLMs */
-const RELATIVE_TIME_PATTERNS = [
-  /\b(?:yesterday|last week|last month|earlier today)\b/i,
-];
+const RELATIVE_TIME_PATTERNS = [/\b(?:yesterday|last week|last month|earlier today)\b/i];
 
 /** Hedging language that should NOT trigger specificity/overconfidence flags */
 const HEDGING_LANGUAGE = [
@@ -239,7 +248,7 @@ export class HallucinationDetector {
     // A single high-severity signal (0.45) should flag for review;
     // multiple signals or a high+medium should reject
     let recommendation: HallucinationReport['recommendation'];
-    const hasHighSeverity = signals.some(s => s.severity === 'high');
+    const hasHighSeverity = signals.some((s) => s.severity === 'high');
     if (riskScore >= 0.5 || (hasHighSeverity && riskScore >= 0.4)) recommendation = 'reject';
     else if (riskScore >= 0.2) recommendation = 'flag_for_review';
     else recommendation = 'pass';
@@ -285,9 +294,10 @@ export class HallucinationDetector {
     }
 
     // Risk score = fraction of flagged sentences, weighted by how inconsistent they are
-    const avgScore = consistencyScores.length > 0
-      ? consistencyScores.reduce((a, b) => a + b, 0) / consistencyScores.length
-      : 1;
+    const avgScore =
+      consistencyScores.length > 0
+        ? consistencyScores.reduce((a, b) => a + b, 0) / consistencyScores.length
+        : 1;
     const riskScore = 1 - avgScore;
 
     return { sentences, consistencyScores, flaggedSentences, riskScore };
@@ -303,8 +313,11 @@ export class HallucinationDetector {
 
     for (const sentence of sentences) {
       // Split compound sentences on conjunctions
-      const parts = sentence.split(/\s+(?:,\s*and\s+|\s+and\s+(?:it|the|this|that|these|those|its|their|a|an)\s+|,\s*but\s+|\s+but\s+|\s+while\s+|\s+whereas\s+)/i)
-        .flatMap(p => p.split(/\s+and\s+(?=[a-z])/i));
+      const parts = sentence
+        .split(
+          /\s+(?:,\s*and\s+|\s+and\s+(?:it|the|this|that|these|those|its|their|a|an)\s+|,\s*but\s+|\s+but\s+|\s+while\s+|\s+whereas\s+)/i,
+        )
+        .flatMap((p) => p.split(/\s+and\s+(?=[a-z])/i));
       for (const part of parts) {
         const trimmed = part.trim();
         if (trimmed.length > 10 && this.isClaimSentence(trimmed)) {
@@ -331,7 +344,8 @@ export class HallucinationDetector {
           type: 'overconfidence',
           severity: hasHedging ? 'low' : 'medium',
           evidence: `Overconfidence marker: "${match[0]}"`,
-          suggestion: 'Use hedging language: "I believe", "likely", "based on available information"',
+          suggestion:
+            'Use hedging language: "I believe", "likely", "based on available information"',
         });
         break;
       }
@@ -346,7 +360,8 @@ export class HallucinationDetector {
             type: 'overconfidence',
             severity: 'low',
             evidence: `Possible overconfidence: "${match[0]}"`,
-            suggestion: 'Consider adding hedging: "I believe", "likely", "based on available information"',
+            suggestion:
+              'Consider adding hedging: "I believe", "likely", "based on available information"',
           });
           break;
         }
@@ -365,8 +380,11 @@ export class HallucinationDetector {
       if (match) {
         // Check if the specific claim is near hedging language
         const matchIndex = match.index ?? 0;
-        const contextWindow = text.substring(Math.max(0, matchIndex - 50), matchIndex + match[0].length + 50);
-        const nearHedging = HEDGING_LANGUAGE.some(h => h.test(contextWindow));
+        const contextWindow = text.substring(
+          Math.max(0, matchIndex - 50),
+          matchIndex + match[0].length + 50,
+        );
+        const nearHedging = HEDGING_LANGUAGE.some((h) => h.test(contextWindow));
 
         if (!nearHedging) {
           signals.push({
@@ -388,7 +406,7 @@ export class HallucinationDetector {
       if (match) {
         // Check if it references a known journal (lower severity)
         const matchText = match[0].toLowerCase();
-        const isKnownJournal = [...KNOWN_JOURNALS].some(j => matchText.includes(j));
+        const isKnownJournal = [...KNOWN_JOURNALS].some((j) => matchText.includes(j));
 
         signals.push({
           type: 'fabricated_reference',
@@ -471,10 +489,11 @@ export class HallucinationDetector {
 
     // Extract key nouns/entities from input
     const inputWords = new Set(
-      input.toLowerCase()
+      input
+        .toLowerCase()
         .replace(/[^\w\s]/g, '')
         .split(/\s+/)
-        .filter(w => w.length > 3)
+        .filter((w) => w.length > 3),
     );
 
     // Check output sentences for novel claims
@@ -484,13 +503,14 @@ export class HallucinationDetector {
     for (const sentence of outputSentences) {
       if (!this.isClaimSentence(sentence)) continue;
 
-      const sentenceWords = sentence.toLowerCase()
+      const sentenceWords = sentence
+        .toLowerCase()
         .replace(/[^\w\s]/g, '')
         .split(/\s+/)
-        .filter(w => w.length > 3);
+        .filter((w) => w.length > 3);
 
       // How many content words in the sentence are NOT in the input?
-      const novelWords = sentenceWords.filter(w => !inputWords.has(w));
+      const novelWords = sentenceWords.filter((w) => !inputWords.has(w));
       const noveltyRatio = sentenceWords.length > 0 ? novelWords.length / sentenceWords.length : 0;
 
       // If >50% of content words are novel and sentence is a factual claim
@@ -505,7 +525,8 @@ export class HallucinationDetector {
         type: 'entailment_failure',
         severity: 'medium',
         evidence: `${novelClaimCount} output sentences contain claims not grounded in the input`,
-        suggestion: 'Verify that expanded content is supported by the source. Consider adding citations.',
+        suggestion:
+          'Verify that expanded content is supported by the source. Consider adding citations.',
       });
     }
 
@@ -550,17 +571,19 @@ export class HallucinationDetector {
     const signals: HallucinationSignal[] = [];
 
     // Detect percentages that sum to more than 100% — scoped per sentence
-    const sentences = text.split(/[.!?\n]+/).filter(s => s.trim().length > 0);
+    const sentences = text.split(/[.!?\n]+/).filter((s) => s.trim().length > 0);
     for (const sentence of sentences) {
       const percentMatches = [...sentence.matchAll(/(\d+(?:\.\d+)?)\s*%/g)];
       if (percentMatches.length >= 3) {
         const sum = percentMatches.reduce((s, m) => s + parseFloat(m[1]), 0);
-        if (sum > 105) { // Small tolerance for rounding
+        if (sum > 105) {
+          // Small tolerance for rounding
           signals.push({
             type: 'numeric_anomaly',
             severity: 'medium',
-            evidence: `Percentages sum to ${sum.toFixed(1)}% in one sentence: ${percentMatches.map(m => m[0]).join(', ')}`,
-            suggestion: 'Verify numeric claims. Percentages summing >100% is a common hallucination.',
+            evidence: `Percentages sum to ${sum.toFixed(1)}% in one sentence: ${percentMatches.map((m) => m[0]).join(', ')}`,
+            suggestion:
+              'Verify numeric claims. Percentages summing >100% is a common hallucination.',
           });
         }
       }
@@ -578,7 +601,9 @@ export class HallucinationDetector {
     }
 
     // Detect contradictory numbers (e.g., "increased by 50%... decreased by 30%")
-    const increaseDecrease = text.match(/\b(?:increased?|grew|rose|improved?)\s+(?:by\s+)?(\d+(?:\.\d+)?)\s*%.*?\b(?:decreased?|fell|dropped?|declined?|reduced?)\s+(?:by\s+)?(\d+(?:\.\d+)?)\s*%/i);
+    const increaseDecrease = text.match(
+      /\b(?:increased?|grew|rose|improved?)\s+(?:by\s+)?(\d+(?:\.\d+)?)\s*%.*?\b(?:decreased?|fell|dropped?|declined?|reduced?)\s+(?:by\s+)?(\d+(?:\.\d+)?)\s*%/i,
+    );
     if (increaseDecrease) {
       signals.push({
         type: 'numeric_anomaly',
@@ -599,14 +624,16 @@ export class HallucinationDetector {
     const signals: HallucinationSignal[] = [];
 
     // Pattern: hedged claim followed by unhedged version
-    const hedgedThenFact = /\b(?:might|could|may|possibly|potentially)\s+\w+.{0,50}?\b(?:definitely|certainly|clearly|obviously|undoubtedly)\s+\w+/i;
+    const hedgedThenFact =
+      /\b(?:might|could|may|possibly|potentially)\s+\w+.{0,50}?\b(?:definitely|certainly|clearly|obviously|undoubtedly)\s+\w+/i;
     const match = text.match(hedgedThenFact);
     if (match) {
       signals.push({
         type: 'hedged_as_fact',
         severity: 'medium',
         evidence: `Hedged claim escalated to fact: "${match[0].slice(0, 80)}"`,
-        suggestion: 'Maintain consistent confidence level. Don\'t escalate uncertain claims to certainties.',
+        suggestion:
+          "Maintain consistent confidence level. Don't escalate uncertain claims to certainties.",
       });
     }
 
@@ -625,8 +652,10 @@ export class HallucinationDetector {
     if (funcMatches.length > 0) {
       // Only flag if there are multiple specific-looking function calls
       // (a single one might be real)
-      const specificFuncs = funcMatches.filter(m => {
-        const funcName = m[0].replace(/(?:use|call|invoke|run|execute)\s+`?/, '').replace(/`?\(\)/, '');
+      const specificFuncs = funcMatches.filter((m) => {
+        const funcName = m[0]
+          .replace(/(?:use|call|invoke|run|execute)\s+`?/, '')
+          .replace(/`?\(\)/, '');
         // Flag if function name is very long or has unusual patterns
         return funcName.length > 15 || /\.[A-Z][a-z]+[A-Z]/.test(funcName);
       });
@@ -653,7 +682,7 @@ export class HallucinationDetector {
    * Hedging reduces the severity of overconfidence/specificity signals.
    */
   private detectHedging(text: string): boolean {
-    return HEDGING_LANGUAGE.some(pattern => pattern.test(text));
+    return HEDGING_LANGUAGE.some((pattern) => pattern.test(text));
   }
 
   /**
@@ -662,8 +691,8 @@ export class HallucinationDetector {
   private splitSentences(text: string): string[] {
     return text
       .split(/[.!?\n]+/)
-      .map(s => s.trim())
-      .filter(s => s.length > 5);
+      .map((s) => s.trim())
+      .filter((s) => s.length > 5);
   }
 
   /**
@@ -690,7 +719,7 @@ export class HallucinationDetector {
       /\d+/, // Numbers suggest factual claims
     ];
 
-    return claimIndicators.some(p => p.test(sentence));
+    return claimIndicators.some((p) => p.test(sentence));
   }
 
   /**
@@ -699,10 +728,11 @@ export class HallucinationDetector {
    */
   private isSentenceSupported(sentence: string, sample: string): boolean {
     const sentenceWords = new Set(
-      sentence.toLowerCase()
+      sentence
+        .toLowerCase()
         .replace(/[^\w\s]/g, '')
         .split(/\s+/)
-        .filter(w => w.length > 3)
+        .filter((w) => w.length > 3),
     );
 
     const sampleLower = sample.toLowerCase();
@@ -716,7 +746,7 @@ export class HallucinationDetector {
 
     // Consider supported if >60% of content words appear in sample
     // This is intentionally strict to catch semantic differences
-    return sentenceWords.size > 0 && (matchCount / sentenceWords.size) > 0.6;
+    return sentenceWords.size > 0 && matchCount / sentenceWords.size > 0.6;
   }
 
   // ---------------------------------------------------------------------------
@@ -728,9 +758,9 @@ export class HallucinationDetector {
       return 'No hallucination signals detected. Output appears grounded.';
     }
 
-    const highCount = signals.filter(s => s.severity === 'high').length;
-    const medCount = signals.filter(s => s.severity === 'medium').length;
-    const lowCount = signals.filter(s => s.severity === 'low').length;
+    const highCount = signals.filter((s) => s.severity === 'high').length;
+    const medCount = signals.filter((s) => s.severity === 'medium').length;
+    const lowCount = signals.filter((s) => s.severity === 'low').length;
 
     const parts: string[] = [];
     if (highCount > 0) parts.push(`${highCount} high-risk`);
@@ -747,7 +777,9 @@ export class HallucinationDetector {
 
 let defaultDetector: HallucinationDetector | null = null;
 
-export function getHallucinationDetector(options?: { knowledgeCutOffDate?: Date }): HallucinationDetector {
+export function getHallucinationDetector(options?: {
+  knowledgeCutOffDate?: Date;
+}): HallucinationDetector {
   if (!defaultDetector) {
     defaultDetector = new HallucinationDetector(options);
   }

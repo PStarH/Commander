@@ -25,16 +25,17 @@ function named(mod: any, name: string): any {
 let _modules: any = null;
 async function loadModules() {
   if (_modules) return _modules;
-  const [agentMod, telosMod, ultMod, mimoMod, webMod, fileMod, codeMod, persistMod] = await Promise.all([
-    import('../src/runtime/agentRuntime'),
-    import('../src/telos/telosOrchestrator'),
-    import('../src/ultimate/orchestrator'),
-    import('../src/runtime/providers/mimoProvider'),
-    import('../src/tools/webSearchTool'),
-    import('../src/tools/fileSystemTool'),
-    import('../src/tools/codeExecutionTool'),
-    import('../src/tools/persistenceTool'),
-  ]);
+  const [agentMod, telosMod, ultMod, mimoMod, webMod, fileMod, codeMod, persistMod] =
+    await Promise.all([
+      import('../src/runtime/agentRuntime'),
+      import('../src/telos/telosOrchestrator'),
+      import('../src/ultimate/orchestrator'),
+      import('../src/runtime/providers/mimoProvider'),
+      import('../src/tools/webSearchTool'),
+      import('../src/tools/fileSystemTool'),
+      import('../src/tools/codeExecutionTool'),
+      import('../src/tools/persistenceTool'),
+    ]);
   _modules = {
     AgentRuntime: named(agentMod, 'AgentRuntime'),
     TELOSOrchestrator: named(telosMod, 'TELOSOrchestrator'),
@@ -65,24 +66,38 @@ async function createRuntime() {
   runtime.registerProvider('mimo', provider);
   runtime.registerProvider('openai', provider);
   const tools: Record<string, any> = {
-    web_search: new M.WebSearchTool(), web_fetch: new M.WebFetchTool(),
-    file_write: new M.FileWriteTool(), file_read: new M.FileReadTool(),
-    file_list: new M.FileListTool(), file_edit: new M.FileEditTool(),
-    file_search: new M.FileSearchTool(), shell_execute: new M.ShellExecuteTool(),
-    memory_store: new M.MemoryStoreTool(), memory_recall: new M.MemoryRecallTool(),
+    web_search: new M.WebSearchTool(),
+    web_fetch: new M.WebFetchTool(),
+    file_write: new M.FileWriteTool(),
+    file_read: new M.FileReadTool(),
+    file_list: new M.FileListTool(),
+    file_edit: new M.FileEditTool(),
+    file_search: new M.FileSearchTool(),
+    shell_execute: new M.ShellExecuteTool(),
+    memory_store: new M.MemoryStoreTool(),
+    memory_recall: new M.MemoryRecallTool(),
   };
   for (const [name, tool] of Object.entries(tools)) runtime.registerTool(name, tool);
   return runtime;
 }
 
 interface CapabilityResult {
-  capability: string; scenario: string; passed: boolean;
-  durationSec: number; detail: string; filesCreated: string[]; error?: string;
+  capability: string;
+  scenario: string;
+  passed: boolean;
+  durationSec: number;
+  detail: string;
+  filesCreated: string[];
+  error?: string;
 }
 
 interface CapabilityScenario {
-  id: string; capability: string; name: string; description: string;
-  setup: () => string; prompt: string;
+  id: string;
+  capability: string;
+  name: string;
+  description: string;
+  setup: () => string;
+  prompt: string;
   verify: (dir: string) => Promise<{ pass: boolean; detail: string }>;
 }
 
@@ -108,11 +123,11 @@ function fileContains(dir: string, filePath: string, ...keywords: string[]): boo
   const full = path.join(dir, filePath);
   if (!fs.existsSync(full)) return false;
   const content = fs.readFileSync(full, 'utf-8');
-  return keywords.every(k => content.includes(k));
+  return keywords.every((k) => content.includes(k));
 }
 
 function countFiles(dir: string, pattern: RegExp): number {
-  return walkDir(dir).filter(f => pattern.test(f)).length;
+  return walkDir(dir).filter((f) => pattern.test(f)).length;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -121,14 +136,15 @@ function countFiles(dir: string, pattern: RegExp): number {
 
 function makeScenarios(): CapabilityScenario[] {
   return [
-
     // ─────────────────────────────────────────────────────────────────────
     // CAP-1: 极限编排 — 完整电商平台 (30+文件, 内容级验证)
     // ─────────────────────────────────────────────────────────────────────
     {
-      id: 'CAP-1', capability: 'orchestration',
+      id: 'CAP-1',
+      capability: 'orchestration',
       name: '电商平台 — 前后端+数据库+测试+部署 (30+文件, 含具体实现)',
-      description: '构建完整电商后端API(用户/商品/订单/支付/评论), 数据库schema, 单元测试, Docker部署. 每个文件必须有真实的业务逻辑.',
+      description:
+        '构建完整电商后端API(用户/商品/订单/支付/评论), 数据库schema, 单元测试, Docker部署. 每个文件必须有真实的业务逻辑.',
       setup: () => fs.mkdtempSync(path.join(TEST_WORKSPACE, 'cap1-')),
       prompt: `请构建一个完整的电商后端API. 所有文件必须有真实的业务逻辑代码,不能只有注释或空壳.
 
@@ -181,11 +197,11 @@ function makeScenarios(): CapabilityScenario[] {
         const checks: string[] = [];
 
         // Count source files
-        const srcFiles = files.filter(f => f.startsWith('src/') && f.endsWith('.ts'));
+        const srcFiles = files.filter((f) => f.startsWith('src/') && f.endsWith('.ts'));
         if (srcFiles.length < 15) checks.push(`src/文件不足: ${srcFiles.length}/15+`);
 
         // Count test files
-        const testFiles = files.filter(f => f.startsWith('tests/') && f.endsWith('.test.ts'));
+        const testFiles = files.filter((f) => f.startsWith('tests/') && f.endsWith('.test.ts'));
         if (testFiles.length < 3) checks.push(`测试文件不足: ${testFiles.length}/3+`);
 
         // Content validation for key files
@@ -194,14 +210,21 @@ function makeScenarios(): CapabilityScenario[] {
           { file: 'src/routes/auth.ts', keywords: ['register', 'login'], name: '认证路由' },
           { file: 'src/routes/products.ts', keywords: ['products'], name: '商品路由' },
           { file: 'src/routes/orders.ts', keywords: ['orders'], name: '订单路由' },
-          { file: 'src/middleware/auth.ts', keywords: ['jwt', 'token', 'Bearer'].map(k => k.toLowerCase()), name: 'JWT中间件' },
+          {
+            file: 'src/middleware/auth.ts',
+            keywords: ['jwt', 'token', 'Bearer'].map((k) => k.toLowerCase()),
+            name: 'JWT中间件',
+          },
         ];
 
         for (const v of validations) {
           const fp = findFile(dir, [v.file]);
-          if (!fp) { checks.push(`缺少${v.name}`); continue; }
+          if (!fp) {
+            checks.push(`缺少${v.name}`);
+            continue;
+          }
           const content = fs.readFileSync(path.join(dir, fp), 'utf-8').toLowerCase();
-          const found = v.keywords.some(k => content.includes(k));
+          const found = v.keywords.some((k) => content.includes(k));
           if (!found) checks.push(`${v.name}缺少关键实现`);
         }
 
@@ -213,7 +236,10 @@ function makeScenarios(): CapabilityScenario[] {
 
         return {
           pass: checks.length === 0,
-          detail: checks.length === 0 ? `电商平台完整: ${files.length}文件, ${srcFiles.length}源码, ${testFiles.length}测试` : checks.join('; '),
+          detail:
+            checks.length === 0
+              ? `电商平台完整: ${files.length}文件, ${srcFiles.length}源码, ${testFiles.length}测试`
+              : checks.join('; '),
         };
       },
     },
@@ -222,7 +248,8 @@ function makeScenarios(): CapabilityScenario[] {
     // CAP-2: 极限记忆 — 大型知识图谱+决策树
     // ─────────────────────────────────────────────────────────────────────
     {
-      id: 'CAP-2', capability: 'memory',
+      id: 'CAP-2',
+      capability: 'memory',
       name: '知识图谱 — 15条知识+关系网络+决策树整合',
       description: '存储15条相互关联的技术知识,建立关系图谱,整合为可查询的决策树文档.',
       setup: () => fs.mkdtempSync(path.join(TEST_WORKSPACE, 'cap2-')),
@@ -254,7 +281,7 @@ function makeScenarios(): CapabilityScenario[] {
 
         // Must reference evolved knowledge
         const requiredTerms = ['PostgreSQL', 'Redis', 'Kafka', 'CQRS', 'OAuth2', 'Elasticsearch'];
-        const missing = requiredTerms.filter(t => !content.includes(t));
+        const missing = requiredTerms.filter((t) => !content.includes(t));
         if (missing.length > 0) checks.push(`缺少术语: ${missing.join(', ')}`);
 
         // Must have relationships
@@ -269,14 +296,17 @@ function makeScenarios(): CapabilityScenario[] {
 
         // Must reference specific issues
         const issues = ['N+1', 'OOM', '超时', '重复', '慢'];
-        const foundIssues = issues.filter(i => content.includes(i));
+        const foundIssues = issues.filter((i) => content.includes(i));
         if (foundIssues.length < 3) checks.push(`问题引用不足: ${foundIssues.length}/5`);
 
         if (content.length < 1500) checks.push(`内容过短: ${content.length}字符`);
 
         return {
           pass: checks.length === 0,
-          detail: checks.length === 0 ? `知识图谱完整: ${content.length}字符, 含关系网络+决策树` : checks.join('; '),
+          detail:
+            checks.length === 0
+              ? `知识图谱完整: ${content.length}字符, 含关系网络+决策树`
+              : checks.join('; '),
         };
       },
     },
@@ -285,9 +315,11 @@ function makeScenarios(): CapabilityScenario[] {
     // CAP-3: 极限质量门禁 — 完整工具库开发
     // ─────────────────────────────────────────────────────────────────────
     {
-      id: 'CAP-3', capability: 'quality-gates',
+      id: 'CAP-3',
+      capability: 'quality-gates',
       name: '工具库开发 — HTTP客户端库 (类型+实现+测试+文档+示例)',
-      description: '开发一个类型安全的HTTP客户端库: 完整TypeScript类型定义, 请求/响应拦截器, 重试机制, 超时控制, 错误分类, 单元测试, API文档, 使用示例.',
+      description:
+        '开发一个类型安全的HTTP客户端库: 完整TypeScript类型定义, 请求/响应拦截器, 重试机制, 超时控制, 错误分类, 单元测试, API文档, 使用示例.',
       setup: () => fs.mkdtempSync(path.join(TEST_WORKSPACE, 'cap3-')),
       prompt: `请开发一个类型安全的HTTP客户端库 http-client. 每个文件必须有完整实现.
 
@@ -408,18 +440,21 @@ http.request('/users')
 
         for (const r of required) {
           const fp = findFile(dir, [r.path]);
-          if (!fp) { checks.push(`缺少${r.path}`); continue; }
+          if (!fp) {
+            checks.push(`缺少${r.path}`);
+            continue;
+          }
           const content = fs.readFileSync(path.join(dir, fp), 'utf-8');
-          const missing = r.must.filter(k => !content.toLowerCase().includes(k.toLowerCase()));
+          const missing = r.must.filter((k) => !content.toLowerCase().includes(k.toLowerCase()));
           if (missing.length > 0) checks.push(`${r.path}缺少: ${missing.join(', ')}`);
         }
 
         // Test files
-        const testFiles = files.filter(f => f.includes('test') && f.endsWith('.ts'));
+        const testFiles = files.filter((f) => f.includes('test') && f.endsWith('.ts'));
         if (testFiles.length < 3) checks.push(`测试文件不足: ${testFiles.length}/3+`);
 
         // Examples
-        const exampleFiles = files.filter(f => f.startsWith('examples/') && f.endsWith('.ts'));
+        const exampleFiles = files.filter((f) => f.startsWith('examples/') && f.endsWith('.ts'));
         if (exampleFiles.length < 2) checks.push(`示例文件不足: ${exampleFiles.length}/2+`);
 
         // Total files
@@ -436,9 +471,11 @@ http.request('/users')
     // CAP-4: 极限自我进化 — 性能优化竞赛
     // ─────────────────────────────────────────────────────────────────────
     {
-      id: 'CAP-4', capability: 'self-evolution',
+      id: 'CAP-4',
+      capability: 'self-evolution',
       name: '优化竞赛 — 3种缓存策略实现+基准测试+选最优',
-      description: '实现3种不同的缓存策略(LRU/LFU/TTL), 为每种写基准测试, 量化对比性能, 选择最优并记录决策过程.',
+      description:
+        '实现3种不同的缓存策略(LRU/LFU/TTL), 为每种写基准测试, 量化对比性能, 选择最优并记录决策过程.',
       setup: () => fs.mkdtempSync(path.join(TEST_WORKSPACE, 'cap4-')),
       prompt: `请实现3种缓存策略,进行基准测试,选择最优方案.
 
@@ -549,11 +586,20 @@ export interface Cache<K, V> {
         const checks: string[] = [];
 
         // Source files
-        const srcFiles = ['src/cache-lru.ts', 'src/cache-lfu.ts', 'src/cache-ttl.ts', 'src/cache-factory.ts'];
+        const srcFiles = [
+          'src/cache-lru.ts',
+          'src/cache-lfu.ts',
+          'src/cache-ttl.ts',
+          'src/cache-factory.ts',
+        ];
         for (const f of srcFiles) {
-          if (!fs.existsSync(path.join(dir, f))) { checks.push(`缺少${f}`); continue; }
+          if (!fs.existsSync(path.join(dir, f))) {
+            checks.push(`缺少${f}`);
+            continue;
+          }
           const content = fs.readFileSync(path.join(dir, f), 'utf-8');
-          if (!content.includes('class') && !content.includes('function')) checks.push(`${f}缺少实现`);
+          if (!content.includes('class') && !content.includes('function'))
+            checks.push(`${f}缺少实现`);
         }
 
         // Benchmark files
@@ -567,7 +613,10 @@ export interface Cache<K, V> {
 
         return {
           pass: checks.length === 0,
-          detail: checks.length === 0 ? `缓存库+基准测试完整: ${walkDir(dir).length}文件` : checks.join('; '),
+          detail:
+            checks.length === 0
+              ? `缓存库+基准测试完整: ${walkDir(dir).length}文件`
+              : checks.join('; '),
         };
       },
     },
@@ -576,14 +625,18 @@ export interface Cache<K, V> {
     // CAP-5: 极限安全沙箱 — CVE级漏洞审计
     // ─────────────────────────────────────────────────────────────────────
     {
-      id: 'CAP-5', capability: 'security-sandbox',
+      id: 'CAP-5',
+      capability: 'security-sandbox',
       name: 'CVE级审计 — 5个真实漏洞,PoC利用代码,修复补丁+回归测试',
-      description: '审查5个含真实CVE级漏洞的代码,编写PoC利用代码,提供修复补丁,并为每个补丁写回归测试证明修复有效.',
+      description:
+        '审查5个含真实CVE级漏洞的代码,编写PoC利用代码,提供修复补丁,并为每个补丁写回归测试证明修复有效.',
       setup: () => {
         const dir = fs.mkdtempSync(path.join(TEST_WORKSPACE, 'cap5-'));
 
         // Vulnerability 1: Path Traversal via zip slip
-        fs.writeFileSync(path.join(dir, 'vuln1-zip.ts'), `
+        fs.writeFileSync(
+          path.join(dir, 'vuln1-zip.ts'),
+          `
 import fs from 'fs';
 import path from 'path';
 import { ZipFile } from 'adm-zip';
@@ -605,10 +658,13 @@ async function extractZip(zipPath: string, destDir: string): Promise<string[]> {
   }
   return extracted;
 }
-`.trim());
+`.trim(),
+        );
 
         // Vulnerability 2: Unsafe deserialization
-        fs.writeFileSync(path.join(dir, 'vuln2-deserialize.ts'), `
+        fs.writeFileSync(
+          path.join(dir, 'vuln2-deserialize.ts'),
+          `
 import { deserialize } from 'node:v8';
 
 app.post('/api/import', (req, res) => {
@@ -625,10 +681,13 @@ app.post('/api/config', (req, res) => {
   // yaml.parse with default options allows arbitrary object construction
   res.json(config);
 });
-`.trim());
+`.trim(),
+        );
 
         // Vulnerability 3: Race condition (TOCTOU)
-        fs.writeFileSync(path.join(dir, 'vuln3-race.ts'), `
+        fs.writeFileSync(
+          path.join(dir, 'vuln3-race.ts'),
+          `
 import fs from 'fs';
 
 async function transferFunds(from: string, to: string, amount: number): Promise<boolean> {
@@ -654,10 +713,13 @@ async function atomicWrite(filePath: string, data: string): Promise<void> {
   fs.writeFileSync(tempPath, data);
   fs.renameSync(tempPath, filePath);
 }
-`.trim());
+`.trim(),
+        );
 
         // Vulnerability 4: Command injection via template
-        fs.writeFileSync(path.join(dir, 'vuln4-template.ts'), `
+        fs.writeFileSync(
+          path.join(dir, 'vuln4-template.ts'),
+          `
 import { execSync } from 'child_process';
 
 function generateReport(template: string, data: Record<string, string>): string {
@@ -690,10 +752,13 @@ app.get('/api/files/:name', (req, res) => {
   // No path validation — could use ../ to escape
   res.sendFile(filePath);
 });
-`.trim());
+`.trim(),
+        );
 
         // Vulnerability 5: SSRF with DNS rebinding
-        fs.writeFileSync(path.join(dir, 'vuln5-ssrf.ts'), `
+        fs.writeFileSync(
+          path.join(dir, 'vuln5-ssrf.ts'),
+          `
 import dns from 'dns';
 import http from 'http';
 import { URL } from 'url';
@@ -736,7 +801,8 @@ app.get('/api/fetch', async (req, res) => {
     res.status(400).json({ error: e.message });
   }
 });
-`.trim());
+`.trim(),
+        );
 
         return dir;
       },
@@ -787,18 +853,21 @@ app.get('/api/fetch', async (req, res) => {
         const checks: string[] = [];
 
         // Check analysis
-        if (!fs.existsSync(path.join(dir, 'vulnerability-analysis.md'))) checks.push('缺少vulnerability-analysis.md');
+        if (!fs.existsSync(path.join(dir, 'vulnerability-analysis.md')))
+          checks.push('缺少vulnerability-analysis.md');
         else {
           const analysis = fs.readFileSync(path.join(dir, 'vulnerability-analysis.md'), 'utf-8');
-          if (!analysis.includes('CVSS') && !analysis.includes('cvss')) checks.push('分析缺少CVSS评分');
-          if (!analysis.includes('CWE') && !analysis.includes('cwe')) checks.push('分析缺少CWE分类');
+          if (!analysis.includes('CVSS') && !analysis.includes('cvss'))
+            checks.push('分析缺少CVSS评分');
+          if (!analysis.includes('CWE') && !analysis.includes('cwe'))
+            checks.push('分析缺少CWE分类');
         }
 
         // Check PoCs
         const pocDir = path.join(dir, 'poc');
         if (!fs.existsSync(pocDir)) checks.push('缺少poc/目录');
         else {
-          const pocFiles = fs.readdirSync(pocDir).filter(f => f.endsWith('.ts'));
+          const pocFiles = fs.readdirSync(pocDir).filter((f) => f.endsWith('.ts'));
           if (pocFiles.length < 5) checks.push(`PoC文件不足: ${pocFiles.length}/5`);
         }
 
@@ -806,7 +875,7 @@ app.get('/api/fetch', async (req, res) => {
         const patchDir = path.join(dir, 'patches');
         if (!fs.existsSync(patchDir)) checks.push('缺少patches/目录');
         else {
-          const patchFiles = fs.readdirSync(patchDir).filter(f => f.endsWith('.ts'));
+          const patchFiles = fs.readdirSync(patchDir).filter((f) => f.endsWith('.ts'));
           if (patchFiles.length < 5) checks.push(`补丁文件不足: ${patchFiles.length}/5`);
         }
 
@@ -814,16 +883,18 @@ app.get('/api/fetch', async (req, res) => {
         const testDir = path.join(dir, 'tests');
         if (!fs.existsSync(testDir)) checks.push('缺少tests/目录');
         else {
-          const testFiles = fs.readdirSync(testDir).filter(f => f.endsWith('.test.ts'));
+          const testFiles = fs.readdirSync(testDir).filter((f) => f.endsWith('.test.ts'));
           if (testFiles.length < 5) checks.push(`回归测试不足: ${testFiles.length}/5`);
         }
 
         // Check security report
-        if (!fs.existsSync(path.join(dir, 'security-report.md'))) checks.push('缺少security-report.md');
+        if (!fs.existsSync(path.join(dir, 'security-report.md')))
+          checks.push('缺少security-report.md');
 
         return {
           pass: checks.length === 0,
-          detail: checks.length === 0 ? `CVE级审计完整: 分析+PoC+补丁+回归测试+报告` : checks.join('; '),
+          detail:
+            checks.length === 0 ? `CVE级审计完整: 分析+PoC+补丁+回归测试+报告` : checks.join('; '),
         };
       },
     },
@@ -854,7 +925,18 @@ ${scenario.prompt}`;
       goal: prompt,
       maxSteps: 20,
       tokenBudget: 400_000,
-      availableTools: ['web_search', 'web_fetch', 'file_write', 'file_read', 'file_list', 'file_edit', 'file_search', 'shell_execute', 'memory_store', 'memory_recall'],
+      availableTools: [
+        'web_search',
+        'web_fetch',
+        'file_write',
+        'file_read',
+        'file_list',
+        'file_edit',
+        'file_search',
+        'shell_execute',
+        'memory_store',
+        'memory_recall',
+      ],
       contextData: {},
     });
 
@@ -863,15 +945,21 @@ ${scenario.prompt}`;
     const filesCreated = walkDir(tempDir);
 
     return {
-      capability: scenario.capability, scenario: scenario.id,
-      passed: verification.pass, durationSec: durationMs / 1000,
-      detail: verification.detail, filesCreated,
+      capability: scenario.capability,
+      scenario: scenario.id,
+      passed: verification.pass,
+      durationSec: durationMs / 1000,
+      detail: verification.detail,
+      filesCreated,
     };
   } catch (e: any) {
     return {
-      capability: scenario.capability, scenario: scenario.id,
-      passed: false, durationSec: (Date.now() - start) / 1000,
-      detail: '执行异常', filesCreated: [],
+      capability: scenario.capability,
+      scenario: scenario.id,
+      passed: false,
+      durationSec: (Date.now() - start) / 1000,
+      detail: '执行异常',
+      filesCreated: [],
       error: e.message?.slice(0, 500),
     };
   }
@@ -881,14 +969,16 @@ ${scenario.prompt}`;
 
 async function main() {
   const scenarios = makeScenarios();
-  const onlyCap = process.argv.find(a => a.startsWith('--capability='))?.split('=')[1];
-  const filtered = onlyCap ? scenarios.filter(s => s.capability === onlyCap) : scenarios;
+  const onlyCap = process.argv.find((a) => a.startsWith('--capability='))?.split('=')[1];
+  const filtered = onlyCap ? scenarios.filter((s) => s.capability === onlyCap) : scenarios;
 
   console.log('╔══════════════════════════════════════════════════════════════════════╗');
   console.log('║     Commander 5大核心能力 — 极限难度场景 v3                        ║');
   console.log('╠══════════════════════════════════════════════════════════════════════╣');
   console.log('║  模型: mimo-v2.5 | 内容级验证 | PoC利用 | 回归测试                 ║');
-  console.log(`║  场景: ${filtered.length} / ${scenarios.length}                                                     ║`);
+  console.log(
+    `║  场景: ${filtered.length} / ${scenarios.length}                                                     ║`,
+  );
   console.log('╚══════════════════════════════════════════════════════════════════════╝\n');
 
   const allResults: CapabilityResult[] = [];
@@ -912,7 +1002,7 @@ async function main() {
 
     if (i < filtered.length - 1) {
       console.log('  ⏳ 冷却20秒...');
-      await new Promise(r => setTimeout(r, 20_000));
+      await new Promise((r) => setTimeout(r, 20_000));
     }
   }
 
@@ -921,13 +1011,15 @@ async function main() {
   console.log('  📊 极限难度测试结果');
   console.log(`${'═'.repeat(70)}\n`);
 
-  const capabilities = [...new Set(filtered.map(s => s.capability))];
-  let totalPassed = 0, totalCount = 0;
+  const capabilities = [...new Set(filtered.map((s) => s.capability))];
+  let totalPassed = 0,
+    totalCount = 0;
 
   for (const cap of capabilities) {
-    const capResults = allResults.filter(r => r.capability === cap);
-    const capPassed = capResults.filter(r => r.passed).length;
-    totalPassed += capPassed; totalCount += capResults.length;
+    const capResults = allResults.filter((r) => r.capability === cap);
+    const capPassed = capResults.filter((r) => r.passed).length;
+    totalPassed += capPassed;
+    totalCount += capResults.length;
     const icon = capPassed === capResults.length ? '✅' : capPassed > 0 ? '⚠️' : '❌';
     console.log(`  ${icon} ${cap}: ${capPassed}/${capResults.length}`);
     for (const r of capResults) {
@@ -941,14 +1033,25 @@ async function main() {
 
   const outDir = path.join(process.cwd(), '.capability-test-output');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-  fs.writeFileSync(path.join(outDir, 'results-v3.json'), JSON.stringify({
-    timestamp: new Date().toISOString(), model: 'mimo-v2.5', totalPassed, totalCount, results: allResults,
-  }, null, 2));
+  fs.writeFileSync(
+    path.join(outDir, 'results-v3.json'),
+    JSON.stringify(
+      {
+        timestamp: new Date().toISOString(),
+        model: 'mimo-v2.5',
+        totalPassed,
+        totalCount,
+        results: allResults,
+      },
+      null,
+      2,
+    ),
+  );
 
   let md = `# Commander 核心能力测试报告 v3 — 极限难度\n\n> 内容级验证, PoC利用, 回归测试\n\n`;
   md += `| 能力 | 场景 | 结果 | 耗时 | 文件数 | 详情 |\n|------|------|------|------|--------|------|\n`;
   for (const r of allResults) {
-    md += `| ${r.capability} | ${r.scenario} | ${r.passed?'✅':'❌'} | ${r.durationSec.toFixed(0)}s | ${r.filesCreated.length} | ${r.detail} |\n`;
+    md += `| ${r.capability} | ${r.scenario} | ${r.passed ? '✅' : '❌'} | ${r.durationSec.toFixed(0)}s | ${r.filesCreated.length} | ${r.detail} |\n`;
   }
   md += `\n**总计: ${totalPassed}/${totalCount} 通过**\n`;
   fs.writeFileSync(path.join(outDir, 'report-v3.md'), md);

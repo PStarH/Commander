@@ -29,7 +29,7 @@ import type { LLMProvider, LLMMessage } from './types';
 // ============================================================================
 
 /** Trigger points as percentage of hard token cap */
-const DEFAULT_TRIGGER_POINTS = [0.20, 0.45, 0.70];
+const DEFAULT_TRIGGER_POINTS = [0.2, 0.45, 0.7];
 
 /** Minimum interval between checkpoints in ms (avoid spamming) */
 const MIN_CHECKPOINT_INTERVAL_MS = 30_000;
@@ -145,7 +145,8 @@ export class CheckpointWriter {
       triggerPoints: config?.triggerPoints ?? DEFAULT_TRIGGER_POINTS,
       minIntervalMs: config?.minIntervalMs ?? MIN_CHECKPOINT_INTERVAL_MS,
       writerTokenBudget: config?.writerTokenBudget ?? WRITER_TOKEN_BUDGET,
-      storageDir: config?.storageDir ?? path.join(process.cwd(), '.commander', 'memory', 'checkpoints'),
+      storageDir:
+        config?.storageDir ?? path.join(process.cwd(), '.commander', 'memory', 'checkpoints'),
     };
   }
 
@@ -267,7 +268,7 @@ export class CheckpointWriter {
     // Determine next action
     let nextAction = '';
     if (params.failedSubtasks.length > 0) {
-      nextAction = `Retry failed subtasks: ${params.failedSubtasks.map(s => s.id).join(', ')}`;
+      nextAction = `Retry failed subtasks: ${params.failedSubtasks.map((s) => s.id).join(', ')}`;
     } else if (params.pendingSubtasks.length > 0) {
       nextAction = `Continue with: ${params.pendingSubtasks[0].goal.slice(0, 100)}`;
     } else {
@@ -283,12 +284,12 @@ export class CheckpointWriter {
       goal: params.goal.slice(0, 500),
       phase: params.phase,
       stepNumber: params.stepNumber,
-      completedSubtasks: params.completedSubtasks.map(s => ({
+      completedSubtasks: params.completedSubtasks.map((s) => ({
         ...s,
         result: s.result.slice(0, 300),
       })),
       pendingSubtasks: params.pendingSubtasks,
-      failedSubtasks: params.failedSubtasks.map(s => ({
+      failedSubtasks: params.failedSubtasks.map((s) => ({
         ...s,
         error: s.error.slice(0, 200),
       })),
@@ -310,7 +311,10 @@ export class CheckpointWriter {
         if (enriched) {
           if (enriched.nextAction) doc.nextAction = enriched.nextAction;
           if (enriched.keyDecisions?.length) {
-            doc.keyDecisions = [...new Set([...doc.keyDecisions, ...enriched.keyDecisions])].slice(0, 10);
+            doc.keyDecisions = [...new Set([...doc.keyDecisions, ...enriched.keyDecisions])].slice(
+              0,
+              10,
+            );
           }
         }
       } catch (e) {
@@ -334,7 +338,9 @@ export class CheckpointWriter {
         pendingCount: params.pendingSubtasks.length,
         filePath,
       });
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
 
     return {
       runId: params.runId,
@@ -366,7 +372,11 @@ export class CheckpointWriter {
     try {
       fs.writeFileSync(tmpPath, markdown, { encoding: 'utf-8', mode: 0o600 });
       fs.renameSync(tmpPath, filePath);
-      try { fs.chmodSync(filePath, 0o600); } catch { /* best-effort */ }
+      try {
+        fs.chmodSync(filePath, 0o600);
+      } catch {
+        /* best-effort */
+      }
     } catch (e) {
       getGlobalLogger().warn('CheckpointWriter', 'Failed to persist checkpoint', {
         error: (e as Error)?.message,
@@ -412,7 +422,9 @@ export class CheckpointWriter {
     if (doc.pendingSubtasks.length > 0) {
       lines.push(``, `### ⏳ Pending (${doc.pendingSubtasks.length})`, ``);
       for (const sub of doc.pendingSubtasks) {
-        lines.push(`- **${sub.id}**: ${sub.goal.slice(0, 120)} (est. ${sub.estimatedTokens.toLocaleString()} tokens)`);
+        lines.push(
+          `- **${sub.id}**: ${sub.goal.slice(0, 120)} (est. ${sub.estimatedTokens.toLocaleString()} tokens)`,
+        );
       }
     }
 
@@ -434,24 +446,34 @@ export class CheckpointWriter {
     if (doc.filesRead.length > 0 || doc.filesModified.length > 0) {
       lines.push(``, `## File State`, ``);
       if (doc.filesRead.length > 0) {
-        lines.push(`**Read** (${doc.filesRead.length}): ${doc.filesRead.slice(0, 20).join(', ')}${doc.filesRead.length > 20 ? '...' : ''}`);
+        lines.push(
+          `**Read** (${doc.filesRead.length}): ${doc.filesRead.slice(0, 20).join(', ')}${doc.filesRead.length > 20 ? '...' : ''}`,
+        );
       }
       if (doc.filesModified.length > 0) {
-        lines.push(`**Modified** (${doc.filesModified.length}): ${doc.filesModified.slice(0, 20).join(', ')}${doc.filesModified.length > 20 ? '...' : ''}`);
+        lines.push(
+          `**Modified** (${doc.filesModified.length}): ${doc.filesModified.slice(0, 20).join(', ')}${doc.filesModified.length > 20 ? '...' : ''}`,
+        );
       }
     }
 
     if (doc.errors.length > 0) {
       lines.push(``, `## Errors`, ``);
       for (const err of doc.errors.slice(0, 10)) {
-        lines.push(`- [${err.recovered ? 'recovered' : 'unrecovered'}] **${err.nodeId}**: ${err.message.slice(0, 150)}`);
+        lines.push(
+          `- [${err.recovered ? 'recovered' : 'unrecovered'}] **${err.nodeId}**: ${err.message.slice(0, 150)}`,
+        );
       }
     }
 
     lines.push(``, `## Token Budget`, ``);
-    lines.push(`- **Used**: ${doc.tokensUsed.toLocaleString()} / ${doc.budgetHardCap.toLocaleString()}`);
+    lines.push(
+      `- **Used**: ${doc.tokensUsed.toLocaleString()} / ${doc.budgetHardCap.toLocaleString()}`,
+    );
     lines.push(`- **Remaining**: ${doc.tokensRemaining.toLocaleString()}`);
-    lines.push(`- **Ratio**: ${((doc.tokensUsed / Math.max(1, doc.budgetHardCap)) * 100).toFixed(1)}%`);
+    lines.push(
+      `- **Ratio**: ${((doc.tokensUsed / Math.max(1, doc.budgetHardCap)) * 100).toFixed(1)}%`,
+    );
 
     lines.push(``, `## Next Action`, ``);
     lines.push(doc.nextAction);
@@ -495,16 +517,18 @@ export class CheckpointWriter {
           `Goal: ${doc.goal.slice(0, 300)}`,
           ``,
           `Completed (${doc.completedSubtasks.length}):`,
-          ...doc.completedSubtasks.map(s => `- ${s.id}: ${s.goal.slice(0, 100)} → ${s.result.slice(0, 100)}`),
+          ...doc.completedSubtasks.map(
+            (s) => `- ${s.id}: ${s.goal.slice(0, 100)} → ${s.result.slice(0, 100)}`,
+          ),
           ``,
           `Pending (${doc.pendingSubtasks.length}):`,
-          ...doc.pendingSubtasks.map(s => `- ${s.id}: ${s.goal.slice(0, 100)}`),
+          ...doc.pendingSubtasks.map((s) => `- ${s.id}: ${s.goal.slice(0, 100)}`),
           ``,
           `Failed (${doc.failedSubtasks.length}):`,
-          ...doc.failedSubtasks.map(s => `- ${s.id}: ${s.goal.slice(0, 100)}`),
+          ...doc.failedSubtasks.map((s) => `- ${s.id}: ${s.goal.slice(0, 100)}`),
           ``,
           `Errors:`,
-          ...doc.errors.map(e => `- ${e.nodeId}: ${e.message.slice(0, 100)}`),
+          ...doc.errors.map((e) => `- ${e.nodeId}: ${e.message.slice(0, 100)}`),
           ``,
           `Token usage: ${doc.tokensUsed.toLocaleString()} / ${doc.budgetHardCap.toLocaleString()}`,
           ``,
@@ -581,9 +605,10 @@ export class CheckpointWriter {
     const dir = this.config.storageDir!;
     try {
       if (!fs.existsSync(dir)) return [];
-      const files = fs.readdirSync(dir)
-        .filter(f => f.endsWith('.md'))
-        .map(f => {
+      const files = fs
+        .readdirSync(dir)
+        .filter((f) => f.endsWith('.md'))
+        .map((f) => {
           const fp = path.join(dir, f);
           const stat = fs.statSync(fp);
           return {
@@ -611,7 +636,9 @@ export class CheckpointWriter {
     const filePath = path.join(this.config.storageDir!, `${runId}.md`);
     try {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   /**
@@ -642,10 +669,14 @@ export class CheckpointWriter {
       const stepMatch = raw.match(/\*\*Step\*\*: (\d+)/);
       const goalMatch = raw.match(/## Goal\n\n(.+?)\n\n##/s);
       // Parse the metadata line: **Completed**: N | **Pending**: M | **Failed**: K
-      const countsMatch = raw.match(/\*\*Completed\*\*:\s*(\d+)\s*\|\s*\*\*Pending\*\*:\s*(\d+)\s*\|\s*\*\*Failed\*\*:\s*(\d+)/);
+      const countsMatch = raw.match(
+        /\*\*Completed\*\*:\s*(\d+)\s*\|\s*\*\*Pending\*\*:\s*(\d+)\s*\|\s*\*\*Failed\*\*:\s*(\d+)/,
+      );
       const tokensMatch = raw.match(/\*\*Used\*\*:\s*([\d,]+)\s*\/\s*([\d,]+)/);
       // If no metadata header, fall back to the Budget section
-      const tokensFallbackMatch = !tokensMatch ? raw.match(/\*\*Used\*\*:\s*([\d,]+)\s*\/\s*([\d,]+)/) : null;
+      const tokensFallbackMatch = !tokensMatch
+        ? raw.match(/\*\*Used\*\*:\s*([\d,]+)\s*\/\s*([\d,]+)/)
+        : null;
       const nextMatch = raw.match(/\*\*Next\*\*:\s*(.+)/);
       const nextFallbackMatch = !nextMatch ? raw.match(/## Next Action\n\n(.+?)\n/s) : null;
 
@@ -663,13 +694,21 @@ export class CheckpointWriter {
         phase: phaseMatch?.[1]?.trim() ?? 'unknown',
         stepNumber: stepMatch ? parseInt(stepMatch[1], 10) : 0,
         completedSubtasks: new Array(completedCount).fill(null).map((_, i) => ({
-          id: `task-${i}`, goal: '', result: '', tokensUsed: 0, durationMs: 0,
+          id: `task-${i}`,
+          goal: '',
+          result: '',
+          tokensUsed: 0,
+          durationMs: 0,
         })),
         pendingSubtasks: new Array(pendingCount).fill(null).map((_, i) => ({
-          id: `task-${i}`, goal: '', estimatedTokens: 0,
+          id: `task-${i}`,
+          goal: '',
+          estimatedTokens: 0,
         })),
         failedSubtasks: new Array(failedCount).fill(null).map((_, i) => ({
-          id: `task-${i}`, goal: '', error: '',
+          id: `task-${i}`,
+          goal: '',
+          error: '',
         })),
         keyDecisions: [],
         filesRead: [],
@@ -691,9 +730,7 @@ export class CheckpointWriter {
 // Singleton
 // ============================================================================
 
-const checkpointWriterSingleton = createTenantAwareSingleton(
-  () => new CheckpointWriter(),
-);
+const checkpointWriterSingleton = createTenantAwareSingleton(() => new CheckpointWriter());
 
 export function getCheckpointWriter(): CheckpointWriter {
   return checkpointWriterSingleton.get();

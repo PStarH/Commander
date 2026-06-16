@@ -56,7 +56,10 @@ describe('SamplesStore', () => {
     it('records with task ID for code extraction', async () => {
       const callId = await store.recordLLMCall(
         { model: 'gpt-4o', messages: [{ role: 'user', content: 'write a function' }] },
-        { content: '```python\ndef hello():\n    pass\n```', usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 } },
+        {
+          content: '```python\ndef hello():\n    pass\n```',
+          usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+        },
         { provider: 'openai', durationMs: 1000, attemptNumber: 1, taskId: 'HumanEval/1' },
       );
       expect(callId).toBeDefined();
@@ -80,18 +83,14 @@ describe('SamplesStore', () => {
     });
 
     it('records failed verification', async () => {
-      await store.recordVerification(
-        'fix the bug',
-        'broken code',
-        {
-          passed: false,
-          confidence: 0.2,
-          signalCount: 1,
-          tokensUsed: 50,
-          stagesRun: [1],
-          skipReason: 'low confidence',
-        },
-      );
+      await store.recordVerification('fix the bug', 'broken code', {
+        passed: false,
+        confidence: 0.2,
+        signalCount: 1,
+        tokensUsed: 50,
+        stagesRun: [1],
+        skipReason: 'low confidence',
+      });
     });
   });
 

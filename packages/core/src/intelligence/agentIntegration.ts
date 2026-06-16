@@ -80,11 +80,13 @@ export class AgentIntelligence {
     return {
       costEstimate,
       failureWarnings,
-      suggestedSkill: matchingSkill ? {
-        name: matchingSkill.name,
-        steps: matchingSkill.steps,
-        confidence: matchingSkill.confidence,
-      } : undefined,
+      suggestedSkill: matchingSkill
+        ? {
+            name: matchingSkill.name,
+            steps: matchingSkill.steps,
+            confidence: matchingSkill.confidence,
+          }
+        : undefined,
     };
   }
 
@@ -135,11 +137,16 @@ export class AgentIntelligence {
 
       // Record extraction metric
       try {
-        const outcome = result.skills.length > 0
-          ? (result.skills[0].usageCount > 1 ? 'updated' : 'extracted')
-          : 'rejected';
+        const outcome =
+          result.skills.length > 0
+            ? result.skills[0].usageCount > 1
+              ? 'updated'
+              : 'extracted'
+            : 'rejected';
         getMetricsCollector().recordSkillExtraction(outcome, result.skills[0]?.category);
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
 
       if (result.skills.length > 0) {
         extractedSkill = {
@@ -181,7 +188,8 @@ export class AgentIntelligence {
     if (intelligence.failureWarnings.length > 0) {
       lines.push('\n⚠️ 风险提醒:');
       for (const warning of intelligence.failureWarnings) {
-        const icon = warning.severity === 'high' ? '🔴' : warning.severity === 'medium' ? '🟡' : '🟢';
+        const icon =
+          warning.severity === 'high' ? '🔴' : warning.severity === 'medium' ? '🟡' : '🟢';
         lines.push(`   ${icon} ${warning.pattern.description}`);
         lines.push(`      建议: ${warning.suggestion}`);
       }

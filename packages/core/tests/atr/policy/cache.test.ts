@@ -8,11 +8,53 @@ import type { PolicyInput, PolicyDecision } from '../../../src/atr/policy/types'
 function mkInput(): PolicyInput {
   return {
     phase: 'tool',
-    run: { id: 'r1', state: 'EXECUTING', fencingEpoch: 1, intentHash: 'h', tenantId: 't1', agentId: 'a1', goal: 'g', metadata: {}, createdAt: 0, actionsSoFar: [] },
-    tool: { name: 'read', riskLevel: 'low', destructive: false, isReadOnly: true, isIdempotent: true, category: 'file_read' },
-    action: { args: { path: '/tmp/a' }, idempotencyKey: 'k', stepNumber: 1, callSite: 'agent', leaseToken: 'lt', fencingEpoch: 1 },
-    tenant: { id: 't1', config: { tokenBudget: 1000, maxConcurrency: 1, maxRunsPerMinute: 1, maxActionsPerRun: 100, allowShell: false, allowNetwork: false, requiresApprovalBypass: false } },
-    metrics: { tokensUsedThisRun: 0, tokensUsedThisHour: 0, actionsThisRun: 0, destructiveThisRun: 0, estimatedCostUsd: 0 },
+    run: {
+      id: 'r1',
+      state: 'EXECUTING',
+      fencingEpoch: 1,
+      intentHash: 'h',
+      tenantId: 't1',
+      agentId: 'a1',
+      goal: 'g',
+      metadata: {},
+      createdAt: 0,
+      actionsSoFar: [],
+    },
+    tool: {
+      name: 'read',
+      riskLevel: 'low',
+      destructive: false,
+      isReadOnly: true,
+      isIdempotent: true,
+      category: 'file_read',
+    },
+    action: {
+      args: { path: '/tmp/a' },
+      idempotencyKey: 'k',
+      stepNumber: 1,
+      callSite: 'agent',
+      leaseToken: 'lt',
+      fencingEpoch: 1,
+    },
+    tenant: {
+      id: 't1',
+      config: {
+        tokenBudget: 1000,
+        maxConcurrency: 1,
+        maxRunsPerMinute: 1,
+        maxActionsPerRun: 100,
+        allowShell: false,
+        allowNetwork: false,
+        requiresApprovalBypass: false,
+      },
+    },
+    metrics: {
+      tokensUsedThisRun: 0,
+      tokensUsedThisHour: 0,
+      actionsThisRun: 0,
+      destructiveThisRun: 0,
+      estimatedCostUsd: 0,
+    },
     time: { now: 0, hourOfDay: 12, isWeekend: false },
   };
 }
@@ -24,7 +66,13 @@ function mkDecision(overrides: Partial<PolicyDecision> = {}): PolicyDecision {
     decisionPath: ['r1'],
     matchedRule: 'r1',
     riskScore: 0,
-    budget: { tokensUsed: 0, tokensBudget: 1000, actionsUsed: 0, actionsBudget: 100, estimatedCostUsd: 0 },
+    budget: {
+      tokensUsed: 0,
+      tokensBudget: 1000,
+      actionsUsed: 0,
+      actionsBudget: 100,
+      estimatedCostUsd: 0,
+    },
     latencyMs: 0.1,
     cached: false,
     cacheable: true,
@@ -105,11 +153,11 @@ describe('DecisionCache', () => {
   it('dedupe returns same promise for concurrent calls', async () => {
     const c = new DecisionCache();
     let invocations = 0;
-    const factory = () => { invocations++; return new Promise<string>((r) => setTimeout(() => r('done'), 10)); };
-    const [a, b] = await Promise.all([
-      c.dedupe('k1', factory),
-      c.dedupe('k1', factory),
-    ]);
+    const factory = () => {
+      invocations++;
+      return new Promise<string>((r) => setTimeout(() => r('done'), 10));
+    };
+    const [a, b] = await Promise.all([c.dedupe('k1', factory), c.dedupe('k1', factory)]);
     assert.strictEqual(a, b);
     assert.strictEqual(invocations, 1);
   });

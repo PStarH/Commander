@@ -47,7 +47,11 @@ export class SSEStream {
   private eventBuffer: Array<{ id: number; payload: string }> = [];
   private readonly maxBufferSize: number;
 
-  constructor(topics?: MessageBusTopic[], heartbeatIntervalMs?: number, options?: { retryMs?: number; maxBufferSize?: number }) {
+  constructor(
+    topics?: MessageBusTopic[],
+    heartbeatIntervalMs?: number,
+    options?: { retryMs?: number; maxBufferSize?: number },
+  ) {
     this.heartbeatIntervalMs = heartbeatIntervalMs ?? 30_000;
     this.retryMs = options?.retryMs ?? 5000;
     this.maxBufferSize = options?.maxBufferSize ?? 100;
@@ -121,7 +125,13 @@ export class SSEStream {
 
   private dispatch(payload: string): void {
     for (const subscriber of this.subscribers) {
-      try { subscriber(payload); } catch (e) { getGlobalLogger().warn('SSEStream', 'Subscriber dispatch failed', { error: (e as Error)?.message }); }
+      try {
+        subscriber(payload);
+      } catch (e) {
+        getGlobalLogger().warn('SSEStream', 'Subscriber dispatch failed', {
+          error: (e as Error)?.message,
+        });
+      }
     }
   }
 
@@ -129,10 +139,17 @@ export class SSEStream {
     this.emitStructured('reasoning.delta', { content, length: content.length });
   }
 
-  emitToolCall(toolName: string, status: 'started' | 'completed' | 'delta', detail?: Record<string, unknown>): void {
-    const eventType = status === 'started' ? 'tool_call.started'
-      : status === 'completed' ? 'tool_call.completed'
-      : 'tool_call.delta';
+  emitToolCall(
+    toolName: string,
+    status: 'started' | 'completed' | 'delta',
+    detail?: Record<string, unknown>,
+  ): void {
+    const eventType =
+      status === 'started'
+        ? 'tool_call.started'
+        : status === 'completed'
+          ? 'tool_call.completed'
+          : 'tool_call.delta';
     this.emitStructured(eventType, { toolName, ...detail });
   }
 
@@ -174,7 +191,7 @@ export class SSEStream {
    * server replays missed events to close the gap.
    */
   replaySince(lastEventId: number): void {
-    const missed = this.eventBuffer.filter(e => e.id > lastEventId);
+    const missed = this.eventBuffer.filter((e) => e.id > lastEventId);
     for (const e of missed) {
       this.dispatch(e.payload);
     }
@@ -191,7 +208,14 @@ export class SSEStream {
   pipe(writable: { write(data: string): void }): void {
     const unsub = this.onEvent((event) => {
       if (!this.closed) {
-        try { writable.write(event); } catch (e) { getGlobalLogger().warn('SSEStream', 'Writable stream write failed', { error: (e as Error)?.message }); this.close(); }
+        try {
+          writable.write(event);
+        } catch (e) {
+          getGlobalLogger().warn('SSEStream', 'Writable stream write failed', {
+            error: (e as Error)?.message,
+          });
+          this.close();
+        }
       }
     });
     this.unsubscribers.push(unsub);
@@ -207,7 +231,11 @@ export class SSEStream {
       this.heartbeatTimer = null;
     }
     for (const unsub of this.unsubscribers) {
-      try { unsub(); } catch (e) { getGlobalLogger().warn('SSEStream', 'Unsubscribe failed', { error: (e as Error)?.message }); }
+      try {
+        unsub();
+      } catch (e) {
+        getGlobalLogger().warn('SSEStream', 'Unsubscribe failed', { error: (e as Error)?.message });
+      }
     }
     this.unsubscribers = [];
     this.subscribers = [];

@@ -62,9 +62,15 @@ function isoToNanos(iso: string): string {
 }
 
 function toOtlpSpan(span: OTelSpan): Record<string, unknown> {
-  const attrs: Array<{ key: string; value: { stringValue?: string; intValue?: string; boolValue?: boolean } }> = [];
+  const attrs: Array<{
+    key: string;
+    value: { stringValue?: string; intValue?: string; boolValue?: boolean };
+  }> = [];
   for (const [key, value] of Object.entries(span.attributes || {})) {
-    const attr: { key: string; value: { stringValue?: string; intValue?: string; boolValue?: boolean } } = { key, value: {} };
+    const attr: {
+      key: string;
+      value: { stringValue?: string; intValue?: string; boolValue?: boolean };
+    } = { key, value: {} };
     if (typeof value === 'string') attr.value = { stringValue: value };
     else if (typeof value === 'boolean') attr.value = { boolValue: value };
     else attr.value = { intValue: String(value) };
@@ -104,7 +110,7 @@ function toOtlpTraceRequest(spans: OTelSpan[], serviceName: string): Record<stri
         scopeSpans: [
           {
             scope: { name: 'commander.execution' },
-            spans: spans.map(s => toOtlpSpan(s)),
+            spans: spans.map((s) => toOtlpSpan(s)),
           },
         ],
       },
@@ -133,7 +139,8 @@ export class OpenTelemetryExporter {
       fallbackDir: config.fallbackDir || path.join(process.cwd(), '.commander', 'otel_queue'),
     };
     // Try env var override
-    const envEndpoint = typeof process !== 'undefined' ? process.env?.OTEL_EXPORTER_OTLP_ENDPOINT : undefined;
+    const envEndpoint =
+      typeof process !== 'undefined' ? process.env?.OTEL_EXPORTER_OTLP_ENDPOINT : undefined;
     if (envEndpoint) {
       this.config.endpoint = envEndpoint;
     }
@@ -189,7 +196,7 @@ export class OpenTelemetryExporter {
     this.queue.push(span);
     // Send immediately if batch size reached
     if (this.queue.length >= this.config.batchSize) {
-      this.flush().catch(err => {
+      this.flush().catch((err) => {
         getGlobalLogger().error('OTelExporter', 'Batch flush failed', err as Error);
       });
     }
@@ -241,7 +248,9 @@ export class OpenTelemetryExporter {
 
       const req = client.request(options, (res) => {
         let data = '';
-        res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+        res.on('data', (chunk: Buffer) => {
+          data += chunk.toString();
+        });
         res.on('end', () => {
           if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
             resolve();
@@ -252,7 +261,10 @@ export class OpenTelemetryExporter {
       });
 
       req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('OTLP request timeout')); });
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('OTLP request timeout'));
+      });
       req.write(body);
       req.end();
     });
@@ -264,9 +276,15 @@ export class OpenTelemetryExporter {
     try {
       const dir = this.config.fallbackDir;
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const filename = path.join(dir, `spans_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.json`);
+      const filename = path.join(
+        dir,
+        `spans_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.json`,
+      );
       fs.writeFileSync(filename, JSON.stringify(spans));
-      getGlobalLogger().info('OTelExporter', 'Saved spans to disk', { filename, count: spans.length });
+      getGlobalLogger().info('OTelExporter', 'Saved spans to disk', {
+        filename,
+        count: spans.length,
+      });
     } catch (err) {
       getGlobalLogger().error('OTelExporter', 'Failed to save spans to disk', err as Error);
     }
@@ -276,7 +294,7 @@ export class OpenTelemetryExporter {
     const dir = this.config.fallbackDir;
     try {
       if (!fs.existsSync(dir)) return;
-      const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+      const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
       for (const file of files) {
         try {
           const data = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8'));
@@ -290,11 +308,21 @@ export class OpenTelemetryExporter {
           fs.unlinkSync(path.join(dir, file));
         } catch {
           // Delete corrupted files to prevent retry loop on every restart
-          try { fs.unlinkSync(path.join(dir, file)); } catch (e) { getGlobalLogger().debug('OTelExporter', 'Failed to delete corrupted file', { error: (e as Error)?.message, file }); }
+          try {
+            fs.unlinkSync(path.join(dir, file));
+          } catch (e) {
+            getGlobalLogger().debug('OTelExporter', 'Failed to delete corrupted file', {
+              error: (e as Error)?.message,
+              file,
+            });
+          }
         }
       }
       if (files.length > 0) {
-        getGlobalLogger().info('OTelExporter', 'Recovered spans from disk', { files: files.length, spans: this.queue.length });
+        getGlobalLogger().info('OTelExporter', 'Recovered spans from disk', {
+          files: files.length,
+          spans: this.queue.length,
+        });
       }
     } catch {
       // Directory may not exist yet
@@ -323,7 +351,7 @@ export function executionTraceToOtlpSpans(trace: import('./types').ExecutionTrac
     const attrs: Record<string, string | number | boolean> = { ...baseAttrs };
     for (const [k, v] of Object.entries(otelAttrs)) {
       if (v === undefined) continue;
-      attrs[k] = typeof v === 'boolean' ? v : v as string | number;
+      attrs[k] = typeof v === 'boolean' ? v : (v as string | number);
     }
     if (event.data.stateTransition) {
       attrs['state.from'] = event.data.stateTransition.from;
@@ -339,7 +367,8 @@ export function executionTraceToOtlpSpans(trace: import('./types').ExecutionTrac
       startTime: event.timestamp,
       endTime: new Date(new Date(event.timestamp).getTime() + event.durationMs).toISOString(),
       attributes: attrs,
-      status: event.type === 'error' ? { code: 2, message: String(event.data.error ?? '') } : { code: 1 },
+      status:
+        event.type === 'error' ? { code: 2, message: String(event.data.error ?? '') } : { code: 1 },
     };
     spans.push(span);
   }
@@ -349,9 +378,12 @@ export function executionTraceToOtlpSpans(trace: import('./types').ExecutionTrac
 
 function eventDataToSpanName(input: unknown, output: unknown, type: string): string {
   if (type === 'llm_call') {
-    const model = (typeof input === 'object' && input && 'model' in (input as Record<string, unknown>))
-      ? String((input as Record<string, unknown>).model).split('/').pop() ?? 'llm'
-      : 'llm';
+    const model =
+      typeof input === 'object' && input && 'model' in (input as Record<string, unknown>)
+        ? (String((input as Record<string, unknown>).model)
+            .split('/')
+            .pop() ?? 'llm')
+        : 'llm';
     return `llm.${model}`;
   }
   if (type === 'tool_execution') return `tool.${String(input ?? 'unknown')}`;
@@ -364,7 +396,9 @@ import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
 let _otelConfig: OTelExporterConfig | undefined;
 
-const otelExporterSingleton = createTenantAwareSingleton(() => new OpenTelemetryExporter(_otelConfig));
+const otelExporterSingleton = createTenantAwareSingleton(
+  () => new OpenTelemetryExporter(_otelConfig),
+);
 
 export function getOTelExporter(config?: OTelExporterConfig): OpenTelemetryExporter {
   if (config) _otelConfig = config;

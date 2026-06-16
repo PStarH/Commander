@@ -27,14 +27,16 @@ export function createRequestToolTool(
 ): Tool {
   const definition: ToolDefinition = {
     name: 'request_tool',
-    description: 'Request the full schema of an available tool. Use this when you need to call a tool that is listed in the "Additional Tools" section of your system prompt. Returns the tool\'s complete input schema so you can construct a proper tool call.',
+    description:
+      'Request the full schema of an available tool. Use this when you need to call a tool that is listed in the "Additional Tools" section of your system prompt. Returns the tool\'s complete input schema so you can construct a proper tool call.',
     category: 'meta',
     inputSchema: {
       type: 'object',
       properties: {
         tool_name: {
           type: 'string',
-          description: 'Name of the tool to request. Must be one of the tools listed in the "Additional Tools" section.',
+          description:
+            'Name of the tool to request. Must be one of the tools listed in the "Additional Tools" section.',
           enum: registryTools.length > 0 ? registryTools : undefined,
         },
       },
@@ -59,12 +61,16 @@ export function createRequestToolTool(
       }
 
       // Return the full schema so the LLM can use it
-      return JSON.stringify({
-        name: schema.name,
-        description: schema.description,
-        input_schema: schema.inputSchema,
-        examples: schema.examples?.slice(0, 2), // Limit examples to save tokens
-      }, null, 2);
+      return JSON.stringify(
+        {
+          name: schema.name,
+          description: schema.description,
+          input_schema: schema.inputSchema,
+          examples: schema.examples?.slice(0, 2), // Limit examples to save tokens
+        },
+        null,
+        2,
+      );
     },
   };
 }

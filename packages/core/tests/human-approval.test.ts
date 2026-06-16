@@ -113,8 +113,22 @@ test('HumanApprovalManager: cancelAllForRun rejects pending approvals for a run'
   t.after(() => manager.cancelAllForRun('run-5'));
   const gate: HumanApprovalGate = { enabled: true, timeoutMs: 60000 };
 
-  const req1 = manager.request({ runId: 'run-5', nodeId: 'n1', nodeGoal: 'x', gate, riskLevel: 'low', requesterId: 'test' });
-  const req2 = manager.request({ runId: 'run-5', nodeId: 'n2', nodeGoal: 'y', gate, riskLevel: 'low', requesterId: 'test' });
+  const req1 = manager.request({
+    runId: 'run-5',
+    nodeId: 'n1',
+    nodeGoal: 'x',
+    gate,
+    riskLevel: 'low',
+    requesterId: 'test',
+  });
+  const req2 = manager.request({
+    runId: 'run-5',
+    nodeId: 'n2',
+    nodeGoal: 'y',
+    gate,
+    riskLevel: 'low',
+    requesterId: 'test',
+  });
 
   const p1 = manager.awaitResolution(req1.approvalId);
   const p2 = manager.awaitResolution(req2.approvalId);
@@ -133,8 +147,12 @@ test('HumanApprovalManager: getPending returns the request while pending', (t) =
   const gate: HumanApprovalGate = { enabled: true, timeoutMs: 60000 };
 
   const req = manager.request({
-    runId: 'run-6', nodeId: 'node-X', nodeGoal: 'commit and push',
-    gate, riskLevel: 'medium', requesterId: 'test',
+    runId: 'run-6',
+    nodeId: 'node-X',
+    nodeGoal: 'commit and push',
+    gate,
+    riskLevel: 'medium',
+    requesterId: 'test',
   });
 
   const pending = manager.getPending(req.approvalId);
@@ -151,7 +169,10 @@ test('assessNodeRisk: low for read-only tasks with no risky tools', () => {
 test('assessNodeRisk: critical for production deploys', () => {
   const node = makeNode({ goal: 'deploy to production', context: { availableTools: ['bash'] } });
   const result = assessNodeRisk(node);
-  assert.ok(['high', 'critical'].includes(result.level), `expected high/critical, got ${result.level}`);
+  assert.ok(
+    ['high', 'critical'].includes(result.level),
+    `expected high/critical, got ${result.level}`,
+  );
 });
 
 test('assessNodeRisk: high for shell_execute tool usage', () => {

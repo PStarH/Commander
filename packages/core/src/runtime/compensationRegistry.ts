@@ -73,14 +73,26 @@ export class CompensationRegistry {
         this.pendingActions.delete(actionId);
         this.compensationAttempts.delete(actionId);
         this.addToCompensated(actionId);
-        try { this.observability?.onSuccess?.(action); } catch { /* best-effort */ }
+        try {
+          this.observability?.onSuccess?.(action);
+        } catch {
+          /* best-effort */
+        }
       } else {
-        try { this.observability?.onFailed?.(action, result.error ?? 'unknown'); } catch { /* best-effort */ }
+        try {
+          this.observability?.onFailed?.(action, result.error ?? 'unknown');
+        } catch {
+          /* best-effort */
+        }
       }
       return result;
     } catch (err) {
       const errStr = String(err);
-      try { this.observability?.onFailed?.(action, errStr); } catch { /* best-effort */ }
+      try {
+        this.observability?.onFailed?.(action, errStr);
+      } catch {
+        /* best-effort */
+      }
       return { success: false, error: errStr };
     }
   }
@@ -109,20 +121,31 @@ export class CompensationRegistry {
               compensationHandlerKey: action.toolName,
               maxAttempts: 10,
             });
-          } catch { /* queue down; proceed with drop */ }
+          } catch {
+            /* queue down; proceed with drop */
+          }
         }
         this.pendingActions.delete(id);
         this.compensationAttempts.delete(id);
         failed++;
         const errMsg = `Compensation exhausted after 3 attempts: ${action.toolName}${this.queue ? ' (queued for durable retry)' : ''}`;
         errors.push(errMsg);
-        try { this.observability?.onExhausted?.(action, errMsg); } catch { /* best-effort */ }
+        try {
+          this.observability?.onExhausted?.(action, errMsg);
+        } catch {
+          /* best-effort */
+        }
         continue;
       }
       this.compensationAttempts.set(id, attempts + 1);
       const result = await this.compensate(id);
-      if (result.success) { this.compensationAttempts.delete(id); succeeded++; }
-      else { failed++; if (result.error) errors.push(result.error); }
+      if (result.success) {
+        this.compensationAttempts.delete(id);
+        succeeded++;
+      } else {
+        failed++;
+        if (result.error) errors.push(result.error);
+      }
     }
     return { succeeded, failed, errors };
   }
@@ -141,7 +164,10 @@ export class CompensationRegistry {
 
       const handler = this.handlers.get(item.compensationHandlerKey);
       if (!handler) {
-        this.queue.markEscalated(item.id, `No handler registered for "${item.compensationHandlerKey}"`);
+        this.queue.markEscalated(
+          item.id,
+          `No handler registered for "${item.compensationHandlerKey}"`,
+        );
         processed++;
         continue;
       }
@@ -161,16 +187,34 @@ export class CompensationRegistry {
         if (result.success) {
           this.queue.markCompleted(item.id);
         } else {
-          const outcome = this.queue.markFailed(item.id, result.error ?? 'unknown', item.attemptCount);
+          const outcome = this.queue.markFailed(
+            item.id,
+            result.error ?? 'unknown',
+            item.attemptCount,
+          );
           if (outcome === 'escalated') {
-            try { this.observability?.onExhausted?.(action, `Queue compensation exhausted: ${result.error}`); } catch { /* best-effort */ }
+            try {
+              this.observability?.onExhausted?.(
+                action,
+                `Queue compensation exhausted: ${result.error}`,
+              );
+            } catch {
+              /* best-effort */
+            }
           }
         }
       } catch (err) {
         const errStr = err instanceof Error ? err.message : String(err);
         const outcome = this.queue.markFailed(item.id, errStr, item.attemptCount);
         if (outcome === 'escalated') {
-          try { this.observability?.onExhausted?.({ actionId: item.id, toolName: item.toolName, args: {}, description: '', tags: [] }, `Queue compensation error: ${errStr}`); } catch { /* best-effort */ }
+          try {
+            this.observability?.onExhausted?.(
+              { actionId: item.id, toolName: item.toolName, args: {}, description: '', tags: [] },
+              `Queue compensation error: ${errStr}`,
+            );
+          } catch {
+            /* best-effort */
+          }
         }
       }
       processed++;
@@ -192,8 +236,12 @@ export class CompensationRegistry {
     return this.handlers.get(toolName);
   }
 
-  getPendingCount(): number { return this.pendingActions.size; }
-  getCompensatedCount(): number { return this.compensated.size; }
+  getPendingCount(): number {
+    return this.pendingActions.size;
+  }
+  getCompensatedCount(): number {
+    return this.compensated.size;
+  }
   clear(): void {
     this.pendingActions.clear();
     this.compensated.clear();

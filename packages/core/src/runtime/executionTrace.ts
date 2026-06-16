@@ -52,7 +52,12 @@ export class ExecutionTraceRecorder {
     agentId: string,
     missionId?: string,
     traceId?: string,
-    context?: { tenantId?: string; parentRunId?: string; subAgentDepth?: number; subAgentRole?: string },
+    context?: {
+      tenantId?: string;
+      parentRunId?: string;
+      subAgentDepth?: number;
+      subAgentRole?: string;
+    },
   ): void {
     const tid = traceId ?? generateTraceId();
     this.traces.set(runId, {
@@ -91,8 +96,13 @@ export class ExecutionTraceRecorder {
     if (!trace) {
       const tid = generateTraceId();
       return {
-        id: '', spanId: '', traceId: tid, runId, agentId: 'unknown',
-        timestamp: new Date().toISOString(), durationMs: 0,
+        id: '',
+        spanId: '',
+        traceId: tid,
+        runId,
+        agentId: 'unknown',
+        timestamp: new Date().toISOString(),
+        durationMs: 0,
         type: event.type ?? 'decision',
         data: event.data ?? {},
         parentSpanId: event.parentSpanId,
@@ -198,12 +208,7 @@ export class ExecutionTraceRecorder {
     });
   }
 
-  recordError(
-    runId: string,
-    error: string,
-    durationMs: number,
-    parentSpanId?: string,
-  ): TraceEvent {
+  recordError(runId: string, error: string, durationMs: number, parentSpanId?: string): TraceEvent {
     return this.recordEvent(runId, {
       type: 'error',
       durationMs,
@@ -255,7 +260,11 @@ export class ExecutionTraceRecorder {
     if (trace) {
       trace.events.push(fullEvent);
     }
-    if (this.store && typeof (this.store as { appendCritical?: (e: TraceEvent) => void }).appendCritical === 'function') {
+    if (
+      this.store &&
+      typeof (this.store as { appendCritical?: (e: TraceEvent) => void }).appendCritical ===
+        'function'
+    ) {
       (this.store as { appendCritical: (e: TraceEvent) => void }).appendCritical(fullEvent);
     } else {
       this.store?.append(fullEvent);
@@ -280,11 +289,11 @@ export class ExecutionTraceRecorder {
   listTraces(agentId?: string, limit = 50): ExecutionTrace[] {
     let all = Array.from(this.traces.values());
     if (agentId) {
-      all = all.filter(t => t.agentId === agentId);
+      all = all.filter((t) => t.agentId === agentId);
     }
     // ISO string comparison — no Date parsing needed
     return all
-      .sort((a, b) => b.startedAt < a.startedAt ? -1 : b.startedAt > a.startedAt ? 1 : 0)
+      .sort((a, b) => (b.startedAt < a.startedAt ? -1 : b.startedAt > a.startedAt ? 1 : 0))
       .slice(0, limit);
   }
 
@@ -312,11 +321,7 @@ export class ExecutionTraceRecorder {
     };
   }
 
-  startSpan(
-    runId: string,
-    name: string,
-    parentSpanId?: string,
-  ): TraceSpan {
+  startSpan(runId: string, name: string, parentSpanId?: string): TraceSpan {
     const trace = this.traces.get(runId);
     const spanId = generateId();
     const traceId = trace?.traceId ?? generateTraceId();
@@ -325,10 +330,20 @@ export class ExecutionTraceRecorder {
 
     if (!trace) {
       this.traces.set(runId, {
-        runId, traceId, agentId, missionId: undefined,
-        startedAt: new Date().toISOString(), events: [], summary: {
-          totalEvents: 0, totalDurationMs: 0, totalTokens: 0,
-          llmCalls: 0, toolExecutions: 0, errors: 0, modelUsed: '',
+        runId,
+        traceId,
+        agentId,
+        missionId: undefined,
+        startedAt: new Date().toISOString(),
+        events: [],
+        summary: {
+          totalEvents: 0,
+          totalDurationMs: 0,
+          totalTokens: 0,
+          llmCalls: 0,
+          toolExecutions: 0,
+          errors: 0,
+          modelUsed: '',
         },
       });
       this.traceInsertOrder.push(runId);
@@ -375,7 +390,9 @@ import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
 let _traceStore: TraceStore | undefined;
 
-const traceRecorderSingleton = createTenantAwareSingleton(() => new ExecutionTraceRecorder(500, _traceStore));
+const traceRecorderSingleton = createTenantAwareSingleton(
+  () => new ExecutionTraceRecorder(500, _traceStore),
+);
 
 export function getTraceRecorder(store?: TraceStore): ExecutionTraceRecorder {
   if (store) _traceStore = store;

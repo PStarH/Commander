@@ -52,14 +52,17 @@ describe('WorkerPool', () => {
       pool.run('bad', async () => {
         throw new Error('boom');
       }),
-      /boom/
+      /boom/,
     );
   });
 
   it('rejects after close', async () => {
     const pool = new InProcessWorkerPool(2);
     await pool.close();
-    await assert.rejects(pool.run('x', async () => 1), /Pool is closed/);
+    await assert.rejects(
+      pool.run('x', async () => 1),
+      /Pool is closed/,
+    );
   });
 
   it('rejects queued tasks on close', async () => {

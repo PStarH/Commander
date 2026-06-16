@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { LocalEmbeddingFunction, cosineSimilarity, MockEmbeddingFunction } from '../../src/runtime/embedding';
+import {
+  LocalEmbeddingFunction,
+  cosineSimilarity,
+  MockEmbeddingFunction,
+} from '../../src/runtime/embedding';
 
 describe('LocalEmbeddingFunction', () => {
   const embedder = new LocalEmbeddingFunction();

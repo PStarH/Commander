@@ -1,10 +1,10 @@
 /**
  * Commander Episodic Memory System
- * 
+ *
  * Based on research findings from:
  * - "Memory for Autonomous LLM Agents: Mechanisms, Evaluation, and Emerging Frontiers" (arXiv 2603.07670v1)
  * - Claude Code three-layer memory architecture
- * 
+ *
  * Implementation:
  * - Layer 1: In-Context Memory (session-scoped, ephemeral)
  * - Layer 2: Episodic Memory Store (SQLite + vector index for semantic search)
@@ -34,27 +34,27 @@ export interface EpisodicMemoryItem {
   projectId: string;
   missionId?: string;
   agentId?: string;
-  
+
   // Memory classification
   kind: MemoryKind;
   duration: MemoryDuration;
-  
+
   // Content
   title: string;
   content: string;
   tags: string[];
-  
+
   // Importance scoring (research: recency + relevance + importance)
   priority: MemoryPriority;
-  
+
   // Timestamps
   createdAt: string;
   lastAccessedAt: string;
   expiresAt?: string;
-  
+
   // Evidence citation (research: avoid baseless generalization)
   evidenceRefs?: string[];
-  
+
   // Confidence score (research: quality gate)
   confidence: number; // 0.0 - 1.0
 }
@@ -130,7 +130,7 @@ export interface MemoryStats {
 
 /**
  * Memory Store Interface
- * 
+ *
  * Implements the Write-Manage-Read loop from research:
  * - Write (𝒰): Store, summarize, deduplicate, score, delete
  * - Manage: Organize and index
@@ -140,21 +140,21 @@ export interface MemoryStore {
   // Write operations
   write(options: MemoryWriteOptions): Promise<EpisodicMemoryItem>;
   batchWrite(items: MemoryWriteOptions[]): Promise<EpisodicMemoryItem[]>;
-  
+
   // Manage operations
   update(options: MemoryManageOptions): Promise<EpisodicMemoryItem | null>;
   delete(id: string, projectId: string): Promise<boolean>;
   deleteByMission(missionId: string, projectId: string): Promise<number>;
   deleteExpired(projectId: string): Promise<number>;
-  
+
   // Read operations
   read(id: string, projectId: string): Promise<EpisodicMemoryItem | null>;
   search(query: MemorySearchQuery): Promise<MemorySearchResult>;
   searchSemantic(query: string, projectId: string, limit?: number): Promise<EpisodicMemoryItem[]>;
-  
+
   // Statistics
   getStats(projectId: string): Promise<MemoryStats>;
-  
+
   // Lifecycle
   close(): Promise<void>;
 }
@@ -165,7 +165,7 @@ export interface MemoryStore {
 
 /**
  * In-Memory Memory Store
- * 
+ *
  * Simple implementation for testing and development.
  * Does NOT persist to disk - use JsonMemoryStore for production.
  */
@@ -202,9 +202,10 @@ export class InMemoryMemoryStore implements MemoryStore {
       priority: options.priority ?? this.calculateDefaultPriority(options),
       createdAt: now,
       lastAccessedAt: now,
-      expiresAt: (options.duration ?? 'EPISODIC') === 'EPISODIC'
-        ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 days for episodic
-        : undefined,
+      expiresAt:
+        (options.duration ?? 'EPISODIC') === 'EPISODIC'
+          ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 days for episodic
+          : undefined,
       evidenceRefs: options.evidenceRefs,
       confidence: options.confidence ?? 0.8,
     };
@@ -307,10 +308,15 @@ export class InMemoryMemoryStore implements MemoryStore {
       if (query.kind && item.kind !== query.kind) continue;
       if (query.missionId && item.missionId !== query.missionId) continue;
       if (query.agentId && item.agentId !== query.agentId) continue;
-      if (hasTags && !query.tags!.some(tag => item.tags.includes(tag))) continue;
+      if (hasTags && !query.tags!.some((tag) => item.tags.includes(tag))) continue;
       if (query.minPriority !== undefined && item.priority < query.minPriority) continue;
       if (query.minConfidence !== undefined && item.confidence < query.minConfidence) continue;
-      if (lowerQuery && !item.title.toLowerCase().includes(lowerQuery) && !item.content.toLowerCase().includes(lowerQuery)) continue;
+      if (
+        lowerQuery &&
+        !item.title.toLowerCase().includes(lowerQuery) &&
+        !item.content.toLowerCase().includes(lowerQuery)
+      )
+        continue;
       results.push(item);
     }
 
@@ -328,11 +334,16 @@ export class InMemoryMemoryStore implements MemoryStore {
     return { items, total, query };
   }
 
-  async searchSemantic(query: string, projectId: string, limit = 10): Promise<EpisodicMemoryItem[]> {
+  async searchSemantic(
+    query: string,
+    projectId: string,
+    limit = 10,
+  ): Promise<EpisodicMemoryItem[]> {
     // TF-IDF based semantic search
     // Scores items by term frequency × inverse document frequency
-    const projectItems = Array.from(this.items.values())
-      .filter(item => item.projectId === projectId);
+    const projectItems = Array.from(this.items.values()).filter(
+      (item) => item.projectId === projectId,
+    );
 
     if (projectItems.length === 0) return [];
 
@@ -343,20 +354,20 @@ export class InMemoryMemoryStore implements MemoryStore {
     const N = projectItems.length;
     const idf = new Map<string, number>();
     for (const term of queryTerms) {
-      const df = projectItems.filter(item =>
-        tokenize(item.title + ' ' + item.content).includes(term)
+      const df = projectItems.filter((item) =>
+        tokenize(item.title + ' ' + item.content).includes(term),
       ).length;
       idf.set(term, Math.log(N / (df + 1)) + 1);
     }
 
     // Score each item: sum of (term_freq × idf) normalized by doc length
-    const scored = projectItems.map(item => {
+    const scored = projectItems.map((item) => {
       const docTerms = tokenize(item.title + ' ' + item.content);
       const docLen = docTerms.length || 1;
       let score = 0;
 
       for (const term of queryTerms) {
-        const tf = docTerms.filter(t => t === term).length / docLen;
+        const tf = docTerms.filter((t) => t === term).length / docLen;
         const termIdf = idf.get(term) ?? 1;
         score += tf * termIdf;
       }
@@ -373,44 +384,45 @@ export class InMemoryMemoryStore implements MemoryStore {
       return b.item.createdAt < a.item.createdAt ? -1 : b.item.createdAt > a.item.createdAt ? 1 : 0;
     });
 
-    return scored.slice(0, limit).map(s => {
+    return scored.slice(0, limit).map((s) => {
       s.item.lastAccessedAt = new Date().toISOString();
       return s.item;
     });
   }
 
   async getStats(projectId: string): Promise<MemoryStats> {
-    const projectItems = Array.from(this.items.values())
-      .filter(item => item.projectId === projectId);
-    
+    const projectItems = Array.from(this.items.values()).filter(
+      (item) => item.projectId === projectId,
+    );
+
     const byKind: Record<MemoryKind, number> = {
       DECISION: 0,
       ISSUE: 0,
       LESSON: 0,
       SUMMARY: 0,
     };
-    
+
     const byDuration: Record<MemoryDuration, number> = {
       EPISODIC: 0,
       LONG_TERM: 0,
     };
-    
+
     const tagCounts: Map<string, number> = new Map();
     let totalPriority = 0;
     let totalConfidence = 0;
     let oldestItem: string | undefined;
     let newestItem: string | undefined;
-    
+
     for (const item of projectItems) {
       byKind[item.kind]++;
       byDuration[item.duration]++;
       totalPriority += item.priority;
       totalConfidence += item.confidence;
-      
+
       for (const tag of item.tags) {
         tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
       }
-      
+
       if (!oldestItem || item.createdAt < oldestItem) {
         oldestItem = item.createdAt;
       }
@@ -418,12 +430,12 @@ export class InMemoryMemoryStore implements MemoryStore {
         newestItem = item.createdAt;
       }
     }
-    
+
     const topTags = Array.from(tagCounts.entries())
       .map(([tag, count]) => ({ tag, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
-    
+
     return {
       totalItems: projectItems.length,
       byKind,
@@ -465,18 +477,18 @@ export class InMemoryMemoryStore implements MemoryStore {
       LESSON: 90,
       SUMMARY: 50,
     };
-    
+
     let priority = kindPriority[options.kind] ?? 50;
-    
+
     // Boost if has mission/agent context
     if (options.missionId) priority += 5;
     if (options.agentId) priority += 5;
-    
+
     // Boost if has evidence
     if (options.evidenceRefs && options.evidenceRefs.length > 0) {
       priority += Math.min(options.evidenceRefs.length * 5, 15);
     }
-    
+
     return Math.min(priority, 100);
   }
 }

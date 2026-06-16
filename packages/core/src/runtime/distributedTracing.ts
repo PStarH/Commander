@@ -118,16 +118,22 @@ export function traceLog(
 
   const enrichedContext = {
     ...context,
-    ...(trace ? {
-      requestId: trace.requestId,
-      traceId: trace.traceId,
-      spanId: trace.spanId,
-      parentSpanId: trace.parentSpanId,
-    } : {}),
+    ...(trace
+      ? {
+          requestId: trace.requestId,
+          traceId: trace.traceId,
+          spanId: trace.spanId,
+          parentSpanId: trace.parentSpanId,
+        }
+      : {}),
   };
 
   if (level === 'error') {
-    (logger.error as (c: string, m: string, ctx?: Record<string, unknown>) => void)(component, message, enrichedContext);
+    (logger.error as (c: string, m: string, ctx?: Record<string, unknown>) => void)(
+      component,
+      message,
+      enrichedContext,
+    );
   } else {
     logger[level](component, message, enrichedContext);
   }
@@ -147,7 +153,9 @@ const TRACE_HEADERS = {
 /**
  * Extract trace context from HTTP headers.
  */
-export function extractTraceFromHeaders(headers: Record<string, string | string[] | undefined>): TraceContext | undefined {
+export function extractTraceFromHeaders(
+  headers: Record<string, string | string[] | undefined>,
+): TraceContext | undefined {
   const requestId = headers[TRACE_HEADERS.requestId] as string;
   if (!requestId) return undefined;
 
@@ -160,7 +168,9 @@ export function extractTraceFromHeaders(headers: Record<string, string | string[
     if (baggageHeader) {
       baggage = JSON.parse(baggageHeader);
     }
-  } catch { /* ignore malformed baggage */ }
+  } catch {
+    /* ignore malformed baggage */
+  }
 
   return {
     requestId,
@@ -174,7 +184,10 @@ export function extractTraceFromHeaders(headers: Record<string, string | string[
 /**
  * Inject trace context into HTTP headers.
  */
-export function injectTraceIntoHeaders(headers: Record<string, string>, context?: TraceContext): void {
+export function injectTraceIntoHeaders(
+  headers: Record<string, string>,
+  context?: TraceContext,
+): void {
   const trace = context ?? getCurrentTraceContext();
   if (!trace) return;
 

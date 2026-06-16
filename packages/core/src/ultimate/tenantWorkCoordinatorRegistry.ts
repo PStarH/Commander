@@ -23,7 +23,10 @@ export class TenantWorkCoordinatorRegistry {
     const store = new SqliteWorkQueueStore({ filePath: this.storePathFor(tenantId) });
     const coord = new WorkCoordinator({ store });
     this.entries.set(tenantId, { coord, store });
-    getGlobalLogger().info('TenantWorkCoordinatorRegistry', 'Created per-tenant WorkCoordinator', { tenantId, storePath: this.storePathFor(tenantId) });
+    getGlobalLogger().info('TenantWorkCoordinatorRegistry', 'Created per-tenant WorkCoordinator', {
+      tenantId,
+      storePath: this.storePathFor(tenantId),
+    });
     return coord;
   }
 
@@ -45,7 +48,10 @@ export class TenantWorkCoordinatorRegistry {
         entry.coord.clear();
         entry.store.close();
       } catch (err) {
-        getGlobalLogger().debug('TenantWorkCoordinatorRegistry', 'closeAll error', { tenantId, error: (err as Error).message });
+        getGlobalLogger().debug('TenantWorkCoordinatorRegistry', 'closeAll error', {
+          tenantId,
+          error: (err as Error).message,
+        });
       }
     }
     this.entries.clear();

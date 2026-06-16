@@ -179,7 +179,9 @@ export const DEFAULT_NUCLEUS: CapabilityProfile[] = [
 export class CapabilityMatcher {
   private pool: Map<string, CapabilityProfile> = new Map();
   private config: AgentPoolConfig;
-  private createAgent: ((profile: Partial<CapabilityProfile>) => Promise<CapabilityProfile>) | null = null;
+  private createAgent:
+    | ((profile: Partial<CapabilityProfile>) => Promise<CapabilityProfile>)
+    | null = null;
 
   constructor(
     config?: Partial<AgentPoolConfig>,
@@ -217,19 +219,19 @@ export class CapabilityMatcher {
       if (!agent.available || agent.activeTasks >= agent.maxConcurrent) continue;
 
       // Check if this agent adds new capabilities
-      const newCaps = agent.capabilities.filter(c =>
-        requiredCapabilities.includes(c) && !coveredCapabilities.has(c)
+      const newCaps = agent.capabilities.filter(
+        (c) => requiredCapabilities.includes(c) && !coveredCapabilities.has(c),
       );
 
       // Always include if it covers required capabilities, or if we need more agents
       if (newCaps.length > 0 || selected.length < 2) {
         selected.push(agent);
-        agent.capabilities.forEach(c => coveredCapabilities.add(c));
+        agent.capabilities.forEach((c) => coveredCapabilities.add(c));
       }
     }
 
     // Phase 3: Check for missing capabilities
-    const missingCapabilities = requiredCapabilities.filter(c => !coveredCapabilities.has(c));
+    const missingCapabilities = requiredCapabilities.filter((c) => !coveredCapabilities.has(c));
 
     // Phase 4: Create electron agents for missing capabilities (if budget allows)
     let strategy: MatchResult['strategy'] = 'reuse';
@@ -243,18 +245,18 @@ export class CapabilityMatcher {
       if (canCreate > 0 && complexity >= this.config.complexityThreshold) {
         const newAgents = await this.createElectronAgents(missingCapabilities.slice(0, canCreate));
         selected.push(...newAgents);
-        newAgents.forEach(a => a.capabilities.forEach(c => coveredCapabilities.add(c)));
-        strategy = selected.some(a => a.role === 'nucleus') ? 'hybrid' : 'create';
+        newAgents.forEach((a) => a.capabilities.forEach((c) => coveredCapabilities.add(c)));
+        strategy = selected.some((a) => a.role === 'nucleus') ? 'hybrid' : 'create';
       }
     }
 
-    const fullyCovered = requiredCapabilities.every(c => coveredCapabilities.has(c));
+    const fullyCovered = requiredCapabilities.every((c) => coveredCapabilities.has(c));
     const confidence = this.calculateConfidence(selected, requirements);
 
     return {
       agents: selected,
       fullyCovered,
-      missingCapabilities: requiredCapabilities.filter(c => !coveredCapabilities.has(c)),
+      missingCapabilities: requiredCapabilities.filter((c) => !coveredCapabilities.has(c)),
       estimatedTokenCost: this.estimateTokenCost(selected, requirements),
       strategy,
       confidence,
@@ -264,7 +266,10 @@ export class CapabilityMatcher {
   /**
    * Update an agent's quality score based on task outcome.
    */
-  updateAgentScore(agentId: string, outcome: { success: boolean; quality?: number; speed?: number }): void {
+  updateAgentScore(
+    agentId: string,
+    outcome: { success: boolean; quality?: number; speed?: number },
+  ): void {
     const agent = this.pool.get(agentId);
     if (!agent) return;
 
@@ -306,14 +311,18 @@ export class CapabilityMatcher {
    * Get available agents.
    */
   getAvailableAgents(): CapabilityProfile[] {
-    return Array.from(this.pool.values()).filter(a => a.available && a.activeTasks < a.maxConcurrent);
+    return Array.from(this.pool.values()).filter(
+      (a) => a.available && a.activeTasks < a.maxConcurrent,
+    );
   }
 
   // --------------------------------------------------------------------------
   // Internal
   // --------------------------------------------------------------------------
 
-  private scoreAgents(requirements: TaskRequirements): Array<{ agent: CapabilityProfile; score: number }> {
+  private scoreAgents(
+    requirements: TaskRequirements,
+  ): Array<{ agent: CapabilityProfile; score: number }> {
     const results: Array<{ agent: CapabilityProfile; score: number }> = [];
     const agents = Array.from(this.pool.values());
 
@@ -325,26 +334,25 @@ export class CapabilityMatcher {
 
       // Capability match score
       const matchedCaps = agent.capabilities.filter((c: string) =>
-        requirements.requiredCapabilities.includes(c)
+        requirements.requiredCapabilities.includes(c),
       ).length;
-      const capScore = requirements.requiredCapabilities.length > 0
-        ? matchedCaps / requirements.requiredCapabilities.length
-        : 0.5;
+      const capScore =
+        requirements.requiredCapabilities.length > 0
+          ? matchedCaps / requirements.requiredCapabilities.length
+          : 0.5;
       score += capScore * 40;
 
       // Preferred capability bonus
       if (requirements.preferredCapabilities) {
         const preferredMatch = agent.capabilities.filter((c: string) =>
-          requirements.preferredCapabilities!.includes(c)
+          requirements.preferredCapabilities!.includes(c),
         ).length;
         score += preferredMatch * 5;
       }
 
       // Tool availability score
       if (requirements.requiredTools) {
-        const toolMatch = requirements.requiredTools.filter(t =>
-          agent.tools.includes(t)
-        ).length;
+        const toolMatch = requirements.requiredTools.filter((t) => agent.tools.includes(t)).length;
         score += (toolMatch / requirements.requiredTools.length) * 20;
       }
 
@@ -358,7 +366,7 @@ export class CapabilityMatcher {
       if (agent.role === 'nucleus') score += 10;
 
       // Availability penalty (busy agents are less desirable)
-      const availabilityRatio = 1 - (agent.activeTasks / agent.maxConcurrent);
+      const availabilityRatio = 1 - agent.activeTasks / agent.maxConcurrent;
       score *= availabilityRatio;
 
       // Complexity matching: specialized agents for complex tasks
@@ -415,9 +423,13 @@ export class CapabilityMatcher {
         const agent = await this.createAgent(profile);
         this.pool.set(agent.agentId, agent);
         created.push(agent);
-        getGlobalLogger().info('CapabilityMatcher', `Created electron agent: ${agent.agentId}`, { capability: cap });
+        getGlobalLogger().info('CapabilityMatcher', `Created electron agent: ${agent.agentId}`, {
+          capability: cap,
+        });
       } catch (err) {
-        getGlobalLogger().warn('CapabilityMatcher', `Failed to create electron for ${cap}`, { error: String(err) });
+        getGlobalLogger().warn('CapabilityMatcher', `Failed to create electron for ${cap}`, {
+          error: String(err),
+        });
       }
     }
 
@@ -451,17 +463,22 @@ export class CapabilityMatcher {
         covered.add(agents[i].capabilities[j]);
       }
     }
-    const coverage = requirements.requiredCapabilities.length > 0
-      ? requirements.requiredCapabilities.filter((c: string) => covered.has(c)).length / requirements.requiredCapabilities.length
-      : 1;
+    const coverage =
+      requirements.requiredCapabilities.length > 0
+        ? requirements.requiredCapabilities.filter((c: string) => covered.has(c)).length /
+          requirements.requiredCapabilities.length
+        : 1;
 
     // Quality score (average of matched agents)
     const avgQuality = agents.reduce((s, a) => s + a.qualityScore, 0) / agents.length;
 
     // Complexity appropriateness
-    const complexityFit = requirements.complexity <= 3
-      ? (agents.length <= 2 ? 1 : 0.7) // Simple task, fewer agents = better
-      : Math.min(1, agents.length / Math.ceil(requirements.complexity / 3));
+    const complexityFit =
+      requirements.complexity <= 3
+        ? agents.length <= 2
+          ? 1
+          : 0.7 // Simple task, fewer agents = better
+        : Math.min(1, agents.length / Math.ceil(requirements.complexity / 3));
 
     return coverage * 0.5 + avgQuality * 0.3 + complexityFit * 0.2;
   }
@@ -474,7 +491,7 @@ export class CapabilityMatcher {
     const taskTokens = requirements.complexity * 500;
 
     // Total: base cost per agent + task tokens distributed across agents
-    const totalPerAgent = baseCostPerAgent + (taskTokens / Math.max(agents.length, 1));
+    const totalPerAgent = baseCostPerAgent + taskTokens / Math.max(agents.length, 1);
 
     return Math.round(agents.length * totalPerAgent);
   }

@@ -32,7 +32,7 @@ export class MockLLMProvider implements LLMProvider {
     this.callCount++;
     this.lastRequest = request;
 
-    const userMsg = request.messages.find(m => m.role === 'user');
+    const userMsg = request.messages.find((m) => m.role === 'user');
     const key = userMsg?.content ?? '';
     const content = this.responseMap.get(key) ?? this.defaultResponse;
 
@@ -66,10 +66,7 @@ export class MockLLMProvider implements LLMProvider {
   }
 }
 
-export function createMockProvider(
-  name = 'mock',
-  defaultResponse?: string,
-): MockLLMProvider {
+export function createMockProvider(name = 'mock', defaultResponse?: string): MockLLMProvider {
   return new MockLLMProvider(name, { defaultResponse });
 }
 

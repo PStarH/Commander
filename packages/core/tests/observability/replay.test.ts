@@ -5,16 +5,38 @@ import type { ExecutionTrace, TraceEvent } from '../../src/runtime/types';
 
 function llm(spanId: string, ts: string, output: string): TraceEvent {
   return {
-    spanId, parentSpanId: undefined, traceId: 't1', runId: 'r1', agentId: 'a1',
-    type: 'llm_call', timestamp: ts, durationMs: 100,
-    data: { output, modelInfo: { provider: 'openai', model: 'gpt-4o' }, tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 } },
+    spanId,
+    parentSpanId: undefined,
+    traceId: 't1',
+    runId: 'r1',
+    agentId: 'a1',
+    type: 'llm_call',
+    timestamp: ts,
+    durationMs: 100,
+    data: {
+      output,
+      modelInfo: { provider: 'openai', model: 'gpt-4o' },
+      tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+    },
   };
 }
 
-function tool(spanId: string, parent: string, ts: string, name: string, output: unknown): TraceEvent {
+function tool(
+  spanId: string,
+  parent: string,
+  ts: string,
+  name: string,
+  output: unknown,
+): TraceEvent {
   return {
-    spanId, parentSpanId: parent, traceId: 't1', runId: 'r1', agentId: 'a1',
-    type: 'tool_execution', timestamp: ts, durationMs: 50,
+    spanId,
+    parentSpanId: parent,
+    traceId: 't1',
+    runId: 'r1',
+    agentId: 'a1',
+    type: 'tool_execution',
+    timestamp: ts,
+    durationMs: 50,
     data: { input: name, output },
   };
 }
@@ -22,9 +44,20 @@ function tool(spanId: string, parent: string, ts: string, name: string, output: 
 describe('dryReplay', () => {
   it('produces same-node diff when no substitutions applied', () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [llm('s1', '2026-06-05T00:00:00.000Z', 'hi')],
-      summary: { totalEvents: 1, totalDurationMs: 100, totalTokens: 150, llmCalls: 1, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 1,
+        totalDurationMs: 100,
+        totalTokens: 150,
+        llmCalls: 1,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     const r = dryReplay(trace, { runId: 'r1', substitutions: [], reExecuteLlm: false });
     assert.strictEqual(r.diff.newSpans, 0);
@@ -34,15 +67,26 @@ describe('dryReplay', () => {
 
   it('substitutes tool_output and reports changedSpans', () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
-      events: [
-        tool('s1', undefined, '2026-06-05T00:00:00.000Z', 'shell', { exit: 0 }),
-      ],
-      summary: { totalEvents: 1, totalDurationMs: 50, totalTokens: 0, llmCalls: 0, toolExecutions: 1, errors: 0, modelUsed: '' },
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
+      events: [tool('s1', undefined, '2026-06-05T00:00:00.000Z', 'shell', { exit: 0 })],
+      summary: {
+        totalEvents: 1,
+        totalDurationMs: 50,
+        totalTokens: 0,
+        llmCalls: 0,
+        toolExecutions: 1,
+        errors: 0,
+        modelUsed: '',
+      },
     };
     const r = dryReplay(trace, {
       runId: 'r1',
-      substitutions: [{ target: 'tool_output', spanId: 's1', value: { exit: 1, stderr: 'failed' } }],
+      substitutions: [
+        { target: 'tool_output', spanId: 's1', value: { exit: 1, stderr: 'failed' } },
+      ],
       reExecuteLlm: false,
     });
     assert.strictEqual(r.diff.changedSpans, 1);
@@ -51,13 +95,26 @@ describe('dryReplay', () => {
 
   it('substitutes llm_response', () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [llm('s1', '2026-06-05T00:00:00.000Z', 'original')],
-      summary: { totalEvents: 1, totalDurationMs: 100, totalTokens: 150, llmCalls: 1, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 1,
+        totalDurationMs: 100,
+        totalTokens: 150,
+        llmCalls: 1,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     const r = dryReplay(trace, {
       runId: 'r1',
-      substitutions: [{ target: 'llm_response', spanId: 's1', value: 'replayed-with-different-prompt' }],
+      substitutions: [
+        { target: 'llm_response', spanId: 's1', value: 'replayed-with-different-prompt' },
+      ],
       reExecuteLlm: true,
     });
     assert.strictEqual(r.diff.changedSpans, 1);
@@ -68,12 +125,32 @@ describe('dryReplay', () => {
 describe('liveReplay', () => {
   it('returns mode=dry when reExecuteLlm is false (no LLM re-execution)', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [llm('s1', '2026-06-05T00:00:00.000Z', 'hi')],
-      summary: { totalEvents: 1, totalDurationMs: 100, totalTokens: 150, llmCalls: 1, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 1,
+        totalDurationMs: 100,
+        totalTokens: 150,
+        llmCalls: 1,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     let invoked = false;
-    const ctx: LiveReplayContext = { invokeLlm: async () => { invoked = true; return { text: 'x', tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, costUsd: 0 }; } };
+    const ctx: LiveReplayContext = {
+      invokeLlm: async () => {
+        invoked = true;
+        return {
+          text: 'x',
+          tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          costUsd: 0,
+        };
+      },
+    };
     const r = await liveReplay(trace, { runId: 'r1', substitutions: [], reExecuteLlm: false }, ctx);
     assert.strictEqual(r.mode, 'dry');
     assert.strictEqual(invoked, false);
@@ -82,9 +159,20 @@ describe('liveReplay', () => {
 
   it('re-executes LLM spans and reports mode=live + reExecutedSpans', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [llm('s1', '2026-06-05T00:00:00.000Z', 'original')],
-      summary: { totalEvents: 1, totalDurationMs: 100, totalTokens: 150, llmCalls: 1, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 1,
+        totalDurationMs: 100,
+        totalTokens: 150,
+        llmCalls: 1,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     const ctx: LiveReplayContext = {
       invokeLlm: async ({ model }) => ({
@@ -103,13 +191,31 @@ describe('liveReplay', () => {
 
   it('respects modelOverride for re-execution', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [llm('s1', '2026-06-05T00:00:00.000Z', 'hi')],
-      summary: { totalEvents: 1, totalDurationMs: 100, totalTokens: 150, llmCalls: 1, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 1,
+        totalDurationMs: 100,
+        totalTokens: 150,
+        llmCalls: 1,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     let receivedModel = '';
     const ctx: LiveReplayContext = {
-      invokeLlm: async ({ model }) => { receivedModel = model; return { text: 'x', tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, costUsd: 0 }; },
+      invokeLlm: async ({ model }) => {
+        receivedModel = model;
+        return {
+          text: 'x',
+          tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          costUsd: 0,
+        };
+      },
     };
     await liveReplay(
       trace,
@@ -122,11 +228,26 @@ describe('liveReplay', () => {
 
   it('falls back to dry node on LLM invocation failure', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [llm('s1', '2026-06-05T00:00:00.000Z', 'original')],
-      summary: { totalEvents: 1, totalDurationMs: 100, totalTokens: 150, llmCalls: 1, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 1,
+        totalDurationMs: 100,
+        totalTokens: 150,
+        llmCalls: 1,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
-    const ctx: LiveReplayContext = { invokeLlm: async () => { throw new Error('provider down'); } };
+    const ctx: LiveReplayContext = {
+      invokeLlm: async () => {
+        throw new Error('provider down');
+      },
+    };
     const r = await liveReplay(trace, { runId: 'r1', substitutions: [], reExecuteLlm: true }, ctx);
     assert.strictEqual(r.reExecutedSpans.length, 0);
     assert.strictEqual(r.replayedNodes.length, 1);
@@ -134,17 +255,34 @@ describe('liveReplay', () => {
 
   it('respects onlySpanIds filter', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [
         llm('s1', '2026-06-05T00:00:00.000Z', 'first'),
         llm('s2', '2026-06-05T00:00:01.000Z', 'second'),
       ],
-      summary: { totalEvents: 2, totalDurationMs: 200, totalTokens: 300, llmCalls: 2, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 2,
+        totalDurationMs: 200,
+        totalTokens: 300,
+        llmCalls: 2,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     const ctx: LiveReplayContext = {
-      invokeLlm: async ({ spanId }) => ({ text: `ok-${spanId}`, tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, costUsd: 0 }),
+      invokeLlm: async ({ spanId }) => ({
+        text: `ok-${spanId}`,
+        tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        costUsd: 0,
+      }),
     };
-    const r = await liveReplay(trace, { runId: 'r1', substitutions: [], reExecuteLlm: true }, ctx, { onlySpanIds: ['s2'] });
+    const r = await liveReplay(trace, { runId: 'r1', substitutions: [], reExecuteLlm: true }, ctx, {
+      onlySpanIds: ['s2'],
+    });
     assert.deepStrictEqual(r.reExecutedSpans, ['s2']);
   });
 });
@@ -156,21 +294,39 @@ describe('liveReplay', () => {
 describe('liveReplay E2E', () => {
   it('E2E: multi-step trace with interleaved LLM and TOOL — only LLMs re-executed', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [
         llm('llm1', '2026-06-05T00:00:00.000Z', 'I will read a file'),
-        tool('tool1', 'llm1', '2026-06-05T00:00:01.000Z', 'read_file', { path: '/a.txt', content: 'hello' }),
+        tool('tool1', 'llm1', '2026-06-05T00:00:01.000Z', 'read_file', {
+          path: '/a.txt',
+          content: 'hello',
+        }),
         llm('llm2', '2026-06-05T00:00:02.000Z', 'I will write a file'),
         tool('tool2', 'llm2', '2026-06-05T00:00:03.000Z', 'write_file', { path: '/b.txt' }),
         llm('llm3', '2026-06-05T00:00:04.000Z', 'Done'),
       ],
-      summary: { totalEvents: 5, totalDurationMs: 500, totalTokens: 450, llmCalls: 3, toolExecutions: 2, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 5,
+        totalDurationMs: 500,
+        totalTokens: 450,
+        llmCalls: 3,
+        toolExecutions: 2,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     const invokedSpans: string[] = [];
     const ctx: LiveReplayContext = {
       invokeLlm: async ({ spanId }) => {
         invokedSpans.push(spanId);
-        return { text: `replayed-${spanId}`, tokens: { promptTokens: 40, completionTokens: 10, totalTokens: 50 }, costUsd: 0.0005 };
+        return {
+          text: `replayed-${spanId}`,
+          tokens: { promptTokens: 40, completionTokens: 10, totalTokens: 50 },
+          costUsd: 0.0005,
+        };
       },
     };
     const r = await liveReplay(trace, { runId: 'r1', substitutions: [], reExecuteLlm: true }, ctx);
@@ -200,12 +356,23 @@ describe('liveReplay E2E', () => {
 
   it('E2E: costDelta reflects replayed LLM costs vs original costs', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [
         llm('s1', '2026-06-05T00:00:00.000Z', 'first'),
         llm('s2', '2026-06-05T00:00:01.000Z', 'second'),
       ],
-      summary: { totalEvents: 2, totalDurationMs: 200, totalTokens: 300, llmCalls: 2, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 2,
+        totalDurationMs: 200,
+        totalTokens: 300,
+        llmCalls: 2,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     // Original costs from the cost model for gpt-4o with promptTokens=100, completionTokens=50, totalTokens=150
     // Replayed costs: 0.003 per LLM, total 0.006
@@ -235,11 +402,20 @@ describe('liveReplay E2E', () => {
 
   it('E2E: tokenDelta reflects replayed token counts', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
-      events: [
-        llm('s1', '2026-06-05T00:00:00.000Z', 'original'),
-      ],
-      summary: { totalEvents: 1, totalDurationMs: 100, totalTokens: 150, llmCalls: 1, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
+      events: [llm('s1', '2026-06-05T00:00:00.000Z', 'original')],
+      summary: {
+        totalEvents: 1,
+        totalDurationMs: 100,
+        totalTokens: 150,
+        llmCalls: 1,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     const ctx: LiveReplayContext = {
       invokeLlm: async () => ({
@@ -261,12 +437,23 @@ describe('liveReplay E2E', () => {
 
   it('E2E: modelOverride changes model field and triggers changedSpans', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [
         llm('s1', '2026-06-05T00:00:00.000Z', 'hi'),
         llm('s2', '2026-06-05T00:00:01.000Z', 'bye'),
       ],
-      summary: { totalEvents: 2, totalDurationMs: 200, totalTokens: 300, llmCalls: 2, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 2,
+        totalDurationMs: 200,
+        totalTokens: 300,
+        llmCalls: 2,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     const ctx: LiveReplayContext = {
       invokeLlm: async ({ model }) => ({
@@ -275,12 +462,9 @@ describe('liveReplay E2E', () => {
         costUsd: 0.002,
       }),
     };
-    const r = await liveReplay(
-      trace,
-      { runId: 'r1', substitutions: [], reExecuteLlm: true },
-      ctx,
-      { modelOverride: 'claude-3-opus' },
-    );
+    const r = await liveReplay(trace, { runId: 'r1', substitutions: [], reExecuteLlm: true }, ctx, {
+      modelOverride: 'claude-3-opus',
+    });
 
     assert.strictEqual(r.mode, 'live');
     assert.deepStrictEqual(r.reExecutedSpans.sort(), ['s1', 's2']);
@@ -297,13 +481,24 @@ describe('liveReplay E2E', () => {
 
   it('E2E: substitutions applied alongside live re-execution', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [
         llm('llm1', '2026-06-05T00:00:00.000Z', 'I will call a tool'),
         tool('tool1', 'llm1', '2026-06-05T00:00:01.000Z', 'shell', { exit: 0 }),
         llm('llm2', '2026-06-05T00:00:02.000Z', 'Tool succeeded'),
       ],
-      summary: { totalEvents: 3, totalDurationMs: 300, totalTokens: 300, llmCalls: 2, toolExecutions: 1, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 3,
+        totalDurationMs: 300,
+        totalTokens: 300,
+        llmCalls: 2,
+        toolExecutions: 1,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     const ctx: LiveReplayContext = {
       invokeLlm: async ({ spanId }) => ({
@@ -312,14 +507,22 @@ describe('liveReplay E2E', () => {
         costUsd: 0.001,
       }),
     };
-    const r = await liveReplay(trace, {
-      runId: 'r1',
-      substitutions: [
-        { target: 'tool_output', spanId: 'tool1', value: { exit: 1, stderr: 'simulated failure' } },
-        { target: 'llm_response', spanId: 'llm2', value: 'Tool failed, retrying...' },
-      ],
-      reExecuteLlm: true,
-    }, ctx);
+    const r = await liveReplay(
+      trace,
+      {
+        runId: 'r1',
+        substitutions: [
+          {
+            target: 'tool_output',
+            spanId: 'tool1',
+            value: { exit: 1, stderr: 'simulated failure' },
+          },
+          { target: 'llm_response', spanId: 'llm2', value: 'Tool failed, retrying...' },
+        ],
+        reExecuteLlm: true,
+      },
+      ctx,
+    );
 
     // LLM spans re-executed
     assert.deepStrictEqual(r.reExecutedSpans.sort(), ['llm1', 'llm2']);
@@ -344,18 +547,36 @@ describe('liveReplay E2E', () => {
 
   it('E2E: AbortSignal prevents LLM invocation and falls back to dry nodes', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [
         llm('s1', '2026-06-05T00:00:00.000Z', 'first'),
         llm('s2', '2026-06-05T00:00:01.000Z', 'second'),
       ],
-      summary: { totalEvents: 2, totalDurationMs: 200, totalTokens: 300, llmCalls: 2, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 2,
+        totalDurationMs: 200,
+        totalTokens: 300,
+        llmCalls: 2,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     let invoked = false;
     const controller = new AbortController();
     controller.abort(); // Abort immediately
     const ctx: LiveReplayContext = {
-      invokeLlm: async () => { invoked = true; return { text: 'x', tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, costUsd: 0 }; },
+      invokeLlm: async () => {
+        invoked = true;
+        return {
+          text: 'x',
+          tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          costUsd: 0,
+        };
+      },
       signal: controller.signal,
     };
     const r = await liveReplay(trace, { runId: 'r1', substitutions: [], reExecuteLlm: true }, ctx);
@@ -371,18 +592,33 @@ describe('liveReplay E2E', () => {
 
   it('E2E: mixed trace where some LLM calls fail and others succeed', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [
         llm('s1', '2026-06-05T00:00:00.000Z', 'will fail'),
         llm('s2', '2026-06-05T00:00:01.000Z', 'will succeed'),
         llm('s3', '2026-06-05T00:00:02.000Z', 'will succeed too'),
       ],
-      summary: { totalEvents: 3, totalDurationMs: 300, totalTokens: 450, llmCalls: 3, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 3,
+        totalDurationMs: 300,
+        totalTokens: 450,
+        llmCalls: 3,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     const ctx: LiveReplayContext = {
       invokeLlm: async ({ spanId }) => {
         if (spanId === 's1') throw new Error('provider down');
-        return { text: `ok-${spanId}`, tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, costUsd: 0 };
+        return {
+          text: `ok-${spanId}`,
+          tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          costUsd: 0,
+        };
       },
     };
     const r = await liveReplay(trace, { runId: 'r1', substitutions: [], reExecuteLlm: true }, ctx);
@@ -406,16 +642,33 @@ describe('liveReplay E2E', () => {
 
   it('E2E: full agent execution trace simulation — LLM→tool→LLM→tool→LLM', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r-full', traceId: 't-full', agentId: 'agent-1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r-full',
+      traceId: 't-full',
+      agentId: 'agent-1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       completedAt: '2026-06-05T00:00:05.000Z',
       events: [
         llm('plan', '2026-06-05T00:00:00.000Z', 'I will read config then write code'),
-        tool('read', 'plan', '2026-06-05T00:00:01.000Z', 'read_file', { path: 'tsconfig.json', content: '{"strict":true}' }),
+        tool('read', 'plan', '2026-06-05T00:00:01.000Z', 'read_file', {
+          path: 'tsconfig.json',
+          content: '{"strict":true}',
+        }),
         llm('code', '2026-06-05T00:00:02.000Z', 'I will write the implementation'),
-        tool('write', 'code', '2026-06-05T00:00:03.000Z', 'write_file', { path: 'src/app.ts', success: true }),
+        tool('write', 'code', '2026-06-05T00:00:03.000Z', 'write_file', {
+          path: 'src/app.ts',
+          success: true,
+        }),
         llm('verify', '2026-06-05T00:00:04.000Z', 'Code written successfully'),
       ],
-      summary: { totalEvents: 5, totalDurationMs: 5000, totalTokens: 450, llmCalls: 3, toolExecutions: 2, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 5,
+        totalDurationMs: 5000,
+        totalTokens: 450,
+        llmCalls: 3,
+        toolExecutions: 2,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
 
     const callLog: Array<{ spanId: string; model: string; prompt: string }> = [];
@@ -432,9 +685,14 @@ describe('liveReplay E2E', () => {
       },
     };
 
-    const r = await liveReplay(trace, { runId: 'r-full', substitutions: [], reExecuteLlm: true }, ctx, {
-      modelOverride: 'claude-3-5-sonnet',
-    });
+    const r = await liveReplay(
+      trace,
+      { runId: 'r-full', substitutions: [], reExecuteLlm: true },
+      ctx,
+      {
+        modelOverride: 'claude-3-5-sonnet',
+      },
+    );
 
     // All 3 LLM spans re-executed
     assert.deepStrictEqual(r.reExecutedSpans.sort(), ['code', 'plan', 'verify']);
@@ -457,7 +715,7 @@ describe('liveReplay E2E', () => {
     assert.strictEqual(r.replaySummary.llmCalls, 3);
     assert.strictEqual(r.replaySummary.toolCalls, 2);
     // Total cost: 0.003 + 0.005 + 0.002 = 0.010
-    assert.strictEqual(r.replaySummary.totalCost.totalCostUsd, 0.010);
+    assert.strictEqual(r.replaySummary.totalCost.totalCostUsd, 0.01);
     // Total tokens: 150 × 3 = 450
     assert.strictEqual(r.replaySummary.totalTokens.total, 450);
 
@@ -477,9 +735,20 @@ describe('liveReplay E2E', () => {
     // Verify diff object shape to catch regressions
     const expectedKeys = ['newSpans', 'changedSpans', 'costDeltaUsd', 'tokenDelta'];
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [llm('s1', '2026-06-05T00:00:00.000Z', 'hi')],
-      summary: { totalEvents: 1, totalDurationMs: 100, totalTokens: 150, llmCalls: 1, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 1,
+        totalDurationMs: 100,
+        totalTokens: 150,
+        llmCalls: 1,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     const r = dryReplay(trace, { runId: 'r1', substitutions: [], reExecuteLlm: false });
     assert.deepStrictEqual(Object.keys(r.diff).sort(), expectedKeys.sort());
@@ -487,13 +756,31 @@ describe('liveReplay E2E', () => {
 
   it('E2E: empty trace returns dry result with no re-executed spans', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [],
-      summary: { totalEvents: 0, totalDurationMs: 0, totalTokens: 0, llmCalls: 0, toolExecutions: 0, errors: 0, modelUsed: '' },
+      summary: {
+        totalEvents: 0,
+        totalDurationMs: 0,
+        totalTokens: 0,
+        llmCalls: 0,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: '',
+      },
     };
     let invoked = false;
     const ctx: LiveReplayContext = {
-      invokeLlm: async () => { invoked = true; return { text: '', tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, costUsd: 0 }; },
+      invokeLlm: async () => {
+        invoked = true;
+        return {
+          text: '',
+          tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          costUsd: 0,
+        };
+      },
     };
     const r = await liveReplay(trace, { runId: 'r1', substitutions: [], reExecuteLlm: true }, ctx);
     assert.strictEqual(r.mode, 'live');
@@ -506,17 +793,34 @@ describe('liveReplay E2E', () => {
 
   it('E2E: originalTokens passed to invokeLlm match trace event token counts', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
-      events: [
-        llm('s1', '2026-06-05T00:00:00.000Z', 'output'),
-      ],
-      summary: { totalEvents: 1, totalDurationMs: 100, totalTokens: 150, llmCalls: 1, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
+      events: [llm('s1', '2026-06-05T00:00:00.000Z', 'output')],
+      summary: {
+        totalEvents: 1,
+        totalDurationMs: 100,
+        totalTokens: 150,
+        llmCalls: 1,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
-    let capturedTokens: { promptTokens: number; completionTokens: number; totalTokens: number } = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    let capturedTokens: { promptTokens: number; completionTokens: number; totalTokens: number } = {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+    };
     const ctx: LiveReplayContext = {
       invokeLlm: async ({ originalTokens }) => {
         capturedTokens = originalTokens;
-        return { text: 'ok', tokens: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, costUsd: 0 };
+        return {
+          text: 'ok',
+          tokens: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+          costUsd: 0,
+        };
       },
     };
     await liveReplay(trace, { runId: 'r1', substitutions: [], reExecuteLlm: true }, ctx);
@@ -529,36 +833,67 @@ describe('liveReplay E2E', () => {
 
   it('E2E: prompt passed to invokeLlm comes from node reasoning preview', async () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
-      events: [
-        llm('s1', '2026-06-05T00:00:00.000Z', 'The plan is to refactor the module'),
-      ],
-      summary: { totalEvents: 1, totalDurationMs: 100, totalTokens: 150, llmCalls: 1, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
+      events: [llm('s1', '2026-06-05T00:00:00.000Z', 'The plan is to refactor the module')],
+      summary: {
+        totalEvents: 1,
+        totalDurationMs: 100,
+        totalTokens: 150,
+        llmCalls: 1,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     let capturedPrompt = '';
     const ctx: LiveReplayContext = {
       invokeLlm: async ({ prompt }) => {
         capturedPrompt = prompt;
-        return { text: 'ok', tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, costUsd: 0 };
+        return {
+          text: 'ok',
+          tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          costUsd: 0,
+        };
       },
     };
     await liveReplay(trace, { runId: 'r1', substitutions: [], reExecuteLlm: true }, ctx);
 
-    assert.ok(capturedPrompt.includes('refactor'), `Expected prompt to contain original reasoning, got: ${capturedPrompt}`);
+    assert.ok(
+      capturedPrompt.includes('refactor'),
+      `Expected prompt to contain original reasoning, got: ${capturedPrompt}`,
+    );
   });
 
   it('E2E: noProgress/maxSteps type scenarios — consecutive LLM calls with escalating costs', async () => {
     // Simulates an agent stuck in a loop: 5 consecutive LLM calls, each more expensive
     const trace: ExecutionTrace = {
-      runId: 'r-loop', traceId: 't-loop', agentId: 'a1', startedAt: '2026-06-05T00:00:00.000Z',
+      runId: 'r-loop',
+      traceId: 't-loop',
+      agentId: 'a1',
+      startedAt: '2026-06-05T00:00:00.000Z',
       events: [
         llm('llm1', '2026-06-05T00:00:00.000Z', 'Attempt 1: Try reading the file'),
         llm('llm2', '2026-06-05T00:00:01.000Z', 'Attempt 2: File not found, retrying'),
-        llm('llm3', '2026-06-05T00:00:02.000Z', 'Attempt 3: Still cannot access, trying different path'),
+        llm(
+          'llm3',
+          '2026-06-05T00:00:02.000Z',
+          'Attempt 3: Still cannot access, trying different path',
+        ),
         llm('llm4', '2026-06-05T00:00:03.000Z', 'Attempt 4: Asking user for clarification'),
         llm('llm5', '2026-06-05T00:00:04.000Z', 'Attempt 5: Giving up'),
       ],
-      summary: { totalEvents: 5, totalDurationMs: 500, totalTokens: 750, llmCalls: 5, toolExecutions: 0, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 5,
+        totalDurationMs: 500,
+        totalTokens: 750,
+        llmCalls: 5,
+        toolExecutions: 0,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
 
     const replayedCosts: number[] = [];
@@ -570,19 +905,27 @@ describe('liveReplay E2E', () => {
         replayedCosts.push(cost);
         return {
           text: `Replayed ${spanId}`,
-          tokens: { promptTokens: 50 * attemptNum, completionTokens: 10, totalTokens: 50 * attemptNum + 10 },
+          tokens: {
+            promptTokens: 50 * attemptNum,
+            completionTokens: 10,
+            totalTokens: 50 * attemptNum + 10,
+          },
           costUsd: cost,
         };
       },
     };
 
-    const r = await liveReplay(trace, { runId: 'r-loop', substitutions: [], reExecuteLlm: true }, ctx);
+    const r = await liveReplay(
+      trace,
+      { runId: 'r-loop', substitutions: [], reExecuteLlm: true },
+      ctx,
+    );
 
     assert.strictEqual(r.mode, 'live');
     assert.strictEqual(r.reExecutedSpans.length, 5);
 
     // Total cost: 0.002 + 0.004 + 0.006 + 0.008 + 0.010 = 0.030
-    assert.strictEqual(r.replaySummary.totalCost.totalCostUsd, 0.030);
+    assert.strictEqual(r.replaySummary.totalCost.totalCostUsd, 0.03);
 
     // Total tokens: (50+10) + (100+10) + (150+10) + (200+10) + (250+10) = 60+110+160+210+260 = 800
     assert.strictEqual(r.replaySummary.totalTokens.total, 800);

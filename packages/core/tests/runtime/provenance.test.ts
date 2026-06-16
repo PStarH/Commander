@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { captureProvenance, createRunProvenance } from '../../src/runtime/provenance';
 
 describe('Provenance tracking', () => {
-
   // -----------------------------------------------------------------------
   // captureProvenance — structure and types
   // -----------------------------------------------------------------------
@@ -24,7 +23,10 @@ describe('Provenance tracking', () => {
     const prov = captureProvenance();
     const isHex = /^[0-9a-f]{7,40}$/.test(prov.git.commitHash);
     const isUnknown = prov.git.commitHash === 'unknown';
-    assert.ok(isHex || isUnknown, `commitHash should be hex SHA or "unknown", got: ${prov.git.commitHash}`);
+    assert.ok(
+      isHex || isUnknown,
+      `commitHash should be hex SHA or "unknown", got: ${prov.git.commitHash}`,
+    );
   });
 
   it('git.branch is a non-empty string', () => {
@@ -114,11 +116,15 @@ describe('Provenance tracking', () => {
   });
 
   it('passes through tags when provided', () => {
-    const prov = createRunProvenance('run-t', {
-      provider: 'openai',
-      modelId: 'gpt-4',
-      tier: 'power',
-    }, { benchmark: 'bfcl', version: 'v2' });
+    const prov = createRunProvenance(
+      'run-t',
+      {
+        provider: 'openai',
+        modelId: 'gpt-4',
+        tier: 'power',
+      },
+      { benchmark: 'bfcl', version: 'v2' },
+    );
 
     assert.deepEqual(prov.tags, { benchmark: 'bfcl', version: 'v2' });
   });
@@ -178,10 +184,14 @@ describe('Provenance tracking', () => {
 
   it('each call produces a unique timestamp (or at least valid)', () => {
     const p1 = createRunProvenance('run-1', {
-      provider: 'openai', modelId: 'gpt-4', tier: 'power',
+      provider: 'openai',
+      modelId: 'gpt-4',
+      tier: 'power',
     });
     const p2 = createRunProvenance('run-2', {
-      provider: 'openai', modelId: 'gpt-4', tier: 'power',
+      provider: 'openai',
+      modelId: 'gpt-4',
+      tier: 'power',
     });
     // Both should have valid timestamps (they may be the same if called in the same ms)
     assert.ok(new Date(p1.timestamp).getTime() > 0);

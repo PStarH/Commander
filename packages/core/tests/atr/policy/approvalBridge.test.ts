@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PolicyHook } from '../../../src/atr/policy/integration/scheduler';
-import { wrapApprovalWithPolicy, approvalRequestToPolicyInput, policyDecisionToApproval } from '../../../src/atr/policy/integration/approvalBridge';
+import {
+  wrapApprovalWithPolicy,
+  approvalRequestToPolicyInput,
+  policyDecisionToApproval,
+} from '../../../src/atr/policy/integration/approvalBridge';
 import { getApprovalSystem, resetApprovalSystem } from '../../../src/sandbox/approval';
 import type { ApprovalRequest } from '../../../src/sandbox/approval';
 import type { RunHandle } from '../../../src/atr/scheduler';
@@ -36,13 +40,27 @@ function baseReq(): ApprovalRequest {
 test('approvalBridge: maps ApprovalRequest to PolicyInput', () => {
   const hook = new PolicyHook({ enableAudit: false, pack: 'readonly' });
   const input = approvalRequestToPolicyInput(baseReq(), {
-    hook, run: makeRun(),
-    tenant: { id: 'tenant-bridge', config: {
-      tokenBudget: 100, maxConcurrency: 1, maxRunsPerMinute: 1,
-      maxActionsPerRun: 10, allowShell: false, allowNetwork: false,
-      requiresApprovalBypass: false,
-    } },
-    metrics: { tokensUsedThisRun: 0, tokensUsedThisHour: 0, actionsThisRun: 0, destructiveThisRun: 0, estimatedCostUsd: 0 },
+    hook,
+    run: makeRun(),
+    tenant: {
+      id: 'tenant-bridge',
+      config: {
+        tokenBudget: 100,
+        maxConcurrency: 1,
+        maxRunsPerMinute: 1,
+        maxActionsPerRun: 10,
+        allowShell: false,
+        allowNetwork: false,
+        requiresApprovalBypass: false,
+      },
+    },
+    metrics: {
+      tokensUsedThisRun: 0,
+      tokensUsedThisHour: 0,
+      actionsThisRun: 0,
+      destructiveThisRun: 0,
+      estimatedCostUsd: 0,
+    },
   });
   assert.equal(input.phase, 'tool');
   assert.equal(input.tool.name, 'shell_run');
@@ -60,13 +78,27 @@ test('approvalBridge: policy deny_class overrides legacy approve', async () => {
   const fresh = getApprovalSystem();
   fresh.setMode('full-auto');
   const eval_ = wrapApprovalWithPolicy(fresh, {
-    hook, run: makeRun(),
-    tenant: { id: 'tenant-bridge', config: {
-      tokenBudget: 100, maxConcurrency: 1, maxRunsPerMinute: 1,
-      maxActionsPerRun: 10, allowShell: false, allowNetwork: false,
-      requiresApprovalBypass: false,
-    } },
-    metrics: { tokensUsedThisRun: 0, tokensUsedThisHour: 0, actionsThisRun: 0, destructiveThisRun: 0, estimatedCostUsd: 0 },
+    hook,
+    run: makeRun(),
+    tenant: {
+      id: 'tenant-bridge',
+      config: {
+        tokenBudget: 100,
+        maxConcurrency: 1,
+        maxRunsPerMinute: 1,
+        maxActionsPerRun: 10,
+        allowShell: false,
+        allowNetwork: false,
+        requiresApprovalBypass: false,
+      },
+    },
+    metrics: {
+      tokensUsedThisRun: 0,
+      tokensUsedThisHour: 0,
+      actionsThisRun: 0,
+      destructiveThisRun: 0,
+      estimatedCostUsd: 0,
+    },
   });
   const result = await eval_(baseReq());
   assert.equal(result.decision, 'denied');
@@ -79,13 +111,27 @@ test('approvalBridge: policy allow falls through to legacy', async () => {
   const fresh = getApprovalSystem();
   fresh.setMode('full-auto');
   const eval_ = wrapApprovalWithPolicy(fresh, {
-    hook, run: makeRun(),
-    tenant: { id: 'tenant-bridge', config: {
-      tokenBudget: 100, maxConcurrency: 1, maxRunsPerMinute: 1,
-      maxActionsPerRun: 10, allowShell: true, allowNetwork: true,
-      requiresApprovalBypass: false,
-    } },
-    metrics: { tokensUsedThisRun: 0, tokensUsedThisHour: 0, actionsThisRun: 0, destructiveThisRun: 0, estimatedCostUsd: 0 },
+    hook,
+    run: makeRun(),
+    tenant: {
+      id: 'tenant-bridge',
+      config: {
+        tokenBudget: 100,
+        maxConcurrency: 1,
+        maxRunsPerMinute: 1,
+        maxActionsPerRun: 10,
+        allowShell: true,
+        allowNetwork: true,
+        requiresApprovalBypass: false,
+      },
+    },
+    metrics: {
+      tokensUsedThisRun: 0,
+      tokensUsedThisHour: 0,
+      actionsThisRun: 0,
+      destructiveThisRun: 0,
+      estimatedCostUsd: 0,
+    },
   });
   const req: ApprovalRequest = {
     ...baseReq(),
@@ -99,37 +145,76 @@ test('approvalBridge: policy allow falls through to legacy', async () => {
 
 test('policyDecisionToApproval: maps all 4 effects', () => {
   const allow = policyDecisionToApproval({
-    effect: 'allow', reason: 'r', decisionPath: [], matchedRule: 'a', riskScore: 0,
+    effect: 'allow',
+    reason: 'r',
+    decisionPath: [],
+    matchedRule: 'a',
+    riskScore: 0,
     budget: { tokensRemaining: 0, runtimeRemainingMs: 0, actionsRemaining: 0, costRemainingUsd: 0 },
-    latencyMs: 0, cached: false, cacheable: true, decisionId: 'd', packVersion: 1, packName: 'p',
-    tenantId: 't', runId: 'r',
+    latencyMs: 0,
+    cached: false,
+    cacheable: true,
+    decisionId: 'd',
+    packVersion: 1,
+    packName: 'p',
+    tenantId: 't',
+    runId: 'r',
   });
   assert.equal(allow.decision, 'approved');
 
   const deny = policyDecisionToApproval({
-    effect: 'deny', reason: 'r', decisionPath: [], matchedRule: 'a', riskScore: 0,
+    effect: 'deny',
+    reason: 'r',
+    decisionPath: [],
+    matchedRule: 'a',
+    riskScore: 0,
     budget: { tokensRemaining: 0, runtimeRemainingMs: 0, actionsRemaining: 0, costRemainingUsd: 0 },
-    latencyMs: 0, cached: false, cacheable: true, decisionId: 'd', packVersion: 1, packName: 'p',
-    tenantId: 't', runId: 'r',
+    latencyMs: 0,
+    cached: false,
+    cacheable: true,
+    decisionId: 'd',
+    packVersion: 1,
+    packName: 'p',
+    tenantId: 't',
+    runId: 'r',
   });
   assert.equal(deny.decision, 'denied');
 
   const denyClass = policyDecisionToApproval({
-    effect: 'deny_class', denyClass: 'deny_shell', reason: 'shell', decisionPath: [],
-    matchedRule: 'a', riskScore: 0,
+    effect: 'deny_class',
+    denyClass: 'deny_shell',
+    reason: 'shell',
+    decisionPath: [],
+    matchedRule: 'a',
+    riskScore: 0,
     budget: { tokensRemaining: 0, runtimeRemainingMs: 0, actionsRemaining: 0, costRemainingUsd: 0 },
-    latencyMs: 0, cached: false, cacheable: true, decisionId: 'd', packVersion: 1, packName: 'p',
-    tenantId: 't', runId: 'r',
+    latencyMs: 0,
+    cached: false,
+    cacheable: true,
+    decisionId: 'd',
+    packVersion: 1,
+    packName: 'p',
+    tenantId: 't',
+    runId: 'r',
   });
   assert.equal(denyClass.decision, 'denied');
   assert.match(denyClass.reason, /deny_shell/);
 
   const requireApproval = policyDecisionToApproval({
-    effect: 'require_approval', reason: 'needs review', decisionPath: [], matchedRule: 'a',
+    effect: 'require_approval',
+    reason: 'needs review',
+    decisionPath: [],
+    matchedRule: 'a',
     riskScore: 0,
     budget: { tokensRemaining: 0, runtimeRemainingMs: 0, actionsRemaining: 0, costRemainingUsd: 0 },
-    latencyMs: 0, cached: false, cacheable: true, decisionId: 'd', packVersion: 1, packName: 'p',
-    tenantId: 't', runId: 'r',
+    latencyMs: 0,
+    cached: false,
+    cacheable: true,
+    decisionId: 'd',
+    packVersion: 1,
+    packName: 'p',
+    tenantId: 't',
+    runId: 'r',
   });
   assert.equal(requireApproval.decision, 'denied');
   assert.match(requireApproval.reason, /require_approval/);

@@ -11,18 +11,44 @@ describe('ExecPolicyEngine', () => {
 
   describe('safe read-only commands', () => {
     it('allows basic read-only commands', () => {
-      const safeCommands = ['cat', 'ls', 'pwd', 'echo', 'grep', 'head', 'tail', 'wc', 'which', 'whoami'];
+      const safeCommands = [
+        'cat',
+        'ls',
+        'pwd',
+        'echo',
+        'grep',
+        'head',
+        'tail',
+        'wc',
+        'which',
+        'whoami',
+      ];
       for (const cmd of safeCommands) {
         const result = engine.evaluate(cmd);
-        assert.equal(result.decision, 'allow', `Expected 'allow' for "${cmd}", got '${result.decision}'`);
+        assert.equal(
+          result.decision,
+          'allow',
+          `Expected 'allow' for "${cmd}", got '${result.decision}'`,
+        );
       }
     });
 
     it('allows git read operations', () => {
-      const gitCommands = ['git status', 'git diff', 'git log', 'git branch', 'git show', 'git blame'];
+      const gitCommands = [
+        'git status',
+        'git diff',
+        'git log',
+        'git branch',
+        'git show',
+        'git blame',
+      ];
       for (const cmd of gitCommands) {
         const result = engine.evaluate(cmd);
-        assert.equal(result.decision, 'allow', `Expected 'allow' for "${cmd}", got '${result.decision}'`);
+        assert.equal(
+          result.decision,
+          'allow',
+          `Expected 'allow' for "${cmd}", got '${result.decision}'`,
+        );
       }
     });
 
@@ -30,7 +56,11 @@ describe('ExecPolicyEngine', () => {
       const devCommands = ['npm', 'pnpm', 'yarn', 'tsc', 'eslint', 'node', 'python3', 'cargo'];
       for (const cmd of devCommands) {
         const result = engine.evaluate(cmd);
-        assert.equal(result.decision, 'allow', `Expected 'allow' for "${cmd}", got '${result.decision}'`);
+        assert.equal(
+          result.decision,
+          'allow',
+          `Expected 'allow' for "${cmd}", got '${result.decision}'`,
+        );
       }
     });
   });
@@ -40,17 +70,31 @@ describe('ExecPolicyEngine', () => {
       const networkCommands = ['curl', 'wget', 'nc', 'ssh', 'sftp'];
       for (const cmd of networkCommands) {
         const result = engine.evaluate(cmd);
-        assert.equal(result.decision, 'prompt', `Expected 'prompt' for "${cmd}", got '${result.decision}'`);
+        assert.equal(
+          result.decision,
+          'prompt',
+          `Expected 'prompt' for "${cmd}", got '${result.decision}'`,
+        );
       }
     });
   });
 
   describe('destructive commands require prompt', () => {
     it('prompts for rm -rf and similar', () => {
-      const destructiveCommands = ['rm -rf', 'rm -r', 'chmod -R', 'git reset --hard', 'git clean -f'];
+      const destructiveCommands = [
+        'rm -rf',
+        'rm -r',
+        'chmod -R',
+        'git reset --hard',
+        'git clean -f',
+      ];
       for (const cmd of destructiveCommands) {
         const result = engine.evaluate(cmd);
-        assert.equal(result.decision, 'prompt', `Expected 'prompt' for "${cmd}", got '${result.decision}'`);
+        assert.equal(
+          result.decision,
+          'prompt',
+          `Expected 'prompt' for "${cmd}", got '${result.decision}'`,
+        );
       }
     });
   });
@@ -60,17 +104,32 @@ describe('ExecPolicyEngine', () => {
       const forbiddenCommands = ['sudo', 'passwd', 'mkfs'];
       for (const cmd of forbiddenCommands) {
         const result = engine.evaluate(cmd);
-        assert.equal(result.decision, 'forbidden', `Expected 'forbidden' for "${cmd}", got '${result.decision}'`);
+        assert.equal(
+          result.decision,
+          'forbidden',
+          `Expected 'forbidden' for "${cmd}", got '${result.decision}'`,
+        );
       }
     });
   });
 
   describe('inline code execution requires prompt', () => {
     it('prompts for inline code execution', () => {
-      const inlineCommands = ['python3 -c', 'python -c', 'node -e', 'perl -e', 'ruby -e', 'osascript'];
+      const inlineCommands = [
+        'python3 -c',
+        'python -c',
+        'node -e',
+        'perl -e',
+        'ruby -e',
+        'osascript',
+      ];
       for (const cmd of inlineCommands) {
         const result = engine.evaluate(cmd);
-        assert.equal(result.decision, 'prompt', `Expected 'prompt' for "${cmd}", got '${result.decision}'`);
+        assert.equal(
+          result.decision,
+          'prompt',
+          `Expected 'prompt' for "${cmd}", got '${result.decision}'`,
+        );
       }
     });
   });

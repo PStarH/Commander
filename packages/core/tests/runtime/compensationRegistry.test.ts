@@ -96,9 +96,27 @@ describe('CompensationRegistry', () => {
       return { success: true };
     });
 
-    registry.recordAction({ actionId: 'a1', toolName: 'tool', args: {}, description: 'first', tags: [] });
-    registry.recordAction({ actionId: 'a2', toolName: 'tool', args: {}, description: 'second', tags: [] });
-    registry.recordAction({ actionId: 'a3', toolName: 'tool', args: {}, description: 'third', tags: [] });
+    registry.recordAction({
+      actionId: 'a1',
+      toolName: 'tool',
+      args: {},
+      description: 'first',
+      tags: [],
+    });
+    registry.recordAction({
+      actionId: 'a2',
+      toolName: 'tool',
+      args: {},
+      description: 'second',
+      tags: [],
+    });
+    registry.recordAction({
+      actionId: 'a3',
+      toolName: 'tool',
+      args: {},
+      description: 'third',
+      tags: [],
+    });
 
     const result = await registry.compensateAll();
     expect(result.succeeded).toBe(3);
@@ -109,8 +127,20 @@ describe('CompensationRegistry', () => {
 
   it('clears all state', () => {
     const registry = new CompensationRegistry();
-    registry.recordAction({ actionId: 'a1', toolName: 't', args: {}, description: 'test', tags: [] });
-    registry.recordAction({ actionId: 'a2', toolName: 't', args: {}, description: 'test', tags: [] });
+    registry.recordAction({
+      actionId: 'a1',
+      toolName: 't',
+      args: {},
+      description: 'test',
+      tags: [],
+    });
+    registry.recordAction({
+      actionId: 'a2',
+      toolName: 't',
+      args: {},
+      description: 'test',
+      tags: [],
+    });
 
     expect(registry.getPendingCount()).toBe(2);
     registry.clear();
@@ -128,9 +158,27 @@ describe('CompensationRegistry', () => {
       return { success: true };
     });
 
-    registry.recordAction({ actionId: 'a1', toolName: 'tool', args: {}, description: 'ok', tags: [] });
-    registry.recordAction({ actionId: 'a2', toolName: 'tool', args: {}, description: 'fail', tags: [] });
-    registry.recordAction({ actionId: 'a3', toolName: 'tool', args: {}, description: 'ok', tags: [] });
+    registry.recordAction({
+      actionId: 'a1',
+      toolName: 'tool',
+      args: {},
+      description: 'ok',
+      tags: [],
+    });
+    registry.recordAction({
+      actionId: 'a2',
+      toolName: 'tool',
+      args: {},
+      description: 'fail',
+      tags: [],
+    });
+    registry.recordAction({
+      actionId: 'a3',
+      toolName: 'tool',
+      args: {},
+      description: 'ok',
+      tags: [],
+    });
 
     const result = await registry.compensateAll();
     expect(result.succeeded).toBe(2);
@@ -148,7 +196,10 @@ describe('CompensationRegistry — GAP-M2.1 snapshot-based rollback', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  const restoreFromSnapshotHandler = async (action: { actionId: string; args: Record<string, unknown> }) => {
+  const restoreFromSnapshotHandler = async (action: {
+    actionId: string;
+    args: Record<string, unknown>;
+  }) => {
     const filePath = action.args.filePath ?? action.args.path;
     if (typeof filePath !== 'string') return { success: true };
     const snapshotPath = `${filePath}.atr-snapshot.${action.actionId}`;
@@ -180,7 +231,13 @@ describe('CompensationRegistry — GAP-M2.1 snapshot-based rollback', () => {
     const actionId = 'a-new';
     takeSnapshot(filePath, actionId);
     fs.writeFileSync(filePath, 'agent content');
-    registry.recordAction({ actionId, toolName: 'file_write', args: { path: filePath }, description: 'write', tags: [] });
+    registry.recordAction({
+      actionId,
+      toolName: 'file_write',
+      args: { path: filePath },
+      description: 'write',
+      tags: [],
+    });
     expect(fs.existsSync(filePath)).toBe(true);
 
     const result = await registry.compensate(actionId);
@@ -196,7 +253,13 @@ describe('CompensationRegistry — GAP-M2.1 snapshot-based rollback', () => {
     const actionId = 'a-existing';
     takeSnapshot(filePath, actionId);
     fs.writeFileSync(filePath, 'agent overwrote');
-    registry.recordAction({ actionId, toolName: 'file_write', args: { path: filePath }, description: 'overwrite', tags: [] });
+    registry.recordAction({
+      actionId,
+      toolName: 'file_write',
+      args: { path: filePath },
+      description: 'overwrite',
+      tags: [],
+    });
     expect(fs.readFileSync(filePath, 'utf-8')).toBe('agent overwrote');
 
     const result = await registry.compensate(actionId);
@@ -224,7 +287,13 @@ describe('CompensationRegistry — GAP-M2.1 snapshot-based rollback', () => {
       const actionId = `act-${f.name}`;
       takeSnapshot(fp, actionId);
       fs.writeFileSync(fp, f.overwritten);
-      registry.recordAction({ actionId, toolName: 'file_write', args: { path: fp }, description: f.name, tags: [] });
+      registry.recordAction({
+        actionId,
+        toolName: 'file_write',
+        args: { path: fp },
+        description: f.name,
+        tags: [],
+      });
     }
 
     const result = await registry.compensateAll();
@@ -242,11 +311,23 @@ describe('CompensationRegistry — GAP-M2.1 snapshot-based rollback', () => {
     const fp1 = path.join(tmpDir, 'a.txt');
     const fp2 = path.join(tmpDir, 'b.txt');
     const fp3 = path.join(tmpDir, 'c.txt');
-    fs.writeFileSync(fp1, 'A'); fs.writeFileSync(fp2, 'B'); fs.writeFileSync(fp3, 'C');
-    for (const [fp, id] of [[fp1, 'x1'], [fp2, 'x2'], [fp3, 'x3']] as const) {
+    fs.writeFileSync(fp1, 'A');
+    fs.writeFileSync(fp2, 'B');
+    fs.writeFileSync(fp3, 'C');
+    for (const [fp, id] of [
+      [fp1, 'x1'],
+      [fp2, 'x2'],
+      [fp3, 'x3'],
+    ] as const) {
       takeSnapshot(fp, id);
       fs.writeFileSync(fp, 'X');
-      registry.recordAction({ actionId: id, toolName: 'file_write', args: { path: fp }, description: '', tags: [] });
+      registry.recordAction({
+        actionId: id,
+        toolName: 'file_write',
+        args: { path: fp },
+        description: '',
+        tags: [],
+      });
     }
     const snapshotB = `${fp2}.atr-snapshot.x2`;
     fs.chmodSync(snapshotB, 0o000);

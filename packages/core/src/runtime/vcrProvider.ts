@@ -110,9 +110,9 @@ export class VCRProvider implements LLMProvider {
 
   private findMatch(request: LLMRequest): VCREntry | undefined {
     if (this.config.matchByContent) {
-      return this.cassette.entries.find((e) =>
-        e.request.model === request.model &&
-        messagesMatch(e.request.messages, request.messages),
+      return this.cassette.entries.find(
+        (e) =>
+          e.request.model === request.model && messagesMatch(e.request.messages, request.messages),
       );
     }
     const hash = hashRequest(request, this.config.hashAlgorithm!);

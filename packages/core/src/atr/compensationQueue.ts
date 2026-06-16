@@ -59,14 +59,14 @@ export interface CompensationQueueItem {
   agentId?: string;
   tenantId?: string;
   toolName: string;
-  args: string;          // JSON-serialized args (idempotency key source)
+  args: string; // JSON-serialized args (idempotency key source)
   attemptCount: number;
   maxAttempts: number;
   status: CompensationStatus;
   lastError?: string;
   enqueuedAt: string;
   lastAttemptAt?: string;
-  nextAttemptAt: string;  // earliest time retry can run
+  nextAttemptAt: string; // earliest time retry can run
   // Tag for the compensation handler that should run (matches
   // CompensationRegistry's key). The bridge between queue and
   // registry happens in agentRuntime/compensationBridge.
@@ -160,7 +160,9 @@ export class CompensationQueue {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'pending', ?, ?)
     `);
     this.stmtGet = this.db.prepare(`SELECT * FROM compensation_queue WHERE id = ?`);
-    this.stmtList = this.db.prepare(`SELECT * FROM compensation_queue ORDER BY enqueued_at DESC LIMIT ?`);
+    this.stmtList = this.db.prepare(
+      `SELECT * FROM compensation_queue ORDER BY enqueued_at DESC LIMIT ?`,
+    );
     this.stmtListPending = this.db.prepare(`
       SELECT * FROM compensation_queue
       WHERE status = 'pending' AND next_attempt_at <= ?
@@ -289,7 +291,7 @@ export class CompensationQueue {
     if (opts.status) {
       // Ad-hoc filtered query
       const rows = this.db!.prepare(
-        `SELECT * FROM compensation_queue WHERE status = ? ORDER BY enqueued_at DESC LIMIT ?`
+        `SELECT * FROM compensation_queue WHERE status = ? ORDER BY enqueued_at DESC LIMIT ?`,
       ).all(opts.status, limit) as Array<Record<string, unknown>>;
       return rows.map(rowToItem);
     }

@@ -68,7 +68,7 @@ export class SimpleTenantProvider implements TenantProvider {
   private tenants: Map<string, TenantConfig>;
 
   constructor(tenants: TenantConfig[] = []) {
-    this.tenants = new Map(tenants.map(t => [t.tenantId, t]));
+    this.tenants = new Map(tenants.map((t) => [t.tenantId, t]));
   }
 
   getTenantConfig(tenantId: string): TenantConfig | undefined {

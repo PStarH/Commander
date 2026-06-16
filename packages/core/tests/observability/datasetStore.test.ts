@@ -17,7 +17,9 @@ import { DatasetStore, type Dataset } from '../../src/observability/dataset';
 
 describe('DatasetStore — in-memory CRUD', () => {
   let store: DatasetStore;
-  beforeEach(() => { store = new DatasetStore(); });
+  beforeEach(() => {
+    store = new DatasetStore();
+  });
 
   it('creates a dataset with auto-generated id + timestamps', () => {
     const ds = store.create({
@@ -43,14 +45,14 @@ describe('DatasetStore — in-memory CRUD', () => {
 
   it('list() returns datasets sorted newest-first by createdAt', async () => {
     const a = store.create({ name: 'a', rubricId: 'r', cases: [] });
-    await new Promise(r => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 5));
     const b = store.create({ name: 'b', rubricId: 'r', cases: [] });
-    expect(store.list().map(d => d.id)).toEqual([b.id, a.id]);
+    expect(store.list().map((d) => d.id)).toEqual([b.id, a.id]);
   });
 
   it('update() is partial + advances updatedAt + locks id/createdAt', async () => {
     const ds = store.create({ name: 'x', rubricId: 'r', cases: [] });
-    await new Promise(r => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 5));
     const updated = store.update(ds.id, { name: 'x-renamed', description: 'desc' })!;
     expect(updated.name).toBe('x-renamed');
     expect(updated.description).toBe('desc');
@@ -91,12 +93,21 @@ describe('DatasetStore — in-memory CRUD', () => {
 
 describe('DatasetStore — persistence', () => {
   let tmpDir: string;
-  beforeEach(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-store-')); });
-  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-store-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   it('save() writes a JSON file; loadFromFile roundtrips', () => {
     const store = new DatasetStore({ persistenceDir: tmpDir });
-    const ds = store.create({ id: 'ds-round', name: 'round', rubricId: 'r', cases: [{ id: 'c', input: { goal: 'g' } }] });
+    const ds = store.create({
+      id: 'ds-round',
+      name: 'round',
+      rubricId: 'r',
+      cases: [{ id: 'c', input: { goal: 'g' } }],
+    });
     expect(store.save(ds.id)).toBe(true);
     const filePath = path.join(tmpDir, `${ds.id}.json`);
     expect(fs.existsSync(filePath)).toBe(true);
@@ -113,7 +124,7 @@ describe('DatasetStore — persistence', () => {
     store.create({ id: 'a', name: 'a', rubricId: 'r', cases: [] });
     store.create({ id: 'b', name: 'b', rubricId: 'r', cases: [] });
     expect(store.saveAll()).toBe(2);
-    expect(fs.readdirSync(tmpDir).filter(f => f.endsWith('.json')).length).toBe(2);
+    expect(fs.readdirSync(tmpDir).filter((f) => f.endsWith('.json')).length).toBe(2);
   });
 
   it('save() is a no-op when persistence is disabled', () => {
@@ -132,8 +143,28 @@ describe('DatasetStore — persistence', () => {
     const loaded = store2.loadAllFromDir();
     // Reload from a fresh store that wasn't already populated.
     const store3 = new DatasetStore({ persistenceDir: tmpDir });
-    fs.writeFileSync(path.join(tmpDir, 'a.json'), JSON.stringify({ id: 'a', name: 'a', rubricId: 'r', cases: [], createdAt: '2024', updatedAt: '2024' }));
-    fs.writeFileSync(path.join(tmpDir, 'b.json'), JSON.stringify({ id: 'b', name: 'b', rubricId: 'r', cases: [], createdAt: '2024', updatedAt: '2024' }));
+    fs.writeFileSync(
+      path.join(tmpDir, 'a.json'),
+      JSON.stringify({
+        id: 'a',
+        name: 'a',
+        rubricId: 'r',
+        cases: [],
+        createdAt: '2024',
+        updatedAt: '2024',
+      }),
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, 'b.json'),
+      JSON.stringify({
+        id: 'b',
+        name: 'b',
+        rubricId: 'r',
+        cases: [],
+        createdAt: '2024',
+        updatedAt: '2024',
+      }),
+    );
     expect(store3.loadAllFromDir()).toBe(2);
     expect(store3.size()).toBe(2);
   });

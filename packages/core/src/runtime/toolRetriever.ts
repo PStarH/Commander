@@ -17,31 +17,163 @@
  */
 import type { ToolDefinition } from './types';
 const TOOL_RELEVANCE_KEYWORDS: Record<string, string[]> = {
-  web_search: ['search web', 'search internet', 'look up', 'find online', 'google', 'what is', 'who is', 'web search', 'latest', 'news', 'current'],
+  web_search: [
+    'search web',
+    'search internet',
+    'look up',
+    'find online',
+    'google',
+    'what is',
+    'who is',
+    'web search',
+    'latest',
+    'news',
+    'current',
+  ],
   web_fetch: ['fetch url', 'get webpage', 'read url', 'http get', 'download page', 'scrape'],
   browser_search: ['browse', 'duckduckgo', 'search browser', 'navigate browser'],
   browser_fetch: ['browser fetch', 'render page', 'get page content', 'javascript render'],
   file_read: ['read file', 'open file', 'view file', 'cat file', 'show file content', 'get file'],
   file_write: ['write file', 'create file', 'save file', 'output to file', 'put file'],
-  file_edit: ['edit file', 'modify file', 'update file', 'change file', 'patch file', 'replace in file', 'edit', 'modify', 'update config'],
-  file_search: ['search files', 'find file', 'glob', 'locate file', 'search directory', 'list files'],
+  file_edit: [
+    'edit file',
+    'modify file',
+    'update file',
+    'change file',
+    'patch file',
+    'replace in file',
+    'edit',
+    'modify',
+    'update config',
+  ],
+  file_search: [
+    'search files',
+    'find file',
+    'glob',
+    'locate file',
+    'search directory',
+    'list files',
+  ],
   file_list: ['list directory', 'ls', 'dir', 'show directory', 'enumerate'],
-  python_execute: ['run python', 'execute python', 'python script', 'calculate', 'compute', 'analyze data', 'plot'],
-  shell_execute: ['run command', 'execute shell', 'terminal', 'bash', 'zsh', 'npm', 'npx', 'git', 'install', 'build'],
+  python_execute: [
+    'run python',
+    'execute python',
+    'python script',
+    'calculate',
+    'compute',
+    'analyze data',
+    'plot',
+  ],
+  shell_execute: [
+    'run command',
+    'execute shell',
+    'terminal',
+    'bash',
+    'zsh',
+    'npm',
+    'npx',
+    'git',
+    'install',
+    'build',
+  ],
   memory_store: ['remember', 'save memory', 'store memory', 'record'],
-  memory_recall: ['recall', 'retrieve memory', 'search memory', 'remember', 'what did i', 'previous'],
+  memory_recall: [
+    'recall',
+    'retrieve memory',
+    'search memory',
+    'remember',
+    'what did i',
+    'previous',
+  ],
   memory_list: ['list memories', 'show memories', 'browse memory'],
-  git: ['git', 'commit', 'push', 'pull', 'branch', 'merge', 'version control', 'repository', 'repo'],
+  git: [
+    'git',
+    'commit',
+    'push',
+    'pull',
+    'branch',
+    'merge',
+    'version control',
+    'repository',
+    'repo',
+  ],
   agent: ['delegate', 'sub-agent', 'subagent', 'spawn agent', 'fork', 'parallel task'],
-  execute_script: ['run script', 'execute script', 'script', 'run js', 'run ts', 'javascript', 'typescript', 'node script'],
-  vision_analyze: ['image', 'picture', 'photo', 'screenshot', 'visual', 'analyze image', 'describe image', 'ocr', 'what is in this image'],
+  execute_script: [
+    'run script',
+    'execute script',
+    'script',
+    'run js',
+    'run ts',
+    'javascript',
+    'typescript',
+    'node script',
+  ],
+  vision_analyze: [
+    'image',
+    'picture',
+    'photo',
+    'screenshot',
+    'visual',
+    'analyze image',
+    'describe image',
+    'ocr',
+    'what is in this image',
+  ],
   pdf_extract: ['pdf', 'extract pdf', 'read pdf', 'parse pdf', 'pdf text', 'pdf content'],
-  screenshot_capture: ['screenshot', 'capture screen', 'take screenshot', 'screen capture', 'grab screen'],
-  code_search: ['search code', 'find code', 'grep code', 'code search', 'search repository', 'find function', 'find class', 'ripgrep', 'find', 'search', 'locate', 'todo', 'fixme', 'hack', 'pattern', 'comment', 'count'],
+  screenshot_capture: [
+    'screenshot',
+    'capture screen',
+    'take screenshot',
+    'screen capture',
+    'grab screen',
+  ],
+  code_search: [
+    'search code',
+    'find code',
+    'grep code',
+    'code search',
+    'search repository',
+    'find function',
+    'find class',
+    'ripgrep',
+    'find',
+    'search',
+    'locate',
+    'todo',
+    'fixme',
+    'hack',
+    'pattern',
+    'comment',
+    'count',
+  ],
   apply_patch: ['patch', 'apply patch', 'diff', 'unified diff', 'code patch', 'apply diff'],
-  refine_code: ['refine', 'improve code', 'refactor', 'clean up code', 'code quality', 'code review', 'optimize code'],
-  verify_answer: ['verify', 'check answer', 'validate answer', 'verify answer', 'format answer', 'answer quality'],
-  fix_code: ['fix code', 'debug', 'fix error', 'fix bug', 'code fix', 'repair code', 'syntax error', 'runtime error'],
+  refine_code: [
+    'refine',
+    'improve code',
+    'refactor',
+    'clean up code',
+    'code quality',
+    'code review',
+    'optimize code',
+  ],
+  verify_answer: [
+    'verify',
+    'check answer',
+    'validate answer',
+    'verify answer',
+    'format answer',
+    'answer quality',
+  ],
+  fix_code: [
+    'fix code',
+    'debug',
+    'fix error',
+    'fix bug',
+    'code fix',
+    'repair code',
+    'syntax error',
+    'runtime error',
+  ],
 };
 
 const TOOL_CATEGORIES: Record<string, string> = {
@@ -221,9 +353,7 @@ export function getToolCategory(toolName: string): string {
  *
  * The order is: category priority (ascending) → tool name (alphabetical).
  */
-export function sortToolDefinitionsForCache(
-  defs: ToolDefinition[],
-): ToolDefinition[] {
+export function sortToolDefinitionsForCache(defs: ToolDefinition[]): ToolDefinition[] {
   return [...defs].sort((a, b) => {
     const catA = CATEGORY_SORT_PRIORITY[TOOL_CATEGORIES[a.name] ?? 'other'] ?? 99;
     const catB = CATEGORY_SORT_PRIORITY[TOOL_CATEGORIES[b.name] ?? 'other'] ?? 99;
@@ -281,11 +411,9 @@ export function buildTwoTierTools(
     };
   }
 
-  const toolNames = allTools.map(t => t.name);
+  const toolNames = allTools.map((t) => t.name);
   const scores = scoreToolsByGoal(goal, toolNames);
-  const refined = recentToolCalls
-    ? refineScoresWithHistory(scores, recentToolCalls)
-    : scores;
+  const refined = recentToolCalls ? refineScoresWithHistory(scores, recentToolCalls) : scores;
 
   // Sort by relevance score descending
   const sorted = Array.from(refined.entries()).sort((a, b) => b[1] - a[1]);
@@ -307,7 +435,7 @@ export function buildTwoTierTools(
   }
 
   // Phase 3: Build active and registry lists
-  const toolMap = new Map(allTools.map(t => [t.name, t]));
+  const toolMap = new Map(allTools.map((t) => [t.name, t]));
   const active: ToolDefinition[] = [];
   const activeNamesArray = Array.from(activeNames);
   for (let i = 0; i < activeNamesArray.length; i++) {
@@ -388,8 +516,8 @@ function truncateDescription(desc: string, maxLen: number): string {
 export function estimateToolTokenCost(tools: ToolDefinition[]): number {
   let totalChars = 0;
   for (const tool of tools) {
-    totalChars += (tool.name?.length ?? 0);
-    totalChars += (tool.description?.length ?? 0);
+    totalChars += tool.name?.length ?? 0;
+    totalChars += tool.description?.length ?? 0;
     totalChars += JSON.stringify(tool.inputSchema ?? {}).length;
     // Examples cost
     if (tool.examples) {
@@ -414,10 +542,7 @@ export interface TwoTierMetrics {
  * Calculate metrics for a two-tier tool layout.
  * Useful for logging cost savings.
  */
-export function calculateTierMetrics(
-  tier: ToolTier,
-  allToolsCount: number,
-): TwoTierMetrics {
+export function calculateTierMetrics(tier: ToolTier, allToolsCount: number): TwoTierMetrics {
   const activeTokens = estimateToolTokenCost(tier.active);
   // Registry is text, ~20 tokens per tool entry
   const registryTokens = tier.registry.length * 20;
@@ -429,8 +554,9 @@ export function calculateTierMetrics(
     registryCount: tier.registry.length,
     activeTokenEstimate: activeTokens,
     registryTokenEstimate: registryTokens,
-    savingsPercent: fullSchemaEstimate > 0
-      ? Math.round((1 - (activeTokens + registryTokens) / fullSchemaEstimate) * 100)
-      : 0,
+    savingsPercent:
+      fullSchemaEstimate > 0
+        ? Math.round((1 - (activeTokens + registryTokens) / fullSchemaEstimate) * 100)
+        : 0,
   };
 }

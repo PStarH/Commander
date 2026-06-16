@@ -120,7 +120,7 @@ describe('QualityGater', () => {
       const d3 = g.recordOutcome(makeMetrics({ quality: 0.3, passed: true }));
 
       // The first outcome that drops below threshold should trigger escalation
-      const escalatingDecision = [d1, d2, d3].find(d => d.action === 'escalate');
+      const escalatingDecision = [d1, d2, d3].find((d) => d.action === 'escalate');
       assert.ok(escalatingDecision, 'At least one decision should be an escalation');
       assert.ok(g.getRollingQuality() < 0.7, 'Rolling quality should be below threshold');
     });
@@ -136,11 +136,13 @@ describe('QualityGater', () => {
 
   describe('Rule 3: Critical issue escalation', () => {
     it('should escalate on critical severity', () => {
-      const decision = gater.recordOutcome(makeMetrics({
-        passed: true,
-        quality: 0.9,
-        worstSeverity: 'critical',
-      }));
+      const decision = gater.recordOutcome(
+        makeMetrics({
+          passed: true,
+          quality: 0.9,
+          worstSeverity: 'critical',
+        }),
+      );
 
       assert.equal(decision.action, 'escalate');
       assert.ok(decision.reason.includes('critical'));

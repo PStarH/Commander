@@ -123,7 +123,10 @@ export function compactToolDef(
     inputSchema = minifySchema(inputSchema, PARAM_NAME_ALIASES, tool.name);
     inputSchema = {
       ...inputSchema,
-      required: aliasArrayKeys(Array.isArray(inputSchema.required) ? inputSchema.required as string[] : undefined, PARAM_NAME_ALIASES),
+      required: aliasArrayKeys(
+        Array.isArray(inputSchema.required) ? (inputSchema.required as string[]) : undefined,
+        PARAM_NAME_ALIASES,
+      ),
     };
   }
 
@@ -178,7 +181,10 @@ function aliasKey(key: string, aliases: Record<string, string>): string {
   return aliases[key] ?? key;
 }
 
-function aliasArrayKeys(arr: string[] | undefined, aliases: Record<string, string>): string[] | undefined {
+function aliasArrayKeys(
+  arr: string[] | undefined,
+  aliases: Record<string, string>,
+): string[] | undefined {
   if (!arr) return undefined;
   return arr.map((k) => aliasKey(k, aliases));
 }
@@ -200,7 +206,12 @@ function minifySchema(
 
   for (const [key, value] of Object.entries(schema)) {
     // Skip redundant top-level description that duplicates the tool name
-    if (key === 'description' && toolName && typeof value === 'string' && value.toLowerCase() === toolName.toLowerCase()) {
+    if (
+      key === 'description' &&
+      toolName &&
+      typeof value === 'string' &&
+      value.toLowerCase() === toolName.toLowerCase()
+    ) {
       continue;
     }
 
@@ -259,7 +270,10 @@ export function minifyToolDef(
     inputSchema: {
       ...minifiedSchema,
       properties: minifiedSchema.properties,
-      required: aliasArrayKeys(Array.isArray(minifiedSchema.required) ? minifiedSchema.required as string[] : undefined, aliases),
+      required: aliasArrayKeys(
+        Array.isArray(minifiedSchema.required) ? (minifiedSchema.required as string[]) : undefined,
+        aliases,
+      ),
     },
   };
 }
@@ -272,17 +286,17 @@ export function restoreToolDefAliases(
   tool: ToolDefinition,
   aliases: Record<string, string> = REVERSE_PARAM_NAME_ALIASES,
 ): ToolDefinition {
-  const restoredSchema = minifySchema(
-    tool.inputSchema as Record<string, unknown>,
-    aliases,
-  );
+  const restoredSchema = minifySchema(tool.inputSchema as Record<string, unknown>, aliases);
 
   return {
     ...tool,
     inputSchema: {
       ...restoredSchema,
       properties: restoredSchema.properties,
-      required: aliasArrayKeys(Array.isArray(restoredSchema.required) ? restoredSchema.required as string[] : undefined, aliases),
+      required: aliasArrayKeys(
+        Array.isArray(restoredSchema.required) ? (restoredSchema.required as string[]) : undefined,
+        aliases,
+      ),
     },
   };
 }

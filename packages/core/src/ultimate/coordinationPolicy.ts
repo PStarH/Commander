@@ -73,11 +73,21 @@ export function evaluateCoordinationPolicy(
   const coordinationChannels = agentCount <= 1 ? 0 : (agentCount * (agentCount - 1)) / 2;
   const tokenMultiplier = TOPOLOGY_TOKEN_MULTIPLIER[candidateTopology];
   const roiThreshold = learnedWeights
-    ? learnedWeights.getCoordinationWeight('roi_threshold', deliberation.taskType, DEFAULT_ROI_THRESHOLD, tenantId)
+    ? learnedWeights.getCoordinationWeight(
+        'roi_threshold',
+        deliberation.taskType,
+        DEFAULT_ROI_THRESHOLD,
+        tenantId,
+      )
     : DEFAULT_ROI_THRESHOLD;
 
   const coupling = learnedWeights
-    ? learnedWeights.getCoordinationWeight('coupling', deliberation.taskType, inferCoupling(deliberation, dag), tenantId)
+    ? learnedWeights.getCoordinationWeight(
+        'coupling',
+        deliberation.taskType,
+        inferCoupling(deliberation, dag),
+        tenantId,
+      )
     : inferCoupling(deliberation, dag);
   const usefulParallelism = inferUsefulParallelism(deliberation, dag);
   const parallelismEfficiency = Math.max(
@@ -247,7 +257,12 @@ function estimateGain(
 ): CoordinationGainEstimate {
   const defaultBreadth = breadthSignal(deliberation, usefulParallelism);
   const breadthGain = learnedWeights
-    ? learnedWeights.getCoordinationWeight('breadth_gain', deliberation.taskType, defaultBreadth, tenantId)
+    ? learnedWeights.getCoordinationWeight(
+        'breadth_gain',
+        deliberation.taskType,
+        defaultBreadth,
+        tenantId,
+      )
     : defaultBreadth;
   const structureGain = structuralSignal(deliberation, topology);
   const contextGain =

@@ -171,8 +171,8 @@ export function computeFileAnchors(
         // True collision: same hash, different normalized content
         warnings.push(
           `Content hash collision in ${filePath}: lines ${firstSeen} and ${lineNum} ` +
-          `have different content but share hash ${hash}. ` +
-          `Use file-level anchors or re-read with a different line range.`,
+            `have different content but share hash ${hash}. ` +
+            `Use file-level anchors or re-read with a different line range.`,
         );
       }
       // Same normalized content, different line = duplicate line, not a collision
@@ -188,8 +188,11 @@ export function computeFileAnchors(
  * Find an anchor by hash in a file's anchors array.
  * Returns the anchor or undefined if not found.
  */
-export function findAnchor(anchors: ContentHashAnchor[], hash: string): ContentHashAnchor | undefined {
-  return anchors.find(a => a.hash === hash);
+export function findAnchor(
+  anchors: ContentHashAnchor[],
+  hash: string,
+): ContentHashAnchor | undefined {
+  return anchors.find((a) => a.hash === hash);
 }
 
 /**
@@ -207,7 +210,7 @@ export function findAnchorRange(
   let searchFrom = 0;
 
   for (const hash of hashes) {
-    const found = anchors.slice(searchFrom).find(a => a.hash === hash);
+    const found = anchors.slice(searchFrom).find((a) => a.hash === hash);
     if (!found) return undefined;
 
     // Check contiguity (except for the first match)
@@ -412,8 +415,8 @@ export function parseHashEdit(input: string): HashEditParseResult {
       // We'll handle these as unresolved anchors
       errors.push(
         `Line ${i + 1}: Legacy hashline format detected. ` +
-        `Use content-hash format: @HASH→replacement instead of 'replace N..M:'. ` +
-        `Content hashes are shown in file_read output as #XXXXXX at the end of each line.`,
+          `Use content-hash format: @HASH→replacement instead of 'replace N..M:'. ` +
+          `Content hashes are shown in file_read output as #XXXXXX at the end of each line.`,
       );
       continue;
     }
@@ -422,7 +425,7 @@ export function parseHashEdit(input: string): HashEditParseResult {
     if (trimmed.startsWith('+')) {
       errors.push(
         `Line ${i + 1}: Legacy hashline body row detected. ` +
-        `Use content-hash format: @HASH→replacement.`,
+          `Use content-hash format: @HASH→replacement.`,
       );
       continue;
     }
@@ -481,7 +484,10 @@ function parseHashEditOp(line: string, sep: string): { op?: HashEditOp; error?: 
   const replacementPart = withoutSigil.slice(sepIndex + sep.length).trim();
 
   // Parse hashes (comma-separated)
-  const hashes = hashesPart.split(',').map(h => h.trim().toUpperCase()).filter(h => h.length > 0);
+  const hashes = hashesPart
+    .split(',')
+    .map((h) => h.trim().toUpperCase())
+    .filter((h) => h.length > 0);
 
   if (hashes.length === 0) {
     return { error: `No content hash specified. Format: @HASH→replacement` };
@@ -617,7 +623,11 @@ export function applyHashEdit(section: HashEditSection): HashEditApplyResult {
     // Replace lines
     const replacementLines = op.replacement.split('\n');
     // Remove trailing empty string from split if replacement ends with \n
-    if (replacementLines.length > 0 && replacementLines[replacementLines.length - 1] === '' && op.replacement.endsWith('\n')) {
+    if (
+      replacementLines.length > 0 &&
+      replacementLines[replacementLines.length - 1] === '' &&
+      op.replacement.endsWith('\n')
+    ) {
       replacementLines.pop();
     }
 
@@ -633,7 +643,11 @@ export function applyHashEdit(section: HashEditSection): HashEditApplyResult {
     fs.writeFileSync(tmpPath, newContent, 'utf-8');
     fs.renameSync(tmpPath, section.filePath);
   } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      /* ignore */
+    }
     return {
       success: false,
       filePath: section.filePath,

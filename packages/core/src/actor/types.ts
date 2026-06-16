@@ -25,14 +25,14 @@ export type ActorId = string;
 /**
  * Actor lifecycle states.
  */
-export type ActorState = 
-  | 'created'    // Actor initialized but not started
-  | 'running'    // Actor is processing messages
-  | 'suspended'  // Actor is temporarily paused
-  | 'stopping'   // Graceful shutdown in progress
-  | 'stopped'    // Actor has terminated
-  | 'failed'     // Actor failed and awaiting supervision
-  | 'restarting' // Actor is being restarted by supervisor
+export type ActorState =
+  | 'created' // Actor initialized but not started
+  | 'running' // Actor is processing messages
+  | 'suspended' // Actor is temporarily paused
+  | 'stopping' // Graceful shutdown in progress
+  | 'stopped' // Actor has terminated
+  | 'failed' // Actor failed and awaiting supervision
+  | 'restarting'; // Actor is being restarted by supervisor
 
 /**
  * Base interface for all actor messages.
@@ -179,7 +179,11 @@ export interface ActorContext {
   /** Send a message to another actor */
   send(targetId: ActorId, message: ActorMessage): void;
   /** Send a message and wait for response (ask pattern) */
-  ask<T extends ActorMessage>(targetId: ActorId, message: ActorMessage, timeoutMs?: number): Promise<T>;
+  ask<T extends ActorMessage>(
+    targetId: ActorId,
+    message: ActorMessage,
+    timeoutMs?: number,
+  ): Promise<T>;
   /** Send message to self (for deferred processing) */
   sendSelf(message: ActorMessage): void;
   /** Get reference to this actor */
@@ -257,10 +261,10 @@ export interface MailboxEntry {
 /**
  * Restart strategy for handling actor failures.
  */
-export type RestartStrategy = 
-  | 'one_for_one'   // Only restart the failed actor
-  | 'one_for_all'   // Restart all actors in the group
-  | 'rest_for_one'  // Restart the failed actor and all actors started after it
+export type RestartStrategy =
+  | 'one_for_one' // Only restart the failed actor
+  | 'one_for_all' // Restart all actors in the group
+  | 'rest_for_one'; // Restart the failed actor and all actors started after it
 
 /**
  * Supervisor configuration.
@@ -480,7 +484,7 @@ export interface WorkerAgentState {
 /**
  * Message types specific to WorkerAgent.
  */
-export type WorkerAgentMessage = 
+export type WorkerAgentMessage =
   | ExecuteSubtaskMessage
   | SubtaskResultMessage
   | StatusQueryMessage

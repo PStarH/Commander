@@ -91,13 +91,7 @@ export class CompensationBridge {
     options?: { tenantId?: string; maxAttempts?: number },
   ): Promise<{ aborted: boolean; outcome: CompensationOutcome }> {
     const bundle = getRunLedgerBundle();
-    return bundle.ledger.abortAndCompensate(
-      runId,
-      leaseToken,
-      fencingEpoch,
-      errorMessage,
-      options,
-    );
+    return bundle.ledger.abortAndCompensate(runId, leaseToken, fencingEpoch, errorMessage, options);
   }
 
   getPendingCount(): number {

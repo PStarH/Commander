@@ -37,10 +37,10 @@ export const options = {
     { duration: '10s', target: 0 },
   ],
   thresholds: {
-    http_req_duration: ['p(95)<2000'],      // 95% under 2s
-    errors: ['rate<0.05'],                   // Error rate under 5%
-    agent_loop_latency: ['p(95)<5000'],      // Agent loop under 5s
-    tool_execution_latency: ['p(95)<1000'],  // Tool execution under 1s
+    http_req_duration: ['p(95)<2000'], // 95% under 2s
+    errors: ['rate<0.05'], // Error rate under 5%
+    agent_loop_latency: ['p(95)<5000'], // Agent loop under 5s
+    tool_execution_latency: ['p(95)<1000'], // Tool execution under 1s
   },
 };
 
@@ -93,7 +93,7 @@ export default function () {
   const params = {
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${__ENV.K6_API_KEY || 'test-key'}`,
+      Authorization: `Bearer ${__ENV.K6_API_KEY || 'test-key'}`,
     },
     timeout: '30s',
   };
@@ -158,7 +158,8 @@ export default function () {
 
     check(res, {
       [`tool ${toolName} status is 200`]: (r) => r.status === 200,
-      [`tool ${toolName} has result`]: (r) => r.json('result') !== undefined || r.json('error') !== undefined,
+      [`tool ${toolName} has result`]: (r) =>
+        r.json('result') !== undefined || r.json('error') !== undefined,
     });
   }
 

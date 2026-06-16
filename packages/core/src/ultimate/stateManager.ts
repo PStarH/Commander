@@ -1,7 +1,10 @@
 import type { SharedState, SharedStateUpdate, StateReducer } from './types';
 
 const appendReducer: StateReducer<string[]> = (prev, next) => [...prev, ...next];
-const appendMsgReducer: StateReducer<Array<{ from: string; subject: string; body: string }>> = (prev, next) => [...prev, ...next];
+const appendMsgReducer: StateReducer<Array<{ from: string; subject: string; body: string }>> = (
+  prev,
+  next,
+) => [...prev, ...next];
 const sumReducer: StateReducer<number> = (prev, next) => prev + next;
 
 /**

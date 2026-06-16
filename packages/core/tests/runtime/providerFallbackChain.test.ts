@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ProviderFallbackChain, FallbackChainExhaustedError, type ProviderEntry } from '../../src/runtime/providerFallbackChain';
+import {
+  ProviderFallbackChain,
+  FallbackChainExhaustedError,
+  type ProviderEntry,
+} from '../../src/runtime/providerFallbackChain';
 import { CircuitBreaker } from '../../src/runtime/circuitBreaker';
 
 describe('ProviderFallbackChain', () => {
@@ -28,7 +32,7 @@ describe('ProviderFallbackChain', () => {
 
   it('throws immediately on permanent (non-retryable) error', async () => {
     const chain = new ProviderFallbackChain<string>({
-      isRetryable: err => /retryable/.test((err as Error).message),
+      isRetryable: (err) => /retryable/.test((err as Error).message),
     });
     const providers: ProviderEntry<string>[] = [
       { name: 'primary', attempt: () => Promise.reject(new Error('permanent auth error')) },

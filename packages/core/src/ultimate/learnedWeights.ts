@@ -325,12 +325,7 @@ export class LearnedWeights {
    * The `value` is an EMA-smoothed scalar; callers typically record the
    * observed coupling or gain after each task completion.
    */
-  recordCoordinationWeight(
-    key: string,
-    taskType: string,
-    value: number,
-    tenantId?: string,
-  ): void {
+  recordCoordinationWeight(key: string, taskType: string, value: number, tenantId?: string): void {
     const tid = this.resolveTenantId(tenantId);
     const mapKey = `${tid}::${key}::${taskType}`;
     const prev = this.coordinationWeights.get(mapKey);
@@ -342,7 +337,12 @@ export class LearnedWeights {
    * Retrieve a learned coordination weight. Returns `defaultValue` when no
    * signal has been recorded for the (tenant, key, taskType) triple.
    */
-  getCoordinationWeight(key: string, taskType: string, defaultValue: number, tenantId?: string): number {
+  getCoordinationWeight(
+    key: string,
+    taskType: string,
+    defaultValue: number,
+    tenantId?: string,
+  ): number {
     const tid = this.resolveTenantId(tenantId);
     const mapKey = `${tid}::${key}::${taskType}`;
     return this.coordinationWeights.get(mapKey) ?? defaultValue;

@@ -94,9 +94,5 @@ export type BackendConfig = SSHConfig | DockerExecConfig;
 export interface ExecutionBackend {
   readonly type: ExecutionBackendType;
   readonly available: boolean;
-  execute(
-    command: string,
-    workdir?: string,
-    timeout?: number,
-  ): Promise<SandboxExecutionResult>;
+  execute(command: string, workdir?: string, timeout?: number): Promise<SandboxExecutionResult>;
 }

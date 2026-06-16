@@ -3,17 +3,20 @@ import { getMessageBus } from './messageBus';
 
 export interface MCPRemoteRuntimeConfig {
   serverName: string;
-  callTool: (name: string, args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }>;
+  callTool: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }>;
   maxSteps?: number;
 }
 
 /**
  * MCP Remote Runtime — wraps a remote MCP server as an AgentRuntime-compatible executor.
- * 
+ *
  * This enables distributed multi-agent execution: sub-agents are dispatched to
  * remote MCP servers via the "run_agent" MCP tool. The remote server runs the
  * agent and returns results over JSON-RPC.
- * 
+ *
  * Usage:
  *   const remoteRuntime = new MCPRemoteRuntime({
  *     serverName: 'worker-1',
@@ -58,7 +61,7 @@ export class MCPRemoteRuntime {
       const durationMs = Date.now() - startTime;
 
       if (result.isError) {
-        const errorText = result.content.map(c => c.text ?? '').join('\n');
+        const errorText = result.content.map((c) => c.text ?? '').join('\n');
         steps.push({
           stepNumber: 1,
           timestamp: new Date().toISOString(),
@@ -67,7 +70,11 @@ export class MCPRemoteRuntime {
           durationMs,
         });
 
-        bus.publish('agent.failed', `mcp:${this.name}`, { runId, agentId: ctx.agentId, error: errorText });
+        bus.publish('agent.failed', `mcp:${this.name}`, {
+          runId,
+          agentId: ctx.agentId,
+          error: errorText,
+        });
 
         return {
           runId,
@@ -81,7 +88,7 @@ export class MCPRemoteRuntime {
         };
       }
 
-      const outputText = result.content.map(c => c.text ?? '').join('\n');
+      const outputText = result.content.map((c) => c.text ?? '').join('\n');
       steps.push({
         stepNumber: 1,
         timestamp: new Date().toISOString(),
@@ -103,14 +110,22 @@ export class MCPRemoteRuntime {
         status: 'success',
         summary: outputText.slice(0, 500),
         steps,
-        totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: Math.ceil(outputText.length / 4) },
+        totalTokenUsage: {
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: Math.ceil(outputText.length / 4),
+        },
         totalDurationMs: durationMs,
       };
     } catch (err) {
       const durationMs = Date.now() - startTime;
       const errorMsg = err instanceof Error ? err.message : String(err);
 
-      bus.publish('agent.failed', `mcp:${this.name}`, { runId, agentId: ctx.agentId, error: errorMsg });
+      bus.publish('agent.failed', `mcp:${this.name}`, {
+        runId,
+        agentId: ctx.agentId,
+        error: errorMsg,
+      });
 
       return {
         runId,

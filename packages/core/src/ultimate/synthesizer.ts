@@ -79,8 +79,9 @@ export class MultiAgentSynthesizer {
     }
 
     const gateResults = await this.runQualityGates(config.qualityGates, synthesis, taskTree);
-    const qualityScore = gateResults.reduce((acc, g) => acc + (g.passed ? g.score : 0), 0)
-      / Math.max(1, gateResults.length);
+    const qualityScore =
+      gateResults.reduce((acc, g) => acc + (g.passed ? g.score : 0), 0) /
+      Math.max(1, gateResults.length);
 
     return {
       synthesis,
@@ -104,7 +105,9 @@ export class MultiAgentSynthesizer {
 
     // Executive summary
     parts.push(`# Synthesis\n`);
-    parts.push(`Synthesized from ${completedNodes.length} completed subtasks across ${artifacts.length} artifacts.\n`);
+    parts.push(
+      `Synthesized from ${completedNodes.length} completed subtasks across ${artifacts.length} artifacts.\n`,
+    );
 
     // Build a structured synthesis that develops each result section
     // For non-atomic nodes, prefer fullSubtaskResults (preserves original data)
@@ -125,7 +128,9 @@ export class MultiAgentSynthesizer {
 
       // For thin results from substantial tasks, add a note
       if (!isSubstantial && node.goal.length > 50) {
-        parts.push(`\n*[Note: This subtask produced a brief result (${resultLen} chars). The analysis above may be incomplete.]*\n`);
+        parts.push(
+          `\n*[Note: This subtask produced a brief result (${resultLen} chars). The analysis above may be incomplete.]*\n`,
+        );
       }
     }
 
@@ -145,7 +150,9 @@ export class MultiAgentSynthesizer {
         parts.push('\n## Limitations and Caveats\n');
         parts.push(`${failedNodes.length} subtask(s) encountered issues during execution:\n`);
         for (const node of failedNodes) {
-          parts.push(`- **${node.goal.slice(0, 100)}**: did not complete successfully (status: ${node.status})`);
+          parts.push(
+            `- **${node.goal.slice(0, 100)}**: did not complete successfully (status: ${node.status})`,
+          );
         }
         parts.push('\nConclusions drawn from partial results should be interpreted with caution.');
       }
@@ -186,20 +193,23 @@ export class MultiAgentSynthesizer {
     if (completed.length === 0) return 'No completed results to synthesize.';
 
     const results = completed
-      .map(n => ({
+      .map((n) => ({
         text: n.result ?? '',
         goal: n.goal,
         length: (n.result ?? '').length,
         depth: this.getDepth(n, taskTree),
       }))
-      .filter(r => r.text.length >= MIN_VOTE_RESULT_LENGTH);
+      .filter((r) => r.text.length >= MIN_VOTE_RESULT_LENGTH);
 
     if (results.length === 0) {
-      return completed.map(n => n.result ?? '').filter(Boolean).join('\n\n---\n\n');
+      return completed
+        .map((n) => n.result ?? '')
+        .filter(Boolean)
+        .join('\n\n---\n\n');
     }
 
     // Vote: score each result by quality heuristics and pick the best
-    const scored = results.map(r => {
+    const scored = results.map((r) => {
       let score = 0;
       // Longer, more detailed results score higher (up to a point)
       score += Math.min(1, r.length / 2000) * 0.3;
@@ -220,7 +230,9 @@ export class MultiAgentSynthesizer {
     const parts: string[] = [];
 
     parts.push(`# Voted Synthesis\n`);
-    parts.push(`Selected from ${results.length} independent analyses via quality-weighted voting.\n`);
+    parts.push(
+      `Selected from ${results.length} independent analyses via quality-weighted voting.\n`,
+    );
     parts.push(`## Primary Analysis\n`);
     parts.push(primary.text);
 
@@ -250,7 +262,7 @@ export class MultiAgentSynthesizer {
 
     // Score each result by multiple quality dimensions
     const scored = completed
-      .map(n => {
+      .map((n) => {
         const text = n.result ?? '';
         const depth = this.getDepth(n, taskTree);
         const maxDepth = this.getMaxDepth(taskTree);
@@ -262,7 +274,7 @@ export class MultiAgentSynthesizer {
         const completenessScore = text.length > 0 ? 1 : 0;
 
         // Depth quality: shallower = more context = higher priority
-        const depthScore = maxDepth > 0 ? (1 - depth / maxDepth) : 1;
+        const depthScore = maxDepth > 0 ? 1 - depth / maxDepth : 1;
 
         const totalScore =
           lengthScore * ENSEMBLE_LENGTH_WEIGHT +
@@ -271,7 +283,7 @@ export class MultiAgentSynthesizer {
 
         return { text, goal: n.goal, depth, score: totalScore };
       })
-      .filter(r => r.text.length > 0)
+      .filter((r) => r.text.length > 0)
       .sort((a, b) => b.score - a.score);
 
     if (scored.length === 0) return 'No results to ensemble.';
@@ -282,8 +294,12 @@ export class MultiAgentSynthesizer {
     parts.push(`Combined from ${scored.length} analyses, weighted by quality metrics.\n`);
 
     for (const result of scored) {
-      const weightLabel = result.score > 0.7 ? '★ High confidence' :
-                          result.score > 0.4 ? '◆ Medium confidence' : '○ Lower confidence';
+      const weightLabel =
+        result.score > 0.7
+          ? '★ High confidence'
+          : result.score > 0.4
+            ? '◆ Medium confidence'
+            : '○ Lower confidence';
       parts.push(`\n## ${weightLabel}: ${result.goal.slice(0, 80)}\n`);
       parts.push(result.text);
     }
@@ -366,9 +382,14 @@ export class MultiAgentSynthesizer {
 
     // Check for hedging language that suggests internal disagreement
     const hedgingPhrases = [
-      'on one hand', 'on the other hand',
-      'however', 'nevertheless', 'despite this',
-      'in contrast', 'conversely', 'alternatively',
+      'on one hand',
+      'on the other hand',
+      'however',
+      'nevertheless',
+      'despite this',
+      'in contrast',
+      'conversely',
+      'alternatively',
     ];
 
     let hedgingCount = 0;
@@ -427,9 +448,18 @@ export class MultiAgentSynthesizer {
     const lower = synthesis.toLowerCase();
 
     const uncertaintyPhrases = [
-      'might be', 'could be', 'possibly', 'perhaps',
-      'not sure', 'unclear', 'unknown', 'insufficient',
-      'i think', 'i believe', 'it seems', 'apparently',
+      'might be',
+      'could be',
+      'possibly',
+      'perhaps',
+      'not sure',
+      'unclear',
+      'unknown',
+      'insufficient',
+      'i think',
+      'i believe',
+      'it seems',
+      'apparently',
     ];
     let uncertaintyCount = 0;
     for (const phrase of uncertaintyPhrases) {

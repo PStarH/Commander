@@ -73,17 +73,28 @@ export type OptimizationAction =
   | { type: 'merge_nodes'; nodeIds: string[]; into: string; rationale: string }
   | { type: 'add_edge'; from: string; to: string; rationale: string }
   | { type: 'remove_edge'; from: string; to: string; rationale: string }
-  | { type: 'change_topology'; from: OrchestrationTopology; to: OrchestrationTopology; rationale: string }
+  | {
+      type: 'change_topology';
+      from: OrchestrationTopology;
+      to: OrchestrationTopology;
+      rationale: string;
+    }
   | { type: 'reorder_nodes'; nodeIds: string[]; rationale: string }
-  | { type: 'upgrade_model_tier'; nodeId: string; fromTier: string; toTier: string; rationale: string };
+  | {
+      type: 'upgrade_model_tier';
+      nodeId: string;
+      fromTier: string;
+      toTier: string;
+      rationale: string;
+    };
 
 export interface OptimizationProposal {
   id: string;
   timestamp: string;
   actions: OptimizationAction[];
   expectedImprovement: number; // 预期提升（0-1）
-  confidence: number;          // 建议置信度（0-1）
-  rationale: string;           // 总体理由
+  confidence: number; // 建议置信度（0-1）
+  rationale: string; // 总体理由
   priority: 'high' | 'medium' | 'low';
   source: 'reflexion' | 'quantitative' | 'hybrid';
   /** 基于历史数据的证据 */
@@ -129,7 +140,12 @@ class ExecutionAnalyzer {
     const loadBalance = this.calculateLoadBalance(tree, metrics);
 
     // 6. 综合健康状况
-    const healthScore = this.computeHealthScore(criticalPath, parallelism, loadBalance, bottlenecks);
+    const healthScore = this.computeHealthScore(
+      criticalPath,
+      parallelism,
+      loadBalance,
+      bottlenecks,
+    );
 
     // 7. 推荐拓扑
     const recommendedTopology = this.recommendTopology(criticalPath, parallelism, loadBalance);
@@ -168,9 +184,10 @@ class ExecutionAnalyzer {
     parallelismHistory: number[],
   ): { max: number; avg: number; utilization: number } {
     const maxParallel = node.subtasks.length;
-    const avgParallel = parallelismHistory.length > 0
-      ? parallelismHistory.reduce((a, b) => a + b, 0) / parallelismHistory.length
-      : maxParallel;
+    const avgParallel =
+      parallelismHistory.length > 0
+        ? parallelismHistory.reduce((a, b) => a + b, 0) / parallelismHistory.length
+        : maxParallel;
 
     const utilization = maxParallel > 0 ? avgParallel / maxParallel : 1;
 
@@ -238,10 +255,10 @@ class ExecutionAnalyzer {
     node: TaskTreeNode,
     metrics: ExecutionSnapshot['metrics'],
   ): { score: number; details: string[] } {
-    const leafNodes = this.flattenTree(node).filter(n => n.subtasks.length === 0);
+    const leafNodes = this.flattenTree(node).filter((n) => n.subtasks.length === 0);
     if (leafNodes.length < 2) return { score: 1, details: [] };
 
-    const durations = leafNodes.map(n => metrics.nodeDurations.get(n.id) ?? 0);
+    const durations = leafNodes.map((n) => metrics.nodeDurations.get(n.id) ?? 0);
     const avg = durations.reduce((a, b) => a + b, 0) / durations.length;
     const variance = durations.reduce((sum, d) => sum + Math.pow(d - avg, 2), 0) / durations.length;
     const stdDev = Math.sqrt(variance);
@@ -315,7 +332,9 @@ class ExecutionAnalyzer {
     const parts: string[] = [];
 
     parts.push(`关键路径长度: ${criticalPath.length} 个节点`);
-    parts.push(`最大并行度: ${parallelism.max}, 实际利用率: ${(parallelism.utilization * 100).toFixed(0)}%`);
+    parts.push(
+      `最大并行度: ${parallelism.max}, 实际利用率: ${(parallelism.utilization * 100).toFixed(0)}%`,
+    );
     parts.push(`负载均衡度: ${(loadBalance.score * 100).toFixed(0)}%`);
 
     if (bottlenecks.length > 0) {
@@ -378,11 +397,8 @@ class ExecutionAnalyzer {
     return false;
   }
 
-  private computeAvgDuration(
-    nodes: TaskTreeNode[],
-    metrics: ExecutionSnapshot['metrics'],
-  ): number {
-    const durations = nodes.map(n => metrics.nodeDurations.get(n.id) ?? 0);
+  private computeAvgDuration(nodes: TaskTreeNode[], metrics: ExecutionSnapshot['metrics']): number {
+    const durations = nodes.map((n) => metrics.nodeDurations.get(n.id) ?? 0);
     return durations.length > 0 ? durations.reduce((a, b) => a + b, 0) / durations.length : 0;
   }
 }
@@ -425,11 +441,7 @@ export class ReflexionTopologicalOptimizer {
     const newTree = this.applyActions(originalTree, proposal.actions);
 
     // 5. 使用Reflexion评估优化效果
-    const reflection = await this.reflectOnOptimization(
-      diagnostics,
-      proposal,
-      experience,
-    );
+    const reflection = await this.reflectOnOptimization(diagnostics, proposal, experience);
     proposal.rationale += `\n\nReflexion: ${reflection}`;
 
     // 6. 记录结果
@@ -458,22 +470,43 @@ export class ReflexionTopologicalOptimizer {
     const nodeTokenUsage = new Map<string, number>();
     const parallelismHistory: number[] = [];
 
-// 使用经验数据估算节点指标
-     if (experience.lessons && experience.lessons.length > 0) {
-       nodeDurations.set('estimated', experience.durationMs ?? 0);
-     }
+    // 使用经验数据估算节点指标
+    if (experience.lessons && experience.lessons.length > 0) {
+      nodeDurations.set('estimated', experience.durationMs ?? 0);
+    }
 
-return {
-       tree,
-        result: { status: 'SUCCESS' as const, summary: '', id: '', synthesis: '', artifacts: [], executionTree: [], reasoning: [], metrics: { totalTokens: 0, totalCostUsd: 0, totalDurationMs: 0, llmCalls: 0, toolCalls: 0, subAgentsSpawned: 0, artifactsCreated: 0, qualityScore: 0, topologyUsed: 'SINGLE' as const, effortLevelUsed: 'COMPLEX' as const }, errors:[] } as UltimateExecutionResult,
-       metrics: {
-         totalDurationMs: experience.durationMs,
-         totalTokens: experience.tokenCost ?? 0,
-         nodeDurations,
-         nodeTokenUsage,
-         parallelismAtEachStep: parallelismHistory,
-       },
-     };
+    return {
+      tree,
+      result: {
+        status: 'SUCCESS' as const,
+        summary: '',
+        id: '',
+        synthesis: '',
+        artifacts: [],
+        executionTree: [],
+        reasoning: [],
+        metrics: {
+          totalTokens: 0,
+          totalCostUsd: 0,
+          totalDurationMs: 0,
+          llmCalls: 0,
+          toolCalls: 0,
+          subAgentsSpawned: 0,
+          artifactsCreated: 0,
+          qualityScore: 0,
+          topologyUsed: 'SINGLE' as const,
+          effortLevelUsed: 'COMPLEX' as const,
+        },
+        errors: [],
+      } as UltimateExecutionResult,
+      metrics: {
+        totalDurationMs: experience.durationMs,
+        totalTokens: experience.tokenCost ?? 0,
+        nodeDurations,
+        nodeTokenUsage,
+        parallelismAtEachStep: parallelismHistory,
+      },
+    };
   }
 
   /**
@@ -523,7 +556,7 @@ return {
     if (diagnostics.loadBalanceScore < 0.6) {
       actions.push({
         type: 'reorder_nodes',
-        nodeIds: diagnostics.bottlenecks.map(b => b.nodeId),
+        nodeIds: diagnostics.bottlenecks.map((b) => b.nodeId),
         rationale: `重新排序以改善负载均衡（当前评分: ${(diagnostics.loadBalanceScore * 100).toFixed(0)}%）`,
       });
     }
@@ -532,9 +565,10 @@ return {
     if (experience.modelUsed) {
       const metaLearner = getMetaLearner();
       const modelScores = metaLearner.getStrategyScoresForModel(experience.modelUsed);
-      const scores = modelScores.length > 0
-        ? modelScores
-        : metaLearner.getStrategyScores(experience.taskType ?? 'general');
+      const scores =
+        modelScores.length > 0
+          ? modelScores
+          : metaLearner.getStrategyScores(experience.taskType ?? 'general');
       if (scores.length > 0 && scores[0].strategy !== 'SEQUENTIAL' && scores[0].score >= 0.4) {
         actions.push({
           type: 'upgrade_model_tier',
@@ -556,7 +590,8 @@ return {
       expectedImprovement: Math.min(1, diagnostics.healthScore < 0.5 ? 0.3 : 0.15),
       confidence,
       rationale: diagnostics.diagnosis,
-      priority: diagnostics.healthScore < 0.4 ? 'high' : diagnostics.healthScore < 0.7 ? 'medium' : 'low',
+      priority:
+        diagnostics.healthScore < 0.4 ? 'high' : diagnostics.healthScore < 0.7 ? 'medium' : 'low',
       source: 'hybrid',
       evidence: [
         `关键路径长度: ${diagnostics.criticalPathLength}`,
@@ -614,11 +649,11 @@ return {
     this.reflectionEngine.addReflection(
       sessionId,
       `Topology optimization after execution with ${diagnostics.criticalPathLength} critical path length, ` +
-      `${diagnostics.bottlenecks.length} bottlenecks, parallelism utilization ${(diagnostics.parallelismUtilization * 100).toFixed(0)}%`,
+        `${diagnostics.bottlenecks.length} bottlenecks, parallelism utilization ${(diagnostics.parallelismUtilization * 100).toFixed(0)}%`,
       `Are the proposed ${proposal.actions.length} actions likely to improve performance?`,
-      `Proposed actions: ${proposal.actions.map(a => a.type).join(', ')}. ` +
-      `Expected improvement: ${(proposal.expectedImprovement * 100).toFixed(0)}%. ` +
-      `Confidence: ${(proposal.confidence * 100).toFixed(0)}%`,
+      `Proposed actions: ${proposal.actions.map((a) => a.type).join(', ')}. ` +
+        `Expected improvement: ${(proposal.expectedImprovement * 100).toFixed(0)}%. ` +
+        `Confidence: ${(proposal.confidence * 100).toFixed(0)}%`,
     );
 
     const insights = this.reflectionEngine.getRecommendations(sessionId);
@@ -649,20 +684,20 @@ return {
     node.subtasks = [];
 
     const chunkSize = Math.ceil(subtasks.length / into.length);
-for (let i = 0; i < into.length; i++) {
-       const chunk = subtasks.slice(i * chunkSize, (i + 1) * chunkSize);
-       node.subtasks.push({
-         id: into[i],
-         parentId: node.id,
-         goal: `${node.goal} (part ${i + 1})`,
-         role: 'EXECUTOR' as ROMARole,
-         isAtomic: true,
-         status: 'PENDING' as const,
-         subtasks: chunk,
-         dependencies: i === 0 ? node.dependencies : [into[i - 1]],
-         context: { ...node.context, splitFrom: nodeId },
-       });
-     }
+    for (let i = 0; i < into.length; i++) {
+      const chunk = subtasks.slice(i * chunkSize, (i + 1) * chunkSize);
+      node.subtasks.push({
+        id: into[i],
+        parentId: node.id,
+        goal: `${node.goal} (part ${i + 1})`,
+        role: 'EXECUTOR' as ROMARole,
+        isAtomic: true,
+        status: 'PENDING' as const,
+        subtasks: chunk,
+        dependencies: i === 0 ? node.dependencies : [into[i - 1]],
+        context: { ...node.context, splitFrom: nodeId },
+      });
+    }
   }
 
   private mergeNodes(tree: TaskTreeNode, nodeIds: string[], into: string): void {
@@ -680,24 +715,21 @@ for (let i = 0; i < into.length; i++) {
     const parent = findParent(tree);
     if (!parent) return;
 
-const mergedNode: TaskTreeNode = {
-       id: into,
-       parentId: parent.id,
-       goal: `Merged: ${nodeIds.map(id => parent.subtasks.find(s => s.id === id)?.goal ?? '').join(' + ')}`,
-       role: 'EXECUTOR' as ROMARole,
-       isAtomic: false,
-       status: 'PENDING' as const,
-       subtasks: nodeIds
-         .map(id => parent.subtasks.find(s => s.id === id))
-         .filter(Boolean) as TaskTreeNode[],
-       dependencies: [],
-       context: { systemPrompt: '', availableTools: [], estimatedTokens: 0, mergedFrom: nodeIds },
-     };
+    const mergedNode: TaskTreeNode = {
+      id: into,
+      parentId: parent.id,
+      goal: `Merged: ${nodeIds.map((id) => parent.subtasks.find((s) => s.id === id)?.goal ?? '').join(' + ')}`,
+      role: 'EXECUTOR' as ROMARole,
+      isAtomic: false,
+      status: 'PENDING' as const,
+      subtasks: nodeIds
+        .map((id) => parent.subtasks.find((s) => s.id === id))
+        .filter(Boolean) as TaskTreeNode[],
+      dependencies: [],
+      context: { systemPrompt: '', availableTools: [], estimatedTokens: 0, mergedFrom: nodeIds },
+    };
 
-    parent.subtasks = [
-      ...parent.subtasks.filter(s => !nodeIdSet.has(s.id)),
-      mergedNode,
-    ];
+    parent.subtasks = [...parent.subtasks.filter((s) => !nodeIdSet.has(s.id)), mergedNode];
   }
 
   private addEdge(tree: TaskTreeNode, fromId: string, toId: string): void {
@@ -710,7 +742,7 @@ const mergedNode: TaskTreeNode = {
   private removeEdge(tree: TaskTreeNode, fromId: string, toId: string): void {
     const toNode = this.findNodeById(tree, toId);
     if (toNode) {
-      toNode.dependencies = toNode.dependencies.filter(d => d !== fromId);
+      toNode.dependencies = toNode.dependencies.filter((d) => d !== fromId);
     }
   }
 

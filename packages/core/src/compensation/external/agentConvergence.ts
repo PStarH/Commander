@@ -90,10 +90,7 @@ export class AgentConvergence {
     };
   }
 
-  private buildResult(
-    reason: ConvergenceResult['reason'],
-    score?: number,
-  ): ConvergenceResult {
+  private buildResult(reason: ConvergenceResult['reason'], score?: number): ConvergenceResult {
     const convergenceScore = score ?? this.computeConvergenceScore();
     return {
       converged: true,
@@ -234,10 +231,7 @@ export class JudgeAgent {
     return this.parseJudgeResponse(response, convergenceResult);
   }
 
-  private buildJudgePrompt(
-    args: AgentArgument[],
-    convergenceResult: ConvergenceResult,
-  ): string {
+  private buildJudgePrompt(args: AgentArgument[], convergenceResult: ConvergenceResult): string {
     const argsText = args
       .map((a) => `[Agent ${a.agentId}, Round ${a.round}]: ${a.content}`)
       .join('\n\n');

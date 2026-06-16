@@ -160,8 +160,10 @@ export class CostEstimator {
     const predictedTotalTokens = predictedInputTokens + predictedOutputTokens;
 
     // Cost prediction using model pricing
-    const costPerKInput = modelConfig?.costPer1KInput ?? this.estimateCostPerK(routing.tier, 'input');
-    const costPerKOutput = modelConfig?.costPer1KOutput ?? this.estimateCostPerK(routing.tier, 'output');
+    const costPerKInput =
+      modelConfig?.costPer1KInput ?? this.estimateCostPerK(routing.tier, 'input');
+    const costPerKOutput =
+      modelConfig?.costPer1KOutput ?? this.estimateCostPerK(routing.tier, 'output');
     const predictedCostUsd =
       (predictedInputTokens / 1000) * costPerKInput +
       (predictedOutputTokens / 1000) * costPerKOutput;
@@ -173,7 +175,12 @@ export class CostEstimator {
     const confidence = this.computeConfidence(samples);
 
     // Build factor breakdown
-    const factors = this.buildFactors(ctx, complexityScore, complexityMultiplier, historicalAdjustment);
+    const factors = this.buildFactors(
+      ctx,
+      complexityScore,
+      complexityMultiplier,
+      historicalAdjustment,
+    );
 
     return {
       predictedInputTokens,
@@ -207,8 +214,7 @@ export class CostEstimator {
       inputTokens,
       outputTokens,
       costUsd:
-        (inputTokens / 1000) * model.costPer1KInput +
-        (outputTokens / 1000) * model.costPer1KOutput,
+        (inputTokens / 1000) * model.costPer1KInput + (outputTokens / 1000) * model.costPer1KOutput,
     };
   }
 
@@ -236,7 +242,7 @@ export class CostEstimator {
     // Weight each subtask by its complexity score
     const totalComplexity = subtasks.reduce((sum, s) => sum + Math.max(1, s.complexity), 0);
 
-    return subtasks.map(subtask => {
+    return subtasks.map((subtask) => {
       const weight = Math.max(1, subtask.complexity) / totalComplexity;
       const budget = Math.round(availableBudget * weight);
       // Enforce minimum budget per agent
@@ -296,20 +302,23 @@ export class CostEstimator {
    * Load historical records from the samples store.
    * Call once at startup to seed the estimator.
    */
-  loadFromRecords(records: Array<{
-    model: string;
-    promptTokens: number;
-    completionTokens: number;
-    costUsd?: number;
-    timestamp: string;
-    error?: string;
-  }>): void {
+  loadFromRecords(
+    records: Array<{
+      model: string;
+      promptTokens: number;
+      completionTokens: number;
+      costUsd?: number;
+      timestamp: string;
+      error?: string;
+    }>,
+  ): void {
     for (const r of records) {
       // Infer task category and model tier from model name
       const tier = this.inferModelTier(r.model);
       if (!tier) continue;
 
-      const costUsd = r.costUsd ?? this.estimateCostFromTokens(r.model, r.promptTokens, r.completionTokens);
+      const costUsd =
+        r.costUsd ?? this.estimateCostFromTokens(r.model, r.promptTokens, r.completionTokens);
 
       this.recordActualCost(
         'general', // default — we don't have task category from raw records
@@ -456,9 +465,12 @@ export class CostEstimator {
 
   private inferModelTier(model: string): string | null {
     const m = model.toLowerCase();
-    if (m.includes('haiku') || m.includes('mini') || m.includes('flash') || m.includes('small')) return 'eco';
-    if (m.includes('opus') || m.includes('gpt-5') || m.includes('o3') || m.includes('o4')) return 'power';
-    if (m.includes('sonnet') || m.includes('gpt-4o') || m.includes('pro') || m.includes('large')) return 'standard';
+    if (m.includes('haiku') || m.includes('mini') || m.includes('flash') || m.includes('small'))
+      return 'eco';
+    if (m.includes('opus') || m.includes('gpt-5') || m.includes('o3') || m.includes('o4'))
+      return 'power';
+    if (m.includes('sonnet') || m.includes('gpt-4o') || m.includes('pro') || m.includes('large'))
+      return 'standard';
     return 'standard'; // default
   }
 

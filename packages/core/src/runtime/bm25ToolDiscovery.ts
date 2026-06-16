@@ -15,9 +15,9 @@ import type { ToolDefinition } from './types';
 // BM25 Parameters
 // ============================================================================
 
-const BM25_K1 = 1.2;  // Term frequency saturation parameter
-const BM25_B = 0.75;  // Length normalization parameter
-const BM25_SCORE_THRESHOLD = 2.0;  // Minimum score to activate a tool
+const BM25_K1 = 1.2; // Term frequency saturation parameter
+const BM25_B = 0.75; // Length normalization parameter
+const BM25_SCORE_THRESHOLD = 2.0; // Minimum score to activate a tool
 
 // ============================================================================
 // BM25 Scorer
@@ -33,7 +33,7 @@ interface BM25Document {
 export class BM25Scorer {
   private documents: BM25Document[] = [];
   private avgDocLength = 0;
-  private docFreqs = new Map<string, number>();  // term → document frequency
+  private docFreqs = new Map<string, number>(); // term → document frequency
 
   /**
    * Add a document (tool description) to the index.
@@ -50,7 +50,8 @@ export class BM25Scorer {
     }
 
     // Recompute average document length
-    this.avgDocLength = this.documents.reduce((sum, d) => sum + d.length, 0) / this.documents.length;
+    this.avgDocLength =
+      this.documents.reduce((sum, d) => sum + d.length, 0) / this.documents.length;
   }
 
   /**
@@ -69,7 +70,7 @@ export class BM25Scorer {
 
       for (const term of queryTokens) {
         // Term frequency in document
-        const tf = doc.tokens.filter(t => t === term).length;
+        const tf = doc.tokens.filter((t) => t === term).length;
         if (tf === 0) continue;
 
         // Document frequency
@@ -79,7 +80,9 @@ export class BM25Scorer {
         const idf = Math.log((n - df + 0.5) / (df + 0.5) + 1);
 
         // BM25 score for this term
-        const tfNorm = (tf * (BM25_K1 + 1)) / (tf + BM25_K1 * (1 - BM25_B + BM25_B * (doc.length / this.avgDocLength)));
+        const tfNorm =
+          (tf * (BM25_K1 + 1)) /
+          (tf + BM25_K1 * (1 - BM25_B + BM25_B * (doc.length / this.avgDocLength)));
         score += idf * tfNorm;
       }
 
@@ -116,7 +119,7 @@ export class BM25Scorer {
       .toLowerCase()
       .replace(/[^a-z0-9_]/g, ' ')
       .split(/\s+/)
-      .filter(t => t.length > 1);
+      .filter((t) => t.length > 1);
   }
 }
 
@@ -152,7 +155,7 @@ export class BM25ToolDiscovery {
       tool.description,
       tool.category ?? '',
       // Add example arguments as context
-      ...(tool.examples ?? []).map(ex => JSON.stringify(ex.arguments)),
+      ...(tool.examples ?? []).map((ex) => JSON.stringify(ex.arguments)),
     ].join(' ');
 
     this.scorer.addDocument(tool.name, text);

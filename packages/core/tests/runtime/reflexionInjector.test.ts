@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { ReflexionInjector, createReflexionInjector } from '../../src/memory/reflexionInjector';
 
-function makeReflection(overrides: Partial<Parameters<ReflexionInjector['addReflection']>[0]> = {}) {
+function makeReflection(
+  overrides: Partial<Parameters<ReflexionInjector['addReflection']>[0]> = {},
+) {
   return {
     id: 'r-1',
     insight: 'keep it simple',
@@ -177,7 +179,9 @@ describe('ReflexionInjector', () => {
 
   it('extractTaskType() extracts type from text', () => {
     const injector = new ReflexionInjector();
-    expect((injector as any).extractTaskType('Task Type: debugging\nSomething else')).toBe('debugging');
+    expect((injector as any).extractTaskType('Task Type: debugging\nSomething else')).toBe(
+      'debugging',
+    );
     expect((injector as any).extractTaskType('no type here')).toBeUndefined();
   });
 });

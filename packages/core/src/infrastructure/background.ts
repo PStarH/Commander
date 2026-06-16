@@ -73,7 +73,9 @@ export class BackgroundTaskManager extends EventEmitter {
           this.jobs.set(job.id, job);
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   private saveJobs(): void {
@@ -169,7 +171,6 @@ export class BackgroundTaskManager extends EventEmitter {
 
       // Detach so it survives parent exit
       child.unref();
-
     } catch (err) {
       job.status = 'failed';
       job.error = String(err);
@@ -188,19 +189,29 @@ export class BackgroundTaskManager extends EventEmitter {
       const { execFile } = require('child_process');
       const status = job.status === 'completed' ? '✅' : '❌';
       const title = `Commander: ${status} ${job.task.slice(0, 50)}`;
-      const body = job.status === 'completed'
-        ? `Completed in ${this.getDuration(job)}`
-        : `Failed: ${job.error || 'Unknown error'}`;
+      const body =
+        job.status === 'completed'
+          ? `Completed in ${this.getDuration(job)}`
+          : `Failed: ${job.error || 'Unknown error'}`;
 
       // macOS notification — use execFile to avoid shell injection
       if (process.platform === 'darwin') {
-        execFile('osascript', ['-e', `display notification "${body.replace(/"/g, '\\"')}" with title "${title.replace(/"/g, '\\"')}"`], { stdio: 'ignore' });
+        execFile(
+          'osascript',
+          [
+            '-e',
+            `display notification "${body.replace(/"/g, '\\"')}" with title "${title.replace(/"/g, '\\"')}"`,
+          ],
+          { stdio: 'ignore' },
+        );
       }
       // Linux notification — use execFile to avoid shell injection
       else if (process.platform === 'linux') {
         execFile('notify-send', [title, body], { stdio: 'ignore' });
       }
-    } catch { /* notification best-effort */ }
+    } catch {
+      /* notification best-effort */
+    }
   }
 
   private getDuration(job: BackgroundJob): string {
@@ -224,7 +235,7 @@ export class BackgroundTaskManager extends EventEmitter {
    */
   listJobs(status?: BackgroundJob['status']): BackgroundJob[] {
     const jobs = Array.from(this.jobs.values());
-    if (status) return jobs.filter(j => j.status === status);
+    if (status) return jobs.filter((j) => j.status === status);
     return jobs.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
   }
 
@@ -262,15 +273,19 @@ export class BackgroundTaskManager extends EventEmitter {
    * Clean up old completed jobs.
    */
   cleanup(keepLast: number = 50): number {
-    const sorted = this.listJobs().sort((a, b) =>
-      new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
+    const sorted = this.listJobs().sort(
+      (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
     );
 
     const toRemove = sorted.slice(keepLast);
     for (const job of toRemove) {
       if (job.status !== 'running') {
         this.jobs.delete(job.id);
-        try { fs.unlinkSync(job.logFile); } catch { /* ignore */ }
+        try {
+          fs.unlinkSync(job.logFile);
+        } catch {
+          /* ignore */
+        }
       }
     }
     this.saveJobs();

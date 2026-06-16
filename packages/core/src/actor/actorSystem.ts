@@ -28,6 +28,7 @@ import type {
 import { DEFAULT_ACTOR_SYSTEM_CONFIG } from './types';
 import { Mailbox } from './mailbox';
 import { Supervisor } from './supervisor';
+import { getGlobalLogger } from '../logging';
 
 /**
  * Internal actor instance.
@@ -53,11 +54,14 @@ export class ActorSystem {
   private readonly actors = new Map<ActorId, ActorInstance>();
   private readonly supervisors = new Map<ActorId, Supervisor>();
   private readonly parentMap = new Map<ActorId, ActorId>();
-  private readonly pendingRequests = new Map<string, {
-    resolve: (message: ActorMessage) => void;
-    reject: (error: Error) => void;
-    timeoutId: ReturnType<typeof setTimeout>;
-  }>();
+  private readonly pendingRequests = new Map<
+    string,
+    {
+      resolve: (message: ActorMessage) => void;
+      reject: (error: Error) => void;
+      timeoutId: ReturnType<typeof setTimeout>;
+    }
+  >();
   private started = false;
   private startTime = 0;
 
@@ -116,11 +120,8 @@ export class ActorSystem {
       ...definition.supervisorConfig,
     };
 
-    const mailbox = new Mailbox(
-      id,
-      mailboxConfig,
-      this.logger,
-      (message) => this.processMessage(id, message),
+    const mailbox = new Mailbox(id, mailboxConfig, this.logger, (message) =>
+      this.processMessage(id, message),
     );
 
     const actor: ActorInstance = {
@@ -372,11 +373,12 @@ export class ActorSystem {
 
   private createLogger(): ActorLogger {
     const prefix = `[ActorSystem:${this.config.name}]`;
+    const logger = getGlobalLogger();
     return {
-      debug: (msg, data) => console.debug(`${prefix} ${msg}`, data),
-      info: (msg, data) => console.info(`${prefix} ${msg}`, data),
-      warn: (msg, data) => console.warn(`${prefix} ${msg}`, data),
-      error: (msg, error, data) => console.error(`${prefix} ${msg}`, error, data),
+      debug: (msg, data) => logger.debug('ActorSystem', `${prefix} ${msg}`, data),
+      info: (msg, data) => logger.info('ActorSystem', `${prefix} ${msg}`, data),
+      warn: (msg, data) => logger.warn('ActorSystem', `${prefix} ${msg}`, data),
+      error: (msg, error, data) => logger.error('ActorSystem', `${prefix} ${msg}`, error, data),
     };
   }
 }

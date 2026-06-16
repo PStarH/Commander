@@ -6,7 +6,10 @@ import { InMemorySagaStore } from '../../src/saga/sagaStore';
 import { CheckpointManager } from '../../src/saga/checkpointManager';
 import { InMemoryApprovalStore, ApprovalManager } from '../../src/saga/approvalManager';
 import { InProcessWorkerPool } from '../../src/saga/workerPool';
-import { CompensationScheduler, defaultCompensationRetryPolicy } from '../../src/saga/compensationScheduler';
+import {
+  CompensationScheduler,
+  defaultCompensationRetryPolicy,
+} from '../../src/saga/compensationScheduler';
 import type { SagaContext, SagaResult } from '../../src/saga/types';
 
 function makeContext(input: Record<string, unknown> = {}): SagaContext {
@@ -128,19 +131,23 @@ describe('SagaCoordinator — compensation', () => {
   it('retries step with retry policy', async () => {
     let attempts = 0;
     const graph = createSaga('s')
-      .step('a', async () => {
-        attempts++;
-        if (attempts < 3) throw new Error('transient');
-        return 'ok';
-      }, {
-        retryPolicy: {
-          maxAttempts: 5,
-          backoff: 'fixed',
-          initialDelayMs: 1,
-          maxDelayMs: 10,
-          jitter: 'none',
+      .step(
+        'a',
+        async () => {
+          attempts++;
+          if (attempts < 3) throw new Error('transient');
+          return 'ok';
         },
-      })
+        {
+          retryPolicy: {
+            maxAttempts: 5,
+            backoff: 'fixed',
+            initialDelayMs: 1,
+            maxDelayMs: 10,
+            jitter: 'none',
+          },
+        },
+      )
       .build();
     const { checkpoint, approval, pool, compensation } = setup();
     const result = await runSaga(graph, makeContext(), checkpoint, approval, {
@@ -163,9 +170,7 @@ describe('SagaCoordinator — parallel', () => {
     const b2 = createSaga('b2')
       .step('reserve', async () => 'reserved')
       .build();
-    const graph = createSaga('order')
-      .parallel([b1, b2])
-      .build();
+    const graph = createSaga('order').parallel([b1, b2]).build();
     const { checkpoint, approval, pool, compensation } = setup();
     const result = await runSaga(graph, makeContext(), checkpoint, approval, {
       checkpoint,

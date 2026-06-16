@@ -69,7 +69,8 @@ function renderGoal(record: IntentRecord): void {
     const parts: string[] = [];
     if (record.taskType) parts.push(`Task: ${record.taskType}`);
     if (record.effortLevel) parts.push(`Effort: ${record.effortLevel}`);
-    if (record.confidence !== undefined) parts.push(`Confidence: ${(record.confidence * 100).toFixed(0)}%`);
+    if (record.confidence !== undefined)
+      parts.push(`Confidence: ${(record.confidence * 100).toFixed(0)}%`);
     console.log(`  ${$.dim}${parts.join(' · ')}${$.reset}`);
   }
   if (record.estimatedAgentCount || record.estimatedSteps) {
@@ -77,7 +78,8 @@ function renderGoal(record: IntentRecord): void {
     if (record.estimatedAgentCount) parts.push(`${record.estimatedAgentCount} agents`);
     if (record.estimatedSteps) parts.push(`${record.estimatedSteps} steps`);
     if (record.estimatedTokens) parts.push(`${record.estimatedTokens.toLocaleString()} tok`);
-    if (record.estimatedDurationMs) parts.push(`${(record.estimatedDurationMs / 1000).toFixed(1)}s`);
+    if (record.estimatedDurationMs)
+      parts.push(`${(record.estimatedDurationMs / 1000).toFixed(1)}s`);
     console.log(`  ${$.dim}Estimated: ${parts.join(' · ')}${$.reset}`);
   }
 }
@@ -109,28 +111,32 @@ function renderTopologyChoice(record: IntentRecord, ml: ReturnType<typeof getMet
     try {
       const scores = ml.getStrategyScores(record.taskType);
       if (scores.length > 0) {
-        const maxScore = Math.max(...scores.map(s => s.score));
+        const maxScore = Math.max(...scores.map((s) => s.score));
         for (const s of scores.slice(0, 5)) {
           const normalized = maxScore > 0 ? s.score / maxScore : 0;
           const chosen = s.strategy === record.chosenTopology;
           const prefix = chosen ? `${$.green}▶${$.reset}` : ' ';
           const name = chosen ? `${$.bold}${s.strategy}${$.reset}` : s.strategy;
           const scorePct = (s.score * 100).toFixed(0);
-          console.log(`  ${prefix} ${name.padEnd(14)} ${bar(normalized)} ${$.dim}${scorePct}%${$.reset} ${$.dim}(${s.trials} trials)${$.reset}`);
+          console.log(
+            `  ${prefix} ${name.padEnd(14)} ${bar(normalized)} ${$.dim}${scorePct}%${$.reset} ${$.dim}(${s.trials} trials)${$.reset}`,
+          );
         }
       }
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 }
 
 function renderExecutionTrace(trace: ExecutionTrace): void {
   section('EXECUTION TRACE');
 
-  const llmCalls = trace.events.filter(e => e.type === 'llm_call');
-  const toolCalls = trace.events.filter(e => e.type === 'tool_execution');
-  const verifications = trace.events.filter(e => e.type === 'verification');
-  const errors = trace.events.filter(e => e.type === 'error');
-  const decisions = trace.events.filter(e => e.type === 'decision');
+  const llmCalls = trace.events.filter((e) => e.type === 'llm_call');
+  const toolCalls = trace.events.filter((e) => e.type === 'tool_execution');
+  const verifications = trace.events.filter((e) => e.type === 'verification');
+  const errors = trace.events.filter((e) => e.type === 'error');
+  const decisions = trace.events.filter((e) => e.type === 'decision');
 
   // Show LLM calls
   if (llmCalls.length > 0) {
@@ -139,9 +145,12 @@ function renderExecutionTrace(trace: ExecutionTrace): void {
       const model = e.data?.modelInfo?.model ?? 'unknown';
       const tokens = e.data?.tokenUsage?.totalTokens ?? 0;
       const dur = e.durationMs > 0 ? `${(e.durationMs / 1000).toFixed(1)}s` : '';
-      console.log(`    ${$.cyan}→${$.reset} ${model} ${$.dim}${tokens.toLocaleString()} tok${$.reset} ${$.gray}${dur}${$.reset}`);
+      console.log(
+        `    ${$.cyan}→${$.reset} ${model} ${$.dim}${tokens.toLocaleString()} tok${$.reset} ${$.gray}${dur}${$.reset}`,
+      );
     }
-    if (llmCalls.length > 8) console.log(`    ${$.dim}... and ${llmCalls.length - 8} more${$.reset}`);
+    if (llmCalls.length > 8)
+      console.log(`    ${$.dim}... and ${llmCalls.length - 8} more${$.reset}`);
   }
 
   // Show tool calls
@@ -153,16 +162,22 @@ function renderExecutionTrace(trace: ExecutionTrace): void {
       const toolName = inputData?.tool ?? outputData?.tool ?? 'tool';
       const dur = e.durationMs > 0 ? `${e.durationMs}ms` : '';
       const err = e.data?.error ? ` ${$.red}✗${$.reset} ${trunc(String(e.data.error), 30)}` : '';
-      console.log(`    ${$.yellow}◆${$.reset} ${trunc(String(toolName), 30)} ${$.gray}${dur}${$.reset}${err}`);
+      console.log(
+        `    ${$.yellow}◆${$.reset} ${trunc(String(toolName), 30)} ${$.gray}${dur}${$.reset}${err}`,
+      );
     }
-    if (toolCalls.length > 10) console.log(`    ${$.dim}... and ${toolCalls.length - 10} more${$.reset}`);
+    if (toolCalls.length > 10)
+      console.log(`    ${$.dim}... and ${toolCalls.length - 10} more${$.reset}`);
   }
 
   // Show decisions
   if (decisions.length > 0) {
     console.log(`\n  ${$.dim}Decisions (${decisions.length}):${$.reset}`);
     for (const e of decisions.slice(0, 5)) {
-      const decision = typeof e.data?.output === 'string' ? e.data.output : JSON.stringify(e.data?.output ?? '').slice(0, 60);
+      const decision =
+        typeof e.data?.output === 'string'
+          ? e.data.output
+          : JSON.stringify(e.data?.output ?? '').slice(0, 60);
       console.log(`    ${$.blue}◉${$.reset} ${trunc(decision, 60)}`);
     }
   }
@@ -174,7 +189,9 @@ function renderExecutionTrace(trace: ExecutionTrace): void {
       const passed = e.data?.evaluationPassed === true;
       const confidence = e.data?.evaluationScore ?? 0;
       const icon = passed ? `${$.green}✓${$.reset}` : `${$.red}✗${$.reset}`;
-      console.log(`    ${icon} ${passed ? 'PASSED' : 'FAILED'} ${$.dim}confidence: ${(Number(confidence) * 100).toFixed(0)}%${$.reset}`);
+      console.log(
+        `    ${icon} ${passed ? 'PASSED' : 'FAILED'} ${$.dim}confidence: ${(Number(confidence) * 100).toFixed(0)}%${$.reset}`,
+      );
     }
   }
 
@@ -198,10 +215,13 @@ function renderVerdict(trace: ExecutionTrace, record: IntentRecord): void {
   const toolCalls = trace.summary.toolExecutions;
   const modelUsed = trace.summary.modelUsed || record.chosenModel?.id || 'unknown';
 
-  const statusIcon = completed && errors === 0 ? `${$.green}✅${$.reset}` :
-    completed ? `${$.yellow}⚠️${$.reset}` : `${$.red}❌${$.reset}`;
-  const statusText = completed && errors === 0 ? 'SUCCESS' :
-    completed ? 'PARTIAL' : 'INCOMPLETE';
+  const statusIcon =
+    completed && errors === 0
+      ? `${$.green}✅${$.reset}`
+      : completed
+        ? `${$.yellow}⚠️${$.reset}`
+        : `${$.red}❌${$.reset}`;
+  const statusText = completed && errors === 0 ? 'SUCCESS' : completed ? 'PARTIAL' : 'INCOMPLETE';
 
   console.log(`  ${statusIcon} ${$.bold}${statusText}${$.reset}`);
   console.log();
@@ -228,7 +248,10 @@ function renderEscalations(record: IntentRecord): void {
 // Main entry: debug intent
 // ============================================================================
 
-export async function cmdDebugIntent(args: string[], _flags: Record<string, string>): Promise<void> {
+export async function cmdDebugIntent(
+  args: string[],
+  _flags: Record<string, string>,
+): Promise<void> {
   const intentLog = getIntentLog();
 
   // Handle 'intent' subcommand prefix: commander debug intent [runId]
@@ -242,14 +265,24 @@ export async function cmdDebugIntent(args: string[], _flags: Record<string, stri
   // No runId → list all runs with captured intent
   if (!runId) {
     const runs = intentLog.listRuns();
-    console.log(`\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`);
-    console.log(`  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}Debug: Captured Intent Runs${$.reset}                          ${$.cyan}${$.bold}│${$.reset}`);
-    console.log(`  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`);
+    console.log(
+      `\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`,
+    );
+    console.log(
+      `  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}Debug: Captured Intent Runs${$.reset}                          ${$.cyan}${$.bold}│${$.reset}`,
+    );
+    console.log(
+      `  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`,
+    );
 
     if (runs.length === 0) {
       console.log(`\n  ${$.dim}No intent-captured runs found.${$.reset}`);
-      console.log(`  ${$.dim}Runs are captured when using the full pipeline (commander run).${$.reset}`);
-      console.log(`  ${$.dim}Run a task first, then use ${$.cyan}commander debug intent <runId>${$.reset}${$.dim} to inspect.${$.reset}\n`);
+      console.log(
+        `  ${$.dim}Runs are captured when using the full pipeline (commander run).${$.reset}`,
+      );
+      console.log(
+        `  ${$.dim}Run a task first, then use ${$.cyan}commander debug intent <runId>${$.reset}${$.dim} to inspect.${$.reset}\n`,
+      );
       return;
     }
 
@@ -271,17 +304,25 @@ export async function cmdDebugIntent(args: string[], _flags: Record<string, stri
     return;
   }
 
-  console.log(`\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`);
+  console.log(
+    `\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`,
+  );
   const padLen = Math.max(0, 34 - runId.length);
-  console.log(`  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}Intent Debug: ${runId}${$.reset}${' '.repeat(padLen)}${$.cyan}${$.bold}│${$.reset}`);
-  console.log(`  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`);
+  console.log(
+    `  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}Intent Debug: ${runId}${$.reset}${' '.repeat(padLen)}${$.cyan}${$.bold}│${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`,
+  );
 
   // 1. Read IntentLog
   const record = intentLog.readIntent(runId);
   if (!record) {
     console.log(`\n  ${$.yellow}No intent record found for run:${$.reset} ${runId}`);
     console.log(`  ${$.dim}Intent may not have been captured for this run.${$.reset}`);
-    console.log(`  ${$.dim}Use ${$.cyan}commander debug intent${$.reset}${$.dim} to list captured runs.${$.reset}\n`);
+    console.log(
+      `  ${$.dim}Use ${$.cyan}commander debug intent${$.reset}${$.dim} to list captured runs.${$.reset}\n`,
+    );
     return;
   }
 
@@ -291,7 +332,11 @@ export async function cmdDebugIntent(args: string[], _flags: Record<string, stri
 
   // 3. Get MetaLearner for strategy scores
   let ml: ReturnType<typeof getMetaLearner> | null = null;
-  try { ml = getMetaLearner(); } catch { /* best-effort */ }
+  try {
+    ml = getMetaLearner();
+  } catch {
+    /* best-effort */
+  }
 
   // 4. Render decision chain
   renderGoal(record);

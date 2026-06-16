@@ -8,18 +8,32 @@ import { buildSeccompFilter, countAllowedSyscalls } from './seccompBpf';
 import { getLLMAPIDomains, writeProxyScript } from './networkProxy';
 
 // Expanded deny list — covers common secret-bearing env vars beyond the original 5
-const EXTRA_DENY = ['DATABASE_URL', 'REDIS_URL', 'MONGO_URL', 'PGPASSWORD', 'MYSQL_PASSWORD',
-  'GITHUB_PAT', 'NPM_TOKEN', 'COOKIE', 'AUTH', 'BEARER', 'PRIVATE_KEY', 'SIGNING_KEY',
-  'ENCRYPTION_KEY', 'CONNECTION_STRING', 'DSN'];
+const EXTRA_DENY = [
+  'DATABASE_URL',
+  'REDIS_URL',
+  'MONGO_URL',
+  'PGPASSWORD',
+  'MYSQL_PASSWORD',
+  'GITHUB_PAT',
+  'NPM_TOKEN',
+  'COOKIE',
+  'AUTH',
+  'BEARER',
+  'PRIVATE_KEY',
+  'SIGNING_KEY',
+  'ENCRYPTION_KEY',
+  'CONNECTION_STRING',
+  'DSN',
+];
 
 function filterEnv(p: SandboxProfile): Record<string, string> {
   const env: Record<string, string> = {};
-  const deny = [...(p.envVarDenyList ?? []), ...EXTRA_DENY].map(x => x.toUpperCase());
+  const deny = [...(p.envVarDenyList ?? []), ...EXTRA_DENY].map((x) => x.toUpperCase());
   const allow = p.envVarAllowList ?? [];
   for (const [k, v] of Object.entries(process.env)) {
     const u = k.toUpperCase();
     if (allow.length > 0 && !allow.includes(k)) continue;
-    if (deny.some(d => u.includes(d))) continue;
+    if (deny.some((d) => u.includes(d))) continue;
     if (k.startsWith('DOCKER_') || k.startsWith('SSH_')) continue;
     // Sanitize value: strip newlines and null bytes to prevent Docker env injection
     const safeValue = (v ?? '').replace(/[\n\r\x00]/g, '');
@@ -31,7 +45,12 @@ function filterEnv(p: SandboxProfile): Record<string, string> {
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB
 
 /** Execute a command as an explicit argv array (no shell interpolation). */
-function execArgv(argv: string[], cwd: string, env: Record<string, string>, timeout: number): Promise<SandboxExecutionResult> {
+function execArgv(
+  argv: string[],
+  cwd: string,
+  env: Record<string, string>,
+  timeout: number,
+): Promise<SandboxExecutionResult> {
   return exec(argv, cwd, env, timeout);
 }
 
@@ -39,27 +58,67 @@ function execArgv(argv: string[], cwd: string, env: Record<string, string>, time
  * Execute a command. If `cmd` is a string, runs via shell (for backward compat with NoopSB).
  * If `cmd` is a string[], uses spawn with explicit args (shell: false) to prevent injection.
  */
-function exec(cmd: string | string[], cwd: string, env: Record<string, string>, timeout: number): Promise<SandboxExecutionResult> {
-  return new Promise(resolve => {
+function exec(
+  cmd: string | string[],
+  cwd: string,
+  env: Record<string, string>,
+  timeout: number,
+): Promise<SandboxExecutionResult> {
+  return new Promise((resolve) => {
     const start = Date.now();
     const isArr = Array.isArray(cmd);
     const child = isArr
       ? spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'pipe', 'pipe'], cwd, env })
       : spawn(cmd, [], { stdio: ['pipe', 'pipe', 'pipe'], cwd, env, shell: true });
-    let stdout = '', stderr = '';
-    let stdoutTruncated = false, stderrTruncated = false;
+    let stdout = '',
+      stderr = '';
+    let stdoutTruncated = false,
+      stderrTruncated = false;
     child.stdout?.on('data', (d: Buffer) => {
-      if (stdout.length < MAX_OUTPUT_BYTES) { stdout += d.toString(); if (stdout.length > MAX_OUTPUT_BYTES) { stdout = stdout.slice(0, MAX_OUTPUT_BYTES); stdoutTruncated = true; } }
+      if (stdout.length < MAX_OUTPUT_BYTES) {
+        stdout += d.toString();
+        if (stdout.length > MAX_OUTPUT_BYTES) {
+          stdout = stdout.slice(0, MAX_OUTPUT_BYTES);
+          stdoutTruncated = true;
+        }
+      }
     });
     child.stderr?.on('data', (d: Buffer) => {
-      if (stderr.length < MAX_OUTPUT_BYTES) { stderr += d.toString(); if (stderr.length > MAX_OUTPUT_BYTES) { stderr = stderr.slice(0, MAX_OUTPUT_BYTES); stderrTruncated = true; } }
+      if (stderr.length < MAX_OUTPUT_BYTES) {
+        stderr += d.toString();
+        if (stderr.length > MAX_OUTPUT_BYTES) {
+          stderr = stderr.slice(0, MAX_OUTPUT_BYTES);
+          stderrTruncated = true;
+        }
+      }
     });
     // Explicit timeout since spawn doesn't honor the timeout option
     let timedOut = false;
-    const killTimer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeout);
+    const killTimer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, timeout);
     killTimer.unref();
-    child.on('close', ec => { clearTimeout(killTimer); resolve({ stdout: stdoutTruncated ? stdout + '\n[truncated]' : stdout, stderr: stderrTruncated ? stderr + '\n[truncated]' : stderr, exitCode: timedOut ? 137 : (ec ?? -1), durationMs: Date.now() - start, sandboxMechanism: 'none' }); });
-    child.on('error', err => { clearTimeout(killTimer); resolve({ stdout, stderr: stderr || err.message, exitCode: -1, durationMs: Date.now() - start, sandboxMechanism: 'none' }); });
+    child.on('close', (ec) => {
+      clearTimeout(killTimer);
+      resolve({
+        stdout: stdoutTruncated ? stdout + '\n[truncated]' : stdout,
+        stderr: stderrTruncated ? stderr + '\n[truncated]' : stderr,
+        exitCode: timedOut ? 137 : (ec ?? -1),
+        durationMs: Date.now() - start,
+        sandboxMechanism: 'none',
+      });
+    });
+    child.on('error', (err) => {
+      clearTimeout(killTimer);
+      resolve({
+        stdout,
+        stderr: stderr || err.message,
+        exitCode: -1,
+        durationMs: Date.now() - start,
+        sandboxMechanism: 'none',
+      });
+    });
   });
 }
 
@@ -94,12 +153,21 @@ function buildSeatbeltProfile(p: SandboxProfile): string {
   // Process lifecycle — spawned children inherit the same policy
   // SECURITY FIX: restrict process-exec to common tool directories instead of allowing all
   // ------------------------------------------------------------------
-  const execPaths = ['/usr/bin', '/usr/local/bin', '/bin', '/sbin', '/usr/sbin', '/opt/homebrew/bin'];
+  const execPaths = [
+    '/usr/bin',
+    '/usr/local/bin',
+    '/bin',
+    '/sbin',
+    '/usr/sbin',
+    '/opt/homebrew/bin',
+  ];
   for (const ep of execPaths) {
     lines.push(`(allow process-exec (subpath "${ep}"))`);
   }
   // Also allow exec from the workspace (for scripts, node_modules/.bin, etc.)
-  lines.push(`(allow process-exec (subpath "${path.resolve(p.filesystem.readablePaths[0] || process.cwd())}"))`);
+  lines.push(
+    `(allow process-exec (subpath "${path.resolve(p.filesystem.readablePaths[0] || process.cwd())}"))`,
+  );
   lines.push('(allow process-fork)');
   lines.push('(allow signal (target same-sandbox))');
 
@@ -112,22 +180,53 @@ function buildSeatbeltProfile(p: SandboxProfile): string {
   // Sysctl — allowlist of sysctls commonly read by dev tools
   // ------------------------------------------------------------------
   const sysctlNames = [
-    'hw.activecpu', 'hw.busfrequency_compat', 'hw.byteorder',
-    'hw.cacheconfig', 'hw.cachelinesize_compat', 'hw.cpufamily',
-    'hw.cpufrequency_compat', 'hw.cputype', 'hw.l1dcachesize_compat',
-    'hw.l1icachesize_compat', 'hw.l2cachesize_compat', 'hw.l3cachesize_compat',
-    'hw.logicalcpu', 'hw.logicalcpu_max', 'hw.machine', 'hw.model',
-    'hw.memsize', 'hw.ncpu', 'hw.nperflevels', 'hw.packages',
-    'hw.pagesize_compat', 'hw.pagesize', 'hw.physicalcpu',
-    'hw.physicalcpu_max', 'hw.cpufrequency', 'hw.tbfrequency_compat',
-    'hw.vectorunit', 'machdep.cpu.brand_string', 'kern.argmax',
-    'kern.hostname', 'kern.maxfilesperproc', 'kern.maxproc',
-    'kern.osproductversion', 'kern.osrelease', 'kern.ostype',
-    'kern.osvariant_status', 'kern.osversion', 'kern.secure_kernel',
-    'kern.usrstack64', 'kern.version', 'vm.loadavg',
-    'kern.ngroups', 'kern.sbkeys',
+    'hw.activecpu',
+    'hw.busfrequency_compat',
+    'hw.byteorder',
+    'hw.cacheconfig',
+    'hw.cachelinesize_compat',
+    'hw.cpufamily',
+    'hw.cpufrequency_compat',
+    'hw.cputype',
+    'hw.l1dcachesize_compat',
+    'hw.l1icachesize_compat',
+    'hw.l2cachesize_compat',
+    'hw.l3cachesize_compat',
+    'hw.logicalcpu',
+    'hw.logicalcpu_max',
+    'hw.machine',
+    'hw.model',
+    'hw.memsize',
+    'hw.ncpu',
+    'hw.nperflevels',
+    'hw.packages',
+    'hw.pagesize_compat',
+    'hw.pagesize',
+    'hw.physicalcpu',
+    'hw.physicalcpu_max',
+    'hw.cpufrequency',
+    'hw.tbfrequency_compat',
+    'hw.vectorunit',
+    'machdep.cpu.brand_string',
+    'kern.argmax',
+    'kern.hostname',
+    'kern.maxfilesperproc',
+    'kern.maxproc',
+    'kern.osproductversion',
+    'kern.osrelease',
+    'kern.ostype',
+    'kern.osvariant_status',
+    'kern.osversion',
+    'kern.secure_kernel',
+    'kern.usrstack64',
+    'kern.version',
+    'vm.loadavg',
+    'kern.ngroups',
+    'kern.sbkeys',
   ];
-  lines.push(`(allow sysctl-read\n${sysctlNames.map(n => `  (sysctl-name "${n}")`).join('\n')}\n  (sysctl-name-prefix "hw.optional.arm.")\n  (sysctl-name-prefix "hw.optional.armv8_")\n  (sysctl-name-prefix "hw.perflevel")\n  (sysctl-name-prefix "kern.proc.pgrp.")\n  (sysctl-name-prefix "kern.proc.pid.")\n  (sysctl-name-prefix "net.routetable."))`);
+  lines.push(
+    `(allow sysctl-read\n${sysctlNames.map((n) => `  (sysctl-name "${n}")`).join('\n')}\n  (sysctl-name-prefix "hw.optional.arm.")\n  (sysctl-name-prefix "hw.optional.armv8_")\n  (sysctl-name-prefix "hw.perflevel")\n  (sysctl-name-prefix "kern.proc.pgrp.")\n  (sysctl-name-prefix "kern.proc.pid.")\n  (sysctl-name-prefix "net.routetable."))`,
+  );
 
   // Allow Java/node to read CPU info — misclassified as write by SB
   lines.push('(allow sysctl-write (sysctl-name "kern.grade_cputype"))');
@@ -212,10 +311,7 @@ function buildSeatbeltProfile(p: SandboxProfile): string {
   // ------------------------------------------------------------------
   // System directory write protection (defense-in-depth)
   // ------------------------------------------------------------------
-  const systemPaths = [
-    '/System', '/Library', '/Applications',
-    '/.vol', '/.file', '/dev', '/cores',
-  ];
+  const systemPaths = ['/System', '/Library', '/Applications', '/.vol', '/.file', '/dev', '/cores'];
   for (const sp of systemPaths) {
     lines.push(`(deny file-write* (subpath "${sp}"))`);
   }
@@ -253,7 +349,19 @@ class SeatbeltSB implements PlatformSandbox {
   readonly name = 'seatbelt' as const;
   readonly available: boolean;
   constructor() {
-    this.available = os.platform() === 'darwin' && (() => { try { execSync('which sandbox-exec 2>/dev/null', { timeout: 3000 }); return true; } catch (e) { getGlobalLogger().debug('SeatbeltSB', 'sandbox-exec unavailable', { error: (e as Error)?.message }); return false; } })();
+    this.available =
+      os.platform() === 'darwin' &&
+      (() => {
+        try {
+          execSync('which sandbox-exec 2>/dev/null', { timeout: 3000 });
+          return true;
+        } catch (e) {
+          getGlobalLogger().debug('SeatbeltSB', 'sandbox-exec unavailable', {
+            error: (e as Error)?.message,
+          });
+          return false;
+        }
+      })();
   }
   async execute(cmd: string, p: SandboxProfile, wd?: string): Promise<SandboxExecutionResult> {
     const profile = buildSeatbeltProfile(p);
@@ -265,9 +373,22 @@ class SeatbeltSB implements PlatformSandbox {
     const timeout = p.timeout ?? 60000;
     // CRITICAL FIX: use spawn with explicit args instead of shell interpolation
     // This prevents command injection via shell metacharacters in `cmd`
-    return execArgv(['sandbox-exec', '-f', tf, '/bin/sh', '-c', cmd], wd ?? process.cwd(), env, timeout)
-      .then(r => ({ ...r, sandboxMechanism: 'seatbelt' as const }))
-      .finally(() => { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) { getGlobalLogger().warn('SeatbeltSB', 'Temp sandbox profile cleanup failed', { error: (e as Error)?.message }); } });
+    return execArgv(
+      ['sandbox-exec', '-f', tf, '/bin/sh', '-c', cmd],
+      wd ?? process.cwd(),
+      env,
+      timeout,
+    )
+      .then((r) => ({ ...r, sandboxMechanism: 'seatbelt' as const }))
+      .finally(() => {
+        try {
+          fs.rmSync(tmpDir, { recursive: true, force: true });
+        } catch (e) {
+          getGlobalLogger().warn('SeatbeltSB', 'Temp sandbox profile cleanup failed', {
+            error: (e as Error)?.message,
+          });
+        }
+      });
   }
 }
 
@@ -276,7 +397,17 @@ class BwrapSB implements PlatformSandbox {
   readonly name = 'bwrap' as const;
   readonly available: boolean;
   constructor() {
-    this.available = os.platform() === 'linux' && (() => { try { execSync('which bwrap 2>/dev/null', { timeout: 3000 }); return true; } catch (e) { getGlobalLogger().debug('BwrapSB', 'bwrap unavailable', { error: (e as Error)?.message }); return false; } })();
+    this.available =
+      os.platform() === 'linux' &&
+      (() => {
+        try {
+          execSync('which bwrap 2>/dev/null', { timeout: 3000 });
+          return true;
+        } catch (e) {
+          getGlobalLogger().debug('BwrapSB', 'bwrap unavailable', { error: (e as Error)?.message });
+          return false;
+        }
+      })();
   }
   async execute(cmd: string, p: SandboxProfile, wd?: string): Promise<SandboxExecutionResult> {
     const start = Date.now();
@@ -286,18 +417,47 @@ class BwrapSB implements PlatformSandbox {
     // Codex CLI pattern: read-only by default, carve-out writable
     // Start with read-only mounts for system directories
     const args: string[] = [
-      '--unshare-user', '--unshare-pid', '--unshare-ipc', '--new-session',
+      '--unshare-user',
+      '--unshare-pid',
+      '--unshare-ipc',
+      '--new-session',
       // Codex pattern: read-only system dirs
-      '--ro-bind', '/usr', '/usr', '--ro-bind', '/lib', '/lib',
-      '--ro-bind', '/lib64', '/lib64', '--ro-bind', '/bin', '/bin',
-      '--ro-bind', '/sbin', '/sbin', '--ro-bind', '/etc', '/etc',
+      '--ro-bind',
+      '/usr',
+      '/usr',
+      '--ro-bind',
+      '/lib',
+      '/lib',
+      '--ro-bind',
+      '/lib64',
+      '/lib64',
+      '--ro-bind',
+      '/bin',
+      '/bin',
+      '--ro-bind',
+      '/sbin',
+      '/sbin',
+      '--ro-bind',
+      '/etc',
+      '/etc',
       // Codex: also mount /nix/store and /run/current-system/sw if they exist (NixOS support)
       ...(fs.existsSync('/nix/store') ? ['--ro-bind', '/nix/store', '/nix/store'] : []),
-      ...(fs.existsSync('/run/current-system/sw') ? ['--ro-bind', '/run/current-system/sw', '/run/current-system/sw'] : []),
-      '--proc', '/proc', '--dev', '/dev',
-      '--dev-bind', '/dev/urandom', '/dev/urandom',
-      '--dev-bind', '/dev/null', '/dev/null',
-      '--dev-bind', '/dev/zero', '/dev/zero',
+      ...(fs.existsSync('/run/current-system/sw')
+        ? ['--ro-bind', '/run/current-system/sw', '/run/current-system/sw']
+        : []),
+      '--proc',
+      '/proc',
+      '--dev',
+      '/dev',
+      '--dev-bind',
+      '/dev/urandom',
+      '/dev/urandom',
+      '--dev-bind',
+      '/dev/null',
+      '/dev/null',
+      '--dev-bind',
+      '/dev/zero',
+      '/dev/zero',
       // Codex: die-with-parent ensures sandbox cleanup on parent crash
       '--die-with-parent',
     ];
@@ -334,9 +494,14 @@ class BwrapSB implements PlatformSandbox {
       fs.writeFileSync(seccompFile, bpf);
       args.push('--seccomp', '3');
       const syscallCount = countAllowedSyscalls({ allowNetwork: p.network === 'full' });
-      getGlobalLogger().debug('BwrapSB', `Seccomp filter: ${syscallCount} syscalls allowed, ${bpf.length / 8} BPF instructions`);
+      getGlobalLogger().debug(
+        'BwrapSB',
+        `Seccomp filter: ${syscallCount} syscalls allowed, ${bpf.length / 8} BPF instructions`,
+      );
     } catch (e) {
-      getGlobalLogger().warn('BwrapSB', 'Seccomp filter generation failed, proceeding without', { error: (e as Error)?.message });
+      getGlobalLogger().warn('BwrapSB', 'Seccomp filter generation failed, proceeding without', {
+        error: (e as Error)?.message,
+      });
     }
 
     args.push('--chdir', workdir, '/bin/sh', '-c', cmd);
@@ -355,16 +520,38 @@ class BwrapSB implements PlatformSandbox {
       }
     }
 
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       const child = spawn('bwrap', args, { stdio, cwd: '/', env });
-      let so = '', se = '';
-      let soTrunc = false, seTrunc = false;
-      child.stdout?.on('data', (d: Buffer) => { if (so.length < MAX_OUTPUT_BYTES) { so += d.toString(); if (so.length > MAX_OUTPUT_BYTES) { so = so.slice(0, MAX_OUTPUT_BYTES); soTrunc = true; } } });
-      child.stderr?.on('data', (d: Buffer) => { if (se.length < MAX_OUTPUT_BYTES) { se += d.toString(); if (se.length > MAX_OUTPUT_BYTES) { se = se.slice(0, MAX_OUTPUT_BYTES); seTrunc = true; } } });
+      let so = '',
+        se = '';
+      let soTrunc = false,
+        seTrunc = false;
+      child.stdout?.on('data', (d: Buffer) => {
+        if (so.length < MAX_OUTPUT_BYTES) {
+          so += d.toString();
+          if (so.length > MAX_OUTPUT_BYTES) {
+            so = so.slice(0, MAX_OUTPUT_BYTES);
+            soTrunc = true;
+          }
+        }
+      });
+      child.stderr?.on('data', (d: Buffer) => {
+        if (se.length < MAX_OUTPUT_BYTES) {
+          se += d.toString();
+          if (se.length > MAX_OUTPUT_BYTES) {
+            se = se.slice(0, MAX_OUTPUT_BYTES);
+            seTrunc = true;
+          }
+        }
+      });
 
       // Codex pattern: forward signals to child process group
       const forwardSignal = (sig: NodeJS.Signals) => {
-        try { child.kill(sig); } catch { /* process may have exited */ }
+        try {
+          child.kill(sig);
+        } catch {
+          /* process may have exited */
+        }
       };
       const sigHandler = (sig: NodeJS.Signals) => () => forwardSignal(sig);
       process.on('SIGHUP', sigHandler('SIGHUP'));
@@ -373,7 +560,10 @@ class BwrapSB implements PlatformSandbox {
       process.on('SIGTERM', sigHandler('SIGTERM'));
 
       let timedOut = false;
-      const killTimer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, p.timeout ?? 60000);
+      const killTimer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, p.timeout ?? 60000);
       killTimer.unref();
 
       const cleanup = () => {
@@ -383,12 +573,42 @@ class BwrapSB implements PlatformSandbox {
         process.removeListener('SIGQUIT', sigHandler('SIGQUIT'));
         process.removeListener('SIGTERM', sigHandler('SIGTERM'));
         // Clean up seccomp fd and temp file
-        if (seccompFd !== null) { try { fs.closeSync(seccompFd); } catch { /* ignore */ } }
-        if (seccompFile) { try { fs.unlinkSync(seccompFile); } catch { /* ignore */ } }
+        if (seccompFd !== null) {
+          try {
+            fs.closeSync(seccompFd);
+          } catch {
+            /* ignore */
+          }
+        }
+        if (seccompFile) {
+          try {
+            fs.unlinkSync(seccompFile);
+          } catch {
+            /* ignore */
+          }
+        }
       };
 
-      child.on('close', ec => { cleanup(); resolve({ stdout: soTrunc ? so + '\n[truncated]' : so, stderr: seTrunc ? se + '\n[truncated]' : se, exitCode: timedOut ? 137 : (ec ?? -1), durationMs: Date.now() - start, sandboxMechanism: 'bwrap' }); });
-      child.on('error', err => { cleanup(); resolve({ stdout: so, stderr: se || err.message, exitCode: -1, durationMs: Date.now() - start, sandboxMechanism: 'bwrap' }); });
+      child.on('close', (ec) => {
+        cleanup();
+        resolve({
+          stdout: soTrunc ? so + '\n[truncated]' : so,
+          stderr: seTrunc ? se + '\n[truncated]' : se,
+          exitCode: timedOut ? 137 : (ec ?? -1),
+          durationMs: Date.now() - start,
+          sandboxMechanism: 'bwrap',
+        });
+      });
+      child.on('error', (err) => {
+        cleanup();
+        resolve({
+          stdout: so,
+          stderr: se || err.message,
+          exitCode: -1,
+          durationMs: Date.now() - start,
+          sandboxMechanism: 'bwrap',
+        });
+      });
     });
   }
 }
@@ -409,7 +629,10 @@ class GVisorSB implements PlatformSandbox {
       } catch {
         // Also check if Docker has a runsc runtime configured
         try {
-          const info = execSync('docker info --format "{{.Runtimes}}" 2>/dev/null', { timeout: 3000, encoding: 'utf-8' });
+          const info = execSync('docker info --format "{{.Runtimes}}" 2>/dev/null', {
+            timeout: 3000,
+            encoding: 'utf-8',
+          });
           return info.includes('runsc');
         } catch {
           getGlobalLogger().debug('GVisorSB', 'gVisor (runsc) not available');
@@ -423,18 +646,36 @@ class GVisorSB implements PlatformSandbox {
     const start = Date.now();
     const workdir = wd ?? process.cwd();
     const image = process.env.COMMANDER_SANDBOX_IMAGE || 'node:22-slim';
-    const ALLOWED_IMAGES = ['node:22-slim', 'node:20-slim', 'python:3.12-slim', 'python:3.11-slim', 'ubuntu:22.04'];
+    const ALLOWED_IMAGES = [
+      'node:22-slim',
+      'node:20-slim',
+      'python:3.12-slim',
+      'python:3.11-slim',
+      'ubuntu:22.04',
+    ];
     const resolvedImage = ALLOWED_IMAGES.includes(image) ? image : 'node:22-slim';
 
     const args: string[] = [
-      'run', '--rm',
-      '--runtime', 'runsc',                    // Use gVisor as the OCI runtime
-      '-v', `${workdir}:${workdir}:${p.mode === 'read-only' ? 'ro' : 'rw'}`,
-      '-w', workdir,
+      'run',
+      '--rm',
+      '--runtime',
+      'runsc', // Use gVisor as the OCI runtime
+      '-v',
+      `${workdir}:${workdir}:${p.mode === 'read-only' ? 'ro' : 'rw'}`,
+      '-w',
+      workdir,
     ];
 
     // gVisor-specific security: no-new-privileges is enforced by default
-    args.push('--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only', '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m');
+    args.push(
+      '--cap-drop',
+      'ALL',
+      '--security-opt',
+      'no-new-privileges',
+      '--read-only',
+      '--tmpfs',
+      '/tmp:rw,noexec,nosuid,size=64m',
+    );
 
     // Network isolation
     if (p.network === 'blocked') {
@@ -472,7 +713,13 @@ class GVisorSB implements PlatformSandbox {
     const cleanupPaths: string[] = [];
     const envFile = path.join(os.tmpdir(), `.cmd-env-${Date.now()}.txt`);
     try {
-      fs.writeFileSync(envFile, Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n'), 'utf-8');
+      fs.writeFileSync(
+        envFile,
+        Object.entries(env)
+          .map(([k, v]) => `${k}=${v}`)
+          .join('\n'),
+        'utf-8',
+      );
       args.push('--env-file', envFile);
       cleanupPaths.push(envFile);
     } catch {
@@ -481,9 +728,9 @@ class GVisorSB implements PlatformSandbox {
 
     // Track proxy script for cleanup
     const proxyScriptPaths: string[] = [];
-    if (p.network === 'proxy' && args.some(a => a.includes('/proxy.js'))) {
+    if (p.network === 'proxy' && args.some((a) => a.includes('/proxy.js'))) {
       // Find the proxy.js mount arg and clean up the source directory
-      const proxyMount = args.find(a => a.endsWith(':/proxy.js:ro'));
+      const proxyMount = args.find((a) => a.endsWith(':/proxy.js:ro'));
       if (proxyMount) {
         const scriptPath = proxyMount.split(':')[0];
         const tmpDir = path.dirname(scriptPath);
@@ -494,22 +741,76 @@ class GVisorSB implements PlatformSandbox {
     args.push(resolvedImage, '/bin/sh', '-c', cmd);
 
     const cleanup = () => {
-      for (const p of cleanupPaths) { try { fs.unlinkSync(p); } catch { /* best-effort */ } }
-      for (const d of proxyScriptPaths) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best-effort */ } }
+      for (const p of cleanupPaths) {
+        try {
+          fs.unlinkSync(p);
+        } catch {
+          /* best-effort */
+        }
+      }
+      for (const d of proxyScriptPaths) {
+        try {
+          fs.rmSync(d, { recursive: true, force: true });
+        } catch {
+          /* best-effort */
+        }
+      }
     };
 
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       const child = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] });
-      let so = '', se = '';
-      let soTrunc = false, seTrunc = false;
-      child.stdout?.on('data', (d: Buffer) => { if (so.length < MAX_OUTPUT_BYTES) { so += d.toString(); if (so.length > MAX_OUTPUT_BYTES) { so = so.slice(0, MAX_OUTPUT_BYTES); soTrunc = true; } } });
-      child.stderr?.on('data', (d: Buffer) => { if (se.length < MAX_OUTPUT_BYTES) { se += d.toString(); if (se.length > MAX_OUTPUT_BYTES) { se = se.slice(0, MAX_OUTPUT_BYTES); seTrunc = true; } } });
+      let so = '',
+        se = '';
+      let soTrunc = false,
+        seTrunc = false;
+      child.stdout?.on('data', (d: Buffer) => {
+        if (so.length < MAX_OUTPUT_BYTES) {
+          so += d.toString();
+          if (so.length > MAX_OUTPUT_BYTES) {
+            so = so.slice(0, MAX_OUTPUT_BYTES);
+            soTrunc = true;
+          }
+        }
+      });
+      child.stderr?.on('data', (d: Buffer) => {
+        if (se.length < MAX_OUTPUT_BYTES) {
+          se += d.toString();
+          if (se.length > MAX_OUTPUT_BYTES) {
+            se = se.slice(0, MAX_OUTPUT_BYTES);
+            seTrunc = true;
+          }
+        }
+      });
       let timedOut = false;
-      const killTimer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, p.timeout ?? 120000);
+      const killTimer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, p.timeout ?? 120000);
       killTimer.unref();
-      const finalize = () => { clearTimeout(killTimer); cleanup(); };
-      child.on('close', ec => { finalize(); resolve({ stdout: soTrunc ? so + '\n[truncated]' : so, stderr: seTrunc ? se + '\n[truncated]' : se, exitCode: timedOut ? 137 : (ec ?? -1), durationMs: Date.now() - start, sandboxMechanism: 'gvisor' }); });
-      child.on('error', err => { finalize(); resolve({ stdout: so, stderr: se || err.message, exitCode: -1, durationMs: Date.now() - start, sandboxMechanism: 'gvisor' }); });
+      const finalize = () => {
+        clearTimeout(killTimer);
+        cleanup();
+      };
+      child.on('close', (ec) => {
+        finalize();
+        resolve({
+          stdout: soTrunc ? so + '\n[truncated]' : so,
+          stderr: seTrunc ? se + '\n[truncated]' : se,
+          exitCode: timedOut ? 137 : (ec ?? -1),
+          durationMs: Date.now() - start,
+          sandboxMechanism: 'gvisor',
+        });
+      });
+      child.on('error', (err) => {
+        finalize();
+        resolve({
+          stdout: so,
+          stderr: se || err.message,
+          exitCode: -1,
+          durationMs: Date.now() - start,
+          sandboxMechanism: 'gvisor',
+        });
+      });
     });
   }
 }
@@ -521,7 +822,15 @@ class DockerSB implements PlatformSandbox {
   readonly available: boolean;
 
   constructor() {
-    this.available = (() => { try { execSync('docker info 2>/dev/null', { timeout: 5000 }); return true; } catch (e) { getGlobalLogger().debug('DockerSB', 'docker unavailable', { error: (e as Error)?.message }); return false; } })();
+    this.available = (() => {
+      try {
+        execSync('docker info 2>/dev/null', { timeout: 5000 });
+        return true;
+      } catch (e) {
+        getGlobalLogger().debug('DockerSB', 'docker unavailable', { error: (e as Error)?.message });
+        return false;
+      }
+    })();
   }
 
   /** Clean up temp files locally — called once per execute() call. */
@@ -534,7 +843,9 @@ class DockerSB implements PlatformSandbox {
         } else {
           fs.unlinkSync(p);
         }
-      } catch { /* best-effort cleanup */ }
+      } catch {
+        /* best-effort cleanup */
+      }
     }
   }
 
@@ -544,14 +855,30 @@ class DockerSB implements PlatformSandbox {
     const cleanupPaths: string[] = []; // Local to this execution — concurrency-safe
 
     // SECURITY FIX: validate image against allowlist
-    const ALLOWED_IMAGES = ['node:22-slim', 'node:20-slim', 'python:3.12-slim', 'python:3.11-slim', 'ubuntu:22.04'];
+    const ALLOWED_IMAGES = [
+      'node:22-slim',
+      'node:20-slim',
+      'python:3.12-slim',
+      'python:3.11-slim',
+      'ubuntu:22.04',
+    ];
     const requestedImage = process.env.COMMANDER_SANDBOX_IMAGE || 'node:22-slim';
     const image = ALLOWED_IMAGES.includes(requestedImage) ? requestedImage : 'node:22-slim';
     if (requestedImage && !ALLOWED_IMAGES.includes(requestedImage)) {
-      getGlobalLogger().warn('DockerSB', `Image "${requestedImage}" not in allowlist, using node:22-slim`);
+      getGlobalLogger().warn(
+        'DockerSB',
+        `Image "${requestedImage}" not in allowlist, using node:22-slim`,
+      );
     }
 
-    const args: string[] = ['run', '--rm', '-v', `${workdir}:${workdir}:${p.mode === 'read-only' ? 'ro' : 'rw'}`, '-w', workdir];
+    const args: string[] = [
+      'run',
+      '--rm',
+      '-v',
+      `${workdir}:${workdir}:${p.mode === 'read-only' ? 'ro' : 'rw'}`,
+      '-w',
+      workdir,
+    ];
 
     // Network isolation: 'none' for blocked, proxy gate for 'proxy' mode
     if (p.network === 'blocked') {
@@ -561,13 +888,19 @@ class DockerSB implements PlatformSandbox {
       const domains = getLLMAPIDomains();
       if (domains.length === 0) {
         // No LLM APIs configured — default to full network block
-        getGlobalLogger().warn('DockerSB', 'Proxy mode but no LLM API domains detected — falling back to network isolation');
+        getGlobalLogger().warn(
+          'DockerSB',
+          'Proxy mode but no LLM API domains detected — falling back to network isolation',
+        );
         args.push('--network', 'none');
       } else {
         // Warn if the container image may not have Node.js (proxy script is JS)
         const NON_NODE_IMAGES = ['python:3.12-slim', 'python:3.11-slim', 'ubuntu:22.04'];
         if (NON_NODE_IMAGES.includes(image)) {
-          getGlobalLogger().warn('DockerSB', `Image "${image}" may not have Node.js — proxy mode requires node for the network gate`);
+          getGlobalLogger().warn(
+            'DockerSB',
+            `Image "${image}" may not have Node.js — proxy mode requires node for the network gate`,
+          );
         }
 
         const scriptPath = writeProxyScript(domains);
@@ -593,13 +926,27 @@ class DockerSB implements PlatformSandbox {
     }
 
     if (p.memoryLimitMB && p.memoryLimitMB > 0) args.push('--memory', `${p.memoryLimitMB}m`);
-    args.push('--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only', '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m');
+    args.push(
+      '--cap-drop',
+      'ALL',
+      '--security-opt',
+      'no-new-privileges',
+      '--read-only',
+      '--tmpfs',
+      '/tmp:rw,noexec,nosuid,size=64m',
+    );
 
     // Use --env-file to prevent env var injection via special characters
     const env = filterEnv(p);
     const envFile = path.join(os.tmpdir(), `.cmd-env-${Date.now()}.txt`);
     try {
-      fs.writeFileSync(envFile, Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n'), 'utf-8');
+      fs.writeFileSync(
+        envFile,
+        Object.entries(env)
+          .map(([k, v]) => `${k}=${v}`)
+          .join('\n'),
+        'utf-8',
+      );
       args.push('--env-file', envFile);
       cleanupPaths.push(envFile);
     } catch {
@@ -618,18 +965,60 @@ class DockerSB implements PlatformSandbox {
 
     const cleanup = () => DockerSB.doCleanup(cleanupPaths);
 
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       const child = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] });
-      let so = '', se = '';
-      let soTrunc = false, seTrunc = false;
-      child.stdout?.on('data', (d: Buffer) => { if (so.length < MAX_OUTPUT_BYTES) { so += d.toString(); if (so.length > MAX_OUTPUT_BYTES) { so = so.slice(0, MAX_OUTPUT_BYTES); soTrunc = true; } } });
-      child.stderr?.on('data', (d: Buffer) => { if (se.length < MAX_OUTPUT_BYTES) { se += d.toString(); if (se.length > MAX_OUTPUT_BYTES) { se = se.slice(0, MAX_OUTPUT_BYTES); seTrunc = true; } } });
+      let so = '',
+        se = '';
+      let soTrunc = false,
+        seTrunc = false;
+      child.stdout?.on('data', (d: Buffer) => {
+        if (so.length < MAX_OUTPUT_BYTES) {
+          so += d.toString();
+          if (so.length > MAX_OUTPUT_BYTES) {
+            so = so.slice(0, MAX_OUTPUT_BYTES);
+            soTrunc = true;
+          }
+        }
+      });
+      child.stderr?.on('data', (d: Buffer) => {
+        if (se.length < MAX_OUTPUT_BYTES) {
+          se += d.toString();
+          if (se.length > MAX_OUTPUT_BYTES) {
+            se = se.slice(0, MAX_OUTPUT_BYTES);
+            seTrunc = true;
+          }
+        }
+      });
       let timedOut = false;
-      const killTimer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, p.timeout ?? 120000);
+      const killTimer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, p.timeout ?? 120000);
       killTimer.unref();
-      const finalize = () => { clearTimeout(killTimer); cleanup(); };
-      child.on('close', ec => { finalize(); resolve({ stdout: soTrunc ? so + '\n[truncated]' : so, stderr: seTrunc ? se + '\n[truncated]' : se, exitCode: timedOut ? 137 : (ec ?? -1), durationMs: Date.now() - start, sandboxMechanism: 'docker' }); });
-      child.on('error', err => { finalize(); resolve({ stdout: so, stderr: se || err.message, exitCode: -1, durationMs: Date.now() - start, sandboxMechanism: 'docker' }); });
+      const finalize = () => {
+        clearTimeout(killTimer);
+        cleanup();
+      };
+      child.on('close', (ec) => {
+        finalize();
+        resolve({
+          stdout: soTrunc ? so + '\n[truncated]' : so,
+          stderr: seTrunc ? se + '\n[truncated]' : se,
+          exitCode: timedOut ? 137 : (ec ?? -1),
+          durationMs: Date.now() - start,
+          sandboxMechanism: 'docker',
+        });
+      });
+      child.on('error', (err) => {
+        finalize();
+        resolve({
+          stdout: so,
+          stderr: se || err.message,
+          exitCode: -1,
+          durationMs: Date.now() - start,
+          sandboxMechanism: 'docker',
+        });
+      });
     });
   }
 }
@@ -644,8 +1033,13 @@ class NoopSB implements PlatformSandbox {
 }
 
 export function discoverSandboxes(): PlatformSandbox[] {
-  const candidates: PlatformSandbox[] = [new SeatbeltSB(), new BwrapSB(), new DockerSB(), new GVisorSB()];
-  return candidates.filter(s => s.available);
+  const candidates: PlatformSandbox[] = [
+    new SeatbeltSB(),
+    new BwrapSB(),
+    new DockerSB(),
+    new GVisorSB(),
+  ];
+  return candidates.filter((s) => s.available);
 }
 
 export { NoopSB };

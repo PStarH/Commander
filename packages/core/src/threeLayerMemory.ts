@@ -34,19 +34,19 @@ export interface MemoryEntry {
   id: string;
   layer: MemoryLayer;
   content: string;
-  context: string;         // 关联上下文
-  importance: number;      // 0-1, 重要程度
+  context: string; // 关联上下文
+  importance: number; // 0-1, 重要程度
   createdAt: string;
   lastAccessedAt: string;
   accessCount: number;
-  decayScore: number;      // 衰减分数 (episodic layer)
+  decayScore: number; // 衰减分数 (episodic layer)
   tags: string[];
   metadata: Record<string, unknown>;
   // L4 Procedural 层专用字段
   proceduralType?: 'sop' | 'tool' | 'workflow' | 'heuristic';
-  successRate?: number;       // 使用成功率 0-1
-  usageCount?: number;         // 被调用次数
-  conditions?: string[];       // 适用条件列表
+  successRate?: number; // 使用成功率 0-1
+  usageCount?: number; // 被调用次数
+  conditions?: string[]; // 适用条件列表
 }
 
 export interface MemoryQuery {
@@ -55,7 +55,7 @@ export interface MemoryQuery {
   context?: string;
   importanceThreshold?: number;
   limit?: number;
-  since?: string;  // ISO date string
+  since?: string; // ISO date string
 }
 
 export interface MemoryStats {
@@ -63,7 +63,7 @@ export interface MemoryStats {
   byLayer: Record<MemoryLayer, number>;
   averageImportance: number;
   averageAccessCount: number;
-  totalMemoryUsed: number;  // bytes estimate
+  totalMemoryUsed: number; // bytes estimate
 }
 
 // ========================================
@@ -73,40 +73,40 @@ export interface MemoryStats {
 interface LayerConfig {
   maxEntries: number;
   maxMemoryBytes: number;
-  decayRate: number;        // 每次访问后的衰减
+  decayRate: number; // 每次访问后的衰减
   baseDecayPerHour: number; // 每小时基础衰减
-  importanceBoost: number;  // 高重要性项衰减减慢
+  importanceBoost: number; // 高重要性项衰减减慢
 }
 
 const DEFAULT_CONFIG: Record<MemoryLayer, LayerConfig> = {
   working: {
     maxEntries: 50,
-    maxMemoryBytes: 100000,  // 100KB
+    maxMemoryBytes: 100000, // 100KB
     decayRate: 0,
     baseDecayPerHour: 0,
-    importanceBoost: 0
+    importanceBoost: 0,
   },
   episodic: {
     maxEntries: 500,
     maxMemoryBytes: 500000, // 500KB
     decayRate: 0.05,
     baseDecayPerHour: 0.01,
-    importanceBoost: 0.02
+    importanceBoost: 0.02,
   },
   longterm: {
     maxEntries: 10000,
     maxMemoryBytes: 5000000, // 5MB
     decayRate: 0,
     baseDecayPerHour: 0,
-    importanceBoost: 0
+    importanceBoost: 0,
   },
   procedural: {
     maxEntries: 5000,
     maxMemoryBytes: 2000000, // 2MB
     decayRate: 0.02,
     baseDecayPerHour: 0.005,
-    importanceBoost: 0.01
-  }
+    importanceBoost: 0.01,
+  },
 };
 
 // ========================================
@@ -154,7 +154,7 @@ export class ThreeLayerMemory {
     context: string = '',
     importance: number = 0.5,
     tags: string[] = [],
-    metadata: Record<string, unknown> = {}
+    metadata: Record<string, unknown> = {},
   ): MemoryEntry {
     // Quality gate: fast path (0 tokens)
     if (layer !== 'working' && !quickQualityCheck(content, importance)) {
@@ -209,9 +209,8 @@ export class ThreeLayerMemory {
       }
     }
 
-    const entryMetadata: Record<string, unknown> = contradictionIds.length > 0
-      ? { ...metadata, contradictions: contradictionIds }
-      : metadata;
+    const entryMetadata: Record<string, unknown> =
+      contradictionIds.length > 0 ? { ...metadata, contradictions: contradictionIds } : metadata;
 
     const entry: MemoryEntry = {
       id: generateUUID(),
@@ -224,7 +223,7 @@ export class ThreeLayerMemory {
       accessCount: 0,
       decayScore: layer === 'episodic' ? 1.0 : 0,
       tags,
-      metadata: entryMetadata
+      metadata: entryMetadata,
     };
 
     this.memories.set(entry.id, entry);
@@ -234,7 +233,13 @@ export class ThreeLayerMemory {
       const combined = `${content} ${context} ${tags.join(' ')}`;
       const result = this.embeddingFn.generate(combined);
       if (result instanceof Promise) {
-        result.then(emb => this.embedStore.setEmbedding(entry.id, emb)).catch(e => getGlobalLogger().debug('ThreeLayerMemory', 'embedding error', { error: (e as Error)?.message }));
+        result
+          .then((emb) => this.embedStore.setEmbedding(entry.id, emb))
+          .catch((e) =>
+            getGlobalLogger().debug('ThreeLayerMemory', 'embedding error', {
+              error: (e as Error)?.message,
+            }),
+          );
       } else {
         this.embedStore.setEmbedding(entry.id, result);
       }
@@ -267,16 +272,18 @@ export class ThreeLayerMemory {
     // Episodic 层应用衰减
     if (entry.layer === 'episodic') {
       const config = this.config.episodic;
-      entry.decayScore = Math.max(0,
-        entry.decayScore - config.decayRate * (1 - entry.importance * config.importanceBoost)
+      entry.decayScore = Math.max(
+        0,
+        entry.decayScore - config.decayRate * (1 - entry.importance * config.importanceBoost),
       );
     }
 
     // Procedural 层应用衰减
     if (entry.layer === 'procedural') {
       const config = this.config.procedural;
-      entry.decayScore = Math.max(0,
-        entry.decayScore - config.decayRate * (1 - entry.importance * config.importanceBoost)
+      entry.decayScore = Math.max(
+        0,
+        entry.decayScore - config.decayRate * (1 - entry.importance * config.importanceBoost),
       );
     }
   }
@@ -289,33 +296,33 @@ export class ThreeLayerMemory {
 
     // 按层过滤
     if (query.layer) {
-      results = results.filter(m => m.layer === query.layer);
+      results = results.filter((m) => m.layer === query.layer);
     }
 
     // 按关键词过滤
     if (query.keywords && query.keywords.length > 0) {
-      results = results.filter(m => {
+      results = results.filter((m) => {
         const text = `${m.content} ${m.context} ${m.tags.join(' ')}`.toLowerCase();
-        return query.keywords!.some(kw => text.includes(kw.toLowerCase()));
+        return query.keywords!.some((kw) => text.includes(kw.toLowerCase()));
       });
     }
 
     // 按上下文过滤
     if (query.context) {
-      results = results.filter(m => 
-        m.context.toLowerCase().includes(query.context!.toLowerCase())
+      results = results.filter((m) =>
+        m.context.toLowerCase().includes(query.context!.toLowerCase()),
       );
     }
 
     // 按重要性过滤
     if (query.importanceThreshold !== undefined) {
-      results = results.filter(m => m.importance >= query.importanceThreshold!);
+      results = results.filter((m) => m.importance >= query.importanceThreshold!);
     }
 
     // 按时间过滤
     if (query.since) {
       const since = new Date(query.since);
-      results = results.filter(m => new Date(m.createdAt) >= since);
+      results = results.filter((m) => new Date(m.createdAt) >= since);
     }
 
     // Compute query embedding once for similarity scoring
@@ -362,7 +369,7 @@ export class ThreeLayerMemory {
     const recentEpisodic = this.query({
       layer: 'episodic',
       limit: episodicSlots,
-      importanceThreshold: 0.6
+      importanceThreshold: 0.6,
     });
     return [...working, ...recentEpisodic].slice(0, maxEntries);
   }
@@ -411,8 +418,7 @@ export class ThreeLayerMemory {
    */
   evictIfNeeded(layer: MemoryLayer): void {
     const config = this.config[layer];
-    const layerMemories = Array.from(this.memories.values())
-      .filter(m => m.layer === layer);
+    const layerMemories = Array.from(this.memories.values()).filter((m) => m.layer === layer);
 
     // 超出数量限制
     if (layerMemories.length > config.maxEntries) {
@@ -422,8 +428,8 @@ export class ThreeLayerMemory {
         const thompsonA = this.thompsonScorer.getMeanUsefulness(a.id);
         const thompsonB = this.thompsonScorer.getMeanUsefulness(b.id);
 
-        const scoreA = (a.importance * 2 + a.accessCount + thompsonA * 3) - a.decayScore * 5;
-        const scoreB = (b.importance * 2 + b.accessCount + thompsonB * 3) - b.decayScore * 5;
+        const scoreA = a.importance * 2 + a.accessCount + thompsonA * 3 - a.decayScore * 5;
+        const scoreB = b.importance * 2 + b.accessCount + thompsonB * 3 - b.decayScore * 5;
         return scoreA - scoreB;
       });
 
@@ -453,8 +459,8 @@ export class ThreeLayerMemory {
     for (const entry of this.memories.values()) {
       if (entry.layer === 'episodic' || entry.layer === 'procedural') {
         const config = this.config[entry.layer];
-        const decay = config.baseDecayPerHour * hoursElapsed *
-          (1 - entry.importance * config.importanceBoost);
+        const decay =
+          config.baseDecayPerHour * hoursElapsed * (1 - entry.importance * config.importanceBoost);
         entry.decayScore = Math.max(0, entry.decayScore - decay);
 
         if (entry.decayScore <= 0) {
@@ -471,12 +477,12 @@ export class ThreeLayerMemory {
    */
   getStats(): MemoryStats {
     const entries = Array.from(this.memories.values());
-    
+
     const byLayer: Record<MemoryLayer, number> = {
       working: 0,
       episodic: 0,
- longterm: 0,
- procedural: 0
+      longterm: 0,
+      procedural: 0,
     };
 
     let totalImportance = 0;
@@ -495,7 +501,7 @@ export class ThreeLayerMemory {
       byLayer,
       averageImportance: entries.length > 0 ? totalImportance / entries.length : 0,
       averageAccessCount: entries.length > 0 ? totalAccess / entries.length : 0,
-      totalMemoryUsed: totalMemory
+      totalMemoryUsed: totalMemory,
     };
   }
 
@@ -515,7 +521,7 @@ export class ThreeLayerMemory {
       .toLowerCase()
       .replace(/[^a-z0-9一-鿿]+/g, ' ')
       .split(/\s+/)
-      .filter(w => w.length >= 2);
+      .filter((w) => w.length >= 2);
 
     if (keywords.length === 0) {
       return Array.from(this.memories.values())
@@ -531,19 +537,17 @@ export class ThreeLayerMemory {
         const scored: Array<{ entry: MemoryEntry; score: number }> = [];
         for (const entry of this.memories.values()) {
           const entryEmb = this.embedStore.getEmbedding(entry.id);
-          const embScore = entryEmb
-            ? calculateMemoryScore(entry, queryEmb, entryEmb)
-            : 0;
+          const embScore = entryEmb ? calculateMemoryScore(entry, queryEmb, entryEmb) : 0;
           // Fallback keyword score for entries without embeddings
           const text = `${entry.content} ${entry.context} ${entry.tags.join(' ')}`.toLowerCase();
-          const kwHits = keywords.filter(kw => text.includes(kw)).length;
+          const kwHits = keywords.filter((kw) => text.includes(kw)).length;
           const kwScore = kwHits / keywords.length;
           // Blend: 70% embedding if available, 30% keyword
           const score = entryEmb ? embScore * 0.7 + kwScore * 0.3 : kwScore;
           if (score > 0) scored.push({ entry, score });
         }
         scored.sort((a, b) => b.score - a.score);
-        return scored.slice(0, limit).map(s => {
+        return scored.slice(0, limit).map((s) => {
           this.updateAccess(s.entry);
           return s.entry;
         });
@@ -558,7 +562,7 @@ export class ThreeLayerMemory {
    * 清除特定层的所有记忆
    */
   clearLayer(layer: MemoryLayer): number {
-    const entries = Array.from(this.memories.values()).filter(m => m.layer === layer);
+    const entries = Array.from(this.memories.values()).filter((m) => m.layer === layer);
     for (const entry of entries) {
       this.delete(entry.id);
     }
@@ -596,10 +600,20 @@ export class ThreeLayerMemory {
    * Returns 0-1 score where 1 = identical word content.
    */
   private textSimilarity(a: string, b: string): number {
-    const wordsA = new Set(a.toLowerCase().split(/\s+/).filter(w => w.length > 1));
-    const wordsB = new Set(b.toLowerCase().split(/\s+/).filter(w => w.length > 1));
+    const wordsA = new Set(
+      a
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w) => w.length > 1),
+    );
+    const wordsB = new Set(
+      b
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w) => w.length > 1),
+    );
     if (wordsA.size === 0 || wordsB.size === 0) return 0;
-    const intersection = new Set([...wordsA].filter(x => wordsB.has(x)));
+    const intersection = new Set([...wordsA].filter((x) => wordsB.has(x)));
     const union = new Set([...wordsA, ...wordsB]);
     return intersection.size / union.size;
   }
@@ -659,7 +673,7 @@ export function resetGlobalThreeLayerMemory(): void {
 }
 
 export function createThreeLayerMemory(
-  config?: Partial<Record<MemoryLayer, LayerConfig>>
+  config?: Partial<Record<MemoryLayer, LayerConfig>>,
 ): ThreeLayerMemory {
   return new ThreeLayerMemory(config);
 }

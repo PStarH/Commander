@@ -16,27 +16,41 @@ import { $, section, kv } from './_shared';
 // ============================================================================
 
 const COMMANDS: Record<string, string[]> = {
-  'run': [],
-  'plan': [],
-  'watch': [],
-  'company': [],
-  'goal': ['--provider=', '--mode=', '--budget=', '--max-rounds='],
-  'swarm': ['--provider=', '--mode=', '--max-depth=', '--max-workers=', '--budget=', '--max-rounds='],
-  'drive': ['--mode=', '--iterations=', '--verbose'],
-  'workers': [],
-  'status': [],
-  'config': ['set', 'show', 'list-providers', 'list-models', 'test'],
-  'doctor': [],
-  'mode': ['plan', 'read-only', 'suggest', 'auto-edit', 'full-auto'],
-  'history': ['view', 'delete', 'prune'],
-  'skill': ['list', 'ls', 'view', 'create', 'pin', 'unpin', 'delete', 'rm', 'curate'],
-  'review': ['--commit', '--branch', '--json', '--base=', '--guidelines='],
-  'workflow': ['ls', 'list', 'run', 'schedule', 'unschedule', 'pause', 'resume', 'history', 'log', 'create', 'daemon', 'start', 'stop'],
+  run: [],
+  plan: [],
+  watch: [],
+  company: [],
+  goal: ['--provider=', '--mode=', '--budget=', '--max-rounds='],
+  swarm: ['--provider=', '--mode=', '--max-depth=', '--max-workers=', '--budget=', '--max-rounds='],
+  drive: ['--mode=', '--iterations=', '--verbose'],
+  workers: [],
+  status: [],
+  config: ['set', 'show', 'list-providers', 'list-models', 'test'],
+  doctor: [],
+  mode: ['plan', 'read-only', 'suggest', 'auto-edit', 'full-auto'],
+  history: ['view', 'delete', 'prune'],
+  skill: ['list', 'ls', 'view', 'create', 'pin', 'unpin', 'delete', 'rm', 'curate'],
+  review: ['--commit', '--branch', '--json', '--base=', '--guidelines='],
+  workflow: [
+    'ls',
+    'list',
+    'run',
+    'schedule',
+    'unschedule',
+    'pause',
+    'resume',
+    'history',
+    'log',
+    'create',
+    'daemon',
+    'start',
+    'stop',
+  ],
 
-  'quickstart': ['--check'],
-  'completion': ['bash', 'zsh', 'fish', 'install'],
-  'gui': [],
-  'tui': [],
+  quickstart: ['--check'],
+  completion: ['bash', 'zsh', 'fish', 'install'],
+  gui: [],
+  tui: [],
 };
 
 const TOP_LEVEL = Object.keys(COMMANDS);
@@ -46,10 +60,10 @@ const TOP_LEVEL = Object.keys(COMMANDS);
 // ============================================================================
 
 function generateBash(): string {
-  const cmdCases = TOP_LEVEL.map(cmd => {
+  const cmdCases = TOP_LEVEL.map((cmd) => {
     const subcmds = COMMANDS[cmd];
     if (subcmds.length === 0) return `        ${cmd}) COMPREPLY=() ;;`;
-    const subList = subcmds.map(s => `"${s}"`).join(' ');
+    const subList = subcmds.map((s) => `"${s}"`).join(' ');
     return `        ${cmd}) COMPREPLY=($(compgen -W "${subcmds.join(' ')}" -- "$cur")) ;;`;
   }).join('\n');
 
@@ -93,12 +107,12 @@ complete -F _commander_completions commander
 // ============================================================================
 
 function generateZsh(): string {
-  const cmdEntries = TOP_LEVEL.map(cmd => {
+  const cmdEntries = TOP_LEVEL.map((cmd) => {
     const subcmds = COMMANDS[cmd];
     if (subcmds.length === 0) {
       return `    "${cmd}"`;
     }
-    const subArgs = subcmds.map(s => `"${s}"`).join(' ');
+    const subArgs = subcmds.map((s) => `"${s}"`).join(' ');
     return `    "${cmd}[${cmd} command]::subcommand:(${subcmds.join(' ')})"`;
   }).join('\n');
 
@@ -126,11 +140,13 @@ ${cmdEntries}
       ;;
     args)
       case $words[1] in
-${TOP_LEVEL.map(cmd => {
+${TOP_LEVEL.map((cmd) => {
   const subcmds = COMMANDS[cmd];
   if (subcmds.length === 0) return '';
-  return `        ${cmd})\n          _describe -t subcommands '${cmd} subcommand' (${subcmds.map(s => `"${s}"`).join(' ')})\n          ;;`;
-}).filter(Boolean).join('\n')}
+  return `        ${cmd})\n          _describe -t subcommands '${cmd} subcommand' (${subcmds.map((s) => `"${s}"`).join(' ')})\n          ;;`;
+})
+  .filter(Boolean)
+  .join('\n')}
       esac
       ;;
   esac
@@ -175,7 +191,9 @@ function generateFish(): string {
         // Flag
         const flagName = sub.replace(/=$/, '');
         const desc = `Flag for ${cmd}`;
-        lines.push(`complete -c commander -n '__fish_seen_subcommand_from ${cmd}' -l ${flagName.replace('--', '')} -d "${desc}"`);
+        lines.push(
+          `complete -c commander -n '__fish_seen_subcommand_from ${cmd}' -l ${flagName.replace('--', '')} -d "${desc}"`,
+        );
       } else {
         // Subcommand
         lines.push(`complete -c commander -n '__fish_seen_subcommand_from ${cmd}' -a ${sub}`);
@@ -202,20 +220,28 @@ function detectShell(): string {
 function getInstallPath(shell: string): string {
   const home = process.env.HOME || process.env.USERPROFILE || '~';
   switch (shell) {
-    case 'zsh': return path.join(home, '.commander-completion.zsh');
-    case 'bash': return path.join(home, '.commander-completion.bash');
-    case 'fish': return path.join(home, '.config', 'fish', 'completions', 'commander.fish');
-    default: return path.join(home, `.commander-completion.${shell}`);
+    case 'zsh':
+      return path.join(home, '.commander-completion.zsh');
+    case 'bash':
+      return path.join(home, '.commander-completion.bash');
+    case 'fish':
+      return path.join(home, '.config', 'fish', 'completions', 'commander.fish');
+    default:
+      return path.join(home, `.commander-completion.${shell}`);
   }
 }
 
 function getRcFile(shell: string): string {
   const home = process.env.HOME || process.env.USERPROFILE || '~';
   switch (shell) {
-    case 'zsh': return path.join(home, '.zshrc');
-    case 'bash': return path.join(home, '.bashrc');
-    case 'fish': return path.join(home, '.config', 'fish', 'config.fish');
-    default: return '';
+    case 'zsh':
+      return path.join(home, '.zshrc');
+    case 'bash':
+      return path.join(home, '.bashrc');
+    case 'fish':
+      return path.join(home, '.config', 'fish', 'config.fish');
+    default:
+      return '';
   }
 }
 
@@ -235,7 +261,8 @@ export async function cmdCompletion(args: string[]) {
 
   if (subcmd === 'install') {
     const detected = detectShell();
-    const script = detected === 'zsh' ? generateZsh() : detected === 'fish' ? generateFish() : generateBash();
+    const script =
+      detected === 'zsh' ? generateZsh() : detected === 'fish' ? generateFish() : generateBash();
     const installPath = getInstallPath(detected);
     const rcFile = getRcFile(detected);
 
@@ -259,9 +286,10 @@ export async function cmdCompletion(args: string[]) {
     }
 
     // Add source line to rc
-    const sourceLine = detected === 'fish'
-      ? `source ${installPath}`
-      : `[ -f ${installPath} ] && source ${installPath}`;
+    const sourceLine =
+      detected === 'fish'
+        ? `source ${installPath}`
+        : `[ -f ${installPath} ] && source ${installPath}`;
 
     console.log(`\n  ${$.bold}Add this to your ${rcFile}:${$.reset}\n`);
     console.log(`    ${$.gray}${sourceLine}${$.reset}`);
@@ -274,10 +302,17 @@ export async function cmdCompletion(args: string[]) {
   // Print script to stdout
   let script: string;
   switch (shell) {
-    case 'bash': script = generateBash(); break;
-    case 'zsh': script = generateZsh(); break;
-    case 'fish': script = generateFish(); break;
-    default: script = generateBash();
+    case 'bash':
+      script = generateBash();
+      break;
+    case 'zsh':
+      script = generateZsh();
+      break;
+    case 'fish':
+      script = generateFish();
+      break;
+    default:
+      script = generateBash();
   }
   process.stdout.write(script);
 }

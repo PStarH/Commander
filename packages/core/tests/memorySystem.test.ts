@@ -265,7 +265,10 @@ describe('TrajectoryAnalyzer — new failure categories', () => {
 
   it('classifies data_validation from errorPattern', async () => {
     const analyzer = new TrajectoryAnalyzer('light');
-    const exp = makeExp({ id: 'dv1', errorPattern: 'Validation error: invalid format, schema violation' });
+    const exp = makeExp({
+      id: 'dv1',
+      errorPattern: 'Validation error: invalid format, schema violation',
+    });
     const [insight] = await analyzer.analyze([exp]);
     assert.strictEqual(insight.failureCategory, 'data_validation');
   });
@@ -296,26 +299,30 @@ describe('MetaLearner — Thompson Sampling', () => {
 
     // Simulate: SEQUENTIAL succeeds 80%, PARALLEL succeeds 20%
     for (let i = 0; i < 50; i++) {
-      ml.recordExperience(makeExp({
-        id: `seq-${i}`,
-        strategyUsed: 'SEQUENTIAL',
-        success: Math.random() < 0.8,
-        taskType: 'test',
-      }));
+      ml.recordExperience(
+        makeExp({
+          id: `seq-${i}`,
+          strategyUsed: 'SEQUENTIAL',
+          success: Math.random() < 0.8,
+          taskType: 'test',
+        }),
+      );
     }
     for (let i = 0; i < 50; i++) {
-      ml.recordExperience(makeExp({
-        id: `par-${i}`,
-        strategyUsed: 'PARALLEL',
-        success: Math.random() < 0.2,
-        taskType: 'test',
-      }));
+      ml.recordExperience(
+        makeExp({
+          id: `par-${i}`,
+          strategyUsed: 'PARALLEL',
+          success: Math.random() < 0.2,
+          taskType: 'test',
+        }),
+      );
     }
 
     // After many trials, SEQUENTIAL should be preferred
     const scores = ml.getStrategyScores('test');
-    const seqScore = scores.find(s => s.strategy === 'SEQUENTIAL')?.score ?? 0;
-    const parScore = scores.find(s => s.strategy === 'PARALLEL')?.score ?? 0;
+    const seqScore = scores.find((s) => s.strategy === 'SEQUENTIAL')?.score ?? 0;
+    const parScore = scores.find((s) => s.strategy === 'PARALLEL')?.score ?? 0;
     assert.ok(seqScore > parScore, 'Sequential should score higher after 80% success rate');
   });
 
@@ -323,24 +330,28 @@ describe('MetaLearner — Thompson Sampling', () => {
     const ml = new MetaLearner(100, 3);
 
     // Easy task success
-    ml.recordExperience(makeExp({
-      id: 'easy-success',
-      strategyUsed: 'SEQUENTIAL',
-      success: true,
-      taskType: 'easy',
-      tokenCost: 100,
-      durationMs: 1000,
-    }));
+    ml.recordExperience(
+      makeExp({
+        id: 'easy-success',
+        strategyUsed: 'SEQUENTIAL',
+        success: true,
+        taskType: 'easy',
+        tokenCost: 100,
+        durationMs: 1000,
+      }),
+    );
 
     // Hard task failure (high token cost, long duration)
-    ml.recordExperience(makeExp({
-      id: 'hard-fail',
-      strategyUsed: 'SEQUENTIAL',
-      success: false,
-      taskType: 'hard',
-      tokenCost: 100000,
-      durationMs: 120000,
-    }));
+    ml.recordExperience(
+      makeExp({
+        id: 'hard-fail',
+        strategyUsed: 'SEQUENTIAL',
+        success: false,
+        taskType: 'hard',
+        tokenCost: 100000,
+        durationMs: 120000,
+      }),
+    );
 
     // The easy success should contribute more to the prior than the hard failure
     const scores = ml.getStrategyScores('easy');
@@ -475,12 +486,14 @@ describe('Edge Cases — MetaLearner', () => {
   it('handles experience buffer overflow (maxExperiences)', () => {
     const ml = new MetaLearner(10, 3); // Small buffer
     for (let i = 0; i < 20; i++) {
-      ml.recordExperience(makeExp({
-        id: `exp-${i}`,
-        strategyUsed: 'SEQUENTIAL',
-        success: true,
-        taskType: 'test',
-      }));
+      ml.recordExperience(
+        makeExp({
+          id: `exp-${i}`,
+          strategyUsed: 'SEQUENTIAL',
+          success: true,
+          taskType: 'test',
+        }),
+      );
     }
     const experiences = ml.getExperiences();
     assert.ok(experiences.length <= 10, 'Should not exceed maxExperiences');
@@ -490,12 +503,14 @@ describe('Edge Cases — MetaLearner', () => {
     const ml = new MetaLearner(100, 3);
     // Create many different task types to trigger prior eviction
     for (let i = 0; i < 250; i++) {
-      ml.recordExperience(makeExp({
-        id: `exp-${i}`,
-        strategyUsed: 'SEQUENTIAL',
-        success: true,
-        taskType: `task-${i}`,
-      }));
+      ml.recordExperience(
+        makeExp({
+          id: `exp-${i}`,
+          strategyUsed: 'SEQUENTIAL',
+          success: true,
+          taskType: `task-${i}`,
+        }),
+      );
     }
     const tracked = ml.getTrackedTaskTypes();
     assert.ok(tracked.length <= 200, 'Should not exceed MAX_THOMPSON_PRIORS');
@@ -504,12 +519,14 @@ describe('Edge Cases — MetaLearner', () => {
   it('handles reflection buffer overflow', () => {
     const ml = new MetaLearner(100, 3);
     for (let i = 0; i < 250; i++) {
-      ml.recordExperience(makeExp({
-        id: `exp-${i}`,
-        strategyUsed: 'SEQUENTIAL',
-        success: true,
-        taskType: 'test',
-      }));
+      ml.recordExperience(
+        makeExp({
+          id: `exp-${i}`,
+          strategyUsed: 'SEQUENTIAL',
+          success: true,
+          taskType: 'test',
+        }),
+      );
     }
     const reflections = ml.getReflections(300);
     assert.ok(reflections.length <= 200, 'Should not exceed reflection buffer');

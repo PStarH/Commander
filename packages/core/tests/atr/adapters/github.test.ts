@@ -47,9 +47,17 @@ function makeStack(client: GitHubClient) {
   resetIdempotencyStore();
   resetRunLedgerBundle();
   resetCompensationBridge();
-  const lm = new LeaseManager({ filePath: ':memory:', defaultTtlSeconds: 60, defaultHolder: 'test' });
+  const lm = new LeaseManager({
+    filePath: ':memory:',
+    defaultTtlSeconds: 60,
+    defaultHolder: 'test',
+  });
   const idem = new IdempotencyStore({ filePath: ':memory:', defaultTtlSeconds: 60 });
-  const ledger = new RunLedger(lm, idem, { filePath: ':memory:', defaultTtlSeconds: 60, defaultHolder: 'test' });
+  const ledger = new RunLedger(lm, idem, {
+    filePath: ':memory:',
+    defaultTtlSeconds: 60,
+    defaultHolder: 'test',
+  });
   const bridge = new CompensationBridge();
   const scheduler = new ExecutionScheduler({ lease: lm, idempotency: idem, ledger, bridge });
   const handlers = getGitHubCompensationHandlers(client);
@@ -57,8 +65,16 @@ function makeStack(client: GitHubClient) {
     scheduler.registerCompensation(name, h);
   }
   return {
-    scheduler, lm, idem, ledger, bridge,
-    close: () => { lm.close(); idem.close(); ledger.close(); },
+    scheduler,
+    lm,
+    idem,
+    ledger,
+    bridge,
+    close: () => {
+      lm.close();
+      idem.close();
+      ledger.close();
+    },
   };
 }
 
@@ -121,16 +137,28 @@ describe('GitHub adapter', () => {
     it('idempotencyKey is deterministic across calls with same args', () => {
       const tools = createGitHubTools(new MockClient());
       const create = tools.get('github_create_pr')!;
-      const k1 = (create.idempotencyKey as Function)({ repo: 'o/r', title: 't', body: 'b', head: 'h', base: 'main' }, { runId: 'r', stepId: 's1' });
-      const k2 = (create.idempotencyKey as Function)({ repo: 'o/r', title: 't', body: 'b', head: 'h', base: 'main' }, { runId: 'r', stepId: 's2' });
+      const k1 = (create.idempotencyKey as Function)(
+        { repo: 'o/r', title: 't', body: 'b', head: 'h', base: 'main' },
+        { runId: 'r', stepId: 's1' },
+      );
+      const k2 = (create.idempotencyKey as Function)(
+        { repo: 'o/r', title: 't', body: 'b', head: 'h', base: 'main' },
+        { runId: 'r', stepId: 's2' },
+      );
       assert.strictEqual(k1, k2, 'same args → same key (independent of step)');
     });
 
     it('idempotencyKey differs for different args', () => {
       const tools = createGitHubTools(new MockClient());
       const create = tools.get('github_create_pr')!;
-      const k1 = (create.idempotencyKey as Function)({ repo: 'o/r', title: 'A', body: '', head: 'h', base: 'main' }, { runId: 'r', stepId: 's' });
-      const k2 = (create.idempotencyKey as Function)({ repo: 'o/r', title: 'B', body: '', head: 'h', base: 'main' }, { runId: 'r', stepId: 's' });
+      const k1 = (create.idempotencyKey as Function)(
+        { repo: 'o/r', title: 'A', body: '', head: 'h', base: 'main' },
+        { runId: 'r', stepId: 's' },
+      );
+      const k2 = (create.idempotencyKey as Function)(
+        { repo: 'o/r', title: 'B', body: '', head: 'h', base: 'main' },
+        { runId: 'r', stepId: 's' },
+      );
       assert.notStrictEqual(k1, k2);
     });
   });
@@ -139,7 +167,9 @@ describe('GitHub adapter', () => {
     it('github_create_pr calls client and returns JSON result', async () => {
       const client = new MockClient();
       const tools = createGitHubTools(client);
-      const r = await tools.get('github_create_pr')!.execute({ repo: 'o/r', title: 't', body: 'b', head: 'h', base: 'main' });
+      const r = await tools
+        .get('github_create_pr')!
+        .execute({ repo: 'o/r', title: 't', body: 'b', head: 'h', base: 'main' });
       assert.strictEqual(client.callCounts.createPr, 1);
       const parsed = JSON.parse(r);
       assert.strictEqual(parsed.number, 42);
@@ -154,10 +184,15 @@ describe('GitHub adapter', () => {
 
     it('propagates client errors', async () => {
       const client = new MockClient();
-      client.createPrImpl = async () => { throw new GitHubClientError('forbidden', 403); };
+      client.createPrImpl = async () => {
+        throw new GitHubClientError('forbidden', 403);
+      };
       const tools = createGitHubTools(client);
       await assert.rejects(
-        () => tools.get('github_create_pr')!.execute({ repo: 'o/r', title: 't', body: 'b', head: 'h', base: 'main' }),
+        () =>
+          tools
+            .get('github_create_pr')!
+            .execute({ repo: 'o/r', title: 't', body: 'b', head: 'h', base: 'main' }),
         /forbidden/,
       );
     });
@@ -170,26 +205,38 @@ describe('GitHub adapter', () => {
       try {
         const h = stack.scheduler.beginRun({ runId: 'gh-1', goal: 'open PR then merge' });
         const create = stack.scheduler.scheduleAction({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          toolName: 'github_create_pr', externalSystem: 'github',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          toolName: 'github_create_pr',
+          externalSystem: 'github',
           args: { repo: 'o/r', title: 'fix', body: '', head: 'feat', base: 'main' },
-          idempotencyKey: 'k1', compensable: true,
+          idempotencyKey: 'k1',
+          compensable: true,
         });
         assert.ok(create);
         stack.scheduler.recordResult({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          actionId: create.actionId, result: JSON.stringify({ number: 42, url: 'x' }),
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          actionId: create.actionId,
+          result: JSON.stringify({ number: 42, url: 'x' }),
         });
 
         const res = await stack.scheduler.abortRun({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch, reason: 'test abort',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          reason: 'test abort',
         });
 
         assert.strictEqual(res.aborted, true);
         assert.strictEqual(res.outcome.succeeded, 1);
         assert.strictEqual(client.callCounts.closePr, 1, 'closePr was called to compensate');
         assert.deepStrictEqual(client.closePrArgs[0], { repo: 'o/r', number: 42 });
-      } finally { stack.close(); }
+      } finally {
+        stack.close();
+      }
     });
 
     it('on abort, github_merge_pr is compensated by github_revert_pr', async () => {
@@ -198,22 +245,34 @@ describe('GitHub adapter', () => {
       try {
         const h = stack.scheduler.beginRun({ runId: 'gh-2', goal: 'merge PR' });
         const merge = stack.scheduler.scheduleAction({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          toolName: 'github_merge_pr', externalSystem: 'github',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          toolName: 'github_merge_pr',
+          externalSystem: 'github',
           args: { repo: 'o/r', number: 7, method: 'merge' },
-          idempotencyKey: 'k2', compensable: true,
+          idempotencyKey: 'k2',
+          compensable: true,
         });
         stack.scheduler.recordResult({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          actionId: merge.actionId, result: JSON.stringify({ merged: true, sha: 'abc' }),
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          actionId: merge.actionId,
+          result: JSON.stringify({ merged: true, sha: 'abc' }),
         });
 
         await stack.scheduler.abortRun({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch, reason: 'x',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          reason: 'x',
         });
 
         assert.strictEqual(client.callCounts.revertPr, 1, 'revertPr was called');
-      } finally { stack.close(); }
+      } finally {
+        stack.close();
+      }
     });
 
     it('on commit (success), no compensation runs', async () => {
@@ -222,48 +281,73 @@ describe('GitHub adapter', () => {
       try {
         const h = stack.scheduler.beginRun({ runId: 'gh-3', goal: 'happy path' });
         const create = stack.scheduler.scheduleAction({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          toolName: 'github_create_pr', externalSystem: 'github',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          toolName: 'github_create_pr',
+          externalSystem: 'github',
           args: { repo: 'o/r', title: 't', body: '', head: 'h', base: 'main' },
-          idempotencyKey: 'k3', compensable: true,
+          idempotencyKey: 'k3',
+          compensable: true,
         });
         stack.scheduler.recordResult({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          actionId: create.actionId, result: JSON.stringify({ number: 1, url: 'x' }),
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          actionId: create.actionId,
+          result: JSON.stringify({ number: 1, url: 'x' }),
         });
 
         const res = stack.scheduler.commitRun({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
         });
         assert.strictEqual(res.committed, true);
         assert.strictEqual(client.callCounts.closePr, 0, 'no compensation on success');
-      } finally { stack.close(); }
+      } finally {
+        stack.close();
+      }
     });
 
     it('compensation failure is reported in outcome', async () => {
       const client = new MockClient();
-      client.closePrImpl = async () => { throw new Error('network down'); };
+      client.closePrImpl = async () => {
+        throw new Error('network down');
+      };
       const stack = makeStack(client);
       try {
         const h = stack.scheduler.beginRun({ runId: 'gh-4', goal: 'g' });
         const create = stack.scheduler.scheduleAction({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          toolName: 'github_create_pr', externalSystem: 'github',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          toolName: 'github_create_pr',
+          externalSystem: 'github',
           args: { repo: 'o/r', title: 't', body: '', head: 'h', base: 'main' },
-          idempotencyKey: 'k4', compensable: true,
+          idempotencyKey: 'k4',
+          compensable: true,
         });
         stack.scheduler.recordResult({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          actionId: create.actionId, result: JSON.stringify({ number: 99, url: 'x' }),
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          actionId: create.actionId,
+          result: JSON.stringify({ number: 99, url: 'x' }),
         });
 
         const res = await stack.scheduler.abortRun({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch, reason: 'x',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          reason: 'x',
         });
         assert.strictEqual(res.outcome.failed, 1);
         assert.strictEqual(res.outcome.errors[0].toolName, 'github_create_pr');
         assert.match(res.outcome.errors[0].error, /network down/);
-      } finally { stack.close(); }
+      } finally {
+        stack.close();
+      }
     });
   });
 
@@ -274,26 +358,39 @@ describe('GitHub adapter', () => {
       try {
         const h = stack.scheduler.beginRun({ runId: 'gh-5', goal: 'g' });
         const first = stack.scheduler.scheduleAction({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          toolName: 'github_create_pr', externalSystem: 'github',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          toolName: 'github_create_pr',
+          externalSystem: 'github',
           args: { repo: 'o/r', title: 't', body: '', head: 'h', base: 'main' },
-          idempotencyKey: 'shared-key', compensable: true,
+          idempotencyKey: 'shared-key',
+          compensable: true,
         });
         assert.strictEqual(first.replayed, false);
         stack.scheduler.recordResult({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          actionId: first.actionId, result: JSON.stringify({ number: 7, url: 'x' }),
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          actionId: first.actionId,
+          result: JSON.stringify({ number: 7, url: 'x' }),
         });
 
         const second = stack.scheduler.scheduleAction({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          toolName: 'github_create_pr', externalSystem: 'github',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          toolName: 'github_create_pr',
+          externalSystem: 'github',
           args: { repo: 'o/r', title: 't', body: '', head: 'h', base: 'main' },
-          idempotencyKey: 'shared-key', compensable: true,
+          idempotencyKey: 'shared-key',
+          compensable: true,
         });
         assert.strictEqual(second.replayed, true);
         assert.strictEqual(second.cachedResult, JSON.stringify({ number: 7, url: 'x' }));
-      } finally { stack.close(); }
+      } finally {
+        stack.close();
+      }
     });
   });
 
@@ -304,12 +401,17 @@ describe('GitHub adapter', () => {
       try {
         const h = stack.scheduler.beginRun({ runId: 'gh-6', goal: 'g' });
         const res = await stack.scheduler.abortRun({
-          runId: h.runId, leaseToken: 'fake', fencingEpoch: 999, reason: 'x',
+          runId: h.runId,
+          leaseToken: 'fake',
+          fencingEpoch: 999,
+          reason: 'x',
         });
         assert.strictEqual(res.aborted, false);
         assert.strictEqual(res.reason, 'fenced');
         assert.strictEqual(client.callCounts.closePr, 0);
-      } finally { stack.close(); }
+      } finally {
+        stack.close();
+      }
     });
   });
 });

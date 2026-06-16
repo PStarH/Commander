@@ -66,7 +66,9 @@ try {
   BetterSqlite3 = require('better-sqlite3');
 } catch {}
 
-export type CompensationHandler = (action: CompensableAction) => Promise<{ success: boolean; error?: string }>;
+export type CompensationHandler = (
+  action: CompensableAction,
+) => Promise<{ success: boolean; error?: string }>;
 
 interface ActionRow {
   action_id: string;
@@ -389,8 +391,14 @@ export class RunLedger {
     if (!this.db || !this.stmtUpdateTxState) return false;
     const tenantId = options?.tenantId ?? null;
     const result = this.stmtUpdateTxState.run(
-      'EXECUTING', null, null, null,
-      runId, tenantId, leaseToken, fencingEpoch,
+      'EXECUTING',
+      null,
+      null,
+      null,
+      runId,
+      tenantId,
+      leaseToken,
+      fencingEpoch,
     );
     return result.changes === 1;
   }
@@ -407,8 +415,14 @@ export class RunLedger {
     if (!this.db || !this.stmtUpdateTxState) return false;
     const tenantId = options?.tenantId ?? null;
     const result = this.stmtUpdateTxState.run(
-      'VERIFYING', null, null, null,
-      runId, tenantId, leaseToken, fencingEpoch,
+      'VERIFYING',
+      null,
+      null,
+      null,
+      runId,
+      tenantId,
+      leaseToken,
+      fencingEpoch,
     );
     return result.changes === 1;
   }
@@ -425,8 +439,14 @@ export class RunLedger {
     if (!this.db || !this.stmtUpdateTxState) return false;
     const tenantId = options?.tenantId ?? null;
     const result = this.stmtUpdateTxState.run(
-      'COMMITTED', new Date().toISOString(), null, null,
-      runId, tenantId, leaseToken, fencingEpoch,
+      'COMMITTED',
+      new Date().toISOString(),
+      null,
+      null,
+      runId,
+      tenantId,
+      leaseToken,
+      fencingEpoch,
     );
     return result.changes === 1;
   }
@@ -439,9 +459,11 @@ export class RunLedger {
   recordAction(input: RecordActionInput): CompensableAction | null {
     if (!this.db || !this.stmtAppendAction || !this.stmtGetTx) return null;
     const tenantId = input.tenantId ?? null;
-      const txRow = this.stmtGetTx.get(input.runId, tenantId) as TxRow | undefined;
+    const txRow = this.stmtGetTx.get(input.runId, tenantId) as TxRow | undefined;
     if (!txRow) {
-      getGlobalLogger().warn('RunLedger', 'recordAction: transaction not found', { runId: input.runId });
+      getGlobalLogger().warn('RunLedger', 'recordAction: transaction not found', {
+        runId: input.runId,
+      });
       return null;
     }
     if (txRow.lease_token !== input.leaseToken || txRow.fencing_epoch !== input.fencingEpoch) {
@@ -525,8 +547,14 @@ export class RunLedger {
 
     if (this.db && this.stmtUpdateTxState) {
       this.stmtUpdateTxState.run(
-        'ABORTED', null, new Date().toISOString(), errorMessage,
-        runId, tenantId, leaseToken, fencingEpoch,
+        'ABORTED',
+        null,
+        new Date().toISOString(),
+        errorMessage,
+        runId,
+        tenantId,
+        leaseToken,
+        fencingEpoch,
       );
     }
     // No handler → log and treat as success (idempotent no-op). This is the
@@ -544,9 +572,13 @@ export class RunLedger {
       outcome.attempted++;
       if (!handler) {
         // No handler — log and treat as success (idempotent no-op)
-        getGlobalLogger().info('RunLedger', `No compensation handler for ${action.toolName}; skipping`, {
-          actionId: action.actionId,
-        });
+        getGlobalLogger().info(
+          'RunLedger',
+          `No compensation handler for ${action.toolName}; skipping`,
+          {
+            actionId: action.actionId,
+          },
+        );
         this.stmtMarkCompensated?.run(new Date().toISOString(), action.actionId);
         outcome.succeeded++;
         continue;
@@ -579,18 +611,28 @@ export class RunLedger {
           toolName: action.toolName,
           error: lastError ?? 'unknown',
         });
-        getGlobalLogger().error('RunLedger', `Compensation failed after ${maxAttempts} attempts`, lastError ? new Error(lastError) : undefined, {
-          actionId: action.actionId,
-          toolName: action.toolName,
-        });
+        getGlobalLogger().error(
+          'RunLedger',
+          `Compensation failed after ${maxAttempts} attempts`,
+          lastError ? new Error(lastError) : undefined,
+          {
+            actionId: action.actionId,
+            toolName: action.toolName,
+          },
+        );
       }
     }
 
     if (this.stmtUpdateTxState) {
       this.stmtUpdateTxState.run(
         outcome.failed === 0 ? 'COMPENSATED' : 'ABORTED',
-        null, null, outcome.failed > 0 ? `${outcome.failed} compensations failed` : null,
-        runId, tenantId, leaseToken, fencingEpoch,
+        null,
+        null,
+        outcome.failed > 0 ? `${outcome.failed} compensations failed` : null,
+        runId,
+        tenantId,
+        leaseToken,
+        fencingEpoch,
       );
     }
 
@@ -642,7 +684,9 @@ export class RunLedger {
 
   private loadActions(runId: string, tenantId: string | null): CompensableAction[] {
     if (!this.stmtListActions) return [];
-    return (this.stmtListActions.all(runId, tenantId) as ActionRow[]).map((r) => this.rowToAction(r));
+    return (this.stmtListActions.all(runId, tenantId) as ActionRow[]).map((r) =>
+      this.rowToAction(r),
+    );
   }
 
   private rowToAction(row: ActionRow): CompensableAction {
@@ -693,14 +737,26 @@ function createLedgerSingleton() {
   return createTenantAwareSingleton<Bundle>(
     () => {
       const memory = process.env.COMMANDER_ATR_MEMORY === '1';
-      const lease = memory ? new LeaseManager({ filePath: ':memory:', defaultHolder: 'test' }) : new LeaseManager();
+      const lease = memory
+        ? new LeaseManager({ filePath: ':memory:', defaultHolder: 'test' })
+        : new LeaseManager();
       const idempotency = getIdempotencyStore();
       const ledger = memory
-        ? new RunLedger(lease, idempotency, { filePath: ':memory:', defaultTtlSeconds: 60, defaultHolder: 'test', defaultIdempotencyTtlSeconds: 60 })
+        ? new RunLedger(lease, idempotency, {
+            filePath: ':memory:',
+            defaultTtlSeconds: 60,
+            defaultHolder: 'test',
+            defaultIdempotencyTtlSeconds: 60,
+          })
         : new RunLedger(lease, idempotency);
       return { lease, idempotency, ledger };
     },
-    { dispose: ({ lease, ledger }) => { lease.close(); ledger.close(); } },
+    {
+      dispose: ({ lease, ledger }) => {
+        lease.close();
+        ledger.close();
+      },
+    },
   );
 }
 

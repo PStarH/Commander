@@ -101,7 +101,16 @@ describe('PolicyEngine — security guarantees', () => {
         allow { input.tool.isReadOnly == true }
       `);
       const engine = new PolicyEngine(pack);
-      const input = makeInput({ tool: { name: 'merge', riskLevel: 'high', destructive: true, isReadOnly: false, isIdempotent: false, category: 'destructive' } });
+      const input = makeInput({
+        tool: {
+          name: 'merge',
+          riskLevel: 'high',
+          destructive: true,
+          isReadOnly: false,
+          isIdempotent: false,
+          category: 'destructive',
+        },
+      });
       const d = engine.evaluate(input);
       assert.notStrictEqual(d.effect, 'allow');
     });
@@ -146,7 +155,16 @@ describe('PolicyEngine — security guarantees', () => {
         allow { true }
       `);
       const engine = new PolicyEngine(pack);
-      const input = makeInput({ tool: { name: 'merge', riskLevel: 'high', destructive: true, isReadOnly: false, isIdempotent: false, category: 'destructive' } });
+      const input = makeInput({
+        tool: {
+          name: 'merge',
+          riskLevel: 'high',
+          destructive: true,
+          isReadOnly: false,
+          isIdempotent: false,
+          category: 'destructive',
+        },
+      });
       const d = engine.evaluate(input);
       assert.strictEqual(d.effect, 'deny');
       assert.match(d.reason, /destructive_without_idempotency/);
@@ -160,7 +178,16 @@ describe('PolicyEngine — security guarantees', () => {
         allow { input.tool.isReadOnly == true }
       `);
       const engine = new PolicyEngine(pack);
-      const input = makeInput({ tool: { name: 'read', riskLevel: 'low', destructive: false, isReadOnly: true, isIdempotent: true, category: 'file_read' } });
+      const input = makeInput({
+        tool: {
+          name: 'read',
+          riskLevel: 'low',
+          destructive: false,
+          isReadOnly: true,
+          isIdempotent: true,
+          category: 'file_read',
+        },
+      });
       const d = engine.evaluate(input);
       assert.ok(d.decisionPath.length > 0);
       assert.ok(d.decisionId.startsWith('pd_'));
@@ -172,7 +199,10 @@ describe('PolicyEngine — security guarantees', () => {
       `);
       const engine = new PolicyEngine(pack);
       const d = engine.evaluate(makeInput());
-      assert.deepStrictEqual(d.decisionPath, ['engine:fail_closed'].length === 1 ? d.decisionPath : d.decisionPath);
+      assert.deepStrictEqual(
+        d.decisionPath,
+        ['engine:fail_closed'].length === 1 ? d.decisionPath : d.decisionPath,
+      );
       assert.ok(d.decisionId);
     });
   });
@@ -184,7 +214,16 @@ describe('PolicyEngine — security guarantees', () => {
         allow { input.tool.isReadOnly == true }
       `);
       const engine = new PolicyEngine(pack);
-      const input = makeInput({ tool: { name: 'read', riskLevel: 'low', destructive: false, isReadOnly: true, isIdempotent: true, category: 'file_read' } });
+      const input = makeInput({
+        tool: {
+          name: 'read',
+          riskLevel: 'low',
+          destructive: false,
+          isReadOnly: true,
+          isIdempotent: true,
+          category: 'file_read',
+        },
+      });
       input.metrics.tokensUsedThisRun = 2_000_000;
       const d = engine.evaluate(input);
       assert.strictEqual(d.effect, 'deny');
@@ -197,7 +236,16 @@ describe('PolicyEngine — security guarantees', () => {
         allow { input.tool.isReadOnly == true }
       `);
       const engine = new PolicyEngine(pack);
-      const input = makeInput({ tool: { name: 'read', riskLevel: 'low', destructive: false, isReadOnly: true, isIdempotent: true, category: 'file_read' } });
+      const input = makeInput({
+        tool: {
+          name: 'read',
+          riskLevel: 'low',
+          destructive: false,
+          isReadOnly: true,
+          isIdempotent: true,
+          category: 'file_read',
+        },
+      });
       input.metrics.actionsThisRun = 200;
       const d = engine.evaluate(input);
       assert.strictEqual(d.effect, 'deny');
@@ -211,7 +259,16 @@ describe('PolicyEngine — security guarantees', () => {
         default allow = true
       `);
       const engine = new PolicyEngine(pack);
-      const input = makeInput({ tool: { name: 'merge', riskLevel: 'high', destructive: true, isReadOnly: false, isIdempotent: false, category: 'destructive' } });
+      const input = makeInput({
+        tool: {
+          name: 'merge',
+          riskLevel: 'high',
+          destructive: true,
+          isReadOnly: false,
+          isIdempotent: false,
+          category: 'destructive',
+        },
+      });
       const d = engine.evaluate(input);
       assert.ok(d.riskScore >= 30);
     });
@@ -233,7 +290,17 @@ describe('PolicyEngine — security guarantees', () => {
         default allow = true
       `);
       const engine = new PolicyEngine(pack);
-      const input = makeInput({ phase: 'tool', tool: { name: 'read', riskLevel: 'low', destructive: false, isReadOnly: true, isIdempotent: true, category: 'file_read' } });
+      const input = makeInput({
+        phase: 'tool',
+        tool: {
+          name: 'read',
+          riskLevel: 'low',
+          destructive: false,
+          isReadOnly: true,
+          isIdempotent: true,
+          category: 'file_read',
+        },
+      });
       const d = engine.evaluate(input);
       assert.strictEqual(d.cacheable, true);
     });
@@ -244,7 +311,16 @@ describe('PolicyEngine — security guarantees', () => {
         deny_class = "deny_shell" { input.tool.category == "shell" }
       `);
       const engine = new PolicyEngine(pack);
-      const input = makeInput({ tool: { name: 'rm', riskLevel: 'high', destructive: true, isReadOnly: false, isIdempotent: false, category: 'shell' } });
+      const input = makeInput({
+        tool: {
+          name: 'rm',
+          riskLevel: 'high',
+          destructive: true,
+          isReadOnly: false,
+          isIdempotent: false,
+          category: 'shell',
+        },
+      });
       const d = engine.evaluate(input);
       assert.strictEqual(d.effect, 'deny_class');
       assert.strictEqual(d.cacheable, false);
@@ -271,7 +347,18 @@ describe('PolicyEngine — security guarantees', () => {
       `);
       const engine = new PolicyEngine(pack);
       engine.evaluate(makeInput());
-      engine.evaluate(makeInput({ tool: { name: 'read', riskLevel: 'low', destructive: false, isReadOnly: true, isIdempotent: true, category: 'file_read' } }));
+      engine.evaluate(
+        makeInput({
+          tool: {
+            name: 'read',
+            riskLevel: 'low',
+            destructive: false,
+            isReadOnly: true,
+            isIdempotent: true,
+            category: 'file_read',
+          },
+        }),
+      );
       const s = engine.getStats();
       assert.ok(s.evaluations >= 2);
     });

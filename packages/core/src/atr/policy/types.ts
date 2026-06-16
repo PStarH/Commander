@@ -1,8 +1,4 @@
-export type PolicyEffect =
-  | 'allow'
-  | 'deny'
-  | 'require_approval'
-  | 'deny_class';
+export type PolicyEffect = 'allow' | 'deny' | 'require_approval' | 'deny_class';
 
 export type PolicyDenyClass =
   | 'deny_shell'
@@ -59,18 +55,15 @@ export type PolicyExpr =
   | { kind: 'list'; items: PolicyExpr[] }
   | { kind: 'object'; fields: { key: string; value: PolicyExpr }[] };
 
-export type PolicyBinOp =
-  | '=='
-  | '!='
-  | '>'
-  | '<'
-  | '>='
-  | '<='
-  | 'in'
-  | 'and'
-  | 'or';
+export type PolicyBinOp = '==' | '!=' | '>' | '<' | '>=' | '<=' | 'in' | 'and' | 'or';
 
-export type LiteralValue = string | number | boolean | null | LiteralValue[] | { [k: string]: LiteralValue };
+export type LiteralValue =
+  | string
+  | number
+  | boolean
+  | null
+  | LiteralValue[]
+  | { [k: string]: LiteralValue };
 
 export interface CompensableActionSummary {
   actionId: string;

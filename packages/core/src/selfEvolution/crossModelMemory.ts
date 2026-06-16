@@ -16,22 +16,30 @@ export class CrossModelMemory {
   getStrategyScoresForModel(
     modelId: string,
     strategyPerformance: Map<string, { avgDurationMs?: number; p95DurationMs?: number }>,
-  ): Array<{ strategy: string; score: number; trials: number; avgDurationMs?: number; p95DurationMs?: number }> {
+  ): Array<{
+    strategy: string;
+    score: number;
+    trials: number;
+    avgDurationMs?: number;
+    p95DurationMs?: number;
+  }> {
     const modelMap = this.perModelPriors.get(modelId);
     if (!modelMap) {
       // No per-model data yet — return empty, caller can fall back to global
       return [];
     }
-    return Array.from(modelMap.entries()).map(([strategy, prior]) => {
-      const perf = strategyPerformance.get(strategy);
-      return {
-        strategy,
-        score: prior.mean,
-        trials: prior.totalTrials,
-        avgDurationMs: perf?.avgDurationMs,
-        p95DurationMs: perf?.p95DurationMs,
-      };
-    }).sort((a, b) => b.score - a.score);
+    return Array.from(modelMap.entries())
+      .map(([strategy, prior]) => {
+        const perf = strategyPerformance.get(strategy);
+        return {
+          strategy,
+          score: prior.mean,
+          trials: prior.totalTrials,
+          avgDurationMs: perf?.avgDurationMs,
+          p95DurationMs: perf?.p95DurationMs,
+        };
+      })
+      .sort((a, b) => b.score - a.score);
   }
 
   getPerModelStats(): PerModelStrategyStats[] {

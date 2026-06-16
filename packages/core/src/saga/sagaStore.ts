@@ -62,9 +62,7 @@ export class FileSagaStore implements SagaStore {
     await fs.rename(tmpPath, path);
   }
 
-  async readSnapshot(
-    runId: string
-  ): Promise<SagaStateSnapshot | undefined> {
+  async readSnapshot(runId: string): Promise<SagaStateSnapshot | undefined> {
     const path = this.snapshotPath(runId);
     try {
       const content = await fs.readFile(path, 'utf8');
@@ -116,17 +114,12 @@ export class InMemorySagaStore implements SagaStore {
     this.snapshots.set(snapshot.runId, snapshot);
   }
 
-  async readSnapshot(
-    runId: string
-  ): Promise<SagaStateSnapshot | undefined> {
+  async readSnapshot(runId: string): Promise<SagaStateSnapshot | undefined> {
     return this.snapshots.get(runId);
   }
 
   async listRunIds(): Promise<string[]> {
-    const ids = new Set<string>([
-      ...this.events.keys(),
-      ...this.snapshots.keys(),
-    ]);
+    const ids = new Set<string>([...this.events.keys(), ...this.snapshots.keys()]);
     return Array.from(ids);
   }
 

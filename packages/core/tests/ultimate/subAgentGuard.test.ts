@@ -15,7 +15,9 @@ describe('SubAgentGuard', () => {
 
   it('throws on max_steps', () => {
     const g = new SubAgentGuard({ maxSteps: 3 });
-    g.check(1); g.check(2); g.check(3);
+    g.check(1);
+    g.check(2);
+    g.check(3);
     expect(() => g.check(4)).toThrowError(SubAgentLimitError);
   });
 
@@ -41,7 +43,7 @@ describe('SubAgentGuard', () => {
   it('throws on max_wall_clock', () => {
     const g = new SubAgentGuard({ maxWallClockMs: 1, maxSteps: 100 });
     g.check(1);
-    return new Promise<void>(resolve => {
+    return new Promise<void>((resolve) => {
       setTimeout(() => {
         expect(() => g.check(2)).toThrow(/max_wall_clock/);
         resolve();
@@ -102,9 +104,9 @@ describe('SubAgentGuard — deep-wiring integration', () => {
 
   it('noProgress: stalls when evidence is flat across many steps', () => {
     const g = new SubAgentGuard({ maxSteps: 100, noProgressThreshold: 2 });
-    g.check(0);  // steps=1, evidence stays 0 (0 > 0 is false)
+    g.check(0); // steps=1, evidence stays 0 (0 > 0 is false)
     try {
-      g.check(0);  // steps=2, evidence stays 0, stall = 2-0 = 2 >= 2 → throws
+      g.check(0); // steps=2, evidence stays 0, stall = 2-0 = 2 >= 2 → throws
       expect.fail('Expected no_progress error on second flat call');
     } catch (err) {
       expect(err).toBeInstanceOf(SubAgentLimitError);
@@ -180,7 +182,7 @@ describe('SubAgentGuard — deep-wiring integration', () => {
 
   it('maxTokens: check() also enforces token limit', () => {
     const g = new SubAgentGuard({ maxTokens: 200 });
-    g.recordTokens(100);   // tokens=100, under 200
+    g.recordTokens(100); // tokens=100, under 200
     // recordTokens enforces immediately, so check() never sees it first.
     // Instead, verify that exceeding via recordTokens throws correctly.
     try {
@@ -198,7 +200,7 @@ describe('SubAgentGuard — deep-wiring integration', () => {
   it('maxWallClockMs: throws after elapsed time exceeds limit', () => {
     const g = new SubAgentGuard({ maxWallClockMs: 50, maxSteps: 100 });
     g.check(1);
-    return new Promise<void>(resolve => {
+    return new Promise<void>((resolve) => {
       setTimeout(() => {
         try {
           g.check(2);
@@ -227,8 +229,8 @@ describe('SubAgentGuard — deep-wiring integration', () => {
   it('multiple limits: steps enforced before tokens', () => {
     // maxSteps=1: first call puts steps at 1, second call exceeds (steps=2 > 1)
     const g = new SubAgentGuard({ maxSteps: 1, maxTokens: 500, noProgressThreshold: 10 });
-    g.check(1);           // steps=1, equals maxSteps (1 > 1 is false, OK)
-    g.recordTokens(100);   // tokens=100, under 500, no throw
+    g.check(1); // steps=1, equals maxSteps (1 > 1 is false, OK)
+    g.recordTokens(100); // tokens=100, under 500, no throw
     try {
       g.check(2); // steps=2 > maxSteps=1 → should throw max_steps
       expect.fail('Expected max_steps error');
@@ -241,7 +243,7 @@ describe('SubAgentGuard — deep-wiring integration', () => {
   it('multiple limits: wall clock checked independently', () => {
     const g = new SubAgentGuard({ maxSteps: 100, maxWallClockMs: 1 });
     g.check(1);
-    return new Promise<void>(resolve => {
+    return new Promise<void>((resolve) => {
       setTimeout(() => {
         try {
           g.check(2);

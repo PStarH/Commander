@@ -65,7 +65,8 @@ export type MessageBusTopic =
   | 'drive.step_failed'
   | 'drive.completed'
   | 'checkpoint.written'
-  | 'context.rebuilt';
+  | 'context.rebuilt'
+  | 'security.event';
 
 /**
  * Priority levels for messages.
@@ -94,7 +95,13 @@ export interface BusPayloadMap {
   'goal.manager_review': { round: number };
   'goal.completed': { goal: string; status: string; summary: string };
   'goal.judge_started': { runId: string; conditionCount: number; evidenceCount: number };
-  'goal.judge_completed': { runId: string; passed: boolean; confidence: number; tokensUsed: number; modelUsed?: string };
+  'goal.judge_completed': {
+    runId: string;
+    passed: boolean;
+    confidence: number;
+    tokensUsed: number;
+    modelUsed?: string;
+  };
   'drive.started': { goal: string; mode: string };
   'drive.step_started': { stepId: string; description: string };
   'drive.step_completed': { stepId: string; result?: string };
@@ -105,7 +112,15 @@ export interface BusPayloadMap {
   'swarm.fusion_conflict': { agentIds: string[]; conflict: string };
   'swarm.round_completed': { round: number; results: unknown[] };
   'swarm.completed': { summary: string };
-  'sop.generated': { runId: string; agentId: string; goal: string; path: string; stepCount: number; status: string; tags?: string[] };
+  'sop.generated': {
+    runId: string;
+    agentId: string;
+    goal: string;
+    path: string;
+    stepCount: number;
+    status: string;
+    tags?: string[];
+  };
   'memory.written': { layer: string; content: string; tags?: string[] };
   'skills.created': { skills: string[]; execId: string };
   'system.alert': { level: 'info' | 'warn' | 'error'; message: string; detail?: string };
@@ -116,12 +131,41 @@ export interface BusPayloadMap {
   'tool.retry': { name: string; attempt: number; error: string };
   'tool.blocked': { name: string; reason: string };
   'tool.compensation_planned': { runId: string; toolName: string; stepCount: number; risk: string };
-  'tool.compensation_step': { runId: string; toolName: string; actionId: string; stepIndex: number; totalSteps: number; status: 'started' | 'completed' | 'failed'; error?: string };
+  'tool.compensation_step': {
+    runId: string;
+    toolName: string;
+    actionId: string;
+    stepIndex: number;
+    totalSteps: number;
+    status: 'started' | 'completed' | 'failed';
+    error?: string;
+  };
   'agent.interrupted': { runId: string; reason: string; value?: unknown };
-  'human.approval_required': { approvalId: string; runId: string; nodeId: string; nodeGoal: string; gate: string; riskLevel: string; timeoutMs: number; requesterId: string };
-  'human.approval_received': { approvalId: string; runId: string; nodeId: string; approverId: string; decision: string; note?: string };
+  'human.approval_required': {
+    approvalId: string;
+    runId: string;
+    nodeId: string;
+    nodeGoal: string;
+    gate: string;
+    riskLevel: string;
+    timeoutMs: number;
+    requesterId: string;
+  };
+  'human.approval_received': {
+    approvalId: string;
+    runId: string;
+    nodeId: string;
+    approverId: string;
+    decision: string;
+    note?: string;
+  };
   'human.approval_rejected': { approvalId: string; runId: string; nodeId: string; reason: string };
-  'human.approval_timeout': { approvalId: string; runId: string; nodeId: string; requestedAt: string };
+  'human.approval_timeout': {
+    approvalId: string;
+    runId: string;
+    nodeId: string;
+    requestedAt: string;
+  };
   'workflow.replan': { phase: string; reason: string; agentId: string };
   'channel.message': { channelId: string; content: string };
   'channel.connected': { channelId: string };
@@ -132,8 +176,30 @@ export interface BusPayloadMap {
   'mission.blocked': { missionId: string; reason: string };
   'mission.completed': { missionId: string; result: string };
   'trace.recorded': { traceId: string; spanCount: number };
-  'checkpoint.written': { runId: string; version: number; triggerPercent: number; tokensUsed: number; completedCount: number; pendingCount: number; filePath: string };
-  'context.rebuilt': { runId: string; rebuildCount: number; totalTokens: number; sections: Array<{ name: string; used: number; cap: number }>; durationMs: number };
+  'checkpoint.written': {
+    runId: string;
+    version: number;
+    triggerPercent: number;
+    tokensUsed: number;
+    completedCount: number;
+    pendingCount: number;
+    filePath: string;
+  };
+  'context.rebuilt': {
+    runId: string;
+    rebuildCount: number;
+    totalTokens: number;
+    sections: Array<{ name: string; used: number; cap: number }>;
+    durationMs: number;
+  };
+  'security.event': SecurityEvent;
+}
+
+export interface SecurityEvent {
+  type: string;
+  timestamp: string;
+  severity?: 'info' | 'warn' | 'error' | 'critical';
+  details?: Record<string, unknown>;
 }
 
 /**
@@ -152,12 +218,12 @@ export type TypedBusMessage<T extends MessageBusTopic = MessageBusTopic> =
 export interface BusMessage {
   id: string;
   topic: MessageBusTopic;
-  source: string;           // agent ID or 'system'
-  target?: string;          // specific agent or undefined = broadcast
+  source: string; // agent ID or 'system'
+  target?: string; // specific agent or undefined = broadcast
   payload: unknown;
   priority: MessagePriority;
   timestamp: string;
-  ttl?: number;             // time-to-live in ms
+  ttl?: number; // time-to-live in ms
 }
 
 /**

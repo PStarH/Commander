@@ -110,7 +110,11 @@ interface SkillLike {
 }
 
 interface SkillManagerLike {
-  searchSkills?(query: { text?: string; tags?: string[]; limit?: number }): Promise<{ skills: SkillLike[] }>;
+  searchSkills?(query: {
+    text?: string;
+    tags?: string[];
+    limit?: number;
+  }): Promise<{ skills: SkillLike[] }>;
   getSkill?(id: string): Promise<SkillLike | null>;
   list?(query?: { tags?: string[]; limit?: number }): Promise<SkillLike[]>;
 }
@@ -355,11 +359,15 @@ export class FileWatcher {
         this.scheduleEvent(entry, 'modified');
       });
       watcher.on('error', (err) => {
-        getGlobalLogger().warn('FileWatcher', `Watch error for ${entry.path}`, { error: err.message });
+        getGlobalLogger().warn('FileWatcher', `Watch error for ${entry.path}`, {
+          error: err.message,
+        });
       });
       entry.watcher = watcher;
     } catch (err) {
-      getGlobalLogger().warn('FileWatcher', `Failed to start watcher for ${entry.path}`, { error: (err as Error).message });
+      getGlobalLogger().warn('FileWatcher', `Failed to start watcher for ${entry.path}`, {
+        error: (err as Error).message,
+      });
     }
   }
 
@@ -444,7 +452,10 @@ export class SessionStore {
       const content = await fsp.readFile(fp, 'utf-8');
       return JSON.parse(content) as SessionInfo;
     } catch (err) {
-      getGlobalLogger().warn('SessionStore', 'load failed', { sessionId, error: (err as Error).message });
+      getGlobalLogger().warn('SessionStore', 'load failed', {
+        sessionId,
+        error: (err as Error).message,
+      });
       return null;
     }
   }
@@ -513,7 +524,10 @@ export class NetworkPolicyEnforcer {
       };
     }
 
-    if (p.allowedDomains.length > 0 && !p.allowedDomains.some((d) => hostname.endsWith(d.toLowerCase()))) {
+    if (
+      p.allowedDomains.length > 0 &&
+      !p.allowedDomains.some((d) => hostname.endsWith(d.toLowerCase()))
+    ) {
       return {
         allowed: false,
         reason: `Domain "${hostname}" is not in allowed list`,
@@ -570,27 +584,137 @@ interface CommandRule {
 }
 
 const COMMAND_RULES: CommandRule[] = [
-  { pattern: /^(ls|cat|head|tail|grep|find|echo|pwd|which|wc|sort|uniq|diff|file|stat|tree|less|more)\b/, level: 'safe', description: 'Read-only file/listing command', autoExecuteAllowed: true, recommendation: 'allow' },
-  { pattern: /^(git\s+(status|log|diff|show|branch|remote|tag|blame|reflog))\b/, level: 'safe', description: 'Git read operation', autoExecuteAllowed: true, recommendation: 'allow' },
-  { pattern: /^(npm|pnpm|yarn)\s+(list|ls|view|info|search|outdated)\b/, level: 'safe', description: 'Package manager read', autoExecuteAllowed: true, recommendation: 'allow' },
-  { pattern: /^(node|python|python3|ruby|go|rustc)\s+--?version\b/, level: 'safe', description: 'Version check', autoExecuteAllowed: true, recommendation: 'allow' },
+  {
+    pattern:
+      /^(ls|cat|head|tail|grep|find|echo|pwd|which|wc|sort|uniq|diff|file|stat|tree|less|more)\b/,
+    level: 'safe',
+    description: 'Read-only file/listing command',
+    autoExecuteAllowed: true,
+    recommendation: 'allow',
+  },
+  {
+    pattern: /^(git\s+(status|log|diff|show|branch|remote|tag|blame|reflog))\b/,
+    level: 'safe',
+    description: 'Git read operation',
+    autoExecuteAllowed: true,
+    recommendation: 'allow',
+  },
+  {
+    pattern: /^(npm|pnpm|yarn)\s+(list|ls|view|info|search|outdated)\b/,
+    level: 'safe',
+    description: 'Package manager read',
+    autoExecuteAllowed: true,
+    recommendation: 'allow',
+  },
+  {
+    pattern: /^(node|python|python3|ruby|go|rustc)\s+--?version\b/,
+    level: 'safe',
+    description: 'Version check',
+    autoExecuteAllowed: true,
+    recommendation: 'allow',
+  },
 
-  { pattern: /^(git\s+(add|commit|push|pull|fetch|merge|rebase|stash|cherry-pick|reset|checkout))\b/, level: 'caution', description: 'Git state-modifying command', autoExecuteAllowed: true, recommendation: 'warn' },
-  { pattern: /^(npm|pnpm|yarn)\s+(install|i|add|update|upgrade|remove|rm|uninstall|run|exec)\b/, level: 'caution', description: 'Package manager write', autoExecuteAllowed: true, recommendation: 'warn' },
-  { pattern: /^(mkdir|touch|cp|mv)\b/, level: 'caution', description: 'File system modification', autoExecuteAllowed: true, recommendation: 'warn' },
-  { pattern: /^(chmod|chown)\b/, level: 'caution', description: 'Permission modification', autoExecuteAllowed: false, recommendation: 'warn' },
+  {
+    pattern:
+      /^(git\s+(add|commit|push|pull|fetch|merge|rebase|stash|cherry-pick|reset|checkout))\b/,
+    level: 'caution',
+    description: 'Git state-modifying command',
+    autoExecuteAllowed: true,
+    recommendation: 'warn',
+  },
+  {
+    pattern: /^(npm|pnpm|yarn)\s+(install|i|add|update|upgrade|remove|rm|uninstall|run|exec)\b/,
+    level: 'caution',
+    description: 'Package manager write',
+    autoExecuteAllowed: true,
+    recommendation: 'warn',
+  },
+  {
+    pattern: /^(mkdir|touch|cp|mv)\b/,
+    level: 'caution',
+    description: 'File system modification',
+    autoExecuteAllowed: true,
+    recommendation: 'warn',
+  },
+  {
+    pattern: /^(chmod|chown)\b/,
+    level: 'caution',
+    description: 'Permission modification',
+    autoExecuteAllowed: false,
+    recommendation: 'warn',
+  },
 
-  { pattern: /^(rm|rmdir)\b/, level: 'risky', description: 'File deletion', autoExecuteAllowed: false, recommendation: 'warn' },
-  { pattern: /^(curl|wget)\b/, level: 'risky', description: 'Network request', autoExecuteAllowed: false, recommendation: 'warn' },
-  { pattern: /^(ssh|scp|rsync)\b/, level: 'risky', description: 'Remote file access', autoExecuteAllowed: false, recommendation: 'warn' },
-  { pattern: /^(kill|pkill|killall)\b/, level: 'risky', description: 'Process termination', autoExecuteAllowed: false, recommendation: 'warn' },
-  { pattern: /^(systemctl|service|launchctl)\b/, level: 'risky', description: 'System service control', autoExecuteAllowed: false, recommendation: 'warn' },
+  {
+    pattern: /^(rm|rmdir)\b/,
+    level: 'risky',
+    description: 'File deletion',
+    autoExecuteAllowed: false,
+    recommendation: 'warn',
+  },
+  {
+    pattern: /^(curl|wget)\b/,
+    level: 'risky',
+    description: 'Network request',
+    autoExecuteAllowed: false,
+    recommendation: 'warn',
+  },
+  {
+    pattern: /^(ssh|scp|rsync)\b/,
+    level: 'risky',
+    description: 'Remote file access',
+    autoExecuteAllowed: false,
+    recommendation: 'warn',
+  },
+  {
+    pattern: /^(kill|pkill|killall)\b/,
+    level: 'risky',
+    description: 'Process termination',
+    autoExecuteAllowed: false,
+    recommendation: 'warn',
+  },
+  {
+    pattern: /^(systemctl|service|launchctl)\b/,
+    level: 'risky',
+    description: 'System service control',
+    autoExecuteAllowed: false,
+    recommendation: 'warn',
+  },
 
-  { pattern: /\brm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r|-rf|-fr)\b/, level: 'dangerous', description: 'Recursive force delete', autoExecuteAllowed: false, recommendation: 'block' },
-  { pattern: /^(dd|mkfs|fdisk|parted)\b/, level: 'dangerous', description: 'Disk operations', autoExecuteAllowed: false, recommendation: 'block' },
-  { pattern: /^(sudo|su)\b/, level: 'dangerous', description: 'Privilege escalation', autoExecuteAllowed: false, recommendation: 'block' },
-  { pattern: /^(shutdown|reboot|halt|poweroff|init\s+0|init\s+6)\b/, level: 'dangerous', description: 'System shutdown', autoExecuteAllowed: false, recommendation: 'block' },
-  { pattern: /:\(\)\s*\{.*:\|:.*\}/, level: 'dangerous', description: 'Fork bomb pattern', autoExecuteAllowed: false, recommendation: 'block' },
+  {
+    pattern: /\brm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r|-rf|-fr)\b/,
+    level: 'dangerous',
+    description: 'Recursive force delete',
+    autoExecuteAllowed: false,
+    recommendation: 'block',
+  },
+  {
+    pattern: /^(dd|mkfs|fdisk|parted)\b/,
+    level: 'dangerous',
+    description: 'Disk operations',
+    autoExecuteAllowed: false,
+    recommendation: 'block',
+  },
+  {
+    pattern: /^(sudo|su)\b/,
+    level: 'dangerous',
+    description: 'Privilege escalation',
+    autoExecuteAllowed: false,
+    recommendation: 'block',
+  },
+  {
+    pattern: /^(shutdown|reboot|halt|poweroff|init\s+0|init\s+6)\b/,
+    level: 'dangerous',
+    description: 'System shutdown',
+    autoExecuteAllowed: false,
+    recommendation: 'block',
+  },
+  {
+    pattern: /:\(\)\s*\{.*:\|:.*\}/,
+    level: 'dangerous',
+    description: 'Fork bomb pattern',
+    autoExecuteAllowed: false,
+    recommendation: 'block',
+  },
 ];
 
 export class CommandClassifier {
@@ -646,7 +770,9 @@ export class SteerQueueImpl {
 
   pop(): SteerMessage | null {
     if (this.messages.length === 0) return null;
-    this.messages.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.timestamp - b.timestamp);
+    this.messages.sort(
+      (a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.timestamp - b.timestamp,
+    );
     return this.messages.shift() ?? null;
   }
 
@@ -877,7 +1003,8 @@ export class HarnessInfrastructure {
 
       applyPatch: (request: PatchRequest) => this.patchEngine.apply(request),
 
-      updatePlanItem: (itemId: string, update: Partial<PlanItem>) => this.planTracker.update(itemId, update),
+      updatePlanItem: (itemId: string, update: Partial<PlanItem>) =>
+        this.planTracker.update(itemId, update),
       getPlanItems: () => this.planTracker.getAll(),
     };
   }

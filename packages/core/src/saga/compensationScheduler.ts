@@ -44,7 +44,7 @@ export class CompensationScheduler {
 
   async compensate(
     steps: readonly CompensableStep[],
-    context: SagaContext
+    context: SagaContext,
   ): Promise<CompensationResult> {
     const compensated: string[] = [];
     const failed: FailedCompensation[] = [];
@@ -71,11 +71,9 @@ export class CompensationScheduler {
 
   async compensateParallel(
     steps: readonly CompensableStep[],
-    context: SagaContext
+    context: SagaContext,
   ): Promise<CompensationResult> {
-    const attempts = await Promise.all(
-      steps.map((s) => this.runOne(s, context))
-    );
+    const attempts = await Promise.all(steps.map((s) => this.runOne(s, context)));
     const compensated: string[] = [];
     const failed: FailedCompensation[] = [];
 
@@ -99,17 +97,11 @@ export class CompensationScheduler {
     return { compensated, failed };
   }
 
-  async forceCompensate(
-    step: CompensableStep,
-    context: SagaContext
-  ): Promise<CompensationAttempt> {
+  async forceCompensate(step: CompensableStep, context: SagaContext): Promise<CompensationAttempt> {
     return this.runOne(step, context);
   }
 
-  private async runOne(
-    step: CompensableStep,
-    context: SagaContext
-  ): Promise<CompensationAttempt> {
+  private async runOne(step: CompensableStep, context: SagaContext): Promise<CompensationAttempt> {
     if (!step.node.compensate) {
       return { nodeId: step.node.id, success: true, attempts: 0 };
     }
@@ -128,9 +120,7 @@ export class CompensationScheduler {
         if (attempts < max) {
           const delay = this.retry.computeDelay(attempts);
           if (delay > 0) {
-            await new Promise<void>((resolve) =>
-              setTimeout(resolve, delay)
-            );
+            await new Promise<void>((resolve) => setTimeout(resolve, delay));
           }
         }
       }

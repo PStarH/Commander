@@ -119,7 +119,7 @@ describe('SubAgentExecutor', () => {
     await executor.executeNode(node, 'proj-1', {}, errors);
 
     expect(node.status).toBe('COMPLETED');
-    expect(node.subtasks.every(s => s.status === 'COMPLETED')).toBe(true);
+    expect(node.subtasks.every((s) => s.status === 'COMPLETED')).toBe(true);
     expect(errors).toHaveLength(0);
   });
 });

@@ -19,7 +19,10 @@ export interface SafeFetchResult {
 
 export class SafeFetchError extends Error {
   readonly name = 'SafeFetchError';
-  constructor(public readonly code: 'timeout' | 'too_large' | 'network' | 'unsafe_url' | 'aborted', message: string) {
+  constructor(
+    public readonly code: 'timeout' | 'too_large' | 'network' | 'unsafe_url' | 'aborted',
+    message: string,
+  ) {
     super(message);
     Object.setPrototypeOf(this, new.target.prototype);
   }
@@ -28,7 +31,10 @@ export class SafeFetchError extends Error {
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 
-export async function performFetch(url: string, options: SafeFetchOptions = {}): Promise<SafeFetchResult> {
+export async function performFetch(
+  url: string,
+  options: SafeFetchOptions = {},
+): Promise<SafeFetchResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const controller = new AbortController();
@@ -118,7 +124,10 @@ export async function performFetch(url: string, options: SafeFetchOptions = {}):
   };
 }
 
-export async function safeFetch(url: string, options: SafeFetchOptions = {}): Promise<SafeFetchResult> {
+export async function safeFetch(
+  url: string,
+  options: SafeFetchOptions = {},
+): Promise<SafeFetchResult> {
   const safety = isUrlSafe(url);
   if (!safety.safe) {
     throw new SafeFetchError('unsafe_url', `URL blocked: ${safety.reason}`);

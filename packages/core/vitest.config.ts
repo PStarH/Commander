@@ -99,6 +99,7 @@ export default defineConfig({
       'tests/ultimate/orchestrator.test.ts',
       'tests/ultimate/workCoordinator.test.ts',
       'tests/ultimate/workQueueStore.test.ts',
+      'tests/benchmark/multiAgentBenchmark.metrics.test.ts',
     ],
     environment: 'node',
     coverage: {

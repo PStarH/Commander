@@ -19,7 +19,10 @@ const FUZZY_MATCH_THRESHOLD = 0.6;
 export class CapabilityRegistry {
   private registry = new Map<string, CapabilityVector>();
 
-  register(agentId: string, vector: Omit<CapabilityVector, 'agentId' | 'version' | 'lastUpdated'>): CapabilityVector {
+  register(
+    agentId: string,
+    vector: Omit<CapabilityVector, 'agentId' | 'version' | 'lastUpdated'>,
+  ): CapabilityVector {
     if (this.registry.size > MAX_REGISTRY_SIZE) this.evictStale();
     const version = `1.0.0`;
     const entry: CapabilityVector = {
@@ -62,7 +65,10 @@ export class CapabilityRegistry {
     const scored: Array<{ agentId: string; matchScore: number; vector: CapabilityVector }> = [];
 
     for (const [agentId, vector] of this.registry) {
-      if (constraints?.minSuccessRate && vector.reliability.successRate < constraints.minSuccessRate) {
+      if (
+        constraints?.minSuccessRate &&
+        vector.reliability.successRate < constraints.minSuccessRate
+      ) {
         continue;
       }
 
@@ -86,7 +92,11 @@ export class CapabilityRegistry {
     let totalStrength = 0;
     let matchedCount = 0;
 
-    const lowerCaps = vector.capabilities.map(c => ({ name: c.name.toLowerCase(), strength: c.strength, domain: c.domain.toLowerCase() }));
+    const lowerCaps = vector.capabilities.map((c) => ({
+      name: c.name.toLowerCase(),
+      strength: c.strength,
+      domain: c.domain.toLowerCase(),
+    }));
     for (const req of required) {
       const reqLower = req.toLowerCase();
       let bestMatch: { strength: number; score: number } | null = null;
@@ -100,7 +110,8 @@ export class CapabilityRegistry {
 
         // Substring match
         if (cap.name.includes(reqLower) || reqLower.includes(cap.name)) {
-          const score = Math.min(cap.name.length, reqLower.length) / Math.max(cap.name.length, reqLower.length);
+          const score =
+            Math.min(cap.name.length, reqLower.length) / Math.max(cap.name.length, reqLower.length);
           if (!bestMatch || score > bestMatch.score) {
             bestMatch = { strength: cap.strength, score };
           }
@@ -145,7 +156,12 @@ export class CapabilityRegistry {
       }
     }
 
-    return (coverageScore * MATCH_WEIGHTS.COVERAGE + strengthScore * MATCH_WEIGHTS.STRENGTH + reliabilityScore * MATCH_WEIGHTS.RELIABILITY) - costPenalty;
+    return (
+      coverageScore * MATCH_WEIGHTS.COVERAGE +
+      strengthScore * MATCH_WEIGHTS.STRENGTH +
+      reliabilityScore * MATCH_WEIGHTS.RELIABILITY -
+      costPenalty
+    );
   }
 
   /**
@@ -176,8 +192,8 @@ export class CapabilityRegistry {
       for (let j = 1; j <= n; j++) {
         const cost = a[i - 1] === b[j - 1] ? 0 : 1;
         curr[j] = Math.min(
-          prev[j] + 1,      // deletion
-          curr[j - 1] + 1,  // insertion
+          prev[j] + 1, // deletion
+          curr[j - 1] + 1, // insertion
           prev[j - 1] + cost, // substitution
         );
       }

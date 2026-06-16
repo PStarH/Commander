@@ -156,8 +156,12 @@ export function cmdHeader(task: string) {
   const model = getEffectiveModel();
   const providerTag = provider ? `${provider.type} · ${model}` : 'no provider';
   console.log(`\n  ${$.bold}${$.blue}╭────────────────────────────────────────────╮${$.reset}`);
-  console.log(`  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander${$.reset} ${$.dim}multi-agent orchestration${$.reset}  ${$.bold}${$.blue}│${$.reset}`);
-  console.log(`  ${$.bold}${$.blue}│${$.reset}  ${$.dim}${providerTag}${$.reset}${' '.repeat(Math.max(0, 36 - providerTag.length))} ${$.bold}${$.blue}│${$.reset}`);
+  console.log(
+    `  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander${$.reset} ${$.dim}multi-agent orchestration${$.reset}  ${$.bold}${$.blue}│${$.reset}`,
+  );
+  console.log(
+    `  ${$.bold}${$.blue}│${$.reset}  ${$.dim}${providerTag}${$.reset}${' '.repeat(Math.max(0, 36 - providerTag.length))} ${$.bold}${$.blue}│${$.reset}`,
+  );
   console.log(`  ${$.bold}${$.blue}╰────────────────────────────────────────────╯${$.reset}`);
   console.log(`  ${$.dim}Task:${$.reset} ${task.length > 70 ? task.slice(0, 70) + '...' : task}\n`);
 }
@@ -168,7 +172,9 @@ export function startSpinner(label: string): () => void {
   const start = Date.now();
   const timer = setInterval(() => {
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-    process.stdout.write(`\r  ${$.cyan}${frames[i]}${$.reset} ${label} ${$.dim}${elapsed}s${$.reset}`);
+    process.stdout.write(
+      `\r  ${$.cyan}${frames[i]}${$.reset} ${label} ${$.dim}${elapsed}s${$.reset}`,
+    );
     i = (i + 1) % frames.length;
   }, 80);
   timer.unref();
@@ -183,7 +189,10 @@ export function startSpinner(label: string): () => void {
  * Start a spinner that can fail (show error instead of success).
  * Returns { done, fail } — call done() on success or fail(msg) on error.
  */
-export function startSpinnerWithFailure(label: string): { done: () => void; fail: (msg?: string) => void } {
+export function startSpinnerWithFailure(label: string): {
+  done: () => void;
+  fail: (msg?: string) => void;
+} {
   const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let i = 0;
   const start = Date.now();
@@ -191,7 +200,9 @@ export function startSpinnerWithFailure(label: string): { done: () => void; fail
   const timer = setInterval(() => {
     if (cleared) return;
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-    process.stdout.write(`\r  ${$.cyan}${frames[i]}${$.reset} ${label} ${$.dim}${elapsed}s${$.reset}`);
+    process.stdout.write(
+      `\r  ${$.cyan}${frames[i]}${$.reset} ${label} ${$.dim}${elapsed}s${$.reset}`,
+    );
     i = (i + 1) % frames.length;
   }, 80);
   timer.unref();
@@ -261,7 +272,9 @@ export class StepProgress {
     if (this.current < this.steps.length) {
       const stepLabel = label || this.steps[this.current];
       const frames = ['⠋', '⠙', '⠹', '⠸', '⠼'];
-      process.stdout.write(`  ${$.cyan}${frames[this.current % frames.length]}${$.reset} ${stepLabel}`);
+      process.stdout.write(
+        `  ${$.cyan}${frames[this.current % frames.length]}${$.reset} ${stepLabel}`,
+      );
     }
     this.current++;
   }
@@ -315,7 +328,9 @@ export function parseFlags(args: string[]): ParsedArgs {
 
 export function onboardingMessage() {
   console.log(`\n  ${$.bold}${$.blue}╭────────────────────────────────────────────╮${$.reset}`);
-  console.log(`  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Welcome to Commander${$.reset}                  ${$.bold}${$.blue}│${$.reset}`);
+  console.log(
+    `  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Welcome to Commander${$.reset}                  ${$.bold}${$.blue}│${$.reset}`,
+  );
   console.log(`  ${$.bold}${$.blue}╰────────────────────────────────────────────╯${$.reset}`);
   console.log(`\n  To get started, set one of these environment variables:\n`);
   const vars = [
@@ -359,7 +374,9 @@ export function fatalError(message: string, suggestion?: string): never {
   if (suggestion) {
     console.error(`  ${$.dim}→ ${suggestion}${$.reset}`);
   }
-  console.error(`  ${$.dim}Run ${$.cyan}commander doctor${$.reset}${$.dim} to diagnose issues.${$.reset}\n`);
+  console.error(
+    `  ${$.dim}Run ${$.cyan}commander doctor${$.reset}${$.dim} to diagnose issues.${$.reset}\n`,
+  );
   process.exit(1);
 }
 
@@ -376,4 +393,3 @@ export function warn(message: string, suggestion?: string) {
 // ============================================================================
 // Config — Multi-Provider Support
 // ============================================================================
-

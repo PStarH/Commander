@@ -10,22 +10,58 @@ function makeTrace(events: TraceEvent[]): ExecutionTrace {
     agentId: 'a-1',
     startedAt: events[0]?.timestamp ?? '2026-06-05T00:00:00.000Z',
     events,
-    summary: { totalEvents: events.length, totalDurationMs: 0, totalTokens: 0, llmCalls: 0, toolExecutions: 0, errors: 0, modelUsed: '' },
+    summary: {
+      totalEvents: events.length,
+      totalDurationMs: 0,
+      totalTokens: 0,
+      llmCalls: 0,
+      toolExecutions: 0,
+      errors: 0,
+      modelUsed: '',
+    },
   };
 }
 
-function llmEvent(spanId: string, parentSpanId: string | undefined, model: string, prompt: number, completion: number, ts: string): TraceEvent {
+function llmEvent(
+  spanId: string,
+  parentSpanId: string | undefined,
+  model: string,
+  prompt: number,
+  completion: number,
+  ts: string,
+): TraceEvent {
   return {
-    spanId, parentSpanId, traceId: 'trace-1', runId: 'run-1', agentId: 'a-1',
-    type: 'llm_call', timestamp: ts, durationMs: 100,
-    data: { input: 'q', output: 'a', modelInfo: { provider: 'openai', model }, tokenUsage: { promptTokens: prompt, completionTokens: completion, totalTokens: prompt + completion } },
+    spanId,
+    parentSpanId,
+    traceId: 'trace-1',
+    runId: 'run-1',
+    agentId: 'a-1',
+    type: 'llm_call',
+    timestamp: ts,
+    durationMs: 100,
+    data: {
+      input: 'q',
+      output: 'a',
+      modelInfo: { provider: 'openai', model },
+      tokenUsage: {
+        promptTokens: prompt,
+        completionTokens: completion,
+        totalTokens: prompt + completion,
+      },
+    },
   };
 }
 
 function toolEvent(spanId: string, parentSpanId: string, tool: string, ts: string): TraceEvent {
   return {
-    spanId, parentSpanId, traceId: 'trace-1', runId: 'run-1', agentId: 'a-1',
-    type: 'tool_execution', timestamp: ts, durationMs: 50,
+    spanId,
+    parentSpanId,
+    traceId: 'trace-1',
+    runId: 'run-1',
+    agentId: 'a-1',
+    type: 'tool_execution',
+    timestamp: ts,
+    durationMs: 50,
     data: { input: tool, output: { ok: true } },
   };
 }
@@ -44,7 +80,9 @@ describe('buildTimeline', () => {
   });
 
   it('attaches tokens and cost to LLM nodes', () => {
-    const trace = makeTrace([llmEvent('s1', undefined, 'gpt-4o', 1000, 500, '2026-06-05T00:00:00.000Z')]);
+    const trace = makeTrace([
+      llmEvent('s1', undefined, 'gpt-4o', 1000, 500, '2026-06-05T00:00:00.000Z'),
+    ]);
     const t = buildTimeline(trace);
     const n = t.nodes[0]!;
     assert.strictEqual(n.tokens?.input, 1000);

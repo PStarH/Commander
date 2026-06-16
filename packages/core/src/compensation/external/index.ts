@@ -39,9 +39,9 @@ import * as sg from './sendgrid';
  * call multiple times. Does not require credentials at registration
  * time; credentials are read lazily on first compensation.
  */
-export function registerAllExternalCompensation(
-  registry?: { register: (toolName: string, handler: CompensationHandler) => void },
-): void {
+export function registerAllExternalCompensation(registry?: {
+  register: (toolName: string, handler: CompensationHandler) => void;
+}): void {
   fs.registerFilesystemCompensation();
   db.registerDatabaseCompensation();
   gh.registerGitHubCompensation();

@@ -14,16 +14,52 @@ function mkInput(overrides: Partial<PolicyInput> = {}): PolicyInput {
   return {
     phase: 'tool',
     run: {
-      id: 'r1', state: 'EXECUTING', fencingEpoch: 1, intentHash: 'h', tenantId: 't1',
-      agentId: 'a1', goal: 'g', metadata: {}, createdAt: now.getTime(), actionsSoFar: [],
+      id: 'r1',
+      state: 'EXECUTING',
+      fencingEpoch: 1,
+      intentHash: 'h',
+      tenantId: 't1',
+      agentId: 'a1',
+      goal: 'g',
+      metadata: {},
+      createdAt: now.getTime(),
+      actionsSoFar: [],
     },
-    tool: { name: 'shell', riskLevel: 'medium', destructive: false, isReadOnly: false, isIdempotent: false, category: 'shell' },
-    action: { args: { command: 'rm -rf /tmp/foo' }, idempotencyKey: 'k', stepNumber: 1, callSite: 'agent', leaseToken: 'lt', fencingEpoch: 1 },
+    tool: {
+      name: 'shell',
+      riskLevel: 'medium',
+      destructive: false,
+      isReadOnly: false,
+      isIdempotent: false,
+      category: 'shell',
+    },
+    action: {
+      args: { command: 'rm -rf /tmp/foo' },
+      idempotencyKey: 'k',
+      stepNumber: 1,
+      callSite: 'agent',
+      leaseToken: 'lt',
+      fencingEpoch: 1,
+    },
     tenant: {
       id: 't1',
-      config: { tokenBudget: 1_000_000, maxConcurrency: 5, maxRunsPerMinute: 60, maxActionsPerRun: 100, allowShell: true, allowNetwork: true, requiresApprovalBypass: false },
+      config: {
+        tokenBudget: 1_000_000,
+        maxConcurrency: 5,
+        maxRunsPerMinute: 60,
+        maxActionsPerRun: 100,
+        allowShell: true,
+        allowNetwork: true,
+        requiresApprovalBypass: false,
+      },
     },
-    metrics: { tokensUsedThisRun: 0, tokensUsedThisHour: 0, actionsThisRun: 0, destructiveThisRun: 0, estimatedCostUsd: 0 },
+    metrics: {
+      tokensUsedThisRun: 0,
+      tokensUsedThisHour: 0,
+      actionsThisRun: 0,
+      destructiveThisRun: 0,
+      estimatedCostUsd: 0,
+    },
     time: { now: now.getTime(), hourOfDay: 12, isWeekend: false },
     ...overrides,
   };
@@ -39,8 +75,22 @@ describe('Threat scenarios', () => {
       `);
       const engine = new PolicyEngine(pack);
       const input = mkInput({
-        tool: { name: 'merge', riskLevel: 'high', destructive: true, isReadOnly: false, isIdempotent: true, category: 'api' },
-        action: { args: { force: true }, idempotencyKey: 'k', stepNumber: 1, callSite: 'agent', leaseToken: 'lt', fencingEpoch: 1 },
+        tool: {
+          name: 'merge',
+          riskLevel: 'high',
+          destructive: true,
+          isReadOnly: false,
+          isIdempotent: true,
+          category: 'api',
+        },
+        action: {
+          args: { force: true },
+          idempotencyKey: 'k',
+          stepNumber: 1,
+          callSite: 'agent',
+          leaseToken: 'lt',
+          fencingEpoch: 1,
+        },
       });
       const d = engine.evaluate(input);
       assert.strictEqual(d.effect, 'deny_class');
@@ -56,7 +106,14 @@ describe('Threat scenarios', () => {
       `);
       const engine = new PolicyEngine(pack);
       const input = mkInput({
-        tool: { name: 'rm', riskLevel: 'high', destructive: true, isReadOnly: false, isIdempotent: false, category: 'shell' },
+        tool: {
+          name: 'rm',
+          riskLevel: 'high',
+          destructive: true,
+          isReadOnly: false,
+          isIdempotent: false,
+          category: 'shell',
+        },
       });
       const d = engine.evaluate(input);
       assert.strictEqual(d.effect, 'deny');
@@ -94,7 +151,14 @@ describe('Threat scenarios', () => {
       `);
       const engine = new PolicyEngine(pack);
       const input = mkInput({
-        tool: { name: 'rm', riskLevel: 'high', destructive: true, isReadOnly: false, isIdempotent: false, category: 'shell' },
+        tool: {
+          name: 'rm',
+          riskLevel: 'high',
+          destructive: true,
+          isReadOnly: false,
+          isIdempotent: false,
+          category: 'shell',
+        },
       });
       const d = engine.evaluate(input);
       assert.notStrictEqual(d.effect, 'allow');

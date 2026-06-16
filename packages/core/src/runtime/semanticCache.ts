@@ -132,10 +132,7 @@ function extractEmbeddingTarget(request: LLMRequest): string | null {
 function estimateDefaultCost(response: LLMResponse): number {
   const inputRate = 3.0 / 1_000_000;
   const outputRate = 15.0 / 1_000_000;
-  return (
-    response.usage.promptTokens * inputRate +
-    response.usage.completionTokens * outputRate
-  );
+  return response.usage.promptTokens * inputRate + response.usage.completionTokens * outputRate;
 }
 
 // ============================================================================

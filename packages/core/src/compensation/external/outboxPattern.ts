@@ -160,7 +160,12 @@ export function createOutboxCompensationHandler<T>(outbox: OutboxPattern<T>) {
 }
 
 export function registerOutboxCompensation<T>(
-  registry: { register: (toolName: string, handler: () => Promise<{ success: boolean; discarded?: number }>) => void },
+  registry: {
+    register: (
+      toolName: string,
+      handler: () => Promise<{ success: boolean; discarded?: number }>,
+    ) => void;
+  },
   outbox: OutboxPattern<T>,
   toolName: string = 'outbox:discard',
 ): void {

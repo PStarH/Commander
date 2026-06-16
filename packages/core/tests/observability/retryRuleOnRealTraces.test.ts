@@ -103,8 +103,11 @@ describe('Retry sampling rule on real production traces', () => {
     expect(recorded.data.errorClass).toBe('transient');
 
     const trace = recorder.getTrace(runId) as ExecutionTrace;
-    const decision = new SamplingPolicy({ baseRate: 0, keepIfRetriesAtLeast: 1 })
-      .decide(trace.events, trace.traceId, 50);
+    const decision = new SamplingPolicy({ baseRate: 0, keepIfRetriesAtLeast: 1 }).decide(
+      trace.events,
+      trace.traceId,
+      50,
+    );
     expect(decision.keep).toBe(true);
     expect(decision.reason).toBe('retry');
   });
@@ -137,8 +140,11 @@ describe('Retry sampling rule on real production traces', () => {
     // baseRate=0 + no retry rule match → error rule (1 error) still
     // fires, classified as 'error' (generic, not 'retry' because
     // there were no retries).
-    const decision = new SamplingPolicy({ baseRate: 0, keepIfRetriesAtLeast: 1 })
-      .decide(trace.events, trace.traceId, 20);
+    const decision = new SamplingPolicy({ baseRate: 0, keepIfRetriesAtLeast: 1 }).decide(
+      trace.events,
+      trace.traceId,
+      20,
+    );
     expect(decision.keep).toBe(true);
     expect(decision.reason).toBe('error'); // not 'retry' — no retry flag
   });
@@ -176,14 +182,14 @@ describe('Retry sampling rule on real production traces', () => {
     const captured: { body: string } = { body: '' };
     const server: Server = createServer((req, res: ServerResponse) => {
       const chunks: Buffer[] = [];
-      req.on('data', c => chunks.push(c));
+      req.on('data', (c) => chunks.push(c));
       req.on('end', () => {
         captured.body = Buffer.concat(chunks).toString('utf-8');
         res.writeHead(200);
         res.end();
       });
     });
-    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
     const port = (server.address() as { port: number }).port;
     try {
       const recorder = new ExecutionTraceRecorder();
@@ -221,8 +227,16 @@ describe('Retry sampling rule on real production traces', () => {
         (s: { status?: { code: number } }) => s.status?.code === 2,
       );
       expect(errorSpan).toBeTruthy();
-      const attrs: Array<{ key: string; value: { stringValue?: string; intValue?: string; doubleValue?: number; boolValue?: boolean } }> = errorSpan.attributes;
-      const get = (key: string) => attrs.find(a => a.key === key);
+      const attrs: Array<{
+        key: string;
+        value: {
+          stringValue?: string;
+          intValue?: string;
+          doubleValue?: number;
+          boolValue?: boolean;
+        };
+      }> = errorSpan.attributes;
+      const get = (key: string) => attrs.find((a) => a.key === key);
       // OTel wire format: stringValue / intValue (as string!) / boolValue
       expect(get('error.class')?.value.stringValue).toBe('transient');
       expect(get('error.retryable')?.value.boolValue).toBe(true);
@@ -230,7 +244,7 @@ describe('Retry sampling rule on real production traces', () => {
       expect(get('error.attempts')?.value.intValue).toBe('2');
       expect(get('http.response.status_code')?.value.intValue).toBe('429');
     } finally {
-      await new Promise<void>(resolve => server.close(() => resolve()));
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 

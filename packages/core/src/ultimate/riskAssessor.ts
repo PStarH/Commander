@@ -9,37 +9,91 @@
 import type { NodeRiskAssessment, NodeRiskLevel, TaskTreeNode } from './types';
 
 const HIGH_RISK_TOOLS = new Set([
-  'shell_execute', 'bash', 'exec',
-  'file_delete', 'rm', 'file_write',
-  'web_fetch', 'http_request',
-  'database_write', 'sql_execute',
-  'deploy', 'docker_run',
+  'shell_execute',
+  'bash',
+  'exec',
+  'file_delete',
+  'rm',
+  'file_write',
+  'web_fetch',
+  'http_request',
+  'database_write',
+  'sql_execute',
+  'deploy',
+  'docker_run',
 ]);
 
 const CRITICAL_RISK_TOOLS = new Set([
-  'shell_execute', 'bash', 'exec',
-  'deploy', 'docker_run', 'kubectl_apply',
-  'database_drop', 'rm_rf',
+  'shell_execute',
+  'bash',
+  'exec',
+  'deploy',
+  'docker_run',
+  'kubectl_apply',
+  'database_drop',
+  'rm_rf',
 ]);
 
 const MEDIUM_RISK_KEYWORDS = [
-  'delete', 'remove', 'drop', 'wipe', 'reset', 'rollback',
-  'modify', 'change', 'update', 'edit', 'patch',
-  'send', 'publish', 'post', 'broadcast', 'email', 'notify',
-  'commit', 'push', 'merge', 'deploy',
+  'delete',
+  'remove',
+  'drop',
+  'wipe',
+  'reset',
+  'rollback',
+  'modify',
+  'change',
+  'update',
+  'edit',
+  'patch',
+  'send',
+  'publish',
+  'post',
+  'broadcast',
+  'email',
+  'notify',
+  'commit',
+  'push',
+  'merge',
+  'deploy',
 ];
 
 const CRITICAL_RISK_KEYWORDS = [
-  'production', 'prod', 'live', 'customer', 'billing',
-  'payment', 'credit card', 'pii', 'ssn', 'password',
-  'secret', 'credential', 'token', 'key', 'auth',
-  'irreversible', 'destructive', 'cascade', 'global',
-  'migrate', 'migration',
+  'production',
+  'prod',
+  'live',
+  'customer',
+  'billing',
+  'payment',
+  'credit card',
+  'pii',
+  'ssn',
+  'password',
+  'secret',
+  'credential',
+  'token',
+  'key',
+  'auth',
+  'irreversible',
+  'destructive',
+  'cascade',
+  'global',
+  'migrate',
+  'migration',
 ];
 
 const LOW_RISK_KEYWORDS = [
-  'read', 'list', 'show', 'find', 'search', 'analyze',
-  'summarize', 'explain', 'document', 'research', 'investigate',
+  'read',
+  'list',
+  'show',
+  'find',
+  'search',
+  'analyze',
+  'summarize',
+  'explain',
+  'document',
+  'research',
+  'investigate',
 ];
 
 const RISK_RANK: Record<NodeRiskLevel, number> = {
@@ -49,10 +103,7 @@ const RISK_RANK: Record<NodeRiskLevel, number> = {
   critical: 3,
 };
 
-export function assessNodeRisk(
-  node: TaskTreeNode,
-  riskProfile?: string,
-): NodeRiskAssessment {
+export function assessNodeRisk(node: TaskTreeNode, riskProfile?: string): NodeRiskAssessment {
   const reasons: string[] = [];
   let level: NodeRiskLevel = 'low';
 
@@ -130,7 +181,13 @@ export function assessNodeRisk(
 }
 
 export function shouldRequestApproval(
-  gate: { enabled: boolean; nodeIds?: string[]; tags?: string[]; riskThreshold?: NodeRiskLevel; sampling?: number },
+  gate: {
+    enabled: boolean;
+    nodeIds?: string[];
+    tags?: string[];
+    riskThreshold?: NodeRiskLevel;
+    sampling?: number;
+  },
   assessment: NodeRiskAssessment,
   node: TaskTreeNode,
 ): boolean {

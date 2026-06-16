@@ -181,9 +181,9 @@ export function evaluate(expr: AvailabilityExpression, ctx: AvailabilityContext)
     case 'predicate':
       return expr.predicate(ctx);
     case 'allOf':
-      return expr.children.every(child => evaluate(child, ctx));
+      return expr.children.every((child) => evaluate(child, ctx));
     case 'anyOf':
-      return expr.children.some(child => evaluate(child, ctx));
+      return expr.children.some((child) => evaluate(child, ctx));
     case 'not':
       return !evaluate(expr.child, ctx);
     case 'always':
@@ -233,7 +233,7 @@ export class ToolAvailabilityManager {
    * Returns only tools that pass all matching rules.
    */
   filterTools(availableTools: string[], ctx: AvailabilityContext): string[] {
-    return availableTools.filter(toolName => this.isAvailable(toolName, ctx));
+    return availableTools.filter((toolName) => this.isAvailable(toolName, ctx));
   }
 
   /**
@@ -263,7 +263,7 @@ export class ToolAvailabilityManager {
     availableTools: string[],
     ctx: AvailabilityContext,
   ): Array<{ tool: string; available: boolean; reason?: string }> {
-    return availableTools.map(toolName => {
+    return availableTools.map((toolName) => {
       for (const rule of this.rules) {
         if (!this.matchesPattern(toolName, rule.toolPattern)) continue;
         const result = evaluate(rule.when, ctx);

@@ -13,7 +13,9 @@ const LEGACY_SKILLS_DIR = path.join(process.cwd(), '.commander_skills');
 function parseYamlFrontmatter(yaml: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   const lines = yaml.split('\n');
-  const stack: Array<{ obj: Record<string, unknown>; indent: number }> = [{ obj: result, indent: -1 }];
+  const stack: Array<{ obj: Record<string, unknown>; indent: number }> = [
+    { obj: result, indent: -1 },
+  ];
   const arrayStack: Array<{ arr: unknown[]; key: string; _indent: number }> = [];
 
   for (const rawLine of lines) {
@@ -42,7 +44,10 @@ function parseYamlFrontmatter(yaml: string): Record<string, unknown> {
     }
 
     // Pop stale array context when indentation decreases
-    while (arrayStack.length > 0 && indent <= (arrayStack[arrayStack.length - 1] as unknown as { _indent: number })._indent) {
+    while (
+      arrayStack.length > 0 &&
+      indent <= (arrayStack[arrayStack.length - 1] as unknown as { _indent: number })._indent
+    ) {
       arrayStack.pop();
     }
 
@@ -53,7 +58,10 @@ function parseYamlFrontmatter(yaml: string): Record<string, unknown> {
       let nextLine = '';
       for (let li = lines.indexOf(rawLine) + 1; li < lines.length; li++) {
         const nl = lines[li].replace(/\s+$/, '');
-        if (nl.trim() && !nl.trim().startsWith('#')) { nextLine = nl; break; }
+        if (nl.trim() && !nl.trim().startsWith('#')) {
+          nextLine = nl;
+          break;
+        }
       }
       const nextIndent = nextLine.search(/\S/);
       const nextTrimmed = nextLine.trim();
@@ -68,7 +76,11 @@ function parseYamlFrontmatter(yaml: string): Record<string, unknown> {
         stack.push({ obj: nested, indent });
       }
     } else if (valueStr.startsWith('[') && valueStr.endsWith(']')) {
-      currentObj[key] = valueStr.slice(1, -1).split(',').map(s => parseYamlValue(s.trim())).filter(s => s !== '');
+      currentObj[key] = valueStr
+        .slice(1, -1)
+        .split(',')
+        .map((s) => parseYamlValue(s.trim()))
+        .filter((s) => s !== '');
     } else {
       currentObj[key] = parseYamlValue(valueStr);
     }
@@ -83,7 +95,10 @@ function parseYamlValue(value: string): unknown {
   if (value === 'null' || value === '~') return null;
   const num = Number(value);
   if (!isNaN(num) && value !== '') return num;
-  if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
+  if (
+    (value.startsWith("'") && value.endsWith("'")) ||
+    (value.startsWith('"') && value.endsWith('"'))
+  ) {
     return value.slice(1, -1);
   }
   return value;
@@ -110,8 +125,8 @@ function serializeToYaml(obj: Record<string, unknown>, indent = 0): string {
     if (Array.isArray(value)) {
       if (value.length === 0) {
         lines.push(`${pad}${key}: []`);
-      } else if (value.every(v => typeof v !== 'object' || v === null)) {
-        const items = value.map(v => serializeYamlValue(v, indent)).join(', ');
+      } else if (value.every((v) => typeof v !== 'object' || v === null)) {
+        const items = value.map((v) => serializeYamlValue(v, indent)).join(', ');
         lines.push(`${pad}${key}: [${items}]`);
       } else {
         lines.push(`${pad}${key}:`);
@@ -140,7 +155,9 @@ function serializeToYaml(obj: Record<string, unknown>, indent = 0): string {
  * Parse a SKILL.md file (YAML frontmatter + markdown body).
  * Returns the frontmatter as a structured object and the body as a string.
  */
-function parseSkillMd(content: string): { frontmatter: Record<string, unknown>; body: string } | null {
+function parseSkillMd(
+  content: string,
+): { frontmatter: Record<string, unknown>; body: string } | null {
   const trimmed = content.trimStart();
   if (!trimmed.startsWith('---')) return null;
 
@@ -168,9 +185,7 @@ function frontmatterToSkill(name: string, fm: Record<string, unknown>, body: str
     name: (fm.name as string) ?? name,
     description: (fm.description as string) ?? '',
     content: body,
-    tools: typeof allowedTools === 'string'
-      ? allowedTools.split(/\s+/).filter(Boolean)
-      : [],
+    tools: typeof allowedTools === 'string' ? allowedTools.split(/\s+/).filter(Boolean) : [],
     metadata: {
       category: (meta.category as Skill['metadata']['category']) ?? 'general',
       tags: (meta.tags as string[]) ?? [],
@@ -244,7 +259,9 @@ export class SkillStore {
 
   async save(skill: Skill): Promise<void> {
     if (!validateSkillName(skill.name)) {
-      throw new Error(`Invalid skill name "${skill.name}": must be 1-64 chars, lowercase alphanumeric with hyphens`);
+      throw new Error(
+        `Invalid skill name "${skill.name}": must be 1-64 chars, lowercase alphanumeric with hyphens`,
+      );
     }
     checkBodyLength(skill.content);
     this.ensureDir();
@@ -265,7 +282,9 @@ export class SkillStore {
       if (!parsed) return null;
       return frontmatterToSkill(name, parsed.frontmatter, parsed.body);
     } catch (e) {
-      getGlobalLogger().warn('SkillStore', `Failed to load skill "${name}"`, { error: (e as Error)?.message });
+      getGlobalLogger().warn('SkillStore', `Failed to load skill "${name}"`, {
+        error: (e as Error)?.message,
+      });
       return null;
     }
   }
@@ -284,14 +303,13 @@ export class SkillStore {
   async list(): Promise<string[]> {
     this.ensureDir();
     try {
-      return fs.readdirSync(this.skillsDir)
-        .filter(f => {
-          try {
-            return fs.statSync(path.join(this.skillsDir, f)).isDirectory();
-          } catch {
-            return false;
-          }
-        });
+      return fs.readdirSync(this.skillsDir).filter((f) => {
+        try {
+          return fs.statSync(path.join(this.skillsDir, f)).isDirectory();
+        } catch {
+          return false;
+        }
+      });
     } catch {
       return [];
     }
@@ -325,7 +343,7 @@ export class SkillStore {
 
     for (const dir of jsonDirs) {
       if (!fs.existsSync(dir)) continue;
-      const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+      const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
       for (const file of files) {
         const name = file.replace(/\.json$/, '');
         // Skip if already migrated
@@ -354,7 +372,9 @@ export class SkillStore {
           await this.save(skill);
           migrated++;
         } catch (e) {
-          getGlobalLogger().warn('SkillStore', `Migration failed for "${name}"`, { error: (e as Error)?.message });
+          getGlobalLogger().warn('SkillStore', `Migration failed for "${name}"`, {
+            error: (e as Error)?.message,
+          });
         }
       }
     }
@@ -363,7 +383,11 @@ export class SkillStore {
 }
 
 function sanitizeName(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
 /** Validate skill name per agentskills.io spec: 1-64 chars, lowercase alphanumeric + hyphens. */

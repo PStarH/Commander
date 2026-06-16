@@ -64,7 +64,10 @@ function sendGridHeaders(apiKey: string): Record<string, string> {
   };
 }
 
-function buildCorrectionEmail(args: SendGridArgs, executionId: string): {
+function buildCorrectionEmail(
+  args: SendGridArgs,
+  executionId: string,
+): {
   personalizations: Array<{ to: Array<{ email: string }> }>;
   from: { email: string; name?: string };
   subject: string;
@@ -194,7 +197,10 @@ const sendGridBatchSendHandler: CompensationHandler = async (action) => {
       return { success: true };
     }
 
-    return { success: false, error: `SendGrid batch HTTP ${res.status}: ${res.body.slice(0, 200)}` };
+    return {
+      success: false,
+      error: `SendGrid batch HTTP ${res.status}: ${res.body.slice(0, 200)}`,
+    };
   } catch (err) {
     return { success: false, error: String(err) };
   }
@@ -205,9 +211,9 @@ const SENDGRID_COMPENSATION_HANDLERS: Record<string, CompensationHandler> = {
   'sendgrid:send_batch': sendGridBatchSendHandler,
 };
 
-export function registerSendGridCompensation(
-  registry: { register: (toolName: string, handler: CompensationHandler) => void },
-): void {
+export function registerSendGridCompensation(registry: {
+  register: (toolName: string, handler: CompensationHandler) => void;
+}): void {
   for (const [toolName, handler] of Object.entries(SENDGRID_COMPENSATION_HANDLERS)) {
     registry.register(toolName, handler);
   }

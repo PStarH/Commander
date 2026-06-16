@@ -31,11 +31,7 @@ export type {
 
 // Autonomous memory curation
 export { MemoryCurator, getMemoryCurator } from './curator';
-export type {
-  CuratorConfig,
-  CurationResult,
-  CuratorMemoryItem,
-} from './curator';
+export type { CuratorConfig, CurationResult, CuratorMemoryItem } from './curator';
 
 // User modeling and personalization
 export { UserModelManager, getUserModelManager } from './userModel';

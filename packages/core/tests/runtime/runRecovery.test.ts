@@ -32,9 +32,17 @@ function makeCheckpoint(overrides: Partial<CheckpointState> = {}): CheckpointSta
     attemptNumber: 1,
     messages: [
       { role: 'user', content: 'do the thing' },
-      { role: 'assistant', content: '', toolCalls: [{ id: 'tc-1', name: 'writeFile', arguments: { path: '/x' } }] },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'tc-1', name: 'writeFile', arguments: { path: '/x' } }],
+      },
       { role: 'tool', content: 'wrote file', toolCallId: 'tc-1' },
-      { role: 'assistant', content: '', toolCalls: [{ id: 'tc-2', name: 'readFile', arguments: { path: '/y' } }] },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'tc-2', name: 'readFile', arguments: { path: '/y' } }],
+      },
       { role: 'tool', content: 'file contents', toolCallId: 'tc-2' },
     ],
     tokenUsage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
@@ -71,10 +79,12 @@ afterEach(() => {
 describe('RunRecovery', () => {
   it('recovers a run with valid checkpoint and live lease', async () => {
     const lease = acquireLease('run-1');
-    checkpointer.checkpoint(makeCheckpoint({
-      leaseToken: lease.token,
-      fencingEpoch: lease.fencingEpoch,
-    }));
+    checkpointer.checkpoint(
+      makeCheckpoint({
+        leaseToken: lease.token,
+        fencingEpoch: lease.fencingEpoch,
+      }),
+    );
 
     const result = await recovery.attempt('run-1');
     expect(result.status).toBe('recovered');
@@ -92,11 +102,13 @@ describe('RunRecovery', () => {
 
   it('returns lease_lost when lease has been released', async () => {
     const oldLease = acquireLease('run-2');
-    checkpointer.checkpoint(makeCheckpoint({
-      runId: 'run-2',
-      leaseToken: oldLease.token,
-      fencingEpoch: oldLease.fencingEpoch,
-    }));
+    checkpointer.checkpoint(
+      makeCheckpoint({
+        runId: 'run-2',
+        leaseToken: oldLease.token,
+        fencingEpoch: oldLease.fencingEpoch,
+      }),
+    );
 
     const released = leaseManager.release('run-2', oldLease.token);
 
@@ -119,21 +131,27 @@ describe('RunRecovery', () => {
     checkpointer.checkpoint(makeCheckpoint({ runId: 'b', phase: 'llm_call' }));
 
     const list = recovery.listRecoverableRuns();
-    const ids = list.map(e => e.runId).sort();
+    const ids = list.map((e) => e.runId).sort();
     expect(ids).toEqual(['a', 'b']);
   });
 
   it('isolates completed tool calls from non-tool messages', async () => {
     const lease = acquireLease('run-4');
-    checkpointer.checkpoint(makeCheckpoint({
-      runId: 'run-4',
-      leaseToken: lease.token,
-      fencingEpoch: lease.fencingEpoch,
-      messages: [
-        { role: 'user', content: 'q' },
-        { role: 'assistant', content: 'thinking', toolCalls: [{ id: 'tc-99', name: 'foo', arguments: {} }] },
-      ],
-    }));
+    checkpointer.checkpoint(
+      makeCheckpoint({
+        runId: 'run-4',
+        leaseToken: lease.token,
+        fencingEpoch: lease.fencingEpoch,
+        messages: [
+          { role: 'user', content: 'q' },
+          {
+            role: 'assistant',
+            content: 'thinking',
+            toolCalls: [{ id: 'tc-99', name: 'foo', arguments: {} }],
+          },
+        ],
+      }),
+    );
 
     const result = await recovery.attempt('run-4');
     expect(result.completedToolCallIds.size).toBe(0);

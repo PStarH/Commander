@@ -61,7 +61,11 @@ export class Mailbox {
     }
 
     const isOverflowProtected = this.config.overflowProtectionTypes.includes(message.type);
-    if (!isOverflowProtected && this.config.capacity > 0 && this.queue.length >= this.config.capacity) {
+    if (
+      !isOverflowProtected &&
+      this.config.capacity > 0 &&
+      this.queue.length >= this.config.capacity
+    ) {
       this.logger.warn('Mailbox overflow, dropping message', {
         actorId: this.actorId,
         messageType: message.type,

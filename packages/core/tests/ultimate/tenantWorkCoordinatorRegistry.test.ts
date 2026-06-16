@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { TenantWorkCoordinatorRegistry, resetTenantWorkCoordinatorRegistry, getTenantWorkCoordinatorRegistry } from '../../src/ultimate/tenantWorkCoordinatorRegistry';
+import {
+  TenantWorkCoordinatorRegistry,
+  resetTenantWorkCoordinatorRegistry,
+  getTenantWorkCoordinatorRegistry,
+} from '../../src/ultimate/tenantWorkCoordinatorRegistry';
 
 describe('TenantWorkCoordinatorRegistry — GAP-M2.5 multi-tenant isolation', () => {
   let tmpDir: string;
@@ -33,8 +37,14 @@ describe('TenantWorkCoordinatorRegistry — GAP-M2.5 multi-tenant isolation', ()
     ]);
     expect(coordA.list()).toHaveLength(3);
     expect(coordB.list()).toHaveLength(5);
-    const aGoals = coordA.list().map(i => i.goal).sort();
-    const bGoals = coordB.list().map(i => i.goal).sort();
+    const aGoals = coordA
+      .list()
+      .map((i) => i.goal)
+      .sort();
+    const bGoals = coordB
+      .list()
+      .map((i) => i.goal)
+      .sort();
     expect(aGoals).toEqual(['A1', 'A2', 'A3']);
     expect(bGoals).toEqual(['B1', 'B2', 'B3', 'B4', 'B5']);
     expect(reg.size()).toBe(2);

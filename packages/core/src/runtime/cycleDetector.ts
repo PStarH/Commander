@@ -118,7 +118,11 @@ export class CycleDetector {
     this.driftTracker.clear();
   }
 
-  private detectConsecutive(toolName: string, args?: Record<string, unknown>, stepNumber?: number): CycleDetectionResult {
+  private detectConsecutive(
+    toolName: string,
+    args?: Record<string, unknown>,
+    stepNumber?: number,
+  ): CycleDetectionResult {
     // Concurrent calls from the same LLM turn share the same step number.
     // These are parallel tool invocations, not consecutive loops — skip tracking.
     if (stepNumber !== undefined && stepNumber === this.lastStepNumber) {
@@ -132,7 +136,11 @@ export class CycleDetector {
     const diffParam = DIFFERENTIATING_PARAM[toolName];
     if (diffParam && args?.[diffParam] !== undefined) {
       const currentVal = String(args[diffParam]);
-      if (this.lastToolName === toolName && this.lastDiffParamValue && this.lastDiffParamValue !== currentVal) {
+      if (
+        this.lastToolName === toolName &&
+        this.lastDiffParamValue &&
+        this.lastDiffParamValue !== currentVal
+      ) {
         this.consecutiveSameToolCount = 1;
         this.lastDiffParamValue = currentVal;
         return { detected: false };
@@ -170,7 +178,8 @@ export class CycleDetector {
       const idx = (this.historyHead - window + i + this.maxHistory) % this.maxHistory;
       const rec = this.history[idx];
       const diffParam = DIFFERENTIATING_PARAM[rec.name];
-      const diffVal = diffParam && rec.args?.[diffParam] != null ? String(rec.args[diffParam]) : null;
+      const diffVal =
+        diffParam && rec.args?.[diffParam] != null ? String(rec.args[diffParam]) : null;
       entries.push({ name: rec.name, diffVal });
     }
 
@@ -179,16 +188,17 @@ export class CycleDetector {
       const evenEntries = entries.filter((_, i) => i % 2 === 0);
       const oddEntries = entries.filter((_, i) => i % 2 === 1);
 
-      const evenSame = evenEntries.every(e => e.name === evenEntries[0].name);
-      const oddSame = oddEntries.every(e => e.name === oddEntries[0].name);
+      const evenSame = evenEntries.every((e) => e.name === evenEntries[0].name);
+      const oddSame = oddEntries.every((e) => e.name === oddEntries[0].name);
 
       if (evenSame && oddSame && evenEntries[0].name !== oddEntries[0].name) {
         // Not a cycle if the differentiating parameter values are changing
         // (e.g., file_read → file_edit on different files is a legitimate workflow)
-        const evenDiffVals = evenEntries.map(e => e.diffVal).filter(Boolean);
-        const oddDiffVals = oddEntries.map(e => e.diffVal).filter(Boolean);
-        const evenVaries = evenDiffVals.length > 1 && !evenDiffVals.every(v => v === evenDiffVals[0]);
-        const oddVaries = oddDiffVals.length > 1 && !oddDiffVals.every(v => v === oddDiffVals[0]);
+        const evenDiffVals = evenEntries.map((e) => e.diffVal).filter(Boolean);
+        const oddDiffVals = oddEntries.map((e) => e.diffVal).filter(Boolean);
+        const evenVaries =
+          evenDiffVals.length > 1 && !evenDiffVals.every((v) => v === evenDiffVals[0]);
+        const oddVaries = oddDiffVals.length > 1 && !oddDiffVals.every((v) => v === oddDiffVals[0]);
 
         if (!evenVaries && !oddVaries) {
           return {
@@ -212,7 +222,10 @@ export class CycleDetector {
       const v = args[keys[i]];
       const val = typeof v === 'string' ? v : JSON.stringify(v);
       argsHash += `${keys[i]}=${val};`;
-      if (argsHash.length > 200) { argsHash = argsHash.slice(0, 200); break; }
+      if (argsHash.length > 200) {
+        argsHash = argsHash.slice(0, 200);
+        break;
+      }
     }
     const key = `${toolName}:${argsHash}`;
     const count = (this.driftTracker.get(key) ?? 0) + 1;

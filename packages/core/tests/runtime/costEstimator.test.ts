@@ -89,7 +89,9 @@ describe('CostEstimator', () => {
 
     it('longer goals produce higher complexity and more tokens', () => {
       const shortCtx = makeCtx({ goal: 'Fix bug' });
-      const longCtx = makeCtx({ goal: 'Analyze the entire codebase for security vulnerabilities, refactor the authentication module to use OAuth2, update all tests, and generate a comprehensive report with findings and recommendations for the engineering team' });
+      const longCtx = makeCtx({
+        goal: 'Analyze the entire codebase for security vulnerabilities, refactor the authentication module to use OAuth2, update all tests, and generate a comprehensive report with findings and recommendations for the engineering team',
+      });
       const shortEst = estimator.estimateBeforeRun(shortCtx, makeRouting());
       const longEst = estimator.estimateBeforeRun(longCtx, makeRouting());
       expect(longEst.predictedTotalTokens).toBeGreaterThan(shortEst.predictedTotalTokens);
@@ -97,7 +99,16 @@ describe('CostEstimator', () => {
 
     it('more tools increase predicted tokens', () => {
       const fewTools = makeCtx({ availableTools: ['file_read'] });
-      const manyTools = makeCtx({ availableTools: ['file_read', 'file_edit', 'shell_execute', 'web_search', 'browser_fetch', 'memory_recall'] });
+      const manyTools = makeCtx({
+        availableTools: [
+          'file_read',
+          'file_edit',
+          'shell_execute',
+          'web_search',
+          'browser_fetch',
+          'memory_recall',
+        ],
+      });
       const fewEst = estimator.estimateBeforeRun(fewTools, makeRouting());
       const manyEst = estimator.estimateBeforeRun(manyTools, makeRouting());
       expect(manyEst.predictedTotalTokens).toBeGreaterThanOrEqual(fewEst.predictedTotalTokens);
@@ -130,9 +141,14 @@ describe('CostEstimator', () => {
   describe('estimateForModel', () => {
     it('returns cost and token estimates for a model', () => {
       const result = estimator.estimateForModel(makeCtx(), {
-        id: 'gpt-4o', provider: 'openai', tier: 'standard',
-        costPer1KInput: 0.0025, costPer1KOutput: 0.01,
-        capabilities: ['code'], contextWindow: 128000, priority: 0,
+        id: 'gpt-4o',
+        provider: 'openai',
+        tier: 'standard',
+        costPer1KInput: 0.0025,
+        costPer1KOutput: 0.01,
+        capabilities: ['code'],
+        contextWindow: 128000,
+        priority: 0,
       });
       expect(result.inputTokens).toBeGreaterThan(0);
       expect(result.outputTokens).toBeGreaterThan(0);
@@ -141,14 +157,24 @@ describe('CostEstimator', () => {
 
     it('cheaper models produce lower cost', () => {
       const expensive = estimator.estimateForModel(makeCtx(), {
-        id: 'gpt-5', provider: 'openai', tier: 'power',
-        costPer1KInput: 0.01, costPer1KOutput: 0.04,
-        capabilities: ['code'], contextWindow: 256000, priority: 0,
+        id: 'gpt-5',
+        provider: 'openai',
+        tier: 'power',
+        costPer1KInput: 0.01,
+        costPer1KOutput: 0.04,
+        capabilities: ['code'],
+        contextWindow: 256000,
+        priority: 0,
       });
       const cheap = estimator.estimateForModel(makeCtx(), {
-        id: 'gpt-4o-mini', provider: 'openai', tier: 'eco',
-        costPer1KInput: 0.00015, costPer1KOutput: 0.0006,
-        capabilities: ['code'], contextWindow: 128000, priority: 0,
+        id: 'gpt-4o-mini',
+        provider: 'openai',
+        tier: 'eco',
+        costPer1KInput: 0.00015,
+        costPer1KOutput: 0.0006,
+        capabilities: ['code'],
+        contextWindow: 128000,
+        priority: 0,
       });
       expect(expensive.costUsd).toBeGreaterThan(cheap.costUsd);
     });
@@ -167,7 +193,9 @@ describe('CostEstimator', () => {
 
     it('enforces minimum budget per agent', () => {
       const subtasks = Array.from({ length: 20 }, (_, i) => ({
-        goal: `Task ${i}`, complexity: 1, modelTier: 'eco',
+        goal: `Task ${i}`,
+        complexity: 1,
+        modelTier: 'eco',
       }));
       const budgets = estimator.allocateBudgetsAcrossAgents(50000, subtasks);
       for (const b of budgets) {

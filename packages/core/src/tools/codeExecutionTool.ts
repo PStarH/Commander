@@ -12,7 +12,13 @@ async function ensureTempDir(): Promise<void> {
   await fs.promises.mkdir(TEMP_DIR, { recursive: true });
 }
 
-function formatExecResult(r: { stdout: string; stderr: string; exitCode: number; durationMs: number; killed: boolean }): string {
+function formatExecResult(r: {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  durationMs: number;
+  killed: boolean;
+}): string {
   // FIX: check killed FIRST — killed processes often have stderr and non-zero exit
   // Also preserve stdout/stderr collected before the kill (partial output is better than none)
   if (r.killed) {
@@ -34,7 +40,8 @@ function formatExecResult(r: { stdout: string; stderr: string; exitCode: number;
 export class PythonExecuteTool implements Tool {
   definition: ToolDefinition = {
     name: 'python_execute',
-    description: 'Execute Python code in a sandboxed environment. Returns stdout, stderr, and execution time. Use for calculations, data analysis, and scripting.',
+    description:
+      'Execute Python code in a sandboxed environment. Returns stdout, stderr, and execution time. Use for calculations, data analysis, and scripting.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -45,7 +52,10 @@ export class PythonExecuteTool implements Tool {
     },
     examples: [
       { name: 'python_execute', arguments: { code: 'print(sum(range(100)))' } },
-      { name: 'python_execute', arguments: { code: 'import json; print(json.dumps({"key": "value"}))', timeout: 10 } },
+      {
+        name: 'python_execute',
+        arguments: { code: 'import json; print(json.dumps({"key": "value"}))', timeout: 10 },
+      },
     ],
     category: 'code',
   };
@@ -66,7 +76,9 @@ export class PythonExecuteTool implements Tool {
       try {
         await fs.promises.unlink(filePath);
       } catch (e) {
-        getGlobalLogger().warn('PythonExecuteTool', 'Temp file cleanup failed', { error: (e as Error)?.message });
+        getGlobalLogger().warn('PythonExecuteTool', 'Temp file cleanup failed', {
+          error: (e as Error)?.message,
+        });
       }
     }
   }
@@ -79,10 +91,17 @@ export class PythonExecuteTool implements Tool {
 function buildBackendDescriptions(): string {
   const parts: string[] = [];
   parts.push('local — run on the local machine through sandbox (default)');
-  if (process.env.COMMANDER_SSH_HOST) parts.push('ssh — run on a remote host (configured via env, or override with ssh_host/ssh_user/ssh_key args)');
-  if (process.env.COMMANDER_DOCKER_CONTAINER) parts.push('docker — run inside a running Docker container (container configured via env, or override with container/container_id args)');
+  if (process.env.COMMANDER_SSH_HOST)
+    parts.push(
+      'ssh — run on a remote host (configured via env, or override with ssh_host/ssh_user/ssh_key args)',
+    );
+  if (process.env.COMMANDER_DOCKER_CONTAINER)
+    parts.push(
+      'docker — run inside a running Docker container (container configured via env, or override with container/container_id args)',
+    );
   if (parts.length === 1) parts.push('ssh — run on a remote host (set ssh_host argument)');
-  if (parts.length <= 2) parts.push('docker — run inside a running container (set container argument)');
+  if (parts.length <= 2)
+    parts.push('docker — run inside a running container (set container argument)');
   return parts.join('; ');
 }
 
@@ -107,17 +126,46 @@ const INTERCEPTED_PATTERNS: Array<{
   requiresTool?: boolean;
 }> = [
   // File reads → file_read
-  { pattern: /\b(cat|less|more|head|tail)\s+/, tool: 'file_read', reason: 'Use file_read instead — it returns hashline-anchored output for direct use with file_edit' },
-  { pattern: /\bsed\s+-n\s+/, tool: 'file_read', reason: 'Use file_read with offset/limit instead of sed -n' },
+  {
+    pattern: /\b(cat|less|more|head|tail)\s+/,
+    tool: 'file_read',
+    reason:
+      'Use file_read instead — it returns hashline-anchored output for direct use with file_edit',
+  },
+  {
+    pattern: /\bsed\s+-n\s+/,
+    tool: 'file_read',
+    reason: 'Use file_read with offset/limit instead of sed -n',
+  },
   // Search → code_search (only when code_search is available)
-  { pattern: /\bgrep\b/, tool: 'code_search', reason: 'Use code_search instead — it returns hashline-anchored results for direct use with file_edit', requiresTool: true },
-  { pattern: /\brg\b/, tool: 'code_search', reason: 'Use code_search instead — it returns hashline-anchored results', requiresTool: true },
+  {
+    pattern: /\bgrep\b/,
+    tool: 'code_search',
+    reason:
+      'Use code_search instead — it returns hashline-anchored results for direct use with file_edit',
+    requiresTool: true,
+  },
+  {
+    pattern: /\brg\b/,
+    tool: 'code_search',
+    reason: 'Use code_search instead — it returns hashline-anchored results',
+    requiresTool: true,
+  },
   { pattern: /\bag\b/, tool: 'code_search', reason: 'Use code_search instead', requiresTool: true },
   // Find → file_search / glob (only when glob is available)
-  { pattern: /\bfind\s+.*-name\b/, tool: 'glob', reason: 'Use glob or file_search instead of find', requiresTool: true },
+  {
+    pattern: /\bfind\s+.*-name\b/,
+    tool: 'glob',
+    reason: 'Use glob or file_search instead of find',
+    requiresTool: true,
+  },
   { pattern: /\bfd\b/, tool: 'glob', reason: 'Use glob instead of fd', requiresTool: true },
   // Edit → file_edit
-  { pattern: /\bsed\s+-i\b/, tool: 'file_edit', reason: 'Use file_edit with hashline format instead of sed -i' },
+  {
+    pattern: /\bsed\s+-i\b/,
+    tool: 'file_edit',
+    reason: 'Use file_edit with hashline format instead of sed -i',
+  },
   { pattern: /\bawk\s+-i\b/, tool: 'file_edit', reason: 'Use file_edit instead of awk -i' },
   // Write → file_write
   { pattern: /\btee\s+/, tool: 'file_write', reason: 'Use file_write instead of tee' },
@@ -160,9 +208,22 @@ Using specialized tools is REQUIRED because they return hashline-anchored output
       type: 'object',
       properties: {
         command: { type: 'string', description: 'Shell command to execute' },
-        timeout: { type: 'number', description: 'Timeout in seconds (default: 30, max: 120)', default: 30 },
-        workdir: { type: 'string', description: 'Working directory relative to workspace (default: ".")', default: '.' },
-        backend: { type: 'string', enum: ['local', 'ssh', 'docker'], description: `Execution backend (default: local). SSH/Docker configured via env vars: COMMANDER_SSH_HOST, COMMANDER_DOCKER_CONTAINER`, default: 'local' },
+        timeout: {
+          type: 'number',
+          description: 'Timeout in seconds (default: 30, max: 120)',
+          default: 30,
+        },
+        workdir: {
+          type: 'string',
+          description: 'Working directory relative to workspace (default: ".")',
+          default: '.',
+        },
+        backend: {
+          type: 'string',
+          enum: ['local', 'ssh', 'docker'],
+          description: `Execution backend (default: local). SSH/Docker configured via env vars: COMMANDER_SSH_HOST, COMMANDER_DOCKER_CONTAINER`,
+          default: 'local',
+        },
       },
       required: ['command'],
     },

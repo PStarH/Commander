@@ -97,11 +97,7 @@ describe('StateCheckpointer file permissions', () => {
     assert.ok(fs.existsSync(chkPath), 'Checkpoint file must exist');
 
     const mode = getFileMode(chkPath);
-    assert.strictEqual(
-      mode,
-      0o600,
-      `Checkpoint file should be 0o600, got 0o${mode.toString(8)}`,
-    );
+    assert.strictEqual(mode, 0o600, `Checkpoint file should be 0o600, got 0o${mode.toString(8)}`);
   });
 
   it('checkpoint temp file is created with 0o600 (written before rename)', () => {
@@ -172,11 +168,7 @@ describe('StateCheckpointer file permissions', () => {
       assert.ok(fs.existsSync(chkPath), `Checkpoint ${i} must exist`);
 
       const mode = getFileMode(chkPath);
-      assert.strictEqual(
-        mode,
-        0o600,
-        `Checkpoint ${i} should be 0o600, got 0o${mode.toString(8)}`,
-      );
+      assert.strictEqual(mode, 0o600, `Checkpoint ${i} should be 0o600, got 0o${mode.toString(8)}`);
     }
   });
 
@@ -190,11 +182,7 @@ describe('StateCheckpointer file permissions', () => {
     assert.ok(fs.existsSync(tenantDir), 'Tenant directory must exist');
 
     const mode = getFileMode(tenantDir);
-    assert.strictEqual(
-      mode,
-      0o700,
-      `Tenant directory should be 0o700, got 0o${mode.toString(8)}`,
-    );
+    assert.strictEqual(mode, 0o700, `Tenant directory should be 0o700, got 0o${mode.toString(8)}`);
   });
 });
 
@@ -216,11 +204,7 @@ describe('PersistentTraceStore file permissions', () => {
     new PersistentTraceStore(tmpDir);
     // PersistentTraceStore uses tmpDir directly as baseDir
     const mode = getFileMode(tmpDir);
-    assert.strictEqual(
-      mode,
-      0o700,
-      `Trace directory should be 0o700, got 0o${mode.toString(8)}`,
-    );
+    assert.strictEqual(mode, 0o700, `Trace directory should be 0o700, got 0o${mode.toString(8)}`);
   });
 
   it('flush creates trace files with 0o600', () => {
@@ -239,11 +223,7 @@ describe('PersistentTraceStore file permissions', () => {
     assert.ok(fs.existsSync(tracePath), 'Trace file must exist');
 
     const mode = getFileMode(tracePath);
-    assert.strictEqual(
-      mode,
-      0o600,
-      `Trace file should be 0o600, got 0o${mode.toString(8)}`,
-    );
+    assert.strictEqual(mode, 0o600, `Trace file should be 0o600, got 0o${mode.toString(8)}`);
   });
 
   it('flushAll creates all trace files with 0o600', () => {
@@ -376,11 +356,7 @@ describe('ConversationStore file permissions', () => {
       assert.ok(fs.existsSync(dbPath), 'Database file must exist');
 
       const mode = getFileMode(dbPath);
-      assert.strictEqual(
-        mode,
-        0o600,
-        `Database file should be 0o600, got 0o${mode.toString(8)}`,
-      );
+      assert.strictEqual(mode, 0o600, `Database file should be 0o600, got 0o${mode.toString(8)}`);
 
       store.close();
     } finally {
@@ -424,11 +400,7 @@ describe('ConversationStore file permissions', () => {
       assert.ok(fs.existsSync(dataDir), 'Data directory must be created');
 
       const mode = getFileMode(dataDir);
-      assert.strictEqual(
-        mode,
-        0o700,
-        `Data directory should be 0o700, got 0o${mode.toString(8)}`,
-      );
+      assert.strictEqual(mode, 0o700, `Data directory should be 0o700, got 0o${mode.toString(8)}`);
 
       store.close();
     } finally {

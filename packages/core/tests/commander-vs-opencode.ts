@@ -29,42 +29,48 @@ const TASKS: ComparisonTask[] = [
   {
     name: 'research-consensus',
     category: 'research',
-    prompt: 'Research Raft vs Paxos consensus algorithms. Compare fault tolerance, performance, and complexity. Write a detailed comparison table to /tmp/compare-consensus.md',
+    prompt:
+      'Research Raft vs Paxos consensus algorithms. Compare fault tolerance, performance, and complexity. Write a detailed comparison table to /tmp/compare-consensus.md',
     outputFile: '/tmp/compare-consensus.md',
     minExpectedBytes: 500,
   },
   {
     name: 'analyze-runtime',
     category: 'analysis',
-    prompt: 'Analyze the packages/core/src/runtime/ directory structure. List the main modules, their responsibilities, and key design patterns used. Write findings to /tmp/compare-runtime-analysis.md',
+    prompt:
+      'Analyze the packages/core/src/runtime/ directory structure. List the main modules, their responsibilities, and key design patterns used. Write findings to /tmp/compare-runtime-analysis.md',
     outputFile: '/tmp/compare-runtime-analysis.md',
     minExpectedBytes: 500,
   },
   {
     name: 'implement-lru-cache',
     category: 'coding',
-    prompt: 'Write a TypeScript implementation of an LRU cache with get/set operations and O(1) time complexity using a doubly-linked list and Map. Include proper types and unit tests. Write to /tmp/compare-lru-cache.ts',
+    prompt:
+      'Write a TypeScript implementation of an LRU cache with get/set operations and O(1) time complexity using a doubly-linked list and Map. Include proper types and unit tests. Write to /tmp/compare-lru-cache.ts',
     outputFile: '/tmp/compare-lru-cache.ts',
     minExpectedBytes: 300,
   },
   {
     name: 'write-blog-cpm',
     category: 'creative',
-    prompt: 'Write a technical blog post about how multi-agent AI systems can use Critical Path Method for task scheduling. Include code examples and ASCII diagrams. Write to /tmp/compare-blog-cpm.md',
+    prompt:
+      'Write a technical blog post about how multi-agent AI systems can use Critical Path Method for task scheduling. Include code examples and ASCII diagrams. Write to /tmp/compare-blog-cpm.md',
     outputFile: '/tmp/compare-blog-cpm.md',
     minExpectedBytes: 500,
   },
   {
     name: 'plan-migration',
     category: 'planning',
-    prompt: 'Create a migration plan for moving a TypeScript monorepo to multi-repo. Include dependency analysis, migration phases, risk mitigation, and rollback strategy. Write to /tmp/compare-migration-plan.md',
+    prompt:
+      'Create a migration plan for moving a TypeScript monorepo to multi-repo. Include dependency analysis, migration phases, risk mitigation, and rollback strategy. Write to /tmp/compare-migration-plan.md',
     outputFile: '/tmp/compare-migration-plan.md',
     minExpectedBytes: 500,
   },
   {
     name: 'multi-error-handling',
     category: 'multi',
-    prompt: 'Research error handling patterns in distributed systems. Then analyze the error handling in packages/core/src/runtime/ and propose 3 specific improvements with code examples. Write to /tmp/compare-error-handling.md',
+    prompt:
+      'Research error handling patterns in distributed systems. Then analyze the error handling in packages/core/src/runtime/ and propose 3 specific improvements with code examples. Write to /tmp/compare-error-handling.md',
     outputFile: '/tmp/compare-error-handling.md',
     minExpectedBytes: 500,
   },
@@ -88,7 +94,9 @@ async function runOpenCode(task: ComparisonTask): Promise<TaskResult> {
 
   try {
     // Clean up output file
-    try { fs.unlinkSync(task.outputFile); } catch {}
+    try {
+      fs.unlinkSync(task.outputFile);
+    } catch {}
 
     // Run opencode in non-interactive mode
     const result = execSync(
@@ -99,14 +107,16 @@ async function runOpenCode(task: ComparisonTask): Promise<TaskResult> {
         maxBuffer: 10 * 1024 * 1024,
         stdio: ['pipe', 'pipe', 'pipe'],
         cwd: process.cwd(),
-      }
+      },
     );
 
     const durationMs = Date.now() - start;
 
     // Check output file
     let outputSize = 0;
-    try { outputSize = fs.statSync(task.outputFile).size; } catch {}
+    try {
+      outputSize = fs.statSync(task.outputFile).size;
+    } catch {}
 
     // Parse token usage from output if available
     const tokenMatch = result.match(/(\d+)\s*tokens?/i);
@@ -126,7 +136,9 @@ async function runOpenCode(task: ComparisonTask): Promise<TaskResult> {
 
     // Check if output was written despite error
     let outputSize = 0;
-    try { outputSize = fs.statSync(task.outputFile).size; } catch {}
+    try {
+      outputSize = fs.statSync(task.outputFile).size;
+    } catch {}
 
     return {
       system: 'opencode',
@@ -147,7 +159,9 @@ async function runCommander(task: ComparisonTask): Promise<TaskResult> {
 
   try {
     // Clean up output file
-    try { fs.unlinkSync(task.outputFile); } catch {}
+    try {
+      fs.unlinkSync(task.outputFile);
+    } catch {}
 
     const { AgentRuntime } = await import('../src/runtime/agentRuntime');
     const { TELOSOrchestrator } = await import('../src/telos/telosOrchestrator');
@@ -168,7 +182,8 @@ async function runCommander(task: ComparisonTask): Promise<TaskResult> {
     runtime.registerProvider('openai', provider);
 
     const { WebSearchTool, WebFetchTool } = await import('../src/tools/webSearchTool');
-    const { FileReadTool, FileWriteTool, FileEditTool, FileListTool, FileSearchTool } = await import('../src/tools/fileSystemTool');
+    const { FileReadTool, FileWriteTool, FileEditTool, FileListTool, FileSearchTool } =
+      await import('../src/tools/fileSystemTool');
 
     runtime.registerTool('web_search', new WebSearchTool());
     runtime.registerTool('web_fetch', new WebFetchTool());
@@ -191,7 +206,14 @@ async function runCommander(task: ComparisonTask): Promise<TaskResult> {
       agentId: `compare-${task.name}`,
       goal: task.prompt,
       contextData: {
-        availableTools: ['web_search', 'web_fetch', 'file_write', 'file_read', 'file_list', 'file_edit'],
+        availableTools: [
+          'web_search',
+          'web_fetch',
+          'file_write',
+          'file_read',
+          'file_list',
+          'file_edit',
+        ],
       },
     });
 
@@ -199,7 +221,9 @@ async function runCommander(task: ComparisonTask): Promise<TaskResult> {
     const tokens = result.metrics?.totalTokens ?? 0;
 
     let outputSize = 0;
-    try { outputSize = fs.statSync(task.outputFile).size; } catch {}
+    try {
+      outputSize = fs.statSync(task.outputFile).size;
+    } catch {}
 
     return {
       system: 'commander',
@@ -244,35 +268,47 @@ async function main() {
     console.log(`${'═'.repeat(60)}`);
 
     // Clean up
-    try { fs.unlinkSync(task.outputFile); } catch {}
+    try {
+      fs.unlinkSync(task.outputFile);
+    } catch {}
 
     // Run OpenCode first
     console.log(`  ├─ Running OpenCode...`);
     const ocResult = await runOpenCode(task);
     allResults.push(ocResult);
     const ocOut = ocResult.success ? `${(ocResult.outputSize / 1024).toFixed(1)}KB` : 'FAIL';
-    console.log(`  │  ${ocResult.success ? '✅' : '❌'} ${(ocResult.durationMs / 1000).toFixed(1)}s | ${ocOut}${ocResult.error ? ` | ${ocResult.error.slice(0, 60)}` : ''}`);
+    console.log(
+      `  │  ${ocResult.success ? '✅' : '❌'} ${(ocResult.durationMs / 1000).toFixed(1)}s | ${ocOut}${ocResult.error ? ` | ${ocResult.error.slice(0, 60)}` : ''}`,
+    );
 
     // Save OpenCode output
     let ocOutput = '';
-    try { ocOutput = fs.readFileSync(task.outputFile, 'utf-8'); } catch {}
+    try {
+      ocOutput = fs.readFileSync(task.outputFile, 'utf-8');
+    } catch {}
 
     // Clean up
-    try { fs.unlinkSync(task.outputFile); } catch {}
+    try {
+      fs.unlinkSync(task.outputFile);
+    } catch {}
 
     // Pause
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise((r) => setTimeout(r, 5000));
 
     // Run Commander
     console.log(`  ├─ Running Commander...`);
     const cmdResult = await runCommander(task);
     allResults.push(cmdResult);
     const cmdOut = cmdResult.success ? `${(cmdResult.outputSize / 1024).toFixed(1)}KB` : 'FAIL';
-    console.log(`  │  ${cmdResult.success ? '✅' : '❌'} ${(cmdResult.durationMs / 1000).toFixed(1)}s | ${cmdResult.tokensUsed.toLocaleString()} tok | ${cmdOut}${cmdResult.error ? ` | ${cmdResult.error.slice(0, 60)}` : ''}`);
+    console.log(
+      `  │  ${cmdResult.success ? '✅' : '❌'} ${(cmdResult.durationMs / 1000).toFixed(1)}s | ${cmdResult.tokensUsed.toLocaleString()} tok | ${cmdOut}${cmdResult.error ? ` | ${cmdResult.error.slice(0, 60)}` : ''}`,
+    );
 
     // Save Commander output
     let cmdOutput = '';
-    try { cmdOutput = fs.readFileSync(task.outputFile, 'utf-8'); } catch {}
+    try {
+      cmdOutput = fs.readFileSync(task.outputFile, 'utf-8');
+    } catch {}
 
     // Save per-task comparison
     const comparison = {
@@ -292,18 +328,21 @@ async function main() {
         outputPreview: cmdOutput.slice(0, 500),
       },
     };
-    fs.writeFileSync(path.join(OUTPUT_DIR, `${task.name}.json`), JSON.stringify(comparison, null, 2));
+    fs.writeFileSync(
+      path.join(OUTPUT_DIR, `${task.name}.json`),
+      JSON.stringify(comparison, null, 2),
+    );
 
     // Pause
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise((r) => setTimeout(r, 5000));
   }
 
   // ── Summary ──────────────────────────────────────────────────────────────
-  const ocResults = allResults.filter(r => r.system === 'opencode');
-  const cmdResults = allResults.filter(r => r.system === 'commander');
+  const ocResults = allResults.filter((r) => r.system === 'opencode');
+  const cmdResults = allResults.filter((r) => r.system === 'commander');
 
-  const ocSuccess = ocResults.filter(r => r.success).length;
-  const cmdSuccess = cmdResults.filter(r => r.success).length;
+  const ocSuccess = ocResults.filter((r) => r.success).length;
+  const cmdSuccess = cmdResults.filter((r) => r.success).length;
   const cmdTokens = cmdResults.reduce((s, r) => s + r.tokensUsed, 0);
   const ocTime = ocResults.reduce((s, r) => s + r.durationMs, 0);
   const cmdTime = cmdResults.reduce((s, r) => s + r.durationMs, 0);
@@ -327,7 +366,7 @@ async function main() {
       avgTimeSec: (cmdTime / TASKS.length / 1000).toFixed(1),
       totalOutputBytes: cmdOutput,
     },
-    perTask: allResults.map(r => ({
+    perTask: allResults.map((r) => ({
       system: r.system,
       task: r.taskName,
       category: r.category,
@@ -339,7 +378,10 @@ async function main() {
     })),
   };
 
-  fs.writeFileSync(path.join(OUTPUT_DIR, 'comparison-summary.json'), JSON.stringify(summary, null, 2));
+  fs.writeFileSync(
+    path.join(OUTPUT_DIR, 'comparison-summary.json'),
+    JSON.stringify(summary, null, 2),
+  );
 
   console.log(`\n${'═'.repeat(60)}`);
   console.log('COMPARISON RESULTS');
@@ -347,20 +389,34 @@ async function main() {
   console.log('');
   console.log('                        OpenCode        Commander');
   console.log('                        ─────────        ─────────');
-  console.log(`  Success Rate:         ${(summary.opencode.successRate).padEnd(16)} ${summary.commander.successRate}`);
-  console.log(`  Total Time:           ${(summary.opencode.totalTimeSec + 's').padEnd(16)} ${summary.commander.totalTimeSec}s`);
-  console.log(`  Avg Time/Task:        ${(summary.opencode.avgTimeSec + 's').padEnd(16)} ${summary.commander.avgTimeSec}s`);
-  console.log(`  Total Tokens:         ${('N/A').padEnd(16)} ${summary.commander.totalTokens.toLocaleString()}`);
-  console.log(`  Output Generated:     ${(summary.opencode.totalOutputBytes + ' bytes').padEnd(16)} ${summary.commander.totalOutputBytes} bytes`);
+  console.log(
+    `  Success Rate:         ${summary.opencode.successRate.padEnd(16)} ${summary.commander.successRate}`,
+  );
+  console.log(
+    `  Total Time:           ${(summary.opencode.totalTimeSec + 's').padEnd(16)} ${summary.commander.totalTimeSec}s`,
+  );
+  console.log(
+    `  Avg Time/Task:        ${(summary.opencode.avgTimeSec + 's').padEnd(16)} ${summary.commander.avgTimeSec}s`,
+  );
+  console.log(
+    `  Total Tokens:         ${'N/A'.padEnd(16)} ${summary.commander.totalTokens.toLocaleString()}`,
+  );
+  console.log(
+    `  Output Generated:     ${(summary.opencode.totalOutputBytes + ' bytes').padEnd(16)} ${summary.commander.totalOutputBytes} bytes`,
+  );
   console.log('');
 
   console.log('Per-task comparison:');
   for (const task of TASKS) {
-    const oc = allResults.find(r => r.system === 'opencode' && r.taskName === task.name);
-    const cmd = allResults.find(r => r.system === 'commander' && r.taskName === task.name);
+    const oc = allResults.find((r) => r.system === 'opencode' && r.taskName === task.name);
+    const cmd = allResults.find((r) => r.system === 'commander' && r.taskName === task.name);
     console.log(`\n  ${task.name} [${task.category}]:`);
-    console.log(`    OpenCode:  ${oc?.success ? '✅' : '❌'} ${(oc?.durationMs ?? 0) / 1000}s | ${oc?.outputSize ?? 0} bytes${oc?.error ? ` | ${oc.error.slice(0, 60)}` : ''}`);
-    console.log(`    Commander: ${cmd?.success ? '✅' : '❌'} ${(cmd?.durationMs ?? 0) / 1000}s | ${(cmd?.tokensUsed ?? 0).toLocaleString()} tok | ${cmd?.outputSize ?? 0} bytes${cmd?.error ? ` | ${cmd.error.slice(0, 60)}` : ''}`);
+    console.log(
+      `    OpenCode:  ${oc?.success ? '✅' : '❌'} ${(oc?.durationMs ?? 0) / 1000}s | ${oc?.outputSize ?? 0} bytes${oc?.error ? ` | ${oc.error.slice(0, 60)}` : ''}`,
+    );
+    console.log(
+      `    Commander: ${cmd?.success ? '✅' : '❌'} ${(cmd?.durationMs ?? 0) / 1000}s | ${(cmd?.tokensUsed ?? 0).toLocaleString()} tok | ${cmd?.outputSize ?? 0} bytes${cmd?.error ? ` | ${cmd.error.slice(0, 60)}` : ''}`,
+    );
   }
 
   console.log(`\n${'═'.repeat(60)}`);
@@ -369,11 +425,13 @@ async function main() {
 
   // Cleanup
   for (const task of TASKS) {
-    try { fs.unlinkSync(task.outputFile); } catch {}
+    try {
+      fs.unlinkSync(task.outputFile);
+    } catch {}
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('FATAL:', err);
   process.exit(1);
 });

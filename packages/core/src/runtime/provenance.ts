@@ -46,7 +46,10 @@ export function captureProvenance(): Omit<RunProvenance, 'runId' | 'timestamp' |
   let dirty = false;
   try {
     commitHash = execSync('git rev-parse HEAD', { encoding: 'utf-8', timeout: 3000 }).trim();
-    branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8', timeout: 3000 }).trim();
+    branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf-8',
+      timeout: 3000,
+    }).trim();
     const status = execSync('git status --porcelain', { encoding: 'utf-8', timeout: 3000 }).trim();
     dirty = status.length > 0;
   } catch {

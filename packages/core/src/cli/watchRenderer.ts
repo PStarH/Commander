@@ -283,11 +283,15 @@ export class WatchRenderer {
 
     // Update nodes
     if (topic === 'agent.started') {
-      const id = (payload?.taskId as string) || (payload?.execId as string) || `agent-${this.nodes.size}`;
-      const label = this.truncate((payload?.goal as string) || (payload?.detail as string) || id, 40);
+      const id =
+        (payload?.taskId as string) || (payload?.execId as string) || `agent-${this.nodes.size}`;
+      const label = this.truncate(
+        (payload?.goal as string) || (payload?.detail as string) || id,
+        40,
+      );
       this.addNode(id, label, 'running');
       this.stats.agentsSpawned++;
-      this.addEvent(ts, topic, payload?.detail as string || label, '▶');
+      this.addEvent(ts, topic, (payload?.detail as string) || label, '▶');
     } else if (topic === 'agent.completed') {
       const id = (payload?.taskId as string) || '';
       this.updateNodeStatus(id, 'completed');
@@ -320,10 +324,10 @@ export class WatchRenderer {
     } else if (topic === 'system.alert') {
       const level = (payload?.level as string) || 'info';
       const icon = level === 'error' ? '✘' : level === 'warn' ? '⚠' : 'ℹ';
-      this.addEvent(ts, topic, payload?.message as string || '', icon);
+      this.addEvent(ts, topic, (payload?.message as string) || '', icon);
     } else if (topic === 'goal.started') {
       this.stats.strategy = (payload?.mode as string) || 'auto';
-      this.addEvent(ts, topic, payload?.goal as string || '', '◉');
+      this.addEvent(ts, topic, (payload?.goal as string) || '', '◉');
     } else if (topic === 'goal.decomposed') {
       this.addEvent(ts, topic, 'task decomposed', '⊕');
     } else if (topic === 'goal.completed') {
@@ -372,7 +376,9 @@ export class WatchRenderer {
     }
 
     // Link to the most recent running node as parent
-    const running = Array.from(this.nodes.values()).filter(n => n.status === 'running' && n.id !== id);
+    const running = Array.from(this.nodes.values()).filter(
+      (n) => n.status === 'running' && n.id !== id,
+    );
     if (running.length > 0) {
       const parent = running[running.length - 1];
       node.parentId = parent.id;
@@ -418,16 +424,16 @@ export class WatchRenderer {
   private renderHeader(): void {
     const elapsed = (this.stats.elapsedMs / 1000).toFixed(1);
     const nodeArr = Array.from(this.nodes.values());
-    const running = nodeArr.filter(n => n.status === 'running').length;
-    const completed = nodeArr.filter(n => n.status === 'completed').length;
+    const running = nodeArr.filter((n) => n.status === 'running').length;
+    const completed = nodeArr.filter((n) => n.status === 'completed').length;
     const total = nodeArr.length;
 
     this.headerBox.setContent(
       ` {bold}Commander{/bold} — Watch Mode ` +
-      `│ Agents: ${running > 0 ? `{cyan-fg}${running} running{/cyan-fg}` : '0 running'} ` +
-      `${completed}/${total} done ` +
-      `│ Topology: {cyan-fg}${this.stats.topology}{/cyan-fg} ` +
-      `│ ${elapsed}s`
+        `│ Agents: ${running > 0 ? `{cyan-fg}${running} running{/cyan-fg}` : '0 running'} ` +
+        `${completed}/${total} done ` +
+        `│ Topology: {cyan-fg}${this.stats.topology}{/cyan-fg} ` +
+        `│ ${elapsed}s`,
     );
   }
 
@@ -446,7 +452,7 @@ export class WatchRenderer {
       lines.push('');
 
       // Build tree view
-      const roots = nodeArr.filter(n => n.parentId === null);
+      const roots = nodeArr.filter((n) => n.parentId === null);
       for (const root of roots) {
         this.renderNode(root, nodeArr, lines, '', true);
       }
@@ -454,19 +460,29 @@ export class WatchRenderer {
       lines.push('');
 
       // Legend
-      lines.push('  {cyan-fg}●{/cyan-fg} running  {green-fg}✓{/green-fg} completed  {red-fg}✗{/red-fg} failed  {gray-fg}○{/gray-fg} pending');
+      lines.push(
+        '  {cyan-fg}●{/cyan-fg} running  {green-fg}✓{/green-fg} completed  {red-fg}✗{/red-fg} failed  {gray-fg}○{/gray-fg} pending',
+      );
 
       // Critical path summary
-      const critPath = nodeArr.filter(n => n.isOnCriticalPath);
+      const critPath = nodeArr.filter((n) => n.isOnCriticalPath);
       if (critPath.length > 0) {
-        lines.push(`  {yellow-fg}Critical path:{/yellow-fg} ${critPath.map(n => this.truncate(n.label, 20)).join(' → ')}`);
+        lines.push(
+          `  {yellow-fg}Critical path:{/yellow-fg} ${critPath.map((n) => this.truncate(n.label, 20)).join(' → ')}`,
+        );
       }
     }
 
     this.dagBox.setContent(lines.join('\n'));
   }
 
-  private renderNode(node: AgentNode, all: AgentNode[], lines: string[], prefix: string, isLast: boolean): void {
+  private renderNode(
+    node: AgentNode,
+    all: AgentNode[],
+    lines: string[],
+    prefix: string,
+    isLast: boolean,
+  ): void {
     const connector = isLast ? '└── ' : '├── ';
     const color = STATUS_COLORS[node.status] || 'white';
     const icon = STATUS_ICONS[node.status] || '○';
@@ -476,12 +492,14 @@ export class WatchRenderer {
 
     lines.push(
       `  ${prefix}${connector}{${color}-fg}${icon}{/${color}-fg} ` +
-      `{bold}{${color}-fg}${node.label}{/${color}-fg}{/bold}` +
-      critMark + duration + tokens
+        `{bold}{${color}-fg}${node.label}{/${color}-fg}{/bold}` +
+        critMark +
+        duration +
+        tokens,
     );
 
     // Render children
-    const children = all.filter(n => n.parentId === node.id);
+    const children = all.filter((n) => n.parentId === node.id);
     for (let i = 0; i < children.length; i++) {
       const childPrefix = prefix + (isLast ? '    ' : '│   ');
       this.renderNode(children[i], all, lines, childPrefix, i === children.length - 1);
@@ -490,7 +508,7 @@ export class WatchRenderer {
 
   private renderEvents(): void {
     const visible = this.events.slice(-50); // Show last 50 events
-    const items = visible.map(e => {
+    const items = visible.map((e) => {
       const color = this.topicColor(e.topic);
       return ` {dim}${e.timestamp}{/dim} {${color}-fg}${e.icon}{/${color}-fg} {${color}-fg}${this.truncate(e.detail, 45)}{/${color}-fg}`;
     });
@@ -501,7 +519,8 @@ export class WatchRenderer {
   private renderStats(): void {
     const s = this.stats;
     const elapsed = (s.elapsedMs / 1000).toFixed(1);
-    const tokensK = s.totalTokens > 1000 ? `${(s.totalTokens / 1000).toFixed(1)}K` : String(s.totalTokens);
+    const tokensK =
+      s.totalTokens > 1000 ? `${(s.totalTokens / 1000).toFixed(1)}K` : String(s.totalTokens);
 
     const lines = [
       '',
@@ -522,15 +541,19 @@ export class WatchRenderer {
   }
 
   private renderStatusBar(): void {
-    const focusName = this.screen.focused === this.dagBox ? 'Graph'
-      : this.screen.focused === this.eventList ? 'Events'
-      : this.screen.focused === this.statsBox ? 'Stats'
-      : '';
+    const focusName =
+      this.screen.focused === this.dagBox
+        ? 'Graph'
+        : this.screen.focused === this.eventList
+          ? 'Events'
+          : this.screen.focused === this.statsBox
+            ? 'Stats'
+            : '';
 
     this.statusBar.setContent(
       ` {bold}q{/bold} quit  {bold}Tab{/bold} focus [${focusName}]  ` +
-      `{bold}↑↓{/bold} scroll  ` +
-      `│ {dim}Commander Watch Mode{/dim}`
+        `{bold}↑↓{/bold} scroll  ` +
+        `│ {dim}Commander Watch Mode{/dim}`,
     );
   }
 

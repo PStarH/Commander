@@ -93,7 +93,13 @@ export class QualityGater {
   private history: QualityMetrics[] = [];
   private currentMode: ExecutionMode = 'compound';
   private consecutiveFailures = 0;
-  private modeChanges: Array<{ from: ExecutionMode; to: ExecutionMode; reason: string; timestamp: number; action: 'escalate' | 'de-escalate' | 'maintain' }> = [];
+  private modeChanges: Array<{
+    from: ExecutionMode;
+    to: ExecutionMode;
+    reason: string;
+    timestamp: number;
+    action: 'escalate' | 'de-escalate' | 'maintain';
+  }> = [];
 
   constructor(config?: Partial<QualityGaterConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -110,7 +116,11 @@ export class QualityGater {
     }
 
     // Track consecutive failures
-    if (!metrics.passed || metrics.worstSeverity === 'high' || metrics.worstSeverity === 'critical') {
+    if (
+      !metrics.passed ||
+      metrics.worstSeverity === 'high' ||
+      metrics.worstSeverity === 'critical'
+    ) {
       this.consecutiveFailures++;
     } else {
       this.consecutiveFailures = 0;
@@ -140,7 +150,12 @@ export class QualityGater {
   /**
    * Get the escalation history.
    */
-  getModeChanges(): Array<{ from: ExecutionMode; to: ExecutionMode; reason: string; timestamp: number }> {
+  getModeChanges(): Array<{
+    from: ExecutionMode;
+    to: ExecutionMode;
+    reason: string;
+    timestamp: number;
+  }> {
     return this.modeChanges;
   }
 
@@ -156,12 +171,14 @@ export class QualityGater {
     escalationCount: number;
     deEscalationCount: number;
   } {
-    const avgQuality = this.history.length > 0
-      ? this.history.reduce((s, m) => s + m.quality, 0) / this.history.length
-      : 0;
-    const avgCost = this.history.length > 0
-      ? this.history.reduce((s, m) => s + m.tokenCost, 0) / this.history.length
-      : 0;
+    const avgQuality =
+      this.history.length > 0
+        ? this.history.reduce((s, m) => s + m.quality, 0) / this.history.length
+        : 0;
+    const avgCost =
+      this.history.length > 0
+        ? this.history.reduce((s, m) => s + m.tokenCost, 0) / this.history.length
+        : 0;
 
     return {
       totalExecutions: this.history.length,
@@ -169,8 +186,8 @@ export class QualityGater {
       averageTokenCost: Math.round(avgCost),
       currentMode: this.currentMode,
       consecutiveFailures: this.consecutiveFailures,
-      escalationCount: this.modeChanges.filter(m => m.action === 'escalate').length,
-      deEscalationCount: this.modeChanges.filter(m => m.action === 'de-escalate').length,
+      escalationCount: this.modeChanges.filter((m) => m.action === 'escalate').length,
+      deEscalationCount: this.modeChanges.filter((m) => m.action === 'de-escalate').length,
     };
   }
 
@@ -180,9 +197,12 @@ export class QualityGater {
   forceMode(mode: ExecutionMode, reason: string): void {
     const prev = this.currentMode;
     this.currentMode = mode;
-    const action = this.getModeLevel(mode) > this.getModeLevel(prev) ? 'escalate'
-      : this.getModeLevel(mode) < this.getModeLevel(prev) ? 'de-escalate'
-      : 'maintain';
+    const action =
+      this.getModeLevel(mode) > this.getModeLevel(prev)
+        ? 'escalate'
+        : this.getModeLevel(mode) < this.getModeLevel(prev)
+          ? 'de-escalate'
+          : 'maintain';
     this.modeChanges.push({
       from: prev,
       to: mode,
@@ -244,7 +264,10 @@ export class QualityGater {
     if (rollingQuality < this.config.escalationThreshold) {
       const newMode = this.escalateMode(prevMode);
       if (newMode !== prevMode) {
-        this.changeMode(newMode, `Quality ${rollingQuality.toFixed(2)} below threshold ${this.config.escalationThreshold}`);
+        this.changeMode(
+          newMode,
+          `Quality ${rollingQuality.toFixed(2)} below threshold ${this.config.escalationThreshold}`,
+        );
         return {
           mode: newMode,
           reason: `Escalated: rolling quality ${rollingQuality.toFixed(2)} below ${this.config.escalationThreshold}`,
@@ -273,11 +296,16 @@ export class QualityGater {
     }
 
     // Rule 4: De-escalate when quality is consistently high
-    if (rollingQuality >= this.config.deEscalationThreshold && this.history.length >= this.config.minExecutions) {
+    if (
+      rollingQuality >= this.config.deEscalationThreshold &&
+      this.history.length >= this.config.minExecutions
+    ) {
       // Check last N executions are all high quality
       const recentWindow = Math.min(this.config.windowSize, this.history.length);
       const recentSlice = this.history.slice(-recentWindow);
-      const allHighQuality = recentSlice.every(m => m.quality >= this.config.deEscalationThreshold);
+      const allHighQuality = recentSlice.every(
+        (m) => m.quality >= this.config.deEscalationThreshold,
+      );
 
       if (allHighQuality && prevMode !== 'compound') {
         const newMode = this.deEscalateMode(prevMode);
@@ -306,28 +334,39 @@ export class QualityGater {
 
   private escalateMode(current: ExecutionMode): ExecutionMode {
     switch (current) {
-      case 'compound': return 'standard';
-      case 'standard': return 'fine';
-      case 'fine': return 'fine';
-      default: return current;
+      case 'compound':
+        return 'standard';
+      case 'standard':
+        return 'fine';
+      case 'fine':
+        return 'fine';
+      default:
+        return current;
     }
   }
 
   private deEscalateMode(current: ExecutionMode): ExecutionMode {
     switch (current) {
-      case 'fine': return 'standard';
-      case 'standard': return 'compound';
-      case 'compound': return 'compound';
-      default: return current;
+      case 'fine':
+        return 'standard';
+      case 'standard':
+        return 'compound';
+      case 'compound':
+        return 'compound';
+      default:
+        return current;
     }
   }
 
   private changeMode(newMode: ExecutionMode, reason: string): void {
     const prev = this.currentMode;
     this.currentMode = newMode;
-    const action = this.getModeLevel(newMode) > this.getModeLevel(prev) ? 'escalate'
-      : this.getModeLevel(newMode) < this.getModeLevel(prev) ? 'de-escalate'
-      : 'maintain';
+    const action =
+      this.getModeLevel(newMode) > this.getModeLevel(prev)
+        ? 'escalate'
+        : this.getModeLevel(newMode) < this.getModeLevel(prev)
+          ? 'de-escalate'
+          : 'maintain';
     this.modeChanges.push({
       from: prev,
       to: newMode,
@@ -341,10 +380,14 @@ export class QualityGater {
 
   private getModeLevel(mode: ExecutionMode): number {
     switch (mode) {
-      case 'compound': return 0;
-      case 'standard': return 1;
-      case 'fine': return 2;
-      default: return 0;
+      case 'compound':
+        return 0;
+      case 'standard':
+        return 1;
+      case 'fine':
+        return 2;
+      default:
+        return 0;
     }
   }
 }

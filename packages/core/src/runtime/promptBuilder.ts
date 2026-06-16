@@ -36,12 +36,22 @@ export function buildSystemPrompt(
       `Tools: ${ctx.availableTools.join(', ')}`,
       `Steps: max ${config.maxStepsPerRun}`,
       'Be terse. JSON/tool calls preferred over prose. Prioritize accuracy.',
-    ].filter(Boolean).join('\n');
+    ]
+      .filter(Boolean)
+      .join('\n');
   }
 
   const governanceProfile = ctx.contextData.governanceProfile;
   const effectiveTaskType = taskType ?? detectTaskType(ctx.goal);
-  const prefix = buildStableSystemPrefix(config, tools, governanceProfile, registrySummary, activeToolNames, effectiveTaskType, projectContext);
+  const prefix = buildStableSystemPrefix(
+    config,
+    tools,
+    governanceProfile,
+    registrySummary,
+    activeToolNames,
+    effectiveTaskType,
+    projectContext,
+  );
   const suffix = buildDynamicContext(ctx, routing, config);
 
   return [prefix, suffix].filter(Boolean).join('\n\n');
@@ -65,14 +75,19 @@ export function buildStableSystemPrefix(
   projectContext?: ProjectContext,
 ): string {
   const effectiveTaskType = taskType ?? 'general';
-  const projectContextBlock = buildProjectContextBlock(projectContext ?? { filesRead: [], content: '', cacheKey: '__none__' });
+  const projectContextBlock = buildProjectContextBlock(
+    projectContext ?? { filesRead: [], content: '', cacheKey: '__none__' },
+  );
   const sortedTools = sortToolsForCache(activeToolNames ?? [...tools.keys()], tools);
-  const toolBlock = sortedTools.length > 0
-    ? sortedTools.map(name => {
-        const t = tools.get(name);
-        return t ? `- ${t.definition.name}: ${t.definition.description}` : `- ${name}`;
-      }).join('\n')
-    : '(no tools registered)';
+  const toolBlock =
+    sortedTools.length > 0
+      ? sortedTools
+          .map((name) => {
+            const t = tools.get(name);
+            return t ? `- ${t.definition.name}: ${t.definition.description}` : `- ${name}`;
+          })
+          .join('\n')
+      : '(no tools registered)';
 
   const examplesBlock = buildExamplesBlock(sortedTools, tools);
   const governanceBlock = stableStringify(governanceProfile) ?? 'No governance constraints.';
@@ -132,7 +147,7 @@ export function buildStableSystemPrefix(
     '## Tool Calling Rules',
     '- **Required arguments**: All required arguments must be provided. Do NOT guess — inspect the schema and supply values.',
     '- **Parallel execution**: Independent tool calls may be made in the same turn. The runtime executes them concurrently.',
-    '- **Sequential dependency**: If tool B depends on tool A\'s result, call them in separate turns.',
+    "- **Sequential dependency**: If tool B depends on tool A's result, call them in separate turns.",
     '- **Error recovery**: On validation error, read the error, fix the arguments, and retry. Do NOT retry the same failing call.',
     '- **Idempotency**: Safe to retry read-only tools. Mutation tools (file_write, shell_execute) may have side effects.',
     '- **Tool not allowed**: If a tool is not in the allowed list, do NOT try to call it. Use the tools that are available.',
@@ -187,7 +202,7 @@ export function buildStableSystemPrefix(
     '</critical_rules_reminder>',
   ];
 
-  return sections.filter(s => s !== '').join('\n');
+  return sections.filter((s) => s !== '').join('\n');
 }
 
 /** Build the workflow section, conditional on task type. */
@@ -225,11 +240,11 @@ function buildQualitySection(taskType: TaskType): string {
     return [
       '<quality>',
       '## Code Quality Standards',
-      '- Write idiomatic, production-quality code matching the project\'s style and conventions.',
+      "- Write idiomatic, production-quality code matching the project's style and conventions.",
       '- Use existing patterns, utilities, and helpers from the codebase rather than reimplementing.',
       '- Add appropriate error handling. Do not silently swallow errors.',
-      '- Follow the project\'s existing testing patterns when adding or modifying functionality.',
-      '- Ensure type safety: avoid \'as any\' casts and @ts-ignore comments.',
+      "- Follow the project's existing testing patterns when adding or modifying functionality.",
+      "- Ensure type safety: avoid 'as any' casts and @ts-ignore comments.",
       '- Clean up after yourself: remove unused imports, variables, and dead code.',
       '</quality>',
     ].join('\n');
@@ -241,7 +256,7 @@ function buildQualitySection(taskType: TaskType): string {
     '- Be clear, accurate, and well-structured.',
     '- Use facts and evidence from tool outputs rather than inventing details.',
     '- Acknowledge uncertainty when evidence is incomplete.',
-    '- Follow the user\'s preferred style and any project conventions found in context.',
+    "- Follow the user's preferred style and any project conventions found in context.",
     '- For reports, analyses, or summaries: be comprehensive and include all relevant findings.',
     '</quality>',
   ].join('\n');
@@ -249,9 +264,10 @@ function buildQualitySection(taskType: TaskType): string {
 
 /** Build the output-format section, conditional on task type. */
 function buildOutputFormatSection(taskType: TaskType): string {
-  const codingExtra = taskType === 'code' || taskType === 'analysis'
-    ? '- When providing code, include complete, runnable code blocks with language annotation and necessary context.\n'
-    : '';
+  const codingExtra =
+    taskType === 'code' || taskType === 'analysis'
+      ? '- When providing code, include complete, runnable code blocks with language annotation and necessary context.\n'
+      : '';
 
   return [
     '<output_format>',
@@ -262,10 +278,12 @@ function buildOutputFormatSection(taskType: TaskType): string {
     '- Use structured formats (headings, lists, tables, code blocks) to organize complex outputs.',
     '- Include relevant details, examples, edge cases, and exceptions. Ambiguity should be acknowledged, not hidden.',
     '- When the task asks for a report, summary, or plan, produce a comprehensive answer with clear sections.',
-    '- Match verbosity to the task\'s inherent complexity: simple factual lookups can be brief; complex tasks must be fully developed.',
+    "- Match verbosity to the task's inherent complexity: simple factual lookups can be brief; complex tasks must be fully developed.",
     codingExtra.slice(0, -1), // strip trailing newline if present
     '</output_format>',
-  ].filter(s => s !== '').join('\n');
+  ]
+    .filter((s) => s !== '')
+    .join('\n');
 }
 
 /** Per-call dynamic context. Appended after the stable prefix. */
@@ -318,7 +336,7 @@ export function computePrefixCacheKey(
   projectContextCacheKey?: string,
 ): string {
   const sortedTools = sortToolsForCache(activeToolNames ?? [...tools.keys()], tools);
-  const toolFingerprint = sortedTools.map(name => {
+  const toolFingerprint = sortedTools.map((name) => {
     const t = tools.get(name);
     return t ? `${t.definition.name}|${t.definition.description}` : name;
   });
@@ -360,7 +378,8 @@ export function buildCacheAwareUserPrompt(
   // Output format config directive (overrides governor hint when explicitly set)
   if (config?.outputFormat && config.outputFormat !== 'auto') {
     const outputDirectives: Record<string, string> = {
-      structured: 'Respond in structured format. Use JSON for data, code blocks with annotations for code.',
+      structured:
+        'Respond in structured format. Use JSON for data, code blocks with annotations for code.',
       concise: 'Short answer only. No preamble or verbose explanations.',
       freeform: 'Natural language response. Match tone to the task.',
     };
@@ -396,7 +415,7 @@ export function isComplexTask(goal: string): boolean {
     /\b(write|create|generate|produce)\b.*\b(report|document|plan|strategy|guide)\b/i,
   ];
   if (goal.length > 200) return true;
-  return complexPatterns.some(p => p.test(goal));
+  return complexPatterns.some((p) => p.test(goal));
 }
 
 // ── internal helpers ──
@@ -407,9 +426,17 @@ function sortToolsForCache(names: string[], tools: Map<string, Tool>): string[] 
   // Deterministic order within groups preserves KV-cache hit rates.
   const unique = [...new Set(names)];
   const categoryOrder: Record<string, number> = {
-    'filesystem': 0, 'code': 1, 'development': 2, 'web': 3,
-    'memory': 4, 'workflow': 5, 'control': 6, 'meta': 7,
-    'multimodal': 8, 'mcp': 9, 'knowledge': 10,
+    filesystem: 0,
+    code: 1,
+    development: 2,
+    web: 3,
+    memory: 4,
+    workflow: 5,
+    control: 6,
+    meta: 7,
+    multimodal: 8,
+    mcp: 9,
+    knowledge: 10,
   };
   unique.sort((a, b) => {
     const catA = tools.get(a)?.definition.category ?? '_zzz';
@@ -424,17 +451,19 @@ function sortToolsForCache(names: string[], tools: Map<string, Tool>): string[] 
 
 function buildExamplesBlock(sortedTools: string[], tools: Map<string, Tool>): string {
   const examples = sortedTools
-    .map(name => tools.get(name))
+    .map((name) => tools.get(name))
     .filter((t): t is Tool => !!t)
-    .flatMap(t => (t.definition.examples ?? []))
+    .flatMap((t) => t.definition.examples ?? [])
     .slice(0, 8);
   if (examples.length === 0) return '';
-  const body = examples.map(ex => {
-    const args = Object.entries(ex.arguments)
-      .map(([k, v]) => `${k}=${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`)
-      .join(', ');
-    return `${ex.name}(${args})`;
-  }).join('\n');
+  const body = examples
+    .map((ex) => {
+      const args = Object.entries(ex.arguments)
+        .map(([k, v]) => `${k}=${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`)
+        .join(', ');
+      return `${ex.name}(${args})`;
+    })
+    .join('\n');
   return `\n## Tool Usage Examples\n${body}`;
 }
 
@@ -446,7 +475,7 @@ function stableStringify(value: unknown): string | null {
   }
   const keys = Object.keys(value as Record<string, unknown>).sort();
   const body = keys
-    .map(k => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`)
+    .map((k) => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`)
     .join(',');
   return '{' + body + '}';
 }

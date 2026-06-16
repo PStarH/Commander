@@ -15,9 +15,17 @@ function makeBundle() {
   process.env.COMMANDER_ATR_IDEMPOTENCY_PATH = ':memory:';
   resetIdempotencyStore();
   resetRunLedgerBundle();
-  const lm = new LeaseManager({ filePath: ':memory:', defaultTtlSeconds: 60, defaultHolder: 'test' });
+  const lm = new LeaseManager({
+    filePath: ':memory:',
+    defaultTtlSeconds: 60,
+    defaultHolder: 'test',
+  });
   const idem = new IdempotencyStore({ filePath: ':memory:', defaultTtlSeconds: 60 });
-  const ledger = new RunLedger(lm, idem, { filePath: ':memory:', defaultTtlSeconds: 60, defaultHolder: 'test' });
+  const ledger = new RunLedger(lm, idem, {
+    filePath: ':memory:',
+    defaultTtlSeconds: 60,
+    defaultHolder: 'test',
+  });
   const bridge = new CompensationBridge();
   return { lm, idem, ledger, bridge };
 }
@@ -73,7 +81,9 @@ describe('ExecutionScheduler', () => {
         const tx = bundle.ledger.getTransaction('r-1')!;
         assert.strictEqual(tx.state, 'EXECUTING');
         assert.strictEqual(tx.leaseToken, handle.leaseToken);
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
 
     it('is idempotent: second beginRun with same runId returns resumed=true', () => {
@@ -83,7 +93,9 @@ describe('ExecutionScheduler', () => {
         const h2 = scheduler.beginRun({ runId: 'r-2', goal: 'g' });
         assert.strictEqual(h2.resumed, true);
         assert.strictEqual(h2.leaseToken, h1.leaseToken, 'same lease on idempotent begin');
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
   });
 
@@ -109,7 +121,9 @@ describe('ExecutionScheduler', () => {
         const tx = bundle.ledger.getTransaction('r-3')!;
         assert.strictEqual(tx.actions.length, 1);
         assert.strictEqual(tx.actions[0].toolName, 'github_create_pr');
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
 
     it('returns cached result when idempotency key already completed (replay)', () => {
@@ -117,23 +131,40 @@ describe('ExecutionScheduler', () => {
       try {
         const h = scheduler.beginRun({ runId: 'r-4', goal: 'g' });
         const a = scheduler.scheduleAction({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          toolName: 't', externalSystem: 's', args: {}, idempotencyKey: 'k1', compensable: true,
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          toolName: 't',
+          externalSystem: 's',
+          args: {},
+          idempotencyKey: 'k1',
+          compensable: true,
         });
         assert.ok(a);
         scheduler.recordResult({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          actionId: a.actionId, result: 'cached-output',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          actionId: a.actionId,
+          result: 'cached-output',
         });
 
         const replay = scheduler.scheduleAction({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          toolName: 't', externalSystem: 's', args: {}, idempotencyKey: 'k1', compensable: true,
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          toolName: 't',
+          externalSystem: 's',
+          args: {},
+          idempotencyKey: 'k1',
+          compensable: true,
         });
         assert.ok(replay);
         assert.strictEqual(replay.replayed, true);
         assert.strictEqual(replay.cachedResult, 'cached-output');
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
 
     it('returns null when lease is stale (fenced)', () => {
@@ -141,11 +172,19 @@ describe('ExecutionScheduler', () => {
       try {
         const h = scheduler.beginRun({ runId: 'r-5', goal: 'g' });
         const res = scheduler.scheduleAction({
-          runId: h.runId, leaseToken: 'fake', fencingEpoch: 999,
-          toolName: 't', externalSystem: 's', args: {}, idempotencyKey: 'k', compensable: true,
+          runId: h.runId,
+          leaseToken: 'fake',
+          fencingEpoch: 999,
+          toolName: 't',
+          externalSystem: 's',
+          args: {},
+          idempotencyKey: 'k',
+          compensable: true,
         });
         assert.strictEqual(res, null);
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
   });
 
@@ -155,16 +194,27 @@ describe('ExecutionScheduler', () => {
       try {
         const h = scheduler.beginRun({ runId: 'r-6', goal: 'g' });
         const a = scheduler.scheduleAction({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          toolName: 't', externalSystem: 's', args: {}, idempotencyKey: 'k1', compensable: true,
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          toolName: 't',
+          externalSystem: 's',
+          args: {},
+          idempotencyKey: 'k1',
+          compensable: true,
         });
         scheduler.recordResult({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          actionId: a.actionId, result: 'ok',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          actionId: a.actionId,
+          result: 'ok',
         });
         const tx = bundle.ledger.getTransaction('r-6')!;
         assert.strictEqual(tx.actions[0].result, 'ok');
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
 
     it('recordError persists error to action and idempotency', () => {
@@ -172,16 +222,27 @@ describe('ExecutionScheduler', () => {
       try {
         const h = scheduler.beginRun({ runId: 'r-7', goal: 'g' });
         const a = scheduler.scheduleAction({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          toolName: 't', externalSystem: 's', args: {}, idempotencyKey: 'k1', compensable: true,
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          toolName: 't',
+          externalSystem: 's',
+          args: {},
+          idempotencyKey: 'k1',
+          compensable: true,
         });
         scheduler.recordError({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          actionId: a.actionId, error: 'flaky',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          actionId: a.actionId,
+          error: 'flaky',
         });
         const tx = bundle.ledger.getTransaction('r-7')!;
         assert.strictEqual(tx.actions[0].error, 'flaky');
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
   });
 
@@ -191,14 +252,18 @@ describe('ExecutionScheduler', () => {
       try {
         const h = scheduler.beginRun({ runId: 'r-8', goal: 'g' });
         const res = scheduler.commitRun({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
         });
         assert.strictEqual(res.committed, true);
         const tx = bundle.ledger.getTransaction('r-8')!;
         assert.strictEqual(tx.state, 'COMMITTED');
         const lease = bundle.lm.get('r-8');
         assert.strictEqual(lease, null, 'lease released after commit');
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
 
     it('returns committed=false, reason=fenced on stale lease', () => {
@@ -208,7 +273,9 @@ describe('ExecutionScheduler', () => {
         const res = scheduler.commitRun({ runId: 'r-9', leaseToken: 'fake', fencingEpoch: 999 });
         assert.strictEqual(res.committed, false);
         assert.strictEqual(res.reason, 'fenced');
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
 
     it('returns committed=false, reason=not_found on unknown run', () => {
@@ -217,7 +284,9 @@ describe('ExecutionScheduler', () => {
         const res = scheduler.commitRun({ runId: 'missing', leaseToken: 'x', fencingEpoch: 1 });
         assert.strictEqual(res.committed, false);
         assert.strictEqual(res.reason, 'not_found');
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
   });
 
@@ -232,56 +301,100 @@ describe('ExecutionScheduler', () => {
         });
         const h = scheduler.beginRun({ runId: 'r-10', goal: 'g' });
         const a = scheduler.scheduleAction({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          toolName: 'github_create_pr', externalSystem: 'github', args: {}, idempotencyKey: 'k',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          toolName: 'github_create_pr',
+          externalSystem: 'github',
+          args: {},
+          idempotencyKey: 'k',
           compensable: true,
         });
         scheduler.recordResult({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          actionId: a.actionId, result: 'pr-1',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          actionId: a.actionId,
+          result: 'pr-1',
         });
 
         const res = await scheduler.abortRun({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch, reason: 'user cancel',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          reason: 'user cancel',
         });
         assert.strictEqual(res.aborted, true);
         assert.strictEqual(res.outcome.succeeded, 1);
         assert.deepStrictEqual(calls, [a.actionId]);
         const tx = bundle.ledger.getTransaction('r-10')!;
         assert.strictEqual(tx.state, 'COMPENSATED');
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
 
     it('is idempotent: re-running abortRun is a no-op', async () => {
       const { scheduler, close } = makeScheduler();
       try {
         const calls: string[] = [];
-        scheduler.registerCompensation('t', async (a) => { calls.push(a.actionId); return { success: true }; });
+        scheduler.registerCompensation('t', async (a) => {
+          calls.push(a.actionId);
+          return { success: true };
+        });
         const h = scheduler.beginRun({ runId: 'r-11', goal: 'g' });
         const a = scheduler.scheduleAction({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          toolName: 't', externalSystem: 's', args: {}, idempotencyKey: 'k', compensable: true,
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          toolName: 't',
+          externalSystem: 's',
+          args: {},
+          idempotencyKey: 'k',
+          compensable: true,
         });
         scheduler.recordResult({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          actionId: a.actionId, result: 'r',
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          actionId: a.actionId,
+          result: 'r',
         });
 
-        await scheduler.abortRun({ runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch, reason: 'x' });
-        const res2 = await scheduler.abortRun({ runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch, reason: 'x' });
+        await scheduler.abortRun({
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          reason: 'x',
+        });
+        const res2 = await scheduler.abortRun({
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          reason: 'x',
+        });
         assert.strictEqual(res2.outcome.succeeded, 0, 'second run is a no-op');
         assert.strictEqual(calls.length, 1);
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
 
     it('returns aborted=false, reason=fenced on stale lease', async () => {
       const { scheduler, close } = makeScheduler();
       try {
         scheduler.beginRun({ runId: 'r-12', goal: 'g' });
-        const res = await scheduler.abortRun({ runId: 'r-12', leaseToken: 'fake', fencingEpoch: 999, reason: 'x' });
+        const res = await scheduler.abortRun({
+          runId: 'r-12',
+          leaseToken: 'fake',
+          fencingEpoch: 999,
+          reason: 'x',
+        });
         assert.strictEqual(res.aborted, false);
         assert.strictEqual(res.reason, 'fenced');
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
   });
 
@@ -295,14 +408,18 @@ describe('ExecutionScheduler', () => {
         assert.strictEqual(r.resumed, true);
         assert.strictEqual(r.leaseToken, h.leaseToken);
         assert.deepStrictEqual(r.metadata, { foo: 'bar' });
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
 
     it('returns null for unknown run', () => {
       const { scheduler, close } = makeScheduler();
       try {
         assert.strictEqual(scheduler.resumeRun({ runId: 'missing' }), null);
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
   });
 
@@ -311,18 +428,33 @@ describe('ExecutionScheduler', () => {
       const { scheduler, bundle, close } = makeScheduler();
       try {
         let handlerCalled = false;
-        scheduler.registerCompensation('t', async () => { handlerCalled = true; return { success: true }; });
+        scheduler.registerCompensation('t', async () => {
+          handlerCalled = true;
+          return { success: true };
+        });
         const h = scheduler.beginRun({ runId: 'r-14', goal: 'g' });
         scheduler.scheduleAction({
-          runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch,
-          toolName: 't', externalSystem: 's', args: {}, idempotencyKey: 'k', compensable: true,
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          toolName: 't',
+          externalSystem: 's',
+          args: {},
+          idempotencyKey: 'k',
+          compensable: true,
         });
 
-        const res = scheduler.killRun({ runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch });
+        const res = scheduler.killRun({
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+        });
         assert.strictEqual(res.killed, true);
         assert.strictEqual(handlerCalled, false, 'kill skips compensation');
         assert.strictEqual(bundle.lm.get('r-14'), null);
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
 
     it('returns killed=false, reason=fenced on stale lease', () => {
@@ -332,7 +464,9 @@ describe('ExecutionScheduler', () => {
         const res = scheduler.killRun({ runId: 'r-15', leaseToken: 'fake', fencingEpoch: 999 });
         assert.strictEqual(res.killed, false);
         assert.strictEqual(res.reason, 'fenced');
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
   });
 
@@ -343,7 +477,9 @@ describe('ExecutionScheduler', () => {
         const h = scheduler.beginRun({ runId: 'r-16', goal: 'g' });
         const ok = scheduler.heartbeat({ runId: h.runId, leaseToken: h.leaseToken });
         assert.strictEqual(ok, true);
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
   });
 
@@ -367,7 +503,14 @@ describe('ExecutionScheduler', () => {
               messages: [],
               tokenUsage: { input: 0, output: 0, total: 0 },
               stepDurations: [],
-              context: { agentId: 'a', projectId: 'p', goal: 'g', availableTools: [], maxSteps: 10, tokenBudget: 1000 },
+              context: {
+                agentId: 'a',
+                projectId: 'p',
+                goal: 'g',
+                availableTools: [],
+                maxSteps: 10,
+                tokenBudget: 1000,
+              },
               totalDurationMs: 0,
               leaseToken: h.leaseToken,
               fencingEpoch: h.fencingEpoch,
@@ -379,9 +522,13 @@ describe('ExecutionScheduler', () => {
           assert.ok(restored);
           assert.strictEqual(restored.leaseToken, h.leaseToken);
           assert.strictEqual(restored.fencingEpoch, h.fencingEpoch);
-        } finally { close(); }
+        } finally {
+          close();
+        }
       } finally {
-        try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+        try {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        } catch {}
       }
     });
   });
@@ -395,32 +542,51 @@ describe('ExecutionScheduler', () => {
         const all = scheduler.listRuns();
         assert.ok(all.some((tx) => tx.runId === 'r-18'));
         assert.ok(all.some((tx) => tx.runId === 'r-19'));
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
 
     it('filters by state', () => {
       const { scheduler, close } = makeScheduler();
       try {
         const h = scheduler.beginRun({ runId: 'r-20', goal: 'g' });
-        scheduler.commitRun({ runId: h.runId, leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch });
+        scheduler.commitRun({
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+        });
         const committed = scheduler.listRuns({ state: 'COMMITTED' });
         assert.ok(committed.some((tx) => tx.runId === 'r-20'));
-      } finally { close(); }
+      } finally {
+        close();
+      }
     });
   });
 
   describe('tenant isolation', () => {
     it('tenant A cannot commit into tenant B run', () => {
-      const lm = new LeaseManager({ filePath: ':memory:', defaultTtlSeconds: 60, defaultHolder: 't' });
+      const lm = new LeaseManager({
+        filePath: ':memory:',
+        defaultTtlSeconds: 60,
+        defaultHolder: 't',
+      });
       const idem = new IdempotencyStore({ filePath: ':memory:', defaultTtlSeconds: 60 });
-      const ledger = new RunLedger(lm, idem, { filePath: ':memory:', defaultTtlSeconds: 60, defaultHolder: 't' });
+      const ledger = new RunLedger(lm, idem, {
+        filePath: ':memory:',
+        defaultTtlSeconds: 60,
+        defaultHolder: 't',
+      });
       const bridge = new CompensationBridge();
       const scheduler = new ExecutionScheduler({ lease: lm, idempotency: idem, ledger, bridge });
       try {
         const h = scheduler.beginRun({ runId: 'r-x', goal: 'g', tenantId: 'tenant-a' });
 
         const wrongTenant = scheduler.commitRun({
-          runId: 'r-x', leaseToken: h.leaseToken, fencingEpoch: h.fencingEpoch, tenantId: 'tenant-b',
+          runId: 'r-x',
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+          tenantId: 'tenant-b',
         });
         assert.strictEqual(wrongTenant.committed, false);
       } finally {

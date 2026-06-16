@@ -106,7 +106,7 @@ const PHASE_CATEGORIES: Array<{ name: string; keywords: string[] }> = [
 
 function classifyPhase(toolNames: string[]): string {
   for (const cat of PHASE_CATEGORIES) {
-    if (toolNames.some(t => cat.keywords.some(k => t.includes(k)))) {
+    if (toolNames.some((t) => cat.keywords.some((k) => t.includes(k)))) {
       return cat.name;
     }
   }
@@ -135,7 +135,7 @@ export function exportSOPFromTrace(trace: ExecutionTrace): SOPTemplate | null {
   const phases = buildPhases(toolCalls, decisions, trace);
 
   // Build the full tool call chain
-  const toolCallChain: SOPToolCall[] = toolCalls.map(evt => ({
+  const toolCallChain: SOPToolCall[] = toolCalls.map((evt) => ({
     stepNumber: evt.stepNumber,
     toolName: evt.toolName,
     phase: classifyPhase([evt.toolName]),
@@ -179,8 +179,8 @@ export function exportSOPFromResult(result: AgentExecutionResult): SOPTemplate |
 
   const steps = result.steps;
   const toolCalls = steps
-    .filter(s => s.type === 'tool_call' && s.toolCall)
-    .map(s => ({
+    .filter((s) => s.type === 'tool_call' && s.toolCall)
+    .map((s) => ({
       toolName: s.toolCall!.name,
       args: s.toolCall!.arguments,
       output: s.toolResult?.output || '',
@@ -194,34 +194,51 @@ export function exportSOPFromResult(result: AgentExecutionResult): SOPTemplate |
     if (s.type === 'tool_call' && s.toolCall) {
       const name = s.toolCall.name;
       if (name === 'file_write' || name === 'write_file') {
-        fileAccess.push({ path: String(s.toolCall.arguments.path || ''), action: 'write', summary: 'wrote file' });
+        fileAccess.push({
+          path: String(s.toolCall.arguments.path || ''),
+          action: 'write',
+          summary: 'wrote file',
+        });
       } else if (name === 'file_edit' || name === 'edit_file' || name === 'str_replace') {
-        fileAccess.push({ path: String(s.toolCall.arguments.path || ''), action: 'edit', summary: 'edited file' });
+        fileAccess.push({
+          path: String(s.toolCall.arguments.path || ''),
+          action: 'edit',
+          summary: 'edited file',
+        });
       } else if (name === 'file_read' || name === 'read_file') {
-        fileAccess.push({ path: String(s.toolCall.arguments.path || ''), action: 'read', summary: 'read file' });
+        fileAccess.push({
+          path: String(s.toolCall.arguments.path || ''),
+          action: 'read',
+          summary: 'read file',
+        });
       }
     }
   }
 
-  const toolNames = toolCalls.map(t => t.toolName);
+  const toolNames = toolCalls.map((t) => t.toolName);
   const phases: SOPPhase[] = [];
   if (toolCalls.length > 0) {
     phases.push({
       name: classifyPhase(toolNames),
       description: `Executed ${toolCalls.length} tool calls across ${steps.length} steps`,
       toolsUsed: [...new Set(toolNames)],
-      decisions: toolCalls.map(t => ({
+      decisions: toolCalls.map((t) => ({
         description: `Called ${t.toolName}`,
         toolName: t.toolName,
         inputSummary: truncate(JSON.stringify(t.args), 100),
         outputSummary: truncate(t.output || t.error || '', 100),
       })),
-      outcome: result.status === 'success' ? 'Completed successfully' : `Completed with status: ${result.status}`,
+      outcome:
+        result.status === 'success'
+          ? 'Completed successfully'
+          : `Completed with status: ${result.status}`,
       agentRole: 'agent',
     });
   }
 
-  const tags = [...new Set([...toolNames, result.status, 'sop-export'].filter(Boolean))] as string[];
+  const tags = [
+    ...new Set([...toolNames, result.status, 'sop-export'].filter(Boolean)),
+  ] as string[];
 
   return {
     schemaVersion: 1,
@@ -233,7 +250,7 @@ export function exportSOPFromResult(result: AgentExecutionResult): SOPTemplate |
     totalDurationMs: result.totalDurationMs,
     modelUsed: '',
     phases,
-    toolCallChain: toolCalls.map(t => ({
+    toolCallChain: toolCalls.map((t) => ({
       stepNumber: t.stepNumber,
       toolName: t.toolName,
       phase: classifyPhase([t.toolName]),
@@ -258,7 +275,9 @@ export function formatSOPAsMarkdown(sop: SOPTemplate): string {
   lines.push('');
   lines.push(`- **Source Run**: \`${sop.sourceRunId}\``);
   lines.push(`- **Executed**: ${sop.executedAt}`);
-  lines.push(`- **Steps**: ${sop.totalSteps} | **Tokens**: ${sop.totalTokens} | **Duration**: ${sop.totalDurationMs}ms`);
+  lines.push(
+    `- **Steps**: ${sop.totalSteps} | **Tokens**: ${sop.totalTokens} | **Duration**: ${sop.totalDurationMs}ms`,
+  );
   if (sop.modelUsed) lines.push(`- **Model**: ${sop.modelUsed}`);
   if (sop.topology) lines.push(`- **Topology**: ${sop.topology}`);
   lines.push('');
@@ -298,7 +317,9 @@ export function formatSOPAsMarkdown(sop: SOPTemplate): string {
     lines.push('|---|------|-------|------|----------|');
     for (const tc of sop.toolCallChain.slice(0, 30)) {
       const argsStr = truncate(JSON.stringify(tc.args), 60);
-      lines.push(`| ${tc.stepNumber} | ${tc.toolName} | ${tc.phase} | \`${argsStr}\` | ${tc.durationMs}ms |`);
+      lines.push(
+        `| ${tc.stepNumber} | ${tc.toolName} | ${tc.phase} | \`${argsStr}\` | ${tc.durationMs}ms |`,
+      );
     }
     if (sop.toolCallChain.length > 30) {
       lines.push(`| ... | (${sop.toolCallChain.length - 30} more calls) | ... | ... | ... |`);
@@ -330,13 +351,15 @@ export function formatSOPAsContext(sop: SOPTemplate): Record<string, unknown> {
     schemaVersion: sop.schemaVersion,
     goal: sop.goal,
     summary: sop.summary,
-    phases: sop.phases.map(p => ({
+    phases: sop.phases.map((p) => ({
       name: p.name,
       tools: p.toolsUsed,
       outcome: p.outcome,
     })),
-    toolCallPattern: sop.toolCallChain.map(tc => `${tc.toolName}(${truncate(JSON.stringify(tc.args), 80)})`),
-    files: sop.files.map(f => `${f.action}:${f.path}`),
+    toolCallPattern: sop.toolCallChain.map(
+      (tc) => `${tc.toolName}(${truncate(JSON.stringify(tc.args), 80)})`,
+    ),
+    files: sop.files.map((f) => `${f.action}:${f.path}`),
     tags: sop.tags,
     modelUsed: sop.modelUsed,
     topology: sop.topology,
@@ -425,7 +448,11 @@ function extractFileAccess(trace: ExecutionTrace): SOPFileAccess[] {
     if (!path || seen.has(path)) continue;
 
     let action: SOPFileAccess['action'] = 'read';
-    if (['file_write', 'write_file', 'file_edit', 'edit_file', 'str_replace', 'patch'].includes(toolName)) {
+    if (
+      ['file_write', 'write_file', 'file_edit', 'edit_file', 'str_replace', 'patch'].includes(
+        toolName,
+      )
+    ) {
       action = 'write';
     } else if (['file_read', 'read_file'].includes(toolName)) {
       action = 'read';
@@ -508,10 +535,11 @@ function buildSummary(
   toolCallCount: number,
   files: SOPFileAccess[],
 ): string {
-  const phaseNames = phases.map(p => p.name).join(' → ');
-  const fileSummary = files.length > 0
-    ? ` (${files.filter(f => f.action === 'write').length} writes, ${files.filter(f => f.action === 'read').length} reads)`
-    : '';
+  const phaseNames = phases.map((p) => p.name).join(' → ');
+  const fileSummary =
+    files.length > 0
+      ? ` (${files.filter((f) => f.action === 'write').length} writes, ${files.filter((f) => f.action === 'read').length} reads)`
+      : '';
   const errorCount = trace.summary.errors || 0;
   const errorNote = errorCount > 0 ? ` with ${errorCount} error(s)` : '';
   return [
@@ -525,7 +553,7 @@ function buildTags(trace: ExecutionTrace, toolCalls: ExtractedToolCall[]): strin
   const tags: string[] = ['sop', 'export'];
 
   // Add tool-based tags
-  const uniqueTools = [...new Set(toolCalls.map(t => t.toolName))];
+  const uniqueTools = [...new Set(toolCalls.map((t) => t.toolName))];
   tags.push(...uniqueTools.slice(0, 5));
 
   // Add model tag

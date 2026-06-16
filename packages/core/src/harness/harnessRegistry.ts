@@ -39,7 +39,10 @@ export class HarnessRegistry {
       throw new Error(`Harness "${harness.name}" is already registered`);
     }
     this.harnesses.set(harness.name, harness);
-    getGlobalLogger().info('HarnessRegistry', `Registered harness: ${harness.name} (${harness.getCapabilities().description})`);
+    getGlobalLogger().info(
+      'HarnessRegistry',
+      `Registered harness: ${harness.name} (${harness.getCapabilities().description})`,
+    );
   }
 
   unregisterHarness(name: string): boolean {
@@ -71,12 +74,12 @@ export class HarnessRegistry {
    * Built-in rules cannot be removed (they are restored on reset).
    */
   removeRule(name: string): boolean {
-    const builtinNames = new Set(BUILTIN_HARNESS_RULES.map(r => r.name));
+    const builtinNames = new Set(BUILTIN_HARNESS_RULES.map((r) => r.name));
     if (builtinNames.has(name)) {
       getGlobalLogger().warn('HarnessRegistry', `Cannot remove built-in rule "${name}"`);
       return false;
     }
-    const idx = this.rules.findIndex(r => r.name === name);
+    const idx = this.rules.findIndex((r) => r.name === name);
     if (idx === -1) return false;
     this.rules.splice(idx, 1);
     return true;
@@ -110,13 +113,19 @@ export class HarnessRegistry {
 
       const harness = this.harnesses.get(rule.harness);
       if (!harness) {
-        getGlobalLogger().warn('HarnessRegistry', `Rule "${rule.name}" matched but harness "${rule.harness}" not registered`);
+        getGlobalLogger().warn(
+          'HarnessRegistry',
+          `Rule "${rule.name}" matched but harness "${rule.harness}" not registered`,
+        );
         continue;
       }
 
       if (!harness.supports(ctx)) {
         if (this.config.verbose) {
-          getGlobalLogger().debug('HarnessRegistry', `Rule "${rule.name}" → harness "${rule.harness}" does not support context, skipping`);
+          getGlobalLogger().debug(
+            'HarnessRegistry',
+            `Rule "${rule.name}" → harness "${rule.harness}" does not support context, skipping`,
+          );
         }
         continue;
       }
@@ -126,7 +135,10 @@ export class HarnessRegistry {
           const value = (ctx as unknown as Record<string, unknown>)[key];
           return value !== undefined ? String(value) : `{{${key}}}`;
         });
-        getGlobalLogger().debug('HarnessRegistry', `Selected: ${rule.name} → ${harness.name} (${reason})`);
+        getGlobalLogger().debug(
+          'HarnessRegistry',
+          `Selected: ${rule.name} → ${harness.name} (${reason})`,
+        );
       }
 
       return harness;

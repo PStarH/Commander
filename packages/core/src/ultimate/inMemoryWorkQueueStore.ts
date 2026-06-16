@@ -5,7 +5,7 @@ export class InMemoryWorkQueueStore implements WorkQueueStore {
   private items = new Map<string, WorkItem>();
 
   loadAll(): WorkItem[] {
-    return Array.from(this.items.values()).map(i => ({ ...i }));
+    return Array.from(this.items.values()).map((i) => ({ ...i }));
   }
 
   enqueue(item: WorkItem): void {

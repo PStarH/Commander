@@ -38,7 +38,11 @@ describe('StreamingSSEServer', () => {
       const res = await fetch(`${server.baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+        body: JSON.stringify({
+          model: 'test',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
       });
 
       assert.strictEqual(res.status, 200);
@@ -51,14 +55,16 @@ describe('StreamingSSEServer', () => {
     });
 
     it('streams tool call chunks', async () => {
-      server.enqueueToolCallChunks([
-        { id: 'call_1', name: 'web_search', arguments: '{"q":"AI"}' },
-      ]);
+      server.enqueueToolCallChunks([{ id: 'call_1', name: 'web_search', arguments: '{"q":"AI"}' }]);
 
       const res = await fetch(`${server.baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'search' }], stream: true }),
+        body: JSON.stringify({
+          model: 'test',
+          messages: [{ role: 'user', content: 'search' }],
+          stream: true,
+        }),
       });
 
       const text = await res.text();
@@ -87,15 +93,19 @@ describe('StreamingSSEServer', () => {
       const resPromise = fetch(`${server.baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+        body: JSON.stringify({
+          model: 'test',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
       });
 
       // Small delay to let the request start
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50));
 
       // Resolve gates sequentially
       gate1.resolve();
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50));
       gate2.resolve();
 
       const res = await resPromise;
@@ -111,9 +121,7 @@ describe('StreamingSSEServer', () => {
       const gate = createGate();
 
       server.enqueueResponse({
-        chunks: [
-          { data: { content: 'waiting' }, gate: gate.promise },
-        ],
+        chunks: [{ data: { content: 'waiting' }, gate: gate.promise }],
       });
 
       assert.strictEqual(server.activeStreams, 0);
@@ -121,18 +129,22 @@ describe('StreamingSSEServer', () => {
       const resPromise = fetch(`${server.baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+        body: JSON.stringify({
+          model: 'test',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
       });
 
       // Wait a bit for the stream to start
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50));
       assert.strictEqual(server.activeStreams, 1);
 
       gate.resolve();
       await resPromise;
 
       // Wait for stream to finish
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50));
       assert.strictEqual(server.activeStreams, 0);
     });
 
@@ -140,18 +152,20 @@ describe('StreamingSSEServer', () => {
       const gate = createGate();
 
       server.enqueueResponse({
-        chunks: [
-          { data: { content: 'slow' }, gate: gate.promise },
-        ],
+        chunks: [{ data: { content: 'slow' }, gate: gate.promise }],
       });
 
       fetch(`${server.baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+        body: JSON.stringify({
+          model: 'test',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
       });
 
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50));
 
       // Resolve after a delay
       setTimeout(() => gate.resolve(), 100);
@@ -171,7 +185,11 @@ describe('StreamingSSEServer', () => {
       await fetch(`${server.baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'gpt-4', messages: [{ role: 'user', content: 'test' }], stream: true }),
+        body: JSON.stringify({
+          model: 'gpt-4',
+          messages: [{ role: 'user', content: 'test' }],
+          stream: true,
+        }),
       });
 
       const reqs = server.getRequests();
@@ -186,13 +204,21 @@ describe('StreamingSSEServer', () => {
       await fetch(`${server.baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'm1', messages: [{ role: 'user', content: 'first' }], stream: true }),
+        body: JSON.stringify({
+          model: 'm1',
+          messages: [{ role: 'user', content: 'first' }],
+          stream: true,
+        }),
       });
 
       await fetch(`${server.baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'm2', messages: [{ role: 'user', content: 'second' }], stream: true }),
+        body: JSON.stringify({
+          model: 'm2',
+          messages: [{ role: 'user', content: 'second' }],
+          stream: true,
+        }),
       });
 
       assert.strictEqual(server.lastRequest()?.body.model, 'm2');
@@ -216,7 +242,11 @@ describe('StreamingSSEServer', () => {
       const res = await fetch(`${server.baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+        body: JSON.stringify({
+          model: 'test',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
       });
 
       await res.text();
@@ -248,11 +278,13 @@ describe('createGate', () => {
     const gate = createGate();
     let resolved = false;
 
-    gate.promise.then(() => { resolved = true; });
+    gate.promise.then(() => {
+      resolved = true;
+    });
 
     assert.strictEqual(resolved, false);
     gate.resolve();
-    await new Promise(r => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 10));
     assert.strictEqual(resolved, true);
   });
 
@@ -260,10 +292,12 @@ describe('createGate', () => {
     const gate = createGate();
     let error: Error | null = null;
 
-    gate.promise.catch((err) => { error = err; });
+    gate.promise.catch((err) => {
+      error = err;
+    });
 
     gate.reject(new Error('test error'));
-    await new Promise(r => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 10));
     assert.ok(error);
     assert.strictEqual(error!.message, 'test error');
   });
@@ -276,23 +310,19 @@ describe('SSE chunk helpers', () => {
     it('creates text chunks with stop', () => {
       const chunks = makeTextSSEChunks('Hello world');
       assert.ok(chunks.length >= 3); // 2 words + stop
-      assert.ok(chunks.some(c => (c.data as any).choices?.[0]?.finish_reason === 'stop'));
+      assert.ok(chunks.some((c) => (c.data as any).choices?.[0]?.finish_reason === 'stop'));
     });
 
     it('splits content into words', () => {
       const chunks = makeTextSSEChunks('one two three');
-      const contentChunks = chunks.filter(c =>
-        (c.data as any).choices?.[0]?.delta?.content
-      );
+      const contentChunks = chunks.filter((c) => (c.data as any).choices?.[0]?.delta?.content);
       assert.strictEqual(contentChunks.length, 3);
     });
   });
 
   describe('makeToolCallSSEChunks', () => {
     it('creates tool call chunks', () => {
-      const chunks = makeToolCallSSEChunks([
-        { id: 'call_1', name: 'web_search', arguments: '{}' },
-      ]);
+      const chunks = makeToolCallSSEChunks([{ id: 'call_1', name: 'web_search', arguments: '{}' }]);
 
       assert.ok(chunks.length >= 2); // 1 tool call + finish
       const toolChunk = chunks[0];
@@ -302,15 +332,10 @@ describe('SSE chunk helpers', () => {
     });
 
     it('finishes with tool_calls reason', () => {
-      const chunks = makeToolCallSSEChunks([
-        { id: 'call_1', name: 'test', arguments: '{}' },
-      ]);
+      const chunks = makeToolCallSSEChunks([{ id: 'call_1', name: 'test', arguments: '{}' }]);
 
       const finishChunk = chunks[chunks.length - 1];
-      assert.strictEqual(
-        (finishChunk.data as any).choices[0].finish_reason,
-        'tool_calls'
-      );
+      assert.strictEqual((finishChunk.data as any).choices[0].finish_reason, 'tool_calls');
     });
   });
 });

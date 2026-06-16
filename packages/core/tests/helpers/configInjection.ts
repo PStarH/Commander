@@ -63,7 +63,7 @@ export interface InjectedConfig {
  */
 export function injectTestConfig(
   configDir: string,
-  options: TestConfigOptions = {}
+  options: TestConfigOptions = {},
 ): InjectedConfig {
   const {
     mockServerUrl = 'http://127.0.0.1:9999',
@@ -132,7 +132,9 @@ export function injectTestConfig(
     // Remove config file
     try {
       fs.unlinkSync(configFile);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   return {

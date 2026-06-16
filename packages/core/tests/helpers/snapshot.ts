@@ -43,7 +43,7 @@ export function toMatchSnapshot(
     dir?: string;
     /** Whether to strip ANSI codes before comparing */
     stripAnsi?: boolean;
-  }
+  },
 ): void {
   const snapDir = options?.dir ?? SNAPSHOT_DIR;
   const snapFile = path.join(snapDir, `${sanitizeName(name)}.snap`);
@@ -79,10 +79,10 @@ export function toMatchSnapshot(
     const diff = generateDiff(expected, processedActual);
     throw new Error(
       `Snapshot mismatch for "${name}"\n\n` +
-      `Expected:\n${expected}\n\n` +
-      `Actual:\n${processedActual}\n\n` +
-      `Diff:\n${diff}\n\n` +
-      `Run with COMMANDER_UPDATE_SNAPSHOTS=1 to update.`
+        `Expected:\n${expected}\n\n` +
+        `Actual:\n${processedActual}\n\n` +
+        `Diff:\n${diff}\n\n` +
+        `Run with COMMANDER_UPDATE_SNAPSHOTS=1 to update.`,
     );
   }
 }
@@ -114,7 +114,9 @@ export function deleteSnapshot(name: string, dir?: string): void {
   const snapFile = path.join(snapDir, `${sanitizeName(name)}.snap`);
   try {
     fs.unlinkSync(snapFile);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
@@ -183,9 +185,7 @@ function generateDiff(expected: string, actual: string): string {
     }
   }
 
-  return diff.length > 0
-    ? diff.join('\n')
-    : '(no line differences — may be trailing whitespace)';
+  return diff.length > 0 ? diff.join('\n') : '(no line differences — may be trailing whitespace)';
 }
 
 /**

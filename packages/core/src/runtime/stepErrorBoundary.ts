@@ -93,19 +93,45 @@ export class StepErrorBoundary {
         lastError = classified.message;
         lastErrorClass = classified.errorClass;
 
-        this.recordToDLQ(operationName, category, lastError, lastErrorClass, classified.retryable, attempt, options);
+        this.recordToDLQ(
+          operationName,
+          category,
+          lastError,
+          lastErrorClass,
+          classified.retryable,
+          attempt,
+          options,
+        );
 
         if (!classified.retryable) {
           const strategy = this.config.onPermanent;
           if (strategy === 'abort') {
-            return { success: false, error: lastError, errorClass: lastErrorClass, attempts, recovered: false };
+            return {
+              success: false,
+              error: lastError,
+              errorClass: lastErrorClass,
+              attempts,
+              recovered: false,
+            };
           }
           if (strategy === 'skip') {
             options?.onSkip?.(lastError);
-            return { success: false, error: lastError, errorClass: lastErrorClass, attempts, recovered: false };
+            return {
+              success: false,
+              error: lastError,
+              errorClass: lastErrorClass,
+              attempts,
+              recovered: false,
+            };
           }
           if (strategy === 'fallback') {
-            return { success: false, error: lastError, errorClass: lastErrorClass, attempts, recovered: false };
+            return {
+              success: false,
+              error: lastError,
+              errorClass: lastErrorClass,
+              attempts,
+              recovered: false,
+            };
           }
         }
 
@@ -136,18 +162,34 @@ export class StepErrorBoundary {
             }
           }
 
-          const delayMs = classified.retryAfter ?? computeBackoff(attempt, this.config.retryDelayMs);
-          await new Promise(r => { const t = setTimeout(r, delayMs); t.unref(); });
+          const delayMs =
+            classified.retryAfter ?? computeBackoff(attempt, this.config.retryDelayMs);
+          await new Promise((r) => {
+            const t = setTimeout(r, delayMs);
+            t.unref();
+          });
         }
       }
     }
 
     const strategy = this.config.onExhausted;
     if (strategy === 'abort') {
-      return { success: false, error: lastError, errorClass: lastErrorClass, attempts, recovered: false };
+      return {
+        success: false,
+        error: lastError,
+        errorClass: lastErrorClass,
+        attempts,
+        recovered: false,
+      };
     }
     options?.onSkip?.(lastError);
-    return { success: false, error: lastError, errorClass: lastErrorClass, attempts, recovered: false };
+    return {
+      success: false,
+      error: lastError,
+      errorClass: lastErrorClass,
+      attempts,
+      recovered: false,
+    };
   }
 
   private recordToDLQ(

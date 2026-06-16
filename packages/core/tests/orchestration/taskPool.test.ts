@@ -5,12 +5,14 @@ import { TaskPool } from '../../src/orchestration/taskPool';
 // Mock AgentRuntime
 function createMockRuntime(executeFn?: (ctx: any) => Promise<any>) {
   return {
-    execute: executeFn ?? (async (ctx: any) => ({
-      status: 'success',
-      summary: `Completed: ${ctx.goal}`,
-      totalTokenUsage: { totalTokens: 100 },
-      totalDurationMs: 50,
-    })),
+    execute:
+      executeFn ??
+      (async (ctx: any) => ({
+        status: 'success',
+        summary: `Completed: ${ctx.goal}`,
+        totalTokenUsage: { totalTokens: 100 },
+        totalDurationMs: 50,
+      })),
   } as any;
 }
 
@@ -34,9 +36,7 @@ describe('TaskPool', () => {
   describe('dispatch', () => {
     it('dispatches single task', async () => {
       const pool = new TaskPool(createMockRuntime());
-      const results = await pool.dispatch([
-        { id: 't1', goal: 'test task' },
-      ]);
+      const results = await pool.dispatch([{ id: 't1', goal: 'test task' }]);
       assert.equal(results.length, 1);
       assert.equal(results[0].taskId, 't1');
       assert.equal(results[0].status, 'success');
@@ -50,15 +50,23 @@ describe('TaskPool', () => {
         { id: 't3', goal: 'task 3' },
       ]);
       assert.equal(results.length, 3);
-      assert.ok(results.every(r => r.status === 'success'));
+      assert.ok(results.every((r) => r.status === 'success'));
     });
 
     it('sorts tasks by priority', async () => {
       const order: string[] = [];
-      const pool = new TaskPool(createMockRuntime(async (ctx) => {
-        order.push(ctx.goal);
-        return { status: 'success', summary: '', totalTokenUsage: { totalTokens: 10 }, totalDurationMs: 10 };
-      }), { maxWorkers: 1 }); // Sequential to track order
+      const pool = new TaskPool(
+        createMockRuntime(async (ctx) => {
+          order.push(ctx.goal);
+          return {
+            status: 'success',
+            summary: '',
+            totalTokenUsage: { totalTokens: 10 },
+            totalDurationMs: 10,
+          };
+        }),
+        { maxWorkers: 1 },
+      ); // Sequential to track order
       await pool.dispatch([
         { id: 't1', goal: 'low', priority: 1 },
         { id: 't2', goal: 'high', priority: 10 },
@@ -67,9 +75,11 @@ describe('TaskPool', () => {
     });
 
     it('handles task failure gracefully', async () => {
-      const pool = new TaskPool(createMockRuntime(async () => {
-        throw new Error('task failed');
-      }));
+      const pool = new TaskPool(
+        createMockRuntime(async () => {
+          throw new Error('task failed');
+        }),
+      );
       const results = await pool.dispatch([{ id: 't1', goal: 'failing task' }]);
       assert.equal(results.length, 1);
       assert.equal(results[0].status, 'failed');
@@ -78,19 +88,26 @@ describe('TaskPool', () => {
 
     it('handles mixed success/failure', async () => {
       let callCount = 0;
-      const pool = new TaskPool(createMockRuntime(async (ctx) => {
-        callCount++;
-        if (callCount === 2) throw new Error('fail');
-        return { status: 'success', summary: '', totalTokenUsage: { totalTokens: 10 }, totalDurationMs: 10 };
-      }));
+      const pool = new TaskPool(
+        createMockRuntime(async (ctx) => {
+          callCount++;
+          if (callCount === 2) throw new Error('fail');
+          return {
+            status: 'success',
+            summary: '',
+            totalTokenUsage: { totalTokens: 10 },
+            totalDurationMs: 10,
+          };
+        }),
+      );
       const results = await pool.dispatch([
         { id: 't1', goal: 'success' },
         { id: 't2', goal: 'fail' },
         { id: 't3', goal: 'success' },
       ]);
       assert.equal(results.length, 3);
-      const successes = results.filter(r => r.status === 'success');
-      const failures = results.filter(r => r.status === 'failed');
+      const successes = results.filter((r) => r.status === 'success');
+      const failures = results.filter((r) => r.status === 'failed');
       assert.equal(successes.length, 2);
       assert.equal(failures.length, 1);
     });
@@ -98,13 +115,21 @@ describe('TaskPool', () => {
     it('respects maxWorkers batching', async () => {
       let maxConcurrent = 0;
       let currentConcurrent = 0;
-      const pool = new TaskPool(createMockRuntime(async (ctx) => {
-        currentConcurrent++;
-        maxConcurrent = Math.max(maxConcurrent, currentConcurrent);
-        await new Promise(r => setTimeout(r, 10));
-        currentConcurrent--;
-        return { status: 'success', summary: '', totalTokenUsage: { totalTokens: 10 }, totalDurationMs: 10 };
-      }), { maxWorkers: 2 });
+      const pool = new TaskPool(
+        createMockRuntime(async (ctx) => {
+          currentConcurrent++;
+          maxConcurrent = Math.max(maxConcurrent, currentConcurrent);
+          await new Promise((r) => setTimeout(r, 10));
+          currentConcurrent--;
+          return {
+            status: 'success',
+            summary: '',
+            totalTokenUsage: { totalTokens: 10 },
+            totalDurationMs: 10,
+          };
+        }),
+        { maxWorkers: 2 },
+      );
       await pool.dispatch([
         { id: 't1', goal: 'a' },
         { id: 't2', goal: 'b' },
@@ -117,9 +142,14 @@ describe('TaskPool', () => {
 
   describe('getStats', () => {
     it('tracks token usage', async () => {
-      const pool = new TaskPool(createMockRuntime(async () => ({
-        status: 'success', summary: '', totalTokenUsage: { totalTokens: 500 }, totalDurationMs: 10,
-      })));
+      const pool = new TaskPool(
+        createMockRuntime(async () => ({
+          status: 'success',
+          summary: '',
+          totalTokenUsage: { totalTokens: 500 },
+          totalDurationMs: 10,
+        })),
+      );
       await pool.dispatch([{ id: 't1', goal: 'test' }]);
       const stats = pool.getStats();
       assert.ok(stats.totalTokensUsed > 0);
@@ -139,13 +169,21 @@ describe('TaskPool', () => {
 
     it('distributes budget across tasks', async () => {
       let receivedBudget = 0;
-      const pool = new TaskPool(createMockRuntime(async (ctx) => {
-        receivedBudget = ctx.tokenBudget;
-        return { status: 'success', summary: '', totalTokenUsage: { totalTokens: 10 }, totalDurationMs: 10 };
-      }), {
-        globalTokenBudget: 10000,
-        defaultTokenBudget: 5000,
-      });
+      const pool = new TaskPool(
+        createMockRuntime(async (ctx) => {
+          receivedBudget = ctx.tokenBudget;
+          return {
+            status: 'success',
+            summary: '',
+            totalTokenUsage: { totalTokens: 10 },
+            totalDurationMs: 10,
+          };
+        }),
+        {
+          globalTokenBudget: 10000,
+          defaultTokenBudget: 5000,
+        },
+      );
       await pool.dispatch([
         { id: 't1', goal: 'a' },
         { id: 't2', goal: 'b' },

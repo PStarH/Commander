@@ -7,7 +7,8 @@ async function main() {
   const { UltimateOrchestrator } = await import('../src/ultimate/orchestrator');
   const { MiMoProvider } = await import('../src/runtime/providers/mimoProvider');
   const { WebSearchTool, WebFetchTool } = await import('../src/tools/webSearchTool');
-  const { FileReadTool, FileWriteTool, FileEditTool, FileListTool, FileSearchTool } = await import('../src/tools/fileSystemTool');
+  const { FileReadTool, FileWriteTool, FileEditTool, FileListTool, FileSearchTool } =
+    await import('../src/tools/fileSystemTool');
 
   const provider = new MiMoProvider({
     apiKey: 'tp-sgmq4chswvythfusfq43fbjnn9adnhzqzzf7v99b3a9kp9pz',
@@ -39,7 +40,9 @@ async function main() {
   });
 
   const outputFile = '/tmp/quick-test-review.md';
-  try { fs.unlinkSync(outputFile); } catch {}
+  try {
+    fs.unlinkSync(outputFile);
+  } catch {}
 
   console.log('Running security-audit task with improved prompting...');
   const start = Date.now();
@@ -48,7 +51,15 @@ async function main() {
     agentId: 'test-agent',
     goal: `Write the unified security audit to ${outputFile}. Review these 3 files simultaneously and produce a unified security audit: 1. packages/core/src/runtime/agentRuntime.ts — focus on input validation and injection risks 2. packages/core/src/tools/fileSystemTool.ts — focus on path traversal and symlink attacks 3. packages/core/src/ultimate/orchestrator.ts — focus on privilege escalation and sandbox escapes. For each file, identify vulnerabilities with severity ratings. Then produce a unified report with executive summary, top 5 critical findings with line numbers, recommended fixes with code examples, and risk matrix.`,
     contextData: {
-      availableTools: ['web_search', 'web_fetch', 'file_write', 'file_read', 'file_list', 'file_edit', 'file_search'],
+      availableTools: [
+        'web_search',
+        'web_fetch',
+        'file_write',
+        'file_read',
+        'file_list',
+        'file_edit',
+        'file_search',
+      ],
     },
   });
 
@@ -63,4 +74,7 @@ async function main() {
   for (const r of result.reasoning) console.log('  -', r);
 }
 
-main().catch(e => { console.error(e.message); process.exit(1); });
+main().catch((e) => {
+  console.error(e.message);
+  process.exit(1);
+});

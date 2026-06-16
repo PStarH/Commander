@@ -55,11 +55,7 @@ describe('BatchLLMProvider', () => {
 
   describe('processBatch', () => {
     it('processes all requests in parallel', async () => {
-      const jobId = batch.submitBatch([
-        makeRequest('a'),
-        makeRequest('b'),
-        makeRequest('c'),
-      ]);
+      const jobId = batch.submitBatch([makeRequest('a'), makeRequest('b'), makeRequest('c')]);
       const job = await batch.processBatch(jobId);
       expect(job.status).toBe('completed');
       expect(job.completedAt).toBeDefined();

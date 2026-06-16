@@ -106,7 +106,9 @@ export async function cmdCost(flags: Record<string, string>): Promise<void> {
   try {
     const { records, parseErrors } = readLLMCallRecords();
     if (records.length === 0) {
-      console.log(`  ${$.dim}No LLM call records found at .commander_samples/llm_calls.ndjson.${$.reset}`);
+      console.log(
+        `  ${$.dim}No LLM call records found at .commander_samples/llm_calls.ndjson.${$.reset}`,
+      );
       console.log(`  ${$.dim}Run a task first: ${$.cyan}commander run "<task>"${$.reset}\n`);
       return;
     }
@@ -131,7 +133,9 @@ export async function cmdCost(flags: Record<string, string>): Promise<void> {
     }
 
     if (parseErrors > 0) {
-      console.log(`\n  ${$.yellow}Note:${$.reset} ${parseErrors} malformed line(s) in llm_calls.ndjson were skipped.`);
+      console.log(
+        `\n  ${$.yellow}Note:${$.reset} ${parseErrors} malformed line(s) in llm_calls.ndjson were skipped.`,
+      );
     }
     if (filter.since || filter.until || filter.model || filter.agent || filter.provider) {
       const parts: string[] = [];
@@ -144,7 +148,9 @@ export async function cmdCost(flags: Record<string, string>): Promise<void> {
     }
     console.log('');
   } catch (err) {
-    console.log(`  ${$.red}Error computing cost: ${err instanceof Error ? err.message : String(err)}${$.reset}`);
+    console.log(
+      `  ${$.red}Error computing cost: ${err instanceof Error ? err.message : String(err)}${$.reset}`,
+    );
   }
 
   console.log('');
@@ -318,19 +324,27 @@ export async function cmdResume(args: string[], flags: Record<string, string>): 
       }
       console.log(`  ${$.bold}Resumable runs:${$.reset}`);
       for (const run of runs) {
-        console.log(`    ${$.cyan}${run.runId}${$.reset}  ${$.dim}phase=${run.phase}  ${run.timestamp}${$.reset}`);
+        console.log(
+          `    ${$.cyan}${run.runId}${$.reset}  ${$.dim}phase=${run.phase}  ${run.timestamp}${$.reset}`,
+        );
       }
       console.log(`\n  ${$.dim}To resume: ${$.cyan}commander resume <runId>${$.reset}\n`);
       return;
     }
 
     const runId = args[0];
-    console.log(`  ${$.dim}Attempting to resume run ${$.cyan}${runId}${$.reset}${$.dim}...${$.reset}\n`);
+    console.log(
+      `  ${$.dim}Attempting to resume run ${$.cyan}${runId}${$.reset}${$.dim}...${$.reset}\n`,
+    );
 
     const result = await runtime.resume(runId);
     if (!result) {
-      console.log(`  ${$.red}✗${$.reset} Recovery failed. The checkpoint may not exist or the lease was lost.`);
-      console.log(`  ${$.dim}Run ${$.cyan}commander resume --list${$.reset}${$.dim} to see available checkpoints.${$.reset}\n`);
+      console.log(
+        `  ${$.red}✗${$.reset} Recovery failed. The checkpoint may not exist or the lease was lost.`,
+      );
+      console.log(
+        `  ${$.dim}Run ${$.cyan}commander resume --list${$.reset}${$.dim} to see available checkpoints.${$.reset}\n`,
+      );
       return;
     }
 
@@ -340,9 +354,13 @@ export async function cmdResume(args: string[], flags: Record<string, string>): 
     console.log(`  ${$.dim}Completed tool calls:${$.reset} ${result.completedToolCallIds.size}`);
     if (result.state) {
       console.log(`  ${$.dim}Phase:${$.reset} ${result.state.phase}`);
-      console.log(`  ${$.dim}Goal:${$.reset} ${result.state.context?.goal?.slice(0, 120) ?? 'N/A'}`);
+      console.log(
+        `  ${$.dim}Goal:${$.reset} ${result.state.context?.goal?.slice(0, 120) ?? 'N/A'}`,
+      );
     }
-    console.log(`\n  ${$.dim}Use ${$.cyan}commander run "<continue>"${$.reset}${$.dim} to continue execution.${$.reset}\n`);
+    console.log(
+      `\n  ${$.dim}Use ${$.cyan}commander run "<continue>"${$.reset}${$.dim} to continue execution.${$.reset}\n`,
+    );
   } catch (err) {
     console.log(`  ${$.red}Error: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`);
   }
@@ -352,7 +370,10 @@ export async function cmdResume(args: string[], flags: Record<string, string>): 
 // 12. commander compensation — Manage durable compensation queue
 // ============================================================================
 
-export async function cmdCompensation(args: string[], flags: Record<string, string>): Promise<void> {
+export async function cmdCompensation(
+  args: string[],
+  flags: Record<string, string>,
+): Promise<void> {
   console.log(`
   ${$.cyan}${$.bold}Commander Compensation${$.reset} — Durable Retry Queue
 `);
@@ -369,7 +390,9 @@ export async function cmdCompensation(args: string[], flags: Record<string, stri
       console.log(`    ${$.red}Escalated:${$.reset}   ${counts.escalated}`);
       console.log(`
   ${$.dim}Commands:${$.reset}`);
-      console.log(`    ${$.cyan}commander compensation list${$.reset}         ${$.dim}View all queue items${$.reset}`);
+      console.log(
+        `    ${$.cyan}commander compensation list${$.reset}         ${$.dim}View all queue items${$.reset}`,
+      );
       console.log(`    ${$.cyan}commander compensation retry <id>${$.reset}    ${$.dim}Retry an escalated item${$.reset}
 `);
       return;
@@ -388,22 +411,33 @@ export async function cmdCompensation(args: string[], flags: Record<string, stri
       console.log(`  ${$.bold}Compensation Queue Items (${items.length}):${$.reset}
 `);
       for (const item of items) {
-        const statusIcon = item.status === 'escalated' ? `${$.red}⬆${$.reset}`
-          : item.status === 'in_progress' ? `${$.cyan}↻${$.reset}`
-          : `${$.yellow}○${$.reset}`;
+        const statusIcon =
+          item.status === 'escalated'
+            ? `${$.red}⬆${$.reset}`
+            : item.status === 'in_progress'
+              ? `${$.cyan}↻${$.reset}`
+              : `${$.yellow}○${$.reset}`;
         const age = getAge(item.enqueuedAt);
         console.log(`    ${statusIcon} ${$.cyan}${item.id}${$.reset}`);
-        console.log(`      ${$.dim}Tool:${$.reset} ${item.toolName}  ${$.dim}Run:${$.reset} ${item.runId}`);
-        console.log(`      ${$.dim}Attempts:${$.reset} ${item.attemptCount}/${item.maxAttempts}  ${$.dim}Age:${$.reset} ${age}  ${$.dim}Status:${$.reset} ${item.status}`);
-        if (item.lastError) console.log(`      ${$.dim}Error:${$.reset} ${item.lastError.slice(0, 100)}`);
-        if (item.nextAttemptAt && item.status === 'pending') console.log(`      ${$.dim}Next attempt:${$.reset} ${item.nextAttemptAt}`);
+        console.log(
+          `      ${$.dim}Tool:${$.reset} ${item.toolName}  ${$.dim}Run:${$.reset} ${item.runId}`,
+        );
+        console.log(
+          `      ${$.dim}Attempts:${$.reset} ${item.attemptCount}/${item.maxAttempts}  ${$.dim}Age:${$.reset} ${age}  ${$.dim}Status:${$.reset} ${item.status}`,
+        );
+        if (item.lastError)
+          console.log(`      ${$.dim}Error:${$.reset} ${item.lastError.slice(0, 100)}`);
+        if (item.nextAttemptAt && item.status === 'pending')
+          console.log(`      ${$.dim}Next attempt:${$.reset} ${item.nextAttemptAt}`);
         console.log('');
       }
       return;
     }
 
     if (args[0] === 'retry' && !args[1]) {
-      console.log(`  ${$.red}Missing item ID.${$.reset} Usage: ${$.cyan}commander compensation retry <id>${$.reset}\n`);
+      console.log(
+        `  ${$.red}Missing item ID.${$.reset} Usage: ${$.cyan}commander compensation retry <id>${$.reset}\n`,
+      );
       return;
     }
 
@@ -451,7 +485,10 @@ export async function cmdTrace(flags: Record<string, string>): Promise<void> {
       return;
     }
 
-    const files = fs.readdirSync(traceDir).filter(f => f.endsWith('.json')).sort();
+    const files = fs
+      .readdirSync(traceDir)
+      .filter((f) => f.endsWith('.json'))
+      .sort();
     if (files.length === 0) {
       console.log(`  ${$.dim}No traces found.${$.reset}\n`);
       return;
@@ -462,7 +499,9 @@ export async function cmdTrace(flags: Record<string, string>): Promise<void> {
       try {
         const data = JSON.parse(fs.readFileSync(path.join(traceDir, file), 'utf-8'));
         const status = data.status === 'success' ? '✅' : data.status === 'failed' ? '❌' : '🔄';
-        const duration = data.totalDurationMs ? `${(data.totalDurationMs / 1000).toFixed(1)}s` : '?';
+        const duration = data.totalDurationMs
+          ? `${(data.totalDurationMs / 1000).toFixed(1)}s`
+          : '?';
         const tokens = data.totalTokens ? `${data.totalTokens.toLocaleString()} tok` : '?';
         console.log(`    ${status} ${$.bold}${file}${$.reset} [${duration}, ${tokens}]`);
       } catch {
@@ -471,14 +510,20 @@ export async function cmdTrace(flags: Record<string, string>): Promise<void> {
     }
 
     console.log(`\n  ${$.dim}Total: ${files.length} traces${$.reset}`);
-    console.log(`  ${$.dim}View OpenTelemetry: ${$.bold}http://localhost:16686${$.reset}${$.dim} (Jaeger)${$.reset}`);
+    console.log(
+      `  ${$.dim}View OpenTelemetry: ${$.bold}http://localhost:16686${$.reset}${$.dim} (Jaeger)${$.reset}`,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.log(`  ${$.red}Error: ${msg}${$.reset}`);
     if (msg.includes('better-sqlite3') || msg.includes('Cannot find module')) {
-      console.log(`  ${$.dim}Compensation queue requires better-sqlite3. Install: pnpm add better-sqlite3${$.reset}\n`);
+      console.log(
+        `  ${$.dim}Compensation queue requires better-sqlite3. Install: pnpm add better-sqlite3${$.reset}\n`,
+      );
     } else {
-      console.log(`  ${$.dim}Run ${$.cyan}commander doctor${$.reset}${$.dim} to diagnose.${$.reset}\n`);
+      console.log(
+        `  ${$.dim}Run ${$.cyan}commander doctor${$.reset}${$.dim} to diagnose.${$.reset}\n`,
+      );
     }
   }
 

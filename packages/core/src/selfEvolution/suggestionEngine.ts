@@ -31,9 +31,7 @@ export function generateSuggestions(context: SuggestionContext): OptimizationSug
   for (const [modelId, stats] of modelPerformance) {
     if (stats.totalRuns >= minSamplesForSuggestion) {
       if (stats.successRate < 0.5 && stats.avgTokens > 10000) {
-        const relevantReflections = reflections
-          .filter(r => r.includes(modelId))
-          .slice(0, 2);
+        const relevantReflections = reflections.filter((r) => r.includes(modelId)).slice(0, 2);
 
         suggestions.push({
           type: 'model_tier_change',
@@ -44,7 +42,9 @@ export function generateSuggestions(context: SuggestionContext): OptimizationSug
           evidence: [
             `success_rate: ${(stats.successRate * 100).toFixed(0)}% over ${stats.totalRuns} runs`,
             `avg_tokens: ${Math.round(stats.avgTokens)}`,
-            ...(relevantReflections.length > 0 ? [`reflections: ${relevantReflections.length} available`] : []),
+            ...(relevantReflections.length > 0
+              ? [`reflections: ${relevantReflections.length} available`]
+              : []),
           ],
           impact: 'high',
         });
@@ -74,7 +74,11 @@ export function generateSuggestions(context: SuggestionContext): OptimizationSug
         .map(([strategy, prior]) => ({ strategy, score: prior.mean, trials: prior.totalTrials }))
         .sort((a, b) => b.score - a.score);
 
-      if (entries.length >= 2 && entries[0].score < 0.6 && entries[0].trials >= minSamplesForSuggestion) {
+      if (
+        entries.length >= 2 &&
+        entries[0].score < 0.6 &&
+        entries[0].trials >= minSamplesForSuggestion
+      ) {
         suggestions.push({
           type: 'strategy_change',
           target: modelId,

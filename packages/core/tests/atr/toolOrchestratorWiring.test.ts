@@ -5,7 +5,10 @@ import { resetIdempotencyStore, getIdempotencyStore } from '../../src/atr/idempo
 import { getApprovalSystem } from '../../src/sandbox/approval';
 import type { Tool } from '../../src/runtime/types';
 
-function makeTool(name: string, opts: { isIdempotent?: boolean; execute: (args: Record<string, unknown>) => Promise<string> }): Tool {
+function makeTool(
+  name: string,
+  opts: { isIdempotent?: boolean; execute: (args: Record<string, unknown>) => Promise<string> },
+): Tool {
   return {
     definition: {
       name,
@@ -17,7 +20,11 @@ function makeTool(name: string, opts: { isIdempotent?: boolean; execute: (args: 
   };
 }
 
-function makeCall(id: string, name: string, args: Record<string, unknown> = {}): { id: string; name: string; arguments: Record<string, unknown> } {
+function makeCall(
+  id: string,
+  name: string,
+  args: Record<string, unknown> = {},
+): { id: string; name: string; arguments: Record<string, unknown> } {
   return { id, name, arguments: args };
 }
 
@@ -55,12 +62,20 @@ describe('ToolOrchestrator + IdempotencyStore', () => {
     const tools = new Map([['fetch_pr', tool]]);
 
     const plan1 = await orchestrator.planExecution([makeCall('1', 'fetch_pr', { id: 1 })], tools);
-    const r1 = await orchestrator.execute(plan1, tools, { runId: 'r-1', agentId: 'a', stepNumber: 5 });
+    const r1 = await orchestrator.execute(plan1, tools, {
+      runId: 'r-1',
+      agentId: 'a',
+      stepNumber: 5,
+    });
     assert.strictEqual(callCount, 1);
     assert.strictEqual(r1.results[0].output, 'pr-12345');
 
     const plan2 = await orchestrator.planExecution([makeCall('2', 'fetch_pr', { id: 1 })], tools);
-    const r2 = await orchestrator.execute(plan2, tools, { runId: 'r-1', agentId: 'a', stepNumber: 5 });
+    const r2 = await orchestrator.execute(plan2, tools, {
+      runId: 'r-1',
+      agentId: 'a',
+      stepNumber: 5,
+    });
     assert.strictEqual(callCount, 1, 'second call with same step must replay from cache');
     assert.strictEqual(r2.results[0].output, 'pr-12345');
   });
@@ -76,10 +91,18 @@ describe('ToolOrchestrator + IdempotencyStore', () => {
     const tools = new Map([['shell_execute', tool]]);
 
     const plan1 = await orchestrator.planExecution([makeCall('1', 'shell_execute')], tools);
-    const r1 = await orchestrator.execute(plan1, tools, { runId: 'r-2', agentId: 'a', stepNumber: 1 });
+    const r1 = await orchestrator.execute(plan1, tools, {
+      runId: 'r-2',
+      agentId: 'a',
+      stepNumber: 1,
+    });
 
     const plan2 = await orchestrator.planExecution([makeCall('2', 'shell_execute')], tools);
-    const r2 = await orchestrator.execute(plan2, tools, { runId: 'r-2', agentId: 'a', stepNumber: 2 });
+    const r2 = await orchestrator.execute(plan2, tools, {
+      runId: 'r-2',
+      agentId: 'a',
+      stepNumber: 2,
+    });
 
     assert.strictEqual(callCount, 2);
     assert.notStrictEqual(r1.results[0].output, r2.results[0].output);
@@ -117,11 +140,19 @@ describe('ToolOrchestrator + IdempotencyStore', () => {
     const tools = new Map([['flaky', tool]]);
 
     const plan1 = await orchestrator.planExecution([makeCall('1', 'flaky')], tools);
-    const r1 = await orchestrator.execute(plan1, tools, { runId: 'r-4', agentId: 'a', stepNumber: 7 });
+    const r1 = await orchestrator.execute(plan1, tools, {
+      runId: 'r-4',
+      agentId: 'a',
+      stepNumber: 7,
+    });
     assert.ok(r1.results[0].error);
 
     const plan2 = await orchestrator.planExecution([makeCall('2', 'flaky')], tools);
-    const r2 = await orchestrator.execute(plan2, tools, { runId: 'r-4', agentId: 'a', stepNumber: 7 });
+    const r2 = await orchestrator.execute(plan2, tools, {
+      runId: 'r-4',
+      agentId: 'a',
+      stepNumber: 7,
+    });
     assert.ok(r2.results[0].error);
     assert.strictEqual(callCount, 1, 'failed call must not be re-executed on replay');
   });

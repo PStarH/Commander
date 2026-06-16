@@ -57,9 +57,15 @@ function durationMs(ms: number): string {
 // ============================================================================
 
 async function showDashboard(): Promise<void> {
-  console.log(`\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`);
-  console.log(`  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}Commander Intelligence${$.reset} — What I've Learned            ${$.cyan}${$.bold}│${$.reset}`);
-  console.log(`  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`);
+  console.log(
+    `\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}Commander Intelligence${$.reset} — What I've Learned            ${$.cyan}${$.bold}│${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`,
+  );
 
   try {
     const { getMetaLearner } = await import('../../selfEvolution/metaLearner');
@@ -79,18 +85,22 @@ async function showDashboard(): Promise<void> {
     if (mlStats.totalExperiences === 0) {
       dim('  No experiences yet. Run some tasks to build up learning data.');
     } else {
-      console.log([
-        `  ${$.bold}Experiences:${$.reset}  ${mlStats.totalExperiences}  `,
-        `  ${$.bold}Strategies:${$.reset}  ${mlStats.trackedStrategies}  `,
-        `  ${$.bold}Success Rate:${$.reset}  ${(mlStats.avgSuccessRate * 100).toFixed(0)}%  `,
-        `  ${$.bold}Reflections:${$.reset}  ${mlStats.totalReflections}`,
-      ].join(''));
+      console.log(
+        [
+          `  ${$.bold}Experiences:${$.reset}  ${mlStats.totalExperiences}  `,
+          `  ${$.bold}Strategies:${$.reset}  ${mlStats.trackedStrategies}  `,
+          `  ${$.bold}Success Rate:${$.reset}  ${(mlStats.avgSuccessRate * 100).toFixed(0)}%  `,
+          `  ${$.bold}Reflections:${$.reset}  ${mlStats.totalReflections}`,
+        ].join(''),
+      );
 
       // Top strategies
       if (mlStats.topStrategies.length > 0) {
         subheader('Top Strategies');
         for (const s of mlStats.topStrategies) {
-          console.log(`  ${bar(s.strategyName, s.successRate)}  ${$.dim}${s.totalRuns} runs · p95 ${durationMs(s.p95DurationMs)}${$.reset}`);
+          console.log(
+            `  ${bar(s.strategyName, s.successRate)}  ${$.dim}${s.totalRuns} runs · p95 ${durationMs(s.p95DurationMs)}${$.reset}`,
+          );
         }
       }
 
@@ -99,12 +109,14 @@ async function showDashboard(): Promise<void> {
       if (regressions.length > 0) {
         subheader('Regression Alerts');
         for (const r of regressions) {
-          console.log(`  ${$.red}⚠${$.reset} ${r.strategyName} on ${r.modelId}: dropped ${(r.dropRatio * 100).toFixed(0)}% (${(r.previousSuccessRate * 100).toFixed(0)}% → ${(r.currentSuccessRate * 100).toFixed(0)}%)`);
+          console.log(
+            `  ${$.red}⚠${$.reset} ${r.strategyName} on ${r.modelId}: dropped ${(r.dropRatio * 100).toFixed(0)}% (${(r.previousSuccessRate * 100).toFixed(0)}% → ${(r.currentSuccessRate * 100).toFixed(0)}%)`,
+          );
         }
       }
 
       // Optimization suggestions
-      const highSuggestions = ml.getSuggestions().filter(s => s.impact === 'high');
+      const highSuggestions = ml.getSuggestions().filter((s) => s.impact === 'high');
       if (highSuggestions.length > 0) {
         subheader('Suggestions');
         for (const s of highSuggestions.slice(0, 3)) {
@@ -125,9 +137,12 @@ async function showDashboard(): Promise<void> {
 
       for (const s of skills.slice(0, 5)) {
         const icon = s.successRate >= 0.9 ? $.green : s.successRate >= 0.7 ? $.yellow : $.red;
-        console.log(`  ${icon}●${$.reset} ${trunc(s.name, 40)}  ${$.dim}${s.usageCount}× · ${(s.successRate * 100).toFixed(0)}%${$.reset}`);
+        console.log(
+          `  ${icon}●${$.reset} ${trunc(s.name, 40)}  ${$.dim}${s.usageCount}× · ${(s.successRate * 100).toFixed(0)}%${$.reset}`,
+        );
       }
-      if (skills.length > 5) dim(`  ... and ${skills.length - 5} more (use --skills for full list)`);
+      if (skills.length > 5)
+        dim(`  ... and ${skills.length - 5} more (use --skills for full list)`);
     }
 
     // ── Failure patterns ──
@@ -135,22 +150,31 @@ async function showDashboard(): Promise<void> {
     if (patterns.length === 0) {
       dim('  No patterns yet. Patterns emerge from repeated failures.');
     } else {
-      const activePatterns = patterns.filter(p => p.occurrences.length >= 2);
-      console.log(`  ${patterns.length} patterns (${activePatterns.length} active with ≥2 occurrences)`);
+      const activePatterns = patterns.filter((p) => p.occurrences.length >= 2);
+      console.log(
+        `  ${patterns.length} patterns (${activePatterns.length} active with ≥2 occurrences)`,
+      );
 
       for (const p of activePatterns.slice(0, 3)) {
-        const sev = p.occurrences.length >= 5 ? $.red : p.occurrences.length >= 3 ? $.yellow : $.dim;
+        const sev =
+          p.occurrences.length >= 5 ? $.red : p.occurrences.length >= 3 ? $.yellow : $.dim;
         const icon = p.autoWarn ? '⚠' : '·';
-        console.log(`  ${sev}${icon}${$.reset} ${trunc(p.description, 55)}  ${$.dim}${p.occurrences.length}× · ${p.confidence >= 0.7 ? 'high' : p.confidence >= 0.4 ? 'med' : 'low'} confidence${$.reset}`);
+        console.log(
+          `  ${sev}${icon}${$.reset} ${trunc(p.description, 55)}  ${$.dim}${p.occurrences.length}× · ${p.confidence >= 0.7 ? 'high' : p.confidence >= 0.4 ? 'med' : 'low'} confidence${$.reset}`,
+        );
       }
-      if (activePatterns.length > 3) dim(`  ... and ${activePatterns.length - 3} more (use --patterns for full list)`);
+      if (activePatterns.length > 3)
+        dim(`  ... and ${activePatterns.length - 3} more (use --patterns for full list)`);
     }
 
     // ── Footer ──
-    console.log(`\n  ${$.dim}Show details: ${$.cyan}commander intelligence --stats${$.reset}${$.dim} | ${$.cyan}--skills${$.reset}${$.dim} | ${$.cyan}--patterns${$.reset}${$.dim} | ${$.cyan}--all${$.reset}\n`);
-
+    console.log(
+      `\n  ${$.dim}Show details: ${$.cyan}commander intelligence --stats${$.reset}${$.dim} | ${$.cyan}--skills${$.reset}${$.dim} | ${$.cyan}--patterns${$.reset}${$.dim} | ${$.cyan}--all${$.reset}\n`,
+    );
   } catch (err) {
-    console.log(`\n  ${$.red}Error loading intelligence data: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`);
+    console.log(
+      `\n  ${$.red}Error loading intelligence data: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`,
+    );
   }
 }
 
@@ -159,9 +183,15 @@ async function showDashboard(): Promise<void> {
 // ============================================================================
 
 async function showStats(): Promise<void> {
-  console.log(`\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`);
-  console.log(`  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}MetaLearner${$.reset} — Thompson Sampling + Reflexion           ${$.cyan}${$.bold}│${$.reset}`);
-  console.log(`  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`);
+  console.log(
+    `\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}MetaLearner${$.reset} — Thompson Sampling + Reflexion           ${$.cyan}${$.bold}│${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`,
+  );
 
   try {
     const { getMetaLearner } = await import('../../selfEvolution/metaLearner');
@@ -191,7 +221,9 @@ async function showStats(): Promise<void> {
       dim('  No strategy data yet.');
     } else {
       for (const s of ranked) {
-        console.log(`  ${bar(s.strategyName, s.successRate, 18)}  ${$.dim}${s.totalRuns} runs · p95 ${durationMs(s.p95DurationMs)} · avg ${durationMs(s.avgDurationMs)}${$.reset}`);
+        console.log(
+          `  ${bar(s.strategyName, s.successRate, 18)}  ${$.dim}${s.totalRuns} runs · p95 ${durationMs(s.p95DurationMs)} · avg ${durationMs(s.avgDurationMs)}${$.reset}`,
+        );
       }
     }
 
@@ -204,7 +236,9 @@ async function showStats(): Promise<void> {
         if (scores.length === 0) continue;
         console.log(`  ${$.bold}${trunc(tt, 35)}${$.reset}`);
         for (const s of scores.slice(0, 3)) {
-          console.log(`    ${s.strategy}: ${(s.score * 100).toFixed(0)}%  ${$.dim}(${s.trials} trials${s.p95DurationMs ? ` · p95 ${durationMs(s.p95DurationMs)}` : ''})${$.reset}`);
+          console.log(
+            `    ${s.strategy}: ${(s.score * 100).toFixed(0)}%  ${$.dim}(${s.trials} trials${s.p95DurationMs ? ` · p95 ${durationMs(s.p95DurationMs)}` : ''})${$.reset}`,
+          );
         }
       }
       if (taskTypes.length > 5) dim(`  ... and ${taskTypes.length - 5} more task types`);
@@ -215,7 +249,9 @@ async function showStats(): Promise<void> {
     if (regressions.length > 0) {
       subheader('Regression Alerts');
       for (const r of regressions) {
-        console.log(`  ${$.red}▼${$.reset} ${r.strategyName} on ${r.modelId}: ${(r.dropRatio * 100).toFixed(0)}% drop (${(r.previousSuccessRate * 100).toFixed(0)}% → ${(r.currentSuccessRate * 100).toFixed(0)}%)  ${$.dim}${ago(r.triggeredAt)}${$.reset}`);
+        console.log(
+          `  ${$.red}▼${$.reset} ${r.strategyName} on ${r.modelId}: ${(r.dropRatio * 100).toFixed(0)}% drop (${(r.previousSuccessRate * 100).toFixed(0)}% → ${(r.currentSuccessRate * 100).toFixed(0)}%)  ${$.dim}${ago(r.triggeredAt)}${$.reset}`,
+        );
       }
     }
 
@@ -225,18 +261,22 @@ async function showStats(): Promise<void> {
       subheader('Optimization Suggestions');
       for (const s of suggestions) {
         const impactColor = s.impact === 'high' ? $.red : s.impact === 'medium' ? $.yellow : $.dim;
-        console.log(`  ${impactColor}→${$.reset} ${s.type}: ${trunc(s.from, 15)} → ${trunc(s.to, 15)}  ${$.dim}${s.evidence.slice(0, 2).join(' · ')}${$.reset}`);
+        console.log(
+          `  ${impactColor}→${$.reset} ${s.type}: ${trunc(s.from, 15)} → ${trunc(s.to, 15)}  ${$.dim}${s.evidence.slice(0, 2).join(' · ')}${$.reset}`,
+        );
       }
     }
 
     // ── Prediction Loop ──
     const verdicts = ml.getVerdicts();
     if (verdicts.length > 0) {
-      const confirmed = verdicts.filter(v => v.netImpact === 'positive').length;
-      const reverted = verdicts.filter(v => v.reverted).length;
+      const confirmed = verdicts.filter((v) => v.netImpact === 'positive').length;
+      const reverted = verdicts.filter((v) => v.reverted).length;
       subheader('Prediction Loop');
       console.log(`  Total verdicts:  ${verdicts.length}`);
-      console.log(`  Confirmed (✓):   ${confirmed}  (${(confirmed / verdicts.length * 100).toFixed(0)}%)`);
+      console.log(
+        `  Confirmed (✓):   ${confirmed}  (${((confirmed / verdicts.length) * 100).toFixed(0)}%)`,
+      );
       console.log(`  Reverted (✗):    ${reverted}`);
     }
 
@@ -246,14 +286,17 @@ async function showStats(): Promise<void> {
       subheader('Recent Reflections');
       for (const r of reflections) {
         const firstLine = r.split('\n')[0];
-        console.log(`  ${$.dim}${trunc(firstLine.replace(/^\[/, '').replace(/\]$/, ''), 65)}${$.reset}`);
+        console.log(
+          `  ${$.dim}${trunc(firstLine.replace(/^\[/, '').replace(/\]$/, ''), 65)}${$.reset}`,
+        );
       }
     }
 
     console.log();
-
   } catch (err) {
-    console.log(`\n  ${$.red}Error loading stats: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`);
+    console.log(
+      `\n  ${$.red}Error loading stats: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`,
+    );
   }
 }
 
@@ -262,9 +305,15 @@ async function showStats(): Promise<void> {
 // ============================================================================
 
 async function showSkills(): Promise<void> {
-  console.log(`\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`);
-  console.log(`  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}Extracted Skills${$.reset} — Auto-learned from successful runs     ${$.cyan}${$.bold}│${$.reset}`);
-  console.log(`  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`);
+  console.log(
+    `\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}Extracted Skills${$.reset} — Auto-learned from successful runs     ${$.cyan}${$.bold}│${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`,
+  );
 
   try {
     const { getSkillExtractor } = await import('../../intelligence/skillExtractor');
@@ -297,17 +346,24 @@ async function showSkills(): Promise<void> {
         const usageBar = `${color}${'█'.repeat(filled)}${$.dim}${'░'.repeat(barWidth - filled)}${$.reset}`;
 
         console.log(`  ${usageBar} ${s.name}`);
-        console.log(`  ${$.dim}     ${s.usageCount} uses · ${(s.successRate * 100).toFixed(0)}% success · ${s.tools.length} tools · last used ${ago(s.lastUsed)}${$.reset}`);
+        console.log(
+          `  ${$.dim}     ${s.usageCount} uses · ${(s.successRate * 100).toFixed(0)}% success · ${s.tools.length} tools · last used ${ago(s.lastUsed)}${$.reset}`,
+        );
         if (s.steps.length > 0) {
-          console.log(`  ${$.dim}     Steps: ${s.steps.slice(0, 3).join(' → ')}${s.steps.length > 3 ? ' …' : ''}${$.reset}`);
+          console.log(
+            `  ${$.dim}     Steps: ${s.steps.slice(0, 3).join(' → ')}${s.steps.length > 3 ? ' …' : ''}${$.reset}`,
+          );
         }
       }
     }
 
-    console.log(`\n  ${$.dim}Skills are stored in ${$.cyan}.commander/intelligence/extracted-skills.json${$.reset}\n`);
-
+    console.log(
+      `\n  ${$.dim}Skills are stored in ${$.cyan}.commander/intelligence/extracted-skills.json${$.reset}\n`,
+    );
   } catch (err) {
-    console.log(`\n  ${$.red}Error loading skills: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`);
+    console.log(
+      `\n  ${$.red}Error loading skills: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`,
+    );
   }
 }
 
@@ -316,9 +372,15 @@ async function showSkills(): Promise<void> {
 // ============================================================================
 
 async function showPatterns(): Promise<void> {
-  console.log(`\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`);
-  console.log(`  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}Failure Patterns${$.reset} — Repeated mistakes & warnings        ${$.cyan}${$.bold}│${$.reset}`);
-  console.log(`  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`);
+  console.log(
+    `\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}Failure Patterns${$.reset} — Repeated mistakes & warnings        ${$.cyan}${$.bold}│${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`,
+  );
 
   try {
     const { getFailurePatternLearner } = await import('../../intelligence/failurePatterns');
@@ -341,7 +403,9 @@ async function showPatterns(): Promise<void> {
 
       console.log(`\n  ${severity} ${$.bold}${p.category}${$.reset}${autoWarnBadge}`);
       console.log(`  ${$.dim}Pattern:${$.reset} ${trunc(p.description, 70)}`);
-      console.log(`  ${$.dim}Occurrences:${$.reset} ${p.occurrences.length} · Confidence: ${confidenceColor}${(p.confidence * 100).toFixed(0)}%${$.reset} · Last: ${ago(p.lastOccurrence)}`);
+      console.log(
+        `  ${$.dim}Occurrences:${$.reset} ${p.occurrences.length} · Confidence: ${confidenceColor}${(p.confidence * 100).toFixed(0)}%${$.reset} · Last: ${ago(p.lastOccurrence)}`,
+      );
 
       // Show recent occurrences
       const recent = p.occurrences.slice(-3);
@@ -351,10 +415,13 @@ async function showPatterns(): Promise<void> {
       }
     }
 
-    console.log(`\n  ${$.dim}Patterns stored in ${$.cyan}.commander/intelligence/failure-patterns.json${$.reset}\n`);
-
+    console.log(
+      `\n  ${$.dim}Patterns stored in ${$.cyan}.commander/intelligence/failure-patterns.json${$.reset}\n`,
+    );
   } catch (err) {
-    console.log(`\n  ${$.red}Error loading patterns: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`);
+    console.log(
+      `\n  ${$.red}Error loading patterns: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`,
+    );
   }
 }
 

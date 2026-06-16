@@ -94,70 +94,90 @@ describe('MetricsCollector', () => {
 
     it('handles labels', () => {
       const buckets = [10, 50, 100];
-      collector.recordHistogram('latency', 'Latency', 25, buckets, [{ name: 'endpoint', value: '/api' }]);
-      collector.recordHistogram('latency', 'Latency', 75, buckets, [{ name: 'endpoint', value: '/health' }]);
+      collector.recordHistogram('latency', 'Latency', 25, buckets, [
+        { name: 'endpoint', value: '/api' },
+      ]);
+      collector.recordHistogram('latency', 'Latency', 75, buckets, [
+        { name: 'endpoint', value: '/health' },
+      ]);
     });
   });
 
   describe('recordToolCall', () => {
     it('records successful tool call', () => {
       collector.recordToolCall('file_read', 50);
-      expect(collector.getCounter('tool_success_total', [{ name: 'tool', value: 'file_read' }])).toBe(1);
+      expect(
+        collector.getCounter('tool_success_total', [{ name: 'tool', value: 'file_read' }]),
+      ).toBe(1);
     });
 
     it('records failed tool call', () => {
       collector.recordToolCall('shell_execute', 100, 'timeout');
-      expect(collector.getCounter('tool_errors_total', [{ name: 'tool', value: 'shell_execute' }])).toBe(1);
+      expect(
+        collector.getCounter('tool_errors_total', [{ name: 'tool', value: 'shell_execute' }]),
+      ).toBe(1);
     });
 
     it('includes tenant label', () => {
       collector.recordToolCall('file_read', 50, undefined, 'tenant-1');
-      expect(collector.getCounter('tool_success_total', [
-        { name: 'tool', value: 'file_read' },
-        { name: 'tenant', value: 'tenant-1' },
-      ])).toBe(1);
+      expect(
+        collector.getCounter('tool_success_total', [
+          { name: 'tool', value: 'file_read' },
+          { name: 'tenant', value: 'tenant-1' },
+        ]),
+      ).toBe(1);
     });
   });
 
   describe('recordLLMCall', () => {
     it('records successful LLM call', () => {
       collector.recordLLMCall('gpt-4o', 'openai', 1000, 500);
-      expect(collector.getCounter('llm_success_total', [
-        { name: 'model', value: 'gpt-4o' },
-        { name: 'provider', value: 'openai' },
-      ])).toBe(1);
+      expect(
+        collector.getCounter('llm_success_total', [
+          { name: 'model', value: 'gpt-4o' },
+          { name: 'provider', value: 'openai' },
+        ]),
+      ).toBe(1);
     });
 
     it('records failed LLM call', () => {
       collector.recordLLMCall('gpt-4o', 'openai', 0, 100, 'rate_limit');
-      expect(collector.getCounter('llm_errors_total', [
-        { name: 'model', value: 'gpt-4o' },
-        { name: 'provider', value: 'openai' },
-      ])).toBe(1);
+      expect(
+        collector.getCounter('llm_errors_total', [
+          { name: 'model', value: 'gpt-4o' },
+          { name: 'provider', value: 'openai' },
+        ]),
+      ).toBe(1);
     });
 
     it('accumulates token count', () => {
       collector.recordLLMCall('gpt-4o', 'openai', 1000, 500);
       collector.recordLLMCall('gpt-4o', 'openai', 2000, 600);
-      expect(collector.getCounter('llm_tokens_total', [
-        { name: 'model', value: 'gpt-4o' },
-        { name: 'provider', value: 'openai' },
-      ])).toBe(3000);
+      expect(
+        collector.getCounter('llm_tokens_total', [
+          { name: 'model', value: 'gpt-4o' },
+          { name: 'provider', value: 'openai' },
+        ]),
+      ).toBe(3000);
     });
   });
 
   describe('recordError', () => {
     it('records error by class', () => {
       collector.recordError('TimeoutError');
-      expect(collector.getCounter('errors_total', [{ name: 'class', value: 'TimeoutError' }])).toBe(1);
+      expect(collector.getCounter('errors_total', [{ name: 'class', value: 'TimeoutError' }])).toBe(
+        1,
+      );
     });
 
     it('includes tenant label', () => {
       collector.recordError('ValidationError', 'tenant-1');
-      expect(collector.getCounter('errors_total', [
-        { name: 'class', value: 'ValidationError' },
-        { name: 'tenant', value: 'tenant-1' },
-      ])).toBe(1);
+      expect(
+        collector.getCounter('errors_total', [
+          { name: 'class', value: 'ValidationError' },
+          { name: 'tenant', value: 'tenant-1' },
+        ]),
+      ).toBe(1);
     });
   });
 

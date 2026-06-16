@@ -26,7 +26,7 @@ function detectLocale(): Locale {
 // ============================================================================
 
 const translations: Record<Locale, Record<string, string>> = {
-  'en': {
+  en: {
     // General
     'app.title': 'Commander — multi-agent orchestration',
     'app.version': 'Version',
@@ -68,7 +68,8 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // Errors
     'error.no.apikey': 'No API key found.',
-    'error.fix.apikey': 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider env var. Run: commander quickstart',
+    'error.fix.apikey':
+      'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider env var. Run: commander quickstart',
     'error.fatal': 'ERROR',
     'error.run.doctor': 'Run commander doctor to diagnose issues.',
     'error.run.quickstart': 'Run commander quickstart for setup guidance.',
@@ -158,7 +159,8 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // Errors
     'error.no.apikey': '未找到 API 密钥。',
-    'error.fix.apikey': '请设置 OPENAI_API_KEY、ANTHROPIC_API_KEY 或其他提供者环境变量。运行：commander quickstart',
+    'error.fix.apikey':
+      '请设置 OPENAI_API_KEY、ANTHROPIC_API_KEY 或其他提供者环境变量。运行：commander quickstart',
     'error.fatal': '错误',
     'error.run.doctor': '运行 commander doctor 诊断问题。',
     'error.run.quickstart': '运行 commander quickstart 查看设置指南。',

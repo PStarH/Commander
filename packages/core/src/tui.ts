@@ -347,9 +347,10 @@ export class CommanderTUI {
   // ======================================================================
 
   private onBusMessage(msg: BusMessage): void {
-    const payloadStr = typeof msg.payload === 'object'
-      ? JSON.stringify(msg.payload).slice(0, 120)
-      : String(msg.payload ?? '').slice(0, 120);
+    const payloadStr =
+      typeof msg.payload === 'object'
+        ? JSON.stringify(msg.payload).slice(0, 120)
+        : String(msg.payload ?? '').slice(0, 120);
 
     const entry: LogEntry = {
       timestamp: new Date(msg.timestamp || Date.now()).toLocaleTimeString(),
@@ -361,11 +362,21 @@ export class CommanderTUI {
 
     // Track metrics
     switch (msg.topic) {
-      case 'agent.started': this.metrics.agentsStarted++; break;
-      case 'agent.completed': this.metrics.agentsCompleted++; break;
-      case 'agent.failed': this.metrics.agentsFailed++; break;
-      case 'tool.executed': this.metrics.toolCalls++; break;
-      case 'system.alert': this.metrics.alerts++; break;
+      case 'agent.started':
+        this.metrics.agentsStarted++;
+        break;
+      case 'agent.completed':
+        this.metrics.agentsCompleted++;
+        break;
+      case 'agent.failed':
+        this.metrics.agentsFailed++;
+        break;
+      case 'tool.executed':
+        this.metrics.toolCalls++;
+        break;
+      case 'system.alert':
+        this.metrics.alerts++;
+        break;
     }
     if (msg.payload && typeof msg.payload === 'object' && 'totalTokens' in msg.payload) {
       this.metrics.totalTokens += (msg.payload as { totalTokens?: number }).totalTokens ?? 0;
@@ -391,9 +402,7 @@ export class CommanderTUI {
     const title = ' Commander TUI — Agent Dashboard ';
     const stats = ` ${this.logs.length} events  |  ${this.sessions.length} sessions `;
     const padding = Math.max(0, width - title.length - stats.length - 2);
-    this.headerBox.setContent(
-      `{bold}${title}{/bold}${' '.repeat(padding)}${stats}`
-    );
+    this.headerBox.setContent(`{bold}${title}{/bold}${' '.repeat(padding)}${stats}`);
   }
 
   private renderTabs(): void {
@@ -412,10 +421,11 @@ export class CommanderTUI {
   private renderEvents(): void {
     // Apply filter
     this.filteredLogs = this.filterText
-      ? this.logs.filter(e =>
-          e.topic.toLowerCase().includes(this.filterText.toLowerCase()) ||
-          e.source.toLowerCase().includes(this.filterText.toLowerCase()) ||
-          e.payload.toLowerCase().includes(this.filterText.toLowerCase())
+      ? this.logs.filter(
+          (e) =>
+            e.topic.toLowerCase().includes(this.filterText.toLowerCase()) ||
+            e.source.toLowerCase().includes(this.filterText.toLowerCase()) ||
+            e.payload.toLowerCase().includes(this.filterText.toLowerCase()),
         )
       : this.logs;
 
@@ -427,7 +437,7 @@ export class CommanderTUI {
       return;
     }
 
-    const items = tabFiltered.map(e => {
+    const items = tabFiltered.map((e) => {
       const icon = this.iconForTopic(e.topic);
       const priorityColor = e.priority === 'high' ? '{red-fg}' : '';
       return `${priorityColor}{${this.colorForTopic(e.topic)}-fg}${e.timestamp}{/} ${icon} {bold}${e.topic}{/bold} {black-fg}${e.source}{/} ${e.payload.slice(0, 80)}`;
@@ -447,10 +457,13 @@ export class CommanderTUI {
       return;
     }
 
-    const items = this.sessions.slice(0, 30).map(s => {
-      const statusColor = s.status === 'completed' || s.status === 'SUCCESS' ? 'green'
-        : s.status === 'failed' || s.status === 'FAILED' ? 'red'
-        : 'yellow';
+    const items = this.sessions.slice(0, 30).map((s) => {
+      const statusColor =
+        s.status === 'completed' || s.status === 'SUCCESS'
+          ? 'green'
+          : s.status === 'failed' || s.status === 'FAILED'
+            ? 'red'
+            : 'yellow';
       const time = new Date(s.timestamp).toLocaleString();
       return `${time.slice(0, 10)} {${statusColor}-fg}${s.status.padEnd(10)}{/} {bold}${s.task.slice(0, 35)}{/bold}`;
     });
@@ -461,7 +474,8 @@ export class CommanderTUI {
   private renderMetrics(): void {
     const m = this.metrics;
     const uptime = ((Date.now() - this.startTime) / 1000).toFixed(0);
-    const agents = `{green-fg}${m.agentsCompleted}{/green-fg}/{cyan-fg}${m.agentsStarted}{/cyan-fg}` +
+    const agents =
+      `{green-fg}${m.agentsCompleted}{/green-fg}/{cyan-fg}${m.agentsStarted}{/cyan-fg}` +
       (m.agentsFailed > 0 ? ` {red-fg}${m.agentsFailed}✗{/red-fg}` : '');
     const line1 = ` Agents: ${agents}  |  Tools: {yellow-fg}${m.toolCalls}{/yellow-fg}  |  Tokens: {yellow-fg}${m.totalTokens.toLocaleString()}{/yellow-fg}`;
     const line2 = ` Alerts: ${m.alerts > 0 ? `{red-fg}${m.alerts}{/red-fg}` : '0'}  |  Uptime: ${uptime}s`;
@@ -538,7 +552,7 @@ export class CommanderTUI {
       if (checkpoints && checkpoints.length > 0) {
         this.sessions = checkpoints
           .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-          .map(c => ({
+          .map((c) => ({
             runId: c.runId,
             task: c.phase ?? 'unknown',
             status: c.phase ?? 'unknown',
@@ -557,7 +571,14 @@ export class CommanderTUI {
   private clearLogs(): void {
     this.logs = [];
     this.filteredLogs = [];
-    this.metrics = { agentsStarted: 0, agentsCompleted: 0, agentsFailed: 0, toolCalls: 0, totalTokens: 0, alerts: 0 };
+    this.metrics = {
+      agentsStarted: 0,
+      agentsCompleted: 0,
+      agentsFailed: 0,
+      toolCalls: 0,
+      totalTokens: 0,
+      alerts: 0,
+    };
     this.renderEvents();
     this.renderMetrics();
     this.renderHeader();
@@ -596,7 +617,7 @@ export class CommanderTUI {
 
   private cycleFocus(): void {
     const focusable = [this.eventList, this.sessionList, this.filterInput];
-    const currentIdx = focusable.findIndex(el => el === this.screen.focused);
+    const currentIdx = focusable.findIndex((el) => el === this.screen.focused);
     const nextIdx = (currentIdx + 1) % focusable.length;
     focusable[nextIdx].focus();
     this.screen.render();
@@ -609,12 +630,12 @@ export class CommanderTUI {
   private filterByTab(entries: LogEntry[]): LogEntry[] {
     switch (this.activeTab) {
       case 1: // Agents
-        return entries.filter(e => e.topic.startsWith('agent.'));
+        return entries.filter((e) => e.topic.startsWith('agent.'));
       case 2: // Tools
-        return entries.filter(e => e.topic === 'tool.executed');
+        return entries.filter((e) => e.topic === 'tool.executed');
       case 3: // System
-        return entries.filter(e =>
-          e.topic.startsWith('system.') || e.topic.startsWith('mission.')
+        return entries.filter(
+          (e) => e.topic.startsWith('system.') || e.topic.startsWith('mission.'),
         );
       default:
         return entries;
@@ -623,16 +644,26 @@ export class CommanderTUI {
 
   private iconForTopic(topic: string): string {
     switch (topic) {
-      case 'agent.started': return '▶';
-      case 'agent.completed': return '✓';
-      case 'agent.failed': return '✗';
-      case 'agent.message': return '◆';
-      case 'system.alert': return '▲';
-      case 'tool.executed': return '⚙';
-      case 'mission.updated': return '◈';
-      case 'mission.blocked': return '⊘';
-      case 'mission.completed': return '●';
-      default: return '·';
+      case 'agent.started':
+        return '▶';
+      case 'agent.completed':
+        return '✓';
+      case 'agent.failed':
+        return '✗';
+      case 'agent.message':
+        return '◆';
+      case 'system.alert':
+        return '▲';
+      case 'tool.executed':
+        return '⚙';
+      case 'mission.updated':
+        return '◈';
+      case 'mission.blocked':
+        return '⊘';
+      case 'mission.completed':
+        return '●';
+      default:
+        return '·';
     }
   }
 

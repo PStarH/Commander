@@ -6,24 +6,35 @@ import { getMetricsCollector, resetMetricsCollector } from '../src/runtime/metri
 import type { LLMMessage } from '../src/runtime/types';
 
 function makeTurns(n: number): LLMMessage[] {
-  const msgs: LLMMessage[] = [
-    { role: 'system', content: 'You are a helpful assistant.' },
-  ];
+  const msgs: LLMMessage[] = [{ role: 'system', content: 'You are a helpful assistant.' }];
   for (let i = 0; i < n; i++) {
-    msgs.push({ role: 'user', content: `User message ${i}: Please help me with task ${i}. This is a detailed instruction that requires careful analysis of the codebase, understanding the architecture, and implementing a comprehensive solution. The task involves multiple modules and requires deep understanding of the system.` });
-    msgs.push({ role: 'assistant', content: `Assistant response ${i}: I will analyze the task and provide a solution. Here is my detailed analysis of the problem. I found several important findings that need to be addressed. The implementation requires careful consideration of edge cases and error handling. I found that the main issue is related to the context window management and token estimation.` });
-    msgs.push({ role: 'tool', content: `Tool output ${i}: Result: 42. Found: data analysis complete. Total: ${i * 100} items processed. The analysis shows that the system is performing well but there are some optimization opportunities.` });
+    msgs.push({
+      role: 'user',
+      content: `User message ${i}: Please help me with task ${i}. This is a detailed instruction that requires careful analysis of the codebase, understanding the architecture, and implementing a comprehensive solution. The task involves multiple modules and requires deep understanding of the system.`,
+    });
+    msgs.push({
+      role: 'assistant',
+      content: `Assistant response ${i}: I will analyze the task and provide a solution. Here is my detailed analysis of the problem. I found several important findings that need to be addressed. The implementation requires careful consideration of edge cases and error handling. I found that the main issue is related to the context window management and token estimation.`,
+    });
+    msgs.push({
+      role: 'tool',
+      content: `Tool output ${i}: Result: 42. Found: data analysis complete. Total: ${i * 100} items processed. The analysis shows that the system is performing well but there are some optimization opportunities.`,
+    });
   }
   return msgs;
 }
 
 function makeLargeToolOutputs(n: number, outputSize: number): LLMMessage[] {
-  const msgs: LLMMessage[] = [
-    { role: 'system', content: 'You are a helpful assistant.' },
-  ];
+  const msgs: LLMMessage[] = [{ role: 'system', content: 'You are a helpful assistant.' }];
   for (let i = 0; i < n; i++) {
     msgs.push({ role: 'user', content: `User message ${i}` });
-    msgs.push({ role: 'assistant', content: `Assistant response ${i}`, tool_calls: [{ id: `call_${i}`, type: 'function', function: { name: 'tool', arguments: '{}' } }] });
+    msgs.push({
+      role: 'assistant',
+      content: `Assistant response ${i}`,
+      tool_calls: [
+        { id: `call_${i}`, type: 'function', function: { name: 'tool', arguments: '{}' } },
+      ],
+    });
     const output = 'x'.repeat(outputSize);
     msgs.push({ role: 'tool', content: output, tool_call_id: `call_${i}` });
   }
@@ -70,7 +81,10 @@ describe('6b. Worker-Offloaded Compaction — Event Loop Lag Reduction', () => {
       console.log(`  Sync P95 lag: ${p95Sync.toFixed(1)}ms`);
       console.log(`  Worker P95 lag: ${p95Worker.toFixed(1)}ms`);
 
-      assert.ok(p95Worker < p95Sync * 1.2, `Worker P95 lag (${p95Worker.toFixed(1)}ms) should be <= 120% of sync (${p95Sync.toFixed(1)}ms)`);
+      assert.ok(
+        p95Worker < p95Sync * 1.2,
+        `Worker P95 lag (${p95Worker.toFixed(1)}ms) should be <= 120% of sync (${p95Sync.toFixed(1)}ms)`,
+      );
     } finally {
       await pool.shutdown();
     }
@@ -88,17 +102,20 @@ describe('6b. Worker-Offloaded Compaction — Event Loop Lag Reduction', () => {
       const promises: Promise<void>[] = [];
       for (let i = 0; i < CONCURRENT; i++) {
         const turns = makeTurns(300 + i * 50);
-        promises.push(
-          compactor.compactWithWorkerOffload([...turns], pool).then(() => {})
-        );
+        promises.push(compactor.compactWithWorkerOffload([...turns], pool).then(() => {}));
       }
       await Promise.all(promises);
       const duration = performance.now() - start;
 
       const lag = await measureLag();
-      console.log(`  ${CONCURRENT} concurrent ops: ${duration.toFixed(0)}ms total, event loop lag: ${lag.toFixed(1)}ms`);
+      console.log(
+        `  ${CONCURRENT} concurrent ops: ${duration.toFixed(0)}ms total, event loop lag: ${lag.toFixed(1)}ms`,
+      );
 
-      assert.ok(lag < 200, `Event loop lag under concurrent worker load should be < 200ms, got ${lag.toFixed(1)}ms`);
+      assert.ok(
+        lag < 200,
+        `Event loop lag under concurrent worker load should be < 200ms, got ${lag.toFixed(1)}ms`,
+      );
     } finally {
       await pool.shutdown();
     }
@@ -124,7 +141,9 @@ describe('6b. Worker-Offloaded Compaction — Event Loop Lag Reduction', () => {
       const queueGauge = metrics.getGauge('cpu_worker_pool_queue_depth');
       const executedCounter = metrics.getCounter('cpu_worker_pool_tasks_executed_total');
 
-      console.log(`  Pool stats: size=${stats.poolSize}, available=${stats.availableWorkers}, executed=${stats.totalExecuted}`);
+      console.log(
+        `  Pool stats: size=${stats.poolSize}, available=${stats.availableWorkers}, executed=${stats.totalExecuted}`,
+      );
       console.log(`  Metrics: queue_depth=${queueGauge}, executed_total=${executedCounter}`);
 
       assert.ok(executedCounter > 0, 'Should have executed at least 1 task');
@@ -136,7 +155,7 @@ describe('6b. Worker-Offloaded Compaction — Event Loop Lag Reduction', () => {
 });
 
 async function measureLag(): Promise<number> {
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     const start = performance.now();
     setImmediate(() => {
       resolve(performance.now() - start);

@@ -14,25 +14,67 @@ import { getGlobalLogger } from '../logging';
 export class HandoffTool implements Tool {
   definition: ToolDefinition = {
     name: 'handoff',
-    description: 'Hand off the current task to another agent using a structured work order and compressed context summary (no full history). The target agent receives the handoff as a high-priority inbox message. Use when: the task requires different expertise, you need to delegate a subtask, or you want to transfer control entirely.',
+    description:
+      'Hand off the current task to another agent using a structured work order and compressed context summary (no full history). The target agent receives the handoff as a high-priority inbox message. Use when: the task requires different expertise, you need to delegate a subtask, or you want to transfer control entirely.',
     inputSchema: {
       type: 'object',
       properties: {
         toAgent: { type: 'string', description: 'Target agent ID or name' },
         goal: { type: 'string', description: 'What the target agent should accomplish' },
-        completedSteps: { type: 'array', items: { type: 'string' }, description: 'Steps already completed by the sending agent' },
-        remainingTasks: { type: 'array', items: { type: 'string' }, description: 'Steps remaining for the receiving agent' },
-        artifacts: { type: 'array', items: { type: 'object' }, description: 'Artifacts produced so far (name, type, reference)' },
-        constraints: { type: 'array', items: { type: 'string' }, description: 'Constraints or guardrails the receiving agent must respect' },
-        contextSummary: { type: 'string', description: 'Optional free-form context summary (if omitted, a ≤500-token summary is generated from messages)' },
-        messages: { type: 'array', items: { type: 'object' }, description: 'Conversation messages used to generate a context summary when contextSummary is omitted' },
-        includeFullMessages: { type: 'boolean', description: 'Include full message history (not recommended; costs more tokens)' },
-        tokenBudget: { type: 'number', description: 'Token budget for the target agent (default: 25000)', default: 25000 },
+        completedSteps: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Steps already completed by the sending agent',
+        },
+        remainingTasks: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Steps remaining for the receiving agent',
+        },
+        artifacts: {
+          type: 'array',
+          items: { type: 'object' },
+          description: 'Artifacts produced so far (name, type, reference)',
+        },
+        constraints: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Constraints or guardrails the receiving agent must respect',
+        },
+        contextSummary: {
+          type: 'string',
+          description:
+            'Optional free-form context summary (if omitted, a ≤500-token summary is generated from messages)',
+        },
+        messages: {
+          type: 'array',
+          items: { type: 'object' },
+          description:
+            'Conversation messages used to generate a context summary when contextSummary is omitted',
+        },
+        includeFullMessages: {
+          type: 'boolean',
+          description: 'Include full message history (not recommended; costs more tokens)',
+        },
+        tokenBudget: {
+          type: 'number',
+          description: 'Token budget for the target agent (default: 25000)',
+          default: 25000,
+        },
       },
       required: ['toAgent', 'goal'],
     },
     examples: [
-      { name: 'handoff', arguments: { toAgent: 'security-expert', goal: 'Review the authentication module for vulnerabilities', completedSteps: ['Scanned authManager.ts'], remainingTasks: ['Check 3 potential issues'], constraints: ['Do not modify files without approval'] } },
+      {
+        name: 'handoff',
+        arguments: {
+          toAgent: 'security-expert',
+          goal: 'Review the authentication module for vulnerabilities',
+          completedSteps: ['Scanned authManager.ts'],
+          remainingTasks: ['Check 3 potential issues'],
+          constraints: ['Do not modify files without approval'],
+        },
+      },
     ],
     category: 'development',
   };
@@ -56,11 +98,16 @@ export class HandoffTool implements Tool {
     if (!toAgent) return 'Error: toAgent is required';
     if (!goal) return 'Error: goal is required';
 
-    const completedSteps = Array.isArray(args.completedSteps) ? args.completedSteps.map(String) : [];
-    const remainingTasks = Array.isArray(args.remainingTasks) ? args.remainingTasks.map(String) : [goal];
+    const completedSteps = Array.isArray(args.completedSteps)
+      ? args.completedSteps.map(String)
+      : [];
+    const remainingTasks = Array.isArray(args.remainingTasks)
+      ? args.remainingTasks.map(String)
+      : [goal];
     const artifacts = Array.isArray(args.artifacts)
       ? args.artifacts.map((a) => {
-          if (a && typeof a === 'object') return a as { name: string; type: string; reference: string };
+          if (a && typeof a === 'object')
+            return a as { name: string; type: string; reference: string };
           return { name: String(a), type: 'unknown', reference: String(a) };
         })
       : [];
@@ -123,7 +170,7 @@ export class HandoffTool implements Tool {
         if (status?.status === 'failed') {
           return `Handoff failed: ${status.response ?? 'unknown error'}`;
         }
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
 
       return `Handoff ${handoffId} sent to ${toAgent}. Waiting for acceptance... (use handoff check action to poll status)`;
@@ -139,7 +186,8 @@ export class HandoffTool implements Tool {
 export class HandoffCheckTool implements Tool {
   definition: ToolDefinition = {
     name: 'handoff_check',
-    description: 'Check the status of a pending handoff. Returns current status (requested/accepted/rejected/completed/failed), the structured work order, and any response from the target agent.',
+    description:
+      'Check the status of a pending handoff. Returns current status (requested/accepted/rejected/completed/failed), the structured work order, and any response from the target agent.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -147,9 +195,7 @@ export class HandoffCheckTool implements Tool {
       },
       required: ['handoffId'],
     },
-    examples: [
-      { name: 'handoff_check', arguments: { handoffId: 'ho_1234567890_abc' } },
-    ],
+    examples: [{ name: 'handoff_check', arguments: { handoffId: 'ho_1234567890_abc' } }],
     category: 'development',
   };
 
@@ -182,7 +228,7 @@ export class HandoffCheckTool implements Tool {
       `- Completed: ${wo.completedSteps.join('; ') || 'none'}`,
       `- Remaining: ${wo.remainingTasks.join('; ') || 'none'}`,
       `- Constraints: ${wo.constraints.join('; ') || 'none'}`,
-      `- Artifacts: ${wo.artifacts.map(a => `${a.name} (${a.reference})`).join(', ') || 'none'}`,
+      `- Artifacts: ${wo.artifacts.map((a) => `${a.name} (${a.reference})`).join(', ') || 'none'}`,
       '',
       '## Context Summary',
       `- Plan: ${cs.executedPlan}`,

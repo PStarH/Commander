@@ -340,10 +340,7 @@ describe('VM sandbox: normal tool calls work', () => {
         }
       `,
     });
-    assert.ok(
-      result.includes('TOOL_CALLED'),
-      'Tool call must succeed without throwing',
-    );
+    assert.ok(result.includes('TOOL_CALLED'), 'Tool call must succeed without throwing');
   });
 
   it('can call multiple tools in sequence', async () => {
@@ -457,7 +454,9 @@ describe('VM sandbox: normal tool calls work', () => {
     });
     assert.ok(result.includes('ECHO_WORKED'), 'Exposed tool must work');
     assert.ok(
-      result.includes('SECRET_BLOCKED') || result.includes('SECRET_ERROR') || !result.includes('GOT_SECRET'),
+      result.includes('SECRET_BLOCKED') ||
+        result.includes('SECRET_ERROR') ||
+        !result.includes('GOT_SECRET'),
       'Non-exposed tools must not be callable',
     );
   });

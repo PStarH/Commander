@@ -189,7 +189,9 @@ export class GuardianAgent {
       const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
       const variance = intervals.reduce((s, v) => s + (v - mean) ** 2, 0) / intervals.length;
       const stddev = Math.sqrt(variance);
-      const burstCount = intervals.filter((i) => i < mean - stddev * this.config.anomalyStddevMultiplier).length;
+      const burstCount = intervals.filter(
+        (i) => i < mean - stddev * this.config.anomalyStddevMultiplier,
+      ).length;
       if (burstCount > intervals.length * 0.5) {
         const count = (this.consecutiveAnomalies.get(agentId) ?? 0) + 1;
         this.consecutiveAnomalies.set(agentId, count);
@@ -252,7 +254,10 @@ export class GuardianAgent {
     return threats;
   }
 
-  private intervene(type: GuardianInterventionType, action: GuardianAction): GuardianInterventionType {
+  private intervene(
+    type: GuardianInterventionType,
+    action: GuardianAction,
+  ): GuardianInterventionType {
     this.interventionCount++;
     this.pausedAgents.add(action.agentId);
 

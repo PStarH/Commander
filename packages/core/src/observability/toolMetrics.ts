@@ -27,7 +27,15 @@ export class ToolMetricsCollector {
 
     let stats = this.toolStats.get(toolName);
     if (!stats) {
-      stats = { toolName, invocations: 0, successes: 0, failures: 0, totalDurationMs: 0, avgDurationMs: 0, lastUsed: event.timestamp };
+      stats = {
+        toolName,
+        invocations: 0,
+        successes: 0,
+        failures: 0,
+        totalDurationMs: 0,
+        avgDurationMs: 0,
+        lastUsed: event.timestamp,
+      };
       this.toolStats.set(toolName, stats);
     }
 

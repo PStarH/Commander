@@ -61,22 +61,37 @@ export class McpHarness implements AgentHarness {
     const runId = generateId();
     const startTime = Date.now();
 
-    this.emitEvent({ type: 'run_start', runId, goal: params.goal, harness: this.name, timestamp: Date.now() });
+    this.emitEvent({
+      type: 'run_start',
+      runId,
+      goal: params.goal,
+      harness: this.name,
+      timestamp: Date.now(),
+    });
 
-    getGlobalLogger().warn('McpHarness', 'MCP server mode not yet fully implemented; goal will not be executed');
+    getGlobalLogger().warn(
+      'McpHarness',
+      'MCP server mode not yet fully implemented; goal will not be executed',
+    );
 
     const result: AgentExecutionResult = {
       runId,
       agentId: params.goal.slice(0, 32),
       status: 'failed',
-      summary: 'MCP server mode is not yet fully implemented. The harness system supports selecting this harness via features=["mcp-server"], but execution is not wired up. Use DefaultHarness or CodeAgentHarness for now.',
+      summary:
+        'MCP server mode is not yet fully implemented. The harness system supports selecting this harness via features=["mcp-server"], but execution is not wired up. Use DefaultHarness or CodeAgentHarness for now.',
       steps: [],
       totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       totalDurationMs: Date.now() - startTime,
       error: 'MCP server mode not yet implemented',
     };
 
-    this.emitEvent({ type: 'run_error', error: result.error ?? 'unknown', runId, timestamp: Date.now() });
+    this.emitEvent({
+      type: 'run_error',
+      error: result.error ?? 'unknown',
+      runId,
+      timestamp: Date.now(),
+    });
     return result;
   }
 

@@ -128,20 +128,41 @@ describe('RunLedger', () => {
       ledger.registerCompensation('tool-c', makeHandler());
 
       const a1 = ledger.recordAction({
-        runId: 'run-8', leaseToken: tx.leaseToken, fencingEpoch: tx.fencingEpoch,
-        toolName: 'tool-a', externalSystem: 'test', args: {}, idempotencyKey: 'k1', compensable: true,
+        runId: 'run-8',
+        leaseToken: tx.leaseToken,
+        fencingEpoch: tx.fencingEpoch,
+        toolName: 'tool-a',
+        externalSystem: 'test',
+        args: {},
+        idempotencyKey: 'k1',
+        compensable: true,
       });
       const a2 = ledger.recordAction({
-        runId: 'run-8', leaseToken: tx.leaseToken, fencingEpoch: tx.fencingEpoch,
-        toolName: 'tool-b', externalSystem: 'test', args: {}, idempotencyKey: 'k2', compensable: true,
+        runId: 'run-8',
+        leaseToken: tx.leaseToken,
+        fencingEpoch: tx.fencingEpoch,
+        toolName: 'tool-b',
+        externalSystem: 'test',
+        args: {},
+        idempotencyKey: 'k2',
+        compensable: true,
       });
       const a3 = ledger.recordAction({
-        runId: 'run-8', leaseToken: tx.leaseToken, fencingEpoch: tx.fencingEpoch,
-        toolName: 'tool-c', externalSystem: 'test', args: {}, idempotencyKey: 'k3', compensable: true,
+        runId: 'run-8',
+        leaseToken: tx.leaseToken,
+        fencingEpoch: tx.fencingEpoch,
+        toolName: 'tool-c',
+        externalSystem: 'test',
+        args: {},
+        idempotencyKey: 'k3',
+        compensable: true,
       });
 
       const result = await ledger.abortAndCompensate(
-        'run-8', tx.leaseToken, tx.fencingEpoch, 'simulated failure',
+        'run-8',
+        tx.leaseToken,
+        tx.fencingEpoch,
+        'simulated failure',
       );
       assert.strictEqual(result.aborted, true);
       assert.strictEqual(result.outcome.succeeded, 3);
@@ -161,12 +182,21 @@ describe('RunLedger', () => {
       ledger.registerCompensation('tool-x', failHandler);
 
       ledger.recordAction({
-        runId: 'run-9', leaseToken: tx.leaseToken, fencingEpoch: tx.fencingEpoch,
-        toolName: 'tool-x', externalSystem: 'test', args: {}, idempotencyKey: 'k1', compensable: true,
+        runId: 'run-9',
+        leaseToken: tx.leaseToken,
+        fencingEpoch: tx.fencingEpoch,
+        toolName: 'tool-x',
+        externalSystem: 'test',
+        args: {},
+        idempotencyKey: 'k1',
+        compensable: true,
       });
 
       const result = await ledger.abortAndCompensate(
-        'run-9', tx.leaseToken, tx.fencingEpoch, 'abort',
+        'run-9',
+        tx.leaseToken,
+        tx.fencingEpoch,
+        'abort',
       );
       assert.strictEqual(result.outcome.succeeded, 0);
       assert.ok(result.outcome.failed > 0);

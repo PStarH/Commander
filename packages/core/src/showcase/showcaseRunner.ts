@@ -65,7 +65,27 @@ const DEFAULT_CONFIG: Required<ShowcaseConfig> = {
   maxFiles: 50,
   maxFileSize: 100 * 1024,
   tokenBudgetPerAgent: 32000,
-  extensions: ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.css', '.html', '.json', '.yaml', '.yml', '.md', '.sql', '.sh'],
+  extensions: [
+    '.ts',
+    '.tsx',
+    '.js',
+    '.jsx',
+    '.py',
+    '.go',
+    '.rs',
+    '.java',
+    '.c',
+    '.cpp',
+    '.h',
+    '.css',
+    '.html',
+    '.json',
+    '.yaml',
+    '.yml',
+    '.md',
+    '.sql',
+    '.sh',
+  ],
 };
 
 // ============================================================================
@@ -163,9 +183,20 @@ function scanCodebase(config: Required<ShowcaseConfig>): ScannedFile[] {
 
   // Directories to skip (not exhaustive — just common noise)
   const skipDirs = new Set([
-    'node_modules', '.git', '.commander', 'dist', 'build', '.next',
-    '__pycache__', '.venv', 'venv', 'target', '.cache', 'coverage',
-    '.commander_output', '.commander_samples',
+    'node_modules',
+    '.git',
+    '.commander',
+    'dist',
+    'build',
+    '.next',
+    '__pycache__',
+    '.venv',
+    'venv',
+    'target',
+    '.cache',
+    'coverage',
+    '.commander_output',
+    '.commander_samples',
   ]);
 
   function walk(dir: string): void {
@@ -237,9 +268,10 @@ function formatFilesForAgent(files: ScannedFile[], label: string): string {
 
   for (const file of files) {
     const header = `\n### 📄 ${file.relativePath} (${file.ext}, ${formatSize(file.size)})\n`;
-    const truncated = file.content.length > 15000
-      ? file.content.slice(0, 15000) + '\n\n... [truncated, total: ' + formatSize(file.size) + ']'
-      : file.content;
+    const truncated =
+      file.content.length > 15000
+        ? file.content.slice(0, 15000) + '\n\n... [truncated, total: ' + formatSize(file.size) + ']'
+        : file.content;
     parts.push(header);
     parts.push('```' + (file.ext.slice(1) || 'text'));
     parts.push(truncated);
@@ -295,7 +327,12 @@ function extractFindings(report: string): {
   medium: string[];
   low: string[];
 } {
-  const findings = { critical: [] as string[], high: [] as string[], medium: [] as string[], low: [] as string[] };
+  const findings = {
+    critical: [] as string[],
+    high: [] as string[],
+    medium: [] as string[],
+    low: [] as string[],
+  };
 
   // Extract from the 🔴/🟠/🟡/🟢 sections
   const sectionPatterns: Array<{ key: keyof typeof findings; icon: string }> = [
@@ -309,9 +346,10 @@ function extractFindings(report: string): {
     const regex = new RegExp(`${icon}[^\\n]*\\n([\\s\\S]*?)(?=\\n## |\\n# |$)`, 'i');
     const m = report.match(regex);
     if (m && m[1]) {
-      const lines = m[1].split('\n')
-        .map(l => l.replace(/^[-*•]\s*/, '').trim())
-        .filter(l => l.length > 10);
+      const lines = m[1]
+        .split('\n')
+        .map((l) => l.replace(/^[-*•]\s*/, '').trim())
+        .filter((l) => l.length > 10);
       findings[key] = lines.slice(0, 10);
     }
   }
@@ -339,15 +377,24 @@ export async function runShowcase(
   if (files.length === 0) {
     return {
       status: 'failed',
-      report: '# 代码健康体检报告\n\n当前目录未找到可扫描的代码文件。请在有代码文件的目录下运行此命令。\n',
+      report:
+        '# 代码健康体检报告\n\n当前目录未找到可扫描的代码文件。请在有代码文件的目录下运行此命令。\n',
       metrics: {
-        redTeamTokens: 0, blueTeamTokens: 0, judgeTokens: 0,
-        totalTokens: 0, durationMs: Date.now() - startTime,
-        filesScanned: 0, securityScore: 0, qualityScore: 0,
-        architectureScore: 0, overallScore: 0,
+        redTeamTokens: 0,
+        blueTeamTokens: 0,
+        judgeTokens: 0,
+        totalTokens: 0,
+        durationMs: Date.now() - startTime,
+        filesScanned: 0,
+        securityScore: 0,
+        qualityScore: 0,
+        architectureScore: 0,
+        overallScore: 0,
       },
       findings: { critical: [], high: [], medium: [], low: [] },
-      redTeamRaw: '', blueTeamRaw: '', judgeRaw: '',
+      redTeamRaw: '',
+      blueTeamRaw: '',
+      judgeRaw: '',
     };
   }
 
@@ -389,8 +436,13 @@ export async function runShowcase(
       }),
     ]);
 
-    redRaw = (redResult.status === 'success' ? redResult.summary : (redResult.error ?? '红队执行失败')) ?? '';
-    blueRaw = (blueResult.status === 'success' ? blueResult.summary : (blueResult.error ?? '蓝队执行失败')) ?? '';
+    redRaw =
+      (redResult.status === 'success' ? redResult.summary : (redResult.error ?? '红队执行失败')) ??
+      '';
+    blueRaw =
+      (blueResult.status === 'success'
+        ? blueResult.summary
+        : (blueResult.error ?? '蓝队执行失败')) ?? '';
     redTokens = redResult.totalTokenUsage?.totalTokens ?? 0;
     blueTokens = blueResult.totalTokenUsage?.totalTokens ?? 0;
 
@@ -437,7 +489,10 @@ export async function runShowcase(
       maxSteps: 12,
       tokenBudget: cfg.tokenBudgetPerAgent * 2,
     });
-    judgeRaw = (judgeResult.status === 'success' ? judgeResult.summary : (judgeResult.error ?? '裁判执行失败')) ?? '';
+    judgeRaw =
+      (judgeResult.status === 'success'
+        ? judgeResult.summary
+        : (judgeResult.error ?? '裁判执行失败')) ?? '';
     judgeTokens = judgeResult.totalTokenUsage?.totalTokens ?? 0;
   } catch (err) {
     logger.warn('Showcase', 'Judge crashed', { error: (err as Error)?.message });
@@ -445,7 +500,9 @@ export async function runShowcase(
   }
 
   // Phase 5: Compute metrics
-  const report = judgeRaw || `# 代码健康体检报告\n\n## 综合评分\n\n裁判未能产出有效报告。\n\n### 红队原始输出\n${redRaw.slice(0, 2000)}\n\n### 蓝队原始输出\n${blueRaw.slice(0, 2000)}`;
+  const report =
+    judgeRaw ||
+    `# 代码健康体检报告\n\n## 综合评分\n\n裁判未能产出有效报告。\n\n### 红队原始输出\n${redRaw.slice(0, 2000)}\n\n### 蓝队原始输出\n${blueRaw.slice(0, 2000)}`;
 
   const scores = extractScores(report);
   const findings = extractFindings(report);

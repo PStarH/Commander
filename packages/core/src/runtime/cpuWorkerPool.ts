@@ -54,7 +54,8 @@ export class CPUWorkerPool {
   private totalTasksQueued = 0;
 
   constructor(options?: CPUWorkerPoolOptions) {
-    this.poolSize = options?.poolSize ?? Math.min(2, (globalThis.navigator?.hardwareConcurrency ?? 4) - 1);
+    this.poolSize =
+      options?.poolSize ?? Math.min(2, (globalThis.navigator?.hardwareConcurrency ?? 4) - 1);
     this.taskTimeoutMs = options?.taskTimeoutMs ?? 30_000;
     this.workerScript = options?.workerScript ?? path.join(__dirname, 'cpuWorker.js');
   }
@@ -73,7 +74,7 @@ export class CPUWorkerPool {
     } as WorkerOptions);
 
     worker.on('message', (msg: { id: string; result?: unknown; error?: string }) => {
-      const taskIdx = this.taskQueue.findIndex(t => t.id === msg.id);
+      const taskIdx = this.taskQueue.findIndex((t) => t.id === msg.id);
       if (taskIdx === -1) return;
 
       const task = this.taskQueue[taskIdx];
@@ -142,7 +143,7 @@ export class CPUWorkerPool {
       this.totalTasksQueued++;
 
       const timer = setTimeout(() => {
-        const idx = this.taskQueue.findIndex(t => t.id === id);
+        const idx = this.taskQueue.findIndex((t) => t.id === id);
         if (idx !== -1) {
           this.taskQueue.splice(idx, 1);
           reject(new Error(`Task ${id} timed out after ${this.taskTimeoutMs}ms`));
@@ -170,7 +171,9 @@ export class CPUWorkerPool {
       const workerIdx = this.availableWorkers.values().next().value!;
       this.availableWorkers.delete(workerIdx);
 
-      const task = this.taskQueue.find(t => t.timestamp === Math.min(...this.taskQueue.map(t => t.timestamp)));
+      const task = this.taskQueue.find(
+        (t) => t.timestamp === Math.min(...this.taskQueue.map((t) => t.timestamp)),
+      );
       if (!task) break;
 
       const worker = this.workers[workerIdx];
@@ -208,7 +211,7 @@ export class CPUWorkerPool {
       task.reject(err);
     }
 
-    const shutdownPromises = this.workers.map(w => w.terminate());
+    const shutdownPromises = this.workers.map((w) => w.terminate());
     await Promise.allSettled(shutdownPromises);
     this.workers = [];
     this.availableWorkers.clear();

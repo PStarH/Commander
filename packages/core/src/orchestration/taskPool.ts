@@ -74,7 +74,7 @@ export class TaskPool {
     // Process in batches of maxWorkers
     for (let i = 0; i < sorted.length; i += this.config.maxWorkers) {
       const batch = sorted.slice(i, i + this.config.maxWorkers);
-      const batchPromises = batch.map(task => {
+      const batchPromises = batch.map((task) => {
         const p = this.executeTask(task, perTaskBudget);
         this.activeWorkers.set(task.id, p);
         p.finally(() => this.activeWorkers.delete(task.id));
@@ -83,14 +83,15 @@ export class TaskPool {
       const batchResults = await Promise.allSettled(batchPromises);
       for (const r of batchResults) {
         if (r.status === 'fulfilled') results.push(r.value);
-        else results.push({
-          taskId: 'unknown',
-          status: 'failed',
-          summary: '',
-          tokens: 0,
-          durationMs: 0,
-          error: r.reason?.toString(),
-        });
+        else
+          results.push({
+            taskId: 'unknown',
+            status: 'failed',
+            summary: '',
+            tokens: 0,
+            durationMs: 0,
+            error: r.reason?.toString(),
+          });
       }
     }
 
@@ -121,7 +122,12 @@ export class TaskPool {
       projectId: 'taskpool',
       goal: task.goal,
       contextData: {},
-      availableTools: task.availableTools || ['browser_search', 'browser_fetch', 'python_execute', 'shell_execute'],
+      availableTools: task.availableTools || [
+        'browser_search',
+        'browser_fetch',
+        'python_execute',
+        'shell_execute',
+      ],
       maxSteps: task.maxSteps || this.config.defaultMaxSteps,
       tokenBudget: Math.min(reservation, task.tokenBudget || this.config.defaultTokenBudget),
     };
@@ -176,7 +182,7 @@ export class TaskPool {
   }
 
   private timeout(ms: number): Promise<'timeout'> {
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       const timer = setTimeout(() => resolve('timeout'), ms);
       timer.unref();
     });

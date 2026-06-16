@@ -125,7 +125,10 @@ function buildSolidifySummary(turns: LLMMessage[][]): string {
   for (const turn of turns) {
     for (const msg of turn) {
       if (msg.role === 'user' && !goalSnippet) {
-        goalSnippet = msg.content.replace(/[\n\r]/g, ' ').trim().slice(0, 150);
+        goalSnippet = msg.content
+          .replace(/[\n\r]/g, ' ')
+          .trim()
+          .slice(0, 150);
       }
       if (msg.role === 'assistant' && msg.tool_calls) {
         for (const tc of msg.tool_calls) {
@@ -134,7 +137,9 @@ function buildSolidifySummary(turns: LLMMessage[][]): string {
             const args = JSON.parse(tc.function.arguments);
             if (args.path) filesTouched.push(args.path);
             if (args.file_path) filesTouched.push(args.file_path);
-          } catch { /* skip unparseable args */ }
+          } catch {
+            /* skip unparseable args */
+          }
         }
       }
       if (msg.role === 'tool') {
@@ -154,7 +159,8 @@ function buildSolidifySummary(turns: LLMMessage[][]): string {
   const parts: string[] = [];
   if (goalSnippet) parts.push(`Goal fragment: ${goalSnippet}`);
   if (toolsUsed.size > 0) parts.push(`Tools: ${[...toolsUsed].slice(0, 10).join(', ')}`);
-  if (filesTouched.length > 0) parts.push(`Files: ${[...new Set(filesTouched)].slice(0, 8).join(', ')}`);
+  if (filesTouched.length > 0)
+    parts.push(`Files: ${[...new Set(filesTouched)].slice(0, 8).join(', ')}`);
   if (keyActions.length > 0) parts.push(`Key actions: ${keyActions.slice(0, 3).join(' | ')}`);
   if (errors.length > 0) parts.push(`Issues: ${errors.slice(0, 3).join(' | ')}`);
 
@@ -255,7 +261,12 @@ export class SlidingWindowOrchestrator {
     const solidifyTargetCount = Math.max(0, totalTurns - turnsToKeep);
 
     if (solidifyTargetCount === 0) {
-      return { turnsSolidified: 0, entriesWritten: 0, tokensFreed: 0, summary: 'no turns outside window' };
+      return {
+        turnsSolidified: 0,
+        entriesWritten: 0,
+        tokensFreed: 0,
+        summary: 'no turns outside window',
+      };
     }
 
     // Only solidify turns that haven't been solidified yet.
@@ -265,13 +276,23 @@ export class SlidingWindowOrchestrator {
     const solidifyEnd = Math.max(0, totalTurns - turnsToKeep);
 
     if (solidifyEnd <= solidifyStart) {
-      return { turnsSolidified: 0, entriesWritten: 0, tokensFreed: 0, summary: `already solidified up to ${solidifyStart}` };
+      return {
+        turnsSolidified: 0,
+        entriesWritten: 0,
+        tokensFreed: 0,
+        summary: `already solidified up to ${solidifyStart}`,
+      };
     }
 
     const solidifyTurns = turns.slice(solidifyStart, solidifyEnd);
 
     if (solidifyTurns.length === 0) {
-      return { turnsSolidified: 0, entriesWritten: 0, tokensFreed: 0, summary: 'no new turns to solidify' };
+      return {
+        turnsSolidified: 0,
+        entriesWritten: 0,
+        tokensFreed: 0,
+        summary: 'no new turns to solidify',
+      };
     }
 
     // Build summary and extract tags
@@ -301,7 +322,12 @@ export class SlidingWindowOrchestrator {
         error: (e as Error)?.message,
         turnCount: solidifyTurns.length,
       });
-      return { turnsSolidified: 0, entriesWritten: 0, tokensFreed: 0, summary: 'memory_write_failed' };
+      return {
+        turnsSolidified: 0,
+        entriesWritten: 0,
+        tokensFreed: 0,
+        summary: 'memory_write_failed',
+      };
     }
 
     this.lastSolidifyIndex = solidifyEnd;
@@ -353,7 +379,7 @@ export class SlidingWindowOrchestrator {
     const tokensFreed = estimateMessagesTokens(droppedMessages);
 
     // Build the new message array: system messages + kept messages
-    const systemMsgs = messages.filter(m => m.role === 'system');
+    const systemMsgs = messages.filter((m) => m.role === 'system');
     const keptMessages = turnsRetained.flat();
 
     // Clear and rebuild messages
@@ -401,7 +427,7 @@ export class SlidingWindowOrchestrator {
     // Extract keywords from goal + recent tool calls
     const goalKeywords = goal
       .split(/\s+/)
-      .filter(w => w.length > 4)
+      .filter((w) => w.length > 4)
       .slice(0, 6);
 
     // Also extract recent tool names for context relevance
@@ -413,7 +439,10 @@ export class SlidingWindowOrchestrator {
     }
 
     try {
-      const memories = memory.searchRelated(allKeywords.join(' '), this.config.contextRetrievalTopK * 2);
+      const memories = memory.searchRelated(
+        allKeywords.join(' '),
+        this.config.contextRetrievalTopK * 2,
+      );
 
       if (memories.length === 0) {
         return { entriesRetrieved: 0, injectedContext: '', injectedTokens: 0 };
@@ -421,7 +450,7 @@ export class SlidingWindowOrchestrator {
 
       // Filter by importance and recency, take top K
       const filtered = memories
-        .filter(m => m.importance >= this.config.retrievalImportanceThreshold)
+        .filter((m) => m.importance >= this.config.retrievalImportanceThreshold)
         .slice(0, this.config.contextRetrievalTopK);
 
       if (filtered.length === 0) {
@@ -509,7 +538,7 @@ export class SlidingWindowOrchestrator {
       }
     }
 
-    return [...toolNames].filter(n => n.length > 2);
+    return [...toolNames].filter((n) => n.length > 2);
   }
 
   /** Infer tags from turns and goal for memory storage */
@@ -518,7 +547,10 @@ export class SlidingWindowOrchestrator {
     tags.add('session_checkpoint');
 
     // Add goal keywords as tags
-    const words = goal.split(/\s+/).filter(w => w.length > 4).slice(0, 5);
+    const words = goal
+      .split(/\s+/)
+      .filter((w) => w.length > 4)
+      .slice(0, 5);
     for (const w of words) tags.add(w);
 
     // Add tool names as tags

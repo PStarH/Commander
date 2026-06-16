@@ -63,7 +63,11 @@ export interface CapturedStreamingRequest {
  * Create a gate that can be resolved externally.
  * Returns { promise, resolve, reject }.
  */
-export function createGate(): { promise: Promise<void>; resolve: () => void; reject: (err: Error) => void } {
+export function createGate(): {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (err: Error) => void;
+} {
   let resolve!: () => void;
   let reject!: (err: Error) => void;
   const promise = new Promise<void>((res, rej) => {
@@ -121,13 +125,19 @@ export class StreamingSSEServer {
 
       try {
         server.closeAllConnections?.();
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       server.close(() => resolve());
 
       // Force resolve after timeout
       setTimeout(() => {
-        try { server.close(); } catch { /* ignore */ }
+        try {
+          server.close();
+        } catch {
+          /* ignore */
+        }
         resolve();
       }, 200);
     });
@@ -163,11 +173,13 @@ export class StreamingSSEServer {
         data: {
           id: `chatcmpl-stream-${Date.now()}`,
           object: 'chat.completion.chunk',
-          choices: [{
-            index: 0,
-            delta: { content: slice },
-            finish_reason: null,
-          }],
+          choices: [
+            {
+              index: 0,
+              delta: { content: slice },
+              finish_reason: null,
+            },
+          ],
         },
       });
     }
@@ -177,11 +189,13 @@ export class StreamingSSEServer {
       data: {
         id: `chatcmpl-stream-${Date.now()}`,
         object: 'chat.completion.chunk',
-        choices: [{
-          index: 0,
-          delta: {},
-          finish_reason: 'stop',
-        }],
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: 'stop',
+          },
+        ],
       },
     });
 
@@ -209,18 +223,22 @@ export class StreamingSSEServer {
         data: {
           id: `chatcmpl-stream-${Date.now()}`,
           object: 'chat.completion.chunk',
-          choices: [{
-            index: 0,
-            delta: {
-              tool_calls: [{
-                index: 0,
-                id: tc.id,
-                type: 'function',
-                function: { name: tc.name, arguments: tc.arguments },
-              }],
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: tc.id,
+                    type: 'function',
+                    function: { name: tc.name, arguments: tc.arguments },
+                  },
+                ],
+              },
+              finish_reason: null,
             },
-            finish_reason: null,
-          }],
+          ],
         },
       });
     }
@@ -302,41 +320,45 @@ export class StreamingSSEServer {
     let parsedBody: Record<string, unknown> = {};
     try {
       parsedBody = JSON.parse(body);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     if (this.captureRequests) {
       this._requests.push({
         timestamp: Date.now(),
         body: parsedBody,
-        headers: Object.fromEntries(
-          Object.entries(req.headers).map(([k, v]) => [k, String(v)])
-        ),
+        headers: Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, String(v)])),
       });
     }
 
     // Handle /v1/models
     if (req.url?.includes('/models')) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        data: [{ id: 'mock-model', object: 'model', owned_by: 'mock' }],
-      }));
+      res.end(
+        JSON.stringify({
+          data: [{ id: 'mock-model', object: 'model', owned_by: 'mock' }],
+        }),
+      );
       return;
     }
 
-    const response = this.responseQueue.length > 0
-      ? this.responseQueue.shift()!
-      : this._defaultResponse;
+    const response =
+      this.responseQueue.length > 0 ? this.responseQueue.shift()! : this._defaultResponse;
 
     await this.handleStreamingResponse(res, response);
   }
 
-  private async handleStreamingResponse(res: http.ServerResponse, response: StreamingResponse): Promise<void> {
+  private async handleStreamingResponse(
+    res: http.ServerResponse,
+    response: StreamingResponse,
+  ): Promise<void> {
     this._activeStreams++;
 
     res.writeHead(response.statusCode ?? 200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
+      Connection: 'keep-alive',
       ...response.headers,
     });
 
@@ -349,14 +371,12 @@ export class StreamingSSEServer {
 
         // Apply delay if specified
         if (chunk.delayMs) {
-          await new Promise(r => setTimeout(r, chunk.delayMs));
+          await new Promise((r) => setTimeout(r, chunk.delayMs));
         }
 
         // Format and send SSE event
         const eventType = chunk.event ?? 'message';
-        const data = typeof chunk.data === 'string'
-          ? chunk.data
-          : JSON.stringify(chunk.data);
+        const data = typeof chunk.data === 'string' ? chunk.data : JSON.stringify(chunk.data);
 
         res.write(`event: ${eventType}\ndata: ${data}\n\n`);
       }
@@ -386,15 +406,17 @@ export class StreamingSSEServer {
  */
 export function makeTextSSEChunks(content: string): SSEChunk[] {
   const words = content.split(' ');
-  const chunks: SSEChunk[] = words.map(word => ({
+  const chunks: SSEChunk[] = words.map((word) => ({
     data: {
       id: `chatcmpl-${Date.now()}`,
       object: 'chat.completion.chunk',
-      choices: [{
-        index: 0,
-        delta: { content: word + ' ' },
-        finish_reason: null,
-      }],
+      choices: [
+        {
+          index: 0,
+          delta: { content: word + ' ' },
+          finish_reason: null,
+        },
+      ],
     },
   }));
 
@@ -414,24 +436,28 @@ export function makeTextSSEChunks(content: string): SSEChunk[] {
  * Helper to create OpenAI-compatible SSE chunks for tool calls.
  */
 export function makeToolCallSSEChunks(
-  toolCalls: Array<{ id: string; name: string; arguments: string }>
+  toolCalls: Array<{ id: string; name: string; arguments: string }>,
 ): SSEChunk[] {
-  const chunks: SSEChunk[] = toolCalls.map(tc => ({
+  const chunks: SSEChunk[] = toolCalls.map((tc) => ({
     data: {
       id: `chatcmpl-${Date.now()}`,
       object: 'chat.completion.chunk',
-      choices: [{
-        index: 0,
-        delta: {
-          tool_calls: [{
-            index: 0,
-            id: tc.id,
-            type: 'function',
-            function: { name: tc.name, arguments: tc.arguments },
-          }],
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: tc.id,
+                type: 'function',
+                function: { name: tc.name, arguments: tc.arguments },
+              },
+            ],
+          },
+          finish_reason: null,
         },
-        finish_reason: null,
-      }],
+      ],
     },
   }));
 

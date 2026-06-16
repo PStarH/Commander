@@ -17,17 +17,20 @@ import { getGlobalLogger } from '../logging';
 export class SearchConversationsTool implements Tool {
   readonly definition: ToolDefinition = {
     name: 'search_conversations',
-    description: 'Search all past conversations using full-text search (FTS5). Returns matching sessions and messages ranked by relevance. Use this to recall prior decisions, past discussions, and historical context across sessions.',
+    description:
+      'Search all past conversations using full-text search (FTS5). Returns matching sessions and messages ranked by relevance. Use this to recall prior decisions, past discussions, and historical context across sessions.',
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Full-text search query. Supports phrases ("exact match"), prefix matching (term*), and multiple terms (all must match).',
+          description:
+            'Full-text search query. Supports phrases ("exact match"), prefix matching (term*), and multiple terms (all must match).',
         },
         projectId: {
           type: 'string',
-          description: 'Project scope (default: "default"). Use to limit search to a specific project.',
+          description:
+            'Project scope (default: "default"). Use to limit search to a specific project.',
           default: 'default',
         },
         limit: {
@@ -37,12 +40,14 @@ export class SearchConversationsTool implements Tool {
         },
         minImportance: {
           type: 'number',
-          description: 'Minimum importance threshold (0-1). Filters out low-value turns like greetings (default: 0.2)',
+          description:
+            'Minimum importance threshold (0-1). Filters out low-value turns like greetings (default: 0.2)',
           default: 0.2,
         },
         sinceDays: {
           type: 'number',
-          description: 'Only search conversations from the last N days (default: 30). Set to 0 for all time.',
+          description:
+            'Only search conversations from the last N days (default: 30). Set to 0 for all time.',
           default: 30,
         },
       },
@@ -50,8 +55,14 @@ export class SearchConversationsTool implements Tool {
     },
     examples: [
       { name: 'search_conversations', arguments: { query: 'database schema design decision' } },
-      { name: 'search_conversations', arguments: { query: 'API authentication', projectId: 'commander', limit: 5 } },
-      { name: 'search_conversations', arguments: { query: 'bug fix deployment', sinceDays: 7, minImportance: 0.3 } },
+      {
+        name: 'search_conversations',
+        arguments: { query: 'API authentication', projectId: 'commander', limit: 5 },
+      },
+      {
+        name: 'search_conversations',
+        arguments: { query: 'bug fix deployment', sinceDays: 7, minImportance: 0.3 },
+      },
     ],
     category: 'memory',
   };
@@ -103,9 +114,10 @@ export async function searchConversationsCLI(
     projectId: options?.projectId ?? 'default',
     limit: options?.limit ?? 10,
     minImportance: options?.minImportance ?? 0.2,
-    since: options?.sinceDays && options.sinceDays > 0
-      ? new Date(Date.now() - options.sinceDays * 24 * 60 * 60 * 1000).toISOString()
-      : undefined,
+    since:
+      options?.sinceDays && options.sinceDays > 0
+        ? new Date(Date.now() - options.sinceDays * 24 * 60 * 60 * 1000).toISOString()
+        : undefined,
     includeSummaries: true,
   };
 
@@ -117,14 +129,12 @@ export async function searchConversationsCLI(
 
   // Text format
   if (results.length === 0) {
-    const daysSuffix = options?.sinceDays && options.sinceDays > 0 ? ` in the last ${options.sinceDays} days` : '';
+    const daysSuffix =
+      options?.sinceDays && options.sinceDays > 0 ? ` in the last ${options.sinceDays} days` : '';
     return `No conversations found matching "${query}"${daysSuffix}.`;
   }
 
-  const parts: string[] = [
-    `Found ${results.length} conversation(s):`,
-    '',
-  ];
+  const parts: string[] = [`Found ${results.length} conversation(s):`, ''];
 
   for (let i = 0; i < results.length; i++) {
     const r = results[i];

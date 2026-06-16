@@ -39,9 +39,7 @@ export function dagToTaskTree(dag: WorkflowDAG): TaskTreeNode {
     isAtomic: true,
     status: 'PENDING' as const,
     subtasks: [],
-    dependencies: dag.edges
-      .filter(e => e.to === workflowNode.id)
-      .map(e => e.from),
+    dependencies: dag.edges.filter((e) => e.to === workflowNode.id).map((e) => e.from),
     context: {
       systemPrompt: `You are a task executor for: ${workflowNode.goal}`,
       availableTools: workflowNode.tools,
@@ -54,16 +52,14 @@ export function dagToTaskTree(dag: WorkflowDAG): TaskTreeNode {
 
   for (const node of nodes) {
     const children = dag.edges
-      .filter(e => e.from === node.id)
-      .map(e => nodes.find(n => n.id === e.to))
+      .filter((e) => e.from === node.id)
+      .map((e) => nodes.find((n) => n.id === e.to))
       .filter(Boolean) as TaskTreeNode[];
     node.subtasks = children;
   }
 
   // Return root
-  const roots = nodes.filter(
-    n => !dag.edges.some(e => e.to === n.id)
-  );
+  const roots = nodes.filter((n) => !dag.edges.some((e) => e.to === n.id));
 
   if (roots.length === 1) return roots[0];
 
@@ -91,19 +87,21 @@ export function dagToTaskTree(dag: WorkflowDAG): TaskTreeNode {
 function topologicalSort(dag: WorkflowDAG): WorkflowNode[] {
   const visited = new Set<string>();
   const result: WorkflowNode[] = [];
-  const nodeMap = new Map(dag.nodes.map(n => [n.id, n]));
+  const nodeMap = new Map(dag.nodes.map((n) => [n.id, n]));
 
   function visit(nodeId: string, stack: Set<string>) {
     if (visited.has(nodeId)) return;
     if (stack.has(nodeId)) {
       const cyclePath = Array.from(stack).concat(nodeId);
-      const named = cyclePath.map(id => nodeMap.get(id)?.id ?? id).join(' → ');
-      throw new Error(`dagConverter.topologicalSort: cyclic DAG detected (${named}). Workflow DAGs must be acyclic.`);
+      const named = cyclePath.map((id) => nodeMap.get(id)?.id ?? id).join(' → ');
+      throw new Error(
+        `dagConverter.topologicalSort: cyclic DAG detected (${named}). Workflow DAGs must be acyclic.`,
+      );
     }
 
     stack.add(nodeId);
 
-    const outgoing = dag.edges.filter(e => e.from === nodeId);
+    const outgoing = dag.edges.filter((e) => e.from === nodeId);
     for (const edge of outgoing) {
       visit(edge.to, stack);
     }

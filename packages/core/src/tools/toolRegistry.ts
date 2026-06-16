@@ -47,7 +47,12 @@ export class ToolRegistry {
       const compiled = compileSchema(tool.definition.inputSchema);
       registry.compiledSchemas.set(tool.definition.name, compiled);
       tool.compiledSchema = compiled;
-    } catch (e) { getGlobalLogger().warn('ToolRegistry', 'Schema compilation failed', { error: (e as Error)?.message, tool: tool.definition.name }); }
+    } catch (e) {
+      getGlobalLogger().warn('ToolRegistry', 'Schema compilation failed', {
+        error: (e as Error)?.message,
+        tool: tool.definition.name,
+      });
+    }
 
     if (category) {
       // Remove from old category if re-registering
@@ -91,7 +96,7 @@ export class ToolRegistry {
    * Get all tool definitions (for LLM function calling).
    */
   static getAllDefinitions(): ToolDefinition[] {
-    return Array.from(ToolRegistry.getInstance().tools.values()).map(t => t.definition);
+    return Array.from(ToolRegistry.getInstance().tools.values()).map((t) => t.definition);
   }
 
   /**

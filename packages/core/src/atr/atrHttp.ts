@@ -139,7 +139,9 @@ export async function handleAtrHttpRequest(
 
     if (segments[1] === 'runs') {
       if (method === 'GET' && segments.length === 2) {
-        const state = queryStr ? new URLSearchParams(queryStr).get('state') ?? undefined : undefined;
+        const state = queryStr
+          ? (new URLSearchParams(queryStr).get('state') ?? undefined)
+          : undefined;
         const runs = deps.scheduler.listRuns({
           state: state as RunState | undefined,
           tenantId,
@@ -149,7 +151,7 @@ export async function handleAtrHttpRequest(
       }
 
       if (method === 'POST' && segments.length === 2) {
-        const body = await readBody(req, opts.maxBodyBytes) as {
+        const body = (await readBody(req, opts.maxBodyBytes)) as {
           runId?: string;
           goal: string;
           intent?: string;
@@ -189,7 +191,7 @@ export async function handleAtrHttpRequest(
         }
 
         if (method === 'POST' && (action === 'commit' || action === 'abort' || action === 'kill')) {
-          const body = await readBody(req, opts.maxBodyBytes) as {
+          const body = (await readBody(req, opts.maxBodyBytes)) as {
             leaseToken: string;
             fencingEpoch: number;
             reason?: string;
@@ -201,7 +203,10 @@ export async function handleAtrHttpRequest(
 
           if (action === 'commit') {
             const r = deps.scheduler.commitRun({
-              runId, leaseToken: body.leaseToken, fencingEpoch: body.fencingEpoch, tenantId,
+              runId,
+              leaseToken: body.leaseToken,
+              fencingEpoch: body.fencingEpoch,
+              tenantId,
             });
             sendJson(res, r.committed ? 200 : 409, r);
             return { handled: true, status: r.committed ? 200 : 409 };
@@ -209,15 +214,21 @@ export async function handleAtrHttpRequest(
 
           if (action === 'kill') {
             const r = deps.scheduler.killRun({
-              runId, leaseToken: body.leaseToken, fencingEpoch: body.fencingEpoch, tenantId,
+              runId,
+              leaseToken: body.leaseToken,
+              fencingEpoch: body.fencingEpoch,
+              tenantId,
             });
             sendJson(res, r.killed ? 200 : 409, r);
             return { handled: true, status: r.killed ? 200 : 409 };
           }
 
           const r = await deps.scheduler.abortRun({
-            runId, leaseToken: body.leaseToken, fencingEpoch: body.fencingEpoch,
-            reason: body.reason ?? 'http_abort', tenantId,
+            runId,
+            leaseToken: body.leaseToken,
+            fencingEpoch: body.fencingEpoch,
+            reason: body.reason ?? 'http_abort',
+            tenantId,
           });
           sendJson(res, r.aborted ? 200 : 409, r);
           return { handled: true, status: r.aborted ? 200 : 409 };
@@ -226,8 +237,18 @@ export async function handleAtrHttpRequest(
     }
 
     if (segments[1] === 'audit' && method === 'GET') {
-      const limit = queryStr ? Math.min(parseInt(new URLSearchParams(queryStr).get('limit') ?? '100', 10) || 100, 1000) : 100;
-      const allStates: RunState[] = ['PENDING', 'EXECUTING', 'VERIFYING', 'COMMITTED', 'ABORTED', 'COMPENSATED', 'PAUSED'];
+      const limit = queryStr
+        ? Math.min(parseInt(new URLSearchParams(queryStr).get('limit') ?? '100', 10) || 100, 1000)
+        : 100;
+      const allStates: RunState[] = [
+        'PENDING',
+        'EXECUTING',
+        'VERIFYING',
+        'COMMITTED',
+        'ABORTED',
+        'COMPENSATED',
+        'PAUSED',
+      ];
       const runs: RunTransaction[] = [];
       for (const s of allStates) {
         const list = deps.scheduler.listRuns({ state: s, tenantId });
@@ -236,7 +257,10 @@ export async function handleAtrHttpRequest(
           if (full) runs.push(full);
         }
       }
-      const actions = runs.flatMap((tx) => tx.actions).slice(-limit).reverse();
+      const actions = runs
+        .flatMap((tx) => tx.actions)
+        .slice(-limit)
+        .reverse();
       sendJson(res, 200, {
         count: actions.length,
         actions: actions.map((a) => ({

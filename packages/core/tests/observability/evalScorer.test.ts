@@ -9,9 +9,18 @@
  *  - timeoutMs honored — slow judges return error='judge_call_timeout_*ms'
  */
 import { describe, it, expect } from 'vitest';
-import { EvalScorer, parseJudgeResponse, type JudgeProvider, type EvalTarget, type LLMRequest, type LLMResponse } from '../../src/observability/evalScorer';
+import {
+  EvalScorer,
+  parseJudgeResponse,
+  type JudgeProvider,
+  type EvalTarget,
+  type LLMRequest,
+  type LLMResponse,
+} from '../../src/observability/evalScorer';
 
-function mockJudge(respond: (req: LLMRequest) => string | Promise<string> | LLMResponse | Promise<LLMResponse>): JudgeProvider {
+function mockJudge(
+  respond: (req: LLMRequest) => string | Promise<string> | LLMResponse | Promise<LLMResponse>,
+): JudgeProvider {
   return {
     name: 'mock',
     async call(request: LLMRequest): Promise<LLMResponse> {
@@ -44,20 +53,27 @@ const sampleTarget: EvalTarget = {
 
 describe('parseJudgeResponse', () => {
   it('parses direct JSON', () => {
-    expect(parseJudgeResponse('{"score": 0.8, "reasoning": "good"}'))
-      .toEqual({ score: 0.8, reasoning: 'good' });
+    expect(parseJudgeResponse('{"score": 0.8, "reasoning": "good"}')).toEqual({
+      score: 0.8,
+      reasoning: 'good',
+    });
   });
   it('parses JSON wrapped in markdown fences', () => {
-    expect(parseJudgeResponse('```json\n{"score": 0.7, "reasoning": "ok"}\n```'))
-      .toEqual({ score: 0.7, reasoning: 'ok' });
+    expect(parseJudgeResponse('```json\n{"score": 0.7, "reasoning": "ok"}\n```')).toEqual({
+      score: 0.7,
+      reasoning: 'ok',
+    });
   });
   it('parses JSON buried in prose', () => {
-    expect(parseJudgeResponse('Sure! Here you go: {"score": 0.5, "reasoning": "meh"} -- enjoy'))
-      .toEqual({ score: 0.5, reasoning: 'meh' });
+    expect(
+      parseJudgeResponse('Sure! Here you go: {"score": 0.5, "reasoning": "meh"} -- enjoy'),
+    ).toEqual({ score: 0.5, reasoning: 'meh' });
   });
   it('coerces numeric string score', () => {
-    expect(parseJudgeResponse('{"score": "0.42", "reasoning": "ok"}'))
-      .toEqual({ score: 0.42, reasoning: 'ok' });
+    expect(parseJudgeResponse('{"score": "0.42", "reasoning": "ok"}')).toEqual({
+      score: 0.42,
+      reasoning: 'ok',
+    });
   });
   it('returns error for non-JSON', () => {
     expect(parseJudgeResponse('not json at all').error).toBeTruthy();
@@ -101,8 +117,12 @@ describe('EvalScorer', () => {
     const judge: JudgeProvider = {
       name: 'mock',
       async call(req: LLMRequest): Promise<LLMResponse> {
-        capturedPrompt = req.messages.map(m => m.content).join('\n');
-        return { content: '{"score": 0.5, "reasoning": "ok"}', usage: emptyUsage(), finishReason: 'stop' };
+        capturedPrompt = req.messages.map((m) => m.content).join('\n');
+        return {
+          content: '{"score": 0.5, "reasoning": "ok"}',
+          usage: emptyUsage(),
+          finishReason: 'stop',
+        };
       },
     };
     const scorer = new EvalScorer(judge);
@@ -128,7 +148,9 @@ describe('EvalScorer', () => {
   it('returns error string when judge throws (no rethrow)', async () => {
     const judge: JudgeProvider = {
       name: 'broken',
-      async call(): Promise<LLMResponse> { throw new Error('provider down'); },
+      async call(): Promise<LLMResponse> {
+        throw new Error('provider down');
+      },
     };
     const scorer = new EvalScorer(judge);
     const r = await scorer.score(sampleTarget);
@@ -148,8 +170,12 @@ describe('EvalScorer', () => {
     const judge: JudgeProvider = {
       name: 'slow',
       async call(): Promise<LLMResponse> {
-        await new Promise(r => setTimeout(r, 100));
-        return { content: '{"score": 0.5, "reasoning": "ok"}', usage: emptyUsage(), finishReason: 'stop' };
+        await new Promise((r) => setTimeout(r, 100));
+        return {
+          content: '{"score": 0.5, "reasoning": "ok"}',
+          usage: emptyUsage(),
+          finishReason: 'stop',
+        };
       },
     };
     const scorer = new EvalScorer(judge, { timeoutMs: 20 });
@@ -162,8 +188,12 @@ describe('EvalScorer', () => {
     const judge: JudgeProvider = {
       name: 'mock',
       async call(req: LLMRequest): Promise<LLMResponse> {
-        capturedPrompt = req.messages.map(m => m.content).join('\n');
-        return { content: '{"score": 0.7, "reasoning": "ok"}', usage: emptyUsage(), finishReason: 'stop' };
+        capturedPrompt = req.messages.map((m) => m.content).join('\n');
+        return {
+          content: '{"score": 0.7, "reasoning": "ok"}',
+          usage: emptyUsage(),
+          finishReason: 'stop',
+        };
       },
     };
     const scorer = new EvalScorer(judge);
@@ -179,7 +209,10 @@ describe('EvalScorer', () => {
     const scorer = new EvalScorer(judge);
     scorer.registerRubric({ id: 'a', name: 'A', promptTemplate: 'p' });
     scorer.registerRubric({ id: 'b', name: 'B', promptTemplate: 'p' });
-    const ids = scorer.listRubrics().map(r => r.id).sort();
+    const ids = scorer
+      .listRubrics()
+      .map((r) => r.id)
+      .sort();
     expect(ids).toContain('a');
     expect(ids).toContain('b');
     expect(ids).toContain('default-quality');

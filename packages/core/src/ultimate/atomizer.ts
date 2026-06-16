@@ -27,10 +27,16 @@ const MIN_STEPS_FOR_DECOMPOSITION = 5;
 function extractFileIntent(goal: string): string | null {
   const extRe = `(?:md|txt|json|ts|js|py|html|css|yaml|yml|csv|xml|sh|sql|go|rs|java|c|cpp|h)`;
   const patterns = [
-    new RegExp(`write\\s+(?:a|an|the)?\\s*(?:to\\s+)?(?:file\\s+)?[\`"']?(\\S+\\.${extRe})[\`"']?`, 'i'),
+    new RegExp(
+      `write\\s+(?:a|an|the)?\\s*(?:to\\s+)?(?:file\\s+)?[\`"']?(\\S+\\.${extRe})[\`"']?`,
+      'i',
+    ),
     new RegExp(`create\\s+(?:a|an|the)?\\s*(?:file\\s+)?[\`"']?(\\S+\\.${extRe})[\`"']?`, 'i'),
     new RegExp(`generate\\s+(?:a|an|the)?\\s*(?:file\\s+)?[\`"']?(\\S+\\.${extRe})[\`"']?`, 'i'),
-    new RegExp(`output\\s+(?:to\\s+)?(?:the\\s+)?(?:file\\s+)?[\`"']?(\\S+\\.${extRe})[\`"']?`, 'i'),
+    new RegExp(
+      `output\\s+(?:to\\s+)?(?:the\\s+)?(?:file\\s+)?[\`"']?(\\S+\\.${extRe})[\`"']?`,
+      'i',
+    ),
     new RegExp(`produce\\s+(?:a|an|the)?\\s*(?:file\\s+)?[\`"']?(\\S+\\.${extRe})[\`"']?`, 'i'),
     new RegExp(`save\\s+(?:to\\s+)?(?:the\\s+)?(?:file\\s+)?[\`"']?(\\S+\\.${extRe})[\`"']?`, 'i'),
   ];
@@ -39,7 +45,12 @@ function extractFileIntent(goal: string): string | null {
     if (m) {
       // Validate it looks like a real path (not a random word ending in .md)
       const candidate = m[1];
-      if (candidate.includes('/') || candidate.includes('\\') || candidate.startsWith('.') || path.extname(candidate).length > 1) {
+      if (
+        candidate.includes('/') ||
+        candidate.includes('\\') ||
+        candidate.startsWith('.') ||
+        path.extname(candidate).length > 1
+      ) {
         return candidate;
       }
     }
@@ -67,12 +78,15 @@ export class RecursiveAtomizer {
     const nodeId = `task_${Date.now()}_${++this.nodeCounter}`;
     const isAtomic = this.shouldBeAtomic(goal, deliberation, depth);
 
-    const estimatedTokens = isAtomic ? deliberation.estimatedTokens / 2 : deliberation.estimatedTokens;
+    const estimatedTokens = isAtomic
+      ? deliberation.estimatedTokens / 2
+      : deliberation.estimatedTokens;
 
     // Chimera-inspired: use deliberation's per-agent time budget for node timeout
-    const nodeTimeoutMs = deliberation.timeBudgetPerAgentMs > 0
-      ? deliberation.timeBudgetPerAgentMs
-      : Math.round(estimatedTokens * MS_PER_TOKEN + availableTools.length * MS_PER_TOOL);
+    const nodeTimeoutMs =
+      deliberation.timeBudgetPerAgentMs > 0
+        ? deliberation.timeBudgetPerAgentMs
+        : Math.round(estimatedTokens * MS_PER_TOKEN + availableTools.length * MS_PER_TOOL);
 
     const node: TaskTreeNode = {
       id: nodeId,
@@ -108,7 +122,7 @@ export class RecursiveAtomizer {
         });
         for (let i = 0; i < limitedSubtasks.length; i++) {
           children[i].dependencies = limitedSubtasks[i].dependencies
-            .map(depIdx => children[depIdx]?.id)
+            .map((depIdx) => children[depIdx]?.id)
             .filter((id): id is string => !!id);
         }
         node.subtasks = children;
@@ -121,11 +135,7 @@ export class RecursiveAtomizer {
     return node;
   }
 
-  private shouldBeAtomic(
-    goal: string,
-    deliberation: DeliberationPlan,
-    depth: number,
-  ): boolean {
+  private shouldBeAtomic(goal: string, deliberation: DeliberationPlan, depth: number): boolean {
     if (depth >= this.maxDepth) return true;
     if (deliberation.decompositionStrategy === 'NONE') return true;
     if (goal.length < MIN_GOAL_LENGTH_FOR_DECOMPOSITION) return true;
@@ -153,11 +163,13 @@ export class RecursiveAtomizer {
       case 'RECURSIVE':
         return this.decomposeRecursive(goal, deliberation, depth);
       default:
-        return [{
-          goal,
-          deliberation: { ...deliberation, decompositionStrategy: 'NONE' } as DeliberationPlan,
-          dependencies: [],
-        }];
+        return [
+          {
+            goal,
+            deliberation: { ...deliberation, decompositionStrategy: 'NONE' } as DeliberationPlan,
+            dependencies: [],
+          },
+        ];
     }
   }
 
@@ -308,7 +320,10 @@ Write a comprehensive output with:
       deliberation: {
         ...deliberation,
         decompositionStrategy: depth < this.maxDepth - 1 ? 'RECURSIVE' : 'NONE',
-        estimatedAgentCount: Math.max(1, Math.floor((deliberation.estimatedAgentCount ?? 4) / halves)),
+        estimatedAgentCount: Math.max(
+          1,
+          Math.floor((deliberation.estimatedAgentCount ?? 4) / halves),
+        ),
         estimatedSteps: Math.max(3, Math.floor((deliberation.estimatedSteps ?? 12) / halves)),
       },
       dependencies: i > 0 ? [i - 1] : [],
@@ -388,7 +403,9 @@ Write a comprehensive output with:
       '',
       `Task type: ${deliberation.taskType}`,
       `Complexity: ${deliberation.estimatedAgentCount > 5 ? 'HIGH' : deliberation.estimatedAgentCount > 2 ? 'MEDIUM' : 'LOW'}`,
-      isAtomic ? 'Execute efficiently and return structured results.' : 'Decompose and delegate to sub-agents.',
+      isAtomic
+        ? 'Execute efficiently and return structured results.'
+        : 'Decompose and delegate to sub-agents.',
       taskTypeGuidance,
       'Use the artifact pattern: write results to shared storage and return references.',
     ].join('\n');

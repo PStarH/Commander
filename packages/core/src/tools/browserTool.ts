@@ -25,7 +25,7 @@ function acquireBrowserSlot(): Promise<void> {
     activeBrowsers++;
     return Promise.resolve();
   }
-  return new Promise<void>(resolve => {
+  return new Promise<void>((resolve) => {
     browserQueue.push(resolve);
   }).then(() => {
     activeBrowsers++;
@@ -79,7 +79,7 @@ async function withBrowserPage<T>(fn: (page: StealthPage) => Promise<T>): Promis
 }
 
 async function searchDDG(query: string, count: number): Promise<string> {
-  const results = await withBrowserPage(async page => {
+  const results = await withBrowserPage(async (page) => {
     await page.goto('https://duckduckgo.com/?q=' + encodeURIComponent(query) + '&ia=web', {
       waitUntil: 'networkidle',
       timeout: 30000,
@@ -96,7 +96,7 @@ async function searchDDG(query: string, count: number): Promise<string> {
         if (!h2) continue;
         const title = h2.textContent?.trim();
         if (!title) continue;
-        items.push((i + 1) + '. ' + title);
+        items.push(i + 1 + '. ' + title);
         if (snip && snip.textContent) items.push('   ' + snip.textContent.trim().slice(0, 300));
         if (link) items.push('   ' + (link as HTMLAnchorElement).href);
       }
@@ -113,12 +113,12 @@ async function fetchPage(url: string): Promise<string> {
   const safety = isUrlSafe(url);
   if (!safety.safe) throw new Error(`Blocked: ${url} (${safety.reason})`);
 
-  return withBrowserPage(async page => {
+  return withBrowserPage(async (page) => {
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
     await page.waitForTimeout(1000);
     return page.evaluate((arg: undefined) => {
       for (const s of ['script', 'style', 'nav', 'footer', 'header', 'aside', 'iframe']) {
-        document.querySelectorAll(s).forEach(e => e.remove());
+        document.querySelectorAll(s).forEach((e) => e.remove());
       }
       const m = document.querySelector('main,article,.content,#content,.post') || document.body;
       return (m.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 10000);
@@ -128,7 +128,8 @@ async function fetchPage(url: string): Promise<string> {
 
 const SDEF: ToolDefinition = {
   name: 'browser_search',
-  description: 'Search the web via headless browser (DuckDuckGo). Renders JavaScript, handles dynamic content. Best for: pages that require JS rendering, sites that block API scrapers. Use web_search for faster API-based lookups.',
+  description:
+    'Search the web via headless browser (DuckDuckGo). Renders JavaScript, handles dynamic content. Best for: pages that require JS rendering, sites that block API scrapers. Use web_search for faster API-based lookups.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -152,7 +153,10 @@ export class BrowserSearchTool implements Tool {
   maxOutputSize = 50000;
   async execute(args: Record<string, unknown>): Promise<string> {
     try {
-      return await searchDDG(String(args.query || ''), Math.min(10, Math.max(1, Number(args.count) || 5)));
+      return await searchDDG(
+        String(args.query || ''),
+        Math.min(10, Math.max(1, Number(args.count) || 5)),
+      );
     } catch (err) {
       return 'Search failed: ' + (err instanceof Error ? err.message : 'Unknown error');
     }
@@ -161,7 +165,8 @@ export class BrowserSearchTool implements Tool {
 
 const FDEF: ToolDefinition = {
   name: 'browser_fetch',
-  description: 'Fetch webpage content using a browser. Renders JavaScript and extracts main readable text. Best for: SPAs, JS-heavy sites, pages behind client-side rendering. Use web_fetch for simpler server-rendered pages.',
+  description:
+    'Fetch webpage content using a browser. Renders JavaScript and extracts main readable text. Best for: SPAs, JS-heavy sites, pages behind client-side rendering. Use web_fetch for simpler server-rendered pages.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -188,9 +193,11 @@ export class BrowserFetchTool implements Tool {
       return 'Invalid URL. Must start with http:// or https://.';
     }
     try {
-      return 'Content from ' + url + ':\n' + await fetchPage(url);
+      return 'Content from ' + url + ':\n' + (await fetchPage(url));
     } catch (err) {
-      return 'Failed to fetch ' + url + ': ' + (err instanceof Error ? err.message : 'Unknown error');
+      return (
+        'Failed to fetch ' + url + ': ' + (err instanceof Error ? err.message : 'Unknown error')
+      );
     }
   }
 }

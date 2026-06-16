@@ -13,14 +13,22 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as crypto from 'crypto';
-import { OIDCAuthPlugin, createOIDCPluginFromEnv, JWKWithKid } from '../../src/runtime/oidcAuthPlugin';
+import {
+  OIDCAuthPlugin,
+  createOIDCPluginFromEnv,
+  JWKWithKid,
+} from '../../src/runtime/oidcAuthPlugin';
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
 /** Generate an RSA key pair for JWT signing */
-function generateKeyPair(): { publicKey: crypto.KeyObject; privateKey: crypto.KeyObject; jwk: JWKWithKid } {
+function generateKeyPair(): {
+  publicKey: crypto.KeyObject;
+  privateKey: crypto.KeyObject;
+  jwk: JWKWithKid;
+} {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
     modulusLength: 2048,
     publicKeyEncoding: { type: 'spki', format: 'pem' },
@@ -125,14 +133,20 @@ describe('OIDCAuthPlugin', () => {
     });
 
     it('falls back to preferred_username when email is missing', async () => {
-      const jwt = createSignedJWT(validPayload({ email: undefined, preferred_username: 'dev-user' }), keys.privateKey);
+      const jwt = createSignedJWT(
+        validPayload({ email: undefined, preferred_username: 'dev-user' }),
+        keys.privateKey,
+      );
       const result = await plugin.authenticate(jwt);
       expect(result).not.toBeNull();
       expect(result!.username).toBe('dev-user');
     });
 
     it('falls back to sub when both email and preferred_username are missing', async () => {
-      const jwt = createSignedJWT(validPayload({ email: undefined, preferred_username: undefined }), keys.privateKey);
+      const jwt = createSignedJWT(
+        validPayload({ email: undefined, preferred_username: undefined }),
+        keys.privateKey,
+      );
       const result = await plugin.authenticate(jwt);
       expect(result).not.toBeNull();
       expect(result!.username).toBe('user-abc-123');
@@ -140,7 +154,12 @@ describe('OIDCAuthPlugin', () => {
 
     it('supports RS384 and RS512 algorithms', async () => {
       for (const alg of ['RS384', 'RS512'] as const) {
-        const jwt = createSignedJWT(validPayload({ sub: `user-${alg}` }), keys.privateKey, 'test-key-1', alg);
+        const jwt = createSignedJWT(
+          validPayload({ sub: `user-${alg}` }),
+          keys.privateKey,
+          'test-key-1',
+          alg,
+        );
         const result = await plugin.authenticate(jwt);
         expect(result).not.toBeNull();
         expect(result!.userId).toBe(`user-${alg}`);
@@ -161,7 +180,10 @@ describe('OIDCAuthPlugin', () => {
         clientId: 'test-client-id',
         trustedJwks: [keys.jwk],
       });
-      const jwt = createSignedJWT(validPayload({ iss: 'https://acme-corp.okta.com', aud: 'test-client-id' }), keys.privateKey);
+      const jwt = createSignedJWT(
+        validPayload({ iss: 'https://acme-corp.okta.com', aud: 'test-client-id' }),
+        keys.privateKey,
+      );
       const result = await oktaPlugin.authenticate(jwt);
       expect(result).not.toBeNull();
       expect(result!.tenantId).toBe('acme-corp');
@@ -270,7 +292,10 @@ describe('OIDCAuthPlugin', () => {
     });
 
     it('rejects JWT with wrong issuer', async () => {
-      const jwt = createSignedJWT(validPayload({ iss: 'https://wrong-issuer.com' }), keys.privateKey);
+      const jwt = createSignedJWT(
+        validPayload({ iss: 'https://wrong-issuer.com' }),
+        keys.privateKey,
+      );
       const result = await plugin.authenticate(jwt);
       expect(result).toBeNull();
     });
@@ -363,7 +388,9 @@ describe('OIDCAuthPlugin', () => {
       const jwt = createSignedJWT(validPayload({ role: 'admin' }), keys.privateKey);
       // Tamper with the payload
       const parts = jwt.split('.');
-      const tamperedPayload = base64url(Buffer.from(JSON.stringify(validPayload({ role: 'super-admin' }))));
+      const tamperedPayload = base64url(
+        Buffer.from(JSON.stringify(validPayload({ role: 'super-admin' }))),
+      );
       const tamperedJwt = `${parts[0]}.${tamperedPayload}.${parts[2]}`;
 
       const result = await plugin.authenticate(tamperedJwt);
@@ -373,7 +400,9 @@ describe('OIDCAuthPlugin', () => {
     it('rejects JWT with tampered header', async () => {
       const jwt = createSignedJWT(validPayload(), keys.privateKey);
       const parts = jwt.split('.');
-      const tamperedHeader = base64url(Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'different-key' })));
+      const tamperedHeader = base64url(
+        Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'different-key' })),
+      );
       const tamperedJwt = `${tamperedHeader}.${parts[1]}.${parts[2]}`;
 
       const result = await plugin.authenticate(tamperedJwt);

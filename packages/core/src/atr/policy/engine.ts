@@ -45,7 +45,10 @@ export class PolicyEngine {
   private readonly packAst: PolicyPackAst;
   private readonly cycles: Set<string>;
 
-  constructor(pack: PolicyPackAst, private readonly opts: PolicyEngineOptions = {}) {
+  constructor(
+    pack: PolicyPackAst,
+    private readonly opts: PolicyEngineOptions = {},
+  ) {
     this.maxDepth = opts.maxEvaluationDepth ?? DEFAULT_MAX_DEPTH;
     this.timeoutMs = opts.evaluationTimeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.packAst = pack;
@@ -125,7 +128,14 @@ export class PolicyEngine {
       return decision;
     } catch (err) {
       this.statsImpl.errors++;
-      return this.failClosed(input, decisionId, budget, `engine_error: ${(err as Error).message ?? 'unknown'}`, start, false);
+      return this.failClosed(
+        input,
+        decisionId,
+        budget,
+        `engine_error: ${(err as Error).message ?? 'unknown'}`,
+        start,
+        false,
+      );
     }
   }
 
@@ -248,9 +258,21 @@ export class PolicyEngine {
   }
 
   private applyBudgetGate(
-    result: { effect: PolicyEffect; reason: string; decisionPath: string[]; matchedRule: string | null; denyClass?: PolicyDenyClass },
+    result: {
+      effect: PolicyEffect;
+      reason: string;
+      decisionPath: string[];
+      matchedRule: string | null;
+      denyClass?: PolicyDenyClass;
+    },
     input: PolicyInput,
-  ): { effect: PolicyEffect; reason: string; decisionPath: string[]; matchedRule: string | null; denyClass?: PolicyDenyClass } {
+  ): {
+    effect: PolicyEffect;
+    reason: string;
+    decisionPath: string[];
+    matchedRule: string | null;
+    denyClass?: PolicyDenyClass;
+  } {
     if (result.effect === 'deny' || result.effect === 'deny_class') return result;
 
     if (input.metrics.tokensUsedThisRun > input.tenant.config.tokenBudget) {
@@ -290,7 +312,8 @@ export class PolicyEngine {
     score += Math.min(input.metrics.destructiveThisRun * 10, 30);
     if (input.tool.isReadOnly) score -= 20;
     if (input.tool.category === 'shell') score += 5;
-    if (input.tool.category === 'network' && input.tenant.config.allowNetwork === false) score += 10;
+    if (input.tool.category === 'network' && input.tenant.config.allowNetwork === false)
+      score += 10;
     if (effect === 'require_approval') score += 5;
     return Math.max(0, Math.min(100, score));
   }
@@ -316,7 +339,8 @@ export class PolicyEngine {
     else if (decision.effect === 'deny') this.statsImpl.denials++;
     else if (decision.effect === 'require_approval') this.statsImpl.approvals++;
     else if (decision.effect === 'deny_class' && decision.denyClass) {
-      this.statsImpl.denyClasses[decision.denyClass] = (this.statsImpl.denyClasses[decision.denyClass] ?? 0) + 1;
+      this.statsImpl.denyClasses[decision.denyClass] =
+        (this.statsImpl.denyClasses[decision.denyClass] ?? 0) + 1;
       this.statsImpl.denials++;
     }
   }
@@ -375,5 +399,11 @@ export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return '[' + value.map(canonicalJson).join(',') + ']';
   const keys = Object.keys(value as Record<string, unknown>).sort();
-  return '{' + keys.map((k) => JSON.stringify(k) + ':' + canonicalJson((value as Record<string, unknown>)[k])).join(',') + '}';
+  return (
+    '{' +
+    keys
+      .map((k) => JSON.stringify(k) + ':' + canonicalJson((value as Record<string, unknown>)[k]))
+      .join(',') +
+    '}'
+  );
 }

@@ -33,11 +33,14 @@ export function persist(state: MetaLearnerState, persistPath: string | null): vo
     // Serialize Thompson priors (Beta distributions as alpha/beta pairs)
     const serializedPriors: Record<string, Array<{ alpha: number; beta: number }>> = {};
     for (const [taskType, distributions] of state.thompsonPriors) {
-      serializedPriors[taskType] = distributions.map(d => ({ alpha: d.alpha, beta: d.beta }));
+      serializedPriors[taskType] = distributions.map((d) => ({ alpha: d.alpha, beta: d.beta }));
     }
 
     // Serialize cross-model priors
-    const serializedCrossModel: Record<string, Record<string, { alpha: number; beta: number }>> = {};
+    const serializedCrossModel: Record<
+      string,
+      Record<string, { alpha: number; beta: number }>
+    > = {};
     for (const [modelId, modelMap] of state.perModelPriors) {
       serializedCrossModel[modelId] = {};
       for (const [strategy, dist] of modelMap) {
@@ -62,7 +65,9 @@ export function persist(state: MetaLearnerState, persistPath: string | null): vo
     fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
     fs.renameSync(tmpPath, persistPath);
   } catch (e) {
-    getGlobalLogger().warn('MetaLearner', 'Persistence failed (best-effort)', { error: (e as Error)?.message });
+    getGlobalLogger().warn('MetaLearner', 'Persistence failed (best-effort)', {
+      error: (e as Error)?.message,
+    });
   }
 }
 
@@ -85,7 +90,7 @@ export function load(state: MetaLearnerState, persistPath: string | null): void 
     if (data.thompsonPriors && typeof data.thompsonPriors === 'object') {
       for (const [taskType, dists] of Object.entries(data.thompsonPriors)) {
         const priors = (dists as Array<{ alpha: number; beta: number }>).map(
-          d => new BetaDistribution(d.alpha, d.beta)
+          (d) => new BetaDistribution(d.alpha, d.beta),
         );
         state.thompsonPriors.set(taskType, priors);
       }
@@ -95,7 +100,9 @@ export function load(state: MetaLearnerState, persistPath: string | null): void 
     if (data.crossModelPriors && typeof data.crossModelPriors === 'object') {
       for (const [modelId, strategies] of Object.entries(data.crossModelPriors)) {
         const modelMap = new Map<string, BetaDistribution>();
-        for (const [strategy, d] of Object.entries(strategies as Record<string, { alpha: number; beta: number }>)) {
+        for (const [strategy, d] of Object.entries(
+          strategies as Record<string, { alpha: number; beta: number }>,
+        )) {
           modelMap.set(strategy, new BetaDistribution(d.alpha, d.beta));
         }
         state.perModelPriors.set(modelId, modelMap);
@@ -114,6 +121,8 @@ export function load(state: MetaLearnerState, persistPath: string | null): void 
       state.config = { ...state.config, ...data.config };
     }
   } catch (e) {
-    getGlobalLogger().warn('MetaLearner', 'Load failed (best-effort)', { error: (e as Error)?.message });
+    getGlobalLogger().warn('MetaLearner', 'Load failed (best-effort)', {
+      error: (e as Error)?.message,
+    });
   }
 }

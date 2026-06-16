@@ -35,7 +35,7 @@ export interface AgentExecutor {
   execute(
     agentId: string,
     input: unknown,
-    context: SequentialContext
+    context: SequentialContext,
   ): Promise<{
     output: unknown;
     tokenUsage: TokenUsage;
@@ -90,10 +90,7 @@ export class SequentialPipelineExecutor {
   // GAP-25: Track active abort controllers per execution for proper cancellation
   private activeAbortControllers: Map<string, AbortController> = new Map();
 
-  constructor(
-    agentExecutor: AgentExecutor,
-    config?: SequentialExecutorConfig
-  ) {
+  constructor(agentExecutor: AgentExecutor, config?: SequentialExecutorConfig) {
     this.agentExecutor = agentExecutor;
     this.config = {
       defaultStepTimeout: config?.defaultStepTimeout ?? 180000, // 3 minutes
@@ -109,7 +106,7 @@ export class SequentialPipelineExecutor {
    */
   async execute(
     pipeline: SequentialPipeline,
-    initialInput?: unknown
+    initialInput?: unknown,
   ): Promise<SequentialPipelineRun> {
     const runId = `${pipeline.id}-run-${Date.now()}`;
     const abortController = new AbortController();
@@ -183,13 +180,7 @@ export class SequentialPipelineExecutor {
         context.currentStepIndex = i;
 
         // Execute step with retries
-        const result = await this.executeStep(
-          step,
-          currentInput,
-          context,
-          state,
-          i
-        );
+        const result = await this.executeStep(step, currentInput, context, state, i);
 
         run.stepResults.push(result);
         context.previousResults.push(result);
@@ -258,7 +249,7 @@ export class SequentialPipelineExecutor {
     input: unknown,
     context: SequentialContext,
     state: ExecutionState,
-    stepIndex: number
+    stepIndex: number,
   ): Promise<SequentialStepResult> {
     const maxRetries = step.maxRetries ?? this.config.defaultMaxRetries;
     const timeoutMs = step.timeout ?? this.config.defaultStepTimeout;
@@ -286,11 +277,7 @@ export class SequentialPipelineExecutor {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         // Execute with timeout
-        const executionPromise = this.agentExecutor.execute(
-          step.agentId,
-          input,
-          context
-        );
+        const executionPromise = this.agentExecutor.execute(step.agentId, input, context);
 
         let timeoutTimer: ReturnType<typeof setTimeout>;
         const timeoutPromise = new Promise<never>((_, reject) => {
@@ -322,12 +309,15 @@ export class SequentialPipelineExecutor {
 
         return result;
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
         if (attempt < maxRetries) {
           // Retry
-          getGlobalLogger().warn('SequentialPipelineExecutor', `Step ${stepId} failed (attempt ${attempt + 1}/${maxRetries})`, { error: errorMessage });
+          getGlobalLogger().warn(
+            'SequentialPipelineExecutor',
+            `Step ${stepId} failed (attempt ${attempt + 1}/${maxRetries})`,
+            { error: errorMessage },
+          );
           // Wait before retry (exponential backoff)
           await new Promise((resolve) => {
             const t = setTimeout(resolve, Math.min(1000 * Math.pow(2, attempt), 10000));
@@ -368,34 +358,35 @@ export class SequentialPipelineExecutor {
           case 'PIPELINE_START':
             await handler.onPipelineStart?.(
               { id: event.pipelineId, name: '', steps: [] } as SequentialPipeline,
-              {} as SequentialContext
+              {} as SequentialContext,
             );
             break;
           case 'STEP_START':
             await handler.onStepStart?.(
               { id: event.stepId || '', name: '', agentId: '' } as SequentialStep,
-              {} as SequentialContext
+              {} as SequentialContext,
             );
             break;
           case 'STEP_COMPLETE':
             await handler.onStepComplete?.(
               { id: event.stepId || '', name: '', agentId: '' } as SequentialStep,
               event.result as SequentialStepResult,
-              {} as SequentialContext
+              {} as SequentialContext,
             );
             break;
           case 'PIPELINE_COMPLETE':
             await handler.onPipelineComplete?.(event.run as SequentialPipelineRun);
             break;
           case 'PIPELINE_ERROR':
-            await handler.onPipelineError?.(
-              event.error as Error,
-              {} as SequentialContext
-            );
+            await handler.onPipelineError?.(event.error as Error, {} as SequentialContext);
             break;
         }
       } catch (error) {
-        getGlobalLogger().error('SequentialPipelineExecutor', 'Event handler error', error instanceof Error ? error : new Error(String(error)));
+        getGlobalLogger().error(
+          'SequentialPipelineExecutor',
+          'Event handler error',
+          error instanceof Error ? error : new Error(String(error)),
+        );
       }
     }
   }
@@ -424,10 +415,13 @@ export class InMemoryAgentExecutor implements AgentExecutor {
   async execute(
     agentId: string,
     input: unknown,
-    context: SequentialContext
+    context: SequentialContext,
   ): Promise<{ output: unknown; tokenUsage: TokenUsage }> {
     // Simulate agent execution
-    getGlobalLogger().info('InMemoryAgentExecutor', `Executing agent ${agentId} for step ${context.currentStepIndex}`);
+    getGlobalLogger().info(
+      'InMemoryAgentExecutor',
+      `Executing agent ${agentId} for step ${context.currentStepIndex}`,
+    );
 
     // Return mock output
     return {
@@ -450,7 +444,7 @@ export class InMemoryAgentExecutor implements AgentExecutor {
  * Create a sequential pipeline executor with default configuration.
  */
 export function createSequentialExecutor(
-  agentExecutor?: AgentExecutor
+  agentExecutor?: AgentExecutor,
 ): SequentialPipelineExecutor {
   const executor = agentExecutor ?? new InMemoryAgentExecutor();
   return new SequentialPipelineExecutor(executor, {

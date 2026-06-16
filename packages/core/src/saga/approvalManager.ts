@@ -24,15 +24,9 @@ export interface ApprovalResult {
 
 export interface ApprovalStore {
   create(request: ApprovalRequest): Promise<void>;
-  get(
-    runId: string,
-    nodeId: string
-  ): Promise<ApprovalRequest | undefined>;
+  get(runId: string, nodeId: string): Promise<ApprovalRequest | undefined>;
   record(request: ApprovalRequest, result: ApprovalResult): Promise<void>;
-  outcome(
-    runId: string,
-    nodeId: string
-  ): Promise<ApprovalResult | undefined>;
+  outcome(runId: string, nodeId: string): Promise<ApprovalResult | undefined>;
   listPending(approver: string): Promise<ApprovalRequest[]>;
   delete(runId: string, nodeId: string): Promise<void>;
 }
@@ -53,33 +47,24 @@ export class InMemoryApprovalStore implements ApprovalStore {
     const k = this.key(request.runId, request.nodeId);
     if (this.records.has(k)) {
       throw new ApprovalStoreError(
-        `Approval already exists for ${request.runId}/${request.nodeId}`
+        `Approval already exists for ${request.runId}/${request.nodeId}`,
       );
     }
     this.records.set(k, { request });
   }
 
-  async get(
-    runId: string,
-    nodeId: string
-  ): Promise<ApprovalRequest | undefined> {
+  async get(runId: string, nodeId: string): Promise<ApprovalRequest | undefined> {
     return this.records.get(this.key(runId, nodeId))?.request;
   }
 
-  async record(
-    request: ApprovalRequest,
-    result: ApprovalResult
-  ): Promise<void> {
+  async record(request: ApprovalRequest, result: ApprovalResult): Promise<void> {
     this.records.set(this.key(request.runId, request.nodeId), {
       request,
       result,
     });
   }
 
-  async outcome(
-    runId: string,
-    nodeId: string
-  ): Promise<ApprovalResult | undefined> {
+  async outcome(runId: string, nodeId: string): Promise<ApprovalResult | undefined> {
     return this.records.get(this.key(runId, nodeId))?.result;
   }
 
@@ -116,11 +101,9 @@ export class FileApprovalStore implements ApprovalStore {
 
   async create(request: ApprovalRequest): Promise<void> {
     const path = this.pathFor(request.runId, request.nodeId);
-    if (
-      await this.exists(path)
-    ) {
+    if (await this.exists(path)) {
       throw new ApprovalStoreError(
-        `Approval already exists for ${request.runId}/${request.nodeId}`
+        `Approval already exists for ${request.runId}/${request.nodeId}`,
       );
     }
     await this.ensureDir(dirname(path));
@@ -129,34 +112,21 @@ export class FileApprovalStore implements ApprovalStore {
     await fs.rename(tmp, path);
   }
 
-  async get(
-    runId: string,
-    nodeId: string
-  ): Promise<ApprovalRequest | undefined> {
+  async get(runId: string, nodeId: string): Promise<ApprovalRequest | undefined> {
     const path = this.pathFor(runId, nodeId);
     const record = await this.readRecord(path);
     return record?.request;
   }
 
-  async record(
-    request: ApprovalRequest,
-    result: ApprovalResult
-  ): Promise<void> {
+  async record(request: ApprovalRequest, result: ApprovalResult): Promise<void> {
     const path = this.pathFor(request.runId, request.nodeId);
     await this.ensureDir(dirname(path));
     const tmp = path + '.tmp';
-    await fs.writeFile(
-      tmp,
-      JSON.stringify({ request, result }),
-      'utf8'
-    );
+    await fs.writeFile(tmp, JSON.stringify({ request, result }), 'utf8');
     await fs.rename(tmp, path);
   }
 
-  async outcome(
-    runId: string,
-    nodeId: string
-  ): Promise<ApprovalResult | undefined> {
+  async outcome(runId: string, nodeId: string): Promise<ApprovalResult | undefined> {
     const path = this.pathFor(runId, nodeId);
     const record = await this.readRecord(path);
     return record?.result;
@@ -168,9 +138,7 @@ export class FileApprovalStore implements ApprovalStore {
     let runDirs: string[] = [];
     try {
       const entries = await fs.readdir(base, { withFileTypes: true });
-      runDirs = entries
-        .filter((e) => e.isDirectory())
-        .map((e) => e.name);
+      runDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw err;
@@ -205,9 +173,7 @@ export class FileApprovalStore implements ApprovalStore {
     }
   }
 
-  private async readRecord(
-    path: string
-  ): Promise<StoredApproval | undefined> {
+  private async readRecord(path: string): Promise<StoredApproval | undefined> {
     try {
       const content = await fs.readFile(path, 'utf8');
       return JSON.parse(content) as StoredApproval;
@@ -243,31 +209,22 @@ export class ApprovalManager {
     await this.options.store.create(req);
   }
 
-  async decide(
-    runId: string,
-    nodeId: string,
-    result: ApprovalResult
-  ): Promise<void> {
+  async decide(runId: string, nodeId: string, result: ApprovalResult): Promise<void> {
     const existing = await this.options.store.get(runId, nodeId);
     if (!existing) {
-      throw new ApprovalError(
-        `No approval request for ${runId}/${nodeId}`
-      );
+      throw new ApprovalError(`No approval request for ${runId}/${nodeId}`);
     }
     await this.options.store.record(existing, result);
   }
 
-  async outcome(
-    runId: string,
-    nodeId: string
-  ): Promise<ApprovalResult | undefined> {
+  async outcome(runId: string, nodeId: string): Promise<ApprovalResult | undefined> {
     return this.options.store.outcome(runId, nodeId);
   }
 
   async waitForDecision(
     runId: string,
     nodeId: string,
-    options: ApprovalWaitOptions = {}
+    options: ApprovalWaitOptions = {},
   ): Promise<ApprovalResult> {
     const pollIntervalMs = options.pollIntervalMs ?? 500;
     const signal = options.signal;
@@ -304,7 +261,7 @@ export class ApprovalManager {
             clearTimeout(timer);
             resolve();
           },
-          { once: true }
+          { once: true },
         );
       }
     });

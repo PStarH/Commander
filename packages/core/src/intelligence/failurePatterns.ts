@@ -15,17 +15,17 @@ import { getGlobalLogger } from '../logging';
 
 export interface FailurePattern {
   id: string;
-  pattern: string;           // e.g., "deploy without migration"
+  pattern: string; // e.g., "deploy without migration"
   category: 'deploy' | 'test' | 'config' | 'dependency' | 'security' | 'other';
-  description: string;       // Human-readable description
+  description: string; // Human-readable description
   occurrences: Array<{
     timestamp: string;
-    context: string;         // What was happening
-    resolution?: string;     // How it was fixed
+    context: string; // What was happening
+    resolution?: string; // How it was fixed
   }>;
   lastOccurrence: string;
-  confidence: number;        // 0-1, how confident we are this is a real pattern
-  autoWarn: boolean;         // Should we warn automatically?
+  confidence: number; // 0-1, how confident we are this is a real pattern
+  autoWarn: boolean; // Should we warn automatically?
 }
 
 export interface FailureWarning {
@@ -58,7 +58,9 @@ export class FailurePatternLearner {
           this.patterns.set(p.id, p);
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   private savePatterns(): void {
@@ -66,8 +68,13 @@ export class FailurePatternLearner {
       const fs = require('fs');
       const path = require('path');
       fs.mkdirSync(path.dirname(this.patternsPath), { recursive: true });
-      fs.writeFileSync(this.patternsPath, JSON.stringify(Array.from(this.patterns.values()), null, 2));
-    } catch { /* ignore */ }
+      fs.writeFileSync(
+        this.patternsPath,
+        JSON.stringify(Array.from(this.patterns.values()), null, 2),
+      );
+    } catch {
+      /* ignore */
+    }
   }
 
   /**
@@ -101,11 +108,13 @@ export class FailurePatternLearner {
         pattern: this.extractPattern(params.task, params.error),
         category: params.category ?? this.inferCategory(params.task, params.error),
         description: `${params.task}: ${params.error}`,
-        occurrences: [{
-          timestamp: new Date().toISOString(),
-          context: params.context,
-          resolution: params.resolution,
-        }],
+        occurrences: [
+          {
+            timestamp: new Date().toISOString(),
+            context: params.context,
+            resolution: params.resolution,
+          },
+        ],
         lastOccurrence: new Date().toISOString(),
         confidence: 0.3,
         autoWarn: false,
@@ -150,7 +159,12 @@ export class FailurePatternLearner {
         if (hoursSinceResolution < 24) continue; // Don't warn if resolved in last 24h
       }
 
-      const severity = pattern.occurrences.length >= 5 ? 'high' : pattern.occurrences.length >= 3 ? 'medium' : 'low';
+      const severity =
+        pattern.occurrences.length >= 5
+          ? 'high'
+          : pattern.occurrences.length >= 3
+            ? 'medium'
+            : 'low';
       const suggestion = this.generateSuggestion(pattern);
 
       warnings.push({ pattern, suggestion, severity });
@@ -166,8 +180,9 @@ export class FailurePatternLearner {
    * Get all patterns (for display).
    */
   getPatterns(): FailurePattern[] {
-    return Array.from(this.patterns.values())
-      .sort((a, b) => new Date(b.lastOccurrence).getTime() - new Date(a.lastOccurrence).getTime());
+    return Array.from(this.patterns.values()).sort(
+      (a, b) => new Date(b.lastOccurrence).getTime() - new Date(a.lastOccurrence).getTime(),
+    );
   }
 
   /**
@@ -221,8 +236,14 @@ export class FailurePatternLearner {
 
   private extractPattern(task: string, error: string): string {
     // Extract key words from task and error
-    const taskWords = task.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-    const errorWords = error.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    const taskWords = task
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 3);
+    const errorWords = error
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 3);
     return [...new Set([...taskWords, ...errorWords])].slice(0, 5).join(' ');
   }
 
@@ -231,7 +252,8 @@ export class FailurePatternLearner {
     if (text.includes('deploy') || text.includes('production')) return 'deploy';
     if (text.includes('test') || text.includes('spec')) return 'test';
     if (text.includes('config') || text.includes('env')) return 'config';
-    if (text.includes('depend') || text.includes('package') || text.includes('npm')) return 'dependency';
+    if (text.includes('depend') || text.includes('package') || text.includes('npm'))
+      return 'dependency';
     if (text.includes('security') || text.includes('vulnerability')) return 'security';
     return 'other';
   }
@@ -239,27 +261,31 @@ export class FailurePatternLearner {
   private calculateSimilarity(a: string, b: string): number {
     const wordsA = new Set(a.toLowerCase().split(/\s+/));
     const wordsB = new Set(b.toLowerCase().split(/\s+/));
-    const intersection = new Set([...wordsA].filter(w => wordsB.has(w)));
+    const intersection = new Set([...wordsA].filter((w) => wordsB.has(w)));
     const union = new Set([...wordsA, ...wordsB]);
     return union.size > 0 ? intersection.size / union.size : 0;
   }
 
   private generateSuggestion(pattern: FailurePattern): string {
-    const lastResolution = pattern.occurrences
-      .reverse()
-      .find(o => o.resolution)?.resolution;
+    const lastResolution = pattern.occurrences.reverse().find((o) => o.resolution)?.resolution;
 
     if (lastResolution) {
       return `上次的解决方案: ${lastResolution}`;
     }
 
     switch (pattern.category) {
-      case 'deploy': return '建议先检查数据库迁移和环境变量';
-      case 'test': return '建议先运行测试确认当前状态';
-      case 'config': return '建议检查配置文件和环境变量';
-      case 'dependency': return '建议检查依赖版本和兼容性';
-      case 'security': return '建议运行安全扫描';
-      default: return '建议仔细检查后再继续';
+      case 'deploy':
+        return '建议先检查数据库迁移和环境变量';
+      case 'test':
+        return '建议先运行测试确认当前状态';
+      case 'config':
+        return '建议检查配置文件和环境变量';
+      case 'dependency':
+        return '建议检查依赖版本和兼容性';
+      case 'security':
+        return '建议运行安全扫描';
+      default:
+        return '建议仔细检查后再继续';
     }
   }
 }

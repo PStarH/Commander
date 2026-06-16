@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { StablePrefix, AppendOnlyLog, buildCachedRequest } from '../../src/runtime/stableContext.js';
+import {
+  StablePrefix,
+  AppendOnlyLog,
+  buildCachedRequest,
+} from '../../src/runtime/stableContext.js';
 import type { LLMMessage } from '../../src/runtime/types.js';
 
 describe('StablePrefix', () => {
@@ -33,9 +37,18 @@ describe('StablePrefix', () => {
   });
 
   it('matches() returns true only for equivalent prefixes', () => {
-    const a = new StablePrefix({ systemPrompt: 'X', toolDefinitions: [{ name: 't', description: 'd' }] });
-    const b = new StablePrefix({ systemPrompt: 'X', toolDefinitions: [{ name: 't', description: 'd' }] });
-    const c = new StablePrefix({ systemPrompt: 'X', toolDefinitions: [{ name: 't', description: 'e' }] });
+    const a = new StablePrefix({
+      systemPrompt: 'X',
+      toolDefinitions: [{ name: 't', description: 'd' }],
+    });
+    const b = new StablePrefix({
+      systemPrompt: 'X',
+      toolDefinitions: [{ name: 't', description: 'd' }],
+    });
+    const c = new StablePrefix({
+      systemPrompt: 'X',
+      toolDefinitions: [{ name: 't', description: 'e' }],
+    });
     assert.equal(a.matches(b), true);
     assert.equal(a.matches(c), false);
   });
@@ -56,7 +69,10 @@ describe('AppendOnlyLog', () => {
     log.append(msg('user', 'hi'));
     log.append(msg('assistant', 'hello'));
     assert.equal(log.size(), 2);
-    assert.deepEqual(log.getAll().map(m => m.content), ['hi', 'hello']);
+    assert.deepEqual(
+      log.getAll().map((m) => m.content),
+      ['hi', 'hello'],
+    );
   });
 
   it('supports batch append', () => {
@@ -68,14 +84,23 @@ describe('AppendOnlyLog', () => {
   it('returns last N entries', () => {
     const log = new AppendOnlyLog();
     for (let i = 0; i < 10; i++) log.append(msg('user', String(i)));
-    assert.deepEqual(log.last(3).map(m => m.content), ['7', '8', '9']);
+    assert.deepEqual(
+      log.last(3).map((m) => m.content),
+      ['7', '8', '9'],
+    );
   });
 
   it('deltaFrom returns entries from index to end', () => {
     const log = new AppendOnlyLog();
     log.append([msg('user', 'a'), msg('user', 'b'), msg('user', 'c')]);
-    assert.deepEqual(log.deltaFrom(1).map(m => m.content), ['b', 'c']);
-    assert.deepEqual(log.deltaFrom(0).map(m => m.content), ['a', 'b', 'c']);
+    assert.deepEqual(
+      log.deltaFrom(1).map((m) => m.content),
+      ['b', 'c'],
+    );
+    assert.deepEqual(
+      log.deltaFrom(0).map((m) => m.content),
+      ['a', 'b', 'c'],
+    );
     assert.deepEqual(log.deltaFrom(99), []);
   });
 
@@ -101,7 +126,10 @@ describe('buildCachedRequest', () => {
   it('concatenates prefix messages + log entries', () => {
     const prefix = new StablePrefix({ systemPrompt: 'SYSTEM', toolDefinitions: [] });
     const log = new AppendOnlyLog();
-    log.append([{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }]);
+    log.append([
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'hello' },
+    ]);
     const result = buildCachedRequest({ prefix, log });
     assert.equal(result.messages.length, 3);
     assert.equal(result.messages[0].content, 'SYSTEM');

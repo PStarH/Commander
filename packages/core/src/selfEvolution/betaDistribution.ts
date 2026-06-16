@@ -74,6 +74,6 @@ export class BetaDistribution {
    */
   explorationBonus(totalSamples: number): number {
     if (this.totalTrials === 0) return 1.0; // Max exploration for untried strategies
-    return Math.sqrt(2 * Math.log(Math.max(1, totalSamples)) / this.totalTrials);
+    return Math.sqrt((2 * Math.log(Math.max(1, totalSamples))) / this.totalTrials);
   }
 }

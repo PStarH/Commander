@@ -59,7 +59,10 @@ export class CircuitBreakerRegistry {
       merged.halfOpenMaxTests,
       (from, to) => {
         if (to === 'OPEN') {
-          getGlobalLogger().warn('CircuitBreakerRegistry', `"${name}" opened (${from}→OPEN, ${this.getStats(name).failureCount} failures)`);
+          getGlobalLogger().warn(
+            'CircuitBreakerRegistry',
+            `"${name}" opened (${from}→OPEN, ${this.getStats(name).failureCount} failures)`,
+          );
         }
         if (to === 'CLOSED') {
           getGlobalLogger().info('CircuitBreakerRegistry', `"${name}" closed (${from}→CLOSED)`);
@@ -91,7 +94,17 @@ export class CircuitBreakerRegistry {
   getStats(name: string): CircuitStats {
     const breaker = this.breakers.get(name);
     if (!breaker) {
-      return { state: 'CLOSED', failureCount: 0, successCount: 0, lastFailureTime: 0, threshold: 0, recoveryTimeMs: 0, openCount: 0, semanticFailureCount: 0, securityEventCount: 0 };
+      return {
+        state: 'CLOSED',
+        failureCount: 0,
+        successCount: 0,
+        lastFailureTime: 0,
+        threshold: 0,
+        recoveryTimeMs: 0,
+        openCount: 0,
+        semanticFailureCount: 0,
+        securityEventCount: 0,
+      };
     }
     return breaker.getStats();
   }
@@ -125,6 +138,9 @@ export class CircuitBreakerRegistry {
   }
 
   dispose(): void {
-    if (this.pruneTimer) { clearInterval(this.pruneTimer); this.pruneTimer = null; }
+    if (this.pruneTimer) {
+      clearInterval(this.pruneTimer);
+      this.pruneTimer = null;
+    }
   }
 }

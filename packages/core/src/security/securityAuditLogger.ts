@@ -180,94 +180,244 @@ export class SecurityAuditLogger {
 
   // ── Convenience Methods ───────────────────────────────────────────
 
-  logSandboxViolation(source: string, message: string, details?: Record<string, unknown>, context?: SecurityEvent['context']): SecurityEvent {
-    return this.logEvent({ type: 'sandbox_violation', severity: 'critical', source, message, details, context });
+  logSandboxViolation(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+    context?: SecurityEvent['context'],
+  ): SecurityEvent {
+    return this.logEvent({
+      type: 'sandbox_violation',
+      severity: 'critical',
+      source,
+      message,
+      details,
+      context,
+    });
   }
 
-  logAuthFailure(source: string, message: string, details?: Record<string, unknown>): SecurityEvent {
+  logAuthFailure(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): SecurityEvent {
     return this.logEvent({ type: 'auth_failure', severity: 'high', source, message, details });
   }
 
-  logAuthSuccess(source: string, message: string, details?: Record<string, unknown>): SecurityEvent {
+  logAuthSuccess(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): SecurityEvent {
     return this.logEvent({ type: 'auth_success', severity: 'low', source, message, details });
   }
 
-  logAuthRateLimit(source: string, message: string, details?: Record<string, unknown>): SecurityEvent {
+  logAuthRateLimit(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): SecurityEvent {
     return this.logEvent({ type: 'auth_rate_limit', severity: 'high', source, message, details });
   }
 
-  logApprovalDenied(source: string, message: string, details?: Record<string, unknown>, context?: SecurityEvent['context']): SecurityEvent {
-    return this.logEvent({ type: 'approval_denied', severity: 'medium', source, message, details, context });
+  logApprovalDenied(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+    context?: SecurityEvent['context'],
+  ): SecurityEvent {
+    return this.logEvent({
+      type: 'approval_denied',
+      severity: 'medium',
+      source,
+      message,
+      details,
+      context,
+    });
   }
 
-  logContentThreat(source: string, message: string, details?: Record<string, unknown>, context?: SecurityEvent['context']): SecurityEvent {
-    return this.logEvent({ type: 'content_threat', severity: 'high', source, message, details, context });
+  logContentThreat(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+    context?: SecurityEvent['context'],
+  ): SecurityEvent {
+    return this.logEvent({
+      type: 'content_threat',
+      severity: 'high',
+      source,
+      message,
+      details,
+      context,
+    });
   }
 
-  logExecPolicyViolation(source: string, message: string, details?: Record<string, unknown>): SecurityEvent {
-    return this.logEvent({ type: 'exec_policy_violation', severity: 'medium', source, message, details });
+  logExecPolicyViolation(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): SecurityEvent {
+    return this.logEvent({
+      type: 'exec_policy_violation',
+      severity: 'medium',
+      source,
+      message,
+      details,
+    });
   }
 
-  logExecPolicyForbidden(source: string, message: string, details?: Record<string, unknown>): SecurityEvent {
-    return this.logEvent({ type: 'exec_policy_forbidden', severity: 'critical', source, message, details });
+  logExecPolicyForbidden(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): SecurityEvent {
+    return this.logEvent({
+      type: 'exec_policy_forbidden',
+      severity: 'critical',
+      source,
+      message,
+      details,
+    });
   }
 
-  logCredentialAccess(source: string, message: string, details?: Record<string, unknown>): SecurityEvent {
-    return this.logEvent({ type: 'credential_access', severity: 'medium', source, message, details });
+  logCredentialAccess(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): SecurityEvent {
+    return this.logEvent({
+      type: 'credential_access',
+      severity: 'medium',
+      source,
+      message,
+      details,
+    });
   }
 
-  logInputValidationFailure(source: string, message: string, details?: Record<string, unknown>): SecurityEvent {
-    return this.logEvent({ type: 'input_validation_failure', severity: 'medium', source, message, details });
+  logInputValidationFailure(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): SecurityEvent {
+    return this.logEvent({
+      type: 'input_validation_failure',
+      severity: 'medium',
+      source,
+      message,
+      details,
+    });
   }
 
-  logPathTraversalAttempt(source: string, message: string, details?: Record<string, unknown>): SecurityEvent {
-    return this.logEvent({ type: 'path_traversal_attempt', severity: 'critical', source, message, details });
+  logPathTraversalAttempt(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): SecurityEvent {
+    return this.logEvent({
+      type: 'path_traversal_attempt',
+      severity: 'critical',
+      source,
+      message,
+      details,
+    });
   }
 
-  logCommandInjectionAttempt(source: string, message: string, details?: Record<string, unknown>): SecurityEvent {
-    return this.logEvent({ type: 'command_injection_attempt', severity: 'critical', source, message, details });
+  logCommandInjectionAttempt(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): SecurityEvent {
+    return this.logEvent({
+      type: 'command_injection_attempt',
+      severity: 'critical',
+      source,
+      message,
+      details,
+    });
   }
 
-  logMemoryPoisoning(source: string, message: string, details?: Record<string, unknown>): SecurityEvent {
-    return this.logEvent({ type: 'memory_poisoning_detected', severity: 'high', source, message, details });
+  logMemoryPoisoning(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): SecurityEvent {
+    return this.logEvent({
+      type: 'memory_poisoning_detected',
+      severity: 'high',
+      source,
+      message,
+      details,
+    });
   }
 
-  logSkillSecurityViolation(source: string, message: string, details?: Record<string, unknown>): SecurityEvent {
-    return this.logEvent({ type: 'skill_security_violation', severity: 'high', source, message, details });
+  logSkillSecurityViolation(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): SecurityEvent {
+    return this.logEvent({
+      type: 'skill_security_violation',
+      severity: 'high',
+      source,
+      message,
+      details,
+    });
   }
 
-  logConfigChange(source: string, message: string, details?: Record<string, unknown>): SecurityEvent {
+  logConfigChange(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): SecurityEvent {
     return this.logEvent({ type: 'config_change', severity: 'medium', source, message, details });
   }
 
-  logSecurityScan(source: string, message: string, details?: Record<string, unknown>): SecurityEvent {
+  logSecurityScan(
+    source: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): SecurityEvent {
     return this.logEvent({ type: 'security_scan', severity: 'low', source, message, details });
   }
 
   // ── Query API ─────────────────────────────────────────────────────
 
   /** Get recent events, optionally filtered by type/severity. */
-  getRecent(limit: number = 50, filters?: { type?: SecurityEventType; severity?: SecuritySeverity }): SecurityEvent[] {
+  getRecent(
+    limit: number = 50,
+    filters?: { type?: SecurityEventType; severity?: SecuritySeverity },
+  ): SecurityEvent[] {
     let result = [...this.events].reverse();
-    if (filters?.type) result = result.filter(e => e.type === filters.type);
-    if (filters?.severity) result = result.filter(e => e.severity === filters.severity);
+    if (filters?.type) result = result.filter((e) => e.type === filters.type);
+    if (filters?.severity) result = result.filter((e) => e.severity === filters.severity);
     return result.slice(0, limit);
   }
 
   /** Get events by source component. */
   getBySource(source: string, limit: number = 50): SecurityEvent[] {
-    return this.events.filter(e => e.source === source).reverse().slice(0, limit);
+    return this.events
+      .filter((e) => e.source === source)
+      .reverse()
+      .slice(0, limit);
   }
 
   /** Get all critical events. */
   getCritical(limit: number = 50): SecurityEvent[] {
-    return this.events.filter(e => e.severity === 'critical').reverse().slice(0, limit);
+    return this.events
+      .filter((e) => e.severity === 'critical')
+      .reverse()
+      .slice(0, limit);
   }
 
   /** Get statistics. */
   getStats(): SecurityStats {
     const byType: Record<string, number> = {};
-    const bySeverity: Record<SecuritySeverity, number> = { low: 0, medium: 0, high: 0, critical: 0 };
+    const bySeverity: Record<SecuritySeverity, number> = {
+      low: 0,
+      medium: 0,
+      high: 0,
+      critical: 0,
+    };
     const sourceCounts: Record<string, number> = {};
 
     for (const e of this.events) {
@@ -310,7 +460,9 @@ export class SecurityAuditLogger {
       }
     } catch (err) {
       // Non-critical: audit logging should never break execution
-      process.stderr.write(`[SecurityAuditLogger] Persist failed: ${(err as Error)?.message ?? String(err)}\n`);
+      process.stderr.write(
+        `[SecurityAuditLogger] Persist failed: ${(err as Error)?.message ?? String(err)}\n`,
+      );
     }
   }
 
@@ -324,14 +476,19 @@ export class SecurityAuditLogger {
         fs.mkdirSync(this.persistDir, { recursive: true });
       }
     } catch (err) {
-      process.stderr.write(`[SecurityAuditLogger] Failed to create persist dir: ${(err as Error)?.message ?? String(err)}\n`);
+      process.stderr.write(
+        `[SecurityAuditLogger] Failed to create persist dir: ${(err as Error)?.message ?? String(err)}\n`,
+      );
     }
   }
 
   private recordMetrics(event: SecurityEvent): void {
     try {
       const metrics = getGlobalMetrics();
-      metrics.incrementCounter('security.events.total', 1, { type: event.type, severity: event.severity });
+      metrics.incrementCounter('security.events.total', 1, {
+        type: event.type,
+        severity: event.severity,
+      });
       metrics.incrementCounter(`security.events.${event.type}`, 1);
       if (event.severity === 'critical') {
         metrics.incrementCounter('security.events.critical', 1);

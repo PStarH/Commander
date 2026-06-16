@@ -108,7 +108,7 @@ export class TokenBudgetManager {
     if (totalEstimated === 0) {
       // Equal split when no estimates available
       const equalShare = Math.floor(status.remainingTokens / subAgentEstimates.length);
-      return new Map(subAgentEstimates.map(e => [e.nodeId, equalShare]));
+      return new Map(subAgentEstimates.map((e) => [e.nodeId, equalShare]));
     }
 
     // 10% reserve for synthesis + quality fix overhead
@@ -150,15 +150,18 @@ export class TokenBudgetManager {
    * Record token usage from a sub-agent. Updates the run-level total
    * and the per-agent allocation tracker.
    */
-  recordUsage(runId: string, nodeId: string, tokens: number): { warning: boolean; exceeded: boolean } {
+  recordUsage(
+    runId: string,
+    nodeId: string,
+    tokens: number,
+  ): { warning: boolean; exceeded: boolean } {
     const status = this.budgets.get(runId);
     if (!status) return { warning: false, exceeded: false };
 
     status.usedTokens += tokens;
     status.remainingTokens = Math.max(0, status.totalBudget - status.usedTokens);
-    status.utilizationPercent = status.totalBudget > 0
-      ? Math.round((status.usedTokens / status.totalBudget) * 100)
-      : 0;
+    status.utilizationPercent =
+      status.totalBudget > 0 ? Math.round((status.usedTokens / status.totalBudget) * 100) : 0;
     status.updatedAt = new Date().toISOString();
 
     // Update phase
@@ -173,7 +176,7 @@ export class TokenBudgetManager {
     }
 
     // Update per-agent tracker
-    const agent = status.subAgents.find(a => a.nodeId === nodeId);
+    const agent = status.subAgents.find((a) => a.nodeId === nodeId);
     if (agent) {
       agent.usedTokens += tokens;
       agent.status = 'running';
@@ -219,7 +222,7 @@ export class TokenBudgetManager {
     const status = this.budgets.get(runId);
     if (!status) return;
 
-    const agent = status.subAgents.find(a => a.nodeId === nodeId);
+    const agent = status.subAgents.find((a) => a.nodeId === nodeId);
     if (agent) {
       agent.usedTokens = finalTokens;
       agent.status = 'completed';
@@ -249,8 +252,7 @@ export class TokenBudgetManager {
    * Get all active budget statuses, most recent first.
    */
   getActiveBudgets(): RunBudgetStatus[] {
-    return Array.from(this.budgets.values())
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return Array.from(this.budgets.values()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
   /**
@@ -283,14 +285,21 @@ export class TokenBudgetManager {
     if (!status) return;
     try {
       const mc = getMetricsCollector();
-      mc.setGauge('token_budget_utilization_percent', 'Token budget utilization %', status.utilizationPercent, [
-        { name: 'run_id', value: runId },
-        { name: 'phase', value: status.phase },
-      ]);
+      mc.setGauge(
+        'token_budget_utilization_percent',
+        'Token budget utilization %',
+        status.utilizationPercent,
+        [
+          { name: 'run_id', value: runId },
+          { name: 'phase', value: status.phase },
+        ],
+      );
       mc.setGauge('token_budget_remaining', 'Remaining token budget', status.remainingTokens, [
         { name: 'run_id', value: runId },
       ]);
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 }
 
@@ -300,9 +309,7 @@ export class TokenBudgetManager {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const budgetManagerSingleton = createTenantAwareSingleton(
-  () => new TokenBudgetManager(),
-);
+const budgetManagerSingleton = createTenantAwareSingleton(() => new TokenBudgetManager());
 
 /**
  * Get the global TokenBudgetManager (single-tenant) or tenant-scoped (multi-tenant).

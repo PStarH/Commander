@@ -5,16 +5,28 @@ import type { ExecutionTrace, TraceEvent } from '../../src/runtime/types';
 
 function llm(spanId: string, ts: string, output: unknown): TraceEvent {
   return {
-    spanId, parentSpanId: undefined, traceId: 't1', runId: 'r1', agentId: 'a1',
-    type: 'llm_call', timestamp: ts, durationMs: 100,
+    spanId,
+    parentSpanId: undefined,
+    traceId: 't1',
+    runId: 'r1',
+    agentId: 'a1',
+    type: 'llm_call',
+    timestamp: ts,
+    durationMs: 100,
     data: { output, modelInfo: { provider: 'openai', model: 'gpt-4o' } },
   };
 }
 
 function tool(spanId: string, parent: string, ts: string, name: string): TraceEvent {
   return {
-    spanId, parentSpanId: parent, traceId: 't1', runId: 'r1', agentId: 'a1',
-    type: 'tool_execution', timestamp: ts, durationMs: 50,
+    spanId,
+    parentSpanId: parent,
+    traceId: 't1',
+    runId: 'r1',
+    agentId: 'a1',
+    type: 'tool_execution',
+    timestamp: ts,
+    durationMs: 50,
     data: { input: name, output: { ok: true } },
   };
 }
@@ -22,13 +34,25 @@ function tool(spanId: string, parent: string, ts: string, name: string): TraceEv
 describe('buildDecisions', () => {
   it('extracts decisions from tool events with preceding LLM call', () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
       startedAt: '2026-06-05T00:00:00.000Z',
       events: [
-        llm('s1', '2026-06-05T00:00:00.000Z', { content: 'I will call web_search to find the docs' }),
+        llm('s1', '2026-06-05T00:00:00.000Z', {
+          content: 'I will call web_search to find the docs',
+        }),
         tool('s2', 's1', '2026-06-05T00:00:01.000Z', 'web_search'),
       ],
-      summary: { totalEvents: 2, totalDurationMs: 0, totalTokens: 0, llmCalls: 1, toolExecutions: 1, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 2,
+        totalDurationMs: 0,
+        totalTokens: 0,
+        llmCalls: 1,
+        toolExecutions: 1,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     const decisions = buildDecisions(trace);
     assert.strictEqual(decisions.length, 1);
@@ -40,10 +64,20 @@ describe('buildDecisions', () => {
 
   it('reports no preceding LLM when tool has no LLM ancestor', () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
       startedAt: '2026-06-05T00:00:00.000Z',
       events: [tool('s1', undefined, '2026-06-05T00:00:00.000Z', 'shell')],
-      summary: { totalEvents: 1, totalDurationMs: 0, totalTokens: 0, llmCalls: 0, toolExecutions: 1, errors: 0, modelUsed: '' },
+      summary: {
+        totalEvents: 1,
+        totalDurationMs: 0,
+        totalTokens: 0,
+        llmCalls: 0,
+        toolExecutions: 1,
+        errors: 0,
+        modelUsed: '',
+      },
     };
     const decisions = buildDecisions(trace);
     assert.strictEqual(decisions.length, 1);
@@ -53,7 +87,9 @@ describe('buildDecisions', () => {
 
   it('summarizes p95 think time and per-tool averages', () => {
     const trace: ExecutionTrace = {
-      runId: 'r1', traceId: 't1', agentId: 'a1',
+      runId: 'r1',
+      traceId: 't1',
+      agentId: 'a1',
       startedAt: '2026-06-05T00:00:00.000Z',
       events: [
         llm('s1', '2026-06-05T00:00:00.000Z', 'a'),
@@ -61,7 +97,15 @@ describe('buildDecisions', () => {
         tool('s3', 's1', '2026-06-05T00:00:00.500Z', 'web_search'),
         tool('s4', 's1', '2026-06-05T00:00:02.000Z', 'shell'),
       ],
-      summary: { totalEvents: 4, totalDurationMs: 0, totalTokens: 0, llmCalls: 1, toolExecutions: 3, errors: 0, modelUsed: 'gpt-4o' },
+      summary: {
+        totalEvents: 4,
+        totalDurationMs: 0,
+        totalTokens: 0,
+        llmCalls: 1,
+        toolExecutions: 3,
+        errors: 0,
+        modelUsed: 'gpt-4o',
+      },
     };
     const decisions = buildDecisions(trace);
     const s = decisionsSummary(decisions);

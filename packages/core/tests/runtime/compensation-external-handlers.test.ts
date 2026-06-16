@@ -23,9 +23,7 @@ describe('AWS Compensation Handler', () => {
       describeInstances: vi.fn().mockResolvedValue({
         Reservations: [
           {
-            Instances: [
-              { State: { Name: 'running' }, InstanceId: 'i-123' },
-            ],
+            Instances: [{ State: { Name: 'running' }, InstanceId: 'i-123' }],
           },
         ],
       }),
@@ -229,12 +227,14 @@ describe('JudgeAgent', () => {
   });
 
   it('should use LLM judge when provided', async () => {
-    const llmCall = vi.fn().mockResolvedValue(JSON.stringify({
-      convergenceScore: 0.9,
-      repeatedArguments: [],
-      strongestPoints: ['React is widely adopted'],
-      recommendation: 'Convergence reached',
-    }));
+    const llmCall = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        convergenceScore: 0.9,
+        repeatedArguments: [],
+        strongestPoints: ['React is widely adopted'],
+        recommendation: 'Convergence reached',
+      }),
+    );
 
     const judge = new JudgeAgent({ maxRounds: 5 }, llmCall);
     const args = [

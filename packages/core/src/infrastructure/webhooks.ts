@@ -24,10 +24,10 @@ export interface WebhookRule {
   id: string;
   name: string;
   source: 'github' | 'gitlab' | 'bitbucket' | 'custom';
-  events: string[];        // ['push', 'pr.opened', 'pr.merged']
-  task: string;            // Task to run when triggered
+  events: string[]; // ['push', 'pr.opened', 'pr.merged']
+  task: string; // Task to run when triggered
   enabled: boolean;
-  secret?: string;         // Webhook secret for verification
+  secret?: string; // Webhook secret for verification
   filters?: Record<string, unknown>; // Event payload filters
   createdAt: string;
   lastTriggeredAt?: string;
@@ -49,7 +49,7 @@ export interface WebhookEvent {
 export class WebhookManager {
   private rules: Map<string, WebhookRule> = new Map();
   private rulesDir: string;
-  private server: any = null;
+  private server: ReturnType<typeof import('http').createServer> | null = null;
 
   constructor(baseDir?: string) {
     this.rulesDir = baseDir ?? path.join(process.cwd(), '.commander', 'webhooks');
@@ -70,7 +70,9 @@ export class WebhookManager {
           this.rules.set(rule.id, rule);
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   private saveRules(): void {
@@ -127,7 +129,10 @@ export class WebhookManager {
 
       // Verify signature if secret is set
       if (rule.secret && !this.verifySignature(event, rule.secret)) {
-        getGlobalLogger().warn('WebhookManager', `Signature verification failed for rule: ${rule.name}`);
+        getGlobalLogger().warn(
+          'WebhookManager',
+          `Signature verification failed for rule: ${rule.name}`,
+        );
         continue;
       }
 
@@ -153,7 +158,11 @@ export class WebhookManager {
         rule.lastTriggeredAt = new Date().toISOString();
         triggered.push(rule.id);
       } catch (err) {
-        getGlobalLogger().error('WebhookManager', `Failed to trigger task for webhook: ${rule.name}`, err as Error);
+        getGlobalLogger().error(
+          'WebhookManager',
+          `Failed to trigger task for webhook: ${rule.name}`,
+          err as Error,
+        );
       }
     }
 
@@ -161,7 +170,10 @@ export class WebhookManager {
     return triggered;
   }
 
-  private matchesFilters(payload: Record<string, unknown>, filters: Record<string, unknown>): boolean {
+  private matchesFilters(
+    payload: Record<string, unknown>,
+    filters: Record<string, unknown>,
+  ): boolean {
     for (const [key, expected] of Object.entries(filters)) {
       const actual = payload[key];
       if (actual !== expected) return false;
@@ -269,12 +281,19 @@ export class WebhookManager {
     return 'custom';
   }
 
-  private detectEvent(headers: Record<string, string | string[] | undefined>, source: string): string {
+  private detectEvent(
+    headers: Record<string, string | string[] | undefined>,
+    source: string,
+  ): string {
     switch (source) {
-      case 'github': return String(headers['x-github-event'] ?? 'unknown');
-      case 'gitlab': return String(headers['x-gitlab-event'] ?? 'unknown');
-      case 'bitbucket': return String(headers['x-event-key'] ?? 'unknown');
-      default: return 'unknown';
+      case 'github':
+        return String(headers['x-github-event'] ?? 'unknown');
+      case 'gitlab':
+        return String(headers['x-gitlab-event'] ?? 'unknown');
+      case 'bitbucket':
+        return String(headers['x-event-key'] ?? 'unknown');
+      default:
+        return 'unknown';
     }
   }
 }

@@ -156,7 +156,11 @@ export class GeminiCacheManager {
    * Compute the content hash for a request. Exposed statically so callers can use the same
    * hash as a key when reporting metrics or when building a stable `cacheConfig.promptCacheKey`.
    */
-  static computeContentHash(systemInstruction: string | undefined, tools: ToolDefinition[] | undefined, model: string): string {
+  static computeContentHash(
+    systemInstruction: string | undefined,
+    tools: ToolDefinition[] | undefined,
+    model: string,
+  ): string {
     const toolsJson = tools ? stableStringify(tools) : '[]';
     return fnv1a(`${model}::${systemInstruction ?? ''}::${toolsJson}`);
   }
@@ -180,7 +184,11 @@ export class GeminiCacheManager {
       return { contentHash: '', createdNow: false };
     }
 
-    const baseHash = GeminiCacheManager.computeContentHash(params.systemInstruction, params.tools, params.model);
+    const baseHash = GeminiCacheManager.computeContentHash(
+      params.systemInstruction,
+      params.tools,
+      params.model,
+    );
     const contentHash = params.tenantId ? fnv1a(`${params.tenantId}::${baseHash}`) : baseHash;
 
     // Hit path: look up the resolved cache
@@ -394,6 +402,8 @@ function stableStringify(value: unknown): string {
     return '[' + items.join(',') + ']';
   }
   const keys = Object.keys(value as Record<string, unknown>).sort();
-  const pairs = keys.map((k) => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`);
+  const pairs = keys.map(
+    (k) => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`,
+  );
   return '{' + pairs.join(',') + '}';
 }

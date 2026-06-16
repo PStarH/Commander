@@ -1,20 +1,74 @@
 import type { CostBreakdown, ModelPricing, TokenBreakdown } from './types';
 
 export const DEFAULT_PRICING: ModelPricing[] = [
-  { provider: 'openai', model: 'gpt-4o', inputPer1k: 0.0025, outputPer1k: 0.01, cachedInputPer1k: 0.00125 },
-  { provider: 'openai', model: 'gpt-4o-mini', inputPer1k: 0.00015, outputPer1k: 0.0006, cachedInputPer1k: 0.000075 },
+  {
+    provider: 'openai',
+    model: 'gpt-4o',
+    inputPer1k: 0.0025,
+    outputPer1k: 0.01,
+    cachedInputPer1k: 0.00125,
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-4o-mini',
+    inputPer1k: 0.00015,
+    outputPer1k: 0.0006,
+    cachedInputPer1k: 0.000075,
+  },
   { provider: 'openai', model: 'gpt-4-turbo', inputPer1k: 0.01, outputPer1k: 0.03 },
   { provider: 'openai', model: 'gpt-3.5-turbo', inputPer1k: 0.0005, outputPer1k: 0.0015 },
   { provider: 'openai', model: 'o1', inputPer1k: 0.015, outputPer1k: 0.06, reasoningPer1k: 0.06 },
-  { provider: 'openai', model: 'o1-mini', inputPer1k: 0.003, outputPer1k: 0.012, reasoningPer1k: 0.012 },
-  { provider: 'openai', model: 'o3-mini', inputPer1k: 0.0011, outputPer1k: 0.0044, reasoningPer1k: 0.0044 },
-  { provider: 'anthropic', model: 'claude-3-5-sonnet', inputPer1k: 0.003, outputPer1k: 0.015, cachedInputPer1k: 0.0003 },
-  { provider: 'anthropic', model: 'claude-3-5-haiku', inputPer1k: 0.0008, outputPer1k: 0.004, cachedInputPer1k: 0.00008 },
+  {
+    provider: 'openai',
+    model: 'o1-mini',
+    inputPer1k: 0.003,
+    outputPer1k: 0.012,
+    reasoningPer1k: 0.012,
+  },
+  {
+    provider: 'openai',
+    model: 'o3-mini',
+    inputPer1k: 0.0011,
+    outputPer1k: 0.0044,
+    reasoningPer1k: 0.0044,
+  },
+  {
+    provider: 'anthropic',
+    model: 'claude-3-5-sonnet',
+    inputPer1k: 0.003,
+    outputPer1k: 0.015,
+    cachedInputPer1k: 0.0003,
+  },
+  {
+    provider: 'anthropic',
+    model: 'claude-3-5-haiku',
+    inputPer1k: 0.0008,
+    outputPer1k: 0.004,
+    cachedInputPer1k: 0.00008,
+  },
   { provider: 'anthropic', model: 'claude-3-opus', inputPer1k: 0.015, outputPer1k: 0.075 },
-  { provider: 'google', model: 'gemini-1.5-pro', inputPer1k: 0.00125, outputPer1k: 0.005, cachedInputPer1k: 0.00031 },
-  { provider: 'google', model: 'gemini-1.5-flash', inputPer1k: 0.000075, outputPer1k: 0.0003, cachedInputPer1k: 0.00001875 },
+  {
+    provider: 'google',
+    model: 'gemini-1.5-pro',
+    inputPer1k: 0.00125,
+    outputPer1k: 0.005,
+    cachedInputPer1k: 0.00031,
+  },
+  {
+    provider: 'google',
+    model: 'gemini-1.5-flash',
+    inputPer1k: 0.000075,
+    outputPer1k: 0.0003,
+    cachedInputPer1k: 0.00001875,
+  },
   { provider: 'google', model: 'gemini-2.0-flash', inputPer1k: 0.0001, outputPer1k: 0.0004 },
-  { provider: 'deepseek', model: 'deepseek-chat', inputPer1k: 0.00014, outputPer1k: 0.00028, cachedInputPer1k: 0.000014 },
+  {
+    provider: 'deepseek',
+    model: 'deepseek-chat',
+    inputPer1k: 0.00014,
+    outputPer1k: 0.00028,
+    cachedInputPer1k: 0.000014,
+  },
   { provider: 'deepseek', model: 'deepseek-reasoner', inputPer1k: 0.00014, outputPer1k: 0.00219 },
 ];
 
@@ -61,12 +115,8 @@ export class CostModel {
     const billableInput = Math.max(0, tokens.input - cachedClamped);
     const inputCost = (billableInput / 1000) * p.inputPer1k;
     const outputCost = (tokens.output / 1000) * p.outputPer1k;
-    const cachedCost = p.cachedInputPer1k
-      ? (cachedClamped / 1000) * p.cachedInputPer1k
-      : 0;
-    const reasoningCost = p.reasoningPer1k
-      ? (tokens.reasoning / 1000) * p.reasoningPer1k
-      : 0;
+    const cachedCost = p.cachedInputPer1k ? (cachedClamped / 1000) * p.cachedInputPer1k : 0;
+    const reasoningCost = p.reasoningPer1k ? (tokens.reasoning / 1000) * p.reasoningPer1k : 0;
     return {
       totalCostUsd: inputCost + outputCost + cachedCost + reasoningCost,
       inputCostUsd: inputCost,
@@ -126,9 +176,7 @@ export class CostModel {
     const pricing = this.getPricing(provider, this.stripTierSuffix(model));
     const clamped = Math.min(cachedTokens, inputTokens);
     const uncachedEquivalent = (clamped / 1000) * pricing.inputPer1k;
-    const cachedCost = pricing.cachedInputPer1k
-      ? (clamped / 1000) * pricing.cachedInputPer1k
-      : 0;
+    const cachedCost = pricing.cachedInputPer1k ? (clamped / 1000) * pricing.cachedInputPer1k : 0;
     const dollarsSaved = uncachedEquivalent - cachedCost;
     return { cachedClamped: clamped, dollarsSaved, dollarsUncachedEquivalent: uncachedEquivalent };
   }

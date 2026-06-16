@@ -16,7 +16,10 @@ import assert from 'node:assert';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { installProcessCrashHandlers, resetCrashHandlersForTesting } from '../src/runtime/processCrashSafety';
+import {
+  installProcessCrashHandlers,
+  resetCrashHandlersForTesting,
+} from '../src/runtime/processCrashSafety';
 import { RunRecovery } from '../src/runtime/runRecovery';
 import { StepTimeoutManager, StepTimeoutError } from '../src/runtime/stepTimeoutManager';
 import { ProviderFallbackChain } from '../src/runtime/providerFallbackChain';
@@ -39,7 +42,11 @@ const TMP_DIR = path.join(process.cwd(), '.test_reversibility_tmp');
 
 function freshTmpDir(name: string): string {
   const dir = path.join(TMP_DIR, name);
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    /* best-effort */
+  }
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -94,12 +101,20 @@ function makeAction(actionId: string, toolName: string): CompensableAction {
 
 describe('M1: Tool call fails → compensation queue, 3 retries, then DLQ', () => {
   let registry: CompensationRegistry;
-  beforeEach(() => { registry = new CompensationRegistry(); });
+  beforeEach(() => {
+    registry = new CompensationRegistry();
+  });
 
   it('regression: CompensationRegistry compensates successful actions in reverse order', async () => {
     const calls: string[] = [];
-    registry.register('toolA', async () => { calls.push('compensateA'); return { success: true }; });
-    registry.register('toolB', async () => { calls.push('compensateB'); return { success: true }; });
+    registry.register('toolA', async () => {
+      calls.push('compensateA');
+      return { success: true };
+    });
+    registry.register('toolB', async () => {
+      calls.push('compensateB');
+      return { success: true };
+    });
     registry.recordAction(makeAction('a1', 'toolA'));
     registry.recordAction(makeAction('b1', 'toolB'));
 
@@ -109,7 +124,9 @@ describe('M1: Tool call fails → compensation queue, 3 retries, then DLQ', () =
   });
 
   it('regression: compensate returns success:false when handler throws', async () => {
-    registry.register('badTool', async () => { throw new Error('handler down'); });
+    registry.register('badTool', async () => {
+      throw new Error('handler down');
+    });
     registry.recordAction(makeAction('bad1', 'badTool'));
     const r = await registry.compensate('bad1');
     assert.strictEqual(r.success, false);
@@ -117,7 +134,10 @@ describe('M1: Tool call fails → compensation queue, 3 retries, then DLQ', () =
 
   it('v2 fix: compensationQueue module ships (Tier 2.4 build)', () => {
     const queuePath = path.join(process.cwd(), 'src/atr/compensationQueue.ts');
-    assert.ok(fs.existsSync(queuePath), 'compensationQueue.ts not yet created (Tier 2.4 not implemented)');
+    assert.ok(
+      fs.existsSync(queuePath),
+      'compensationQueue.ts not yet created (Tier 2.4 not implemented)',
+    );
   });
 });
 
@@ -142,7 +162,12 @@ describe('M2: LLM call fails → primary 503 → fallback in <1s', () => {
     const chain = new ProviderFallbackChain({ totalTimeoutMs: 1000 });
     const start = Date.now();
     const { result, providerUsed } = await chain.tryProviders([
-      { name: 'primary', attempt: async () => { throw new Error('503'); } },
+      {
+        name: 'primary',
+        attempt: async () => {
+          throw new Error('503');
+        },
+      },
       { name: 'secondary', attempt: async () => 42 },
     ]);
     const elapsed = Date.now() - start;
@@ -154,17 +179,31 @@ describe('M2: LLM call fails → primary 503 → fallback in <1s', () => {
 
 describe('M3: Sub-agent fails → subAgentGuard aborts on limit violation', () => {
   it('regression: SubAgentGuard.check() throws on max_steps breach', () => {
-    const guard = new SubAgentGuard({ maxSteps: 2, maxTokens: 1000, maxWallClockMs: 60_000, noProgressThreshold: 10 });
+    const guard = new SubAgentGuard({
+      maxSteps: 2,
+      maxTokens: 1000,
+      maxWallClockMs: 60_000,
+      noProgressThreshold: 10,
+    });
     guard.check(1);
     guard.check(2);
-    assert.throws(() => guard.check(3), (e: unknown) =>
-      e instanceof SubAgentLimitError && e.reason === 'max_steps');
+    assert.throws(
+      () => guard.check(3),
+      (e: unknown) => e instanceof SubAgentLimitError && e.reason === 'max_steps',
+    );
   });
 
   it('regression: SubAgentGuard.recordTokens() throws on max_tokens breach', () => {
-    const guard = new SubAgentGuard({ maxSteps: 100, maxTokens: 50, maxWallClockMs: 60_000, noProgressThreshold: 10 });
-    assert.throws(() => guard.recordTokens(100), (e: unknown) =>
-      e instanceof SubAgentLimitError && e.reason === 'max_tokens');
+    const guard = new SubAgentGuard({
+      maxSteps: 100,
+      maxTokens: 50,
+      maxWallClockMs: 60_000,
+      noProgressThreshold: 10,
+    });
+    assert.throws(
+      () => guard.recordTokens(100),
+      (e: unknown) => e instanceof SubAgentLimitError && e.reason === 'max_tokens',
+    );
   });
 
   it('v2 fix: subAgentExecutor references SubAgentGuard (Tier 2.2 wire-up)', () => {
@@ -198,11 +237,17 @@ describe('M4: Process crashes → DLQ + lease released + exit 1', () => {
     });
 
     const listeners = process.listeners('uncaughtException');
-    assert.ok(listeners.length >= 1,
-      `Expected ≥1 uncaughtException handler after install, got ${listeners.length}`);
+    assert.ok(
+      listeners.length >= 1,
+      `Expected ≥1 uncaughtException handler after install, got ${listeners.length}`,
+    );
 
     resetCrashHandlersForTesting();
-    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
   });
 
   it('v2 fix: DeadLetterQueue writes to disk (flush) (Tier 1.1)', () => {
@@ -226,7 +271,11 @@ describe('M4: Process crashes → DLQ + lease released + exit 1', () => {
     dlq.flush();
     const files = fs.readdirSync(tmp);
     assert.ok(files.length >= 1, `Expected DLQ file in ${tmp}, got ${files.length}`);
-    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
   });
 });
 
@@ -245,7 +294,11 @@ describe('M5: Crash mid-tool → resume(runId) returns completedToolCallIds from
     const out = reloaded.loadCheckpoint('crash-run');
     assert.ok(out, 'Checkpoint should reload');
     assert.strictEqual(out!.stepNumber, 5);
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
   });
 
   it('v2 fix: RunRecovery.attempt() returns status="not_found" for unknown runId', async () => {
@@ -256,7 +309,11 @@ describe('M5: Crash mid-tool → resume(runId) returns completedToolCallIds from
     const result = await recovery.attempt('nonexistent-run');
     assert.strictEqual(result.status, 'not_found');
     assert.strictEqual(result.completedToolCallIds.size, 0);
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
   });
 
   it('v2 fix: RunRecovery.attempt() returns status="recovered" with completedToolCallIds from messages', async () => {
@@ -276,7 +333,11 @@ describe('M5: Crash mid-tool → resume(runId) returns completedToolCallIds from
     assert.ok(result.completedToolCallIds.has('tc-A'));
     assert.ok(result.completedToolCallIds.has('tc-B'));
     assert.strictEqual(result.resumeFromStep, 3);
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
   });
 
   it('v2 fix: RunRecovery.attempt() exposes lease_lost status (Tier 1.2 fix)', async () => {
@@ -294,7 +355,11 @@ describe('M5: Crash mid-tool → resume(runId) returns completedToolCallIds from
       result.status === 'lease_lost' || result.status === 'not_found',
       `Expected lease_lost (v2) or not_found (today, since loadCheckpoint pre-validates), got ${result.status}`,
     );
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
   });
 });
 
@@ -306,7 +371,11 @@ describe('M6: Two processes resume same run → fencing epoch protects', () => {
     const reloaded = new StateCheckpointer(dir);
     const state = reloaded.loadCheckpoint('fence-run');
     assert.ok(state, 'Unfenced checkpoint loads');
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
   });
 });
 
@@ -314,7 +383,8 @@ describe('M7: Hallucinated tool args → validator feedback → correct args on 
   it('regression: toolCallValidator exposes formatValidationErrors or validateToolCall', () => {
     const mod = require('../src/runtime/toolCallValidator') as Record<string, unknown>;
     assert.ok(
-      typeof mod.formatValidationErrors === 'function' || typeof mod.validateToolCall === 'function',
+      typeof mod.formatValidationErrors === 'function' ||
+        typeof mod.validateToolCall === 'function',
       'toolCallValidator should expose formatValidationErrors or validateToolCall',
     );
   });
@@ -356,7 +426,11 @@ describe('M8: Tool wrong output → verification fail → reflexion → correct 
       return {
         content,
         model: req.model,
-        usage: { promptTokens: 10, completionTokens: content.length, totalTokens: 10 + content.length },
+        usage: {
+          promptTokens: 10,
+          completionTokens: content.length,
+          totalTokens: 10 + content.length,
+        },
         finishReason: 'stop',
       };
     };
@@ -398,7 +472,10 @@ describe('M8: Tool wrong output → verification fail → reflexion → correct 
     assert.strictEqual(result.status, 'success');
     assert.ok(callIndex >= 2, `Expected >=2 LLM calls (reflexion loop), got ${callIndex}`);
     assert.ok(verifyIndex >= 2, `Expected >=2 verification calls, got ${verifyIndex}`);
-    assert.ok((runtime as any).reflexionInjector.size >= 1, 'ReflexionInjector should have recorded a failure reflection');
+    assert.ok(
+      (runtime as any).reflexionInjector.size >= 1,
+      'ReflexionInjector should have recorded a failure reflection',
+    );
   });
 
   it('v2 fix: reflexion loop does not run when confidence is high', async () => {
@@ -439,16 +516,27 @@ describe('M8: Tool wrong output → verification fail → reflexion → correct 
     });
 
     const guidance = provider.lastRequest?.messages.find(
-      (m: { role: string; content: string }) => m.role === 'system' && m.content.includes('[Reflexion guidance'),
+      (m: { role: string; content: string }) =>
+        m.role === 'system' && m.content.includes('[Reflexion guidance'),
     );
-    assert.strictEqual(guidance, undefined, 'High-confidence failure should not trigger reflexion guidance');
+    assert.strictEqual(
+      guidance,
+      undefined,
+      'High-confidence failure should not trigger reflexion guidance',
+    );
   });
 });
 
 describe('M9: Tenant quota exceeded → TENANT_RATE_LIMIT or TENANT_CONCURRENCY_LIMIT', () => {
   it('regression: SimpleTenantProvider.getTenantConfig() returns per-tenant config', () => {
     const tp = new SimpleTenantProvider([
-      { tenantId: 'm9-a', tokenBudget: 1000, maxConcurrency: 5, maxRunsPerMinute: 60, enabled: true },
+      {
+        tenantId: 'm9-a',
+        tokenBudget: 1000,
+        maxConcurrency: 5,
+        maxRunsPerMinute: 60,
+        enabled: true,
+      },
       { tenantId: 'm9-b', tokenBudget: 0, maxConcurrency: 1, maxRunsPerMinute: 1, enabled: false },
     ]);
     const cfgA = tp.getTenantConfig('m9-a');
@@ -481,9 +569,14 @@ describe('M10: Provider 429 → wait retryAfter → fallback if exhausted', () =
   it('v2 fix: ProviderFallbackChain falls back on 429 (Tier 2.3)', async () => {
     const chain = new ProviderFallbackChain({ totalTimeoutMs: 500 });
     const { result, providerUsed } = await chain.tryProviders([
-      { name: 'openai', attempt: async () => {
-        const e = new Error('429'); (e as { status?: number }).status = 429; throw e;
-      }},
+      {
+        name: 'openai',
+        attempt: async () => {
+          const e = new Error('429');
+          (e as { status?: number }).status = 429;
+          throw e;
+        },
+      },
       { name: 'anthropic', attempt: async () => 'fallback-success' },
     ]);
     assert.strictEqual(result, 'fallback-success');
@@ -521,15 +614,24 @@ describe('M11: All retries exhausted → DLQ retryable entry + circuit open', ()
     });
     dlq.flush();
     const retryable = dlq.getRetryableEntries('llm');
-    assert.ok(retryable.length >= 1, `DLQ should expose retryable entries, got ${retryable.length}`);
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    assert.ok(
+      retryable.length >= 1,
+      `DLQ should expose retryable entries, got ${retryable.length}`,
+    );
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
   });
 });
 
 describe('M12: Compensation fails → durable queue, not dropped', () => {
   it('regression: CompensationRegistry returns success:false when handler throws', async () => {
     const reg = new CompensationRegistry();
-    reg.register('bad', async () => { throw new Error('compensation down'); });
+    reg.register('bad', async () => {
+      throw new Error('compensation down');
+    });
     reg.recordAction(makeAction('a1', 'bad'));
     const r = await reg.compensate('a1');
     assert.strictEqual(r.success, false);
@@ -537,7 +639,10 @@ describe('M12: Compensation fails → durable queue, not dropped', () => {
 
   it('v2 fix: compensationQueue module ships with durable retry (Tier 2.4)', () => {
     const queuePath = path.join(process.cwd(), 'src/atr/compensationQueue.ts');
-    assert.ok(fs.existsSync(queuePath), 'compensationQueue.ts not yet created (Tier 2.4 not implemented)');
+    assert.ok(
+      fs.existsSync(queuePath),
+      'compensationQueue.ts not yet created (Tier 2.4 not implemented)',
+    );
   });
 });
 
@@ -548,13 +653,21 @@ describe('M13: Checkpoint write fails → prior checkpoint durable (atomic tmp+r
     cp.checkpoint(makeCheckpoint({ runId: 'atomic-run', stepNumber: 1 }));
 
     const tmpFile = path.join(dir, 'atomic-run.tmp');
-    try { fs.writeFileSync(tmpFile, 'corrupt'); } catch { /* best-effort */ }
+    try {
+      fs.writeFileSync(tmpFile, 'corrupt');
+    } catch {
+      /* best-effort */
+    }
 
     const reloaded = new StateCheckpointer(dir);
     const state = reloaded.loadCheckpoint('atomic-run');
     assert.ok(state, 'Prior checkpoint should survive corrupt tmp');
     assert.strictEqual(state!.stepNumber, 1);
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
   });
 });
 
@@ -580,7 +693,10 @@ describe('M16: Token budget exhausted → tokenGovernor aborts', () => {
 });
 
 describe('M17: LLM call hangs → llmTimeoutMs aborts with StepTimeoutManager', () => {
-  function makeRuntime(config: Partial<import('../src/runtime/types').AgentRuntimeConfig> = {}, provider: MockLLMProvider) {
+  function makeRuntime(
+    config: Partial<import('../src/runtime/types').AgentRuntimeConfig> = {},
+    provider: MockLLMProvider,
+  ) {
     resetModelRouter();
     resetMessageBus();
     resetTraceRecorder();
@@ -624,8 +740,12 @@ describe('M17: LLM call hangs → llmTimeoutMs aborts with StepTimeoutManager', 
 
   it('regression: StepTimeoutManager can cancel an active step', async () => {
     const mgr = new StepTimeoutManager();
-    const slow = new Promise<string>(() => { /* never resolves */ });
-    const p = mgr.wrap(slow, { timeoutMs: 60_000, stepId: 'cancellable' }).catch(() => { /* expected */ });
+    const slow = new Promise<string>(() => {
+      /* never resolves */
+    });
+    const p = mgr.wrap(slow, { timeoutMs: 60_000, stepId: 'cancellable' }).catch(() => {
+      /* expected */
+    });
     assert.strictEqual(mgr.activeCount(), 1);
     assert.strictEqual(mgr.cancel('cancellable'), true);
     await p;
@@ -638,7 +758,10 @@ describe('M17: LLM call hangs → llmTimeoutMs aborts with StepTimeoutManager', 
 
   it('v2 fix: AgentRuntime aborts a hanging LLM call using llmTimeoutMs', async () => {
     const hangingProvider = new MockLLMProvider('hanger', { defaultResponse: 'never' });
-    hangingProvider.call = async () => new Promise(() => { /* hang forever */ });
+    hangingProvider.call = async () =>
+      new Promise(() => {
+        /* hang forever */
+      });
     const runtime = makeRuntime({}, hangingProvider);
 
     const start = Date.now();
@@ -651,7 +774,10 @@ describe('M17: LLM call hangs → llmTimeoutMs aborts with StepTimeoutManager', 
 
   it('v2 fix: custom llmTimeoutMs overrides the default', async () => {
     const hangingProvider = new MockLLMProvider('hanger', { defaultResponse: 'never' });
-    hangingProvider.call = async () => new Promise(() => { /* hang forever */ });
+    hangingProvider.call = async () =>
+      new Promise(() => {
+        /* hang forever */
+      });
     const runtime = makeRuntime({ llmTimeoutMs: 500 }, hangingProvider);
 
     const start = Date.now();
@@ -710,7 +836,10 @@ describe('M19: Tier 4 observability → DLQ tags, latency histograms, cost-by-fa
     assert.ok(files.length >= 1, 'DLQ file should be written');
     const content = fs.readFileSync(path.join(tmp, files[0]), 'utf-8');
     assert.ok(content.includes('mode:12'), `Expected mode:12 tag in DLQ entry, got: ${content}`);
-    assert.ok(content.includes('mode:compensation_exhausted'), `Expected string failure mode tag, got: ${content}`);
+    assert.ok(
+      content.includes('mode:compensation_exhausted'),
+      `Expected string failure mode tag, got: ${content}`,
+    );
   });
 
   it('v2 fix: verification latency is recorded as a step_latency_ms histogram', async () => {
@@ -720,7 +849,11 @@ describe('M19: Tier 4 observability → DLQ tags, latency histograms, cost-by-fa
     resetTraceRecorder();
     const router = new ModelRouter();
     const runtime = new AgentRuntime(
-      { maxRetries: 0, timeoutMs: 5000, llmTimeoutMs: 5000 } as import('../src/runtime/types').AgentRuntimeConfig,
+      {
+        maxRetries: 0,
+        timeoutMs: 5000,
+        llmTimeoutMs: 5000,
+      } as import('../src/runtime/types').AgentRuntimeConfig,
       router,
     );
     const provider = new MockLLMProvider('obs', { defaultResponse: 'ok' });
@@ -756,7 +889,11 @@ describe('M19: Tier 4 observability → DLQ tags, latency histograms, cost-by-fa
     resetTraceRecorder();
     const router = new ModelRouter();
     const runtime = new AgentRuntime(
-      { maxRetries: 0, timeoutMs: 5000, llmTimeoutMs: 5000 } as import('../src/runtime/types').AgentRuntimeConfig,
+      {
+        maxRetries: 0,
+        timeoutMs: 5000,
+        llmTimeoutMs: 5000,
+      } as import('../src/runtime/types').AgentRuntimeConfig,
       router,
     );
     const provider = new MockLLMProvider('obs', { defaultResponse: 'ok' });
@@ -782,8 +919,14 @@ describe('M19: Tier 4 observability → DLQ tags, latency histograms, cost-by-fa
     });
 
     const metrics = getMetricsCollector().exportOpenMetrics();
-    assert.ok(metrics.includes('cost_by_failure_mode_usd'), 'Expected cost_by_failure_mode_usd metric');
-    assert.ok(metrics.includes('failure_mode="verification"'), 'Expected verification failure mode label');
+    assert.ok(
+      metrics.includes('cost_by_failure_mode_usd'),
+      'Expected cost_by_failure_mode_usd metric',
+    );
+    assert.ok(
+      metrics.includes('failure_mode="verification"'),
+      'Expected verification failure mode label',
+    );
   });
 
   it('v2 fix: getProviderHealth returns per-provider snapshot', () => {
@@ -797,12 +940,22 @@ describe('M19: Tier 4 observability → DLQ tags, latency histograms, cost-by-fa
     );
     runtime.registerProvider('openai', new MockLLMProvider('openai'));
     const health = runtime.getProviderHealth();
-    assert.ok(health.some(h => h.provider === 'openai'), 'Expected openai in provider health');
-    assert.ok(health.every(h => typeof h.errorRate === 'number'), 'Expected errorRate for all providers');
+    assert.ok(
+      health.some((h) => h.provider === 'openai'),
+      'Expected openai in provider health',
+    );
+    assert.ok(
+      health.every((h) => typeof h.errorRate === 'number'),
+      'Expected errorRate for all providers',
+    );
   });
 });
 
 after(() => {
-  try { fs.rmSync(TMP_DIR, { recursive: true, force: true }); } catch { /* best-effort */ }
+  try {
+    fs.rmSync(TMP_DIR, { recursive: true, force: true });
+  } catch {
+    /* best-effort */
+  }
   resetCrashHandlersForTesting();
 });

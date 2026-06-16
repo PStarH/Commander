@@ -1,8 +1,20 @@
 export {
-  $, setTheme, getThemeName, listThemes,
-  section, kv, bullet, cmdHeader,
-  startSpinner, startSpinnerWithFailure, progressBar, StepProgress,
-  parseFlags, onboardingMessage, fatalError, warn,
+  $,
+  setTheme,
+  getThemeName,
+  listThemes,
+  section,
+  kv,
+  bullet,
+  cmdHeader,
+  startSpinner,
+  startSpinnerWithFailure,
+  progressBar,
+  StepProgress,
+  parseFlags,
+  onboardingMessage,
+  fatalError,
+  warn,
 } from './util';
 export type { Theme, ParsedArgs } from './util';
 export { WatchRenderer, startWatchRenderer } from './watchRenderer';

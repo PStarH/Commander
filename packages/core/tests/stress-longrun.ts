@@ -159,14 +159,25 @@ class MetricsCollector {
     fs.writeFileSync(this.outputFile, '');
   }
 
-  recordTask(result: { name: string; durationMs: number; tokensUsed: number; success: boolean; error?: string; phase?: string }) {
+  recordTask(result: {
+    name: string;
+    durationMs: number;
+    tokensUsed: number;
+    success: boolean;
+    error?: string;
+    phase?: string;
+  }) {
     this.taskResults.push(result);
     this.appendLine({ type: 'task', ...result, timestamp: new Date().toISOString() });
   }
 
   recordCheckpoint() {
     this.checkpoints++;
-    this.appendLine({ type: 'checkpoint', count: this.checkpoints, timestamp: new Date().toISOString() });
+    this.appendLine({
+      type: 'checkpoint',
+      count: this.checkpoints,
+      timestamp: new Date().toISOString(),
+    });
   }
 
   snapshotMemory() {
@@ -183,10 +194,10 @@ class MetricsCollector {
 
   getSummary() {
     const totalMs = Date.now() - this.startTime;
-    const successCount = this.taskResults.filter(r => r.success).length;
-    const failCount = this.taskResults.filter(r => !r.success).length;
+    const successCount = this.taskResults.filter((r) => r.success).length;
+    const failCount = this.taskResults.filter((r) => !r.success).length;
     const totalTokens = this.taskResults.reduce((sum, r) => sum + r.tokensUsed, 0);
-    const maxHeap = Math.max(...this.memorySnapshots.map(s => s.heapMB), 0);
+    const maxHeap = Math.max(...this.memorySnapshots.map((s) => s.heapMB), 0);
 
     return {
       totalDurationMs: totalMs,
@@ -198,7 +209,7 @@ class MetricsCollector {
       checkpointsWritten: this.checkpoints,
       maxHeapMB: maxHeap,
       memorySnapshots: this.memorySnapshots.length,
-      taskBreakdown: this.taskResults.map(r => ({
+      taskBreakdown: this.taskResults.map((r) => ({
         name: r.name,
         durationSec: (r.durationMs / 1000).toFixed(1),
         success: r.success,
@@ -243,7 +254,8 @@ async function main() {
 
   // Register tools
   const { WebSearchTool, WebFetchTool } = await import('../src/tools/webSearchTool');
-  const { FileReadTool, FileWriteTool, FileEditTool, FileListTool, FileSearchTool } = await import('../src/tools/fileSystemTool');
+  const { FileReadTool, FileWriteTool, FileEditTool, FileListTool, FileSearchTool } =
+    await import('../src/tools/fileSystemTool');
   const { GitTool } = await import('../src/tools/gitTool');
 
   runtime.registerTool('web_search', new WebSearchTool());
@@ -278,7 +290,9 @@ async function main() {
   while (Date.now() < deadline) {
     cycle++;
     console.log(`\n${'═'.repeat(60)}`);
-    console.log(`CYCLE ${cycle} | ${new Date().toISOString()} | Tokens: ${totalTokensUsed.toLocaleString()}`);
+    console.log(
+      `CYCLE ${cycle} | ${new Date().toISOString()} | Tokens: ${totalTokensUsed.toLocaleString()}`,
+    );
     console.log(`${'═'.repeat(60)}`);
 
     for (const task of TASKS) {
@@ -299,7 +313,15 @@ async function main() {
           agentId: `stress-agent-${task.name}`,
           goal: task.goal,
           contextData: {
-            availableTools: ['web_search', 'web_fetch', 'file_write', 'file_read', 'file_list', 'file_edit', 'git'],
+            availableTools: [
+              'web_search',
+              'web_fetch',
+              'file_write',
+              'file_read',
+              'file_list',
+              'file_edit',
+              'git',
+            ],
           },
           onProgress: (phase, detail) => {
             process.stdout.write(`│  [${phase}] ${detail.slice(0, 60)}\n`);
@@ -319,7 +341,12 @@ async function main() {
           stepNumber: 1,
           attemptNumber: 1,
           messages: [],
-          tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: tokens, cachedTokens: 0 },
+          tokenUsage: {
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: tokens,
+            cachedTokens: 0,
+          },
           stepDurations: [durationMs],
           context: {
             agentId: 'stress-runner',
@@ -345,7 +372,9 @@ async function main() {
         const memDeltaMB = ((memAfter - memBefore) / 1024 / 1024).toFixed(1);
         const snap = metrics.snapshotMemory();
 
-        console.log(`│  ✅ Done in ${(durationMs / 1000).toFixed(1)}s | ${tokens.toLocaleString()} tokens | mem: ${snap.heapMB}MB (+${memDeltaMB}MB)`);
+        console.log(
+          `│  ✅ Done in ${(durationMs / 1000).toFixed(1)}s | ${tokens.toLocaleString()} tokens | mem: ${snap.heapMB}MB (+${memDeltaMB}MB)`,
+        );
         console.log(`└─`);
 
         // Check if output file was created
@@ -357,7 +386,6 @@ async function main() {
             console.log(`   📄 Output: ${outputMatch[1]} (${size} bytes)`);
           }
         }
-
       } catch (err) {
         const durationMs = Date.now() - taskStart;
         const errorMsg = err instanceof Error ? err.message : String(err);
@@ -370,19 +398,23 @@ async function main() {
           error: errorMsg,
         });
 
-        console.log(`│  ❌ FAILED after ${(durationMs / 1000).toFixed(1)}s: ${errorMsg.slice(0, 100)}`);
+        console.log(
+          `│  ❌ FAILED after ${(durationMs / 1000).toFixed(1)}s: ${errorMsg.slice(0, 100)}`,
+        );
         console.log(`└─`);
       }
 
       // Pause between tasks to avoid rate limiting and let memory stabilize
-      await new Promise(r => setTimeout(r, TASK_DELAY_MS));
+      await new Promise((r) => setTimeout(r, TASK_DELAY_MS));
     }
 
     // Print cycle summary
     const summary = metrics.getSummary();
     console.log(`\n${'─'.repeat(60)}`);
     console.log(`Cycle ${cycle} Summary:`);
-    console.log(`  Tasks: ${summary.tasksSucceeded}✅ ${summary.tasksFailed}❌ | Tokens: ${summary.totalTokensUsed.toLocaleString()} | Heap: ${summary.maxHeapMB}MB`);
+    console.log(
+      `  Tasks: ${summary.tasksSucceeded}✅ ${summary.tasksFailed}❌ | Tokens: ${summary.totalTokensUsed.toLocaleString()} | Heap: ${summary.maxHeapMB}MB`,
+    );
     console.log(`${'─'.repeat(60)}`);
   }
 
@@ -395,7 +427,9 @@ async function main() {
   console.log('STRESS TEST COMPLETE');
   console.log(`${'═'.repeat(60)}`);
   console.log(`Duration:     ${finalSummary.totalDurationMin} minutes`);
-  console.log(`Tasks:        ${finalSummary.tasksCompleted} total (${finalSummary.tasksSucceeded}✅ ${finalSummary.tasksFailed}❌)`);
+  console.log(
+    `Tasks:        ${finalSummary.tasksCompleted} total (${finalSummary.tasksSucceeded}✅ ${finalSummary.tasksFailed}❌)`,
+  );
   console.log(`Tokens:       ${finalSummary.totalTokensUsed.toLocaleString()}`);
   console.log(`Checkpoints:  ${finalSummary.checkpointsWritten}`);
   console.log(`Peak Memory:  ${finalSummary.maxHeapMB}MB heap`);
@@ -405,15 +439,31 @@ async function main() {
   console.log(`${'═'.repeat(60)}`);
 
   // Cleanup generated files
-  const cleanupPatterns = [/comparison-ai-frameworks\.md/, /typescript-trends.*\.md/, /consensus-algorithms\.md/, /architecture-analysis\.md/, /security-audit\.md/, /blog-cpm-agents\.md/, /adr-001.*\.md/, /migration-plan\.md/, /testing-strategy\.md/, /error-handling.*\.md/, /test-coverage.*\.md/, /competitive-analysis\.md/, /plugin-system.*\.md/];
+  const cleanupPatterns = [
+    /comparison-ai-frameworks\.md/,
+    /typescript-trends.*\.md/,
+    /consensus-algorithms\.md/,
+    /architecture-analysis\.md/,
+    /security-audit\.md/,
+    /blog-cpm-agents\.md/,
+    /adr-001.*\.md/,
+    /migration-plan\.md/,
+    /testing-strategy\.md/,
+    /error-handling.*\.md/,
+    /test-coverage.*\.md/,
+    /competitive-analysis\.md/,
+    /plugin-system.*\.md/,
+  ];
   for (const file of fs.readdirSync(process.cwd())) {
-    if (cleanupPatterns.some(p => p.test(file))) {
-      try { fs.unlinkSync(path.join(process.cwd(), file)); } catch {}
+    if (cleanupPatterns.some((p) => p.test(file))) {
+      try {
+        fs.unlinkSync(path.join(process.cwd(), file));
+      } catch {}
     }
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('FATAL:', err);
   process.exit(1);
 });

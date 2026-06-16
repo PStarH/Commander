@@ -31,7 +31,8 @@ describe('OllamaProvider', () => {
   });
 
   it('defaults to localhost base URL', async () => {
-    const { OllamaProvider, resolveOllamaBaseUrl } = await import('../src/runtime/providers/ollamaProvider');
+    const { OllamaProvider, resolveOllamaBaseUrl } =
+      await import('../src/runtime/providers/ollamaProvider');
     assert.strictEqual(resolveOllamaBaseUrl(), 'http://localhost:11434/v1');
     const p = new OllamaProvider({ apiKey: 'test' });
   });
@@ -106,10 +107,7 @@ describe('VLLMProvider', () => {
 
   it('uses correct default model', async () => {
     const { VLLMProvider } = await import('../src/runtime/providers/vllmProvider');
-    assert.strictEqual(
-      new VLLMProvider({}).getDefaultModel(),
-      'meta-llama/Llama-3.2-3B-Instruct'
-    );
+    assert.strictEqual(new VLLMProvider({}).getDefaultModel(), 'meta-llama/Llama-3.2-3B-Instruct');
   });
 
   it('has isLocal flag', async () => {
@@ -183,7 +181,7 @@ describe('MistralProvider', () => {
     const { MistralProvider } = await import('../src/runtime/providers/mistralProvider');
     assert.strictEqual(
       new MistralProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
-      'https://api.mistral.ai/v1'
+      'https://api.mistral.ai/v1',
     );
   });
 
@@ -191,7 +189,7 @@ describe('MistralProvider', () => {
     const { MistralProvider } = await import('../src/runtime/providers/mistralProvider');
     assert.strictEqual(
       new MistralProvider({ apiKey: 'test' }).getDefaultModel(),
-      'mistral-large-latest'
+      'mistral-large-latest',
     );
   });
 
@@ -200,7 +198,7 @@ describe('MistralProvider', () => {
     process.env.MISTRAL_BASE_URL = 'https://custom.mistral.ai/v1';
     assert.strictEqual(
       new MistralProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
-      'https://custom.mistral.ai/v1'
+      'https://custom.mistral.ai/v1',
     );
   });
 });
@@ -224,7 +222,7 @@ describe('GroqProvider', () => {
     const { GroqProvider } = await import('../src/runtime/providers/groqProvider');
     assert.strictEqual(
       new GroqProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
-      'https://api.groq.com/openai/v1'
+      'https://api.groq.com/openai/v1',
     );
   });
 
@@ -232,7 +230,7 @@ describe('GroqProvider', () => {
     const { GroqProvider } = await import('../src/runtime/providers/groqProvider');
     assert.strictEqual(
       new GroqProvider({ apiKey: 'test' }).getDefaultModel(),
-      'llama-3.3-70b-versatile'
+      'llama-3.3-70b-versatile',
     );
   });
 
@@ -241,7 +239,7 @@ describe('GroqProvider', () => {
     process.env.GROQ_BASE_URL = 'https://custom.groq.com/v1';
     assert.strictEqual(
       new GroqProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
-      'https://custom.groq.com/v1'
+      'https://custom.groq.com/v1',
     );
   });
 });
@@ -265,7 +263,7 @@ describe('TogetherProvider', () => {
     const { TogetherProvider } = await import('../src/runtime/providers/togetherProvider');
     assert.strictEqual(
       new TogetherProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
-      'https://api.together.ai/v1'
+      'https://api.together.ai/v1',
     );
   });
 
@@ -273,7 +271,7 @@ describe('TogetherProvider', () => {
     const { TogetherProvider } = await import('../src/runtime/providers/togetherProvider');
     assert.strictEqual(
       new TogetherProvider({ apiKey: 'test' }).getDefaultModel(),
-      'meta-llama/Llama-3.3-70B-Instruct-Turbo'
+      'meta-llama/Llama-3.3-70B-Instruct-Turbo',
     );
   });
 });
@@ -297,23 +295,25 @@ describe('PerplexityProvider', () => {
     const { PerplexityProvider } = await import('../src/runtime/providers/perplexityProvider');
     assert.strictEqual(
       new PerplexityProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
-      'https://api.perplexity.ai/v1'
+      'https://api.perplexity.ai/v1',
     );
   });
 
   it('uses correct default model', async () => {
     const { PerplexityProvider } = await import('../src/runtime/providers/perplexityProvider');
-    assert.strictEqual(
-      new PerplexityProvider({ apiKey: 'test' }).getDefaultModel(),
-      'sonar-pro'
-    );
+    assert.strictEqual(new PerplexityProvider({ apiKey: 'test' }).getDefaultModel(), 'sonar-pro');
   });
 
   it('throws when tools are passed (unsupported)', async () => {
     const { PerplexityProvider } = await import('../src/runtime/providers/perplexityProvider');
     const p = new PerplexityProvider({ apiKey: 'test' });
     try {
-      await p.call({ messages: [{ role: 'user', content: 'hi' }], tools: [{ name: 'test', description: 'test', inputSchema: { type: 'object', properties: {} } }] });
+      await p.call({
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [
+          { name: 'test', description: 'test', inputSchema: { type: 'object', properties: {} } },
+        ],
+      });
       assert.fail('Should have thrown');
     } catch (e: any) {
       assert.ok(e.message.includes('perplexity'), 'Error should mention provider');
@@ -341,7 +341,7 @@ describe('FireworksProvider', () => {
     const { FireworksProvider } = await import('../src/runtime/providers/fireworksProvider');
     assert.strictEqual(
       new FireworksProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
-      'https://api.fireworks.ai/inference/v1'
+      'https://api.fireworks.ai/inference/v1',
     );
   });
 
@@ -349,7 +349,7 @@ describe('FireworksProvider', () => {
     const { FireworksProvider } = await import('../src/runtime/providers/fireworksProvider');
     assert.strictEqual(
       new FireworksProvider({ apiKey: 'test' }).getDefaultModel(),
-      'accounts/fireworks/models/llama-v3p3-70b-instruct'
+      'accounts/fireworks/models/llama-v3p3-70b-instruct',
     );
   });
 });
@@ -396,7 +396,12 @@ describe('ReplicateProvider', () => {
     const { ReplicateProvider } = await import('../src/runtime/providers/replicateProvider');
     const p = new ReplicateProvider({ apiKey: 'test' });
     try {
-      await p.call({ messages: [{ role: 'user', content: 'hi' }], tools: [{ name: 'test', description: 'test', inputSchema: { type: 'object', properties: {} } }] });
+      await p.call({
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [
+          { name: 'test', description: 'test', inputSchema: { type: 'object', properties: {} } },
+        ],
+      });
       assert.fail('Should have thrown');
     } catch (e: any) {
       assert.ok(e.message.includes('replicate'), 'Error should mention provider');
@@ -514,10 +519,28 @@ describe('Provider registration consistency', () => {
   it('all providers are in ENV_MAP', async () => {
     const { ENV_MAP } = await import('../src/config/commanderConfig');
     const expectedVars = [
-      'openai', 'anthropic', 'google', 'openrouter', 'deepseek',
-      'glm', 'mimo', 'xiaomi', 'cohere', 'mistral', 'groq',
-      'together', 'perplexity', 'fireworks', 'replicate', 'ollama',
-      'vllm', 'bedrock', 'xai', 'anyscale', 'deepinfra', 'agnes',
+      'openai',
+      'anthropic',
+      'google',
+      'openrouter',
+      'deepseek',
+      'glm',
+      'mimo',
+      'xiaomi',
+      'cohere',
+      'mistral',
+      'groq',
+      'together',
+      'perplexity',
+      'fireworks',
+      'replicate',
+      'ollama',
+      'vllm',
+      'bedrock',
+      'xai',
+      'anyscale',
+      'deepinfra',
+      'agnes',
     ];
     for (const provider of expectedVars) {
       assert.ok(ENV_MAP[provider], `Missing ENV_MAP entry for ${provider}`);
@@ -528,10 +551,28 @@ describe('Provider registration consistency', () => {
   it('all providers are in PROVIDER_ORDER', async () => {
     const { PROVIDER_ORDER } = await import('../src/config/commanderConfig');
     const expectedProviders = [
-      'openai', 'anthropic', 'google', 'openrouter', 'deepseek',
-      'glm', 'mimo', 'xiaomi', 'cohere', 'mistral', 'groq',
-      'together', 'perplexity', 'fireworks', 'replicate', 'ollama',
-      'vllm', 'bedrock', 'xai', 'anyscale', 'deepinfra', 'agnes',
+      'openai',
+      'anthropic',
+      'google',
+      'openrouter',
+      'deepseek',
+      'glm',
+      'mimo',
+      'xiaomi',
+      'cohere',
+      'mistral',
+      'groq',
+      'together',
+      'perplexity',
+      'fireworks',
+      'replicate',
+      'ollama',
+      'vllm',
+      'bedrock',
+      'xai',
+      'anyscale',
+      'deepinfra',
+      'agnes',
     ];
     for (const provider of expectedProviders) {
       assert.ok(PROVIDER_ORDER.includes(provider), `Missing from PROVIDER_ORDER: ${provider}`);
@@ -561,20 +602,29 @@ describe('Provider registration consistency', () => {
 describe('detectProvider', () => {
   beforeEach(() => {
     const allVars = [
-      'OPENAI_API_KEY', 'OPENAI_BASE_URL',
+      'OPENAI_API_KEY',
+      'OPENAI_BASE_URL',
       'ANTHROPIC_API_KEY',
       'GOOGLE_API_KEY',
       'OPENROUTER_API_KEY',
-      'CO_API_KEY', 'COHERE_API_KEY',
+      'CO_API_KEY',
+      'COHERE_API_KEY',
       'MISTRAL_API_KEY',
       'GROQ_API_KEY',
       'TOGETHER_API_KEY',
-      'PERPLEXITY_API_KEY', 'PPLX_API_KEY',
+      'PERPLEXITY_API_KEY',
+      'PPLX_API_KEY',
       'FIREWORKS_API_KEY',
-      'REPLICATE_API_TOKEN', 'REPLICATE_API_KEY',
-      'OLLAMA_HOST', 'OLLAMA_BASE_URL', 'OLLAMA_MODEL',
-      'VLLM_BASE_URL', 'VLLM_API_KEY',
-      'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_PROFILE',
+      'REPLICATE_API_TOKEN',
+      'REPLICATE_API_KEY',
+      'OLLAMA_HOST',
+      'OLLAMA_BASE_URL',
+      'OLLAMA_MODEL',
+      'VLLM_BASE_URL',
+      'VLLM_API_KEY',
+      'AWS_ACCESS_KEY_ID',
+      'AWS_SECRET_ACCESS_KEY',
+      'AWS_PROFILE',
       'DEEPSEEK_API_KEY',
       'ZHIPU_API_KEY',
       'MIMO_API_KEY',

@@ -25,10 +25,17 @@ const makeItem = (overrides: Partial<WorkItem> = {}): WorkItem => ({
 
 describe('InMemoryWorkQueueStore', () => {
   let store: InMemoryWorkQueueStore;
-  beforeEach(() => { store = new InMemoryWorkQueueStore(); });
+  beforeEach(() => {
+    store = new InMemoryWorkQueueStore();
+  });
 
   it('enqueue + loadAll round-trip preserves all fields', () => {
-    const item = makeItem({ id: 'x1', goal: 'complex goal', tools: ['a', 'b'], dependsOn: ['dep1'] });
+    const item = makeItem({
+      id: 'x1',
+      goal: 'complex goal',
+      tools: ['a', 'b'],
+      dependsOn: ['dep1'],
+    });
     store.enqueue(item);
     const loaded = store.loadAll();
     expect(loaded).toHaveLength(1);
@@ -49,20 +56,29 @@ describe('InMemoryWorkQueueStore', () => {
   it('updateMany applies a batch atomically (all-or-nothing visible)', () => {
     const items = Array.from({ length: 100 }, (_, i) => makeItem({ id: `batch-${i}` }));
     for (const i of items) store.enqueue(i);
-    const updated = items.map(i => ({ ...i, status: 'COMPLETED' as const, completedAt: '2026-01-01T00:00:00.000Z' }));
+    const updated = items.map((i) => ({
+      ...i,
+      status: 'COMPLETED' as const,
+      completedAt: '2026-01-01T00:00:00.000Z',
+    }));
     store.updateMany(updated);
     const loaded = store.loadAll();
     expect(loaded).toHaveLength(100);
-    expect(loaded.every(i => i.status === 'COMPLETED')).toBe(true);
+    expect(loaded.every((i) => i.status === 'COMPLETED')).toBe(true);
   });
 
   it('remove deletes items matching predicate', () => {
     store.enqueue(makeItem({ id: 'a', runId: 'run-1' }));
     store.enqueue(makeItem({ id: 'b', runId: 'run-2' }));
     store.enqueue(makeItem({ id: 'c', runId: 'run-1' }));
-    const removed = store.remove(i => i.runId === 'run-1');
+    const removed = store.remove((i) => i.runId === 'run-1');
     expect(removed).toBe(2);
-    expect(store.loadAll().map(i => i.id).sort()).toEqual(['b']);
+    expect(
+      store
+        .loadAll()
+        .map((i) => i.id)
+        .sort(),
+    ).toEqual(['b']);
   });
 });
 
@@ -73,11 +89,18 @@ describe('SqliteWorkQueueStore', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wqueue-sqlite-'));
     dbPath = path.join(tmpDir, 'queue.db');
   });
-  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   it('enqueue + loadAll round-trip preserves all fields', () => {
     const store = new SqliteWorkQueueStore({ filePath: dbPath });
-    const item = makeItem({ id: 'sql-1', goal: 'sql test', tools: ['x', 'y'], dependsOn: ['d1', 'd2'] });
+    const item = makeItem({
+      id: 'sql-1',
+      goal: 'sql test',
+      tools: ['x', 'y'],
+      dependsOn: ['d1', 'd2'],
+    });
     store.enqueue(item);
     const loaded = store.loadAll();
     expect(loaded).toHaveLength(1);
@@ -111,7 +134,9 @@ describe('SqliteWorkQueueStore', () => {
 
   it('1000 items enqueue + loadAll < 2000ms', () => {
     const store = new SqliteWorkQueueStore({ filePath: dbPath });
-    const items = Array.from({ length: 1000 }, (_, i) => makeItem({ id: `perf-${i}`, priority: i % 100 }));
+    const items = Array.from({ length: 1000 }, (_, i) =>
+      makeItem({ id: `perf-${i}`, priority: i % 100 }),
+    );
     const t0 = Date.now();
     for (const i of items) store.enqueue(i);
     const loaded = store.loadAll();
@@ -125,11 +150,16 @@ describe('SqliteWorkQueueStore', () => {
     const store = new SqliteWorkQueueStore({ filePath: dbPath });
     for (let i = 0; i < 50; i++) store.enqueue(makeItem({ id: `tx-${i}` }));
     const all = store.loadAll();
-    const reassigned = all.map(i => ({ ...i, status: 'PENDING' as const, claimedBy: undefined, claimedAt: undefined }));
+    const reassigned = all.map((i) => ({
+      ...i,
+      status: 'PENDING' as const,
+      claimedBy: undefined,
+      claimedAt: undefined,
+    }));
     store.updateMany(reassigned);
     const reloaded = store.loadAll();
-    expect(reloaded.every(i => i.status === 'PENDING')).toBe(true);
-    expect(reloaded.every(i => i.claimedBy === undefined)).toBe(true);
+    expect(reloaded.every((i) => i.status === 'PENDING')).toBe(true);
+    expect(reloaded.every((i) => i.claimedBy === undefined)).toBe(true);
     store.close();
   });
 
@@ -138,9 +168,14 @@ describe('SqliteWorkQueueStore', () => {
     store.enqueue(makeItem({ id: 'p-1', runId: 'r1' }));
     store.enqueue(makeItem({ id: 'p-2', runId: 'r2' }));
     store.enqueue(makeItem({ id: 'p-3', runId: 'r1' }));
-    const removed = store.remove(i => i.runId === 'r1');
+    const removed = store.remove((i) => i.runId === 'r1');
     expect(removed).toBe(2);
-    expect(store.loadAll().map(i => i.id).sort()).toEqual(['p-2']);
+    expect(
+      store
+        .loadAll()
+        .map((i) => i.id)
+        .sort(),
+    ).toEqual(['p-2']);
     store.close();
   });
 });
@@ -153,12 +188,19 @@ describe('WorkQueueStore parity: InMemory vs Sqlite', () => {
       const sqlite = new SqliteWorkQueueStore({ filePath: path.join(tmpDir, 'p.db') });
 
       const ops: Array<(s: InMemoryWorkQueueStore | SqliteWorkQueueStore) => void> = [
-        s => s.enqueue(makeItem({ id: 'a' })),
-        s => s.enqueue(makeItem({ id: 'b' })),
-        s => { const i = makeItem({ id: 'c' }); s.enqueue(i); s.update({ ...i, status: 'CLAIMED', claimedBy: 'agt' }); },
-        s => s.remove(i => i.id === 'b'),
+        (s) => s.enqueue(makeItem({ id: 'a' })),
+        (s) => s.enqueue(makeItem({ id: 'b' })),
+        (s) => {
+          const i = makeItem({ id: 'c' });
+          s.enqueue(i);
+          s.update({ ...i, status: 'CLAIMED', claimedBy: 'agt' });
+        },
+        (s) => s.remove((i) => i.id === 'b'),
       ];
-      for (const op of ops) { op(inMem); op(sqlite); }
+      for (const op of ops) {
+        op(inMem);
+        op(sqlite);
+      }
 
       const stripUndefined = (i: WorkItem): Record<string, unknown> => {
         const out: Record<string, unknown> = {};
@@ -166,11 +208,16 @@ describe('WorkQueueStore parity: InMemory vs Sqlite', () => {
           if (v !== undefined) out[k] = v;
         }
         // Normalize timestamps to 1s resolution to avoid flaky 1ms differences
-        if (typeof out.createdAt === 'string') out.createdAt = (out.createdAt as string).slice(0, -4) + '000';
+        if (typeof out.createdAt === 'string')
+          out.createdAt = (out.createdAt as string).slice(0, -4) + '000';
         return out;
       };
-      const a = (inMem.loadAll() as WorkItem[]).map(stripUndefined).sort((x, y) => (x.id as string).localeCompare(y.id as string));
-      const b = (sqlite.loadAll() as WorkItem[]).map(stripUndefined).sort((x, y) => (x.id as string).localeCompare(y.id as string));
+      const a = (inMem.loadAll() as WorkItem[])
+        .map(stripUndefined)
+        .sort((x, y) => (x.id as string).localeCompare(y.id as string));
+      const b = (sqlite.loadAll() as WorkItem[])
+        .map(stripUndefined)
+        .sort((x, y) => (x.id as string).localeCompare(y.id as string));
       expect(a).toEqual(b);
       sqlite.close();
     } finally {
@@ -200,7 +247,8 @@ describe('WorkQueueStore — GAP-M2.4 multi-process tryClaim', () => {
     expect(firstWins).toBe(10);
     let secondWins = 0;
     for (let i = 0; i < 10; i++) {
-      if (store.tryClaim('agent-B', `m-${i}`, `lease-b-${i}`, new Date().toISOString())) secondWins++;
+      if (store.tryClaim('agent-B', `m-${i}`, `lease-b-${i}`, new Date().toISOString()))
+        secondWins++;
     }
     expect(secondWins).toBe(0);
   });
@@ -235,9 +283,9 @@ describe('WorkQueueStore — GAP-M2.4 multi-process tryClaim', () => {
     const procBSuccess = store.tryClaim('process-B', 'task-2', 'lease-B2', t0);
     expect(procBSuccess).toBe(true);
     const all = store.loadAll();
-    const claimed1 = all.find(i => i.id === 'task-1')!;
-    const claimed2 = all.find(i => i.id === 'task-2')!;
-    const pending3 = all.find(i => i.id === 'task-3')!;
+    const claimed1 = all.find((i) => i.id === 'task-1')!;
+    const claimed2 = all.find((i) => i.id === 'task-2')!;
+    const pending3 = all.find((i) => i.id === 'task-3')!;
     expect(claimed1.claimedBy).toBe('process-A');
     expect(claimed1.leaseToken).toBe('lease-A');
     expect(claimed2.claimedBy).toBe('process-B');

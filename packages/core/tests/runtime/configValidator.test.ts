@@ -10,7 +10,11 @@ import {
   validateField,
 } from '../../src/runtime/configValidator';
 
-import type { ConfigField, ConfigSchema, ConfigValidationResult } from '../../src/runtime/configValidator';
+import type {
+  ConfigField,
+  ConfigSchema,
+  ConfigValidationResult,
+} from '../../src/runtime/configValidator';
 
 // ── createSchema ────────────────────────────────────────────────────
 
@@ -340,14 +344,18 @@ describe('validateConfig - array min items constraint', () => {
 
 describe('validateConfig - enum validation', () => {
   it('accepts value that is in the enum', () => {
-    const schema = createSchema({ level: { type: 'enum', enum: ['debug', 'info', 'warn', 'error'] } });
+    const schema = createSchema({
+      level: { type: 'enum', enum: ['debug', 'info', 'warn', 'error'] },
+    });
     const result = validateConfig({ level: 'info' }, schema);
     assert.strictEqual(result.valid, true);
     assert.strictEqual(result.data.level, 'info');
   });
 
   it('rejects value not in the enum', () => {
-    const schema = createSchema({ level: { type: 'enum', enum: ['debug', 'info', 'warn', 'error'] } });
+    const schema = createSchema({
+      level: { type: 'enum', enum: ['debug', 'info', 'warn', 'error'] },
+    });
     const result = validateConfig({ level: 'verbose' }, schema);
     assert.strictEqual(result.valid, false);
     assert.ok(result.errors[0].message.includes('must be one of'));
@@ -400,8 +408,8 @@ describe('validateConfig - nested object validation', () => {
     const result = validateConfig({ server: { port: 0 } }, schema);
     assert.strictEqual(result.valid, false);
     // Should have error for missing host and for port < min
-    const hostError = result.errors.find(e => e.path === 'server.host');
-    const portError = result.errors.find(e => e.path === 'server.port');
+    const hostError = result.errors.find((e) => e.path === 'server.host');
+    const portError = result.errors.find((e) => e.path === 'server.port');
     assert.ok(hostError, 'Expected error for server.host');
     assert.ok(portError, 'Expected error for server.port');
   });
@@ -480,22 +488,22 @@ describe('validateConfig - unknown fields', () => {
     const schema = createSchema({ known: { type: 'string' } });
     const result = validateConfig({ known: 'ok', mystery: 'what' }, schema);
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(e => e.message.includes('Unknown field')));
-    assert.ok(result.errors.some(e => e.message.includes('mystery')));
+    assert.ok(result.errors.some((e) => e.message.includes('Unknown field')));
+    assert.ok(result.errors.some((e) => e.message.includes('mystery')));
   });
 
   it('detects multiple unknown fields', () => {
     const schema = createSchema({ a: { type: 'string' } });
     const result = validateConfig({ a: 'ok', x: 1, y: 2 }, schema);
     assert.strictEqual(result.valid, false);
-    const unknownErrors = result.errors.filter(e => e.message.includes('Unknown field'));
+    const unknownErrors = result.errors.filter((e) => e.message.includes('Unknown field'));
     assert.strictEqual(unknownErrors.length, 2);
   });
 
   it('does not report unknown fields when all fields are known', () => {
     const schema = createSchema({ host: { type: 'string' }, port: { type: 'number' } });
     const result = validateConfig({ host: 'a', port: 1 }, schema);
-    const unknownErrors = result.errors.filter(e => e.message.includes('Unknown field'));
+    const unknownErrors = result.errors.filter((e) => e.message.includes('Unknown field'));
     assert.strictEqual(unknownErrors.length, 0);
   });
 });
@@ -629,8 +637,11 @@ describe('validateRuntimeConfig', () => {
   it('fails when required fields are missing', () => {
     const result = validateRuntimeConfig({});
     assert.strictEqual(result.valid, false);
-    const requiredErrors = result.errors.filter(e => e.message.includes('required'));
-    assert.ok(requiredErrors.length >= 5, `Expected at least 5 required errors, got ${requiredErrors.length}`);
+    const requiredErrors = result.errors.filter((e) => e.message.includes('required'));
+    assert.ok(
+      requiredErrors.length >= 5,
+      `Expected at least 5 required errors, got ${requiredErrors.length}`,
+    );
   });
 
   it('rejects maxStepsPerRun below min', () => {
@@ -642,7 +653,7 @@ describe('validateRuntimeConfig', () => {
       budgetHardCapTokens: 100000,
     });
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(e => e.path === 'maxStepsPerRun' && e.message.includes('>= 1')));
+    assert.ok(result.errors.some((e) => e.path === 'maxStepsPerRun' && e.message.includes('>= 1')));
   });
 
   it('rejects maxStepsPerRun above max', () => {
@@ -654,7 +665,9 @@ describe('validateRuntimeConfig', () => {
       budgetHardCapTokens: 100000,
     });
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(e => e.path === 'maxStepsPerRun' && e.message.includes('<= 1000')));
+    assert.ok(
+      result.errors.some((e) => e.path === 'maxStepsPerRun' && e.message.includes('<= 1000')),
+    );
   });
 
   it('rejects invalid logLevel enum value', () => {
@@ -667,7 +680,9 @@ describe('validateRuntimeConfig', () => {
       logLevel: 'verbose',
     });
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(e => e.path === 'logLevel' && e.message.includes('must be one of')));
+    assert.ok(
+      result.errors.some((e) => e.path === 'logLevel' && e.message.includes('must be one of')),
+    );
   });
 
   it('accepts all valid logLevel values', () => {
@@ -694,7 +709,11 @@ describe('validateRuntimeConfig', () => {
       unknownProp: 'bad',
     });
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(e => e.message.includes('Unknown field') && e.message.includes('unknownProp')));
+    assert.ok(
+      result.errors.some(
+        (e) => e.message.includes('Unknown field') && e.message.includes('unknownProp'),
+      ),
+    );
   });
 
   it('handles undefined config gracefully', () => {
@@ -733,19 +752,19 @@ describe('validateHttpServerConfig', () => {
   it('fails when port is missing', () => {
     const result = validateHttpServerConfig({});
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(e => e.path === 'port' && e.message.includes('required')));
+    assert.ok(result.errors.some((e) => e.path === 'port' && e.message.includes('required')));
   });
 
   it('rejects port below 1', () => {
     const result = validateHttpServerConfig({ port: 0 });
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(e => e.path === 'port' && e.message.includes('>= 1')));
+    assert.ok(result.errors.some((e) => e.path === 'port' && e.message.includes('>= 1')));
   });
 
   it('rejects port above 65535', () => {
     const result = validateHttpServerConfig({ port: 70000 });
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(e => e.path === 'port' && e.message.includes('<= 65535')));
+    assert.ok(result.errors.some((e) => e.path === 'port' && e.message.includes('<= 65535')));
   });
 
   it('accepts port at boundaries', () => {
@@ -759,7 +778,7 @@ describe('validateHttpServerConfig', () => {
   it('rejects maxBodyBytes below minimum', () => {
     const result = validateHttpServerConfig({ port: 3000, maxBodyBytes: 512 });
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(e => e.path === 'maxBodyBytes'));
+    assert.ok(result.errors.some((e) => e.path === 'maxBodyBytes'));
   });
 
   it('coerces port from string to number', () => {
@@ -780,7 +799,11 @@ describe('validateHttpServerConfig', () => {
   it('detects unknown fields in HTTP config', () => {
     const result = validateHttpServerConfig({ port: 3000, websocket: true });
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(e => e.message.includes('Unknown field') && e.message.includes('websocket')));
+    assert.ok(
+      result.errors.some(
+        (e) => e.message.includes('Unknown field') && e.message.includes('websocket'),
+      ),
+    );
   });
 });
 
@@ -912,15 +935,12 @@ describe('validateConfig - edge cases', () => {
       port: { type: 'number', min: 1, max: 65535 },
       level: { type: 'enum', enum: ['a', 'b'] },
     });
-    const result = validateConfig(
-      { port: 99999, level: 'z', extra: true },
-      schema,
-    );
+    const result = validateConfig({ port: 99999, level: 'z', extra: true }, schema);
     assert.strictEqual(result.valid, false);
     // missing required, port > max, invalid enum, unknown field
     assert.ok(result.errors.length >= 3, `Expected >= 3 errors, got ${result.errors.length}`);
-    assert.ok(result.errors.some(e => e.message.includes('required')));
-    assert.ok(result.errors.some(e => e.message.includes('Unknown field')));
+    assert.ok(result.errors.some((e) => e.message.includes('required')));
+    assert.ok(result.errors.some((e) => e.message.includes('Unknown field')));
   });
 
   it('handles array value provided for non-array field', () => {
@@ -954,7 +974,7 @@ describe('validateConfig - error structure', () => {
   it('unknown field error includes the value', () => {
     const schema = createSchema({ a: { type: 'string' } });
     const result = validateConfig({ a: 'ok', mystery: 42 }, schema);
-    const unknownErr = result.errors.find(e => e.message.includes('Unknown field'));
+    const unknownErr = result.errors.find((e) => e.message.includes('Unknown field'));
     assert.ok(unknownErr);
     assert.strictEqual(unknownErr!.value, 42);
   });

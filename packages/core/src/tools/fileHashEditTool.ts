@@ -51,8 +51,15 @@ Content hashes stay valid even when line numbers change.`,
     inputSchema: {
       type: 'object',
       properties: {
-        input: { type: 'string', description: 'Hash-edit input (starts with ¶PATH#FILE_HASH). Use @HASH→new content format.' },
-        path: { type: 'string', description: 'Legacy: path to file (for backward compat with string replacement)' },
+        input: {
+          type: 'string',
+          description:
+            'Hash-edit input (starts with ¶PATH#FILE_HASH). Use @HASH→new content format.',
+        },
+        path: {
+          type: 'string',
+          description: 'Legacy: path to file (for backward compat with string replacement)',
+        },
         oldString: { type: 'string', description: 'Legacy: text to replace' },
         newString: { type: 'string', description: 'Legacy: replacement text' },
       },
@@ -60,9 +67,18 @@ Content hashes stay valid even when line numbers change.`,
     },
     examples: [
       // Hash-anchored single-line edit
-      { name: 'file_hash_edit', arguments: { input: '¶src/config.ts#A1B2\\n@F7G8H9→const port = 8080;' } },
+      {
+        name: 'file_hash_edit',
+        arguments: { input: '¶src/config.ts#A1B2\\n@F7G8H9→const port = 8080;' },
+      },
       // Hash-anchored multi-line edit
-      { name: 'file_hash_edit', arguments: { input: '¶src/config.ts#A1B2\\n@F7G8H9,I0J1K2→\\nconst port = 8080;\\nconst host = \"0.0.0.0\";' } },
+      {
+        name: 'file_hash_edit',
+        arguments: {
+          input:
+            '¶src/config.ts#A1B2\\n@F7G8H9,I0J1K2→\\nconst port = 8080;\\nconst host = \"0.0.0.0\";',
+        },
+      },
     ],
     category: 'filesystem',
   };
@@ -117,7 +133,8 @@ Content hashes stay valid even when line numbers change.`,
 
       let content = fs.readFileSync(resolved, 'utf-8');
       const idx = content.indexOf(oldStr);
-      if (idx === -1) return `Error: oldString not found in ${filePath}. Try re-reading the file with includeHashes:true and use @hash→content format.`;
+      if (idx === -1)
+        return `Error: oldString not found in ${filePath}. Try re-reading the file with includeHashes:true and use @hash→content format.`;
 
       const occurrences = content.split(oldStr).length - 1;
       content = content.split(oldStr).join(newStr);
@@ -130,4 +147,3 @@ Content hashes stay valid even when line numbers change.`,
     }
   }
 }
-

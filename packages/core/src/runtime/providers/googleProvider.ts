@@ -37,11 +37,7 @@ export class GoogleProvider implements LLMProvider {
   private baseUrl: string;
   private defaultModel: string;
 
-  constructor(config: {
-    apiKey: string;
-    baseUrl?: string;
-    defaultModel?: string;
-  }) {
+  constructor(config: { apiKey: string; baseUrl?: string; defaultModel?: string }) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta';
     this.defaultModel = config.defaultModel ?? 'gemini-2.0-flash';
@@ -68,7 +64,8 @@ export class GoogleProvider implements LLMProvider {
     // Provider-native structured output (Gemini responseSchema)
     if (request.responseFormat?.type === 'json_schema' && request.responseFormat.schema) {
       (body.generationConfig as Record<string, unknown>).responseMimeType = 'application/json';
-      (body.generationConfig as Record<string, unknown>).responseSchema = request.responseFormat.schema;
+      (body.generationConfig as Record<string, unknown>).responseSchema =
+        request.responseFormat.schema;
     } else if (request.responseFormat?.type === 'json_object') {
       (body.generationConfig as Record<string, unknown>).responseMimeType = 'application/json';
     }
@@ -113,7 +110,7 @@ export class GoogleProvider implements LLMProvider {
   }
 
   private buildSystemInstruction(request: LLMRequest): string | undefined {
-    const sysMsg = request.messages.find(m => m.role === 'system');
+    const sysMsg = request.messages.find((m) => m.role === 'system');
     return sysMsg?.content;
   }
 
@@ -125,7 +122,11 @@ export class GoogleProvider implements LLMProvider {
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
     const finishReason = data.candidates?.[0]?.finishReason ?? 'stop';
 
-    const usage = data.usageMetadata ?? { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 };
+    const usage = data.usageMetadata ?? {
+      promptTokenCount: 0,
+      candidatesTokenCount: 0,
+      totalTokenCount: 0,
+    };
 
     const parsed = tryParseGeminiResponse(text, responseFormat);
 
@@ -137,7 +138,8 @@ export class GoogleProvider implements LLMProvider {
         completionTokens: usage.candidatesTokenCount,
         totalTokens: usage.totalTokenCount,
       },
-      finishReason: finishReason === 'STOP' ? 'stop' : finishReason === 'MAX_TOKENS' ? 'length' : 'stop',
+      finishReason:
+        finishReason === 'STOP' ? 'stop' : finishReason === 'MAX_TOKENS' ? 'length' : 'stop',
       parsed,
     };
   }

@@ -164,7 +164,9 @@ export interface ApprovalConfig {
     toolName: string;
     arguments: Record<string, unknown>;
     reason?: string;
-  }) => Promise<{ approved: boolean; requestId: string; approvedAt: string; reason?: string }> | { approved: boolean; requestId: string; approvedAt: string; reason?: string };
+  }) =>
+    | Promise<{ approved: boolean; requestId: string; approvedAt: string; reason?: string }>
+    | { approved: boolean; requestId: string; approvedAt: string; reason?: string };
 }
 
 /**

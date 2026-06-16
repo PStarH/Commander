@@ -19,7 +19,10 @@
 
 import type { CheckpointState } from '../runtime/stateCheckpointer';
 import { StateCheckpointer } from '../runtime/stateCheckpointer';
-import type { CompensableAction, CompensableAction as _CompensableAction } from '../runtime/compensationRegistry';
+import type {
+  CompensableAction,
+  CompensableAction as _CompensableAction,
+} from '../runtime/compensationRegistry';
 import type { CompensationHandler } from '../runtime/compensationRegistry';
 import type { RunState, RunTransaction } from './types';
 import { hashIntent } from './canonicalJson';
@@ -200,7 +203,10 @@ export class ExecutionScheduler {
     const tx = this.ledger.getTransaction(input.runId, { tenantId: input.tenantId });
     if (tx) {
       const action = tx.actions.find((a) => a.actionId === input.actionId);
-      if (action) this.idempotency.complete(action.idempotencyKey, input.result, { tenantId: input.tenantId });
+      if (action)
+        this.idempotency.complete(action.idempotencyKey, input.result, {
+          tenantId: input.tenantId,
+        });
     }
   }
 
@@ -216,11 +222,17 @@ export class ExecutionScheduler {
     const tx = this.ledger.getTransaction(input.runId, { tenantId: input.tenantId });
     if (tx) {
       const action = tx.actions.find((a) => a.actionId === input.actionId);
-      if (action) this.idempotency.fail(action.idempotencyKey, input.error, { tenantId: input.tenantId });
+      if (action)
+        this.idempotency.fail(action.idempotencyKey, input.error, { tenantId: input.tenantId });
     }
   }
 
-  commitRun(input: { runId: string; leaseToken: string; fencingEpoch: number; tenantId?: string }): CommitResult {
+  commitRun(input: {
+    runId: string;
+    leaseToken: string;
+    fencingEpoch: number;
+    tenantId?: string;
+  }): CommitResult {
     const tx = this.ledger.getTransaction(input.runId, { tenantId: input.tenantId });
     if (!tx) return { committed: false, reason: 'not_found' };
     if (tx.leaseToken !== input.leaseToken || tx.fencingEpoch !== input.fencingEpoch) {
@@ -243,9 +255,18 @@ export class ExecutionScheduler {
     maxAttempts?: number;
   }): Promise<AbortResult> {
     const tx = this.ledger.getTransaction(input.runId, { tenantId: input.tenantId });
-    if (!tx) return { aborted: false, reason: 'not_found', outcome: { attempted: 0, succeeded: 0, failed: 0, errors: [] } };
+    if (!tx)
+      return {
+        aborted: false,
+        reason: 'not_found',
+        outcome: { attempted: 0, succeeded: 0, failed: 0, errors: [] },
+      };
     if (tx.leaseToken !== input.leaseToken || tx.fencingEpoch !== input.fencingEpoch) {
-      return { aborted: false, reason: 'fenced', outcome: { attempted: 0, succeeded: 0, failed: 0, errors: [] } };
+      return {
+        aborted: false,
+        reason: 'fenced',
+        outcome: { attempted: 0, succeeded: 0, failed: 0, errors: [] },
+      };
     }
     const res = await this.ledger.abortAndCompensate(
       input.runId,
@@ -290,17 +311,29 @@ export class ExecutionScheduler {
     return tx.actions.slice(-limit).reverse();
   }
 
-  killRun(input: { runId: string; leaseToken: string; fencingEpoch: number; tenantId?: string }): KillResult {
+  killRun(input: {
+    runId: string;
+    leaseToken: string;
+    fencingEpoch: number;
+    tenantId?: string;
+  }): KillResult {
     const tx = this.ledger.getTransaction(input.runId, { tenantId: input.tenantId });
     if (!tx) return { killed: false, reason: 'not_found' };
     if (tx.leaseToken !== input.leaseToken || tx.fencingEpoch !== input.fencingEpoch) {
       return { killed: false, reason: 'fenced' };
     }
-    const released = this.lease.release(input.runId, input.leaseToken, { tenantId: input.tenantId });
+    const released = this.lease.release(input.runId, input.leaseToken, {
+      tenantId: input.tenantId,
+    });
     return { killed: released, reason: released ? undefined : 'fenced' };
   }
 
-  heartbeat(input: { runId: string; leaseToken: string; tenantId?: string; ttlSeconds?: number }): boolean {
+  heartbeat(input: {
+    runId: string;
+    leaseToken: string;
+    tenantId?: string;
+    ttlSeconds?: number;
+  }): boolean {
     return this.lease.heartbeat(input.runId, input.leaseToken, {
       tenantId: input.tenantId,
       ttlSeconds: input.ttlSeconds,
@@ -315,7 +348,15 @@ export class ExecutionScheduler {
 
   listRuns(input?: { state?: RunState; tenantId?: string }): RunTransaction[] {
     if (input?.state) return this.ledger.listByState(input.state, { tenantId: input.tenantId });
-    const allStates: RunState[] = ['PENDING', 'EXECUTING', 'VERIFYING', 'COMMITTED', 'ABORTED', 'COMPENSATED', 'PAUSED'];
+    const allStates: RunState[] = [
+      'PENDING',
+      'EXECUTING',
+      'VERIFYING',
+      'COMMITTED',
+      'ABORTED',
+      'COMPENSATED',
+      'PAUSED',
+    ];
     const tenantId = input?.tenantId;
     return allStates.flatMap((s) => this.ledger.listByState(s, { tenantId }));
   }

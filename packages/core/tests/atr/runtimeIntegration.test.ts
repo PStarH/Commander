@@ -131,12 +131,17 @@ describe('runtimeIntegration (ATR wrapper)', () => {
       };
 
       const { result, replayed } = await wrapToolExecutionWithATR(
-        ctx, tc, { name: 'shell_execute' }, executeInner,
+        ctx,
+        tc,
+        { name: 'shell_execute' },
+        executeInner,
       );
       assert.strictEqual(replayed, false);
       assert.strictEqual(result.error, 'exit code 1');
-      assert.ok(!ctx.completedToolCallIds.has('tc-1'),
-        'shell_execute is non-compensable, so completedToolCallIds is NOT updated');
+      assert.ok(
+        !ctx.completedToolCallIds.has('tc-1'),
+        'shell_execute is non-compensable, so completedToolCallIds is NOT updated',
+      );
     });
 
     it('records a compensable action for a declared mutation', async () => {
@@ -150,7 +155,10 @@ describe('runtimeIntegration (ATR wrapper)', () => {
       };
 
       const { result, replayed } = await wrapToolExecutionWithATR(
-        ctx, tc, { name: 'file_write', mutation: true, externalSystem: 'filesystem' }, executeInner,
+        ctx,
+        tc,
+        { name: 'file_write', mutation: true, externalSystem: 'filesystem' },
+        executeInner,
       );
       assert.strictEqual(replayed, false);
       assert.strictEqual(result.output, 'wrote 3 bytes');
@@ -162,11 +170,14 @@ describe('runtimeIntegration (ATR wrapper)', () => {
     it('fires for every successful tool call', async () => {
       const ctx = startATRRun('run-7', 'hook test')!;
       const seen: string[] = [];
-      ctx.onCompleted = (id) => { seen.push(id); };
+      ctx.onCompleted = (id) => {
+        seen.push(id);
+      };
 
       for (const id of ['tc-a', 'tc-b', 'tc-c']) {
         await wrapToolExecutionWithATR(
-          ctx, makeToolCall(id, 'file_read', { path: `/foo/${id}` }),
+          ctx,
+          makeToolCall(id, 'file_read', { path: `/foo/${id}` }),
           { name: 'file_read' },
           async () => okResult(id, 'file_read', `result of ${id}`),
         );
@@ -178,10 +189,13 @@ describe('runtimeIntegration (ATR wrapper)', () => {
     it('does NOT fire when the tool returns an error', async () => {
       const ctx = startATRRun('run-8', 'hook error test')!;
       const seen: string[] = [];
-      ctx.onCompleted = (id) => { seen.push(id); };
+      ctx.onCompleted = (id) => {
+        seen.push(id);
+      };
 
       await wrapToolExecutionWithATR(
-        ctx, makeToolCall('tc-x', 'shell_execute', { cmd: 'false' }),
+        ctx,
+        makeToolCall('tc-x', 'shell_execute', { cmd: 'false' }),
         { name: 'shell_execute' },
         async () => errResult('tc-x', 'shell_execute', 'exit 1'),
       );
@@ -199,7 +213,9 @@ describe('runtimeIntegration (ATR wrapper)', () => {
 
       const tc1 = makeToolCall('tc-1', 'file_write', { path: filePath, content: 'BAD MUTATION\n' });
       const r1 = await wrapToolExecutionWithATR(
-        ctx, tc1, { name: 'file_write', mutation: true, externalSystem: 'filesystem' },
+        ctx,
+        tc1,
+        { name: 'file_write', mutation: true, externalSystem: 'filesystem' },
         async () => {
           writeFileSync(filePath, 'BAD MUTATION\n');
           return okResult('tc-1', 'file_write', 'wrote');
@@ -209,23 +225,25 @@ describe('runtimeIntegration (ATR wrapper)', () => {
       assert.strictEqual(readFileSync(filePath, 'utf8'), 'BAD MUTATION\n');
 
       const tc2 = makeToolCall('tc-2', 'shell_execute', { cmd: 'false' });
-      await wrapToolExecutionWithATR(
-        ctx, tc2, { name: 'shell_execute' },
-        async () => errResult('tc-2', 'shell_execute', 'kaboom'),
+      await wrapToolExecutionWithATR(ctx, tc2, { name: 'shell_execute' }, async () =>
+        errResult('tc-2', 'shell_execute', 'kaboom'),
       );
 
       await finalizeATRRun(ctx, 'failed', 'downstream tool failed');
 
       const after = readFileSync(filePath, 'utf8');
-      assert.strictEqual(after, 'ORIGINAL CONTENT\n', `expected compensation to restore file, got: ${after}`);
+      assert.strictEqual(
+        after,
+        'ORIGINAL CONTENT\n',
+        `expected compensation to restore file, got: ${after}`,
+      );
     });
 
     it('skips non-compensable tools during saga (no error reported)', async () => {
       const ctx = startATRRun('run-10', 'non-compensable test')!;
       const tc = makeToolCall('tc-1', 'shell_execute', { cmd: 'echo hi' });
-      await wrapToolExecutionWithATR(
-        ctx, tc, { name: 'shell_execute' },
-        async () => errResult('tc-1', 'shell_execute', 'boom'),
+      await wrapToolExecutionWithATR(ctx, tc, { name: 'shell_execute' }, async () =>
+        errResult('tc-1', 'shell_execute', 'boom'),
       );
       await finalizeATRRun(ctx, 'failed', 'tool failed');
     });

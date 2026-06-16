@@ -48,18 +48,24 @@ describe('SagaBuilder', () => {
     assert.throws(
       () =>
         createSaga('test')
-          .parallel([createSaga('b').step('x', async () => 1).build()])
+          .parallel([
+            createSaga('b')
+              .step('x', async () => 1)
+              .build(),
+          ])
           .compensate(async () => undefined),
-      SagaBuilderError
+      SagaBuilderError,
     );
   });
 
   it('adds parallel branches as nested sagas', () => {
-    const b1 = createSaga('b1').step('a', async () => 1).build();
-    const b2 = createSaga('b2').step('a', async () => 2).build();
-    const graph = createSaga('root')
-      .parallel([b1, b2])
+    const b1 = createSaga('b1')
+      .step('a', async () => 1)
       .build();
+    const b2 = createSaga('b2')
+      .step('a', async () => 2)
+      .build();
+    const graph = createSaga('root').parallel([b1, b2]).build();
     assert.strictEqual(graph.nodes.length, 1);
     const parallel = graph.nodes[0];
     assert.strictEqual(parallel.kind, 'parallel');
@@ -71,16 +77,11 @@ describe('SagaBuilder', () => {
   });
 
   it('throws on empty parallel', () => {
-    assert.throws(
-      () => createSaga('test').parallel([]),
-      SagaBuilderError
-    );
+    assert.throws(() => createSaga('test').parallel([]), SagaBuilderError);
   });
 
   it('adds approval gate', () => {
-    const graph = createSaga('test')
-      .approval('alice')
-      .build();
+    const graph = createSaga('test').approval('alice').build();
     const node = graph.nodes[0];
     assert.strictEqual(node.kind, 'approval');
     if (node.kind === 'approval') {
@@ -94,14 +95,19 @@ describe('SagaBuilder', () => {
   });
 
   it('adds nested saga', () => {
-    const child = createSaga('child').step('a', async () => 1).build();
+    const child = createSaga('child')
+      .step('a', async () => 1)
+      .build();
     const graph = createSaga('parent').nested(child).build();
     assert.strictEqual(graph.nodes.length, 1);
     assert.strictEqual(graph.nodes[0].kind, 'nested');
   });
 
   it('sets global timeout', () => {
-    const graph = createSaga('test').withTimeout(5000).step('a', async () => 1).build();
+    const graph = createSaga('test')
+      .withTimeout(5000)
+      .step('a', async () => 1)
+      .build();
     assert.strictEqual(graph.timeoutMs, 5000);
   });
 
@@ -156,9 +162,7 @@ describe('SagaBuilder', () => {
   });
 
   it('buildSaga helper', () => {
-    const graph = buildSaga('test', (b) =>
-      b.step('a', async () => 1).step('b', async () => 2)
-    );
+    const graph = buildSaga('test', (b) => b.step('a', async () => 1).step('b', async () => 2));
     assert.strictEqual(graph.nodes.length, 2);
   });
 

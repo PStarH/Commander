@@ -18,7 +18,7 @@ if (!fs.existsSync(STATE_DIR)) fs.mkdirSync(STATE_DIR, { recursive: true });
 interface ScheduleEntry {
   id: string;
   name: string;
-  cron: string;        // "daily", "weekly", "hourly", or "* */30 * * * *"
+  cron: string; // "daily", "weekly", "hourly", or "* */30 * * * *"
   prompt: string;
   lastRun: string | null;
   nextRun: string;
@@ -37,13 +37,18 @@ export class Scheduler {
   private entries: ScheduleEntry[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor() { this.load(); }
+  constructor() {
+    this.load();
+  }
 
   add(name: string, cron: string, prompt: string): string {
     const id = `sched_${Date.now()}`;
     const now = new Date();
     this.entries.push({
-      id, name, cron, prompt,
+      id,
+      name,
+      cron,
+      prompt,
       lastRun: null,
       nextRun: parseCron(cron, now).toISOString(),
       createdAt: now.toISOString(),
@@ -54,19 +59,24 @@ export class Scheduler {
 
   getDue(): ScheduleEntry[] {
     const now = new Date();
-    return this.entries.filter(e => new Date(e.nextRun) <= now);
+    return this.entries.filter((e) => new Date(e.nextRun) <= now);
   }
 
   markRun(id: string) {
-    const entry = this.entries.find(e => e.id === id);
+    const entry = this.entries.find((e) => e.id === id);
     if (!entry) return;
     entry.lastRun = new Date().toISOString();
     entry.nextRun = parseCron(entry.cron).toISOString();
     this.save();
   }
 
-  list() { return [...this.entries]; }
-  remove(id: string) { this.entries = this.entries.filter(e => e.id !== id); this.save(); }
+  list() {
+    return [...this.entries];
+  }
+  remove(id: string) {
+    this.entries = this.entries.filter((e) => e.id !== id);
+    this.save();
+  }
 
   start(intervalMs = 30000) {
     this.timer = setInterval(() => {
@@ -79,19 +89,25 @@ export class Scheduler {
     if (typeof this.timer.unref === 'function') this.timer.unref();
   }
 
-  stop() { if (this.timer) clearInterval(this.timer); }
+  stop() {
+    if (this.timer) clearInterval(this.timer);
+  }
 
   private load() {
     try {
       const p = path.join(STATE_DIR, 'schedules.json');
       if (fs.existsSync(p)) this.entries = JSON.parse(fs.readFileSync(p, 'utf-8'));
-    } catch (e) { getGlobalLogger().debug('Company', 'Scheduler load error', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().debug('Company', 'Scheduler load error', { error: (e as Error)?.message });
+    }
   }
   private save() {
     // Fire-and-forget async write to avoid blocking the event loop
     const data = JSON.stringify(this.entries, null, 2);
-    fs.promises.writeFile(path.join(STATE_DIR, 'schedules.json'), data, 'utf-8').catch(
-      (e) => getGlobalLogger().debug('Company', 'Scheduler save error', { error: (e as Error)?.message })
+    fs.promises.writeFile(path.join(STATE_DIR, 'schedules.json'), data, 'utf-8').catch((e) =>
+      getGlobalLogger().debug('Company', 'Scheduler save error', {
+        error: (e as Error)?.message,
+      }),
     );
   }
 }
@@ -100,19 +116,36 @@ export class Scheduler {
 // 2. Multi-Stage Quality Pipeline
 // ============================================================================
 export interface DraftOutput {
-  id: string; content: string; agentId: string; createdAt: string; type: string;
+  id: string;
+  content: string;
+  agentId: string;
+  createdAt: string;
+  type: string;
 }
 export interface ReviewResult {
-  draftId: string; passed: boolean; score: number;
-  issues: string[]; suggestions: string[];
+  draftId: string;
+  passed: boolean;
+  score: number;
+  issues: string[];
+  suggestions: string[];
 }
 
 export class QualityPipeline {
-  async run(content: string, type: string, agentId: string): Promise<{
-    draft: DraftOutput; review: ReviewResult; final: string | null;
+  async run(
+    content: string,
+    type: string,
+    agentId: string,
+  ): Promise<{
+    draft: DraftOutput;
+    review: ReviewResult;
+    final: string | null;
   }> {
     const draft: DraftOutput = {
-      id: `draft_${Date.now()}`, content, agentId, createdAt: new Date().toISOString(), type,
+      id: `draft_${Date.now()}`,
+      content,
+      agentId,
+      createdAt: new Date().toISOString(),
+      type,
     };
 
     // Stage 1: Auto-review (quality gates)
@@ -123,9 +156,11 @@ export class QualityPipeline {
     if (!this.isConsistent(content)) issues.push('Internal inconsistency detected');
 
     const review: ReviewResult = {
-      draftId: draft.id, passed: issues.length === 0,
+      draftId: draft.id,
+      passed: issues.length === 0,
       score: Math.max(0, 1 - issues.length * 0.2),
-      issues, suggestions: [],
+      issues,
+      suggestions: [],
     };
 
     // Stage 2: Auto-fix if possible
@@ -133,7 +168,7 @@ export class QualityPipeline {
     if (review.passed) {
       final = content;
     } else {
-      review.suggestions = issues.map(i => `Fix: ${i}`);
+      review.suggestions = issues.map((i) => `Fix: ${i}`);
       if (issues.length <= 2) final = content;
     }
 
@@ -142,7 +177,8 @@ export class QualityPipeline {
   }
 
   private hasHallucinationSignals(s: string): boolean {
-    const signals = /\b(unverified|allegedly|reportedly|supposedly|as of my last|I cannot verify)\b/i;
+    const signals =
+      /\b(unverified|allegedly|reportedly|supposedly|as of my last|I cannot verify)\b/i;
     return signals.test(s);
   }
 
@@ -161,15 +197,31 @@ export class QualityPipeline {
   private logQuality(draft: DraftOutput, review: ReviewResult) {
     try {
       const logPath = path.join(STATE_DIR, 'quality-log.json');
-      let logs: Array<{ draftId: string; type: string; score: number; passed: boolean; timestamp: string }> = [];
+      let logs: Array<{
+        draftId: string;
+        type: string;
+        score: number;
+        passed: boolean;
+        timestamp: string;
+      }> = [];
       if (fs.existsSync(logPath)) logs = JSON.parse(fs.readFileSync(logPath, 'utf-8'));
-      logs.push({ draftId: draft.id, type: draft.type, score: review.score, passed: review.passed, timestamp: new Date().toISOString() });
+      logs.push({
+        draftId: draft.id,
+        type: draft.type,
+        score: review.score,
+        passed: review.passed,
+        timestamp: new Date().toISOString(),
+      });
       if (logs.length > 1000) logs = logs.slice(-1000);
       // Fire-and-forget async write
-      fs.promises.writeFile(logPath, JSON.stringify(logs, null, 2), 'utf-8').catch(
-        (e) => getGlobalLogger().debug('Company', 'Quality log write error', { error: (e as Error)?.message })
+      fs.promises.writeFile(logPath, JSON.stringify(logs, null, 2), 'utf-8').catch((e) =>
+        getGlobalLogger().debug('Company', 'Quality log write error', {
+          error: (e as Error)?.message,
+        }),
       );
-    } catch (e) { getGlobalLogger().debug('Company', 'Quality log error', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().debug('Company', 'Quality log error', { error: (e as Error)?.message });
+    }
   }
 }
 
@@ -177,8 +229,12 @@ export class QualityPipeline {
 // 3. Feedback Learning Loop
 // ============================================================================
 export interface FeedbackEntry {
-  taskId: string; prompt: string; output: string;
-  score: number; issues: string[]; improved: boolean;
+  taskId: string;
+  prompt: string;
+  output: string;
+  score: number;
+  issues: string[];
+  improved: boolean;
   timestamp: string;
 }
 
@@ -191,10 +247,14 @@ export class FeedbackLoop {
       logs.push(entry);
       if (logs.length > 500) logs = logs.slice(-500);
       // Fire-and-forget async write
-      fs.promises.writeFile(p, JSON.stringify(logs, null, 2), 'utf-8').catch(
-        (e) => getGlobalLogger().debug('Company', 'Feedback write error', { error: (e as Error)?.message })
+      fs.promises.writeFile(p, JSON.stringify(logs, null, 2), 'utf-8').catch((e) =>
+        getGlobalLogger().debug('Company', 'Feedback write error', {
+          error: (e as Error)?.message,
+        }),
       );
-    } catch (e) { getGlobalLogger().debug('Company', 'Feedback record error', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().debug('Company', 'Feedback record error', { error: (e as Error)?.message });
+    }
   }
 
   getStats(): { total: number; avgScore: number; improvementRate: number; commonIssues: string[] } {
@@ -204,12 +264,24 @@ export class FeedbackLoop {
       const logs: FeedbackEntry[] = JSON.parse(fs.readFileSync(p, 'utf-8'));
       if (logs.length === 0) return { total: 0, avgScore: 0, improvementRate: 0, commonIssues: [] };
       const avg = logs.reduce((a, b) => a + b.score, 0) / logs.length;
-      const improved = logs.filter(l => l.improved).length;
+      const improved = logs.filter((l) => l.improved).length;
       const issueCount = new Map<string, number>();
-      for (const l of logs) for (const issue of l.issues) issueCount.set(issue, (issueCount.get(issue) || 0) + 1);
-      const top = [...issueCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([i]) => i);
-      return { total: logs.length, avgScore: avg, improvementRate: improved / logs.length, commonIssues: top };
-    } catch (e) { getGlobalLogger().debug('Company', 'Feedback stats error', { error: (e as Error)?.message }); return { total: 0, avgScore: 0, improvementRate: 0, commonIssues: [] }; }
+      for (const l of logs)
+        for (const issue of l.issues) issueCount.set(issue, (issueCount.get(issue) || 0) + 1);
+      const top = [...issueCount.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([i]) => i);
+      return {
+        total: logs.length,
+        avgScore: avg,
+        improvementRate: improved / logs.length,
+        commonIssues: top,
+      };
+    } catch (e) {
+      getGlobalLogger().debug('Company', 'Feedback stats error', { error: (e as Error)?.message });
+      return { total: 0, avgScore: 0, improvementRate: 0, commonIssues: [] };
+    }
   }
 }
 
@@ -235,11 +307,21 @@ export class CompanyEngine {
     this.running = false;
     this.scheduler.stop();
     const elapsed = ((Date.now() - this.startTime) / 1000 / 60).toFixed(1);
-    getGlobalLogger().info('Company', `Engine stopped. Ran ${this.taskCount} tasks in ${elapsed}min`);
+    getGlobalLogger().info(
+      'Company',
+      `Engine stopped. Ran ${this.taskCount} tasks in ${elapsed}min`,
+    );
   }
 
-  async submit(content: string, type: string, agentId: string): Promise<{
-    draft: DraftOutput; review: ReviewResult; final: string | null; tokenCost: number;
+  async submit(
+    content: string,
+    type: string,
+    agentId: string,
+  ): Promise<{
+    draft: DraftOutput;
+    review: ReviewResult;
+    final: string | null;
+    tokenCost: number;
   }> {
     this.taskCount++;
     const tokenCost = this.estimateTokens(content);
@@ -247,8 +329,12 @@ export class CompanyEngine {
     const { draft, review, final } = await this.quality.run(content, type, agentId);
 
     this.feedback.record({
-      taskId: draft.id, prompt: content.slice(0, 100), output: (final || content).slice(0, 100),
-      score: review.score, issues: review.issues, improved: final !== null && review.passed,
+      taskId: draft.id,
+      prompt: content.slice(0, 100),
+      output: (final || content).slice(0, 100),
+      score: review.score,
+      issues: review.issues,
+      improved: final !== null && review.passed,
       timestamp: new Date().toISOString(),
     });
 

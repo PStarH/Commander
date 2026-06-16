@@ -49,9 +49,9 @@ export type PrivacyRoute = 'cloud' | 'local' | 'blocked';
 export interface SensitivityMatch {
   category: SensitivityCategory;
   severity: 'low' | 'medium' | 'high' | 'critical';
-  pattern: string;       // Which pattern matched
-  match: string;         // The matched text (redacted in logs)
-  position: number;      // Character position in content
+  pattern: string; // Which pattern matched
+  match: string; // The matched text (redacted in logs)
+  position: number; // Character position in content
 }
 
 export interface PrivacyDecision {
@@ -89,47 +89,182 @@ const SENSITIVITY_PATTERNS: Array<{
   label: string;
 }> = [
   // ── API Keys (critical) ────────────────────────────────────────────────
-  { category: 'api_key', severity: 'critical', regex: /sk-[A-Za-z0-9]{20,}/g, label: 'OpenAI API key' },
-  { category: 'api_key', severity: 'critical', regex: /sk-ant-[A-Za-z0-9]{20,}/g, label: 'Anthropic API key' },
-  { category: 'api_key', severity: 'critical', regex: /AIza[0-9A-Za-z_-]{35}/g, label: 'Google API key' },
-  { category: 'api_key', severity: 'critical', regex: /ghp_[A-Za-z0-9]{36}/g, label: 'GitHub personal access token' },
-  { category: 'api_key', severity: 'critical', regex: /ghs_[A-Za-z0-9]{36}/g, label: 'GitHub server-to-server token' },
-  { category: 'api_key', severity: 'high', regex: /hf_[A-Za-z0-9]{32,}/g, label: 'HuggingFace API key' },
+  {
+    category: 'api_key',
+    severity: 'critical',
+    regex: /sk-[A-Za-z0-9]{20,}/g,
+    label: 'OpenAI API key',
+  },
+  {
+    category: 'api_key',
+    severity: 'critical',
+    regex: /sk-ant-[A-Za-z0-9]{20,}/g,
+    label: 'Anthropic API key',
+  },
+  {
+    category: 'api_key',
+    severity: 'critical',
+    regex: /AIza[0-9A-Za-z_-]{35}/g,
+    label: 'Google API key',
+  },
+  {
+    category: 'api_key',
+    severity: 'critical',
+    regex: /ghp_[A-Za-z0-9]{36}/g,
+    label: 'GitHub personal access token',
+  },
+  {
+    category: 'api_key',
+    severity: 'critical',
+    regex: /ghs_[A-Za-z0-9]{36}/g,
+    label: 'GitHub server-to-server token',
+  },
+  {
+    category: 'api_key',
+    severity: 'high',
+    regex: /hf_[A-Za-z0-9]{32,}/g,
+    label: 'HuggingFace API key',
+  },
   { category: 'api_key', severity: 'high', regex: /xai-[A-Za-z0-9]{32,}/g, label: 'xAI API key' },
   { category: 'api_key', severity: 'high', regex: /glm-[A-Za-z0-9]{20,}/g, label: 'GLM API key' },
 
   // ── Internal IPs (high) ────────────────────────────────────────────────
-  { category: 'internal_ip', severity: 'high', regex: /\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, label: 'Class A private IP (10.x)' },
-  { category: 'internal_ip', severity: 'high', regex: /\b172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/g, label: 'Class B private IP (172.16-31.x)' },
-  { category: 'internal_ip', severity: 'high', regex: /\b192\.168\.\d{1,3}\.\d{1,3}\b/g, label: 'Class C private IP (192.168.x)' },
-  { category: 'internal_ip', severity: 'medium', regex: /\b127\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, label: 'Loopback IP (127.x)' },
-  { category: 'internal_ip', severity: 'medium', regex: /\b(0\.0\.0\.0|localhost)\b/g, label: 'Localhost reference' },
+  {
+    category: 'internal_ip',
+    severity: 'high',
+    regex: /\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,
+    label: 'Class A private IP (10.x)',
+  },
+  {
+    category: 'internal_ip',
+    severity: 'high',
+    regex: /\b172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/g,
+    label: 'Class B private IP (172.16-31.x)',
+  },
+  {
+    category: 'internal_ip',
+    severity: 'high',
+    regex: /\b192\.168\.\d{1,3}\.\d{1,3}\b/g,
+    label: 'Class C private IP (192.168.x)',
+  },
+  {
+    category: 'internal_ip',
+    severity: 'medium',
+    regex: /\b127\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,
+    label: 'Loopback IP (127.x)',
+  },
+  {
+    category: 'internal_ip',
+    severity: 'medium',
+    regex: /\b(0\.0\.0\.0|localhost)\b/g,
+    label: 'Localhost reference',
+  },
 
   // ── Credential Exposure (critical) ─────────────────────────────────────
-  { category: 'credential_exposure', severity: 'critical', regex: /(?:password|passwd|pwd)\s*[:=]\s*['"][^'"]{3,}['"]/gi, label: 'Password assignment' },
-  { category: 'credential_exposure', severity: 'critical', regex: /(?:secret|SECRET)\s*[:=]\s*['"][A-Za-z0-9_\-+=/]{8,}['"]/g, label: 'Secret key assignment' },
-  { category: 'credential_exposure', severity: 'high', regex: /(?:token|TOKEN)\s*[:=]\s*['"][A-Za-z0-9_.\-]{8,}['"]/g, label: 'Token assignment' },
-  { category: 'credential_exposure', severity: 'high', regex: /DATABASE_URL\s*=\s*['"][^'"]+['"]/g, label: 'Database connection string' },
-  { category: 'credential_exposure', severity: 'high', regex: /(?:mongodb|postgres|mysql|redis):\/\/[^'"\s]+/gi, label: 'Database connection URI' },
+  {
+    category: 'credential_exposure',
+    severity: 'critical',
+    regex: /(?:password|passwd|pwd)\s*[:=]\s*['"][^'"]{3,}['"]/gi,
+    label: 'Password assignment',
+  },
+  {
+    category: 'credential_exposure',
+    severity: 'critical',
+    regex: /(?:secret|SECRET)\s*[:=]\s*['"][A-Za-z0-9_\-+=/]{8,}['"]/g,
+    label: 'Secret key assignment',
+  },
+  {
+    category: 'credential_exposure',
+    severity: 'high',
+    regex: /(?:token|TOKEN)\s*[:=]\s*['"][A-Za-z0-9_.\-]{8,}['"]/g,
+    label: 'Token assignment',
+  },
+  {
+    category: 'credential_exposure',
+    severity: 'high',
+    regex: /DATABASE_URL\s*=\s*['"][^'"]+['"]/g,
+    label: 'Database connection string',
+  },
+  {
+    category: 'credential_exposure',
+    severity: 'high',
+    regex: /(?:mongodb|postgres|mysql|redis):\/\/[^'"\s]+/gi,
+    label: 'Database connection URI',
+  },
 
   // ── Private Keys (critical) ────────────────────────────────────────────
-  { category: 'private_key', severity: 'critical', regex: /-----BEGIN\s+(?:RSA\s+|EC\s+|DSA\s+|OPENSSH\s+)?PRIVATE\s+KEY-----/g, label: 'Private key block' },
-  { category: 'private_key', severity: 'high', regex: /-----BEGIN\s+CERTIFICATE-----/g, label: 'Certificate block' },
-  { category: 'private_key', severity: 'high', regex: /ssh-[a-z0-9]+\s+[A-Za-z0-9+/=]{100,}/g, label: 'SSH public key' },
+  {
+    category: 'private_key',
+    severity: 'critical',
+    regex: /-----BEGIN\s+(?:RSA\s+|EC\s+|DSA\s+|OPENSSH\s+)?PRIVATE\s+KEY-----/g,
+    label: 'Private key block',
+  },
+  {
+    category: 'private_key',
+    severity: 'high',
+    regex: /-----BEGIN\s+CERTIFICATE-----/g,
+    label: 'Certificate block',
+  },
+  {
+    category: 'private_key',
+    severity: 'high',
+    regex: /ssh-[a-z0-9]+\s+[A-Za-z0-9+/=]{100,}/g,
+    label: 'SSH public key',
+  },
 
   // ── PII (medium) ───────────────────────────────────────────────────────
-  { category: 'pii', severity: 'medium', regex: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, label: 'Email address' },
-  { category: 'pii', severity: 'low', regex: /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g, label: 'Phone number (US)' },
+  {
+    category: 'pii',
+    severity: 'medium',
+    regex: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+    label: 'Email address',
+  },
+  {
+    category: 'pii',
+    severity: 'low',
+    regex: /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g,
+    label: 'Phone number (US)',
+  },
 
   // ── Cloud Credentials (critical) ───────────────────────────────────────
-  { category: 'cloud_credential', severity: 'critical', regex: /AKIA[0-9A-Z]{16}/g, label: 'AWS Access Key ID' },
-  { category: 'cloud_credential', severity: 'critical', regex: /(?:aws_access_key_id|aws_secret_access_key)\s*[:=]\s*\S+/gi, label: 'AWS credential config' },
-  { category: 'cloud_credential', severity: 'high', regex: /service_account.*\.json/gi, label: 'GCP service account' },
-  { category: 'cloud_credential', severity: 'high', regex: /AZURE_CLIENT_SECRET\s*[:=]\s*\S+/gi, label: 'Azure client secret' },
+  {
+    category: 'cloud_credential',
+    severity: 'critical',
+    regex: /AKIA[0-9A-Z]{16}/g,
+    label: 'AWS Access Key ID',
+  },
+  {
+    category: 'cloud_credential',
+    severity: 'critical',
+    regex: /(?:aws_access_key_id|aws_secret_access_key)\s*[:=]\s*\S+/gi,
+    label: 'AWS credential config',
+  },
+  {
+    category: 'cloud_credential',
+    severity: 'high',
+    regex: /service_account.*\.json/gi,
+    label: 'GCP service account',
+  },
+  {
+    category: 'cloud_credential',
+    severity: 'high',
+    regex: /AZURE_CLIENT_SECRET\s*[:=]\s*\S+/gi,
+    label: 'Azure client secret',
+  },
 
   // ── Config Secrets (medium) ────────────────────────────────────────────
-  { category: 'config_secret', severity: 'medium', regex: /\.env\b.{0,20}?(?:KEY|SECRET|TOKEN|PASSWORD)/gi, label: '.env file secret reference' },
-  { category: 'config_secret', severity: 'low', regex: /process\.env\.[A-Z_]{3,}/g, label: 'process.env reference' },
+  {
+    category: 'config_secret',
+    severity: 'medium',
+    regex: /\.env\b.{0,20}?(?:KEY|SECRET|TOKEN|PASSWORD)/gi,
+    label: '.env file secret reference',
+  },
+  {
+    category: 'config_secret',
+    severity: 'low',
+    regex: /process\.env\.[A-Z_]{3,}/g,
+    label: 'process.env reference',
+  },
 ];
 
 // ============================================================================
@@ -163,7 +298,14 @@ export class PrivacyRouter {
     context?: { agentId?: string; runId?: string },
   ): Promise<PrivacyDecision> {
     if (!this.config.enabled) {
-      return { route: 'cloud', reason: 'Privacy routing disabled', matches: [], suggestedProvider: null, suggestedModel: null, blocked: false };
+      return {
+        route: 'cloud',
+        reason: 'Privacy routing disabled',
+        matches: [],
+        suggestedProvider: null,
+        suggestedModel: null,
+        blocked: false,
+      };
     }
 
     const matches = this.detectSensitivePatterns(content);
@@ -171,16 +313,26 @@ export class PrivacyRouter {
     // Filter by threshold
     const severityOrder: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
     const threshold = severityOrder[this.config.routeThreshold];
-    const significant = matches.filter(m => severityOrder[m.severity] >= threshold);
+    const significant = matches.filter((m) => severityOrder[m.severity] >= threshold);
 
     if (significant.length === 0) {
-      return { route: 'cloud', reason: 'No sensitive patterns detected', matches, suggestedProvider: null, suggestedModel: null, blocked: false };
+      return {
+        route: 'cloud',
+        reason: 'No sensitive patterns detected',
+        matches,
+        suggestedProvider: null,
+        suggestedModel: null,
+        blocked: false,
+      };
     }
 
-    const criticalMatches = significant.filter(m => m.severity === 'critical');
-    const highestSeverity = criticalMatches.length > 0 ? 'critical'
-      : significant.some(m => m.severity === 'high') ? 'high'
-      : 'medium';
+    const criticalMatches = significant.filter((m) => m.severity === 'critical');
+    const highestSeverity =
+      criticalMatches.length > 0
+        ? 'critical'
+        : significant.some((m) => m.severity === 'high')
+          ? 'high'
+          : 'medium';
 
     if (criticalMatches.length > 0 && this.config.blockOnCritical) {
       // Block execution entirely — live keys/secrets in content is a red flag
@@ -202,7 +354,8 @@ export class PrivacyRouter {
       this.logPrivacyEvent('fallback_cloud', significant, context);
       return {
         route: 'cloud',
-        reason: 'Sensitive content detected but no local model available. Routing to cloud (fallback).',
+        reason:
+          'Sensitive content detected but no local model available. Routing to cloud (fallback).',
         matches: significant,
         suggestedProvider: null,
         suggestedModel: null,
@@ -238,7 +391,7 @@ export class PrivacyRouter {
       reasoning: [
         ...original.reasoning,
         `privacy_routing: ${decision.reason}`,
-        `sensitive_patterns: ${decision.matches.map(m => m.category).join(', ')}`,
+        `sensitive_patterns: ${decision.matches.map((m) => m.category).join(', ')}`,
       ],
       estimatedCost: 0, // Local = free
       maxTokens: original.maxTokens,
@@ -280,7 +433,7 @@ export class PrivacyRouter {
    */
   checkSync(content: string): PrivacyDecision {
     const matches = this.detectSensitivePatterns(content);
-    const critical = matches.filter(m => m.severity === 'critical');
+    const critical = matches.filter((m) => m.severity === 'critical');
 
     if (critical.length > 0 && this.config.blockOnCritical) {
       return {
@@ -295,7 +448,7 @@ export class PrivacyRouter {
 
     const severityOrder: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
     const threshold = severityOrder[this.config.routeThreshold];
-    const significant = matches.filter(m => severityOrder[m.severity] >= threshold);
+    const significant = matches.filter((m) => severityOrder[m.severity] >= threshold);
 
     if (significant.length > 0) {
       return {
@@ -375,9 +528,12 @@ export class PrivacyRouter {
 
     try {
       const audit = getSecurityAuditLogger();
-      const categories = [...new Set(matches.map(m => m.category))];
-      const highestSeverity = matches.some(m => m.severity === 'critical') ? 'critical'
-        : matches.some(m => m.severity === 'high') ? 'high' : 'medium';
+      const categories = [...new Set(matches.map((m) => m.category))];
+      const highestSeverity = matches.some((m) => m.severity === 'critical')
+        ? 'critical'
+        : matches.some((m) => m.severity === 'high')
+          ? 'high'
+          : 'medium';
 
       const event: Omit<SecurityEvent, 'id' | 'timestamp'> = {
         type: 'content_threat',
@@ -404,9 +560,15 @@ export class PrivacyRouter {
     try {
       const logger = getGlobalLogger();
       if (action === 'blocked') {
-        logger.warn('PrivacyRouter', `🚫 Blocked execution: ${matches.length} sensitive pattern(s) detected`);
+        logger.warn(
+          'PrivacyRouter',
+          `🚫 Blocked execution: ${matches.length} sensitive pattern(s) detected`,
+        );
       } else if (action === 'routed_local') {
-        logger.info('PrivacyRouter', `🔒 Routed to local model: ${matches.length} sensitive pattern(s) detected`);
+        logger.info(
+          'PrivacyRouter',
+          `🔒 Routed to local model: ${matches.length} sensitive pattern(s) detected`,
+        );
       }
     } catch {
       // Logging is best-effort
@@ -432,7 +594,10 @@ export class PrivacyRouter {
         return { provider: 'ollama', model: this.config.preferredLocalModel ?? 'llama3.2' };
       }
       if (this.localAvailable.vllm) {
-        return { provider: 'vllm', model: this.config.preferredLocalModel ?? 'meta-llama/Llama-3.2-3B-Instruct' };
+        return {
+          provider: 'vllm',
+          model: this.config.preferredLocalModel ?? 'meta-llama/Llama-3.2-3B-Instruct',
+        };
       }
       return null;
     }
@@ -448,7 +613,9 @@ export class PrivacyRouter {
         const model = this.config.preferredLocalModel ?? 'llama3.2';
         return { provider: 'ollama', model };
       }
-    } catch { /* Ollama not available */ }
+    } catch {
+      /* Ollama not available */
+    }
 
     // Try vLLM
     try {
@@ -461,7 +628,9 @@ export class PrivacyRouter {
         const model = this.config.preferredLocalModel ?? 'meta-llama/Llama-3.2-3B-Instruct';
         return { provider: 'vllm', model };
       }
-    } catch { /* vLLM not available */ }
+    } catch {
+      /* vLLM not available */
+    }
 
     return null;
   }

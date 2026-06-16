@@ -24,18 +24,16 @@ export interface AtomicWriteResult {
 export async function atomicWriteFile(
   filePath: string,
   content: string | Buffer,
-  options: { encoding?: BufferEncoding; mode?: number } = {}
+  options: { encoding?: BufferEncoding; mode?: number } = {},
 ): Promise<AtomicWriteResult> {
   const dir = path.dirname(filePath);
   const base = path.basename(filePath);
-  const tmpPath = path.join(
-    dir,
-    `.${base}.${process.pid}.${randomUUID()}.tmp`
-  );
+  const tmpPath = path.join(dir, `.${base}.${process.pid}.${randomUUID()}.tmp`);
 
-  const bytes = typeof content === 'string'
-    ? Buffer.byteLength(content, options.encoding ?? 'utf8')
-    : content.byteLength;
+  const bytes =
+    typeof content === 'string'
+      ? Buffer.byteLength(content, options.encoding ?? 'utf8')
+      : content.byteLength;
 
   let handle: fs.promises.FileHandle | undefined;
   try {

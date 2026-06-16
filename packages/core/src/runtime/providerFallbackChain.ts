@@ -40,7 +40,9 @@ const DEFAULT_RETRYABLE = (err: unknown): boolean => {
 export class FallbackChainExhaustedError extends Error {
   readonly attempts: Array<{ provider: string; error: string }>;
   constructor(attempts: Array<{ provider: string; error: string }>) {
-    super(`All ${attempts.length} providers failed: ${attempts.map(a => `${a.provider}: ${a.error}`).join('; ')}`);
+    super(
+      `All ${attempts.length} providers failed: ${attempts.map((a) => `${a.provider}: ${a.error}`).join('; ')}`,
+    );
     this.name = 'FallbackChainExhaustedError';
     this.attempts = attempts;
   }
@@ -57,7 +59,9 @@ export class ProviderFallbackChain<T> {
     };
   }
 
-  async tryProviders(providers: ProviderEntry<T>[]): Promise<{ result: T; providerUsed: string; attempts: number }> {
+  async tryProviders(
+    providers: ProviderEntry<T>[],
+  ): Promise<{ result: T; providerUsed: string; attempts: number }> {
     const startedAt = Date.now();
     const attempts: Array<{ provider: string; error: string }> = [];
 

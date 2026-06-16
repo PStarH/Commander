@@ -59,14 +59,53 @@ const DEFAULT_CONFIG: QualityGateConfig = {
   dedupThreshold: 0.85,
   consensusThreshold: 0.6,
   actionKeywords: [
-    'should', 'need', 'must', 'recommend', 'fix', 'use', 'avoid',
-    'preference', 'always', 'never', 'important', 'remember',
-    '应该', '需要', '必须', '建议', '修复', '使用', '避免', '偏好', '总是', '从不', '重要', '记住',
+    'should',
+    'need',
+    'must',
+    'recommend',
+    'fix',
+    'use',
+    'avoid',
+    'preference',
+    'always',
+    'never',
+    'important',
+    'remember',
+    '应该',
+    '需要',
+    '必须',
+    '建议',
+    '修复',
+    '使用',
+    '避免',
+    '偏好',
+    '总是',
+    '从不',
+    '重要',
+    '记住',
   ],
   factKeywords: [
-    'version', 'port', 'password', 'address', 'config', 'path',
-    'error', 'bug', 'issue', 'solution', 'answer',
-    '版本', '端口', '密码', '地址', '配置', '路径', '错误', '问题', '解决方案', '答案',
+    'version',
+    'port',
+    'password',
+    'address',
+    'config',
+    'path',
+    'error',
+    'bug',
+    'issue',
+    'solution',
+    'answer',
+    '版本',
+    '端口',
+    '密码',
+    '地址',
+    '配置',
+    '路径',
+    '错误',
+    '问题',
+    '解决方案',
+    '答案',
   ],
 };
 
@@ -93,7 +132,7 @@ export class MemoryQualityGate {
   async evaluate(
     entry: MemoryEntry,
     embedStore?: InMemoryEmbeddingStore,
-    queryEmbedding?: number[]
+    queryEmbedding?: number[],
   ): Promise<QualityGateResult> {
     // Layer 1: Rule filter (0 tokens)
     const ruleResult = this.passesRuleFilter(entry.content);
@@ -154,7 +193,10 @@ export class MemoryQualityGate {
   passesRuleFilter(content: string): { passed: boolean; reason: string } {
     // Too short
     if (content.length < this.config.minContentLength) {
-      return { passed: false, reason: `Content too short (${content.length} < ${this.config.minContentLength})` };
+      return {
+        passed: false,
+        reason: `Content too short (${content.length} < ${this.config.minContentLength})`,
+      };
     }
 
     // Pure tool call logs
@@ -180,7 +222,7 @@ export class MemoryQualityGate {
     // Repetitive content (same line repeated)
     const lines = content.split('\n');
     if (lines.length > 3) {
-      const uniqueLines = new Set(lines.map(l => l.trim()));
+      const uniqueLines = new Set(lines.map((l) => l.trim()));
       if (uniqueLines.size / lines.length < 0.3) {
         return { passed: false, reason: 'Highly repetitive content' };
       }
@@ -198,18 +240,21 @@ export class MemoryQualityGate {
     const content = entry.content;
 
     // Information density check
-    const words = content.split(/\s+/).filter(w => w.length > 0);
-    const uniqueWords = new Set(words.map(w => w.toLowerCase()));
+    const words = content.split(/\s+/).filter((w) => w.length > 0);
+    const uniqueWords = new Set(words.map((w) => w.toLowerCase()));
     const density = words.length > 0 ? uniqueWords.size / words.length : 0;
 
     if (density < this.config.minDensity) {
-      return { passed: false, reason: `Low information density (${density.toFixed(2)} < ${this.config.minDensity})` };
+      return {
+        passed: false,
+        reason: `Low information density (${density.toFixed(2)} < ${this.config.minDensity})`,
+      };
     }
 
     // Must contain action or fact keywords
     const lowerContent = content.toLowerCase();
-    const hasAction = this.config.actionKeywords.some(kw => lowerContent.includes(kw));
-    const hasFact = this.config.factKeywords.some(kw => lowerContent.includes(kw));
+    const hasAction = this.config.actionKeywords.some((kw) => lowerContent.includes(kw));
+    const hasFact = this.config.factKeywords.some((kw) => lowerContent.includes(kw));
 
     if (!hasAction && !hasFact && entry.importance < 0.5) {
       return { passed: false, reason: 'No action/fact keywords and low importance' };
@@ -226,7 +271,7 @@ export class MemoryQualityGate {
   async checkDuplicate(
     content: string,
     embedStore: InMemoryEmbeddingStore,
-    queryEmbedding: number[]
+    queryEmbedding: number[],
   ): Promise<{ isDuplicate: boolean; similarity: number; duplicateId?: string }> {
     // Get all entries and their embeddings
     const entries = embedStore.getAllEntries();
@@ -279,7 +324,8 @@ export class MemoryQualityGate {
     });
 
     // Signal 3: Content length (not too short, not too long)
-    const lengthScore = Math.min(entry.content.length / 100, 1) *
+    const lengthScore =
+      Math.min(entry.content.length / 100, 1) *
       (entry.content.length < this.config.maxContentLength ? 1 : 0.5);
     votes.push({
       signal: 'content_quality',
@@ -312,7 +358,7 @@ export class MemoryQualityGate {
 
     const totalWeight = votes.reduce((sum, v) => sum + v.confidence, 0);
     const storeWeight = votes
-      .filter(v => v.shouldStore)
+      .filter((v) => v.shouldStore)
       .reduce((sum, v) => sum + v.confidence, 0);
 
     const consensusRatio = totalWeight > 0 ? storeWeight / totalWeight : 0;

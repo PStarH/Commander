@@ -58,7 +58,10 @@ export interface ArtifactReference {
  * Shared artifact store for agent communication.
  */
 export interface ArtifactStore {
-  write(artifact: Omit<ArtifactReference, 'id' | 'createdAt'>, content: string): Promise<ArtifactReference>;
+  write(
+    artifact: Omit<ArtifactReference, 'id' | 'createdAt'>,
+    content: string,
+  ): Promise<ArtifactReference>;
   read(id: string): Promise<ArtifactReference | null>;
   find(tags: string[], type?: string): Promise<ArtifactReference[]>;
   delete(id: string): Promise<boolean>;

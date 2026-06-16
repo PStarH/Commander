@@ -182,14 +182,14 @@ export class TtsrManager {
       // Check file path globs
       if (entry.rule.globs && entry.rule.globs.length > 0) {
         if (!context.filePaths || context.filePaths.length === 0) continue;
-        const hasMatch = entry.rule.globs.some(glob =>
-          context.filePaths!.some(fp => this.#matchGlob(fp, glob))
+        const hasMatch = entry.rule.globs.some((glob) =>
+          context.filePaths!.some((fp) => this.#matchGlob(fp, glob)),
         );
         if (!hasMatch) continue;
       }
 
       // Check conditions against buffered content
-      const triggered = entry.conditions.some(cond => {
+      const triggered = entry.conditions.some((cond) => {
         cond.lastIndex = 0;
         return cond.test(buffered);
       });
@@ -265,7 +265,7 @@ export class TtsrManager {
     if (repeatMode === 'once') return false;
 
     const gap = rule.repeatGap ?? this.#settings.repeatGap;
-    return (this.#messageCount - record.lastInjectedAt) >= gap;
+    return this.#messageCount - record.lastInjectedAt >= gap;
   }
 
   #matchGlob(filePath: string, glob: string): boolean {

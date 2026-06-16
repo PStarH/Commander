@@ -22,7 +22,7 @@ export interface CostEstimate {
   estimatedTokens: number;
   estimatedCostUsd: number;
   estimatedDurationMs: number;
-  confidence: number;       // 0-1
+  confidence: number; // 0-1
   breakdown: {
     deliberation: number;
     execution: number;
@@ -72,7 +72,9 @@ export class CostPredictor {
       if (fs.existsSync(this.historyPath)) {
         this.history = JSON.parse(fs.readFileSync(this.historyPath, 'utf-8'));
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   private saveHistory(): void {
@@ -81,7 +83,9 @@ export class CostPredictor {
       const path = require('path');
       fs.mkdirSync(path.dirname(this.historyPath), { recursive: true });
       fs.writeFileSync(this.historyPath, JSON.stringify(this.history.slice(-1000), null, 2));
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   /**
@@ -112,9 +116,9 @@ export class CostPredictor {
 
     const breakdown = {
       deliberation: Math.round(estimatedTokens * 0.05),
-      execution: Math.round(estimatedTokens * 0.70),
+      execution: Math.round(estimatedTokens * 0.7),
       synthesis: Math.round(estimatedTokens * 0.15),
-      qualityGates: Math.round(estimatedTokens * 0.10),
+      qualityGates: Math.round(estimatedTokens * 0.1),
     };
 
     // Use real per-model pricing. Assume input/output split ~70/30 (typical).
@@ -124,7 +128,8 @@ export class CostPredictor {
     const costResult = calculateCostBreakdown(modelId, inputShare, outputShare);
 
     const estimatedCostUsd = costResult.totalUsd;
-    const confidence = similar.length >= 5 ? 0.9 : similar.length >= 3 ? 0.7 : similar.length >= 1 ? 0.5 : 0.3;
+    const confidence =
+      similar.length >= 5 ? 0.9 : similar.length >= 3 ? 0.7 : similar.length >= 1 ? 0.5 : 0.3;
 
     return {
       estimatedTokens,
@@ -132,7 +137,7 @@ export class CostPredictor {
       estimatedDurationMs,
       confidence,
       breakdown,
-      similarTasks: similar.slice(0, 5).map(t => ({
+      similarTasks: similar.slice(0, 5).map((t) => ({
         task: t.taskType,
         tokens: t.tokens,
         cost: t.costUsd,
@@ -171,10 +176,11 @@ export class CostPredictor {
     topology: string;
   }): CostHistory[] {
     return this.history
-      .filter(h =>
-        h.taskType === params.taskType ||
-        h.effortLevel === params.effortLevel ||
-        h.topology === params.topology
+      .filter(
+        (h) =>
+          h.taskType === params.taskType ||
+          h.effortLevel === params.effortLevel ||
+          h.topology === params.topology,
       )
       .sort((a, b) => {
         let scoreA = 0;
@@ -199,7 +205,9 @@ export class CostPredictor {
     if (estimate.similarTasks.length > 0) {
       lines.push(`\n类似任务参考:`);
       for (const t of estimate.similarTasks.slice(0, 3)) {
-        lines.push(`  ${t.task}: ${t.tokens.toLocaleString()} tok, $${t.cost.toFixed(4)}, ${(t.duration / 1000).toFixed(0)}s`);
+        lines.push(
+          `  ${t.task}: ${t.tokens.toLocaleString()} tok, $${t.cost.toFixed(4)}, ${(t.duration / 1000).toFixed(0)}s`,
+        );
       }
     }
 

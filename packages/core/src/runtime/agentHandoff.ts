@@ -200,7 +200,7 @@ export class AgentHandoff {
   /** List handoffs for an agent */
   listForAgent(agentId: string): HandoffRequest[] {
     return Array.from(this.handoffs.values()).filter(
-      h => h.fromAgent === agentId || h.toAgent === agentId,
+      (h) => h.fromAgent === agentId || h.toAgent === agentId,
     );
   }
 
@@ -231,27 +231,26 @@ export class AgentHandoff {
    */
   static generateSummary(messages: Array<{ role: string; content: string }>): ContextSummary {
     // Extract system instructions (first system message)
-    const systemMsgs = messages.filter(m => m.role === 'system');
-    const userMsgs = messages.filter(m => m.role === 'user');
-    const assistantMsgs = messages.filter(m => m.role === 'assistant');
-    const toolMsgs = messages.filter(m => m.role === 'tool');
+    const systemMsgs = messages.filter((m) => m.role === 'system');
+    const userMsgs = messages.filter((m) => m.role === 'user');
+    const assistantMsgs = messages.filter((m) => m.role === 'assistant');
+    const toolMsgs = messages.filter((m) => m.role === 'tool');
 
     // Compress: extract key sentences from each message type
     const extractKeySentences = (text: string, maxSentences: number): string => {
       const sentences = text
         .split(/[.\n]+/)
-        .map(s => s.trim())
-        .filter(s => s.length > 20 && s.length < 300);
+        .map((s) => s.trim())
+        .filter((s) => s.length > 20 && s.length < 300);
       return sentences.slice(0, maxSentences).join('. ');
     };
 
     // Build executed plan summary from user messages
-    const planParts = userMsgs
-      .map(m => extractKeySentences(m.content, 2))
-      .filter(Boolean);
-    const executedPlan = planParts.length > 0
-      ? planParts.slice(0, 5).join('; ').slice(0, 300)
-      : 'No explicit plan recorded';
+    const planParts = userMsgs.map((m) => extractKeySentences(m.content, 2)).filter(Boolean);
+    const executedPlan =
+      planParts.length > 0
+        ? planParts.slice(0, 5).join('; ').slice(0, 300)
+        : 'No explicit plan recorded';
 
     // Extract findings from tool results (first meaningful output per unique tool)
     const seenTools = new Set<string>();
@@ -271,11 +270,14 @@ export class AgentHandoff {
     // Extract decisions from assistant messages
     const decisions: string[] = [];
     for (const msg of assistantMsgs) {
-      const lines = msg.content.split('\n').filter(l => l.trim().length > 20);
+      const lines = msg.content.split('\n').filter((l) => l.trim().length > 20);
       for (const line of lines) {
         const lower = line.toLowerCase();
         if (
-          (lower.includes('decid') || lower.includes('conclud') || lower.includes('therefor') || lower.includes('thus')) &&
+          (lower.includes('decid') ||
+            lower.includes('conclud') ||
+            lower.includes('therefor') ||
+            lower.includes('thus')) &&
           line.length < 200
         ) {
           decisions.push(line.slice(0, 180));
@@ -286,9 +288,10 @@ export class AgentHandoff {
     }
 
     // Environment snapshot: last system message
-    const environmentSnapshot = systemMsgs.length > 0
-      ? systemMsgs[systemMsgs.length - 1].content.slice(0, 200)
-      : 'No environment snapshot available';
+    const environmentSnapshot =
+      systemMsgs.length > 0
+        ? systemMsgs[systemMsgs.length - 1].content.slice(0, 200)
+        : 'No environment snapshot available';
 
     // Open questions: last user message if it ends with a question
     const lastUser = userMsgs[userMsgs.length - 1];
@@ -331,7 +334,13 @@ export class AgentHandoff {
     if (totalTokens(current) <= maxTokens) return current;
 
     // Budget per field: allocate proportionally, with a floor
-    const fields: Array<keyof ContextSummary> = ['executedPlan', 'findings', 'decisions', 'environmentSnapshot', 'openQuestions'];
+    const fields: Array<keyof ContextSummary> = [
+      'executedPlan',
+      'findings',
+      'decisions',
+      'environmentSnapshot',
+      'openQuestions',
+    ];
     const toText = (s: ContextSummary, field: keyof ContextSummary) =>
       Array.isArray(s[field]) ? (s[field] as string[]).join('\n') : String(s[field]);
 
@@ -345,8 +354,14 @@ export class AgentHandoff {
         const text = toText(current, field);
         if (text.length <= 20) continue;
         const fieldTokens = estimate(text);
-        const share = Math.max(10, Math.floor((fieldTokens / Math.max(1, totalTokens(current))) * overage));
-        const targetChars = Math.max(20, Math.floor(text.length * (1 - share / Math.max(1, fieldTokens))));
+        const share = Math.max(
+          10,
+          Math.floor((fieldTokens / Math.max(1, totalTokens(current))) * overage),
+        );
+        const targetChars = Math.max(
+          20,
+          Math.floor(text.length * (1 - share / Math.max(1, fieldTokens))),
+        );
         if (targetChars < text.length) {
           if (Array.isArray(current[field])) {
             const joined = (current[field] as string[]).join('\n');
@@ -397,6 +412,9 @@ export class AgentHandoff {
   }
 
   dispose(): void {
-    if (this.pruneTimer) { clearInterval(this.pruneTimer); this.pruneTimer = null; }
+    if (this.pruneTimer) {
+      clearInterval(this.pruneTimer);
+      this.pruneTimer = null;
+    }
   }
 }

@@ -15,10 +15,13 @@ import { CycleDetector } from '../src/runtime/cycleDetector';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function assertDeliberation(result: ReturnType<typeof deliberate>, opts: {
-  taskType?: string;
-  requiresExternalInfo?: boolean;
-} = {}) {
+function assertDeliberation(
+  result: ReturnType<typeof deliberate>,
+  opts: {
+    taskType?: string;
+    requiresExternalInfo?: boolean;
+  } = {},
+) {
   assert.ok(result.taskType, `taskType should be set, got: ${result.taskType}`);
   assert.ok(result.recommendedTopology, 'recommendedTopology should be set');
   assert.ok(result.reasoning.length > 0, 'reasoning should not be empty');
@@ -26,7 +29,8 @@ function assertDeliberation(result: ReturnType<typeof deliberate>, opts: {
   assert.ok(result.estimatedSteps >= 1, 'estimatedSteps >= 1');
   assert.ok(result.confidence > 0 && result.confidence <= 1, 'confidence between 0 and 1');
   if (opts.taskType) assert.strictEqual(result.taskType, opts.taskType);
-  if (opts.requiresExternalInfo !== undefined) assert.strictEqual(result.requiresExternalInfo, opts.requiresExternalInfo);
+  if (opts.requiresExternalInfo !== undefined)
+    assert.strictEqual(result.requiresExternalInfo, opts.requiresExternalInfo);
 }
 
 // ── Deliberation: Task Classification ────────────────────────────────────────
@@ -34,12 +38,16 @@ function assertDeliberation(result: ReturnType<typeof deliberate>, opts: {
 describe('General-Purpose Deliberation', () => {
   describe('Task Type Classification', () => {
     it('classifies research tasks', () => {
-      const result = deliberate('Research the latest developments in quantum computing and summarize the key breakthroughs');
+      const result = deliberate(
+        'Research the latest developments in quantum computing and summarize the key breakthroughs',
+      );
       assertDeliberation(result, { taskType: 'RESEARCH', requiresExternalInfo: true });
     });
 
     it('classifies analysis tasks', () => {
-      const result = deliberate('Review and audit the security posture of our authentication system');
+      const result = deliberate(
+        'Review and audit the security posture of our authentication system',
+      );
       assertDeliberation(result, { taskType: 'ANALYSIS' });
     });
 
@@ -49,7 +57,9 @@ describe('General-Purpose Deliberation', () => {
     });
 
     it('classifies reasoning tasks', () => {
-      const result = deliberate('Explain why microservices architecture might not be the right choice for a small team');
+      const result = deliberate(
+        'Explain why microservices architecture might not be the right choice for a small team',
+      );
       assertDeliberation(result, { taskType: 'REASONING' });
     });
 
@@ -59,12 +69,16 @@ describe('General-Purpose Deliberation', () => {
     });
 
     it('classifies coding tasks', () => {
-      const result = deliberate('Implement a REST API with authentication middleware using Express.js');
+      const result = deliberate(
+        'Implement a REST API with authentication middleware using Express.js',
+      );
       assertDeliberation(result, { taskType: 'CODING' });
     });
 
     it('classifies multi-concern tasks', () => {
-      const result = deliberate('Design a distributed caching system, implement it with tests, write documentation');
+      const result = deliberate(
+        'Design a distributed caching system, implement it with tests, write documentation',
+      );
       assertDeliberation(result);
       // Multi-concern tasks should be classified as non-trivial
       assert.ok(result.estimatedSteps >= 2, 'multi-concern task should estimate multiple steps');
@@ -129,10 +143,15 @@ describe('General-Purpose Atomization', () => {
   const atomizer = new RecursiveAtomizer();
 
   it('decomposes research tasks into subtasks', () => {
-    const deliberation = deliberate('Research the current state of WebAssembly adoption across major browsers and frameworks');
+    const deliberation = deliberate(
+      'Research the current state of WebAssembly adoption across major browsers and frameworks',
+    );
     const tree = atomizer.decompose(
       'Research the current state of WebAssembly adoption across major browsers and frameworks',
-      deliberation, null, 0, ['web_search', 'web_fetch', 'file_write']
+      deliberation,
+      null,
+      0,
+      ['web_search', 'web_fetch', 'file_write'],
     );
     assert.ok(tree.goal.length > 0, 'root node should have a goal');
     assert.ok(tree.id, 'root node should have an id');
@@ -143,14 +162,19 @@ describe('General-Purpose Atomization', () => {
   });
 
   it('preserves file-writing intent in decomposition', () => {
-    const deliberation = deliberate('Write a comprehensive report on AI safety research to ai-safety-report.md');
+    const deliberation = deliberate(
+      'Write a comprehensive report on AI safety research to ai-safety-report.md',
+    );
     const tree = atomizer.decompose(
       'Write a comprehensive report on AI safety research to ai-safety-report.md',
-      deliberation, null, 0, ['web_search', 'file_write']
+      deliberation,
+      null,
+      0,
+      ['web_search', 'file_write'],
     );
     // Check that file intent is captured somewhere in the tree
     const allGoals = collectGoals(tree);
-    const hasFileRef = allGoals.some(g => g.includes('ai-safety-report.md'));
+    const hasFileRef = allGoals.some((g) => g.includes('ai-safety-report.md'));
     assert.ok(hasFileRef, 'should reference the output file somewhere in the tree');
   });
 
@@ -161,7 +185,10 @@ describe('General-Purpose Atomization', () => {
   });
 });
 
-function collectGoals(tree: { goal: string; subtasks: Array<{ goal: string; subtasks: any[] }> }): string[] {
+function collectGoals(tree: {
+  goal: string;
+  subtasks: Array<{ goal: string; subtasks: any[] }>;
+}): string[] {
   const goals = [tree.goal];
   for (const sub of tree.subtasks) {
     goals.push(...collectGoals(sub));
@@ -179,11 +206,16 @@ describe('Topology Routing', () => {
     const decision = router.route(deliberation);
     assert.ok(decision.topology, 'should have a topology');
     assert.ok(decision.reasoning.length > 0, 'should have reasoning');
-    assert.ok(['SINGLE', 'SEQUENTIAL'].includes(decision.topology), `expected simple topology, got ${decision.topology}`);
+    assert.ok(
+      ['SINGLE', 'SEQUENTIAL'].includes(decision.topology),
+      `expected simple topology, got ${decision.topology}`,
+    );
   });
 
   it('routes research tasks to parallel-friendly topologies', () => {
-    const deliberation = deliberate('Research TypeScript, Rust, and Go performance, compare benchmarks, analyze ecosystem maturity');
+    const deliberation = deliberate(
+      'Research TypeScript, Rust, and Go performance, compare benchmarks, analyze ecosystem maturity',
+    );
     const decision = router.route(deliberation);
     assert.ok(decision.topology, 'should have a topology');
     assert.ok(decision.expectedCost > 0, 'should estimate cost');
@@ -231,9 +263,15 @@ describe('Cycle Detector for General-Purpose Tasks', () => {
   it('allows alternating read/write on different files', () => {
     const detector = new CycleDetector();
     assert.strictEqual(detector.check('file_read', { path: 'config.json' }, 1).detected, false);
-    assert.strictEqual(detector.check('file_write', { path: 'output.md', content: '...' }, 2).detected, false);
+    assert.strictEqual(
+      detector.check('file_write', { path: 'output.md', content: '...' }, 2).detected,
+      false,
+    );
     assert.strictEqual(detector.check('file_read', { path: 'template.md' }, 3).detected, false);
-    assert.strictEqual(detector.check('file_write', { path: 'result.md', content: '...' }, 4).detected, false);
+    assert.strictEqual(
+      detector.check('file_write', { path: 'result.md', content: '...' }, 4).detected,
+      false,
+    );
   });
 
   it('allows git operations on different refs', () => {
@@ -250,39 +288,46 @@ describe('Cycle Detector for General-Purpose Tasks', () => {
 describe('LLM-Powered Deliberation', () => {
   const hasApiKey = !!process.env.OPENAI_API_KEY;
 
-  it('produces deliberation plan via LLM', async () => {
-    if (!hasApiKey) {
-      console.log('  Skipping (no OPENAI_API_KEY)');
-      return;
-    }
+  it(
+    'produces deliberation plan via LLM',
+    async () => {
+      if (!hasApiKey) {
+        console.log('  Skipping (no OPENAI_API_KEY)');
+        return;
+      }
 
-    const { createMiMoProvider } = await import('../src/runtime/providers/mimoProvider');
-    const { deliberateWithLLM } = await import('../src/ultimate/deliberation');
-    const provider = createMiMoProvider({
-      apiKey: process.env.OPENAI_API_KEY!,
-      baseUrl: process.env.OPENAI_BASE_URL,
-      defaultModel: process.env.OPENAI_MODEL,
-    });
+      const { createMiMoProvider } = await import('../src/runtime/providers/mimoProvider');
+      const { deliberateWithLLM } = await import('../src/ultimate/deliberation');
+      const provider = createMiMoProvider({
+        apiKey: process.env.OPENAI_API_KEY!,
+        baseUrl: process.env.OPENAI_BASE_URL,
+        defaultModel: process.env.OPENAI_MODEL,
+      });
 
-    try {
-      const plan = await deliberateWithLLM(
-        'Analyze the trade-offs between monolithic and microservice architectures for a startup with 5 engineers',
-        provider,
-        { availableTools: ['web_search', 'file_read', 'file_write'] }
-      );
+      try {
+        const plan = await deliberateWithLLM(
+          'Analyze the trade-offs between monolithic and microservice architectures for a startup with 5 engineers',
+          provider,
+          { availableTools: ['web_search', 'file_read', 'file_write'] },
+        );
 
-      assert.ok(plan.taskType, 'LLM should classify task type');
-      assert.ok(plan.recommendedTopology, 'LLM should recommend topology');
-      assert.ok(plan.confidence > 0, 'LLM should provide confidence');
-      console.log('  LLM Deliberation:', JSON.stringify({
-        taskType: plan.taskType,
-        topology: plan.recommendedTopology,
-        confidence: plan.confidence,
-        agents: plan.estimatedAgentCount,
-      }));
-    } catch (err) {
-      console.log('  LLM deliberation fell back to heuristic:', (err as Error).message);
-      assert.ok(true, 'fallback is acceptable');
-    }
-  }, { timeout: 60000 });
+        assert.ok(plan.taskType, 'LLM should classify task type');
+        assert.ok(plan.recommendedTopology, 'LLM should recommend topology');
+        assert.ok(plan.confidence > 0, 'LLM should provide confidence');
+        console.log(
+          '  LLM Deliberation:',
+          JSON.stringify({
+            taskType: plan.taskType,
+            topology: plan.recommendedTopology,
+            confidence: plan.confidence,
+            agents: plan.estimatedAgentCount,
+          }),
+        );
+      } catch (err) {
+        console.log('  LLM deliberation fell back to heuristic:', (err as Error).message);
+        assert.ok(true, 'fallback is acceptable');
+      }
+    },
+    { timeout: 60000 },
+  );
 });

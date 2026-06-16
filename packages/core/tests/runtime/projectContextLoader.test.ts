@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { loadProjectContext, buildProjectContextBlock, computeProjectContextCacheKey } from '../../src/runtime/projectContextLoader.js';
+import {
+  loadProjectContext,
+  buildProjectContextBlock,
+  computeProjectContextCacheKey,
+} from '../../src/runtime/projectContextLoader.js';
 
 interface FileSnapshot {
   filePath: string;
@@ -119,22 +123,26 @@ describe('buildProjectContextBlock', () => {
 
 describe('computeProjectContextCacheKey', () => {
   it('is deterministic for identical snapshots', () => {
-    const snapshots: FileSnapshot[] = [
-      { filePath: '/a/PROJECT.md', mtimeMs: 123, content: 'x' },
-    ];
+    const snapshots: FileSnapshot[] = [{ filePath: '/a/PROJECT.md', mtimeMs: 123, content: 'x' }];
     const a = computeProjectContextCacheKey(snapshots);
     const b = computeProjectContextCacheKey(snapshots);
     assert.strictEqual(a, b);
   });
 
   it('differs when mtime changes', () => {
-    const a = computeProjectContextCacheKey([{ filePath: '/a/PROJECT.md', mtimeMs: 123, content: 'x' }]);
-    const b = computeProjectContextCacheKey([{ filePath: '/a/PROJECT.md', mtimeMs: 456, content: 'x' }]);
+    const a = computeProjectContextCacheKey([
+      { filePath: '/a/PROJECT.md', mtimeMs: 123, content: 'x' },
+    ]);
+    const b = computeProjectContextCacheKey([
+      { filePath: '/a/PROJECT.md', mtimeMs: 456, content: 'x' },
+    ]);
     assert.notStrictEqual(a, b);
   });
 
   it('differs when file set changes', () => {
-    const a = computeProjectContextCacheKey([{ filePath: '/a/PROJECT.md', mtimeMs: 123, content: 'x' }]);
+    const a = computeProjectContextCacheKey([
+      { filePath: '/a/PROJECT.md', mtimeMs: 123, content: 'x' },
+    ]);
     const b = computeProjectContextCacheKey([
       { filePath: '/a/PROJECT.md', mtimeMs: 123, content: 'x' },
       { filePath: '/a/AGENTS.md', mtimeMs: 123, content: 'y' },

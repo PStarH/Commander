@@ -96,14 +96,26 @@ describe('MetricsCollector', () => {
   describe('recordToolCall', () => {
     it('records success counter and duration', () => {
       mc.recordToolCall('read_file', 42);
-      assert.strictEqual(mc.getCounter('tool_success_total', [{ name: 'tool', value: 'read_file' }]), 1);
-      assert.strictEqual(mc.getCounter('tool_errors_total', [{ name: 'tool', value: 'read_file' }]), 0);
+      assert.strictEqual(
+        mc.getCounter('tool_success_total', [{ name: 'tool', value: 'read_file' }]),
+        1,
+      );
+      assert.strictEqual(
+        mc.getCounter('tool_errors_total', [{ name: 'tool', value: 'read_file' }]),
+        0,
+      );
     });
 
     it('records error counter on failure', () => {
       mc.recordToolCall('read_file', 42, 'ENOENT');
-      assert.strictEqual(mc.getCounter('tool_errors_total', [{ name: 'tool', value: 'read_file' }]), 1);
-      assert.strictEqual(mc.getCounter('tool_success_total', [{ name: 'tool', value: 'read_file' }]), 0);
+      assert.strictEqual(
+        mc.getCounter('tool_errors_total', [{ name: 'tool', value: 'read_file' }]),
+        1,
+      );
+      assert.strictEqual(
+        mc.getCounter('tool_success_total', [{ name: 'tool', value: 'read_file' }]),
+        0,
+      );
     });
 
     it('preserves histogram on multiple calls', () => {
@@ -118,11 +130,17 @@ describe('MetricsCollector', () => {
     it('records success, tokens, and duration', () => {
       mc.recordLLMCall('gpt-4', 'openai', 150, 500);
       assert.strictEqual(
-        mc.getCounter('llm_success_total', [{ name: 'model', value: 'gpt-4' }, { name: 'provider', value: 'openai' }]),
+        mc.getCounter('llm_success_total', [
+          { name: 'model', value: 'gpt-4' },
+          { name: 'provider', value: 'openai' },
+        ]),
         1,
       );
       assert.strictEqual(
-        mc.getCounter('llm_tokens_total', [{ name: 'model', value: 'gpt-4' }, { name: 'provider', value: 'openai' }]),
+        mc.getCounter('llm_tokens_total', [
+          { name: 'model', value: 'gpt-4' },
+          { name: 'provider', value: 'openai' },
+        ]),
         150,
       );
     });
@@ -130,7 +148,10 @@ describe('MetricsCollector', () => {
     it('records error on failure', () => {
       mc.recordLLMCall('gpt-4', 'openai', 0, 500, 'timeout');
       assert.strictEqual(
-        mc.getCounter('llm_errors_total', [{ name: 'model', value: 'gpt-4' }, { name: 'provider', value: 'openai' }]),
+        mc.getCounter('llm_errors_total', [
+          { name: 'model', value: 'gpt-4' },
+          { name: 'provider', value: 'openai' },
+        ]),
         1,
       );
     });
@@ -242,12 +263,18 @@ describe('MetricsCollector prompt prefix cache', () => {
 
   it('recordPromptPrefixCache(true) increments the hit counter', () => {
     mc.recordPromptPrefixCache(true);
-    assert.strictEqual(mc.getCounter('prompt_prefix_cache_total', [{ name: 'outcome', value: 'hit' }]), 1);
+    assert.strictEqual(
+      mc.getCounter('prompt_prefix_cache_total', [{ name: 'outcome', value: 'hit' }]),
+      1,
+    );
   });
 
   it('recordPromptPrefixCache(false) increments the miss counter', () => {
     mc.recordPromptPrefixCache(false);
-    assert.strictEqual(mc.getCounter('prompt_prefix_cache_total', [{ name: 'outcome', value: 'miss' }]), 1);
+    assert.strictEqual(
+      mc.getCounter('prompt_prefix_cache_total', [{ name: 'outcome', value: 'miss' }]),
+      1,
+    );
   });
 
   it('setPromptPrefixCacheKey writes a numeric gauge', () => {

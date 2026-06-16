@@ -24,11 +24,18 @@ import { getGlobalLogger } from '../logging';
 import { getGlobalThreeLayerMemory } from '../threeLayerMemory';
 import type { ThreeLayerMemory, MemoryEntry } from '../threeLayerMemory';
 import type {
-  MemoryStore, EpisodicMemoryItem, MemoryWriteOptions,
-  MemorySearchQuery, MemorySearchResult,
+  MemoryStore,
+  EpisodicMemoryItem,
+  MemoryWriteOptions,
+  MemorySearchQuery,
+  MemorySearchResult,
 } from '../memory';
 import { ConversationStore, getConversationStore } from './conversationStore';
-import type { ConversationSearchResult, ConversationSession, ConversationTurn } from './conversationStore';
+import type {
+  ConversationSearchResult,
+  ConversationSession,
+  ConversationTurn,
+} from './conversationStore';
 import { MemoryCurator, getMemoryCurator } from './curator';
 import type { CurationResult } from './curator';
 import { UserModelManager, getUserModelManager } from './userModel';
@@ -279,12 +286,12 @@ export class UnifiedMemory {
         limit * 2,
       );
       if (sources.includes('episodic')) {
-        episodicResults = storeResults.filter(r => r.duration === 'EPISODIC').slice(0, limit);
+        episodicResults = storeResults.filter((r) => r.duration === 'EPISODIC').slice(0, limit);
       }
       if (sources.includes('longterm')) {
-        const ltItems = storeResults.filter(r => r.duration === 'LONG_TERM').slice(0, limit);
+        const ltItems = storeResults.filter((r) => r.duration === 'LONG_TERM').slice(0, limit);
         // Convert EpisodicMemoryItem to MemoryEntry format for longtermResults
-        longtermResults = ltItems.map(item => ({
+        longtermResults = ltItems.map((item) => ({
           id: item.id,
           layer: 'longterm' as const,
           content: item.content,
@@ -314,16 +321,22 @@ export class UnifiedMemory {
     // User model
     if (sources.includes('user_model') && options.userId && this.config.enableUserModel) {
       // Load from disk if not in memory
-      userProfile = this.userModel.loadProfile(options.userId)
-        ?? this.userModel.getProfile(options.userId);
+      userProfile =
+        this.userModel.loadProfile(options.userId) ?? this.userModel.getProfile(options.userId);
     }
 
     // Build unified context string
-    const totalCount = workingResults.length + episodicResults.length +
-      longtermResults.length + conversationResults.length;
+    const totalCount =
+      workingResults.length +
+      episodicResults.length +
+      longtermResults.length +
+      conversationResults.length;
 
     const contextString = this.buildRecallContextString(
-      workingResults, episodicResults, longtermResults, conversationResults,
+      workingResults,
+      episodicResults,
+      longtermResults,
+      conversationResults,
     );
 
     return {
@@ -372,7 +385,8 @@ export class UnifiedMemory {
     let workingContext = '';
     const recentWorking = this.threeLayer.searchRelated('', 10);
     if (recentWorking.length > 0) {
-      workingContext = '## Current Session Context\n' +
+      workingContext =
+        '## Current Session Context\n' +
         recentWorking.map((e: MemoryEntry) => `- ${e.content.substring(0, 200)}`).join('\n');
     }
 
@@ -381,8 +395,11 @@ export class UnifiedMemory {
     if (params.goal && this.memoryStore) {
       const relevant = await this.memoryStore.searchSemantic(params.goal, params.projectId, 5);
       if (relevant.length > 0) {
-        systemContext = '## Relevant Knowledge\n' +
-          relevant.map(r => `- [${r.kind}] ${r.title}: ${r.content.substring(0, 200)}`).join('\n');
+        systemContext =
+          '## Relevant Knowledge\n' +
+          relevant
+            .map((r) => `- [${r.kind}] ${r.title}: ${r.content.substring(0, 200)}`)
+            .join('\n');
       }
     }
 
@@ -392,7 +409,7 @@ export class UnifiedMemory {
       { label: 'system', content: systemContext },
       { label: 'conversation', content: conversationContext },
       { label: 'working', content: workingContext },
-    ].filter(s => s.content);
+    ].filter((s) => s.content);
 
     let combined = '';
     let estimatedTokens = 0;
@@ -463,12 +480,15 @@ export class UnifiedMemory {
   /**
    * Record a user interaction for model building.
    */
-  recordUserInteraction(userId: string, params: {
-    message: string;
-    role: 'user' | 'assistant';
-    toolUsed?: string;
-    domain?: string;
-  }): void {
+  recordUserInteraction(
+    userId: string,
+    params: {
+      message: string;
+      role: 'user' | 'assistant';
+      toolUsed?: string;
+      domain?: string;
+    },
+  ): void {
     if (!this.config.enableUserModel) return;
     this.userModel.recordInteraction(userId, params);
   }
@@ -588,7 +608,7 @@ export class UnifiedMemory {
 
     // Step 3: Deduplicate similar memories
     // Use title + kind for quick dedup
-    const seen = new Map<string, typeof episodic.items[0]>();
+    const seen = new Map<string, (typeof episodic.items)[0]>();
     for (const item of episodic.items) {
       const key = `${item.kind}:${item.title.toLowerCase().trim()}`;
       const existing = seen.get(key);
@@ -688,7 +708,9 @@ export class UnifiedMemory {
       parts.push('\n## Related Conversations');
       for (const conv of conversations) {
         const date = new Date(conv.session.startedAt).toLocaleDateString();
-        parts.push(`- ${date}: ${conv.session.goal ?? 'No goal'} (${conv.matchingTurns.length} matches)`);
+        parts.push(
+          `- ${date}: ${conv.session.goal ?? 'No goal'} (${conv.matchingTurns.length} matches)`,
+        );
         for (const turn of conv.matchingTurns.slice(0, 2)) {
           parts.push(`  > ${turn.content.substring(0, 150)}`);
         }

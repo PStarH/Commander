@@ -98,7 +98,9 @@ describe('CoordinationPolicy learned weights', () => {
       lw.recordCoordinationWeight('breadth_gain', 'RESEARCH', 0.25);
       const decisionNoLearned = evaluateCoordinationPolicy(plan(), 'PARALLEL');
       const decisionLearned = evaluateCoordinationPolicy(plan(), 'PARALLEL', undefined, lw);
-      expect(decisionLearned.gain.coverageGain).toBeGreaterThan(decisionNoLearned.gain.coverageGain);
+      expect(decisionLearned.gain.coverageGain).toBeGreaterThan(
+        decisionNoLearned.gain.coverageGain,
+      );
       expect(decisionLearned.gain.netRoi).toBeGreaterThan(decisionNoLearned.gain.netRoi);
     });
 

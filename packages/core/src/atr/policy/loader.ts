@@ -1,4 +1,11 @@
-import type { PolicyPackAst, PolicyRuleAst, PolicyExpr, PolicyBinOp, LiteralValue, ConflictReport } from './types';
+import type {
+  PolicyPackAst,
+  PolicyRuleAst,
+  PolicyExpr,
+  PolicyBinOp,
+  LiteralValue,
+  ConflictReport,
+} from './types';
 import { analyzeConflicts } from './conflictAnalyzer';
 
 export interface ParseResult {
@@ -8,7 +15,17 @@ export interface ParseResult {
 }
 
 const KEYWORDS = new Set([
-  'package', 'import', 'default', 'true', 'false', 'null', 'not', 'and', 'or', 'in', 'if',
+  'package',
+  'import',
+  'default',
+  'true',
+  'false',
+  'null',
+  'not',
+  'and',
+  'or',
+  'in',
+  'if',
 ]);
 
 const EFFECT_KEYWORDS = new Set(['allow', 'deny', 'require_approval', 'deny_class']);
@@ -32,7 +49,10 @@ export function tokenize(src: string): Token[] {
   while (i < src.length) {
     const c = src[i];
     const pos = i;
-    if (c === ' ' || c === '\t' || c === '\n' || c === '\r') { i++; continue; }
+    if (c === ' ' || c === '\t' || c === '\n' || c === '\r') {
+      i++;
+      continue;
+    }
     if (c === '#') {
       while (i < src.length && src[i] !== '\n') i++;
       continue;
@@ -116,10 +136,17 @@ export function tokenize(src: string): Token[] {
 
 class Parser {
   private pos = 0;
-  constructor(private readonly tokens: Token[], private readonly errors: string[]) {}
+  constructor(
+    private readonly tokens: Token[],
+    private readonly errors: string[],
+  ) {}
 
-  private peek(): Token { return this.tokens[this.pos]; }
-  private advance(): Token { return this.tokens[this.pos++]; }
+  private peek(): Token {
+    return this.tokens[this.pos];
+  }
+  private advance(): Token {
+    return this.tokens[this.pos++];
+  }
   private match(kind: string, value?: string): boolean {
     const t = this.peek();
     if (t.kind !== kind) return false;
@@ -129,13 +156,19 @@ class Parser {
   private expect(kind: string, value?: string): Token {
     const t = this.peek();
     if (t.kind !== kind || (value !== undefined && tokValue(t) !== value)) {
-      this.errors.push(`parse_error at ${t.pos}: expected ${kind}${value ? `(${value})` : ''}, got ${t.kind}${value ? `(${tokValue(t)})` : ''}`);
+      this.errors.push(
+        `parse_error at ${t.pos}: expected ${kind}${value ? `(${value})` : ''}, got ${t.kind}${value ? `(${tokValue(t)})` : ''}`,
+      );
       throw new Error('parse_error');
     }
     return this.advance();
   }
 
-  parse(): { rules: PolicyRuleAst[]; defaults: { allow: boolean; require_approval: boolean }; packageName: string } {
+  parse(): {
+    rules: PolicyRuleAst[];
+    defaults: { allow: boolean; require_approval: boolean };
+    packageName: string;
+  } {
     let packageName = 'atr.policy';
     const rules: PolicyRuleAst[] = [];
     const defaults = { allow: false, require_approval: false };
@@ -174,7 +207,8 @@ class Parser {
         const effVal = effTok.kind === 'eof' ? null : effTok.value;
         this.expect('punc', '=');
         const valTok = this.advance();
-        const truthy = valTok.kind === 'bool' ? valTok.value : (valTok.kind === 'punc' && valTok.value === 'true');
+        const truthy =
+          valTok.kind === 'bool' ? valTok.value : valTok.kind === 'punc' && valTok.value === 'true';
         if (effVal === 'allow') defaults.allow = Boolean(truthy);
         else if (effVal === 'require_approval') defaults.require_approval = Boolean(truthy);
         continue;
@@ -200,12 +234,20 @@ class Parser {
       const effTok = this.advance();
       if (name === 'deny_class') {
         effect = 'deny_class';
-        denyClass = effTok.kind === 'string'
-          ? effTok.value
-          : (effTok.kind === 'eof' ? '' : String(tokValue(effTok) ?? ''));
+        denyClass =
+          effTok.kind === 'string'
+            ? effTok.value
+            : effTok.kind === 'eof'
+              ? ''
+              : String(tokValue(effTok) ?? '');
       } else {
         const val = effTok.kind === 'eof' ? null : String(tokValue(effTok) ?? '');
-        if (val === 'allow' || val === 'deny' || val === 'require_approval' || val === 'deny_class') {
+        if (
+          val === 'allow' ||
+          val === 'deny' ||
+          val === 'require_approval' ||
+          val === 'deny_class'
+        ) {
           effect = val;
         } else {
           this.errors.push(`unknown_effect at ${effTok.pos}: ${val}`);
@@ -346,7 +388,12 @@ class Parser {
       const fields: { key: string; value: PolicyExpr }[] = [];
       while (!this.match('punc', '}') && !this.match('eof')) {
         const keyTok = this.advance();
-        const key = keyTok.kind === 'string' ? keyTok.value : (keyTok.kind === 'eof' ? '' : String(tokValue(keyTok) ?? ''));
+        const key =
+          keyTok.kind === 'string'
+            ? keyTok.value
+            : keyTok.kind === 'eof'
+              ? ''
+              : String(tokValue(keyTok) ?? '');
         this.expect('punc', ':');
         const value = this.parseExpr();
         fields.push({ key, value });

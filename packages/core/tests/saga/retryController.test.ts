@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { RetryController, RetryControllerError, mergeRetryPolicy } from '../../src/saga/retryController';
+import {
+  RetryController,
+  RetryControllerError,
+  mergeRetryPolicy,
+} from '../../src/saga/retryController';
 import type { RetryPolicy } from '../../src/saga/types';
 
 const expPolicy: RetryPolicy = {
@@ -13,11 +17,17 @@ const expPolicy: RetryPolicy = {
 
 describe('RetryController', () => {
   it('throws on invalid policy', () => {
-    assert.throws(() => new RetryController({ ...expPolicy, maxAttempts: 0 }), RetryControllerError);
-    assert.throws(() => new RetryController({ ...expPolicy, initialDelayMs: -1 }), RetryControllerError);
+    assert.throws(
+      () => new RetryController({ ...expPolicy, maxAttempts: 0 }),
+      RetryControllerError,
+    );
+    assert.throws(
+      () => new RetryController({ ...expPolicy, initialDelayMs: -1 }),
+      RetryControllerError,
+    );
     assert.throws(
       () => new RetryController({ ...expPolicy, initialDelayMs: 100, maxDelayMs: 50 }),
-      RetryControllerError
+      RetryControllerError,
     );
   });
 

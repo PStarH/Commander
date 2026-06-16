@@ -57,7 +57,9 @@ export class ModelPerformanceStore {
     // Ensure directory exists
     try {
       fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
 
     // Load existing records
     this.loadedRecords = this.loadFromDisk();
@@ -94,7 +96,7 @@ export class ModelPerformanceStore {
    */
   getFiltered(filter: { modelId?: string; taskType?: string }): ModelOutcome[] {
     const all = this.getAll();
-    return all.filter(r => {
+    return all.filter((r) => {
       if (filter.modelId && r.modelId !== filter.modelId) return false;
       if (filter.taskType && r.taskType !== filter.taskType) return false;
       return true;
@@ -138,7 +140,7 @@ export class ModelPerformanceStore {
       const colonIdx = key.lastIndexOf(':');
       const modelId = key.slice(0, colonIdx);
       const taskType = key.slice(colonIdx + 1);
-      const successes = outcomes.filter(o => o.success).length;
+      const successes = outcomes.filter((o) => o.success).length;
       const avgDuration = outcomes.reduce((s, o) => s + o.durationMs, 0) / outcomes.length;
       const avgTokens = outcomes.reduce((s, o) => s + o.tokensUsed, 0) / outcomes.length;
 
@@ -163,7 +165,7 @@ export class ModelPerformanceStore {
 
     try {
       // Append pending records to file
-      const lines = this.pendingRecords.map(r => JSON.stringify(r)).join('\n') + '\n';
+      const lines = this.pendingRecords.map((r) => JSON.stringify(r)).join('\n') + '\n';
       fs.appendFileSync(this.filePath, lines, 'utf-8');
 
       // Move pending to loaded
@@ -175,10 +177,12 @@ export class ModelPerformanceStore {
       if (this.loadedRecords.length > this.config.maxRecords) {
         this.loadedRecords = this.loadedRecords.slice(-this.config.maxRecords);
         // Rewrite file with pruned records
-        const prunedLines = this.loadedRecords.map(r => JSON.stringify(r)).join('\n') + '\n';
+        const prunedLines = this.loadedRecords.map((r) => JSON.stringify(r)).join('\n') + '\n';
         fs.writeFileSync(this.filePath, prunedLines, 'utf-8');
       }
-    } catch { /* best-effort: don't crash runtime for analytics */ }
+    } catch {
+      /* best-effort: don't crash runtime for analytics */
+    }
   }
 
   /**
@@ -214,7 +218,9 @@ export class ModelPerformanceStore {
         if (!trimmed) continue;
         try {
           records.push(JSON.parse(trimmed) as ModelOutcome);
-        } catch { /* skip malformed lines */ }
+        } catch {
+          /* skip malformed lines */
+        }
       }
 
       // Return most recent up to maxRecords

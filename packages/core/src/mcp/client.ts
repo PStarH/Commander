@@ -32,7 +32,10 @@ function uuid(): string {
 export class StdioClientTransport implements MCPTransport {
   private process: ChildProcess | null = null;
   private config: MCPClientConfig;
-  private pending = new Map<string | number, { resolve: (v: JSONRPCResponse) => void; reject: (e: Error) => void }>();
+  private pending = new Map<
+    string | number,
+    { resolve: (v: JSONRPCResponse) => void; reject: (e: Error) => void }
+  >();
   private buf = '';
   private msgId = 0;
 
@@ -100,8 +103,14 @@ export class StdioClientTransport implements MCPTransport {
       }, 30_000);
       timeout.unref();
       this.pending.set(id, {
-        resolve: (v) => { clearTimeout(timeout); resolve(v); },
-        reject: (e) => { clearTimeout(timeout); reject(e); },
+        resolve: (v) => {
+          clearTimeout(timeout);
+          resolve(v);
+        },
+        reject: (e) => {
+          clearTimeout(timeout);
+          reject(e);
+        },
       });
       stdin.write(JSON.stringify(req) + '\n');
     });
@@ -117,14 +126,28 @@ export class StdioClientTransport implements MCPTransport {
    * Only passes safe system variables. Secrets (API_KEY, TOKEN, SECRET, etc.) are excluded.
    */
   private filterEnvironment(): Record<string, string> {
-    const safeVars = new Set(['PATH', 'HOME', 'USER', 'SHELL', 'TERM', 'LANG', 'LC_ALL', 'TMPDIR', 'NODE_PATH', 'PYTHONPATH']);
+    const safeVars = new Set([
+      'PATH',
+      'HOME',
+      'USER',
+      'SHELL',
+      'TERM',
+      'LANG',
+      'LC_ALL',
+      'TMPDIR',
+      'NODE_PATH',
+      'PYTHONPATH',
+    ]);
     const denyPatterns = ['KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL', 'AUTH', 'PRIVATE'];
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) {
       if (v === undefined) continue;
-      if (safeVars.has(k)) { env[k] = v; continue; }
+      if (safeVars.has(k)) {
+        env[k] = v;
+        continue;
+      }
       const upper = k.toUpperCase();
-      if (denyPatterns.some(p => upper.includes(p))) continue;
+      if (denyPatterns.some((p) => upper.includes(p))) continue;
       env[k] = v;
     }
     return env;
@@ -163,7 +186,9 @@ export class StreamableHTTPClientTransport implements MCPTransport {
     try {
       return JSON.parse(text) as JSONRPCResponse;
     } catch {
-      throw new Error(`MCP HTTP server returned invalid JSON (status ${res.status}): ${text.slice(0, 200)}`);
+      throw new Error(
+        `MCP HTTP server returned invalid JSON (status ${res.status}): ${text.slice(0, 200)}`,
+      );
     }
   }
 
@@ -186,9 +211,10 @@ export class MCPClient {
 
   constructor(config: MCPClientConfig) {
     this.config = config;
-    this.transport = config.transport === 'stdio'
-      ? new StdioClientTransport(config)
-      : new StreamableHTTPClientTransport(config);
+    this.transport =
+      config.transport === 'stdio'
+        ? new StdioClientTransport(config)
+        : new StreamableHTTPClientTransport(config);
   }
 
   async connect(): Promise<void> {

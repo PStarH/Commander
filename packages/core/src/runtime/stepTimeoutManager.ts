@@ -41,7 +41,11 @@ export class StepTimeoutManager {
       const timer = setTimeout(() => {
         controller.abort(new StepTimeoutError(options.stepId, options.timeoutMs));
         if (options.onTimeout) {
-          try { options.onTimeout(controller.signal); } catch { /* best-effort */ }
+          try {
+            options.onTimeout(controller.signal);
+          } catch {
+            /* best-effort */
+          }
         }
         reject(new StepTimeoutError(options.stepId, options.timeoutMs));
       }, options.timeoutMs);
@@ -57,7 +61,7 @@ export class StepTimeoutManager {
 
     this.active.set(options.stepId, {
       controller,
-      reject: err => {
+      reject: (err) => {
         controller.abort(err);
         if (rejectFn) rejectFn(err);
       },

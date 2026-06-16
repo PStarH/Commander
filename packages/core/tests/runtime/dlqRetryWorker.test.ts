@@ -1,7 +1,26 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { DlqRetryWorker, type DlqReader, type DlqWriter, type RetryHandler } from '../../src/runtime/dlqRetryWorker';
+import {
+  DlqRetryWorker,
+  type DlqReader,
+  type DlqWriter,
+  type RetryHandler,
+} from '../../src/runtime/dlqRetryWorker';
 
-function makeEntry(overrides: Partial<{ id: string; category: string; operationName: string; runId: string; attemptNumber: number; retryable: boolean; recovered: boolean; errorMessage: string; inputSnapshot: string; agentId: string; tags: string[] }> = {}) {
+function makeEntry(
+  overrides: Partial<{
+    id: string;
+    category: string;
+    operationName: string;
+    runId: string;
+    attemptNumber: number;
+    retryable: boolean;
+    recovered: boolean;
+    errorMessage: string;
+    inputSnapshot: string;
+    agentId: string;
+    tags: string[];
+  }> = {},
+) {
   return {
     id: overrides.id ?? 'dlq-1',
     category: overrides.category ?? 'llm',
@@ -19,7 +38,9 @@ function makeEntry(overrides: Partial<{ id: string; category: string; operationN
 
 function createMockDlq(entries: ReturnType<typeof makeEntry>[] = []): DlqReader & DlqWriter {
   const getRetryableEntries = vi.fn().mockImplementation((category: string, limit: number) => {
-    return entries.filter((e) => e.category === category && e.retryable && !e.recovered).slice(0, limit);
+    return entries
+      .filter((e) => e.category === category && e.retryable && !e.recovered)
+      .slice(0, limit);
   });
   const readEntries = vi.fn().mockImplementation((category: string, limit: number) => {
     return entries.filter((e) => e.category === category).slice(0, limit);
@@ -32,7 +53,9 @@ function createMockDlq(entries: ReturnType<typeof makeEntry>[] = []): DlqReader 
   };
 }
 
-function createMockHandler(outcome: { recovered: boolean; error?: string } = { recovered: true }): RetryHandler {
+function createMockHandler(
+  outcome: { recovered: boolean; error?: string } = { recovered: true },
+): RetryHandler {
   return vi.fn().mockResolvedValue(outcome);
 }
 
@@ -49,7 +72,11 @@ describe('DlqRetryWorker', () => {
     const entry = makeEntry({ attemptNumber: 1 });
     const dlq = createMockDlq([entry]);
     const handler = createMockHandler({ recovered: true });
-    const worker = new DlqRetryWorker(dlq, handler, { intervalMs: 60_000, maxAutoRetries: 3, batchSize: 10 });
+    const worker = new DlqRetryWorker(dlq, handler, {
+      intervalMs: 60_000,
+      maxAutoRetries: 3,
+      batchSize: 10,
+    });
 
     const result = await worker.poll();
 
@@ -64,7 +91,11 @@ describe('DlqRetryWorker', () => {
     const entry = makeEntry({ attemptNumber: 3 });
     const dlq = createMockDlq([entry]);
     const handler = createMockHandler({ recovered: true });
-    const worker = new DlqRetryWorker(dlq, handler, { intervalMs: 60_000, maxAutoRetries: 3, batchSize: 10 });
+    const worker = new DlqRetryWorker(dlq, handler, {
+      intervalMs: 60_000,
+      maxAutoRetries: 3,
+      batchSize: 10,
+    });
 
     const result = await worker.poll();
 
@@ -72,14 +103,20 @@ describe('DlqRetryWorker', () => {
     expect(result.recovered).toBe(0);
     expect(result.escalated).toBe(1);
     expect(handler).not.toHaveBeenCalled();
-    expect(dlq.record).toHaveBeenCalledWith(expect.objectContaining({ operationName: 'dlq_retry.escalated', retryable: false }));
+    expect(dlq.record).toHaveBeenCalledWith(
+      expect.objectContaining({ operationName: 'dlq_retry.escalated', retryable: false }),
+    );
   });
 
   it('poll() handles handler returning recovered: false', async () => {
     const entry = makeEntry({ attemptNumber: 1 });
     const dlq = createMockDlq([entry]);
     const handler = createMockHandler({ recovered: false, error: 'still broken' });
-    const worker = new DlqRetryWorker(dlq, handler, { intervalMs: 60_000, maxAutoRetries: 3, batchSize: 10 });
+    const worker = new DlqRetryWorker(dlq, handler, {
+      intervalMs: 60_000,
+      maxAutoRetries: 3,
+      batchSize: 10,
+    });
 
     const result = await worker.poll();
 
@@ -92,7 +129,11 @@ describe('DlqRetryWorker', () => {
     const entry = makeEntry({ attemptNumber: 1 });
     const dlq = createMockDlq([entry]);
     const handler = vi.fn().mockRejectedValue(new Error('explosion'));
-    const worker = new DlqRetryWorker(dlq, handler, { intervalMs: 60_000, maxAutoRetries: 3, batchSize: 10 });
+    const worker = new DlqRetryWorker(dlq, handler, {
+      intervalMs: 60_000,
+      maxAutoRetries: 3,
+      batchSize: 10,
+    });
 
     const result = await worker.poll();
 

@@ -5,7 +5,11 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { injectTestConfig, createMockAgentLoopConfig, type InjectedConfig } from './configInjection';
+import {
+  injectTestConfig,
+  createMockAgentLoopConfig,
+  type InjectedConfig,
+} from './configInjection';
 import { createTestEnvSync, type TestEnv } from './testEnv';
 
 describe('configInjection', () => {

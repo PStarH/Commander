@@ -12,7 +12,12 @@
 
 export * from './types';
 export * from './canonicalJson';
-export { IdempotencyStore, getIdempotencyStore, resetIdempotencyStore, newLeaseToken } from './idempotencyStore';
+export {
+  IdempotencyStore,
+  getIdempotencyStore,
+  resetIdempotencyStore,
+  newLeaseToken,
+} from './idempotencyStore';
 export type { IdempotencyStoreConfig } from './idempotencyStore';
 export { LeaseManager } from './leaseManager';
 export type { LeaseManagerConfig, AcquireResult } from './leaseManager';
@@ -75,9 +80,6 @@ export type {
   ClosePrArgs,
   GitHubToolName,
 } from './adapters/github';
-export {
-  handleAtrHttpRequest,
-  ATR_HTTP_ROUTES,
-} from './atrHttp';
+export { handleAtrHttpRequest, ATR_HTTP_ROUTES } from './atrHttp';
 export type { AtrHttpDeps, AtrHttpResult } from './atrHttp';
 export * as Policy from './policy';

@@ -72,16 +72,19 @@ export function getCompensationData(bus: MessageBus): CompensationDashboardData 
   }
 
   for (const tool of seenTools) {
-    byTool[tool] = mc.getCounter('compensation_planned_total', [
-      { name: 'tool', value: tool },
-      { name: 'risk', value: 'safe' },
-    ]) + mc.getCounter('compensation_planned_total', [
-      { name: 'tool', value: tool },
-      { name: 'risk', value: 'review' },
-    ]) + mc.getCounter('compensation_planned_total', [
-      { name: 'tool', value: tool },
-      { name: 'risk', value: 'destructive' },
-    ]);
+    byTool[tool] =
+      mc.getCounter('compensation_planned_total', [
+        { name: 'tool', value: tool },
+        { name: 'risk', value: 'safe' },
+      ]) +
+      mc.getCounter('compensation_planned_total', [
+        { name: 'tool', value: tool },
+        { name: 'risk', value: 'review' },
+      ]) +
+      mc.getCounter('compensation_planned_total', [
+        { name: 'tool', value: tool },
+        { name: 'risk', value: 'destructive' },
+      ]);
   }
 
   for (const risk of seenRisks) {
@@ -391,5 +394,9 @@ export function renderDashboardHtml(bus: MessageBus): string {
 }
 
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }

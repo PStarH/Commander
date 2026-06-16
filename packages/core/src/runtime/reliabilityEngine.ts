@@ -26,7 +26,12 @@
  */
 
 import { CircuitBreaker, type CircuitStats } from './circuitBreaker';
-import { DeadLetterQueue, type DeadLetterEntry, type DLQCategory, type FailureMode } from './deadLetterQueue';
+import {
+  DeadLetterQueue,
+  type DeadLetterEntry,
+  type DLQCategory,
+  type FailureMode,
+} from './deadLetterQueue';
 import type { ErrorClass } from './llmRetry';
 import type { CompensationHandler, CompensableAction } from './compensationRegistry';
 import { CompensationRegistry } from './compensationRegistry';
@@ -91,18 +96,18 @@ export class ReliabilityEngine {
 
     this._deadLetterQueue = new DeadLetterQueue(config.dlqBaseDir);
     this._compensationRegistry = new CompensationRegistry();
-    this._stateCheckpointer = new StateCheckpointer(
-      config.checkpointBaseDir,
-      config.tenantId,
-      { leaseManager: config.leaseManager },
-    );
+    this._stateCheckpointer = new StateCheckpointer(config.checkpointBaseDir, config.tenantId, {
+      leaseManager: config.leaseManager,
+    });
 
     // Wire observability
     this._circuitBreaker.setObservability({
       onTransition: (from, to, provider) => {
         try {
           getMetricsCollector().recordCircuitTransition(from, to, provider ?? 'reliabilityEngine');
-        } catch { /* best-effort */ }
+        } catch {
+          /* best-effort */
+        }
         try {
           this._deadLetterQueue.enqueue({
             category: 'circuit_breaker',
@@ -111,7 +116,9 @@ export class ReliabilityEngine {
             tags: [`from:${from}`, `to:${to}`],
             failureMode: 'circuit_open',
           });
-        } catch { /* best-effort */ }
+        } catch {
+          /* best-effort */
+        }
       },
     });
 
@@ -119,24 +126,32 @@ export class ReliabilityEngine {
     if (config.compensationQueue) {
       try {
         this._compensationRegistry.setCompensationQueue(config.compensationQueue);
-      } catch { /* queue requires better-sqlite3; skip durable retry */ }
+      } catch {
+        /* queue requires better-sqlite3; skip durable retry */
+      }
     }
 
     this._compensationRegistry.setObservability({
       onSuccess: (action) => {
         try {
           getMetricsCollector().recordCompensation(action.toolName, 'success');
-        } catch { /* best-effort */ }
+        } catch {
+          /* best-effort */
+        }
       },
       onFailed: (action, err) => {
         try {
           getMetricsCollector().recordCompensation(action.toolName, 'failed');
-        } catch { /* best-effort */ }
+        } catch {
+          /* best-effort */
+        }
       },
       onExhausted: (action, err) => {
         try {
           getMetricsCollector().recordCompensation(action.toolName, 'exhausted');
-        } catch { /* best-effort */ }
+        } catch {
+          /* best-effort */
+        }
         try {
           this._deadLetterQueue.enqueue({
             category: 'compensation',
@@ -145,7 +160,9 @@ export class ReliabilityEngine {
             tags: [action.toolName],
             failureMode: 'compensation_exhausted',
           });
-        } catch { /* best-effort */ }
+        } catch {
+          /* best-effort */
+        }
       },
     });
   }

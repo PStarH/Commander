@@ -14,11 +14,18 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as http from 'http';
-import { handleObservabilityRequest, type ObservabilityDeps } from '../../src/observability/httpApi';
+import {
+  handleObservabilityRequest,
+  type ObservabilityDeps,
+} from '../../src/observability/httpApi';
 import { DatasetStore } from '../../src/observability/dataset';
 import { ExperimentRunner } from '../../src/observability/experimentRunner';
 import { AutoScorer } from '../../src/observability/autoScorer';
-import { EvalScorer, type JudgeProvider, type LLMResponse } from '../../src/observability/evalScorer';
+import {
+  EvalScorer,
+  type JudgeProvider,
+  type LLMResponse,
+} from '../../src/observability/evalScorer';
 import type { ExecutionTraceRecorder } from '../../src/runtime/executionTrace';
 import type { TraceStore } from '../../src/runtime/traceStore';
 
@@ -34,13 +41,24 @@ function stubStore(): TraceStore {
   return { readTrace: () => [] } as unknown as TraceStore;
 }
 
-function startServer(deps: Partial<ObservabilityDeps>): Promise<{ server: http.Server; port: number; close: () => Promise<void> }> {
+function startServer(
+  deps: Partial<ObservabilityDeps>,
+): Promise<{ server: http.Server; port: number; close: () => Promise<void> }> {
   return new Promise((resolve) => {
     const server = http.createServer(async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost');
-      const segments = url.pathname.replace(/^\/api\/v1\/observability\/?/, '').split('/').filter(Boolean);
+      const segments = url.pathname
+        .replace(/^\/api\/v1\/observability\/?/, '')
+        .split('/')
+        .filter(Boolean);
       try {
-        await handleObservabilityRequest(req, res, deps as ObservabilityDeps, segments, url.search.slice(1));
+        await handleObservabilityRequest(
+          req,
+          res,
+          deps as ObservabilityDeps,
+          segments,
+          url.search.slice(1),
+        );
       } catch (err) {
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -50,42 +68,68 @@ function startServer(deps: Partial<ObservabilityDeps>): Promise<{ server: http.S
     });
     server.listen(0, '127.0.0.1', () => {
       const addr = server.address() as { port: number };
-      resolve({ server, port: addr.port, close: () => new Promise<void>((r) => server.close(() => r())) });
+      resolve({
+        server,
+        port: addr.port,
+        close: () => new Promise<void>((r) => server.close(() => r())),
+      });
     });
   });
 }
 
 function get(server: { port: number }, path: string): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
-    const req = http.request({ hostname: '127.0.0.1', port: server.port, path, method: 'GET' }, (res) => {
-      let data = '';
-      res.on('data', (c) => (data += c));
-      res.on('end', () => {
-        let body: unknown = data;
-        try { body = JSON.parse(data); } catch { /* keep as text */ }
-        resolve({ status: res.statusCode ?? 0, body });
-      });
-    });
+    const req = http.request(
+      { hostname: '127.0.0.1', port: server.port, path, method: 'GET' },
+      (res) => {
+        let data = '';
+        res.on('data', (c) => (data += c));
+        res.on('end', () => {
+          let body: unknown = data;
+          try {
+            body = JSON.parse(data);
+          } catch {
+            /* keep as text */
+          }
+          resolve({ status: res.statusCode ?? 0, body });
+        });
+      },
+    );
     req.on('error', reject);
     req.end();
   });
 }
 
-function send(server: { port: number }, method: string, path: string, payload?: unknown): Promise<{ status: number; body: unknown }> {
+function send(
+  server: { port: number },
+  method: string,
+  path: string,
+  payload?: unknown,
+): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const body = payload === undefined ? '' : JSON.stringify(payload);
-    const req = http.request({
-      hostname: '127.0.0.1', port: server.port, path, method,
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-    }, (res) => {
-      let data = '';
-      res.on('data', (c) => (data += c));
-      res.on('end', () => {
-        let parsed: unknown = data;
-        try { parsed = JSON.parse(data); } catch { /* keep as text */ }
-        resolve({ status: res.statusCode ?? 0, body: parsed });
-      });
-    });
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: server.port,
+        path,
+        method,
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (c) => (data += c));
+        res.on('end', () => {
+          let parsed: unknown = data;
+          try {
+            parsed = JSON.parse(data);
+          } catch {
+            /* keep as text */
+          }
+          resolve({ status: res.statusCode ?? 0, body: parsed });
+        });
+      },
+    );
     req.on('error', reject);
     if (body) req.write(body);
     req.end();
@@ -95,12 +139,18 @@ function send(server: { port: number }, method: string, path: string, payload?: 
 const mockJudge: JudgeProvider = {
   name: 'mock',
   async call(): Promise<LLMResponse> {
-    return { content: '{"score": 0.9, "reasoning": "good"}', usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, finishReason: 'stop' };
+    return {
+      content: '{"score": 0.9, "reasoning": "good"}',
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      finishReason: 'stop',
+    };
   },
 };
 
 interface Harness {
-  server: http.Server; port: number; close: () => Promise<void>;
+  server: http.Server;
+  port: number;
+  close: () => Promise<void>;
   datasetStore: DatasetStore;
   experimentRunner: ExperimentRunner;
   autoScorer: AutoScorer;
@@ -121,8 +171,11 @@ async function startHarness(): Promise<Harness> {
     autoScorer,
     evalScorer,
     caseExecutorFactory: () => async () => ({
-      output: 'ok', toolCallsMade: [], tokenUsage: { promptTokens: 10, completionTokens: 10, totalTokens: 20 },
-      costUsd: 0.001, durationMs: 5,
+      output: 'ok',
+      toolCallsMade: [],
+      tokenUsage: { promptTokens: 10, completionTokens: 10, totalTokens: 20 },
+      costUsd: 0.001,
+      durationMs: 5,
     }),
   };
   const { server, port, close } = await startServer(deps);
@@ -131,7 +184,9 @@ async function startHarness(): Promise<Harness> {
 
 describe('P-obs-3 HTTP routes — datasets', () => {
   let h: Harness;
-  beforeEach(async () => { h = await startHarness(); });
+  beforeEach(async () => {
+    h = await startHarness();
+  });
   // No global afterEach — vitest's per-test cleanup happens on test
   // completion via the harness's `close()`.
 
@@ -143,7 +198,8 @@ describe('P-obs-3 HTTP routes — datasets', () => {
 
   it('POST /datasets creates a dataset (201)', async () => {
     const r = await send(h, 'POST', '/api/v1/observability/datasets', {
-      name: 'demo', rubricId: 'default-quality',
+      name: 'demo',
+      rubricId: 'default-quality',
       cases: [{ id: 'c1', input: { goal: 'g' } }],
     });
     expect(r.status).toBe(201);
@@ -157,7 +213,9 @@ describe('P-obs-3 HTTP routes — datasets', () => {
 
   it('GET /datasets/:id returns the dataset', async () => {
     const created = await send(h, 'POST', '/api/v1/observability/datasets', {
-      name: 'demo', rubricId: 'r', cases: [],
+      name: 'demo',
+      rubricId: 'r',
+      cases: [],
     });
     const id = (created.body as { id: string }).id;
     const got = await get(h, `/api/v1/observability/datasets/${id}`);
@@ -172,7 +230,9 @@ describe('P-obs-3 HTTP routes — datasets', () => {
 
   it('PUT /datasets/:id updates fields and advances updatedAt', async () => {
     const created = await send(h, 'POST', '/api/v1/observability/datasets', {
-      name: 'demo', rubricId: 'r', cases: [],
+      name: 'demo',
+      rubricId: 'r',
+      cases: [],
     });
     const id = (created.body as { id: string }).id;
     const upd = await send(h, 'PUT', `/api/v1/observability/datasets/${id}`, { name: 'renamed' });
@@ -182,7 +242,9 @@ describe('P-obs-3 HTTP routes — datasets', () => {
 
   it('DELETE /datasets/:id removes the dataset', async () => {
     const created = await send(h, 'POST', '/api/v1/observability/datasets', {
-      name: 'demo', rubricId: 'r', cases: [],
+      name: 'demo',
+      rubricId: 'r',
+      cases: [],
     });
     const id = (created.body as { id: string }).id;
     const del = await send(h, 'DELETE', `/api/v1/observability/datasets/${id}`);
@@ -196,14 +258,17 @@ describe('P-obs-3 HTTP routes — experiments', () => {
   it('POST /datasets/:id/run returns 202 with runId; polling /experiments/:id returns the completed run', async () => {
     const h = await startHarness();
     const created = await send(h, 'POST', '/api/v1/observability/datasets', {
-      name: 'demo', rubricId: 'default-quality',
+      name: 'demo',
+      rubricId: 'default-quality',
       cases: [
         { id: 'c1', input: { goal: 'g1' } },
         { id: 'c2', input: { goal: 'g2' } },
       ],
     });
     const id = (created.body as { id: string }).id;
-    const start = await send(h, 'POST', `/api/v1/observability/datasets/${id}/run`, { passThreshold: 0.5 });
+    const start = await send(h, 'POST', `/api/v1/observability/datasets/${id}/run`, {
+      passThreshold: 0.5,
+    });
     expect(start.status).toBe(202);
     const startBody = start.body as { runId: string; datasetId: string; status: string };
     expect(startBody.runId).toBeTruthy();
@@ -214,7 +279,7 @@ describe('P-obs-3 HTTP routes — experiments', () => {
     for (let i = 0; i < 50; i++) {
       run = await get(h, `/api/v1/observability/experiments/${startBody.runId}`);
       if (run.status === 200) break;
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 10));
     }
     expect(run.status).toBe(200);
     const runBody = run.body as { summary: { totalCases: number; passed: number } };
@@ -242,10 +307,17 @@ describe('P-obs-3 HTTP routes — auto-score', () => {
 
   it('POST /auto-score/config updates the config', async () => {
     const h = await startHarness();
-    const r = await send(h, 'POST', '/api/v1/observability/auto-score/config', { enabled: true, sampleRate: 0.25 });
+    const r = await send(h, 'POST', '/api/v1/observability/auto-score/config', {
+      enabled: true,
+      sampleRate: 0.25,
+    });
     expect(r.status).toBe(200);
-    expect((r.body as { applied: { sampleRate: number; enabled: boolean } }).applied.sampleRate).toBe(0.25);
-    expect((r.body as { applied: { sampleRate: number; enabled: boolean } }).applied.enabled).toBe(true);
+    expect(
+      (r.body as { applied: { sampleRate: number; enabled: boolean } }).applied.sampleRate,
+    ).toBe(0.25);
+    expect((r.body as { applied: { sampleRate: number; enabled: boolean } }).applied.enabled).toBe(
+      true,
+    );
     const got = await get(h, '/api/v1/observability/auto-score/config');
     expect((got.body as { sampleRate: number }).sampleRate).toBe(0.25);
     await h.close();
@@ -272,7 +344,7 @@ describe('P-obs-3 HTTP routes — rubrics', () => {
     const h = await startHarness();
     const r = await get(h, '/api/v1/observability/rubrics');
     expect(r.status).toBe(200);
-    const ids = ((r.body as { rubrics: { id: string }[] }).rubrics).map(x => x.id);
+    const ids = (r.body as { rubrics: { id: string }[] }).rubrics.map((x) => x.id);
     expect(ids).toContain('default-quality');
     await h.close();
   });
@@ -280,11 +352,13 @@ describe('P-obs-3 HTTP routes — rubrics', () => {
   it('POST /rubrics registers a new rubric', async () => {
     const h = await startHarness();
     const r = await send(h, 'POST', '/api/v1/observability/rubrics', {
-      id: 'strict', name: 'Strict', promptTemplate: 'be strict: {{output}}',
+      id: 'strict',
+      name: 'Strict',
+      promptTemplate: 'be strict: {{output}}',
     });
     expect(r.status).toBe(201);
     const list = await get(h, '/api/v1/observability/rubrics');
-    const ids = ((list.body as { rubrics: { id: string }[] }).rubrics).map(x => x.id);
+    const ids = (list.body as { rubrics: { id: string }[] }).rubrics.map((x) => x.id);
     expect(ids).toContain('strict');
     await h.close();
   });

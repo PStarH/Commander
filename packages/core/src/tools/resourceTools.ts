@@ -21,7 +21,12 @@
 import type { Tool, ToolDefinition, AgentExecutionContext } from '../runtime/types';
 import type { AgentHandoff } from '../runtime/agentHandoff';
 import {
-  FileReadTool, FileWriteTool, FileEditTool, FileSearchTool, FileListTool, GlobTool,
+  FileReadTool,
+  FileWriteTool,
+  FileEditTool,
+  FileSearchTool,
+  FileListTool,
+  GlobTool,
 } from './fileSystemTool';
 import { MemoryStoreTool, MemoryRecallTool, MemoryListTool } from './persistenceTool';
 import { WebSearchTool, WebFetchTool } from './webSearchTool';
@@ -30,7 +35,10 @@ import { CodeSearchTool } from './codeSearchTool';
 import { CodeRefinerTool } from './codeRefinerTool';
 import { CodeFixerTool } from './codeFixer';
 import {
-  CheckpointSaveTool, CheckpointRewindTool, CheckpointListTool, CheckpointCollapseTool,
+  CheckpointSaveTool,
+  CheckpointRewindTool,
+  CheckpointListTool,
+  CheckpointCollapseTool,
 } from './checkpointTool';
 import { HandoffTool, HandoffCheckTool } from './handoffTool';
 import { PythonExecuteTool, ShellExecuteTool } from './codeExecutionTool';
@@ -60,9 +68,7 @@ function normalizeToolResult(result: unknown): string {
   return String(result ?? '');
 }
 
-function buildInputSchema(
-  actions: Record<string, ResourceActionDef>,
-): Record<string, unknown> {
+function buildInputSchema(actions: Record<string, ResourceActionDef>): Record<string, unknown> {
   const actionEnum = Object.keys(actions);
 
   const mergedProperties: Record<string, unknown> = {
@@ -168,7 +174,8 @@ export class FileResourceTool implements Tool {
   constructor() {
     this.definition = {
       name: 'file',
-      description: 'Interact with the file system: read, write, edit, search, list, glob. Use `action` to choose the operation.',
+      description:
+        'Interact with the file system: read, write, edit, search, list, glob. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'filesystem',
     };
@@ -210,7 +217,8 @@ export class MemoryResourceTool implements Tool {
   constructor() {
     this.definition = {
       name: 'memory',
-      description: 'Persistent key-value memory: store, recall, list keys. Use `action` to choose the operation.',
+      description:
+        'Persistent key-value memory: store, recall, list keys. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'memory',
     };
@@ -244,7 +252,8 @@ export class WebResourceTool implements Tool {
   constructor() {
     this.definition = {
       name: 'web',
-      description: 'Search the web or fetch content from URLs. Use `action` to choose the operation.',
+      description:
+        'Search the web or fetch content from URLs. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'web',
     };
@@ -278,7 +287,8 @@ export class BrowserResourceTool implements Tool {
   constructor() {
     this.definition = {
       name: 'browser',
-      description: 'Control a browser to search the web or fetch pages. Use `action` to choose the operation.',
+      description:
+        'Control a browser to search the web or fetch pages. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'web',
     };
@@ -299,7 +309,9 @@ export class CodeResourceTool implements Tool {
   private actions: Record<string, ResourceActionDef> = {
     search: {
       description: 'Search codebase for symbols, definitions, and references',
-      params: { query: { type: 'string', description: 'Search query (symbol name, function, class, etc.)' } },
+      params: {
+        query: { type: 'string', description: 'Search query (symbol name, function, class, etc.)' },
+      },
       handler: async (args) => normalizeToolResult(await new CodeSearchTool().execute(args)),
     },
     refine: {
@@ -343,16 +355,26 @@ export class CheckpointResourceTool implements Tool {
       description: 'Save a checkpoint of the current conversation state',
       params: {
         label: { type: 'string', description: 'Human-readable label for this checkpoint' },
-        messages: { type: 'array', description: 'Current conversation messages', items: { type: 'object' } },
+        messages: {
+          type: 'array',
+          description: 'Current conversation messages',
+          items: { type: 'object' },
+        },
         stepNumber: { type: 'number', description: 'Current step number' },
         filesRead: { type: 'array', description: 'Files read so far', items: { type: 'string' } },
-        filesModified: { type: 'array', description: 'Files modified so far', items: { type: 'string' } },
+        filesModified: {
+          type: 'array',
+          description: 'Files modified so far',
+          items: { type: 'string' },
+        },
       },
       handler: async (args) => normalizeToolResult(await new CheckpointSaveTool().execute(args)),
     },
     rewind: {
       description: 'Rewind to a previous checkpoint',
-      params: { checkpointId: { type: 'string', description: 'Checkpoint ID from checkpoint save' } },
+      params: {
+        checkpointId: { type: 'string', description: 'Checkpoint ID from checkpoint save' },
+      },
       handler: async (args) => normalizeToolResult(await new CheckpointRewindTool().execute(args)),
     },
     list: {
@@ -363,14 +385,16 @@ export class CheckpointResourceTool implements Tool {
     collapse: {
       description: 'Collapse a checkpoint into a concise summary',
       params: { checkpointId: { type: 'string', description: 'Checkpoint ID to collapse' } },
-      handler: async (args) => normalizeToolResult(await new CheckpointCollapseTool().execute(args)),
+      handler: async (args) =>
+        normalizeToolResult(await new CheckpointCollapseTool().execute(args)),
     },
   };
 
   constructor() {
     this.definition = {
       name: 'checkpoint',
-      description: 'Save, rewind, list, and collapse conversation checkpoints. Use `action` to choose the operation.',
+      description:
+        'Save, rewind, list, and collapse conversation checkpoints. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'workflow',
     };
@@ -401,8 +425,14 @@ export class HandoffResourceTool implements Tool {
       params: {
         toAgent: { type: 'string', description: 'Target agent ID or name' },
         goal: { type: 'string', description: 'What the target agent should accomplish' },
-        context: { type: 'string', description: 'Additional context (current progress, findings, constraints)' },
-        tokenBudget: { type: 'number', description: 'Token budget for the target agent (default: 25000)' },
+        context: {
+          type: 'string',
+          description: 'Additional context (current progress, findings, constraints)',
+        },
+        tokenBudget: {
+          type: 'number',
+          description: 'Token budget for the target agent (default: 25000)',
+        },
       },
       handler: async (args) => {
         if (!this.handoff) return 'Error: Handoff infrastructure not available';
@@ -411,7 +441,9 @@ export class HandoffResourceTool implements Tool {
     },
     check: {
       description: 'Check the status of a pending handoff',
-      params: { handoffId: { type: 'string', description: 'The handoff ID returned by handoff send' } },
+      params: {
+        handoffId: { type: 'string', description: 'The handoff ID returned by handoff send' },
+      },
       handler: async (args) => {
         if (!this.handoff) return 'Error: Handoff infrastructure not available';
         return normalizeToolResult(await new HandoffCheckTool(this.handoff).execute(args));
@@ -422,7 +454,8 @@ export class HandoffResourceTool implements Tool {
   constructor() {
     this.definition = {
       name: 'handoff',
-      description: 'Hand off tasks to another agent or check handoff status. Use `action` to choose the operation.',
+      description:
+        'Hand off tasks to another agent or check handoff status. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'development',
     };
@@ -445,7 +478,9 @@ export class ExecResourceTool implements Tool {
   setTools(tools: Map<string, Tool>): void {
     this.toolMap = new Map();
     for (const [name, tool] of tools) {
-      this.toolMap.set(name, (args) => Promise.resolve(tool.execute(args)).then(normalizeToolResult));
+      this.toolMap.set(name, (args) =>
+        Promise.resolve(tool.execute(args)).then(normalizeToolResult),
+      );
     }
     this.scriptTool.setTools(this.toolMap);
   }
@@ -464,17 +499,32 @@ export class ExecResourceTool implements Tool {
       params: {
         command: { type: 'string', description: 'Shell command to execute' },
         timeout: { type: 'number', description: 'Timeout in seconds (default: 30, max: 120)' },
-        workdir: { type: 'string', description: 'Working directory relative to workspace (default: ".")' },
-        backend: { type: 'string', enum: ['local', 'ssh', 'docker'], description: 'Execution backend (default: local)' },
+        workdir: {
+          type: 'string',
+          description: 'Working directory relative to workspace (default: ".")',
+        },
+        backend: {
+          type: 'string',
+          enum: ['local', 'ssh', 'docker'],
+          description: 'Execution backend (default: local)',
+        },
       },
       handler: async (args) => normalizeToolResult(await new ShellExecuteTool().execute(args)),
     },
     script: {
-      description: 'Execute a JavaScript script that calls other tools programmatically via `tools.toolName(args)`',
+      description:
+        'Execute a JavaScript script that calls other tools programmatically via `tools.toolName(args)`',
       params: {
         script: { type: 'string', description: 'JavaScript code to execute' },
-        tools: { type: 'array', items: { type: 'string' }, description: 'List of tool names to make available in the script' },
-        timeout: { type: 'number', description: 'Maximum execution time in seconds (default: 30, max: 120)' },
+        tools: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of tool names to make available in the script',
+        },
+        timeout: {
+          type: 'number',
+          description: 'Maximum execution time in seconds (default: 30, max: 120)',
+        },
       },
       handler: async (args) => normalizeToolResult(await this.scriptTool.execute(args)),
     },
@@ -483,7 +533,8 @@ export class ExecResourceTool implements Tool {
   constructor() {
     this.definition = {
       name: 'exec',
-      description: 'Execute Python, shell, or JavaScript scripts. Use `action` to choose the execution mode.',
+      description:
+        'Execute Python, shell, or JavaScript scripts. Use `action` to choose the execution mode.',
       inputSchema: buildInputSchema(this.actions),
       category: 'code',
     };
@@ -507,7 +558,11 @@ export class MediaResourceTool implements Tool {
       params: {
         source: { type: 'string', description: 'File path to image or base64 data URL' },
         prompt: { type: 'string', description: 'Optional specific question about the image' },
-        detail: { type: 'string', enum: ['low', 'high', 'auto'], description: 'Detail level for vision processing' },
+        detail: {
+          type: 'string',
+          enum: ['low', 'high', 'auto'],
+          description: 'Detail level for vision processing',
+        },
       },
       handler: async (args) => normalizeToolResult(await new VisionAnalyzeTool().execute(args)),
     },
@@ -538,7 +593,8 @@ export class MediaResourceTool implements Tool {
   constructor() {
     this.definition = {
       name: 'media',
-      description: 'Analyze images, capture screenshots, and extract PDF text. Use `action` to choose the operation.',
+      description:
+        'Analyze images, capture screenshots, and extract PDF text. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'multimodal',
     };
@@ -559,7 +615,10 @@ export class SystemResourceTool implements Tool {
   private requestToolResolver: ((name: string) => ToolDefinition | undefined) | undefined;
   private registryTools: string[] = [];
 
-  setToolResolver(resolver: (name: string) => ToolDefinition | undefined, registryTools?: string[]): void {
+  setToolResolver(
+    resolver: (name: string) => ToolDefinition | undefined,
+    registryTools?: string[],
+  ): void {
     this.requestToolResolver = resolver;
     if (registryTools) this.registryTools = registryTools;
   }
@@ -571,7 +630,8 @@ export class SystemResourceTool implements Tool {
         reason: { type: 'string', description: 'Why you need human input' },
         value: { description: 'Optional payload to present to the human' },
       },
-      handler: async (args, ctx) => normalizeToolResult(await this.humanInputTool.execute(args, ctx)),
+      handler: async (args, ctx) =>
+        normalizeToolResult(await this.humanInputTool.execute(args, ctx)),
     },
     tool_schema: {
       description: 'Request the full schema of an available tool',
@@ -589,7 +649,8 @@ export class SystemResourceTool implements Tool {
   constructor() {
     this.definition = {
       name: 'system',
-      description: 'Request human input or retrieve a tool schema on demand. Use `action` to choose the operation.',
+      description:
+        'Request human input or retrieve a tool schema on demand. Use `action` to choose the operation.',
       inputSchema: buildInputSchema(this.actions),
       category: 'control',
     };
@@ -648,9 +709,6 @@ export function wireResourceToolDependencies(
 
   const systemTool = tools.get('system');
   if (systemTool && systemTool instanceof SystemResourceTool) {
-    systemTool.setToolResolver(
-      deps.toolResolver ?? (() => undefined),
-      deps.registryTools,
-    );
+    systemTool.setToolResolver(deps.toolResolver ?? (() => undefined), deps.registryTools);
   }
 }

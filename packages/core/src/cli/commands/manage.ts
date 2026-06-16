@@ -1,12 +1,31 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { detectProvider, getEffectiveModel, setConfig, showConfig, listProviders, listModels } from '../../config/commanderConfig';
+import {
+  detectProvider,
+  getEffectiveModel,
+  setConfig,
+  showConfig,
+  listProviders,
+  listModels,
+} from '../../config/commanderConfig';
 import { getMetaLearner } from '../../selfEvolution/metaLearner';
 import { getEvolverAgent } from '../../selfEvolution/evolverAgent';
 import { getApprovalSystem } from '../../sandbox';
 import type { ApprovalMode } from '../../sandbox';
 import { getGlobalLogger } from '../../logging';
-import { createRuntime, $, section, kv, bullet, cmdHeader, startSpinner, onboardingMessage, setTheme, getThemeName, listThemes } from './_shared';
+import {
+  createRuntime,
+  $,
+  section,
+  kv,
+  bullet,
+  cmdHeader,
+  startSpinner,
+  onboardingMessage,
+  setTheme,
+  getThemeName,
+  listThemes,
+} from './_shared';
 
 export async function cmdStatus() {
   const provider = detectProvider();
@@ -25,13 +44,23 @@ export async function cmdStatus() {
     kv('Provider', 'None — set an API key env var', $.red);
   }
 
-  const envVars = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GOOGLE_API_KEY', 'OPENROUTER_API_KEY', 'DEEPSEEK_API_KEY', 'ZHIPU_API_KEY', 'MIMO_API_KEY', 'XIAOMI_API_KEY'];
+  const envVars = [
+    'OPENAI_API_KEY',
+    'ANTHROPIC_API_KEY',
+    'GOOGLE_API_KEY',
+    'OPENROUTER_API_KEY',
+    'DEEPSEEK_API_KEY',
+    'ZHIPU_API_KEY',
+    'MIMO_API_KEY',
+    'XIAOMI_API_KEY',
+  ];
   section('API KEYS');
   for (const v of envVars) {
     const exists = !!process.env[v];
     console.log(`  ${exists ? $.green + '✓' : $.dim + '✗'}${$.reset} ${v}`);
   }
-  if (process.env.OPENAI_BASE_URL) console.log(`  ${$.dim}  (base URL: ${process.env.OPENAI_BASE_URL})${$.reset}`);
+  if (process.env.OPENAI_BASE_URL)
+    console.log(`  ${$.dim}  (base URL: ${process.env.OPENAI_BASE_URL})${$.reset}`);
 
   const runtime = createRuntime();
   kv('Runtime', runtime ? `${$.green}ready${$.reset}` : `${$.red}no API key${$.reset}`);
@@ -46,7 +75,9 @@ export async function cmdStatus() {
     if (suggestions.length > 0) {
       section('OPTIMIZATIONS');
       for (const s of suggestions.slice(0, 3)) {
-        console.log(`  ${$.yellow}!${$.reset} ${s.type}: ${s.from} → ${s.to} (${(s.confidence * 100).toFixed(0)}%)`);
+        console.log(
+          `  ${$.yellow}!${$.reset} ${s.type}: ${s.from} → ${s.to} (${(s.confidence * 100).toFixed(0)}%)`,
+        );
       }
     }
 
@@ -55,23 +86,42 @@ export async function cmdStatus() {
     if (shadows.length > 0) {
       section('SHADOW MODE');
       const lastShadow = shadows[shadows.length - 1];
-      const betterStrategy = lastShadow.shadowSuccess && !lastShadow.mainSuccess ? lastShadow.shadowStrategy :
-        !lastShadow.shadowSuccess && lastShadow.mainSuccess ? lastShadow.mainStrategy : null;
-      kv('Last run', `${lastShadow.mainStrategy} vs ${$.cyan}${lastShadow.shadowStrategy}${$.reset}`);
-      kv('Main result', lastShadow.mainSuccess ? `${$.green}✓${$.reset}` : `${$.red}✗${$.reset}`, $.dim);
-      kv('Shadow result', lastShadow.shadowSuccess ? `${$.green}✓${$.reset}` : `${$.red}✗${$.reset}`, $.dim);
+      const betterStrategy =
+        lastShadow.shadowSuccess && !lastShadow.mainSuccess
+          ? lastShadow.shadowStrategy
+          : !lastShadow.shadowSuccess && lastShadow.mainSuccess
+            ? lastShadow.mainStrategy
+            : null;
+      kv(
+        'Last run',
+        `${lastShadow.mainStrategy} vs ${$.cyan}${lastShadow.shadowStrategy}${$.reset}`,
+      );
+      kv(
+        'Main result',
+        lastShadow.mainSuccess ? `${$.green}✓${$.reset}` : `${$.red}✗${$.reset}`,
+        $.dim,
+      );
+      kv(
+        'Shadow result',
+        lastShadow.shadowSuccess ? `${$.green}✓${$.reset}` : `${$.red}✗${$.reset}`,
+        $.dim,
+      );
       if (betterStrategy) {
-        console.log(`  ${$.yellow}💡${$.reset} ${$.cyan}${betterStrategy}${$.reset} would have performed better in the last run`);
+        console.log(
+          `  ${$.yellow}💡${$.reset} ${$.cyan}${betterStrategy}${$.reset} would have performed better in the last run`,
+        );
       }
       kv('Total shadows', `${shadows.length}`, $.dim);
     }
   } catch (err) {
-    getGlobalLogger().debug('CLI', 'Failed to load MetaLearner stats', { error: err instanceof Error ? err.message : String(err) });
+    getGlobalLogger().debug('CLI', 'Failed to load MetaLearner stats', {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   const poolStatsPath = path.join(process.cwd(), '.commander_results');
   if (fs.existsSync(poolStatsPath)) {
-    const files = fs.readdirSync(poolStatsPath).filter(f => f.endsWith('.txt'));
+    const files = fs.readdirSync(poolStatsPath).filter((f) => f.endsWith('.txt'));
     if (files.length > 0) kv('Cached results', String(files.length));
   }
 }
@@ -104,7 +154,9 @@ export async function cmdConfig(args: string[]) {
       }
       setTheme(value);
       console.log(`  ${$.green}✓${$.reset} theme = ${$.cyan}${value}${$.reset}`);
-      console.log(`  ${$.dim}Colors updated for this session. Persist with: export COMMANDER_THEME=${value}${$.reset}\n`);
+      console.log(
+        `  ${$.dim}Colors updated for this session. Persist with: export COMMANDER_THEME=${value}${$.reset}\n`,
+      );
       return;
     }
 
@@ -121,7 +173,9 @@ export async function cmdConfig(args: string[]) {
     section('AVAILABLE PROVIDERS');
     console.log(`  ${$.dim}Set any API key env var to activate a provider:${$.reset}\n`);
     listProviders();
-    console.log(`\n  ${$.dim}  ✓ = configured  ~ = via OPENAI_API_KEY  (space) = not set${$.reset}`);
+    console.log(
+      `\n  ${$.dim}  ✓ = configured  ~ = via OPENAI_API_KEY  (space) = not set${$.reset}`,
+    );
     return;
   }
 
@@ -143,7 +197,7 @@ export async function cmdConfig(args: string[]) {
     process.stdout.write(`  Testing...`);
     try {
       const res = await fetch(`${provider.baseUrl}/models`, {
-        headers: { 'Authorization': `Bearer ${provider.apiKey}` },
+        headers: { Authorization: `Bearer ${provider.apiKey}` },
         signal: AbortSignal.timeout(5000),
       });
       if (res.ok) console.log(` ${$.green}✓ Connection OK${$.reset}`);
@@ -161,20 +215,32 @@ export async function cmdConfig(args: string[]) {
 
     if (!status.active) {
       console.log(`\n  ${$.dim}No active canary deployment.${$.reset}`);
-      console.log(`  ${$.dim}Canary deployments are created automatically when the EvolverAgent${$.reset}`);
+      console.log(
+        `  ${$.dim}Canary deployments are created automatically when the EvolverAgent${$.reset}`,
+      );
       console.log(`  ${$.dim}detects failure patterns and proposes config mutations.${$.reset}`);
-      console.log(`  ${$.dim}A 10% canary rollout is used to safely verify config changes.${$.reset}\n`);
+      console.log(
+        `  ${$.dim}A 10% canary rollout is used to safely verify config changes.${$.reset}\n`,
+      );
       return;
     }
 
-    kv('Status', status.decided
-      ? (status.successRate >= 0.5 ? `${$.green}Promoted${$.reset}` : `${$.red}Rejected${$.reset}`)
-      : `${$.yellow}Active${$.reset}`);
+    kv(
+      'Status',
+      status.decided
+        ? status.successRate >= 0.5
+          ? `${$.green}Promoted${$.reset}`
+          : `${$.red}Rejected${$.reset}`
+        : `${$.yellow}Active${$.reset}`,
+    );
     kv('Mutations', `${status.mutations}`, $.cyan);
     kv('Runs', `${status.runCount}`, $.dim);
     kv('Rollout', `${(status.rolloutFraction * 100).toFixed(0)}%`, $.yellow);
-    kv('Success rate', `${(status.successRate * 100).toFixed(0)}%`,
-      status.successRate >= 0.5 ? $.green : $.red);
+    kv(
+      'Success rate',
+      `${(status.successRate * 100).toFixed(0)}%`,
+      status.successRate >= 0.5 ? $.green : $.red,
+    );
 
     if (!status.decided && status.pendingRuns > 0) {
       kv('Pending runs', `${status.pendingRuns} more needed for auto-decision`, $.dim);
@@ -187,7 +253,9 @@ export async function cmdConfig(args: string[]) {
     return;
   }
 
-  console.log(`  ${$.red}Usage:${$.reset} commander config [show|set <key> <val>|list-providers|list-models|test|canary-status]`);
+  console.log(
+    `  ${$.red}Usage:${$.reset} commander config [show|set <key> <val>|list-providers|list-models|test|canary-status]`,
+  );
 }
 
 export async function cmdDoctor() {
@@ -199,7 +267,12 @@ export async function cmdDoctor() {
   const checks: Array<{ label: string; pass: boolean; msg: string; section?: string }> = [];
 
   // Environment
-  checks.push({ label: 'Node.js v20+', pass: major >= 20, msg: major < 20 ? `Current: ${process.version}. Install from https://nodejs.org` : '', section: 'ENVIRONMENT' });
+  checks.push({
+    label: 'Node.js v20+',
+    pass: major >= 20,
+    msg: major < 20 ? `Current: ${process.version}. Install from https://nodejs.org` : '',
+    section: 'ENVIRONMENT',
+  });
 
   // Git
   let gitVersion = '';
@@ -218,25 +291,50 @@ export async function cmdDoctor() {
     if (fs.existsSync(path.join(process.cwd(), 'pnpm-lock.yaml'))) pm = 'pnpm';
     else if (fs.existsSync(path.join(process.cwd(), 'yarn.lock'))) pm = 'yarn';
     else if (fs.existsSync(path.join(process.cwd(), 'package-lock.json'))) pm = 'npm';
-    checks.push({ label: 'Package manager', pass: pm !== 'unknown', msg: pm !== 'unknown' ? pm : 'No lockfile found' });
+    checks.push({
+      label: 'Package manager',
+      pass: pm !== 'unknown',
+      msg: pm !== 'unknown' ? pm : 'No lockfile found',
+    });
   } catch {
     checks.push({ label: 'Package manager', pass: false, msg: 'Unknown' });
   }
 
   // Provider
-  checks.push({ label: 'API key', pass: !!provider, msg: provider ? `${provider.type} · ${getEffectiveModel()}` : 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.', section: 'PROVIDER' });
+  checks.push({
+    label: 'API key',
+    pass: !!provider,
+    msg: provider
+      ? `${provider.type} · ${getEffectiveModel()}`
+      : 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.',
+    section: 'PROVIDER',
+  });
 
   // Packages
-  const nodeModulesExists = fs.existsSync(path.join(process.cwd(), 'node_modules')) || fs.existsSync(path.join(__dirname, '..', '..', '..', 'node_modules'));
-  checks.push({ label: 'Packages installed', pass: nodeModulesExists, msg: nodeModulesExists ? '' : 'Run: pnpm install' });
+  const nodeModulesExists =
+    fs.existsSync(path.join(process.cwd(), 'node_modules')) ||
+    fs.existsSync(path.join(__dirname, '..', '..', '..', 'node_modules'));
+  checks.push({
+    label: 'Packages installed',
+    pass: nodeModulesExists,
+    msg: nodeModulesExists ? '' : 'Run: pnpm install',
+  });
 
   // Workspace
   const cwd = process.cwd();
   const hasCommanderDir = fs.existsSync(path.join(cwd, '.commander'));
-  checks.push({ label: '.commander/ dir', pass: true, msg: hasCommanderDir ? 'Found' : 'Not found (will be created on first run)', section: 'WORKSPACE' });
+  checks.push({
+    label: '.commander/ dir',
+    pass: true,
+    msg: hasCommanderDir ? 'Found' : 'Not found (will be created on first run)',
+    section: 'WORKSPACE',
+  });
 
   // Tools config
-  const tools = (process.env.COMMANDER_TOOLS || 'web_search,web_fetch,file_read,file_write,file_edit,file_search,file_list,python_execute,shell_execute,git').split(',');
+  const tools = (
+    process.env.COMMANDER_TOOLS ||
+    'web_search,web_fetch,file_read,file_write,file_edit,file_search,file_list,python_execute,shell_execute,git'
+  ).split(',');
   checks.push({ label: 'Tools configured', pass: true, msg: `${tools.length} tools` });
 
   // Disk space
@@ -246,7 +344,11 @@ export async function cmdDoctor() {
     const parts = df.split(/\s+/);
     const avail = parts[3] || 'unknown';
     const usePercent = parseInt(parts[4] || '0', 10);
-    checks.push({ label: 'Disk space', pass: usePercent < 95, msg: `${avail} available (${parts[4]} used)${usePercent >= 95 ? ' — LOW SPACE' : ''}` });
+    checks.push({
+      label: 'Disk space',
+      pass: usePercent < 95,
+      msg: `${avail} available (${parts[4]} used)${usePercent >= 95 ? ' — LOW SPACE' : ''}`,
+    });
   } catch {
     // Non-critical
   }
@@ -260,7 +362,9 @@ export async function cmdDoctor() {
       lastSection = c.section;
       console.log(`\n  ${$.dim}${c.section}${$.reset}`);
     }
-    console.log(`  ${c.pass ? $.green + '✓' : $.red + '✗'}${$.reset} ${c.label}${c.msg ? ' — ' + (c.pass ? $.dim : $.yellow) + c.msg + $.reset : ''}`);
+    console.log(
+      `  ${c.pass ? $.green + '✓' : $.red + '✗'}${$.reset} ${c.label}${c.msg ? ' — ' + (c.pass ? $.dim : $.yellow) + c.msg + $.reset : ''}`,
+    );
   }
 
   // Connectivity test
@@ -269,29 +373,38 @@ export async function cmdDoctor() {
     console.log(`  ${$.dim}Testing ${provider.type} at ${provider.baseUrl}...${$.reset}`);
     try {
       const res = await fetch(`${provider.baseUrl}/models`, {
-        headers: { 'Authorization': `Bearer ${provider.apiKey}` },
+        headers: { Authorization: `Bearer ${provider.apiKey}` },
         signal: AbortSignal.timeout(5000),
       });
       if (res.ok) {
         console.log(`  ${$.green}✓${$.reset} API reachable (HTTP ${res.status})`);
         try {
-          const data = await res.json() as { data?: Array<{ id: string }> };
+          const data = (await res.json()) as { data?: Array<{ id: string }> };
           const modelCount = data.data?.length ?? 0;
           if (modelCount > 0) {
             console.log(`  ${$.green}✓${$.reset} ${modelCount} models available`);
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       } else {
         console.log(`  ${$.red}✗${$.reset} API returned HTTP ${res.status}`);
-        if (res.status === 401) console.log(`    ${$.yellow}→ Invalid API key. Check your credentials.${$.reset}`);
-        if (res.status === 429) console.log(`    ${$.yellow}→ Rate limited. Try again later.${$.reset}`);
+        if (res.status === 401)
+          console.log(`    ${$.yellow}→ Invalid API key. Check your credentials.${$.reset}`);
+        if (res.status === 429)
+          console.log(`    ${$.yellow}→ Rate limited. Try again later.${$.reset}`);
       }
     } catch (err) {
       console.log(`  ${$.red}✗${$.reset} API unreachable`);
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('ENOTFOUND')) console.log(`    ${$.yellow}→ DNS resolution failed. Check your internet connection.${$.reset}`);
-      else if (msg.includes('ECONNREFUSED')) console.log(`    ${$.yellow}→ Connection refused. Is the server running?${$.reset}`);
-      else if (msg.includes('timeout')) console.log(`    ${$.yellow}→ Connection timed out. Check network/firewall.${$.reset}`);
+      if (msg.includes('ENOTFOUND'))
+        console.log(
+          `    ${$.yellow}→ DNS resolution failed. Check your internet connection.${$.reset}`,
+        );
+      else if (msg.includes('ECONNREFUSED'))
+        console.log(`    ${$.yellow}→ Connection refused. Is the server running?${$.reset}`);
+      else if (msg.includes('timeout'))
+        console.log(`    ${$.yellow}→ Connection timed out. Check network/firewall.${$.reset}`);
       else console.log(`    ${$.dim}${msg.slice(0, 100)}${$.reset}`);
     }
   }
@@ -300,10 +413,14 @@ export async function cmdDoctor() {
   console.log();
   if (allOk) {
     console.log(`  ${$.green}${$.bold}All checks passed ✓${$.reset}`);
-    console.log(`  ${$.dim}Run ${$.cyan}commander quickstart${$.reset}${$.dim} for usage tips.${$.reset}`);
+    console.log(
+      `  ${$.dim}Run ${$.cyan}commander quickstart${$.reset}${$.dim} for usage tips.${$.reset}`,
+    );
   } else {
     console.log(`  ${$.yellow}Some checks need attention${$.reset}`);
-    console.log(`  ${$.dim}Run ${$.cyan}commander quickstart${$.reset}${$.dim} for setup guidance.${$.reset}`);
+    console.log(
+      `  ${$.dim}Run ${$.cyan}commander quickstart${$.reset}${$.dim} for setup guidance.${$.reset}`,
+    );
   }
   console.log();
 }
@@ -314,16 +431,18 @@ export async function cmdMode(modeArg?: string) {
   if (!modeArg) {
     const current = approval.getMode();
     const modeLabels: Record<string, string> = {
-      'suggest': 'Suggest mode — prompts before risky operations',
+      suggest: 'Suggest mode — prompts before risky operations',
       'auto-edit': 'Auto-edit mode — allows most operations, flags sandbox escapes',
       'full-auto': 'Full-auto mode — no approval gates',
       'read-only': 'Read-only mode — no writes, no destructive ops',
-      'plan': 'Plan mode — analysis only, no modifications',
+      plan: 'Plan mode — analysis only, no modifications',
     };
     section('APPROVAL MODE');
     kv('Mode', current, $.cyan);
     console.log(`  ${$.dim}${modeLabels[current] ?? ''}${$.reset}`);
-    console.log(`\n  ${$.dim}Set:  commander mode <plan|read-only|auto-edit|full-auto|suggest>${$.reset}\n`);
+    console.log(
+      `\n  ${$.dim}Set:  commander mode <plan|read-only|auto-edit|full-auto|suggest>${$.reset}\n`,
+    );
     return;
   }
 

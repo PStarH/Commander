@@ -67,7 +67,10 @@ describe('SemanticCache', () => {
   it('exact-match hit returns cached response', async () => {
     const cache = new SemanticCache(fn, { enabled: true, pruneIntervalMs: 0 });
     fn.setVector('What is TypeScript?', [1, 0, 0, 0]);
-    cache.store(makeRequest('What is TypeScript?'), makeResponse('TypeScript is a typed superset of JavaScript.'));
+    cache.store(
+      makeRequest('What is TypeScript?'),
+      makeResponse('TypeScript is a typed superset of JavaScript.'),
+    );
     await flushMicrotasks();
     const result = await cache.lookup(makeRequest('What is TypeScript?'));
     expect(result).not.toBeNull();
@@ -80,7 +83,11 @@ describe('SemanticCache', () => {
   });
 
   it('miss on unrelated text', async () => {
-    const cache = new SemanticCache(fn, { enabled: true, similarityThreshold: 0.92, pruneIntervalMs: 0 });
+    const cache = new SemanticCache(fn, {
+      enabled: true,
+      similarityThreshold: 0.92,
+      pruneIntervalMs: 0,
+    });
     fn.setVector('cats are cute', [1, 0, 0, 0]);
     fn.setVector('quantum physics', [0, 1, 0, 0]);
     cache.store(makeRequest('cats are cute'), makeResponse('yes'));
@@ -92,7 +99,11 @@ describe('SemanticCache', () => {
   });
 
   it('semantic hit on near-parallel vectors', async () => {
-    const cache = new SemanticCache(fn, { enabled: true, similarityThreshold: 0.9, pruneIntervalMs: 0 });
+    const cache = new SemanticCache(fn, {
+      enabled: true,
+      similarityThreshold: 0.9,
+      pruneIntervalMs: 0,
+    });
     fn.setVector('how to make pasta', [0.95, 0.31, 0, 0]);
     fn.setVector('how do I cook pasta', [0.96, 0.28, 0, 0]);
     fn.setVector('weather tomorrow', [0, 0, 1, 0]);
@@ -131,7 +142,12 @@ describe('SemanticCache', () => {
   });
 
   it('global LRU eviction: oldest entry evicted at capacity', async () => {
-    const cache = new SemanticCache(fn, { enabled: true, maxEntries: 2, maxBucketSize: 16, pruneIntervalMs: 0 });
+    const cache = new SemanticCache(fn, {
+      enabled: true,
+      maxEntries: 2,
+      maxBucketSize: 16,
+      pruneIntervalMs: 0,
+    });
     fn.setVector('a', [1, 0, 0, 0]);
     fn.setVector('b', [0, 1, 0, 0]);
     fn.setVector('c', [0, 0, 1, 0]);
@@ -152,7 +168,10 @@ describe('SemanticCache', () => {
   it('stochastic skip: temperature > 0 not cached by default', async () => {
     const cache = new SemanticCache(fn, { enabled: true, pruneIntervalMs: 0 });
     fn.setVector('creative query', [1, 0, 0, 0]);
-    cache.store(makeRequest('creative query', { temperature: 0.7 }), makeResponse('stochastic answer'));
+    cache.store(
+      makeRequest('creative query', { temperature: 0.7 }),
+      makeResponse('stochastic answer'),
+    );
     await flushMicrotasks();
     await new Promise((r) => setTimeout(r, 20));
     const result = await cache.lookup(makeRequest('creative query', { temperature: 0.7 }));
@@ -163,7 +182,9 @@ describe('SemanticCache', () => {
   it('tool-call skip: tool calls not cached by default', async () => {
     const cache = new SemanticCache(fn, { enabled: true, pruneIntervalMs: 0 });
     fn.setVector('query with tools', [1, 0, 0, 0]);
-    const req = makeRequest('query with tools', { tools: [{ name: 'foo', description: 'bar', parameters: {} }] });
+    const req = makeRequest('query with tools', {
+      tools: [{ name: 'foo', description: 'bar', parameters: {} }],
+    });
     const resp = makeResponse('answer', { toolCalls: [{ id: '1', name: 'foo', arguments: '{}' }] });
     cache.store(req, resp);
     await flushMicrotasks();
@@ -267,9 +288,27 @@ describe('SemanticCache', () => {
   });
 
   it('computeRequestSignature: same model+system → same signature', () => {
-    const r1 = makeRequest('q1', { model: 'gpt-4o', messages: [{ role: 'system', content: 'be brief' }, { role: 'user', content: 'q1' }] });
-    const r2 = makeRequest('q1', { model: 'gpt-4o', messages: [{ role: 'system', content: 'be brief' }, { role: 'user', content: 'DIFFERENT q' }] });
-    const r3 = makeRequest('q1', { model: 'gpt-4o', messages: [{ role: 'system', content: 'be verbose' }, { role: 'user', content: 'q1' }] });
+    const r1 = makeRequest('q1', {
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: 'be brief' },
+        { role: 'user', content: 'q1' },
+      ],
+    });
+    const r2 = makeRequest('q1', {
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: 'be brief' },
+        { role: 'user', content: 'DIFFERENT q' },
+      ],
+    });
+    const r3 = makeRequest('q1', {
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: 'be verbose' },
+        { role: 'user', content: 'q1' },
+      ],
+    });
     expect(computeRequestSignature(r1)).toBe(computeRequestSignature(r2));
     expect(computeRequestSignature(r1)).not.toBe(computeRequestSignature(r3));
   });
@@ -295,7 +334,11 @@ describe('SemanticCache', () => {
   });
 
   it('cost-reduction micro-benchmark: 30% duplicate traffic yields measurable savings', async () => {
-    const cache = new SemanticCache(fn, { enabled: true, similarityThreshold: 0.9, pruneIntervalMs: 0 });
+    const cache = new SemanticCache(fn, {
+      enabled: true,
+      similarityThreshold: 0.9,
+      pruneIntervalMs: 0,
+    });
 
     const baseQueries: Array<[string, number[]]> = [
       ['how to make pasta', [0.95, 0.31, 0, 0]],

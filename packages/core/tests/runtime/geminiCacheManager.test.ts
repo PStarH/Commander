@@ -3,7 +3,11 @@ import { GeminiCacheManager } from '../../src/runtime/geminiCacheManager';
 import type { ToolDefinition } from '../../src/runtime/types';
 
 function makeTool(name: string): ToolDefinition {
-  return { name, description: `${name} tool`, inputSchema: { type: 'object', properties: { x: { type: 'string' } } } };
+  return {
+    name,
+    description: `${name} tool`,
+    inputSchema: { type: 'object', properties: { x: { type: 'string' } } },
+  };
 }
 
 describe('GeminiCacheManager', () => {
@@ -178,13 +182,28 @@ describe('GeminiCacheManager', () => {
     const small = new GeminiCacheManager({ enabled: true, maxEntries: 2 });
 
     mockFetchOk('cachedContents/1');
-    await small.getOrCreate({ systemInstruction: 'sys1', tools: undefined, model: 'm', apiKey: 'k' });
+    await small.getOrCreate({
+      systemInstruction: 'sys1',
+      tools: undefined,
+      model: 'm',
+      apiKey: 'k',
+    });
 
     mockFetchOk('cachedContents/2');
-    await small.getOrCreate({ systemInstruction: 'sys2', tools: undefined, model: 'm', apiKey: 'k' });
+    await small.getOrCreate({
+      systemInstruction: 'sys2',
+      tools: undefined,
+      model: 'm',
+      apiKey: 'k',
+    });
 
     mockFetchOk('cachedContents/3');
-    await small.getOrCreate({ systemInstruction: 'sys3', tools: undefined, model: 'm', apiKey: 'k' });
+    await small.getOrCreate({
+      systemInstruction: 'sys3',
+      tools: undefined,
+      model: 'm',
+      apiKey: 'k',
+    });
 
     expect(small.getStats().totalEntries).toBe(2);
     expect(small.getStats().totalEvictions).toBe(1);
@@ -192,7 +211,12 @@ describe('GeminiCacheManager', () => {
 
   it('evicts by server-side name', async () => {
     mockFetchOk('cachedContents/abc');
-    await manager.getOrCreate({ systemInstruction: 'sys', tools: undefined, model: 'm', apiKey: 'k' });
+    await manager.getOrCreate({
+      systemInstruction: 'sys',
+      tools: undefined,
+      model: 'm',
+      apiKey: 'k',
+    });
     expect(manager.getStats().totalEntries).toBe(1);
 
     const evicted = manager.evictByName('cachedContents/abc');
@@ -203,7 +227,12 @@ describe('GeminiCacheManager', () => {
 
   it('reset clears all state', async () => {
     mockFetchOk('cachedContents/abc');
-    await manager.getOrCreate({ systemInstruction: 'sys', tools: undefined, model: 'm', apiKey: 'k' });
+    await manager.getOrCreate({
+      systemInstruction: 'sys',
+      tools: undefined,
+      model: 'm',
+      apiKey: 'k',
+    });
     expect(manager.getStats().totalEntries).toBe(1);
 
     manager.reset();

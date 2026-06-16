@@ -103,10 +103,7 @@ export const AWS_TOOL_TAGS: Record<string, string[]> = {
   'aws:iam:user:delete': ['aws', 'iam', 'destructive', 'requires_approval'],
 };
 
-async function getEC2State(
-  client: MockEC2Client,
-  instanceId: string,
-): Promise<string> {
+async function getEC2State(client: MockEC2Client, instanceId: string): Promise<string> {
   const desc = await client.describeInstances({ InstanceIds: [instanceId] });
   if (!desc.Reservations.length || !desc.Reservations[0].Instances.length) {
     throw new Error(`EC2 instance ${instanceId} not found`);
@@ -329,9 +326,9 @@ const AWS_COMPENSATION_HANDLERS: Record<string, CompensationHandler> = {
   'aws:iam:user:delete': iamUserDeleteHandler,
 };
 
-export function registerAWSCompensation(
-  registry: { register: (toolName: string, handler: CompensationHandler) => void },
-): void {
+export function registerAWSCompensation(registry: {
+  register: (toolName: string, handler: CompensationHandler) => void;
+}): void {
   for (const [toolName, handler] of Object.entries(AWS_COMPENSATION_HANDLERS)) {
     registry.register(toolName, handler);
   }

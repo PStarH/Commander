@@ -58,7 +58,7 @@ export class StablePrefix {
     }
     if (this.toolDefinitions.length > 0) {
       const toolList = this.toolDefinitions
-        .map(t => `- \`${t.name}\`: ${t.description}`)
+        .map((t) => `- \`${t.name}\`: ${t.description}`)
         .join('\n');
       out.push({ role: 'system', content: `## Available Tools\n${toolList}` });
     }
@@ -67,7 +67,7 @@ export class StablePrefix {
 
   private computeFingerprint(): string {
     const toolFp = this.toolDefinitions
-      .map(t => `${t.name}:${t.description.length}:${t.description.slice(0, 80)}`)
+      .map((t) => `${t.name}:${t.description.length}:${t.description.slice(0, 80)}`)
       .join('|');
     return `${this.systemPrompt.length}:${this.systemPrompt.slice(0, 80)}|tools=${this.toolDefinitions.length}|${toolFp}|gov=${this.governanceProfile.length}`;
   }

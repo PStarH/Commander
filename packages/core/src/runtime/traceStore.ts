@@ -36,7 +36,11 @@ export class PersistentTraceStore implements TraceStore {
     const base = baseDir ?? path.join(process.cwd(), '.commander_traces');
     this.baseDir = tenantId ? path.join(base, `tenant_${tenantId}`) : base;
     fs.mkdirSync(this.baseDir, { recursive: true, mode: 0o700 });
-    try { fs.chmodSync(this.baseDir, 0o700); } catch { /* best-effort */ }
+    try {
+      fs.chmodSync(this.baseDir, 0o700);
+    } catch {
+      /* best-effort */
+    }
   }
 
   append(event: TraceEvent): void {
@@ -55,7 +59,10 @@ export class PersistentTraceStore implements TraceStore {
 
     // Flush stale buffers periodically (not on every append to avoid O(n) scan)
     if (!this.staleFlushTimer) {
-      this.staleFlushTimer = setTimeout(() => { this.staleFlushTimer = null; this.flushStaleBuffers(); }, 60_000);
+      this.staleFlushTimer = setTimeout(() => {
+        this.staleFlushTimer = null;
+        this.flushStaleBuffers();
+      }, 60_000);
       if (this.staleFlushTimer?.unref) this.staleFlushTimer.unref();
     }
   }
@@ -71,14 +78,23 @@ export class PersistentTraceStore implements TraceStore {
     const line = JSON.stringify(event) + '\n';
     try {
       const fd = fs.openSync(filePath, 'a', 0o600);
-      try { fs.fchmodSync(fd, 0o600); } catch { /* best-effort */ }
+      try {
+        fs.fchmodSync(fd, 0o600);
+      } catch {
+        /* best-effort */
+      }
       try {
         fs.writeSync(fd, line);
         fs.fsyncSync(fd);
       } finally {
         fs.closeSync(fd);
       }
-    } catch (e) { getGlobalLogger().warn('TraceStore', 'Failed to append critical trace', { error: (e as Error)?.message, runId: key }); }
+    } catch (e) {
+      getGlobalLogger().warn('TraceStore', 'Failed to append critical trace', {
+        error: (e as Error)?.message,
+        runId: key,
+      });
+    }
   }
 
   private flushStaleBuffers(): void {
@@ -99,12 +115,25 @@ export class PersistentTraceStore implements TraceStore {
     try {
       if (!fs.existsSync(filePath)) {
         fs.writeFileSync(filePath, buffer.join('\n') + '\n', { encoding: 'utf-8', mode: 0o600 });
-        try { fs.chmodSync(filePath, 0o600); } catch { /* best-effort */ }
+        try {
+          fs.chmodSync(filePath, 0o600);
+        } catch {
+          /* best-effort */
+        }
       } else {
-        try { fs.chmodSync(filePath, 0o600); } catch { /* best-effort */ }
+        try {
+          fs.chmodSync(filePath, 0o600);
+        } catch {
+          /* best-effort */
+        }
         fs.appendFileSync(filePath, buffer.join('\n') + '\n', 'utf-8');
       }
-    } catch (e) { getGlobalLogger().warn('TraceStore', 'Failed to flush trace buffer', { error: (e as Error)?.message, runId: key }); }
+    } catch (e) {
+      getGlobalLogger().warn('TraceStore', 'Failed to flush trace buffer', {
+        error: (e as Error)?.message,
+        runId: key,
+      });
+    }
     this.buffers.delete(key);
     this.bufferTimestamps.delete(key);
   }
@@ -131,11 +160,21 @@ export class PersistentTraceStore implements TraceStore {
       if (!raw) return [];
       const events: TraceEvent[] = [];
       for (const line of raw.split('\n')) {
-        try { events.push(JSON.parse(line)); } catch (e) { getGlobalLogger().warn('TraceStore', 'Skipped corrupt trace line', { error: (e as Error)?.message, runId: key }); }
+        try {
+          events.push(JSON.parse(line));
+        } catch (e) {
+          getGlobalLogger().warn('TraceStore', 'Skipped corrupt trace line', {
+            error: (e as Error)?.message,
+            runId: key,
+          });
+        }
       }
       return events;
     } catch (e) {
-      getGlobalLogger().warn('TraceStore', 'Failed to read trace file', { error: (e as Error)?.message, runId: key });
+      getGlobalLogger().warn('TraceStore', 'Failed to read trace file', {
+        error: (e as Error)?.message,
+        runId: key,
+      });
       return [];
     }
   }

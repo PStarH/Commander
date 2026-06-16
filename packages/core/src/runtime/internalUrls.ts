@@ -24,7 +24,10 @@ export interface InternalUrlResult {
   immutable?: boolean;
 }
 
-export type InternalUrlHandler = (path: string, params: Record<string, string>) => Promise<InternalUrlResult>;
+export type InternalUrlHandler = (
+  path: string,
+  params: Record<string, string>,
+) => Promise<InternalUrlResult>;
 
 // ============================================================================
 // URL Parser
@@ -126,7 +129,10 @@ export class InternalUrlRouter {
 
   // ── Built-in Handlers ──
 
-  private async handleCheckpoint(path: string, params: Record<string, string>): Promise<InternalUrlResult> {
+  private async handleCheckpoint(
+    path: string,
+    params: Record<string, string>,
+  ): Promise<InternalUrlResult> {
     const manager = getCheckpointManager();
 
     if (path === 'list' || path === '') {
@@ -134,7 +140,7 @@ export class InternalUrlRouter {
       if (checkpoints.length === 0) {
         return { content: 'No checkpoints saved.', immutable: true };
       }
-      const lines = checkpoints.map(cp => {
+      const lines = checkpoints.map((cp) => {
         const age = Math.round((Date.now() - cp.timestamp) / 1000);
         return `${cp.id} | ${cp.label} | step ${cp.stepNumber} | ${cp.messageCount} msgs | ${age}s ago`;
       });
@@ -167,7 +173,10 @@ export class InternalUrlRouter {
     };
   }
 
-  private async handleMemory(path: string, params: Record<string, string>): Promise<InternalUrlResult> {
+  private async handleMemory(
+    path: string,
+    params: Record<string, string>,
+  ): Promise<InternalUrlResult> {
     // Memory access would integrate with the memory system
     // For now, return a placeholder
     const namespace = params.namespace || 'default';
@@ -177,7 +186,10 @@ export class InternalUrlRouter {
     };
   }
 
-  private async handleSkill(path: string, _params: Record<string, string>): Promise<InternalUrlResult> {
+  private async handleSkill(
+    path: string,
+    _params: Record<string, string>,
+  ): Promise<InternalUrlResult> {
     // Skill access would integrate with the skill system
     return {
       content: `Skill: ${path}\nNote: Skill integration pending.`,
@@ -185,7 +197,10 @@ export class InternalUrlRouter {
     };
   }
 
-  private async handleAgent(path: string, _params: Record<string, string>): Promise<InternalUrlResult> {
+  private async handleAgent(
+    path: string,
+    _params: Record<string, string>,
+  ): Promise<InternalUrlResult> {
     // Agent output access would integrate with the subagent system
     return {
       content: `Agent output: ${path}\nNote: Agent integration pending.`,

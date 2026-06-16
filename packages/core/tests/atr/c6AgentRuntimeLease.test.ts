@@ -26,7 +26,9 @@ describe('C6 — agentRuntime ↔ LeaseManager wiring', () => {
 
   afterEach(() => {
     lm.close();
-    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    } catch {}
   });
 
   it('setLeaseManager enables fencing on subsequent checkpoint writes', () => {
@@ -51,7 +53,14 @@ describe('C6 — agentRuntime ↔ LeaseManager wiring', () => {
       messages: [],
       tokenUsage: { input: 0, output: 0, total: 0 },
       stepDurations: [],
-      context: { agentId: 'a-1', projectId: 'p-1', goal: 'test', availableTools: [], maxSteps: 1, tokenBudget: 1000 },
+      context: {
+        agentId: 'a-1',
+        projectId: 'p-1',
+        goal: 'test',
+        availableTools: [],
+        maxSteps: 1,
+        tokenBudget: 1000,
+      },
       totalDurationMs: 0,
       leaseToken: lease.token,
       fencingEpoch: lease.fencingEpoch,
@@ -77,7 +86,14 @@ describe('C6 — agentRuntime ↔ LeaseManager wiring', () => {
       messages: [],
       tokenUsage: { input: 0, output: 0, total: 0 },
       stepDurations: [],
-      context: { agentId: 'a-1', projectId: 'p-1', goal: 'test', availableTools: [], maxSteps: 1, tokenBudget: 1000 },
+      context: {
+        agentId: 'a-1',
+        projectId: 'p-1',
+        goal: 'test',
+        availableTools: [],
+        maxSteps: 1,
+        tokenBudget: 1000,
+      },
       totalDurationMs: 0,
       leaseToken: old.token,
       fencingEpoch: old.fencingEpoch,
@@ -85,7 +101,7 @@ describe('C6 — agentRuntime ↔ LeaseManager wiring', () => {
     const v1 = cp.resume('run-c6-2')!.version;
     assert.strictEqual(v1, 1);
 
-    await new Promise(r => setTimeout(r, 1100));
+    await new Promise((r) => setTimeout(r, 1100));
     const fresh = lm.acquire('run-c6-2');
     assert.strictEqual(fresh.reclaimed, true);
 
@@ -99,7 +115,14 @@ describe('C6 — agentRuntime ↔ LeaseManager wiring', () => {
       messages: [],
       tokenUsage: { input: 0, output: 0, total: 0 },
       stepDurations: [],
-      context: { agentId: 'a-1', projectId: 'p-1', goal: 'test', availableTools: [], maxSteps: 1, tokenBudget: 1000 },
+      context: {
+        agentId: 'a-1',
+        projectId: 'p-1',
+        goal: 'test',
+        availableTools: [],
+        maxSteps: 1,
+        tokenBudget: 1000,
+      },
       totalDurationMs: 100,
       leaseToken: old.token,
       fencingEpoch: old.fencingEpoch,

@@ -47,7 +47,11 @@ const PRICING = {
   power: { input: 0.015, output: 0.075 },
 };
 
-function costUsd(inputTokens: number, outputTokens: number, tier: 'standard' | 'eco' | 'power' = 'standard'): number {
+function costUsd(
+  inputTokens: number,
+  outputTokens: number,
+  tier: 'standard' | 'eco' | 'power' = 'standard',
+): number {
   const p = PRICING[tier];
   return (inputTokens / 1000) * p.input + (outputTokens / 1000) * p.output;
 }
@@ -124,11 +128,23 @@ function makeMessages(count: number, avgLen = 500): LLMMessage[] {
 
 function makeToolDefs(count: number): ToolDefinition[] {
   const names = [
-    'file_read', 'file_write', 'file_edit', 'file_search', 'file_list',
-    'shell_execute', 'python_execute', 'code_search', 'apply_patch', 'fix_code',
-    'refine_code', 'web_search', 'web_fetch', 'git', 'agent',
+    'file_read',
+    'file_write',
+    'file_edit',
+    'file_search',
+    'file_list',
+    'shell_execute',
+    'python_execute',
+    'code_search',
+    'apply_patch',
+    'fix_code',
+    'refine_code',
+    'web_search',
+    'web_fetch',
+    'git',
+    'agent',
   ];
-  return names.slice(0, count).map(name => ({
+  return names.slice(0, count).map((name) => ({
     name,
     description: `${name} tool for performing ${name.replace(/_/g, ' ')} operations on the system`,
     inputSchema: { type: 'object', properties: { path: { type: 'string' } } },
@@ -143,7 +159,13 @@ describe('Benchmark: Tool Result Cache Hit Rate', () => {
   let cache: ToolResultCache;
 
   beforeEach(() => {
-    cache = new ToolResultCache({ enabled: true, maxEntries: 1000, defaultTtlMs: 300_000, toolTtls: {}, neverCache: [] });
+    cache = new ToolResultCache({
+      enabled: true,
+      maxEntries: 1000,
+      defaultTtlMs: 300_000,
+      toolTtls: {},
+      neverCache: [],
+    });
   });
 
   afterEach(() => cache.dispose());
@@ -188,10 +210,19 @@ describe('Benchmark: Tool Result Cache Hit Rate', () => {
   });
 
   it('measures cache effectiveness under LRU eviction', async () => {
-    const smallCache = new ToolResultCache({ enabled: true, maxEntries: 10, defaultTtlMs: 300_000, toolTtls: {}, neverCache: [] });
+    const smallCache = new ToolResultCache({
+      enabled: true,
+      maxEntries: 10,
+      defaultTtlMs: 300_000,
+      toolTtls: {},
+      neverCache: [],
+    });
 
     for (let i = 0; i < 30; i++) {
-      await smallCache.set(makeToolCall('file_read', { path: `/file_${i}` }), makeToolResult('file_read'));
+      await smallCache.set(
+        makeToolCall('file_read', { path: `/file_${i}` }),
+        makeToolResult('file_read'),
+      );
     }
 
     let hits = 0;
@@ -203,7 +234,7 @@ describe('Benchmark: Tool Result Cache Hit Rate', () => {
     const stats = smallCache.getStats();
     report('Tool Cache LRU', {
       'Entries kept': stats.totalEntries,
-      'Evictions': stats.evictions,
+      Evictions: stats.evictions,
       'Recent access hits': hits,
     });
 
@@ -213,7 +244,13 @@ describe('Benchmark: Tool Result Cache Hit Rate', () => {
   });
 
   it('reports never-cache exclusion correctly', async () => {
-    const restrictedCache = new ToolResultCache({ enabled: true, maxEntries: 100, defaultTtlMs: 300_000, toolTtls: {}, neverCache: ['shell_execute', 'python_execute', 'git_push'] });
+    const restrictedCache = new ToolResultCache({
+      enabled: true,
+      maxEntries: 100,
+      defaultTtlMs: 300_000,
+      toolTtls: {},
+      neverCache: ['shell_execute', 'python_execute', 'git_push'],
+    });
 
     const neverCache = ['shell_execute', 'python_execute', 'git_push'];
     for (const tool of neverCache) {
@@ -225,7 +262,10 @@ describe('Benchmark: Tool Result Cache Hit Rate', () => {
       expect(result).toBeUndefined();
     }
 
-    await restrictedCache.set(makeToolCall('file_read', { path: '/x' }), makeToolResult('file_read'));
+    await restrictedCache.set(
+      makeToolCall('file_read', { path: '/x' }),
+      makeToolResult('file_read'),
+    );
     const result = restrictedCache.get(makeToolCall('file_read', { path: '/x' }));
     expect(result).toBeDefined();
     restrictedCache.dispose();
@@ -256,19 +296,19 @@ describe('Benchmark: Semantic Cache Hit Rate', () => {
       'What is the capital of France?', // exact dup
       'Tell me about Paris', // different
       'What is the capital of Germany?', // different
-      'What is France\'s capital?', // paraphrase
+      "What is France's capital?", // paraphrase
       'How do I fix a bug in file_read?', // different domain
       'How to fix a bug in file_read?', // near-dup
     ];
 
-    const responses: LLMResponse[] = queries.map(q => makeLLMResponse(`Answer for: ${q}`));
+    const responses: LLMResponse[] = queries.map((q) => makeLLMResponse(`Answer for: ${q}`));
 
     for (let i = 0; i < queries.length; i++) {
       const req = makeLLMRequest([{ role: 'user', content: queries[i] }]);
       cache.store(req, responses[i]);
     }
 
-    await new Promise(r => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 10));
 
     let hits = 0;
     let misses = 0;
@@ -303,7 +343,7 @@ describe('Benchmark: Semantic Cache Hit Rate', () => {
     const embeddingFn = new MockEmbeddingFunction();
     const cache = new SemanticCache(embeddingFn, {
       enabled: true,
-      similarityThreshold: 0.90,
+      similarityThreshold: 0.9,
       maxEntries: 5000,
       defaultTtlMs: 86_400_000,
       maxBucketSize: 64,
@@ -325,11 +365,11 @@ describe('Benchmark: Semantic Cache Hit Rate', () => {
       cache.store(req, makeLLMResponse(`Response: ${q}`, 800, 400));
     }
 
-    await new Promise(r => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 10));
 
     const simulatedTraffic = [
       ...baseQueries,
-      ...baseQueries.slice(0, 3).map(q => q + '?'), // near-dups
+      ...baseQueries.slice(0, 3).map((q) => q + '?'), // near-dups
       ...baseQueries.slice(0, 2), // exact dups
     ];
 
@@ -367,13 +407,15 @@ describe('Benchmark: Single-Flight Dedup', () => {
   it('measures dedup savings for concurrent identical requests', async () => {
     const cache = new SingleFlightRequestCache({ enabled: true, maxInFlight: 100 });
 
-    const request = makeLLMRequest([{ role: 'user', content: 'Plan the optimal decomposition for this task' }]);
+    const request = makeLLMRequest([
+      { role: 'user', content: 'Plan the optimal decomposition for this task' },
+    ]);
     const key = SingleFlightRequestCache.computeKey(request);
 
     let factoryCalls = 0;
     const factory = async (): Promise<LLMResponse> => {
       factoryCalls++;
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50));
       return makeLLMResponse('Planned decomposition', 1000, 500);
     };
 
@@ -397,7 +439,7 @@ describe('Benchmark: Single-Flight Dedup', () => {
     });
 
     expect(factoryCalls).toBe(1);
-    expect(results.every(r => r.content === 'Planned decomposition')).toBe(true);
+    expect(results.every((r) => r.content === 'Planned decomposition')).toBe(true);
   });
 
   it('measures savings across multiple dedup windows', async () => {
@@ -414,7 +456,7 @@ describe('Benchmark: Single-Flight Dedup', () => {
       const key = SingleFlightRequestCache.computeKey(req);
       return async () => {
         factoryCounts[idx]++;
-        await new Promise(r => setTimeout(r, 30));
+        await new Promise((r) => setTimeout(r, 30));
         return makeLLMResponse(`Result ${idx}`, 500, 200);
       };
     });
@@ -471,7 +513,7 @@ describe('Benchmark: Cost Estimator Accuracy', () => {
       'Predicted cost (USD)': estimate.predictedCostUsd,
       'Baseline cost (USD)': baselineCost,
       'Prediction error': predictionError,
-      'Confidence': estimate.confidence,
+      Confidence: estimate.confidence,
       'Recommended budget': estimate.recommendedBudget,
     });
 
@@ -484,7 +526,15 @@ describe('Benchmark: Cost Estimator Accuracy', () => {
 
     for (const cat of categories) {
       for (let i = 0; i < 25; i++) {
-        estimator.recordActualCost(cat, 'standard', 8000 + Math.random() * 2000, 4000 + Math.random() * 1000, 0.05 + Math.random() * 0.02, 5000, true);
+        estimator.recordActualCost(
+          cat,
+          'standard',
+          8000 + Math.random() * 2000,
+          4000 + Math.random() * 1000,
+          0.05 + Math.random() * 0.02,
+          5000,
+          true,
+        );
       }
     }
 
@@ -495,7 +545,7 @@ describe('Benchmark: Cost Estimator Accuracy', () => {
       'Predicted input tokens': estimate.predictedInputTokens,
       'Predicted output tokens': estimate.predictedOutputTokens,
       'Predicted cost (USD)': estimate.predictedCostUsd,
-      'Confidence': estimate.confidence,
+      Confidence: estimate.confidence,
       'Sample count': estimate.sampleCount,
       'Recommended budget': estimate.recommendedBudget,
     });
@@ -516,13 +566,13 @@ describe('Benchmark: Cost Estimator Accuracy', () => {
     const allocations = estimator.allocateBudgetsAcrossAgents(totalBudget, subtasks);
 
     const totalAllocated = allocations.reduce((s, a) => s + a.budget, 0);
-    const maxAllocation = Math.max(...allocations.map(a => a.budget));
-    const minAllocation = Math.min(...allocations.map(a => a.budget));
+    const maxAllocation = Math.max(...allocations.map((a) => a.budget));
+    const minAllocation = Math.min(...allocations.map((a) => a.budget));
 
     report('Budget Allocation', {
       'Total budget': totalBudget,
       'Total allocated': totalAllocated,
-      'Subtasks': allocations.length,
+      Subtasks: allocations.length,
       'Max allocation': maxAllocation,
       'Min allocation': minAllocation,
       'Allocation variance (max/min)': maxAllocation / minAllocation,
@@ -549,7 +599,7 @@ describe('Benchmark: Context Compaction Savings', () => {
     for (const layer of layers) {
       const compactor = new ContextCompactor({
         maxContextTokens: layer.maxTokens,
-        layer1Trigger: 0.50,
+        layer1Trigger: 0.5,
         layer2Trigger: 0.55,
         layer3Trigger: 0.65,
         layer4Trigger: 0.75,
@@ -566,21 +616,24 @@ describe('Benchmark: Context Compaction Savings', () => {
       const pctSaved = before.total > 0 ? tokensSaved / before.total : 0;
       const savedUsd = costUsd(tokensSaved, 0);
 
-      report(`${layer.name} (${layer.count} msgs, ~${layer.avgLen} avg chars, ${layer.maxTokens} budget)`, {
-        'Before tokens': before.total,
-        'After tokens': after.total,
-        'Tokens saved': tokensSaved,
-        'Percentage saved': pctSaved,
-        'USD saved': savedUsd,
-        'Action': result.action.description,
-      });
+      report(
+        `${layer.name} (${layer.count} msgs, ~${layer.avgLen} avg chars, ${layer.maxTokens} budget)`,
+        {
+          'Before tokens': before.total,
+          'After tokens': after.total,
+          'Tokens saved': tokensSaved,
+          'Percentage saved': pctSaved,
+          'USD saved': savedUsd,
+          Action: result.action.description,
+        },
+      );
     }
   });
 
   it('measures compaction effectiveness under governor pressure', () => {
     const compactor = new ContextCompactor({
       maxContextTokens: 6000,
-      layer1Trigger: 0.50,
+      layer1Trigger: 0.5,
       layer2Trigger: 0.55,
       layer3Trigger: 0.65,
       layer4Trigger: 0.75,
@@ -610,7 +663,7 @@ describe('Benchmark: Context Compaction Savings', () => {
   it('measures total compaction savings for a long conversation', () => {
     const compactor = new ContextCompactor({
       maxContextTokens: 6000,
-      layer1Trigger: 0.50,
+      layer1Trigger: 0.5,
       layer2Trigger: 0.55,
       layer3Trigger: 0.65,
       layer4Trigger: 0.75,
@@ -660,7 +713,10 @@ describe('Benchmark: Early-Exit Savings', () => {
     const earlyExitSteps = 2;
 
     const fullRunCost = costUsd(10000, maxTokensFull * fullRunSteps);
-    const earlyExitCost = costUsd(10000, earlyExitTokens * earlyExitSteps + maxTokensFull * (fullRunSteps - earlyExitSteps));
+    const earlyExitCost = costUsd(
+      10000,
+      earlyExitTokens * earlyExitSteps + maxTokensFull * (fullRunSteps - earlyExitSteps),
+    );
 
     const tokensSaved = (maxTokensFull - earlyExitTokens) * (fullRunSteps - earlyExitSteps);
     const savedUsd = fullRunCost - earlyExitCost;
@@ -693,18 +749,19 @@ describe('Benchmark: Early-Exit Savings', () => {
     governor.reportUsage(5000);
     const decisions = governor.getRecommendations();
 
-    const speculativeSkip = decisions.find(d => d.strategy === 'speculative_skip');
-    const verificationSkip = decisions.find(d => d.strategy === 'verification_skip');
+    const speculativeSkip = decisions.find((d) => d.strategy === 'speculative_skip');
+    const verificationSkip = decisions.find((d) => d.strategy === 'verification_skip');
 
     const tokensSavedPerSkip = 800;
     const skipCount = 3;
 
-    const totalSaved = (speculativeSkip?.apply ? tokensSavedPerSkip : 0) +
-                       (verificationSkip?.apply ? tokensSavedPerSkip : 0);
+    const totalSaved =
+      (speculativeSkip?.apply ? tokensSavedPerSkip : 0) +
+      (verificationSkip?.apply ? tokensSavedPerSkip : 0);
 
     report('Governor Early-Exit Strategies', {
       'Budget pressure': governor.getState().pressure,
-      'Phase': governor.getState().phase,
+      Phase: governor.getState().phase,
       'Speculative skip enabled': speculativeSkip?.apply ?? false,
       'Verification skip enabled': verificationSkip?.apply ?? false,
       'Tokens saved per skip': tokensSavedPerSkip,
@@ -722,14 +779,23 @@ describe('Benchmark: Early-Exit Savings', () => {
 describe('Benchmark: Tool Pruning Savings', () => {
   it('measures token reduction from selectTools with goal specificity', () => {
     const allTools = makeToolDefs(15);
-    const allToolNames = allTools.map(t => t.name);
+    const allToolNames = allTools.map((t) => t.name);
 
     const fullSchemaTokens = estimateToolTokenCost(allTools);
 
     const goals = [
-      { goal: 'Fix the bug in the file_read function that causes timeout on large files', expected: ['file_read', 'code_search', 'shell_execute'] },
-      { goal: 'Search the web for the latest React documentation', expected: ['web_search', 'web_fetch'] },
-      { goal: 'Write a commit message and push to the remote repository', expected: ['git', 'shell_execute'] },
+      {
+        goal: 'Fix the bug in the file_read function that causes timeout on large files',
+        expected: ['file_read', 'code_search', 'shell_execute'],
+      },
+      {
+        goal: 'Search the web for the latest React documentation',
+        expected: ['web_search', 'web_fetch'],
+      },
+      {
+        goal: 'Write a commit message and push to the remote repository',
+        expected: ['git', 'shell_execute'],
+      },
     ];
 
     let totalSavedTokens = 0;
@@ -737,7 +803,7 @@ describe('Benchmark: Tool Pruning Savings', () => {
 
     for (const { goal } of goals) {
       const selected = selectTools(goal, allToolNames, { minTools: 3, maxTools: 8 });
-      const selectedDefs = allTools.filter(t => selected.includes(t.name));
+      const selectedDefs = allTools.filter((t) => selected.includes(t.name));
       const selectedTokens = estimateToolTokenCost(selectedDefs);
 
       const saved = fullSchemaTokens - selectedTokens;
@@ -770,8 +836,12 @@ describe('Benchmark: Tool Pruning Savings', () => {
     const fullTokens = estimateToolTokenCost(allTools);
 
     const goal = 'Fix the bug in file_read that causes timeout on large files';
-    const tier = selectTools(goal, allTools.map(t => t.name), { minTools: 3, maxTools: 8 });
-    const tierDefs = allTools.filter(t => tier.includes(t.name));
+    const tier = selectTools(
+      goal,
+      allTools.map((t) => t.name),
+      { minTools: 3, maxTools: 8 },
+    );
+    const tierDefs = allTools.filter((t) => tier.includes(t.name));
     const tierTokens = estimateToolTokenCost(tierDefs);
 
     const saved = fullTokens - tierTokens;
@@ -804,8 +874,12 @@ describe('Benchmark: Tool Pruning Savings', () => {
 
     let totalSaved = 0;
     for (const { goal } of taskTypes) {
-      const selected = selectTools(goal, allTools.map(t => t.name), { minTools: 3, maxTools: 8 });
-      const selectedDefs = allTools.filter(t => selected.includes(t.name));
+      const selected = selectTools(
+        goal,
+        allTools.map((t) => t.name),
+        { minTools: 3, maxTools: 8 },
+      );
+      const selectedDefs = allTools.filter((t) => selected.includes(t.name));
       const selectedTokens = estimateToolTokenCost(selectedDefs);
       totalSaved += Math.max(0, fullTokens - selectedTokens);
     }
@@ -837,14 +911,23 @@ describe('Benchmark: Prompt Compression Savings', () => {
 
     for (const phase of phases) {
       governor.reset(20000);
-      const usedTokens = phase === 'relaxed' ? 2000 : phase === 'moderate' ? 10000 : phase === 'tight' ? 16000 : 19000;
+      const usedTokens =
+        phase === 'relaxed'
+          ? 2000
+          : phase === 'moderate'
+            ? 10000
+            : phase === 'tight'
+              ? 16000
+              : 19000;
       governor.reportUsage(usedTokens);
 
       const recommendations = governor.getRecommendations();
-      const promptCompression = recommendations.find(d => d.strategy === 'prompt_compression');
-      const observationMask = recommendations.find(d => d.strategy === 'observation_mask');
+      const promptCompression = recommendations.find((d) => d.strategy === 'prompt_compression');
+      const observationMask = recommendations.find((d) => d.strategy === 'observation_mask');
 
-      const compressedTokens = Math.round(baseTokens * (1 - (promptCompression?.intensity ?? 0) * 0.5));
+      const compressedTokens = Math.round(
+        baseTokens * (1 - (promptCompression?.intensity ?? 0) * 0.5),
+      );
       const maskedTokens = Math.round(baseTokens * (1 - (observationMask?.intensity ?? 0) * 0.3));
       const totalSaved = baseTokens - compressedTokens + baseTokens - maskedTokens;
 
@@ -870,17 +953,19 @@ describe('Benchmark: Prompt Compression Savings', () => {
     for (let i = 0; i < steps; i++) {
       governor.reportUsage(tokensPerStep);
       const recs = governor.getRecommendations();
-      const compression = recs.find(d => d.strategy === 'prompt_compression');
-      const mask = recs.find(d => d.strategy === 'observation_mask');
+      const compression = recs.find((d) => d.strategy === 'prompt_compression');
+      const mask = recs.find((d) => d.strategy === 'observation_mask');
 
-      const stepSaved = Math.round(tokensPerStep * ((compression?.intensity ?? 0) * 0.3 + (mask?.intensity ?? 0) * 0.2));
+      const stepSaved = Math.round(
+        tokensPerStep * ((compression?.intensity ?? 0) * 0.3 + (mask?.intensity ?? 0) * 0.2),
+      );
       totalSaved += stepSaved;
     }
 
     const totalTokens = steps * tokensPerStep;
 
     report('Cumulative Prompt Compression', {
-      'Steps': steps,
+      Steps: steps,
       'Tokens per step': tokensPerStep,
       'Total tokens consumed': totalTokens,
       'Total tokens saved': totalSaved,
@@ -898,20 +983,39 @@ describe('Benchmark: Cost-Weighted vs Naive Compaction', () => {
   it('compares cost-weighted and naive compaction quality', () => {
     const compactor = new ContextCompactor({
       maxContextTokens: 5000,
-      layer1Trigger: 0.50,
+      layer1Trigger: 0.5,
       governorAware: false,
     });
 
     const messages: LLMMessage[] = [
       { role: 'system', content: 'You are a coding assistant.' },
       { role: 'user', content: 'Fix the bug in the authentication module' },
-      { role: 'assistant', content: 'I will analyze the authentication module. The issue is that the token validation check is missing expiry handling. I need to add the expiry check before the signature verification.', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'file_read', arguments: '{"path":"src/auth.ts"}' } }] },
+      {
+        role: 'assistant',
+        content:
+          'I will analyze the authentication module. The issue is that the token validation check is missing expiry handling. I need to add the expiry check before the signature verification.',
+        tool_calls: [
+          {
+            id: 'c1',
+            type: 'function',
+            function: { name: 'file_read', arguments: '{"path":"src/auth.ts"}' },
+          },
+        ],
+      },
       { role: 'tool', content: 'ERROR: Cannot read file - file not found at src/auth.ts' },
       { role: 'assistant', content: 'The file was not found. Let me search for it.' },
       { role: 'user', content: 'The file is at src/modules/auth/tokenValidator.ts' },
       { role: 'assistant', content: 'Found it. I will read the tokenValidator.ts file now.' },
-      { role: 'tool', content: 'File content: export function validateToken(token: string) { return jwt.verify(token, secret); }' },
-      { role: 'assistant', content: 'I found the issue. The validateToken function does not check the token expiry. I will add the expiry check.' },
+      {
+        role: 'tool',
+        content:
+          'File content: export function validateToken(token: string) { return jwt.verify(token, secret); }',
+      },
+      {
+        role: 'assistant',
+        content:
+          'I found the issue. The validateToken function does not check the token expiry. I will add the expiry check.',
+      },
       { role: 'tool', content: 'error: timeout connection refused' },
       { role: 'assistant', content: 'Retrying the operation...' },
     ];
@@ -919,9 +1023,13 @@ describe('Benchmark: Cost-Weighted vs Naive Compaction', () => {
     const result = compactor.compact(messages, undefined, 'code');
     const compactedMessages = result.messages;
 
-    const preservedSystem = compactedMessages.some(m => m.role === 'system');
-    const preservedErrors = compactedMessages.filter(m => m.content.includes('error') || m.content.includes('ERROR'));
-    const preservedDecisions = compactedMessages.filter(m => m.content.includes('I will') || m.content.includes('Found it'));
+    const preservedSystem = compactedMessages.some((m) => m.role === 'system');
+    const preservedErrors = compactedMessages.filter(
+      (m) => m.content.includes('error') || m.content.includes('ERROR'),
+    );
+    const preservedDecisions = compactedMessages.filter(
+      (m) => m.content.includes('I will') || m.content.includes('Found it'),
+    );
 
     const naiveDropCount = result.action.droppedCount;
 
@@ -951,7 +1059,7 @@ describe('Benchmark: Cost-Weighted vs Naive Compaction', () => {
     for (const strat of strategies) {
       const compactor = new ContextCompactor({
         maxContextTokens: strat.maxTokens,
-        layer1Trigger: 0.50,
+        layer1Trigger: 0.5,
         governorAware: false,
       });
 
@@ -965,12 +1073,12 @@ describe('Benchmark: Cost-Weighted vs Naive Compaction', () => {
 
       report(`Compaction Strategy: ${strat.name}`, {
         'Task type': strat.taskType,
-        'Messages': strat.count,
+        Messages: strat.count,
         'Before tokens': before.total,
         'After tokens': after.total,
         'Tokens saved': saved,
         'Percentage saved': pctSaved,
-        'Layer': result.action.layer,
+        Layer: result.action.layer,
       });
     }
   });
@@ -1019,10 +1127,22 @@ describe('Benchmark: Cost-Per-Success Model Scoring', () => {
     const router = new ModelRouter();
 
     const taskTypes = [
-      { goal: 'Fix the bug in the authentication module that causes timeout', type: 'code', tokens: 12000 },
+      {
+        goal: 'Fix the bug in the authentication module that causes timeout',
+        type: 'code',
+        tokens: 12000,
+      },
       { goal: 'Search for the latest React documentation on hooks', type: 'search', tokens: 5000 },
-      { goal: 'Analyze the performance bottleneck in the database queries', type: 'analysis', tokens: 8000 },
-      { goal: 'Write a creative product description for the new feature', type: 'creative', tokens: 3000 },
+      {
+        goal: 'Analyze the performance bottleneck in the database queries',
+        type: 'analysis',
+        tokens: 8000,
+      },
+      {
+        goal: 'Write a creative product description for the new feature',
+        type: 'creative',
+        tokens: 3000,
+      },
     ];
 
     let totalCost = 0;
@@ -1036,7 +1156,9 @@ describe('Benchmark: Cost-Per-Success Model Scoring', () => {
       if (model) {
         const inputTokens = Math.ceil(task.goal.length / 4) + 2048;
         const outputTokens = task.tokens - inputTokens;
-        const taskCost = (inputTokens / 1000) * model.costPer1KInput + (outputTokens / 1000) * model.costPer1KOutput;
+        const taskCost =
+          (inputTokens / 1000) * model.costPer1KInput +
+          (outputTokens / 1000) * model.costPer1KOutput;
         totalCost += taskCost;
 
         const naiveCostPerK = 0.015;
@@ -1064,7 +1186,7 @@ describe('Benchmark: Cost-Per-Success Model Scoring', () => {
     const ctx = makeCtx({ goal: 'Debug the failing test in the authentication module' });
     const { initial, escalationChain } = router.routeWithCascade(ctx, 'tight');
 
-    const chainCosts = escalationChain.map(m => ({
+    const chainCosts = escalationChain.map((m) => ({
       model: m.id,
       costPer1KInput: m.costPer1KInput,
       costPer1KOutput: m.costPer1KOutput,
@@ -1072,9 +1194,11 @@ describe('Benchmark: Cost-Per-Success Model Scoring', () => {
 
     const initialModel = router.getModel(initial.modelId);
     const initialCostPerK = initialModel ? initialModel.costPer1KOutput : 0.01;
-    const escalationCostPerK = chainCosts.length > 0 ? chainCosts[0].costPer1KOutput : initialCostPerK;
+    const escalationCostPerK =
+      chainCosts.length > 0 ? chainCosts[0].costPer1KOutput : initialCostPerK;
 
-    const cascadeSavings = Math.max(0, initialCostPerK - escalationCostPerK) / Math.max(initialCostPerK, 0.001);
+    const cascadeSavings =
+      Math.max(0, initialCostPerK - escalationCostPerK) / Math.max(initialCostPerK, 0.001);
 
     report('Cascade Chain Efficiency', {
       'Initial model': initial.modelId,
@@ -1103,11 +1227,11 @@ describe('Aggregate Cost Savings Summary', () => {
     const optimizations = [
       { name: 'toolCache', rate: 0.85, tokensPerHit: 150 },
       { name: 'semanticCache', rate: 0.45, tokensPerHit: 1200 },
-      { name: 'singleFlight', rate: 0.30, tokensPerHit: 1500 },
-      { name: 'contextCompaction', rate: 0.40, tokensPerHit: 20000 },
+      { name: 'singleFlight', rate: 0.3, tokensPerHit: 1500 },
+      { name: 'contextCompaction', rate: 0.4, tokensPerHit: 20000 },
       { name: 'earlyExit', rate: 0.35, tokensPerHit: 4000 },
       { name: 'toolPruning', rate: 0.35, tokensPerHit: 2500 },
-      { name: 'promptCompression', rate: 0.20, tokensPerHit: 1500 },
+      { name: 'promptCompression', rate: 0.2, tokensPerHit: 1500 },
     ];
 
     let totalTokensSaved = 0;

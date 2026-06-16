@@ -89,18 +89,25 @@ describe('CodeSearchTool Security', () => {
     const injectionPattern = ['"', '; rm', ' -rf / #"'].join('');
     const result = await tool.execute({ pattern: injectionPattern });
     assert.ok(result !== undefined && result !== null, 'result should be defined');
-    assert.ok(!/sh:|bash:|command not found/.test(result), 'result should not contain shell artifacts');
+    assert.ok(
+      !/sh:|bash:|command not found/.test(result),
+      'result should not contain shell artifacts',
+    );
   });
 
-  it('should NOT execute shell commands via filePattern injection', { timeout: 30000 }, async () => {
-    const tool = new CodeSearchTool();
-    const result = await tool.execute({
-      pattern: 'test',
-      filePattern: '"; cat /etc/passwd #',
-    });
-    assert.ok(!/root:.*:0:0/.test(result));
-    assert.ok(!/nobody:.*:65534/.test(result));
-  });
+  it(
+    'should NOT execute shell commands via filePattern injection',
+    { timeout: 30000 },
+    async () => {
+      const tool = new CodeSearchTool();
+      const result = await tool.execute({
+        pattern: 'test',
+        filePattern: '"; cat /etc/passwd #',
+      });
+      assert.ok(!/root:.*:0:0/.test(result));
+      assert.ok(!/nobody:.*:65534/.test(result));
+    },
+  );
 });
 
 describe('VerificationTool Security', () => {
@@ -251,7 +258,10 @@ describe('ExecPolicy Security', () => {
 
     it('should prompt for inline code execution (Codex banned prefixes)', () => {
       const engine = new ExecPolicyEngine();
-      assert.strictEqual(engine.evaluate('python3 -c "import os; os.system(\'rm -rf /\')"').decision, 'prompt');
+      assert.strictEqual(
+        engine.evaluate('python3 -c "import os; os.system(\'rm -rf /\')"').decision,
+        'prompt',
+      );
       assert.strictEqual(engine.evaluate('node -e "process.exit()"').decision, 'prompt');
       assert.strictEqual(engine.evaluate('bash -lc "malicious"').decision, 'prompt');
     });

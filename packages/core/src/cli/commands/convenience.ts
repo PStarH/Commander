@@ -133,7 +133,7 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
         stdio: 'pipe',
       });
       console.log(`  ${$.green}✓${$.reset} ESLint fixes applied`);
-    } catch (err: any) {
+    } catch {
       console.log(`  ${$.yellow}⚠${$.reset} ESLint found issues (some may need manual fix)`);
     }
 
@@ -145,7 +145,7 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
         stdio: 'pipe',
       });
       console.log(`  ${$.green}✓${$.reset} Prettier formatting applied`);
-    } catch (err: any) {
+    } catch {
       console.log(`  ${$.yellow}⚠${$.reset} Prettier had issues`);
     }
 
@@ -157,8 +157,9 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
         stdio: 'pipe',
       });
       console.log(`  ${$.green}✓${$.reset} TypeScript check passed`);
-    } catch (err: any) {
-      const output = err.stdout || err.stderr || '';
+    } catch (err: unknown) {
+      const output =
+        err instanceof Error && 'stdout' in err ? String((err as { stdout?: string }).stdout) : '';
       const errorCount = (output.match(/error TS/g) || []).length;
       console.log(`  ${$.yellow}⚠${$.reset} TypeScript found ${errorCount} errors`);
     }
@@ -169,7 +170,7 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
       try {
         execSync('pnpm test 2>&1', { encoding: 'utf-8', stdio: 'pipe' });
         console.log(`  ${$.green}✓${$.reset} Tests passed`);
-      } catch (err: any) {
+      } catch {
         console.log(`  ${$.red}✗${$.reset} Tests failed`);
       }
     }
@@ -256,7 +257,7 @@ export async function cmdTest(flags: Record<string, string>): Promise<void> {
     try {
       const output = execSync('pnpm test 2>&1', { encoding: 'utf-8', stdio: 'pipe' });
       console.log(`  ${$.green}✓${$.reset} Tests passed`);
-    } catch (err: any) {
+    } catch {
       console.log(`  ${$.red}✗${$.reset} Tests failed`);
 
       if (flags['--fix']) {

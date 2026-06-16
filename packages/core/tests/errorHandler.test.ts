@@ -24,12 +24,12 @@ import {
 function createFastHandler(overrides?: Partial<ErrorHandlerConfig>): ErrorHandler {
   return new ErrorHandler({
     maxRetries: 3,
-    retryDelayMs: 1,            // 1 ms – effectively instant
+    retryDelayMs: 1, // 1 ms – effectively instant
     exponentialBackoff: false,
     circuitBreakerThreshold: 5,
     circuitBreakerCooldownMs: 50, // short cooldown for half-open tests
     maxErrors: 100,
-    enableLogging: false,        // skip logger entirely
+    enableLogging: false, // skip logger entirely
     ...overrides,
   });
 }
@@ -188,7 +188,9 @@ describe('handleWithRetry', () => {
 
   it('does NOT retry non-retryable CommanderError (INVALID_INPUT)', async () => {
     const err = new CommanderError('bad input', 'INVALID_INPUT', 'Test', 'low');
-    const op = mock.fn(async () => { throw err; });
+    const op = mock.fn(async () => {
+      throw err;
+    });
 
     await assert.rejects(
       handler.handleWithRetry(op, { component: 'Test', operation: 'bad' }),
@@ -218,19 +220,23 @@ describe('handleWithRetry', () => {
   it('does NOT retry ERR_INVALID_ARG_TYPE', async () => {
     const e: NodeJS.ErrnoException = new Error('bad arg');
     e.code = 'ERR_INVALID_ARG_TYPE';
-    const op = mock.fn(async () => { throw e; });
+    const op = mock.fn(async () => {
+      throw e;
+    });
 
-    await assert.rejects(
-      handler.handleWithRetry(op, { component: 'Test', operation: 'argOp' }),
-    );
+    await assert.rejects(handler.handleWithRetry(op, { component: 'Test', operation: 'argOp' }));
     assert.strictEqual(op.mock.callCount(), 1);
   });
 
   it('wraps plain Error in CommanderError on record', async () => {
     let caught: CommanderError | undefined;
-    handler.onError((err) => { caught = err; });
+    handler.onError((err) => {
+      caught = err;
+    });
 
-    const op = mock.fn(async () => { throw new Error('network timeout'); });
+    const op = mock.fn(async () => {
+      throw new Error('network timeout');
+    });
 
     // Exhaust retries
     await assert.rejects(
@@ -345,7 +351,7 @@ describe('Circuit breaker integration', () => {
   it('opens circuit after threshold failures and rejects with CIRCUIT_OPEN', async () => {
     const handler = createFastHandler({
       circuitBreakerThreshold: 3,
-      maxRetries: 0,   // no retries — one failure per call
+      maxRetries: 0, // no retries — one failure per call
     });
 
     const failingOp = async () => {
@@ -385,7 +391,9 @@ describe('Circuit breaker integration', () => {
       maxRetries: 0,
     });
 
-    const failingOp = async () => { throw new Error('timeout'); };
+    const failingOp = async () => {
+      throw new Error('timeout');
+    };
 
     // Trip the breaker
     for (let i = 0; i < 2; i++) {
@@ -425,13 +433,13 @@ describe('Circuit breaker integration', () => {
       maxRetries: 0,
     });
 
-    const failOp = async () => { throw new Error('timeout'); };
+    const failOp = async () => {
+      throw new Error('timeout');
+    };
 
     // Trip breaker for CompA
     for (let i = 0; i < 2; i++) {
-      await assert.rejects(
-        handler.handleWithRetry(failOp, { component: 'CompA', operation: 'f' }),
-      );
+      await assert.rejects(handler.handleWithRetry(failOp, { component: 'CompA', operation: 'f' }));
     }
 
     // CompA is open
@@ -472,9 +480,12 @@ describe('error listeners', () => {
 
     // Use a non-retryable CommanderError so it records exactly once
     await assert.rejects(
-      handler.handleWithRetry(async () => {
-        throw new CommanderError('bad input', 'INVALID_INPUT', 'ListenerTest', 'low');
-      }, { component: 'ListenerTest', operation: 'op' }),
+      handler.handleWithRetry(
+        async () => {
+          throw new CommanderError('bad input', 'INVALID_INPUT', 'ListenerTest', 'low');
+        },
+        { component: 'ListenerTest', operation: 'op' },
+      ),
     );
 
     assert.strictEqual(errors.length, 1);
@@ -488,9 +499,12 @@ describe('error listeners', () => {
     handler.onError((e) => b.push(e));
 
     await assert.rejects(
-      handler.handleWithRetry(async () => {
-        throw new CommanderError('denied', 'PERMISSION_DENIED', 'MultiListener', 'high');
-      }, { component: 'MultiListener', operation: 'op' }),
+      handler.handleWithRetry(
+        async () => {
+          throw new CommanderError('denied', 'PERMISSION_DENIED', 'MultiListener', 'high');
+        },
+        { component: 'MultiListener', operation: 'op' },
+      ),
     );
 
     assert.strictEqual(a.length, 1);
@@ -504,32 +518,45 @@ describe('error listeners', () => {
     handler.onError(listener);
 
     await assert.rejects(
-      handler.handleWithRetry(async () => {
-        throw new CommanderError('bad', 'INVALID_INPUT', 'OffTest', 'low');
-      }, { component: 'OffTest', operation: 'op' }),
+      handler.handleWithRetry(
+        async () => {
+          throw new CommanderError('bad', 'INVALID_INPUT', 'OffTest', 'low');
+        },
+        { component: 'OffTest', operation: 'op' },
+      ),
     );
     assert.strictEqual(errors.length, 1);
 
     handler.offError(listener);
 
     await assert.rejects(
-      handler.handleWithRetry(async () => {
-        throw new CommanderError('bad again', 'INVALID_INPUT', 'OffTest', 'low');
-      }, { component: 'OffTest', operation: 'op2' }),
+      handler.handleWithRetry(
+        async () => {
+          throw new CommanderError('bad again', 'INVALID_INPUT', 'OffTest', 'low');
+        },
+        { component: 'OffTest', operation: 'op2' },
+      ),
     );
     // Still 1 — listener was removed
     assert.strictEqual(errors.length, 1);
   });
 
   it('listener exception does not propagate', async () => {
-    handler.onError(() => { throw new Error('listener boom'); });
+    handler.onError(() => {
+      throw new Error('listener boom');
+    });
 
     // Should not throw the listener error
     await assert.rejects(
-      handler.handleWithRetry(async () => { throw new Error('timeout'); }, {
-        component: 'ThrowingListener',
-        operation: 'op',
-      }),
+      handler.handleWithRetry(
+        async () => {
+          throw new Error('timeout');
+        },
+        {
+          component: 'ThrowingListener',
+          operation: 'op',
+        },
+      ),
       (err: Error) => err.message === 'timeout',
     );
   });
@@ -553,9 +580,12 @@ describe('error querying', () => {
   /** Trigger a non-retryable error so it records exactly once. */
   async function triggerError(component: string) {
     await assert.rejects(
-      handler.handleWithRetry(async () => {
-        throw new CommanderError('bad', 'INVALID_INPUT', component, 'low');
-      }, { component, operation: 'op' }),
+      handler.handleWithRetry(
+        async () => {
+          throw new CommanderError('bad', 'INVALID_INPUT', component, 'low');
+        },
+        { component, operation: 'op' },
+      ),
     );
   }
 
@@ -596,16 +626,26 @@ describe('error querying', () => {
   it('getErrorStats aggregates by severity and component', async () => {
     // Record a TaskComplexityError (medium) and an OrchestrationError (high)
     await assert.rejects(
-      handler.handleWithRetry(async () => { throw new TaskComplexityError('tc'); }, {
-        component: 'TaskComplexityAnalyzer',
-        operation: 'op',
-      }),
+      handler.handleWithRetry(
+        async () => {
+          throw new TaskComplexityError('tc');
+        },
+        {
+          component: 'TaskComplexityAnalyzer',
+          operation: 'op',
+        },
+      ),
     );
     await assert.rejects(
-      handler.handleWithRetry(async () => { throw new OrchestrationError('orch'); }, {
-        component: 'AdaptiveOrchestrator',
-        operation: 'op',
-      }),
+      handler.handleWithRetry(
+        async () => {
+          throw new OrchestrationError('orch');
+        },
+        {
+          component: 'AdaptiveOrchestrator',
+          operation: 'op',
+        },
+      ),
     );
 
     const stats = handler.getErrorStats();
@@ -622,10 +662,15 @@ describe('error querying', () => {
   it('getErrorStats includes circuit breaker status', async () => {
     // Use a retryable error so cb.onFailure() is called
     await assert.rejects(
-      handler.handleWithRetry(async () => { throw new Error('timeout'); }, {
-        component: 'CompX',
-        operation: 'op',
-      }),
+      handler.handleWithRetry(
+        async () => {
+          throw new Error('timeout');
+        },
+        {
+          component: 'CompX',
+          operation: 'op',
+        },
+      ),
     );
 
     const stats = handler.getErrorStats();
@@ -645,10 +690,15 @@ describe('maxErrors cap', () => {
 
     for (let i = 0; i < 10; i++) {
       await assert.rejects(
-        handler.handleWithRetry(async () => { throw new Error('timeout'); }, {
-          component: 'CapTest',
-          operation: 'op',
-        }),
+        handler.handleWithRetry(
+          async () => {
+            throw new Error('timeout');
+          },
+          {
+            component: 'CapTest',
+            operation: 'op',
+          },
+        ),
       );
     }
 
@@ -717,12 +767,7 @@ describe('safeExecute', () => {
   });
 
   it('returns success Result when operation succeeds', async () => {
-    const result = await safeExecute(
-      () => 'hello',
-      handler,
-      'SafeTest',
-      'greet',
-    );
+    const result = await safeExecute(() => 'hello', handler, 'SafeTest', 'greet');
     assert.strictEqual(result.success, true);
     if (result.success) {
       assert.strictEqual(result.data, 'hello');
@@ -750,7 +795,9 @@ describe('safeExecute', () => {
   it('returns failure Result when all retries exhausted', async () => {
     // Use a CommanderError so it's properly typed in the failure result
     const result = await safeExecute(
-      async () => { throw new TaskComplexityError('always complex'); },
+      async () => {
+        throw new TaskComplexityError('always complex');
+      },
       handler,
       'SafeTest',
       'alwaysFail',
@@ -764,7 +811,9 @@ describe('safeExecute', () => {
 
   it('returns failure Result for non-retryable error', async () => {
     const result = await safeExecute(
-      async () => { throw new BudgetExhaustedError('no budget'); },
+      async () => {
+        throw new BudgetExhaustedError('no budget');
+      },
       handler,
       'SafeTest',
       'broke',
@@ -802,9 +851,12 @@ describe('clear()', () => {
 
     // Use non-retryable error so it records exactly once
     await assert.rejects(
-      handler.handleWithRetry(async () => {
-        throw new CommanderError('bad', 'INVALID_INPUT', 'ClearTest', 'low');
-      }, { component: 'ClearTest', operation: 'op' }),
+      handler.handleWithRetry(
+        async () => {
+          throw new CommanderError('bad', 'INVALID_INPUT', 'ClearTest', 'low');
+        },
+        { component: 'ClearTest', operation: 'op' },
+      ),
     );
     assert.strictEqual(handler.getRecentErrors().length, 1);
 
@@ -825,7 +877,9 @@ describe('clear()', () => {
       maxRetries: 0,
     });
 
-    const failOp = async () => { throw new Error('timeout'); };
+    const failOp = async () => {
+      throw new Error('timeout');
+    };
 
     // Trip the breaker
     for (let i = 0; i < 2; i++) {
@@ -868,31 +922,40 @@ describe('isRetryable classification', () => {
 
   it('retries on message containing "network"', async () => {
     let calls = 0;
-    await handler.handleWithRetry(async () => {
-      calls++;
-      if (calls < 2) throw new Error('network error occurred');
-      return 'ok';
-    }, { component: 'T', operation: 'op' });
+    await handler.handleWithRetry(
+      async () => {
+        calls++;
+        if (calls < 2) throw new Error('network error occurred');
+        return 'ok';
+      },
+      { component: 'T', operation: 'op' },
+    );
     assert.strictEqual(calls, 2);
   });
 
   it('retries on message containing "timeout"', async () => {
     let calls = 0;
-    await handler.handleWithRetry(async () => {
-      calls++;
-      if (calls < 2) throw new Error('connection timeout');
-      return 'ok';
-    }, { component: 'T', operation: 'op' });
+    await handler.handleWithRetry(
+      async () => {
+        calls++;
+        if (calls < 2) throw new Error('connection timeout');
+        return 'ok';
+      },
+      { component: 'T', operation: 'op' },
+    );
     assert.strictEqual(calls, 2);
   });
 
   it('retries on message containing "temporary"', async () => {
     let calls = 0;
-    await handler.handleWithRetry(async () => {
-      calls++;
-      if (calls < 2) throw new Error('temporary service unavailable');
-      return 'ok';
-    }, { component: 'T', operation: 'op' });
+    await handler.handleWithRetry(
+      async () => {
+        calls++;
+        if (calls < 2) throw new Error('temporary service unavailable');
+        return 'ok';
+      },
+      { component: 'T', operation: 'op' },
+    );
     assert.strictEqual(calls, 2);
   });
 
@@ -901,9 +964,7 @@ describe('isRetryable classification', () => {
       throw new Error('invalid network request');
     });
 
-    await assert.rejects(
-      handler.handleWithRetry(op, { component: 'T', operation: 'op' }),
-    );
+    await assert.rejects(handler.handleWithRetry(op, { component: 'T', operation: 'op' }));
     // "invalid" is non-retryable and overrides "network"
     assert.strictEqual(op.mock.callCount(), 1);
   });
@@ -913,9 +974,7 @@ describe('isRetryable classification', () => {
       throw new Error('validation error');
     });
 
-    await assert.rejects(
-      handler.handleWithRetry(op, { component: 'T', operation: 'op' }),
-    );
+    await assert.rejects(handler.handleWithRetry(op, { component: 'T', operation: 'op' }));
     assert.strictEqual(op.mock.callCount(), 1);
   });
 
@@ -924,9 +983,7 @@ describe('isRetryable classification', () => {
       throw new Error('malformed input');
     });
 
-    await assert.rejects(
-      handler.handleWithRetry(op, { component: 'T', operation: 'op' }),
-    );
+    await assert.rejects(handler.handleWithRetry(op, { component: 'T', operation: 'op' }));
     assert.strictEqual(op.mock.callCount(), 1);
   });
 
@@ -935,44 +992,48 @@ describe('isRetryable classification', () => {
       throw new Error('something went wrong');
     });
 
-    await assert.rejects(
-      handler.handleWithRetry(op, { component: 'T', operation: 'op' }),
-    );
+    await assert.rejects(handler.handleWithRetry(op, { component: 'T', operation: 'op' }));
     assert.strictEqual(op.mock.callCount(), 1);
   });
 
   it('retries ECONNREFUSED', async () => {
     let calls = 0;
-    await handler.handleWithRetry(async () => {
-      calls++;
-      const e: NodeJS.ErrnoException = new Error('refused');
-      e.code = 'ECONNREFUSED';
-      if (calls < 2) throw e;
-      return 'ok';
-    }, { component: 'T', operation: 'op' });
+    await handler.handleWithRetry(
+      async () => {
+        calls++;
+        const e: NodeJS.ErrnoException = new Error('refused');
+        e.code = 'ECONNREFUSED';
+        if (calls < 2) throw e;
+        return 'ok';
+      },
+      { component: 'T', operation: 'op' },
+    );
     assert.strictEqual(calls, 2);
   });
 
   it('retries ETIMEDOUT', async () => {
     let calls = 0;
-    await handler.handleWithRetry(async () => {
-      calls++;
-      const e: NodeJS.ErrnoException = new Error('timed out');
-      e.code = 'ETIMEDOUT';
-      if (calls < 2) throw e;
-      return 'ok';
-    }, { component: 'T', operation: 'op' });
+    await handler.handleWithRetry(
+      async () => {
+        calls++;
+        const e: NodeJS.ErrnoException = new Error('timed out');
+        e.code = 'ETIMEDOUT';
+        if (calls < 2) throw e;
+        return 'ok';
+      },
+      { component: 'T', operation: 'op' },
+    );
     assert.strictEqual(calls, 2);
   });
 
   it('does NOT retry MODULE_NOT_FOUND', async () => {
     const e: NodeJS.ErrnoException = new Error('not found');
     e.code = 'MODULE_NOT_FOUND';
-    const op = mock.fn(async () => { throw e; });
+    const op = mock.fn(async () => {
+      throw e;
+    });
 
-    await assert.rejects(
-      handler.handleWithRetry(op, { component: 'T', operation: 'op' }),
-    );
+    await assert.rejects(handler.handleWithRetry(op, { component: 'T', operation: 'op' }));
     assert.strictEqual(op.mock.callCount(), 1);
   });
 });
@@ -994,16 +1055,27 @@ describe('non-retryable CommanderError codes', () => {
 
   const nonRetryableCases = [
     { name: 'INVALID_INPUT', make: () => new CommanderError('bad', 'INVALID_INPUT', 'T', 'low') },
-    { name: 'VALIDATION_ERROR', make: () => new CommanderError('bad', 'VALIDATION_ERROR', 'T', 'low') },
-    { name: 'PERMISSION_DENIED', make: () => new CommanderError('denied', 'PERMISSION_DENIED', 'T', 'high') },
+    {
+      name: 'VALIDATION_ERROR',
+      make: () => new CommanderError('bad', 'VALIDATION_ERROR', 'T', 'low'),
+    },
+    {
+      name: 'PERMISSION_DENIED',
+      make: () => new CommanderError('denied', 'PERMISSION_DENIED', 'T', 'high'),
+    },
     { name: 'NOT_FOUND', make: () => new CommanderError('gone', 'NOT_FOUND', 'T', 'medium') },
-    { name: 'UNAUTHORIZED', make: () => new CommanderError('no auth', 'UNAUTHORIZED', 'T', 'high') },
+    {
+      name: 'UNAUTHORIZED',
+      make: () => new CommanderError('no auth', 'UNAUTHORIZED', 'T', 'high'),
+    },
     { name: 'BUDGET_EXHAUSTED via subclass', make: () => new BudgetExhaustedError('no budget') },
   ];
 
   for (const tc of nonRetryableCases) {
     it(`does not retry ${tc.name}`, async () => {
-      const op = mock.fn(async () => { throw tc.make(); });
+      const op = mock.fn(async () => {
+        throw tc.make();
+      });
       await assert.rejects(handler.handleWithRetry(op, { component: 'T', operation: 'op' }));
       assert.strictEqual(op.mock.callCount(), 1);
     });
@@ -1025,9 +1097,12 @@ describe('listener + stats integration', () => {
 
     // Use non-retryable error so it records exactly once
     await assert.rejects(
-      handler.handleWithRetry(async () => {
-        throw new CommanderError('bad', 'INVALID_INPUT', 'Integ', 'low');
-      }, { component: 'Integ', operation: 'op' }),
+      handler.handleWithRetry(
+        async () => {
+          throw new CommanderError('bad', 'INVALID_INPUT', 'Integ', 'low');
+        },
+        { component: 'Integ', operation: 'op' },
+      ),
     );
 
     assert.strictEqual(listenerCallCount, 1);
@@ -1090,14 +1165,19 @@ describe('edge cases', () => {
     // Defaults should apply: exponentialBackoff = true, retryDelayMs = 1000, etc.
     // Just verify it doesn't crash and respects maxRetries
     const delays: number[] = [];
-    (handler as any).sleep = async (ms: number) => { delays.push(ms); };
+    (handler as any).sleep = async (ms: number) => {
+      delays.push(ms);
+    };
 
     let calls = 0;
-    await handler.handleWithRetry(async () => {
-      calls++;
-      if (calls < 2) throw new Error('timeout');
-      return 'ok';
-    }, { component: 'Config', operation: 'op' });
+    await handler.handleWithRetry(
+      async () => {
+        calls++;
+        if (calls < 2) throw new Error('timeout');
+        return 'ok';
+      },
+      { component: 'Config', operation: 'op' },
+    );
 
     // 1 retry means one delay
     assert.strictEqual(delays.length, 1);

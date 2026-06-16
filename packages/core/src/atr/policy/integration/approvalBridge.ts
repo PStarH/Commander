@@ -1,8 +1,4 @@
-import type {
-  ApprovalRequest,
-  ApprovalDecision,
-  ApprovalSystem,
-} from '../../../sandbox/approval';
+import type { ApprovalRequest, ApprovalDecision, ApprovalSystem } from '../../../sandbox/approval';
 import type { PolicyHook } from './scheduler';
 import type { PolicyInput, PolicyDecision, RiskLevel, ToolCategory } from '../types';
 import type { RunHandle } from '../../scheduler';
@@ -39,8 +35,7 @@ export function approvalRequestToPolicyInput(
   ctx: PolicyBackedContext,
 ): PolicyInput {
   const category = GATE_TO_CATEGORY[req.gate.category] ?? 'unknown';
-  const destructive =
-    req.gate.category === 'destructive' || req.gate.riskLevel === 'critical';
+  const destructive = req.gate.category === 'destructive' || req.gate.riskLevel === 'critical';
   const isReadOnly = req.gate.category === 'file_read';
   const toolArgs = req.toolArgs ?? {};
   const externalSystem = (toolArgs['externalSystem'] as string) ?? undefined;
@@ -72,8 +67,7 @@ export function approvalRequestToPolicyInput(
     },
     action: {
       args: toolArgs,
-      idempotencyKey:
-        (toolArgs['idempotencyKey'] as string) ?? `legacy:${req.id}`,
+      idempotencyKey: (toolArgs['idempotencyKey'] as string) ?? `legacy:${req.id}`,
       stepNumber: -1,
       callSite: 'http',
       leaseToken,
@@ -89,9 +83,10 @@ export function approvalRequestToPolicyInput(
   };
 }
 
-export function policyDecisionToApproval(
-  decision: PolicyDecision,
-): { decision: ApprovalDecision; reason: string } {
+export function policyDecisionToApproval(decision: PolicyDecision): {
+  decision: ApprovalDecision;
+  reason: string;
+} {
   if (decision.effect === 'allow') {
     return { decision: 'approved', reason: decision.reason };
   }

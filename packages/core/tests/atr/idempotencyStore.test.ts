@@ -62,7 +62,11 @@ describe('IdempotencyStore', () => {
       assert.strictEqual(first.acquired, true);
       assert.strictEqual(second.acquired, false);
       assert.strictEqual(second.record.state, 'in_progress');
-      assert.strictEqual(second.record.attemptCount, 1, 'attempt count not incremented on concurrent in_progress');
+      assert.strictEqual(
+        second.record.attemptCount,
+        1,
+        'attempt count not incremented on concurrent in_progress',
+      );
     });
 
     it('increments attempt count on reclaim of expired record', async () => {
@@ -324,10 +328,7 @@ describe('generateIdempotencyKey', () => {
       ...baseInput,
       args: { base: 'main', head: 'feature/x', repo: 'commander' },
     };
-    assert.strictEqual(
-      generateIdempotencyKey(baseInput),
-      generateIdempotencyKey(reordered),
-    );
+    assert.strictEqual(generateIdempotencyKey(baseInput), generateIdempotencyKey(reordered));
   });
 
   it('changes when tool name changes', () => {

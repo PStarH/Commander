@@ -141,7 +141,7 @@ class StopConditionRegistry {
  */
 const PREMATURE_DECLARATION_PATTERNS = [
   "I've completed the task",
-  "The task is now complete",
+  'The task is now complete',
   'All done!',
   'Everything is working',
   'The implementation is finished',
@@ -161,19 +161,23 @@ function buildJudgePrompt(
   conditions: StopCondition[],
   evidenceCount: number,
 ): string {
-  const outputSnippet = output.length > 4000
-    ? output.slice(0, 2000) + '\n...[truncated]...\n' + output.slice(-2000)
-    : output;
+  const outputSnippet =
+    output.length > 4000
+      ? output.slice(0, 2000) + '\n...[truncated]...\n' + output.slice(-2000)
+      : output;
 
-  const conditionsBlock = conditions.length > 0
-    ? conditions.map((c, i) => {
-        let detail = `  ${i + 1}. [${c.type}] ${c.description}`;
-        if (c.pattern) detail += `\n     Pattern: ${c.pattern}`;
-        if (c.threshold !== undefined) detail += `\n     Threshold: ${c.threshold}`;
-        if (c.customPrompt) detail += `\n     Custom: ${c.customPrompt}`;
-        return detail;
-      }).join('\n')
-    : '  No specific stop conditions defined.';
+  const conditionsBlock =
+    conditions.length > 0
+      ? conditions
+          .map((c, i) => {
+            let detail = `  ${i + 1}. [${c.type}] ${c.description}`;
+            if (c.pattern) detail += `\n     Pattern: ${c.pattern}`;
+            if (c.threshold !== undefined) detail += `\n     Threshold: ${c.threshold}`;
+            if (c.customPrompt) detail += `\n     Custom: ${c.customPrompt}`;
+            return detail;
+          })
+          .join('\n')
+      : '  No specific stop conditions defined.';
 
   return [
     'You are an independent Goal Judge. Your job is ADVERSARIAL — actively find reasons',
@@ -311,7 +315,9 @@ export class GoalJudge {
     const cacheKey = idempotencyKey ?? `${runId}:${goal.slice(0, 50)}:${output.slice(0, 50)}`;
     const cached = this.verdictCache.get(cacheKey);
     if (cached) {
-      getGlobalLogger().debug('GoalJudge', 'Returning cached verdict', { cacheKey: cacheKey.slice(0, 60) });
+      getGlobalLogger().debug('GoalJudge', 'Returning cached verdict', {
+        cacheKey: cacheKey.slice(0, 60),
+      });
       return cached;
     }
 
@@ -367,7 +373,9 @@ export class GoalJudge {
         { name: 'passed', value: String(verdict.passed) },
         { name: 'model', value: verdict.modelUsed },
       ]);
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
 
     return verdict;
   }
@@ -412,20 +420,38 @@ export class GoalJudge {
     const elapsed = Date.now() - startTime;
     const tokensUsed = response.usage?.totalTokens ?? 0;
 
+    interface JudgeCondition {
+      id?: string;
+      passed?: boolean;
+      evidence?: string;
+    }
+
+    interface JudgeResponse {
+      passed: boolean;
+      reasoning?: string;
+      confidence?: number;
+      evidence?: string | string[];
+      conditions?: JudgeCondition[];
+    }
+
     // Parse the JSON response
     const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-    let parsed: any;
+    let parsed: JudgeResponse | null;
     try {
-      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+      parsed = jsonMatch ? (JSON.parse(jsonMatch[0]) as JudgeResponse) : null;
     } catch {
       parsed = null;
     }
 
     if (!parsed || typeof parsed.passed !== 'boolean') {
       // Failed to parse — use rule-based fallback
-      getGlobalLogger().warn('GoalJudge', 'Failed to parse judge LLM response, using rule-based fallback', {
-        content: response.content.slice(0, 200),
-      });
+      getGlobalLogger().warn(
+        'GoalJudge',
+        'Failed to parse judge LLM response, using rule-based fallback',
+        {
+          content: response.content.slice(0, 200),
+        },
+      );
       const fallback = this.judgeWithRules(goal, output, conditions, evidenceCount);
       fallback.tokensUsed = tokensUsed;
       fallback.modelUsed = modelId;
@@ -435,13 +461,13 @@ export class GoalJudge {
     }
 
     const conditionsChecked: StopConditionResult[] = Array.isArray(parsed.conditions)
-      ? parsed.conditions.map((c: any) => ({
+      ? parsed.conditions.map((c: JudgeCondition) => ({
           conditionId: c.id ?? 'unknown',
-          description: conditions.find(sc => sc.id === c.id)?.description ?? c.id ?? 'unknown',
+          description: conditions.find((sc) => sc.id === c.id)?.description ?? c.id ?? 'unknown',
           passed: c.passed ?? false,
           evidence: c.evidence ?? '',
         }))
-      : conditions.map(c => ({
+      : conditions.map((c) => ({
           conditionId: c.id,
           description: c.description,
           passed: parsed.passed,
@@ -462,10 +488,16 @@ export class GoalJudge {
 
     try {
       getMetricsCollector().recordLLMCall(
-        modelId, providerName, tokensUsed, elapsed,
-        undefined, undefined,
+        modelId,
+        providerName,
+        tokensUsed,
+        elapsed,
+        undefined,
+        undefined,
       );
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
 
     return verdict;
   }
@@ -523,22 +555,22 @@ export class GoalJudge {
     // 5. Check if goal keywords appear in the output (basic relevance)
     const goalKeywords = goal
       .split(/\s+/)
-      .filter(w => w.length > 4)
-      .map(w => w.toLowerCase());
-    const matchedKeywords = goalKeywords.filter(kw => outputLower.includes(kw));
-    const keywordRatio = goalKeywords.length > 0
-      ? matchedKeywords.length / goalKeywords.length
-      : 1;
+      .filter((w) => w.length > 4)
+      .map((w) => w.toLowerCase());
+    const matchedKeywords = goalKeywords.filter((kw) => outputLower.includes(kw));
+    const keywordRatio = goalKeywords.length > 0 ? matchedKeywords.length / goalKeywords.length : 1;
 
     if (keywordRatio < 0.3 && goalKeywords.length > 3) {
       allPassed = false;
-      evidence.push(`RELEVANCE: Only ${matchedKeywords.length}/${goalKeywords.length} goal keywords found in output`);
+      evidence.push(
+        `RELEVANCE: Only ${matchedKeywords.length}/${goalKeywords.length} goal keywords found in output`,
+      );
     }
 
     const confidence = allPassed ? 0.75 : 0.3;
     const reasoning = allPassed
       ? `Rule-based check passed: ${conditionsChecked.length} conditions checked, ${evidenceCount} tool calls, no premature-declaration flags.`
-      : `Rule-based check failed: ${conditionsChecked.filter(c => !c.passed).length}/${conditionsChecked.length} conditions not met.`;
+      : `Rule-based check failed: ${conditionsChecked.filter((c) => !c.passed).length}/${conditionsChecked.length} conditions not met.`;
 
     return {
       passed: allPassed,
@@ -568,9 +600,7 @@ export class GoalJudge {
           conditionId: condition.id,
           description: condition.description,
           passed: found,
-          evidence: found
-            ? `Found "${pattern}" in output`
-            : `Missing "${pattern}" in output`,
+          evidence: found ? `Found "${pattern}" in output` : `Missing "${pattern}" in output`,
         };
       }
 
@@ -643,7 +673,7 @@ export class GoalJudge {
           conditionId: condition.id,
           description: condition.description,
           passed: false,
-          evidence: `Unknown condition type: ${(condition as any).type}`,
+          evidence: `Unknown condition type: ${(condition as { type?: string }).type ?? 'undefined'}`,
         };
     }
   }

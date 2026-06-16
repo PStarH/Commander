@@ -11,7 +11,13 @@ let baseUrl: string = '';
 async function requestJson(
   method: 'GET' | 'POST',
   url: string,
-  options?: { accept?: string; origin?: string; requestId?: string; body?: unknown; headers?: Record<string, string> },
+  options?: {
+    accept?: string;
+    origin?: string;
+    requestId?: string;
+    body?: unknown;
+    headers?: Record<string, string>;
+  },
 ): Promise<{ status: number; body: any; text?: string; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -21,37 +27,57 @@ async function requestJson(
     Object.assign(headers, options?.headers);
     const req = http.request(url, { method, headers }, (res) => {
       let data = '';
-      res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+      res.on('data', (chunk: Buffer) => {
+        data += chunk.toString();
+      });
       res.on('end', () => {
         try {
-          resolve({ status: res.statusCode ?? 500, body: JSON.parse(data), text: data, headers: res.headers });
+          resolve({
+            status: res.statusCode ?? 500,
+            body: JSON.parse(data),
+            text: data,
+            headers: res.headers,
+          });
         } catch {
           resolve({ status: res.statusCode ?? 500, body: null, text: data, headers: res.headers });
         }
       });
     });
-    if (options?.body !== undefined) req.write(typeof options.body === 'string' ? options.body : JSON.stringify(options.body));
+    if (options?.body !== undefined)
+      req.write(typeof options.body === 'string' ? options.body : JSON.stringify(options.body));
     req.end();
     req.on('error', reject);
   });
 }
 
-async function fetchJson(path: string, options?: { accept?: string; origin?: string; requestId?: string }): Promise<{ status: number; body: any; text?: string; headers: http.IncomingHttpHeaders }> {
+async function fetchJson(
+  path: string,
+  options?: { accept?: string; origin?: string; requestId?: string },
+): Promise<{ status: number; body: any; text?: string; headers: http.IncomingHttpHeaders }> {
   return requestJson('GET', `${baseUrl}${path}`, options);
 }
 
 describe('CommanderHttpServer — Monitoring Endpoints', () => {
   before(async () => {
-    server = new CommanderHttpServer({ port: 0, host: '127.0.0.1', apiKey: '', rateLimitPerMinute: 0 });
+    server = new CommanderHttpServer({
+      port: 0,
+      host: '127.0.0.1',
+      apiKey: '',
+      rateLimitPerMinute: 0,
+    });
     await server.start();
     baseUrl = `http://127.0.0.1:${server.getPort()}`;
   });
 
   after(async () => {
     if (server) {
-      try { await server.stop(); } catch { /* ignore stop errors during teardown */ }
+      try {
+        await server.stop();
+      } catch {
+        /* ignore stop errors during teardown */
+      }
       // Small delay to let Node.js test runner drain socket references
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 100));
       server = null;
     }
   });
@@ -123,24 +149,40 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
       const { status, text } = await fetchJson('/metrics', { accept: 'text/plain' });
       assert.strictEqual(status, 200);
       assert.ok(text, 'Response body should not be empty');
-      assert.ok(text!.includes('commander_'), `OpenMetrics response should contain commander_ metrics`);
+      assert.ok(
+        text!.includes('commander_'),
+        `OpenMetrics response should contain commander_ metrics`,
+      );
     });
   });
 
   describe('Auth enforcement', () => {
     it('returns 401 for protected endpoints without auth', async () => {
-      const authServer = new CommanderHttpServer({ port: 0, host: '127.0.0.1', apiKey: 'test-key-123', rateLimitPerMinute: 0 });
+      const authServer = new CommanderHttpServer({
+        port: 0,
+        host: '127.0.0.1',
+        apiKey: 'test-key-123',
+        rateLimitPerMinute: 0,
+      });
       await authServer.start();
       const authBaseUrl = `http://127.0.0.1:${authServer.getPort()}`;
 
       try {
-        const { status, body } = await new Promise<{ status: number; body: any }>((resolve, reject) => {
-          http.get(`${authBaseUrl}/api/v1/status`, (res) => {
-            let data = '';
-            res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
-            res.on('end', () => resolve({ status: res.statusCode ?? 500, body: JSON.parse(data) }));
-          }).on('error', reject);
-        });
+        const { status, body } = await new Promise<{ status: number; body: any }>(
+          (resolve, reject) => {
+            http
+              .get(`${authBaseUrl}/api/v1/status`, (res) => {
+                let data = '';
+                res.on('data', (chunk: Buffer) => {
+                  data += chunk.toString();
+                });
+                res.on('end', () =>
+                  resolve({ status: res.statusCode ?? 500, body: JSON.parse(data) }),
+                );
+              })
+              .on('error', reject);
+          },
+        );
         assert.strictEqual(status, 401);
         assert.ok(body.error?.toLowerCase().includes('unauthorized'));
       } finally {
@@ -168,12 +210,22 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
         assert.strictEqual(status, 200);
         assert.strictEqual(typeof body.activeSessions, 'number');
 
-        const retainedConfig = (authServer as unknown as { config: { apiKey?: string; tenantApiKeys?: Record<string, string> } }).config;
+        const retainedConfig = (
+          authServer as unknown as {
+            config: { apiKey?: string; tenantApiKeys?: Record<string, string> };
+          }
+        ).config;
         assert.strictEqual(retainedConfig.apiKey, undefined);
         assert.strictEqual(retainedConfig.tenantApiKeys, undefined);
 
-        const tenantReq = { headers: { authorization: 'Bearer tenant-raw-key' } } as http.IncomingMessage;
-        const tenantId = (authServer as unknown as { resolveTenantFromAuth(req: http.IncomingMessage): string | undefined }).resolveTenantFromAuth(tenantReq);
+        const tenantReq = {
+          headers: { authorization: 'Bearer tenant-raw-key' },
+        } as http.IncomingMessage;
+        const tenantId = (
+          authServer as unknown as {
+            resolveTenantFromAuth(req: http.IncomingMessage): string | undefined;
+          }
+        ).resolveTenantFromAuth(tenantReq);
         assert.strictEqual(tenantId, 'tenant-a');
       } finally {
         await authServer.stop();
@@ -191,11 +243,19 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
 
     it('allows configured CORS origins', async () => {
       // Spawn a fresh server that includes localhost:3000 as an allowed origin
-      const corsServer = new CommanderHttpServer({ port: 0, host: '127.0.0.1', apiKey: '', rateLimitPerMinute: 0, corsAllowedOrigins: ['http://localhost:3000'] });
+      const corsServer = new CommanderHttpServer({
+        port: 0,
+        host: '127.0.0.1',
+        apiKey: '',
+        rateLimitPerMinute: 0,
+        corsAllowedOrigins: ['http://localhost:3000'],
+      });
       await corsServer.start();
       const corsBaseUrl = `http://127.0.0.1:${corsServer.getPort()}`;
 
-      const { status, headers } = await requestJson('GET', `${corsBaseUrl}/health`, { origin: 'http://localhost:3000' });
+      const { status, headers } = await requestJson('GET', `${corsBaseUrl}/health`, {
+        origin: 'http://localhost:3000',
+      });
       assert.strictEqual(status, 200);
       assert.strictEqual(headers['access-control-allow-origin'], 'http://localhost:3000');
       await corsServer.stop();
@@ -226,13 +286,18 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
 
   describe('/dashboard/compensation', () => {
     it('returns 200 with HTML dashboard page', async () => {
-      const { status, text, headers } = await fetchJson('/dashboard/compensation', { accept: 'text/html' });
+      const { status, text, headers } = await fetchJson('/dashboard/compensation', {
+        accept: 'text/html',
+      });
       assert.strictEqual(status, 200);
       assert.ok(headers['content-type']?.includes('text/html'), 'Content-Type should be text/html');
       assert.ok(text?.includes('Compensation Dashboard'), 'HTML should contain dashboard title');
       assert.ok(text?.includes('chart.js'), 'HTML should reference Chart.js');
       assert.ok(text?.includes('EventSource'), 'HTML should use EventSource for live updates');
-      assert.ok(text?.includes('/stream/compensation'), 'HTML should reference the SSE stream endpoint');
+      assert.ok(
+        text?.includes('/stream/compensation'),
+        'HTML should reference the SSE stream endpoint',
+      );
     });
 
     it('contains counter cards section', async () => {
@@ -254,8 +319,14 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
     it('uses SSE for live updates instead of polling', async () => {
       const { text } = await fetchJson('/dashboard/compensation');
       assert.ok(text?.includes('EventSource'), 'HTML should use EventSource for SSE');
-      assert.ok(text?.includes('/stream/compensation'), 'HTML should connect to SSE stream endpoint');
-      assert.ok(text?.includes('compensation.update'), 'HTML should listen for compensation.update events');
+      assert.ok(
+        text?.includes('/stream/compensation'),
+        'HTML should connect to SSE stream endpoint',
+      );
+      assert.ok(
+        text?.includes('compensation.update'),
+        'HTML should listen for compensation.update events',
+      );
       // Should NOT use setInterval polling anymore
       assert.ok(!text?.includes('setInterval(refresh,'), 'HTML should not use setInterval polling');
     });
@@ -273,9 +344,18 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
 
     it('returns all expected counter fields', async () => {
       const { body } = await fetchJson('/api/v1/compensation');
-      assert.ok('compensation_planned_total' in body.counters, 'counters should include compensation_planned_total');
-      assert.ok('compensation_steps_total' in body.counters, 'counters should include compensation_steps_total');
-      assert.ok('compensation_total' in body.counters, 'counters should include compensation_total');
+      assert.ok(
+        'compensation_planned_total' in body.counters,
+        'counters should include compensation_planned_total',
+      );
+      assert.ok(
+        'compensation_steps_total' in body.counters,
+        'counters should include compensation_steps_total',
+      );
+      assert.ok(
+        'compensation_total' in body.counters,
+        'counters should include compensation_total',
+      );
       assert.ok('byTool' in body, 'should have byTool breakdown');
       assert.ok('byRisk' in body, 'should have byRisk breakdown');
       assert.ok('byStepStatus' in body, 'should have byStepStatus breakdown');
@@ -322,7 +402,9 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
       assert.ok(body.counters.compensation_planned_total >= 0);
       // Event history should include the event we published
       assert.ok(body.recentEvents.length >= 1, 'Should have at least 1 recent event');
-      const plannedEvents = body.recentEvents.filter((e: any) => e.topic === 'tool.compensation_planned');
+      const plannedEvents = body.recentEvents.filter(
+        (e: any) => e.topic === 'tool.compensation_planned',
+      );
       assert.ok(plannedEvents.length >= 1, 'Should have at least 1 planned event');
     });
   });
@@ -420,7 +502,12 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
 
   describe('Graceful shutdown', () => {
     it('stop() resolves without error', async () => {
-      const srv = new CommanderHttpServer({ port: 0, host: '127.0.0.1', apiKey: '', rateLimitPerMinute: 0 });
+      const srv = new CommanderHttpServer({
+        port: 0,
+        host: '127.0.0.1',
+        apiKey: '',
+        rateLimitPerMinute: 0,
+      });
       await srv.start();
       await srv.stop();
       assert.ok(true, 'stop() resolved successfully');

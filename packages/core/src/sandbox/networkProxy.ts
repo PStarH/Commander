@@ -39,15 +39,39 @@ interface ProviderDomainEntry {
 
 const PROVIDER_DOMAINS: ProviderDomainEntry[] = [
   { envVar: 'OPENAI_API_KEY', defaultDomain: 'api.openai.com', baseUrlEnv: 'OPENAI_BASE_URL' },
-  { envVar: 'ANTHROPIC_API_KEY', defaultDomain: 'api.anthropic.com', baseUrlEnv: 'ANTHROPIC_BASE_URL' },
-  { envVar: 'DEEPSEEK_API_KEY', defaultDomain: 'api.deepseek.com', baseUrlEnv: 'DEEPSEEK_BASE_URL' },
+  {
+    envVar: 'ANTHROPIC_API_KEY',
+    defaultDomain: 'api.anthropic.com',
+    baseUrlEnv: 'ANTHROPIC_BASE_URL',
+  },
+  {
+    envVar: 'DEEPSEEK_API_KEY',
+    defaultDomain: 'api.deepseek.com',
+    baseUrlEnv: 'DEEPSEEK_BASE_URL',
+  },
   { envVar: 'GROQ_API_KEY', defaultDomain: 'api.groq.com', baseUrlEnv: 'GROQ_BASE_URL' },
-  { envVar: 'TOGETHER_API_KEY', defaultDomain: 'api.together.xyz', baseUrlEnv: 'TOGETHER_BASE_URL' },
-  { envVar: 'PERPLEXITY_API_KEY', defaultDomain: 'api.perplexity.ai', baseUrlEnv: 'PERPLEXITY_BASE_URL' },
-  { envVar: 'FIREWORKS_API_KEY', defaultDomain: 'api.fireworks.ai', baseUrlEnv: 'FIREWORKS_BASE_URL' },
+  {
+    envVar: 'TOGETHER_API_KEY',
+    defaultDomain: 'api.together.xyz',
+    baseUrlEnv: 'TOGETHER_BASE_URL',
+  },
+  {
+    envVar: 'PERPLEXITY_API_KEY',
+    defaultDomain: 'api.perplexity.ai',
+    baseUrlEnv: 'PERPLEXITY_BASE_URL',
+  },
+  {
+    envVar: 'FIREWORKS_API_KEY',
+    defaultDomain: 'api.fireworks.ai',
+    baseUrlEnv: 'FIREWORKS_BASE_URL',
+  },
   { envVar: 'MISTRAL_API_KEY', defaultDomain: 'api.mistral.ai', baseUrlEnv: 'MISTRAL_BASE_URL' },
   { envVar: 'CO_API_KEY', defaultDomain: 'api.cohere.ai' },
-  { envVar: 'OPENROUTER_API_KEY', defaultDomain: 'openrouter.ai', baseUrlEnv: 'OPENROUTER_BASE_URL' },
+  {
+    envVar: 'OPENROUTER_API_KEY',
+    defaultDomain: 'openrouter.ai',
+    baseUrlEnv: 'OPENROUTER_BASE_URL',
+  },
   { envVar: 'REPLICATE_API_TOKEN', defaultDomain: 'api.replicate.com' },
   { envVar: 'MIMO_API_KEY', defaultDomain: 'api.mimo.ai' },
   { envVar: 'XAI_API_KEY', defaultDomain: 'api.x.ai' },
@@ -116,7 +140,11 @@ export function getLLMAPIDomains(): string[] {
     let hostStr = process.env.OLLAMA_HOST;
     // Strip protocol if present
     if (hostStr.startsWith('http://') || hostStr.startsWith('https://')) {
-      try { hostStr = new URL(hostStr).host; } catch { /* keep original */ }
+      try {
+        hostStr = new URL(hostStr).host;
+      } catch {
+        /* keep original */
+      }
     }
     // Strip port
     const hostOnly = hostStr.split(':')[0];
@@ -149,8 +177,8 @@ export function generateProxyScript(allowDomains: string): string {
   // Sanitize: ensure domains are safe to embed in JS string
   const sanitized = allowDomains
     .split(',')
-    .map(d => d.trim().toLowerCase())
-    .filter(d => d.length > 0 && /^[a-z0-9._-]+$/.test(d))
+    .map((d) => d.trim().toLowerCase())
+    .filter((d) => d.length > 0 && /^[a-z0-9._-]+$/.test(d))
     .join(',');
 
   return `

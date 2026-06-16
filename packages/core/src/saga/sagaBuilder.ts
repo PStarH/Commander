@@ -88,7 +88,7 @@ export class SagaBuilder {
   step(
     name: string,
     fn: (ctx: import('./types').SagaContext) => Promise<unknown>,
-    config: SagaStepConfig = {}
+    config: SagaStepConfig = {},
   ): this {
     const id = config.id ?? genId('step');
     const node: SagaStepNode = {
@@ -99,9 +99,7 @@ export class SagaBuilder {
       compensate: config.compensate,
       compensateOrder: config.compensateOrder ?? 'lifo',
       timeoutMs: config.timeoutMs,
-      retryPolicy: config.retryPolicy
-        ? this.resolveRetryPolicy(config.retryPolicy)
-        : undefined,
+      retryPolicy: config.retryPolicy ? this.resolveRetryPolicy(config.retryPolicy) : undefined,
       compensable: config.compensate !== undefined,
       description: config.description,
       tags: config.tags ?? [],
@@ -114,7 +112,7 @@ export class SagaBuilder {
     const last = this.nodes[this.nodes.length - 1];
     if (!last || last.kind !== 'step') {
       throw new SagaBuilderError(
-        'compensate() must follow a step() — most recent node is not a step'
+        'compensate() must follow a step() — most recent node is not a step',
       );
     }
     const step = last as SagaStepNode;
@@ -123,10 +121,7 @@ export class SagaBuilder {
     return this;
   }
 
-  parallel(
-    branches: readonly SagaGraph[],
-    config: SagaParallelConfig = {}
-  ): this {
+  parallel(branches: readonly SagaGraph[], config: SagaParallelConfig = {}): this {
     if (branches.length === 0) {
       throw new SagaBuilderError('parallel() requires at least one branch');
     }
@@ -148,10 +143,7 @@ export class SagaBuilder {
     return this;
   }
 
-  nested(
-    child: SagaGraph,
-    config: SagaNestedConfig = {}
-  ): this {
+  nested(child: SagaGraph, config: SagaNestedConfig = {}): this {
     const node: SagaNestedNode = {
       kind: 'nested',
       id: config.id ?? genId('nested'),
@@ -181,9 +173,7 @@ export class SagaBuilder {
 
   build(): SagaGraph {
     if (this.nodes.length === 0) {
-      throw new SagaBuilderError(
-        'Cannot build a saga with no nodes — add at least one step'
-      );
+      throw new SagaBuilderError('Cannot build a saga with no nodes — add at least one step');
     }
     const graph: SagaGraph = {
       name: this._name,
@@ -213,8 +203,7 @@ export class SagaBuilder {
       maxDelayMs: partial.maxDelayMs ?? base.maxDelayMs,
       jitter: partial.jitter ?? base.jitter,
       retryOn: partial.retryOn ?? base.retryOn,
-      circuitBreakerAfter:
-        partial.circuitBreakerAfter ?? base.circuitBreakerAfter,
+      circuitBreakerAfter: partial.circuitBreakerAfter ?? base.circuitBreakerAfter,
     };
   }
 }
@@ -230,10 +219,7 @@ export function createSaga(name: string): SagaBuilder {
   return new SagaBuilder(name);
 }
 
-export function buildSaga(
-  name: string,
-  configure: (b: SagaBuilder) => SagaBuilder
-): SagaGraph {
+export function buildSaga(name: string, configure: (b: SagaBuilder) => SagaBuilder): SagaGraph {
   const builder = new SagaBuilder(name);
   return configure(builder).build();
 }

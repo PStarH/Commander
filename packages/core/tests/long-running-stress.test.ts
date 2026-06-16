@@ -70,8 +70,14 @@ describe('Token Governor — Long Session Stress', () => {
     strategyCounts['critical'] = governor.getRecommendations().length;
 
     // Tight and critical should have significantly more strategies than relaxed
-    assert.ok(strategyCounts.tight > strategyCounts.relaxed, 'tight should have more strategies than relaxed');
-    assert.ok(strategyCounts.critical >= strategyCounts.tight, 'critical should have at least as many as tight');
+    assert.ok(
+      strategyCounts.tight > strategyCounts.relaxed,
+      'tight should have more strategies than relaxed',
+    );
+    assert.ok(
+      strategyCounts.critical >= strategyCounts.tight,
+      'critical should have at least as many as tight',
+    );
   });
 
   it('adjusts strategy intensity by task category', () => {
@@ -79,17 +85,19 @@ describe('Token Governor — Long Session Stress', () => {
 
     governor.setTaskCategory('creative');
     const creativeRecs = governor.getRecommendations();
-    const creativeFormat = creativeRecs.find(d => d.strategy === 'response_format');
+    const creativeFormat = creativeRecs.find((d) => d.strategy === 'response_format');
 
     governor.setTaskCategory('structured');
     const structuredRecs = governor.getRecommendations();
-    const structuredFormat = structuredRecs.find(d => d.strategy === 'response_format');
+    const structuredFormat = structuredRecs.find((d) => d.strategy === 'response_format');
 
     // Creative tasks should have lower intensity for response_format (bad for creative)
     // Structured tasks should have higher intensity (good for structured)
     if (creativeFormat && structuredFormat) {
-      assert.ok(structuredFormat.intensity >= creativeFormat.intensity,
-        'structured should get higher response_format intensity than creative');
+      assert.ok(
+        structuredFormat.intensity >= creativeFormat.intensity,
+        'structured should get higher response_format intensity than creative',
+      );
     }
   });
 
@@ -137,14 +145,21 @@ describe('Token Governor — Long Session Stress', () => {
 import { ContextCompactor } from '../src/runtime/contextCompactor';
 import type { LLMMessage } from '../src/runtime/types';
 
-function makeMessages(count: number, opts: { role?: string; contentLen?: number; withTools?: boolean } = {}): LLMMessage[] {
+function makeMessages(
+  count: number,
+  opts: { role?: string; contentLen?: number; withTools?: boolean } = {},
+): LLMMessage[] {
   const msgs: LLMMessage[] = [];
   for (let i = 0; i < count; i++) {
     const role = opts.role ?? (i % 2 === 0 ? 'user' : 'assistant');
     const content = `Message ${i}: ${'x'.repeat(opts.contentLen ?? 200)}`;
     msgs.push({ role: role as LLMMessage['role'], content });
     if (opts.withTools && i % 3 === 0) {
-      msgs.push({ role: 'tool', content: `Tool output ${i}: ${'y'.repeat(500)}`, tool_call_id: `call_${i}` });
+      msgs.push({
+        role: 'tool',
+        content: `Tool output ${i}: ${'y'.repeat(500)}`,
+        tool_call_id: `call_${i}`,
+      });
     }
   }
   return msgs;
@@ -172,9 +187,12 @@ describe('Context Compactor — Progressive Compaction', () => {
     const result = compactor.compact(messages);
 
     // Tool outputs should be trimmed if present
-    const toolMsgs = result.messages.filter(m => m.role === 'tool');
+    const toolMsgs = result.messages.filter((m) => m.role === 'tool');
     for (const msg of toolMsgs) {
-      assert.ok(msg.content.length <= 2000, `tool output should be trimmed: ${msg.content.length} chars`);
+      assert.ok(
+        msg.content.length <= 2000,
+        `tool output should be trimmed: ${msg.content.length} chars`,
+      );
     }
   });
 
@@ -208,7 +226,7 @@ describe('Context Compactor — Progressive Compaction', () => {
 
     const result = compactor.compact(messages);
     // The critical instruction should survive compaction
-    const hasCritical = result.messages.some(m => m.content.includes('CRITICAL'));
+    const hasCritical = result.messages.some((m) => m.content.includes('CRITICAL'));
     // This is best-effort — the compactor may or may not preserve it depending on position
     assert.ok(true, 'compaction should complete without error');
   });
@@ -232,7 +250,10 @@ describe('ThreeLayerMemory — Long Session Persistence', () => {
     }
 
     const stats = memory.getStats();
-    assert.ok(stats.byLayer.working <= 50, `working layer should cap at 50, got ${stats.byLayer.working}`);
+    assert.ok(
+      stats.byLayer.working <= 50,
+      `working layer should cap at 50, got ${stats.byLayer.working}`,
+    );
   });
 
   it('episodic layer handles 500+ entries with time decay', () => {
@@ -241,7 +262,10 @@ describe('ThreeLayerMemory — Long Session Persistence', () => {
     }
 
     const stats = memory.getStats();
-    assert.ok(stats.byLayer.episodic <= 500, `episodic should cap at 500, got ${stats.byLayer.episodic}`);
+    assert.ok(
+      stats.byLayer.episodic <= 500,
+      `episodic should cap at 500, got ${stats.byLayer.episodic}`,
+    );
 
     // Apply time decay
     memory.applyTimeDecay(24); // 24 hours
@@ -250,11 +274,20 @@ describe('ThreeLayerMemory — Long Session Persistence', () => {
   });
 
   it('longterm layer stores and retrieves entries', () => {
-    const entry = memory.add('Important finding: TypeScript is great', 'longterm', 'research', 0.9, ['typescript', 'finding']);
+    const entry = memory.add(
+      'Important finding: TypeScript is great',
+      'longterm',
+      'research',
+      0.9,
+      ['typescript', 'finding'],
+    );
 
     const results = memory.query({ layer: 'longterm', keywords: ['TypeScript'] });
     assert.ok(results.length > 0, 'should find longterm entry');
-    assert.ok(results.some(r => r.id === entry.id), 'should find the specific entry');
+    assert.ok(
+      results.some((r) => r.id === entry.id),
+      'should find the specific entry',
+    );
   });
 
   it('query with multiple filters works correctly', () => {
@@ -277,7 +310,9 @@ describe('ThreeLayerMemory — Long Session Persistence', () => {
   it('handles 1000 rapid add/query cycles', () => {
     const before = process.memoryUsage().heapUsed;
     for (let i = 0; i < 1000; i++) {
-      memory.add(`Entry ${i}`, i % 3 === 0 ? 'working' : 'episodic', 'stress', Math.random(), ['stress']);
+      memory.add(`Entry ${i}`, i % 3 === 0 ? 'working' : 'episodic', 'stress', Math.random(), [
+        'stress',
+      ]);
       if (i % 10 === 0) memory.query({ keywords: ['Entry'], limit: 5 });
     }
     const after = process.memoryUsage().heapUsed;
@@ -367,7 +402,10 @@ describe('StateCheckpointer — Crash Recovery', () => {
 
   it('listCheckpoints returns all checkpoints sorted by time', () => {
     for (let i = 0; i < 5; i++) {
-      const state = makeCheckpoint({ runId: `run-${i}`, timestamp: new Date(Date.now() + i * 1000).toISOString() });
+      const state = makeCheckpoint({
+        runId: `run-${i}`,
+        timestamp: new Date(Date.now() + i * 1000).toISOString(),
+      });
       checkpointer.checkpoint(state);
     }
 
@@ -396,13 +434,15 @@ describe('StateCheckpointer — Crash Recovery', () => {
   it('handles concurrent checkpoint writes safely', async () => {
     const promises: Promise<void>[] = [];
     for (let i = 0; i < 20; i++) {
-      promises.push(new Promise(resolve => {
-        setTimeout(() => {
-          const state = makeCheckpoint({ runId: `concurrent-${i}`, stepNumber: i });
-          checkpointer.checkpoint(state);
-          resolve();
-        }, Math.random() * 50);
-      }));
+      promises.push(
+        new Promise((resolve) => {
+          setTimeout(() => {
+            const state = makeCheckpoint({ runId: `concurrent-${i}`, stepNumber: i });
+            checkpointer.checkpoint(state);
+            resolve();
+          }, Math.random() * 50);
+        }),
+      );
     }
     await Promise.all(promises);
 
@@ -434,7 +474,7 @@ describe('StateCheckpointer — Crash Recovery', () => {
     }
 
     const completedDir = path.join(tmpDir, 'completed');
-    const files = fs.readdirSync(completedDir).filter(f => f.endsWith('.json'));
+    const files = fs.readdirSync(completedDir).filter((f) => f.endsWith('.json'));
     assert.ok(files.length <= 100, `should prune to 100, got ${files.length}`);
   });
 });
@@ -461,7 +501,7 @@ describe('Circuit Breaker — Failure Recovery', () => {
     cb.onFailure();
     assert.ok(!cb.isAvailable(), 'should be OPEN');
 
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, 150));
     assert.ok(cb.isAvailable(), 'should be HALF_OPEN after recovery time');
   });
 
@@ -470,7 +510,7 @@ describe('Circuit Breaker — Failure Recovery', () => {
 
     cb.onFailure();
     cb.onFailure();
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, 150));
 
     cb.onSuccess();
     assert.ok(cb.isAvailable(), 'should be CLOSED after success in HALF_OPEN');
@@ -481,7 +521,7 @@ describe('Circuit Breaker — Failure Recovery', () => {
 
     cb.onFailure();
     cb.onFailure();
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, 150));
 
     cb.onFailure();
     assert.ok(!cb.isAvailable(), 'should be OPEN after failure in HALF_OPEN');
@@ -585,7 +625,13 @@ describe('Simulated Long-Running Orchestration', () => {
 
         // Store results in memory
         if (step % 2 === 0) {
-          memory.add(`Finding from step ${step}: important result`, 'episodic', 'research', 0.5 + Math.random() * 0.5, ['finding']);
+          memory.add(
+            `Finding from step ${step}: important result`,
+            'episodic',
+            'research',
+            0.5 + Math.random() * 0.5,
+            ['finding'],
+          );
         }
 
         // Compact context when it gets too large
@@ -596,7 +642,8 @@ describe('Simulated Long-Running Orchestration', () => {
         }
 
         // Record circuit breaker state
-        if (Math.random() < 0.05) { // 5% chance of failure
+        if (Math.random() < 0.05) {
+          // 5% chance of failure
           cb.onFailure();
         } else {
           if (!cb.isAvailable()) {
@@ -613,7 +660,10 @@ describe('Simulated Long-Running Orchestration', () => {
       // Final assertions
       const finalState = governor.getState();
       assert.ok(finalState.usedTokens > 0, 'should have used tokens');
-      assert.ok(checkpointsWritten >= 10, `should have written checkpoints, got ${checkpointsWritten}`);
+      assert.ok(
+        checkpointsWritten >= 10,
+        `should have written checkpoints, got ${checkpointsWritten}`,
+      );
       assert.ok(compactionEvents > 0, `should have compacted context, got ${compactionEvents}`);
 
       const memStats = memory.getStats();
@@ -624,7 +674,6 @@ describe('Simulated Long-Running Orchestration', () => {
       const resumed = checkpointer.resume('stress-test-run');
       assert.ok(resumed, 'should resume from checkpoint');
       assert.ok(resumed.stepNumber >= 0, 'should have valid step number');
-
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -637,16 +686,18 @@ describe('Simulated Long-Running Orchestration', () => {
     try {
       // Phase 1: Run for 30 steps then "crash"
       for (let step = 0; step < 30; step++) {
-        checkpointer.checkpoint(makeCheckpoint({
-          runId: 'crash-recovery-run',
-          stepNumber: step,
-          phase: step === 29 ? 'tool_execution' : 'llm_call',
-          messages: [
-            { role: 'user', content: 'Research task' },
-            { role: 'assistant', content: `Step ${step} result` },
-          ],
-          totalDurationMs: step * 5000,
-        }));
+        checkpointer.checkpoint(
+          makeCheckpoint({
+            runId: 'crash-recovery-run',
+            stepNumber: step,
+            phase: step === 29 ? 'tool_execution' : 'llm_call',
+            messages: [
+              { role: 'user', content: 'Research task' },
+              { role: 'assistant', content: `Step ${step} result` },
+            ],
+            totalDurationMs: step * 5000,
+          }),
+        );
       }
 
       // Phase 2: "Recover" — resume from last checkpoint
@@ -657,25 +708,28 @@ describe('Simulated Long-Running Orchestration', () => {
 
       // Phase 3: Continue from recovered state
       for (let step = lastCheckpoint.stepNumber + 1; step < 60; step++) {
-        checkpointer.checkpoint(makeCheckpoint({
-          runId: 'crash-recovery-run',
-          stepNumber: step,
-          phase: 'llm_call',
-          totalDurationMs: step * 5000,
-        }));
+        checkpointer.checkpoint(
+          makeCheckpoint({
+            runId: 'crash-recovery-run',
+            stepNumber: step,
+            phase: 'llm_call',
+            totalDurationMs: step * 5000,
+          }),
+        );
       }
 
       // Terminal checkpoint
-      checkpointer.terminalCheckpoint(makeCheckpoint({
-        runId: 'crash-recovery-run',
-        stepNumber: 59,
-        phase: 'completed',
-      }));
+      checkpointer.terminalCheckpoint(
+        makeCheckpoint({
+          runId: 'crash-recovery-run',
+          stepNumber: 59,
+          phase: 'completed',
+        }),
+      );
 
       const final = checkpointer.resume('crash-recovery-run');
       assert.ok(final, 'should find completed checkpoint');
       assert.strictEqual(final.phase, 'completed');
-
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -700,7 +754,9 @@ describe('Simulated Long-Running Orchestration', () => {
 
         // Governor should recommend aggressive strategies
         const recs = governor.getRecommendations();
-        const hasEmergencyCompaction = recs.some(d => d.strategy === 'context_compaction' && d.intensity >= 0.8);
+        const hasEmergencyCompaction = recs.some(
+          (d) => d.strategy === 'context_compaction' && d.intensity >= 0.8,
+        );
         assert.ok(hasEmergencyCompaction, 'critical phase should recommend emergency compaction');
 
         // Compact aggressively
@@ -734,18 +790,26 @@ describe('Simulated Long-Running Orchestration', () => {
         agentResults[agent].push(result);
 
         // Store in memory
-        memory.add(result, 'episodic', `agent-${agent}`, 0.4 + Math.random() * 0.6, [`agent-${agent}`]);
+        memory.add(result, 'episodic', `agent-${agent}`, 0.4 + Math.random() * 0.6, [
+          `agent-${agent}`,
+        ]);
 
         // Cross-agent knowledge sharing via longterm memory
         if (step === stepsPerAgent - 1) {
-          memory.add(`Agent ${agent} final summary: ${result}`, 'longterm', 'synthesis', 0.9, ['summary', `agent-${agent}`]);
+          memory.add(`Agent ${agent} final summary: ${result}`, 'longterm', 'synthesis', 0.9, [
+            'summary',
+            `agent-${agent}`,
+          ]);
         }
       }
     }
 
     // Verify all agents contributed
     const stats = memory.getStats();
-    assert.ok(stats.byLayer.episodic >= agentCount * stepsPerAgent * 0.8, 'should have most episodic entries');
+    assert.ok(
+      stats.byLayer.episodic >= agentCount * stepsPerAgent * 0.8,
+      'should have most episodic entries',
+    );
     assert.ok(stats.byLayer.longterm >= agentCount, 'should have agent summaries in longterm');
 
     // Verify synthesis can query across agents
@@ -754,6 +818,9 @@ describe('Simulated Long-Running Orchestration', () => {
 
     // Verify governor tracked total usage
     const finalState = governor.getState();
-    assert.ok(finalState.usedTokens >= agentCount * stepsPerAgent * 1000, 'should track all agent token usage');
+    assert.ok(
+      finalState.usedTokens >= agentCount * stepsPerAgent * 1000,
+      'should track all agent token usage',
+    );
   });
 });

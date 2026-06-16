@@ -29,7 +29,7 @@ import type {
   ExplorationEventLogFilter,
   ExplorationSnapshot,
 } from '../ultimate/explorationEventLog';
-import type {  EpsilonStore } from '../ultimate/epsilonStore';
+import type { EpsilonStore } from '../ultimate/epsilonStore';
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;

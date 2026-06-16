@@ -91,16 +91,11 @@ export class RetryControllerError extends Error {
   }
 }
 
-export function createRetryController(
-  policy: RetryPolicy
-): RetryController {
+export function createRetryController(policy: RetryPolicy): RetryController {
   return new RetryController(policy);
 }
 
-export function mergeRetryPolicy(
-  base: RetryPolicy,
-  override: Partial<RetryPolicy>
-): RetryPolicy {
+export function mergeRetryPolicy(base: RetryPolicy, override: Partial<RetryPolicy>): RetryPolicy {
   return {
     maxAttempts: override.maxAttempts ?? base.maxAttempts,
     backoff: override.backoff ?? base.backoff,
@@ -108,7 +103,6 @@ export function mergeRetryPolicy(
     maxDelayMs: override.maxDelayMs ?? base.maxDelayMs,
     jitter: override.jitter ?? base.jitter,
     retryOn: override.retryOn ?? base.retryOn,
-    circuitBreakerAfter:
-      override.circuitBreakerAfter ?? base.circuitBreakerAfter,
+    circuitBreakerAfter: override.circuitBreakerAfter ?? base.circuitBreakerAfter,
   };
 }

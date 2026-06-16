@@ -67,7 +67,9 @@ function renderSummary(status: RunBudgetStatus): string {
   lines.push(`  ${status.runId.slice(0, 16)}...  ${phaseLabel(status.phase)}`);
   lines.push(`    ${barChart(status.usedTokens, status.totalBudget, 40)}`);
   if (status.subAgents.length > 0) {
-    lines.push(`    ${status.subAgents.length} sub-agents, ${status.subAgents.filter(a => a.hardCapExceeded).length} over budget`);
+    lines.push(
+      `    ${status.subAgents.length} sub-agents, ${status.subAgents.filter((a) => a.hardCapExceeded).length} over budget`,
+    );
   }
   return lines.join('\n');
 }
@@ -82,7 +84,12 @@ function renderDetailedStatus(status: RunBudgetStatus): string {
   lines.push(kv('Used', status.usedTokens.toLocaleString()));
   lines.push(kv('Remaining', status.remainingTokens.toLocaleString()));
   lines.push(kv('Utilization', `${status.utilizationPercent}%`));
-  lines.push(kv('Soft Cap', `${status.softCap.toLocaleString()} (${Math.round((status.softCap / status.totalBudget) * 100)}% of total)`));
+  lines.push(
+    kv(
+      'Soft Cap',
+      `${status.softCap.toLocaleString()} (${Math.round((status.softCap / status.totalBudget) * 100)}% of total)`,
+    ),
+  );
   lines.push('');
   lines.push(kv('Created', new Date(status.createdAt).toLocaleString()));
   lines.push(kv('Updated', new Date(status.updatedAt).toLocaleString()));
@@ -92,11 +99,21 @@ function renderDetailedStatus(status: RunBudgetStatus): string {
   if (status.subAgents.length > 0) {
     lines.push(section(`Sub-Agents (${status.subAgents.length})`));
     for (const agent of status.subAgents) {
-      const icon = agent.hardCapExceeded ? '⚠️ ' : agent.status === 'completed' ? '✅' : agent.status === 'running' ? '🔄' : '⏳';
+      const icon = agent.hardCapExceeded
+        ? '⚠️ '
+        : agent.status === 'completed'
+          ? '✅'
+          : agent.status === 'running'
+            ? '🔄'
+            : '⏳';
       lines.push(`  ${icon} ${agent.nodeId.slice(0, 40)}`);
-      lines.push(`    Budget: ${agent.allocatedBudget.toLocaleString()} → Used: ${agent.usedTokens.toLocaleString()} (${agent.allocatedBudget > 0 ? Math.round((agent.usedTokens / agent.allocatedBudget) * 100) : 0}%)`);
+      lines.push(
+        `    Budget: ${agent.allocatedBudget.toLocaleString()} → Used: ${agent.usedTokens.toLocaleString()} (${agent.allocatedBudget > 0 ? Math.round((agent.usedTokens / agent.allocatedBudget) * 100) : 0}%)`,
+      );
       if (agent.hardCapExceeded) {
-        lines.push(`    ⚠️  OVER BUDGET by ${(agent.usedTokens - agent.allocatedBudget).toLocaleString()} tokens`);
+        lines.push(
+          `    ⚠️  OVER BUDGET by ${(agent.usedTokens - agent.allocatedBudget).toLocaleString()} tokens`,
+        );
       }
     }
   }

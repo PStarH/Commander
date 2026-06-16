@@ -59,7 +59,9 @@ export class RegressionGate {
         try {
           // @ts-ignore — best-effort metric, may not be on collector yet
           getMetricsCollector().recordRegressionActiveCount(this.regressionEvents.length);
-        } catch { /* best-effort */ }
+        } catch {
+          /* best-effort */
+        }
 
         const bus = getMessageBus();
         bus.publish('system.alert', 'meta-learner', {

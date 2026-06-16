@@ -16,8 +16,17 @@
 
 import { getGlobalLogger } from '../logging';
 import { CapabilityMatcher, getCapabilityMatcher } from '../runtime/capabilityMatcher';
-import type { CapabilityProfile, TaskRequirements, MatchResult } from '../runtime/capabilityMatcher';
-import { QualityGater, getQualityGater, getInitialMode, getModeConfig } from '../runtime/qualityGater';
+import type {
+  CapabilityProfile,
+  TaskRequirements,
+  MatchResult,
+} from '../runtime/capabilityMatcher';
+import {
+  QualityGater,
+  getQualityGater,
+  getInitialMode,
+  getModeConfig,
+} from '../runtime/qualityGater';
 import type { ExecutionMode, QualityMetrics, EscalationDecision } from '../runtime/qualityGater';
 import { UnifiedMemory, getUnifiedMemory } from '../memory/unifiedMemory';
 import type { UnifiedContext } from '../memory/unifiedMemory';
@@ -106,10 +115,7 @@ export class CompanyEngine {
     timestamp: number;
   }> = [];
 
-  constructor(
-    orchestrator: UltimateOrchestrator,
-    config?: Partial<CompanyEngineConfig>,
-  ) {
+  constructor(orchestrator: UltimateOrchestrator, config?: Partial<CompanyEngineConfig>) {
     this.orchestrator = orchestrator;
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.matcher = getCapabilityMatcher();
@@ -192,7 +198,10 @@ export class CompanyEngine {
     }
 
     const modeConfig = getModeConfig(executionMode);
-    emit('MODE', `Execution mode: ${executionMode} (${modeConfig.maxAgents} agents, ${modeConfig.verificationLevel} verification)`);
+    emit(
+      'MODE',
+      `Execution mode: ${executionMode} (${modeConfig.maxAgents} agents, ${modeConfig.verificationLevel} verification)`,
+    );
 
     // Step 5: Start conversation session
     let sessionId: string | null = null;
@@ -206,7 +215,9 @@ export class CompanyEngine {
         });
         sessionId = session.id;
       } catch (err) {
-        getGlobalLogger().warn('CompanyEngine', 'Failed to start conversation session', { error: String(err) });
+        getGlobalLogger().warn('CompanyEngine', 'Failed to start conversation session', {
+          error: String(err),
+        });
       }
     }
 
@@ -224,7 +235,7 @@ export class CompanyEngine {
           companyEngine: {
             executionMode,
             modeConfig,
-            matchedAgents: matchResult.agents.map(a => a.agentId),
+            matchedAgents: matchResult.agents.map((a) => a.agentId),
             matchConfidence: matchResult.confidence,
             strategy: matchResult.strategy,
           },
@@ -249,16 +260,19 @@ export class CompanyEngine {
     }
 
     // Step 7: Record quality metrics
-    const qualityScore = result.metrics?.qualityScore
-      ?? (result.errors.length === 0 ? 0.9
-        : result.errors.every(e => e.recovered) ? 0.7
-        : Math.max(0.3, 1 - result.errors.length * 0.2));
+    const qualityScore =
+      result.metrics?.qualityScore ??
+      (result.errors.length === 0
+        ? 0.9
+        : result.errors.every((e) => e.recovered)
+          ? 0.7
+          : Math.max(0.3, 1 - result.errors.length * 0.2));
     const totalTokens = result.metrics?.totalTokens ?? 0;
 
     if (this.config.enableQualityGating) {
       qualityDecision = this.gater.recordOutcome({
         quality: qualityScore,
-        passed: result.errors.length === 0 || result.errors.every(e => e.recovered),
+        passed: result.errors.length === 0 || result.errors.every((e) => e.recovered),
         issueCount: result.errors.length,
         worstSeverity: result.errors.length > 0 ? 'high' : 'none',
         tokenCost: totalTokens,
@@ -346,12 +360,14 @@ export class CompanyEngine {
     poolSize: number;
     estimatedTotalSavings: number;
   } {
-    const avgQuality = this.executionHistory.length > 0
-      ? this.executionHistory.reduce((s, e) => s + e.quality, 0) / this.executionHistory.length
-      : 0;
-    const avgTokens = this.executionHistory.length > 0
-      ? this.executionHistory.reduce((s, e) => s + e.tokens, 0) / this.executionHistory.length
-      : 0;
+    const avgQuality =
+      this.executionHistory.length > 0
+        ? this.executionHistory.reduce((s, e) => s + e.quality, 0) / this.executionHistory.length
+        : 0;
+    const avgTokens =
+      this.executionHistory.length > 0
+        ? this.executionHistory.reduce((s, e) => s + e.tokens, 0) / this.executionHistory.length
+        : 0;
 
     return {
       totalExecutions: this.executionHistory.length,
@@ -362,7 +378,7 @@ export class CompanyEngine {
       poolSize: this.matcher.getPool().length,
       estimatedTotalSavings: this.executionHistory.reduce((s, e) => {
         const modeConfig = getModeConfig(e.mode);
-        return s + (e.tokens * (modeConfig.tokenMultiplier - 1));
+        return s + e.tokens * (modeConfig.tokenMultiplier - 1);
       }, 0),
     };
   }
@@ -395,7 +411,10 @@ export class CompanyEngine {
   /**
    * Analyze task requirements from the goal and context.
    */
-  private analyzeRequirements(goal: string, contextData?: Record<string, unknown>): TaskRequirements {
+  private analyzeRequirements(
+    goal: string,
+    contextData?: Record<string, unknown>,
+  ): TaskRequirements {
     const goalLower = goal.toLowerCase();
 
     // Infer required capabilities from goal keywords
@@ -474,7 +493,7 @@ export class CompanyEngine {
     if (/\b(security|critical|production)\b/.test(goalLower)) complexity += 1;
 
     // Subtask indicators
-    const sentences = goal.split(/[.!?]+/).filter(s => s.trim().length > 10);
+    const sentences = goal.split(/[.!?]+/).filter((s) => s.trim().length > 10);
     if (sentences.length > 5) complexity += 1;
 
     return Math.max(1, Math.min(10, complexity));

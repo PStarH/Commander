@@ -15,8 +15,13 @@
 
 import { getGlobalLogger } from '../logging';
 import type {
-  EpisodicMemoryItem, MemoryWriteOptions, MemorySearchQuery,
-  MemorySearchResult, MemoryManageOptions, MemoryStats, MemoryStore,
+  EpisodicMemoryItem,
+  MemoryWriteOptions,
+  MemorySearchQuery,
+  MemorySearchResult,
+  MemoryManageOptions,
+  MemoryStats,
+  MemoryStore,
 } from '../memory';
 import type { MemoryKind, MemoryDuration } from '../memory';
 
@@ -165,20 +170,16 @@ export class SqliteMemoryStore implements MemoryStore {
       VALUES (@id, @projectId, @missionId, @agentId, @kind, @duration, @title, @content, @tags, @priority, @createdAt, @lastAccessedAt, @expiresAt, @evidenceRefs, @confidence)
     `);
 
-    this.stmtGet = d.prepare(
-      'SELECT * FROM memory_items WHERE id = ? AND project_id = ?'
-    );
+    this.stmtGet = d.prepare('SELECT * FROM memory_items WHERE id = ? AND project_id = ?');
 
-    this.stmtDelete = d.prepare(
-      'DELETE FROM memory_items WHERE id = ? AND project_id = ?'
-    );
+    this.stmtDelete = d.prepare('DELETE FROM memory_items WHERE id = ? AND project_id = ?');
 
     this.stmtDeleteByMission = d.prepare(
-      'DELETE FROM memory_items WHERE mission_id = ? AND project_id = ?'
+      'DELETE FROM memory_items WHERE mission_id = ? AND project_id = ?',
     );
 
     this.stmtDeleteExpired = d.prepare(
-      'DELETE FROM memory_items WHERE project_id = ? AND expires_at IS NOT NULL AND expires_at < ?'
+      'DELETE FROM memory_items WHERE project_id = ? AND expires_at IS NOT NULL AND expires_at < ?',
     );
 
     this.stmtUpdate = d.prepare(`
@@ -243,18 +244,22 @@ export class SqliteMemoryStore implements MemoryStore {
     const id = `memory-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     const kindPriority: Record<MemoryKind, number> = {
-      DECISION: 80, ISSUE: 70, LESSON: 90, SUMMARY: 50,
+      DECISION: 80,
+      ISSUE: 70,
+      LESSON: 90,
+      SUMMARY: 50,
     };
-    let priority = options.priority ?? (kindPriority[options.kind] ?? 50);
+    let priority = options.priority ?? kindPriority[options.kind] ?? 50;
     if (options.missionId) priority += 5;
     if (options.agentId) priority += 5;
     if (options.evidenceRefs?.length) priority += Math.min(options.evidenceRefs.length * 5, 15);
     priority = Math.min(priority, 100);
 
     const duration = options.duration ?? 'EPISODIC';
-    const expiresAt = duration === 'EPISODIC'
-      ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-      : undefined;
+    const expiresAt =
+      duration === 'EPISODIC'
+        ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+        : undefined;
 
     const item: EpisodicMemoryItem = {
       id,
@@ -299,34 +304,63 @@ export class SqliteMemoryStore implements MemoryStore {
     await this.init();
     const results: EpisodicMemoryItem[] = [];
 
-    type BatchTx = (fn: (batch: MemoryWriteOptions[]) => void) => (batch: MemoryWriteOptions[]) => void;
+    type BatchTx = (
+      fn: (batch: MemoryWriteOptions[]) => void,
+    ) => (batch: MemoryWriteOptions[]) => void;
     const txFn = this.db!.transaction as BatchTx;
     const insertMany = txFn((batch: MemoryWriteOptions[]) => {
       for (const options of batch) {
         // Reuse write logic inline for transaction
         const now = new Date().toISOString();
         const id = `memory-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const kindPriority: Record<MemoryKind, number> = { DECISION: 80, ISSUE: 70, LESSON: 90, SUMMARY: 50 };
-        let priority = options.priority ?? (kindPriority[options.kind] ?? 50);
+        const kindPriority: Record<MemoryKind, number> = {
+          DECISION: 80,
+          ISSUE: 70,
+          LESSON: 90,
+          SUMMARY: 50,
+        };
+        let priority = options.priority ?? kindPriority[options.kind] ?? 50;
         if (options.missionId) priority += 5;
         if (options.agentId) priority += 5;
         if (options.evidenceRefs?.length) priority += Math.min(options.evidenceRefs.length * 5, 15);
         priority = Math.min(priority, 100);
         const duration = options.duration ?? 'EPISODIC';
-        const expiresAt = duration === 'EPISODIC' ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() : undefined;
+        const expiresAt =
+          duration === 'EPISODIC'
+            ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+            : undefined;
 
         const item: EpisodicMemoryItem = {
-          id, projectId: options.projectId, missionId: options.missionId, agentId: options.agentId,
-          kind: options.kind, duration, title: options.title, content: options.content,
-          tags: options.tags ?? [], priority, createdAt: now, lastAccessedAt: now,
-          expiresAt, evidenceRefs: options.evidenceRefs, confidence: options.confidence ?? 0.8,
+          id,
+          projectId: options.projectId,
+          missionId: options.missionId,
+          agentId: options.agentId,
+          kind: options.kind,
+          duration,
+          title: options.title,
+          content: options.content,
+          tags: options.tags ?? [],
+          priority,
+          createdAt: now,
+          lastAccessedAt: now,
+          expiresAt,
+          evidenceRefs: options.evidenceRefs,
+          confidence: options.confidence ?? 0.8,
         };
 
         this.stmtInsert.run({
-          id: item.id, projectId: item.projectId, missionId: item.missionId ?? null,
-          agentId: item.agentId ?? null, kind: item.kind, duration: item.duration,
-          title: item.title, content: item.content, tags: JSON.stringify(item.tags),
-          priority: item.priority, createdAt: item.createdAt, lastAccessedAt: item.lastAccessedAt,
+          id: item.id,
+          projectId: item.projectId,
+          missionId: item.missionId ?? null,
+          agentId: item.agentId ?? null,
+          kind: item.kind,
+          duration: item.duration,
+          title: item.title,
+          content: item.content,
+          tags: JSON.stringify(item.tags),
+          priority: item.priority,
+          createdAt: item.createdAt,
+          lastAccessedAt: item.lastAccessedAt,
           expiresAt: item.expiresAt ?? null,
           evidenceRefs: item.evidenceRefs ? JSON.stringify(item.evidenceRefs) : null,
           confidence: item.confidence,
@@ -403,56 +437,72 @@ export class SqliteMemoryStore implements MemoryStore {
     const now = new Date().toISOString();
     const limit = query.limit ?? 50;
 
-    const rows = this.stmtSearch.all<SqliteRow>({
-      projectId: query.projectId,
-      kind: query.kind ?? null,
-      missionId: query.missionId ?? null,
-      agentId: query.agentId ?? null,
-      minPriority: query.minPriority ?? null,
-      minConfidence: query.minConfidence ?? null,
-    }, now, limit);
+    const rows = this.stmtSearch.all<SqliteRow>(
+      {
+        projectId: query.projectId,
+        kind: query.kind ?? null,
+        missionId: query.missionId ?? null,
+        agentId: query.agentId ?? null,
+        minPriority: query.minPriority ?? null,
+        minConfidence: query.minConfidence ?? null,
+      },
+      now,
+      limit,
+    );
 
-    let items = rows.map(r => this.rowToItem(r));
+    let items = rows.map((r) => this.rowToItem(r));
 
     // Text search filter (if query provided)
     if (query.query && query.query.trim()) {
       const lowerQuery = query.query.toLowerCase();
-      items = items.filter(item =>
-        item.title.toLowerCase().includes(lowerQuery) ||
-        item.content.toLowerCase().includes(lowerQuery) ||
-        item.tags.some((t: string) => t.toLowerCase().includes(lowerQuery))
+      items = items.filter(
+        (item) =>
+          item.title.toLowerCase().includes(lowerQuery) ||
+          item.content.toLowerCase().includes(lowerQuery) ||
+          item.tags.some((t: string) => t.toLowerCase().includes(lowerQuery)),
       );
     }
 
     // Tag filter
     if (query.tags && query.tags.length > 0) {
-      items = items.filter(item =>
-        query.tags!.some((tag: string) => item.tags.includes(tag))
-      );
+      items = items.filter((item) => query.tags!.some((tag: string) => item.tags.includes(tag)));
     }
 
     return { items: items.slice(0, limit), total: items.length, query };
   }
 
-  async searchSemantic(query: string, projectId: string, limit = 10): Promise<EpisodicMemoryItem[]> {
+  async searchSemantic(
+    query: string,
+    projectId: string,
+    limit = 10,
+  ): Promise<EpisodicMemoryItem[]> {
     await this.init();
 
     try {
       // Use FTS5 for full-text search
       const ftsQuery = this.buildFtsQuery(query);
-      const rows = this.stmtFtsSearch.all<SqliteRow>(ftsQuery, projectId, new Date().toISOString(), limit);
-      return rows.map(r => this.rowToItem(r));
+      const rows = this.stmtFtsSearch.all<SqliteRow>(
+        ftsQuery,
+        projectId,
+        new Date().toISOString(),
+        limit,
+      );
+      return rows.map((r) => this.rowToItem(r));
     } catch (err) {
-      getGlobalLogger().warn('SqliteMemoryStore', 'FTS search failed, falling back to LIKE', { error: String(err) });
+      getGlobalLogger().warn('SqliteMemoryStore', 'FTS search failed, falling back to LIKE', {
+        error: String(err),
+      });
       // Fallback to LIKE search
       const lowerQuery = query.toLowerCase();
-      const rows = this.db!.prepare(`
+      const rows = this.db!.prepare(
+        `
         SELECT * FROM memory_items
         WHERE project_id = ? AND (title LIKE ? OR content LIKE ?)
         ORDER BY priority DESC, created_at DESC
         LIMIT ?
-      `).all<SqliteRow>(projectId, `%${lowerQuery}%`, `%${lowerQuery}%`, limit);
-      return rows.map(r => this.rowToItem(r));
+      `,
+      ).all<SqliteRow>(projectId, `%${lowerQuery}%`, `%${lowerQuery}%`, limit);
+      return rows.map((r) => this.rowToItem(r));
     }
   }
 
@@ -478,9 +528,11 @@ export class SqliteMemoryStore implements MemoryStore {
     }
 
     // Get top tags
-    const tagRows = this.db!.prepare(`
+    const tagRows = this.db!.prepare(
+      `
       SELECT tags FROM memory_items WHERE project_id = ?
-    `).all<SqliteRow>(projectId);
+    `,
+    ).all<SqliteRow>(projectId);
 
     const tagCounts = new Map<string, number>();
     for (const tagRow of tagRows) {
@@ -489,7 +541,9 @@ export class SqliteMemoryStore implements MemoryStore {
         for (const tag of tags) {
           tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
         }
-      } catch { /* skip malformed */ }
+      } catch {
+        /* skip malformed */
+      }
     }
 
     const topTags = Array.from(tagCounts.entries())
@@ -536,8 +590,16 @@ export class SqliteMemoryStore implements MemoryStore {
   private rowToItem(row: SqliteRow): EpisodicMemoryItem {
     let tags: string[] = [];
     let evidenceRefs: string[] | undefined;
-    try { tags = JSON.parse(row.tags as string || '[]'); } catch { /* ok */ }
-    try { evidenceRefs = row.evidence_refs ? JSON.parse(row.evidence_refs as string) : undefined; } catch { /* ok */ }
+    try {
+      tags = JSON.parse((row.tags as string) || '[]');
+    } catch {
+      /* ok */
+    }
+    try {
+      evidenceRefs = row.evidence_refs ? JSON.parse(row.evidence_refs as string) : undefined;
+    } catch {
+      /* ok */
+    }
 
     return {
       id: row.id as string,
@@ -561,10 +623,10 @@ export class SqliteMemoryStore implements MemoryStore {
   private buildFtsQuery(input: string): string {
     const cleaned = input.replace(/[^\w\s\-_.]/g, ' ').trim();
     if (!cleaned) return '""';
-    const words = cleaned.split(/\s+/).filter(w => w.length >= 1);
+    const words = cleaned.split(/\s+/).filter((w) => w.length >= 1);
     if (words.length === 0) return '""';
     if (words.length === 1) return `"${words[0]}"*`;
-    const terms = words.slice(0, -1).map(w => `"${w}"`);
+    const terms = words.slice(0, -1).map((w) => `"${w}"`);
     terms.push(`"${words[words.length - 1]}"*`);
     return terms.join(' ');
   }

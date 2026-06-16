@@ -116,22 +116,20 @@ export class CapturedRequest {
 
   /** Messages filtered by role */
   messagesByRole(role: ParsedMessage['role']): ParsedMessage[] {
-    return this._messages.filter(m => m.role === role);
+    return this._messages.filter((m) => m.role === role);
   }
 
   /** System prompt text (all system messages joined) */
   systemPrompt(): string {
     return this._messages
-      .filter(m => m.role === 'system')
-      .map(m => m.content)
+      .filter((m) => m.role === 'system')
+      .map((m) => m.content)
       .join('\n');
   }
 
   /** User message texts */
   userMessages(): string[] {
-    return this._messages
-      .filter(m => m.role === 'user')
-      .map(m => m.content);
+    return this._messages.filter((m) => m.role === 'user').map((m) => m.content);
   }
 
   /** Last user message text */
@@ -144,9 +142,7 @@ export class CapturedRequest {
 
   /** Assistant message texts (excluding tool-call-only messages) */
   assistantTexts(): string[] {
-    return this._messages
-      .filter(m => m.role === 'assistant' && m.content)
-      .map(m => m.content);
+    return this._messages.filter((m) => m.role === 'assistant' && m.content).map((m) => m.content);
   }
 
   // ── Tool call introspection ───────────────────────────────────────────────
@@ -170,19 +166,19 @@ export class CapturedRequest {
 
   /** Check if a specific tool was called */
   hasToolCall(name: string): boolean {
-    return this.allToolCalls().some(tc => tc.name === name);
+    return this.allToolCalls().some((tc) => tc.name === name);
   }
 
   /** Get all tool calls by name */
   toolCallsByName(name: string): Array<{ id: string; arguments: string }> {
     return this.allToolCalls()
-      .filter(tc => tc.name === name)
-      .map(tc => ({ id: tc.id, arguments: tc.arguments }));
+      .filter((tc) => tc.name === name)
+      .map((tc) => ({ id: tc.id, arguments: tc.arguments }));
   }
 
   /** Get a specific tool call by id */
   toolCallById(id: string): { name: string; arguments: string } | undefined {
-    const tc = this.allToolCalls().find(tc => tc.id === id);
+    const tc = this.allToolCalls().find((tc) => tc.id === id);
     return tc ? { name: tc.name, arguments: tc.arguments } : undefined;
   }
 
@@ -191,8 +187,8 @@ export class CapturedRequest {
   /** All tool result messages */
   allToolOutputs(): Array<{ tool_call_id: string; name: string; content: string }> {
     return this._messages
-      .filter(m => m.role === 'tool')
-      .map(m => ({
+      .filter((m) => m.role === 'tool')
+      .map((m) => ({
         tool_call_id: m.tool_call_id ?? '',
         name: m.name ?? '',
         content: m.content,
@@ -201,24 +197,20 @@ export class CapturedRequest {
 
   /** Get tool output by call_id */
   toolOutputByCallId(callId: string): string | undefined {
-    const output = this._messages.find(
-      m => m.role === 'tool' && m.tool_call_id === callId
-    );
+    const output = this._messages.find((m) => m.role === 'tool' && m.tool_call_id === callId);
     return output?.content;
   }
 
   /** Get tool outputs by tool name */
   toolOutputsByName(name: string): string[] {
-    return this._messages
-      .filter(m => m.role === 'tool' && m.name === name)
-      .map(m => m.content);
+    return this._messages.filter((m) => m.role === 'tool' && m.name === name).map((m) => m.content);
   }
 
   // ── Requested tools ───────────────────────────────────────────────────────
 
   /** Names of tools requested in the tools parameter */
   requestedToolNames(): string[] {
-    return (this.tools ?? []).map(t => t.function.name);
+    return (this.tools ?? []).map((t) => t.function.name);
   }
 
   /** Check if a tool was requested */
@@ -242,8 +234,8 @@ export function validateRequestInvariants(request: CapturedRequest): InvariantVi
   const toolCalls = request.allToolCalls();
   const toolOutputs = request.allToolOutputs();
 
-  const callIds = new Set(toolCalls.map(tc => tc.id));
-  const outputCallIds = new Set(toolOutputs.map(o => o.tool_call_id));
+  const callIds = new Set(toolCalls.map((tc) => tc.id));
+  const outputCallIds = new Set(toolOutputs.map((o) => o.tool_call_id));
 
   // Rule 1: Every output must have a matching call
   for (const output of toolOutputs) {
@@ -293,7 +285,10 @@ export class MockLLMServer {
     usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
   };
   private validateInvariants: boolean;
-  private onInvariantViolation?: (violations: InvariantViolation[], request: CapturedRequest) => void;
+  private onInvariantViolation?: (
+    violations: InvariantViolation[],
+    request: CapturedRequest,
+  ) => void;
   private _invariantViolations: InvariantViolation[] = [];
 
   constructor(options?: MockLLMServerOptions) {
@@ -325,7 +320,9 @@ export class MockLLMServer {
       // Force close all connections
       try {
         server.closeAllConnections?.();
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       // Close the server
       server.close(() => {
@@ -334,7 +331,11 @@ export class MockLLMServer {
 
       // Force resolve after timeout to prevent hanging
       setTimeout(() => {
-        try { server.close(); } catch { /* ignore */ }
+        try {
+          server.close();
+        } catch {
+          /* ignore */
+        }
         resolve();
       }, 200);
     });
@@ -403,14 +404,14 @@ export class MockLLMServer {
     let parsedBody: Record<string, unknown> = {};
     try {
       parsedBody = JSON.parse(body);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     const captured = new CapturedRequest(
       Date.now(),
       parsedBody,
-      Object.fromEntries(
-        Object.entries(req.headers).map(([k, v]) => [k, String(v)])
-      ),
+      Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, String(v)])),
     );
     this._requests.push(captured);
 
@@ -425,9 +426,8 @@ export class MockLLMServer {
       }
     }
 
-    const response = this.responseQueue.length > 0
-      ? this.responseQueue.shift()!
-      : this.defaultResponse;
+    const response =
+      this.responseQueue.length > 0 ? this.responseQueue.shift()! : this.defaultResponse;
 
     if (response.error) {
       res.writeHead(response.statusCode ?? 500, { 'Content-Type': 'application/json' });
@@ -436,7 +436,7 @@ export class MockLLMServer {
     }
 
     if (response.delayMs) {
-      await new Promise(r => setTimeout(r, response.delayMs));
+      await new Promise((r) => setTimeout(r, response.delayMs));
     }
 
     const isStreaming = parsedBody.stream === true;
@@ -448,7 +448,10 @@ export class MockLLMServer {
     }
   }
 
-  private async handleSyncResponse(res: http.ServerResponse, response: MockLLMResponse): Promise<void> {
+  private async handleSyncResponse(
+    res: http.ServerResponse,
+    response: MockLLMResponse,
+  ): Promise<void> {
     const message: Record<string, unknown> = { role: 'assistant' };
 
     if (response.toolCalls && response.toolCalls.length > 0) {
@@ -468,11 +471,13 @@ export class MockLLMServer {
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
       model: 'mock-model',
-      choices: [{
-        index: 0,
-        message,
-        finish_reason: response.toolCalls ? 'tool_calls' : 'stop',
-      }],
+      choices: [
+        {
+          index: 0,
+          message,
+          finish_reason: response.toolCalls ? 'tool_calls' : 'stop',
+        },
+      ],
       usage: response.usage ?? { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
     };
 
@@ -480,11 +485,14 @@ export class MockLLMServer {
     res.end(JSON.stringify(responseBody));
   }
 
-  private async handleStreamingResponse(res: http.ServerResponse, response: MockLLMResponse): Promise<void> {
+  private async handleStreamingResponse(
+    res: http.ServerResponse,
+    response: MockLLMResponse,
+  ): Promise<void> {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
+      Connection: 'keep-alive',
     });
 
     const sendChunk = (data: Record<string, unknown>) => {
@@ -502,20 +510,24 @@ export class MockLLMServer {
       for (const tc of response.toolCalls) {
         sendChunk({
           ...chunkBase,
-          choices: [{
-            index: 0,
-            delta: {
-              tool_calls: [{
-                index: 0,
-                id: tc.id,
-                type: 'function',
-                function: { name: tc.function.name, arguments: tc.function.arguments },
-              }],
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: tc.id,
+                    type: 'function',
+                    function: { name: tc.function.name, arguments: tc.function.arguments },
+                  },
+                ],
+              },
+              finish_reason: null,
             },
-            finish_reason: null,
-          }],
+          ],
         });
-        await new Promise(r => setTimeout(r, 5));
+        await new Promise((r) => setTimeout(r, 5));
       }
       sendChunk({
         ...chunkBase,
@@ -527,13 +539,15 @@ export class MockLLMServer {
       for (const word of words) {
         sendChunk({
           ...chunkBase,
-          choices: [{
-            index: 0,
-            delta: { content: word + ' ' },
-            finish_reason: null,
-          }],
+          choices: [
+            {
+              index: 0,
+              delta: { content: word + ' ' },
+              finish_reason: null,
+            },
+          ],
         });
-        await new Promise(r => setTimeout(r, 2));
+        await new Promise((r) => setTimeout(r, 2));
       }
       sendChunk({
         ...chunkBase,

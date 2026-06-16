@@ -31,40 +31,154 @@ export class ExecPolicyEngine {
     // Codex CLI command safety classification (from codex-rs/shell-command/src/command_safety/)
     // Safe commands — auto-approved without prompting
     const SAFE_READONLY = [
-      'cat', 'cd', 'cut', 'echo', 'grep', 'head', 'tail', 'less', 'more',
-      'ls', 'pwd', 'stat', 'wc', 'which', 'whoami', 'type', 'find', 'du',
-      'diff', 'sort', 'uniq', 'tr', 'tee', 'xargs', 'basename', 'dirname',
-      'realpath', 'readlink', 'file', 'md5sum', 'sha256sum',
+      'cat',
+      'cd',
+      'cut',
+      'echo',
+      'grep',
+      'head',
+      'tail',
+      'less',
+      'more',
+      'ls',
+      'pwd',
+      'stat',
+      'wc',
+      'which',
+      'whoami',
+      'type',
+      'find',
+      'du',
+      'diff',
+      'sort',
+      'uniq',
+      'tr',
+      'tee',
+      'xargs',
+      'basename',
+      'dirname',
+      'realpath',
+      'readlink',
+      'file',
+      'md5sum',
+      'sha256sum',
     ];
     const SAFE_GIT = [
-      'git status', 'git diff', 'git log', 'git branch', 'git show', 'git blame',
-      'git remote', 'git tag', 'git stash list', 'git rev-parse',
+      'git status',
+      'git diff',
+      'git log',
+      'git branch',
+      'git show',
+      'git blame',
+      'git remote',
+      'git tag',
+      'git stash list',
+      'git rev-parse',
     ];
     const SAFE_DEV = [
-      'npm', 'pnpm', 'yarn', 'npx', 'tsc', 'eslint', 'prettier',
-      'jest', 'vitest', 'mocha', 'node', 'python3', 'pip', 'cargo', 'go',
+      'npm',
+      'pnpm',
+      'yarn',
+      'npx',
+      'tsc',
+      'eslint',
+      'prettier',
+      'jest',
+      'vitest',
+      'mocha',
+      'node',
+      'python3',
+      'pip',
+      'cargo',
+      'go',
     ];
 
     this.rules.push(
       // Safe: read-only commands (priority 1 — lowest, easily overridden)
-      { id: 'allow-readonly', pattern: SAFE_READONLY, decision: 'allow', justification: 'Safe read-only commands (Codex classification)', priority: 1 },
-      { id: 'allow-git-read', pattern: SAFE_GIT, decision: 'allow', justification: 'Safe git read operations', priority: 2 },
-      { id: 'allow-dev', pattern: SAFE_DEV, decision: 'allow', justification: 'Development tooling', priority: 2 },
+      {
+        id: 'allow-readonly',
+        pattern: SAFE_READONLY,
+        decision: 'allow',
+        justification: 'Safe read-only commands (Codex classification)',
+        priority: 1,
+      },
+      {
+        id: 'allow-git-read',
+        pattern: SAFE_GIT,
+        decision: 'allow',
+        justification: 'Safe git read operations',
+        priority: 2,
+      },
+      {
+        id: 'allow-dev',
+        pattern: SAFE_DEV,
+        decision: 'allow',
+        justification: 'Development tooling',
+        priority: 2,
+      },
 
       // Network: prompt required
-      { id: 'default-deny-network', pattern: ['curl', 'wget', 'nc', 'telnet', 'ssh', 'sftp'], decision: 'prompt', justification: 'Network access requires approval', priority: 10 },
+      {
+        id: 'default-deny-network',
+        pattern: ['curl', 'wget', 'nc', 'telnet', 'ssh', 'sftp'],
+        decision: 'prompt',
+        justification: 'Network access requires approval',
+        priority: 10,
+      },
 
       // Destructive: always prompt
-      { id: 'prompt-destructive', pattern: ['rm -rf', 'rm -r', 'rm -f', 'chmod -R', 'chown -R', 'git reset --hard', 'git clean -f'], decision: 'prompt', justification: 'Destructive operation requires approval', priority: 30 },
+      {
+        id: 'prompt-destructive',
+        pattern: [
+          'rm -rf',
+          'rm -r',
+          'rm -f',
+          'chmod -R',
+          'chown -R',
+          'git reset --hard',
+          'git clean -f',
+        ],
+        decision: 'prompt',
+        justification: 'Destructive operation requires approval',
+        priority: 30,
+      },
 
       // Dangerous: prompt with strong warning
-      { id: 'forbid-secrets', pattern: ['chmod 777', 'git push --force', 'git push -f'], decision: 'prompt', justification: 'Potentially dangerous operations', priority: 40 },
+      {
+        id: 'forbid-secrets',
+        pattern: ['chmod 777', 'git push --force', 'git push -f'],
+        decision: 'prompt',
+        justification: 'Potentially dangerous operations',
+        priority: 40,
+      },
 
       // Banned prefixes (from Codex CLI) — inline code execution never auto-approved
-      { id: 'ban-inline-exec', pattern: ['python3 -c', 'python -c', 'bash -lc', 'sh -c', 'node -e', 'perl -e', 'ruby -e', 'osascript', 'php -r'], decision: 'prompt', justification: 'Inline code execution requires approval (Codex banned prefix)', priority: 50 },
+      {
+        id: 'ban-inline-exec',
+        pattern: [
+          'python3 -c',
+          'python -c',
+          'bash -lc',
+          'sh -c',
+          'node -e',
+          'perl -e',
+          'ruby -e',
+          'osascript',
+          'php -r',
+        ],
+        decision: 'prompt',
+        justification: 'Inline code execution requires approval (Codex banned prefix)',
+        priority: 50,
+      },
 
       // Forbidden: always blocked
-      { id: 'forbid-dangerous', pattern: ['sudo', 'su ', 'passwd', 'mkfs', 'dd if=', '> /dev/', ':(){ :|:& };:'], decision: 'forbidden', justification: 'Dangerous commands are blocked', priority: 100 },
+      {
+        id: 'forbid-dangerous',
+        pattern: ['sudo', 'su ', 'passwd', 'mkfs', 'dd if=', '> /dev/', ':(){ :|:& };:'],
+        decision: 'forbidden',
+        justification: 'Dangerous commands are blocked',
+        priority: 100,
+      },
     );
   }
 
@@ -77,14 +191,17 @@ export class ExecPolicyEngine {
     for (const loc of locations) {
       try {
         if (fs.statSync(loc).isDirectory()) {
-          const files = fs.readdirSync(loc).filter(f => f.endsWith('.json'));
+          const files = fs.readdirSync(loc).filter((f) => f.endsWith('.json'));
           for (const f of files) this.loadFile(path.join(loc, f));
         } else {
           this.loadFile(loc);
         }
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-          getGlobalLogger().warn('ExecPolicyEngine', 'User rules load failed', { error: (e as Error)?.message, location: loc });
+          getGlobalLogger().warn('ExecPolicyEngine', 'User rules load failed', {
+            error: (e as Error)?.message,
+            location: loc,
+          });
         }
       }
     }
@@ -102,7 +219,9 @@ export class ExecPolicyEngine {
         this.loadedFiles.add(filepath);
       }
     } catch (err) {
-      getGlobalLogger().warn('ExecPolicyEngine', `Failed to load ${filepath}`, { error: (err as Error)?.message });
+      getGlobalLogger().warn('ExecPolicyEngine', `Failed to load ${filepath}`, {
+        error: (err as Error)?.message,
+      });
     }
   }
 
@@ -110,7 +229,11 @@ export class ExecPolicyEngine {
   // e.g., "timeout 30 npm test" should match the "npm" rule
   private static readonly WRAPPER_PREFIXES = ['timeout', 'time', 'nice', 'nohup', 'stdbuf', 'env'];
 
-  evaluate(command: string): { decision: PolicyDecision; rule?: PolicyRule; matchedPattern?: string } {
+  evaluate(command: string): {
+    decision: PolicyDecision;
+    rule?: PolicyRule;
+    matchedPattern?: string;
+  } {
     const normalized = command.toLowerCase().trim();
 
     // Strip process wrapper prefixes for matching (Claude Code pattern)
@@ -128,13 +251,15 @@ export class ExecPolicyEngine {
     const sorted = [...this.rules].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 
     // Evaluate each rule against the (possibly wrapper-stripped) command
-    const effectiveCandidates = strippedCommand !== command
-      ? this.extractCommandCandidates(strippedCommand)
-      : candidates;
+    const effectiveCandidates =
+      strippedCommand !== command ? this.extractCommandCandidates(strippedCommand) : candidates;
 
     for (const rule of sorted) {
       for (const pattern of rule.pattern) {
-        if (this.matchesPattern(candidates, pattern) || this.matchesPattern(effectiveCandidates, pattern)) {
+        if (
+          this.matchesPattern(candidates, pattern) ||
+          this.matchesPattern(effectiveCandidates, pattern)
+        ) {
           return { decision: rule.decision, rule, matchedPattern: pattern };
         }
       }
@@ -171,10 +296,10 @@ export class ExecPolicyEngine {
     if (/^[a-z0-9._+-]+$/i.test(p)) {
       return candidates.commandNames.has(p);
     }
-    if (Array.from(candidates.rawCommands).some(command => this.rawCommandMatches(command, p))) {
+    if (Array.from(candidates.rawCommands).some((command) => this.rawCommandMatches(command, p))) {
       return true;
     }
-    return Array.from(candidates.segments).some(segment => this.segmentMatches(segment, p));
+    return Array.from(candidates.segments).some((segment) => this.segmentMatches(segment, p));
   }
 
   private rawCommandMatches(command: string, pattern: string): boolean {
@@ -196,7 +321,12 @@ export class ExecPolicyEngine {
   }
 
   private isShellPayloadPattern(pattern: string): boolean {
-    return pattern.includes('|') || pattern.includes(';') || pattern.includes('&') || pattern.includes('>');
+    return (
+      pattern.includes('|') ||
+      pattern.includes(';') ||
+      pattern.includes('&') ||
+      pattern.includes('>')
+    );
   }
 
   private startsWithTokenBoundary(segment: string, pattern: string): boolean {
@@ -262,7 +392,7 @@ export class ExecPolicyEngine {
       if (ch === ';' || ch === '\n' || ch === '|') {
         segments.push(current);
         current = '';
-        if ((ch === '|' && next === '|')) i++;
+        if (ch === '|' && next === '|') i++;
         continue;
       }
       if (ch === '&' && next === '&') {
@@ -362,14 +492,18 @@ export class ExecPolicyEngine {
     if (token.includes('/')) {
       try {
         if (fs.existsSync(token)) return fs.realpathSync(token);
-      } catch { return null; }
+      } catch {
+        return null;
+      }
     } else {
       const pathDirs = (process.env.PATH || '').split(':');
       for (const dir of pathDirs) {
         const fullPath = path.join(dir, token);
         try {
           if (fs.existsSync(fullPath)) return fs.realpathSync(fullPath);
-        } catch { continue; }
+        } catch {
+          continue;
+        }
       }
     }
     return null;
@@ -390,14 +524,17 @@ export class ExecPolicyEngine {
   }
 
   addRule(rule: Omit<PolicyRule, 'id'>): PolicyRule {
-    const newRule: PolicyRule = { ...rule, id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` };
+    const newRule: PolicyRule = {
+      ...rule,
+      id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    };
     newRule.priority = newRule.priority ?? 25;
     this.rules.push(newRule);
     return newRule;
   }
 
   removeRule(id: string): boolean {
-    const idx = this.rules.findIndex(r => r.id === id);
+    const idx = this.rules.findIndex((r) => r.id === id);
     if (idx === -1) return false;
     this.rules.splice(idx, 1);
     return true;

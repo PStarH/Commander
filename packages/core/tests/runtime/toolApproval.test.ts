@@ -19,7 +19,12 @@ describe('ToolApproval', () => {
 
     it('auto-approves web_search', async () => {
       const approval = new ToolApproval();
-      const result = await approval.requestApproval('web_search', { query: 'test' }, 'agent-1', 'run-1');
+      const result = await approval.requestApproval(
+        'web_search',
+        { query: 'test' },
+        'agent-1',
+        'run-1',
+      );
       expect(result.approved).toBe(true);
     });
 
@@ -27,7 +32,12 @@ describe('ToolApproval', () => {
       const approval = new ToolApproval({
         callback: async () => true, // Auto-approve for testing
       });
-      const result = await approval.requestApproval('shell_execute', { command: 'ls' }, 'agent-1', 'run-1');
+      const result = await approval.requestApproval(
+        'shell_execute',
+        { command: 'ls' },
+        'agent-1',
+        'run-1',
+      );
       expect(result).toBeDefined();
     });
   });
@@ -54,19 +64,19 @@ describe('ToolApproval', () => {
     });
 
     it('includes shell_execute as manual', () => {
-      const shellPolicy = DEFAULT_APPROVAL_POLICIES.find(p => p.pattern === 'shell_execute');
+      const shellPolicy = DEFAULT_APPROVAL_POLICIES.find((p) => p.pattern === 'shell_execute');
       expect(shellPolicy).toBeDefined();
       expect(shellPolicy!.level).toBe('manual');
     });
 
     it('includes web_search as auto', () => {
-      const webPolicy = DEFAULT_APPROVAL_POLICIES.find(p => p.pattern === 'web_search');
+      const webPolicy = DEFAULT_APPROVAL_POLICIES.find((p) => p.pattern === 'web_search');
       expect(webPolicy).toBeDefined();
       expect(webPolicy!.level).toBe('auto');
     });
 
     it('includes web_search as auto', () => {
-      const webPolicy = DEFAULT_APPROVAL_POLICIES.find(p => p.pattern === 'web_search');
+      const webPolicy = DEFAULT_APPROVAL_POLICIES.find((p) => p.pattern === 'web_search');
       expect(webPolicy).toBeDefined();
       expect(webPolicy!.level).toBe('auto');
     });

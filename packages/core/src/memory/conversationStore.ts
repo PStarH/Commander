@@ -33,7 +33,7 @@ export interface ConversationTurn {
   toolName?: string;
   toolCallId?: string;
   tokenCount?: number;
-  importance: number;     // 0-1, computed from content analysis
+  importance: number; // 0-1, computed from content analysis
   createdAt: string;
 }
 
@@ -43,7 +43,7 @@ export interface ConversationSession {
   agentId?: string;
   userId?: string;
   goal?: string;
-  summary?: string;       // LLM-generated summary of the session
+  summary?: string; // LLM-generated summary of the session
   turnCount: number;
   totalTokens: number;
   startedAt: string;
@@ -64,7 +64,7 @@ export interface ConversationSearchOptions {
   userId?: string;
   limit?: number;
   minImportance?: number;
-  since?: string;          // ISO date string
+  since?: string; // ISO date string
   includeSummaries?: boolean;
 }
 
@@ -152,11 +152,19 @@ export class ConversationStore {
       : '.';
     if (dir) {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
-      try { chmodSync(dir, 0o700); } catch { /* best-effort */ }
+      try {
+        chmodSync(dir, 0o700);
+      } catch {
+        /* best-effort */
+      }
     }
 
     this.db = new BetterSqlite3(this.config.dbPath!);
-    try { chmodSync(this.config.dbPath!, 0o600); } catch { /* best-effort */ }
+    try {
+      chmodSync(this.config.dbPath!, 0o600);
+    } catch {
+      /* best-effort */
+    }
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('synchronous = NORMAL');
 
@@ -249,20 +257,16 @@ export class ConversationStore {
       VALUES (@id, @sessionId, @role, @content, @toolName, @toolCallId, @tokenCount, @importance, @createdAt)
     `);
 
-    this.stmtGetSession = d.prepare(
-      'SELECT * FROM conversation_sessions WHERE id = ?'
-    );
+    this.stmtGetSession = d.prepare('SELECT * FROM conversation_sessions WHERE id = ?');
 
     this.stmtGetTurns = d.prepare(
-      'SELECT * FROM conversation_turns WHERE session_id = ? ORDER BY created_at ASC'
+      'SELECT * FROM conversation_turns WHERE session_id = ? ORDER BY created_at ASC',
     );
 
-    this.stmtUpdateSummary = d.prepare(
-      'UPDATE conversation_sessions SET summary = ? WHERE id = ?'
-    );
+    this.stmtUpdateSummary = d.prepare('UPDATE conversation_sessions SET summary = ? WHERE id = ?');
 
     this.stmtEndSession = d.prepare(
-      'UPDATE conversation_sessions SET ended_at = ?, turn_count = ?, total_tokens = ? WHERE id = ?'
+      'UPDATE conversation_sessions SET ended_at = ?, turn_count = ?, total_tokens = ? WHERE id = ?',
     );
 
     this.stmtFtsSearch = d.prepare(`
@@ -345,7 +349,10 @@ export class ConversationStore {
   async endSession(sessionId: string): Promise<void> {
     await this.init();
     const turns = this.stmtGetTurns.all<SqliteRow>(sessionId);
-    const totalTokens = turns.reduce((sum: number, t: SqliteRow) => sum + ((t.token_count as number) ?? 0), 0);
+    const totalTokens = turns.reduce(
+      (sum: number, t: SqliteRow) => sum + ((t.token_count as number) ?? 0),
+      0,
+    );
     this.stmtEndSession.run(new Date().toISOString(), turns.length, totalTokens, sessionId);
   }
 
@@ -364,7 +371,7 @@ export class ConversationStore {
   async getRecentSessions(projectId: string, limit = 20): Promise<ConversationSession[]> {
     await this.init();
     const rows = this.stmtRecentSessions.all<SqliteRow>(projectId, limit);
-    return rows.map(r => this.rowToSession(r));
+    return rows.map((r) => this.rowToSession(r));
   }
 
   // --------------------------------------------------------------------------
@@ -417,7 +424,7 @@ export class ConversationStore {
   async getTurns(sessionId: string): Promise<ConversationTurn[]> {
     await this.init();
     const rows = this.stmtGetTurns.all<SqliteRow>(sessionId);
-    return rows.map(r => this.rowToTurn(r));
+    return rows.map((r) => this.rowToTurn(r));
   }
 
   // --------------------------------------------------------------------------
@@ -437,15 +444,23 @@ export class ConversationStore {
     const limit = options.limit ?? 20;
 
     try {
-      const rows = this.stmtFtsSearch.all<SqliteRow & {
-        project_id: string; goal: string | null; summary: string | null; user_id: string | null;
-      }>(ftsQuery, options.projectId, limit * 3); // Fetch more to group by session
+      const rows = this.stmtFtsSearch.all<
+        SqliteRow & {
+          project_id: string;
+          goal: string | null;
+          summary: string | null;
+          user_id: string | null;
+        }
+      >(ftsQuery, options.projectId, limit * 3); // Fetch more to group by session
 
       // Group by session
-      const sessionMap = new Map<string, {
-        session: ConversationSession;
-        turns: ConversationTurn[];
-      }>();
+      const sessionMap = new Map<
+        string,
+        {
+          session: ConversationSession;
+          turns: ConversationTurn[];
+        }
+      >();
 
       for (const row of rows) {
         const sessionId = row.session_id as string;
@@ -497,7 +512,9 @@ export class ConversationStore {
       results.sort((a, b) => b.relevanceScore - a.relevanceScore);
       return results.slice(0, limit);
     } catch (err) {
-      getGlobalLogger().warn('ConversationStore', 'FTS search failed, falling back', { error: String(err) });
+      getGlobalLogger().warn('ConversationStore', 'FTS search failed, falling back', {
+        error: String(err),
+      });
       return [];
     }
   }
@@ -537,7 +554,7 @@ export class ConversationStore {
   async prune(projectId: string): Promise<number> {
     await this.init();
     const before = this.db!.prepare(
-      'SELECT COUNT(*) as cnt FROM conversation_sessions WHERE project_id = ?'
+      'SELECT COUNT(*) as cnt FROM conversation_sessions WHERE project_id = ?',
     ).get<{ cnt: number }>(projectId);
     const currentCount = before?.cnt ?? 0;
 
@@ -546,7 +563,7 @@ export class ConversationStore {
     this.stmtDeleteOldSessions.run(projectId, this.config.maxSessions!);
 
     const after = this.db!.prepare(
-      'SELECT COUNT(*) as cnt FROM conversation_sessions WHERE project_id = ?'
+      'SELECT COUNT(*) as cnt FROM conversation_sessions WHERE project_id = ?',
     ).get<{ cnt: number }>(projectId);
     return currentCount - (after?.cnt ?? 0);
   }
@@ -563,8 +580,8 @@ export class ConversationStore {
     let score = 0.5; // baseline
 
     // Role-based boost
-    if (role === 'user') score += 0.1;          // User messages are intent signals
-    if (role === 'system') score += 0.2;         // System messages are structural
+    if (role === 'user') score += 0.1; // User messages are intent signals
+    if (role === 'system') score += 0.2; // System messages are structural
 
     // Content-based signals
     const lower = content.toLowerCase();
@@ -618,11 +635,11 @@ export class ConversationStore {
     const cleaned = input.replace(/[^\w\s\-_.一-鿿]/g, ' ').trim();
     if (!cleaned) return '""';
     // Allow single-char tokens for CJK and meaningful short words (ts, go, etc.)
-    const words = cleaned.split(/\s+/).filter(w => w.length >= 1);
+    const words = cleaned.split(/\s+/).filter((w) => w.length >= 1);
     if (words.length === 0) return '""';
     if (words.length === 1) return `"${words[0]}"*`;
     // Last word gets prefix matching for typeahead-style search
-    const terms = words.slice(0, -1).map(w => `"${w}"`);
+    const terms = words.slice(0, -1).map((w) => `"${w}"`);
     terms.push(`"${words[words.length - 1]}"*`);
     return terms.join(' ');
   }
@@ -630,8 +647,16 @@ export class ConversationStore {
   private rowToSession(row: SqliteRow): ConversationSession {
     let tags: string[] = [];
     let metadata: Record<string, unknown> = {};
-    try { tags = JSON.parse((row.tags as string) || '[]'); } catch { /* ok */ }
-    try { metadata = JSON.parse((row.metadata as string) || '{}'); } catch { /* ok */ }
+    try {
+      tags = JSON.parse((row.tags as string) || '[]');
+    } catch {
+      /* ok */
+    }
+    try {
+      metadata = JSON.parse((row.metadata as string) || '{}');
+    } catch {
+      /* ok */
+    }
 
     return {
       id: row.id as string,

@@ -112,7 +112,14 @@ export class OIDCAuthPlugin implements AuthPlugin {
   private jwksCache: CachedJWKS | null = null;
   private jwksFetchPromise: Promise<JWKWithKid[]> | null = null;
 
-  private static readonly SUPPORTED_ALGORITHMS = ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'];
+  private static readonly SUPPORTED_ALGORITHMS = [
+    'RS256',
+    'RS384',
+    'RS512',
+    'ES256',
+    'ES384',
+    'ES512',
+  ];
 
   constructor(config: Partial<OIDCPluginConfig> & { issuer: string; clientId: string }) {
     this.config = {
@@ -157,7 +164,7 @@ export class OIDCAuthPlugin implements AuthPlugin {
 
     if (!iss || !aud || !exp || !sub) {
       audit.logAuthFailure('OIDCAuthPlugin', 'JWT missing required claims (iss, aud, exp, sub)', {
-        missingClaims: ['iss', 'aud', 'exp', 'sub'].filter(c => !payload[c]),
+        missingClaims: ['iss', 'aud', 'exp', 'sub'].filter((c) => !payload[c]),
       });
       return null;
     }
@@ -247,14 +254,12 @@ export class OIDCAuthPlugin implements AuthPlugin {
     // Map roles from claims
     const roleClaimName = this.config.roleClaim ?? 'roles';
     const rawRoles = payload[roleClaimName] as string | string[] | undefined;
-    const roles = rawRoles
-      ? (Array.isArray(rawRoles) ? rawRoles : [rawRoles])
-      : [];
+    const roles = rawRoles ? (Array.isArray(rawRoles) ? rawRoles : [rawRoles]) : [];
 
     let role: AuthRole = 'viewer'; // default
-    if (roles.some(r => this.config.adminRoles?.includes(r))) {
+    if (roles.some((r) => this.config.adminRoles?.includes(r))) {
       role = 'admin';
-    } else if (roles.some(r => this.config.operatorRoles?.includes(r))) {
+    } else if (roles.some((r) => this.config.operatorRoles?.includes(r))) {
       role = 'operator';
     }
 
@@ -270,7 +275,10 @@ export class OIDCAuthPlugin implements AuthPlugin {
 
     return {
       userId: payload.sub as string,
-      username: (payload.email as string) || (payload.preferred_username as string) || (payload.sub as string),
+      username:
+        (payload.email as string) ||
+        (payload.preferred_username as string) ||
+        (payload.sub as string),
       role,
       tenantId,
       claims: payload,
@@ -293,13 +301,13 @@ export class OIDCAuthPlugin implements AuthPlugin {
     if (this.jwksCache) {
       const age = Date.now() - this.jwksCache.fetchedAt;
       if (age < (this.config.jwksCacheTtlMs ?? 3600_000)) {
-        return this.jwksCache.keys.find(k => k.kid === kid);
+        return this.jwksCache.keys.find((k) => k.kid === kid);
       }
     }
 
     // Fetch fresh JWKS
     const keys = await this.fetchJWKS();
-    return keys.find(k => k.kid === kid);
+    return keys.find((k) => k.kid === kid);
   }
 
   private async fetchJWKS(): Promise<JWKWithKid[]> {
@@ -330,54 +338,70 @@ export class OIDCAuthPlugin implements AuthPlugin {
       const jwksUri = `${issuer}/.well-known/openid-configuration`;
 
       // First fetch OIDC discovery document to get jwks_uri
-      https.get(jwksUri, { timeout: 10000 }, (discoveryRes) => {
-        let body = '';
-        discoveryRes.on('data', (chunk: string) => { body += chunk; });
-        discoveryRes.on('end', () => {
-          if (discoveryRes.statusCode !== 200) {
-            // Fallback: try common JWKS URI
-            this.fetchJWKSFromUrl(`${issuer}/.well-known/jwks.json`).then(resolve).catch(reject);
-            return;
-          }
-          try {
-            const discovery = JSON.parse(body);
-            const jwksUrl = discovery.jwks_uri;
-            if (!jwksUrl) {
-              reject(new Error('No jwks_uri in OIDC discovery document'));
+      https
+        .get(jwksUri, { timeout: 10000 }, (discoveryRes) => {
+          let body = '';
+          discoveryRes.on('data', (chunk: string) => {
+            body += chunk;
+          });
+          discoveryRes.on('end', () => {
+            if (discoveryRes.statusCode !== 200) {
+              // Fallback: try common JWKS URI
+              this.fetchJWKSFromUrl(`${issuer}/.well-known/jwks.json`).then(resolve).catch(reject);
               return;
             }
-            this.fetchJWKSFromUrl(jwksUrl).then(resolve).catch(reject);
-          } catch {
-            reject(new Error('Failed to parse OIDC discovery document'));
-          }
+            try {
+              const discovery = JSON.parse(body);
+              const jwksUrl = discovery.jwks_uri;
+              if (!jwksUrl) {
+                reject(new Error('No jwks_uri in OIDC discovery document'));
+                return;
+              }
+              this.fetchJWKSFromUrl(jwksUrl).then(resolve).catch(reject);
+            } catch {
+              reject(new Error('Failed to parse OIDC discovery document'));
+            }
+          });
+        })
+        .on('error', reject)
+        .on('timeout', function (this: import('http').ClientRequest) {
+          this.destroy();
+          reject(new Error('OIDC discovery timeout'));
         });
-      }).on('error', reject).on('timeout', function (this: import('http').ClientRequest) { this.destroy(); reject(new Error('OIDC discovery timeout')); });
     });
   }
 
   private fetchJWKSFromUrl(url: string): Promise<JWKWithKid[]> {
     return new Promise((resolve, reject) => {
-      https.get(url, { timeout: 10000 }, (res: import('http').IncomingMessage) => {
-        let body = '';
-        res.on('data', (chunk: string) => { body += chunk; });
-        res.on('end', () => {
-          if (res.statusCode !== 200) {
-            reject(new Error(`JWKS fetch failed: ${res.statusCode}`));
-            return;
-          }
-          try {
-            const parsed = JSON.parse(body);
-            const keys = parsed.keys as JWKWithKid[];
-            if (!keys || !Array.isArray(keys)) {
-              reject(new Error('Invalid JWKS response'));
+      https
+        .get(url, { timeout: 10000 }, (res: import('http').IncomingMessage) => {
+          let body = '';
+          res.on('data', (chunk: string) => {
+            body += chunk;
+          });
+          res.on('end', () => {
+            if (res.statusCode !== 200) {
+              reject(new Error(`JWKS fetch failed: ${res.statusCode}`));
               return;
             }
-            resolve(keys);
-          } catch {
-            reject(new Error('Failed to parse JWKS response'));
-          }
+            try {
+              const parsed = JSON.parse(body);
+              const keys = parsed.keys as JWKWithKid[];
+              if (!keys || !Array.isArray(keys)) {
+                reject(new Error('Invalid JWKS response'));
+                return;
+              }
+              resolve(keys);
+            } catch {
+              reject(new Error('Failed to parse JWKS response'));
+            }
+          });
+        })
+        .on('error', reject)
+        .on('timeout', function (this: import('http').ClientRequest) {
+          this.destroy();
+          reject(new Error('JWKS fetch timeout'));
         });
-      }).on('error', reject).on('timeout', function (this: import('http').ClientRequest) { this.destroy(); reject(new Error('JWKS fetch timeout')); });
     });
   }
 
@@ -385,12 +409,7 @@ export class OIDCAuthPlugin implements AuthPlugin {
    * Verify JWT signature using the JWK.
    * Supports RS256, RS384, RS512, ES256, ES384, ES512.
    */
-  private verifySignature(
-    alg: string,
-    data: string,
-    signature: Buffer,
-    jwk: JWKWithKid,
-  ): boolean {
+  private verifySignature(alg: string, data: string, signature: Buffer, jwk: JWKWithKid): boolean {
     // Import the JWK as a public key
     const keyObject = crypto.createPublicKey({
       key: jwk as unknown as JsonWebKey,
@@ -403,23 +422,25 @@ export class OIDCAuthPlugin implements AuthPlugin {
       throw new Error(`Unsupported algorithm: ${alg}`);
     }
 
-    return crypto.verify(
-      cryptoAlg,
-      Buffer.from(data, 'utf-8'),
-      keyObject,
-      signature,
-    );
+    return crypto.verify(cryptoAlg, Buffer.from(data, 'utf-8'), keyObject, signature);
   }
 
   private jwtAlgToCrypto(alg: string): string | null {
     switch (alg) {
-      case 'RS256': return 'sha256';
-      case 'RS384': return 'sha384';
-      case 'RS512': return 'sha512';
-      case 'ES256': return 'sha256';
-      case 'ES384': return 'sha384';
-      case 'ES512': return 'sha512';
-      default: return null;
+      case 'RS256':
+        return 'sha256';
+      case 'RS384':
+        return 'sha384';
+      case 'RS512':
+        return 'sha512';
+      case 'ES256':
+        return 'sha256';
+      case 'ES384':
+        return 'sha384';
+      case 'ES512':
+        return 'sha512';
+      default:
+        return null;
     }
   }
 
@@ -478,7 +499,9 @@ export function createOIDCPluginFromEnv(): OIDCAuthPlugin | null {
     issuer,
     clientId,
     roleClaim: process.env.OIDC_ROLE_CLAIM ?? 'roles',
-    adminRoles: (process.env.OIDC_ADMIN_ROLES?.split(',') ?? ['admin']).map(s => s.trim()),
-    operatorRoles: (process.env.OIDC_OPERATOR_ROLES?.split(',') ?? ['operator', 'developer']).map(s => s.trim()),
+    adminRoles: (process.env.OIDC_ADMIN_ROLES?.split(',') ?? ['admin']).map((s) => s.trim()),
+    operatorRoles: (process.env.OIDC_OPERATOR_ROLES?.split(',') ?? ['operator', 'developer']).map(
+      (s) => s.trim(),
+    ),
   });
 }

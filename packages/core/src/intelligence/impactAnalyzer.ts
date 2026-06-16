@@ -78,13 +78,13 @@ export class ImpactAnalyzer {
     const indirect = [...indirectSet];
 
     // Find affected tests
-    const affectedTests = [...direct, ...indirect].filter(f =>
-      f.includes('.test.') || f.includes('.spec.') || f.includes('__tests__')
+    const affectedTests = [...direct, ...indirect].filter(
+      (f) => f.includes('.test.') || f.includes('.spec.') || f.includes('__tests__'),
     );
 
     // Find affected API endpoints
-    const affectedApis = [...direct, ...indirect].filter(f =>
-      f.includes('routes') || f.includes('endpoint') || f.includes('controller')
+    const affectedApis = [...direct, ...indirect].filter(
+      (f) => f.includes('routes') || f.includes('endpoint') || f.includes('controller'),
     );
 
     // Determine risk level
@@ -96,7 +96,14 @@ export class ImpactAnalyzer {
     else riskLevel = 'critical';
 
     // Generate summary
-    const summary = this.generateSummary(filePath, direct, indirect, affectedTests, affectedApis, riskLevel);
+    const summary = this.generateSummary(
+      filePath,
+      direct,
+      indirect,
+      affectedTests,
+      affectedApis,
+      riskLevel,
+    );
 
     return {
       targetFile: filePath,
@@ -158,7 +165,9 @@ export class ImpactAnalyzer {
           this.scanFile(fullPath);
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   private scanFile(filePath: string): void {
@@ -186,7 +195,9 @@ export class ImpactAnalyzer {
           depNode.importedBy.push(filePath);
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   private extractImports(content: string): string[] {
@@ -211,7 +222,7 @@ export class ImpactAnalyzer {
     indirect: string[],
     tests: string[],
     apis: string[],
-    risk: ImpactAnalysis['riskLevel']
+    risk: ImpactAnalysis['riskLevel'],
   ): string {
     const lines: string[] = [];
     lines.push(`变更影响分析: ${file}`);

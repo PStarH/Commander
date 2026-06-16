@@ -2,9 +2,8 @@ import type { ExecutionExperience } from '../runtime/types';
 
 export function generateReflection(exp: ExecutionExperience): string {
   if (exp.success) {
-    const lessons = exp.lessons.length > 0
-      ? exp.lessons.join('; ')
-      : 'No specific lessons recorded.';
+    const lessons =
+      exp.lessons.length > 0 ? exp.lessons.join('; ') : 'No specific lessons recorded.';
     return [
       `[Reflection: SUCCESS]`,
       `Task: ${exp.taskType} (${exp.strategyUsed})`,

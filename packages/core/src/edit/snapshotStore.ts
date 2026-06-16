@@ -113,7 +113,10 @@ export class SnapshotStore {
    * Validate a hashline edit against the current file state.
    * Returns { valid, currentHash, message }.
    */
-  validateEdit(filePath: string, expectedHash: string): {
+  validateEdit(
+    filePath: string,
+    expectedHash: string,
+  ): {
     valid: boolean;
     currentHash: string | null;
     message?: string;

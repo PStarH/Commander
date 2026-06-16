@@ -5,8 +5,13 @@
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { getGlobalLogger } from '../logging';
 import type {
-  EpisodicMemoryItem, MemoryWriteOptions, MemorySearchQuery,
-  MemorySearchResult, MemoryManageOptions, MemoryStats, MemoryStore,
+  EpisodicMemoryItem,
+  MemoryWriteOptions,
+  MemorySearchQuery,
+  MemorySearchResult,
+  MemoryManageOptions,
+  MemoryStats,
+  MemoryStore,
 } from '../memory';
 import type { MemoryKind, MemoryDuration } from '../memory';
 import { BM25Scorer } from './ftsScorer';
@@ -70,23 +75,36 @@ export class JsonMemoryStore implements MemoryStore {
     const id = `memory-${this.nextId++}`;
 
     const kindPriority: Record<MemoryKind, number> = {
-      DECISION: 80, ISSUE: 70, LESSON: 90, SUMMARY: 50,
+      DECISION: 80,
+      ISSUE: 70,
+      LESSON: 90,
+      SUMMARY: 50,
     };
-    let priority = options.priority ?? (kindPriority[options.kind] ?? 50);
+    let priority = options.priority ?? kindPriority[options.kind] ?? 50;
     if (options.missionId) priority += 5;
     if (options.agentId) priority += 5;
     if (options.evidenceRefs?.length) priority += Math.min(options.evidenceRefs.length * 5, 15);
     priority = Math.min(priority, 100);
 
     const item: EpisodicMemoryItem = {
-      id, projectId: options.projectId, missionId: options.missionId,
-      agentId: options.agentId, kind: options.kind,
+      id,
+      projectId: options.projectId,
+      missionId: options.missionId,
+      agentId: options.agentId,
+      kind: options.kind,
       duration: options.duration ?? 'EPISODIC',
-      title: options.title, content: options.content, tags: options.tags ?? [],
-      priority, createdAt: now, lastAccessedAt: now,
-      expiresAt: (options.duration ?? 'EPISODIC') === 'EPISODIC'
-        ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() : undefined,
-      evidenceRefs: options.evidenceRefs, confidence: options.confidence ?? 0.8,
+      title: options.title,
+      content: options.content,
+      tags: options.tags ?? [],
+      priority,
+      createdAt: now,
+      lastAccessedAt: now,
+      expiresAt:
+        (options.duration ?? 'EPISODIC') === 'EPISODIC'
+          ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+          : undefined,
+      evidenceRefs: options.evidenceRefs,
+      confidence: options.confidence ?? 0.8,
     };
 
     this.items.set(id, item);
@@ -101,22 +119,37 @@ export class JsonMemoryStore implements MemoryStore {
     for (const item of items) {
       const now = new Date().toISOString();
       const id = `memory-${this.nextId++}`;
-      const kindPriority: Record<MemoryKind, number> = { DECISION: 80, ISSUE: 70, LESSON: 90, SUMMARY: 50 };
-      let priority = item.priority ?? (kindPriority[item.kind] ?? 50);
+      const kindPriority: Record<MemoryKind, number> = {
+        DECISION: 80,
+        ISSUE: 70,
+        LESSON: 90,
+        SUMMARY: 50,
+      };
+      let priority = item.priority ?? kindPriority[item.kind] ?? 50;
       if (item.missionId) priority += 5;
       if (item.agentId) priority += 5;
       if (item.evidenceRefs?.length) priority += Math.min(item.evidenceRefs.length * 5, 15);
       priority = Math.min(priority, 100);
 
       const entry: EpisodicMemoryItem = {
-        id, projectId: item.projectId, missionId: item.missionId,
-        agentId: item.agentId, kind: item.kind,
+        id,
+        projectId: item.projectId,
+        missionId: item.missionId,
+        agentId: item.agentId,
+        kind: item.kind,
         duration: item.duration ?? 'EPISODIC',
-        title: item.title, content: item.content, tags: item.tags ?? [],
-        priority, createdAt: now, lastAccessedAt: now,
-        expiresAt: (item.duration ?? 'EPISODIC') === 'EPISODIC'
-          ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() : undefined,
-        evidenceRefs: item.evidenceRefs, confidence: item.confidence ?? 0.8,
+        title: item.title,
+        content: item.content,
+        tags: item.tags ?? [],
+        priority,
+        createdAt: now,
+        lastAccessedAt: now,
+        expiresAt:
+          (item.duration ?? 'EPISODIC') === 'EPISODIC'
+            ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+            : undefined,
+        evidenceRefs: item.evidenceRefs,
+        confidence: item.confidence ?? 0.8,
       };
       this.items.set(id, entry);
       this.indexItem(entry);
@@ -130,13 +163,20 @@ export class JsonMemoryStore implements MemoryStore {
   async update(options: MemoryManageOptions): Promise<EpisodicMemoryItem | null> {
     const item = this.items.get(options.id);
     if (!item || item.projectId !== options.projectId) return null;
-    if (options.delete) { this.deindexItem(options.id); this.items.delete(options.id); this.dirty = true; await this.persist(); return null; }
+    if (options.delete) {
+      this.deindexItem(options.id);
+      this.items.delete(options.id);
+      this.dirty = true;
+      await this.persist();
+      return null;
+    }
     if (options.updates) {
       this.deindexItem(options.id);
       Object.assign(item, options.updates);
       item.lastAccessedAt = new Date().toISOString();
       this.indexItem(item);
-      this.dirty = true; await this.persist();
+      this.dirty = true;
+      await this.persist();
     }
     return item;
   }
@@ -145,7 +185,9 @@ export class JsonMemoryStore implements MemoryStore {
     const item = this.items.get(id);
     if (!item || item.projectId !== projectId) return false;
     this.deindexItem(id);
-    this.items.delete(id); this.dirty = true; await this.persist();
+    this.items.delete(id);
+    this.dirty = true;
+    await this.persist();
     return true;
   }
 
@@ -154,10 +196,14 @@ export class JsonMemoryStore implements MemoryStore {
     for (const [id, item] of this.items) {
       if (item.projectId === projectId && item.missionId === missionId) {
         this.deindexItem(id);
-        this.items.delete(id); count++;
+        this.items.delete(id);
+        count++;
       }
     }
-    if (count > 0) { this.dirty = true; await this.persist(); }
+    if (count > 0) {
+      this.dirty = true;
+      await this.persist();
+    }
     return count;
   }
 
@@ -167,10 +213,14 @@ export class JsonMemoryStore implements MemoryStore {
     for (const [id, item] of this.items) {
       if (item.projectId === projectId && item.expiresAt && new Date(item.expiresAt) < now) {
         this.deindexItem(id);
-        this.items.delete(id); count++;
+        this.items.delete(id);
+        count++;
       }
     }
-    if (count > 0) { this.dirty = true; await this.persist(); }
+    if (count > 0) {
+      this.dirty = true;
+      await this.persist();
+    }
     return count;
   }
 
@@ -188,7 +238,9 @@ export class JsonMemoryStore implements MemoryStore {
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;
       this.persist().catch((err) => {
-        getGlobalLogger().warn('JsonMemoryStore', 'Deferred persist failed', { error: (err as Error)?.message });
+        getGlobalLogger().warn('JsonMemoryStore', 'Deferred persist failed', {
+          error: (err as Error)?.message,
+        });
       });
     }, 2000);
     this.persistTimer.unref();
@@ -200,7 +252,7 @@ export class JsonMemoryStore implements MemoryStore {
     if (query.query) {
       if (this.indexDirty) this.rebuildIndex();
       const bm25Results = this.bm25.score(query.query, this.items.size);
-      candidateIds = new Set(bm25Results.map(r => r.id));
+      candidateIds = new Set(bm25Results.map((r) => r.id));
     }
 
     // Single-pass filter: combine all conditions to avoid intermediate array allocations
@@ -214,10 +266,15 @@ export class JsonMemoryStore implements MemoryStore {
       if (query.kind && item.kind !== query.kind) continue;
       if (query.missionId && item.missionId !== query.missionId) continue;
       if (query.agentId && item.agentId !== query.agentId) continue;
-      if (hasTags && !query.tags!.some(tag => item.tags.includes(tag))) continue;
+      if (hasTags && !query.tags!.some((tag) => item.tags.includes(tag))) continue;
       if (query.minPriority !== undefined && item.priority < query.minPriority) continue;
       if (query.minConfidence !== undefined && item.confidence < query.minConfidence) continue;
-      if (lowerQuery && !item.title.toLowerCase().includes(lowerQuery) && !item.content.toLowerCase().includes(lowerQuery)) continue;
+      if (
+        lowerQuery &&
+        !item.title.toLowerCase().includes(lowerQuery) &&
+        !item.content.toLowerCase().includes(lowerQuery)
+      )
+        continue;
       results.push(item);
     }
 
@@ -262,16 +319,22 @@ export class JsonMemoryStore implements MemoryStore {
     this.tokenCache.delete(id);
   }
 
-  async searchSemantic(query: string, projectId: string, limit = 10): Promise<EpisodicMemoryItem[]> {
+  async searchSemantic(
+    query: string,
+    projectId: string,
+    limit = 10,
+  ): Promise<EpisodicMemoryItem[]> {
     // Lazy rebuild index if dirty
     if (this.indexDirty) this.rebuildIndex();
 
-    const projectItems = Array.from(this.items.values()).filter(item => item.projectId === projectId);
+    const projectItems = Array.from(this.items.values()).filter(
+      (item) => item.projectId === projectId,
+    );
     if (projectItems.length === 0) return [];
 
     // Use BM25 for high-quality full-text search
     const bm25Results = this.bm25.score(query, projectItems.length);
-    const bm25ScoreMap = new Map(bm25Results.map(r => [r.id, r.score]));
+    const bm25ScoreMap = new Map(bm25Results.map((r) => [r.id, r.score]));
 
     // Score project items with BM25 + priority + confidence boost
     const scored: Array<{ item: EpisodicMemoryItem; score: number }> = [];
@@ -291,34 +354,45 @@ export class JsonMemoryStore implements MemoryStore {
       return b.item.createdAt < a.item.createdAt ? -1 : b.item.createdAt > a.item.createdAt ? 1 : 0;
     });
 
-    return scored.slice(0, limit).map(s => {
+    return scored.slice(0, limit).map((s) => {
       s.item.lastAccessedAt = new Date().toISOString();
       return s.item;
     });
   }
 
   async getStats(projectId: string): Promise<MemoryStats> {
-    const projectItems = Array.from(this.items.values()).filter(item => item.projectId === projectId);
+    const projectItems = Array.from(this.items.values()).filter(
+      (item) => item.projectId === projectId,
+    );
     const byKind: Record<MemoryKind, number> = { DECISION: 0, ISSUE: 0, LESSON: 0, SUMMARY: 0 };
     const byDuration: Record<MemoryDuration, number> = { EPISODIC: 0, LONG_TERM: 0 };
     const tagCounts = new Map<string, number>();
-    let totalPriority = 0, totalConfidence = 0;
+    let totalPriority = 0,
+      totalConfidence = 0;
     let oldestItem: string | undefined, newestItem: string | undefined;
 
     for (const item of projectItems) {
-      byKind[item.kind]++; byDuration[item.duration]++;
-      totalPriority += item.priority; totalConfidence += item.confidence;
+      byKind[item.kind]++;
+      byDuration[item.duration]++;
+      totalPriority += item.priority;
+      totalConfidence += item.confidence;
       for (const tag of item.tags) tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
       if (!oldestItem || item.createdAt < oldestItem) oldestItem = item.createdAt;
       if (!newestItem || item.createdAt > newestItem) newestItem = item.createdAt;
     }
 
     return {
-      totalItems: projectItems.length, byKind, byDuration,
+      totalItems: projectItems.length,
+      byKind,
+      byDuration,
       avgPriority: projectItems.length > 0 ? totalPriority / projectItems.length : 0,
       avgConfidence: projectItems.length > 0 ? totalConfidence / projectItems.length : 0,
-      topTags: Array.from(tagCounts.entries()).map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count).slice(0, 10),
-      oldestItem, newestItem,
+      topTags: Array.from(tagCounts.entries())
+        .map(([tag, count]) => ({ tag, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10),
+      oldestItem,
+      newestItem,
     };
   }
 

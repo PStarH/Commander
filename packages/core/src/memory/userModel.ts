@@ -81,18 +81,18 @@ export interface UserPreferences {
 
 export interface ExpertiseLevel {
   domain: string;
-  level: number;         // 0-1 scale (0=beginner, 1=expert)
-  confidence: number;    // How confident we are in this assessment
+  level: number; // 0-1 scale (0=beginner, 1=expert)
+  confidence: number; // How confident we are in this assessment
   evidenceCount: number; // Number of observations supporting this
   lastAssessed: string;
-  signals: string[];     // What signals led to this assessment
+  signals: string[]; // What signals led to this assessment
 }
 
 export interface CommunicationStyle {
-  formality: number;     // 0=casual, 1=formal
-  verbosity: number;     // 0=concise, 1=verbose
-  technicality: number;  // 0=layman, 1=expert
-  emojiUsage: number;    // 0=never, 1=frequent
+  formality: number; // 0=casual, 1=formal
+  verbosity: number; // 0=concise, 1=verbose
+  technicality: number; // 0=layman, 1=expert
+  emojiUsage: number; // 0=never, 1=frequent
   questionStyle: 'direct' | 'exploratory' | 'contextual';
   confidence: number;
 }
@@ -208,13 +208,16 @@ export class UserModelManager {
    * Record an interaction and update the user model.
    * This is called after each conversation turn to incrementally build the model.
    */
-  recordInteraction(userId: string, params: {
-    message: string;
-    role: 'user' | 'assistant';
-    toolUsed?: string;
-    domain?: string;
-    feedback?: 'positive' | 'negative' | 'neutral';
-  }): void {
+  recordInteraction(
+    userId: string,
+    params: {
+      message: string;
+      role: 'user' | 'assistant';
+      toolUsed?: string;
+      domain?: string;
+      feedback?: 'positive' | 'negative' | 'neutral';
+    },
+  ): void {
     const profile = this.getProfile(userId);
     profile.interactionCount++;
     profile.updatedAt = new Date().toISOString();
@@ -239,20 +242,24 @@ export class UserModelManager {
     this.updateTopicInterests(profile, params.message);
 
     // Update model confidence (increases with interactions)
-    profile.modelConfidence = Math.min(1, 0.1 + (profile.interactionCount * 0.02));
+    profile.modelConfidence = Math.min(1, 0.1 + profile.interactionCount * 0.02);
   }
 
   /**
    * Add an explicit observation about the user.
    * Observations are the "dialectic" part — the agent records what it notices.
    */
-  addObservation(userId: string, observation: Omit<UserObservation, 'id' | 'firstObserved' | 'lastConfirmed'>): void {
+  addObservation(
+    userId: string,
+    observation: Omit<UserObservation, 'id' | 'firstObserved' | 'lastConfirmed'>,
+  ): void {
     const profile = this.getProfile(userId);
 
     // Check for duplicate observations
-    const existing = profile.observations.find(o =>
-      o.category === observation.category &&
-      o.content.toLowerCase() === observation.content.toLowerCase()
+    const existing = profile.observations.find(
+      (o) =>
+        o.category === observation.category &&
+        o.content.toLowerCase() === observation.content.toLowerCase(),
     );
 
     if (existing) {
@@ -303,7 +310,9 @@ export class UserModelManager {
       .sort((a, b) => b[1].level - a[1].level)
       .slice(0, 5);
     if (topExpertise.length > 0) {
-      parts.push(`- Expertise: ${topExpertise.map(([d, v]) => `${d} (${Math.round(v.level * 100)}%)`).join(', ')}`);
+      parts.push(
+        `- Expertise: ${topExpertise.map(([d, v]) => `${d} (${Math.round(v.level * 100)}%)`).join(', ')}`,
+      );
     }
 
     // Communication style
@@ -324,7 +333,7 @@ export class UserModelManager {
 
     // Key observations
     const keyObservations = profile.observations
-      .filter(o => o.confidence >= this.config.confidenceThreshold)
+      .filter((o) => o.confidence >= this.config.confidenceThreshold)
       .sort((a, b) => b.confidence - a.confidence)
       .slice(0, 3);
     if (keyObservations.length > 0) {
@@ -357,7 +366,11 @@ export class UserModelManager {
     // Formality detection
     const formalIndicators = /\b(please|kindly|would you|could you|thank you|regards)\b/i;
     const casualIndicators = /\b(hey|yo|gonna|wanna|gotta|btw|thx|lol|idk)\b/i;
-    const formalScore = formalIndicators.test(message) ? 1 : casualIndicators.test(message) ? 0 : 0.5;
+    const formalScore = formalIndicators.test(message)
+      ? 1
+      : casualIndicators.test(message)
+        ? 0
+        : 0.5;
     style.formality = this.runningAverage(style.formality, formalScore, n);
 
     // Verbosity detection
@@ -366,7 +379,8 @@ export class UserModelManager {
     style.verbosity = this.runningAverage(style.verbosity, verboseScore, n);
 
     // Technicality detection
-    const technicalTerms = /\b(async|await|closure|recursion|polymorphism|dependency injection|middleware|ORM|API|SDK|CI\/CD)\b/gi;
+    const technicalTerms =
+      /\b(async|await|closure|recursion|polymorphism|dependency injection|middleware|ORM|API|SDK|CI\/CD)\b/gi;
     const techMatches = (message.match(technicalTerms) || []).length;
     const techScore = Math.min(1, techMatches / 3);
     style.technicality = this.runningAverage(style.technicality, techScore, n);
@@ -376,7 +390,7 @@ export class UserModelManager {
     const emojiScore = Math.min(1, emojiCount / 3);
     style.emojiUsage = this.runningAverage(style.emojiUsage, emojiScore, n);
 
-    style.confidence = Math.min(1, 0.1 + (n * 0.03));
+    style.confidence = Math.min(1, 0.1 + n * 0.03);
   }
 
   private updateInteractionPatterns(profile: UserProfile, message: string): void {
@@ -458,7 +472,7 @@ export class UserModelManager {
     }
 
     exp.level = Math.max(0, Math.min(1, exp.level + adjustment));
-    exp.confidence = Math.min(1, 0.1 + (exp.evidenceCount * 0.05));
+    exp.confidence = Math.min(1, 0.1 + exp.evidenceCount * 0.05);
 
     // Keep only recent signals
     if (exp.signals.length > 20) {
@@ -578,16 +592,34 @@ export class UserModelManager {
 
   private deserializeProfile(data: Record<string, unknown>): UserProfile {
     const profile = data as unknown as UserProfile;
-    profile.expertise = new Map(Object.entries(data.expertise as Record<string, unknown>)) as Map<string, ExpertiseLevel>;
-    profile.topicInterests = new Map(Object.entries(data.topicInterests as Record<string, unknown>)) as Map<string, number>;
+    profile.expertise = new Map(Object.entries(data.expertise as Record<string, unknown>)) as Map<
+      string,
+      ExpertiseLevel
+    >;
+    profile.topicInterests = new Map(
+      Object.entries(data.topicInterests as Record<string, unknown>),
+    ) as Map<string, number>;
     profile.toolPatterns = {
-      ...data.toolPatterns as ToolUsagePatterns,
-      mostUsedTools: new Map(Object.entries((data.toolPatterns as Record<string, unknown>)?.mostUsedTools as Record<string, unknown> ?? {})) as Map<string, number>,
-      avoidedTools: new Set((data.toolPatterns as Record<string, unknown>)?.avoidedTools as string[] ?? []),
+      ...(data.toolPatterns as ToolUsagePatterns),
+      mostUsedTools: new Map(
+        Object.entries(
+          ((data.toolPatterns as Record<string, unknown>)?.mostUsedTools as Record<
+            string,
+            unknown
+          >) ?? {},
+        ),
+      ) as Map<string, number>,
+      avoidedTools: new Set(
+        ((data.toolPatterns as Record<string, unknown>)?.avoidedTools as string[]) ?? [],
+      ),
     };
     profile.preferences = {
-      ...data.preferences as UserPreferences,
-      custom: new Map(Object.entries((data.preferences as Record<string, unknown>)?.custom as Record<string, unknown> ?? {})) as Map<string, string>,
+      ...(data.preferences as UserPreferences),
+      custom: new Map(
+        Object.entries(
+          ((data.preferences as Record<string, unknown>)?.custom as Record<string, unknown>) ?? {},
+        ),
+      ) as Map<string, string>,
     };
     return profile;
   }

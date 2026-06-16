@@ -27,7 +27,9 @@ describe('W3C trace context propagation', () => {
     it('returns undefined for malformed headers (per spec: ignore, do not throw)', () => {
       expect(parseTraceparent('garbage')).toBeUndefined();
       expect(parseTraceparent('00-0af7-b7ad-01')).toBeUndefined();
-      expect(parseTraceparent('00-ZZZZ651916cd43dd8448eb211c80319c-b7ad6b7169203331-01')).toBeUndefined();
+      expect(
+        parseTraceparent('00-ZZZZ651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'),
+      ).toBeUndefined();
       expect(parseTraceparent('')).toBeUndefined();
       expect(parseTraceparent(null)).toBeUndefined();
       expect(parseTraceparent(undefined)).toBeUndefined();
@@ -61,13 +63,21 @@ describe('W3C trace context propagation', () => {
     });
 
     it('emits the 00- prefix and dash separators', () => {
-      const header = formatTraceparent('0af7651916cd43dd8448eb211c80319c', 'b7ad6b7169203331', true);
+      const header = formatTraceparent(
+        '0af7651916cd43dd8448eb211c80319c',
+        'b7ad6b7169203331',
+        true,
+      );
       expect(header).toBe('00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01');
     });
 
     it('throws TraceContextParseError for invalid input', () => {
-      expect(() => formatTraceparent('short', 'b7ad6b7169203331', true)).toThrow(TraceContextParseError);
-      expect(() => formatTraceparent('0af7651916cd43dd8448eb211c80319c', 'short', true)).toThrow(TraceContextParseError);
+      expect(() => formatTraceparent('short', 'b7ad6b7169203331', true)).toThrow(
+        TraceContextParseError,
+      );
+      expect(() => formatTraceparent('0af7651916cd43dd8448eb211c80319c', 'short', true)).toThrow(
+        TraceContextParseError,
+      );
     });
   });
 

@@ -9,12 +9,12 @@ import type { ModelTier } from './shared';
  */
 export interface ModelConfig {
   id: string;
-  provider: string;       // e.g. 'openai', 'anthropic', 'google'
+  provider: string; // e.g. 'openai', 'anthropic', 'google'
   tier: ModelTier;
-  costPer1KInput: number;   // USD per 1K input tokens
-  costPer1KOutput: number;  // USD per 1K output tokens
-  capabilities: string[];   // e.g. 'code', 'reasoning', 'creative'
-  contextWindow: number;    // max context tokens
+  costPer1KInput: number; // USD per 1K input tokens
+  costPer1KOutput: number; // USD per 1K output tokens
+  capabilities: string[]; // e.g. 'code', 'reasoning', 'creative'
+  contextWindow: number; // max context tokens
   /** Priority within tier (lower = preferred first) */
   priority: number;
   /** Whether the model/provider supports OpenAI-style json_object response_format. */

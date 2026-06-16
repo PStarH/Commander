@@ -13,7 +13,13 @@ function newStore(): IdempotencyStore {
   });
 }
 
-function runtimeKey(runId: string, actionId: string, toolName: string, args: Record<string, unknown>, externalSystem = 'agent'): string {
+function runtimeKey(
+  runId: string,
+  actionId: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  externalSystem = 'agent',
+): string {
   return generateIdempotencyKey({
     externalSystem,
     toolName,
@@ -104,6 +110,10 @@ describe('C2 — agentRuntime ↔ IdempotencyStore wiring', () => {
     const args = { path: '/tmp/u.txt' };
     const keyAgent = runtimeKey(runId, actionId, 'file_write', args, 'agent');
     const keyShell = runtimeKey(runId, actionId, 'file_write', args, 'shell');
-    assert.notStrictEqual(keyAgent, keyShell, 'externalSystem disambiguates tools touching different systems');
+    assert.notStrictEqual(
+      keyAgent,
+      keyShell,
+      'externalSystem disambiguates tools touching different systems',
+    );
   });
 });

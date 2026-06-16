@@ -76,30 +76,138 @@ interface StrategyDef {
 
 const STRATEGY_DEFS: Record<string, StrategyDef[]> = {
   relaxed: [
-    { strategy: 'observation_mask', baseIntensity: 0.3, reason: 'Baseline masking', goodFor: [], badFor: [] },
+    {
+      strategy: 'observation_mask',
+      baseIntensity: 0.3,
+      reason: 'Baseline masking',
+      goodFor: [],
+      badFor: [],
+    },
   ],
   moderate: [
-    { strategy: 'observation_mask', baseIntensity: 0.5, reason: 'Moderate masking', goodFor: [], badFor: [] },
-    { strategy: 'tool_output_truncate', baseIntensity: 0.3, reason: 'Truncate verbose outputs', goodFor: ['search', 'analysis'], badFor: [] },
-    { strategy: 'response_format', baseIntensity: 0.3, reason: 'Request concise responses', goodFor: ['structured'], badFor: ['creative'] },
+    {
+      strategy: 'observation_mask',
+      baseIntensity: 0.5,
+      reason: 'Moderate masking',
+      goodFor: [],
+      badFor: [],
+    },
+    {
+      strategy: 'tool_output_truncate',
+      baseIntensity: 0.3,
+      reason: 'Truncate verbose outputs',
+      goodFor: ['search', 'analysis'],
+      badFor: [],
+    },
+    {
+      strategy: 'response_format',
+      baseIntensity: 0.3,
+      reason: 'Request concise responses',
+      goodFor: ['structured'],
+      badFor: ['creative'],
+    },
   ],
   tight: [
-    { strategy: 'observation_mask', baseIntensity: 0.8, reason: 'Aggressive masking', goodFor: [], badFor: [] },
-    { strategy: 'context_compaction', baseIntensity: 0.5, reason: 'Compact conversation', goodFor: [], badFor: [] },
-    { strategy: 'tool_output_truncate', baseIntensity: 0.6, reason: 'Aggressive truncation', goodFor: ['search'], badFor: [] },
-    { strategy: 'response_format', baseIntensity: 0.6, reason: 'Force concise', goodFor: ['structured'], badFor: ['creative'] },
-    { strategy: 'verification_skip', baseIntensity: 0.5, reason: 'Skip LLM verification', goodFor: ['search'], badFor: ['code'] },
-    { strategy: 'prompt_compression', baseIntensity: 0.4, reason: 'Compress prompt', goodFor: [], badFor: [] },
+    {
+      strategy: 'observation_mask',
+      baseIntensity: 0.8,
+      reason: 'Aggressive masking',
+      goodFor: [],
+      badFor: [],
+    },
+    {
+      strategy: 'context_compaction',
+      baseIntensity: 0.5,
+      reason: 'Compact conversation',
+      goodFor: [],
+      badFor: [],
+    },
+    {
+      strategy: 'tool_output_truncate',
+      baseIntensity: 0.6,
+      reason: 'Aggressive truncation',
+      goodFor: ['search'],
+      badFor: [],
+    },
+    {
+      strategy: 'response_format',
+      baseIntensity: 0.6,
+      reason: 'Force concise',
+      goodFor: ['structured'],
+      badFor: ['creative'],
+    },
+    {
+      strategy: 'verification_skip',
+      baseIntensity: 0.5,
+      reason: 'Skip LLM verification',
+      goodFor: ['search'],
+      badFor: ['code'],
+    },
+    {
+      strategy: 'prompt_compression',
+      baseIntensity: 0.4,
+      reason: 'Compress prompt',
+      goodFor: [],
+      badFor: [],
+    },
   ],
   critical: [
-    { strategy: 'observation_mask', baseIntensity: 1.0, reason: 'Maximum masking', goodFor: [], badFor: [] },
-    { strategy: 'context_compaction', baseIntensity: 1.0, reason: 'Emergency compaction', goodFor: [], badFor: [] },
-    { strategy: 'tool_output_truncate', baseIntensity: 1.0, reason: 'Minimal output', goodFor: [], badFor: [] },
-    { strategy: 'response_format', baseIntensity: 1.0, reason: 'Maximally terse', goodFor: [], badFor: [] },
-    { strategy: 'verification_skip', baseIntensity: 1.0, reason: 'Skip all verification', goodFor: [], badFor: [] },
-    { strategy: 'prompt_compression', baseIntensity: 1.0, reason: 'Minimal prompt', goodFor: [], badFor: [] },
-    { strategy: 'speculative_skip', baseIntensity: 1.0, reason: 'No speculation', goodFor: [], badFor: [] },
-    { strategy: 'entropy_gating', baseIntensity: 1.0, reason: 'Skip optional tools', goodFor: [], badFor: [] },
+    {
+      strategy: 'observation_mask',
+      baseIntensity: 1.0,
+      reason: 'Maximum masking',
+      goodFor: [],
+      badFor: [],
+    },
+    {
+      strategy: 'context_compaction',
+      baseIntensity: 1.0,
+      reason: 'Emergency compaction',
+      goodFor: [],
+      badFor: [],
+    },
+    {
+      strategy: 'tool_output_truncate',
+      baseIntensity: 1.0,
+      reason: 'Minimal output',
+      goodFor: [],
+      badFor: [],
+    },
+    {
+      strategy: 'response_format',
+      baseIntensity: 1.0,
+      reason: 'Maximally terse',
+      goodFor: [],
+      badFor: [],
+    },
+    {
+      strategy: 'verification_skip',
+      baseIntensity: 1.0,
+      reason: 'Skip all verification',
+      goodFor: [],
+      badFor: [],
+    },
+    {
+      strategy: 'prompt_compression',
+      baseIntensity: 1.0,
+      reason: 'Minimal prompt',
+      goodFor: [],
+      badFor: [],
+    },
+    {
+      strategy: 'speculative_skip',
+      baseIntensity: 1.0,
+      reason: 'No speculation',
+      goodFor: [],
+      badFor: [],
+    },
+    {
+      strategy: 'entropy_gating',
+      baseIntensity: 1.0,
+      reason: 'Skip optional tools',
+      goodFor: [],
+      badFor: [],
+    },
   ],
 };
 
@@ -119,7 +227,10 @@ export class TokenGovernor {
   private readonly decayHalfLifeMs = 20 * 60 * 1000; // 20 minutes
 
   // Pre-bucketed strategy index for O(1) lookups
-  private strategyIndex: Map<string, Array<{ strategy: string; effective: boolean; timestamp: number }>> = new Map();
+  private strategyIndex: Map<
+    string,
+    Array<{ strategy: string; effective: boolean; timestamp: number }>
+  > = new Map();
 
   // Cache for recommendations (invalidated on reportUsage or setTaskCategory)
   private cachedPhase: string | null = null;
@@ -145,9 +256,8 @@ export class TokenGovernor {
 
   getState(): BudgetState {
     const remaining = Math.max(0, this.config.totalBudget - this.usedTokens);
-    const pressure = this.config.totalBudget > 0
-      ? Math.min(1, this.usedTokens / this.config.totalBudget)
-      : 1;
+    const pressure =
+      this.config.totalBudget > 0 ? Math.min(1, this.usedTokens / this.config.totalBudget) : 1;
 
     let phase: BudgetState['phase'];
     if (pressure < this.config.thresholds.relaxed) phase = 'relaxed';
@@ -155,7 +265,13 @@ export class TokenGovernor {
     else if (pressure < this.config.thresholds.tight) phase = 'tight';
     else phase = 'critical';
 
-    return { totalBudget: this.config.totalBudget, usedTokens: this.usedTokens, remainingTokens: remaining, pressure, phase };
+    return {
+      totalBudget: this.config.totalBudget,
+      usedTokens: this.usedTokens,
+      remainingTokens: remaining,
+      pressure,
+      phase,
+    };
   }
 
   reset(budget?: number): void {
@@ -188,7 +304,7 @@ export class TokenGovernor {
     }
 
     const defs = STRATEGY_DEFS[state.phase] ?? STRATEGY_DEFS.relaxed;
-    let decisions: GovernorDecision[] = defs.map(d => {
+    let decisions: GovernorDecision[] = defs.map((d) => {
       let intensity = d.baseIntensity;
 
       // Adjust intensity based on task type
@@ -215,7 +331,7 @@ export class TokenGovernor {
     this.cachedPhase = state.phase;
     this.cachedRecommendations = decisions;
     // Build O(1) lookup map
-    this.cachedRecommendationsMap = new Map(decisions.map(d => [d.strategy, d]));
+    this.cachedRecommendationsMap = new Map(decisions.map((d) => [d.strategy, d]));
     return decisions;
   }
 
@@ -223,7 +339,9 @@ export class TokenGovernor {
     // Ensure recommendations are built
     this.getRecommendations();
     const decision = this.cachedRecommendationsMap?.get(strategy);
-    return decision ? { apply: decision.apply, intensity: decision.intensity } : { apply: false, intensity: 0 };
+    return decision
+      ? { apply: decision.apply, intensity: decision.intensity }
+      : { apply: false, intensity: 0 };
   }
 
   // ---------------------------------------------------------------------------
@@ -283,15 +401,23 @@ export class TokenGovernor {
   }
 
   private adjustByLearning(decisions: GovernorDecision[]): GovernorDecision[] {
-    return decisions.map(d => {
+    return decisions.map((d) => {
       const effectiveness = this.strategyEffectiveness(d.strategy);
       // Demote strategies that are consistently ineffective, regardless of intensity
       if (effectiveness < 0.3) {
-        return { ...d, apply: false, reason: `${d.reason} (demoted: ${(effectiveness * 100).toFixed(0)}% effective)` };
+        return {
+          ...d,
+          apply: false,
+          reason: `${d.reason} (demoted: ${(effectiveness * 100).toFixed(0)}% effective)`,
+        };
       }
       // Gradually reduce intensity for moderately ineffective strategies
       if (effectiveness < 0.5) {
-        return { ...d, intensity: Math.max(0.1, d.intensity * effectiveness * 2), reason: `${d.reason} (reduced: ${(effectiveness * 100).toFixed(0)}% effective)` };
+        return {
+          ...d,
+          intensity: Math.max(0.1, d.intensity * effectiveness * 2),
+          reason: `${d.reason} (reduced: ${(effectiveness * 100).toFixed(0)}% effective)`,
+        };
       }
       // Boost consistently effective strategies
       if (effectiveness > 0.8) {

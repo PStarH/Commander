@@ -5,15 +5,21 @@ import * as path from 'path';
 
 import {
   WebSearchTool,
-  FileReadTool, FileWriteTool, FileEditTool, FileSearchTool, FileListTool,
-  PythonExecuteTool, ShellExecuteTool,
-  MemoryStoreTool, MemoryRecallTool, MemoryListTool,
+  FileReadTool,
+  FileWriteTool,
+  FileEditTool,
+  FileSearchTool,
+  FileListTool,
+  PythonExecuteTool,
+  ShellExecuteTool,
+  MemoryStoreTool,
+  MemoryRecallTool,
+  MemoryListTool,
   GitTool,
   createAllTools,
 } from '../src/tools/index';
 
 describe('Commander Tools Integration', () => {
-
   it('web_search returns results', async () => {
     const tool = new WebSearchTool();
     const result = await tool.execute({ query: 'latest AI news 2026', numResults: 3 });
@@ -67,7 +73,10 @@ describe('Commander Tools Integration', () => {
     const tool = new FileListTool();
     const result = await tool.execute({ path: 'src/tools' });
     assert.ok(result.length > 0, 'Should list directory');
-    assert.ok(result.includes('webSearchTool.ts') || result.includes('fileSystemTool.ts'), 'Should show tool files');
+    assert.ok(
+      result.includes('webSearchTool.ts') || result.includes('fileSystemTool.ts'),
+      'Should show tool files',
+    );
     console.log(`  [file_list] ${result.split('\n').length} entries`);
   });
 
@@ -150,13 +159,16 @@ describe('Commander Tools Integration', () => {
 });
 
 describe('Full Multi-Agent Pipeline with Tools', () => {
-
   it('deliberation + tools classification works', async () => {
     const { deliberate } = await import('../src/ultimate/deliberation');
-    const plan = deliberate('Search the web for the latest population of Tokyo and write it to a file');
+    const plan = deliberate(
+      'Search the web for the latest population of Tokyo and write it to a file',
+    );
 
     assert.strictEqual(plan.requiresExternalInfo, true);
     assert.ok(plan.capabilitiesNeeded.includes('web_search') || plan.capabilitiesNeeded.length > 0);
-    console.log(`  [deliberation] Task type: ${plan.taskType}, needs web: ${plan.requiresExternalInfo}`);
+    console.log(
+      `  [deliberation] Task type: ${plan.taskType}, needs web: ${plan.requiresExternalInfo}`,
+    );
   });
 });

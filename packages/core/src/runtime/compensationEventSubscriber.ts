@@ -48,7 +48,9 @@ export class CompensationEventSubscriber {
             { name: 'risk', value: risk },
           ],
         );
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
 
       // 3. Persistent trace event
       try {
@@ -67,7 +69,9 @@ export class CompensationEventSubscriber {
             output: { status: 'planned' },
           },
         });
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
     });
 
     this.unsubStep = bus.subscribe('tool.compensation_step', (msg) => {
@@ -75,15 +79,19 @@ export class CompensationEventSubscriber {
 
       // 1. Structured log
       const totalStr = `[${stepIndex + 1}/${totalSteps}]`;
-      getGlobalLogger().info('CompensationEvent', `Compensation step ${totalStr}: ${toolName} -> ${status}`, {
-        toolName,
-        actionId,
-        stepIndex,
-        totalSteps,
-        status,
-        error,
-        runId,
-      });
+      getGlobalLogger().info(
+        'CompensationEvent',
+        `Compensation step ${totalStr}: ${toolName} -> ${status}`,
+        {
+          toolName,
+          actionId,
+          stepIndex,
+          totalSteps,
+          status,
+          error,
+          runId,
+        },
+      );
 
       // 2. Metrics counters and latency
       try {
@@ -97,7 +105,9 @@ export class CompensationEventSubscriber {
             { name: 'status', value: status },
           ],
         );
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
 
       // 3. Persistent trace event
       try {
@@ -116,7 +126,9 @@ export class CompensationEventSubscriber {
             output: { status, error },
           },
         });
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
     });
   }
 

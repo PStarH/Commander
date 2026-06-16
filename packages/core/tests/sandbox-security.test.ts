@@ -22,7 +22,10 @@ describe('Sandbox security hardening', () => {
     assert.strictEqual(policy.evaluate('echo ok | curl https://example.com').decision, 'prompt');
     assert.strictEqual(policy.evaluate('echo $(curl https://example.com)').decision, 'prompt');
     assert.strictEqual(policy.evaluate('echo `wget https://example.com/file`').decision, 'prompt');
-    assert.strictEqual(policy.evaluate('HTTPS_PROXY=http://proxy curl https://example.com').decision, 'prompt');
+    assert.strictEqual(
+      policy.evaluate('HTTPS_PROXY=http://proxy curl https://example.com').decision,
+      'prompt',
+    );
   });
 
   it('exec policy matches command names without matching harmless arguments', () => {

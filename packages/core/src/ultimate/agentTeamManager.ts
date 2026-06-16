@@ -62,7 +62,7 @@ export class AgentTeamManager {
   removeMember(teamId: string, agentId: string): boolean {
     const team = this.teamStore.get(teamId);
     if (!team) return false;
-    const idx = team.members.findIndex(m => m.agentId === agentId);
+    const idx = team.members.findIndex((m) => m.agentId === agentId);
     if (idx === -1) return false;
     team.members.splice(idx, 1);
     return true;
@@ -71,13 +71,16 @@ export class AgentTeamManager {
   updateMemberStatus(teamId: string, agentId: string, status: TeamMember['status']): boolean {
     const team = this.teamStore.get(teamId);
     if (!team) return false;
-    const member = team.members.find(m => m.agentId === agentId);
+    const member = team.members.find((m) => m.agentId === agentId);
     if (!member) return false;
     member.status = status;
     return true;
   }
 
-  addTask(teamId: string, task: Omit<SharedTask, 'id' | 'status' | 'createdAt'>): SharedTask | null {
+  addTask(
+    teamId: string,
+    task: Omit<SharedTask, 'id' | 'status' | 'createdAt'>,
+  ): SharedTask | null {
     const team = this.teamStore.get(teamId);
     if (!team) return null;
     const newTask: SharedTask = {
@@ -93,7 +96,7 @@ export class AgentTeamManager {
   updateTask(teamId: string, taskId: string, updates: Partial<SharedTask>): boolean {
     const team = this.teamStore.get(teamId);
     if (!team) return false;
-    const task = team.sharedTaskList.find(t => t.id === taskId);
+    const task = team.sharedTaskList.find((t) => t.id === taskId);
     if (!task) return false;
     Object.assign(task, updates);
     if (updates.status === 'COMPLETED') {
@@ -105,7 +108,7 @@ export class AgentTeamManager {
   assignTask(teamId: string, taskId: string, agentId: string): boolean {
     const team = this.teamStore.get(teamId);
     if (!team) return false;
-    const task = team.sharedTaskList.find(t => t.id === taskId);
+    const task = team.sharedTaskList.find((t) => t.id === taskId);
     if (!task) return false;
     task.assignedTo = agentId;
     task.status = 'IN_PROGRESS';
@@ -154,7 +157,7 @@ export class AgentTeamManager {
     const team = this.teamStore.get(teamId);
     if (!team) return [];
 
-    let messages = team.inbox.filter(m => {
+    let messages = team.inbox.filter((m) => {
       const isForAgent = m.to === 'ALL' || m.to === agentId;
       const isUnread = includeRead || !m.readAt;
       const matchesPriority = !priorityFilter || m.priority === priorityFilter;
@@ -192,14 +195,19 @@ export class AgentTeamManager {
     const team = this.teamStore.get(teamId);
     if (!team) return null;
 
-    let activeMembers = 0, busyMembers = 0, blockedMembers = 0;
+    let activeMembers = 0,
+      busyMembers = 0,
+      blockedMembers = 0;
     for (const m of team.members) {
       if (m.status === 'IDLE') activeMembers++;
       else if (m.status === 'BUSY') busyMembers++;
       else if (m.status === 'BLOCKED') blockedMembers++;
     }
 
-    let pendingTasks = 0, inProgressTasks = 0, completedTasks = 0, blockedTasks = 0;
+    let pendingTasks = 0,
+      inProgressTasks = 0,
+      completedTasks = 0,
+      blockedTasks = 0;
     for (const t of team.sharedTaskList) {
       if (t.status === 'PENDING') pendingTasks++;
       else if (t.status === 'IN_PROGRESS') inProgressTasks++;
@@ -227,7 +235,7 @@ export class AgentTeamManager {
 
   listTeams(status?: AgentTeam['status']): AgentTeam[] {
     const teams = Array.from(this.teamStore.values());
-    return status ? teams.filter(t => t.status === status) : teams;
+    return status ? teams.filter((t) => t.status === status) : teams;
   }
 }
 

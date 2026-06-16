@@ -28,18 +28,26 @@ class FakeResponse extends EventEmitter {
 function fakeRequest(headers: Record<string, string> = {}): IncomingMessage {
   const req = new EventEmitter() as IncomingMessage & EventEmitter;
   (req as EventEmitter).setMaxListeners(50);
-  Object.assign(req, { headers, method: 'GET', url: '/', socket: new Socket(), setEncoding: () => {} });
+  Object.assign(req, {
+    headers,
+    method: 'GET',
+    url: '/',
+    socket: new Socket(),
+    setEncoding: () => {},
+  });
   return req;
 }
 
-function makeEvent(overrides: Partial<{
-  tenantId: string;
-  taskType: string;
-  chosenTopology: OrchestrationTopology;
-  argmaxTopology: OrchestrationTopology;
-  diverged: boolean;
-  topCandidates: Array<{ topology: OrchestrationTopology; score: number }>;
-}> = {}): Parameters<ExplorationEventLog['record']>[0] {
+function makeEvent(
+  overrides: Partial<{
+    tenantId: string;
+    taskType: string;
+    chosenTopology: OrchestrationTopology;
+    argmaxTopology: OrchestrationTopology;
+    diverged: boolean;
+    topCandidates: Array<{ topology: OrchestrationTopology; score: number }>;
+  }> = {},
+): Parameters<ExplorationEventLog['record']>[0] {
   return {
     tenantId: overrides.tenantId ?? 'tenant-A',
     taskType: overrides.taskType ?? 'CODING',
@@ -145,15 +153,17 @@ describe('routingDashboard HTTP handler', () => {
 
   it('returns histogram at /histogram with all 6 buckets', async () => {
     const log = new ExplorationEventLog();
-    log.record(makeEvent({
-      chosenTopology: 'PARALLEL',
-      argmaxTopology: 'SEQUENTIAL',
-      diverged: true,
-      topCandidates: [
-        { topology: 'SEQUENTIAL', score: 10 },
-        { topology: 'PARALLEL', score: 1 },
-      ],
-    }));
+    log.record(
+      makeEvent({
+        chosenTopology: 'PARALLEL',
+        argmaxTopology: 'SEQUENTIAL',
+        diverged: true,
+        topCandidates: [
+          { topology: 'SEQUENTIAL', score: 10 },
+          { topology: 'PARALLEL', score: 1 },
+        ],
+      }),
+    );
     const res = new FakeResponse();
     const r = await handleRoutingDashboardRequest(
       fakeRequest(),
@@ -165,7 +175,9 @@ describe('routingDashboard HTTP handler', () => {
     expect(r.status).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.buckets).toHaveLength(6);
-    const bucket = body.buckets.find((b: { marginBucket: string; count: number }) => b.marginBucket === '>2.0');
+    const bucket = body.buckets.find(
+      (b: { marginBucket: string; count: number }) => b.marginBucket === '>2.0',
+    );
     expect(bucket?.count).toBe(1);
   });
 
@@ -311,7 +323,11 @@ describe('routingDashboard HTTP handler — ε override (P6)', () => {
 
   it('GET /epsilon lists all overrides for an admin caller', async () => {
     const log = new ExplorationEventLog();
-    const store = (log as unknown as { getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore }).getEpsilonStore();
+    const store = (
+      log as unknown as {
+        getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore;
+      }
+    ).getEpsilonStore();
     store.set('A', 0.1);
     store.set('B', 0.2);
     const res = new FakeResponse();
@@ -330,7 +346,11 @@ describe('routingDashboard HTTP handler — ε override (P6)', () => {
 
   it('GET /epsilon?tenantId=X returns a single override', async () => {
     const log = new ExplorationEventLog();
-    const store = (log as unknown as { getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore }).getEpsilonStore();
+    const store = (
+      log as unknown as {
+        getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore;
+      }
+    ).getEpsilonStore();
     store.set('A', 0.1);
     const res = new FakeResponse();
     const r = await handleRoutingDashboardRequest(
@@ -347,7 +367,11 @@ describe('routingDashboard HTTP handler — ε override (P6)', () => {
 
   it('GET /epsilon?tenantId=UNKNOWN returns override=null', async () => {
     const log = new ExplorationEventLog();
-    const store = (log as unknown as { getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore }).getEpsilonStore();
+    const store = (
+      log as unknown as {
+        getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore;
+      }
+    ).getEpsilonStore();
     const res = new FakeResponse();
     const r = await handleRoutingDashboardRequest(
       fakeRequest(),
@@ -363,7 +387,11 @@ describe('routingDashboard HTTP handler — ε override (P6)', () => {
 
   it('GET /epsilon as tenant-A only returns tenant-A override', async () => {
     const log = new ExplorationEventLog();
-    const store = (log as unknown as { getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore }).getEpsilonStore();
+    const store = (
+      log as unknown as {
+        getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore;
+      }
+    ).getEpsilonStore();
     store.set('A', 0.1);
     store.set('B', 0.2);
     const res = new FakeResponse();
@@ -381,7 +409,11 @@ describe('routingDashboard HTTP handler — ε override (P6)', () => {
 
   it('GET /epsilon?tenantId=B returns 403 for tenant-A caller (cross-tenant guard)', async () => {
     const log = new ExplorationEventLog();
-    const store = (log as unknown as { getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore }).getEpsilonStore();
+    const store = (
+      log as unknown as {
+        getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore;
+      }
+    ).getEpsilonStore();
     store.set('B', 0.2);
     const res = new FakeResponse();
     const r = await handleRoutingDashboardRequest(
@@ -396,7 +428,11 @@ describe('routingDashboard HTTP handler — ε override (P6)', () => {
 
   it('PUT /epsilon with JSON body sets the override', async () => {
     const log = new ExplorationEventLog();
-    const store = (log as unknown as { getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore }).getEpsilonStore();
+    const store = (
+      log as unknown as {
+        getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore;
+      }
+    ).getEpsilonStore();
     const req = fakeRequest();
     (req as { method: string }).method = 'PUT';
     // Inject a JSON body via the event emitter
@@ -418,10 +454,16 @@ describe('routingDashboard HTTP handler — ε override (P6)', () => {
 
   it('PUT /epsilon with query params sets the override', async () => {
     const log = new ExplorationEventLog();
-    const store = (log as unknown as { getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore }).getEpsilonStore();
+    const store = (
+      log as unknown as {
+        getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore;
+      }
+    ).getEpsilonStore();
     const req = fakeRequest();
     (req as { method: string }).method = 'PUT';
-    setImmediate(() => { req.emit('end'); });
+    setImmediate(() => {
+      req.emit('end');
+    });
     const res = new FakeResponse();
     const r = await handleRoutingDashboardRequest(
       req,
@@ -436,7 +478,11 @@ describe('routingDashboard HTTP handler — ε override (P6)', () => {
 
   it('PUT /epsilon clamps out-of-range values to [0, 1]', async () => {
     const log = new ExplorationEventLog();
-    const store = (log as unknown as { getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore }).getEpsilonStore();
+    const store = (
+      log as unknown as {
+        getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore;
+      }
+    ).getEpsilonStore();
     const req = fakeRequest();
     (req as { method: string }).method = 'PUT';
     setImmediate(() => {
@@ -457,7 +503,11 @@ describe('routingDashboard HTTP handler — ε override (P6)', () => {
 
   it('PUT /epsilon returns 400 when tenantId is missing', async () => {
     const log = new ExplorationEventLog();
-    const store = (log as unknown as { getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore }).getEpsilonStore();
+    const store = (
+      log as unknown as {
+        getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore;
+      }
+    ).getEpsilonStore();
     const req = fakeRequest();
     (req as { method: string }).method = 'PUT';
     setImmediate(() => {
@@ -477,7 +527,11 @@ describe('routingDashboard HTTP handler — ε override (P6)', () => {
 
   it('PUT /epsilon returns 400 when epsilon is missing', async () => {
     const log = new ExplorationEventLog();
-    const store = (log as unknown as { getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore }).getEpsilonStore();
+    const store = (
+      log as unknown as {
+        getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore;
+      }
+    ).getEpsilonStore();
     const req = fakeRequest();
     (req as { method: string }).method = 'PUT';
     setImmediate(() => {
@@ -497,7 +551,11 @@ describe('routingDashboard HTTP handler — ε override (P6)', () => {
 
   it('PUT /epsilon returns 403 on cross-tenant set', async () => {
     const log = new ExplorationEventLog();
-    const store = (log as unknown as { getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore }).getEpsilonStore();
+    const store = (
+      log as unknown as {
+        getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore;
+      }
+    ).getEpsilonStore();
     const req = fakeRequest();
     (req as { method: string }).method = 'PUT';
     setImmediate(() => {
@@ -517,7 +575,11 @@ describe('routingDashboard HTTP handler — ε override (P6)', () => {
 
   it('DELETE /epsilon clears the override', async () => {
     const log = new ExplorationEventLog();
-    const store = (log as unknown as { getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore }).getEpsilonStore();
+    const store = (
+      log as unknown as {
+        getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore;
+      }
+    ).getEpsilonStore();
     store.set('A', 0.1);
     const req = fakeRequest();
     (req as { method: string }).method = 'DELETE';
@@ -535,7 +597,11 @@ describe('routingDashboard HTTP handler — ε override (P6)', () => {
 
   it('DELETE /epsilon returns 200 with cleared=false when there was nothing to clear', async () => {
     const log = new ExplorationEventLog();
-    const store = (log as unknown as { getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore }).getEpsilonStore();
+    const store = (
+      log as unknown as {
+        getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore;
+      }
+    ).getEpsilonStore();
     const req = fakeRequest();
     (req as { method: string }).method = 'DELETE';
     const res = new FakeResponse();
@@ -553,7 +619,11 @@ describe('routingDashboard HTTP handler — ε override (P6)', () => {
 
   it('DELETE /epsilon returns 403 on cross-tenant clear', async () => {
     const log = new ExplorationEventLog();
-    const store = (log as unknown as { getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore }).getEpsilonStore();
+    const store = (
+      log as unknown as {
+        getEpsilonStore(): import('../../src/ultimate/epsilonStore').EpsilonStore;
+      }
+    ).getEpsilonStore();
     store.set('B', 0.2);
     const req = fakeRequest();
     (req as { method: string }).method = 'DELETE';

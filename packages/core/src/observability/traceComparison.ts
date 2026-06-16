@@ -48,10 +48,14 @@ function eventsMatch(a: TraceEvent, b: TraceEvent): boolean {
 function computeChanges(a: TraceEvent, b: TraceEvent): string[] {
   const changes: string[] = [];
   if (a.data.modelInfo?.model !== b.data.modelInfo?.model) {
-    changes.push(`model: ${a.data.modelInfo?.model ?? 'none'} → ${b.data.modelInfo?.model ?? 'none'}`);
+    changes.push(
+      `model: ${a.data.modelInfo?.model ?? 'none'} → ${b.data.modelInfo?.model ?? 'none'}`,
+    );
   }
   if (a.data.tokenUsage?.totalTokens !== b.data.tokenUsage?.totalTokens) {
-    changes.push(`tokens: ${a.data.tokenUsage?.totalTokens ?? 0} → ${b.data.tokenUsage?.totalTokens ?? 0}`);
+    changes.push(
+      `tokens: ${a.data.tokenUsage?.totalTokens ?? 0} → ${b.data.tokenUsage?.totalTokens ?? 0}`,
+    );
   }
   if (a.durationMs !== b.durationMs) {
     changes.push(`duration: ${a.durationMs}ms → ${b.durationMs}ms`);
@@ -98,10 +102,10 @@ export function compareTraces(traceA: ExecutionTrace, traceB: ExecutionTrace): T
     }
   }
 
-  const added = eventDiffs.filter(d => d.type === 'added').length;
-  const removed = eventDiffs.filter(d => d.type === 'removed').length;
-  const modified = eventDiffs.filter(d => d.type === 'modified').length;
-  const unchanged = eventDiffs.filter(d => d.type === 'unchanged').length;
+  const added = eventDiffs.filter((d) => d.type === 'added').length;
+  const removed = eventDiffs.filter((d) => d.type === 'removed').length;
+  const modified = eventDiffs.filter((d) => d.type === 'modified').length;
+  const unchanged = eventDiffs.filter((d) => d.type === 'unchanged').length;
 
   const timelineA = buildTimeline(traceA);
   const timelineB = buildTimeline(traceB);
@@ -118,7 +122,10 @@ export function compareTraces(traceA: ExecutionTrace, traceB: ExecutionTrace): T
     summary: {
       totalEventsA: eventsA.length,
       totalEventsB: eventsB.length,
-      added, removed, modified, unchanged,
+      added,
+      removed,
+      modified,
+      unchanged,
     },
     eventDiffs,
     costDelta: {

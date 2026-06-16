@@ -23,19 +23,43 @@ describe('Deliberation Output', () => {
 
       // Fields used by cmdPlan
       assert.ok(typeof plan.taskType === 'string', 'taskType should be string');
-      assert.ok(typeof plan.recommendedTopology === 'string', 'recommendedTopology should be string');
-      assert.ok(typeof plan.estimatedAgentCount === 'number', 'estimatedAgentCount should be number');
+      assert.ok(
+        typeof plan.recommendedTopology === 'string',
+        'recommendedTopology should be string',
+      );
+      assert.ok(
+        typeof plan.estimatedAgentCount === 'number',
+        'estimatedAgentCount should be number',
+      );
       assert.ok(typeof plan.estimatedSteps === 'number', 'estimatedSteps should be number');
       assert.ok(typeof plan.confidence === 'number', 'confidence should be number');
-      assert.ok(typeof plan.requiresExternalInfo === 'boolean', 'requiresExternalInfo should be boolean');
+      assert.ok(
+        typeof plan.requiresExternalInfo === 'boolean',
+        'requiresExternalInfo should be boolean',
+      );
       assert.ok(typeof plan.estimatedTokens === 'number', 'estimatedTokens should be number');
       assert.ok(plan.tokenBudget !== undefined, 'tokenBudget should exist');
-      assert.ok(typeof plan.tokenBudget.thinking === 'number', 'tokenBudget.thinking should be number');
-      assert.ok(typeof plan.tokenBudget.execution === 'number', 'tokenBudget.execution should be number');
-      assert.ok(typeof plan.estimatedDurationMs === 'number', 'estimatedDurationMs should be number');
-      assert.ok(typeof plan.timeBudgetPerAgentMs === 'number', 'timeBudgetPerAgentMs should be number');
+      assert.ok(
+        typeof plan.tokenBudget.thinking === 'number',
+        'tokenBudget.thinking should be number',
+      );
+      assert.ok(
+        typeof plan.tokenBudget.execution === 'number',
+        'tokenBudget.execution should be number',
+      );
+      assert.ok(
+        typeof plan.estimatedDurationMs === 'number',
+        'estimatedDurationMs should be number',
+      );
+      assert.ok(
+        typeof plan.timeBudgetPerAgentMs === 'number',
+        'timeBudgetPerAgentMs should be number',
+      );
       assert.ok(typeof plan.taskNature === 'string', 'taskNature should be string');
-      assert.ok(typeof plan.suitableForSpeculation === 'boolean', 'suitableForSpeculation should be boolean');
+      assert.ok(
+        typeof plan.suitableForSpeculation === 'boolean',
+        'suitableForSpeculation should be boolean',
+      );
       assert.ok(Array.isArray(plan.capabilitiesNeeded), 'capabilitiesNeeded should be array');
     });
 
@@ -50,7 +74,7 @@ describe('Deliberation Output', () => {
         const plan = deliberate(task);
         assert.ok(
           ['IO_BOUND', 'COMPUTE_BOUND', 'MIXED'].includes(plan.taskNature),
-          `taskNature should be valid, got: ${plan.taskNature}`
+          `taskNature should be valid, got: ${plan.taskNature}`,
         );
       }
     });
@@ -58,12 +82,18 @@ describe('Deliberation Output', () => {
     it('returns valid topology values', () => {
       const plan = deliberate('Complex multi-step task');
       const validTopologies = [
-        'SINGLE', 'SEQUENTIAL', 'PARALLEL', 'HIERARCHICAL',
-        'DEBATE', 'CONSENSUS', 'ENSEMBLE', 'HYBRID',
+        'SINGLE',
+        'SEQUENTIAL',
+        'PARALLEL',
+        'HIERARCHICAL',
+        'DEBATE',
+        'CONSENSUS',
+        'ENSEMBLE',
+        'HYBRID',
       ];
       assert.ok(
         validTopologies.includes(plan.recommendedTopology),
-        `topology should be valid, got: ${plan.recommendedTopology}`
+        `topology should be valid, got: ${plan.recommendedTopology}`,
       );
     });
   });
@@ -89,8 +119,10 @@ describe('Deliberation Output', () => {
   describe('confidence formatting', () => {
     it('confidence is between 0 and 1', () => {
       const plan = deliberate('Any task');
-      assert.ok(plan.confidence >= 0 && plan.confidence <= 1,
-        `confidence should be 0-1, got: ${plan.confidence}`);
+      assert.ok(
+        plan.confidence >= 0 && plan.confidence <= 1,
+        `confidence should be 0-1, got: ${plan.confidence}`,
+      );
     });
 
     it('formats confidence as percentage', () => {

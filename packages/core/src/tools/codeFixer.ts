@@ -2,24 +2,37 @@ import type { Tool, ToolDefinition } from '../runtime/types';
 
 const DEFINITION: ToolDefinition = {
   name: 'fix_code',
-  description: 'Fix common Python syntax errors in generated code. Handles unclosed docstrings, indentation errors, and missing function bodies.',
+  description:
+    'Fix common Python syntax errors in generated code. Handles unclosed docstrings, indentation errors, and missing function bodies.',
   inputSchema: {
     type: 'object',
     properties: {
       code: { type: 'string', description: 'The buggy Python code to fix' },
-      error: { type: 'string', description: 'The syntax error message (optional, will be detected if not provided)' },
+      error: {
+        type: 'string',
+        description: 'The syntax error message (optional, will be detected if not provided)',
+      },
       entryPoint: { type: 'string', description: 'Function name to verify exists in output' },
     },
     required: ['code'],
   },
   examples: [
     { name: 'fix_code', arguments: { code: 'def hello():\nprint("world")', entryPoint: 'hello' } },
-    { name: 'fix_code', arguments: { code: '"""missing close', error: 'SyntaxError: EOF while scanning triple-quoted string' } },
+    {
+      name: 'fix_code',
+      arguments: {
+        code: '"""missing close',
+        error: 'SyntaxError: EOF while scanning triple-quoted string',
+      },
+    },
   ],
   category: 'development',
 };
 
-export function fixPythonSyntax(code: string, errorHint?: string): { fixed: string; changes: string[] } {
+export function fixPythonSyntax(
+  code: string,
+  errorHint?: string,
+): { fixed: string; changes: string[] } {
   const changes: string[] = [];
   let fixed = code;
 
@@ -54,7 +67,13 @@ export function fixPythonSyntax(code: string, errorHint?: string): { fixed: stri
       fixedLines.push(line);
       continue;
     }
-    if (inDef && line.trim() && !line.startsWith(' ') && !line.startsWith('\t') && !line.startsWith('def ')) {
+    if (
+      inDef &&
+      line.trim() &&
+      !line.startsWith(' ') &&
+      !line.startsWith('\t') &&
+      !line.startsWith('def ')
+    ) {
       // Function ended without body
       fixedLines.push('    pass');
       changes.push(`Added body for ${defName}`);
@@ -75,13 +94,16 @@ export function fixPythonSyntax(code: string, errorHint?: string): { fixed: stri
   fixed = fixedLines.join('\n');
 
   // Fix 3: Fix indentation - ensure function body is indented with 4 spaces
-  fixed = fixed.split('\n').map(line => {
-    if (line.match(/^\s+def\s/) || line.match(/^\s+class\s/)) {
-      // Ensure def/class at top level have no leading whitespace
-      return line.trimStart();
-    }
-    return line;
-  }).join('\n');
+  fixed = fixed
+    .split('\n')
+    .map((line) => {
+      if (line.match(/^\s+def\s/) || line.match(/^\s+class\s/)) {
+        // Ensure def/class at top level have no leading whitespace
+        return line.trimStart();
+      }
+      return line;
+    })
+    .join('\n');
 
   // Fix 4: Remove trailing whitespace and ensure newline at end
   fixed = fixed.replace(/[ \t]+$/gm, '').trimEnd() + '\n';
@@ -115,7 +137,7 @@ export class CodeFixerTool implements Tool {
     const summary = [
       `## Code Fix Results`,
       `- Changes made: ${changes.length}`,
-      ...changes.map(c => `  - ${c}`),
+      ...changes.map((c) => `  - ${c}`),
       `- Entry point "${entryPoint}": ${entryPointOk ? '✅ found' : '❌ missing'}`,
       `- Output length: ${fixed.length} chars`,
       ``,

@@ -24,17 +24,22 @@ describe('HookManager', () => {
       let loaded = false;
       await manager.register({
         name: 'lifecycle',
-        onLoad: () => { loaded = true; },
+        onLoad: () => {
+          loaded = true;
+        },
       });
       assert.ok(loaded);
     });
 
     it('removes plugin if onLoad throws', async () => {
       await assert.rejects(
-        () => manager.register({
-          name: 'failing',
-          onLoad: () => { throw new Error('load failed'); },
-        }),
+        () =>
+          manager.register({
+            name: 'failing',
+            onLoad: () => {
+              throw new Error('load failed');
+            },
+          }),
         /load failed/,
       );
       assert.ok(!manager.hasPlugin('failing'));
@@ -56,7 +61,9 @@ describe('HookManager', () => {
       let unloaded = false;
       await manager.register({
         name: 'unloader',
-        onUnload: () => { unloaded = true; },
+        onUnload: () => {
+          unloaded = true;
+        },
       });
       await manager.unregister('unloader');
       assert.ok(unloaded);
@@ -64,10 +71,11 @@ describe('HookManager', () => {
 
     it('validates dependencies on register', async () => {
       await assert.rejects(
-        () => manager.register({
-          name: 'dependent',
-          dependsOn: ['missing-dep'],
-        }),
+        () =>
+          manager.register({
+            name: 'dependent',
+            dependsOn: ['missing-dep'],
+          }),
         /not registered/,
       );
     });
@@ -132,10 +140,15 @@ describe('HookManager', () => {
   describe('config', () => {
     it('passes config to plugin on load', async () => {
       let receivedConfig: Record<string, unknown> = {};
-      await manager.register({
-        name: 'configurable',
-        onLoad: (ctx) => { receivedConfig = ctx.config; },
-      }, { foo: 'bar' });
+      await manager.register(
+        {
+          name: 'configurable',
+          onLoad: (ctx) => {
+            receivedConfig = ctx.config;
+          },
+        },
+        { foo: 'bar' },
+      );
       assert.equal(receivedConfig.foo, 'bar');
     });
 
@@ -149,8 +162,12 @@ describe('HookManager', () => {
       let loadCount = 0;
       await manager.register({
         name: 'updatable',
-        onLoad: () => { loadCount++; },
-        onUnload: () => { loadCount++; },
+        onLoad: () => {
+          loadCount++;
+        },
+        onUnload: () => {
+          loadCount++;
+        },
       });
       assert.equal(loadCount, 1); // onLoad called
       await manager.updateConfig('updatable', { newKey: 'newVal' });
@@ -193,7 +210,10 @@ describe('HookManager', () => {
       let called = false;
       await manager.register({
         name: 'hook-test',
-        beforeToolCall: () => { called = true; return null; },
+        beforeToolCall: () => {
+          called = true;
+          return null;
+        },
       });
       await manager.fireBeforeToolCall({
         toolName: 'test-tool',
@@ -208,7 +228,10 @@ describe('HookManager', () => {
       let called = false;
       await manager.register({
         name: 'disabled-hook',
-        beforeToolCall: () => { called = true; return null; },
+        beforeToolCall: () => {
+          called = true;
+          return null;
+        },
       });
       manager.disable('disabled-hook');
       await manager.fireBeforeToolCall({
@@ -224,12 +247,18 @@ describe('HookManager', () => {
       const order: string[] = [];
       await manager.register({
         name: 'first',
-        beforeToolCall: () => { order.push('first'); return null; },
+        beforeToolCall: () => {
+          order.push('first');
+          return null;
+        },
       });
       await manager.register({
         name: 'second',
         dependsOn: ['first'],
-        beforeToolCall: () => { order.push('second'); return null; },
+        beforeToolCall: () => {
+          order.push('second');
+          return null;
+        },
       });
       await manager.fireBeforeToolCall({
         toolName: 'test-tool',
@@ -244,7 +273,9 @@ describe('HookManager', () => {
       await manager.register({
         name: 'flaky',
         required: false,
-        beforeToolCall: () => { throw new Error('oops'); },
+        beforeToolCall: () => {
+          throw new Error('oops');
+        },
       });
       // Should not throw
       const result = await manager.fireBeforeToolCall({
@@ -260,15 +291,18 @@ describe('HookManager', () => {
       await manager.register({
         name: 'critical',
         required: true,
-        beforeToolCall: () => { throw new Error('critical failure'); },
+        beforeToolCall: () => {
+          throw new Error('critical failure');
+        },
       });
       await assert.rejects(
-        () => manager.fireBeforeToolCall({
-          toolName: 'test-tool',
-          args: {},
-          agentId: 'agent-1',
-          runId: 'run-1',
-        }),
+        () =>
+          manager.fireBeforeToolCall({
+            toolName: 'test-tool',
+            args: {},
+            agentId: 'agent-1',
+            runId: 'run-1',
+          }),
         /critical failure/,
       );
     });

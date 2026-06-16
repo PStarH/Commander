@@ -24,7 +24,9 @@ export class CircuitBreaker {
   private halfOpenInFlight = 0;
   private openCount = 0;
   private onStateChange?: (from: CircuitState, to: CircuitState) => void;
-  private observability?: { onTransition?: (from: CircuitState, to: CircuitState, provider?: string) => void };
+  private observability?: {
+    onTransition?: (from: CircuitState, to: CircuitState, provider?: string) => void;
+  };
   private providerName?: string;
   /** Sliding window of failure timestamps for windowed failure counting */
   private failureTimestamps: number[] = [];
@@ -45,7 +47,18 @@ export class CircuitBreaker {
   private semanticThreshold: number;
   private securityThreshold: number;
 
-  constructor(threshold = 5, recoveryTimeMs = 30000, halfOpenMaxTests = 1, onStateChange?: (from: CircuitState, to: CircuitState) => void, options?: { volumeThreshold?: number; errorRateThreshold?: number; semanticThreshold?: number; securityThreshold?: number }) {
+  constructor(
+    threshold = 5,
+    recoveryTimeMs = 30000,
+    halfOpenMaxTests = 1,
+    onStateChange?: (from: CircuitState, to: CircuitState) => void,
+    options?: {
+      volumeThreshold?: number;
+      errorRateThreshold?: number;
+      semanticThreshold?: number;
+      securityThreshold?: number;
+    },
+  ) {
     this.threshold = threshold;
     this.recoveryTimeMs = recoveryTimeMs;
     this.halfOpenMaxTests = halfOpenMaxTests;
@@ -60,11 +73,15 @@ export class CircuitBreaker {
     this.providerName = name;
   }
 
-  setObservability(obs: { onTransition?: (from: CircuitState, to: CircuitState, provider?: string) => void }): void {
+  setObservability(obs: {
+    onTransition?: (from: CircuitState, to: CircuitState, provider?: string) => void;
+  }): void {
     this.observability = obs;
   }
 
-  getState(): CircuitState { return this.state; }
+  getState(): CircuitState {
+    return this.state;
+  }
 
   getStats(): CircuitStats {
     return {
@@ -83,7 +100,10 @@ export class CircuitBreaker {
   isAvailable(): boolean {
     // Trip the circuit if semantic failures or security events exceed their thresholds,
     // even when conventional operational failures have not reached the volume/error rate gate.
-    if (this.semanticFailureCount >= this.semanticThreshold || this.securityEventCount >= this.securityThreshold) {
+    if (
+      this.semanticFailureCount >= this.semanticThreshold ||
+      this.securityEventCount >= this.securityThreshold
+    ) {
       if (this.state !== 'OPEN') {
         this.transitionTo('OPEN');
         this.openCount++;
@@ -138,8 +158,8 @@ export class CircuitBreaker {
     this.failureTimestamps.push(now);
     this.requestTimestamps.push(now);
     const windowStart = now - this.recoveryTimeMs;
-    this.failureTimestamps = this.failureTimestamps.filter(t => t > windowStart);
-    this.requestTimestamps = this.requestTimestamps.filter(t => t > windowStart);
+    this.failureTimestamps = this.failureTimestamps.filter((t) => t > windowStart);
+    this.requestTimestamps = this.requestTimestamps.filter((t) => t > windowStart);
     if (this.state === 'HALF_OPEN') {
       this.halfOpenInFlight = Math.max(0, this.halfOpenInFlight - 1);
     }
@@ -149,7 +169,10 @@ export class CircuitBreaker {
     const volumeMet = windowedRequests >= this.volumeThreshold;
     const errorRate = windowedRequests > 0 ? windowedFailures / windowedRequests : 0;
     const errorRateMet = errorRate >= this.errorRateThreshold;
-    if (this.state === 'HALF_OPEN' || (volumeMet && errorRateMet && windowedFailures >= this.threshold)) {
+    if (
+      this.state === 'HALF_OPEN' ||
+      (volumeMet && errorRateMet && windowedFailures >= this.threshold)
+    ) {
       if (this.state !== 'OPEN') {
         this.transitionTo('OPEN');
         this.openCount++;
@@ -235,7 +258,11 @@ export class CircuitBreaker {
     if (old !== newState) {
       this.state = newState;
       this.onStateChange?.(old, newState);
-      try { this.observability?.onTransition?.(old, newState, this.providerName); } catch { /* best-effort */ }
+      try {
+        this.observability?.onTransition?.(old, newState, this.providerName);
+      } catch {
+        /* best-effort */
+      }
     }
   }
 }

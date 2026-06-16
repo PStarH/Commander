@@ -12,7 +12,11 @@
  *  - summarizeTrace: extracts agentId, model, tenantId, hasErrors from the trace
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { EvalScorer, type JudgeProvider, type LLMResponse } from '../../src/observability/evalScorer';
+import {
+  EvalScorer,
+  type JudgeProvider,
+  type LLMResponse,
+} from '../../src/observability/evalScorer';
 import { AutoScorer } from '../../src/observability/autoScorer';
 import type { ExecutionTrace, TraceEvent } from '../../src/runtime/types';
 
@@ -20,28 +24,63 @@ function mockJudge(score: number, delayMs = 0): JudgeProvider {
   return {
     name: 'mock',
     async call(): Promise<LLMResponse> {
-      if (delayMs) await new Promise(r => setTimeout(r, delayMs));
-      return { content: JSON.stringify({ score, reasoning: 'ok' }), usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, finishReason: 'stop' };
+      if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+      return {
+        content: JSON.stringify({ score, reasoning: 'ok' }),
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        finishReason: 'stop',
+      };
     },
   };
 }
 
-function makeTrace(opts: { runId: string; agentId?: string; tenantId?: string; hasError?: boolean; tokens?: number; model?: string } = { runId: 'r' }): ExecutionTrace {
+function makeTrace(
+  opts: {
+    runId: string;
+    agentId?: string;
+    tenantId?: string;
+    hasError?: boolean;
+    tokens?: number;
+    model?: string;
+  } = { runId: 'r' },
+): ExecutionTrace {
   const events: TraceEvent[] = [];
   if (opts.model) {
     events.push({
-      type: 'llm_call', timestamp: new Date().toISOString(), durationMs: 0, spanId: 's1', traceId: 't1', agentId: opts.agentId ?? 'a',
-      data: { modelInfo: { provider: 'mock', model: opts.model }, tokenUsage: { promptTokens: opts.tokens ?? 100, completionTokens: 0, totalTokens: opts.tokens ?? 100 } },
+      type: 'llm_call',
+      timestamp: new Date().toISOString(),
+      durationMs: 0,
+      spanId: 's1',
+      traceId: 't1',
+      agentId: opts.agentId ?? 'a',
+      data: {
+        modelInfo: { provider: 'mock', model: opts.model },
+        tokenUsage: {
+          promptTokens: opts.tokens ?? 100,
+          completionTokens: 0,
+          totalTokens: opts.tokens ?? 100,
+        },
+      },
     });
   } else {
     events.push({
-      type: 'state_change', timestamp: new Date().toISOString(), durationMs: 0, spanId: 's1', traceId: 't1', agentId: opts.agentId ?? 'a',
+      type: 'state_change',
+      timestamp: new Date().toISOString(),
+      durationMs: 0,
+      spanId: 's1',
+      traceId: 't1',
+      agentId: opts.agentId ?? 'a',
       data: { input: { goal: 'g' } },
     });
   }
   if (opts.hasError) {
     events.push({
-      type: 'error', timestamp: new Date().toISOString(), durationMs: 0, spanId: 's2', traceId: 't1', agentId: opts.agentId ?? 'a',
+      type: 'error',
+      timestamp: new Date().toISOString(),
+      durationMs: 0,
+      spanId: 's2',
+      traceId: 't1',
+      agentId: opts.agentId ?? 'a',
       data: { error: 'boom' },
     });
   }
@@ -56,9 +95,9 @@ function makeTrace(opts: { runId: string; agentId?: string; tenantId?: string; h
       totalEvents: events.length,
       totalDurationMs: 10,
       totalTokens: opts.tokens ?? 100,
-      llmCalls: events.filter(e => e.type === 'llm_call').length,
+      llmCalls: events.filter((e) => e.type === 'llm_call').length,
       toolExecutions: 0,
-      errors: events.filter(e => e.type === 'error').length,
+      errors: events.filter((e) => e.type === 'error').length,
       modelUsed: opts.model,
     },
     ...(opts.tenantId ? { tenantId: opts.tenantId } : {}),
@@ -68,7 +107,12 @@ function makeTrace(opts: { runId: string; agentId?: string; tenantId?: string; h
 describe('AutoScorer — sampling', () => {
   it('isInSample is deterministic for a given traceId', () => {
     const scorer = new EvalScorer(mockJudge(0.5));
-    const auto = new AutoScorer(scorer, { enabled: true, rubricId: 'default-quality', sampleRate: 0.5, salt: 's' });
+    const auto = new AutoScorer(scorer, {
+      enabled: true,
+      rubricId: 'default-quality',
+      sampleRate: 0.5,
+      salt: 's',
+    });
     const a1 = auto.isInSample('trace-1');
     const a2 = auto.isInSample('trace-1');
     expect(a1).toBe(a2);
@@ -94,8 +138,8 @@ describe('AutoScorer — sampling', () => {
     // 0 collisions across 1000 hashes with two independent djb2 salts
     // is effectively 0).
     const ids = Array.from({ length: 1000 }, (_, i) => `trace-${i}`);
-    const aIn = new Set(ids.filter(id => a.isInSample(id)));
-    const bIn = new Set(ids.filter(id => b.isInSample(id)));
+    const aIn = new Set(ids.filter((id) => a.isInSample(id)));
+    const bIn = new Set(ids.filter((id) => b.isInSample(id)));
     let sameCount = 0;
     for (const id of ids) if (aIn.has(id) === bIn.has(id)) sameCount++;
     const diffRate = 1 - sameCount / ids.length;
@@ -128,11 +172,23 @@ describe('AutoScorer — filters', () => {
   });
 
   it('drops traces with the wrong tenantId', async () => {
-    const t = makeTrace({ runId: 'r1', tenantId: 'other', hasError: true, tokens: 100, model: 'gpt-4o-mini' });
+    const t = makeTrace({
+      runId: 'r1',
+      tenantId: 'other',
+      hasError: true,
+      tokens: 100,
+      model: 'gpt-4o-mini',
+    });
     expect(await auto.scoreTrace(t)).toBeUndefined();
   });
   it('drops traces below minTokens', async () => {
-    const t = makeTrace({ runId: 'r1', tenantId: 't1', hasError: true, tokens: 10, model: 'gpt-4o-mini' });
+    const t = makeTrace({
+      runId: 'r1',
+      tenantId: 't1',
+      hasError: true,
+      tokens: 10,
+      model: 'gpt-4o-mini',
+    });
     expect(await auto.scoreTrace(t)).toBeUndefined();
   });
   it('drops traces without errors when errorsOnly is set', async () => {
@@ -140,12 +196,24 @@ describe('AutoScorer — filters', () => {
     expect(await auto.scoreTrace(t)).toBeUndefined();
   });
   it('drops traces with the wrong model', async () => {
-    const t = makeTrace({ runId: 'r1', tenantId: 't1', hasError: true, tokens: 100, model: 'claude-haiku-4-5' });
+    const t = makeTrace({
+      runId: 'r1',
+      tenantId: 't1',
+      hasError: true,
+      tokens: 100,
+      model: 'claude-haiku-4-5',
+    });
     expect(await auto.scoreTrace(t)).toBeUndefined();
   });
   it('passes a trace matching all filters (synchronous mode returns the result)', async () => {
     auto.configure({ synchronous: true });
-    const t = makeTrace({ runId: 'r1', tenantId: 't1', hasError: true, tokens: 100, model: 'gpt-4o-mini' });
+    const t = makeTrace({
+      runId: 'r1',
+      tenantId: 't1',
+      hasError: true,
+      tokens: 100,
+      model: 'gpt-4o-mini',
+    });
     const r = await auto.scoreTrace(t);
     expect(r).toBeTruthy();
     expect(r!.score).toBe(0.5);
@@ -158,7 +226,11 @@ describe('AutoScorer — result storage + drain', () => {
   it('stores results; getResults() returns newest-first', async () => {
     const scorer = new EvalScorer(mockJudge(0.7));
     const auto = new AutoScorer(scorer, {
-      enabled: true, sampleRate: 1, salt: 's', synchronous: true, maxResults: 10,
+      enabled: true,
+      sampleRate: 1,
+      salt: 's',
+      synchronous: true,
+      maxResults: 10,
     });
     await auto.scoreTrace(makeTrace({ runId: 'r1' }));
     await auto.scoreTrace(makeTrace({ runId: 'r2' }));
@@ -170,7 +242,12 @@ describe('AutoScorer — result storage + drain', () => {
   });
   it('clearResults() empties the buffer', async () => {
     const scorer = new EvalScorer(mockJudge(0.5));
-    const auto = new AutoScorer(scorer, { enabled: true, sampleRate: 1, salt: 's', synchronous: true });
+    const auto = new AutoScorer(scorer, {
+      enabled: true,
+      sampleRate: 1,
+      salt: 's',
+      synchronous: true,
+    });
     await auto.scoreTrace(makeTrace({ runId: 'r1' }));
     expect(auto.size()).toBe(1);
     auto.clearResults();
@@ -178,17 +255,30 @@ describe('AutoScorer — result storage + drain', () => {
   });
   it('maxResults evicts the oldest (FIFO)', async () => {
     const scorer = new EvalScorer(mockJudge(0.5));
-    const auto = new AutoScorer(scorer, { enabled: true, sampleRate: 1, salt: 's', synchronous: true, maxResults: 2 });
+    const auto = new AutoScorer(scorer, {
+      enabled: true,
+      sampleRate: 1,
+      salt: 's',
+      synchronous: true,
+      maxResults: 2,
+    });
     await auto.scoreTrace(makeTrace({ runId: 'a' }));
     await auto.scoreTrace(makeTrace({ runId: 'b' }));
     await auto.scoreTrace(makeTrace({ runId: 'c' }));
     expect(auto.size()).toBe(2);
-    const ids = auto.getResults().map(r => r.runId).sort();
+    const ids = auto
+      .getResults()
+      .map((r) => r.runId)
+      .sort();
     expect(ids).toEqual(['b', 'c']);
   });
   it('async mode returns undefined synchronously; drain() awaits inflight', async () => {
     const scorer = new EvalScorer(mockJudge(0.6, 5));
-    const auto = new AutoScorer(scorer, { enabled: true, sampleRate: 1, salt: 's' /* synchronous: false default */ });
+    const auto = new AutoScorer(scorer, {
+      enabled: true,
+      sampleRate: 1,
+      salt: 's' /* synchronous: false default */,
+    });
     const p = auto.scoreTrace(makeTrace({ runId: 'r1' }));
     // Async: the immediate result is undefined; the result lands in storage after the judge call.
     // We need to be careful — scoreTrace returns the in-flight promise which *will* resolve to
@@ -201,13 +291,23 @@ describe('AutoScorer — result storage + drain', () => {
   });
   it('scoreTrace is a no-op when disabled', async () => {
     const scorer = new EvalScorer(mockJudge(0.5));
-    const auto = new AutoScorer(scorer, { enabled: false, sampleRate: 1, salt: 's', synchronous: true });
+    const auto = new AutoScorer(scorer, {
+      enabled: false,
+      sampleRate: 1,
+      salt: 's',
+      synchronous: true,
+    });
     expect(await auto.scoreTrace(makeTrace({ runId: 'r1' }))).toBeUndefined();
     expect(auto.size()).toBe(0);
   });
   it('scoreTrace is a no-op when trace is out of sample', async () => {
     const scorer = new EvalScorer(mockJudge(0.5));
-    const auto = new AutoScorer(scorer, { enabled: true, sampleRate: 0, salt: 's', synchronous: true });
+    const auto = new AutoScorer(scorer, {
+      enabled: true,
+      sampleRate: 0,
+      salt: 's',
+      synchronous: true,
+    });
     expect(await auto.scoreTrace(makeTrace({ runId: 'r1' }))).toBeUndefined();
     expect(auto.size()).toBe(0);
   });

@@ -1,8 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  calculateCostBreakdown,
-  CACHE_MULTIPLIERS,
-} from '../../src/telos/tokenSentinel';
+import { calculateCostBreakdown, CACHE_MULTIPLIERS } from '../../src/telos/tokenSentinel';
 import {
   aggregateCost,
   formatCostTable,
@@ -130,13 +127,21 @@ describe('CostPredictor (no hardcoded rate)', () => {
     const { CostPredictor } = await import('../../src/intelligence/costPredictor');
     const predictor = new CostPredictor();
     const cheap = predictor.predict({
-      taskType: 'code', effortLevel: 'medium', topology: 'SINGLE',
-      estimatedTokens: 100000, estimatedDurationMs: 30000, agentCount: 1,
+      taskType: 'code',
+      effortLevel: 'medium',
+      topology: 'SINGLE',
+      estimatedTokens: 100000,
+      estimatedDurationMs: 30000,
+      agentCount: 1,
       modelId: 'gpt-4o-mini',
     });
     const expensive = predictor.predict({
-      taskType: 'code', effortLevel: 'medium', topology: 'SINGLE',
-      estimatedTokens: 100000, estimatedDurationMs: 30000, agentCount: 1,
+      taskType: 'code',
+      effortLevel: 'medium',
+      topology: 'SINGLE',
+      estimatedTokens: 100000,
+      estimatedDurationMs: 30000,
+      agentCount: 1,
       modelId: 'claude-opus-4-8',
     });
     expect(expensive.estimatedCostUsd).toBeGreaterThan(cheap.estimatedCostUsd);
@@ -217,9 +222,7 @@ describe('aggregateCost (cost aggregator)', () => {
   });
 
   it('accumulates cache tokens and savings', () => {
-    const records: LLMCallRow[] = [
-      makeRow({ model: 'claude-haiku-4-5', cacheReadTokens: 5000 }),
-    ];
+    const records: LLMCallRow[] = [makeRow({ model: 'claude-haiku-4-5', cacheReadTokens: 5000 })];
     const report = aggregateCost(records);
     expect(report.total.cacheReadTokens).toBe(5000);
     expect(report.total.cacheSavingsUsd).toBeGreaterThan(0);
@@ -244,10 +247,7 @@ describe('aggregateCost (cost aggregator)', () => {
   });
 
   it('respects --model filter', () => {
-    const records: LLMCallRow[] = [
-      makeRow({ model: 'gpt-4o-mini' }),
-      makeRow({ model: 'gpt-4o' }),
-    ];
+    const records: LLMCallRow[] = [makeRow({ model: 'gpt-4o-mini' }), makeRow({ model: 'gpt-4o' })];
     const report = aggregateCost(records, { model: 'gpt-4o' });
     expect(report.total.calls).toBe(1);
     expect(report.total.inputTokens).toBe(1000);
@@ -396,13 +396,15 @@ describe('Single source of truth (cost calculation consistency)', () => {
     const breakdown = calculateCostBreakdown(modelId, inputTokens, outputTokens);
 
     // Method 2: aggregator (per-row)
-    const report = aggregateCost([{
-      model: modelId,
-      promptTokens: inputTokens,
-      completionTokens: outputTokens,
-      totalTokens: inputTokens + outputTokens,
-      timestamp: new Date().toISOString(),
-    }]);
+    const report = aggregateCost([
+      {
+        model: modelId,
+        promptTokens: inputTokens,
+        completionTokens: outputTokens,
+        totalTokens: inputTokens + outputTokens,
+        timestamp: new Date().toISOString(),
+      },
+    ]);
 
     expect(Math.abs(breakdown.totalUsd - report.total.costUsd)).toBeLessThan(0.0001);
   });
@@ -413,8 +415,12 @@ describe('Single source of truth (cost calculation consistency)', () => {
     // Recompute manually: 70/30 split, gpt-4o-mini rates
     const expected = calculateCostBreakdown('gpt-4o-mini', 70000, 30000).totalUsd;
     const result = predictor.predict({
-      taskType: 'code', effortLevel: 'medium', topology: 'SINGLE',
-      estimatedTokens: 100000, estimatedDurationMs: 30000, agentCount: 1,
+      taskType: 'code',
+      effortLevel: 'medium',
+      topology: 'SINGLE',
+      estimatedTokens: 100000,
+      estimatedDurationMs: 30000,
+      agentCount: 1,
       modelId: 'gpt-4o-mini',
     });
     expect(result.estimatedCostUsd).toBeCloseTo(expected, 4);

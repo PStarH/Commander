@@ -8,13 +8,18 @@
 
 import { AgentRuntime } from '../runtime/agentRuntime';
 import { ModelRouter, getModelRouter } from '../runtime/modelRouter';
-import { NullTenantProvider, SimpleTenantProvider, setGlobalTenantProvider } from '../runtime/tenantProvider';
+import {
+  NullTenantProvider,
+  SimpleTenantProvider,
+  setGlobalTenantProvider,
+} from '../runtime/tenantProvider';
 import { getGlobalLogger } from '../logging';
 import { createAllTools } from '../tools/index';
 import type { ResolvedConfig } from './tier';
 
 // Provider map — lazy-loaded to avoid bundling all providers in every import
-const PROVIDER_FACTORIES: Record<string, () => Promise<{ new(...args: any[]): any }>> = {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const PROVIDER_FACTORIES: Record<string, () => Promise<{ new (...args: any[]): any }>> = {
   openai: async () => (await import('../runtime/providers/openaiProvider')).OpenAIProvider,
   anthropic: async () => (await import('../runtime/providers/anthropicProvider')).AnthropicProvider,
   google: async () => (await import('../runtime/providers/googleProvider')).GoogleProvider,
@@ -28,7 +33,8 @@ const PROVIDER_FACTORIES: Record<string, () => Promise<{ new(...args: any[]): an
   mistral: async () => (await import('../runtime/providers/mistralProvider')).MistralProvider,
   groq: async () => (await import('../runtime/providers/groqProvider')).GroqProvider,
   together: async () => (await import('../runtime/providers/togetherProvider')).TogetherProvider,
-  perplexity: async () => (await import('../runtime/providers/perplexityProvider')).PerplexityProvider,
+  perplexity: async () =>
+    (await import('../runtime/providers/perplexityProvider')).PerplexityProvider,
   fireworks: async () => (await import('../runtime/providers/fireworksProvider')).FireworksProvider,
   replicate: async () => (await import('../runtime/providers/replicateProvider')).ReplicateProvider,
   bedrock: async () => (await import('../runtime/providers/bedrockProvider')).BedrockProvider,

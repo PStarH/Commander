@@ -42,9 +42,7 @@ export interface TestEnv {
  * All paths are guaranteed to not exist yet (created fresh).
  */
 export async function createTestEnv(name = 'test'): Promise<TestEnv> {
-  const tmpRoot = await fs.promises.mkdtemp(
-    path.join(os.tmpdir(), `commander-${name}-`)
-  );
+  const tmpRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), `commander-${name}-`));
 
   const tempDir = tmpRoot;
   const stateFile = path.join(tmpRoot, 'state.json');
@@ -80,9 +78,7 @@ export async function createTestEnv(name = 'test'): Promise<TestEnv> {
  * Synchronous version for tests that don't use async.
  */
 export function createTestEnvSync(name = 'test'): TestEnv {
-  const tmpRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), `commander-${name}-`)
-  );
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), `commander-${name}-`));
 
   const tempDir = tmpRoot;
   const stateFile = path.join(tmpRoot, 'state.json');
@@ -119,7 +115,7 @@ export function createTestEnvSync(name = 'test'): TestEnv {
  */
 export async function withTestEnv<T>(
   name: string,
-  fn: (env: TestEnv) => T | Promise<T>
+  fn: (env: TestEnv) => T | Promise<T>,
 ): Promise<T> {
   const env = await createTestEnv(name);
   try {

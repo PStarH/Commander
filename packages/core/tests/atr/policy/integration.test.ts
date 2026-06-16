@@ -14,12 +14,31 @@ function makeStack() {
   resetIdempotencyStore();
   resetRunLedgerBundle();
   resetCompensationBridge();
-  const lm = new LeaseManager({ filePath: ':memory:', defaultTtlSeconds: 60, defaultHolder: 'test' });
+  const lm = new LeaseManager({
+    filePath: ':memory:',
+    defaultTtlSeconds: 60,
+    defaultHolder: 'test',
+  });
   const idem = new IdempotencyStore({ filePath: ':memory:', defaultTtlSeconds: 60 });
-  const ledger = new RunLedger(lm, idem, { filePath: ':memory:', defaultTtlSeconds: 60, defaultHolder: 'test' });
+  const ledger = new RunLedger(lm, idem, {
+    filePath: ':memory:',
+    defaultTtlSeconds: 60,
+    defaultHolder: 'test',
+  });
   const bridge = new CompensationBridge();
   const scheduler = new ExecutionScheduler({ lease: lm, idempotency: idem, ledger, bridge });
-  return { scheduler, lm, idem, ledger, bridge, close: () => { lm.close(); idem.close(); ledger.close(); } };
+  return {
+    scheduler,
+    lm,
+    idem,
+    ledger,
+    bridge,
+    close: () => {
+      lm.close();
+      idem.close();
+      ledger.close();
+    },
+  };
 }
 
 describe('PolicyHook integration', () => {
@@ -42,13 +61,22 @@ describe('PolicyHook integration', () => {
         scheduler: stack.scheduler,
         runId: 'r1',
         phase: 'tool',
-        tool: { name: 'read', riskLevel: 'low', destructive: false, isReadOnly: true, isIdempotent: true, category: 'file_read' },
+        tool: {
+          name: 'read',
+          riskLevel: 'low',
+          destructive: false,
+          isReadOnly: true,
+          isIdempotent: true,
+          category: 'file_read',
+        },
         args: { path: '/tmp/a' },
         stepNumber: 1,
       });
       const d = hook.evaluate(input);
       assert.strictEqual(d.effect, 'allow');
-    } finally { stack.close(); }
+    } finally {
+      stack.close();
+    }
   });
 
   it('denies destructive + non-idempotent even when pack allows', () => {
@@ -60,13 +88,22 @@ describe('PolicyHook integration', () => {
         scheduler: stack.scheduler,
         runId: 'r1',
         phase: 'tool',
-        tool: { name: 'rm', riskLevel: 'high', destructive: true, isReadOnly: false, isIdempotent: false, category: 'shell' },
+        tool: {
+          name: 'rm',
+          riskLevel: 'high',
+          destructive: true,
+          isReadOnly: false,
+          isIdempotent: false,
+          category: 'shell',
+        },
         args: { path: '/tmp/foo' },
         stepNumber: 1,
       });
       const d = hook.evaluate(input);
       assert.notStrictEqual(d.effect, 'allow');
-    } finally { stack.close(); }
+    } finally {
+      stack.close();
+    }
   });
 
   it('denies shell when tenant.allowShell is false', () => {
@@ -78,14 +115,23 @@ describe('PolicyHook integration', () => {
         scheduler: stack.scheduler,
         runId: 'r1',
         phase: 'tool',
-        tool: { name: 'shell', riskLevel: 'medium', destructive: false, isReadOnly: false, isIdempotent: true, category: 'shell' },
+        tool: {
+          name: 'shell',
+          riskLevel: 'medium',
+          destructive: false,
+          isReadOnly: false,
+          isIdempotent: true,
+          category: 'shell',
+        },
         args: { command: 'ls' },
         stepNumber: 1,
       });
       const d = hook.evaluate(input);
       assert.strictEqual(d.effect, 'deny_class');
       assert.strictEqual(d.denyClass, 'deny_shell');
-    } finally { stack.close(); }
+    } finally {
+      stack.close();
+    }
   });
 
   it('cache hit on second identical eval', () => {
@@ -97,7 +143,14 @@ describe('PolicyHook integration', () => {
         scheduler: stack.scheduler,
         runId: 'r1',
         phase: 'tool',
-        tool: { name: 'read', riskLevel: 'low', destructive: false, isReadOnly: true, isIdempotent: true, category: 'file_read' },
+        tool: {
+          name: 'read',
+          riskLevel: 'low',
+          destructive: false,
+          isReadOnly: true,
+          isIdempotent: true,
+          category: 'file_read',
+        },
         args: { path: '/tmp/a' },
         stepNumber: 1,
       });
@@ -105,7 +158,9 @@ describe('PolicyHook integration', () => {
       const d2 = hook.evaluate(input);
       assert.strictEqual(d1.effect, 'allow');
       assert.strictEqual(d2.cached, true);
-    } finally { stack.close(); }
+    } finally {
+      stack.close();
+    }
   });
 
   it('invalidateRun clears cache for that run', () => {
@@ -117,14 +172,23 @@ describe('PolicyHook integration', () => {
         scheduler: stack.scheduler,
         runId: 'r1',
         phase: 'tool',
-        tool: { name: 'read', riskLevel: 'low', destructive: false, isReadOnly: true, isIdempotent: true, category: 'file_read' },
+        tool: {
+          name: 'read',
+          riskLevel: 'low',
+          destructive: false,
+          isReadOnly: true,
+          isIdempotent: true,
+          category: 'file_read',
+        },
         args: { path: '/tmp/a' },
         stepNumber: 1,
       });
       hook.evaluate(input);
       const removed = hook.invalidateRun('r1');
       assert.ok(removed >= 0);
-    } finally { stack.close(); }
+    } finally {
+      stack.close();
+    }
   });
 
   it('readonly pack denies all writes', () => {
@@ -136,13 +200,22 @@ describe('PolicyHook integration', () => {
         scheduler: stack.scheduler,
         runId: 'r1',
         phase: 'tool',
-        tool: { name: 'write', riskLevel: 'medium', destructive: false, isReadOnly: false, isIdempotent: true, category: 'file_write' },
+        tool: {
+          name: 'write',
+          riskLevel: 'medium',
+          destructive: false,
+          isReadOnly: false,
+          isIdempotent: true,
+          category: 'file_write',
+        },
         args: { path: '/tmp/a' },
         stepNumber: 1,
       });
       const d = hook.evaluate(input);
       assert.strictEqual(d.effect, 'deny_class');
-    } finally { stack.close(); }
+    } finally {
+      stack.close();
+    }
   });
 
   it('destructive pack requires approval for all destructive ops', () => {
@@ -154,22 +227,37 @@ describe('PolicyHook integration', () => {
         scheduler: stack.scheduler,
         runId: 'r1',
         phase: 'tool',
-        tool: { name: 'merge', riskLevel: 'high', destructive: true, isReadOnly: false, isIdempotent: true, category: 'api' },
+        tool: {
+          name: 'merge',
+          riskLevel: 'high',
+          destructive: true,
+          isReadOnly: false,
+          isIdempotent: true,
+          category: 'api',
+        },
         args: {},
         stepNumber: 1,
       });
       const d = hook.evaluate(input);
       assert.strictEqual(d.effect, 'require_approval');
-    } finally { stack.close(); }
+    } finally {
+      stack.close();
+    }
   });
 
   it('rejects pack with critical conflicts', () => {
     assert.throws(() => {
-      new PolicyHook({ pack: { source: `package t
+      new PolicyHook({
+        pack: {
+          source: `package t
         default allow = false
         a { data.policy.b == true }
         b { data.policy.a == true }
-      `, name: 'cyclic', version: 1 } });
+      `,
+          name: 'cyclic',
+          version: 1,
+        },
+      });
     });
   });
 
@@ -179,7 +267,9 @@ describe('PolicyHook integration', () => {
       const hook = new PolicyHook();
       const stats = hook.getStats();
       assert.ok(typeof stats.evaluations === 'number');
-    } finally { stack.close(); }
+    } finally {
+      stack.close();
+    }
   });
 
   it('exposes pack name and version', () => {
@@ -188,6 +278,8 @@ describe('PolicyHook integration', () => {
       const hook = new PolicyHook();
       assert.strictEqual(hook.getPackName(), 'defaultCoding');
       assert.strictEqual(hook.getPackVersion(), 1);
-    } finally { stack.close(); }
+    } finally {
+      stack.close();
+    }
   });
 });

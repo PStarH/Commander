@@ -34,7 +34,7 @@ describe('WorkflowPopulation', () => {
         { id: 'n1', type: 'tool', toolName: 'file_read' },
         { id: 'n2', type: 'tool', toolName: 'file_write' },
       ]);
-      const ids = population.individualsAccessor.map(i => i.id);
+      const ids = population.individualsAccessor.map((i) => i.id);
       const uniqueIds = new Set(ids);
       expect(uniqueIds.size).toBe(ids.length);
     });

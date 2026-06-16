@@ -124,7 +124,8 @@ export function snapshotToolCall(
 // Compensation handlers — one per tool
 // ============================================================================
 
-function restoreFromStore(_action: CompensableAction,
+function restoreFromStore(
+  _action: CompensableAction,
   store: SnapshotStore,
   variant: 'restore' | 'delete' = 'restore',
 ): CompensationOutcome {

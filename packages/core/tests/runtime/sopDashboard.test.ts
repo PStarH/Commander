@@ -25,10 +25,16 @@ const TEST_DIR = path.join(process.cwd(), '.commander_test_sops');
 function cleanTestDir(): void {
   try {
     fs.rmSync(TEST_DIR, { recursive: true, force: true });
-  } catch { /* ok */ }
+  } catch {
+    /* ok */
+  }
 }
 
-function createSampleSOP(agentId: string, runId: string, overrides?: Record<string, unknown>): void {
+function createSampleSOP(
+  agentId: string,
+  runId: string,
+  overrides?: Record<string, unknown>,
+): void {
   const agentDir = path.join(TEST_DIR, agentId);
   fs.mkdirSync(agentDir, { recursive: true });
 
@@ -68,7 +74,11 @@ function createSampleSOP(agentId: string, runId: string, overrides?: Record<stri
   };
 
   fs.writeFileSync(path.join(agentDir, `${runId}.json`), JSON.stringify(sop, null, 2), 'utf-8');
-  fs.writeFileSync(path.join(agentDir, `${runId}.md`), `# SOP: Test\n\nSummary: ${sop.summary}\n`, 'utf-8');
+  fs.writeFileSync(
+    path.join(agentDir, `${runId}.md`),
+    `# SOP: Test\n\nSummary: ${sop.summary}\n`,
+    'utf-8',
+  );
 }
 
 function seedTestData(): void {
@@ -113,20 +123,23 @@ describe('sopDashboard', () => {
 
     it('returns SOPs from filesystem', () => {
       createSampleSOP('agent-alpha', 'run-001', { tags: ['test', 'alpha'], stepCount: 3 });
-      createSampleSOP('agent-alpha', 'run-002', { tags: ['test', 'alpha', 'urgent'], stepCount: 7 });
+      createSampleSOP('agent-alpha', 'run-002', {
+        tags: ['test', 'alpha', 'urgent'],
+        stepCount: 7,
+      });
       createSampleSOP('agent-beta', 'run-003', { tags: ['test', 'beta'], stepCount: 12 });
 
       const result = sopModule.listSOPs(TEST_DIR);
       assert.strictEqual(result.length, 3);
-      assert.ok(result.some(s => s.agentId === 'agent-alpha'));
-      assert.ok(result.some(s => s.agentId === 'agent-beta'));
-      assert.ok(result.some(s => s.runId === 'run-001'));
-      assert.ok(result.some(s => s.runId === 'run-003'));
+      assert.ok(result.some((s) => s.agentId === 'agent-alpha'));
+      assert.ok(result.some((s) => s.agentId === 'agent-beta'));
+      assert.ok(result.some((s) => s.runId === 'run-001'));
+      assert.ok(result.some((s) => s.runId === 'run-003'));
     });
 
     it('returns correct SOPListItem fields', () => {
       const result = sopModule.listSOPs(TEST_DIR);
-      const item = result.find(s => s.runId === 'run-001');
+      const item = result.find((s) => s.runId === 'run-001');
       assert.ok(item, 'Should find run-001');
       assert.strictEqual(item!.agentId, 'agent-alpha');
       assert.strictEqual(item!.goal, 'Test goal for run-001');
@@ -214,7 +227,11 @@ describe('sopDashboard', () => {
     it('returns null for SOP with only JSON file (no .md)', () => {
       const agentDir = path.join(TEST_DIR, 'json-only-agent');
       fs.mkdirSync(agentDir, { recursive: true });
-      fs.writeFileSync(path.join(agentDir, 'no-md.json'), JSON.stringify({ goal: 'No MD' }), 'utf-8');
+      fs.writeFileSync(
+        path.join(agentDir, 'no-md.json'),
+        JSON.stringify({ goal: 'No MD' }),
+        'utf-8',
+      );
 
       const md = sopModule.getSOPMarkdown('json-only-agent', 'no-md', TEST_DIR);
       assert.strictEqual(md, null);

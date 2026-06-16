@@ -49,7 +49,10 @@ export class BatchLLMProvider {
     };
 
     this.pendingJobs.set(jobId, job);
-    getGlobalLogger().info('BatchProvider', `Batch job ${jobId} created with ${requests.length} requests`);
+    getGlobalLogger().info(
+      'BatchProvider',
+      `Batch job ${jobId} created with ${requests.length} requests`,
+    );
     return jobId;
   }
 
@@ -70,7 +73,10 @@ export class BatchLLMProvider {
         if (result.status === 'fulfilled') {
           job.results.set(chunk[i].id, result.value);
         } else {
-          job.results.set(chunk[i].id, result.reason instanceof Error ? result.reason : new Error(String(result.reason)));
+          job.results.set(
+            chunk[i].id,
+            result.reason instanceof Error ? result.reason : new Error(String(result.reason)),
+          );
         }
       }
     }

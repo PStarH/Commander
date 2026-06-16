@@ -1,7 +1,18 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSystemPrompt, isComplexTask, buildStableSystemPrefix, buildDynamicContext, computePrefixCacheKey } from '../../src/runtime/promptBuilder.js';
-import type { AgentExecutionContext, RoutingDecision, Tool, AgentRuntimeConfig } from '../../src/runtime/types.js';
+import {
+  buildSystemPrompt,
+  isComplexTask,
+  buildStableSystemPrefix,
+  buildDynamicContext,
+  computePrefixCacheKey,
+} from '../../src/runtime/promptBuilder.js';
+import type {
+  AgentExecutionContext,
+  RoutingDecision,
+  Tool,
+  AgentRuntimeConfig,
+} from '../../src/runtime/types.js';
 import { TokenGovernor } from '../../src/runtime/tokenGovernor.js';
 
 function makeCtx(overrides: Partial<AgentExecutionContext> = {}): AgentExecutionContext {
@@ -26,7 +37,9 @@ function makeTools(names: string[]): Map<string, Tool> {
   for (const name of names) {
     map.set(name, {
       definition: { name, description: `${name} description`, parameters: [] },
-      async execute() { return { output: '' }; },
+      async execute() {
+        return { output: '' };
+      },
     } as unknown as Tool);
   }
   return map;
@@ -37,7 +50,9 @@ function makeToolsByDescription(...descs: string[]): Map<string, Tool> {
   descs.forEach((d, i) => {
     m.set(`t${i}`, {
       definition: { name: `t${i}`, description: d, parameters: [] },
-      async execute() { return { output: '' }; },
+      async execute() {
+        return { output: '' };
+      },
     } as unknown as Tool);
   });
   return m;
@@ -45,7 +60,13 @@ function makeToolsByDescription(...descs: string[]): Map<string, Tool> {
 
 describe('buildSystemPrompt (P0 #3 #4 #5)', () => {
   it('includes the pre-yield verification checklist', () => {
-    const prompt = buildSystemPrompt(makeCtx(), makeRouting(), { maxStepsPerRun: 30 } as never, makeTools(['file_read']), new TokenGovernor({ totalBudget: 100000 }));
+    const prompt = buildSystemPrompt(
+      makeCtx(),
+      makeRouting(),
+      { maxStepsPerRun: 30 } as never,
+      makeTools(['file_read']),
+      new TokenGovernor({ totalBudget: 100000 }),
+    );
     assert.match(prompt, /Pre-yield Checklist/);
     assert.match(prompt, /Goal coverage/);
     assert.match(prompt, /Artifact propagation/);
@@ -53,15 +74,29 @@ describe('buildSystemPrompt (P0 #3 #4 #5)', () => {
   });
 
   it('includes the thinking protocol section with plan-before-acting directive', () => {
-    const prompt = buildSystemPrompt(makeCtx(), makeRouting(), { maxStepsPerRun: 30 } as never, makeTools(['file_read']), new TokenGovernor({ totalBudget: 100000 }));
+    const prompt = buildSystemPrompt(
+      makeCtx(),
+      makeRouting(),
+      { maxStepsPerRun: 30 } as never,
+      makeTools(['file_read']),
+      new TokenGovernor({ totalBudget: 100000 }),
+    );
     assert.match(prompt, /Thinking Protocol/);
     assert.match(prompt, /Plan before acting/);
     assert.match(prompt, /1-2 sentences/);
   });
 
   it('includes multi-file refactoring workflow for complex tasks', () => {
-    const ctx = makeCtx({ goal: 'Refactor the entire authentication layer to use a centralized config' });
-    const prompt = buildSystemPrompt(ctx, makeRouting(), { maxStepsPerRun: 30 } as never, makeTools(['file_read', 'file_edit', 'code_search']), new TokenGovernor({ totalBudget: 100000 }));
+    const ctx = makeCtx({
+      goal: 'Refactor the entire authentication layer to use a centralized config',
+    });
+    const prompt = buildSystemPrompt(
+      ctx,
+      makeRouting(),
+      { maxStepsPerRun: 30 } as never,
+      makeTools(['file_read', 'file_edit', 'code_search']),
+      new TokenGovernor({ totalBudget: 100000 }),
+    );
     assert.match(prompt, /Multi-File Refactoring Workflow/);
     assert.match(prompt, /Enumerate/);
     assert.match(prompt, /Read all first/);
@@ -70,7 +105,13 @@ describe('buildSystemPrompt (P0 #3 #4 #5)', () => {
 
   it('omits multi-file section for simple tasks', () => {
     const ctx = makeCtx({ goal: 'What is 2+2?' });
-    const prompt = buildSystemPrompt(ctx, makeRouting(), { maxStepsPerRun: 30 } as never, makeTools(['file_read']), new TokenGovernor({ totalBudget: 100000 }));
+    const prompt = buildSystemPrompt(
+      ctx,
+      makeRouting(),
+      { maxStepsPerRun: 30 } as never,
+      makeTools(['file_read']),
+      new TokenGovernor({ totalBudget: 100000 }),
+    );
     assert.doesNotMatch(prompt, /Multi-File Refactoring Workflow/);
   });
 
@@ -92,7 +133,9 @@ describe('buildStableSystemPrefix (KV-cache stability)', () => {
     descs.forEach((d, i) => {
       m.set(`t${i}`, {
         definition: { name: `t${i}`, description: d, parameters: [] },
-        async execute() { return { output: '' }; },
+        async execute() {
+          return { output: '' };
+        },
       } as unknown as Tool);
     });
     return m;
@@ -203,15 +246,36 @@ describe('buildSystemPrompt (cache split)', () => {
 
   it('prefix portion is identical across calls with varying agent/goal/budget/model', () => {
     const tools = new Map<string, Tool>();
-    tools.set('t0', { definition: { name: 't0', description: 'read', parameters: [] }, async execute() { return { output: '' }; } } as unknown as Tool);
-    const prefixA = buildSystemPrompt(makeCtx({ agentId: 'A', goal: 'X', tokenBudget: 100 }), makeRouting('m1'), config, tools, new TokenGovernor({ totalBudget: 100000 })).split('## Run Context')[0];
-    const prefixB = buildSystemPrompt(makeCtx({ agentId: 'B', goal: 'Y', tokenBudget: 200 }), makeRouting('m2'), config, tools, new TokenGovernor({ totalBudget: 100000 })).split('## Run Context')[0];
+    tools.set('t0', {
+      definition: { name: 't0', description: 'read', parameters: [] },
+      async execute() {
+        return { output: '' };
+      },
+    } as unknown as Tool);
+    const prefixA = buildSystemPrompt(
+      makeCtx({ agentId: 'A', goal: 'X', tokenBudget: 100 }),
+      makeRouting('m1'),
+      config,
+      tools,
+      new TokenGovernor({ totalBudget: 100000 }),
+    ).split('## Run Context')[0];
+    const prefixB = buildSystemPrompt(
+      makeCtx({ agentId: 'B', goal: 'Y', tokenBudget: 200 }),
+      makeRouting('m2'),
+      config,
+      tools,
+      new TokenGovernor({ totalBudget: 100000 }),
+    ).split('## Run Context')[0];
     assert.strictEqual(prefixA, prefixB);
   });
 
   it('low-budget phase returns terse format and skips the cache split', () => {
     const tools = new Map<string, Tool>();
-    const tight = new TokenGovernor({ totalBudget: 100, warningThreshold: 0.5, criticalThreshold: 0.95 });
+    const tight = new TokenGovernor({
+      totalBudget: 100,
+      warningThreshold: 0.5,
+      criticalThreshold: 0.95,
+    });
     // Force tight phase by reporting usage near the budget cap
     tight.reportUsage({ promptTokens: 90, completionTokens: 0, totalTokens: 90 });
     const prompt = buildSystemPrompt(makeCtx(), makeRouting(), config, tools, tight);
@@ -284,7 +348,14 @@ describe('buildStableSystemPrefix (prompt engineering improvements)', () => {
 
   it('includes tool discipline section for all task types', () => {
     const tools = makeToolsByDescription('read files');
-    for (const taskType of ['general', 'code', 'analysis', 'search', 'creative', 'structured'] as const) {
+    for (const taskType of [
+      'general',
+      'code',
+      'analysis',
+      'search',
+      'creative',
+      'structured',
+    ] as const) {
       const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], taskType);
       assert.match(prefix, /Tool Use Discipline/);
       assert.match(prefix, /Think first/);
@@ -328,7 +399,15 @@ describe('buildStableSystemPrefix (prompt engineering improvements)', () => {
       content: '<!-- AGENTS.md -->\nUse TypeScript strict mode.',
       cacheKey: 'abc123',
     };
-    const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], 'general', projectCtx);
+    const prefix = buildStableSystemPrefix(
+      config,
+      tools,
+      null,
+      undefined,
+      ['t0'],
+      'general',
+      projectCtx,
+    );
     assert.match(prefix, /<project_context>/);
     assert.match(prefix, /AGENTS\.md/);
     assert.match(prefix, /Use TypeScript strict mode/);

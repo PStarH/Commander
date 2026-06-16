@@ -29,10 +29,10 @@ export interface ExtractedSkill {
   name: string;
   description: string;
   category: 'code' | 'config' | 'deploy' | 'debug' | 'test' | 'other';
-  pattern: string;           // What triggers this skill
-  steps: string[];           // What steps to take
-  tools: string[];           // What tools are used
-  confidence: number;        // 0-1
+  pattern: string; // What triggers this skill
+  steps: string[]; // What steps to take
+  tools: string[]; // What tools are used
+  confidence: number; // 0-1
   usageCount: number;
   successRate: number;
   lastUsed: string;
@@ -87,7 +87,9 @@ export class SkillExtractor {
         // Run decay check on load
         this.purgeStaleSkills();
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   private saveSkills(): void {
@@ -96,7 +98,9 @@ export class SkillExtractor {
       const path = require('path');
       fs.mkdirSync(path.dirname(this.skillsPath), { recursive: true });
       fs.writeFileSync(this.skillsPath, JSON.stringify(Array.from(this.skills.values()), null, 2));
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   /**
@@ -139,8 +143,8 @@ export class SkillExtractor {
     }
 
     // Extract steps
-    const steps = params.steps.map(s => `${s.action}: ${s.tool}`);
-    const tools = [...new Set(params.steps.map(s => s.tool))];
+    const steps = params.steps.map((s) => `${s.action}: ${s.tool}`);
+    const tools = [...new Set(params.steps.map((s) => s.tool))];
 
     // Create new skill
     const id = `skill-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -159,11 +163,13 @@ export class SkillExtractor {
       createdAt: new Date().toISOString(),
       sourceRunId: params.runId,
       decayed: false,
-      examples: [{
-        task: params.task,
-        result: 'success',
-        tokens: params.tokens,
-      }],
+      examples: [
+        {
+          task: params.task,
+          result: 'success',
+          tokens: params.tokens,
+        },
+      ],
     };
 
     this.skills.set(id, skill);
@@ -205,8 +211,7 @@ export class SkillExtractor {
     // Run decay check before listing
     this.purgeStaleSkills();
 
-    return Array.from(this.skills.values())
-      .sort((a, b) => b.usageCount - a.usageCount);
+    return Array.from(this.skills.values()).sort((a, b) => b.usageCount - a.usageCount);
   }
 
   /**
@@ -214,7 +219,7 @@ export class SkillExtractor {
    */
   getSkillsByCategory(category: ExtractedSkill['category']): ExtractedSkill[] {
     return Array.from(this.skills.values())
-      .filter(s => s.category === category)
+      .filter((s) => s.category === category)
       .sort((a, b) => b.usageCount - a.usageCount);
   }
 
@@ -223,7 +228,7 @@ export class SkillExtractor {
    */
   getDecayedSkills(): ExtractedSkill[] {
     return Array.from(this.skills.values())
-      .filter(s => s.decayed)
+      .filter((s) => s.decayed)
       .sort((a, b) => b.lastUsed.localeCompare(a.lastUsed));
   }
 
@@ -291,7 +296,7 @@ export class SkillExtractor {
     skill.successRate = skill.successRate * (1 - alpha) + (success ? 1 : 0) * alpha;
 
     // Update confidence based on usage and success rate
-    skill.confidence = Math.min(1, 0.5 + (skill.usageCount * 0.02) + (skill.successRate * 0.3));
+    skill.confidence = Math.min(1, 0.5 + skill.usageCount * 0.02 + skill.successRate * 0.3);
 
     this.saveSkills();
   }
@@ -302,19 +307,39 @@ export class SkillExtractor {
 
   private extractPattern(task: string): string {
     // Extract key action words
-    const actionWords = ['create', 'build', 'fix', 'deploy', 'test', 'refactor', 'add', 'update', 'delete', 'configure', 'setup', 'install'];
+    const actionWords = [
+      'create',
+      'build',
+      'fix',
+      'deploy',
+      'test',
+      'refactor',
+      'add',
+      'update',
+      'delete',
+      'configure',
+      'setup',
+      'install',
+    ];
     const words = task.toLowerCase().split(/\s+/);
-    const actions = words.filter(w => actionWords.includes(w));
-    const nouns = words.filter(w => w.length > 3 && !actionWords.includes(w));
+    const actions = words.filter((w) => actionWords.includes(w));
+    const nouns = words.filter((w) => w.length > 3 && !actionWords.includes(w));
 
     return [...actions, ...nouns].slice(0, 5).join(' ');
   }
 
-  private inferCategory(taskType: string, steps: Array<{ tool: string }>): ExtractedSkill['category'] {
-    const tools = steps.map(s => s.tool).join(' ').toLowerCase();
+  private inferCategory(
+    taskType: string,
+    steps: Array<{ tool: string }>,
+  ): ExtractedSkill['category'] {
+    const tools = steps
+      .map((s) => s.tool)
+      .join(' ')
+      .toLowerCase();
     const type = taskType.toLowerCase();
 
-    if (type.includes('coding') || tools.includes('file_write') || tools.includes('apply_patch')) return 'code';
+    if (type.includes('coding') || tools.includes('file_write') || tools.includes('apply_patch'))
+      return 'code';
     if (type.includes('test') || tools.includes('test')) return 'test';
     if (type.includes('deploy') || tools.includes('deploy')) return 'deploy';
     if (type.includes('debug') || tools.includes('shell_execute')) return 'debug';
@@ -322,7 +347,10 @@ export class SkillExtractor {
     return 'other';
   }
 
-  private findSimilarSkill(pattern: string, category: ExtractedSkill['category']): ExtractedSkill | undefined {
+  private findSimilarSkill(
+    pattern: string,
+    category: ExtractedSkill['category'],
+  ): ExtractedSkill | undefined {
     for (const skill of this.skills.values()) {
       if (skill.category !== category) continue;
       if (this.calculateSimilarity(pattern, skill.pattern) > 0.5) {
@@ -335,7 +363,7 @@ export class SkillExtractor {
   private calculateSimilarity(a: string, b: string): number {
     const wordsA = new Set(a.split(/\s+/));
     const wordsB = new Set(b.split(/\s+/));
-    const intersection = new Set([...wordsA].filter(w => wordsB.has(w)));
+    const intersection = new Set([...wordsA].filter((w) => wordsB.has(w)));
     const union = new Set([...wordsA, ...wordsB]);
     return union.size > 0 ? intersection.size / union.size : 0;
   }

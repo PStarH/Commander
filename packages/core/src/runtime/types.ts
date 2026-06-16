@@ -44,10 +44,7 @@ export type {
 } from './types/tool';
 
 // Re-export from routing.ts
-export type {
-  ModelConfig,
-  RoutingDecision,
-} from './types/routing';
+export type { ModelConfig, RoutingDecision } from './types/routing';
 
 // Re-export from execution.ts
 export type {
@@ -75,17 +72,10 @@ export type {
 } from './types/messageBus';
 
 // Re-export from trace.ts
-export type {
-  TraceEvent,
-  TraceSpan,
-  ExecutionTrace,
-} from './types/trace';
+export type { TraceEvent, TraceSpan, ExecutionTrace } from './types/trace';
 
 // Re-export from htmlReport.ts
-export type {
-  HTMLReportSection,
-  HTMLReport,
-} from './types/htmlReport';
+export type { HTMLReportSection, HTMLReport } from './types/htmlReport';
 
 // Re-export from selfEvolution.ts
 export type {

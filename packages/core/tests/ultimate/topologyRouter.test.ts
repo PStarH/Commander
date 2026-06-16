@@ -42,8 +42,16 @@ function makeEdge(from: string, to: string, dataDependency = true): TaskDAGEdge 
 }
 
 const ALL_TOPOLOGIES = [
-  'SINGLE', 'SEQUENTIAL', 'PARALLEL', 'HIERARCHICAL', 'HYBRID',
-  'DEBATE', 'ENSEMBLE', 'EVALUATOR_OPTIMIZER', 'HANDOFF', 'CONSENSUS',
+  'SINGLE',
+  'SEQUENTIAL',
+  'PARALLEL',
+  'HIERARCHICAL',
+  'HYBRID',
+  'DEBATE',
+  'ENSEMBLE',
+  'EVALUATOR_OPTIMIZER',
+  'HANDOFF',
+  'CONSENSUS',
 ] as const;
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -61,21 +69,25 @@ describe('TopologyRouter', () => {
 
   describe('SINGLE for simple tasks', () => {
     it('selects SINGLE for a simple factual task with 1 agent', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'FACTUAL',
-        estimatedAgentCount: 1,
-        estimatedTokens: 500,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'FACTUAL',
+          estimatedAgentCount: 1,
+          estimatedTokens: 500,
+        }),
+      );
       expect(result.topology).toBe('SINGLE');
     });
 
     it('selects SINGLE with SIMPLE effort bonus for 1-agent tasks', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'FACTUAL',
-        estimatedAgentCount: 1,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'FACTUAL',
+          estimatedAgentCount: 1,
+        }),
+      );
       expect(result.topology).toBe('SINGLE');
-      expect(result.reasoning.some(r => r.includes('SINGLE'))).toBe(true);
+      expect(result.reasoning.some((r) => r.includes('SINGLE'))).toBe(true);
     });
 
     it('returns latency < 5s for SINGLE topology', () => {
@@ -90,40 +102,48 @@ describe('TopologyRouter', () => {
 
   describe('PARALLEL for independent subtasks', () => {
     it('selects PARALLEL for research tasks with many agents', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'RESEARCH',
-        estimatedAgentCount: 6,
-        estimatedTokens: 10000,
-        taskNature: 'IO_BOUND',
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'RESEARCH',
+          estimatedAgentCount: 6,
+          estimatedTokens: 10000,
+          taskNature: 'IO_BOUND',
+        }),
+      );
       expect(result.topology).toBe('PARALLEL');
     });
 
     it('selects PARALLEL for analysis tasks with IO-bound nature', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'ANALYSIS',
-        estimatedAgentCount: 5,
-        taskNature: 'IO_BOUND',
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'ANALYSIS',
+          estimatedAgentCount: 5,
+          taskNature: 'IO_BOUND',
+        }),
+      );
       expect(result.topology).toBe('PARALLEL');
     });
 
     it('selects PARALLEL for creative tasks with speculation', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'CREATIVE',
-        estimatedAgentCount: 5,
-        suitableForSpeculation: true,
-        taskNature: 'IO_BOUND',
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'CREATIVE',
+          estimatedAgentCount: 5,
+          suitableForSpeculation: true,
+          taskNature: 'IO_BOUND',
+        }),
+      );
       expect(result.topology).toBe('PARALLEL');
     });
 
     it('returns latency 15-45s for PARALLEL topology', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'RESEARCH',
-        estimatedAgentCount: 6,
-        taskNature: 'IO_BOUND',
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'RESEARCH',
+          estimatedAgentCount: 6,
+          taskNature: 'IO_BOUND',
+        }),
+      );
       expect(result.expectedLatency).toBe('15-45s');
     });
   });
@@ -146,18 +166,23 @@ describe('TopologyRouter', () => {
       expect(dag.metadata.criticalPathDepth).toBe(5);
       expect(dag.metadata.interSubtaskCoupling).toBe(0); // no coupling
 
-      const result = router.route(makeDeliberation({
-        taskType: 'REASONING',
-        estimatedAgentCount: 8,
-      }), dag);
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'REASONING',
+          estimatedAgentCount: 8,
+        }),
+        dag,
+      );
       expect(result.topology).toBe('HIERARCHICAL');
     });
 
     it('returns latency 30-120s for HIERARCHICAL topology', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'REASONING',
-        estimatedAgentCount: 8,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'REASONING',
+          estimatedAgentCount: 8,
+        }),
+      );
       expect(['30-120s', '1-5min']).toContain(result.expectedLatency);
     });
   });
@@ -170,21 +195,25 @@ describe('TopologyRouter', () => {
     it('selects HIERARCHICAL or SEQUENTIAL for compute-bound reasoning (DEBATE is also boosted)', () => {
       // COMPUTE_BOUND gives DEBATE +1 but SEQUENTIAL +2, so SEQUENTIAL often wins.
       // Verify the result is a reasonable topology for this scenario.
-      const result = router.route(makeDeliberation({
-        taskType: 'REASONING',
-        estimatedAgentCount: 5,
-        taskNature: 'COMPUTE_BOUND',
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'REASONING',
+          estimatedAgentCount: 5,
+          taskNature: 'COMPUTE_BOUND',
+        }),
+      );
       expect(['SEQUENTIAL', 'HIERARCHICAL', 'DEBATE']).toContain(result.topology);
     });
 
     it('returns latency 30-90s when DEBATE is selected', () => {
       // Force DEBATE by using a scenario that strongly favors it
-      const result = router.route(makeDeliberation({
-        taskType: 'REASONING',
-        estimatedAgentCount: 5,
-        taskNature: 'COMPUTE_BOUND',
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'REASONING',
+          estimatedAgentCount: 5,
+          taskNature: 'COMPUTE_BOUND',
+        }),
+      );
       if (result.topology === 'DEBATE') {
         expect(result.expectedLatency).toBe('30-90s');
       }
@@ -204,10 +233,12 @@ describe('TopologyRouter', () => {
     });
 
     it('top-4 scores are mentioned in reasoning', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'CODING',
-        estimatedAgentCount: 3,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'CODING',
+          estimatedAgentCount: 3,
+        }),
+      );
       const scoreLine = result.reasoning[0];
       // Should contain at least 4 topology=score pairs
       const matches = scoreLine.match(/\w+=/g);
@@ -215,11 +246,13 @@ describe('TopologyRouter', () => {
     });
 
     it('score reflects task type: CODING produces reasonable top-4 selection', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'CODING',
-        estimatedAgentCount: 3,
-        estimatedTokens: 5000,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'CODING',
+          estimatedAgentCount: 3,
+          estimatedTokens: 5000,
+        }),
+      );
       // CODING weights balance parallel=2, sequential=2, complex=1
       // Top 4 should include HYBRID, HANDOFF, PARALLEL, or HIERARCHICAL
       const scoreLine = result.reasoning[0];
@@ -229,18 +262,22 @@ describe('TopologyRouter', () => {
     });
 
     it('score reflects task type: RESEARCH favors HYBRID or PARALLEL', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'RESEARCH',
-        estimatedAgentCount: 8,
-        estimatedTokens: 10000,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'RESEARCH',
+          estimatedAgentCount: 8,
+          estimatedTokens: 10000,
+        }),
+      );
       expect(['HYBRID', 'PARALLEL']).toContain(result.topology);
     });
 
     it('expected cost is positive and reasonable', () => {
-      const result = router.route(makeDeliberation({
-        estimatedTokens: 10000,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          estimatedTokens: 10000,
+        }),
+      );
       expect(result.expectedCost).toBeGreaterThan(0);
       // cost = tokens * COST_PER_TOKEN * costMultiplier, SINGLE has 1.0
       expect(result.expectedCost).toBe(10000 * COST_PER_TOKEN * 1.0);
@@ -253,20 +290,26 @@ describe('TopologyRouter', () => {
 
   describe('budget penalties', () => {
     it('penalizes expensive topologies when budget is tight', () => {
-      const withoutBudget = router.route(makeDeliberation({
-        taskType: 'RESEARCH',
-        estimatedAgentCount: 8,
-        estimatedTokens: 100000,
-      }));
+      const withoutBudget = router.route(
+        makeDeliberation({
+          taskType: 'RESEARCH',
+          estimatedAgentCount: 8,
+          estimatedTokens: 100000,
+        }),
+      );
 
-      const withBudget = router.route(makeDeliberation({
-        taskType: 'RESEARCH',
-        estimatedAgentCount: 8,
-        estimatedTokens: 100000,
-      }), undefined, {
-        maxCostUsd: 0.01,
-        maxTokens: 200000,
-      });
+      const withBudget = router.route(
+        makeDeliberation({
+          taskType: 'RESEARCH',
+          estimatedAgentCount: 8,
+          estimatedTokens: 100000,
+        }),
+        undefined,
+        {
+          maxCostUsd: 0.01,
+          maxTokens: 200000,
+        },
+      );
 
       // HYBRID (costMultiplier 4.0) is expensive: 100000 * 0.000015 * 4 = 6.0 USD
       // With a tight budget of $0.01, HYBRID gets a penalty and something cheaper should win
@@ -284,14 +327,18 @@ describe('TopologyRouter', () => {
     });
 
     it('no penalty when cost is within budget', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'FACTUAL',
-        estimatedAgentCount: 1,
-        estimatedTokens: 100,
-      }), undefined, {
-        maxCostUsd: 100,
-        maxTokens: 100000,
-      });
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'FACTUAL',
+          estimatedAgentCount: 1,
+          estimatedTokens: 100,
+        }),
+        undefined,
+        {
+          maxCostUsd: 100,
+          maxTokens: 100000,
+        },
+      );
       // SINGLE is cheap, no penalty expected
       expect(result.topology).toBe('SINGLE');
     });
@@ -302,14 +349,18 @@ describe('TopologyRouter', () => {
       // 50000 * 0.000015 * 1.0 = 0.75 <= 1.0
       // SINGLE (1.0), SEQUENTIAL (1.1 -> 0.825) should be within budget
       // PARALLEL (2.0 -> 1.5) and above should be penalized
-      const result = router.route(makeDeliberation({
-        taskType: 'FACTUAL',
-        estimatedAgentCount: 1,
-        estimatedTokens: 50000,
-      }), undefined, {
-        maxCostUsd: 1.0,
-        maxTokens: 100000,
-      });
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'FACTUAL',
+          estimatedAgentCount: 1,
+          estimatedTokens: 50000,
+        }),
+        undefined,
+        {
+          maxCostUsd: 1.0,
+          maxTokens: 100000,
+        },
+      );
       // SINGLE cost: 50000 * 0.000015 * 1.0 = 0.75 (within budget)
       expect(result.topology).toBe('SINGLE');
     });
@@ -321,55 +372,67 @@ describe('TopologyRouter', () => {
 
   describe('task type weights', () => {
     it('FACTUAL type favors SEQUENTIAL (weight sequential=2)', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'FACTUAL',
-        estimatedAgentCount: 3,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'FACTUAL',
+          estimatedAgentCount: 3,
+        }),
+      );
       expect(['SEQUENTIAL', 'SINGLE']).toContain(result.topology);
     });
 
     it('REASONING type favors complex topologies (weight complex=3)', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'REASONING',
-        estimatedAgentCount: 8,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'REASONING',
+          estimatedAgentCount: 8,
+        }),
+      );
       // complex weight=3 should boost HIERARCHICAL (complex:1.0) and HYBRID (complex:0.9)
       expect(['HIERARCHICAL', 'HYBRID', 'DEBATE']).toContain(result.topology);
     });
 
     it('RESEARCH type favors research-heavy topologies (weight research=3)', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'RESEARCH',
-        estimatedAgentCount: 6,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'RESEARCH',
+          estimatedAgentCount: 6,
+        }),
+      );
       // research weight=3 should boost HYBRID (research:1.0) and HIERARCHICAL (research:0.9)
       expect(['HYBRID', 'HIERARCHICAL', 'PARALLEL']).toContain(result.topology);
     });
 
     it('CODING type balances sequential and parallel (weights seq=2, par=2)', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'CODING',
-        estimatedAgentCount: 3,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'CODING',
+          estimatedAgentCount: 3,
+        }),
+      );
       // Both sequential and parallel weights are 2
       expect(result.topology).toBeDefined();
       expect(ALL_TOPOLOGIES).toContain(result.topology);
     });
 
     it('CREATIVE type favors parallel (weight parallel=2)', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'CREATIVE',
-        estimatedAgentCount: 5,
-        taskNature: 'IO_BOUND',
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'CREATIVE',
+          estimatedAgentCount: 5,
+          taskNature: 'IO_BOUND',
+        }),
+      );
       expect(['PARALLEL', 'ENSEMBLE']).toContain(result.topology);
     });
 
     it('unknown task type falls back to FACTUAL weights', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'FACTUAL' as any,
-        estimatedAgentCount: 1,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'FACTUAL' as any,
+          estimatedAgentCount: 1,
+        }),
+      );
       expect(result.topology).toBe('SINGLE');
     });
   });
@@ -379,24 +442,27 @@ describe('TopologyRouter', () => {
   // =====================================================================
 
   describe('valid topology for all inputs', () => {
-    it.each(ALL_TOPOLOGIES)('result topology is always a valid OrchestrationTopology (got %s indirectly)', () => {
-      // Run many different configurations and verify all results are valid
-      const configs = [
-        { taskType: 'FACTUAL' as const, estimatedAgentCount: 1 },
-        { taskType: 'RESEARCH' as const, estimatedAgentCount: 10 },
-        { taskType: 'REASONING' as const, estimatedAgentCount: 5 },
-        { taskType: 'CODING' as const, estimatedAgentCount: 3 },
-        { taskType: 'CREATIVE' as const, estimatedAgentCount: 7 },
-        { taskType: 'ANALYSIS' as const, estimatedAgentCount: 2 },
-      ];
-      for (const cfg of configs) {
-        const result = router.route(makeDeliberation(cfg));
-        expect(ALL_TOPOLOGIES).toContain(result.topology);
-        expect(typeof result.expectedCost).toBe('number');
-        expect(typeof result.expectedLatency).toBe('string');
-        expect(result.reasoning.length).toBeGreaterThanOrEqual(2);
-      }
-    });
+    it.each(ALL_TOPOLOGIES)(
+      'result topology is always a valid OrchestrationTopology (got %s indirectly)',
+      () => {
+        // Run many different configurations and verify all results are valid
+        const configs = [
+          { taskType: 'FACTUAL' as const, estimatedAgentCount: 1 },
+          { taskType: 'RESEARCH' as const, estimatedAgentCount: 10 },
+          { taskType: 'REASONING' as const, estimatedAgentCount: 5 },
+          { taskType: 'CODING' as const, estimatedAgentCount: 3 },
+          { taskType: 'CREATIVE' as const, estimatedAgentCount: 7 },
+          { taskType: 'ANALYSIS' as const, estimatedAgentCount: 2 },
+        ];
+        for (const cfg of configs) {
+          const result = router.route(makeDeliberation(cfg));
+          expect(ALL_TOPOLOGIES).toContain(result.topology);
+          expect(typeof result.expectedCost).toBe('number');
+          expect(typeof result.expectedLatency).toBe('string');
+          expect(result.reasoning.length).toBeGreaterThanOrEqual(2);
+        }
+      },
+    );
 
     it('returns valid result with no DAG', () => {
       const result = router.route(makeDeliberation(), undefined);
@@ -419,10 +485,13 @@ describe('TopologyRouter', () => {
       edges.push(makeEdge('n0', 'n2'));
       edges.push(makeEdge('n0', 'n3'));
       const dag = router.buildDAG(nodes, edges);
-      const result = router.route(makeDeliberation({
-        taskType: 'REASONING',
-        estimatedAgentCount: 8,
-      }), dag);
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'REASONING',
+          estimatedAgentCount: 8,
+        }),
+        dag,
+      );
       expect(ALL_TOPOLOGIES).toContain(result.topology);
     });
 
@@ -456,7 +525,12 @@ describe('TopologyRouter', () => {
     it('computes correct parallelism width for diamond DAG', () => {
       // a -> b, a -> c, b -> d, c -> d
       const nodes = [makeNode('a'), makeNode('b'), makeNode('c'), makeNode('d')];
-      const edges = [makeEdge('a', 'b'), makeEdge('a', 'c'), makeEdge('b', 'd'), makeEdge('c', 'd')];
+      const edges = [
+        makeEdge('a', 'b'),
+        makeEdge('a', 'c'),
+        makeEdge('b', 'd'),
+        makeEdge('c', 'd'),
+      ];
       const dag = router.buildDAG(nodes, edges);
       // Level 0: {a}, Level 1: {b, c}, Level 2: {d} -> max width = 2
       expect(dag.metadata.parallelismWidth).toBe(2);
@@ -513,11 +587,14 @@ describe('TopologyRouter', () => {
       const nodes = Array.from({ length: 6 }, (_, i) => makeNode(`n${i}`));
       const dag = router.buildDAG(nodes, []);
 
-      const result = router.route(makeDeliberation({
-        taskType: 'CODING',
-        estimatedAgentCount: 6,
-        estimatedTokens: 5000,
-      }), dag);
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'CODING',
+          estimatedAgentCount: 6,
+          estimatedTokens: 5000,
+        }),
+        dag,
+      );
       // PARALLEL should get a DAG bonus
       expect(result.topology).toBeDefined();
     });
@@ -529,11 +606,14 @@ describe('TopologyRouter', () => {
       const dag = router.buildDAG(nodes, edges);
       expect(dag.metadata.interSubtaskCoupling).toBe(1.0);
 
-      const result = router.route(makeDeliberation({
-        taskType: 'CODING',
-        estimatedAgentCount: 3,
-        estimatedTokens: 5000,
-      }), dag);
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'CODING',
+          estimatedAgentCount: 3,
+          estimatedTokens: 5000,
+        }),
+        dag,
+      );
       // SEQUENTIAL should get a coupling bonus
       expect(['SEQUENTIAL', 'SINGLE']).toContain(result.topology);
     });
@@ -542,17 +622,23 @@ describe('TopologyRouter', () => {
       // 5-node chain with non-data-dependent edges -> critical path = 5, coupling = 0
       const nodes = Array.from({ length: 5 }, (_, i) => makeNode(`n${i}`));
       const edges: TaskDAGEdge[] = Array.from({ length: 4 }, (_, i) => ({
-        from: `n${i}`, to: `n${i + 1}`, type: 'CONDITIONAL' as const, dataDependency: false,
+        from: `n${i}`,
+        to: `n${i + 1}`,
+        type: 'CONDITIONAL' as const,
+        dataDependency: false,
       }));
       const dag = router.buildDAG(nodes, edges);
       expect(dag.metadata.criticalPathDepth).toBe(5);
       expect(dag.metadata.interSubtaskCoupling).toBe(0);
 
-      const result = router.route(makeDeliberation({
-        taskType: 'REASONING',
-        estimatedAgentCount: 8,
-        estimatedTokens: 10000,
-      }), dag);
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'REASONING',
+          estimatedAgentCount: 8,
+          estimatedTokens: 10000,
+        }),
+        dag,
+      );
       // HIERARCHICAL gets +2 from DEEP_CRITICAL_PATH, plus high complex score for REASONING
       expect(result.topology).toBe('HIERARCHICAL');
     });
@@ -564,27 +650,33 @@ describe('TopologyRouter', () => {
 
   describe('effort level classification', () => {
     it('SIMPLE effort (1 agent) gives SINGLE a bonus', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'FACTUAL',
-        estimatedAgentCount: 1,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'FACTUAL',
+          estimatedAgentCount: 1,
+        }),
+      );
       expect(result.topology).toBe('SINGLE');
     });
 
     it('DEEP_RESEARCH effort (11+ agents) gives HYBRID a bonus', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'RESEARCH',
-        estimatedAgentCount: 15,
-        estimatedTokens: 50000,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'RESEARCH',
+          estimatedAgentCount: 15,
+          estimatedTokens: 50000,
+        }),
+      );
       expect(result.topology).toBe('HYBRID');
     });
 
     it('MODERATE effort (2-4 agents) does not apply SIMPLE or DEEP_RESEARCH bonus', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'CODING',
-        estimatedAgentCount: 3,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'CODING',
+          estimatedAgentCount: 3,
+        }),
+      );
       expect(ALL_TOPOLOGIES).toContain(result.topology);
     });
   });
@@ -595,29 +687,35 @@ describe('TopologyRouter', () => {
 
   describe('task nature bonuses', () => {
     it('IO_BOUND boosts PARALLEL and HYBRID', () => {
-      const ioResult = router.route(makeDeliberation({
-        taskType: 'ANALYSIS',
-        estimatedAgentCount: 6,
-        taskNature: 'IO_BOUND',
-      }));
+      const ioResult = router.route(
+        makeDeliberation({
+          taskType: 'ANALYSIS',
+          estimatedAgentCount: 6,
+          taskNature: 'IO_BOUND',
+        }),
+      );
       expect(['PARALLEL', 'HYBRID']).toContain(ioResult.topology);
     });
 
     it('COMPUTE_BOUND boosts SEQUENTIAL and DEBATE', () => {
-      const computeResult = router.route(makeDeliberation({
-        taskType: 'REASONING',
-        estimatedAgentCount: 5,
-        taskNature: 'COMPUTE_BOUND',
-      }));
+      const computeResult = router.route(
+        makeDeliberation({
+          taskType: 'REASONING',
+          estimatedAgentCount: 5,
+          taskNature: 'COMPUTE_BOUND',
+        }),
+      );
       expect(['DEBATE', 'HIERARCHICAL', 'SEQUENTIAL']).toContain(computeResult.topology);
     });
 
     it('MIXED nature does not apply special bonuses', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'CODING',
-        estimatedAgentCount: 3,
-        taskNature: 'MIXED',
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'CODING',
+          estimatedAgentCount: 3,
+          taskNature: 'MIXED',
+        }),
+      );
       expect(ALL_TOPOLOGIES).toContain(result.topology);
     });
   });
@@ -628,23 +726,27 @@ describe('TopologyRouter', () => {
 
   describe('speculation bonuses', () => {
     it('suitableForSpeculation boosts PARALLEL and ENSEMBLE', () => {
-      const withSpec = router.route(makeDeliberation({
-        taskType: 'RESEARCH',
-        estimatedAgentCount: 6,
-        suitableForSpeculation: true,
-        taskNature: 'IO_BOUND',
-      }));
+      const withSpec = router.route(
+        makeDeliberation({
+          taskType: 'RESEARCH',
+          estimatedAgentCount: 6,
+          suitableForSpeculation: true,
+          taskNature: 'IO_BOUND',
+        }),
+      );
       // PARALLEL should be boosted by speculation + IO_BOUND
       expect(withSpec.topology).toBe('PARALLEL');
     });
 
     it('speculation has no effect when false', () => {
-      const result = router.route(makeDeliberation({
-        taskType: 'RESEARCH',
-        estimatedAgentCount: 6,
-        suitableForSpeculation: false,
-        taskNature: 'IO_BOUND',
-      }));
+      const result = router.route(
+        makeDeliberation({
+          taskType: 'RESEARCH',
+          estimatedAgentCount: 6,
+          suitableForSpeculation: false,
+          taskNature: 'IO_BOUND',
+        }),
+      );
       expect(ALL_TOPOLOGIES).toContain(result.topology);
     });
   });
@@ -656,10 +758,12 @@ describe('TopologyRouter', () => {
   describe('expected cost and latency', () => {
     it('expected cost uses correct cost multiplier for each topology', () => {
       // SINGLE: multiplier 1.0
-      const single = router.route(makeDeliberation({
-        estimatedAgentCount: 1,
-        estimatedTokens: 10000,
-      }));
+      const single = router.route(
+        makeDeliberation({
+          estimatedAgentCount: 1,
+          estimatedTokens: 10000,
+        }),
+      );
       expect(single.topology).toBe('SINGLE');
       expect(single.expectedCost).toBeCloseTo(10000 * COST_PER_TOKEN * 1.0, 10);
     });
@@ -692,10 +796,12 @@ describe('TopologyRouter', () => {
     });
 
     it('handles very large estimatedTokens', () => {
-      const result = router.route(makeDeliberation({
-        estimatedTokens: 1_000_000,
-        estimatedAgentCount: 1,
-      }));
+      const result = router.route(
+        makeDeliberation({
+          estimatedTokens: 1_000_000,
+          estimatedAgentCount: 1,
+        }),
+      );
       expect(result.expectedCost).toBeGreaterThan(0);
       expect(ALL_TOPOLOGIES).toContain(result.topology);
     });

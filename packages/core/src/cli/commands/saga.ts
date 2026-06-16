@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, readFileSync, mkdirSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, readdirSync, readFileSync, mkdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import {
   CheckpointManager,
   ApprovalManager,
@@ -14,111 +14,115 @@ import {
   ExecutionGraph,
   listSagaExamples,
   getSagaExample,
-} from '../../saga/index.js'
-import type { SagaContext } from '../../saga/index.js'
+} from '../../saga/index.js';
+import type { SagaContext } from '../../saga/index.js';
 
-const DATA_DIR_ENV = 'COMMANDER_SAGA_DATA'
-const DEFAULT_DATA_DIR = join(process.cwd(), '.commander', 'sagas')
+const DATA_DIR_ENV = 'COMMANDER_SAGA_DATA';
+const DEFAULT_DATA_DIR = join(process.cwd(), '.commander', 'sagas');
 
 function sagaDataDir(): string {
-  return process.env[DATA_DIR_ENV] ?? DEFAULT_DATA_DIR
+  return process.env[DATA_DIR_ENV] ?? DEFAULT_DATA_DIR;
 }
 
 function ensureDataDir(): string {
-  const dir = sagaDataDir()
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  return dir
+  const dir = sagaDataDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
 function listRuns(): Array<{ runId: string; state: string; updatedAt: string }> {
-  const dir = sagaDataDir()
-  if (!existsSync(dir)) return []
+  const dir = sagaDataDir();
+  if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isDirectory())
     .map((runId) => {
-      const snapshotPath = join(dir, runId.name, 'snapshot.json')
+      const snapshotPath = join(dir, runId.name, 'snapshot.json');
       if (!existsSync(snapshotPath)) {
-        return { runId: runId.name, state: 'UNKNOWN', updatedAt: '' }
+        return { runId: runId.name, state: 'UNKNOWN', updatedAt: '' };
       }
       try {
-        const snap = JSON.parse(readFileSync(snapshotPath, 'utf-8'))
-        return { runId: runId.name, state: snap.state ?? 'UNKNOWN', updatedAt: snap.updatedAt ?? '' }
+        const snap = JSON.parse(readFileSync(snapshotPath, 'utf-8'));
+        return {
+          runId: runId.name,
+          state: snap.state ?? 'UNKNOWN',
+          updatedAt: snap.updatedAt ?? '',
+        };
       } catch {
-        return { runId: runId.name, state: 'CORRUPT', updatedAt: '' }
+        return { runId: runId.name, state: 'CORRUPT', updatedAt: '' };
       }
     })
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 function pad(s: string, n: number): string {
-  return s.length >= n ? s : s + ' '.repeat(n - s.length)
+  return s.length >= n ? s : s + ' '.repeat(n - s.length);
 }
 
 function dim(s: string): string {
-  return `\x1b[2m${s}\x1b[0m`
+  return `\x1b[2m${s}\x1b[0m`;
 }
 function green(s: string): string {
-  return `\x1b[32m${s}\x1b[0m`
+  return `\x1b[32m${s}\x1b[0m`;
 }
 function red(s: string): string {
-  return `\x1b[31m${s}\x1b[0m`
+  return `\x1b[31m${s}\x1b[0m`;
 }
 function yellow(s: string): string {
-  return `\x1b[33m${s}\x1b[0m`
+  return `\x1b[33m${s}\x1b[0m`;
 }
 function cyan(s: string): string {
-  return `\x1b[36m${s}\x1b[0m`
+  return `\x1b[36m${s}\x1b[0m`;
 }
 function bold(s: string): string {
-  return `\x1b[1m${s}\x1b[0m`
+  return `\x1b[1m${s}\x1b[0m`;
 }
 
 function header(title: string) {
-  console.log(`\n  ${bold(cyan('Saga'))}  ${title}\n`)
+  console.log(`\n  ${bold(cyan('Saga'))}  ${title}\n`);
 }
 
 function parseFlags(args: string[]): { positional: string[]; flags: Record<string, string> } {
-  const positional: string[] = []
-  const flags: Record<string, string> = {}
+  const positional: string[] = [];
+  const flags: Record<string, string> = {};
   for (const arg of args) {
     if (arg.startsWith('--') && arg.includes('=')) {
-      const [k, v] = arg.slice(2).split('=', 2)
-      flags[k] = v
+      const [k, v] = arg.slice(2).split('=', 2);
+      flags[k] = v;
     } else if (arg.startsWith('--')) {
-      flags[arg.slice(2)] = 'true'
+      flags[arg.slice(2)] = 'true';
     } else {
-      positional.push(arg)
+      positional.push(arg);
     }
   }
-  return { positional, flags }
+  return { positional, flags };
 }
 
 function parseInputJson(raw: string | undefined): Record<string, unknown> {
-  if (!raw) return {}
+  if (!raw) return {};
   try {
-    const parsed = JSON.parse(raw)
+    const parsed = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      throw new Error('must be a JSON object')
+      throw new Error('must be a JSON object');
     }
-    return parsed as Record<string, unknown>
+    return parsed as Record<string, unknown>;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    throw new Error(`Invalid --input JSON: ${msg}`)
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Invalid --input JSON: ${msg}`);
   }
 }
 
 function buildRuntime(useFiles: boolean) {
   if (useFiles) {
-    const baseDir = ensureDataDir()
-    const store = new FileSagaStore({ baseDir })
-    const approvalStore = new FileApprovalStore({ baseDir })
+    const baseDir = ensureDataDir();
+    const store = new FileSagaStore({ baseDir });
+    const approvalStore = new FileApprovalStore({ baseDir });
     return {
       checkpoint: new CheckpointManager(store),
       approval: new ApprovalManager({ store: approvalStore }),
       compensation: new CompensationScheduler({ retryPolicy: defaultCompensationRetryPolicy() }),
       workerPool: new InProcessWorkerPool(8),
       baseDir,
-    }
+    };
   }
   return {
     checkpoint: new CheckpointManager(new InMemorySagaStore()),
@@ -126,10 +130,14 @@ function buildRuntime(useFiles: boolean) {
     compensation: new CompensationScheduler({ retryPolicy: defaultCompensationRetryPolicy() }),
     workerPool: new InProcessWorkerPool(8),
     baseDir: '(in-memory)',
-  }
+  };
 }
 
-function buildContext(runId: string, input: Record<string, unknown>, timeoutMs: number): SagaContext {
+function buildContext(
+  runId: string,
+  input: Record<string, unknown>,
+  timeoutMs: number,
+): SagaContext {
   return {
     runId,
     input,
@@ -137,232 +145,252 @@ function buildContext(runId: string, input: Record<string, unknown>, timeoutMs: 
     attempts: new Map(),
     metadata: {},
     signal: AbortSignal.timeout(timeoutMs),
-  }
+  };
 }
 
 function formatResult(result: Awaited<ReturnType<typeof runSaga>>): void {
-  const statusColor = result.status === 'committed' ? green : red
-  const icon = result.status === 'committed' ? '✓' : '✗'
-  console.log(`\n  ${statusColor(icon)} ${bold(result.status.toUpperCase())}  ${dim(`(${result.durationMs}ms)`)}`)
-  if (result.error) console.log(`  ${dim('error:')} ${result.error}`)
+  const statusColor = result.status === 'committed' ? green : red;
+  const icon = result.status === 'committed' ? '✓' : '✗';
+  console.log(
+    `\n  ${statusColor(icon)} ${bold(result.status.toUpperCase())}  ${dim(`(${result.durationMs}ms)`)}`,
+  );
+  if (result.error) console.log(`  ${dim('error:')} ${result.error}`);
   if (Object.keys(result.results).length > 0) {
-    console.log(`  ${dim('results:')}`)
+    console.log(`  ${dim('results:')}`);
     for (const [k, v] of Object.entries(result.results)) {
-      const value = typeof v === 'object' ? JSON.stringify(v) : String(v)
-      console.log(`    ${cyan(k)}: ${value}`)
+      const value = typeof v === 'object' ? JSON.stringify(v) : String(v);
+      console.log(`    ${cyan(k)}: ${value}`);
     }
   }
-  console.log(`  ${dim('summary:')} ${result.summary}\n`)
+  console.log(`  ${dim('summary:')} ${result.summary}\n`);
 }
 
 async function cmdSagaRun(args: string[]) {
-  const { positional, flags } = parseFlags(args)
+  const { positional, flags } = parseFlags(args);
   if (positional.length === 0) {
-    console.error(`  ${red('error:')} missing saga name`)
-    console.log(`  ${dim('Run')} ${bold('commander saga examples')} ${dim('to see available sagas')}`)
-    process.exit(1)
+    console.error(`  ${red('error:')} missing saga name`);
+    console.log(
+      `  ${dim('Run')} ${bold('commander saga examples')} ${dim('to see available sagas')}`,
+    );
+    process.exit(1);
   }
 
-  const name = positional[0]!
-  const example = getSagaExample(name)
+  const name = positional[0]!;
+  const example = getSagaExample(name);
   if (!example) {
-    console.error(`  ${red('error:')} unknown saga "${name}"`)
-    console.log(`  ${dim('Run')} ${bold('commander saga examples')} ${dim('to see available sagas')}`)
-    process.exit(1)
+    console.error(`  ${red('error:')} unknown saga "${name}"`);
+    console.log(
+      `  ${dim('Run')} ${bold('commander saga examples')} ${dim('to see available sagas')}`,
+    );
+    process.exit(1);
   }
 
-  const input = parseInputJson(flags.input)
-  const useFiles = flags['in-memory'] !== 'true'
-  const timeoutMs = parseInt(flags.timeout ?? '60000', 10)
-  const runId = flags['run-id'] ?? `${name}-${Date.now()}`
+  const input = parseInputJson(flags.input);
+  const useFiles = flags['in-memory'] !== 'true';
+  const timeoutMs = parseInt(flags.timeout ?? '60000', 10);
+  const runId = flags['run-id'] ?? `${name}-${Date.now()}`;
 
-  header(example.name)
-  console.log(`  ${dim('description:')} ${example.description}`)
-  console.log(`  ${dim('runId:      ')} ${runId}`)
-  console.log(`  ${dim('storage:    ')} ${useFiles ? sagaDataDir() : '(in-memory)'}`)
-  console.log(`  ${dim('timeout:    ')} ${timeoutMs}ms`)
+  header(example.name);
+  console.log(`  ${dim('description:')} ${example.description}`);
+  console.log(`  ${dim('runId:      ')} ${runId}`);
+  console.log(`  ${dim('storage:    ')} ${useFiles ? sagaDataDir() : '(in-memory)'}`);
+  console.log(`  ${dim('timeout:    ')} ${timeoutMs}ms`);
 
-  const graph = example.build()
-  const eg = new ExecutionGraph(graph)
-  const order = eg.nodes.map((n) => ('name' in n && n.name ? n.name : n.id))
-  console.log(`  ${dim('nodes:      ')} ${eg.size} (${order.join(' \u2192 ')})`)
+  const graph = example.build();
+  const eg = new ExecutionGraph(graph);
+  const order = eg.nodes.map((n) => ('name' in n && n.name ? n.name : n.id));
+  console.log(`  ${dim('nodes:      ')} ${eg.size} (${order.join(' \u2192 ')})`);
 
-  const runtime = buildRuntime(useFiles)
-  const ctx = buildContext(runId, input, timeoutMs)
+  const runtime = buildRuntime(useFiles);
+  const ctx = buildContext(runId, input, timeoutMs);
 
-  console.log('')
-  const t0 = Date.now()
-  const result = await runSaga(graph, ctx, runtime.checkpoint, runtime.approval, runtime)
-  formatResult(result)
+  console.log('');
+  const t0 = Date.now();
+  const result = await runSaga(graph, ctx, runtime.checkpoint, runtime.approval, runtime);
+  formatResult(result);
 
   if (useFiles && result.status === 'aborted') {
-    console.log(`  ${dim('Recover the run with:')} ${bold(`commander saga resume ${runId}`)}`)
+    console.log(`  ${dim('Recover the run with:')} ${bold(`commander saga resume ${runId}`)}`);
   }
 }
 
 async function cmdSagaList(_args: string[]) {
-  const runs = listRuns()
-  header(`${runs.length} run${runs.length === 1 ? '' : 's'}`)
+  const runs = listRuns();
+  header(`${runs.length} run${runs.length === 1 ? '' : 's'}`);
   if (runs.length === 0) {
-    console.log(`  ${dim('No runs found. Run one with:')} ${bold('commander saga run order-fulfillment')}\n`)
-    return
+    console.log(
+      `  ${dim('No runs found. Run one with:')} ${bold('commander saga run order-fulfillment')}\n`,
+    );
+    return;
   }
-  console.log(`  ${pad(bold('RUN ID'), 32)}  ${pad(bold('STATE'), 14)}  ${bold('UPDATED')}`)
-  console.log(`  ${dim('-'.repeat(70))}`)
+  console.log(`  ${pad(bold('RUN ID'), 32)}  ${pad(bold('STATE'), 14)}  ${bold('UPDATED')}`);
+  console.log(`  ${dim('-'.repeat(70))}`);
   for (const r of runs) {
-    const stateColor = r.state === 'COMMITTED' ? green : r.state === 'ABORTED' ? red : yellow
-    console.log(`  ${pad(r.runId, 32)}  ${pad(stateColor(r.state), 22)}  ${dim(r.updatedAt)}`)
+    const stateColor = r.state === 'COMMITTED' ? green : r.state === 'ABORTED' ? red : yellow;
+    console.log(`  ${pad(r.runId, 32)}  ${pad(stateColor(r.state), 22)}  ${dim(r.updatedAt)}`);
   }
-  console.log()
+  console.log();
 }
 
 async function cmdSagaStatus(args: string[]) {
-  const { positional } = parseFlags(args)
+  const { positional } = parseFlags(args);
   if (positional.length === 0) {
-    console.error(`  ${red('error:')} missing runId`)
-    process.exit(1)
+    console.error(`  ${red('error:')} missing runId`);
+    process.exit(1);
   }
-  const runId = positional[0]!
-  const dir = sagaDataDir()
-  const snapshotPath = join(dir, runId, 'snapshot.json')
+  const runId = positional[0]!;
+  const dir = sagaDataDir();
+  const snapshotPath = join(dir, runId, 'snapshot.json');
 
   if (!existsSync(snapshotPath)) {
-    console.error(`  ${red('error:')} run "${runId}" not found`)
-    process.exit(1)
+    console.error(`  ${red('error:')} run "${runId}" not found`);
+    process.exit(1);
   }
 
   const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8')) as {
-    runId: string
-    state: string
-    intentHash: string
-    fencingEpoch: number
-    nodeStates: Record<string, string>
-    createdAt: string
-    updatedAt: string
-    error?: string
-  }
+    runId: string;
+    state: string;
+    intentHash: string;
+    fencingEpoch: number;
+    nodeStates: Record<string, string>;
+    createdAt: string;
+    updatedAt: string;
+    error?: string;
+  };
 
-  header(`Status: ${runId}`)
-  console.log(`  ${dim('state:        ')} ${snapshot.state}`)
-  console.log(`  ${dim('fencingEpoch: ')} ${snapshot.fencingEpoch}`)
-  console.log(`  ${dim('createdAt:    ')} ${snapshot.createdAt}`)
-  console.log(`  ${dim('updatedAt:    ')} ${snapshot.updatedAt}`)
-  if (snapshot.error) console.log(`  ${dim('error:        ')} ${red(snapshot.error)}`)
-  console.log(`\n  ${dim('Nodes:')}`)
+  header(`Status: ${runId}`);
+  console.log(`  ${dim('state:        ')} ${snapshot.state}`);
+  console.log(`  ${dim('fencingEpoch: ')} ${snapshot.fencingEpoch}`);
+  console.log(`  ${dim('createdAt:    ')} ${snapshot.createdAt}`);
+  console.log(`  ${dim('updatedAt:    ')} ${snapshot.updatedAt}`);
+  if (snapshot.error) console.log(`  ${dim('error:        ')} ${red(snapshot.error)}`);
+  console.log(`\n  ${dim('Nodes:')}`);
   for (const [id, state] of Object.entries(snapshot.nodeStates)) {
-    const stateColor = state === 'completed' ? green : state === 'failed' ? red : dim
-    console.log(`    ${pad(id, 28)}  ${stateColor(state)}`)
+    const stateColor = state === 'completed' ? green : state === 'failed' ? red : dim;
+    console.log(`    ${pad(id, 28)}  ${stateColor(state)}`);
   }
-  console.log()
+  console.log();
 }
 
 async function cmdSagaResume(args: string[]) {
-  const { positional, flags } = parseFlags(args)
+  const { positional, flags } = parseFlags(args);
   if (positional.length === 0) {
-    console.error(`  ${red('error:')} missing runId`)
-    process.exit(1)
+    console.error(`  ${red('error:')} missing runId`);
+    process.exit(1);
   }
-  const runId = positional[0]!
-  const dir = sagaDataDir()
-  const snapshotPath = join(dir, runId, 'snapshot.json')
+  const runId = positional[0]!;
+  const dir = sagaDataDir();
+  const snapshotPath = join(dir, runId, 'snapshot.json');
 
   if (!existsSync(snapshotPath)) {
-    console.error(`  ${red('error:')} run "${runId}" not found`)
-    process.exit(1)
+    console.error(`  ${red('error:')} run "${runId}" not found`);
+    process.exit(1);
   }
 
-  const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8'))
+  const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8'));
   if (snapshot.state === 'COMMITTED' || snapshot.state === 'ABORTED') {
-    console.log(`  ${yellow('note:')} run "${runId}" is already ${snapshot.state}; nothing to resume`)
-    return
+    console.log(
+      `  ${yellow('note:')} run "${runId}" is already ${snapshot.state}; nothing to resume`,
+    );
+    return;
   }
 
-  console.log(`  ${dim('Resuming run')} ${cyan(runId)} ${dim('— this rebuilds the saga from the snapshot.')}`)
-  console.log(`  ${dim('For a full implementation, load the snapshot, replay eventsAfterSnapshot,')}`)
-  console.log(`  ${dim('and dispatch to a new coordinator.')}`)
+  console.log(
+    `  ${dim('Resuming run')} ${cyan(runId)} ${dim('— this rebuilds the saga from the snapshot.')}`,
+  );
+  console.log(
+    `  ${dim('For a full implementation, load the snapshot, replay eventsAfterSnapshot,')}`,
+  );
+  console.log(`  ${dim('and dispatch to a new coordinator.')}`);
 
-  const ctx = buildContext(runId, {}, parseInt(flags.timeout ?? '60000', 10))
-  const runtime = buildRuntime(true)
-  const recovered = await runtime.checkpoint.recover(runId)
+  const ctx = buildContext(runId, {}, parseInt(flags.timeout ?? '60000', 10));
+  const runtime = buildRuntime(true);
+  const recovered = await runtime.checkpoint.recover(runId);
   if (!recovered) {
-    console.error(`  ${red('error:')} could not recover ${runId}`)
-    process.exit(1)
+    console.error(`  ${red('error:')} could not recover ${runId}`);
+    process.exit(1);
   }
-  console.log(`\n  ${dim('snapshot:')}      ${recovered.snapshot.state}`)
-  console.log(`  ${dim('events total:')}  ${recovered.allEvents.length}`)
-  console.log(`  ${dim('events since:')}  ${recovered.eventsAfterSnapshot.length}\n`)
+  console.log(`\n  ${dim('snapshot:')}      ${recovered.snapshot.state}`);
+  console.log(`  ${dim('events total:')}  ${recovered.allEvents.length}`);
+  console.log(`  ${dim('events since:')}  ${recovered.eventsAfterSnapshot.length}\n`);
 }
 
 async function cmdSagaApprove(args: string[]) {
-  await cmdSagaDecide(args, 'approve')
+  await cmdSagaDecide(args, 'approve');
 }
 
 async function cmdSagaReject(args: string[]) {
-  await cmdSagaDecide(args, 'reject')
+  await cmdSagaDecide(args, 'reject');
 }
 
 async function cmdSagaDecide(args: string[], decision: 'approve' | 'reject') {
-  const { positional, flags } = parseFlags(args)
+  const { positional, flags } = parseFlags(args);
   if (positional.length < 2) {
-    console.error(`  ${red('error:')} usage: commander saga ${decision} <runId> <nodeId> [--by=<user>]`);
-    process.exit(1)
+    console.error(
+      `  ${red('error:')} usage: commander saga ${decision} <runId> <nodeId> [--by=<user>]`,
+    );
+    process.exit(1);
   }
-  const [, runId, nodeId] = [positional[0], positional[1]!, positional[2]!]
-  const by = flags.by ?? process.env.USER ?? process.env.USERNAME ?? 'cli-user'
+  const [, runId, nodeId] = [positional[0], positional[1]!, positional[2]!];
+  const by = flags.by ?? process.env.USER ?? process.env.USERNAME ?? 'cli-user';
 
-  const baseDir = ensureDataDir()
-  const approval = new ApprovalManager({ store: new FileApprovalStore({ baseDir }) })
+  const baseDir = ensureDataDir();
+  const approval = new ApprovalManager({ store: new FileApprovalStore({ baseDir }) });
 
   await approval.decide(runId, nodeId, {
     decision,
     decidedBy: by,
     decidedAt: new Date().toISOString(),
-  })
+  });
 
-  console.log(`  ${green('\u2713')} ${bold(decision.toUpperCase())} ${dim('by')} ${cyan(by)} ${dim('\u2192')} ${cyan(`${runId}/${nodeId}`)}\n`)
+  console.log(
+    `  ${green('\u2713')} ${bold(decision.toUpperCase())} ${dim('by')} ${cyan(by)} ${dim('\u2192')} ${cyan(`${runId}/${nodeId}`)}\n`,
+  );
 }
 
 async function cmdSagaExamples(_args: string[]) {
-  const examples = listSagaExamples()
-  header(`${examples.length} built-in examples`)
+  const examples = listSagaExamples();
+  header(`${examples.length} built-in examples`);
   for (const ex of examples) {
-    const graph = ex.build()
-    const eg = new ExecutionGraph(graph)
-    console.log(`  ${bold(cyan(ex.name))}`)
-    console.log(`    ${dim(ex.description)}`)
-    console.log(`    ${dim('nodes:')} ${eg.size}`)
-    console.log(`    ${dim('run:    ')} ${bold(`commander saga run ${ex.name} --input='{"orderId":"o_42","amount":100}'`)}`)
-    console.log()
+    const graph = ex.build();
+    const eg = new ExecutionGraph(graph);
+    console.log(`  ${bold(cyan(ex.name))}`);
+    console.log(`    ${dim(ex.description)}`);
+    console.log(`    ${dim('nodes:')} ${eg.size}`);
+    console.log(
+      `    ${dim('run:    ')} ${bold(`commander saga run ${ex.name} --input='{"orderId":"o_42","amount":100}'`)}`,
+    );
+    console.log();
   }
 }
 
 export async function cmdSaga(args: string[]) {
-  const sub = args[0] ?? 'help'
-  const rest = args.slice(1)
+  const sub = args[0] ?? 'help';
+  const rest = args.slice(1);
 
   switch (sub) {
     case 'run':
-      await cmdSagaRun(rest)
-      break
+      await cmdSagaRun(rest);
+      break;
     case 'list':
     case 'ls':
-      await cmdSagaList(rest)
-      break
+      await cmdSagaList(rest);
+      break;
     case 'status':
-      await cmdSagaStatus(rest)
-      break
+      await cmdSagaStatus(rest);
+      break;
     case 'resume':
-      await cmdSagaResume(rest)
-      break
+      await cmdSagaResume(rest);
+      break;
     case 'approve':
-      await cmdSagaApprove(rest)
-      break
+      await cmdSagaApprove(rest);
+      break;
     case 'reject':
-      await cmdSagaReject(rest)
-      break
+      await cmdSagaReject(rest);
+      break;
     case 'examples':
-      await cmdSagaExamples(rest)
-      break
+      await cmdSagaExamples(rest);
+      break;
     case 'help':
     case '--help':
     case '-h':
@@ -392,9 +420,9 @@ export async function cmdSaga(args: string[]) {
     commander saga list
     commander saga status order-fulfillment-1717523456
     commander saga approve r_1 finance-team-approval --by=alice
-`)
+`);
       if (sub !== 'help' && sub !== '--help' && sub !== '-h') {
-        process.exit(1)
+        process.exit(1);
       }
   }
 }

@@ -62,7 +62,10 @@ describe('RecursiveAtomizer with estimatedDurationMs', () => {
     assert.ok(root.estimatedDurationMs !== undefined);
     if (root.subtasks.length > 0) {
       for (const sub of root.subtasks) {
-        assert.ok(sub.estimatedDurationMs !== undefined, `subtask ${sub.id} should have estimatedDurationMs`);
+        assert.ok(
+          sub.estimatedDurationMs !== undefined,
+          `subtask ${sub.id} should have estimatedDurationMs`,
+        );
       }
     }
   });

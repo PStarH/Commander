@@ -42,10 +42,7 @@ describe('SSRF protection: WebFetchTool', () => {
 
   it('blocks http://localhost', async () => {
     const result = await tool.execute({ url: 'http://localhost/admin' });
-    assert.ok(
-      result.includes('Blocked') || result.includes('Error'),
-      'localhost must be blocked',
-    );
+    assert.ok(result.includes('Blocked') || result.includes('Error'), 'localhost must be blocked');
   });
 
   it('blocks http://localhost with port', async () => {
@@ -58,10 +55,7 @@ describe('SSRF protection: WebFetchTool', () => {
 
   it('blocks http://127.0.0.1', async () => {
     const result = await tool.execute({ url: 'http://127.0.0.1/' });
-    assert.ok(
-      result.includes('Blocked') || result.includes('Error'),
-      '127.0.0.1 must be blocked',
-    );
+    assert.ok(result.includes('Blocked') || result.includes('Error'), '127.0.0.1 must be blocked');
   });
 
   it('blocks http://127.0.0.1 with port', async () => {
@@ -74,10 +68,7 @@ describe('SSRF protection: WebFetchTool', () => {
 
   it('blocks http://0.0.0.0', async () => {
     const result = await tool.execute({ url: 'http://0.0.0.0/' });
-    assert.ok(
-      result.includes('Blocked') || result.includes('Error'),
-      '0.0.0.0 must be blocked',
-    );
+    assert.ok(result.includes('Blocked') || result.includes('Error'), '0.0.0.0 must be blocked');
   });
 
   // --- Cloud metadata endpoints ---
@@ -116,10 +107,7 @@ describe('SSRF protection: WebFetchTool', () => {
 
   it('blocks 10.x.x.x (Class A private)', async () => {
     const result = await tool.execute({ url: 'http://10.0.0.1/' });
-    assert.ok(
-      result.includes('Blocked') || result.includes('Error'),
-      '10.0.0.1 must be blocked',
-    );
+    assert.ok(result.includes('Blocked') || result.includes('Error'), '10.0.0.1 must be blocked');
   });
 
   it('blocks 10.x.x.x with port', async () => {
@@ -132,10 +120,7 @@ describe('SSRF protection: WebFetchTool', () => {
 
   it('blocks 172.16.x.x (Class B private)', async () => {
     const result = await tool.execute({ url: 'http://172.16.0.1/' });
-    assert.ok(
-      result.includes('Blocked') || result.includes('Error'),
-      '172.16.0.1 must be blocked',
-    );
+    assert.ok(result.includes('Blocked') || result.includes('Error'), '172.16.0.1 must be blocked');
   });
 
   it('blocks 172.31.x.x (upper bound of Class B private)', async () => {
@@ -176,26 +161,17 @@ describe('SSRF protection: WebFetchTool', () => {
 
   it('blocks [::1] (IPv6 loopback with brackets)', async () => {
     const result = await tool.execute({ url: 'http://[::1]/' });
-    assert.ok(
-      result.includes('Blocked') || result.includes('Error'),
-      '[::1] must be blocked',
-    );
+    assert.ok(result.includes('Blocked') || result.includes('Error'), '[::1] must be blocked');
   });
 
   it('blocks [::1] with port', async () => {
     const result = await tool.execute({ url: 'http://[::1]:8080/' });
-    assert.ok(
-      result.includes('Blocked') || result.includes('Error'),
-      '[::1]:8080 must be blocked',
-    );
+    assert.ok(result.includes('Blocked') || result.includes('Error'), '[::1]:8080 must be blocked');
   });
 
   it('blocks fe80:: (IPv6 link-local)', async () => {
     const result = await tool.execute({ url: 'http://[fe80::1]/' });
-    assert.ok(
-      result.includes('Blocked') || result.includes('Error'),
-      'fe80:: must be blocked',
-    );
+    assert.ok(result.includes('Blocked') || result.includes('Error'), 'fe80:: must be blocked');
   });
 
   // KNOWN GAP: new URL() normalizes ::ffff:10.0.0.1 to [::ffff:a00:1],
@@ -271,10 +247,7 @@ describe('SSRF protection: WebFetchTool', () => {
   it('allows https://example.com', async () => {
     const result = await tool.execute({ url: 'https://example.com' });
     // Should NOT be blocked by SSRF check (may fail network request, that's OK)
-    assert.ok(
-      !result.includes('Blocked'),
-      'https://example.com must not be blocked by SSRF check',
-    );
+    assert.ok(!result.includes('Blocked'), 'https://example.com must not be blocked by SSRF check');
   });
 
   it('allows https://httpbin.org/get', async () => {
@@ -287,18 +260,12 @@ describe('SSRF protection: WebFetchTool', () => {
 
   it('allows standard HTTP port (80)', async () => {
     const result = await tool.execute({ url: 'http://example.com:80/' });
-    assert.ok(
-      !result.includes('Blocked'),
-      'Standard port 80 must not be blocked',
-    );
+    assert.ok(!result.includes('Blocked'), 'Standard port 80 must not be blocked');
   });
 
   it('allows standard HTTPS port (443)', async () => {
     const result = await tool.execute({ url: 'https://example.com:443/' });
-    assert.ok(
-      !result.includes('Blocked'),
-      'Standard port 443 must not be blocked',
-    );
+    assert.ok(!result.includes('Blocked'), 'Standard port 443 must not be blocked');
   });
 });
 
@@ -310,10 +277,7 @@ describe('SSRF protection: BrowserFetchTool', () => {
 
   it('blocks localhost', async () => {
     const result = await tool.execute({ url: 'http://localhost:6379/' });
-    assert.ok(
-      result.includes('Blocked') || result.includes('Failed'),
-      'localhost must be blocked',
-    );
+    assert.ok(result.includes('Blocked') || result.includes('Failed'), 'localhost must be blocked');
   });
 
   it('blocks AWS metadata endpoint', async () => {
@@ -328,10 +292,7 @@ describe('SSRF protection: BrowserFetchTool', () => {
 
   it('blocks private IP 10.x.x.x', async () => {
     const result = await tool.execute({ url: 'http://10.0.0.1:8080/admin' });
-    assert.ok(
-      result.includes('Blocked') || result.includes('Failed'),
-      '10.0.0.1 must be blocked',
-    );
+    assert.ok(result.includes('Blocked') || result.includes('Failed'), '10.0.0.1 must be blocked');
   });
 
   it('blocks private IP 192.168.x.x', async () => {
@@ -352,10 +313,7 @@ describe('SSRF protection: BrowserFetchTool', () => {
 
   it('blocks IPv6 loopback [::1]', async () => {
     const result = await tool.execute({ url: 'http://[::1]/' });
-    assert.ok(
-      result.includes('Blocked') || result.includes('Failed'),
-      '[::1] must be blocked',
-    );
+    assert.ok(result.includes('Blocked') || result.includes('Failed'), '[::1] must be blocked');
   });
 
   it('blocks GCP metadata endpoint', async () => {
@@ -370,10 +328,7 @@ describe('SSRF protection: BrowserFetchTool', () => {
 
   it('blocks 0.0.0.0', async () => {
     const result = await tool.execute({ url: 'http://0.0.0.0/' });
-    assert.ok(
-      result.includes('Blocked') || result.includes('Failed'),
-      '0.0.0.0 must be blocked',
-    );
+    assert.ok(result.includes('Blocked') || result.includes('Failed'), '0.0.0.0 must be blocked');
   });
 
   it('rejects non-http URLs', async () => {

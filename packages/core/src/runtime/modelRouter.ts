@@ -11,12 +11,7 @@
  * Backward compatible: same class name, same route() interface.
  */
 
-import type {
-  ModelConfig,
-  ModelTier,
-  RoutingDecision,
-  AgentExecutionContext,
-} from './types';
+import type { ModelConfig, ModelTier, RoutingDecision, AgentExecutionContext } from './types';
 import { detectTaskType } from './unifiedVerification';
 
 // ============================================================================
@@ -25,38 +20,335 @@ import { detectTaskType } from './unifiedVerification';
 
 const DEFAULT_MODELS: ModelConfig[] = [
   // ===== Eco tier — cheap & fast =====
-  { id: 'claude-haiku-4-5', provider: 'anthropic', tier: 'eco', costPer1KInput: 0.0008, costPer1KOutput: 0.004, capabilities: ['code', 'analysis'], contextWindow: 200000, priority: 0, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'gpt-4o-mini', provider: 'openai', tier: 'eco', costPer1KInput: 0.00015, costPer1KOutput: 0.0006, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 1, supportsJSONMode: true, supportsStructuredOutput: true },
-  { id: 'gemini-2-flash', provider: 'google', tier: 'eco', costPer1KInput: 0.0001, costPer1KOutput: 0.0004, capabilities: ['analysis'], contextWindow: 1000000, priority: 2, supportsJSONMode: true, supportsStructuredOutput: true },
-  { id: 'llama-3.3-70b-versatile', provider: 'groq', tier: 'eco', costPer1KInput: 0.00059, costPer1KOutput: 0.00079, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 3, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'mistral-small-latest', provider: 'mistral', tier: 'eco', costPer1KInput: 0.001, costPer1KOutput: 0.001, capabilities: ['code', 'analysis'], contextWindow: 32000, priority: 4, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'command-r-08-2024', provider: 'cohere', tier: 'eco', costPer1KInput: 0.0005, costPer1KOutput: 0.0015, capabilities: ['analysis'], contextWindow: 128000, priority: 5, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'sonar', provider: 'perplexity', tier: 'eco', costPer1KInput: 0.001, costPer1KOutput: 0.001, capabilities: ['analysis'], contextWindow: 128000, priority: 6, supportsJSONMode: false, supportsStructuredOutput: false },
+  {
+    id: 'claude-haiku-4-5',
+    provider: 'anthropic',
+    tier: 'eco',
+    costPer1KInput: 0.0008,
+    costPer1KOutput: 0.004,
+    capabilities: ['code', 'analysis'],
+    contextWindow: 200000,
+    priority: 0,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'gpt-4o-mini',
+    provider: 'openai',
+    tier: 'eco',
+    costPer1KInput: 0.00015,
+    costPer1KOutput: 0.0006,
+    capabilities: ['code', 'analysis'],
+    contextWindow: 128000,
+    priority: 1,
+    supportsJSONMode: true,
+    supportsStructuredOutput: true,
+  },
+  {
+    id: 'gemini-2-flash',
+    provider: 'google',
+    tier: 'eco',
+    costPer1KInput: 0.0001,
+    costPer1KOutput: 0.0004,
+    capabilities: ['analysis'],
+    contextWindow: 1000000,
+    priority: 2,
+    supportsJSONMode: true,
+    supportsStructuredOutput: true,
+  },
+  {
+    id: 'llama-3.3-70b-versatile',
+    provider: 'groq',
+    tier: 'eco',
+    costPer1KInput: 0.00059,
+    costPer1KOutput: 0.00079,
+    capabilities: ['code', 'analysis'],
+    contextWindow: 128000,
+    priority: 3,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'mistral-small-latest',
+    provider: 'mistral',
+    tier: 'eco',
+    costPer1KInput: 0.001,
+    costPer1KOutput: 0.001,
+    capabilities: ['code', 'analysis'],
+    contextWindow: 32000,
+    priority: 4,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'command-r-08-2024',
+    provider: 'cohere',
+    tier: 'eco',
+    costPer1KInput: 0.0005,
+    costPer1KOutput: 0.0015,
+    capabilities: ['analysis'],
+    contextWindow: 128000,
+    priority: 5,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'sonar',
+    provider: 'perplexity',
+    tier: 'eco',
+    costPer1KInput: 0.001,
+    costPer1KOutput: 0.001,
+    capabilities: ['analysis'],
+    contextWindow: 128000,
+    priority: 6,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
   // Local providers — effectively free
-  { id: 'llama3.2', provider: 'ollama', tier: 'eco', costPer1KInput: 0, costPer1KOutput: 0, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 7, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'meta-llama/Llama-3.2-3B-Instruct', provider: 'vllm', tier: 'eco', costPer1KInput: 0, costPer1KOutput: 0, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 8, supportsJSONMode: false, supportsStructuredOutput: false },
+  {
+    id: 'llama3.2',
+    provider: 'ollama',
+    tier: 'eco',
+    costPer1KInput: 0,
+    costPer1KOutput: 0,
+    capabilities: ['code', 'analysis'],
+    contextWindow: 128000,
+    priority: 7,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'meta-llama/Llama-3.2-3B-Instruct',
+    provider: 'vllm',
+    tier: 'eco',
+    costPer1KInput: 0,
+    costPer1KOutput: 0,
+    capabilities: ['code', 'analysis'],
+    contextWindow: 128000,
+    priority: 8,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
 
   // ===== Standard tier — balanced quality/cost =====
-  { id: 'claude-sonnet-4-6', provider: 'anthropic', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 200000, priority: 0, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'gpt-4o', provider: 'openai', tier: 'standard', costPer1KInput: 0.0025, costPer1KOutput: 0.01, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 1, supportsJSONMode: true, supportsStructuredOutput: true },
-  { id: 'gemini-2-pro', provider: 'google', tier: 'standard', costPer1KInput: 0.0015, costPer1KOutput: 0.0075, capabilities: ['reasoning', 'analysis'], contextWindow: 1000000, priority: 2, supportsJSONMode: true, supportsStructuredOutput: true },
-  { id: 'mistral-large-latest', provider: 'mistral', tier: 'standard', costPer1KInput: 0.002, costPer1KOutput: 0.006, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 3, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', provider: 'together', tier: 'standard', costPer1KInput: 0.0009, costPer1KOutput: 0.0009, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 131072, priority: 4, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'sonar-pro', provider: 'perplexity', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['reasoning', 'analysis'], contextWindow: 128000, priority: 5, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'accounts/fireworks/models/llama-v3p3-70b-instruct', provider: 'fireworks', tier: 'standard', costPer1KInput: 0.0009, costPer1KOutput: 0.0009, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 6, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'llama3-70b-8192', provider: 'groq', tier: 'standard', costPer1KInput: 0.00059, costPer1KOutput: 0.00079, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 8192, priority: 7, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'command-r-plus-08-2024', provider: 'cohere', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['reasoning', 'analysis'], contextWindow: 128000, priority: 8, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'anthropic.claude-sonnet-4-6-v1:0', provider: 'bedrock', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 200000, priority: 9, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'meta/meta-llama-3.3-70b-instruct', provider: 'replicate', tier: 'standard', costPer1KInput: 0.00065, costPer1KOutput: 0.00275, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 10, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'grok-3', provider: 'xai', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 131072, priority: 11, supportsJSONMode: false, supportsStructuredOutput: false },
+  {
+    id: 'claude-sonnet-4-6',
+    provider: 'anthropic',
+    tier: 'standard',
+    costPer1KInput: 0.003,
+    costPer1KOutput: 0.015,
+    capabilities: ['code', 'reasoning', 'analysis', 'creative'],
+    contextWindow: 200000,
+    priority: 0,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'gpt-4o',
+    provider: 'openai',
+    tier: 'standard',
+    costPer1KInput: 0.0025,
+    costPer1KOutput: 0.01,
+    capabilities: ['code', 'reasoning', 'analysis', 'creative'],
+    contextWindow: 128000,
+    priority: 1,
+    supportsJSONMode: true,
+    supportsStructuredOutput: true,
+  },
+  {
+    id: 'gemini-2-pro',
+    provider: 'google',
+    tier: 'standard',
+    costPer1KInput: 0.0015,
+    costPer1KOutput: 0.0075,
+    capabilities: ['reasoning', 'analysis'],
+    contextWindow: 1000000,
+    priority: 2,
+    supportsJSONMode: true,
+    supportsStructuredOutput: true,
+  },
+  {
+    id: 'mistral-large-latest',
+    provider: 'mistral',
+    tier: 'standard',
+    costPer1KInput: 0.002,
+    costPer1KOutput: 0.006,
+    capabilities: ['code', 'reasoning', 'analysis'],
+    contextWindow: 128000,
+    priority: 3,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    provider: 'together',
+    tier: 'standard',
+    costPer1KInput: 0.0009,
+    costPer1KOutput: 0.0009,
+    capabilities: ['code', 'reasoning', 'analysis'],
+    contextWindow: 131072,
+    priority: 4,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'sonar-pro',
+    provider: 'perplexity',
+    tier: 'standard',
+    costPer1KInput: 0.003,
+    costPer1KOutput: 0.015,
+    capabilities: ['reasoning', 'analysis'],
+    contextWindow: 128000,
+    priority: 5,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+    provider: 'fireworks',
+    tier: 'standard',
+    costPer1KInput: 0.0009,
+    costPer1KOutput: 0.0009,
+    capabilities: ['code', 'reasoning', 'analysis'],
+    contextWindow: 128000,
+    priority: 6,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'llama3-70b-8192',
+    provider: 'groq',
+    tier: 'standard',
+    costPer1KInput: 0.00059,
+    costPer1KOutput: 0.00079,
+    capabilities: ['code', 'reasoning', 'analysis'],
+    contextWindow: 8192,
+    priority: 7,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'command-r-plus-08-2024',
+    provider: 'cohere',
+    tier: 'standard',
+    costPer1KInput: 0.003,
+    costPer1KOutput: 0.015,
+    capabilities: ['reasoning', 'analysis'],
+    contextWindow: 128000,
+    priority: 8,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'anthropic.claude-sonnet-4-6-v1:0',
+    provider: 'bedrock',
+    tier: 'standard',
+    costPer1KInput: 0.003,
+    costPer1KOutput: 0.015,
+    capabilities: ['code', 'reasoning', 'analysis', 'creative'],
+    contextWindow: 200000,
+    priority: 9,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'meta/meta-llama-3.3-70b-instruct',
+    provider: 'replicate',
+    tier: 'standard',
+    costPer1KInput: 0.00065,
+    costPer1KOutput: 0.00275,
+    capabilities: ['code', 'reasoning', 'analysis'],
+    contextWindow: 128000,
+    priority: 10,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'grok-3',
+    provider: 'xai',
+    tier: 'standard',
+    costPer1KInput: 0.003,
+    costPer1KOutput: 0.015,
+    capabilities: ['code', 'reasoning', 'analysis'],
+    contextWindow: 131072,
+    priority: 11,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
 
   // ===== Power tier — strongest reasoning =====
-  { id: 'claude-opus-4-8', provider: 'anthropic', tier: 'power', costPer1KInput: 0.015, costPer1KOutput: 0.075, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 200000, priority: 0, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'gpt-5', provider: 'openai', tier: 'power', costPer1KInput: 0.01, costPer1KOutput: 0.04, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 256000, priority: 1, supportsJSONMode: true, supportsStructuredOutput: true },
-  { id: 'claude-sonnet-4-6', provider: 'bedrock', tier: 'power', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 200000, priority: 2, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'deepseek-v4-pro', provider: 'deepseek', tier: 'power', costPer1KInput: 0.002, costPer1KOutput: 0.008, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 128000, priority: 3, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'mimo-v2.5-pro', provider: 'mimo', tier: 'power', costPer1KInput: 0.004, costPer1KOutput: 0.012, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 4, supportsJSONMode: false, supportsStructuredOutput: false },
-  { id: 'glm-5.1', provider: 'glm', tier: 'power', costPer1KInput: 0.002, costPer1KOutput: 0.008, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 5, supportsJSONMode: false, supportsStructuredOutput: false },
+  {
+    id: 'claude-opus-4-8',
+    provider: 'anthropic',
+    tier: 'power',
+    costPer1KInput: 0.015,
+    costPer1KOutput: 0.075,
+    capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'],
+    contextWindow: 200000,
+    priority: 0,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'gpt-5',
+    provider: 'openai',
+    tier: 'power',
+    costPer1KInput: 0.01,
+    costPer1KOutput: 0.04,
+    capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'],
+    contextWindow: 256000,
+    priority: 1,
+    supportsJSONMode: true,
+    supportsStructuredOutput: true,
+  },
+  {
+    id: 'claude-sonnet-4-6',
+    provider: 'bedrock',
+    tier: 'power',
+    costPer1KInput: 0.003,
+    costPer1KOutput: 0.015,
+    capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'],
+    contextWindow: 200000,
+    priority: 2,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'deepseek-v4-pro',
+    provider: 'deepseek',
+    tier: 'power',
+    costPer1KInput: 0.002,
+    costPer1KOutput: 0.008,
+    capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'],
+    contextWindow: 128000,
+    priority: 3,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'mimo-v2.5-pro',
+    provider: 'mimo',
+    tier: 'power',
+    costPer1KInput: 0.004,
+    costPer1KOutput: 0.012,
+    capabilities: ['code', 'reasoning', 'analysis', 'creative'],
+    contextWindow: 128000,
+    priority: 4,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
+  {
+    id: 'glm-5.1',
+    provider: 'glm',
+    tier: 'power',
+    costPer1KInput: 0.002,
+    costPer1KOutput: 0.008,
+    capabilities: ['code', 'reasoning', 'analysis', 'creative'],
+    contextWindow: 128000,
+    priority: 5,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+  },
 ];
 
 // ============================================================================
@@ -99,24 +391,50 @@ function scoreComplexity(ctx: AgentExecutionContext): ComplexityScore {
   let score = 0;
 
   // Goal length as a proxy for complexity
-  if (ctx.goal.length > 400) { score += 3; factors.push({ name: 'long_goal', contribution: 3 }); }
-  else if (ctx.goal.length > 150) { score += 2; factors.push({ name: 'medium_goal', contribution: 2 }); }
-  else if (ctx.goal.length > 50) { score += 1; factors.push({ name: 'short_goal', contribution: 1 }); }
+  if (ctx.goal.length > 400) {
+    score += 3;
+    factors.push({ name: 'long_goal', contribution: 3 });
+  } else if (ctx.goal.length > 150) {
+    score += 2;
+    factors.push({ name: 'medium_goal', contribution: 2 });
+  } else if (ctx.goal.length > 50) {
+    score += 1;
+    factors.push({ name: 'short_goal', contribution: 1 });
+  }
 
   // Number of tools suggests breadth
-  if (ctx.availableTools.length > 5) { score += 3; factors.push({ name: 'many_tools', contribution: 3 }); }
-  else if (ctx.availableTools.length > 3) { score += 2; factors.push({ name: 'several_tools', contribution: 2 }); }
-  else if (ctx.availableTools.length > 1) { score += 1; factors.push({ name: 'few_tools', contribution: 1 }); }
+  if (ctx.availableTools.length > 5) {
+    score += 3;
+    factors.push({ name: 'many_tools', contribution: 3 });
+  } else if (ctx.availableTools.length > 3) {
+    score += 2;
+    factors.push({ name: 'several_tools', contribution: 2 });
+  } else if (ctx.availableTools.length > 1) {
+    score += 1;
+    factors.push({ name: 'few_tools', contribution: 1 });
+  }
 
   // Token budget indicates expected effort
-  if (ctx.tokenBudget > 20000) { score += 3; factors.push({ name: 'large_budget', contribution: 3 }); }
-  else if (ctx.tokenBudget > 6000) { score += 2; factors.push({ name: 'medium_budget', contribution: 2 }); }
-  else if (ctx.tokenBudget > 3000) { score += 1; factors.push({ name: 'small_budget', contribution: 1 }); }
+  if (ctx.tokenBudget > 20000) {
+    score += 3;
+    factors.push({ name: 'large_budget', contribution: 3 });
+  } else if (ctx.tokenBudget > 6000) {
+    score += 2;
+    factors.push({ name: 'medium_budget', contribution: 2 });
+  } else if (ctx.tokenBudget > 3000) {
+    score += 1;
+    factors.push({ name: 'small_budget', contribution: 1 });
+  }
 
   // Complexity from context data presence of governance constraints
   const gov = ctx.contextData.governanceProfile as { riskLevel?: string } | undefined;
-  if (gov?.riskLevel === 'CRITICAL') { score += 4; factors.push({ name: 'critical_risk', contribution: 4 }); }
-  else if (gov?.riskLevel === 'HIGH') { score += 3; factors.push({ name: 'high_risk', contribution: 3 }); }
+  if (gov?.riskLevel === 'CRITICAL') {
+    score += 4;
+    factors.push({ name: 'critical_risk', contribution: 4 });
+  } else if (gov?.riskLevel === 'HIGH') {
+    score += 3;
+    factors.push({ name: 'high_risk', contribution: 3 });
+  }
 
   return { score: Math.min(score, 10), factors };
 }
@@ -180,7 +498,11 @@ export class ModelRouter {
    * @param governorPhase - Current budget governor phase ('relaxed'|'moderate'|'tight'|'critical').
    *   Callers should pass their per-run governor state instead of relying on global singleton.
    */
-  route(ctx: AgentExecutionContext, governorPhase?: string, preferredTier?: ModelTier): RoutingDecision {
+  route(
+    ctx: AgentExecutionContext,
+    governorPhase?: string,
+    preferredTier?: ModelTier,
+  ): RoutingDecision {
     const complexity = scoreComplexity(ctx);
     const taskType = detectTaskType(ctx.goal);
     const requiredCaps = TASK_CAPABILITY_MAP[taskType] ?? [];
@@ -199,7 +521,7 @@ export class ModelRouter {
     const model = candidates[0];
 
     const reasoning: string[] = [
-      `complexity: ${complexity.score}/10 (${complexity.factors.map(f => f.name).join(', ')})`,
+      `complexity: ${complexity.score}/10 (${complexity.factors.map((f) => f.name).join(', ')})`,
       `task_type: ${taskType}`,
       `required_capabilities: ${requiredCaps.join(', ') || 'none'}`,
       `selected_tier: ${tier}`,
@@ -220,9 +542,13 @@ export class ModelRouter {
     }
 
     const estimatedInputTokens = Math.ceil(ctx.goal.length / 4) + 2048;
-    const estimatedOutputTokens = Math.min(ctx.tokenBudget, model.contextWindow - estimatedInputTokens);
-    const estimatedCost = (estimatedInputTokens / 1000) * model.costPer1KInput
-      + (estimatedOutputTokens / 1000) * model.costPer1KOutput;
+    const estimatedOutputTokens = Math.min(
+      ctx.tokenBudget,
+      model.contextWindow - estimatedInputTokens,
+    );
+    const estimatedCost =
+      (estimatedInputTokens / 1000) * model.costPer1KInput +
+      (estimatedOutputTokens / 1000) * model.costPer1KOutput;
 
     return {
       modelId: model.id,
@@ -238,7 +564,13 @@ export class ModelRouter {
    * Record a model execution outcome for learning.
    * Call this after each successful or failed model execution.
    */
-  recordOutcome(modelId: string, taskType: string, success: boolean, durationMs: number, tokensUsed: number): void {
+  recordOutcome(
+    modelId: string,
+    taskType: string,
+    success: boolean,
+    durationMs: number,
+    tokensUsed: number,
+  ): void {
     const record: ModelOutcome = {
       modelId,
       taskType,
@@ -282,7 +614,7 @@ export class ModelRouter {
     const requiredCaps = TASK_CAPABILITY_MAP[taskType ?? 'general'] ?? [];
 
     // Try same tier, next priority (pre-sorted by priority)
-    const sameTier = (this.tierIndex.get(failed.tier) ?? []).filter(m => m.id !== failedModelId);
+    const sameTier = (this.tierIndex.get(failed.tier) ?? []).filter((m) => m.id !== failedModelId);
     for (const candidate of sameTier) {
       if (this.hasCapabilities(candidate, requiredCaps)) return candidate;
     }
@@ -321,7 +653,7 @@ export class ModelRouter {
         if (chain.length >= maxModels) break;
         if (this.hasCapabilities(model, requiredCaps)) {
           // Avoid duplicates (same model can appear in multiple tiers like bedrock)
-          if (!chain.some(m => m.id === model.id && m.provider === model.provider)) {
+          if (!chain.some((m) => m.id === model.id && m.provider === model.provider)) {
             chain.push(model);
           }
         }
@@ -370,7 +702,10 @@ export class ModelRouter {
     const cheapest = chain[0];
     const complexity = scoreComplexity(ctx);
     const estimatedInputTokens = Math.ceil(ctx.goal.length / 4) + 2048;
-    const estimatedOutputTokens = Math.min(ctx.tokenBudget, cheapest.contextWindow - estimatedInputTokens);
+    const estimatedOutputTokens = Math.min(
+      ctx.tokenBudget,
+      cheapest.contextWindow - estimatedInputTokens,
+    );
 
     const initial: RoutingDecision = {
       modelId: cheapest.id,
@@ -381,10 +716,11 @@ export class ModelRouter {
         `complexity: ${complexity.score}/10`,
         `task_type: ${taskType}`,
         `governor_phase: ${governor}`,
-        `escalation_chain: ${chain.map(m => m.id).join(' → ')}`,
+        `escalation_chain: ${chain.map((m) => m.id).join(' → ')}`,
       ],
-      estimatedCost: (estimatedInputTokens / 1000) * cheapest.costPer1KInput
-        + (estimatedOutputTokens / 1000) * cheapest.costPer1KOutput,
+      estimatedCost:
+        (estimatedInputTokens / 1000) * cheapest.costPer1KInput +
+        (estimatedOutputTokens / 1000) * cheapest.costPer1KOutput,
       maxTokens: Math.min(estimatedOutputTokens, 200000),
     };
 
@@ -402,7 +738,7 @@ export class ModelRouter {
     currentModelId: string,
     escalationChain: ModelConfig[],
   ): ModelConfig | undefined {
-    const currentIdx = escalationChain.findIndex(m => m.id === currentModelId);
+    const currentIdx = escalationChain.findIndex((m) => m.id === currentModelId);
     if (currentIdx === -1) {
       // Current model not in chain; return the first escalation model
       return escalationChain[0];
@@ -417,8 +753,9 @@ export class ModelRouter {
   estimateCost(modelId: string, inputTokens: number, outputTokens: number): number {
     const model = this.models.get(modelId);
     if (!model) return 0;
-    return (inputTokens / 1000) * model.costPer1KInput
-      + (outputTokens / 1000) * model.costPer1KOutput;
+    return (
+      (inputTokens / 1000) * model.costPer1KInput + (outputTokens / 1000) * model.costPer1KOutput
+    );
   }
 
   /**
@@ -431,10 +768,7 @@ export class ModelRouter {
    * - A batch-capable model exists at the appropriate tier
    * - Task doesn't require immediate tool interaction
    */
-  routeBatch(
-    ctx: AgentExecutionContext,
-    tier?: ModelTier,
-  ): ModelConfig | undefined {
+  routeBatch(ctx: AgentExecutionContext, tier?: ModelTier): ModelConfig | undefined {
     const taskType = detectTaskType(ctx.goal);
     const requiredCaps = TASK_CAPABILITY_MAP[taskType] ?? [];
     const targetTier = tier ?? 'eco';
@@ -442,7 +776,7 @@ export class ModelRouter {
     const tierOrder: ModelTier[] = [targetTier, 'eco', 'standard'];
     for (const t of tierOrder) {
       const candidates = (this.tierIndex.get(t) ?? []).filter(
-        m => m.supportsBatchAPI && this.hasCapabilities(m, requiredCaps),
+        (m) => m.supportsBatchAPI && this.hasCapabilities(m, requiredCaps),
       );
       if (candidates.length > 0) {
         // Return the cheapest batch-capable model
@@ -483,13 +817,25 @@ export class ModelRouter {
   /**
    * Get learning stats for debugging.
    */
-  getLearningStats(): { modelId: string; taskType: string; successRate: string; avgDuration: number; count: number }[] {
-    const stats: { modelId: string; taskType: string; successRate: string; avgDuration: number; count: number }[] = [];
+  getLearningStats(): {
+    modelId: string;
+    taskType: string;
+    successRate: string;
+    avgDuration: number;
+    count: number;
+  }[] {
+    const stats: {
+      modelId: string;
+      taskType: string;
+      successRate: string;
+      avgDuration: number;
+      count: number;
+    }[] = [];
     for (const [key, outcomes] of this.outcomesIndex) {
       const colonIdx = key.lastIndexOf(':');
       const modelId = colonIdx >= 0 ? key.slice(0, colonIdx) : key;
       const taskType = colonIdx >= 0 ? key.slice(colonIdx + 1) : 'unknown';
-      const successes = outcomes.filter(o => o.success).length;
+      const successes = outcomes.filter((o) => o.success).length;
       const avgDuration = outcomes.reduce((s, o) => s + o.durationMs, 0) / outcomes.length;
       stats.push({
         modelId,
@@ -509,7 +855,11 @@ export class ModelRouter {
   /**
    * Select tier based on complexity, governance, and governor phase.
    */
-  private selectTier(complexity: ComplexityScore, ctx: AgentExecutionContext, governor: string): ModelTier {
+  private selectTier(
+    complexity: ComplexityScore,
+    ctx: AgentExecutionContext,
+    governor: string,
+  ): ModelTier {
     const gov = ctx.contextData.governanceProfile as { riskLevel?: string } | undefined;
 
     // Critical risk → always use power tier
@@ -561,7 +911,7 @@ export class ModelRouter {
     const needsStructured = !!ctx.outputSchema;
     if (needsStructured) {
       const structuredCapable = candidates.filter(
-        m => m.supportsStructuredOutput || m.supportsJSONMode,
+        (m) => m.supportsStructuredOutput || m.supportsJSONMode,
       );
       if (structuredCapable.length > 0) {
         candidates = structuredCapable;
@@ -569,13 +919,13 @@ export class ModelRouter {
     }
 
     // Score each candidate
-    const scored = candidates.map(m => ({
+    const scored = candidates.map((m) => ({
       model: m,
       score: this.scoreCandidate(m, requiredCaps, taskType, ctx),
     }));
 
     scored.sort((a, b) => b.score - a.score);
-    return scored.map(s => s.model);
+    return scored.map((s) => s.model);
   }
 
   /**
@@ -594,16 +944,17 @@ export class ModelRouter {
     _ctx: AgentExecutionContext,
   ): number {
     // 1. Capability fit: what fraction of required caps does this model have?
-    const capFit = requiredCaps.length === 0
-      ? 1.0
-      : requiredCaps.filter(c => model.capabilities.includes(c)).length / requiredCaps.length;
+    const capFit =
+      requiredCaps.length === 0
+        ? 1.0
+        : requiredCaps.filter((c) => model.capabilities.includes(c)).length / requiredCaps.length;
 
     // 2. Cost efficiency: use cost-per-successful-task (raw cost / success rate)
     //    A model that costs $0.001 but fails 50% of the time effectively costs $0.002/task
     //    A model that costs $0.003 but succeeds 99% of the time effectively costs $0.003/task
     //    The second model is actually cheaper per successful task!
     const tierModels = this.tierIndex.get(model.tier) ?? [];
-    const maxCost = Math.max(...tierModels.map(m => m.costPer1KOutput), 0.001);
+    const maxCost = Math.max(...tierModels.map((m) => m.costPer1KOutput), 0.001);
     const rawCostRatio = model.costPer1KOutput / maxCost;
 
     // Get success rate from learning data (0.5 = no data = neutral)
@@ -685,7 +1036,7 @@ export class ModelRouter {
    */
   private hasCapabilities(model: ModelConfig, requiredCaps: string[]): boolean {
     if (requiredCaps.length === 0) return true;
-    return requiredCaps.every(c => model.capabilities.includes(c));
+    return requiredCaps.every((c) => model.capabilities.includes(c));
   }
 
   /**
@@ -697,14 +1048,13 @@ export class ModelRouter {
 
     while (currentIdx < tierOrder.length) {
       const tierModels = this.tierIndex.get(tierOrder[currentIdx]) ?? [];
-      const hasCapableModel = tierModels.some(m => this.hasCapabilities(m, requiredCaps));
+      const hasCapableModel = tierModels.some((m) => this.hasCapabilities(m, requiredCaps));
       if (hasCapableModel) return tierOrder[currentIdx];
       currentIdx++;
     }
 
     return tier; // fallback to original
   }
-
 }
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
@@ -717,9 +1067,17 @@ const routerSingleton = createTenantAwareSingleton(() => {
     const store = getModelPerformanceStore();
     const historical = store.getAll();
     for (const outcome of historical) {
-      router.recordOutcome(outcome.modelId, outcome.taskType, outcome.success, outcome.durationMs, outcome.tokensUsed);
+      router.recordOutcome(
+        outcome.modelId,
+        outcome.taskType,
+        outcome.success,
+        outcome.durationMs,
+        outcome.tokensUsed,
+      );
     }
-  } catch { /* best-effort: don't crash if store unavailable */ }
+  } catch {
+    /* best-effort: don't crash if store unavailable */
+  }
   return router;
 });
 

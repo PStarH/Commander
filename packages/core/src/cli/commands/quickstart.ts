@@ -85,7 +85,10 @@ function checkWorkspace(): CheckResult {
 }
 
 function checkTools(): CheckResult {
-  const tools = (process.env.COMMANDER_TOOLS || 'web_search,web_fetch,file_read,file_write,file_edit,file_search,file_list,python_execute,shell_execute,git').split(',');
+  const tools = (
+    process.env.COMMANDER_TOOLS ||
+    'web_search,web_fetch,file_read,file_write,file_edit,file_search,file_list,python_execute,shell_execute,git'
+  ).split(',');
   return {
     label: 'Tools',
     pass: true,
@@ -102,26 +105,60 @@ async function showProviderSetup() {
   console.log(`  Commander supports 20+ providers. Pick one:\n`);
 
   const providers = [
-    { name: 'OpenAI', env: 'OPENAI_API_KEY', url: 'https://platform.openai.com/api-keys', models: 'GPT-4o, GPT-4.1, o3' },
-    { name: 'Anthropic', env: 'ANTHROPIC_API_KEY', url: 'https://console.anthropic.com', models: 'Claude Sonnet 4.6, Opus 4.8' },
-    { name: 'Google', env: 'GOOGLE_API_KEY', url: 'https://aistudio.google.com/apikey', models: 'Gemini 2.5 Pro/Flash' },
-    { name: 'OpenRouter', env: 'OPENROUTER_API_KEY', url: 'https://openrouter.ai/keys', models: '200+ models' },
-    { name: 'DeepSeek', env: 'DEEPSEEK_API_KEY', url: 'https://platform.deepseek.com', models: 'DeepSeek R1, V3' },
-    { name: 'Ollama (local)', env: 'OLLAMA_HOST', url: 'https://ollama.com', models: 'Llama 3, Mistral, etc.' },
+    {
+      name: 'OpenAI',
+      env: 'OPENAI_API_KEY',
+      url: 'https://platform.openai.com/api-keys',
+      models: 'GPT-4o, GPT-4.1, o3',
+    },
+    {
+      name: 'Anthropic',
+      env: 'ANTHROPIC_API_KEY',
+      url: 'https://console.anthropic.com',
+      models: 'Claude Sonnet 4.6, Opus 4.8',
+    },
+    {
+      name: 'Google',
+      env: 'GOOGLE_API_KEY',
+      url: 'https://aistudio.google.com/apikey',
+      models: 'Gemini 2.5 Pro/Flash',
+    },
+    {
+      name: 'OpenRouter',
+      env: 'OPENROUTER_API_KEY',
+      url: 'https://openrouter.ai/keys',
+      models: '200+ models',
+    },
+    {
+      name: 'DeepSeek',
+      env: 'DEEPSEEK_API_KEY',
+      url: 'https://platform.deepseek.com',
+      models: 'DeepSeek R1, V3',
+    },
+    {
+      name: 'Ollama (local)',
+      env: 'OLLAMA_HOST',
+      url: 'https://ollama.com',
+      models: 'Llama 3, Mistral, etc.',
+    },
   ];
 
   for (let i = 0; i < providers.length; i++) {
     const p = providers[i];
     const hasKey = !!process.env[p.env];
     const status = hasKey ? `${$.green}✓${$.reset}` : `${$.dim}○${$.reset}`;
-    console.log(`  ${status} ${$.bold}${i + 1}.${$.reset} ${$.cyan}${p.name.padEnd(14)}${$.reset} ${$.dim}${p.models}${$.reset}`);
+    console.log(
+      `  ${status} ${$.bold}${i + 1}.${$.reset} ${$.cyan}${p.name.padEnd(14)}${$.reset} ${$.dim}${p.models}${$.reset}`,
+    );
   }
 
   console.log(`\n  ${$.dim}To configure:${$.reset}`);
   console.log(`  ${$.gray}$ export OPENAI_API_KEY=sk-...${$.reset}`);
   console.log(`  ${$.dim}or${$.reset}`);
   console.log(`  ${$.gray}$ commander config set model <model-id>${$.reset}`);
-  console.log(`  ${$.gray}$ commander config list-providers${$.reset}  ${$.dim}See all options${$.reset}`);
+  console.log(
+    `  ${$.gray}$ commander config list-providers${$.reset}  ${$.dim}See all options${$.reset}`,
+  );
 }
 
 function showFirstSteps() {
@@ -142,7 +179,9 @@ function showFirstSteps() {
   }
 
   console.log(`\n  ${$.bold}Pro tips:${$.reset}`);
-  bullet(`Any unrecognized command is treated as a task: ${$.cyan}commander fix the login bug${$.reset}`);
+  bullet(
+    `Any unrecognized command is treated as a task: ${$.cyan}commander fix the login bug${$.reset}`,
+  );
   bullet(`Use ${$.cyan}--help${$.reset} with any command for options`);
   bullet(`Use ${$.cyan}commander config test${$.reset} to verify your API connection`);
   bullet(`Use ${$.cyan}commander mode auto-edit${$.reset} to skip approval prompts`);
@@ -176,12 +215,14 @@ export async function cmdQuickstart(args: string[]) {
 
   // Run all checks
   const checks = [checkNode(), checkProvider(), checkGit(), checkWorkspace(), checkTools()];
-  const failures = checks.filter(c => !c.pass);
+  const failures = checks.filter((c) => !c.pass);
 
   section('PREREQUISITES');
   for (const c of checks) {
     const icon = c.pass ? `${$.green}✓${$.reset}` : `${$.red}✗${$.reset}`;
-    console.log(`  ${icon} ${$.bold}${c.label.padEnd(16)}${$.reset} ${c.pass ? $.dim : $.yellow}${c.detail}${$.reset}`);
+    console.log(
+      `  ${icon} ${$.bold}${c.label.padEnd(16)}${$.reset} ${c.pass ? $.dim : $.yellow}${c.detail}${$.reset}`,
+    );
     if (!c.pass && c.fix) {
       console.log(`    ${$.dim}→ ${c.fix}${$.reset}`);
     }
@@ -210,9 +251,13 @@ export async function cmdQuickstart(args: string[]) {
   section('SUMMARY');
   if (failures.length === 0) {
     console.log(`  ${$.green}${$.bold}✓ Everything looks good!${$.reset}`);
-    console.log(`  ${$.dim}Run ${$.cyan}commander "your first task"${$.reset}${$.dim} to get started.${$.reset}\n`);
+    console.log(
+      `  ${$.dim}Run ${$.cyan}commander "your first task"${$.reset}${$.dim} to get started.${$.reset}\n`,
+    );
   } else {
     console.log(`  ${$.yellow}⚠ ${failures.length} item(s) to fix above.${$.reset}`);
-    console.log(`  ${$.dim}Fix them, then run ${$.cyan}commander quickstart --check${$.reset}${$.dim} to verify.${$.reset}\n`);
+    console.log(
+      `  ${$.dim}Fix them, then run ${$.cyan}commander quickstart --check${$.reset}${$.dim} to verify.${$.reset}\n`,
+    );
   }
 }

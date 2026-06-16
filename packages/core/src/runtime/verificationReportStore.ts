@@ -41,7 +41,11 @@ export class VerificationReportStore {
     const base = baseDir ?? path.join(process.cwd(), '.commander_verifications');
     this.baseDir = tenantId ? path.join(base, `tenant_${tenantId}`) : base;
     fs.mkdirSync(this.baseDir, { recursive: true, mode: 0o700 });
-    try { fs.chmodSync(this.baseDir, 0o700); } catch { /* best-effort */ }
+    try {
+      fs.chmodSync(this.baseDir, 0o700);
+    } catch {
+      /* best-effort */
+    }
   }
 
   async write(record: StoredVerificationRecord): Promise<void> {
@@ -49,7 +53,11 @@ export class VerificationReportStore {
     this.enqueueWrite(async () => {
       const filePath = path.join(this.baseDir, `${sanitizeRunId(record.runId)}.ndjson`);
       fs.appendFileSync(filePath, line, 'utf-8');
-      try { fs.chmodSync(filePath, 0o600); } catch { /* best-effort */ }
+      try {
+        fs.chmodSync(filePath, 0o600);
+      } catch {
+        /* best-effort */
+      }
     });
   }
 
@@ -69,8 +77,10 @@ export class VerificationReportStore {
       }
       return out;
     } catch (e) {
-      getGlobalLogger().warn('VerificationReportStore', 'Failed to read verification reports',
-        { error: (e as Error)?.message, runId });
+      getGlobalLogger().warn('VerificationReportStore', 'Failed to read verification reports', {
+        error: (e as Error)?.message,
+        runId,
+      });
       return [];
     }
   }
@@ -88,7 +98,9 @@ export class VerificationReportStore {
     }
   }
 
-  getBaseDir(): string { return this.baseDir; }
+  getBaseDir(): string {
+    return this.baseDir;
+  }
 
   private enqueueWrite(task: () => Promise<void>): void {
     this.writeQueue.push(task);

@@ -127,7 +127,7 @@ function findNodeById(nodes: GoalNode[], id: string): GoalNode | undefined {
 }
 
 function cloneGoalTree(nodes: GoalNode[]): GoalNode[] {
-  return nodes.map(n => ({
+  return nodes.map((n) => ({
     ...n,
     critique: n.critique ? { ...n.critique, findings: [...n.critique.findings] } : undefined,
     subGoals: cloneGoalTree(n.subGoals),
@@ -142,10 +142,7 @@ export class GoalOrchestrator {
   private currentRound = 0;
   private checkpointPath: string | null = null;
 
-  constructor(
-    provider: LLMProvider,
-    config?: Partial<GoalConfig>,
-  ) {
+  constructor(provider: LLMProvider, config?: Partial<GoalConfig>) {
     this.provider = provider;
     this.config = { ...DEFAULT_GOAL_CONFIG, ...config };
     this.model = this.config.model ?? DEFAULT_GOAL_CONFIG.model!;
@@ -219,7 +216,10 @@ export class GoalOrchestrator {
       this.rootNodes = data.rootNodes;
       this.currentRound = data.currentRound;
 
-      getGlobalLogger().info('GoalOrchestrator', `Resumed from checkpoint: round ${this.currentRound}`);
+      getGlobalLogger().info(
+        'GoalOrchestrator',
+        `Resumed from checkpoint: round ${this.currentRound}`,
+      );
       return {
         goal: data.goal,
         rootNodes: data.rootNodes,
@@ -240,7 +240,9 @@ export class GoalOrchestrator {
     if (this.checkpointPath && fs.existsSync(this.checkpointPath)) {
       try {
         fs.unlinkSync(this.checkpointPath);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -271,8 +273,14 @@ export class GoalOrchestrator {
     const decomposition = await this.managerDecompose(goal);
     if (!decomposition) {
       return {
-        goal, status: 'failed', totalRounds: 0, totalTokensUsed, totalDurationMs: Date.now() - startTime,
-        ledger: [], finalGoalTree: [], summary: 'Failed to decompose goal.',
+        goal,
+        status: 'failed',
+        totalRounds: 0,
+        totalTokensUsed,
+        totalDurationMs: Date.now() - startTime,
+        ledger: [],
+        finalGoalTree: [],
+        summary: 'Failed to decompose goal.',
       };
     }
     totalTokensUsed += decomposition.tokens;
@@ -298,14 +306,17 @@ export class GoalOrchestrator {
       let roundTokens = 0;
       let roundFailures = 0;
 
-      bus.publish('goal.round_started', 'goal-orch', { round, activeGoals: countActiveGoals(goalTree) });
+      bus.publish('goal.round_started', 'goal-orch', {
+        round,
+        activeGoals: countActiveGoals(goalTree),
+      });
 
       const pending = this.getPendingNodes(goalTree);
       for (const node of [...pending]) {
         node.status = 'in_progress';
         node.roundAssigned = node.roundAssigned ?? round;
 
-        const depsBlocked = node.dependencies.some(depId => {
+        const depsBlocked = node.dependencies.some((depId) => {
           const dep = findNodeById(goalTree, depId);
           return dep && dep.status !== 'completed';
         });
@@ -328,7 +339,7 @@ export class GoalOrchestrator {
         if (criticResult) {
           node.critique = {
             passed: criticResult.data.passed,
-            findings: criticResult.data.findings.map(f => ({
+            findings: criticResult.data.findings.map((f) => ({
               severity: f.severity,
               category: f.category,
               description: f.description,
@@ -341,7 +352,14 @@ export class GoalOrchestrator {
         } else {
           node.critique = {
             passed: false,
-            findings: [{ severity: 'medium', category: 'correctness', description: 'Critic evaluation failed', suggestion: 'Manual review needed' }],
+            findings: [
+              {
+                severity: 'medium',
+                category: 'correctness',
+                description: 'Critic evaluation failed',
+                suggestion: 'Manual review needed',
+              },
+            ],
             summary: 'Critic evaluation failed.',
           };
         }
@@ -377,12 +395,18 @@ export class GoalOrchestrator {
       }
 
       if (consecutiveFailedRounds >= MAX_CONSECUTIVE_FAILURES) {
-        getGlobalLogger().error('GoalOrchestrator', `Stopping after ${consecutiveFailedRounds} consecutive failed rounds (LLM calls failing)`);
+        getGlobalLogger().error(
+          'GoalOrchestrator',
+          `Stopping after ${consecutiveFailedRounds} consecutive failed rounds (LLM calls failing)`,
+        );
         break;
       }
 
       const allNodes = collectAllNodes(goalTree);
-      const currentFindings = allNodes.reduce((sum, n) => sum + (n.critique?.findings.length ?? 0), 0);
+      const currentFindings = allNodes.reduce(
+        (sum, n) => sum + (n.critique?.findings.length ?? 0),
+        0,
+      );
 
       // Build fingerprint set of current finding descriptions for accurate tracking
       const currentFindingsSet = new Set<string>();
@@ -406,16 +430,21 @@ export class GoalOrchestrator {
         }
       }
 
-      const improvementRate = prevFindingsSet !== null && prevFindingsSet.size > 0
-        ? resolvedFindings / prevFindingsSet.size
-        : 1;
+      const improvementRate =
+        prevFindingsSet !== null && prevFindingsSet.size > 0
+          ? resolvedFindings / prevFindingsSet.size
+          : 1;
 
       if (improvementRate < 0.02) plateauRounds++;
       else plateauRounds = 0;
 
       const decision = await this.makeDecision(
-        round, totalTokensUsed, currentFindings, plateauRounds,
-        allNodes, goal,
+        round,
+        totalTokensUsed,
+        currentFindings,
+        plateauRounds,
+        allNodes,
+        goal,
       );
 
       prevFindingsSet = currentFindingsSet;
@@ -445,10 +474,13 @@ export class GoalOrchestrator {
 
     const elapsed = Date.now() - startTime;
     const finalAll = collectAllNodes(goalTree);
-    const completedCount = finalAll.filter(n => n.status === 'completed').length;
-    const resultStatus = completedCount === finalAll.length && finalAll.length > 0
-      ? 'completed'
-      : completedCount > 0 ? 'partial' : 'failed';
+    const completedCount = finalAll.filter((n) => n.status === 'completed').length;
+    const resultStatus =
+      completedCount === finalAll.length && finalAll.length > 0
+        ? 'completed'
+        : completedCount > 0
+          ? 'partial'
+          : 'failed';
 
     // Clear checkpoint on successful completion
     if (resultStatus === 'completed') {
@@ -456,19 +488,38 @@ export class GoalOrchestrator {
     }
 
     return {
-      goal, status: resultStatus, totalRounds: round, totalTokensUsed, totalDurationMs: elapsed,
-      ledger, finalGoalTree: goalTree, summary: this.buildSummary(goal, resultStatus, round, completedCount, finalAll.length, ledger),
+      goal,
+      status: resultStatus,
+      totalRounds: round,
+      totalTokensUsed,
+      totalDurationMs: elapsed,
+      ledger,
+      finalGoalTree: goalTree,
+      summary: this.buildSummary(
+        goal,
+        resultStatus,
+        round,
+        completedCount,
+        finalAll.length,
+        ledger,
+      ),
     };
   }
 
-  private async managerDecompose(goal: string): Promise<{ data: ManagerDecomposition; tokens: number } | null> {
+  private async managerDecompose(
+    goal: string,
+  ): Promise<{ data: ManagerDecomposition; tokens: number } | null> {
     const result = await callLLMJSON<ManagerDecomposition>(
-      this.provider, this.model,
+      this.provider,
+      this.model,
       MANAGER_DECOMPOSE_PROMPT,
       `Goal: ${goal}`,
     );
     if (result && !validateShape(result.data, { subGoals: 'array', reasoning: 'string' })) {
-      getGlobalLogger().warn('GoalOrchestrator', 'managerDecompose: LLM response failed shape validation');
+      getGlobalLogger().warn(
+        'GoalOrchestrator',
+        'managerDecompose: LLM response failed shape validation',
+      );
       return null;
     }
     return result;
@@ -479,10 +530,12 @@ export class GoalOrchestrator {
     goalTree: GoalNode[],
     round: number,
   ): Promise<{ data: ManagerReview; tokens: number } | null> {
-    const completed = collectAllNodes(goalTree).filter(n => n.status === 'completed' || n.status === 'in_progress');
+    const completed = collectAllNodes(goalTree).filter(
+      (n) => n.status === 'completed' || n.status === 'in_progress',
+    );
     if (completed.length === 0) return null;
 
-    const context = completed.map(n => ({
+    const context = completed.map((n) => ({
       id: n.id,
       goal: n.goal,
       status: n.status,
@@ -491,17 +544,24 @@ export class GoalOrchestrator {
     }));
 
     const result = await callLLMJSON<ManagerReview>(
-      this.provider, this.model,
+      this.provider,
+      this.model,
       MANAGER_REVIEW_PROMPT,
       `Original Goal: ${goal}\nRound: ${round}\n\nCompleted work:\n${JSON.stringify(context, null, 2)}`,
     );
-    if (result && !validateShape(result.data, {
-      goalAssessments: 'array',
-      newSubGoals: 'array',
-      overallStatus: 'string',
-      overallSummary: 'string',
-    })) {
-      getGlobalLogger().warn('GoalOrchestrator', 'managerReview: LLM response failed shape validation');
+    if (
+      result &&
+      !validateShape(result.data, {
+        goalAssessments: 'array',
+        newSubGoals: 'array',
+        overallStatus: 'string',
+        overallSummary: 'string',
+      })
+    ) {
+      getGlobalLogger().warn(
+        'GoalOrchestrator',
+        'managerReview: LLM response failed shape validation',
+      );
       return null;
     }
     return result;
@@ -513,9 +573,11 @@ export class GoalOrchestrator {
   ): Promise<{ output: string; tokens: number } | null> {
     const systemPrompt = `You are a Worker Agent. Execute the assigned task thoroughly. Provide complete, production-quality output. Include code, explanations, and any relevant details.`;
     const context = node.dependencies
-      .map(depId => {
+      .map((depId) => {
         const dep = findNodeById(this.rootNodes, depId);
-        return dep ? `Dependency "${dep.goal}" output:\n${dep.workerOutput?.slice(0, 500) ?? '(no output)'}` : '';
+        return dep
+          ? `Dependency "${dep.goal}" output:\n${dep.workerOutput?.slice(0, 500) ?? '(no output)'}`
+          : '';
       })
       .filter(Boolean)
       .join('\n\n');
@@ -525,7 +587,10 @@ export class GoalOrchestrator {
         model: this.model,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `Parent Goal: ${parentGoal}\n\nSub-Goal: ${node.goal}${context ? `\n\nContext from dependencies:\n${context}` : ''}\n\nProvide your output.` },
+          {
+            role: 'user',
+            content: `Parent Goal: ${parentGoal}\n\nSub-Goal: ${node.goal}${context ? `\n\nContext from dependencies:\n${context}` : ''}\n\nProvide your output.`,
+          },
         ],
         temperature: 0.3,
         maxTokens: 4096,
@@ -546,12 +611,19 @@ export class GoalOrchestrator {
   ): Promise<{ data: CriticOutput; tokens: number } | null> {
     const context = `Parent Goal: ${parentGoal}\nSub-Goal: ${node.goal}\n\nWorker Output:\n${node.workerOutput?.slice(0, 2000) ?? '(no output)'}`;
     const result = await callLLMJSON<CriticOutput>(
-      this.provider, this.model,
+      this.provider,
+      this.model,
       CRITIC_PROMPT,
       context,
     );
-    if (result && !validateShape(result.data, { passed: 'boolean', findings: 'array', summary: 'string' })) {
-      getGlobalLogger().warn('GoalOrchestrator', 'criticEvaluate: LLM response failed shape validation');
+    if (
+      result &&
+      !validateShape(result.data, { passed: 'boolean', findings: 'array', summary: 'string' })
+    ) {
+      getGlobalLogger().warn(
+        'GoalOrchestrator',
+        'criticEvaluate: LLM response failed shape validation',
+      );
       return null;
     }
     return result;
@@ -566,22 +638,28 @@ export class GoalOrchestrator {
     goal?: string,
   ): Promise<{ decision: RoundDecision; reason: string }> {
     if (totalTokensUsed >= this.config.budgetTokens) {
-      return { decision: 'stop_budget', reason: `Token budget (${this.config.budgetTokens}) exhausted.` };
+      return {
+        decision: 'stop_budget',
+        reason: `Token budget (${this.config.budgetTokens}) exhausted.`,
+      };
     }
 
     if (round >= this.config.maxRounds) {
-      return { decision: 'stop_max_rounds', reason: `Max rounds (${this.config.maxRounds}) reached.` };
+      return {
+        decision: 'stop_max_rounds',
+        reason: `Max rounds (${this.config.maxRounds}) reached.`,
+      };
     }
 
-    const activeCount = allNodes.filter(n =>
-      n.status === 'pending' || n.status === 'in_progress' || n.status === 're_opened'
+    const activeCount = allNodes.filter(
+      (n) => n.status === 'pending' || n.status === 'in_progress' || n.status === 're_opened',
     ).length;
 
     if (activeCount === 0 && findingsCount === 0) {
       if (goal) {
         const output = allNodes
-          .filter(n => n.workerOutput)
-          .map(n => `[${n.goal.slice(0, 60)}]: ${n.workerOutput?.slice(0, 300) ?? ''}`)
+          .filter((n) => n.workerOutput)
+          .map((n) => `[${n.goal.slice(0, 60)}]: ${n.workerOutput?.slice(0, 300) ?? ''}`)
           .join('\n');
         try {
           const goalJudge = getGoalJudge();
@@ -592,7 +670,7 @@ export class GoalOrchestrator {
             runId: `goal-orch-${Date.now()}`,
             goal: goal,
             output: output || 'All sub-goals completed',
-            evidenceCount: allNodes.filter(n => n.status === 'completed').length,
+            evidenceCount: allNodes.filter((n) => n.status === 'completed').length,
           });
 
           if (!verdict.passed) {
@@ -607,34 +685,49 @@ export class GoalOrchestrator {
             };
           }
         } catch (err) {
-          getGlobalLogger().debug('GoalOrchestrator', 'Judge check failed, allowing completion (best-effort)', {
-            error: (err as Error).message,
-          });
+          getGlobalLogger().debug(
+            'GoalOrchestrator',
+            'Judge check failed, allowing completion (best-effort)',
+            {
+              error: (err as Error).message,
+            },
+          );
           // Judge failure is non-blocking — allow completion
         }
       } else {
-        getGlobalLogger().warn('GoalOrchestrator', 'makeDecision called without goal — judge protection skipped');
+        getGlobalLogger().warn(
+          'GoalOrchestrator',
+          'makeDecision called without goal — judge protection skipped',
+        );
       }
       return { decision: 'stop_achieved', reason: 'All sub-goals completed with zero findings.' };
     }
 
-    const plateauThreshold = this.config.mode === 'thorough' ? 5
-      : this.config.mode === 'balanced' ? 3
-      : 2;
+    const plateauThreshold =
+      this.config.mode === 'thorough' ? 5 : this.config.mode === 'balanced' ? 3 : 2;
 
     if (plateauRounds >= plateauThreshold && findingsCount <= 2) {
-      const hasCritical = allNodes.some(n =>
-        n.critique?.findings.some(f => f.severity === 'critical' || f.severity === 'high')
+      const hasCritical = allNodes.some((n) =>
+        n.critique?.findings.some((f) => f.severity === 'critical' || f.severity === 'high'),
       );
       if (!hasCritical) {
-        return { decision: 'stop_plateau', reason: `Improvement plateaued after ${plateauRounds} rounds.` };
+        return {
+          decision: 'stop_plateau',
+          reason: `Improvement plateaued after ${plateauRounds} rounds.`,
+        };
       }
     }
 
-    return { decision: 'continue', reason: `Active goals: ${activeCount}, findings: ${findingsCount}` };
+    return {
+      decision: 'continue',
+      reason: `Active goals: ${activeCount}, findings: ${findingsCount}`,
+    };
   }
 
-  private buildGoalTree(subGoals: ManagerDecomposition['subGoals'], parentId: string | null): GoalNode[] {
+  private buildGoalTree(
+    subGoals: ManagerDecomposition['subGoals'],
+    parentId: string | null,
+  ): GoalNode[] {
     const nodeMap = new Map<string, GoalNode>();
     const nodes: GoalNode[] = [];
 
@@ -660,7 +753,7 @@ export class GoalOrchestrator {
       const node = nodeMap.get(`idx:${i}`);
       if (node && sg.dependencies.length > 0) {
         node.dependencies = sg.dependencies
-          .map(depIdx => nodeMap.get(`idx:${depIdx}`)?.id)
+          .map((depIdx) => nodeMap.get(`idx:${depIdx}`)?.id)
           .filter((id): id is string => !!id);
       }
     }

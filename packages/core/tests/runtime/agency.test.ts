@@ -12,10 +12,19 @@ describe('DeadLetterQueue', async () => {
     const { DeadLetterQueue } = await import('../../src/runtime/deadLetterQueue');
     const dlq = new DeadLetterQueue(testDir);
     dlq.record({
-      id: 'dlq_1', category: 'tool', runId: 'run_1', agentId: 'agent_a',
-      timestamp: new Date().toISOString(), errorClass: 'transient',
-      errorMessage: 'timeout', retryable: true, attemptNumber: 0,
-      operationName: 'web_search', compensated: false, recovered: false, tags: [],
+      id: 'dlq_1',
+      category: 'tool',
+      runId: 'run_1',
+      agentId: 'agent_a',
+      timestamp: new Date().toISOString(),
+      errorClass: 'transient',
+      errorMessage: 'timeout',
+      retryable: true,
+      attemptNumber: 0,
+      operationName: 'web_search',
+      compensated: false,
+      recovered: false,
+      tags: [],
     });
     dlq.flush('tool');
     const entries = dlq.readEntries('tool', 10);
@@ -28,15 +37,24 @@ describe('DeadLetterQueue', async () => {
     const { DeadLetterQueue } = await import('../../src/runtime/deadLetterQueue');
     const dlq = new DeadLetterQueue(testDir);
     dlq.record({
-      id: 'dlq_2', category: 'llm', runId: 'run_2', agentId: 'agent_b',
-      timestamp: new Date().toISOString(), errorClass: 'permanent',
-      errorMessage: 'auth failed', retryable: false, attemptNumber: 0,
-      operationName: 'llm_call', compensated: false, recovered: false, tags: [],
+      id: 'dlq_2',
+      category: 'llm',
+      runId: 'run_2',
+      agentId: 'agent_b',
+      timestamp: new Date().toISOString(),
+      errorClass: 'permanent',
+      errorMessage: 'auth failed',
+      retryable: false,
+      attemptNumber: 0,
+      operationName: 'llm_call',
+      compensated: false,
+      recovered: false,
+      tags: [],
     });
     dlq.flush('llm');
     const stats = dlq.getStats();
-    assert.ok(stats.some(s => s.category === 'tool'));
-    assert.ok(stats.some(s => s.category === 'llm'));
+    assert.ok(stats.some((s) => s.category === 'tool'));
+    assert.ok(stats.some((s) => s.category === 'llm'));
   });
 
   after(() => {
@@ -56,8 +74,11 @@ describe('CompensationRegistry', async () => {
       return { success: true };
     });
     registry.recordAction({
-      actionId: 'act_1', toolName: 'file_write', args: { filePath: '/tmp/test.txt' },
-      description: 'write test file', tags: ['test'],
+      actionId: 'act_1',
+      toolName: 'file_write',
+      args: { filePath: '/tmp/test.txt' },
+      description: 'write test file',
+      tags: ['test'],
     });
     const result = await registry.compensate('act_1');
     assert.ok(result.success);
@@ -69,10 +90,28 @@ describe('CompensationRegistry', async () => {
     const { CompensationRegistry } = await import('../../src/runtime/compensationRegistry');
     const registry = new CompensationRegistry();
     const order: string[] = [];
-    registry.register('tool_a', async (a) => { order.push(a.actionId); return { success: true }; });
-    registry.register('tool_b', async (a) => { order.push(a.actionId); return { success: true }; });
-    registry.recordAction({ actionId: 'first', toolName: 'tool_a', args: {}, description: '', tags: [] });
-    registry.recordAction({ actionId: 'second', toolName: 'tool_b', args: {}, description: '', tags: [] });
+    registry.register('tool_a', async (a) => {
+      order.push(a.actionId);
+      return { success: true };
+    });
+    registry.register('tool_b', async (a) => {
+      order.push(a.actionId);
+      return { success: true };
+    });
+    registry.recordAction({
+      actionId: 'first',
+      toolName: 'tool_a',
+      args: {},
+      description: '',
+      tags: [],
+    });
+    registry.recordAction({
+      actionId: 'second',
+      toolName: 'tool_b',
+      args: {},
+      description: '',
+      tags: [],
+    });
     await registry.compensateAll();
     assert.deepEqual(order, ['second', 'first']);
   });
@@ -81,8 +120,20 @@ describe('CompensationRegistry', async () => {
     const { CompensationRegistry } = await import('../../src/runtime/compensationRegistry');
     const registry = new CompensationRegistry();
     registry.register('tool', async () => ({ success: true }));
-    registry.recordAction({ actionId: 'a1', toolName: 'tool', args: {}, description: '', tags: [] });
-    registry.recordAction({ actionId: 'a2', toolName: 'tool', args: {}, description: '', tags: [] });
+    registry.recordAction({
+      actionId: 'a1',
+      toolName: 'tool',
+      args: {},
+      description: '',
+      tags: [],
+    });
+    registry.recordAction({
+      actionId: 'a2',
+      toolName: 'tool',
+      args: {},
+      description: '',
+      tags: [],
+    });
     assert.equal(registry.getPendingCount(), 2);
     await registry.compensate('a1');
     assert.equal(registry.getPendingCount(), 1);
@@ -99,8 +150,13 @@ describe('AgentInbox', async () => {
     const { AgentInbox } = await import('../../src/runtime/agentInbox');
     const inbox = new AgentInbox(testDir);
     inbox.send({
-      id: 'msg_1', from: 'agent_a', to: 'agent_b', subject: 'hello',
-      body: 'test message', priority: 'normal', tags: [],
+      id: 'msg_1',
+      from: 'agent_a',
+      to: 'agent_b',
+      subject: 'hello',
+      body: 'test message',
+      priority: 'normal',
+      tags: [],
     });
     const unread = inbox.pollInbox('agent_b');
     assert.equal(unread.length, 1);
@@ -113,7 +169,15 @@ describe('AgentInbox', async () => {
   test('acknowledge marks message as processed', async () => {
     const { AgentInbox } = await import('../../src/runtime/agentInbox');
     const inbox = new AgentInbox(testDir);
-    inbox.send({ id: 'msg_2', from: 'a', to: 'b', subject: 'test', body: '', priority: 'normal', tags: [] });
+    inbox.send({
+      id: 'msg_2',
+      from: 'a',
+      to: 'b',
+      subject: 'test',
+      body: '',
+      priority: 'normal',
+      tags: [],
+    });
     const msgs = inbox.pollInbox('b');
     assert.ok(inbox.acknowledge('b', msgs[0].id));
     const all = inbox.getMessages('b');
@@ -123,8 +187,25 @@ describe('AgentInbox', async () => {
   test('prune removes acknowledged and expired messages', async () => {
     const { AgentInbox } = await import('../../src/runtime/agentInbox');
     const inbox = new AgentInbox(testDir);
-    inbox.send({ id: 'keep', from: 'a', to: 'c', subject: 'keep', body: '', priority: 'normal', tags: [] });
-    inbox.send({ id: 'expire', from: 'a', to: 'c', subject: 'expire', body: '', priority: 'normal', tags: [], ttlMs: -1 });
+    inbox.send({
+      id: 'keep',
+      from: 'a',
+      to: 'c',
+      subject: 'keep',
+      body: '',
+      priority: 'normal',
+      tags: [],
+    });
+    inbox.send({
+      id: 'expire',
+      from: 'a',
+      to: 'c',
+      subject: 'expire',
+      body: '',
+      priority: 'normal',
+      tags: [],
+      ttlMs: -1,
+    });
     const msgs = inbox.pollInbox('c');
     inbox.acknowledge('c', 'keep');
     const pruned = inbox.prune('c');
@@ -134,7 +215,15 @@ describe('AgentInbox', async () => {
   test('persistence across instances', async () => {
     const { AgentInbox } = await import('../../src/runtime/agentInbox');
     const inbox1 = new AgentInbox(testDir);
-    inbox1.send({ id: 'persist_1', from: 'x', to: 'y', subject: 'persist', body: 'data', priority: 'normal', tags: [] });
+    inbox1.send({
+      id: 'persist_1',
+      from: 'x',
+      to: 'y',
+      subject: 'persist',
+      body: 'data',
+      priority: 'normal',
+      tags: [],
+    });
     inbox1.pollInbox('y');
     inbox1.dispose();
     const inbox2 = new AgentInbox(testDir);
@@ -157,9 +246,12 @@ describe('TeamRegistry', async () => {
     const { TeamRegistry } = await import('../../src/runtime/teamRegistry');
     const registry = new TeamRegistry(manifestPath);
     registry.createTeam({
-      teamId: 'team_1', name: 'Alpha', description: 'test team',
+      teamId: 'team_1',
+      name: 'Alpha',
+      description: 'test team',
       members: [{ agentId: 'agent_a', role: 'lead', joinedAt: new Date().toISOString() }],
-      createdBy: 'admin', tags: [],
+      createdBy: 'admin',
+      tags: [],
     });
     const team = registry.getTeam('team_1');
     assert.ok(team);
@@ -172,7 +264,14 @@ describe('TeamRegistry', async () => {
   test('add and remove members', async () => {
     const { TeamRegistry } = await import('../../src/runtime/teamRegistry');
     const registry = new TeamRegistry(manifestPath);
-    registry.createTeam({ teamId: 'team_2', name: 'Beta', description: '', members: [], createdBy: 'admin', tags: [] });
+    registry.createTeam({
+      teamId: 'team_2',
+      name: 'Beta',
+      description: '',
+      members: [],
+      createdBy: 'admin',
+      tags: [],
+    });
     assert.ok(registry.addMember('team_2', { agentId: 'worker_1', role: 'worker', joinedAt: '' }));
     // Duplicate returns false
     assert.ok(!registry.addMember('team_2', { agentId: 'worker_1', role: 'worker', joinedAt: '' }));
@@ -184,10 +283,17 @@ describe('TeamRegistry', async () => {
   test('role assignment and lead query', async () => {
     const { TeamRegistry } = await import('../../src/runtime/teamRegistry');
     const registry = new TeamRegistry(manifestPath);
-    registry.createTeam({ teamId: 'team_3', name: 'Gamma', description: '', members: [
-      { agentId: 'lead_1', role: 'lead', joinedAt: '' },
-      { agentId: 'worker_2', role: 'worker', joinedAt: '' },
-    ], createdBy: 'admin', tags: [] });
+    registry.createTeam({
+      teamId: 'team_3',
+      name: 'Gamma',
+      description: '',
+      members: [
+        { agentId: 'lead_1', role: 'lead', joinedAt: '' },
+        { agentId: 'worker_2', role: 'worker', joinedAt: '' },
+      ],
+      createdBy: 'admin',
+      tags: [],
+    });
     assert.equal(registry.getLead('team_3')?.agentId, 'lead_1');
     assert.ok(registry.setRole('team_3', 'worker_2', 'reviewer'));
     assert.equal(registry.getMembers('team_3', 'reviewer').length, 1);
@@ -196,13 +302,20 @@ describe('TeamRegistry', async () => {
   test('find teams for agent', async () => {
     const { TeamRegistry } = await import('../../src/runtime/teamRegistry');
     const registry = new TeamRegistry(manifestPath);
-    assert.ok(registry.findTeamsForAgent('lead_1').some(t => t.teamId === 'team_3'));
+    assert.ok(registry.findTeamsForAgent('lead_1').some((t) => t.teamId === 'team_3'));
   });
 
   test('prune empty teams', async () => {
     const { TeamRegistry } = await import('../../src/runtime/teamRegistry');
     const registry = new TeamRegistry(manifestPath);
-    registry.createTeam({ teamId: 'empty_team', name: 'Empty', description: '', members: [], createdBy: 'admin', tags: [] });
+    registry.createTeam({
+      teamId: 'empty_team',
+      name: 'Empty',
+      description: '',
+      members: [],
+      createdBy: 'admin',
+      tags: [],
+    });
     assert.ok(registry.pruneEmpty() >= 1);
   });
 
@@ -222,16 +335,20 @@ describe('AgentHandoff', async () => {
     const inbox = new AgentInbox(testDir);
     const handoff = new AgentHandoff(inbox);
     const req = await handoff.request({
-      handoffId: 'ho_1', fromAgent: 'agent_a', toAgent: 'agent_b',
-      goal: 'finish the task', context: {
+      handoffId: 'ho_1',
+      fromAgent: 'agent_a',
+      toAgent: 'agent_b',
+      goal: 'finish the task',
+      context: {
         messages: [{ role: 'user', content: 'hello' }],
-        availableTools: ['web_search'], tokenBudget: 1000,
+        availableTools: ['web_search'],
+        tokenBudget: 1000,
       },
     });
     assert.equal(req.status, 'requested');
     // Check inbox message was delivered
     const msgs = inbox.pollInbox('agent_b');
-    assert.ok(msgs.some(m => m.payload?.handoffId === 'ho_1'));
+    assert.ok(msgs.some((m) => m.payload?.handoffId === 'ho_1'));
   });
 
   test('accept updates status and sends ack', async () => {
@@ -240,8 +357,11 @@ describe('AgentHandoff', async () => {
     const inbox = new AgentInbox(testDir);
     const handoff = new AgentHandoff(inbox);
     await handoff.request({
-      handoffId: 'ho_2', fromAgent: 'a', toAgent: 'b',
-      goal: 'test', context: { messages: [], availableTools: [], tokenBudget: 100 },
+      handoffId: 'ho_2',
+      fromAgent: 'a',
+      toAgent: 'b',
+      goal: 'test',
+      context: { messages: [], availableTools: [], tokenBudget: 100 },
     });
     const accepted = await handoff.accept('ho_2', 'OK');
     assert.ok(accepted);
@@ -254,8 +374,11 @@ describe('AgentHandoff', async () => {
     const inbox = new AgentInbox(testDir);
     const handoff = new AgentHandoff(inbox);
     await handoff.request({
-      handoffId: 'ho_3', fromAgent: 'a', toAgent: 'b',
-      goal: 'test', context: { messages: [], availableTools: [], tokenBudget: 100 },
+      handoffId: 'ho_3',
+      fromAgent: 'a',
+      toAgent: 'b',
+      goal: 'test',
+      context: { messages: [], availableTools: [], tokenBudget: 100 },
     });
     const rejected = await handoff.reject('ho_3', 'busy');
     assert.ok(rejected);
@@ -274,21 +397,24 @@ describe('HookManager (plugin system)', async () => {
   test('register with config validation', async () => {
     const { HookManager } = await import('../../src/pluginManager');
     const hm = new HookManager();
-    await hm.register({
-      name: 'test-plugin',
-      configSchema: {
-        type: 'object',
-        properties: {
-          apiKey: { type: 'string' },
-          retries: { type: 'number', default: 3 },
+    await hm.register(
+      {
+        name: 'test-plugin',
+        configSchema: {
+          type: 'object',
+          properties: {
+            apiKey: { type: 'string' },
+            retries: { type: 'number', default: 3 },
+          },
+          required: ['apiKey'],
         },
-        required: ['apiKey'],
+        onLoad: async (ctx) => {
+          assert.equal(ctx.config.apiKey, 'sk-xxx');
+          assert.equal(ctx.config.retries, 3);
+        },
       },
-      onLoad: async (ctx) => {
-        assert.equal(ctx.config.apiKey, 'sk-xxx');
-        assert.equal(ctx.config.retries, 3);
-      },
-    }, { apiKey: 'sk-xxx' });
+      { apiKey: 'sk-xxx' },
+    );
     assert.ok(hm.hasPlugin('test-plugin'));
     const info = hm.getPluginInfo('test-plugin');
     assert.equal(info?.config.apiKey, 'sk-xxx');
@@ -299,14 +425,17 @@ describe('HookManager (plugin system)', async () => {
     const { HookManager } = await import('../../src/pluginManager');
     const hm = new HookManager();
     await assert.rejects(async () => {
-      await hm.register({
-        name: 'bad-plugin',
-        configSchema: {
-          type: 'object',
-          properties: { apiKey: { type: 'string' } },
-          required: ['apiKey'],
+      await hm.register(
+        {
+          name: 'bad-plugin',
+          configSchema: {
+            type: 'object',
+            properties: { apiKey: { type: 'string' } },
+            required: ['apiKey'],
+          },
         },
-      }, {});
+        {},
+      );
     });
   });
 
@@ -316,7 +445,9 @@ describe('HookManager (plugin system)', async () => {
     await assert.rejects(async () => {
       await hm.register({
         name: 'failing-plugin',
-        onLoad: async () => { throw new Error('init failed'); },
+        onLoad: async () => {
+          throw new Error('init failed');
+        },
       });
     });
     assert.ok(!hm.hasPlugin('failing-plugin'));
@@ -339,7 +470,9 @@ describe('HookManager (plugin system)', async () => {
     let unloaded = false;
     await hm.register({
       name: 'unload-test',
-      onUnload: async () => { unloaded = true; },
+      onUnload: async () => {
+        unloaded = true;
+      },
     });
     await hm.unregister('unload-test');
     assert.ok(unloaded);
@@ -351,15 +484,26 @@ describe('HookManager (plugin system)', async () => {
     const hm = new HookManager();
     const order: string[] = [];
     await hm.register({
-      name: 'base-plugin', dependsOn: [],
-      beforeToolCall: async () => { order.push('base'); return null; },
+      name: 'base-plugin',
+      dependsOn: [],
+      beforeToolCall: async () => {
+        order.push('base');
+        return null;
+      },
     });
     await hm.register({
-      name: 'derived-plugin', dependsOn: ['base-plugin'],
-      beforeToolCall: async () => { order.push('derived'); return null; },
+      name: 'derived-plugin',
+      dependsOn: ['base-plugin'],
+      beforeToolCall: async () => {
+        order.push('derived');
+        return null;
+      },
     });
     await hm.fireBeforeToolCall({
-      toolName: 'test', args: {}, agentId: 'a', runId: 'r1',
+      toolName: 'test',
+      args: {},
+      agentId: 'a',
+      runId: 'r1',
     });
     assert.deepEqual(order, ['base', 'derived']);
   });
@@ -370,11 +514,17 @@ describe('HookManager (plugin system)', async () => {
     let fired = false;
     await hm.register({
       name: 'disabled-test',
-      beforeToolCall: async () => { fired = true; return null; },
+      beforeToolCall: async () => {
+        fired = true;
+        return null;
+      },
     });
     hm.disable('disabled-test');
     await hm.fireBeforeToolCall({
-      toolName: 'test', args: {}, agentId: 'a', runId: 'r1',
+      toolName: 'test',
+      args: {},
+      agentId: 'a',
+      runId: 'r1',
     });
     assert.ok(!fired);
   });
@@ -395,14 +545,26 @@ describe('HookManager (plugin system)', async () => {
     let afterBlockCalled = false;
     await hm.register({
       name: 'blocker',
-      beforeToolCall: async () => ({ toolCallId: '0', name: 'test', output: '', error: 'Blocked', durationMs: 0 }),
+      beforeToolCall: async () => ({
+        toolCallId: '0',
+        name: 'test',
+        output: '',
+        error: 'Blocked',
+        durationMs: 0,
+      }),
     });
     await hm.register({
       name: 'after-blocker',
-      beforeToolCall: async () => { afterBlockCalled = true; return null; },
+      beforeToolCall: async () => {
+        afterBlockCalled = true;
+        return null;
+      },
     });
     const result = await hm.fireBeforeToolCall({
-      toolName: 'test', args: {}, agentId: 'a', runId: 'r1',
+      toolName: 'test',
+      args: {},
+      agentId: 'a',
+      runId: 'r1',
     });
     assert.ok(result?.error === 'Blocked');
     assert.ok(!afterBlockCalled);

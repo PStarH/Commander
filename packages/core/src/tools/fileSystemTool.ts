@@ -3,7 +3,13 @@ import * as path from 'path';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
 import { getSnapshotStore, computeFileHash } from '../edit/snapshotStore';
-import { parseHashline, applyHashlineSection, isHashlineFormat, formatHashlineHeader, formatNumberedLines } from '../edit/hashline';
+import {
+  parseHashline,
+  applyHashlineSection,
+  isHashlineFormat,
+  formatHashlineHeader,
+  formatNumberedLines,
+} from '../edit/hashline';
 import { formatAnchoredOutput } from '../edit/hashAnchoredEditor';
 import { getInternalUrlRouter, isInternalUrl } from '../runtime/internalUrls';
 import { atomicWriteFile } from './_utils/atomicWrite';
@@ -64,7 +70,8 @@ export function safePath(target: string): string {
         }
       } catch (e) {
         if (e instanceof Error && e.message.startsWith('Access denied')) throw e;
-        if (!isWithinRoot(resolved, getSafeRoot())) throw new Error(`Access denied: path "${target}" is outside workspace`);
+        if (!isWithinRoot(resolved, getSafeRoot()))
+          throw new Error(`Access denied: path "${target}" is outside workspace`);
       }
       return resolved;
     }
@@ -79,15 +86,25 @@ export function safePath(target: string): string {
 export class FileReadTool implements Tool {
   definition: ToolDefinition = {
     name: 'file_read',
-    description: 'Read a file. Returns content with line numbers in hashline format (¶path#HASH followed by LINE:content). Set includeHashes:true to get per-line content hashes (#XXXXXX) for drift-proof hash-anchored edits with file_hash_edit.',
+    description:
+      'Read a file. Returns content with line numbers in hashline format (¶path#HASH followed by LINE:content). Set includeHashes:true to get per-line content hashes (#XXXXXX) for drift-proof hash-anchored edits with file_hash_edit.',
     inputSchema: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Path to the file (relative to workspace)' },
-        maxChars: { type: 'number', description: 'Maximum characters to return (default: 10000)', default: 10000 },
+        maxChars: {
+          type: 'number',
+          description: 'Maximum characters to return (default: 10000)',
+          default: 10000,
+        },
         offset: { type: 'number', description: 'Start at this line number (1-indexed)' },
         limit: { type: 'number', description: 'Maximum number of lines to return' },
-        includeHashes: { type: 'boolean', description: 'Include per-line content hashes (#XXXXXX) for hash-anchored edits (default: false)', default: false },
+        includeHashes: {
+          type: 'boolean',
+          description:
+            'Include per-line content hashes (#XXXXXX) for hash-anchored edits (default: false)',
+          default: false,
+        },
       },
       required: ['path'],
     },
@@ -115,7 +132,9 @@ export class FileReadTool implements Tool {
       if (result) {
         const content = result.content;
         if (content.length > maxChars) {
-          return content.slice(0, maxChars) + `\n\n...[truncated ${content.length - maxChars} chars]`;
+          return (
+            content.slice(0, maxChars) + `\n\n...[truncated ${content.length - maxChars} chars]`
+          );
         }
         return content;
       }
@@ -127,7 +146,8 @@ export class FileReadTool implements Tool {
       if (!fs.existsSync(resolved)) return `Error: file not found: ${filePath}`;
 
       const stat = fs.statSync(resolved);
-      if (stat.size > 1024 * 1024) return `Error: file too large (${(stat.size / 1024 / 1024).toFixed(1)}MB). Max: 1MB`;
+      if (stat.size > 1024 * 1024)
+        return `Error: file too large (${(stat.size / 1024 / 1024).toFixed(1)}MB). Max: 1MB`;
 
       const content = fs.readFileSync(resolved, 'utf-8');
 
@@ -154,9 +174,7 @@ export class FileReadTool implements Tool {
       const header = formatHashlineHeader(filePath, hash);
 
       // Build numbered lines
-      const numberedLines = displayLines
-        .map((line, i) => `${startIdx + i + 1}:${line}`)
-        .join('\n');
+      const numberedLines = displayLines.map((line, i) => `${startIdx + i + 1}:${line}`).join('\n');
 
       // Add truncation info
       let truncationInfo = '';
@@ -186,7 +204,8 @@ export class FileReadTool implements Tool {
 export class FileWriteTool implements Tool {
   definition: ToolDefinition = {
     name: 'file_write',
-    description: 'Write content to a file. Creates the file if it does not exist. Overwrites existing content.',
+    description:
+      'Write content to a file. Creates the file if it does not exist. Overwrites existing content.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -207,7 +226,8 @@ export class FileWriteTool implements Tool {
     const content = String(args.content ?? '');
 
     if (!filePath) return 'Error: path is required';
-    if (content.length > 10 * 1024 * 1024) return `Error: content too large (${(content.length / 1024 / 1024).toFixed(1)}MB). Max: 10MB`;
+    if (content.length > 10 * 1024 * 1024)
+      return `Error: content too large (${(content.length / 1024 / 1024).toFixed(1)}MB). Max: 10MB`;
 
     try {
       const resolved = safePath(filePath);
@@ -250,18 +270,33 @@ LEGACY MODE (backward-compatible): Use path + oldString + newString for simple s
     inputSchema: {
       type: 'object',
       properties: {
-        input: { type: 'string', description: 'Hashline-format edit (starts with ¶PATH#TAG). Preferred mode.' },
-        path: { type: 'string', description: 'Path to the file (legacy mode, relative to workspace)' },
-        oldString: { type: 'string', description: 'Text to replace (legacy mode, must exist in file)' },
+        input: {
+          type: 'string',
+          description: 'Hashline-format edit (starts with ¶PATH#TAG). Preferred mode.',
+        },
+        path: {
+          type: 'string',
+          description: 'Path to the file (legacy mode, relative to workspace)',
+        },
+        oldString: {
+          type: 'string',
+          description: 'Text to replace (legacy mode, must exist in file)',
+        },
         newString: { type: 'string', description: 'Replacement text (legacy mode)' },
       },
       required: [],
     },
     examples: [
       // Hashline example
-      { name: 'file_edit', arguments: { input: '¶src/config.ts#A1B2\nreplace 3..3:\n+  port: 8080' } },
+      {
+        name: 'file_edit',
+        arguments: { input: '¶src/config.ts#A1B2\nreplace 3..3:\n+  port: 8080' },
+      },
       // Legacy example
-      { name: 'file_edit', arguments: { path: 'src/config.ts', oldString: 'port: 3000', newString: 'port: 8080' } },
+      {
+        name: 'file_edit',
+        arguments: { path: 'src/config.ts', oldString: 'port: 3000', newString: 'port: 8080' },
+      },
     ],
     category: 'filesystem',
   };
@@ -329,7 +364,8 @@ LEGACY MODE (backward-compatible): Use path + oldString + newString for simple s
     const oldStr = String(args.oldString ?? '');
     const newStr = String(args.newString ?? '');
 
-    if (!filePath || !oldStr) return 'Error: path and oldString are required (or use hashline mode with input)';
+    if (!filePath || !oldStr)
+      return 'Error: path and oldString are required (or use hashline mode with input)';
 
     try {
       const resolved = safePath(filePath);
@@ -360,7 +396,8 @@ LEGACY MODE (backward-compatible): Use path + oldString + newString for simple s
 export class FileSearchTool implements Tool {
   definition: ToolDefinition = {
     name: 'file_search',
-    description: 'Search for files matching a pattern. Uses glob patterns. Returns matching file paths.',
+    description:
+      'Search for files matching a pattern. Uses glob patterns. Returns matching file paths.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -398,7 +435,7 @@ export class FileSearchTool implements Tool {
     const dirPattern = parts.join('/');
 
     let searchDir: string;
-    let deep = false;  // Whether to recurse into subdirectories
+    let deep = false; // Whether to recurse into subdirectories
     if (dirPattern) {
       // Handle ** at the end of the directory pattern (e.g., "src/**" or "**")
       if (dirPattern.endsWith('/**') || dirPattern === '**') {
@@ -436,7 +473,11 @@ export class FileSearchTool implements Tool {
           results.push(relPath);
         }
       }
-    } catch (e) { getGlobalLogger().warn('FileSystemTool', 'Directory scan failed', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().warn('FileSystemTool', 'Directory scan failed', {
+        error: (e as Error)?.message,
+      });
+    }
   }
 
   /** Recursive version used when the pattern contains ** — recurses into all subdirectories */
@@ -455,7 +496,11 @@ export class FileSearchTool implements Tool {
           results.push(relPath);
         }
       }
-    } catch (e) { getGlobalLogger().warn('FileSystemTool', 'Directory scan failed', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().warn('FileSystemTool', 'Directory scan failed', {
+        error: (e as Error)?.message,
+      });
+    }
   }
 
   private matchGlob(name: string, pattern: string): boolean {
@@ -476,7 +521,11 @@ export class FileListTool implements Tool {
     inputSchema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Directory path (relative to workspace, default: ".")', default: '.' },
+        path: {
+          type: 'string',
+          description: 'Directory path (relative to workspace, default: ".")',
+          default: '.',
+        },
       },
     },
     examples: [
@@ -494,7 +543,9 @@ export class FileListTool implements Tool {
       if (!fs.existsSync(resolved)) return `Error: directory not found: ${dirPath}`;
 
       const entries = fs.readdirSync(resolved, { withFileTypes: true });
-      return entries.map(e => `${e.isDirectory() ? '📁' : '📄'} ${e.name}${e.isDirectory() ? '/' : ''}`).join('\n');
+      return entries
+        .map((e) => `${e.isDirectory() ? '📁' : '📄'} ${e.name}${e.isDirectory() ? '/' : ''}`)
+        .join('\n');
     } catch (err) {
       return `Error listing directory: ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -508,12 +559,20 @@ export class FileListTool implements Tool {
 export class GlobTool implements Tool {
   definition: ToolDefinition = {
     name: 'glob',
-    description: 'Find files matching a glob pattern. Searches by filename/path, not content. Use for: finding files by extension (**/*.ts), locating specific files (src/**/index.ts), discovering project structure. Use code_search to search inside files.',
+    description:
+      'Find files matching a glob pattern. Searches by filename/path, not content. Use for: finding files by extension (**/*.ts), locating specific files (src/**/index.ts), discovering project structure. Use code_search to search inside files.',
     inputSchema: {
       type: 'object',
       properties: {
-        pattern: { type: 'string', description: 'Glob pattern (e.g., "**/*.ts", "src/**/*.{ts,tsx}", "package.json")' },
-        path: { type: 'string', description: 'Directory to search in (default: workspace root)', default: '.' },
+        pattern: {
+          type: 'string',
+          description: 'Glob pattern (e.g., "**/*.ts", "src/**/*.{ts,tsx}", "package.json")',
+        },
+        path: {
+          type: 'string',
+          description: 'Directory to search in (default: workspace root)',
+          default: '.',
+        },
         maxResults: { type: 'number', description: 'Maximum results (default: 50)', default: 50 },
       },
       required: ['pattern'],
@@ -567,7 +626,14 @@ export class GlobTool implements Tool {
     return results;
   }
 
-  private recurse(dir: string, root: string, filePattern: string, deep: boolean, results: string[], limit: number): void {
+  private recurse(
+    dir: string,
+    root: string,
+    filePattern: string,
+    deep: boolean,
+    results: string[],
+    limit: number,
+  ): void {
     if (results.length >= limit) return;
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -576,7 +642,8 @@ export class GlobTool implements Tool {
         const fullPath = path.join(dir, entry.name);
 
         if (entry.isDirectory()) {
-          if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist') continue;
+          if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist')
+            continue;
           if (deep || this.matchGlob(entry.name, filePattern)) {
             this.recurse(fullPath, root, filePattern, deep, results, limit);
           }
@@ -592,16 +659,23 @@ export class GlobTool implements Tool {
   }
 
   private matchGlob(name: string, pattern: string): boolean {
-    const expanded = pattern.replace(/\{([^}]+)\}/g, (_, opts: string) =>
-      `(${opts.split(',').map(o => o.trim()).join('|')})`
+    const expanded = pattern.replace(
+      /\{([^}]+)\}/g,
+      (_, opts: string) =>
+        `(${opts
+          .split(',')
+          .map((o) => o.trim())
+          .join('|')})`,
     );
     const escaped = expanded.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-    const regexStr = '^' + escaped
-      .replace(/\*\*/g, '{{DOUBLESTAR}}')
-      .replace(/\*/g, '[^/]*')
-      .replace(/\?/g, '[^/]')
-      .replace(/\{\{DOUBLESTAR\}\}/g, '.*')
-      + '$';
+    const regexStr =
+      '^' +
+      escaped
+        .replace(/\*\*/g, '{{DOUBLESTAR}}')
+        .replace(/\*/g, '[^/]*')
+        .replace(/\?/g, '[^/]')
+        .replace(/\{\{DOUBLESTAR\}\}/g, '.*') +
+      '$';
     try {
       return new RegExp(regexStr).test(name);
     } catch {

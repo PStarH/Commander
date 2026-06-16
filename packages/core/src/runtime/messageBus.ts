@@ -6,8 +6,12 @@
  */
 
 import type {
-  BusMessage, MessageBusTopic, MessageHandler, MessagePriority,
-  BusPayloadMap, TypedBusMessage,
+  BusMessage,
+  MessageBusTopic,
+  MessageHandler,
+  MessagePriority,
+  BusPayloadMap,
+  TypedBusMessage,
 } from './types';
 import { getGlobalLogger } from '../logging';
 
@@ -28,7 +32,8 @@ export class MessageBus {
   // Wildcard subscriber flag — skip wildcard dispatch when no wildcard subscribers exist
   private hasWildcardSubscribers = false;
   // Topic-indexed history — ring buffer per topic for O(1) insert/evict
-  private topicHistory: Map<MessageBusTopic, { buf: BusMessage[]; head: number; count: number }> = new Map();
+  private topicHistory: Map<MessageBusTopic, { buf: BusMessage[]; head: number; count: number }> =
+    new Map();
   private readonly MAX_TOPICS = 200;
   private readonly TOPIC_IDLE_TTL_MS = 3600_000; // 1 hour
 
@@ -125,7 +130,9 @@ export class MessageBus {
         try {
           const result = handler(message);
           if (result instanceof Promise) {
-            result.catch(err => getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err));
+            result.catch((err) =>
+              getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err),
+            );
           }
         } catch (err) {
           getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err as Error);
@@ -141,7 +148,9 @@ export class MessageBus {
           try {
             const result = handler(message);
             if (result instanceof Promise) {
-              result.catch(err => getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err));
+              result.catch((err) =>
+                getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err),
+              );
             }
           } catch (err) {
             getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err as Error);
@@ -163,14 +172,8 @@ export class MessageBus {
   /**
    * Subscribe to an arbitrary topic — payload is unknown.
    */
-  subscribe(
-    topic: MessageBusTopic,
-    handler: MessageHandler,
-  ): () => void;
-  subscribe(
-    topic: MessageBusTopic,
-    handler: MessageHandler,
-  ): () => void {
+  subscribe(topic: MessageBusTopic, handler: MessageHandler): () => void;
+  subscribe(topic: MessageBusTopic, handler: MessageHandler): () => void {
     if (!this.subscribers.has(topic)) {
       this.subscribers.set(topic, new Set());
     }
@@ -201,8 +204,8 @@ export class MessageBus {
    * Subscribe to multiple topics at once.
    */
   subscribeMany(topics: MessageBusTopic[], handler: MessageHandler): () => void {
-    const unsubs = topics.map(t => this.subscribe(t, handler));
-    return () => unsubs.forEach(fn => fn());
+    const unsubs = topics.map((t) => this.subscribe(t, handler));
+    return () => unsubs.forEach((fn) => fn());
   }
 
   /**

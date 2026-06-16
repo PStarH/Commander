@@ -9,7 +9,14 @@ import * as path from 'path';
 import { getGlobalLogger } from '../logging';
 import type { ErrorClass } from './llmRetry';
 
-export type DLQCategory = 'llm' | 'tool' | 'execution' | 'verification' | 'circuit_breaker' | 'compensation' | 'semantic_drift';
+export type DLQCategory =
+  | 'llm'
+  | 'tool'
+  | 'execution'
+  | 'verification'
+  | 'circuit_breaker'
+  | 'compensation'
+  | 'semantic_drift';
 
 /**
  * Tier 4.1: Standardized failure-mode discriminator. Each DLQ entry should
@@ -131,7 +138,7 @@ export class DeadLetterQueue {
   private static readonly MAX_ENTRIES_PER_FILE = 1000;
 
   flush(category?: DLQCategory): void {
-    const cats = category ? [category] : Array.from(this.buffers.keys()) as DLQCategory[];
+    const cats = category ? [category] : (Array.from(this.buffers.keys()) as DLQCategory[]);
     for (const cat of cats) {
       // Atomic swap: take the buffer out first so concurrent record() calls
       // go into a fresh buffer instead of getting lost when we clear below.
@@ -158,7 +165,12 @@ export class DeadLetterQueue {
           fs.renameSync(tmpPath, filePath);
           this.lineCounts.set(cat, trimmed.length);
         }
-      } catch (e) { getGlobalLogger().warn('DeadLetterQueue', 'Failed to flush dead-letter entries', { error: (e as Error)?.message, category: cat }); }
+      } catch (e) {
+        getGlobalLogger().warn('DeadLetterQueue', 'Failed to flush dead-letter entries', {
+          error: (e as Error)?.message,
+          category: cat,
+        });
+      }
     }
   }
 
@@ -172,11 +184,22 @@ export class DeadLetterQueue {
       // Read lines from end (most recent first) without reversing the whole array
       const lines = raw.split('\n');
       for (let i = lines.length - 1; i >= 0 && entries.length < limit; i--) {
-        try { entries.push(JSON.parse(lines[i])); } catch (e) { getGlobalLogger().debug('DeadLetterQueue', 'Skipping corrupt entry', { error: (e as Error)?.message, category, line: i }); }
+        try {
+          entries.push(JSON.parse(lines[i]));
+        } catch (e) {
+          getGlobalLogger().debug('DeadLetterQueue', 'Skipping corrupt entry', {
+            error: (e as Error)?.message,
+            category,
+            line: i,
+          });
+        }
       }
       return entries;
     } catch (e) {
-      getGlobalLogger().warn('DeadLetterQueue', 'Failed to read dead-letter entries', { error: (e as Error)?.message, category });
+      getGlobalLogger().warn('DeadLetterQueue', 'Failed to read dead-letter entries', {
+        error: (e as Error)?.message,
+        category,
+      });
       return [];
     }
   }
@@ -187,7 +210,7 @@ export class DeadLetterQueue {
    */
   getRetryableEntries(category: DLQCategory, limit = 10): DeadLetterEntry[] {
     return this.readEntries(category, 100)
-      .filter(e => e.retryable && !e.recovered && !e.compensated)
+      .filter((e) => e.retryable && !e.recovered && !e.compensated)
       .slice(0, limit);
   }
 
@@ -208,7 +231,11 @@ export class DeadLetterQueue {
           results.push({ category: cat, count });
         }
       }
-    } catch (e) { getGlobalLogger().warn('DeadLetterQueue', 'Failed to collect dead-letter stats', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().warn('DeadLetterQueue', 'Failed to collect dead-letter stats', {
+        error: (e as Error)?.message,
+      });
+    }
     return results;
   }
 }

@@ -41,5 +41,9 @@ if (files.length === 0) {
 }
 
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-const result = spawnSync(npx, ['tsx', '--test', '--test-concurrency=1', ...files], { stdio: 'inherit' });
+const result = spawnSync(
+  npx,
+  ['tsx', '--test', '--test-concurrency=1', '--test-reporter=spec', ...files],
+  { stdio: 'inherit' },
+);
 process.exit(result.status ?? 1);

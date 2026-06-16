@@ -28,7 +28,11 @@ export function parseStructuredOutput<T = unknown>(
   if (jsonBlock !== null) {
     try {
       return { success: true, data: JSON.parse(jsonBlock) as T };
-    } catch (e) { getGlobalLogger().debug('StructuredOutput', 'Failed to parse JSON code block', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().debug('StructuredOutput', 'Failed to parse JSON code block', {
+        error: (e as Error)?.message,
+      });
+    }
   }
 
   // Strategy 2: Extract JSON from raw response (strip leading/trailing non-JSON)
@@ -36,7 +40,11 @@ export function parseStructuredOutput<T = unknown>(
   if (rawJson !== null) {
     try {
       return { success: true, data: JSON.parse(rawJson) as T };
-    } catch (e) { getGlobalLogger().debug('StructuredOutput', 'Failed to parse raw JSON', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().debug('StructuredOutput', 'Failed to parse raw JSON', {
+        error: (e as Error)?.message,
+      });
+    }
   }
 
   // Strategy 3: Extract JSON from `<output_json>...</output_json>` tags
@@ -44,7 +52,11 @@ export function parseStructuredOutput<T = unknown>(
   if (taggedJson !== null) {
     try {
       return { success: true, data: JSON.parse(taggedJson) as T };
-    } catch (e) { getGlobalLogger().debug('StructuredOutput', 'Failed to parse tagged JSON', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().debug('StructuredOutput', 'Failed to parse tagged JSON', {
+        error: (e as Error)?.message,
+      });
+    }
   }
 
   // Strategy 4: Extract XML-like structured content
@@ -75,7 +87,7 @@ export function validateStructuredOutput<T>(
   requiredKeys: (keyof T)[],
 ): result is { success: true; data: T } {
   if (!result.success) return false;
-  return requiredKeys.every(key => key in (result.data as Record<string, unknown>));
+  return requiredKeys.every((key) => key in (result.data as Record<string, unknown>));
 }
 
 /**

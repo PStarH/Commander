@@ -73,14 +73,14 @@ export class SubAgentGuard {
     if (this.state.tokens > this.limits.maxTokens) {
       throw new SubAgentLimitError('max_tokens', this.limits.maxTokens, this.state.tokens);
     }
-      if (currentEvidenceCount > this.state.evidenceCount) {
-        this.state.evidenceCount = currentEvidenceCount;
-      } else {
-        const stall = this.state.steps - this.state.evidenceCount;
-        if (stall >= this.limits.noProgressThreshold) {
-          throw new SubAgentLimitError('no_progress', this.limits.noProgressThreshold, stall);
-        }
+    if (currentEvidenceCount > this.state.evidenceCount) {
+      this.state.evidenceCount = currentEvidenceCount;
+    } else {
+      const stall = this.state.steps - this.state.evidenceCount;
+      if (stall >= this.limits.noProgressThreshold) {
+        throw new SubAgentLimitError('no_progress', this.limits.noProgressThreshold, stall);
       }
+    }
   }
 
   recordTokens(used: number): void {

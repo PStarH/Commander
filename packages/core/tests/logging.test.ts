@@ -96,7 +96,10 @@ describe('Logger', () => {
       logger.critical('test', 'kept');
       const entries = logger.getRecent(100);
       assert.strictEqual(entries.length, 3);
-      assert.deepStrictEqual(entries.map(e => e.level), ['warn', 'error', 'critical']);
+      assert.deepStrictEqual(
+        entries.map((e) => e.level),
+        ['warn', 'error', 'critical'],
+      );
     });
 
     it('debug level lets everything through', () => {
@@ -255,7 +258,7 @@ describe('Logger', () => {
       logger.info('alpha', 'a2');
       const alphaEntries = logger.getByComponent('alpha');
       assert.strictEqual(alphaEntries.length, 2);
-      assert.ok(alphaEntries.every(e => e.component === 'alpha'));
+      assert.ok(alphaEntries.every((e) => e.component === 'alpha'));
     });
 
     it('limits results when limit is given', () => {
@@ -286,7 +289,10 @@ describe('Logger', () => {
       logger.critical('c', 'c');
       const errors = logger.getErrors();
       assert.strictEqual(errors.length, 2);
-      assert.deepStrictEqual(errors.map(e => e.level), ['error', 'critical']);
+      assert.deepStrictEqual(
+        errors.map((e) => e.level),
+        ['error', 'critical'],
+      );
     });
 
     it('respects limit', () => {
@@ -370,7 +376,7 @@ describe('Logger', () => {
   describe('onLog / offLog', () => {
     it('notifies listener for each log entry', () => {
       const received: LogEntry[] = [];
-      logger.onLog(entry => received.push(entry));
+      logger.onLog((entry) => received.push(entry));
       logger.info('c', 'a');
       logger.warn('c', 'b');
       assert.strictEqual(received.length, 2);
@@ -381,8 +387,8 @@ describe('Logger', () => {
     it('supports multiple listeners', () => {
       const a: LogEntry[] = [];
       const b: LogEntry[] = [];
-      logger.onLog(e => a.push(e));
-      logger.onLog(e => b.push(e));
+      logger.onLog((e) => a.push(e));
+      logger.onLog((e) => b.push(e));
       logger.info('c', 'x');
       assert.strictEqual(a.length, 1);
       assert.strictEqual(b.length, 1);
@@ -426,7 +432,7 @@ describe('Logger', () => {
     it('listeners are not called when message is filtered by level', () => {
       const received: LogEntry[] = [];
       logger.setLevel('warn');
-      logger.onLog(e => received.push(e));
+      logger.onLog((e) => received.push(e));
       logger.info('c', 'dropped');
       assert.strictEqual(received.length, 0);
     });
@@ -984,7 +990,9 @@ describe('Timer', () => {
     const timer = new Timer();
     // Small sleep to ensure some time passes
     const start = Date.now();
-    while (Date.now() - start < 2) { /* busy wait */ }
+    while (Date.now() - start < 2) {
+      /* busy wait */
+    }
     const duration = timer.stop(metrics, 'delayed');
     assert.ok(duration >= 0);
   });
@@ -1020,7 +1028,7 @@ describe('Logger + MetricsCollector integration', () => {
     const logger = new Logger({ enableConsole: false });
     const metrics = makeMetrics();
 
-    logger.onLog(entry => {
+    logger.onLog((entry) => {
       if (entry.level === 'error') {
         metrics.incrementCounter('error_count', 1, { component: entry.component });
       }

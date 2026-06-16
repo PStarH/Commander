@@ -188,9 +188,10 @@ export function generateRollbackPlan(input: PlanInput): CompensationPlan {
       // This prevents cascading failures where a reversible step fails
       // after an irreversible one has already been committed.
       buffered: meta.risk === 'impossible' || meta.tags.includes('irreversible'),
-      bufferedReason: meta.risk === 'impossible'
-        ? `Irreversible action: ${call.toolName} — held until all other steps succeed`
-        : undefined,
+      bufferedReason:
+        meta.risk === 'impossible'
+          ? `Irreversible action: ${call.toolName} — held until all other steps succeed`
+          : undefined,
     };
     steps.push(step);
 
@@ -338,8 +339,8 @@ export async function executeRollbackPlan(
   // P1-8: Separate buffered (irreversible) steps from normal steps.
   // Normal steps execute first. Buffered steps only execute AFTER
   // all normal steps succeed to prevent cascading failures.
-  const normalSteps = plan.steps.filter(s => !s.buffered);
-  const bufferedSteps = plan.steps.filter(s => s.buffered);
+  const normalSteps = plan.steps.filter((s) => !s.buffered);
+  const bufferedSteps = plan.steps.filter((s) => s.buffered);
 
   // Phase 1: Execute normal (reversible) compensation steps.
   for (const step of normalSteps) {

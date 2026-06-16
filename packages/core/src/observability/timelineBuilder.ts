@@ -71,11 +71,12 @@ function nodeFromEvent(e: TraceEvent, childSpanIds: Set<string>): TimelineNode {
     traceId: e.traceId,
     type: kind,
     operation,
-    name: e.type === 'llm_call'
-      ? `chat ${e.data.modelInfo?.model ?? 'llm'}`
-      : e.type === 'tool_execution'
-        ? `execute_tool ${String(e.data.input ?? 'unknown')}`
-        : e.type,
+    name:
+      e.type === 'llm_call'
+        ? `chat ${e.data.modelInfo?.model ?? 'llm'}`
+        : e.type === 'tool_execution'
+          ? `execute_tool ${String(e.data.input ?? 'unknown')}`
+          : e.type,
     startedAt: e.timestamp,
     endedAt,
     durationMs: e.durationMs,
@@ -93,7 +94,12 @@ function nodeFromEvent(e: TraceEvent, childSpanIds: Set<string>): TimelineNode {
     completionContent,
     toolInputPreview: e.type === 'tool_execution' ? preview(e.data.input) : undefined,
     toolOutputPreview: e.type === 'tool_execution' ? preview(e.data.output) : undefined,
-    decision: e.type === 'decision' ? (typeof e.data.output === 'string' ? e.data.output : preview(e.data.output)) : undefined,
+    decision:
+      e.type === 'decision'
+        ? typeof e.data.output === 'string'
+          ? e.data.output
+          : preview(e.data.output)
+        : undefined,
     stateTransition: e.data.stateTransition,
     evaluationScore: e.data.evaluationScore,
     evaluationPassed: e.data.evaluationPassed,
@@ -119,7 +125,10 @@ export function buildTimeline(trace: ExecutionTrace): TimelineView {
   let toolCalls = 0;
   let agentInvocations = 0;
   let errors = 0;
-  const modelAgg = new Map<string, { model: string; provider: string; calls: number; tokens: TokenBreakdown; costUsd: number }>();
+  const modelAgg = new Map<
+    string,
+    { model: string; provider: string; calls: number; tokens: TokenBreakdown; costUsd: number }
+  >();
 
   for (const n of nodes) {
     if (n.tokens) totalTokens = costModel.addTokens(totalTokens, n.tokens);
@@ -137,8 +146,11 @@ export function buildTimeline(trace: ExecutionTrace): TimelineView {
         cur.costUsd += n.cost.totalCostUsd;
       } else {
         modelAgg.set(key, {
-          model: n.model, provider: n.provider, calls: 1,
-          tokens: n.tokens, costUsd: n.cost.totalCostUsd,
+          model: n.model,
+          provider: n.provider,
+          calls: 1,
+          tokens: n.tokens,
+          costUsd: n.cost.totalCostUsd,
         });
       }
     }
@@ -214,7 +226,11 @@ export function buildSpanTree(trace: ExecutionTrace): SpanTreeView {
   return {
     runId: trace.runId,
     traceId: trace.traceId,
-    root: root ?? { span: nodeFromEvent(events[0] as TraceEvent, childSpanIds), children: [], depth: 0 },
+    root: root ?? {
+      span: nodeFromEvent(events[0] as TraceEvent, childSpanIds),
+      children: [],
+      depth: 0,
+    },
     orphans,
   };
 }

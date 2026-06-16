@@ -103,9 +103,7 @@ export class LeaseManager {
 
   private openDb(): void {
     if (!BetterSqlite3) {
-      throw new Error(
-        'LeaseManager requires better-sqlite3. Install it: pnpm add better-sqlite3',
-      );
+      throw new Error('LeaseManager requires better-sqlite3. Install it: pnpm add better-sqlite3');
     }
     if (this.config.filePath !== ':memory:') {
       mkdirSync(dirname(this.config.filePath), { recursive: true });
@@ -271,11 +269,7 @@ export class LeaseManager {
   /**
    * Release a lease. Returns true if it was actually held by this token.
    */
-  release(
-    runId: string,
-    token: string,
-    options?: { tenantId?: string },
-  ): boolean {
+  release(runId: string, token: string, options?: { tenantId?: string }): boolean {
     if (!this.db || !this.stmtRelease) return false;
     const tenantId = options?.tenantId ?? null;
     const result = this.stmtRelease.run(runId, tenantId, token);

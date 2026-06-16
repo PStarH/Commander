@@ -33,7 +33,7 @@ export interface ConfigField {
 
 export type ConfigSchema<T> = Record<string, ConfigField>;
 
-export interface ConfigValidationResult<T = any> {
+export interface ConfigValidationResult<T = unknown> {
   valid: boolean;
   errors: ConfigValidationError[];
   data: T;
@@ -48,7 +48,10 @@ export interface ConfigValidationError {
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function resolveNested(obj: Record<string, unknown>, path: string): { parent: Record<string, unknown>; key: string; value: unknown } | null {
+function resolveNested(
+  obj: Record<string, unknown>,
+  path: string,
+): { parent: Record<string, unknown>; key: string; value: unknown } | null {
   const parts = path.split('.');
   let current: unknown = obj;
   for (let i = 0; i < parts.length - 1; i++) {
@@ -56,7 +59,11 @@ function resolveNested(obj: Record<string, unknown>, path: string): { parent: Re
     current = (current as Record<string, unknown>)[parts[i]];
   }
   const key = parts[parts.length - 1];
-  return { parent: current as Record<string, unknown>, key, value: (current as Record<string, unknown>)?.[key] };
+  return {
+    parent: current as Record<string, unknown>,
+    key,
+    value: (current as Record<string, unknown>)?.[key],
+  };
 }
 
 function getTypeName(val: unknown): FieldType {
@@ -65,7 +72,12 @@ function getTypeName(val: unknown): FieldType {
   return typeof val as FieldType;
 }
 
-function formatError(path: string, message: string, value?: unknown, expected?: string): ConfigValidationError {
+function formatError(
+  path: string,
+  message: string,
+  value?: unknown,
+  expected?: string,
+): ConfigValidationError {
   return { path, message, value, expected };
 }
 
@@ -131,7 +143,14 @@ export function validateConfig<T extends Record<string, unknown>>(
     const actualType = getTypeName(value);
     if (field.type === 'enum' && field.enum) {
       if (!field.enum.includes(String(value))) {
-        errors.push(formatError(key, `Field "${key}" must be one of: ${field.enum.join(', ')}`, value, field.enum.join('|')));
+        errors.push(
+          formatError(
+            key,
+            `Field "${key}" must be one of: ${field.enum.join(', ')}`,
+            value,
+            field.enum.join('|'),
+          ),
+        );
         data[key] = value;
         continue;
       }
@@ -143,10 +162,12 @@ export function validateConfig<T extends Record<string, unknown>>(
       }
       // Recursively validate nested object
       const nestedResult = validateConfig(value as Record<string, unknown>, field.fields);
-      errors.push(...nestedResult.errors.map(e => ({
-        ...e,
-        path: `${key}.${e.path}`,
-      })));
+      errors.push(
+        ...nestedResult.errors.map((e) => ({
+          ...e,
+          path: `${key}.${e.path}`,
+        })),
+      );
       data[key] = nestedResult.data;
       continue;
     } else if (actualType !== field.type) {
@@ -162,14 +183,20 @@ export function validateConfig<T extends Record<string, unknown>>(
         // Continue to constraint checks
         const numVal = num;
         if (field.min !== undefined && numVal < field.min) {
-          errors.push(formatError(key, `Field "${key}" must be >= ${field.min}`, numVal, `>= ${field.min}`));
+          errors.push(
+            formatError(key, `Field "${key}" must be >= ${field.min}`, numVal, `>= ${field.min}`),
+          );
         }
         if (field.max !== undefined && numVal > field.max) {
-          errors.push(formatError(key, `Field "${key}" must be <= ${field.max}`, numVal, `<= ${field.max}`));
+          errors.push(
+            formatError(key, `Field "${key}" must be <= ${field.max}`, numVal, `<= ${field.max}`),
+          );
         }
         continue;
       }
-      errors.push(formatError(key, `Field "${key}" must be of type ${field.type}`, value, field.type));
+      errors.push(
+        formatError(key, `Field "${key}" must be of type ${field.type}`, value, field.type),
+      );
       data[key] = value;
       continue;
     }
@@ -178,26 +205,51 @@ export function validateConfig<T extends Record<string, unknown>>(
     if (field.type === 'number') {
       const numVal = value as number;
       if (field.min !== undefined && numVal < field.min) {
-        errors.push(formatError(key, `Field "${key}" must be >= ${field.min}`, numVal, `>= ${field.min}`));
+        errors.push(
+          formatError(key, `Field "${key}" must be >= ${field.min}`, numVal, `>= ${field.min}`),
+        );
       }
       if (field.max !== undefined && numVal > field.max) {
-        errors.push(formatError(key, `Field "${key}" must be <= ${field.max}`, numVal, `<= ${field.max}`));
+        errors.push(
+          formatError(key, `Field "${key}" must be <= ${field.max}`, numVal, `<= ${field.max}`),
+        );
       }
     }
 
     if (field.type === 'string') {
       const strVal = String(value);
       if (field.minLength !== undefined && strVal.length < field.minLength) {
-        errors.push(formatError(key, `Field "${key}" must be at least ${field.minLength} characters`, strVal, `min ${field.minLength}`));
+        errors.push(
+          formatError(
+            key,
+            `Field "${key}" must be at least ${field.minLength} characters`,
+            strVal,
+            `min ${field.minLength}`,
+          ),
+        );
       }
       if (field.maxLength !== undefined && strVal.length > field.maxLength) {
-        errors.push(formatError(key, `Field "${key}" must be at most ${field.maxLength} characters`, strVal, `max ${field.maxLength}`));
+        errors.push(
+          formatError(
+            key,
+            `Field "${key}" must be at most ${field.maxLength} characters`,
+            strVal,
+            `max ${field.maxLength}`,
+          ),
+        );
       }
     }
 
     if (field.type === 'array' && Array.isArray(value) && field.min !== undefined) {
       if (value.length < field.min) {
-        errors.push(formatError(key, `Field "${key}" must have at least ${field.min} items`, value.length, `>= ${field.min}`));
+        errors.push(
+          formatError(
+            key,
+            `Field "${key}" must have at least ${field.min} items`,
+            value.length,
+            `>= ${field.min}`,
+          ),
+        );
       }
     }
 
@@ -227,7 +279,13 @@ export function validateRuntimeConfig(config: Record<string, unknown>): ConfigVa
     maxRetries: { type: 'number', required: true, min: 0, max: 10, default: 3 },
     timeoutMs: { type: 'number', required: true, min: 1000, max: 600000, default: 180000 },
     maxConcurrency: { type: 'number', required: true, min: 1, max: 100, default: 10 },
-    budgetHardCapTokens: { type: 'number', required: true, min: 1000, max: 10000000, default: 100000 },
+    budgetHardCapTokens: {
+      type: 'number',
+      required: true,
+      min: 1000,
+      max: 10000000,
+      default: 100000,
+    },
     enableCache: { type: 'boolean', default: true },
     enableTracing: { type: 'boolean', default: true },
     logLevel: { type: 'enum', enum: ['debug', 'info', 'warn', 'error'], default: 'info' },
@@ -243,7 +301,10 @@ export function validateHttpServerConfig(config: Record<string, unknown>): Confi
     port: { type: 'number', required: true, min: 1, max: 65535, default: 3001 },
     host: { type: 'string', default: '127.0.0.1' },
     cors: { type: 'boolean', default: true },
-    corsAllowedOrigins: { type: 'array', default: ['http://localhost:3000', 'http://127.0.0.1:3000'] },
+    corsAllowedOrigins: {
+      type: 'array',
+      default: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+    },
     maxBodyBytes: { type: 'number', min: 1024, max: 100 * 1024 * 1024, default: 1024 * 1024 },
     apiKey: { type: 'string' },
     rateLimitPerMinute: { type: 'number', min: 0, max: 100000, default: 120 },
@@ -254,7 +315,14 @@ export function validateHttpServerConfig(config: Record<string, unknown>): Confi
 /**
  * Validate a single config value against a field definition.
  */
-export function validateField(value: unknown, field: ConfigField, path: string): ConfigValidationError[] {
-  const result = validateConfig({ [path.split('.').pop()!]: value }, { [path.split('.').pop()!]: field });
+export function validateField(
+  value: unknown,
+  field: ConfigField,
+  path: string,
+): ConfigValidationError[] {
+  const result = validateConfig(
+    { [path.split('.').pop()!]: value },
+    { [path.split('.').pop()!]: field },
+  );
   return result.errors;
 }

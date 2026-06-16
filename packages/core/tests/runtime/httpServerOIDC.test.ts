@@ -17,7 +17,11 @@ import { OIDCAuthPlugin, type JWKWithKid } from '../../src/runtime/oidcAuthPlugi
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /** Generate RSA key pair for JWT signing */
-function generateTestKeys(): { publicKey: crypto.KeyObject; privateKey: crypto.KeyObject; jwk: JWKWithKid } {
+function generateTestKeys(): {
+  publicKey: crypto.KeyObject;
+  privateKey: crypto.KeyObject;
+  jwk: JWKWithKid;
+} {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
     modulusLength: 2048,
     publicKeyEncoding: { type: 'spki', format: 'pem' },
@@ -89,8 +93,12 @@ describe('CommanderHttpServer — OIDC Authentication Integration', () => {
 
   after(async () => {
     if (server) {
-      try { await server.stop(); } catch { /* ignore stop errors */ }
-      await new Promise(r => setTimeout(r, 100));
+      try {
+        await server.stop();
+      } catch {
+        /* ignore stop errors */
+      }
+      await new Promise((r) => setTimeout(r, 100));
       server = null;
     }
   });
@@ -132,10 +140,13 @@ describe('CommanderHttpServer — OIDC Authentication Integration', () => {
     });
 
     it('rejects expired OIDC JWT', async () => {
-      const jwt = createSignedJWT({
-        ...validTokenPayload(),
-        exp: Math.floor(Date.now() / 1000) - 120, // expired 2 min ago
-      }, testKeys.privateKey);
+      const jwt = createSignedJWT(
+        {
+          ...validTokenPayload(),
+          exp: Math.floor(Date.now() / 1000) - 120, // expired 2 min ago
+        },
+        testKeys.privateKey,
+      );
       const { status } = await requestJson('GET', `${baseUrl}/api/v1/status`, {
         headers: { Authorization: `Bearer ${jwt}` },
       });
@@ -143,10 +154,13 @@ describe('CommanderHttpServer — OIDC Authentication Integration', () => {
     });
 
     it('rejects OIDC JWT with wrong issuer', async () => {
-      const jwt = createSignedJWT({
-        ...validTokenPayload(),
-        iss: 'https://attacker.com',
-      }, testKeys.privateKey);
+      const jwt = createSignedJWT(
+        {
+          ...validTokenPayload(),
+          iss: 'https://attacker.com',
+        },
+        testKeys.privateKey,
+      );
       const { status } = await requestJson('GET', `${baseUrl}/api/v1/status`, {
         headers: { Authorization: `Bearer ${jwt}` },
       });
@@ -156,7 +170,9 @@ describe('CommanderHttpServer — OIDC Authentication Integration', () => {
     it('rejects tampered OIDC JWT', async () => {
       const jwt = createSignedJWT(validTokenPayload(), testKeys.privateKey);
       const parts = jwt.split('.');
-      const tamperedPayload = base64url(Buffer.from(JSON.stringify({ ...validTokenPayload(), role: 'admin' })));
+      const tamperedPayload = base64url(
+        Buffer.from(JSON.stringify({ ...validTokenPayload(), role: 'admin' })),
+      );
       const tamperedJwt = `${parts[0]}.${tamperedPayload}.${parts[2]}`;
       const { status } = await requestJson('GET', `${baseUrl}/api/v1/status`, {
         headers: { Authorization: `Bearer ${tamperedJwt}` },
@@ -197,7 +213,9 @@ async function requestJson(
     Object.assign(headers, options?.headers);
     const req = http.request(url, { method, headers }, (res) => {
       let data = '';
-      res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+      res.on('data', (chunk: Buffer) => {
+        data += chunk.toString();
+      });
       res.on('end', () => {
         try {
           resolve({ status: res.statusCode ?? 500, body: JSON.parse(data) });

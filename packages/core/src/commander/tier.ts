@@ -88,7 +88,10 @@ export interface ResolvedConfig {
 // Tier defaults
 // ============================================================================
 
-const TIER_DEFAULTS: Record<DeploymentTier, Omit<ResolvedConfig, 'tier' | 'provider' | 'tenant' | 'persistence'>> = {
+const TIER_DEFAULTS: Record<
+  DeploymentTier,
+  Omit<ResolvedConfig, 'tier' | 'provider' | 'tenant' | 'persistence'>
+> = {
   hobbyist: {
     runtime: {
       defaultModelTier: 'eco' as ModelTier,
@@ -293,7 +296,10 @@ function resolveTenant(tier: DeploymentTier, _probe: ProbeResult): ResolvedConfi
 // Persistence resolution
 // ============================================================================
 
-function resolvePersistence(tier: DeploymentTier, probe: ProbeResult): ResolvedConfig['persistence'] {
+function resolvePersistence(
+  tier: DeploymentTier,
+  probe: ProbeResult,
+): ResolvedConfig['persistence'] {
   if (tier === 'enterprise' && probe.redisUrl) {
     return { type: 'redis', redisUrl: probe.redisUrl };
   }
@@ -334,7 +340,6 @@ export function resolveConfig(
   if (options?.maxConcurrency !== undefined) {
     config.runtime.maxConcurrency = options.maxConcurrency;
   }
-
 
   return config;
 }

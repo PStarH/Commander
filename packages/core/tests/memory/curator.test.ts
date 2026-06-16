@@ -4,27 +4,40 @@ import { MemoryCurator } from '../../src/memory/curator';
 import type { MemoryStore, EpisodicMemoryItem, MemorySearchResult } from '../../src/memory';
 
 function createMockStore(items: EpisodicMemoryItem[] = []): MemoryStore {
-  const store = new Map(items.map(i => [i.id, { ...i }]));
+  const store = new Map(items.map((i) => [i.id, { ...i }]));
   return {
     write: async (opts: any) => {
       const id = `mem-${store.size + 1}`;
       const item: EpisodicMemoryItem = {
-        id, projectId: opts.projectId, kind: opts.kind ?? 'DECISION',
-        duration: opts.duration ?? 'EPISODIC', title: opts.title ?? '',
-        content: opts.content ?? '', tags: opts.tags ?? [],
-        priority: opts.priority ?? 50, createdAt: new Date().toISOString(),
+        id,
+        projectId: opts.projectId,
+        kind: opts.kind ?? 'DECISION',
+        duration: opts.duration ?? 'EPISODIC',
+        title: opts.title ?? '',
+        content: opts.content ?? '',
+        tags: opts.tags ?? [],
+        priority: opts.priority ?? 50,
+        createdAt: new Date().toISOString(),
         lastAccessedAt: new Date().toISOString(),
         confidence: opts.confidence ?? 0.8,
       };
       store.set(id, item);
       return item;
     },
-    batchWrite: async (items: any[]) => items.map((_, i) => ({
-      id: `batch-${i}`, projectId: 'test', kind: 'DECISION', duration: 'EPISODIC',
-      title: '', content: '', tags: [], priority: 50,
-      createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(),
-      confidence: 0.8,
-    })),
+    batchWrite: async (items: any[]) =>
+      items.map((_, i) => ({
+        id: `batch-${i}`,
+        projectId: 'test',
+        kind: 'DECISION',
+        duration: 'EPISODIC',
+        title: '',
+        content: '',
+        tags: [],
+        priority: 50,
+        createdAt: new Date().toISOString(),
+        lastAccessedAt: new Date().toISOString(),
+        confidence: 0.8,
+      })),
     update: async () => null,
     delete: async () => true,
     deleteByMission: async () => 0,
@@ -41,14 +54,17 @@ function createMockStore(items: EpisodicMemoryItem[] = []): MemoryStore {
     },
     read: async () => null,
     search: async (q: any): Promise<MemorySearchResult> => {
-      let results = Array.from(store.values()).filter(i => i.projectId === q.projectId);
-      if (q.kind) results = results.filter(i => i.kind === q.kind);
-      if (q.minPriority) results = results.filter(i => i.priority >= q.minPriority);
+      let results = Array.from(store.values()).filter((i) => i.projectId === q.projectId);
+      if (q.kind) results = results.filter((i) => i.kind === q.kind);
+      if (q.minPriority) results = results.filter((i) => i.priority >= q.minPriority);
       return { items: results.slice(0, q.limit ?? 50), total: results.length, query: q };
     },
     searchSemantic: async () => [],
     getStats: async () => ({
-      totalMemories: store.size, byType: {} as any, avgPriority: 50, avgConfidence: 0.8,
+      totalMemories: store.size,
+      byType: {} as any,
+      avgPriority: 50,
+      avgConfidence: 0.8,
     }),
   } as any;
 }
@@ -110,14 +126,33 @@ describe('MemoryCurator', () => {
   describe('curate', () => {
     it('runs full curation cycle', async () => {
       const items: EpisodicMemoryItem[] = [
-        { id: 'm1', projectId: 'proj-1', kind: 'DECISION', duration: 'EPISODIC',
-          title: 'Test', content: 'content', tags: [], priority: 80,
-          createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(),
-          confidence: 0.9, expiresAt: new Date(Date.now() - 86400000).toISOString() },
-        { id: 'm2', projectId: 'proj-1', kind: 'LESSON', duration: 'LONG_TERM',
-          title: 'Lesson', content: 'important lesson', tags: [], priority: 90,
-          createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(),
-          confidence: 0.95 },
+        {
+          id: 'm1',
+          projectId: 'proj-1',
+          kind: 'DECISION',
+          duration: 'EPISODIC',
+          title: 'Test',
+          content: 'content',
+          tags: [],
+          priority: 80,
+          createdAt: new Date().toISOString(),
+          lastAccessedAt: new Date().toISOString(),
+          confidence: 0.9,
+          expiresAt: new Date(Date.now() - 86400000).toISOString(),
+        },
+        {
+          id: 'm2',
+          projectId: 'proj-1',
+          kind: 'LESSON',
+          duration: 'LONG_TERM',
+          title: 'Lesson',
+          content: 'important lesson',
+          tags: [],
+          priority: 90,
+          createdAt: new Date().toISOString(),
+          lastAccessedAt: new Date().toISOString(),
+          confidence: 0.95,
+        },
       ];
       const store = createMockStore(items);
       const result = await curator.curate(store, 'proj-1');
@@ -128,11 +163,20 @@ describe('MemoryCurator', () => {
 
     it('evicts expired items', async () => {
       const items: EpisodicMemoryItem[] = [
-        { id: 'expired', projectId: 'proj-1', kind: 'DECISION', duration: 'EPISODIC',
-          title: 'Old', content: 'expired', tags: [], priority: 50,
+        {
+          id: 'expired',
+          projectId: 'proj-1',
+          kind: 'DECISION',
+          duration: 'EPISODIC',
+          title: 'Old',
+          content: 'expired',
+          tags: [],
+          priority: 50,
           createdAt: new Date(Date.now() - 30 * 86400000).toISOString(),
           lastAccessedAt: new Date(Date.now() - 30 * 86400000).toISOString(),
-          confidence: 0.5, expiresAt: new Date(Date.now() - 86400000).toISOString() },
+          confidence: 0.5,
+          expiresAt: new Date(Date.now() - 86400000).toISOString(),
+        },
       ];
       const store = createMockStore(items);
       const result = await curator.curate(store, 'proj-1');

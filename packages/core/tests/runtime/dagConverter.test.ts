@@ -51,7 +51,7 @@ describe('dagConverter', () => {
       expect(tree.id).toBe('root');
       expect(tree.goal).toBe('forest');
       expect(tree.isAtomic).toBe(false);
-      expect(tree.subtasks.map(n => n.goal).sort()).toEqual(['alpha', 'bravo']);
+      expect(tree.subtasks.map((n) => n.goal).sort()).toEqual(['alpha', 'bravo']);
     });
   });
 
@@ -86,7 +86,12 @@ describe('dagConverter', () => {
     it('does NOT throw on a diamond DAG (acyclic)', () => {
       const dag: WorkflowDAG = {
         name: 'diamond',
-        nodes: [makeNode('a', 'alpha'), makeNode('b', 'bravo'), makeNode('c', 'charlie'), makeNode('d', 'delta')],
+        nodes: [
+          makeNode('a', 'alpha'),
+          makeNode('b', 'bravo'),
+          makeNode('c', 'charlie'),
+          makeNode('d', 'delta'),
+        ],
         edges: [makeEdge('a', 'b'), makeEdge('a', 'c'), makeEdge('b', 'd'), makeEdge('c', 'd')],
       };
       expect(() => dagToTaskTree(dag)).not.toThrow();

@@ -74,7 +74,10 @@ export interface TraceSpan {
   /** Finish the span and record it. Duration computed from start to now. */
   end(attributes?: { output?: unknown; error?: string }): TraceEvent;
   /** Add a child event to this span without ending it */
-  recordChild(type: TraceEvent['type'], attrs?: { input?: unknown; output?: unknown; error?: string; durationMs?: number }): TraceEvent;
+  recordChild(
+    type: TraceEvent['type'],
+    attrs?: { input?: unknown; output?: unknown; error?: string; durationMs?: number },
+  ): TraceEvent;
 }
 
 /**

@@ -129,11 +129,7 @@ export interface HarnessSelectionContext {
  * - `danger-full-access`: Skip all approval checks. Bypasses sandbox.
  *   Use with extreme caution.
  */
-export type ApprovalMode =
-  | 'suggest'
-  | 'auto-edit'
-  | 'full-auto'
-  | 'danger-full-access';
+export type ApprovalMode = 'suggest' | 'auto-edit' | 'full-auto' | 'danger-full-access';
 
 /**
  * Reasoning effort levels (Codex CLI reasoning_effort).
@@ -233,12 +229,7 @@ export interface PatchResult {
 /**
  * Status of a plan item.
  */
-export type PlanItemStatus =
-  | 'pending'
-  | 'in_progress'
-  | 'completed'
-  | 'failed'
-  | 'skipped';
+export type PlanItemStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
 
 /**
  * A single item in a plan document (Codex CLI PlanItemArg).
@@ -350,12 +341,7 @@ export interface SubAgentSpawnParams {
 /**
  * Safety classification for a command.
  */
-export type CommandSafetyLevel =
-  | 'safe'
-  | 'caution'
-  | 'risky'
-  | 'dangerous'
-  | 'unknown';
+export type CommandSafetyLevel = 'safe' | 'caution' | 'risky' | 'dangerous' | 'unknown';
 
 /**
  * Result of classifying a command's safety.
@@ -480,17 +466,59 @@ export type HarnessEvent =
   | { type: 'run_start'; runId: string; goal: string; harness: string; timestamp: number }
   | { type: 'llm_request'; request: LLMRequest; runId: string; timestamp: number }
   | { type: 'llm_response'; response: LLMResponse; runId: string; timestamp: number }
-  | { type: 'tool_call_start'; toolCall: ToolCall; intent?: Intent; runId: string; timestamp: number }
-  | { type: 'tool_call_end'; toolCall: ToolCall; result: ToolResult; runId: string; timestamp: number }
-  | { type: 'guardian_decision'; toolCall: ToolCall; decision: GuardianDecision; runId: string; timestamp: number }
-  | { type: 'intent_extracted'; toolCall: ToolCall; intent: Intent; runId: string; timestamp: number }
+  | {
+      type: 'tool_call_start';
+      toolCall: ToolCall;
+      intent?: Intent;
+      runId: string;
+      timestamp: number;
+    }
+  | {
+      type: 'tool_call_end';
+      toolCall: ToolCall;
+      result: ToolResult;
+      runId: string;
+      timestamp: number;
+    }
+  | {
+      type: 'guardian_decision';
+      toolCall: ToolCall;
+      decision: GuardianDecision;
+      runId: string;
+      timestamp: number;
+    }
+  | {
+      type: 'intent_extracted';
+      toolCall: ToolCall;
+      intent: Intent;
+      runId: string;
+      timestamp: number;
+    }
   | { type: 'steer_message'; message: SteerMessage; runId: string; timestamp: number }
   | { type: 'compaction'; dropped: number; saved: number; runId: string; timestamp: number }
   | { type: 'plan_update'; items: PlanItem[]; runId: string; timestamp: number }
-  | { type: 'plan_item_status'; itemId: string; status: PlanItemStatus; runId: string; timestamp: number }
+  | {
+      type: 'plan_item_status';
+      itemId: string;
+      status: PlanItemStatus;
+      runId: string;
+      timestamp: number;
+    }
   | { type: 'sub_agent_start'; handle: SubAgentHandle; runId: string; timestamp: number }
-  | { type: 'sub_agent_end'; handle: SubAgentHandle; result: AgentExecutionResult; runId: string; timestamp: number }
-  | { type: 'sub_agent_progress'; handle: SubAgentHandle; event: HarnessEvent; runId: string; timestamp: number }
+  | {
+      type: 'sub_agent_end';
+      handle: SubAgentHandle;
+      result: AgentExecutionResult;
+      runId: string;
+      timestamp: number;
+    }
+  | {
+      type: 'sub_agent_progress';
+      handle: SubAgentHandle;
+      event: HarnessEvent;
+      runId: string;
+      timestamp: number;
+    }
   | { type: 'file_change'; event: FileChangeEvent; runId: string; timestamp: number }
   | { type: 'session_update'; info: SessionInfo; runId: string; timestamp: number }
   | { type: 'checkpoint'; phase: string; stepNumber: number; runId: string; timestamp: number }
@@ -563,23 +591,54 @@ export interface HarnessServices {
   }): void;
 
   // ── Plugin System (Harnesses MUST fire standard CommanderPlugin hooks) ──
-  fireBeforeLLMCall(ctx: { request: LLMRequest; agentId: string; runId: string }): Promise<LLMRequest>;
-  fireAfterLLMCall(ctx: { request: LLMRequest; response: LLMResponse | null; agentId: string; runId: string }): Promise<void>;
-  fireBeforeToolCall(ctx: { toolName: string; args: Record<string, unknown>; agentId: string; runId: string }): Promise<{ blocked: boolean; error?: string }>;
-  fireAfterToolCall(ctx: { toolName: string; args: Record<string, unknown>; result: ToolResult; agentId: string; runId: string }): Promise<ToolResult>;
+  fireBeforeLLMCall(ctx: {
+    request: LLMRequest;
+    agentId: string;
+    runId: string;
+  }): Promise<LLMRequest>;
+  fireAfterLLMCall(ctx: {
+    request: LLMRequest;
+    response: LLMResponse | null;
+    agentId: string;
+    runId: string;
+  }): Promise<void>;
+  fireBeforeToolCall(ctx: {
+    toolName: string;
+    args: Record<string, unknown>;
+    agentId: string;
+    runId: string;
+  }): Promise<{ blocked: boolean; error?: string }>;
+  fireAfterToolCall(ctx: {
+    toolName: string;
+    args: Record<string, unknown>;
+    result: ToolResult;
+    agentId: string;
+    runId: string;
+  }): Promise<ToolResult>;
   fireOnAgentStart(ctx: { agentId: string; runId: string }): Promise<void>;
   fireOnAgentComplete(ctx: { result: AgentExecutionResult; runId: string }): Promise<void>;
   fireOnError(ctx: { error: string; runId: string; agentId: string }): Promise<void>;
 
   // ── Metrics ──
-  recordLLMCall(model: string, provider: string, tokens: number, durationMs: number, tenantId?: string): void;
+  recordLLMCall(
+    model: string,
+    provider: string,
+    tokens: number,
+    durationMs: number,
+    tenantId?: string,
+  ): void;
   recordToolCall(name: string, durationMs: number, error?: string, tenantId?: string): void;
 
   // ── Context Compaction ──
-  compactMessages(messages: LLMMessage[], taskType?: string): { messages: LLMMessage[]; dropped: number; saved: number };
+  compactMessages(
+    messages: LLMMessage[],
+    taskType?: string,
+  ): { messages: LLMMessage[]; dropped: number; saved: number };
 
   // ── Content Safety ──
-  scanContent(content: string): Promise<{ isSafe: boolean; threats: Array<{ type: string; severity: string }> }>;
+  scanContent(
+    content: string,
+  ): Promise<{ isSafe: boolean; threats: Array<{ type: string; severity: string }> }>;
 
   // ── Token Governance ──
   reportTokenUsage(tokens: number): void;
@@ -595,7 +654,11 @@ export interface HarnessServices {
   injectSkill(skillId: string, currentSystemPrompt: string): Promise<string>;
 
   // ── Sub-Agents (Oh My Pi TaskExecutor) ──
-  spawnSubAgent(params: SubAgentSpawnParams, parentRunId: string, tenantId?: string): Promise<SubAgentHandle>;
+  spawnSubAgent(
+    params: SubAgentSpawnParams,
+    parentRunId: string,
+    tenantId?: string,
+  ): Promise<SubAgentHandle>;
   waitForSubAgent(handle: SubAgentHandle, signal?: AbortSignal): Promise<AgentExecutionResult>;
 
   // ── File Watcher (Codex notify crate) ──
@@ -804,8 +867,7 @@ export const BUILTIN_HARNESS_RULES: HarnessSelectionRule[] = [
     priority: 100,
     name: 'power-code-models',
     matcher: (ctx) =>
-      ctx.tier === 'power' &&
-      POWER_CODE_MODELS.some((p) => ctx.model.startsWith(p)),
+      ctx.tier === 'power' && POWER_CODE_MODELS.some((p) => ctx.model.startsWith(p)),
     harness: 'code-agent',
     reason: 'power model {{model}} → code-agent harness (full capability)',
   },
@@ -815,8 +877,7 @@ export const BUILTIN_HARNESS_RULES: HarnessSelectionRule[] = [
     priority: 90,
     name: 'standard-code-models',
     matcher: (ctx) =>
-      ctx.tier === 'standard' &&
-      STANDARD_CODE_MODELS.some((p) => ctx.model.startsWith(p)),
+      ctx.tier === 'standard' && STANDARD_CODE_MODELS.some((p) => ctx.model.startsWith(p)),
     harness: 'code-agent',
     reason: 'standard model {{model}} → code-agent harness (balanced)',
   },

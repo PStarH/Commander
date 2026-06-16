@@ -49,15 +49,19 @@ describe('evaluateCoordinationPolicy', () => {
     const router = new TopologyRouter();
     const nodes = ['a', 'b', 'c', 'd', 'e'].map(node);
     const dag = router.buildDAG(nodes, []);
-    const decision = evaluateCoordinationPolicy(plan({
-      requiresExternalInfo: true,
-      taskType: 'RESEARCH',
-      estimatedAgentCount: 5,
-      estimatedTokens: 30000,
-      taskNature: 'IO_BOUND',
-      suitableForSpeculation: true,
-      capabilitiesNeeded: ['web_search', 'reasoning'],
-    }), 'PARALLEL', dag);
+    const decision = evaluateCoordinationPolicy(
+      plan({
+        requiresExternalInfo: true,
+        taskType: 'RESEARCH',
+        estimatedAgentCount: 5,
+        estimatedTokens: 30000,
+        taskNature: 'IO_BOUND',
+        suitableForSpeculation: true,
+        capabilitiesNeeded: ['web_search', 'reasoning'],
+      }),
+      'PARALLEL',
+      dag,
+    );
 
     expect(decision.negativeRoi).toBe(false);
     expect(decision.pattern).toBe('SPECIALIST_SWARM');
@@ -73,12 +77,16 @@ describe('evaluateCoordinationPolicy', () => {
       { from: 'b', to: 'c', type: 'SEQUENTIAL', dataDependency: true },
     ];
     const dag = router.buildDAG(nodes, edges);
-    const decision = evaluateCoordinationPolicy(plan({
-      taskType: 'CODING',
-      estimatedAgentCount: 3,
-      estimatedTokens: 6000,
-      capabilitiesNeeded: ['code_understanding', 'reasoning'],
-    }), 'PARALLEL', dag);
+    const decision = evaluateCoordinationPolicy(
+      plan({
+        taskType: 'CODING',
+        estimatedAgentCount: 3,
+        estimatedTokens: 6000,
+        capabilitiesNeeded: ['code_understanding', 'reasoning'],
+      }),
+      'PARALLEL',
+      dag,
+    );
 
     expect(decision.negativeRoi).toBe(true);
     expect(decision.fallbackTopology).toBe('SEQUENTIAL');
@@ -86,15 +94,17 @@ describe('evaluateCoordinationPolicy', () => {
   });
 
   it('exposes coordination ROI from topology routing', () => {
-    const result = new TopologyRouter().route(plan({
-      taskType: 'RESEARCH',
-      requiresExternalInfo: true,
-      estimatedAgentCount: 6,
-      estimatedTokens: 20000,
-      taskNature: 'IO_BOUND',
-    }));
+    const result = new TopologyRouter().route(
+      plan({
+        taskType: 'RESEARCH',
+        requiresExternalInfo: true,
+        estimatedAgentCount: 6,
+        estimatedTokens: 20000,
+        taskNature: 'IO_BOUND',
+      }),
+    );
 
     expect(result.coordination).toBeDefined();
-    expect(result.reasoning.some(line => line.includes('Coordination ROI'))).toBe(true);
+    expect(result.reasoning.some((line) => line.includes('Coordination ROI'))).toBe(true);
   });
 });

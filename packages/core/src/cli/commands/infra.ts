@@ -23,16 +23,27 @@ export async function cmdJobs(args: string[]): Promise<void> {
     console.log(`\n  ${$.cyan}${$.bold}Background Jobs${$.reset}\n`);
 
     if (jobs.length === 0) {
-      console.log(`  ${$.dim}No jobs found. Use ${$.bold}commander run "task" --background${$.reset}${$.dim} to start one.${$.reset}\n`);
+      console.log(
+        `  ${$.dim}No jobs found. Use ${$.bold}commander run "task" --background${$.reset}${$.dim} to start one.${$.reset}\n`,
+      );
       return;
     }
 
     for (const job of jobs.slice(0, 20)) {
-      const statusIcon = job.status === 'running' ? '🔄' : job.status === 'completed' ? '✅' : job.status === 'failed' ? '❌' : '⏹️';
+      const statusIcon =
+        job.status === 'running'
+          ? '🔄'
+          : job.status === 'completed'
+            ? '✅'
+            : job.status === 'failed'
+              ? '❌'
+              : '⏹️';
       const duration = job.completedAt
         ? `${Math.round((new Date(job.completedAt).getTime() - new Date(job.startedAt).getTime()) / 1000)}s`
         : 'running';
-      console.log(`  ${statusIcon} ${$.bold}${job.id}${$.reset} ${$.dim}${job.task.slice(0, 50)}${$.reset} [${duration}]`);
+      console.log(
+        `  ${statusIcon} ${$.bold}${job.id}${$.reset} ${$.dim}${job.task.slice(0, 50)}${$.reset} [${duration}]`,
+      );
     }
     console.log(`\n  ${$.dim}Total: ${jobs.length} jobs${$.reset}\n`);
     return;
@@ -87,7 +98,13 @@ export async function cmdJobs(args: string[]): Promise<void> {
 export async function cmdNotify(message: string, flags: Record<string, string>): Promise<void> {
   const manager = getNotificationManager();
 
-  const channel = flags['--slack'] ? 'slack' : flags['--discord'] ? 'discord' : flags['--webhook'] ? 'webhook' : undefined;
+  const channel = flags['--slack']
+    ? 'slack'
+    : flags['--discord']
+      ? 'discord'
+      : flags['--webhook']
+        ? 'webhook'
+        : undefined;
 
   await manager.send({
     title: 'Commander',
@@ -112,13 +129,16 @@ export async function cmdSchedule(args: string[]): Promise<void> {
 
     if (tasks.length === 0) {
       console.log(`  ${$.dim}No scheduled tasks.${$.reset}`);
-      console.log(`  ${$.dim}Add one: ${$.bold}commander schedule add "task name" --cron "0 2 * * *"${$.reset}\n`);
+      console.log(
+        `  ${$.dim}Add one: ${$.bold}commander schedule add "task name" --cron "0 2 * * *"${$.reset}\n`,
+      );
       return;
     }
 
     for (const task of tasks) {
       const statusIcon = task.enabled ? '🟢' : '⚫';
-      const schedule = task.cron ?? `every ${task.intervalMs ? Math.round(task.intervalMs / 60000) + 'm' : '?'}`;
+      const schedule =
+        task.cron ?? `every ${task.intervalMs ? Math.round(task.intervalMs / 60000) + 'm' : '?'}`;
       const lastRun = task.lastRunAt ? new Date(task.lastRunAt).toLocaleString() : 'never';
       console.log(`  ${statusIcon} ${$.bold}${task.name}${$.reset} [${schedule}] last: ${lastRun}`);
     }
@@ -142,7 +162,9 @@ export async function cmdSchedule(args: string[]): Promise<void> {
     const scheduled = scheduler.add({ name, task, cron, every });
     console.log(`  ${$.green}✓${$.reset} Scheduled: ${scheduled.name} (${scheduled.id})`);
     if (scheduled.nextRunAt) {
-      console.log(`  ${$.dim}Next run: ${new Date(scheduled.nextRunAt).toLocaleString()}${$.reset}`);
+      console.log(
+        `  ${$.dim}Next run: ${new Date(scheduled.nextRunAt).toLocaleString()}${$.reset}`,
+      );
     }
     return;
   }
@@ -184,13 +206,17 @@ export async function cmdWebhook(args: string[]): Promise<void> {
 
     if (rules.length === 0) {
       console.log(`  ${$.dim}No webhook rules.${$.reset}`);
-      console.log(`  ${$.dim}Add one: ${$.bold}commander webhook add github --events push,pr --task "run tests"${$.reset}\n`);
+      console.log(
+        `  ${$.dim}Add one: ${$.bold}commander webhook add github --events push,pr --task "run tests"${$.reset}\n`,
+      );
       return;
     }
 
     for (const rule of rules) {
       const statusIcon = rule.enabled ? '🟢' : '⚫';
-      console.log(`  ${statusIcon} ${$.bold}${rule.name}${$.reset} [${rule.source}:${rule.events.join(',')}] triggered: ${rule.triggerCount}x`);
+      console.log(
+        `  ${statusIcon} ${$.bold}${rule.name}${$.reset} [${rule.source}:${rule.events.join(',')}] triggered: ${rule.triggerCount}x`,
+      );
     }
     console.log(`\n  ${$.dim}Total: ${rules.length} rules${$.reset}\n`);
     return;
@@ -206,7 +232,9 @@ export async function cmdWebhook(args: string[]): Promise<void> {
     const task = taskIdx >= 0 ? args[taskIdx + 1] : args[2];
 
     if (!source || !task) {
-      console.log(`  ${$.red}Usage:${$.reset} commander webhook add github --events push,pr --task "run tests"`);
+      console.log(
+        `  ${$.red}Usage:${$.reset} commander webhook add github --events push,pr --task "run tests"`,
+      );
       return;
     }
 

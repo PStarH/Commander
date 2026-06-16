@@ -76,7 +76,7 @@ export function listSOPs(customDir?: string): SOPListItem[] {
       try {
         const files = fs.readdirSync(agentPath);
         // Find JSON files (the structured source of truth)
-        const jsonFiles = files.filter(f => f.endsWith('.json'));
+        const jsonFiles = files.filter((f) => f.endsWith('.json'));
         for (const jsonFile of jsonFiles) {
           const runId = jsonFile.replace(/\.json$/, '');
           const jsonPath = path.join(agentPath, jsonFile);
@@ -161,16 +161,20 @@ export function getSOPDashboardData(customDir?: string): SOPDashboardData {
   const sops = listSOPs(customDir);
 
   // Collect recent bus events related to SOPs
-  const history = (bus as { getHistory?: (topic?: string, limit?: number) => BusMessage[] }).getHistory?.('sop.generated', 50) || [];
+  const history =
+    (bus as { getHistory?: (topic?: string, limit?: number) => BusMessage[] }).getHistory?.(
+      'sop.generated',
+      50,
+    ) || [];
 
-  const recentEvents = history.map(msg => ({
+  const recentEvents = history.map((msg) => ({
     topic: msg.topic,
     timestamp: msg.timestamp,
     payload: msg.payload,
   }));
 
   // Collect unique agent IDs
-  const agents = [...new Set(sops.map(s => s.agentId))];
+  const agents = [...new Set(sops.map((s) => s.agentId))];
 
   return {
     agents,
@@ -197,7 +201,7 @@ export function renderSOPDashboardHtml(customDir?: string): string {
   const totalSOPs = data.total;
   const totalAgents = data.agents.length;
   const totalSteps = data.sops.reduce((sum, s) => sum + s.stepCount, 0);
-  const totalTags = [...new Set(data.sops.flatMap(s => s.tags))].length;
+  const totalTags = [...new Set(data.sops.flatMap((s) => s.tags))].length;
 
   // Chart data: by agent
   const agentCounts: Record<string, number> = {};
@@ -217,11 +221,17 @@ export function renderSOPDashboardHtml(customDir?: string): string {
   const topTags = Object.entries(tagCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10);
-  const byTagLabels = JSON.stringify(topTags.map(t => t[0]));
-  const byTagValues = JSON.stringify(topTags.map(t => t[1]));
+  const byTagLabels = JSON.stringify(topTags.map((t) => t[0]));
+  const byTagValues = JSON.stringify(topTags.map((t) => t[1]));
 
   // Chart data: step count distribution
-  const stepBuckets: Record<string, number> = { '<10': 0, '10-25': 0, '26-50': 0, '51-100': 0, '100+': 0 };
+  const stepBuckets: Record<string, number> = {
+    '<10': 0,
+    '10-25': 0,
+    '26-50': 0,
+    '51-100': 0,
+    '100+': 0,
+  };
   for (const sop of data.sops) {
     if (sop.stepCount < 10) stepBuckets['<10']++;
     else if (sop.stepCount <= 25) stepBuckets['10-25']++;
@@ -240,7 +250,12 @@ export function renderSOPDashboardHtml(customDir?: string): string {
           <td><span class="agent-badge">${escapeHtml(sop.agentId)}</span></td>
           <td class="goal-cell">${escapeHtml(sop.goal.slice(0, 80))}${sop.goal.length > 80 ? '&hellip;' : ''}</td>
           <td>${sop.stepCount}</td>
-          <td class="tags-cell">${sop.tags.slice(0, 3).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join(' ')}${sop.tags.length > 3 ? ` <span class="tag-more">+${sop.tags.length - 3}</span>` : ''}</td>
+          <td class="tags-cell">${sop.tags
+            .slice(0, 3)
+            .map((t) => `<span class="tag">${escapeHtml(t)}</span>`)
+            .join(
+              ' ',
+            )}${sop.tags.length > 3 ? ` <span class="tag-more">+${sop.tags.length - 3}</span>` : ''}</td>
           <td class="timestamp">${new Date(sop.generatedAt).toLocaleString()}</td>
           <td class="actions-cell">
             <a href="/api/v1/sops/${encodeURIComponent(sop.agentId)}/${encodeURIComponent(sop.runId)}" class="action-link" title="View JSON" onclick="event.stopPropagation()">JSON</a>
@@ -260,7 +275,7 @@ export function renderSOPDashboardHtml(customDir?: string): string {
                 <strong>Agent:</strong> <code>${escapeHtml(sop.agentId)}</code>
               </div>
               <div class="detail-section">
-                <strong>Tags:</strong> ${sop.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join(' ')}
+                <strong>Tags:</strong> ${sop.tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join(' ')}
               </div>
               <div class="detail-section">
                 <strong>Generated:</strong> ${new Date(sop.generatedAt).toLocaleString()}
@@ -724,5 +739,9 @@ export function renderSOPDashboardHtml(customDir?: string): string {
 }
 
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }

@@ -75,7 +75,13 @@ export class ArtifactSystem {
   }
 
   async find(
-    query: { tags?: string[]; type?: ArtifactReference['type']; createdBy?: string; since?: string; textSearch?: string },
+    query: {
+      tags?: string[];
+      type?: ArtifactReference['type'];
+      createdBy?: string;
+      since?: string;
+      textSearch?: string;
+    },
     limit = 20,
   ): Promise<ArtifactReference[]> {
     const results: ArtifactReference[] = [];
@@ -83,7 +89,7 @@ export class ArtifactSystem {
     for (const { artifact, content } of ARTIFACT_STORE.values()) {
       if (limit > 0 && results.length >= limit) break;
 
-      if (query.tags && !query.tags.some(t => artifact.tags.includes(t))) continue;
+      if (query.tags && !query.tags.some((t) => artifact.tags.includes(t))) continue;
       if (query.type && artifact.type !== query.type) continue;
       if (query.createdBy && artifact.createdBy !== query.createdBy) continue;
       if (query.since && artifact.createdAt < query.since) continue;
@@ -113,7 +119,7 @@ export class ArtifactSystem {
   ): Promise<Array<{ artifact: ArtifactReference; relevance: number }>> {
     const limit = options?.limit ?? 20;
     const queryLower = query.toLowerCase();
-    const queryTerms = queryLower.split(/\s+/).filter(t => t.length > 2);
+    const queryTerms = queryLower.split(/\s+/).filter((t) => t.length > 2);
 
     const scored: Array<{ artifact: ArtifactReference; relevance: number }> = [];
 
@@ -125,8 +131,10 @@ export class ArtifactSystem {
 
       // Count term occurrences
       for (const term of queryTerms) {
-        const titleMatches = (artifact.title.toLowerCase().match(new RegExp(term, 'g')) || []).length;
-        const summaryMatches = (artifact.summary.toLowerCase().match(new RegExp(term, 'g')) || []).length;
+        const titleMatches = (artifact.title.toLowerCase().match(new RegExp(term, 'g')) || [])
+          .length;
+        const summaryMatches = (artifact.summary.toLowerCase().match(new RegExp(term, 'g')) || [])
+          .length;
         const contentMatches = (contentLower.match(new RegExp(term, 'g')) || []).length;
 
         // Weight: title > summary > content
@@ -138,9 +146,7 @@ export class ArtifactSystem {
       }
     }
 
-    return scored
-      .sort((a, b) => b.relevance - a.relevance)
-      .slice(0, limit);
+    return scored.sort((a, b) => b.relevance - a.relevance).slice(0, limit);
   }
 
   async delete(id: string): Promise<boolean> {

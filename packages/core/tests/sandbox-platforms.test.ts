@@ -41,8 +41,14 @@ describe('Sandbox Profiles', () => {
     for (const profile of [READ_ONLY, WORKSPACE_WRITE, FULL_ACCESS]) {
       assert.ok(profile.envVarDenyList?.includes('API_KEY'), `${profile.mode} should deny API_KEY`);
       assert.ok(profile.envVarDenyList?.includes('TOKEN'), `${profile.mode} should deny TOKEN`);
-      assert.ok(profile.envVarDenyList?.includes('PASSWORD'), `${profile.mode} should deny PASSWORD`);
-      assert.ok(profile.envVarDenyList?.includes('CREDENTIAL'), `${profile.mode} should deny CREDENTIAL`);
+      assert.ok(
+        profile.envVarDenyList?.includes('PASSWORD'),
+        `${profile.mode} should deny PASSWORD`,
+      );
+      assert.ok(
+        profile.envVarDenyList?.includes('CREDENTIAL'),
+        `${profile.mode} should deny CREDENTIAL`,
+      );
     }
   });
 });
@@ -144,7 +150,7 @@ describe('Seatbelt Profile Generation', () => {
     // On macOS, verify that SeatbeltSB detects sandbox-exec availability
     const { discoverSandboxes } = await import('../src/sandbox/platforms');
     const sandboxes = discoverSandboxes();
-    const seatbelt = sandboxes.find(s => s.name === 'seatbelt');
+    const seatbelt = sandboxes.find((s) => s.name === 'seatbelt');
 
     if (seatbelt) {
       assert.ok(seatbelt.available, 'Seatbelt should be available on macOS');
@@ -157,7 +163,7 @@ describe('Bubblewrap Configuration', () => {
   it('BwrapSB is only available on Linux', async () => {
     const { discoverSandboxes } = await import('../src/sandbox/platforms');
     const sandboxes = discoverSandboxes();
-    const bwrap = sandboxes.find(s => s.name === 'bwrap');
+    const bwrap = sandboxes.find((s) => s.name === 'bwrap');
 
     if (os.platform() === 'linux') {
       // On Linux, bwrap may or may not be installed
@@ -175,7 +181,7 @@ describe('Docker Configuration', () => {
   it('DockerSB detects Docker availability', async () => {
     const { discoverSandboxes } = await import('../src/sandbox/platforms');
     const sandboxes = discoverSandboxes();
-    const docker = sandboxes.find(s => s.name === 'docker');
+    const docker = sandboxes.find((s) => s.name === 'docker');
 
     // Docker may or may not be installed — just verify the detection works
     if (docker) {

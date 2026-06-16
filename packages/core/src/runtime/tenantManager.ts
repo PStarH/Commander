@@ -175,18 +175,30 @@ export class TenantManager {
    */
   flushAll(): void {
     for (const store of this.tenantSamplesStores.values()) {
-      try { store.flush(); } catch (e) {
-        getGlobalLogger().warn('TenantManager', 'Failed to flush tenant samples store', { error: (e as Error)?.message });
+      try {
+        store.flush();
+      } catch (e) {
+        getGlobalLogger().warn('TenantManager', 'Failed to flush tenant samples store', {
+          error: (e as Error)?.message,
+        });
       }
     }
     for (const store of this.tenantTraceStores.values()) {
-      try { store.shutdown(); } catch (e) {
-        getGlobalLogger().warn('TenantManager', 'Failed to flush tenant trace store', { error: (e as Error)?.message });
+      try {
+        store.shutdown();
+      } catch (e) {
+        getGlobalLogger().warn('TenantManager', 'Failed to flush tenant trace store', {
+          error: (e as Error)?.message,
+        });
       }
     }
     for (const cp of this.tenantCheckpointers.values()) {
-      try { cp.dispose(); } catch (e) {
-        getGlobalLogger().warn('TenantManager', 'Failed to dispose tenant checkpointer', { error: (e as Error)?.message });
+      try {
+        cp.dispose();
+      } catch (e) {
+        getGlobalLogger().warn('TenantManager', 'Failed to dispose tenant checkpointer', {
+          error: (e as Error)?.message,
+        });
       }
     }
   }
@@ -205,7 +217,10 @@ export class TenantManager {
   }
 
   private evictOldTenantStores(tenantId: string): void {
-    if (this.tenantSamplesStores.size >= TenantManager.MAX_TENANT_STORES && !this.tenantSamplesStores.has(tenantId)) {
+    if (
+      this.tenantSamplesStores.size >= TenantManager.MAX_TENANT_STORES &&
+      !this.tenantSamplesStores.has(tenantId)
+    ) {
       const oldestKey = this.tenantSamplesStores.keys().next().value;
       if (oldestKey) {
         this.tenantSamplesStores.delete(oldestKey);

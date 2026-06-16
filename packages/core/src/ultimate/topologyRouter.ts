@@ -123,24 +123,45 @@ export class TopologyRouter {
     return this.learnedWeights;
   }
 
-private readonly topologyPerformance: Record<OrchestrationTopology, {
-     sequential: number;  // suitability for sequential tasks 0-1
-     parallel: number;    // suitability for parallel tasks 0-1
-     complex: number;     // suitability for complex tasks 0-1
-     research: number;    // suitability for research tasks 0-1
-     costMultiplier: number;
-   }> = {
-     SINGLE: { sequential: 1.0, parallel: 0.2, complex: 0.1, research: 0.1, costMultiplier: 1.0 },
-     SEQUENTIAL: { sequential: 1.0, parallel: 0.3, complex: 0.3, research: 0.2, costMultiplier: 1.1 },
-     PARALLEL: { sequential: 0.3, parallel: 1.0, complex: 0.6, research: 0.8, costMultiplier: 2.0 },
-     HIERARCHICAL: { sequential: 0.4, parallel: 0.7, complex: 1.0, research: 0.9, costMultiplier: 3.0 },
-     HYBRID: { sequential: 0.5, parallel: 0.8, complex: 0.9, research: 1.0, costMultiplier: 4.0 },
-     DEBATE: { sequential: 0.3, parallel: 0.4, complex: 0.8, research: 0.5, costMultiplier: 3.5 },
-     ENSEMBLE: { sequential: 0.2, parallel: 0.9, complex: 0.5, research: 0.4, costMultiplier: 3.0 },
-     EVALUATOR_OPTIMIZER: { sequential: 0.6, parallel: 0.3, complex: 0.7, research: 0.3, costMultiplier: 2.5 },
-     HANDOFF: { sequential: 0.8, parallel: 0.6, complex: 0.7, research: 0.6, costMultiplier: 2.0 },
-     CONSENSUS: { sequential: 0.5, parallel: 0.7, complex: 0.8, research: 0.7, costMultiplier: 3.5 },
-   };
+  private readonly topologyPerformance: Record<
+    OrchestrationTopology,
+    {
+      sequential: number; // suitability for sequential tasks 0-1
+      parallel: number; // suitability for parallel tasks 0-1
+      complex: number; // suitability for complex tasks 0-1
+      research: number; // suitability for research tasks 0-1
+      costMultiplier: number;
+    }
+  > = {
+    SINGLE: { sequential: 1.0, parallel: 0.2, complex: 0.1, research: 0.1, costMultiplier: 1.0 },
+    SEQUENTIAL: {
+      sequential: 1.0,
+      parallel: 0.3,
+      complex: 0.3,
+      research: 0.2,
+      costMultiplier: 1.1,
+    },
+    PARALLEL: { sequential: 0.3, parallel: 1.0, complex: 0.6, research: 0.8, costMultiplier: 2.0 },
+    HIERARCHICAL: {
+      sequential: 0.4,
+      parallel: 0.7,
+      complex: 1.0,
+      research: 0.9,
+      costMultiplier: 3.0,
+    },
+    HYBRID: { sequential: 0.5, parallel: 0.8, complex: 0.9, research: 1.0, costMultiplier: 4.0 },
+    DEBATE: { sequential: 0.3, parallel: 0.4, complex: 0.8, research: 0.5, costMultiplier: 3.5 },
+    ENSEMBLE: { sequential: 0.2, parallel: 0.9, complex: 0.5, research: 0.4, costMultiplier: 3.0 },
+    EVALUATOR_OPTIMIZER: {
+      sequential: 0.6,
+      parallel: 0.3,
+      complex: 0.7,
+      research: 0.3,
+      costMultiplier: 2.5,
+    },
+    HANDOFF: { sequential: 0.8, parallel: 0.6, complex: 0.7, research: 0.6, costMultiplier: 2.0 },
+    CONSENSUS: { sequential: 0.5, parallel: 0.7, complex: 0.8, research: 0.7, costMultiplier: 3.5 },
+  };
 
   route(
     deliberation: DeliberationPlan,
@@ -178,9 +199,12 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
 
     // Resolve epsilon: per-call > per-tenant > constructor default
     const perCallEpsilon = perCallConfig?.epsilon;
-    const effectiveEpsilon = perCallEpsilon !== undefined
-      ? (Number.isNaN(perCallEpsilon) ? 0.05 : Math.max(0, Math.min(1, perCallEpsilon)))
-      : this.resolveEpsilon(_tenantId);
+    const effectiveEpsilon =
+      perCallEpsilon !== undefined
+        ? Number.isNaN(perCallEpsilon)
+          ? 0.05
+          : Math.max(0, Math.min(1, perCallEpsilon))
+        : this.resolveEpsilon(_tenantId);
 
     const scores: Array<{ topology: OrchestrationTopology; score: number }> = [];
 
@@ -188,7 +212,11 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
 
     // Get adjusted weights from learned weights (may be boosted/penalized by experience)
     const baseWeights = TASK_TYPE_WEIGHTS[taskType] ?? TASK_TYPE_WEIGHTS.FACTUAL;
-    const adjustedWeightsResult = this.learnedWeights.getAdjustedWeights(taskType, baseWeights, _tenantId);
+    const adjustedWeightsResult = this.learnedWeights.getAdjustedWeights(
+      taskType,
+      baseWeights,
+      _tenantId,
+    );
     const typeWeights = adjustedWeightsResult.adjusted;
 
     // If mature pairs exist, log the learned-weights line
@@ -214,27 +242,38 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
       // DAG-aware bonuses
       if (dagMetrics) {
         if (dagMetrics.interSubtaskCoupling > DAG_THRESHOLDS.HIGH_COUPLING) {
-          score += DAG_BONUSES.HIGH_COUPLING[topology as keyof typeof DAG_BONUSES.HIGH_COUPLING] ?? 0;
+          score +=
+            DAG_BONUSES.HIGH_COUPLING[topology as keyof typeof DAG_BONUSES.HIGH_COUPLING] ?? 0;
         }
         if (dagMetrics.parallelismWidth > DAG_THRESHOLDS.HIGH_PARALLELISM) {
-          score += DAG_BONUSES.HIGH_PARALLELISM[topology as keyof typeof DAG_BONUSES.HIGH_PARALLELISM] ?? 0;
+          score +=
+            DAG_BONUSES.HIGH_PARALLELISM[topology as keyof typeof DAG_BONUSES.HIGH_PARALLELISM] ??
+            0;
         }
         if (dagMetrics.criticalPathDepth > DAG_THRESHOLDS.DEEP_CRITICAL_PATH) {
-          score += DAG_BONUSES.DEEP_CRITICAL_PATH[topology as keyof typeof DAG_BONUSES.DEEP_CRITICAL_PATH] ?? 0;
+          score +=
+            DAG_BONUSES.DEEP_CRITICAL_PATH[
+              topology as keyof typeof DAG_BONUSES.DEEP_CRITICAL_PATH
+            ] ?? 0;
         }
       }
 
       // Effort level bonuses
       if (effortLevel === 'SIMPLE' && topology === 'SINGLE') score += EFFORT_BONUSES.SIMPLE_SINGLE;
-      if (effortLevel === 'DEEP_RESEARCH' && topology === 'HYBRID') score += EFFORT_BONUSES.DEEP_RESEARCH_HYBRID;
+      if (effortLevel === 'DEEP_RESEARCH' && topology === 'HYBRID')
+        score += EFFORT_BONUSES.DEEP_RESEARCH_HYBRID;
 
       // Astraea-inspired: IO-bound tasks benefit more from parallelism
       if (deliberation.taskNature === 'IO_BOUND') {
-        score += TASK_NATURE_BONUSES.IO_BOUND[topology as keyof typeof TASK_NATURE_BONUSES.IO_BOUND] ?? 0;
+        score +=
+          TASK_NATURE_BONUSES.IO_BOUND[topology as keyof typeof TASK_NATURE_BONUSES.IO_BOUND] ?? 0;
       }
       // Compute-bound tasks benefit from sequential/debate for deep reasoning
       if (deliberation.taskNature === 'COMPUTE_BOUND') {
-        score += TASK_NATURE_BONUSES.COMPUTE_BOUND[topology as keyof typeof TASK_NATURE_BONUSES.COMPUTE_BOUND] ?? 0;
+        score +=
+          TASK_NATURE_BONUSES.COMPUTE_BOUND[
+            topology as keyof typeof TASK_NATURE_BONUSES.COMPUTE_BOUND
+          ] ?? 0;
       }
 
       // SPAgent-inspired: speculation-suitable tasks prefer faster topologies
@@ -254,18 +293,20 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
     }
 
     // Apply pheromone biasing if there's enough data
-    let biasedScores: Array<{
-      topology: OrchestrationTopology;
-      score: number;
-      pheromoneBias: number;
-      pheromoneSamples: number;
-      expectedSuccess: number;
-    }> | undefined;
+    let biasedScores:
+      | Array<{
+          topology: OrchestrationTopology;
+          score: number;
+          pheromoneBias: number;
+          pheromoneSamples: number;
+          expectedSuccess: number;
+        }>
+      | undefined;
 
     try {
       const biased = this.pheromoneRouter.bias(taskType, scores);
       if (biased && biased.length > 0) {
-        biasedScores = biased.map(b => ({
+        biasedScores = biased.map((b) => ({
           topology: b.topology as OrchestrationTopology,
           score: b.score,
           pheromoneBias: b.pheromoneBias,
@@ -274,10 +315,10 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
         }));
         // Apply the biased scores in place
         for (const b of biased) {
-          const existing = scores.find(s => s.topology === (b.topology as OrchestrationTopology));
+          const existing = scores.find((s) => s.topology === (b.topology as OrchestrationTopology));
           if (existing) existing.score = b.score;
         }
-        const positiveCount = biased.filter(b => b.pheromoneBias > 0).length;
+        const positiveCount = biased.filter((b) => b.pheromoneBias > 0).length;
         if (positiveCount > 0) {
           reasoning.push(`Pheromone bias applied: ${positiveCount} topologies boosted`);
         }
@@ -315,7 +356,12 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
       selected = argmaxTopology;
     }
 
-    reasoning.push(`Topology scores: ${scores.slice(0, 4).map(s => `${s.topology}=${s.score}`).join(', ')}`);
+    reasoning.push(
+      `Topology scores: ${scores
+        .slice(0, 4)
+        .map((s) => `${s.topology}=${s.score}`)
+        .join(', ')}`,
+    );
     if (!explorationTriggered) {
       reasoning.push(`Selected ${selected} (score: ${scores[0].score})`);
     }
@@ -337,7 +383,13 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
     };
 
     // Compute coordination decision
-    const coordination = evaluateCoordinationPolicy(deliberation, selected, dag, this.learnedWeights, _tenantId);
+    const coordination = evaluateCoordinationPolicy(
+      deliberation,
+      selected,
+      dag,
+      this.learnedWeights,
+      _tenantId,
+    );
     reasoning.push(`Coordination ROI: ${coordination.gain.netRoi.toFixed(3)}`);
 
     return {
@@ -380,12 +432,9 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
    * that would silently produce incorrect critical-path / parallelism metrics.
    * Surface it instead of returning garbage.
    */
-  buildDAG(
-    nodes: TaskDAGNode[],
-    edges: TaskDAGEdge[],
-  ): TaskDAG {
+  buildDAG(nodes: TaskDAGNode[], edges: TaskDAGEdge[]): TaskDAG {
     this.assertAcyclic(nodes, edges);
-    const nodeSet = new Set(nodes.map(n => n.id));
+    const nodeSet = new Set(nodes.map((n) => n.id));
 
     // Build adjacency list for topological sort
     const inDegree = new Map<string, number>();
@@ -406,10 +455,9 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
 
     const criticalPathDepth = this.calculateCriticalPath(nodes, edges);
 
-    const couplingEdges = edges.filter(e => e.dataDependency);
-    const interSubtaskCoupling = edges.length > 0
-      ? Math.min(1, couplingEdges.length / edges.length)
-      : 0;
+    const couplingEdges = edges.filter((e) => e.dataDependency);
+    const interSubtaskCoupling =
+      edges.length > 0 ? Math.min(1, couplingEdges.length / edges.length) : 0;
 
     return {
       nodes,
@@ -445,7 +493,7 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
     while (qIdx < queue.length) {
       const current = queue[qIdx++];
       const currentLevel = level.get(current) ?? 0;
-      for (const neighbor of (adjList.get(current) ?? [])) {
+      for (const neighbor of adjList.get(current) ?? []) {
         const newLevel = currentLevel + 1;
         const existing = level.get(neighbor) ?? 0;
         level.set(neighbor, Math.max(existing, newLevel));
@@ -504,7 +552,9 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
   }
 
   private assertAcyclic(nodes: TaskDAGNode[], edges: TaskDAGEdge[]): void {
-    const WHITE = 0, GRAY = 1, BLACK = 2;
+    const WHITE = 0,
+      GRAY = 1,
+      BLACK = 2;
     const color = new Map<string, number>();
     for (const n of nodes) color.set(n.id, WHITE);
     const adjList = new Map<string, string[]>();
@@ -514,7 +564,7 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
         adjList.get(e.from)!.push(e.to);
       }
     }
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    const nodeMap = new Map(nodes.map((n) => [n.id, n]));
 
     const path: string[] = [];
     const visit = (nodeId: string): void => {
@@ -523,10 +573,10 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
       if (c === GRAY) {
         const startIdx = path.indexOf(nodeId);
         const cycleOnly = path.slice(startIdx);
-        const named = cycleOnly.map(id => nodeMap.get(id)?.label ?? id).join(' → ');
+        const named = cycleOnly.map((id) => nodeMap.get(id)?.label ?? id).join(' → ');
         throw new Error(
           `TopologyRouter.buildDAG: cyclic task graph detected (${named}). ` +
-          `Task DAGs must be acyclic — fix the dependency declarations.`,
+            `Task DAGs must be acyclic — fix the dependency declarations.`,
         );
       }
       color.set(nodeId, GRAY);
@@ -572,8 +622,8 @@ function boltzmannDraw(
   temperature: number,
   rng: () => number,
 ): OrchestrationTopology {
-  const maxScore = Math.max(...scores.map(s => s.score));
-  const shifted = scores.map(s => Math.exp((s.score - maxScore) / Math.max(temperature, 0.001)));
+  const maxScore = Math.max(...scores.map((s) => s.score));
+  const shifted = scores.map((s) => Math.exp((s.score - maxScore) / Math.max(temperature, 0.001)));
   const sum = shifted.reduce((a, b) => a + b, 0);
   const target = rng() * sum;
   let cumulative = 0;

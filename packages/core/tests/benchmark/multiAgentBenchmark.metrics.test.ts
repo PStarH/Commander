@@ -29,18 +29,20 @@ import {
  * Build a minimal UltimateExecutionResult with controllable fields so each
  * test can simulate a specific pass/fail/cost/latency combination.
  */
-function makeResult(overrides: Partial<{
-  status: 'SUCCESS' | 'PARTIAL' | 'FAILED';
-  totalTokens: number;
-  totalCostUsd: number;
-  totalDurationMs: number;
-  qualityScore: number;
-  subAgentsSpawned: number;
-  topologyUsed: 'SINGLE' | 'SEQUENTIAL' | 'PARALLEL' | 'HIERARCHICAL' | 'HYBRID';
-  synthesis: string;
-  errors: Array<{ nodeId: string; agentId: string; message: string; recovered: boolean }>;
-  subAgentDurations: number[]; // wall-clock per completed sub-agent
-}>): UltimateExecutionResult {
+function makeResult(
+  overrides: Partial<{
+    status: 'SUCCESS' | 'PARTIAL' | 'FAILED';
+    totalTokens: number;
+    totalCostUsd: number;
+    totalDurationMs: number;
+    qualityScore: number;
+    subAgentsSpawned: number;
+    topologyUsed: 'SINGLE' | 'SEQUENTIAL' | 'PARALLEL' | 'HIERARCHICAL' | 'HYBRID';
+    synthesis: string;
+    errors: Array<{ nodeId: string; agentId: string; message: string; recovered: boolean }>;
+    subAgentDurations: number[]; // wall-clock per completed sub-agent
+  }>,
+): UltimateExecutionResult {
   const completedDurations = overrides.subAgentDurations ?? [100];
   return {
     id: 'mock-exec',
@@ -120,7 +122,12 @@ describe('MultiAgentBenchmark metrics', () => {
         },
       } as unknown as UltimateOrchestrator;
       const task: BenchmarkTask = {
-        id: 't1', tier: 'simple', goal: 'x', expectedCapability: 'x', maxTokens: 1, tools: [],
+        id: 't1',
+        tier: 'simple',
+        goal: 'x',
+        expectedCapability: 'x',
+        maxTokens: 1,
+        tools: [],
       };
 
       const bench = new MultiAgentBenchmark({
@@ -140,11 +147,25 @@ describe('MultiAgentBenchmark metrics', () => {
     });
 
     it('sets latencyComparable=true when both paths succeed', async () => {
-      const singleResult = makeResult({ status: 'SUCCESS', totalDurationMs: 100, subAgentDurations: [80] });
-      const multiResult = makeResult({ status: 'SUCCESS', totalDurationMs: 150, subAgentDurations: [120], qualityScore: 0.7 });
+      const singleResult = makeResult({
+        status: 'SUCCESS',
+        totalDurationMs: 100,
+        subAgentDurations: [80],
+      });
+      const multiResult = makeResult({
+        status: 'SUCCESS',
+        totalDurationMs: 150,
+        subAgentDurations: [120],
+        qualityScore: 0.7,
+      });
       const orch = makeMockOrchestrator([singleResult, multiResult]);
       const task: BenchmarkTask = {
-        id: 't2', tier: 'simple', goal: 'x', expectedCapability: 'x', maxTokens: 1, tools: [],
+        id: 't2',
+        tier: 'simple',
+        goal: 'x',
+        expectedCapability: 'x',
+        maxTokens: 1,
+        tools: [],
       };
       const bench = new MultiAgentBenchmark({
         customTasks: [task],
@@ -168,34 +189,34 @@ describe('MultiAgentBenchmark metrics', () => {
     });
 
     it('returns 1.0 when all keywords are present', () => {
-      const score = (bench as any).keywordCoverage(
-        'this output mentions install, run, and test',
-        ['install', 'run', 'test'],
-      );
+      const score = (bench as any).keywordCoverage('this output mentions install, run, and test', [
+        'install',
+        'run',
+        'test',
+      ]);
       expect(score).toBe(1.0);
     });
 
     it('returns fraction for partial keyword coverage', () => {
-      const score = (bench as any).keywordCoverage(
-        'this output mentions install only',
-        ['install', 'run', 'test'],
-      );
+      const score = (bench as any).keywordCoverage('this output mentions install only', [
+        'install',
+        'run',
+        'test',
+      ]);
       expect(score).toBeCloseTo(1 / 3, 5);
     });
 
     it('returns 0 when no keywords are present', () => {
-      const score = (bench as any).keywordCoverage(
-        'no required words here',
-        ['install', 'pnpm'],
-      );
+      const score = (bench as any).keywordCoverage('no required words here', ['install', 'pnpm']);
       expect(score).toBe(0);
     });
 
     it('is case-insensitive', () => {
-      const score = (bench as any).keywordCoverage(
-        'INSTALL, Run, tEsT',
-        ['install', 'run', 'test'],
-      );
+      const score = (bench as any).keywordCoverage('INSTALL, Run, tEsT', [
+        'install',
+        'run',
+        'test',
+      ]);
       expect(score).toBe(1.0);
     });
   });
@@ -204,11 +225,19 @@ describe('MultiAgentBenchmark metrics', () => {
     it('uses Math.min so a generous judge cannot exceed the keyword floor', async () => {
       let judgeCalled = false;
       const bench = new MultiAgentBenchmark({
-        judgeLLMCall: async () => { judgeCalled = true; return '0.9'; },
+        judgeLLMCall: async () => {
+          judgeCalled = true;
+          return '0.9';
+        },
       });
 
       const task: BenchmarkTask = {
-        id: 'guard-test', tier: 'simple', goal: 'x', expectedCapability: 'x', maxTokens: 1, tools: [],
+        id: 'guard-test',
+        tier: 'simple',
+        goal: 'x',
+        expectedCapability: 'x',
+        maxTokens: 1,
+        tools: [],
         judgeRubric: 'should mention required topics',
         requiredKeywords: ['install', 'run', 'test'],
       };
@@ -224,7 +253,12 @@ describe('MultiAgentBenchmark metrics', () => {
     it('falls back to keyword score when judge is not configured', async () => {
       const bench = new MultiAgentBenchmark({}); // no judgeLLMCall
       const task: BenchmarkTask = {
-        id: 'fallback-test', tier: 'simple', goal: 'x', expectedCapability: 'x', maxTokens: 1, tools: [],
+        id: 'fallback-test',
+        tier: 'simple',
+        goal: 'x',
+        expectedCapability: 'x',
+        maxTokens: 1,
+        tools: [],
         judgeRubric: 'some rubric',
         requiredKeywords: ['install'],
       };
@@ -237,7 +271,9 @@ describe('MultiAgentBenchmark metrics', () => {
 
     it('returns null from judgeLLM when the call throws', async () => {
       const bench = new MultiAgentBenchmark({
-        judgeLLMCall: async () => { throw new Error('judge down'); },
+        judgeLLMCall: async () => {
+          throw new Error('judge down');
+        },
       });
       const score = await (bench as any).judgeLLM('synthesis', 'rubric');
       expect(score).toBeNull();
@@ -258,11 +294,19 @@ describe('MultiAgentBenchmark metrics', () => {
       // Budget $0.50 with parallel=1: pre-check (0 < 0.5) runs task #1, then
       // post-batch (1.0 >= 0.5) breaks before task #2. So totalTasks === 1.
       const singleResult = makeResult({ status: 'SUCCESS', totalCostUsd: 0.5, totalDurationMs: 5 });
-      const multiResult = makeResult({ status: 'SUCCESS', totalCostUsd: 0.5, totalDurationMs: 10, qualityScore: 0.7 });
+      const multiResult = makeResult({
+        status: 'SUCCESS',
+        totalCostUsd: 0.5,
+        totalDurationMs: 10,
+        qualityScore: 0.7,
+      });
       const orch = makeMockOrchestrator([
-        singleResult, multiResult,
-        singleResult, multiResult,
-        singleResult, multiResult,
+        singleResult,
+        multiResult,
+        singleResult,
+        multiResult,
+        singleResult,
+        multiResult,
       ]);
       const tasks: BenchmarkTask[] = [
         { id: 'a', tier: 'simple', goal: 'a', expectedCapability: 'x', maxTokens: 1, tools: [] },
@@ -292,7 +336,12 @@ describe('MultiAgentBenchmark metrics', () => {
       const multiResult = makeResult({ status: 'SUCCESS', totalCostUsd: 0.01, qualityScore: 0.7 });
       const orch = makeMockOrchestrator([singleResult, multiResult]);
       const task: BenchmarkTask = {
-        id: 'z', tier: 'simple', goal: 'z', expectedCapability: 'x', maxTokens: 1, tools: [],
+        id: 'z',
+        tier: 'simple',
+        goal: 'z',
+        expectedCapability: 'x',
+        maxTokens: 1,
+        tools: [],
       };
       const bench = new MultiAgentBenchmark({
         customTasks: [task],
@@ -309,7 +358,10 @@ describe('MultiAgentBenchmark metrics', () => {
   describe('per-sub-agent metrics on multi path', () => {
     it('records sumSubAgentMs and maxSubAgentMs only for AUTO/multi', async () => {
       const singleResult = makeResult({ topologyUsed: 'SINGLE', subAgentDurations: [100] });
-      const multiResult = makeResult({ topologyUsed: 'PARALLEL', subAgentDurations: [300, 500, 200] });
+      const multiResult = makeResult({
+        topologyUsed: 'PARALLEL',
+        subAgentDurations: [300, 500, 200],
+      });
       const orch = makeMockOrchestrator([singleResult, multiResult]);
 
       const bench = new MultiAgentBenchmark({
@@ -320,7 +372,15 @@ describe('MultiAgentBenchmark metrics', () => {
 
       // Use a public surface that doesn't depend on the BENCHMARK_TASKS array:
       // call executeWithTopology directly on a synthetic task.
-      const fakeTask: BenchmarkTask = { id: 'pm', tier: 'simple', goal: 'g', expectedCapability: 'c', maxTokens: 1, tools: [], requiredKeywords: ['x'] };
+      const fakeTask: BenchmarkTask = {
+        id: 'pm',
+        tier: 'simple',
+        goal: 'g',
+        expectedCapability: 'c',
+        maxTokens: 1,
+        tools: [],
+        requiredKeywords: ['x'],
+      };
       const single = await (bench as any).executeWithTopology(fakeTask, 'SINGLE');
       const multi = await (bench as any).executeWithTopology(fakeTask, 'AUTO');
 

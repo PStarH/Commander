@@ -156,7 +156,9 @@ After getting tool results, continue with your response. When done, write the fi
 
     // Check if output file was written
     let outputSize = 0;
-    try { outputSize = fs.statSync(task.outputFile).size; } catch {}
+    try {
+      outputSize = fs.statSync(task.outputFile).size;
+    } catch {}
 
     // If no file was written but we have a response, write it
     if (outputSize === 0 && finalResponse.length > 100) {
@@ -190,7 +192,9 @@ After getting tool results, continue with your response. When done, write the fi
   }
 }
 
-async function callLLM(messages: Array<{ role: string; content: string }>): Promise<{ content: string; tokens: number }> {
+async function callLLM(
+  messages: Array<{ role: string; content: string }>,
+): Promise<{ content: string; tokens: number }> {
   const body = {
     model: MODEL,
     messages,
@@ -202,7 +206,7 @@ async function callLLM(messages: Array<{ role: string; content: string }>): Prom
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${API_KEY}`,
+      Authorization: `Bearer ${API_KEY}`,
     },
     body: JSON.stringify(body),
   });
@@ -212,7 +216,7 @@ async function callLLM(messages: Array<{ role: string; content: string }>): Prom
     throw new Error(`LLM API error ${resp.status}: ${errText.slice(0, 200)}`);
   }
 
-  const data = await resp.json() as any;
+  const data = (await resp.json()) as any;
   const content = data.choices?.[0]?.message?.content ?? '';
   const tokens = data.usage?.total_tokens ?? 0;
 
@@ -226,7 +230,9 @@ async function executeToolCall(name: string, args: Record<string, unknown>): Pro
         const query = String(args.query ?? '');
         const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&cc=us&mkt=en-US&setlang=en`;
         const resp = await fetch(url, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          },
           signal: AbortSignal.timeout(15000),
         });
         const html = await resp.text();
@@ -246,7 +252,11 @@ async function executeToolCall(name: string, args: Record<string, unknown>): Pro
           signal: AbortSignal.timeout(15000),
         });
         const html = await resp.text();
-        return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 5000);
+        return html
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 5000);
       }
       case 'file_write': {
         const filePath = String(args.path ?? '');
@@ -295,7 +305,8 @@ async function runCommander(task: ComparisonTask): Promise<TaskResult> {
     runtime.registerProvider('openai', provider);
 
     const { WebSearchTool, WebFetchTool } = await import('../src/tools/webSearchTool');
-    const { FileReadTool, FileWriteTool, FileEditTool, FileListTool, FileSearchTool } = await import('../src/tools/fileSystemTool');
+    const { FileReadTool, FileWriteTool, FileEditTool, FileListTool, FileSearchTool } =
+      await import('../src/tools/fileSystemTool');
 
     runtime.registerTool('web_search', new WebSearchTool());
     runtime.registerTool('web_fetch', new WebFetchTool());
@@ -318,7 +329,14 @@ async function runCommander(task: ComparisonTask): Promise<TaskResult> {
       agentId: `compare-${task.name}`,
       goal: task.goal,
       contextData: {
-        availableTools: ['web_search', 'web_fetch', 'file_write', 'file_read', 'file_list', 'file_edit'],
+        availableTools: [
+          'web_search',
+          'web_fetch',
+          'file_write',
+          'file_read',
+          'file_list',
+          'file_edit',
+        ],
       },
     });
 
@@ -326,7 +344,9 @@ async function runCommander(task: ComparisonTask): Promise<TaskResult> {
     const tokens = result.metrics?.totalTokens ?? 0;
 
     let outputSize = 0;
-    try { outputSize = fs.statSync(task.outputFile).size; } catch {}
+    try {
+      outputSize = fs.statSync(task.outputFile).size;
+    } catch {}
 
     return {
       system: 'commander',
@@ -374,35 +394,49 @@ async function main() {
     console.log(`${'═'.repeat(60)}`);
 
     // Clean up output file
-    try { fs.unlinkSync(task.outputFile); } catch {}
+    try {
+      fs.unlinkSync(task.outputFile);
+    } catch {}
 
     // Run Direct LLM first (simpler, faster baseline)
     console.log(`  ├─ Running Direct LLM...`);
     const directResult = await runDirectLLM(task);
     allResults.push(directResult);
-    const directOut = directResult.success ? `${(directResult.outputSize / 1024).toFixed(1)}KB` : 'FAIL';
-    console.log(`  │  ${directResult.success ? '✅' : '❌'} ${(directResult.durationMs / 1000).toFixed(1)}s | ${directResult.tokensUsed.toLocaleString()} tok | ${directOut} | ${directResult.toolCalls} tools${directResult.error ? ` | ${directResult.error.slice(0, 60)}` : ''}`);
+    const directOut = directResult.success
+      ? `${(directResult.outputSize / 1024).toFixed(1)}KB`
+      : 'FAIL';
+    console.log(
+      `  │  ${directResult.success ? '✅' : '❌'} ${(directResult.durationMs / 1000).toFixed(1)}s | ${directResult.tokensUsed.toLocaleString()} tok | ${directOut} | ${directResult.toolCalls} tools${directResult.error ? ` | ${directResult.error.slice(0, 60)}` : ''}`,
+    );
 
     // Save direct output for comparison
     let directOutput = '';
-    try { directOutput = fs.readFileSync(task.outputFile, 'utf-8'); } catch {}
+    try {
+      directOutput = fs.readFileSync(task.outputFile, 'utf-8');
+    } catch {}
 
     // Clean up
-    try { fs.unlinkSync(task.outputFile); } catch {}
+    try {
+      fs.unlinkSync(task.outputFile);
+    } catch {}
 
     // Pause to avoid rate limiting
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise((r) => setTimeout(r, 5000));
 
     // Run Commander
     console.log(`  ├─ Running Commander...`);
     const cmdResult = await runCommander(task);
     allResults.push(cmdResult);
     const cmdOut = cmdResult.success ? `${(cmdResult.outputSize / 1024).toFixed(1)}KB` : 'FAIL';
-    console.log(`  │  ${cmdResult.success ? '✅' : '❌'} ${(cmdResult.durationMs / 1000).toFixed(1)}s | ${cmdResult.tokensUsed.toLocaleString()} tok | ${cmdOut}${cmdResult.error ? ` | ${cmdResult.error.slice(0, 60)}` : ''}`);
+    console.log(
+      `  │  ${cmdResult.success ? '✅' : '❌'} ${(cmdResult.durationMs / 1000).toFixed(1)}s | ${cmdResult.tokensUsed.toLocaleString()} tok | ${cmdOut}${cmdResult.error ? ` | ${cmdResult.error.slice(0, 60)}` : ''}`,
+    );
 
     // Save outputs for quality comparison
     let cmdOutput = '';
-    try { cmdOutput = fs.readFileSync(task.outputFile, 'utf-8'); } catch {}
+    try {
+      cmdOutput = fs.readFileSync(task.outputFile, 'utf-8');
+    } catch {}
 
     // Write comparison
     const comparison = {
@@ -424,18 +458,21 @@ async function main() {
         outputPreview: cmdOutput.slice(0, 500),
       },
     };
-    fs.writeFileSync(path.join(OUTPUT_DIR, `${task.name}.json`), JSON.stringify(comparison, null, 2));
+    fs.writeFileSync(
+      path.join(OUTPUT_DIR, `${task.name}.json`),
+      JSON.stringify(comparison, null, 2),
+    );
 
     // Pause between tasks
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise((r) => setTimeout(r, 5000));
   }
 
   // ── Summary ──────────────────────────────────────────────────────────────
-  const directResults = allResults.filter(r => r.system === 'direct-llm');
-  const cmdResults = allResults.filter(r => r.system === 'commander');
+  const directResults = allResults.filter((r) => r.system === 'direct-llm');
+  const cmdResults = allResults.filter((r) => r.system === 'commander');
 
-  const directSuccess = directResults.filter(r => r.success).length;
-  const cmdSuccess = cmdResults.filter(r => r.success).length;
+  const directSuccess = directResults.filter((r) => r.success).length;
+  const cmdSuccess = cmdResults.filter((r) => r.success).length;
   const directTokens = directResults.reduce((s, r) => s + r.tokensUsed, 0);
   const cmdTokens = cmdResults.reduce((s, r) => s + r.tokensUsed, 0);
   const directTime = directResults.reduce((s, r) => s + r.durationMs, 0);
@@ -464,11 +501,14 @@ async function main() {
       totalOutputBytes: cmdOutput,
     },
     overhead: {
-      tokenMultiplier: cmdTokens > 0 && directTokens > 0 ? (cmdTokens / directTokens).toFixed(2) + 'x' : 'N/A',
-      timeMultiplier: cmdTime > 0 && directTime > 0 ? (cmdTime / directTime).toFixed(2) + 'x' : 'N/A',
-      outputRatio: cmdOutput > 0 && directOutput > 0 ? (cmdOutput / directOutput).toFixed(2) + 'x' : 'N/A',
+      tokenMultiplier:
+        cmdTokens > 0 && directTokens > 0 ? (cmdTokens / directTokens).toFixed(2) + 'x' : 'N/A',
+      timeMultiplier:
+        cmdTime > 0 && directTime > 0 ? (cmdTime / directTime).toFixed(2) + 'x' : 'N/A',
+      outputRatio:
+        cmdOutput > 0 && directOutput > 0 ? (cmdOutput / directOutput).toFixed(2) + 'x' : 'N/A',
     },
-    perTask: allResults.map(r => ({
+    perTask: allResults.map((r) => ({
       system: r.system,
       task: r.taskName,
       category: r.category,
@@ -481,7 +521,10 @@ async function main() {
     })),
   };
 
-  fs.writeFileSync(path.join(OUTPUT_DIR, 'comparison-summary.json'), JSON.stringify(summary, null, 2));
+  fs.writeFileSync(
+    path.join(OUTPUT_DIR, 'comparison-summary.json'),
+    JSON.stringify(summary, null, 2),
+  );
 
   console.log(`\n${'═'.repeat(60)}`);
   console.log('COMPARISON RESULTS');
@@ -489,12 +532,22 @@ async function main() {
   console.log('');
   console.log('                        Direct LLM      Commander');
   console.log('                        ───────────      ─────────');
-  console.log(`  Success Rate:         ${(summary.directLLM.successRate).padEnd(16)} ${summary.commander.successRate}`);
-  console.log(`  Total Tokens:         ${(summary.directLLM.totalTokens.toLocaleString()).padEnd(16)} ${summary.commander.totalTokens.toLocaleString()}`);
-  console.log(`  Total Time:           ${(summary.directLLM.totalTimeSec + 's').padEnd(16)} ${summary.commander.totalTimeSec}s`);
-  console.log(`  Avg Time/Task:        ${(summary.directLLM.avgTimeSec + 's').padEnd(16)} ${summary.commander.avgTimeSec}s`);
-  console.log(`  Output Generated:     ${(summary.directLLM.totalOutputBytes + ' bytes').padEnd(16)} ${summary.commander.totalOutputBytes} bytes`);
-  console.log(`  Tool Calls:           ${(String(summary.directLLM.totalToolCalls)).padEnd(16)} N/A`);
+  console.log(
+    `  Success Rate:         ${summary.directLLM.successRate.padEnd(16)} ${summary.commander.successRate}`,
+  );
+  console.log(
+    `  Total Tokens:         ${summary.directLLM.totalTokens.toLocaleString().padEnd(16)} ${summary.commander.totalTokens.toLocaleString()}`,
+  );
+  console.log(
+    `  Total Time:           ${(summary.directLLM.totalTimeSec + 's').padEnd(16)} ${summary.commander.totalTimeSec}s`,
+  );
+  console.log(
+    `  Avg Time/Task:        ${(summary.directLLM.avgTimeSec + 's').padEnd(16)} ${summary.commander.avgTimeSec}s`,
+  );
+  console.log(
+    `  Output Generated:     ${(summary.directLLM.totalOutputBytes + ' bytes').padEnd(16)} ${summary.commander.totalOutputBytes} bytes`,
+  );
+  console.log(`  Tool Calls:           ${String(summary.directLLM.totalToolCalls).padEnd(16)} N/A`);
   console.log('');
   console.log('  Overhead (Commander vs Direct):');
   console.log(`    Token Multiplier:   ${summary.overhead.tokenMultiplier}`);
@@ -504,11 +557,15 @@ async function main() {
 
   console.log('Per-task comparison:');
   for (const task of TASKS) {
-    const direct = allResults.find(r => r.system === 'direct-llm' && r.taskName === task.name);
-    const cmd = allResults.find(r => r.system === 'commander' && r.taskName === task.name);
+    const direct = allResults.find((r) => r.system === 'direct-llm' && r.taskName === task.name);
+    const cmd = allResults.find((r) => r.system === 'commander' && r.taskName === task.name);
     console.log(`\n  ${task.name} [${task.category}]:`);
-    console.log(`    Direct LLM: ${direct?.success ? '✅' : '❌'} ${(direct?.durationMs ?? 0) / 1000}s | ${(direct?.tokensUsed ?? 0).toLocaleString()} tok | ${direct?.outputSize ?? 0} bytes | ${direct?.toolCalls ?? 0} tools`);
-    console.log(`    Commander:  ${cmd?.success ? '✅' : '❌'} ${(cmd?.durationMs ?? 0) / 1000}s | ${(cmd?.tokensUsed ?? 0).toLocaleString()} tok | ${cmd?.outputSize ?? 0} bytes`);
+    console.log(
+      `    Direct LLM: ${direct?.success ? '✅' : '❌'} ${(direct?.durationMs ?? 0) / 1000}s | ${(direct?.tokensUsed ?? 0).toLocaleString()} tok | ${direct?.outputSize ?? 0} bytes | ${direct?.toolCalls ?? 0} tools`,
+    );
+    console.log(
+      `    Commander:  ${cmd?.success ? '✅' : '❌'} ${(cmd?.durationMs ?? 0) / 1000}s | ${(cmd?.tokensUsed ?? 0).toLocaleString()} tok | ${cmd?.outputSize ?? 0} bytes`,
+    );
   }
 
   console.log(`\n${'═'.repeat(60)}`);
@@ -516,7 +573,7 @@ async function main() {
   console.log(`${'═'.repeat(60)}`);
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('FATAL:', err);
   process.exit(1);
 });

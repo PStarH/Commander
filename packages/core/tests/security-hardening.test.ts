@@ -43,12 +43,7 @@ describe('SSH workdir command injection', () => {
       return /^[a-zA-Z0-9/_. ~@:-]+$/.test(p) && !p.includes('..');
     };
 
-    const validPaths = [
-      '/home/user/project',
-      '/tmp/workspace',
-      '/opt/app/src',
-      os.homedir(),
-    ];
+    const validPaths = ['/home/user/project', '/tmp/workspace', '/opt/app/src', os.homedir()];
 
     for (const wd of validPaths) {
       assert.strictEqual(isValidShellPath(wd), true, `Should allow: ${wd}`);
@@ -140,13 +135,7 @@ describe('Shell metacharacter detection', () => {
   it('allows safe commands', () => {
     const SHELL_UNSAFE_RE = /[;&|`$(){}[\]!#~<>*\n\t'"\\\x00-\x1f\x7f-\x9f]/;
 
-    const safe = [
-      'ls -la',
-      'cat file.txt',
-      'npm install',
-      'git status',
-      'node script.js',
-    ];
+    const safe = ['ls -la', 'cat file.txt', 'npm install', 'git status', 'node script.js'];
 
     for (const cmd of safe) {
       // These should not trigger (though some might due to spaces, which is fine)
@@ -164,8 +153,11 @@ describe('ExecPolicy fail-safe defaults', () => {
 
     // Unknown commands should require review, not be silently allowed
     const result = policy.evaluate('some-unknown-tool-xyz --arg value');
-    assert.strictEqual(result.decision, 'prompt',
-      'Unknown commands should default to prompt for safety');
+    assert.strictEqual(
+      result.decision,
+      'prompt',
+      'Unknown commands should default to prompt for safety',
+    );
   });
 
   it('still allows known safe commands', () => {
@@ -211,14 +203,22 @@ describe('Full-access profile hardening', () => {
     const profile = manager.getProfile('full-access');
 
     // Should protect SSH keys, cloud credentials, Docker socket
-    assert.ok(profile.filesystem.protectedPaths.some(p => p.includes('.ssh')),
-      'Should protect .ssh directory');
-    assert.ok(profile.filesystem.protectedPaths.some(p => p.includes('.gnupg')),
-      'Should protect .gnupg directory');
-    assert.ok(profile.filesystem.protectedPaths.some(p => p.includes('docker.sock')),
-      'Should protect Docker socket');
-    assert.ok(profile.filesystem.protectedPaths.some(p => p.includes('.aws')),
-      'Should protect AWS credentials');
+    assert.ok(
+      profile.filesystem.protectedPaths.some((p) => p.includes('.ssh')),
+      'Should protect .ssh directory',
+    );
+    assert.ok(
+      profile.filesystem.protectedPaths.some((p) => p.includes('.gnupg')),
+      'Should protect .gnupg directory',
+    );
+    assert.ok(
+      profile.filesystem.protectedPaths.some((p) => p.includes('docker.sock')),
+      'Should protect Docker socket',
+    );
+    assert.ok(
+      profile.filesystem.protectedPaths.some((p) => p.includes('.aws')),
+      'Should protect AWS credentials',
+    );
   });
 });
 
@@ -261,13 +261,32 @@ describe('LocalBackend workdir validation', () => {
 // ============================================================================
 describe('Docker environment credential filtering', () => {
   it('blocks AWS credentials from Docker env', () => {
-    const SECRET_PATTERNS = ['KEY', 'SECRET', 'TOKEN', 'PASSWORD', 'CREDENTIAL', 'AUTH', 'PRIVATE', 'SIGNATURE'];
-    const BLOCKED_PREFIXES = ['DOCKER_', 'SSH_', 'AWS_', 'GCP_', 'AZURE_', 'GCLOUD_', 'KUBE_', 'NPM_', 'NODE_'];
+    const SECRET_PATTERNS = [
+      'KEY',
+      'SECRET',
+      'TOKEN',
+      'PASSWORD',
+      'CREDENTIAL',
+      'AUTH',
+      'PRIVATE',
+      'SIGNATURE',
+    ];
+    const BLOCKED_PREFIXES = [
+      'DOCKER_',
+      'SSH_',
+      'AWS_',
+      'GCP_',
+      'AZURE_',
+      'GCLOUD_',
+      'KUBE_',
+      'NPM_',
+      'NODE_',
+    ];
 
     const shouldBlock = (key: string): boolean => {
       const upper = key.toUpperCase();
-      if (BLOCKED_PREFIXES.some(p => upper.startsWith(p))) return true;
-      if (SECRET_PATTERNS.some(p => upper.includes(p))) return true;
+      if (BLOCKED_PREFIXES.some((p) => upper.startsWith(p))) return true;
+      if (SECRET_PATTERNS.some((p) => upper.includes(p))) return true;
       return false;
     };
 
@@ -290,13 +309,32 @@ describe('Docker environment credential filtering', () => {
   });
 
   it('allows safe environment variables', () => {
-    const SECRET_PATTERNS = ['KEY', 'SECRET', 'TOKEN', 'PASSWORD', 'CREDENTIAL', 'AUTH', 'PRIVATE', 'SIGNATURE'];
-    const BLOCKED_PREFIXES = ['DOCKER_', 'SSH_', 'AWS_', 'GCP_', 'AZURE_', 'GCLOUD_', 'KUBE_', 'NPM_', 'NODE_'];
+    const SECRET_PATTERNS = [
+      'KEY',
+      'SECRET',
+      'TOKEN',
+      'PASSWORD',
+      'CREDENTIAL',
+      'AUTH',
+      'PRIVATE',
+      'SIGNATURE',
+    ];
+    const BLOCKED_PREFIXES = [
+      'DOCKER_',
+      'SSH_',
+      'AWS_',
+      'GCP_',
+      'AZURE_',
+      'GCLOUD_',
+      'KUBE_',
+      'NPM_',
+      'NODE_',
+    ];
 
     const shouldBlock = (key: string): boolean => {
       const upper = key.toUpperCase();
-      if (BLOCKED_PREFIXES.some(p => upper.startsWith(p))) return true;
-      if (SECRET_PATTERNS.some(p => upper.includes(p))) return true;
+      if (BLOCKED_PREFIXES.some((p) => upper.startsWith(p))) return true;
+      if (SECRET_PATTERNS.some((p) => upper.includes(p))) return true;
       return false;
     };
 
@@ -366,7 +404,7 @@ describe('Prompt injection detection', () => {
     ];
 
     for (const injection of injections) {
-      const detected = INJECTION_PATTERNS.some(p => p.test(injection));
+      const detected = INJECTION_PATTERNS.some((p) => p.test(injection));
       assert.strictEqual(detected, true, `Should detect injection: ${injection}`);
     }
   });

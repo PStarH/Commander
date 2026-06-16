@@ -5,11 +5,21 @@ import { PolicyEngine } from '../engine';
 import { DecisionCache } from '../cache';
 import { parsePolicyPack } from '../loader';
 import { canonicalJson } from '../engine';
-import { DEFAULT_CODING_PACK, READ_ONLY_PACK, DESTRUCTIVE_OPS_PACK, LEGACY_EXEC_PACK } from '../packs/defaultCoding';
+import {
+  DEFAULT_CODING_PACK,
+  READ_ONLY_PACK,
+  DESTRUCTIVE_OPS_PACK,
+  LEGACY_EXEC_PACK,
+} from '../packs/defaultCoding';
 import { getSecurityAuditLogger } from '../../../security/securityAuditLogger';
 
 export interface PolicyHookOptions extends PolicyEngineOptions {
-  pack?: 'default' | 'readonly' | 'destructive' | 'legacyExec' | { source: string; name: string; version: number };
+  pack?:
+    | 'default'
+    | 'readonly'
+    | 'destructive'
+    | 'legacyExec'
+    | { source: string; name: string; version: number };
   enableAudit?: boolean;
 }
 
@@ -29,16 +39,30 @@ export class PolicyHook {
     if (typeof packChoice === 'string') {
       switch (packChoice) {
         case 'readonly':
-          source = READ_ONLY_PACK; name = 'readonly'; version = 1; break;
+          source = READ_ONLY_PACK;
+          name = 'readonly';
+          version = 1;
+          break;
         case 'destructive':
-          source = DESTRUCTIVE_OPS_PACK; name = 'destructive'; version = 1; break;
+          source = DESTRUCTIVE_OPS_PACK;
+          name = 'destructive';
+          version = 1;
+          break;
         case 'legacyExec':
-          source = LEGACY_EXEC_PACK; name = 'legacyExec'; version = 1; break;
+          source = LEGACY_EXEC_PACK;
+          name = 'legacyExec';
+          version = 1;
+          break;
         default:
-          source = DEFAULT_CODING_PACK; name = 'defaultCoding'; version = 1; break;
+          source = DEFAULT_CODING_PACK;
+          name = 'defaultCoding';
+          version = 1;
+          break;
       }
     } else {
-      source = packChoice.source; name = packChoice.name; version = packChoice.version;
+      source = packChoice.source;
+      name = packChoice.name;
+      version = packChoice.version;
     }
     const parsed = parsePolicyPack(source, name, version);
     if (parsed.errors.length > 0) {
@@ -90,8 +114,12 @@ export class PolicyHook {
     };
   }
 
-  getPackName(): string { return this.packName; }
-  getPackVersion(): number { return this.packVersion; }
+  getPackName(): string {
+    return this.packName;
+  }
+  getPackVersion(): number {
+    return this.packVersion;
+  }
 
   private cacheKey(input: PolicyInput): string {
     const obj = {
@@ -158,7 +186,16 @@ export interface PolicyInputForSchedulerArgs {
     destructive: boolean;
     isReadOnly: boolean;
     isIdempotent: boolean;
-    category: 'shell' | 'network' | 'file_write' | 'file_read' | 'destructive' | 'mcp' | 'compute' | 'api' | 'unknown';
+    category:
+      | 'shell'
+      | 'network'
+      | 'file_write'
+      | 'file_read'
+      | 'destructive'
+      | 'mcp'
+      | 'compute'
+      | 'api'
+      | 'unknown';
   };
   args?: Record<string, unknown>;
   stepNumber?: number;
@@ -186,7 +223,11 @@ export function buildPolicyInput(args: PolicyInputForSchedulerArgs): PolicyInput
         toolName: a.toolName,
         externalSystem: a.externalSystem,
         destructive: a.tags.includes('destructive'),
-        riskLevel: (a.tags.includes('high') ? 'high' : a.tags.includes('low') ? 'low' : 'medium') as 'low' | 'medium' | 'high',
+        riskLevel: (a.tags.includes('high')
+          ? 'high'
+          : a.tags.includes('low')
+            ? 'low'
+            : 'medium') as 'low' | 'medium' | 'high',
         idempotencyKey: a.idempotencyKey,
         executedAt: a.executedAt ? Date.parse(a.executedAt) : undefined,
         result: a.result,

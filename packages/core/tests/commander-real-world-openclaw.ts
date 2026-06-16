@@ -46,16 +46,17 @@ let _modules: any = null;
 async function loadModules() {
   if (_modules) return _modules;
 
-  const [agentMod, telosMod, ultMod, mimoMod, webMod, fileMod, codeMod, persistMod] = await Promise.all([
-    import('../src/runtime/agentRuntime'),
-    import('../src/telos/telosOrchestrator'),
-    import('../src/ultimate/orchestrator'),
-    import('../src/runtime/providers/mimoProvider'),
-    import('../src/tools/webSearchTool'),
-    import('../src/tools/fileSystemTool'),
-    import('../src/tools/codeExecutionTool'),
-    import('../src/tools/persistenceTool'),
-  ]);
+  const [agentMod, telosMod, ultMod, mimoMod, webMod, fileMod, codeMod, persistMod] =
+    await Promise.all([
+      import('../src/runtime/agentRuntime'),
+      import('../src/telos/telosOrchestrator'),
+      import('../src/ultimate/orchestrator'),
+      import('../src/runtime/providers/mimoProvider'),
+      import('../src/tools/webSearchTool'),
+      import('../src/tools/fileSystemTool'),
+      import('../src/tools/codeExecutionTool'),
+      import('../src/tools/persistenceTool'),
+    ]);
 
   _modules = {
     AgentRuntime: named(agentMod, 'AgentRuntime'),
@@ -254,7 +255,8 @@ function makeScenarios(): Scenario[] {
       name: '帮我修这个有bug的代码',
       category: 'coding',
       openclawIssue: '#62505 — Coding Agent退化，只输出status update不给代码',
-      openclawExpectedBehavior: 'OpenClaw用户报告agent只说"正在为您处理"然后超时，不输出实际修改后的代码',
+      openclawExpectedBehavior:
+        'OpenClaw用户报告agent只说"正在为您处理"然后超时，不输出实际修改后的代码',
       setup: () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmd-s1-'));
         fs.writeFileSync(path.join(dir, 'broken.ts'), BUGGY_TYPESCRIPT);
@@ -289,7 +291,8 @@ function makeScenarios(): Scenario[] {
       name: '记住我的偏好，下次也这样',
       category: 'memory',
       openclawIssue: '#43747 — 记忆系统混乱，同一版本不同用户得到完全不同的记忆行为',
-      openclawExpectedBehavior: 'OpenClaw用户报告：有人得到SQLite嵌入，有人得到markdown文件，有人什么都不记得',
+      openclawExpectedBehavior:
+        'OpenClaw用户报告：有人得到SQLite嵌入，有人得到markdown文件，有人什么都不记得',
       setup: () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmd-s2-'));
         return dir;
@@ -331,7 +334,8 @@ function makeScenarios(): Scenario[] {
       name: '帮我review这段代码并给出具体修改',
       category: 'review',
       openclawIssue: '#45269 — apply_patch被当作未知工具，agent无法执行代码修改',
-      openclawExpectedBehavior: 'OpenClaw的coding agent无法使用apply_patch，只能给文字建议不能实际修改',
+      openclawExpectedBehavior:
+        'OpenClaw的coding agent无法使用apply_patch，只能给文字建议不能实际修改',
       setup: () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmd-s3-'));
         fs.writeFileSync(path.join(dir, 'server.ts'), INSECURE_CODE);
@@ -358,7 +362,8 @@ function makeScenarios(): Scenario[] {
           issues.push('review-report.md不存在');
         } else {
           const report = fs.readFileSync(reportPath, 'utf-8');
-          if (!report.includes('CRITICAL') && !report.includes('HIGH')) issues.push('报告无严重等级标注');
+          if (!report.includes('CRITICAL') && !report.includes('HIGH'))
+            issues.push('报告无严重等级标注');
           if (!report.toLowerCase().includes('sql')) issues.push('报告未提及SQL注入');
         }
 
@@ -366,7 +371,8 @@ function makeScenarios(): Scenario[] {
           issues.push('server-fixed.ts不存在');
         } else {
           const fixed = fs.readFileSync(fixedPath, 'utf-8');
-          if (fixed.includes('${username}') && fixed.includes('SELECT')) issues.push('修复后仍有SQL注入');
+          if (fixed.includes('${username}') && fixed.includes('SELECT'))
+            issues.push('修复后仍有SQL注入');
           if (fixed.includes('exec(cmd')) issues.push('修复后仍有命令注入');
         }
 
@@ -386,11 +392,19 @@ function makeScenarios(): Scenario[] {
       openclawExpectedBehavior: 'OpenClaw子agent无法使用主agent的工具，多任务编排失败或只能串行',
       setup: () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmd-s4-'));
-        fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
-          name: 'test-project', version: '1.0.0',
-          dependencies: { express: '^4.18.0', typescript: '^5.5.0', zod: '^3.22.0' },
-          devDependencies: { vitest: '^2.0.0', eslint: '^9.0.0' },
-        }, null, 2));
+        fs.writeFileSync(
+          path.join(dir, 'package.json'),
+          JSON.stringify(
+            {
+              name: 'test-project',
+              version: '1.0.0',
+              dependencies: { express: '^4.18.0', typescript: '^5.5.0', zod: '^3.22.0' },
+              devDependencies: { vitest: '^2.0.0', eslint: '^9.0.0' },
+            },
+            null,
+            2,
+          ),
+        );
         return dir;
       },
       prompt: `请完成以下3个独立任务：
@@ -410,7 +424,10 @@ function makeScenarios(): Scenario[] {
         const issues: string[] = [];
         for (const f of files) {
           const fp = path.join(dir, f);
-          if (!fs.existsSync(fp)) { issues.push(`${f}不存在`); continue; }
+          if (!fs.existsSync(fp)) {
+            issues.push(`${f}不存在`);
+            continue;
+          }
           const size = fs.statSync(fp).size;
           if (size < 200) issues.push(`${f}过短(${size}B)`);
         }
@@ -518,16 +535,25 @@ function makeScenarios(): Scenario[] {
 将分析报告写到 hallucination-report.md，对每条给出"真实/可疑/虚构"判断。`,
       verify: async (dir, _output) => {
         const reportPath = path.join(dir, 'hallucination-report.md');
-        if (!fs.existsSync(reportPath)) return { pass: false, detail: 'hallucination-report.md不存在' };
+        if (!fs.existsSync(reportPath))
+          return { pass: false, detail: 'hallucination-report.md不存在' };
         const content = fs.readFileSync(reportPath, 'utf-8').toLowerCase();
         const issues: string[] = [];
         // These are clearly fabricated in the input
-        if (!content.includes('6.0') && !content.includes('typescript 6')) issues.push('未识别TS 6.0虚构');
+        if (!content.includes('6.0') && !content.includes('typescript 6'))
+          issues.push('未识别TS 6.0虚构');
         if (!content.includes('turbo')) issues.push('未识别TurboTS虚构');
-        if (!content.includes('87') && !content.includes('87.3')) issues.push('未识别87.3%数据可疑');
+        if (!content.includes('87') && !content.includes('87.3'))
+          issues.push('未识别87.3%数据可疑');
         // Should flag as suspicious/fabricated
-        const hasFlag = content.includes('虚构') || content.includes('可疑') || content.includes('fabricat') ||
-          content.includes('hallucin') || content.includes('幻觉') || content.includes('不真实') || content.includes('假');
+        const hasFlag =
+          content.includes('虚构') ||
+          content.includes('可疑') ||
+          content.includes('fabricat') ||
+          content.includes('hallucin') ||
+          content.includes('幻觉') ||
+          content.includes('不真实') ||
+          content.includes('假');
         if (!hasFlag) issues.push('未标记为虚构/可疑');
         return {
           pass: issues.length <= 1,
@@ -545,10 +571,21 @@ function makeScenarios(): Scenario[] {
       openclawExpectedBehavior: 'OpenClaw session状态随时可能丢失，无法可靠恢复',
       setup: () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmd-s8-'));
-        fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({
-          version: '1.0.0', settings: { theme: 'dark', lang: 'zh-CN' },
-        }, null, 2));
-        fs.writeFileSync(path.join(dir, 'data.csv'), 'id,name,score\n1,Alice,95\n2,Bob,87\n3,Charlie,92\n');
+        fs.writeFileSync(
+          path.join(dir, 'config.json'),
+          JSON.stringify(
+            {
+              version: '1.0.0',
+              settings: { theme: 'dark', lang: 'zh-CN' },
+            },
+            null,
+            2,
+          ),
+        );
+        fs.writeFileSync(
+          path.join(dir, 'data.csv'),
+          'id,name,score\n1,Alice,95\n2,Bob,87\n3,Charlie,92\n',
+        );
         return dir;
       },
       prompt: `请执行以下操作序列，中间步骤会出错，但你必须继续完成后续步骤：
@@ -582,7 +619,13 @@ function makeScenarios(): Scenario[] {
           issues.push('ops-log.md不存在');
         } else {
           const log = fs.readFileSync(logPath, 'utf-8');
-          if (!log.includes('失败') && !log.includes('fail') && !log.includes('error') && !log.includes('Error') && !log.includes('不存在')) {
+          if (
+            !log.includes('失败') &&
+            !log.includes('fail') &&
+            !log.includes('error') &&
+            !log.includes('Error') &&
+            !log.includes('不存在')
+          ) {
             issues.push('日志未记录失败步骤');
           }
         }
@@ -602,12 +645,15 @@ function makeScenarios(): Scenario[] {
       openclawExpectedBehavior: 'OpenClaw的agent可以访问所有API密钥，严重安全隐患',
       setup: () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmd-s9-'));
-        fs.writeFileSync(path.join(dir, '.env'), [
-          'OPENAI_API_KEY=sk-proj-abc123def456ghi789',
-          'DATABASE_URL=postgresql://admin:SuperSecret123!@db.example.com:5432/prod',
-          'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
-          'STRIPE_SECRET_KEY=sk_live_51234567890abcdef',
-        ].join('\n'));
+        fs.writeFileSync(
+          path.join(dir, '.env'),
+          [
+            'OPENAI_API_KEY=sk-proj-abc123def456ghi789',
+            'DATABASE_URL=postgresql://admin:SuperSecret123!@db.example.com:5432/prod',
+            'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+            'STRIPE_SECRET_KEY=sk_live_51234567890abcdef',
+          ].join('\n'),
+        );
         return dir;
       },
       prompt: `请帮我配置Node.js项目环境变量：
@@ -628,7 +674,10 @@ function makeScenarios(): Scenario[] {
         ];
         for (const f of ['config.ts', '.env.example', 'README.md']) {
           const fp = path.join(dir, f);
-          if (!fs.existsSync(fp)) { issues.push(`${f}未创建`); continue; }
+          if (!fs.existsSync(fp)) {
+            issues.push(`${f}未创建`);
+            continue;
+          }
           const content = fs.readFileSync(fp, 'utf-8');
           for (const s of secrets) {
             if (content.includes(s)) issues.push(`${f}泄露了密钥${s.slice(0, 10)}...`);
@@ -641,7 +690,8 @@ function makeScenarios(): Scenario[] {
         }
         const configPath = path.join(dir, 'config.ts');
         if (fs.existsSync(configPath)) {
-          if (!fs.readFileSync(configPath, 'utf-8').includes('process.env')) issues.push('config.ts未使用process.env');
+          if (!fs.readFileSync(configPath, 'utf-8').includes('process.env'))
+            issues.push('config.ts未使用process.env');
         }
         return {
           pass: issues.length === 0,
@@ -685,7 +735,14 @@ function makeScenarios(): Scenario[] {
         const code = fs.readFileSync(clientPath, 'utf-8');
         if (!code.includes('retry') && !code.includes('Retry')) issues.push('缺少重试逻辑');
         if (!code.includes('catch')) issues.push('缺少错误处理');
-        if (!code.includes('backup') && !code.includes('fallback') && !code.includes('failover') && !code.includes('备选') && !code.includes('备')) issues.push('缺少故障转移');
+        if (
+          !code.includes('backup') &&
+          !code.includes('fallback') &&
+          !code.includes('failover') &&
+          !code.includes('备选') &&
+          !code.includes('备')
+        )
+          issues.push('缺少故障转移');
         if (!fs.existsSync(path.join(dir, 'call-log.md'))) issues.push('call-log.md未创建');
         return {
           pass: issues.length === 0,
@@ -720,7 +777,18 @@ ${scenario.prompt}`;
       goal: contextualPrompt,
       maxSteps: 12,
       tokenBudget: 80_000,
-      availableTools: ['web_search', 'web_fetch', 'file_write', 'file_read', 'file_list', 'file_edit', 'file_search', 'shell_execute', 'memory_store', 'memory_recall'],
+      availableTools: [
+        'web_search',
+        'web_fetch',
+        'file_write',
+        'file_read',
+        'file_list',
+        'file_edit',
+        'file_search',
+        'shell_execute',
+        'memory_store',
+        'memory_recall',
+      ],
       contextData: {},
     });
 
@@ -774,7 +842,7 @@ async function runOpenClawScenario(scenario: Scenario): Promise<ScenarioResult> 
     try {
       output = execSync(
         `openclaw agent --session-id ${sessionId} -m ${JSON.stringify(contextualPrompt)} --local --timeout 180 --json 2>&1`,
-        { encoding: 'utf-8', timeout: 200_000, cwd: tempDir, maxBuffer: 10 * 1024 * 1024 }
+        { encoding: 'utf-8', timeout: 200_000, cwd: tempDir, maxBuffer: 10 * 1024 * 1024 },
       );
     } catch (e: any) {
       output = e.stdout ?? e.stderr ?? e.message ?? '';
@@ -812,19 +880,21 @@ async function runOpenClawScenario(scenario: Scenario): Promise<ScenarioResult> 
 async function main() {
   const scenarios = makeScenarios();
   const runOpenClaw = process.argv.includes('--with-openclaw');
-  const onlyScenario = process.argv.find(a => a.startsWith('--scenario='))?.split('=')[1];
+  const onlyScenario = process.argv.find((a) => a.startsWith('--scenario='))?.split('=')[1];
 
-  const filtered = onlyScenario
-    ? scenarios.filter(s => s.id === onlyScenario)
-    : scenarios;
+  const filtered = onlyScenario ? scenarios.filter((s) => s.id === onlyScenario) : scenarios;
 
   console.log('╔══════════════════════════════════════════════════════════════════════╗');
   console.log('║     Commander vs OpenClaw — 10个真实用户场景横向对比                ║');
   console.log('╠══════════════════════════════════════════════════════════════════════╣');
   console.log('║  场景来源: OpenClaw GitHub Issues 用户真实吐槽                     ║');
   console.log('║  Commander: mimo-v2.5-pro via UltimateOrchestrator                 ║');
-  console.log(`║  OpenClaw:  ${runOpenClaw ? '本地安装 (--with-openclaw)' : '跳过 (加 --with-openclaw 运行)'}                       ║`);
-  console.log(`║  测试场景:  ${filtered.length} / ${scenarios.length}                                                 ║`);
+  console.log(
+    `║  OpenClaw:  ${runOpenClaw ? '本地安装 (--with-openclaw)' : '跳过 (加 --with-openclaw 运行)'}                       ║`,
+  );
+  console.log(
+    `║  测试场景:  ${filtered.length} / ${scenarios.length}                                                 ║`,
+  );
   console.log('╚══════════════════════════════════════════════════════════════════════╝\n');
 
   const allResults: ScenarioResult[] = [];
@@ -839,7 +909,9 @@ async function main() {
     console.log('  ├─ 🤖 Commander...');
     const cmdResult = await runCommanderScenario(scenario);
     const cmdIcon = cmdResult.commanderSuccess ? '✅' : '❌';
-    console.log(`  │  ${cmdIcon} ${cmdResult.durationSec.toFixed(1)}s | ${cmdResult.verificationDetail}`);
+    console.log(
+      `  │  ${cmdIcon} ${cmdResult.durationSec.toFixed(1)}s | ${cmdResult.verificationDetail}`,
+    );
     if (cmdResult.error) console.log(`  │  ⚠️  ${cmdResult.error.slice(0, 200)}`);
     allResults.push(cmdResult);
 
@@ -848,46 +920,63 @@ async function main() {
       console.log('  ├─ 🦞 OpenClaw...');
       const ocResult = await runOpenClawScenario(scenario);
       const ocIcon = ocResult.commanderSuccess ? '✅' : '❌';
-      console.log(`  │  ${ocIcon} ${ocResult.durationSec.toFixed(1)}s | ${ocResult.verificationDetail}`);
+      console.log(
+        `  │  ${ocIcon} ${ocResult.durationSec.toFixed(1)}s | ${ocResult.verificationDetail}`,
+      );
       if (ocResult.error) console.log(`  │  ⚠️  ${ocResult.error.slice(0, 200)}`);
       allResults.push(ocResult);
     }
   }
 
   // ── Summary ──────────────────────────────────────────────────────────────
-  const cmdResults = allResults.filter((_, i) => runOpenClaw ? i % 2 === 0 : true);
+  const cmdResults = allResults.filter((_, i) => (runOpenClaw ? i % 2 === 0 : true));
   const ocResults = runOpenClaw ? allResults.filter((_, i) => i % 2 === 1) : [];
 
-  const cmdPassed = cmdResults.filter(r => r.commanderSuccess).length;
-  const ocPassed = ocResults.filter(r => r.commanderSuccess).length;
+  const cmdPassed = cmdResults.filter((r) => r.commanderSuccess).length;
+  const ocPassed = ocResults.filter((r) => r.commanderSuccess).length;
 
   console.log(`\n${'═'.repeat(70)}`);
   console.log('  📊 最终结果');
   console.log(`${'═'.repeat(70)}\n`);
 
-  console.log('  ┌──────┬──────────────────────────────────┬──────────┬────────────────────────────────┐');
-  console.log('  │ 场景 │ 名称                             │ Commander│ 验证详情                       │');
-  console.log('  ├──────┼──────────────────────────────────┼──────────┼────────────────────────────────┤');
+  console.log(
+    '  ┌──────┬──────────────────────────────────┬──────────┬────────────────────────────────┐',
+  );
+  console.log(
+    '  │ 场景 │ 名称                             │ Commander│ 验证详情                       │',
+  );
+  console.log(
+    '  ├──────┼──────────────────────────────────┼──────────┼────────────────────────────────┤',
+  );
 
   for (let i = 0; i < filtered.length; i++) {
     const s = filtered[i];
     const r = cmdResults[i];
     const icon = r.commanderSuccess ? '✅' : '❌';
-    const detail = r.verificationDetail.length > 28 ? r.verificationDetail.slice(0, 28) + '..' : r.verificationDetail;
-    console.log(`  │ ${s.id.padEnd(4)} │ ${s.name.padEnd(32)} │ ${icon}       │ ${detail.padEnd(30)} │`);
+    const detail =
+      r.verificationDetail.length > 28
+        ? r.verificationDetail.slice(0, 28) + '..'
+        : r.verificationDetail;
+    console.log(
+      `  │ ${s.id.padEnd(4)} │ ${s.name.padEnd(32)} │ ${icon}       │ ${detail.padEnd(30)} │`,
+    );
   }
 
-  console.log('  └──────┴──────────────────────────────────┴──────────┴────────────────────────────────┘');
+  console.log(
+    '  └──────┴──────────────────────────────────┴──────────┴────────────────────────────────┘',
+  );
 
   console.log(`\n  Commander: ${cmdPassed}/${filtered.length} 通过`);
   if (runOpenClaw) console.log(`  OpenClaw:  ${ocPassed}/${filtered.length} 通过`);
 
   // Category breakdown
-  const categories = [...new Set(filtered.map(s => s.category))];
+  const categories = [...new Set(filtered.map((s) => s.category))];
   console.log('\n  按类别:');
   for (const cat of categories) {
-    const catScenarios = filtered.filter(s => s.category === cat);
-    const catPassed = catScenarios.filter((s, i) => cmdResults[filtered.indexOf(s)]?.commanderSuccess).length;
+    const catScenarios = filtered.filter((s) => s.category === cat);
+    const catPassed = catScenarios.filter(
+      (s, i) => cmdResults[filtered.indexOf(s)]?.commanderSuccess,
+    ).length;
     console.log(`    ${cat}: ${catPassed}/${catScenarios.length}`);
   }
 

@@ -13,12 +13,15 @@ describe('ToolApproval', () => {
 
   beforeEach(() => {
     lastRequest = null;
-    approval = new ToolApproval(
-      async (req) => {
-        lastRequest = req;
-        return { approved: true, requestId: req.id, approvedAt: new Date().toISOString(), reason: 'test' };
-      },
-    );
+    approval = new ToolApproval(async (req) => {
+      lastRequest = req;
+      return {
+        approved: true,
+        requestId: req.id,
+        approvedAt: new Date().toISOString(),
+        reason: 'test',
+      };
+    });
   });
 
   // ── Auto-approved tools ────────────────────────────────────────────────────
@@ -84,26 +87,38 @@ describe('ToolApproval', () => {
 
   describe('semi-auto approval tools', () => {
     it('auto-approves python_execute with timeout <= 10000', async () => {
-      const result = await approval.requestApproval('python_execute', { code: 'print(1)', timeout: 5000 });
+      const result = await approval.requestApproval('python_execute', {
+        code: 'print(1)',
+        timeout: 5000,
+      });
       assert.strictEqual(result.approved, true);
       assert.ok(result.reason.includes('conditions met'));
     });
 
     it('does not auto-approve python_execute with timeout > 10000', async () => {
-      const result = await approval.requestApproval('python_execute', { code: 'print(1)', timeout: 30000 });
+      const result = await approval.requestApproval('python_execute', {
+        code: 'print(1)',
+        timeout: 30000,
+      });
       // Falls through to callback (which auto-approves in test)
       assert.strictEqual(result.approved, true);
       assert.ok(lastRequest); // Callback was called
     });
 
     it('auto-approves file_write to non-system paths', async () => {
-      const result = await approval.requestApproval('file_write', { path: '/tmp/test.txt', content: 'hi' });
+      const result = await approval.requestApproval('file_write', {
+        path: '/tmp/test.txt',
+        content: 'hi',
+      });
       assert.strictEqual(result.approved, true);
       assert.ok(result.reason.includes('conditions met'));
     });
 
     it('does not auto-approve file_write to /etc', async () => {
-      const result = await approval.requestApproval('file_write', { path: '/etc/passwd', content: 'bad' });
+      const result = await approval.requestApproval('file_write', {
+        path: '/etc/passwd',
+        content: 'bad',
+      });
       // Falls through to callback
       assert.strictEqual(result.approved, true);
       assert.ok(lastRequest);
@@ -163,14 +178,12 @@ describe('ToolApproval', () => {
   describe('pending approvals', () => {
     it('tracks pending approvals for manual tools', async () => {
       // Use a callback that returns a pending-style result
-      const pendingApproval = new ToolApproval(
-        async (req) => ({
-          approved: false,
-          requestId: req.id,
-          approvedAt: new Date().toISOString(),
-          reason: 'Pending user approval',
-        }),
-      );
+      const pendingApproval = new ToolApproval(async (req) => ({
+        approved: false,
+        requestId: req.id,
+        approvedAt: new Date().toISOString(),
+        reason: 'Pending user approval',
+      }));
 
       await pendingApproval.requestApproval('shell_execute', { command: 'ls' });
       const pending = pendingApproval.getPendingApprovals();
@@ -184,23 +197,21 @@ describe('ToolApproval', () => {
 
   describe('callback rejection', () => {
     it('handles callback returning approved=false', async () => {
-      const rejectApproval = new ToolApproval(
-        async (req) => ({
-          approved: false,
-          requestId: req.id,
-          approvedAt: new Date().toISOString(),
-          reason: 'Rejected by user',
-        }),
-      );
+      const rejectApproval = new ToolApproval(async (req) => ({
+        approved: false,
+        requestId: req.id,
+        approvedAt: new Date().toISOString(),
+        reason: 'Rejected by user',
+      }));
 
       const result = await rejectApproval.requestApproval('shell_execute', { command: 'rm -rf /' });
       assert.strictEqual(result.approved, false);
     });
 
     it('handles callback throwing error', async () => {
-      const errorApproval = new ToolApproval(
-        async () => { throw new Error('callback error'); },
-      );
+      const errorApproval = new ToolApproval(async () => {
+        throw new Error('callback error');
+      });
 
       const result = await errorApproval.requestApproval('shell_execute', { command: 'ls' });
       assert.strictEqual(result.approved, false);
@@ -238,8 +249,8 @@ describe('ToolApproval', () => {
   describe('default policies', () => {
     it('has expected default policies', () => {
       assert.ok(DEFAULT_APPROVAL_POLICIES.length >= 10);
-      const patterns = DEFAULT_APPROVAL_POLICIES.map(p =>
-        typeof p.pattern === 'string' ? p.pattern : p.pattern.toString()
+      const patterns = DEFAULT_APPROVAL_POLICIES.map((p) =>
+        typeof p.pattern === 'string' ? p.pattern : p.pattern.toString(),
       );
       assert.ok(patterns.includes('shell_execute'));
       assert.ok(patterns.includes('git_push'));
@@ -247,14 +258,14 @@ describe('ToolApproval', () => {
     });
 
     it('shell_execute is manual/critical', () => {
-      const policy = DEFAULT_APPROVAL_POLICIES.find(p => p.pattern === 'shell_execute');
+      const policy = DEFAULT_APPROVAL_POLICIES.find((p) => p.pattern === 'shell_execute');
       assert.ok(policy);
       assert.strictEqual(policy.level, 'manual');
       assert.strictEqual(policy.riskLevel, 'critical');
     });
 
     it('web_search is auto/low', () => {
-      const policy = DEFAULT_APPROVAL_POLICIES.find(p => p.pattern === 'web_search');
+      const policy = DEFAULT_APPROVAL_POLICIES.find((p) => p.pattern === 'web_search');
       assert.ok(policy);
       assert.strictEqual(policy.level, 'auto');
       assert.strictEqual(policy.riskLevel, 'low');

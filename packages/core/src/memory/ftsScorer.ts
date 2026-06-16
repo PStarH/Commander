@@ -43,18 +43,111 @@ const DEFAULT_BM25_CONFIG: BM25Config = {
 // ============================================================================
 
 const STOP_WORDS = new Set([
-  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-  'should', 'may', 'might', 'shall', 'can', 'need', 'must',
-  'this', 'that', 'these', 'those', 'it', 'its', 'they', 'them', 'their',
-  'we', 'our', 'you', 'your', 'he', 'him', 'his', 'she', 'her',
-  'i', 'me', 'my', 'not', 'no', 'nor', 'and', 'but', 'or', 'if', 'then',
-  'for', 'of', 'in', 'on', 'at', 'to', 'by', 'with', 'from', 'as',
-  'into', 'through', 'during', 'before', 'after', 'above', 'below',
-  'between', 'out', 'off', 'over', 'under', 'again', 'further',
-  'about', 'up', 'down', 'here', 'there', 'when', 'where', 'why', 'how',
-  'all', 'each', 'every', 'both', 'few', 'more', 'most', 'other', 'some',
-  'such', 'only', 'own', 'same', 'so', 'than', 'too', 'very',
+  'the',
+  'a',
+  'an',
+  'is',
+  'are',
+  'was',
+  'were',
+  'be',
+  'been',
+  'being',
+  'have',
+  'has',
+  'had',
+  'do',
+  'does',
+  'did',
+  'will',
+  'would',
+  'could',
+  'should',
+  'may',
+  'might',
+  'shall',
+  'can',
+  'need',
+  'must',
+  'this',
+  'that',
+  'these',
+  'those',
+  'it',
+  'its',
+  'they',
+  'them',
+  'their',
+  'we',
+  'our',
+  'you',
+  'your',
+  'he',
+  'him',
+  'his',
+  'she',
+  'her',
+  'i',
+  'me',
+  'my',
+  'not',
+  'no',
+  'nor',
+  'and',
+  'but',
+  'or',
+  'if',
+  'then',
+  'for',
+  'of',
+  'in',
+  'on',
+  'at',
+  'to',
+  'by',
+  'with',
+  'from',
+  'as',
+  'into',
+  'through',
+  'during',
+  'before',
+  'after',
+  'above',
+  'below',
+  'between',
+  'out',
+  'off',
+  'over',
+  'under',
+  'again',
+  'further',
+  'about',
+  'up',
+  'down',
+  'here',
+  'there',
+  'when',
+  'where',
+  'why',
+  'how',
+  'all',
+  'each',
+  'every',
+  'both',
+  'few',
+  'more',
+  'most',
+  'other',
+  'some',
+  'such',
+  'only',
+  'own',
+  'same',
+  'so',
+  'than',
+  'too',
+  'very',
 ]);
 
 // ============================================================================
@@ -77,7 +170,10 @@ export function tokenizeForBM25(text: string, minLength: number = 2): string[] {
 
     // CJK characters (individual tokens)
     if (code >= 0x4e00 && code <= 0x9fff) {
-      if (current) { tokens.push(current); current = ''; }
+      if (current) {
+        tokens.push(current);
+        current = '';
+      }
       tokens.push(ch);
       continue;
     }
@@ -86,13 +182,16 @@ export function tokenizeForBM25(text: string, minLength: number = 2): string[] {
     if ((code >= 97 && code <= 122) || (code >= 48 && code <= 57) || ch === '-' || ch === '_') {
       current += ch;
     } else {
-      if (current) { tokens.push(current); current = ''; }
+      if (current) {
+        tokens.push(current);
+        current = '';
+      }
     }
   }
   if (current) tokens.push(current);
 
   // Filter by length and stop words (CJK characters are always kept regardless of length)
-  return tokens.filter(t => {
+  return tokens.filter((t) => {
     if (STOP_WORDS.has(t)) return false;
     // CJK characters (single-char tokens) are always kept
     if (t.length === 1 && t.charCodeAt(0) >= 0x4e00 && t.charCodeAt(0) <= 0x9fff) return true;
@@ -254,7 +353,8 @@ export class BM25Scorer {
       const termFreq = tf.get(term) ?? 0;
 
       // BM25 score for this term
-      const tfNorm = (termFreq * (k1 + 1)) / (termFreq + k1 * (1 - b + b * docLen / this.avgDocLength));
+      const tfNorm =
+        (termFreq * (k1 + 1)) / (termFreq + k1 * (1 - b + (b * docLen) / this.avgDocLength));
 
       score += idf * tfNorm;
 
@@ -262,7 +362,8 @@ export class BM25Scorer {
       if (doc.fieldTokens) {
         const titleFreq = fieldTf.get('title')?.get(term) ?? 0;
         if (titleFreq > 0) {
-          const titleTfNorm = (titleFreq * (k1 + 1)) / (titleFreq + k1 * (1 - b + b * docLen / this.avgDocLength));
+          const titleTfNorm =
+            (titleFreq * (k1 + 1)) / (titleFreq + k1 * (1 - b + (b * docLen) / this.avgDocLength));
           score += idf * titleTfNorm * 1.0; // Additional boost for title
         }
       }
@@ -320,9 +421,7 @@ export class BM25Scorer {
     scorer.avgDocLength = data.avgDocLength;
 
     for (const doc of data.documents) {
-      const fieldTokens = doc.fieldTokens
-        ? new Map(doc.fieldTokens)
-        : undefined;
+      const fieldTokens = doc.fieldTokens ? new Map(doc.fieldTokens) : undefined;
       scorer.documents.set(doc.id, {
         id: doc.id,
         tokens: doc.tokens,

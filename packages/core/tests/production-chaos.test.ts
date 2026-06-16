@@ -50,7 +50,12 @@ function makeCheckpointState(runId: string, step: number): CheckpointState {
 
 describe('Production Chaos — 1. Agent Runtime Concurrent Stress', () => {
   it('handles 50 rapid context compactions without corruption', () => {
-    const compactor = new ContextCompactor({ maxContextTokens: 10000, layer1Trigger: 0.5, layer2Trigger: 0.7, keepRecentTurns: 2 });
+    const compactor = new ContextCompactor({
+      maxContextTokens: 10000,
+      layer1Trigger: 0.5,
+      layer2Trigger: 0.7,
+      keepRecentTurns: 2,
+    });
     const results: { dropped: number; saved: number }[] = [];
 
     for (let i = 0; i < 50; i++) {
@@ -68,7 +73,11 @@ describe('Production Chaos — 1. Agent Runtime Concurrent Stress', () => {
   });
 
   it('compaction under rapid message insertion/removal', () => {
-    const compactor = new ContextCompactor({ maxContextTokens: 5000, layer1Trigger: 0.4, keepRecentTurns: 2 });
+    const compactor = new ContextCompactor({
+      maxContextTokens: 5000,
+      layer1Trigger: 0.4,
+      keepRecentTurns: 2,
+    });
     let msgs = makeMessages(50, 100);
 
     for (let i = 0; i < 20; i++) {
@@ -94,7 +103,9 @@ describe('Production Chaos — 2. State Checkpoint Crash Recovery', () => {
     checkpointer = new StateCheckpointer(tmpPath);
   });
 
-  after(() => { fs.rmSync(tmpPath, { recursive: true, force: true }); });
+  after(() => {
+    fs.rmSync(tmpPath, { recursive: true, force: true });
+  });
 
   it('survives 100 rapid checkpoint-write cycles', () => {
     for (let i = 0; i < 100; i++) {
@@ -120,13 +131,22 @@ describe('Production Chaos — 2. State Checkpoint Crash Recovery', () => {
 describe('Production Chaos — 3. Circuit Breaker Chaos', () => {
   it('rapid open/close cycling under random failures', () => {
     const cb = new CircuitBreaker(5, 100);
-    let success = 0, failure = 0, blocked = 0;
+    let success = 0,
+      failure = 0,
+      blocked = 0;
 
     for (let i = 0; i < 100; i++) {
       if (cb.isAvailable()) {
-        if (Math.random() < 0.3) { cb.onFailure(); failure++; }
-        else { cb.onSuccess(); success++; }
-      } else { blocked++; }
+        if (Math.random() < 0.3) {
+          cb.onFailure();
+          failure++;
+        } else {
+          cb.onSuccess();
+          success++;
+        }
+      } else {
+        blocked++;
+      }
     }
 
     console.log(`  100 iterations: success=${success}, failure=${failure}, blocked=${blocked}`);
@@ -137,14 +157,15 @@ describe('Production Chaos — 3. Circuit Breaker Chaos', () => {
     const cb = new CircuitBreaker(3, 50);
     for (let i = 0; i < 3; i++) cb.onFailure();
     assert.ok(!cb.isAvailable());
-    await new Promise(r => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 60));
     assert.ok(cb.isAvailable());
   });
 
   it('half-open state allows exactly one probe', async () => {
     const cb = new CircuitBreaker(2, 50);
-    cb.onFailure(); cb.onFailure();
-    await new Promise(r => setTimeout(r, 60));
+    cb.onFailure();
+    cb.onFailure();
+    await new Promise((r) => setTimeout(r, 60));
     assert.ok(cb.isAvailable());
     cb.onSuccess();
     assert.ok(cb.isAvailable());
@@ -160,7 +181,9 @@ describe('Production Chaos — 4. Dead Letter Queue Persistence', () => {
     dlq = new DeadLetterQueue(tmpPath);
   });
 
-  after(() => { fs.rmSync(tmpPath, { recursive: true, force: true }); });
+  after(() => {
+    fs.rmSync(tmpPath, { recursive: true, force: true });
+  });
 
   it('persists 100 errors and retrieves them', () => {
     for (let i = 0; i < 100; i++) {
@@ -199,8 +222,20 @@ describe('Production Chaos — 4. Dead Letter Queue Persistence', () => {
 describe('Production Chaos — 5. Multi-Tenant Isolation Stress', () => {
   it('tenant A changes do not leak to tenant B', () => {
     const provider = new SimpleTenantProvider([
-      { tenantId: 'tenant-a', tokenBudget: 10000, maxConcurrency: 5, maxRunsPerMinute: 100, enabled: true },
-      { tenantId: 'tenant-b', tokenBudget: 20000, maxConcurrency: 5, maxRunsPerMinute: 100, enabled: true },
+      {
+        tenantId: 'tenant-a',
+        tokenBudget: 10000,
+        maxConcurrency: 5,
+        maxRunsPerMinute: 100,
+        enabled: true,
+      },
+      {
+        tenantId: 'tenant-b',
+        tokenBudget: 20000,
+        maxConcurrency: 5,
+        maxRunsPerMinute: 100,
+        enabled: true,
+      },
     ]);
     const configA = provider.getTenantConfig('tenant-a');
     const configB = provider.getTenantConfig('tenant-b');
@@ -216,7 +251,11 @@ describe('Production Chaos — 5. Multi-Tenant Isolation Stress', () => {
 
   it('handles 100 concurrent tenant config lookups', () => {
     const configs = Array.from({ length: 100 }, (_, i) => ({
-      tenantId: `tenant-${i}`, tokenBudget: 10000 + i, maxConcurrency: 5, maxRunsPerMinute: 100, enabled: true,
+      tenantId: `tenant-${i}`,
+      tokenBudget: 10000 + i,
+      maxConcurrency: 5,
+      maxRunsPerMinute: 100,
+      enabled: true,
     }));
     const provider = new SimpleTenantProvider(configs);
     for (let i = 0; i < 100; i++) {
@@ -229,7 +268,12 @@ describe('Production Chaos — 5. Multi-Tenant Isolation Stress', () => {
 
 describe('Production Chaos — 6. Token Budget Enforcement', () => {
   it('compaction respects token budget limits', () => {
-    const compactor = new ContextCompactor({ maxContextTokens: 1000, layer1Trigger: 0.5, layer2Trigger: 0.7, keepRecentTurns: 2 });
+    const compactor = new ContextCompactor({
+      maxContextTokens: 1000,
+      layer1Trigger: 0.5,
+      layer2Trigger: 0.7,
+      keepRecentTurns: 2,
+    });
     const msgs = makeMessages(50, 200);
     const { messages, action } = compactor.compact(msgs);
     const { total } = compactor.getUsage(messages);
@@ -238,7 +282,11 @@ describe('Production Chaos — 6. Token Budget Enforcement', () => {
   });
 
   it('layer 4 emergency compaction respects hard cap', () => {
-    const compactor = new ContextCompactor({ maxContextTokens: 2000, layer4Trigger: 0.8, keepRecentTurns: 1 });
+    const compactor = new ContextCompactor({
+      maxContextTokens: 2000,
+      layer4Trigger: 0.8,
+      keepRecentTurns: 1,
+    });
     const msgs = makeMessages(100, 300);
     const { messages } = compactor.compact(msgs);
     const { total } = compactor.getUsage(messages);
@@ -260,7 +308,11 @@ describe('Production Chaos — 7. Error Classification Chaos', () => {
     ];
     for (const tc of cases) {
       const result = classifyLLMError(new Error(tc.error));
-      assert.strictEqual(result.retryable, tc.retryable, `${tc.error}: retryable should be ${tc.retryable}`);
+      assert.strictEqual(
+        result.retryable,
+        tc.retryable,
+        `${tc.error}: retryable should be ${tc.retryable}`,
+      );
     }
   });
 
@@ -277,11 +329,16 @@ describe('Production Chaos — 7. Error Classification Chaos', () => {
 describe('Production Chaos — 8. Metrics Collector Stress', () => {
   let metrics: MetricsCollector;
 
-  before(() => { resetMetricsCollector(); metrics = new MetricsCollector(); });
+  before(() => {
+    resetMetricsCollector();
+    metrics = new MetricsCollector();
+  });
 
   it('handles 10000 counter increments without corruption', () => {
     for (let i = 0; i < 10000; i++) {
-      metrics.incrementCounter('test_counter', 'Test counter', 1, [{ name: 'key', value: `value-${i % 10}` }]);
+      metrics.incrementCounter('test_counter', 'Test counter', 1, [
+        { name: 'key', value: `value-${i % 10}` },
+      ]);
     }
     const total = metrics.getCounterTotal('test_counter');
     assert.strictEqual(total, 10000);
@@ -337,15 +394,25 @@ describe('Production Chaos — 10. Memory Pressure', () => {
   it('handles 10000 messages without OOM', () => {
     const msgs = makeMessages(10000, 500);
     assert.strictEqual(msgs.length, 20001);
-    const compactor = new ContextCompactor({ maxContextTokens: 50000, layer1Trigger: 0.3, keepRecentTurns: 2 });
+    const compactor = new ContextCompactor({
+      maxContextTokens: 50000,
+      layer1Trigger: 0.3,
+      keepRecentTurns: 2,
+    });
     const { messages, action } = compactor.compact(msgs);
     assert.ok(messages.length < msgs.length);
     assert.ok(action.tokensSaved > 0);
-    console.log(`  10000 messages: ${msgs.length} -> ${messages.length}, saved ${action.tokensSaved} tokens`);
+    console.log(
+      `  10000 messages: ${msgs.length} -> ${messages.length}, saved ${action.tokensSaved} tokens`,
+    );
   });
 
   it('repeated compaction does not grow messages', () => {
-    const compactor = new ContextCompactor({ maxContextTokens: 5000, layer1Trigger: 0.4, keepRecentTurns: 2 });
+    const compactor = new ContextCompactor({
+      maxContextTokens: 5000,
+      layer1Trigger: 0.4,
+      keepRecentTurns: 2,
+    });
     let msgs = makeMessages(200, 100);
     for (let i = 0; i < 10; i++) {
       const { messages } = compactor.compact(msgs);

@@ -29,7 +29,11 @@ describe('SamplingPolicy', () => {
 
     it('keeps a trace with an error', () => {
       const policy = new SamplingPolicy({ baseRate: 0 });
-      const d = policy.decide([makeEvent({ type: 'error', data: { error: 'boom' } })], 'trace-a', 50);
+      const d = policy.decide(
+        [makeEvent({ type: 'error', data: { error: 'boom' } })],
+        'trace-a',
+        50,
+      );
       expect(d.keep).toBe(true);
       expect(d.reason).toBe('error');
     });
@@ -43,27 +47,43 @@ describe('SamplingPolicy', () => {
 
     it('keeps a trace with retries when retrying=true flag is set', () => {
       const policy = new SamplingPolicy({ baseRate: 0, keepIfRetriesAtLeast: 1 });
-      const d = policy.decide([
-        makeEvent({ type: 'error', data: { error: 'transient', retrying: true } }),
-      ], 'trace-a', 50);
+      const d = policy.decide(
+        [makeEvent({ type: 'error', data: { error: 'transient', retrying: true } })],
+        'trace-a',
+        50,
+      );
       expect(d.keep).toBe(true);
       expect(d.reason).toBe('retry');
     });
 
     it('keeps a trace with verification failure when keepIfVerificationFailed=true', () => {
       const policy = new SamplingPolicy({ baseRate: 0 });
-      const d = policy.decide([
-        makeEvent({ type: 'verification', data: { evaluationPassed: false, evaluationScore: 0.2 } }),
-      ], 'trace-a', 50);
+      const d = policy.decide(
+        [
+          makeEvent({
+            type: 'verification',
+            data: { evaluationPassed: false, evaluationScore: 0.2 },
+          }),
+        ],
+        'trace-a',
+        50,
+      );
       expect(d.keep).toBe(true);
       expect(d.reason).toBe('verification');
     });
 
     it('keeps a trace with low quality score', () => {
       const policy = new SamplingPolicy({ baseRate: 0, keepIfQualityBelow: 0.7 });
-      const d = policy.decide([
-        makeEvent({ type: 'verification', data: { evaluationPassed: true, evaluationScore: 0.3 } }),
-      ], 'trace-a', 50);
+      const d = policy.decide(
+        [
+          makeEvent({
+            type: 'verification',
+            data: { evaluationPassed: true, evaluationScore: 0.3 },
+          }),
+        ],
+        'trace-a',
+        50,
+      );
       expect(d.keep).toBe(true);
       expect(d.reason).toBe('quality');
     });
@@ -82,8 +102,8 @@ describe('SamplingPolicy', () => {
       const a = new SamplingPolicy({ baseRate: 0.5, salt: 'A' });
       const b = new SamplingPolicy({ baseRate: 0.5, salt: 'B' });
       const ids = Array.from({ length: 100 }, (_, i) => `trace-${i}`);
-      const aKept = ids.filter(id => a.decide([makeEvent()], id, 50).keep).length;
-      const bKept = ids.filter(id => b.decide([makeEvent()], id, 50).keep).length;
+      const aKept = ids.filter((id) => a.decide([makeEvent()], id, 50).keep).length;
+      const bKept = ids.filter((id) => b.decide([makeEvent()], id, 50).keep).length;
       // With 100 trials and baseRate=0.5, both should keep ~50.
       // The fact that they differ at all demonstrates salt matters.
       expect(aKept).toBeGreaterThan(0);
@@ -104,7 +124,9 @@ describe('SamplingPolicy', () => {
       expect(cfg.tail_sampling.decision_wait).toBe('10s');
       expect(cfg.tail_sampling.policies).toHaveLength(3);
       const probabilistic = cfg.tail_sampling.policies.find((p) => p['type'] === 'probabilistic');
-      expect((probabilistic?.['probabilistic'] as { sampling_percentage: number })?.sampling_percentage).toBe(10);
+      expect(
+        (probabilistic?.['probabilistic'] as { sampling_percentage: number })?.sampling_percentage,
+      ).toBe(10);
       const latency = cfg.tail_sampling.policies.find((p) => p['type'] === 'latency');
       expect((latency?.['latency'] as { threshold_ms: number })?.threshold_ms).toBe(5000);
     });

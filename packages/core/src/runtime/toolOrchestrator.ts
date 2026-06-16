@@ -110,10 +110,7 @@ export class ToolOrchestrator {
    * Build an execution plan: partition tools into concurrent/serial,
    * check approvals, check circuit breakers.
    */
-  async planExecution(
-    toolCalls: ToolCall[],
-    tools: Map<string, Tool>,
-  ): Promise<ToolExecutionPlan> {
+  async planExecution(toolCalls: ToolCall[], tools: Map<string, Tool>): Promise<ToolExecutionPlan> {
     const concurrent: ToolCall[] = [];
     const serial: ToolCall[] = [];
     const skipped: ToolExecutionPlan['skipped'] = [];
@@ -178,7 +175,7 @@ export class ToolOrchestrator {
     // Execute concurrent tools in parallel
     if (plan.concurrent.length > 0) {
       const concurrentResults = await Promise.allSettled(
-        plan.concurrent.map(tc => this.executeSingleWithRetry(tc, tools, context)),
+        plan.concurrent.map((tc) => this.executeSingleWithRetry(tc, tools, context)),
       );
       for (const r of concurrentResults) {
         if (r.status === 'fulfilled') {
@@ -268,7 +265,8 @@ export class ToolOrchestrator {
           result: {
             toolCallId: toolCall.id,
             name: toolCall.name,
-            output: typeof cached.result === 'string' ? cached.result : JSON.stringify(cached.result),
+            output:
+              typeof cached.result === 'string' ? cached.result : JSON.stringify(cached.result),
             durationMs: 0,
             fromCache: true,
           },
@@ -324,7 +322,26 @@ export class ToolOrchestrator {
           store.complete(idempotencyKey, output);
         }
 
-        try { getIntentLog(context.tenantId).write({ schemaVersion: 1, runId: context.runId ?? 'tool-orchestrator', capturedAt: new Date().toISOString(), stage: 'tool.execute', decision: 'success', reason: `${toolCall.name} completed`, payload: { toolName: toolCall.name, toolCallId: toolCall.id, durationMs, outputLength: typeof output === 'string' ? output.length : JSON.stringify(output).length, attempt: attempt + 1 } }); } catch { /* best-effort */ }
+        try {
+          getIntentLog(context.tenantId).write({
+            schemaVersion: 1,
+            runId: context.runId ?? 'tool-orchestrator',
+            capturedAt: new Date().toISOString(),
+            stage: 'tool.execute',
+            decision: 'success',
+            reason: `${toolCall.name} completed`,
+            payload: {
+              toolName: toolCall.name,
+              toolCallId: toolCall.id,
+              durationMs,
+              outputLength:
+                typeof output === 'string' ? output.length : JSON.stringify(output).length,
+              attempt: attempt + 1,
+            },
+          });
+        } catch {
+          /* best-effort */
+        }
 
         return {
           result: {
@@ -341,14 +358,38 @@ export class ToolOrchestrator {
 
         this.recordFailure(toolCall.name);
 
-        try { getIntentLog(context.tenantId).write({ schemaVersion: 1, runId: context.runId ?? 'tool-orchestrator', capturedAt: new Date().toISOString(), stage: 'tool.execute', decision: 'failed', reason: lastError.slice(0, 200), payload: { toolName: toolCall.name, toolCallId: toolCall.id, durationMs, attempt: attempt + 1, willRetry: attempt < this.config.maxRetries } }); } catch { /* best-effort */ }
+        try {
+          getIntentLog(context.tenantId).write({
+            schemaVersion: 1,
+            runId: context.runId ?? 'tool-orchestrator',
+            capturedAt: new Date().toISOString(),
+            stage: 'tool.execute',
+            decision: 'failed',
+            reason: lastError.slice(0, 200),
+            payload: {
+              toolName: toolCall.name,
+              toolCallId: toolCall.id,
+              durationMs,
+              attempt: attempt + 1,
+              willRetry: attempt < this.config.maxRetries,
+            },
+          });
+        } catch {
+          /* best-effort */
+        }
 
         if (attempt < this.config.maxRetries) {
           retries++;
-          await new Promise(r => { const t = setTimeout(r, 500 * (attempt + 1)); t.unref(); });
+          await new Promise((r) => {
+            const t = setTimeout(r, 500 * (attempt + 1));
+            t.unref();
+          });
         } else {
           if (store && idempotencyKey) {
-            store.fail(idempotencyKey, this.formatError(toolCall, lastError, durationMs, attempt + 1));
+            store.fail(
+              idempotencyKey,
+              this.formatError(toolCall, lastError, durationMs, attempt + 1),
+            );
           }
           return {
             result: {
@@ -467,9 +508,14 @@ export class ToolOrchestrator {
     const mode = getApprovalSystem().getMode();
     if (mode === 'full-auto') return 'approved';
 
-    const isWrite = /^(file_write|file_edit|write|edit|apply_patch|code_fixer|refine_code|execute_script|python_execute|shell_execute)$/i.test(toolName);
+    const isWrite =
+      /^(file_write|file_edit|write|edit|apply_patch|code_fixer|refine_code|execute_script|python_execute|shell_execute)$/i.test(
+        toolName,
+      );
     const isDestructive = /^(rm|rmdir|remove|delete)/i.test(toolName);
-    const isNetwork = /^(web_search|web_fetch|browser_search|browser_fetch|web_extract)/i.test(toolName);
+    const isNetwork = /^(web_search|web_fetch|browser_search|browser_fetch|web_extract)/i.test(
+      toolName,
+    );
 
     if (mode === 'plan' || mode === 'read-only') {
       if (isWrite || isDestructive) return 'denied';

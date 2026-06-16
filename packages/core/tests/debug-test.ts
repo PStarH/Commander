@@ -27,12 +27,30 @@ describe('debug', () => {
     const errors: any[] = [];
 
     executor.setApprovalGate(null);
-    const node: any = { id: 'free-1', goal: 'list the files', context: { availableTools: [] }, subtasks: [], dependencies: [], isAtomic: true, status: 'PENDING', estimatedDurationMs: 100 };
+    const node: any = {
+      id: 'free-1',
+      goal: 'list the files',
+      context: { availableTools: [] },
+      subtasks: [],
+      dependencies: [],
+      isAtomic: true,
+      status: 'PENDING',
+      estimatedDurationMs: 100,
+    };
     await executor.executeNode(node, 'proj-1', {}, errors);
 
     console.log('NODE STATUS:', node.status);
     console.log('NODE RESULT:', node.result?.slice(0, 500));
-    console.log('ERROR MSGS:', JSON.stringify(errors.map(e => ({ nodeId: e.nodeId, message: e.message, stack: e.stack?.split('\n').slice(0,5).join(' | ') }))));
+    console.log(
+      'ERROR MSGS:',
+      JSON.stringify(
+        errors.map((e) => ({
+          nodeId: e.nodeId,
+          message: e.message,
+          stack: e.stack?.split('\n').slice(0, 5).join(' | '),
+        })),
+      ),
+    );
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 });

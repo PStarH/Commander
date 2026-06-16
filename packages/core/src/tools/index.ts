@@ -1,5 +1,12 @@
 export { WebSearchTool, WebFetchTool } from './webSearchTool';
-export { FileReadTool, FileWriteTool, FileEditTool, FileSearchTool, FileListTool, GlobTool } from './fileSystemTool';
+export {
+  FileReadTool,
+  FileWriteTool,
+  FileEditTool,
+  FileSearchTool,
+  FileListTool,
+  GlobTool,
+} from './fileSystemTool';
 export { FileHashEditTool } from './fileHashEditTool';
 export { PythonExecuteTool, ShellExecuteTool } from './codeExecutionTool';
 export { MemoryStoreTool, MemoryRecallTool, MemoryListTool } from './persistenceTool';
@@ -26,16 +33,27 @@ export { ToolRegistry, TOOL_CATEGORIES } from './toolRegistry';
 export { createRequestHumanInputTool } from './requestHumanInputTool';
 export { createRequestToolTool } from './requestToolTool';
 export {
-  CheckpointSaveTool, CheckpointRewindTool, CheckpointListTool, CheckpointCollapseTool,
+  CheckpointSaveTool,
+  CheckpointRewindTool,
+  CheckpointListTool,
+  CheckpointCollapseTool,
 } from './checkpointTool';
 export { HandoffTool, HandoffCheckTool } from './handoffTool';
 
 // STRAP-consolidated resource tools (Single Tool Resource Action Pattern)
 export {
-  FileResourceTool, MemoryResourceTool, WebResourceTool,
-  BrowserResourceTool, CodeResourceTool, CheckpointResourceTool,
-  HandoffResourceTool, ExecResourceTool, MediaResourceTool,
-  SystemResourceTool, createResourceTools, wireResourceToolDependencies,
+  FileResourceTool,
+  MemoryResourceTool,
+  WebResourceTool,
+  BrowserResourceTool,
+  CodeResourceTool,
+  CheckpointResourceTool,
+  HandoffResourceTool,
+  ExecResourceTool,
+  MediaResourceTool,
+  SystemResourceTool,
+  createResourceTools,
+  wireResourceToolDependencies,
 } from './resourceTools';
 
 import type { Tool } from '../runtime/types';
@@ -50,9 +68,15 @@ import { CodeFixerTool } from './codeFixer';
 import { SkillViewTool } from '../skills/skillViewTool';
 import { SearchConversationsTool } from './conversationSearchTool';
 import {
-  FileResourceTool, MemoryResourceTool, WebResourceTool,
-  BrowserResourceTool, CodeResourceTool, CheckpointResourceTool,
-  HandoffResourceTool, ExecResourceTool, MediaResourceTool,
+  FileResourceTool,
+  MemoryResourceTool,
+  WebResourceTool,
+  BrowserResourceTool,
+  CodeResourceTool,
+  CheckpointResourceTool,
+  HandoffResourceTool,
+  ExecResourceTool,
+  MediaResourceTool,
   SystemResourceTool,
 } from './resourceTools';
 import { FileHashEditTool } from './fileHashEditTool';

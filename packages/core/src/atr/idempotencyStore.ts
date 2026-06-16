@@ -22,11 +22,7 @@ import { createHash, randomUUID } from 'crypto';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { getGlobalLogger } from '../logging';
-import type {
-  IdempotencyOptions,
-  IdempotencyRecord,
-  IdempotencyState,
-} from './types';
+import type { IdempotencyOptions, IdempotencyRecord, IdempotencyState } from './types';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 export interface IdempotencyStoreConfig {
@@ -154,9 +150,7 @@ export class IdempotencyStore {
       SET state = 'failed', error = ?, completed_at = ?, expires_at = ?
       WHERE key = ?
     `);
-    this.stmtEvictExpired = this.db.prepare(
-      `DELETE FROM idempotency WHERE expires_at <= ?`,
-    );
+    this.stmtEvictExpired = this.db.prepare(`DELETE FROM idempotency WHERE expires_at <= ?`);
     this.stmtCount = this.db.prepare(`SELECT COUNT(*) AS c FROM idempotency`);
     this.stmtTrimOldest = this.db.prepare(`
       DELETE FROM idempotency WHERE key IN (
@@ -169,12 +163,7 @@ export class IdempotencyStore {
     key: string,
     options?: Partial<IdempotencyOptions>,
   ): { acquired: boolean; record: IdempotencyRecord } {
-    if (
-      !this.db ||
-      !this.stmtGetRaw ||
-      !this.stmtInsertIgnore ||
-      !this.stmtReclaim
-    ) {
+    if (!this.db || !this.stmtGetRaw || !this.stmtInsertIgnore || !this.stmtReclaim) {
       throw new Error('IdempotencyStore not initialized');
     }
 
@@ -188,9 +177,7 @@ export class IdempotencyStore {
     };
     const now = new Date();
     const nowIso = now.toISOString();
-    const expiresIso = new Date(
-      now.getTime() + opts.ttlSeconds * 1000,
-    ).toISOString();
+    const expiresIso = new Date(now.getTime() + opts.ttlSeconds * 1000).toISOString();
     const namespacedKey = this.namespaceKey(key, opts.tenantId);
 
     const insertResult = this.stmtInsertIgnore.run(
@@ -206,40 +193,28 @@ export class IdempotencyStore {
       this.enforceSizeCap();
       const row = this.stmtGetRaw.get(namespacedKey);
       if (!row) {
-        throw new Error(
-          'IdempotencyStore.begin: row vanished after insert (eviction race)',
-        );
+        throw new Error('IdempotencyStore.begin: row vanished after insert (eviction race)');
       }
       return { acquired: true, record: this.rowToRecord(row) };
     }
 
     const existing = this.stmtGetRaw.get(namespacedKey);
     if (!existing) {
-      throw new Error(
-        'IdempotencyStore.begin: row vanished after conflict (eviction race)',
-      );
+      throw new Error('IdempotencyStore.begin: row vanished after conflict (eviction race)');
     }
 
-    const isExpired =
-      new Date(existing.expires_at as string).getTime() <= now.getTime();
+    const isExpired = new Date(existing.expires_at as string).getTime() <= now.getTime();
     const existingState = existing.state as IdempotencyState;
 
     if (isExpired && existingState !== 'in_progress') {
-      const reclaimResult = this.stmtReclaim.run(
-        nowIso,
-        expiresIso,
-        namespacedKey,
-        nowIso,
-      );
+      const reclaimResult = this.stmtReclaim.run(nowIso, expiresIso, namespacedKey, nowIso);
       if (reclaimResult.changes === 1) {
         const reclaimed = this.stmtGetRaw.get(namespacedKey);
         if (reclaimed) return { acquired: true, record: this.rowToRecord(reclaimed) };
       }
       const afterRace = this.stmtGetRaw.get(namespacedKey);
       if (!afterRace) {
-        throw new Error(
-          'IdempotencyStore.begin: row vanished after reclaim (eviction race)',
-        );
+        throw new Error('IdempotencyStore.begin: row vanished after reclaim (eviction race)');
       }
       return { acquired: false, record: this.rowToRecord(afterRace) };
     }
@@ -247,11 +222,7 @@ export class IdempotencyStore {
     return { acquired: false, record: this.rowToRecord(existing) };
   }
 
-  complete(
-    key: string,
-    result: string,
-    opts?: { tenantId?: string; ttlSeconds?: number },
-  ): void {
+  complete(key: string, result: string, opts?: { tenantId?: string; ttlSeconds?: number }): void {
     if (!this.db || !this.stmtComplete) return;
     const ttl = opts?.ttlSeconds ?? this.config.defaultTtlSeconds;
     const now = new Date();
@@ -263,11 +234,7 @@ export class IdempotencyStore {
     );
   }
 
-  fail(
-    key: string,
-    error: string,
-    opts?: { tenantId?: string; ttlSeconds?: number },
-  ): void {
+  fail(key: string, error: string, opts?: { tenantId?: string; ttlSeconds?: number }): void {
     if (!this.db || !this.stmtFail) return;
     const ttl = opts?.ttlSeconds ?? this.config.defaultTtlSeconds;
     const now = new Date();
@@ -315,9 +282,7 @@ export class IdempotencyStore {
 
   private namespaceKey(key: string, tenantId?: string): string {
     if (!tenantId) return key;
-    return createHash('sha256')
-      .update(`${tenantId}::${key}`)
-      .digest('hex');
+    return createHash('sha256').update(`${tenantId}::${key}`).digest('hex');
   }
 
   private enforceSizeCap(): void {
@@ -363,13 +328,14 @@ export class IdempotencyStore {
 }
 
 const idempotencyStoreSingleton = createTenantAwareSingleton(
-  () => new IdempotencyStore(
-    process.env.COMMANDER_ATR_MEMORY === '1'
-      ? { filePath: ':memory:' }
-      : process.env.COMMANDER_ATR_IDEMPOTENCY_PATH
-        ? { filePath: process.env.COMMANDER_ATR_IDEMPOTENCY_PATH }
-        : undefined,
-  ),
+  () =>
+    new IdempotencyStore(
+      process.env.COMMANDER_ATR_MEMORY === '1'
+        ? { filePath: ':memory:' }
+        : process.env.COMMANDER_ATR_IDEMPOTENCY_PATH
+          ? { filePath: process.env.COMMANDER_ATR_IDEMPOTENCY_PATH }
+          : undefined,
+    ),
   { dispose: (store) => store.close() },
 );
 

@@ -22,7 +22,11 @@ describe('AuthManager', () => {
 
   beforeEach(() => {
     // Clean up auth file to prevent state leakage between tests
-    try { fs.unlinkSync(AUTH_FILE); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(AUTH_FILE);
+    } catch {
+      /* ignore */
+    }
     auth = new AuthManager();
   });
 

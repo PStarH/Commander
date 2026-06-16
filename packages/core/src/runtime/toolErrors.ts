@@ -20,7 +20,9 @@ export class ToolNotFoundError extends Error {
   readonly availableTools: string[];
 
   constructor(props: ToolNotFoundErrorProps) {
-    super(`Tool "${props.toolName}" was not found. Available tools: ${props.availableTools.join(', ') || 'none'}`);
+    super(
+      `Tool "${props.toolName}" was not found. Available tools: ${props.availableTools.join(', ') || 'none'}`,
+    );
     this.toolName = props.toolName;
     this.availableTools = [...props.availableTools];
     Object.setPrototypeOf(this, new.target.prototype);
@@ -40,7 +42,9 @@ export class ToolTimeoutError extends Error {
   readonly elapsedMs: number;
 
   constructor(props: ToolTimeoutErrorProps) {
-    super(`Tool "${props.toolName}" timed out after ${props.elapsedMs}ms (limit: ${props.timeoutMs}ms)`);
+    super(
+      `Tool "${props.toolName}" timed out after ${props.elapsedMs}ms (limit: ${props.timeoutMs}ms)`,
+    );
     this.toolName = props.toolName;
     this.timeoutMs = props.timeoutMs;
     this.elapsedMs = props.elapsedMs;
@@ -61,7 +65,9 @@ export class ToolCompensationError extends Error {
   readonly cause: string;
 
   constructor(props: ToolCompensationErrorProps) {
-    super(`Compensation failed for tool "${props.toolName}" (action ${props.actionId}): ${props.cause}`);
+    super(
+      `Compensation failed for tool "${props.toolName}" (action ${props.actionId}): ${props.cause}`,
+    );
     this.actionId = props.actionId;
     this.toolName = props.toolName;
     this.cause = props.cause;
@@ -104,7 +110,9 @@ export class ToolIdempotencyConflictError extends Error {
   readonly existingStatusCode: number;
 
   constructor(props: ToolIdempotencyConflictErrorProps) {
-    super(`Idempotency conflict for key "${props.idempotencyKey}" (existing status: ${props.existingStatusCode})`);
+    super(
+      `Idempotency conflict for key "${props.idempotencyKey}" (existing status: ${props.existingStatusCode})`,
+    );
     this.idempotencyKey = props.idempotencyKey;
     this.existingStatusCode = props.existingStatusCode;
     Object.setPrototypeOf(this, new.target.prototype);

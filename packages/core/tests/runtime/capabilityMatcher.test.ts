@@ -13,10 +13,10 @@ describe('CapabilityMatcher', () => {
     it('initializes with default nucleus agents', () => {
       const pool = matcher.getPool();
       assert.ok(pool.length >= DEFAULT_NUCLEUS.length);
-      assert.ok(pool.some(a => a.agentId === 'nucleus-coder'));
-      assert.ok(pool.some(a => a.agentId === 'nucleus-reviewer'));
-      assert.ok(pool.some(a => a.agentId === 'nucleus-researcher'));
-      assert.ok(pool.some(a => a.agentId === 'nucleus-orchestrator'));
+      assert.ok(pool.some((a) => a.agentId === 'nucleus-coder'));
+      assert.ok(pool.some((a) => a.agentId === 'nucleus-reviewer'));
+      assert.ok(pool.some((a) => a.agentId === 'nucleus-researcher'));
+      assert.ok(pool.some((a) => a.agentId === 'nucleus-orchestrator'));
     });
 
     it('all nucleus agents are available', () => {
@@ -33,7 +33,7 @@ describe('CapabilityMatcher', () => {
         priority: 5,
       });
       assert.ok(result.agents.length > 0);
-      assert.ok(result.agents.some(a => a.capabilities.includes('typescript')));
+      assert.ok(result.agents.some((a) => a.capabilities.includes('typescript')));
       assert.ok(result.confidence > 0);
     });
 
@@ -43,7 +43,7 @@ describe('CapabilityMatcher', () => {
         complexity: 5,
         priority: 7,
       });
-      assert.ok(result.agents.some(a => a.agentId === 'nucleus-reviewer'));
+      assert.ok(result.agents.some((a) => a.agentId === 'nucleus-reviewer'));
     });
 
     it('matches research task to nucleus-researcher', async () => {
@@ -52,7 +52,7 @@ describe('CapabilityMatcher', () => {
         complexity: 3,
         priority: 5,
       });
-      assert.ok(result.agents.some(a => a.agentId === 'nucleus-researcher'));
+      assert.ok(result.agents.some((a) => a.agentId === 'nucleus-researcher'));
     });
 
     it('reports fullyCovered when all capabilities are matched', async () => {
@@ -118,40 +118,40 @@ describe('CapabilityMatcher', () => {
 
     it('skips unavailable agents', async () => {
       // Mark nucleus-coder as unavailable
-      const coder = matcher.getPool().find(a => a.agentId === 'nucleus-coder')!;
+      const coder = matcher.getPool().find((a) => a.agentId === 'nucleus-coder')!;
       coder.available = false;
       const result = await matcher.match({
         requiredCapabilities: ['typescript'],
         complexity: 2,
         priority: 5,
       });
-      assert.ok(!result.agents.some(a => a.agentId === 'nucleus-coder'));
+      assert.ok(!result.agents.some((a) => a.agentId === 'nucleus-coder'));
     });
 
     it('skips agents at max concurrency', async () => {
-      const coder = matcher.getPool().find(a => a.agentId === 'nucleus-coder')!;
+      const coder = matcher.getPool().find((a) => a.agentId === 'nucleus-coder')!;
       coder.activeTasks = coder.maxConcurrent;
       const result = await matcher.match({
         requiredCapabilities: ['typescript'],
         complexity: 2,
         priority: 5,
       });
-      assert.ok(!result.agents.some(a => a.agentId === 'nucleus-coder'));
+      assert.ok(!result.agents.some((a) => a.agentId === 'nucleus-coder'));
     });
   });
 
   describe('updateAgentScore', () => {
     it('updates quality score on success', () => {
-      const before = matcher.getPool().find(a => a.agentId === 'nucleus-coder')!.qualityScore;
+      const before = matcher.getPool().find((a) => a.agentId === 'nucleus-coder')!.qualityScore;
       matcher.updateAgentScore('nucleus-coder', { success: true, quality: 1.0 });
-      const after = matcher.getPool().find(a => a.agentId === 'nucleus-coder')!.qualityScore;
+      const after = matcher.getPool().find((a) => a.agentId === 'nucleus-coder')!.qualityScore;
       assert.ok(after > before);
     });
 
     it('decreases quality score on failure', () => {
-      const before = matcher.getPool().find(a => a.agentId === 'nucleus-coder')!.qualityScore;
+      const before = matcher.getPool().find((a) => a.agentId === 'nucleus-coder')!.qualityScore;
       matcher.updateAgentScore('nucleus-coder', { success: false });
-      const after = matcher.getPool().find(a => a.agentId === 'nucleus-coder')!.qualityScore;
+      const after = matcher.getPool().find((a) => a.agentId === 'nucleus-coder')!.qualityScore;
       assert.ok(after < before);
     });
 
@@ -177,12 +177,12 @@ describe('CapabilityMatcher', () => {
         activeTasks: 0,
         maxConcurrent: 1,
       });
-      assert.ok(matcher.getPool().some(a => a.agentId === 'custom-agent'));
+      assert.ok(matcher.getPool().some((a) => a.agentId === 'custom-agent'));
     });
 
     it('removes an agent', () => {
       matcher.removeAgent('nucleus-coder');
-      assert.ok(!matcher.getPool().some(a => a.agentId === 'nucleus-coder'));
+      assert.ok(!matcher.getPool().some((a) => a.agentId === 'nucleus-coder'));
     });
   });
 
@@ -204,17 +204,21 @@ describe('CapabilityMatcher', () => {
 
   describe('electron creation', () => {
     it('creates electron agents when createAgentFn is provided', async () => {
-      const electronMatcher = new CapabilityMatcher({}, async (profile) => ({
-        ...profile,
-        agentId: `electron-${profile.capabilities![0]}`,
-      } as any));
+      const electronMatcher = new CapabilityMatcher(
+        {},
+        async (profile) =>
+          ({
+            ...profile,
+            agentId: `electron-${profile.capabilities![0]}`,
+          }) as any,
+      );
       const result = await electronMatcher.match({
         requiredCapabilities: ['quantum_computing'],
         complexity: 8,
         priority: 5,
       });
       // Should have created an electron for the missing capability
-      assert.ok(result.agents.some(a => a.agentId === 'electron-quantum_computing'));
+      assert.ok(result.agents.some((a) => a.agentId === 'electron-quantum_computing'));
     });
   });
 });
@@ -225,15 +229,15 @@ describe('DEFAULT_NUCLEUS', () => {
   });
 
   it('all nucleus agents have role=nucleus', () => {
-    assert.ok(DEFAULT_NUCLEUS.every(a => a.role === 'nucleus'));
+    assert.ok(DEFAULT_NUCLEUS.every((a) => a.role === 'nucleus'));
   });
 
   it('all nucleus agents are available', () => {
-    assert.ok(DEFAULT_NUCLEUS.every(a => a.available));
+    assert.ok(DEFAULT_NUCLEUS.every((a) => a.available));
   });
 
   it('nucleus agents have unique IDs', () => {
-    const ids = DEFAULT_NUCLEUS.map(a => a.agentId);
+    const ids = DEFAULT_NUCLEUS.map((a) => a.agentId);
     assert.equal(new Set(ids).size, ids.length);
   });
 });

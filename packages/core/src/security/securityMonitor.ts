@@ -19,7 +19,11 @@
  *   monitor.stop(); // Stop monitoring
  */
 
-import { getSecurityAuditLogger, type SecurityEvent, type SecuritySeverity } from './securityAuditLogger';
+import {
+  getSecurityAuditLogger,
+  type SecurityEvent,
+  type SecuritySeverity,
+} from './securityAuditLogger';
 import { getGlobalLogger, getGlobalMetrics } from '../logging';
 
 // ============================================================================
@@ -62,10 +66,10 @@ interface MonitorConfig {
 }
 
 const DEFAULT_CONFIG: MonitorConfig = {
-  burstWindowMs: 60_000,       // 1 minute
-  burstThreshold: 20,           // 20 events in 1 minute
-  failureWindowMs: 300_000,     // 5 minutes
-  failureThreshold: 10,         // 10 failures from same source
+  burstWindowMs: 60_000, // 1 minute
+  burstThreshold: 20, // 20 events in 1 minute
+  failureWindowMs: 300_000, // 5 minutes
+  failureThreshold: 10, // 10 failures from same source
   healthCheckIntervalMs: 30_000, // 30 seconds
   maxAlerts: 100,
 };
@@ -137,12 +141,14 @@ export class SecurityMonitor {
   /** Get current security health status. */
   getHealth(): SecurityHealth {
     const recentEvents = this.getRecentEvents(this.config.burstWindowMs);
-    const criticalEvents = recentEvents.filter(e => e.severity === 'critical').length;
+    const criticalEvents = recentEvents.filter((e) => e.severity === 'critical').length;
     const eventRate = recentEvents.length / (this.config.burstWindowMs / 60_000);
 
-    const status = this.alerts.some(a => a.level === 'critical') ? 'critical'
-      : this.alerts.length > 0 || eventRate > this.config.burstThreshold / 2 ? 'elevated'
-      : 'healthy';
+    const status = this.alerts.some((a) => a.level === 'critical')
+      ? 'critical'
+      : this.alerts.length > 0 || eventRate > this.config.burstThreshold / 2
+        ? 'elevated'
+        : 'healthy';
 
     const typeCounts: Record<string, number> = {};
     for (const e of recentEvents) {
@@ -171,7 +177,7 @@ export class SecurityMonitor {
 
   /** Dismiss an alert by ID. */
   dismissAlert(alertId: string): boolean {
-    const idx = this.alerts.findIndex(a => a.id === alertId);
+    const idx = this.alerts.findIndex((a) => a.id === alertId);
     if (idx === -1) return false;
     this.alerts.splice(idx, 1);
     return true;
@@ -210,19 +216,20 @@ export class SecurityMonitor {
 
   private detectBurst(event: SecurityEvent): void {
     const windowStart = Date.now() - this.config.burstWindowMs;
-    const recentInWindow = this.eventWindow.filter(e =>
-      new Date(e.timestamp).getTime() > windowStart
+    const recentInWindow = this.eventWindow.filter(
+      (e) => new Date(e.timestamp).getTime() > windowStart,
     );
 
     if (recentInWindow.length >= this.config.burstThreshold) {
-      const existing = this.alerts.find(a => a.title === 'Security event burst detected');
+      const existing = this.alerts.find((a) => a.title === 'Security event burst detected');
       if (!existing) {
         this.raiseAlert({
           level: 'critical',
           title: 'Security event burst detected',
           description: `${recentInWindow.length} security events in the last ${this.config.burstWindowMs / 1000}s (threshold: ${this.config.burstThreshold})`,
           events: recentInWindow.slice(-5),
-          recommendation: 'Investigate the source of these events. Possible coordinated attack or system misconfiguration.',
+          recommendation:
+            'Investigate the source of these events. Possible coordinated attack or system misconfiguration.',
         });
       }
     }
@@ -233,13 +240,13 @@ export class SecurityMonitor {
 
     const windowStart = Date.now() - this.config.failureWindowMs;
     const sourceEvents = this.sourceFailures.get(event.source) ?? [];
-    const recentFailures = sourceEvents.filter(e =>
-      new Date(e.timestamp).getTime() > windowStart
+    const recentFailures = sourceEvents.filter(
+      (e) => new Date(e.timestamp).getTime() > windowStart,
     );
 
     if (recentFailures.length >= this.config.failureThreshold) {
-      const existing = this.alerts.find(a =>
-        a.title === 'Repeated failures from source' && a.events[0]?.source === event.source
+      const existing = this.alerts.find(
+        (a) => a.title === 'Repeated failures from source' && a.events[0]?.source === event.source,
       );
       if (!existing) {
         this.raiseAlert({
@@ -259,8 +266,8 @@ export class SecurityMonitor {
     // Check if there were recent high-severity events from the same source
     const windowStart = Date.now() - this.config.burstWindowMs;
     const sourceEvents = this.sourceFailures.get(event.source) ?? [];
-    const recentHigh = sourceEvents.filter(e =>
-      new Date(e.timestamp).getTime() > windowStart && e.severity === 'high'
+    const recentHigh = sourceEvents.filter(
+      (e) => new Date(e.timestamp).getTime() > windowStart && e.severity === 'high',
     );
 
     if (recentHigh.length >= 3) {
@@ -302,7 +309,9 @@ export class SecurityMonitor {
     try {
       const metrics = getGlobalMetrics();
       metrics.incrementCounter('security.alerts', 1, { level: alert.level });
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
 
     // Publish on MessageBus
     try {
@@ -311,7 +320,9 @@ export class SecurityMonitor {
       bus.publish('security.alert', 'SecurityMonitor', fullAlert, {
         priority: alert.level === 'critical' ? 0 : 2,
       });
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
   }
 
   // ── Internal ──────────────────────────────────────────────────────
@@ -321,7 +332,7 @@ export class SecurityMonitor {
     const recent = audit.getRecent(100);
     for (const event of recent) {
       // Only process events we haven't seen yet
-      if (!this.eventWindow.some(e => e.id === event.id)) {
+      if (!this.eventWindow.some((e) => e.id === event.id)) {
         this.processEvent(event);
       }
     }
@@ -329,12 +340,10 @@ export class SecurityMonitor {
 
   private cleanupOldEvents(): void {
     const cutoff = Date.now() - this.config.failureWindowMs;
-    this.eventWindow = this.eventWindow.filter(e =>
-      new Date(e.timestamp).getTime() > cutoff
-    );
+    this.eventWindow = this.eventWindow.filter((e) => new Date(e.timestamp).getTime() > cutoff);
 
     for (const [source, events] of this.sourceFailures) {
-      const filtered = events.filter(e => new Date(e.timestamp).getTime() > cutoff);
+      const filtered = events.filter((e) => new Date(e.timestamp).getTime() > cutoff);
       if (filtered.length === 0) {
         this.sourceFailures.delete(source);
       } else {
@@ -344,16 +353,12 @@ export class SecurityMonitor {
 
     // Auto-dismiss old alerts (1 hour)
     const alertCutoff = Date.now() - 3600_000;
-    this.alerts = this.alerts.filter(a =>
-      new Date(a.timestamp).getTime() > alertCutoff
-    );
+    this.alerts = this.alerts.filter((a) => new Date(a.timestamp).getTime() > alertCutoff);
   }
 
   private getRecentEvents(windowMs: number): SecurityEvent[] {
     const cutoff = Date.now() - windowMs;
-    return this.eventWindow.filter(e =>
-      new Date(e.timestamp).getTime() > cutoff
-    );
+    return this.eventWindow.filter((e) => new Date(e.timestamp).getTime() > cutoff);
   }
 }
 

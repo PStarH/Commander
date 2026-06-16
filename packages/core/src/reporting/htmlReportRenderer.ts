@@ -116,15 +116,16 @@ export class HTMLReportRenderer {
   }
 
   private renderContent(report: HTMLReport): string {
-    const highlightsHtml = report.highlights.length > 0
-      ? `<div class="highlights"><h3>Key Highlights</h3>${report.highlights.map(h =>
-          `<div class="highlight-item">${this.escapeHtml(h)}</div>`
-        ).join('')}</div>`
-      : '';
+    const highlightsHtml =
+      report.highlights.length > 0
+        ? `<div class="highlights"><h3>Key Highlights</h3>${report.highlights
+            .map((h) => `<div class="highlight-item">${this.escapeHtml(h)}</div>`)
+            .join('')}</div>`
+        : '';
 
     const sectionsHtml = report.sections
       .sort((a, b) => a.priority - b.priority)
-      .map(s => this.renderSection(s))
+      .map((s) => this.renderSection(s))
       .join('');
 
     return `
@@ -133,9 +134,9 @@ export class HTMLReportRenderer {
         <h1 class="report-title">${this.escapeHtml(report.title)}</h1>
         ${report.subtitle ? `<p class="report-subtitle">${this.escapeHtml(report.subtitle)}</p>` : ''}
         <div class="report-meta">
-          ${Object.entries(report.metadata).map(([k, v]) =>
-            `<span>${this.escapeHtml(k)}: ${this.escapeHtml(v)}</span>`
-          ).join('')}
+          ${Object.entries(report.metadata)
+            .map(([k, v]) => `<span>${this.escapeHtml(k)}: ${this.escapeHtml(v)}</span>`)
+            .join('')}
           <span>Generated: ${report.generatedAt}</span>
         </div>
       </div>
@@ -145,8 +146,12 @@ export class HTMLReportRenderer {
   }
 
   private renderSection(section: HTMLReportSection): string {
-    const collapseAttr = section.collapsible ? ' onclick="this.parentElement.querySelector(\'.section-body\').classList.toggle(\'collapsed\')"' : '';
-    const toggleHtml = section.collapsible ? '<span class="section-toggle">click to toggle</span>' : '';
+    const collapseAttr = section.collapsible
+      ? " onclick=\"this.parentElement.querySelector('.section-body').classList.toggle('collapsed')\""
+      : '';
+    const toggleHtml = section.collapsible
+      ? '<span class="section-toggle">click to toggle</span>'
+      : '';
 
     return `
       <div class="section">
@@ -165,22 +170,25 @@ export class HTMLReportRenderer {
    * Render a metrics row (key-value pairs).
    */
   renderMetrics(metrics: Record<string, string | number>): string {
-    return `<div class="metric-row">${Object.entries(metrics).map(([label, value]) =>
-      `<div class="metric-card">
+    return `<div class="metric-row">${Object.entries(metrics)
+      .map(
+        ([label, value]) =>
+          `<div class="metric-card">
         <div class="metric-label">${this.escapeHtml(label)}</div>
         <div class="metric-value">${this.escapeHtml(String(value))}</div>
-      </div>`
-    ).join('')}</div>`;
+      </div>`,
+      )
+      .join('')}</div>`;
   }
 
   /**
    * Render a table from column headers and rows.
    */
   renderTable(headers: string[], rows: string[][]): string {
-    return `<table><thead><tr>${headers.map(h => `<th>${this.escapeHtml(h)}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map(row =>
-        `<tr>${row.map(cell => `<td>${this.escapeHtml(cell)}</td>`).join('')}</tr>`
-      ).join('')}</tbody></table>`;
+    return `<table><thead><tr>${headers.map((h) => `<th>${this.escapeHtml(h)}</th>`).join('')}</tr></thead>
+      <tbody>${rows
+        .map((row) => `<tr>${row.map((cell) => `<td>${this.escapeHtml(cell)}</td>`).join('')}</tr>`)
+        .join('')}</tbody></table>`;
   }
 
   /**
@@ -246,12 +254,17 @@ export function createWarRoomHTMLReport(params: {
     },
     {
       title: 'Agent Leaderboard',
-      content: params.topAgents.length > 0
-        ? renderer.renderTable(
-            ['Agent', 'Missions Completed'],
-            params.topAgents.map(a => [a.name, String(a.completed), a.completed >= 5 ? renderer.renderTag('top performer', 'green') : '']),
-          )
-        : '<p style="color: var(--text-dim);">No agents have completed missions yet.</p>',
+      content:
+        params.topAgents.length > 0
+          ? renderer.renderTable(
+              ['Agent', 'Missions Completed'],
+              params.topAgents.map((a) => [
+                a.name,
+                String(a.completed),
+                a.completed >= 5 ? renderer.renderTag('top performer', 'green') : '',
+              ]),
+            )
+          : '<p style="color: var(--text-dim);">No agents have completed missions yet.</p>',
       collapsible: true,
       priority: 2,
     },
@@ -266,15 +279,18 @@ export function createWarRoomHTMLReport(params: {
   if (params.recentEvents && params.recentEvents.length > 0) {
     sections.push({
       title: 'Recent Execution Events',
-      content: params.recentEvents.map(e =>
-        `<div class="trace-step">
+      content: params.recentEvents
+        .map(
+          (e) =>
+            `<div class="trace-step">
           <div class="trace-header">
             <span class="trace-type">${renderer.escapeHtml(e.level)}</span>
             <span class="trace-tokens">${renderer.escapeHtml(e.timestamp)}</span>
           </div>
           <div class="trace-detail">${renderer.escapeHtml(e.message)}</div>
-        </div>`
-      ).join(''),
+        </div>`,
+        )
+        .join(''),
       collapsible: true,
       priority: 4,
     });
@@ -292,7 +308,9 @@ export function createWarRoomHTMLReport(params: {
     generatedAt: new Date().toISOString(),
     highlights: [
       `Project health: ${params.health}`,
-      ...(params.topAgents[0] ? [`Lead: ${params.topAgents[0].name} (${params.topAgents[0].completed} missions)`] : []),
+      ...(params.topAgents[0]
+        ? [`Lead: ${params.topAgents[0].name} (${params.topAgents[0].completed} missions)`]
+        : []),
     ],
   };
 }

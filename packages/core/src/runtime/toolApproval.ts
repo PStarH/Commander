@@ -182,10 +182,7 @@ export class ToolApproval {
     timestamp: string;
   }> = [];
 
-  constructor(
-    approvalCallback: ApprovalCallback,
-    autoApproveCallback?: ApprovalCallback,
-  ) {
+  constructor(approvalCallback: ApprovalCallback, autoApproveCallback?: ApprovalCallback) {
     this.approvalCallback = approvalCallback;
     this.autoApproveCallback = autoApproveCallback;
     this.initializeDefaultPolicies();
@@ -287,69 +284,69 @@ export class ToolApproval {
    * 请求审批 — 核心方法
    * 在工具执行前调用
    */
-async requestApproval(
-     toolName: string,
-     args: Record<string, unknown>,
-     context?: {
-       agentId?: string;
-       runId?: string;
-       reason?: string;
-     },
-   ): Promise<ApprovalResult> {
-     const policy = this.findPolicy(toolName);
+  async requestApproval(
+    toolName: string,
+    args: Record<string, unknown>,
+    context?: {
+      agentId?: string;
+      runId?: string;
+      reason?: string;
+    },
+  ): Promise<ApprovalResult> {
+    const policy = this.findPolicy(toolName);
 
-     // 没有匹配的策略 — 默认自动通过
-     if (!policy) {
-       return {
-         approved: true,
-         requestId: `auto-${Date.now()}-${toolName}`,
-         approvedAt: new Date().toISOString(),
-         reason: 'No policy found, auto-approved',
-       };
-     }
+    // 没有匹配的策略 — 默认自动通过
+    if (!policy) {
+      return {
+        approved: true,
+        requestId: `auto-${Date.now()}-${toolName}`,
+        approvedAt: new Date().toISOString(),
+        reason: 'No policy found, auto-approved',
+      };
+    }
 
-     // 自动审批级别
-     if (policy.level === 'auto') {
-       this.recordDecision(toolName, true, policy.level);
-       return {
-         approved: true,
-         requestId: `auto-${Date.now()}-${toolName}`,
-         approvedAt: new Date().toISOString(),
-         reason: 'Auto-approved by policy',
-       };
-     }
+    // 自动审批级别
+    if (policy.level === 'auto') {
+      this.recordDecision(toolName, true, policy.level);
+      return {
+        approved: true,
+        requestId: `auto-${Date.now()}-${toolName}`,
+        approvedAt: new Date().toISOString(),
+        reason: 'Auto-approved by policy',
+      };
+    }
 
-     const requestId = `req-${Date.now()}-${toolName}-${Math.random().toString(36).slice(2, 6)}`;
-     const now = new Date().toISOString();
+    const requestId = `req-${Date.now()}-${toolName}-${Math.random().toString(36).slice(2, 6)}`;
+    const now = new Date().toISOString();
 
-     // 半自动审批 — 先检查自动条件
-     if (policy.level === 'semi_auto') {
-       const autoApproved = this.checkAutoApproveConditions(policy, args);
-       if (autoApproved) {
-         this.recordDecision(toolName, true, policy.level);
-         return {
-           approved: true,
-           requestId,
-           approvedAt: now,
-           reason: 'Auto-approved: conditions met',
-         };
-       }
+    // 半自动审批 — 先检查自动条件
+    if (policy.level === 'semi_auto') {
+      const autoApproved = this.checkAutoApproveConditions(policy, args);
+      if (autoApproved) {
+        this.recordDecision(toolName, true, policy.level);
+        return {
+          approved: true,
+          requestId,
+          approvedAt: now,
+          reason: 'Auto-approved: conditions met',
+        };
+      }
 
-       // 检查等待次数是否超限
-       const existingRequest = this.pendingApprovals.get(
-         `${toolName}:${context?.runId ?? 'global'}`
-       );
-       if (existingRequest && existingRequest.waitCount >= (policy.maxWaitCount ?? 3)) {
-         this.recordDecision(toolName, false, policy.level);
-         return {
-           approved: false,
-           requestId,
-           approvedAt: now,
-           reason: `Max wait count (${policy.maxWaitCount ?? 3}) exceeded`,
-           alternativeAction: 'Try a different approach or simplify the operation',
-         };
-       }
-     }
+      // 检查等待次数是否超限
+      const existingRequest = this.pendingApprovals.get(
+        `${toolName}:${context?.runId ?? 'global'}`,
+      );
+      if (existingRequest && existingRequest.waitCount >= (policy.maxWaitCount ?? 3)) {
+        this.recordDecision(toolName, false, policy.level);
+        return {
+          approved: false,
+          requestId,
+          approvedAt: now,
+          reason: `Max wait count (${policy.maxWaitCount ?? 3}) exceeded`,
+          alternativeAction: 'Try a different approach or simplify the operation',
+        };
+      }
+    }
 
     // 手动审批或半自动审批需要人工确认
     if (policy.level === 'manual' || policy.level === 'semi_auto') {
@@ -378,7 +375,10 @@ async requestApproval(
         this.recordDecision(toolName, result.approved, policy.level);
         return result;
       } catch (e) {
-        getGlobalLogger().warn('ToolApproval', 'Approval callback failed', { error: (e as Error)?.message, toolName });
+        getGlobalLogger().warn('ToolApproval', 'Approval callback failed', {
+          error: (e as Error)?.message,
+          toolName,
+        });
         // If callback fails, store as pending and return approval_failed
         this.pendingApprovals.set(pendingKey, approvalRequest);
         this.pruneStaleApprovals();

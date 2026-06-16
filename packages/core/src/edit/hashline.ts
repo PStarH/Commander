@@ -29,7 +29,7 @@ export interface HashlineOp {
   startLine: number;
   endLine?: number;
   position?: 'before' | 'after' | 'head' | 'tail';
-  body: string[];  // Only for replace and insert
+  body: string[]; // Only for replace and insert
 }
 
 export interface HashlineSection {
@@ -98,10 +98,16 @@ export function parseHashline(input: string): HashlineParseResult {
     const trimmed = line.trim();
 
     // Skip empty lines
-    if (!trimmed) { i++; continue; }
+    if (!trimmed) {
+      i++;
+      continue;
+    }
 
     // Skip patch envelope markers
-    if (trimmed === '*** Begin Patch' || trimmed === '*** End Patch') { i++; continue; }
+    if (trimmed === '*** Begin Patch' || trimmed === '*** End Patch') {
+      i++;
+      continue;
+    }
 
     // File section header: ¶PATH#TAG
     if (trimmed.startsWith(FILE_PREFIX)) {
@@ -132,11 +138,15 @@ export function parseHashline(input: string): HashlineParseResult {
     if (!currentSection) {
       // Try to recover: maybe it's a malformed header
       if (trimmed.includes('#') && trimmed.includes('/')) {
-        errors.push(`Line ${i + 1}: Missing '${FILE_PREFIX}' prefix. Expected '${FILE_PREFIX}${trimmed}'`);
+        errors.push(
+          `Line ${i + 1}: Missing '${FILE_PREFIX}' prefix. Expected '${FILE_PREFIX}${trimmed}'`,
+        );
         i++;
         continue;
       }
-      errors.push(`Line ${i + 1}: Content without a file header. Add '${FILE_PREFIX}path#HASH' before operations.`);
+      errors.push(
+        `Line ${i + 1}: Content without a file header. Add '${FILE_PREFIX}path#HASH' before operations.`,
+      );
       i++;
       continue;
     }
@@ -161,12 +171,16 @@ export function parseHashline(input: string): HashlineParseResult {
     // Body row: must start with +
     if (trimmed.startsWith(BODY_SIGIL)) {
       if (!currentOp) {
-        errors.push(`Line ${i + 1}: Body row without an operation header. Add 'replace N..M:', 'delete N', or 'insert ...' above.`);
+        errors.push(
+          `Line ${i + 1}: Body row without an operation header. Add 'replace N..M:', 'delete N', or 'insert ...' above.`,
+        );
         i++;
         continue;
       }
       if (currentOp.type === 'delete') {
-        errors.push(`Line ${i + 1}: 'delete' does not take body rows. Use 'replace N..M:' if you need new content.`);
+        errors.push(
+          `Line ${i + 1}: 'delete' does not take body rows. Use 'replace N..M:' if you need new content.`,
+        );
         i++;
         continue;
       }
@@ -214,7 +228,9 @@ function parseFileHeader(line: string): { path?: string; hash?: string; error?: 
   const hashIndex = withoutPrefix.lastIndexOf(HASH_SEP);
 
   if (hashIndex === -1) {
-    return { error: `Missing hash tag. Expected format: ${FILE_PREFIX}path${HASH_SEP}XXXX. Got: "${line}"` };
+    return {
+      error: `Missing hash tag. Expected format: ${FILE_PREFIX}path${HASH_SEP}XXXX. Got: "${line}"`,
+    };
   }
 
   const filePath = withoutPrefix.slice(0, hashIndex);
@@ -225,7 +241,9 @@ function parseFileHeader(line: string): { path?: string; hash?: string; error?: 
   }
 
   if (hash.length !== HASH_LENGTH || !/^[0-9A-Fa-f]+$/.test(hash)) {
-    return { error: `Invalid hash tag "${hash}" (must be ${HASH_LENGTH} hex chars). Got: "${line}"` };
+    return {
+      error: `Invalid hash tag "${hash}" (must be ${HASH_LENGTH} hex chars). Got: "${line}"`,
+    };
   }
 
   return { path: filePath, hash: hash.toUpperCase() };
@@ -238,7 +256,8 @@ function parseOpHeader(line: string, lineNum: number): { op?: HashlineOp; error?
     const start = parseInt(replaceMatch[1], 10);
     const end = replaceMatch[2] ? parseInt(replaceMatch[2], 10) : start;
     if (start < 1) return { error: `Line ${lineNum}: Line numbers are 1-indexed, got ${start}` };
-    if (end < start) return { error: `Line ${lineNum}: Range ${start}..${end} ends before it starts` };
+    if (end < start)
+      return { error: `Line ${lineNum}: Range ${start}..${end} ends before it starts` };
     return { op: { type: 'replace', startLine: start, endLine: end, body: [] } };
   }
 
@@ -256,7 +275,8 @@ function parseOpHeader(line: string, lineNum: number): { op?: HashlineOp; error?
     const start = parseInt(deleteMatch[1], 10);
     const end = deleteMatch[2] ? parseInt(deleteMatch[2], 10) : start;
     if (start < 1) return { error: `Line ${lineNum}: Line numbers are 1-indexed, got ${start}` };
-    if (end < start) return { error: `Line ${lineNum}: Range ${start}..${end} ends before it starts` };
+    if (end < start)
+      return { error: `Line ${lineNum}: Range ${start}..${end} ends before it starts` };
     return { op: { type: 'delete', startLine: start, endLine: end, body: [] } };
   }
 
@@ -281,7 +301,7 @@ function parseOpHeader(line: string, lineNum: number): { op?: HashlineOp; error?
     return { op: { type: 'insert', startLine: 0, position: 'tail', body: [] } };
   }
 
-  return {};  // Not an op header
+  return {}; // Not an op header
 }
 
 // ============================================================================
@@ -347,7 +367,11 @@ export function applyHashlineSection(section: HashlineSection): HashlineApplyRes
     fs.writeFileSync(tmpPath, newContent, 'utf-8');
     fs.renameSync(tmpPath, section.filePath);
   } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      /* ignore */
+    }
     return {
       success: false,
       filePath: section.filePath,
@@ -372,7 +396,10 @@ export function applyHashlineSection(section: HashlineSection): HashlineApplyRes
  * Apply operations to lines array. Operations are sorted and applied in reverse
  * line order to preserve line numbers.
  */
-function applyOperations(lines: string[], ops: HashlineOp[]): {
+function applyOperations(
+  lines: string[],
+  ops: HashlineOp[],
+): {
   lines: string[];
   error?: string;
   replacements: number;
@@ -389,17 +416,32 @@ function applyOperations(lines: string[], ops: HashlineOp[]): {
   for (const op of sorted) {
     switch (op.type) {
       case 'replace': {
-        const start = op.startLine - 1;  // Convert to 0-indexed
+        const start = op.startLine - 1; // Convert to 0-indexed
         const end = (op.endLine ?? op.startLine) - 1;
 
         if (start < 0 || start >= result.length) {
-          return { lines: result, error: `Line ${op.startLine} does not exist (file has ${result.length} lines)`, replacements, warnings };
+          return {
+            lines: result,
+            error: `Line ${op.startLine} does not exist (file has ${result.length} lines)`,
+            replacements,
+            warnings,
+          };
         }
         if (end >= result.length) {
-          return { lines: result, error: `Line ${op.endLine} does not exist (file has ${result.length} lines)`, replacements, warnings };
+          return {
+            lines: result,
+            error: `Line ${op.endLine} does not exist (file has ${result.length} lines)`,
+            replacements,
+            warnings,
+          };
         }
         if (op.body.length === 0) {
-          return { lines: result, error: `replace ${op.startLine}..${op.endLine}: needs at least one +TEXT body row`, replacements, warnings };
+          return {
+            lines: result,
+            error: `replace ${op.startLine}..${op.endLine}: needs at least one +TEXT body row`,
+            replacements,
+            warnings,
+          };
         }
 
         // Replace lines start..end with body
@@ -413,10 +455,20 @@ function applyOperations(lines: string[], ops: HashlineOp[]): {
         const end = (op.endLine ?? op.startLine) - 1;
 
         if (start < 0 || start >= result.length) {
-          return { lines: result, error: `Line ${op.startLine} does not exist (file has ${result.length} lines)`, replacements, warnings };
+          return {
+            lines: result,
+            error: `Line ${op.startLine} does not exist (file has ${result.length} lines)`,
+            replacements,
+            warnings,
+          };
         }
         if (end >= result.length) {
-          return { lines: result, error: `Line ${op.endLine} does not exist (file has ${result.length} lines)`, replacements, warnings };
+          return {
+            lines: result,
+            error: `Line ${op.endLine} does not exist (file has ${result.length} lines)`,
+            replacements,
+            warnings,
+          };
         }
 
         result.splice(start, end - start + 1);
@@ -440,11 +492,21 @@ function applyOperations(lines: string[], ops: HashlineOp[]): {
             insertIdx = result.length;
             break;
           default:
-            return { lines: result, error: `Unknown insert position: ${op.position}`, replacements, warnings };
+            return {
+              lines: result,
+              error: `Unknown insert position: ${op.position}`,
+              replacements,
+              warnings,
+            };
         }
 
         if (insertIdx < 0 || insertIdx > result.length) {
-          return { lines: result, error: `Insert position ${op.startLine} is out of range (file has ${result.length} lines)`, replacements, warnings };
+          return {
+            lines: result,
+            error: `Insert position ${op.startLine} is out of range (file has ${result.length} lines)`,
+            replacements,
+            warnings,
+          };
         }
 
         result.splice(insertIdx, 0, ...op.body);
@@ -487,7 +549,11 @@ function applyWithRecovery(
     fs.writeFileSync(tmpPath, newContent, 'utf-8');
     fs.renameSync(tmpPath, section.filePath);
   } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      /* ignore */
+    }
     return {
       success: false,
       filePath: section.filePath,

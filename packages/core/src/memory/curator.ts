@@ -19,8 +19,13 @@
 
 import { getGlobalLogger } from '../logging';
 import type {
-  MemoryStore, EpisodicMemoryItem, MemoryWriteOptions,
-  MemorySearchQuery, MemorySearchResult, MemoryManageOptions, MemoryStats,
+  MemoryStore,
+  EpisodicMemoryItem,
+  MemoryWriteOptions,
+  MemorySearchQuery,
+  MemorySearchResult,
+  MemoryManageOptions,
+  MemoryStats,
 } from '../memory';
 
 // ============================================================================
@@ -69,10 +74,10 @@ export interface CuratorMemoryItem extends EpisodicMemoryItem {
 // ============================================================================
 
 const DEFAULT_CURATOR_CONFIG: CuratorConfig = {
-  curationInterval: 50,         // Run every 50 writes
-  duplicateThreshold: 0.85,     // 85% similarity = duplicate
-  promotionAccessThreshold: 5,  // 5+ accesses promotes to long-term
-  episodicTtlDays: 14,          // 14 days for episodic memories
+  curationInterval: 50, // Run every 50 writes
+  duplicateThreshold: 0.85, // 85% similarity = duplicate
+  promotionAccessThreshold: 5, // 5+ accesses promotes to long-term
+  episodicTtlDays: 14, // 14 days for episodic memories
   batchSize: 200,
   detectContradictions: true,
   reEvaluateImportance: true,
@@ -154,7 +159,8 @@ export class MemoryCurator {
 
       result.duration = Date.now() - startTime;
       result.summary = this.buildSummary(result);
-      result.processed = result.evicted + result.promoted + result.merged + result.importanceAdjusted;
+      result.processed =
+        result.evicted + result.promoted + result.merged + result.importanceAdjusted;
 
       this.lastCuration = result;
       this.writeCount = 0;
@@ -411,14 +417,16 @@ export class MemoryCurator {
     for (let i = 0; i < decisions.length; i++) {
       for (let j = i + 1; j < decisions.length; j++) {
         // Only check decisions with overlapping tags
-        const sharedTags = decisions[i].tags.filter(t => decisions[j].tags.includes(t));
+        const sharedTags = decisions[i].tags.filter((t) => decisions[j].tags.includes(t));
         if (sharedTags.length === 0) continue;
 
         // Check for negation patterns
         if (this.detectNegation(decisions[i].content, decisions[j].content)) {
           // Lower confidence on the older/less-priority one
-          const older = new Date(decisions[i].createdAt) < new Date(decisions[j].createdAt)
-            ? decisions[i] : decisions[j];
+          const older =
+            new Date(decisions[i].createdAt) < new Date(decisions[j].createdAt)
+              ? decisions[i]
+              : decisions[j];
 
           await store.update({
             id: older.id,
@@ -466,7 +474,7 @@ export class MemoryCurator {
       .toLowerCase()
       .replace(/[^\w\s]/g, ' ')
       .split(/\s+/)
-      .filter(w => w.length > 2);
+      .filter((w) => w.length > 2);
   }
 
   /**
@@ -474,14 +482,27 @@ export class MemoryCurator {
    * Simple heuristic: look for negation patterns near similar content.
    */
   private detectNegation(a: string, b: string): boolean {
-    const negationWords = ['not', "don't", "doesn't", "didn't", "won't", "shouldn't",
-      "never", 'no', 'avoid', 'reject', 'deny', 'contradict', 'opposite'];
+    const negationWords = [
+      'not',
+      "don't",
+      "doesn't",
+      "didn't",
+      "won't",
+      "shouldn't",
+      'never',
+      'no',
+      'avoid',
+      'reject',
+      'deny',
+      'contradict',
+      'opposite',
+    ];
 
     const tokensA = this.tokenize(a);
     const tokensB = this.tokenize(b);
 
-    const hasNegA = tokensA.some(t => negationWords.includes(t));
-    const hasNegB = tokensB.some(t => negationWords.includes(t));
+    const hasNegA = tokensA.some((t) => negationWords.includes(t));
+    const hasNegB = tokensB.some((t) => negationWords.includes(t));
 
     // One has negation, the other doesn't, and they share significant content
     if (hasNegA !== hasNegB) {
@@ -497,8 +518,10 @@ export class MemoryCurator {
     if (result.evicted > 0) parts.push(`${result.evicted} expired memories evicted`);
     if (result.promoted > 0) parts.push(`${result.promoted} memories promoted to long-term`);
     if (result.merged > 0) parts.push(`${result.merged} duplicates merged`);
-    if (result.contradictionsFound > 0) parts.push(`${result.contradictionsFound} contradictions detected`);
-    if (result.importanceAdjusted > 0) parts.push(`${result.importanceAdjusted} importance scores adjusted`);
+    if (result.contradictionsFound > 0)
+      parts.push(`${result.contradictionsFound} contradictions detected`);
+    if (result.importanceAdjusted > 0)
+      parts.push(`${result.importanceAdjusted} importance scores adjusted`);
     if (parts.length === 0) return 'No curation actions needed';
     return parts.join('; ');
   }

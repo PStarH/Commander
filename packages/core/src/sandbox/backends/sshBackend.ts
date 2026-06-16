@@ -13,10 +13,14 @@ function isValidShellPath(p: string): boolean {
 
 function buildSshArgs(config: SSHConfig): string[] {
   const args: string[] = [
-    '-o', `Port=${config.port}`,
-    '-o', `ConnectTimeout=${Math.ceil((config.connectTimeoutMs ?? 10000) / 1000)}`,
-    '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', 'BatchMode=yes',
+    '-o',
+    `Port=${config.port}`,
+    '-o',
+    `ConnectTimeout=${Math.ceil((config.connectTimeoutMs ?? 10000) / 1000)}`,
+    '-o',
+    'StrictHostKeyChecking=accept-new',
+    '-o',
+    'BatchMode=yes',
   ];
   if (config.identityFile) {
     args.push('-o', `IdentityFile=${config.identityFile}`);
@@ -39,7 +43,11 @@ export class SSHBackend implements ExecutionBackend {
   private config: SSHConfig;
 
   constructor(config: SSHConfig) {
-    this.config = { ...config, port: config.port ?? 22, connectTimeoutMs: config.connectTimeoutMs ?? 10000 };
+    this.config = {
+      ...config,
+      port: config.port ?? 22,
+      connectTimeoutMs: config.connectTimeoutMs ?? 10000,
+    };
   }
 
   get available(): boolean {
@@ -55,7 +63,11 @@ export class SSHBackend implements ExecutionBackend {
 
     // Security: validate workdir to prevent command injection via path
     if (workdir && !isValidShellPath(workdir)) {
-      getSecurityAuditLogger().logCommandInjectionAttempt('SSHBackend', 'Rejected workdir with unsafe characters', { workdir });
+      getSecurityAuditLogger().logCommandInjectionAttempt(
+        'SSHBackend',
+        'Rejected workdir with unsafe characters',
+        { workdir },
+      );
       return {
         stdout: '',
         stderr: `Rejected: workdir contains unsafe characters: ${workdir}`,
@@ -80,13 +92,33 @@ export class SSHBackend implements ExecutionBackend {
       let stdout = '';
       let stderr = '';
       const MAX_OUTPUT = 10 * 1024 * 1024;
-      const stdoutTimer = setTimeout(() => { child.stdout?.destroy(); }, (timeout ?? 60) * 1000);
+      const stdoutTimer = setTimeout(
+        () => {
+          child.stdout?.destroy();
+        },
+        (timeout ?? 60) * 1000,
+      );
       stdoutTimer.unref();
-      const stderrTimer = setTimeout(() => { child.stderr?.destroy(); }, (timeout ?? 60) * 1000);
+      const stderrTimer = setTimeout(
+        () => {
+          child.stderr?.destroy();
+        },
+        (timeout ?? 60) * 1000,
+      );
       stderrTimer.unref();
 
-      child.stdout?.on('data', (d: Buffer) => { if (stdout.length < MAX_OUTPUT) { stdout += d.toString(); if (stdout.length > MAX_OUTPUT) stdout = stdout.slice(0, MAX_OUTPUT); } });
-      child.stderr?.on('data', (d: Buffer) => { if (stderr.length < MAX_OUTPUT) { stderr += d.toString(); if (stderr.length > MAX_OUTPUT) stderr = stderr.slice(0, MAX_OUTPUT); } });
+      child.stdout?.on('data', (d: Buffer) => {
+        if (stdout.length < MAX_OUTPUT) {
+          stdout += d.toString();
+          if (stdout.length > MAX_OUTPUT) stdout = stdout.slice(0, MAX_OUTPUT);
+        }
+      });
+      child.stderr?.on('data', (d: Buffer) => {
+        if (stderr.length < MAX_OUTPUT) {
+          stderr += d.toString();
+          if (stderr.length > MAX_OUTPUT) stderr = stderr.slice(0, MAX_OUTPUT);
+        }
+      });
 
       child.on('close', (exitCode) => {
         clearTimeout(stdoutTimer);
@@ -122,7 +154,7 @@ export class SSHBackend implements ExecutionBackend {
 /**
  * Resolve SSH configuration from a combination of explicit args and environment.
  * Environment variables take precedence over defaults but explicit args win over env.
- * 
+ *
  * Priority: explicit args > env vars > defaults
  */
 /** Validate SSH host — must be a hostname or IP, no shell metacharacters. */
@@ -146,7 +178,11 @@ export function resolveSSHConfig(args: Record<string, unknown>): SSHConfig | nul
     host,
     port,
     user: String(args.ssh_user ?? process.env.COMMANDER_SSH_USER ?? os.userInfo().username),
-    identityFile: String(args.ssh_key ?? process.env.COMMANDER_SSH_KEY ?? path.join(os.homedir(), '.ssh', 'id_rsa')),
-    connectTimeoutMs: Number(args.ssh_timeout ?? process.env.COMMANDER_SSH_CONNECT_TIMEOUT ?? 10000),
+    identityFile: String(
+      args.ssh_key ?? process.env.COMMANDER_SSH_KEY ?? path.join(os.homedir(), '.ssh', 'id_rsa'),
+    ),
+    connectTimeoutMs: Number(
+      args.ssh_timeout ?? process.env.COMMANDER_SSH_CONNECT_TIMEOUT ?? 10000,
+    ),
   };
 }

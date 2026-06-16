@@ -54,7 +54,9 @@ export class NotificationManager {
       if (fs.existsSync(this.configPath)) {
         return JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     return {
       desktop: { enabled: true },
@@ -135,11 +137,16 @@ export class NotificationManager {
 
       // Use execFile to avoid shell injection
       if (process.platform === 'darwin') {
-        execFile('osascript', ['-e', `display notification "${body.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}" with title "${title.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`]);
+        execFile('osascript', [
+          '-e',
+          `display notification "${body.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}" with title "${title.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`,
+        ]);
       } else if (process.platform === 'linux') {
         execFile('notify-send', [title, body]);
       }
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
   /**
@@ -151,7 +158,7 @@ export class NotificationManager {
 
     // Visual notification
     const icon = message.priority === 'urgent' ? '🔴' : message.priority === 'high' ? '🟡' : '🔔';
-    console.log(`\n${icon} ${message.title}: ${message.body}\n`);
+    process.stdout.write(`\n${icon} ${message.title}: ${message.body}\n`);
   }
 
   /**
@@ -174,7 +181,9 @@ export class NotificationManager {
         body: JSON.stringify(payload),
       });
     } catch (err) {
-      getGlobalLogger().warn('NotificationManager', 'Slack notification failed', { error: String(err) });
+      getGlobalLogger().warn('NotificationManager', 'Slack notification failed', {
+        error: String(err),
+      });
     }
   }
 
@@ -189,15 +198,24 @@ export class NotificationManager {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          embeds: [{
-            title: message.title,
-            description: message.body,
-            color: message.priority === 'urgent' ? 0xff0000 : message.priority === 'high' ? 0xffaa00 : 0x00ff00,
-          }],
+          embeds: [
+            {
+              title: message.title,
+              description: message.body,
+              color:
+                message.priority === 'urgent'
+                  ? 0xff0000
+                  : message.priority === 'high'
+                    ? 0xffaa00
+                    : 0x00ff00,
+            },
+          ],
         }),
       });
     } catch (err) {
-      getGlobalLogger().warn('NotificationManager', 'Discord notification failed', { error: String(err) });
+      getGlobalLogger().warn('NotificationManager', 'Discord notification failed', {
+        error: String(err),
+      });
     }
   }
 
@@ -223,7 +241,9 @@ export class NotificationManager {
         }),
       });
     } catch (err) {
-      getGlobalLogger().warn('NotificationManager', 'Webhook notification failed', { error: String(err) });
+      getGlobalLogger().warn('NotificationManager', 'Webhook notification failed', {
+        error: String(err),
+      });
     }
   }
 

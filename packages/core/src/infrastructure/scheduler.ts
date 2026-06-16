@@ -24,8 +24,8 @@ export interface ScheduledTask {
   id: string;
   name: string;
   task: string;
-  cron?: string;        // Cron expression: "0 2 * * *"
-  intervalMs?: number;  // Interval in ms: 1800000 (30m)
+  cron?: string; // Cron expression: "0 2 * * *"
+  intervalMs?: number; // Interval in ms: 1800000 (30m)
   enabled: boolean;
   lastRunAt?: string;
   nextRunAt?: string;
@@ -39,7 +39,7 @@ export interface ScheduleOptions {
   name: string;
   task: string;
   cron?: string;
-  every?: string;       // "30m", "1h", "2d"
+  every?: string; // "30m", "1h", "2d"
   enabled?: boolean;
   metadata?: Record<string, unknown>;
 }
@@ -48,13 +48,19 @@ export interface ScheduleOptions {
 // Cron Parser (simple)
 // ============================================================================
 
-function parseCron(expr: string): { minute: number[]; hour: number[]; dayOfMonth: number[]; month: number[]; dayOfWeek: number[] } | null {
+function parseCron(expr: string): {
+  minute: number[];
+  hour: number[];
+  dayOfMonth: number[];
+  month: number[];
+  dayOfWeek: number[];
+} | null {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return null;
 
   const parseField = (field: string, min: number, max: number): number[] => {
     if (field === '*') return Array.from({ length: max - min + 1 }, (_, i) => i + min);
-    if (field.includes(',')) return field.split(',').flatMap(f => parseField(f, min, max));
+    if (field.includes(',')) return field.split(',').flatMap((f) => parseField(f, min, max));
     if (field.includes('-')) {
       const [start, end] = field.split('-').map(Number);
       return Array.from({ length: end - start + 1 }, (_, i) => start + i);
@@ -71,7 +77,10 @@ function parseCron(expr: string): { minute: number[]; hour: number[]; dayOfMonth
       } else {
         start = Number(rangePart);
       }
-      return Array.from({ length: Math.floor((max - start) / step) + 1 }, (_, i) => start + i * step);
+      return Array.from(
+        { length: Math.floor((max - start) / step) + 1 },
+        (_, i) => start + i * step,
+      );
     }
     return [Number(field)];
   };
@@ -106,11 +115,16 @@ function parseInterval(expr: string): number | null {
   const value = parseInt(match[1]);
   const unit = match[2];
   switch (unit) {
-    case 's': return value * 1000;
-    case 'm': return value * 60 * 1000;
-    case 'h': return value * 60 * 60 * 1000;
-    case 'd': return value * 24 * 60 * 60 * 1000;
-    default: return null;
+    case 's':
+      return value * 1000;
+    case 'm':
+      return value * 60 * 1000;
+    case 'h':
+      return value * 60 * 60 * 1000;
+    case 'd':
+      return value * 24 * 60 * 60 * 1000;
+    default:
+      return null;
   }
 }
 
@@ -170,7 +184,9 @@ export class TaskScheduler {
           this.tasks.set(task.id, task);
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   private saveTasks(): void {
@@ -236,8 +252,8 @@ export class TaskScheduler {
    * List all scheduled tasks.
    */
   list(): ScheduledTask[] {
-    return Array.from(this.tasks.values()).sort((a, b) =>
-      new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    return Array.from(this.tasks.values()).sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
   }
 
@@ -292,7 +308,9 @@ export class TaskScheduler {
       this.saveTasks();
 
       // Run the task
-      getGlobalLogger().info('TaskScheduler', `Running scheduled task: ${task.name}`, { taskId: task.id });
+      getGlobalLogger().info('TaskScheduler', `Running scheduled task: ${task.name}`, {
+        taskId: task.id,
+      });
 
       try {
         const bgManager = getBackgroundTaskManager();

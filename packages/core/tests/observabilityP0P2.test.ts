@@ -23,7 +23,10 @@ describe('Observability P0–P2 wiring (smoke)', () => {
       assert.deepStrictEqual(events, ['CLOSED->OPEN']);
       const mc = getMetricsCollector();
       const all = mc.listMetricNames();
-      assert.ok(all.some(n => n.startsWith('circuit_transitions_total')), 'metric emitted');
+      assert.ok(
+        all.some((n) => n.startsWith('circuit_transitions_total')),
+        'metric emitted',
+      );
     });
   });
 
@@ -32,20 +35,41 @@ describe('Observability P0–P2 wiring (smoke)', () => {
       const reg = new CompensationRegistry();
       const outcomes: string[] = [];
       reg.setObservability({
-        onSuccess: (a) => { outcomes.push(`s:${a.toolName}`); getMetricsCollector().recordCompensation(a.toolName, 'success'); },
-        onFailed: (a, err) => { outcomes.push(`f:${a.toolName}`); getMetricsCollector().recordCompensation(a.toolName, 'failed'); },
-        onExhausted: (a) => { outcomes.push(`e:${a.toolName}`); getMetricsCollector().recordCompensation(a.toolName, 'exhausted'); },
+        onSuccess: (a) => {
+          outcomes.push(`s:${a.toolName}`);
+          getMetricsCollector().recordCompensation(a.toolName, 'success');
+        },
+        onFailed: (a, err) => {
+          outcomes.push(`f:${a.toolName}`);
+          getMetricsCollector().recordCompensation(a.toolName, 'failed');
+        },
+        onExhausted: (a) => {
+          outcomes.push(`e:${a.toolName}`);
+          getMetricsCollector().recordCompensation(a.toolName, 'exhausted');
+        },
       });
       reg.register('tool_a', async () => ({ success: true }));
       reg.register('tool_b', async () => ({ success: false, error: 'nope' }));
-      reg.recordAction({ actionId: 'a1', toolName: 'tool_a', args: {}, description: 'x', tags: [] });
-      reg.recordAction({ actionId: 'a2', toolName: 'tool_b', args: {}, description: 'y', tags: [] });
+      reg.recordAction({
+        actionId: 'a1',
+        toolName: 'tool_a',
+        args: {},
+        description: 'x',
+        tags: [],
+      });
+      reg.recordAction({
+        actionId: 'a2',
+        toolName: 'tool_b',
+        args: {},
+        description: 'y',
+        tags: [],
+      });
       await reg.compensate('a1');
       await reg.compensate('a2');
       assert.deepStrictEqual(outcomes.sort(), ['f:tool_b', 's:tool_a']);
       const mc = getMetricsCollector();
       const all = mc.listMetricNames();
-      assert.ok(all.some(n => n.startsWith('compensation_total')));
+      assert.ok(all.some((n) => n.startsWith('compensation_total')));
     });
   });
 

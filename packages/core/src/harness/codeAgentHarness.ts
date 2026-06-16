@@ -60,7 +60,8 @@ export const CODE_AGENT_HARNESS_CAPABILITIES: HarnessCapabilities = {
   supportsReasoningEffort: true,
   maxConcurrentTools: 8,
   maxToolCallsPerTurn: 30,
-  description: 'Code agent harness — full Oh My Pi + Codex CLI patterns (event stream, Guardian, plan mode, sub-agents, skills, steering, intent tracing)',
+  description:
+    'Code agent harness — full Oh My Pi + Codex CLI patterns (event stream, Guardian, plan mode, sub-agents, skills, steering, intent tracing)',
 };
 
 // ============================================================================
@@ -223,9 +224,15 @@ export class CodeAgentHarness implements AgentHarness {
       );
 
       if (isContinue) {
-        getGlobalLogger().info('CodeAgentHarness', `[${runId}] Continuing from existing context (${messages.length} messages)`);
+        getGlobalLogger().info(
+          'CodeAgentHarness',
+          `[${runId}] Continuing from existing context (${messages.length} messages)`,
+        );
       } else {
-        getGlobalLogger().info('CodeAgentHarness', `[${runId}] Starting fresh context for: ${goal.slice(0, 80)}`);
+        getGlobalLogger().info(
+          'CodeAgentHarness',
+          `[${runId}] Starting fresh context for: ${goal.slice(0, 80)}`,
+        );
       }
 
       const toolDefs = availableTools
@@ -252,12 +259,28 @@ export class CodeAgentHarness implements AgentHarness {
       request = await services.fireBeforeLLMCall({ request, agentId: goal.slice(0, 32), runId });
       for (let attempt = 0; attempt <= 2; attempt++) {
         if (signal.aborted || this.abortController.signal.aborted) {
-          return this.buildResult(runId, goal, 'cancelled', 'Cancelled by user', steps, totalTokenUsage, Date.now() - startTime);
+          return this.buildResult(
+            runId,
+            goal,
+            'cancelled',
+            'Cancelled by user',
+            steps,
+            totalTokenUsage,
+            Date.now() - startTime,
+          );
         }
 
         const provider = this.resolveProvider(routing, services);
         if (!provider) {
-          return this.buildResult(runId, goal, 'failed', `No provider: ${routing.provider}`, steps, totalTokenUsage, Date.now() - startTime);
+          return this.buildResult(
+            runId,
+            goal,
+            'failed',
+            `No provider: ${routing.provider}`,
+            steps,
+            totalTokenUsage,
+            Date.now() - startTime,
+          );
         }
 
         // ── Main agent loop (tool-call iterations) ──
@@ -266,13 +289,26 @@ export class CodeAgentHarness implements AgentHarness {
 
         while (toolLoopCount < maxSteps && !taskComplete) {
           if (signal.aborted || this.abortController.signal.aborted) {
-            return this.buildResult(runId, goal, 'cancelled', 'Cancelled by user', steps, totalTokenUsage, Date.now() - startTime);
+            return this.buildResult(
+              runId,
+              goal,
+              'cancelled',
+              'Cancelled by user',
+              steps,
+              totalTokenUsage,
+              Date.now() - startTime,
+            );
           }
 
           const steerMsgs = this.drainSteerMessages();
           for (const msg of steerMsgs) {
             request.messages.push({ role: 'user', content: `[Steering] ${msg}` });
-            this.emitEvent({ type: 'steer_message', message: { id: `steer_${Date.now()}`, message: msg, timestamp: Date.now() }, runId, timestamp: Date.now() });
+            this.emitEvent({
+              type: 'steer_message',
+              message: { id: `steer_${Date.now()}`, message: msg, timestamp: Date.now() },
+              runId,
+              timestamp: Date.now(),
+            });
           }
 
           this.emitEvent({ type: 'llm_request', request, runId, timestamp: Date.now() });
@@ -296,7 +332,13 @@ export class CodeAgentHarness implements AgentHarness {
           totalTokenUsage.completionTokens += response.usage.completionTokens;
           totalTokenUsage.totalTokens += response.usage.totalTokens;
           services.reportTokenUsage(response.usage.totalTokens);
-          services.recordLLMCall(routing.modelId, routing.provider, response.usage.totalTokens, Date.now() - startTime, tenantId);
+          services.recordLLMCall(
+            routing.modelId,
+            routing.provider,
+            response.usage.totalTokens,
+            Date.now() - startTime,
+            tenantId,
+          );
 
           // Record response step
           steps.push({
@@ -335,23 +377,49 @@ export class CodeAgentHarness implements AgentHarness {
           // For each tool call, consult the Guardian. If rejected, provide
           // feedback to the model and skip execution.
           const approvedCalls: ToolCall[] = [];
-          const rejectedFeedback: Array<{ call: ToolCall; reason: string; suggestion?: string }> = [];
+          const rejectedFeedback: Array<{ call: ToolCall; reason: string; suggestion?: string }> =
+            [];
 
           for (const tc of toolCalls) {
             if (signal.aborted || this.abortController.signal.aborted) break;
 
             const intent = this.extractIntent(tc);
             if (intent) {
-              this.emitEvent({ type: 'intent_extracted', toolCall: tc, intent, runId, timestamp: Date.now() });
+              this.emitEvent({
+                type: 'intent_extracted',
+                toolCall: tc,
+                intent,
+                runId,
+                timestamp: Date.now(),
+              });
             }
-            this.emitEvent({ type: 'tool_call_start', toolCall: tc, intent: intent ?? undefined, runId, timestamp: Date.now() });
+            this.emitEvent({
+              type: 'tool_call_start',
+              toolCall: tc,
+              intent: intent ?? undefined,
+              runId,
+              timestamp: Date.now(),
+            });
 
             if (this.guardianConfig.enabled) {
               const decision = await this.guardianApprove(tc, goal, services, tenantId);
-              this.emitEvent({ type: 'guardian_decision', toolCall: tc, decision, runId, timestamp: Date.now() });
+              this.emitEvent({
+                type: 'guardian_decision',
+                toolCall: tc,
+                decision,
+                runId,
+                timestamp: Date.now(),
+              });
               if (!decision.approved) {
-                getGlobalLogger().info('CodeAgentHarness', `Guardian rejected: ${tc.name}(${JSON.stringify(tc.arguments).slice(0, 100)}) — ${decision.reason}`);
-                rejectedFeedback.push({ call: tc, reason: decision.reason, suggestion: decision.suggestion });
+                getGlobalLogger().info(
+                  'CodeAgentHarness',
+                  `Guardian rejected: ${tc.name}(${JSON.stringify(tc.arguments).slice(0, 100)}) — ${decision.reason}`,
+                );
+                rejectedFeedback.push({
+                  call: tc,
+                  reason: decision.reason,
+                  suggestion: decision.suggestion,
+                });
                 continue;
               }
             }
@@ -362,7 +430,8 @@ export class CodeAgentHarness implements AgentHarness {
           // ── Handle rejected calls: provide feedback to model ──
           if (rejectedFeedback.length > 0) {
             const feedbackMessages = rejectedFeedback.map(
-              (rf) => `Tool call "${rf.call.name}" was rejected by the safety Guardian.\nReason: ${rf.reason}${rf.suggestion ? `\nSuggestion: ${rf.suggestion}` : ''}`,
+              (rf) =>
+                `Tool call "${rf.call.name}" was rejected by the safety Guardian.\nReason: ${rf.reason}${rf.suggestion ? `\nSuggestion: ${rf.suggestion}` : ''}`,
             );
 
             // APPEND-ONLY: push feedback as a user message
@@ -389,7 +458,11 @@ export class CodeAgentHarness implements AgentHarness {
             }
 
             // Retry LLM with rejection feedback
-            request = await services.fireBeforeLLMCall({ request, agentId: goal.slice(0, 32), runId });
+            request = await services.fireBeforeLLMCall({
+              request,
+              agentId: goal.slice(0, 32),
+              runId,
+            });
             continue;
           }
 
@@ -496,7 +569,11 @@ export class CodeAgentHarness implements AgentHarness {
             role: 'user',
             content: `The previous attempt encountered an error: ${lastError}\nPlease try again with a different approach.`,
           });
-          request = await services.fireBeforeLLMCall({ request, agentId: goal.slice(0, 32), runId });
+          request = await services.fireBeforeLLMCall({
+            request,
+            agentId: goal.slice(0, 32),
+            runId,
+          });
           continue;
         }
 
@@ -519,19 +596,35 @@ export class CodeAgentHarness implements AgentHarness {
       );
 
       if (!finalContent) {
-        this.emitEvent({ type: 'run_error', error: lastError ?? 'All attempts exhausted', runId, timestamp: Date.now() });
-        await services.fireOnError({ error: lastError ?? 'All attempts exhausted', runId, agentId: goal.slice(0, 32) });
+        this.emitEvent({
+          type: 'run_error',
+          error: lastError ?? 'All attempts exhausted',
+          runId,
+          timestamp: Date.now(),
+        });
+        await services.fireOnError({
+          error: lastError ?? 'All attempts exhausted',
+          runId,
+          agentId: goal.slice(0, 32),
+        });
       } else {
         this.emitEvent({ type: 'run_complete', result: finalResult, runId, timestamp: Date.now() });
         await services.fireOnAgentComplete({ result: finalResult, runId });
       }
 
       return finalResult;
-
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       getGlobalLogger().error('CodeAgentHarness', 'Run failed', err as Error);
-      const result = this.buildResult(runId, goal, 'failed', errorMsg, steps, totalTokenUsage, Date.now() - startTime);
+      const result = this.buildResult(
+        runId,
+        goal,
+        'failed',
+        errorMsg,
+        steps,
+        totalTokenUsage,
+        Date.now() - startTime,
+      );
       this.emitEvent({ type: 'run_error', error: errorMsg, runId, timestamp: Date.now() });
       await services.fireOnError({ error: errorMsg, runId, agentId: goal.slice(0, 32) });
       return result;
@@ -590,10 +683,17 @@ export class CodeAgentHarness implements AgentHarness {
     return sorted.map((s) => s.message);
   }
 
-  private extractIntent(tc: ToolCall): { summary: string; rationale?: string; confidence?: number; tags?: string[] } | null {
+  private extractIntent(
+    tc: ToolCall,
+  ): { summary: string; rationale?: string; confidence?: number; tags?: string[] } | null {
     const i = tc.arguments?._i;
     if (i && typeof i === 'object' && typeof (i as { summary?: unknown }).summary === 'string') {
-      const obj = i as { summary: string; rationale?: string; confidence?: number; tags?: string[] };
+      const obj = i as {
+        summary: string;
+        rationale?: string;
+        confidence?: number;
+        tags?: string[];
+      };
       return {
         summary: obj.summary,
         rationale: obj.rationale,
@@ -610,7 +710,10 @@ export class CodeAgentHarness implements AgentHarness {
 
   updateGuardianConfig(config: Partial<GuardianConfig>): void {
     this.guardianConfig = { ...this.guardianConfig, ...config };
-    getGlobalLogger().info('CodeAgentHarness', `Guardian config updated: enabled=${this.guardianConfig.enabled}, model=${this.guardianConfig.model}`);
+    getGlobalLogger().info(
+      'CodeAgentHarness',
+      `Guardian config updated: enabled=${this.guardianConfig.enabled}, model=${this.guardianConfig.model}`,
+    );
   }
 
   getGuardianConfig(): GuardianConfig {
@@ -624,8 +727,14 @@ export class CodeAgentHarness implements AgentHarness {
     tenantId?: string,
   ): Promise<GuardianDecision> {
     const alwaysApprove = [
-      'file_read', 'file_search', 'file_list', 'code_search',
-      'glob', 'grep', 'web_search', 'web_fetch',
+      'file_read',
+      'file_search',
+      'file_list',
+      'code_search',
+      'glob',
+      'grep',
+      'web_search',
+      'web_fetch',
     ];
     if (alwaysApprove.includes(toolCall.name)) {
       return { approved: true, reason: 'Read-only tool — auto-approved' };
@@ -653,14 +762,15 @@ Respond with a JSON object:
   "suggestion": "alternative approach if rejected (optional)"
 }`;
 
-    const guardianMessages = [
-      { role: 'system' as const, content: guardianPrompt },
-    ];
+    const guardianMessages = [{ role: 'system' as const, content: guardianPrompt }];
 
     try {
       const guardianProvider = services.getProvider(this.guardianConfig.provider);
       if (!guardianProvider) {
-        return { approved: true, reason: `Guardian provider "${this.guardianConfig.provider}" not available — auto-approved` };
+        return {
+          approved: true,
+          reason: `Guardian provider "${this.guardianConfig.provider}" not available — auto-approved`,
+        };
       }
 
       const guardianResponse = await guardianProvider.call({
@@ -685,7 +795,9 @@ Respond with a JSON object:
 
       return { approved: true, reason: 'Could not parse Guardian response — auto-approved' };
     } catch (err) {
-      getGlobalLogger().warn('CodeAgentHarness', 'Guardian check failed, auto-approving', { error: (err as Error)?.message });
+      getGlobalLogger().warn('CodeAgentHarness', 'Guardian check failed, auto-approving', {
+        error: (err as Error)?.message,
+      });
       return { approved: true, reason: 'Guardian check failed — auto-approved (fail-open)' };
     }
   }
@@ -788,7 +900,13 @@ Respond with a JSON object:
         services.cacheResult(tc, toolResult, tenantId);
       }
 
-      this.emitEvent({ type: 'tool_call_end', toolCall: tc, result: toolResult, runId, timestamp: Date.now() });
+      this.emitEvent({
+        type: 'tool_call_end',
+        toolCall: tc,
+        result: toolResult,
+        runId,
+        timestamp: Date.now(),
+      });
       results.push(toolResult);
     }
 
@@ -799,11 +917,17 @@ Respond with a JSON object:
   // Private: Helper Methods
   // ==========================================================================
 
-  private resolveProvider(routing: { provider: string }, services: HarnessServices): LLMProvider | undefined {
+  private resolveProvider(
+    routing: { provider: string },
+    services: HarnessServices,
+  ): LLMProvider | undefined {
     const provider = services.getProvider(routing.provider);
     if (provider) return provider;
 
-    getGlobalLogger().warn('CodeAgentHarness', `Provider "${routing.provider}" not found, falling back`);
+    getGlobalLogger().warn(
+      'CodeAgentHarness',
+      `Provider "${routing.provider}" not found, falling back`,
+    );
     return services.getProvider('openai') ?? services.getProvider('anthropic');
   }
 

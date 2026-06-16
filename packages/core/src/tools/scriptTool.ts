@@ -33,12 +33,14 @@ export class ExecuteScriptTool implements Tool {
       properties: {
         script: {
           type: 'string',
-          description: 'JavaScript code to execute. Use `tools.toolName(args)` to call tools, `console.log()` for output.',
+          description:
+            'JavaScript code to execute. Use `tools.toolName(args)` to call tools, `console.log()` for output.',
         },
         tools: {
           type: 'array',
           items: { type: 'string' },
-          description: 'List of tool names to make available in the script (default: all core tools)',
+          description:
+            'List of tool names to make available in the script (default: all core tools)',
         },
         timeout: {
           type: 'number',
@@ -49,8 +51,21 @@ export class ExecuteScriptTool implements Tool {
       required: ['script'],
     },
     examples: [
-      { name: 'execute_script', arguments: { script: 'const files = await tools.file_search({ pattern: "src/**/*.ts" }); console.log("Found", files.length, "files");' } },
-      { name: 'execute_script', arguments: { script: 'const r = await tools.web_search({ query: "AI news" }); await tools.file_write({ path: "result.txt", content: r }); console.log("Saved");', tools: ['web_search', 'file_write'] } },
+      {
+        name: 'execute_script',
+        arguments: {
+          script:
+            'const files = await tools.file_search({ pattern: "src/**/*.ts" }); console.log("Found", files.length, "files");',
+        },
+      },
+      {
+        name: 'execute_script',
+        arguments: {
+          script:
+            'const r = await tools.web_search({ query: "AI news" }); await tools.file_write({ path: "result.txt", content: r }); console.log("Saved");',
+          tools: ['web_search', 'file_write'],
+        },
+      },
     ],
     category: 'code',
   };
@@ -95,13 +110,17 @@ export class ExecuteScriptTool implements Tool {
     // Safe console that captures output
     const safeConsole = {
       log: (...msgArgs: unknown[]) => {
-        outputLines.push(msgArgs.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' '));
+        outputLines.push(
+          msgArgs
+            .map((a) => (typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)))
+            .join(' '),
+        );
       },
       warn: (...msgArgs: unknown[]) => {
-        outputLines.push('[warn] ' + msgArgs.map(a => String(a)).join(' '));
+        outputLines.push('[warn] ' + msgArgs.map((a) => String(a)).join(' '));
       },
       error: (...msgArgs: unknown[]) => {
-        outputLines.push('[error] ' + msgArgs.map(a => String(a)).join(' '));
+        outputLines.push('[error] ' + msgArgs.map((a) => String(a)).join(' '));
       },
     };
 
@@ -132,9 +151,14 @@ export class ExecuteScriptTool implements Tool {
 
       // Truncate output if too large (preserve head + tail)
       const MAX_OUTPUT = 10000;
-      const finalOutput = output.length > MAX_OUTPUT
-        ? output.slice(0, MAX_OUTPUT / 2) + '\n... [truncated, ' + (output.length - MAX_OUTPUT) + ' chars omitted] ...\n' + output.slice(-MAX_OUTPUT / 2)
-        : output;
+      const finalOutput =
+        output.length > MAX_OUTPUT
+          ? output.slice(0, MAX_OUTPUT / 2) +
+            '\n... [truncated, ' +
+            (output.length - MAX_OUTPUT) +
+            ' chars omitted] ...\n' +
+            output.slice(-MAX_OUTPUT / 2)
+          : output;
 
       return `[Script completed in ${elapsed}ms]\n${finalOutput || '(no console.log output)'}`;
     } catch (err) {
@@ -149,15 +173,33 @@ export class ExecuteScriptTool implements Tool {
   private async runScript(
     script: string,
     tools: Record<string, (args: Record<string, unknown>) => Promise<string>>,
-    console_: { log: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void },
+    console_: {
+      log: (...args: unknown[]) => void;
+      warn: (...args: unknown[]) => void;
+      error: (...args: unknown[]) => void;
+    },
   ): Promise<void> {
     // SECURITY FIX: wrap all sandbox objects in Proxy to prevent prototype chain escape
     // Node.js vm module is NOT a security sandbox — this.constructor.constructor('return process')()
     // can escape. We use Proxy to block access to constructor, __proto__, and other prototype paths.
-    const BLOCKED = new Set(['constructor', '__proto__', 'prototype', 'apply', 'call', 'bind',
-      '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__',
-      'toLocaleString', 'valueOf', 'hasOwnProperty', 'isPrototypeOf',
-      'propertyIsEnumerable', 'toString']);
+    const BLOCKED = new Set([
+      'constructor',
+      '__proto__',
+      'prototype',
+      'apply',
+      'call',
+      'bind',
+      '__defineGetter__',
+      '__defineSetter__',
+      '__lookupGetter__',
+      '__lookupSetter__',
+      'toLocaleString',
+      'valueOf',
+      'hasOwnProperty',
+      'isPrototypeOf',
+      'propertyIsEnumerable',
+      'toString',
+    ]);
 
     /**
      * Block dangerous prototype-chain properties on a function by defining own
@@ -169,7 +211,11 @@ export class ExecuteScriptTool implements Tool {
     function shadowBlockedProperties(fn: (...args: unknown[]) => unknown): void {
       for (const key of BLOCKED) {
         try {
-          Object.defineProperty(fn, key, { value: undefined, writable: false, configurable: false });
+          Object.defineProperty(fn, key, {
+            value: undefined,
+            writable: false,
+            configurable: false,
+          });
         } catch {
           // Some properties (e.g. __proto__ on some objects) may be non-configurable;
           // ignore silently — the Proxy layer still blocks them at the object level.
@@ -190,7 +236,12 @@ export class ExecuteScriptTool implements Tool {
         if (typeof val === 'function') {
           const wrapper = (...args: unknown[]) => {
             const result = val.apply(obj, args);
-            if (result && typeof result === 'object' && !(result instanceof Promise) && !(typeof (result as Record<string, unknown>).then === 'function')) {
+            if (
+              result &&
+              typeof result === 'object' &&
+              !(result instanceof Promise) &&
+              !(typeof (result as Record<string, unknown>).then === 'function')
+            ) {
               return new Proxy(result as object, safeProxyHandler);
             }
             return result;
@@ -204,10 +255,14 @@ export class ExecuteScriptTool implements Tool {
         if (val && typeof val === 'object') return new Proxy(val as object, safeProxyHandler);
         return val;
       },
-      getPrototypeOf() { return null; },
-      has(_, prop) { return typeof prop === 'string' && !BLOCKED.has(prop); },
+      getPrototypeOf() {
+        return null;
+      },
+      has(_, prop) {
+        return typeof prop === 'string' && !BLOCKED.has(prop);
+      },
       ownKeys(target) {
-        return Reflect.ownKeys(target).filter(k => typeof k !== 'string' || !BLOCKED.has(k));
+        return Reflect.ownKeys(target).filter((k) => typeof k !== 'string' || !BLOCKED.has(k));
       },
     };
 
@@ -231,7 +286,14 @@ export class ExecuteScriptTool implements Tool {
      */
     const safePromise = new Proxy(Promise, {
       get(target, prop) {
-        if (prop === 'constructor' || prop === '__proto__' || prop === 'prototype' || prop === 'apply' || prop === 'call' || prop === 'bind') {
+        if (
+          prop === 'constructor' ||
+          prop === '__proto__' ||
+          prop === 'prototype' ||
+          prop === 'apply' ||
+          prop === 'call' ||
+          prop === 'bind'
+        ) {
           return undefined;
         }
         if (typeof prop === 'symbol') return undefined;
@@ -261,7 +323,8 @@ export class ExecuteScriptTool implements Tool {
     // Top-level sandbox Proxy blocks direct access to dangerous globals
     const sandbox = new Proxy(rawSandbox, {
       get(target, prop) {
-        if (prop === 'constructor' || prop === '__proto__' || prop === 'prototype') return undefined;
+        if (prop === 'constructor' || prop === '__proto__' || prop === 'prototype')
+          return undefined;
         if (typeof prop === 'symbol') return undefined;
         return Reflect.get(target, prop);
       },
@@ -270,7 +333,9 @@ export class ExecuteScriptTool implements Tool {
         return Reflect.has(target, prop);
       },
       ownKeys(target) {
-        return Reflect.ownKeys(target).filter(k => typeof k !== 'string' || !['constructor', '__proto__', 'prototype'].includes(k));
+        return Reflect.ownKeys(target).filter(
+          (k) => typeof k !== 'string' || !['constructor', '__proto__', 'prototype'].includes(k),
+        );
       },
     });
     const context = vm.createContext(sandbox, { name: 'script-sandbox' });
@@ -279,7 +344,7 @@ export class ExecuteScriptTool implements Tool {
     });
 
     if (result && typeof (result as { then?: unknown }).then === 'function') {
-      await result as Promise<unknown>;
+      (await result) as Promise<unknown>;
     }
   }
 }

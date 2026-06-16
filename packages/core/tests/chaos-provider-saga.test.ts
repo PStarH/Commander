@@ -23,7 +23,11 @@ import * as os from 'os';
 // ───────────────────────────────────────────────────────────────────────────
 // CM-T11: ProviderFallbackChain under real failure injection
 // ───────────────────────────────────────────────────────────────────────────
-import { ProviderFallbackChain, FallbackChainExhaustedError, type ProviderEntry } from '../src/runtime/providerFallbackChain';
+import {
+  ProviderFallbackChain,
+  FallbackChainExhaustedError,
+  type ProviderEntry,
+} from '../src/runtime/providerFallbackChain';
 import { CircuitBreaker } from '../src/runtime/circuitBreaker';
 
 describe('CM-T11: ProviderFallbackChain failure injection', () => {
@@ -32,9 +36,27 @@ describe('CM-T11: ProviderFallbackChain failure injection', () => {
 
     let callOrder: string[] = [];
     const providers: ProviderEntry<string>[] = [
-      { name: 'primary', attempt: async () => { callOrder.push('primary'); throw new Error('500 Internal Server Error'); } },
-      { name: 'secondary', attempt: async () => { callOrder.push('secondary'); throw new Error('429 Rate Limited'); } },
-      { name: 'tertiary', attempt: async () => { callOrder.push('tertiary'); return 'success-from-tertiary'; } },
+      {
+        name: 'primary',
+        attempt: async () => {
+          callOrder.push('primary');
+          throw new Error('500 Internal Server Error');
+        },
+      },
+      {
+        name: 'secondary',
+        attempt: async () => {
+          callOrder.push('secondary');
+          throw new Error('429 Rate Limited');
+        },
+      },
+      {
+        name: 'tertiary',
+        attempt: async () => {
+          callOrder.push('tertiary');
+          return 'success-from-tertiary';
+        },
+      },
     ];
 
     const result = await chain.tryProviders(providers);
@@ -50,8 +72,21 @@ describe('CM-T11: ProviderFallbackChain failure injection', () => {
 
     let calledNames: string[] = [];
     const providers: ProviderEntry<string>[] = [
-      { name: 'broken', attempt: async () => { calledNames.push('broken'); return 'should-not-reach'; }, breaker },
-      { name: 'healthy', attempt: async () => { calledNames.push('healthy'); return 'healthy-result'; } },
+      {
+        name: 'broken',
+        attempt: async () => {
+          calledNames.push('broken');
+          return 'should-not-reach';
+        },
+        breaker,
+      },
+      {
+        name: 'healthy',
+        attempt: async () => {
+          calledNames.push('healthy');
+          return 'healthy-result';
+        },
+      },
     ];
 
     const result = await chain.tryProviders(providers);
@@ -68,8 +103,18 @@ describe('CM-T11: ProviderFallbackChain failure injection', () => {
     });
 
     const providers: ProviderEntry<string>[] = [
-      { name: 'a', attempt: async () => { throw new Error('permanent auth error - do not retry'); } },
-      { name: 'b', attempt: async () => { throw new Error('another permanent error'); } },
+      {
+        name: 'a',
+        attempt: async () => {
+          throw new Error('permanent auth error - do not retry');
+        },
+      },
+      {
+        name: 'b',
+        attempt: async () => {
+          throw new Error('another permanent error');
+        },
+      },
     ];
 
     // First provider throws permanent error — chain should not continue
@@ -77,7 +122,7 @@ describe('CM-T11: ProviderFallbackChain failure injection', () => {
       () => chain.tryProviders(providers),
       (err: unknown) => {
         return err instanceof Error && err.message.includes('permanent auth error');
-      }
+      },
     );
   });
 
@@ -85,14 +130,32 @@ describe('CM-T11: ProviderFallbackChain failure injection', () => {
     const chain = new ProviderFallbackChain<string>({ maxProviders: 3, totalTimeoutMs: 50 });
 
     const providers: ProviderEntry<string>[] = [
-      { name: 'slow1', attempt: async () => { await new Promise(r => setTimeout(r, 60)); throw new Error('slow network timeout'); } },
-      { name: 'slow2', attempt: async () => { await new Promise(r => setTimeout(r, 60)); throw new Error('slow network timeout'); } },
-      { name: 'slow3', attempt: async () => { await new Promise(r => setTimeout(r, 60)); throw new Error('slow network timeout'); } },
+      {
+        name: 'slow1',
+        attempt: async () => {
+          await new Promise((r) => setTimeout(r, 60));
+          throw new Error('slow network timeout');
+        },
+      },
+      {
+        name: 'slow2',
+        attempt: async () => {
+          await new Promise((r) => setTimeout(r, 60));
+          throw new Error('slow network timeout');
+        },
+      },
+      {
+        name: 'slow3',
+        attempt: async () => {
+          await new Promise((r) => setTimeout(r, 60));
+          throw new Error('slow network timeout');
+        },
+      },
     ];
 
     await assert.rejects(
       () => chain.tryProviders(providers),
-      (err: unknown) => err instanceof FallbackChainExhaustedError
+      (err: unknown) => err instanceof FallbackChainExhaustedError,
     );
   });
 
@@ -103,7 +166,9 @@ describe('CM-T11: ProviderFallbackChain failure injection', () => {
     for (let i = 0; i < 19; i++) {
       providers.push({
         name: `fail-${i}`,
-        attempt: async () => { throw new Error(`provider ${i} error: connection timeout`); },
+        attempt: async () => {
+          throw new Error(`provider ${i} error: connection timeout`);
+        },
       });
     }
     providers.push({
@@ -120,20 +185,13 @@ describe('CM-T11: ProviderFallbackChain failure injection', () => {
 // ───────────────────────────────────────────────────────────────────────────
 // CM-T12: Saga compensation rollback under step failure
 // ───────────────────────────────────────────────────────────────────────────
-import {
-  SagaCoordinator,
-} from '../src/saga/sagaCoordinator';
+import { SagaCoordinator } from '../src/saga/sagaCoordinator';
 import { ExecutionGraph } from '../src/saga/executionGraph';
 import { CheckpointManager } from '../src/saga/checkpointManager';
 import { ApprovalManager } from '../src/saga/approvalManager';
 import { CompensationScheduler } from '../src/saga/compensationScheduler';
 import { InMemorySagaStore } from '../src/saga/sagaStore';
-import type {
-  SagaGraph,
-  SagaContext,
-  SagaStepNode,
-  RetryPolicy,
-} from '../src/saga/types';
+import type { SagaGraph, SagaContext, SagaStepNode, RetryPolicy } from '../src/saga/types';
 import { DEFAULT_RETRY_POLICY } from '../src/saga/types';
 
 function makeSimpleSagaGraph(): SagaGraph {
@@ -143,7 +201,10 @@ function makeSimpleSagaGraph(): SagaGraph {
     name: 'step_create_file',
     compensable: true,
     fn: async (ctx: SagaContext) => {
-      const filePath = path.join(ctx.input.workspace as string ?? os.tmpdir(), 'chaos-saga-test.txt');
+      const filePath = path.join(
+        (ctx.input.workspace as string) ?? os.tmpdir(),
+        'chaos-saga-test.txt',
+      );
       fs.writeFileSync(filePath, 'created by saga');
       return { filePath };
     },
@@ -159,8 +220,12 @@ function makeSimpleSagaGraph(): SagaGraph {
     kind: 'step',
     name: 'step_always_fails',
     compensable: true,
-    fn: async () => { throw new Error('DELIBERATE CHAOS FAILURE'); },
-    compensate: async () => { /* no-op: nothing to undo */ },
+    fn: async () => {
+      throw new Error('DELIBERATE CHAOS FAILURE');
+    },
+    compensate: async () => {
+      /* no-op: nothing to undo */
+    },
     retryPolicy: { ...DEFAULT_RETRY_POLICY, maxAttempts: 1 },
     timeoutMs: 5000,
   };
@@ -168,9 +233,7 @@ function makeSimpleSagaGraph(): SagaGraph {
     name: 'chaos-saga',
     rootId: 's1',
     nodes: [step1, step2],
-    edges: [
-      { from: 's1', to: 's2', type: 'sequential' },
-    ],
+    edges: [{ from: 's1', to: 's2', type: 'sequential' }],
   };
 }
 
@@ -188,7 +251,11 @@ describe('CM-T12: Saga compensation under step failure', () => {
   });
 
   afterEach(() => {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ok */ }
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* ok */
+    }
   });
 
   it('rolls back completed steps when a later step fails', async () => {
@@ -211,7 +278,10 @@ describe('CM-T12: Saga compensation under step failure', () => {
 
     // Saga should have aborted
     assert.strictEqual(result.status, 'aborted');
-    assert.ok(result.error?.includes('DELIBERATE CHAOS FAILURE'), `Expected chaos failure, got: ${result.error}`);
+    assert.ok(
+      result.error?.includes('DELIBERATE CHAOS FAILURE'),
+      `Expected chaos failure, got: ${result.error}`,
+    );
 
     // step_create_file's compensation should have deleted the file
     assert.ok(!fs.existsSync(tmpFile), 'Compensation should have deleted the created file');
@@ -225,7 +295,7 @@ describe('CM-T12: Saga compensation under step failure', () => {
       name: 'flaky_create',
       compensable: true,
       fn: async (ctx: SagaContext) => {
-        const p = path.join(ctx.input.workspace as string ?? tmpDir, 'flaky.txt');
+        const p = path.join((ctx.input.workspace as string) ?? tmpDir, 'flaky.txt');
         fs.writeFileSync(p, 'data');
         return { filePath: p };
       },
@@ -240,7 +310,9 @@ describe('CM-T12: Saga compensation under step failure', () => {
       kind: 'step',
       name: 'trigger_failure',
       compensable: false,
-      fn: async () => { throw new Error('trigger'); },
+      fn: async () => {
+        throw new Error('trigger');
+      },
       retryPolicy: { ...DEFAULT_RETRY_POLICY, maxAttempts: 1 },
       timeoutMs: 5000,
     };
@@ -287,7 +359,11 @@ describe('CM-T12: Saga compensation under step failure', () => {
 // ───────────────────────────────────────────────────────────────────────────
 // CM-T13: DeadLetterQueue persistence under simulated crash
 // ───────────────────────────────────────────────────────────────────────────
-import { DeadLetterQueue, type DeadLetterEntry, type DLQCategory } from '../src/runtime/deadLetterQueue';
+import {
+  DeadLetterQueue,
+  type DeadLetterEntry,
+  type DLQCategory,
+} from '../src/runtime/deadLetterQueue';
 
 describe('CM-T13: DeadLetterQueue persistence under crash', () => {
   let dlqDir: string;
@@ -297,7 +373,11 @@ describe('CM-T13: DeadLetterQueue persistence under crash', () => {
   });
 
   afterEach(() => {
-    try { fs.rmSync(dlqDir, { recursive: true, force: true }); } catch { /* ok */ }
+    try {
+      fs.rmSync(dlqDir, { recursive: true, force: true });
+    } catch {
+      /* ok */
+    }
   });
 
   it('survives process-level crash (new instance reads old entries)', () => {
@@ -329,14 +409,25 @@ describe('CM-T13: DeadLetterQueue persistence under crash', () => {
     assert.ok(entries.length >= 10, `Expected >=10 entries after crash, got ${entries.length}`);
     // All entries should be readable
     for (let i = 0; i < Math.min(entries.length, 15); i++) {
-      assert.ok(entries.some(e => e.id === `entry-${i}`), `Entry ${i} should survive crash`);
+      assert.ok(
+        entries.some((e) => e.id === `entry-${i}`),
+        `Entry ${i} should survive crash`,
+      );
     }
   });
 
   it('enqueue convenience method works for all categories', () => {
     const dlq = new DeadLetterQueue(dlqDir);
 
-    const categories: DLQCategory[] = ['llm', 'tool', 'execution', 'verification', 'circuit_breaker', 'compensation', 'semantic_drift'];
+    const categories: DLQCategory[] = [
+      'llm',
+      'tool',
+      'execution',
+      'verification',
+      'circuit_breaker',
+      'compensation',
+      'semantic_drift',
+    ];
     for (const cat of categories) {
       dlq.enqueue({
         category: cat,
@@ -352,7 +443,7 @@ describe('CM-T13: DeadLetterQueue persistence under crash', () => {
 
     const stats = dlq.getStats();
     for (const cat of categories) {
-      const s = stats.find(s => s.category === cat);
+      const s = stats.find((s) => s.category === cat);
       assert.ok(s, `Category ${cat} should have stats`);
       assert.ok(s && s.count >= 1, `Category ${cat} should have entries`);
     }
@@ -362,34 +453,105 @@ describe('CM-T13: DeadLetterQueue persistence under crash', () => {
     const dlqDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'chaos-dlq-corrupt-'));
     try {
       const corruptPath = path.join(dlqDir2, 'tool.ndjson');
-      fs.writeFileSync(corruptPath, [
-        JSON.stringify({ id: 'good-1', category: 'tool', runId: 'r1', agentId: 'a1', timestamp: new Date().toISOString(), errorClass: 'transient', errorMessage: 'ok', retryable: true, attemptNumber: 1, operationName: 'ok', compensated: false, recovered: false, tags: [] }),
-        'NOT VALID JSON {{{',
-        JSON.stringify({ id: 'good-2', category: 'tool', runId: 'r2', agentId: 'a2', timestamp: new Date().toISOString(), errorClass: 'transient', errorMessage: 'ok2', retryable: true, attemptNumber: 1, operationName: 'ok2', compensated: false, recovered: false, tags: [] }),
-      ].join('\n') + '\n');
+      fs.writeFileSync(
+        corruptPath,
+        [
+          JSON.stringify({
+            id: 'good-1',
+            category: 'tool',
+            runId: 'r1',
+            agentId: 'a1',
+            timestamp: new Date().toISOString(),
+            errorClass: 'transient',
+            errorMessage: 'ok',
+            retryable: true,
+            attemptNumber: 1,
+            operationName: 'ok',
+            compensated: false,
+            recovered: false,
+            tags: [],
+          }),
+          'NOT VALID JSON {{{',
+          JSON.stringify({
+            id: 'good-2',
+            category: 'tool',
+            runId: 'r2',
+            agentId: 'a2',
+            timestamp: new Date().toISOString(),
+            errorClass: 'transient',
+            errorMessage: 'ok2',
+            retryable: true,
+            attemptNumber: 1,
+            operationName: 'ok2',
+            compensated: false,
+            recovered: false,
+            tags: [],
+          }),
+        ].join('\n') + '\n',
+      );
 
       const dlq = new DeadLetterQueue(dlqDir2);
       const entries = dlq.readEntries('tool', 10);
       assert.ok(entries.length >= 2, `Expected >=2 good entries, got ${entries.length}`);
     } finally {
-      try { fs.rmSync(dlqDir2, { recursive: true, force: true }); } catch { /* ok */ }
+      try {
+        fs.rmSync(dlqDir2, { recursive: true, force: true });
+      } catch {
+        /* ok */
+      }
     }
   });
 
   it('getRetryableEntries filters correctly', () => {
     const dlq = new DeadLetterQueue(dlqDir);
 
-    dlq.enqueue({ category: 'tool', operationName: 'retryable-op', errorMessage: 'retryable', retryable: true, recovered: false, compensated: false, errorClass: 'transient' });
-    dlq.enqueue({ category: 'tool', operationName: 'recovered-op', errorMessage: 'recovered', retryable: true, recovered: true, compensated: false, errorClass: 'transient' });
-    dlq.enqueue({ category: 'tool', operationName: 'permanent-op', errorMessage: 'permanent', retryable: false, recovered: false, compensated: false, errorClass: 'permanent' });
-    dlq.enqueue({ category: 'tool', operationName: 'compensated-op', errorMessage: 'compensated', retryable: true, recovered: false, compensated: true, errorClass: 'transient' });
+    dlq.enqueue({
+      category: 'tool',
+      operationName: 'retryable-op',
+      errorMessage: 'retryable',
+      retryable: true,
+      recovered: false,
+      compensated: false,
+      errorClass: 'transient',
+    });
+    dlq.enqueue({
+      category: 'tool',
+      operationName: 'recovered-op',
+      errorMessage: 'recovered',
+      retryable: true,
+      recovered: true,
+      compensated: false,
+      errorClass: 'transient',
+    });
+    dlq.enqueue({
+      category: 'tool',
+      operationName: 'permanent-op',
+      errorMessage: 'permanent',
+      retryable: false,
+      recovered: false,
+      compensated: false,
+      errorClass: 'permanent',
+    });
+    dlq.enqueue({
+      category: 'tool',
+      operationName: 'compensated-op',
+      errorMessage: 'compensated',
+      retryable: true,
+      recovered: false,
+      compensated: true,
+      errorClass: 'transient',
+    });
 
     dlq.flush('tool'); // Force flush buffer to disk before reading
 
     const retryable = dlq.getRetryableEntries('tool', 10);
     // Only the first one should be retryable
-    const found = retryable.filter(e => e.operationName === 'retryable-op');
-    assert.strictEqual(found.length, 1, 'Only the retryable, non-recovered, non-compensated entry should match');
+    const found = retryable.filter((e) => e.operationName === 'retryable-op');
+    assert.strictEqual(
+      found.length,
+      1,
+      'Only the retryable, non-recovered, non-compensated entry should match',
+    );
   });
 });
 
@@ -405,7 +567,10 @@ describe('CM-T14: Sandbox crash isolation', () => {
     assert.ok(profile.mode === 'workspace-write');
     assert.ok(profile.filesystem);
     assert.ok(Array.isArray(profile.filesystem.protectedPaths));
-    assert.ok(profile.filesystem.protectedPaths.length > 0, 'Protected paths should include system dirs');
+    assert.ok(
+      profile.filesystem.protectedPaths.length > 0,
+      'Protected paths should include system dirs',
+    );
   });
 
   it('full-access profile requires explicit request (security check)', () => {
@@ -415,7 +580,11 @@ describe('CM-T14: Sandbox crash isolation', () => {
     process.env.COMMANDER_SANDBOX_MODE = 'full-access';
     try {
       const profile = sm.getProfile();
-      assert.notStrictEqual(profile.mode, 'full-access', 'full-access should not be default or env-drivable');
+      assert.notStrictEqual(
+        profile.mode,
+        'full-access',
+        'full-access should not be default or env-drivable',
+      );
     } finally {
       if (originalEnv !== undefined) process.env.COMMANDER_SANDBOX_MODE = originalEnv;
       else delete process.env.COMMANDER_SANDBOX_MODE;
@@ -457,7 +626,7 @@ describe('CM-T15: Provider timeout fallback recovery', () => {
       {
         name: 'timeout-provider',
         attempt: async () => {
-          await new Promise(r => setTimeout(r, 2000));
+          await new Promise((r) => setTimeout(r, 2000));
           return 'too-late';
         },
       },
@@ -485,8 +654,19 @@ describe('CM-T15: Provider timeout fallback recovery', () => {
     for (const msg of retryableMessages) {
       let called = false;
       const providers: ProviderEntry<string>[] = [
-        { name: 'bad', attempt: async () => { throw new Error(msg); } },
-        { name: 'good', attempt: async () => { called = true; return 'ok'; } },
+        {
+          name: 'bad',
+          attempt: async () => {
+            throw new Error(msg);
+          },
+        },
+        {
+          name: 'good',
+          attempt: async () => {
+            called = true;
+            return 'ok';
+          },
+        },
       ];
       const result = await chain.tryProviders(providers);
       assert.strictEqual(result.result, 'ok');
@@ -510,7 +690,11 @@ describe('CM-T16: Multi-step saga under concurrent chaos', () => {
   });
 
   afterEach(() => {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ok */ }
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* ok */
+    }
   });
 
   it('5-step saga with random step failure properly compensates all prior steps', async () => {
@@ -597,7 +781,11 @@ describe('CM-T17: DLQ retry worker resilience', () => {
   });
 
   afterEach(() => {
-    try { fs.rmSync(dlqDir, { recursive: true, force: true }); } catch { /* ok */ }
+    try {
+      fs.rmSync(dlqDir, { recursive: true, force: true });
+    } catch {
+      /* ok */
+    }
   });
 
   it('retryable entries can be replayed without data loss', () => {
@@ -613,7 +801,14 @@ describe('CM-T17: DLQ retry worker resilience', () => {
         compensated: i % 7 === 0,
         attemptNumber: 1 + (i % 3),
         tags: [`batch-${i % 10}`],
-        failureMode: i % 4 === 0 ? 'timeout' : i % 4 === 1 ? 'provider_unavailable' : i % 4 === 2 ? 'validation' : 'unknown',
+        failureMode:
+          i % 4 === 0
+            ? 'timeout'
+            : i % 4 === 1
+              ? 'provider_unavailable'
+              : i % 4 === 2
+                ? 'validation'
+                : 'unknown',
       });
     }
 
@@ -621,7 +816,7 @@ describe('CM-T17: DLQ retry worker resilience', () => {
     const retryable = dlq.getRetryableEntries('tool', 20);
     // retryable=true, recovered=false, compensated=false
     const expected = 50 / 3; // ~17 entries
-    const actualR = retryable.filter(e => !e.recovered && !e.compensated && e.retryable).length;
+    const actualR = retryable.filter((e) => !e.recovered && !e.compensated && e.retryable).length;
     assert.ok(actualR > 0, 'Should have some retryable entries');
 
     // Mark them as recovered
@@ -642,7 +837,10 @@ describe('CM-T17: DLQ retry worker resilience', () => {
 
     // After marking recovered, getRetryableEntries should return fewer
     const afterRetry = dlq.getRetryableEntries('tool', 50);
-    assert.ok(afterRetry.length <= retryable.length + 10, 'Recovered entries should not appear as retryable');
+    assert.ok(
+      afterRetry.length <= retryable.length + 10,
+      'Recovered entries should not appear as retryable',
+    );
   });
 });
 
@@ -657,7 +855,11 @@ describe('CM-T18: Concurrent saga execution with partial failures', () => {
   });
 
   afterEach(() => {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ok */ }
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* ok */
+    }
   });
 
   it('3 sagas run concurrently, 1 fails, others unaffected', async () => {
@@ -671,7 +873,10 @@ describe('CM-T18: Concurrent saga execution with partial failures', () => {
         const approval = new ApprovalManager();
 
         const step1: SagaStepNode = {
-          id: 's1', kind: 'step', name: 'write', compensable: true,
+          id: 's1',
+          kind: 'step',
+          name: 'write',
+          compensable: true,
           fn: async () => {
             fs.writeFileSync(path.join(subDir, 'data.txt'), id);
             return { ok: true };
@@ -684,7 +889,10 @@ describe('CM-T18: Concurrent saga execution with partial failures', () => {
           timeoutMs: 5000,
         };
         const step2: SagaStepNode = {
-          id: 's2', kind: 'step', name: 'maybe_fail', compensable: false,
+          id: 's2',
+          kind: 'step',
+          name: 'maybe_fail',
+          compensable: false,
           fn: async () => {
             if (shouldFail) throw new Error(`saga ${id} failure`);
             return { ok: true };
@@ -710,7 +918,8 @@ describe('CM-T18: Concurrent saga execution with partial failures', () => {
         };
 
         const coord = new SagaCoordinator(eg, ctx, checkpoint, approval, {
-          checkpoint, approval,
+          checkpoint,
+          approval,
         });
 
         const result = await coord.run();
@@ -725,19 +934,28 @@ describe('CM-T18: Concurrent saga execution with partial failures', () => {
       createSaga('saga-fail', true),
     ]);
 
-    const ok1 = results.find(r => r.runId === 'saga-ok-1');
-    const ok2 = results.find(r => r.runId === 'saga-ok-2');
-    const fail = results.find(r => r.runId === 'saga-fail');
+    const ok1 = results.find((r) => r.runId === 'saga-ok-1');
+    const ok2 = results.find((r) => r.runId === 'saga-ok-2');
+    const fail = results.find((r) => r.runId === 'saga-fail');
 
     assert.strictEqual(ok1?.status, 'committed');
     assert.strictEqual(ok2?.status, 'committed');
     assert.strictEqual(fail?.status, 'aborted');
 
     // The failed saga should have compensated its step1 file
-    assert.ok(!fs.existsSync(path.join(tmpDir, 'saga-fail', 'data.txt')), 'Failed saga should compensate');
+    assert.ok(
+      !fs.existsSync(path.join(tmpDir, 'saga-fail', 'data.txt')),
+      'Failed saga should compensate',
+    );
     // OK sagas should have their files
-    assert.ok(fs.existsSync(path.join(tmpDir, 'saga-ok-1', 'data.txt')), 'OK saga 1 file should exist');
-    assert.ok(fs.existsSync(path.join(tmpDir, 'saga-ok-2', 'data.txt')), 'OK saga 2 file should exist');
+    assert.ok(
+      fs.existsSync(path.join(tmpDir, 'saga-ok-1', 'data.txt')),
+      'OK saga 1 file should exist',
+    );
+    assert.ok(
+      fs.existsSync(path.join(tmpDir, 'saga-ok-2', 'data.txt')),
+      'OK saga 2 file should exist',
+    );
   });
 });
 
@@ -763,7 +981,7 @@ describe('CM-T19: Compensation registry chaos', () => {
             tags: ['test'],
             runId: 'chaos-run',
           });
-        })
+        }),
       );
     }
     await Promise.all(actions);
@@ -811,8 +1029,19 @@ describe('CM-T20: Full end-to-end — provider failure → saga abort → compen
       let fallbackResult: string | undefined;
       try {
         const r = await chain.tryProviders([
-          { name: 'fail-500', attempt: async () => { throw new Error('500 Server Error'); } },
-          { name: 'fallback', attempt: async () => { fallbackResult = 'recovered-via-fallback'; return fallbackResult; } },
+          {
+            name: 'fail-500',
+            attempt: async () => {
+              throw new Error('500 Server Error');
+            },
+          },
+          {
+            name: 'fallback',
+            attempt: async () => {
+              fallbackResult = 'recovered-via-fallback';
+              return fallbackResult;
+            },
+          },
         ]);
         assert.strictEqual(r.providerUsed, 'fallback');
       } catch {
@@ -823,7 +1052,10 @@ describe('CM-T20: Full end-to-end — provider failure → saga abort → compen
       const checkpoint = new CheckpointManager(new InMemorySagaStore());
       const approval = new ApprovalManager();
       const step1: SagaStepNode = {
-        id: 's1', kind: 'step', name: 'create', compensable: true,
+        id: 's1',
+        kind: 'step',
+        name: 'create',
+        compensable: true,
         fn: async () => {
           const fp = path.join(tmpDir, 'e2e-file.txt');
           fs.writeFileSync(fp, 'e2e-data');
@@ -837,8 +1069,13 @@ describe('CM-T20: Full end-to-end — provider failure → saga abort → compen
         timeoutMs: 5000,
       };
       const step2: SagaStepNode = {
-        id: 's2', kind: 'step', name: 'always-fail', compensable: false,
-        fn: async () => { throw new Error('E2E CHAOS FAILURE'); },
+        id: 's2',
+        kind: 'step',
+        name: 'always-fail',
+        compensable: false,
+        fn: async () => {
+          throw new Error('E2E CHAOS FAILURE');
+        },
         retryPolicy: { ...DEFAULT_RETRY_POLICY, maxAttempts: 1 },
         timeoutMs: 5000,
       };
@@ -898,9 +1135,12 @@ describe('CM-T20: Full end-to-end — provider failure → saga abort → compen
 
       // All steps completed successfully
       assert.strictEqual(fallbackResult, 'recovered-via-fallback');
-
     } finally {
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ok */ }
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        /* ok */
+      }
     }
   });
 });

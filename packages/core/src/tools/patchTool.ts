@@ -17,19 +17,32 @@ function assertShellSafePath(filePath: string, label: string): void {
 
 const DEFINITION: ToolDefinition = {
   name: 'apply_patch',
-  description: 'Apply a unified diff patch to a file. The patch must be in standard unified diff format (diff -u old new). Validates the patch before applying and returns the result. Use this for surgical code modifications.',
+  description:
+    'Apply a unified diff patch to a file. The patch must be in standard unified diff format (diff -u old new). Validates the patch before applying and returns the result. Use this for surgical code modifications.',
   inputSchema: {
     type: 'object',
     properties: {
       patch: { type: 'string', description: 'The unified diff content to apply' },
-      targetFile: { type: 'string', description: 'File to patch (if the diff does not include the file path)' },
+      targetFile: {
+        type: 'string',
+        description: 'File to patch (if the diff does not include the file path)',
+      },
       validate: { type: 'boolean', description: 'Run validation after applying (default: true)' },
-      verifyCommand: { type: 'string', description: 'Command to run for verification (e.g., "npm test", "python -m pytest")' },
+      verifyCommand: {
+        type: 'string',
+        description: 'Command to run for verification (e.g., "npm test", "python -m pytest")',
+      },
     },
     required: ['patch'],
   },
   examples: [
-    { name: 'apply_patch', arguments: { patch: '--- a/src/file.ts\n+++ b/src/file.ts\n@@ -1,3 +1,4 @@\n-old line\n+new line', validate: true } },
+    {
+      name: 'apply_patch',
+      arguments: {
+        patch: '--- a/src/file.ts\n+++ b/src/file.ts\n@@ -1,3 +1,4 @@\n-old line\n+new line',
+        validate: true,
+      },
+    },
     { name: 'apply_patch', arguments: { patch: '...', verifyCommand: 'npm test' } },
   ],
   category: 'development',
@@ -90,11 +103,16 @@ export class ApplyPatchTool implements Tool {
       for (const args of patchArgsList) {
         try {
           execFileSync('patch', args, {
-            cwd, encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'],
+            cwd,
+            encoding: 'utf-8',
+            timeout: 30000,
+            stdio: ['pipe', 'pipe', 'pipe'],
           });
           patchApplied = true;
           break;
-        } catch { /* try next variant */ }
+        } catch {
+          /* try next variant */
+        }
       }
       if (!patchApplied) {
         return `Error: Patch application failed. The patch format may be invalid or the file content has changed.\n\nPatch content:\n${patchContent.slice(0, 1000)}`;
@@ -112,7 +130,7 @@ export class ApplyPatchTool implements Tool {
             const tscOutput = tscResult.stdout || tscResult.stderr;
             // Split once and reuse
             const tscLines = tscOutput.split('\n');
-            const errors = tscLines.filter(l => l.includes('error TS')).length;
+            const errors = tscLines.filter((l) => l.includes('error TS')).length;
             if (errors > 0) {
               outputLines.push(`\n⚠️  TypeScript errors after patch: ${errors}`);
               outputLines.push(tscLines.slice(0, 10).join('\n'));
@@ -129,7 +147,11 @@ export class ApplyPatchTool implements Tool {
               outputLines.push(`\n⚠️  Lint issues found:\n${lintOutput.slice(0, 1000)}`);
             }
           }
-        } catch (e) { getGlobalLogger().warn('ApplyPatchTool', 'Validation step failed', { error: (e as Error)?.message }); }
+        } catch (e) {
+          getGlobalLogger().warn('ApplyPatchTool', 'Validation step failed', {
+            error: (e as Error)?.message,
+          });
+        }
       }
 
       // Run verification command if provided
@@ -142,7 +164,9 @@ export class ApplyPatchTool implements Tool {
           } else {
             const stderr = verifyResult.stderr?.slice(0, 1000) || '';
             const stdout = verifyResult.stdout?.slice(0, 1000) || '';
-            outputLines.push(`❌ Verification failed:\n${stderr || stdout || 'Exit code ' + verifyResult.exitCode}`);
+            outputLines.push(
+              `❌ Verification failed:\n${stderr || stdout || 'Exit code ' + verifyResult.exitCode}`,
+            );
             // Auto-revert on failure
             try {
               const revertRes = await execSandboxed(`git checkout -- "${fileToPatch}"`, 10, cwd);
@@ -150,15 +174,21 @@ export class ApplyPatchTool implements Tool {
                 outputLines.push('\n↩️  Patch reverted automatically.');
               } else {
                 outputLines.push('\n⚠️  Could not auto-revert. Manual restore needed.');
-                getGlobalLogger().warn('ApplyPatchTool', 'Auto-revert failed', { stderr: revertRes.stderr });
+                getGlobalLogger().warn('ApplyPatchTool', 'Auto-revert failed', {
+                  stderr: revertRes.stderr,
+                });
               }
             } catch (e) {
               outputLines.push('\n⚠️  Could not auto-revert. Manual restore needed.');
-              getGlobalLogger().warn('ApplyPatchTool', 'Auto-revert exception', { error: (e as Error)?.message });
+              getGlobalLogger().warn('ApplyPatchTool', 'Auto-revert exception', {
+                error: (e as Error)?.message,
+              });
             }
           }
         } catch (err: unknown) {
-          outputLines.push(`❌ Verification error: ${err instanceof Error ? err.message : String(err)}`);
+          outputLines.push(
+            `❌ Verification error: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
       }
 
@@ -167,7 +197,13 @@ export class ApplyPatchTool implements Tool {
       const msg = err instanceof Error ? err.message : String(err);
       return `Patch failed: ${msg.slice(0, 300)}`;
     } finally {
-      try { fs.unlinkSync(patchFile); } catch (e) { getGlobalLogger().warn('ApplyPatchTool', 'Temp patch cleanup failed', { error: (e as Error)?.message }); }
+      try {
+        fs.unlinkSync(patchFile);
+      } catch (e) {
+        getGlobalLogger().warn('ApplyPatchTool', 'Temp patch cleanup failed', {
+          error: (e as Error)?.message,
+        });
+      }
     }
   }
 }

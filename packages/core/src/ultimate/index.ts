@@ -1,28 +1,14 @@
-export {
-  UltimateOrchestrator,
-} from './orchestrator';
+export { UltimateOrchestrator } from './orchestrator';
 
-export {
-  deliberate,
-} from './deliberation';
+export { deliberate } from './deliberation';
 
-export {
-  RecursiveAtomizer,
-} from './atomizer';
+export { RecursiveAtomizer } from './atomizer';
 
-export {
-  TopologyRouter,
-} from './topologyRouter';
+export { TopologyRouter } from './topologyRouter';
 
-export {
-  SubAgentExecutor,
-} from './subAgentExecutor';
+export { SubAgentExecutor } from './subAgentExecutor';
 
-export {
-  WorkCoordinator,
-  getWorkCoordinator,
-  resetWorkCoordinator,
-} from './workCoordinator';
+export { WorkCoordinator, getWorkCoordinator, resetWorkCoordinator } from './workCoordinator';
 export type {
   WorkItem,
   WorkStatus,
@@ -45,31 +31,15 @@ export {
   resetTenantWorkCoordinatorRegistry,
 } from './tenantWorkCoordinatorRegistry';
 
-export {
-  MultiAgentSynthesizer,
-} from './synthesizer';
+export { MultiAgentSynthesizer } from './synthesizer';
 
-export {
-  ArtifactSystem,
-  getArtifactSystem,
-  resetArtifactSystem,
-} from './artifactSystem';
+export { ArtifactSystem, getArtifactSystem, resetArtifactSystem } from './artifactSystem';
 
-export {
-  CapabilityRegistry,
-  getCapabilityRegistry,
-} from './capabilityRegistry';
+export { CapabilityRegistry, getCapabilityRegistry } from './capabilityRegistry';
 
-export {
-  AgentTeamManager,
-  getTeamManager,
-} from './agentTeamManager';
+export { AgentTeamManager, getTeamManager } from './agentTeamManager';
 
-export {
-  getEffortRules,
-  classifyEffortLevel,
-  selectTopologyForEffort,
-} from './effortScaler';
+export { getEffortRules, classifyEffortLevel, selectTopologyForEffort } from './effortScaler';
 
 export type {
   OrchestrationTopology,

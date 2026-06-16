@@ -7,9 +7,9 @@
  */
 export interface HTMLReportSection {
   title: string;
-  content: string;   // HTML content
+  content: string; // HTML content
   collapsible?: boolean;
-  priority: number;  // display order
+  priority: number; // display order
 }
 
 /**

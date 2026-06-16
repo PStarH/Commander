@@ -28,7 +28,7 @@ export class MCPToolAdapter implements Tool {
   readonly definition: ToolDefinition;
   readonly isConcurrencySafe = true;
   readonly isReadOnly = false;
-  readonly timeout = 300000;  // 5min default for external tools
+  readonly timeout = 300000; // 5min default for external tools
   readonly maxOutputSize = 100000;
 
   private client: MCPClient;
@@ -57,23 +57,32 @@ export class MCPToolAdapter implements Tool {
       const result: MCPToolResult = await this.client.callTool(this.mcpToolName, args);
 
       if (result.isError) {
-        const errText = result.content.map(c => {
-          if (c.type === 'text') return c.text;
-          if (c.type === 'resource') return `[Resource: ${c.resource.uri}]`;
-          return '[Image]';
-        }).join('\n');
+        const errText = result.content
+          .map((c) => {
+            if (c.type === 'text') return c.text;
+            if (c.type === 'resource') return `[Resource: ${c.resource.uri}]`;
+            return '[Image]';
+          })
+          .join('\n');
         return `error: MCP tool "${this.serverLabel}/${this.mcpToolName}" returned an error:\n${errText}`;
       }
 
-      return result.content.map(c => {
-        if (c.type === 'text') return c.text;
-        if (c.type === 'resource') return `[Resource: ${c.resource.uri}]\n${c.resource.text ?? ''}`;
-        if (c.type === 'image') return `[Image: ${c.mimeType} (${c.data.length} bytes base64)]`;
-        return '';
-      }).join('\n');
+      return result.content
+        .map((c) => {
+          if (c.type === 'text') return c.text;
+          if (c.type === 'resource')
+            return `[Resource: ${c.resource.uri}]\n${c.resource.text ?? ''}`;
+          if (c.type === 'image') return `[Image: ${c.mimeType} (${c.data.length} bytes base64)]`;
+          return '';
+        })
+        .join('\n');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.error('MCPToolAdapter', `MCP tool ${this.serverLabel}/${this.mcpToolName} failed`, new Error(msg));
+      logger.error(
+        'MCPToolAdapter',
+        `MCP tool ${this.serverLabel}/${this.mcpToolName} failed`,
+        new Error(msg),
+      );
       return `error: MCP tool "${this.serverLabel}/${this.mcpToolName}" execution failed: ${msg}`;
     }
   }
@@ -141,10 +150,17 @@ export class MCPIntegrationManager {
           ToolRegistry.register(adapter, 'mcp');
         }
 
-        logger.info('MCPIntegration', `Connected to MCP server "${cfg.label}" — discovered ${tools.length} tools`);
+        logger.info(
+          'MCPIntegration',
+          `Connected to MCP server "${cfg.label}" — discovered ${tools.length} tools`,
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        logger.error('MCPIntegration', `Failed to connect to MCP server "${cfg.label}"`, new Error(msg));
+        logger.error(
+          'MCPIntegration',
+          `Failed to connect to MCP server "${cfg.label}"`,
+          new Error(msg),
+        );
         // Don't crash — other servers may still connect
       }
     }
@@ -176,7 +192,9 @@ export class MCPIntegrationManager {
     for (const client of this.clients) {
       try {
         await client.disconnect();
-      } catch { /* ignore disconnect errors */ }
+      } catch {
+        /* ignore disconnect errors */
+      }
     }
     this.clients = [];
     this.adapters = [];
@@ -207,7 +225,9 @@ export class MCPIntegrationManager {
  * Env var format:
  *   COMMANDER_MCP_SERVERS='[{"label":"filesystem","transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/path"]}]'
  */
-export function readMCPConfig(configFile?: { mcpServers?: MCPIntegrationServerConfig[] }): MCPIntegrationServerConfig[] {
+export function readMCPConfig(configFile?: {
+  mcpServers?: MCPIntegrationServerConfig[];
+}): MCPIntegrationServerConfig[] {
   // 1. Try environment variable
   const envJson = process.env.COMMANDER_MCP_SERVERS;
   if (envJson) {

@@ -4,7 +4,12 @@ import { getModelRouter } from '../runtime/modelRouter';
 import { getMessageBus } from '../runtime/messageBus';
 import { getTraceRecorder } from '../runtime/executionTrace';
 import { getMetaLearner } from '../selfEvolution/metaLearner';
-import type { TELOSPlanContext, TELOSAgentAssignment, TELOSOrchestrationMode, TELOSConfig } from './types';
+import type {
+  TELOSPlanContext,
+  TELOSAgentAssignment,
+  TELOSOrchestrationMode,
+  TELOSConfig,
+} from './types';
 import { DEFAULT_TELOS_CONFIG } from './types';
 import { TokenSentinel, getTokenSentinel } from './tokenSentinel';
 import { ProviderPool, getProviderPool } from './providerPool';
@@ -27,27 +32,40 @@ interface TaskProfile {
   reasoning: string[];
 }
 
-function analyzeTask(
-  goal: string,
-  contextData: Record<string, unknown>,
-): TaskProfile {
+function analyzeTask(goal: string, contextData: Record<string, unknown>): TaskProfile {
   const reasoning: string[] = [];
   const gov = contextData.governanceProfile as { riskLevel?: string } | undefined;
   const riskLevel = gov?.riskLevel ?? 'LOW';
 
   let complexity = 0;
-  if (goal.length > 500) { complexity += 2; reasoning.push('long goal, +2 complexity'); }
-  else if (goal.length > 200) { complexity += 1; reasoning.push('medium goal, +1 complexity'); }
+  if (goal.length > 500) {
+    complexity += 2;
+    reasoning.push('long goal, +2 complexity');
+  } else if (goal.length > 200) {
+    complexity += 1;
+    reasoning.push('medium goal, +1 complexity');
+  }
 
-  if (riskLevel === 'CRITICAL') { complexity += 4; reasoning.push('critical risk, +4 complexity'); }
-  else if (riskLevel === 'HIGH') { complexity += 3; reasoning.push('high risk, +3 complexity'); }
-  else if (riskLevel === 'MEDIUM') { complexity += 1; reasoning.push('medium risk, +1 complexity'); }
+  if (riskLevel === 'CRITICAL') {
+    complexity += 4;
+    reasoning.push('critical risk, +4 complexity');
+  } else if (riskLevel === 'HIGH') {
+    complexity += 3;
+    reasoning.push('high risk, +3 complexity');
+  } else if (riskLevel === 'MEDIUM') {
+    complexity += 1;
+    reasoning.push('medium risk, +1 complexity');
+  }
 
   const toolHints = (contextData.availableTools as string[] | undefined)?.length ?? 0;
-  if (toolHints > 5) { complexity += 2; reasoning.push(`${toolHints} tools suggested, +2 complexity`); }
+  if (toolHints > 5) {
+    complexity += 2;
+    reasoning.push(`${toolHints} tools suggested, +2 complexity`);
+  }
 
   let mode: TELOSOrchestrationMode;
-  const level = complexity >= 7 ? 'CRITICAL' : complexity >= 4 ? 'HIGH' : complexity >= 2 ? 'MEDIUM' : 'LOW';
+  const level =
+    complexity >= 7 ? 'CRITICAL' : complexity >= 4 ? 'HIGH' : complexity >= 2 ? 'MEDIUM' : 'LOW';
 
   if (riskLevel === 'CRITICAL') {
     mode = 'CONSENSUS';
@@ -153,14 +171,29 @@ function buildPlanContext(
       availableToolNames: (contextData.availableTools as string[] | undefined) ?? [],
       estimatedContextTokens,
       budget: {
-        hardCapTokens: profile.complexity === 'CRITICAL' ? 400000 : profile.complexity === 'HIGH' ? 200000 : 100000,
-        softCapTokens: profile.complexity === 'CRITICAL' ? 300000 : profile.complexity === 'HIGH' ? 150000 : 75000,
-        costCapUsd: profile.complexity === 'CRITICAL' ? 10.00 : profile.complexity === 'HIGH' ? 5.00 : 2.00,
+        hardCapTokens:
+          profile.complexity === 'CRITICAL'
+            ? 400000
+            : profile.complexity === 'HIGH'
+              ? 200000
+              : 100000,
+        softCapTokens:
+          profile.complexity === 'CRITICAL'
+            ? 300000
+            : profile.complexity === 'HIGH'
+              ? 150000
+              : 75000,
+        costCapUsd:
+          profile.complexity === 'CRITICAL' ? 10.0 : profile.complexity === 'HIGH' ? 5.0 : 2.0,
       },
     },
     governance: {
       riskLevel: profile.complexity,
-      governanceMode: profile.requiresApproval ? 'MANUAL' : profile.mode === 'CONSENSUS' ? 'GUARDED' : 'AUTO',
+      governanceMode: profile.requiresApproval
+        ? 'MANUAL'
+        : profile.mode === 'CONSENSUS'
+          ? 'GUARDED'
+          : 'AUTO',
       requiresApproval: profile.requiresApproval,
     },
     reasoning: profile.reasoning,
@@ -260,9 +293,7 @@ export class TELOSOrchestrator {
   // Execute — run the plan with token-safe execution
   // ========================================================================
 
-  async execute(
-    planId: string,
-  ): Promise<{
+  async execute(planId: string): Promise<{
     status: 'success' | 'failed' | 'cancelled';
     results: Array<{ agentId: string; summary: string; status: string }>;
     totalCostUsd: number;
@@ -271,7 +302,13 @@ export class TELOSOrchestrator {
   }> {
     const plan = this.activePlans.get(planId);
     if (!plan) {
-      return { status: 'failed', results: [], totalCostUsd: 0, totalTokens: 0, error: 'plan not found' };
+      return {
+        status: 'failed',
+        results: [],
+        totalCostUsd: 0,
+        totalTokens: 0,
+        error: 'plan not found',
+      };
     }
 
     // Preflight check (budget gate)
@@ -331,12 +368,20 @@ export class TELOSOrchestrator {
         plan.slimContext.budget,
       );
       if (!tokenCheck.allowed) {
-        tracer.recordDecision(planId, `TOKEN_BUDGET_EXCEEDED for ${assignment.agentId}: ${tokenCheck.reason}`, 0);
+        tracer.recordDecision(
+          planId,
+          `TOKEN_BUDGET_EXCEEDED for ${assignment.agentId}: ${tokenCheck.reason}`,
+          0,
+        );
         results.push({ agentId: assignment.agentId, summary: '', status: 'cancelled' });
         continue;
       }
 
-      tracer.recordDecision(planId, `Routing ${assignment.agentId} → ${routing.modelId} (${routing.tier})`, 0);
+      tracer.recordDecision(
+        planId,
+        `Routing ${assignment.agentId} → ${routing.modelId} (${routing.tier})`,
+        0,
+      );
 
       // Execute via runtime
       try {
@@ -389,7 +434,7 @@ export class TELOSOrchestrator {
       taskType: plan.mode,
       modelUsed: 'multiple',
       strategyUsed: plan.mode,
-      success: results.every(r => r.status === 'success'),
+      success: results.every((r) => r.status === 'success'),
       durationMs: 0,
       tokenCost: totalTokens,
       lessons: [],
@@ -404,7 +449,7 @@ export class TELOSOrchestrator {
       totalTokens,
     });
 
-    const allSuccess = results.every(r => r.status === 'success');
+    const allSuccess = results.every((r) => r.status === 'success');
 
     // Clean up completed plan to prevent unbounded activePlans growth
     this.activePlans.delete(planId);

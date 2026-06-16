@@ -42,8 +42,17 @@ describe('createAllTools', () => {
     // STRAP consolidation exposes domain-level resource tools rather than
     // granular CRUD names.
     const expectedTools = [
-      'web', 'file', 'exec', 'memory', 'git',
-      'browser', 'code', 'checkpoint', 'handoff', 'media', 'system',
+      'web',
+      'file',
+      'exec',
+      'memory',
+      'git',
+      'browser',
+      'code',
+      'checkpoint',
+      'handoff',
+      'media',
+      'system',
     ];
 
     for (const name of expectedTools) {

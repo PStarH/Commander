@@ -113,14 +113,35 @@ export class DefaultHarness implements AgentHarness {
 
       for (let attempt = 0; attempt <= 2; attempt++) {
         if (signal.aborted) {
-          return this.buildResult(runId, goal, 'cancelled', 'Cancelled by user', steps, totalTokenUsage, Date.now() - startTime);
+          return this.buildResult(
+            runId,
+            goal,
+            'cancelled',
+            'Cancelled by user',
+            steps,
+            totalTokenUsage,
+            Date.now() - startTime,
+          );
         }
 
         // LLM call
         const provider = services.getProvider(routing.provider);
         if (!provider) {
-          const res = this.buildResult(runId, goal, 'failed', `No provider: ${routing.provider}`, steps, totalTokenUsage, Date.now() - startTime);
-          this.emitEvent({ type: 'run_error', error: `No provider: ${routing.provider}`, runId, timestamp: Date.now() });
+          const res = this.buildResult(
+            runId,
+            goal,
+            'failed',
+            `No provider: ${routing.provider}`,
+            steps,
+            totalTokenUsage,
+            Date.now() - startTime,
+          );
+          this.emitEvent({
+            type: 'run_error',
+            error: `No provider: ${routing.provider}`,
+            runId,
+            timestamp: Date.now(),
+          });
           return res;
         }
 
@@ -147,7 +168,13 @@ export class DefaultHarness implements AgentHarness {
         totalTokenUsage.totalTokens += response.usage.totalTokens;
         services.reportTokenUsage(response.usage.totalTokens);
 
-        services.recordLLMCall(routing.modelId, routing.provider, response.usage.totalTokens, Date.now() - startTime, tenantId);
+        services.recordLLMCall(
+          routing.modelId,
+          routing.provider,
+          response.usage.totalTokens,
+          Date.now() - startTime,
+          tenantId,
+        );
 
         // Record response step
         steps.push({
@@ -165,7 +192,15 @@ export class DefaultHarness implements AgentHarness {
           toolLoopCount++;
 
           if (signal.aborted) {
-            return this.buildResult(runId, goal, 'cancelled', 'Cancelled by user', steps, totalTokenUsage, Date.now() - startTime);
+            return this.buildResult(
+              runId,
+              goal,
+              'cancelled',
+              'Cancelled by user',
+              steps,
+              totalTokenUsage,
+              Date.now() - startTime,
+            );
           }
 
           // Execute tool calls (parallel if concurrency-safe)
@@ -222,7 +257,11 @@ export class DefaultHarness implements AgentHarness {
           };
 
           // Next LLM call
-          request = await services.fireBeforeLLMCall({ request, agentId: goal.slice(0, 32), runId });
+          request = await services.fireBeforeLLMCall({
+            request,
+            agentId: goal.slice(0, 32),
+            runId,
+          });
           try {
             response = await provider.call(request);
           } catch (err) {
@@ -241,7 +280,13 @@ export class DefaultHarness implements AgentHarness {
           totalTokenUsage.completionTokens += response.usage.completionTokens;
           totalTokenUsage.totalTokens += response.usage.totalTokens;
           services.reportTokenUsage(response.usage.totalTokens);
-          services.recordLLMCall(routing.modelId, routing.provider, response.usage.totalTokens, Date.now() - startTime, tenantId);
+          services.recordLLMCall(
+            routing.modelId,
+            routing.provider,
+            response.usage.totalTokens,
+            Date.now() - startTime,
+            tenantId,
+          );
 
           steps.push({
             stepNumber: steps.length + 1,
@@ -271,7 +316,9 @@ export class DefaultHarness implements AgentHarness {
               try {
                 const parsed = JSON.parse(safeContent);
                 result.outputData = parsed;
-              } catch { /* not JSON — leave unstructured */ }
+              } catch {
+                /* not JSON — leave unstructured */
+              }
             }
             await services.fireOnAgentComplete({ result, runId });
             return result;
@@ -282,13 +329,33 @@ export class DefaultHarness implements AgentHarness {
       }
 
       // All attempts exhausted
-      const result = this.buildResult(runId, goal, 'failed', lastError ?? 'All attempts failed', steps, totalTokenUsage, Date.now() - startTime);
-      await services.fireOnError({ error: lastError ?? 'Unknown error', runId, agentId: goal.slice(0, 32) });
+      const result = this.buildResult(
+        runId,
+        goal,
+        'failed',
+        lastError ?? 'All attempts failed',
+        steps,
+        totalTokenUsage,
+        Date.now() - startTime,
+      );
+      await services.fireOnError({
+        error: lastError ?? 'Unknown error',
+        runId,
+        agentId: goal.slice(0, 32),
+      });
       return result;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       getGlobalLogger().error('DefaultHarness', 'Run failed', err as Error);
-      const result = this.buildResult(runId, goal, 'failed', errorMsg, steps, totalTokenUsage, Date.now() - startTime);
+      const result = this.buildResult(
+        runId,
+        goal,
+        'failed',
+        errorMsg,
+        steps,
+        totalTokenUsage,
+        Date.now() - startTime,
+      );
       await services.fireOnError({ error: errorMsg, runId, agentId: goal.slice(0, 32) });
       return result;
     }

@@ -2,7 +2,12 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { ToolMetricsCollector } from '../src/observability/toolMetrics';
 import { buildDecisions, decisionsSummary } from '../src/observability/decisionProvenance';
-import { CostModel, getCostModel, resetCostModel, DEFAULT_PRICING } from '../src/observability/costModel';
+import {
+  CostModel,
+  getCostModel,
+  resetCostModel,
+  DEFAULT_PRICING,
+} from '../src/observability/costModel';
 import { compareTraces } from '../src/observability/traceComparison';
 import { dryReplay } from '../src/observability/replay';
 import { ExecutionTraceRecorder } from '../src/runtime/executionTrace';
@@ -11,27 +16,54 @@ import type { ReplaySpec } from '../src/observability/types';
 
 function makeTrace(events: TraceEvent[], runId = 'run-1'): ExecutionTrace {
   return {
-    runId, traceId: `trace-${runId}`, agentId: 'agent-1',
+    runId,
+    traceId: `trace-${runId}`,
+    agentId: 'agent-1',
     startedAt: events[0]?.timestamp ?? '2026-06-05T00:00:00.000Z',
     events,
-    summary: { totalEvents: events.length, totalDurationMs: 0, totalTokens: 0, llmCalls: 0, toolExecutions: 0, errors: 0, modelUsed: '' },
+    summary: {
+      totalEvents: events.length,
+      totalDurationMs: 0,
+      totalTokens: 0,
+      llmCalls: 0,
+      toolExecutions: 0,
+      errors: 0,
+      modelUsed: '',
+    },
   };
 }
 
-function toolEvent(toolName: string, opts: Partial<{ durationMs: number; error: string; timestamp: string; spanId: string }> = {}): TraceEvent {
+function toolEvent(
+  toolName: string,
+  opts: Partial<{ durationMs: number; error: string; timestamp: string; spanId: string }> = {},
+): TraceEvent {
   return {
-    spanId: opts.spanId ?? `s-${toolName}`, traceId: 'trace-1', runId: 'run-1', agentId: 'agent-1',
-    type: 'tool_execution', timestamp: opts.timestamp ?? '2026-06-05T00:00:00.000Z', durationMs: opts.durationMs ?? 100,
+    spanId: opts.spanId ?? `s-${toolName}`,
+    traceId: 'trace-1',
+    runId: 'run-1',
+    agentId: 'agent-1',
+    type: 'tool_execution',
+    timestamp: opts.timestamp ?? '2026-06-05T00:00:00.000Z',
+    durationMs: opts.durationMs ?? 100,
     data: { input: toolName, output: 'ok', ...(opts.error ? { error: opts.error } : {}) },
   };
 }
 
-function llmEvent(output: string, opts: Partial<{ timestamp: string; spanId: string; model: string }> = {}): TraceEvent {
+function llmEvent(
+  output: string,
+  opts: Partial<{ timestamp: string; spanId: string; model: string }> = {},
+): TraceEvent {
   return {
-    spanId: opts.spanId ?? 's-llm', traceId: 'trace-1', runId: 'run-1', agentId: 'agent-1',
-    type: 'llm_call', timestamp: opts.timestamp ?? '2026-06-05T00:00:00.000Z', durationMs: 50,
+    spanId: opts.spanId ?? 's-llm',
+    traceId: 'trace-1',
+    runId: 'run-1',
+    agentId: 'agent-1',
+    type: 'llm_call',
+    timestamp: opts.timestamp ?? '2026-06-05T00:00:00.000Z',
+    durationMs: 50,
     data: {
-      input: { messages: 'test' }, output,
+      input: { messages: 'test' },
+      output,
       modelInfo: { provider: 'openai', model: opts.model ?? 'gpt-4o', tier: 'standard' },
       tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
     },
@@ -59,7 +91,9 @@ describe('P2-P3 observability features', () => {
 
     it('counts failures separately', () => {
       collector.recordToolExecution(toolEvent('write_file', { durationMs: 10 }));
-      collector.recordToolExecution(toolEvent('write_file', { durationMs: 20, error: 'permission denied' }));
+      collector.recordToolExecution(
+        toolEvent('write_file', { durationMs: 20, error: 'permission denied' }),
+      );
 
       const summary = collector.getSummary();
       assert.strictEqual(summary.tools[0].failures, 1);
@@ -84,7 +118,10 @@ describe('P2-P3 observability features', () => {
   describe('buildDecisions', () => {
     it('extracts tool decisions with preceding LLM reasoning', () => {
       const trace = makeTrace([
-        llmEvent('I should read the file', { spanId: 's-llm-1', timestamp: '2026-06-05T00:00:00.000Z' }),
+        llmEvent('I should read the file', {
+          spanId: 's-llm-1',
+          timestamp: '2026-06-05T00:00:00.000Z',
+        }),
         toolEvent('read_file', { spanId: 's-tool-1', timestamp: '2026-06-05T00:00:01.000Z' }),
       ]);
 
@@ -129,7 +166,13 @@ describe('P2-P3 observability features', () => {
 
     it('calculates cost for known model', () => {
       const model = getCostModel();
-      const cost = model.calculate('openai', 'gpt-4o', { input: 1000, output: 500, cached: 0, reasoning: 0, total: 1500 });
+      const cost = model.calculate('openai', 'gpt-4o', {
+        input: 1000,
+        output: 500,
+        cached: 0,
+        reasoning: 0,
+        total: 1500,
+      });
       assert.strictEqual(Math.abs(cost.inputCostUsd - 0.0025) < 0.0001, true);
       assert.strictEqual(Math.abs(cost.outputCostUsd - 0.005) < 0.0001, true);
       assert.strictEqual(Math.abs(cost.totalCostUsd - 0.0075) < 0.0001, true);
@@ -137,13 +180,25 @@ describe('P2-P3 observability features', () => {
 
     it('uses fallback pricing for unknown model', () => {
       const model = getCostModel();
-      const cost = model.calculate('unknown', 'unknown-model', { input: 1000, output: 1000, cached: 0, reasoning: 0, total: 2000 });
+      const cost = model.calculate('unknown', 'unknown-model', {
+        input: 1000,
+        output: 1000,
+        cached: 0,
+        reasoning: 0,
+        total: 2000,
+      });
       assert.ok(cost.totalCostUsd > 0);
     });
 
     it('handles cached input pricing', () => {
       const model = getCostModel();
-      const cost = model.calculate('openai', 'gpt-4o', { input: 1000, output: 0, cached: 500, reasoning: 0, total: 1000 });
+      const cost = model.calculate('openai', 'gpt-4o', {
+        input: 1000,
+        output: 0,
+        cached: 500,
+        reasoning: 0,
+        total: 1000,
+      });
       assert.ok(cost.totalCostUsd > 0);
       assert.ok(cost.totalCostUsd < 0.0025);
     });
@@ -258,9 +313,21 @@ describe('P2-P3 observability features', () => {
       const recorder = new ExecutionTraceRecorder();
       recorder.startRun('run-phase', 'agent-1');
 
-      recorder.recordDecision('run-phase', 'phase:deliberation taskType=coding confidence=0.85', 1500);
-      recorder.recordDecision('run-phase', 'phase:effort_scaling level=medium minAgents=2 maxAgents=5', 200);
-      recorder.recordDecision('run-phase', 'phase:topology_routing topology=PARALLEL expectedCost=$0.05', 300);
+      recorder.recordDecision(
+        'run-phase',
+        'phase:deliberation taskType=coding confidence=0.85',
+        1500,
+      );
+      recorder.recordDecision(
+        'run-phase',
+        'phase:effort_scaling level=medium minAgents=2 maxAgents=5',
+        200,
+      );
+      recorder.recordDecision(
+        'run-phase',
+        'phase:topology_routing topology=PARALLEL expectedCost=$0.05',
+        300,
+      );
 
       const trace = recorder.getTrace('run-phase');
       assert.ok(trace);
@@ -278,14 +345,27 @@ describe('P2-P3 observability features', () => {
       const recorder = new ExecutionTraceRecorder();
       recorder.startRun('run-llm', 'agent-1');
 
-      const fullPrompt = { messages: [{ role: 'user', content: 'Write a function to validate emails' }] };
-      const fullResponse = { content: 'function validateEmail(email) { return /^[^@]+@[^@]+$/.test(email); }' };
+      const fullPrompt = {
+        messages: [{ role: 'user', content: 'Write a function to validate emails' }],
+      };
+      const fullResponse = {
+        content: 'function validateEmail(email) { return /^[^@]+@[^@]+$/.test(email); }',
+      };
 
-      recorder.recordLLMCall('run-llm', 'gpt-4o', 'openai', 'standard', fullPrompt, fullResponse, {
-        promptTokens: 100,
-        completionTokens: 50,
-        totalTokens: 150,
-      }, 500);
+      recorder.recordLLMCall(
+        'run-llm',
+        'gpt-4o',
+        'openai',
+        'standard',
+        fullPrompt,
+        fullResponse,
+        {
+          promptTokens: 100,
+          completionTokens: 50,
+          totalTokens: 150,
+        },
+        500,
+      );
 
       const trace = recorder.getTrace('run-llm');
       assert.ok(trace);

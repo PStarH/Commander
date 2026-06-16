@@ -190,9 +190,10 @@ export class FileChangeTracker {
     if (op === 'create' || op === 'modify' || op === 'append') {
       const d = computeUnifiedDiff(before, after, 3, this.config.maxDiffLines);
       if (d) {
-        diff = d.length > this.config.maxDiffBytes
-          ? d.slice(0, this.config.maxDiffBytes) + '\n[diff truncated for storage]'
-          : d;
+        diff =
+          d.length > this.config.maxDiffBytes
+            ? d.slice(0, this.config.maxDiffBytes) + '\n[diff truncated for storage]'
+            : d;
         for (const line of d.split('\n')) {
           if (line.startsWith('+ ') && !line.startsWith('+++')) linesAdded++;
           else if (line.startsWith('- ') && !line.startsWith('---')) linesRemoved++;
@@ -203,7 +204,11 @@ export class FileChangeTracker {
     }
 
     let snapshotPath: string | undefined;
-    if (this.config.enableSnapshots && (op === 'modify' || op === 'delete' || op === 'create') && before.length > 0) {
+    if (
+      this.config.enableSnapshots &&
+      (op === 'modify' || op === 'delete' || op === 'create') &&
+      before.length > 0
+    ) {
       const runSnapDir = path.join(this.snapshotsDir, params.runId);
       const counter = this.snapshotCounters.get(params.runId) ?? 0;
       if (counter < this.config.maxSnapshotsPerRun) {
@@ -409,22 +414,36 @@ export class FileChangeTracker {
     const base = path.join(dir, 'changes.ndjson');
     const oldest = `${base}.${this.config.maxRotatedFiles}`;
     if (fs.existsSync(oldest)) {
-      try { fs.unlinkSync(oldest); } catch (e) {
-        getGlobalLogger().warn('FileChangeTracker', 'Failed to delete oldest rotated file', { error: (e as Error)?.message });
+      try {
+        fs.unlinkSync(oldest);
+      } catch (e) {
+        getGlobalLogger().warn('FileChangeTracker', 'Failed to delete oldest rotated file', {
+          error: (e as Error)?.message,
+        });
       }
     }
     for (let i = this.config.maxRotatedFiles - 1; i >= 1; i--) {
       const from = `${base}.${i}`;
       const to = `${base}.${i + 1}`;
       if (fs.existsSync(from)) {
-        try { fs.renameSync(from, to); } catch (e) {
-          getGlobalLogger().warn('FileChangeTracker', 'Failed to rotate file', { error: (e as Error)?.message, from, to });
+        try {
+          fs.renameSync(from, to);
+        } catch (e) {
+          getGlobalLogger().warn('FileChangeTracker', 'Failed to rotate file', {
+            error: (e as Error)?.message,
+            from,
+            to,
+          });
         }
       }
     }
     if (fs.existsSync(base)) {
-      try { fs.renameSync(base, `${base}.1`); } catch (e) {
-        getGlobalLogger().warn('FileChangeTracker', 'Failed to rotate current file', { error: (e as Error)?.message });
+      try {
+        fs.renameSync(base, `${base}.1`);
+      } catch (e) {
+        getGlobalLogger().warn('FileChangeTracker', 'Failed to rotate current file', {
+          error: (e as Error)?.message,
+        });
       }
     }
   }
@@ -445,7 +464,10 @@ export class FileChangeTracker {
           if (line.length > 0) allLines.push(line);
         }
       } catch (e) {
-        getGlobalLogger().warn('FileChangeTracker', 'Failed to read changes file', { error: (e as Error)?.message, name });
+        getGlobalLogger().warn('FileChangeTracker', 'Failed to read changes file', {
+          error: (e as Error)?.message,
+          name,
+        });
       }
     }
     return allLines;
@@ -457,7 +479,9 @@ export class FileChangeTracker {
       try {
         records.push(JSON.parse(line) as FileChangeRecord);
       } catch (e) {
-        getGlobalLogger().debug('FileChangeTracker', 'Skipped corrupt line', { error: (e as Error)?.message });
+        getGlobalLogger().debug('FileChangeTracker', 'Skipped corrupt line', {
+          error: (e as Error)?.message,
+        });
       }
     }
     return records;
@@ -509,17 +533,21 @@ export function createFileChangeTrackingPlugin(options?: {
       },
     },
     onLoad: (ctx) => {
-      getGlobalLogger().info('FileChangeTracker', `Loaded (trackShellCommands=${ctx.config.trackShellCommands ?? false})`);
+      getGlobalLogger().info(
+        'FileChangeTracker',
+        `Loaded (trackShellCommands=${ctx.config.trackShellCommands ?? false})`,
+      );
     },
     afterToolCall: async (hookCtx: AfterToolCallContext) => {
       if (!trackedTools.has(hookCtx.toolName)) return hookCtx.result;
       if (hookCtx.result.error) return hookCtx.result;
       const args = hookCtx.args as Record<string, unknown>;
-      const filePath = typeof args.path === 'string'
-        ? args.path
-        : typeof args.file === 'string'
-          ? args.file
-          : null;
+      const filePath =
+        typeof args.path === 'string'
+          ? args.path
+          : typeof args.file === 'string'
+            ? args.file
+            : null;
       if (!filePath) return hookCtx.result;
 
       const tracker = getFileChangeTracker();

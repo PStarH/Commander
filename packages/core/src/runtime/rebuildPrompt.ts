@@ -165,7 +165,10 @@ export class RebuildPrompt {
     sections.push(sessionSection);
 
     // ── Section 4: Recent User Messages (verbatim) ──────────────────
-    const recentSection = this.buildRecentSection(params.recentUserMessages, SECTION_CAPS.recentUserMessages);
+    const recentSection = this.buildRecentSection(
+      params.recentUserMessages,
+      SECTION_CAPS.recentUserMessages,
+    );
     messages.push(...params.recentUserMessages);
     sections.push(recentSection);
 
@@ -196,10 +199,12 @@ export class RebuildPrompt {
         runId: params.runId,
         rebuildCount: count,
         totalTokens,
-        sections: sections.map(s => ({ name: s.name, used: s.used, cap: s.cap })),
+        sections: sections.map((s) => ({ name: s.name, used: s.used, cap: s.cap })),
         durationMs: Date.now() - startTime,
       });
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
 
     getGlobalLogger().info('RebuildPrompt', 'Context rebuilt', {
       runId: params.runId,
@@ -237,12 +242,9 @@ export class RebuildPrompt {
   // Section Builders
   // ========================================================================
 
-  private buildSystemSection(
-    systemPrompt: LLMMessage[],
-    cap: number,
-  ): RebuildSection {
+  private buildSystemSection(systemPrompt: LLMMessage[], cap: number): RebuildSection {
     const content = systemPrompt
-      .map(m => typeof m.content === 'string' ? m.content : '')
+      .map((m) => (typeof m.content === 'string' ? m.content : ''))
       .join('\n');
     const truncated = fitToCap(content, cap);
     return { name: 'systemPrompt', cap, used: estimateTokens(truncated), content: truncated };
@@ -266,7 +268,12 @@ export class RebuildPrompt {
     ].join('\n');
 
     const truncated = fitToCap(lines, SECTION_CAPS.taskAndGoal);
-    return { name: 'taskAndGoal', cap: SECTION_CAPS.taskAndGoal, used: estimateTokens(truncated), content: truncated };
+    return {
+      name: 'taskAndGoal',
+      cap: SECTION_CAPS.taskAndGoal,
+      used: estimateTokens(truncated),
+      content: truncated,
+    };
   }
 
   private async buildSessionSection(
@@ -312,7 +319,9 @@ export class RebuildPrompt {
         if (doc.failedSubtasks.length > 0) {
           lines.push(`### Failed Subtasks`);
           for (const sub of doc.failedSubtasks.slice(0, 5)) {
-            lines.push(`- **${sub.id}**: ${sub.goal.slice(0, 100)} (Error: ${sub.error.slice(0, 100)})`);
+            lines.push(
+              `- **${sub.id}**: ${sub.goal.slice(0, 100)} (Error: ${sub.error.slice(0, 100)})`,
+            );
           }
           lines.push('');
         }
@@ -328,14 +337,20 @@ export class RebuildPrompt {
         if (doc.errors.length > 0) {
           lines.push(`### Errors Encountered`);
           for (const e of doc.errors.slice(0, 5)) {
-            lines.push(`- [${e.recovered ? 'recovered' : 'unrecovered'}] ${e.message.slice(0, 120)}`);
+            lines.push(
+              `- [${e.recovered ? 'recovered' : 'unrecovered'}] ${e.message.slice(0, 120)}`,
+            );
           }
           lines.push('');
         }
 
         lines.push(`### Token Budget`);
-        lines.push(`- Used: ${doc.tokensUsed.toLocaleString()} / ${doc.budgetHardCap.toLocaleString()}`);
-        lines.push(`- Ratio: ${((doc.tokensUsed / Math.max(1, doc.budgetHardCap)) * 100).toFixed(0)}%`);
+        lines.push(
+          `- Used: ${doc.tokensUsed.toLocaleString()} / ${doc.budgetHardCap.toLocaleString()}`,
+        );
+        lines.push(
+          `- Ratio: ${((doc.tokensUsed / Math.max(1, doc.budgetHardCap)) * 100).toFixed(0)}%`,
+        );
         lines.push('');
 
         if (doc.nextAction) {
@@ -362,10 +377,7 @@ export class RebuildPrompt {
     }
   }
 
-  private buildRecentSection(
-    recentUserMessages: LLMMessage[],
-    cap: number,
-  ): RebuildSection {
+  private buildRecentSection(recentUserMessages: LLMMessage[], cap: number): RebuildSection {
     if (recentUserMessages.length === 0) {
       return { name: 'recentUserMessages', cap, used: 0, content: '' };
     }
@@ -383,13 +395,15 @@ export class RebuildPrompt {
       tokens += msgTokens;
     }
 
-    return { name: 'recentUserMessages', cap, used: tokens, content: `${kept.length} recent messages carried forward` };
+    return {
+      name: 'recentUserMessages',
+      cap,
+      used: tokens,
+      content: `${kept.length} recent messages carried forward`,
+    };
   }
 
-  private async buildMemorySection(
-    goal: string,
-    cap: number,
-  ): Promise<RebuildSection> {
+  private async buildMemorySection(goal: string, cap: number): Promise<RebuildSection> {
     try {
       // Dynamically import ThreeLayerMemory
       const { getGlobalThreeLayerMemory } = await import('../threeLayerMemory');
@@ -398,21 +412,21 @@ export class RebuildPrompt {
       // Search for relevant memories across layers
       const episodic = memory.query({
         layer: 'episodic',
-        keywords: goal.split(/\s+/).filter(w => w.length > 3),
+        keywords: goal.split(/\s+/).filter((w) => w.length > 3),
         limit: 5,
         importanceThreshold: 0.5,
       });
 
       const longTerm = memory.query({
         layer: 'longterm',
-        keywords: goal.split(/\s+/).filter(w => w.length > 3),
+        keywords: goal.split(/\s+/).filter((w) => w.length > 3),
         limit: 5,
         importanceThreshold: 0.5,
       });
 
       const procedural = memory.query({
         layer: 'procedural',
-        keywords: goal.split(/\s+/).filter(w => w.length > 3),
+        keywords: goal.split(/\s+/).filter((w) => w.length > 3),
         limit: 3,
       });
 
@@ -448,10 +462,7 @@ export class RebuildPrompt {
     }
   }
 
-  private buildNextStepSection(
-    stepNumber: number,
-    rebuildCount: number,
-  ): RebuildSection {
+  private buildNextStepSection(stepNumber: number, rebuildCount: number): RebuildSection {
     const lines = [
       `## Instructions`,
       ``,
@@ -465,7 +476,12 @@ export class RebuildPrompt {
     ].join('\n');
 
     const truncated = fitToCap(lines, SECTION_CAPS.nextStep);
-    return { name: 'nextStep', cap: SECTION_CAPS.nextStep, used: estimateTokens(truncated), content: truncated };
+    return {
+      name: 'nextStep',
+      cap: SECTION_CAPS.nextStep,
+      used: estimateTokens(truncated),
+      content: truncated,
+    };
   }
 }
 

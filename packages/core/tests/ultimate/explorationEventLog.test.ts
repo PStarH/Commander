@@ -2,19 +2,21 @@ import { describe, it, expect } from 'vitest';
 import { ExplorationEventLog } from '../../src/ultimate/explorationEventLog';
 import type { OrchestrationTopology } from '../../src/ultimate/types';
 
-function makeEvent(overrides: Partial<{
-  tenantId: string;
-  taskType: string;
-  chosenTopology: OrchestrationTopology;
-  argmaxTopology: OrchestrationTopology;
-  diverged: boolean;
-  epsilon: number;
-  topCandidates: Array<{ topology: OrchestrationTopology; score: number }>;
-  runId: string;
-  agentId: string;
-  coordinationOverride: boolean;
-  finalTopology: OrchestrationTopology;
-}> = {}): Parameters<ExplorationEventLog['record']>[0] {
+function makeEvent(
+  overrides: Partial<{
+    tenantId: string;
+    taskType: string;
+    chosenTopology: OrchestrationTopology;
+    argmaxTopology: OrchestrationTopology;
+    diverged: boolean;
+    epsilon: number;
+    topCandidates: Array<{ topology: OrchestrationTopology; score: number }>;
+    runId: string;
+    agentId: string;
+    coordinationOverride: boolean;
+    finalTopology: OrchestrationTopology;
+  }> = {},
+): Parameters<ExplorationEventLog['record']>[0] {
   return {
     tenantId: overrides.tenantId ?? 'tenant-A',
     taskType: overrides.taskType ?? 'CODING',
@@ -28,7 +30,9 @@ function makeEvent(overrides: Partial<{
     ],
     ...(overrides.runId !== undefined ? { runId: overrides.runId } : {}),
     ...(overrides.agentId !== undefined ? { agentId: overrides.agentId } : {}),
-    ...(overrides.coordinationOverride !== undefined ? { coordinationOverride: overrides.coordinationOverride } : {}),
+    ...(overrides.coordinationOverride !== undefined
+      ? { coordinationOverride: overrides.coordinationOverride }
+      : {}),
     ...(overrides.finalTopology !== undefined ? { finalTopology: overrides.finalTopology } : {}),
   };
 }
@@ -58,7 +62,7 @@ describe('ExplorationEventLog', () => {
     expect(snap.globalStats.lifetimeRoutingCount).toBe(5);
     expect(snap.globalStats.ringBufferSize).toBe(3);
     expect(snap.globalStats.lifetimeOverflowCount).toBe(2);
-    expect(snap.recentEvents.map(e => e.runId)).toEqual(['r2', 'r3', 'r4']);
+    expect(snap.recentEvents.map((e) => e.runId)).toEqual(['r2', 'r3', 'r4']);
     expect(snap.globalStats.lifetimeOverflowCount > 0).toBe(true);
   });
 
@@ -116,9 +120,9 @@ describe('ExplorationEventLog', () => {
   it('filters events by since timestamp', async () => {
     const log = new ExplorationEventLog();
     log.record(makeEvent({ runId: 'old' }));
-    await new Promise(r => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 20));
     const sinceIso = new Date().toISOString();
-    await new Promise(r => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 20));
     log.record(makeEvent({ runId: 'new' }));
 
     const snap = log.getSnapshot({ since: sinceIso });
@@ -133,7 +137,7 @@ describe('ExplorationEventLog', () => {
     }
     const snap = log.getSnapshot({ limit: 3 });
     expect(snap.recentEvents).toHaveLength(3);
-    expect(snap.recentEvents.map(e => e.runId)).toEqual(['e7', 'e8', 'e9']);
+    expect(snap.recentEvents.map((e) => e.runId)).toEqual(['e7', 'e8', 'e9']);
   });
 
   it('clamps limit to MAX_LIMIT=1000 and floor of 1', () => {
@@ -153,54 +157,64 @@ describe('ExplorationEventLog', () => {
     log.record(makeEvent({ diverged: true, runId: 'd' }));
 
     const snap = log.getSnapshot({ divergedOnly: true });
-    expect(snap.recentEvents.map(e => e.runId)).toEqual(['b', 'd']);
+    expect(snap.recentEvents.map((e) => e.runId)).toEqual(['b', 'd']);
   });
 
   it('builds sign-preserving divergence histogram from biased-score margins', () => {
     const log = new ExplorationEventLog();
     // Event 1: margin = +9 (argmax much higher → '>2.0')
-    log.record(makeEvent({
-      chosenTopology: 'PARALLEL',
-      argmaxTopology: 'SEQUENTIAL',
-      diverged: true,
-      topCandidates: [
-        { topology: 'SEQUENTIAL', score: 10 },
-        { topology: 'PARALLEL', score: 1 },
-      ],
-    }));
+    log.record(
+      makeEvent({
+        chosenTopology: 'PARALLEL',
+        argmaxTopology: 'SEQUENTIAL',
+        diverged: true,
+        topCandidates: [
+          { topology: 'SEQUENTIAL', score: 10 },
+          { topology: 'PARALLEL', score: 1 },
+        ],
+      }),
+    );
     // Event 2: margin = 0 (tied) → 'same'
-    log.record(makeEvent({
-      chosenTopology: 'HIERARCHICAL',
-      argmaxTopology: 'HIERARCHICAL',
-      diverged: false,
-      topCandidates: [
-        { topology: 'HIERARCHICAL', score: 7 },
-        { topology: 'PARALLEL', score: 7 },
-      ],
-    }));
+    log.record(
+      makeEvent({
+        chosenTopology: 'HIERARCHICAL',
+        argmaxTopology: 'HIERARCHICAL',
+        diverged: false,
+        topCandidates: [
+          { topology: 'HIERARCHICAL', score: 7 },
+          { topology: 'PARALLEL', score: 7 },
+        ],
+      }),
+    );
     // Event 3: margin = -0.3 (chosen scored higher) → 'chosen_higher'
-    log.record(makeEvent({
-      chosenTopology: 'PARALLEL',
-      argmaxTopology: 'SEQUENTIAL',
-      diverged: true,
-      topCandidates: [
-        { topology: 'SEQUENTIAL', score: 5 },
-        { topology: 'PARALLEL', score: 5.3 },
-      ],
-    }));
+    log.record(
+      makeEvent({
+        chosenTopology: 'PARALLEL',
+        argmaxTopology: 'SEQUENTIAL',
+        diverged: true,
+        topCandidates: [
+          { topology: 'SEQUENTIAL', score: 5 },
+          { topology: 'PARALLEL', score: 5.3 },
+        ],
+      }),
+    );
     // Event 4: margin = +1.5 → '1.0-2.0'
-    log.record(makeEvent({
-      chosenTopology: 'PARALLEL',
-      argmaxTopology: 'SEQUENTIAL',
-      diverged: true,
-      topCandidates: [
-        { topology: 'SEQUENTIAL', score: 8 },
-        { topology: 'PARALLEL', score: 6.5 },
-      ],
-    }));
+    log.record(
+      makeEvent({
+        chosenTopology: 'PARALLEL',
+        argmaxTopology: 'SEQUENTIAL',
+        diverged: true,
+        topCandidates: [
+          { topology: 'SEQUENTIAL', score: 8 },
+          { topology: 'PARALLEL', score: 6.5 },
+        ],
+      }),
+    );
 
     const snap = log.getSnapshot();
-    const byBucket = Object.fromEntries(snap.divergenceHistogram.map(b => [b.marginBucket, b.count]));
+    const byBucket = Object.fromEntries(
+      snap.divergenceHistogram.map((b) => [b.marginBucket, b.count]),
+    );
     expect(byBucket['>2.0']).toBe(1);
     expect(byBucket['same']).toBe(1);
     expect(byBucket['chosen_higher']).toBe(1);
@@ -214,8 +228,13 @@ describe('ExplorationEventLog', () => {
     log.record(makeEvent());
     const snap = log.getSnapshot();
     expect(snap.divergenceHistogram).toHaveLength(6);
-    expect(snap.divergenceHistogram.map(b => b.marginBucket)).toEqual([
-      'same', 'chosen_higher', '<0.5', '0.5-1.0', '1.0-2.0', '>2.0',
+    expect(snap.divergenceHistogram.map((b) => b.marginBucket)).toEqual([
+      'same',
+      'chosen_higher',
+      '<0.5',
+      '0.5-1.0',
+      '1.0-2.0',
+      '>2.0',
     ]);
   });
 
@@ -226,7 +245,7 @@ describe('ExplorationEventLog', () => {
     log.record(makeEvent({ tenantId: 'A', diverged: true }));
 
     const aSnap = log.getSnapshot({ tenantId: 'A' });
-    expect(aSnap.totals.routingCount).toBe(2);          // filter-aware
+    expect(aSnap.totals.routingCount).toBe(2); // filter-aware
     expect(aSnap.globalStats.lifetimeRoutingCount).toBe(3); // process-lifetime
     expect(aSnap.tenants).toHaveLength(1);
   });
@@ -239,8 +258,8 @@ describe('ExplorationEventLog', () => {
     log.record(makeEvent({ tenantId: 'B' }));
 
     const snap = log.getSnapshot();
-    const a = snap.tenants.find(t => t.tenantId === 'A')!;
-    const b = snap.tenants.find(t => t.tenantId === 'B')!;
+    const a = snap.tenants.find((t) => t.tenantId === 'A')!;
+    const b = snap.tenants.find((t) => t.tenantId === 'B')!;
     expect(a.routingCount).toBe(3);
     expect(a.explorationCount).toBe(1);
     expect(a.divergenceCount).toBe(1);
@@ -299,7 +318,7 @@ describe('ExplorationEventLog', () => {
     log.record(makeEvent({ runId: 'b' }));
     log.record(makeEvent({ runId: 'c' }));
     const events = log.getSnapshot().recentEvents;
-    const ids = events.map(e => e.eventId);
+    const ids = events.map((e) => e.eventId);
     expect(new Set(ids).size).toBe(3);
     expect(ids[0]).toBeLessThan(ids[1]!);
     expect(ids[1]).toBeLessThan(ids[2]!);
@@ -363,7 +382,7 @@ describe('ExplorationEventLog', () => {
     log.record({ ...ev, topCandidates: [] });
     const snap = log.getSnapshot();
     expect(snap.recentEvents).toHaveLength(1);
-    expect(snap.divergenceHistogram.every(b => b.count >= 0)).toBe(true);
+    expect(snap.divergenceHistogram.every((b) => b.count >= 0)).toBe(true);
   });
 
   it('sorts tenants by routingCount desc', () => {
@@ -372,6 +391,6 @@ describe('ExplorationEventLog', () => {
     for (let i = 0; i < 5; i++) log.record(makeEvent({ tenantId: 'big' }));
     for (let i = 0; i < 3; i++) log.record(makeEvent({ tenantId: 'medium' }));
     const snap = log.getSnapshot();
-    expect(snap.tenants.map(t => t.tenantId)).toEqual(['big', 'medium', 'small']);
+    expect(snap.tenants.map((t) => t.tenantId)).toEqual(['big', 'medium', 'small']);
   });
 });

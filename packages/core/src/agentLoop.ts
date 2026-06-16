@@ -34,7 +34,13 @@ export class CommanderAgentLoop {
   private telos: TELOSOrchestrator;
   private orchestrator: UltimateOrchestrator;
   private config: AgentLoopConfig;
-  private taskQueue: Array<{ id: string; goal: string; priority: number; status: string; createdAt: string }> = [];
+  private taskQueue: Array<{
+    id: string;
+    goal: string;
+    priority: number;
+    status: string;
+    createdAt: string;
+  }> = [];
   private activeSessions: Map<string, { startTime: number; goal: string }> = new Map();
   private isRunning = false;
   private mcpManager: MCPIntegrationManager | null = null;
@@ -76,7 +82,10 @@ export class CommanderAgentLoop {
       const defaultModel = process.env.OPENAI_MODEL || 'gpt-4o';
       registrations.push(async () => {
         const { OpenAIProvider } = await import('./runtime/providers/openaiProvider');
-        this.runtime.registerProvider('openai', new OpenAIProvider({ apiKey, baseUrl, defaultModel }));
+        this.runtime.registerProvider(
+          'openai',
+          new OpenAIProvider({ apiKey, baseUrl, defaultModel }),
+        );
       });
     }
     if (process.env.ANTHROPIC_API_KEY) {
@@ -214,7 +223,10 @@ export class CommanderAgentLoop {
       const defaultModel = process.env.ANYSCALE_MODEL || 'meta-llama/Llama-3.3-70B-Instruct';
       registrations.push(async () => {
         const { AnyscaleProvider } = await import('./runtime/providers/anyscaleProvider');
-        this.runtime.registerProvider('anyscale', new AnyscaleProvider({ apiKey, baseUrl, defaultModel }));
+        this.runtime.registerProvider(
+          'anyscale',
+          new AnyscaleProvider({ apiKey, baseUrl, defaultModel }),
+        );
       });
     }
     if (process.env.DEEPINFRA_API_KEY) {
@@ -223,11 +235,17 @@ export class CommanderAgentLoop {
       const defaultModel = process.env.DEEPINFRA_MODEL || 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
       registrations.push(async () => {
         const { DeepInfraProvider } = await import('./runtime/providers/deepinfraProvider');
-        this.runtime.registerProvider('deepinfra', new DeepInfraProvider({ apiKey, baseUrl, defaultModel }));
+        this.runtime.registerProvider(
+          'deepinfra',
+          new DeepInfraProvider({ apiKey, baseUrl, defaultModel }),
+        );
       });
     }
-    await Promise.all(registrations.map(fn => fn()));
-    this.logger.info('AgentLoop', `Registered ${registrations.length} provider(s) from environment`);
+    await Promise.all(registrations.map((fn) => fn()));
+    this.logger.info(
+      'AgentLoop',
+      `Registered ${registrations.length} provider(s) from environment`,
+    );
   }
 
   private loadState(): void {
@@ -247,10 +265,14 @@ export class CommanderAgentLoop {
   private saveState(): void {
     // Synchronous write — the state file is small (<1KB) and must be consistent
     // for crash recovery. Async writes create races on process exit and test assertions.
-    const data = JSON.stringify({
-      taskQueue: this.taskQueue,
-      updatedAt: new Date().toISOString(),
-    }, null, 2);
+    const data = JSON.stringify(
+      {
+        taskQueue: this.taskQueue,
+        updatedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    );
     try {
       fs.writeFileSync(this.config.stateFile, data, 'utf-8');
     } catch (e) {
@@ -262,7 +284,13 @@ export class CommanderAgentLoop {
 
   addTask(goal: string, priority = 0): string {
     const id = `task_${Date.now()}_${this.taskQueue.length}`;
-    const newTask = { id, goal, priority, status: 'pending' as const, createdAt: new Date().toISOString() };
+    const newTask = {
+      id,
+      goal,
+      priority,
+      status: 'pending' as const,
+      createdAt: new Date().toISOString(),
+    };
     // Insertion sort: find correct position and insert (O(N) instead of O(N log N) full sort)
     let insertIdx = this.taskQueue.length;
     for (let i = 0; i < this.taskQueue.length; i++) {
@@ -281,8 +309,12 @@ export class CommanderAgentLoop {
     return id;
   }
 
-  getQueueLength(): number { return this.taskQueue.length; }
-  getActiveCount(): number { return this.activeSessions.size; }
+  getQueueLength(): number {
+    return this.taskQueue.length;
+  }
+  getActiveCount(): number {
+    return this.activeSessions.size;
+  }
 
   /**
    * Initialize MCP/A2A external integrations.
@@ -309,11 +341,16 @@ export class CommanderAgentLoop {
         await this.mcpManager.connect(mcpServers);
         if (this.mcpManager.isConnected()) {
           this.mcpManager.registerIntoRuntime(this.runtime);
-          this.logger.info('AgentLoop', `Registered ${this.mcpManager.getToolCount()} MCP tools from ${this.mcpManager.getServerCount()} servers`);
+          this.logger.info(
+            'AgentLoop',
+            `Registered ${this.mcpManager.getToolCount()} MCP tools from ${this.mcpManager.getServerCount()} servers`,
+          );
         }
       }
     } catch (err) {
-      this.logger.warn('AgentLoop', 'Failed to initialize MCP integration', { error: err instanceof Error ? err.message : String(err) });
+      this.logger.warn('AgentLoop', 'Failed to initialize MCP integration', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // A2A server
@@ -324,13 +361,16 @@ export class CommanderAgentLoop {
         if (serverCfg.enabled !== false) {
           const agentCard: A2AAgentCard = {
             name: 'Commander',
-            description: 'Multi-agent orchestration system. Supports deliberation, multi-agent topologies, MCP tools, and distributed execution.',
+            description:
+              'Multi-agent orchestration system. Supports deliberation, multi-agent topologies, MCP tools, and distributed execution.',
             version: '1.0.0',
-            supportedInterfaces: [{
-              url: `http://${serverCfg.host ?? '127.0.0.1'}:${serverCfg.port ?? 3002}`,
-              protocolBinding: 'JSONRPC',
-              protocolVersion: '1.0',
-            }],
+            supportedInterfaces: [
+              {
+                url: `http://${serverCfg.host ?? '127.0.0.1'}:${serverCfg.port ?? 3002}`,
+                protocolBinding: 'JSONRPC',
+                protocolVersion: '1.0',
+              },
+            ],
             capabilities: {
               streaming: false,
               pushNotifications: false,
@@ -339,37 +379,70 @@ export class CommanderAgentLoop {
             defaultInputModes: ['text'],
             defaultOutputModes: ['text'],
             skills: [
-              { id: 'deliberation', name: 'Task Deliberation', description: 'Analyze task complexity and select optimal execution topology', tags: ['planning', 'analysis'] },
-              { id: 'orchestration', name: 'Multi-Agent Orchestration', description: 'Execute tasks using 8 topologies: single, sequential, parallel, hierarchical, hybrid, debate, ensemble, evaluator-opt', tags: ['execution', 'multi-agent'] },
-              { id: 'tool-execution', name: 'Tool Execution', description: 'Execute 25+ built-in tools and any MCP-compatible external tools', tags: ['tools', 'mcp'] },
+              {
+                id: 'deliberation',
+                name: 'Task Deliberation',
+                description: 'Analyze task complexity and select optimal execution topology',
+                tags: ['planning', 'analysis'],
+              },
+              {
+                id: 'orchestration',
+                name: 'Multi-Agent Orchestration',
+                description:
+                  'Execute tasks using 8 topologies: single, sequential, parallel, hierarchical, hybrid, debate, ensemble, evaluator-opt',
+                tags: ['execution', 'multi-agent'],
+              },
+              {
+                id: 'tool-execution',
+                name: 'Tool Execution',
+                description: 'Execute 25+ built-in tools and any MCP-compatible external tools',
+                tags: ['tools', 'mcp'],
+              },
             ],
           };
 
-          this.a2aServer = createA2AServer({
-            port: (serverCfg.port as number) ?? 3002,
-            host: (serverCfg.host as string) ?? '127.0.0.1',
-            agentCard,
-          }, this.runtime);
+          this.a2aServer = createA2AServer(
+            {
+              port: (serverCfg.port as number) ?? 3002,
+              host: (serverCfg.host as string) ?? '127.0.0.1',
+              agentCard,
+            },
+            this.runtime,
+          );
           await this.a2aServer.start();
-          this.logger.info('AgentLoop', `A2A server started on ${serverCfg.host ?? '127.0.0.1'}:${serverCfg.port ?? 3002}`);
+          this.logger.info(
+            'AgentLoop',
+            `A2A server started on ${serverCfg.host ?? '127.0.0.1'}:${serverCfg.port ?? 3002}`,
+          );
         }
       }
     } catch (err) {
-      this.logger.warn('AgentLoop', 'Failed to start A2A server', { error: err instanceof Error ? err.message : String(err) });
+      this.logger.warn('AgentLoop', 'Failed to start A2A server', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // A2A discovery from config
     try {
       if (a2aConfig?.remoteAgents && Array.isArray(a2aConfig.remoteAgents)) {
         this.a2aDiscoveryManager = new A2ADiscoveryManager();
-        const remoteConfigs = a2aConfig.remoteAgents as Array<{ label: string; url: string; authToken?: string }>;
+        const remoteConfigs = a2aConfig.remoteAgents as Array<{
+          label: string;
+          url: string;
+          authToken?: string;
+        }>;
         if (remoteConfigs.length > 0) {
           await this.a2aDiscoveryManager.discoverFromConfig(remoteConfigs);
-          this.logger.info('AgentLoop', `Connected to ${this.a2aDiscoveryManager.getAgentCount()} remote A2A agents`);
+          this.logger.info(
+            'AgentLoop',
+            `Connected to ${this.a2aDiscoveryManager.getAgentCount()} remote A2A agents`,
+          );
         }
       }
     } catch (err) {
-      this.logger.warn('AgentLoop', 'Failed to discover A2A agents from config', { error: err instanceof Error ? err.message : String(err) });
+      this.logger.warn('AgentLoop', 'Failed to discover A2A agents from config', {
+        error: err instanceof Error ? err.message : String(err),
+      });
       this.a2aDiscoveryManager = null;
     }
 
@@ -389,7 +462,10 @@ export class CommanderAgentLoop {
           await this.a2aDiscoveryManager.discoverFromConfig(
             urls.map((url, i) => ({ label: `a2a-env-${i}`, url })),
           );
-          this.logger.info('AgentLoop', `Connected to ${this.a2aDiscoveryManager.getAgentCount()} env-configured A2A agents`);
+          this.logger.info(
+            'AgentLoop',
+            `Connected to ${this.a2aDiscoveryManager.getAgentCount()} env-configured A2A agents`,
+          );
         }
       } catch {
         this.logger.warn('AgentLoop', 'Failed to parse COMMANDER_A2A_AGENTS env var');
@@ -415,8 +491,12 @@ export class CommanderAgentLoop {
       const task = this.taskQueue.shift();
       if (!task) continue;
 
-      this.executeTask(task).catch(err => {
-        this.logger.error('AgentLoop', `Task ${task.id} failed`, err instanceof Error ? err : new Error(String(err)));
+      this.executeTask(task).catch((err) => {
+        this.logger.error(
+          'AgentLoop',
+          `Task ${task.id} failed`,
+          err instanceof Error ? err : new Error(String(err)),
+        );
       });
     }
 
@@ -445,7 +525,10 @@ export class CommanderAgentLoop {
     try {
       // Phase 1: Deliberation
       const plan = deliberate(task.goal);
-       this.logger.info('AgentLoop', `Type: ${plan.taskType} | Agents: ${plan.estimatedAgentCount} | Topology: ${plan.recommendedTopology} | Nature: ${plan.taskNature} | Spec: ${plan.suitableForSpeculation} | Time/agent: ${(plan.timeBudgetPerAgentMs / 1000).toFixed(1)}s`);
+      this.logger.info(
+        'AgentLoop',
+        `Type: ${plan.taskType} | Agents: ${plan.estimatedAgentCount} | Topology: ${plan.recommendedTopology} | Nature: ${plan.taskNature} | Spec: ${plan.suitableForSpeculation} | Time/agent: ${(plan.timeBudgetPerAgentMs / 1000).toFixed(1)}s`,
+      );
 
       // Phase 2: Execute via orchestrator
       const result = await this.orchestrator.execute({
@@ -462,13 +545,18 @@ export class CommanderAgentLoop {
       this.logger.info('AgentLoop', `Synthesis: ${result.synthesis.slice(0, 200)}...`);
 
       bus.publish('agent.completed', 'commander-loop', {
-        taskId: task.id, status: result.status,
+        taskId: task.id,
+        status: result.status,
         metrics: result.metrics,
       });
 
       return result;
     } catch (err) {
-      this.logger.error('AgentLoop', 'Task error', err instanceof Error ? err : new Error(String(err)));
+      this.logger.error(
+        'AgentLoop',
+        'Task error',
+        err instanceof Error ? err : new Error(String(err)),
+      );
       bus.publish('agent.failed', 'commander-loop', { taskId: task.id, error: String(err) });
     } finally {
       this.activeSessions.delete(task.id);
@@ -483,7 +571,11 @@ export class CommanderAgentLoop {
         await this.a2aServer.stop();
         this.logger.info('AgentLoop', 'A2A server stopped');
       } catch (err) {
-        this.logger.error('AgentLoop', 'Failed to stop A2A server', err instanceof Error ? err : new Error(String(err)));
+        this.logger.error(
+          'AgentLoop',
+          'Failed to stop A2A server',
+          err instanceof Error ? err : new Error(String(err)),
+        );
       }
     }
 
@@ -492,7 +584,11 @@ export class CommanderAgentLoop {
         await this.mcpManager.disconnect();
         this.logger.info('AgentLoop', 'MCP servers disconnected');
       } catch (err) {
-        this.logger.error('AgentLoop', 'Failed to disconnect MCP', err instanceof Error ? err : new Error(String(err)));
+        this.logger.error(
+          'AgentLoop',
+          'Failed to disconnect MCP',
+          err instanceof Error ? err : new Error(String(err)),
+        );
       }
     }
 
@@ -505,13 +601,18 @@ export class CommanderAgentLoop {
       queueLength: this.taskQueue.length,
       activeSessions: this.activeSessions.size,
       sessions: Array.from(this.activeSessions.entries()).map(([id, s]) => ({
-        id, goal: s.goal.slice(0, 60), runningFor: Date.now() - s.startTime,
+        id,
+        goal: s.goal.slice(0, 60),
+        runningFor: Date.now() - s.startTime,
       })),
       tools: this.config.tools,
     };
   }
 
   private sleep(ms: number): Promise<void> {
-    return new Promise(r => { const t = setTimeout(r, ms); t.unref(); });
+    return new Promise((r) => {
+      const t = setTimeout(r, ms);
+      t.unref();
+    });
   }
 }

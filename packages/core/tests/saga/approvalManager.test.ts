@@ -42,10 +42,7 @@ describe('InMemoryApprovalStore', () => {
   it('throws on duplicate create', async () => {
     const store = new InMemoryApprovalStore();
     await store.create(makeRequest('r1', 'a', 'alice'));
-    await assert.rejects(
-      store.create(makeRequest('r1', 'a', 'alice')),
-      ApprovalStoreError
-    );
+    await assert.rejects(store.create(makeRequest('r1', 'a', 'alice')), ApprovalStoreError);
   });
 
   it('records a decision and retrieves outcome', async () => {
@@ -138,7 +135,7 @@ describe('FileApprovalStore', () => {
     await fs.writeFile(
       join(runDir, 'snapshot.json'),
       JSON.stringify({ runId: mixedRunId, state: 'COMMITTED' }),
-      'utf8'
+      'utf8',
     );
     await store.create(makeRequest(mixedRunId, 'real-approval', 'dave'));
     const pending = await store.listPending('dave');
@@ -177,10 +174,7 @@ describe('ApprovalManager', () => {
   it('decide throws if no request', async () => {
     const store = new InMemoryApprovalStore();
     const mgr = new ApprovalManager({ store });
-    await assert.rejects(
-      mgr.decide('r1', 'a', makeResult('approve', 'alice')),
-      ApprovalError
-    );
+    await assert.rejects(mgr.decide('r1', 'a', makeResult('approve', 'alice')), ApprovalError);
   });
 
   it('cancel removes the request', async () => {

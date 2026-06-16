@@ -5,6 +5,7 @@ This directory contains k6 load test scripts for Commander's HTTP API and agent 
 ## Prerequisites
 
 Install k6:
+
 ```bash
 # macOS
 brew install k6
@@ -23,12 +24,14 @@ choco install k6
 ## Running Tests
 
 ### Start the server
+
 ```bash
 # Start Commander HTTP server
 npx tsx src/httpServer.ts
 ```
 
 ### Run load tests
+
 ```bash
 # Run basic HTTP endpoint tests
 k6 run tests/load/load-test.k6.js
@@ -42,25 +45,29 @@ K6_BASE_URL=http://localhost:3001 K6_VUS=20 K6_DURATION=120s k6 run tests/load/a
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `K6_BASE_URL` | `http://127.0.0.1:3001` | Server base URL |
-| `K6_API_KEY` | (empty) | API key for authenticated endpoints |
-| `K6_VUS` | `10` / `5` | Number of virtual users |
-| `K6_DURATION` | `30s` / `60s` | Test duration |
-| `K6_RAMP_UP` | `10s` | Ramp up duration (agent-loop only) |
+| Variable      | Default                 | Description                         |
+| ------------- | ----------------------- | ----------------------------------- |
+| `K6_BASE_URL` | `http://127.0.0.1:3001` | Server base URL                     |
+| `K6_API_KEY`  | (empty)                 | API key for authenticated endpoints |
+| `K6_VUS`      | `10` / `5`              | Number of virtual users             |
+| `K6_DURATION` | `30s` / `60s`           | Test duration                       |
+| `K6_RAMP_UP`  | `10s`                   | Ramp up duration (agent-loop only)  |
 
 ## Test Scenarios
 
 ### load-test.k6.js
+
 Basic HTTP endpoint tests:
+
 - `/health` - Health check
 - `/ready` - Readiness check
 - `/metrics` - Metrics endpoint
 - `/openapi.json` - OpenAPI spec
 
 ### agent-loop.k6.js
+
 Agent runtime tests with weighted scenarios:
+
 - Simple queries (30%)
 - File read operations (20%)
 - Web search operations (20%)
@@ -70,6 +77,7 @@ Agent runtime tests with weighted scenarios:
 ## Thresholds
 
 Tests will fail if:
+
 - 95th percentile latency exceeds 2s (agent-loop) or 500ms (basic)
 - Error rate exceeds 5% (agent-loop) or 1% (basic)
 - Agent loop latency exceeds 5s at p95
@@ -78,9 +86,10 @@ Tests will fail if:
 ## CI Integration
 
 Add to `.github/workflows/ci.yml`:
+
 ```yaml
 - name: Install k6
-  run: brew install k6  # or appropriate for the OS
+  run: brew install k6 # or appropriate for the OS
 
 - name: Run load tests
   run: |

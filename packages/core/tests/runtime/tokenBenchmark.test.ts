@@ -15,7 +15,11 @@ import { describe, it, expect } from 'vitest';
 import { TokenGovernor } from '../../src/runtime/tokenGovernor';
 import { ContextCompactor } from '../../src/runtime/contextCompactor';
 import { ToolOutputManager } from '../../src/runtime/toolOutputManager';
-import { buildTwoTierTools, calculateTierMetrics, estimateToolTokenCost } from '../../src/runtime/toolRetriever';
+import {
+  buildTwoTierTools,
+  calculateTierMetrics,
+  estimateToolTokenCost,
+} from '../../src/runtime/toolRetriever';
 import { applyObservationMask } from '../../src/runtime/runtimeHelpers';
 import type { ToolDefinition, LLMMessage, ToolCall, ToolResult } from '../../src/runtime/types';
 
@@ -57,8 +61,17 @@ function makeMessages(count: number, avgLen = 500): LLMMessage[] {
   return messages;
 }
 
-function makeToolResults(count: number, avgLen = 2000): Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }> {
-  const results: Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }> = [];
+function makeToolResults(
+  count: number,
+  avgLen = 2000,
+): Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }> {
+  const results: Array<{
+    toolCallId: string;
+    name: string;
+    output: string;
+    error?: string;
+    durationMs: number;
+  }> = [];
   for (let i = 0; i < count; i++) {
     results.push({
       toolCallId: `call_${i}`,
@@ -133,11 +146,16 @@ describe('Token Usage Benchmarks', () => {
         messages.push({
           role: 'assistant',
           content: `I'll use tool_${i} to check the code.`,
-          tool_calls: [{
-            id: `call_${i}`,
-            type: 'function' as const,
-            function: { name: `tool_${i % 5}`, arguments: JSON.stringify({ path: `/src/file${i}.ts` }) },
-          }],
+          tool_calls: [
+            {
+              id: `call_${i}`,
+              type: 'function' as const,
+              function: {
+                name: `tool_${i % 5}`,
+                arguments: JSON.stringify({ path: `/src/file${i}.ts` }),
+              },
+            },
+          ],
         });
         messages.push({
           role: 'tool',
@@ -147,14 +165,20 @@ describe('Token Usage Benchmarks', () => {
       }
 
       const before = compactor.getUsage(messages);
-      console.log(`Before compaction: ${before.total} tokens (${(before.pct * 100).toFixed(1)}% of budget)`);
+      console.log(
+        `Before compaction: ${before.total} tokens (${(before.pct * 100).toFixed(1)}% of budget)`,
+      );
 
       // Compact and measure
       const result = compactor.compact(messages);
       const after = compactor.getUsage(result.messages);
 
-      console.log(`After compaction: ${after.total} tokens (${(after.pct * 100).toFixed(1)}% of budget)`);
-      console.log(`Layer: ${result.action.layer}, Dropped: ${result.action.droppedCount}, Saved: ${result.action.tokensSaved} tokens`);
+      console.log(
+        `After compaction: ${after.total} tokens (${(after.pct * 100).toFixed(1)}% of budget)`,
+      );
+      console.log(
+        `Layer: ${result.action.layer}, Dropped: ${result.action.droppedCount}, Saved: ${result.action.tokensSaved} tokens`,
+      );
 
       // If context exceeds threshold, should save tokens; otherwise just log
       if (before.pct > 0.6) {
@@ -205,10 +229,14 @@ describe('Token Usage Benchmarks', () => {
       const managed = manager.manageBatch(calls);
       const totalOriginal = calls.reduce((sum, c) => sum + c.result.output.length, 0);
       const totalManaged = managed.reduce((sum, m) => sum + m.output.length, 0);
-      const truncatedCount = managed.filter(m => m.truncated).length;
+      const truncatedCount = managed.filter((m) => m.truncated).length;
 
-      console.log(`Output management: ${totalOriginal} → ${totalManaged} chars (${truncatedCount}/${calls.length} truncated)`);
-      console.log(`Token savings: ~${estimateTokens('X'.repeat(totalOriginal - totalManaged))} tokens`);
+      console.log(
+        `Output management: ${totalOriginal} → ${totalManaged} chars (${truncatedCount}/${calls.length} truncated)`,
+      );
+      console.log(
+        `Token savings: ~${estimateTokens('X'.repeat(totalOriginal - totalManaged))} tokens`,
+      );
 
       // Should truncate when outputs exceed budget
       expect(truncatedCount).toBeGreaterThan(0);
@@ -225,10 +253,14 @@ describe('Token Usage Benchmarks', () => {
       const masked = await applyObservationMask(results, windowSize);
       const after = masked.reduce((sum, r) => sum + estimateTokens(r.output), 0);
 
-      console.log(`Observation mask (window=${windowSize}): ${before} → ${after} tokens (saved ${before - after})`);
+      console.log(
+        `Observation mask (window=${windowSize}): ${before} → ${after} tokens (saved ${before - after})`,
+      );
 
       // Should mask older results
-      const maskedCount = masked.filter(r => r.output.startsWith('[observation purified:')).length;
+      const maskedCount = masked.filter((r) =>
+        r.output.startsWith('[observation purified:'),
+      ).length;
       expect(maskedCount).toBeGreaterThan(0);
       expect(after).toBeLessThan(before);
     });

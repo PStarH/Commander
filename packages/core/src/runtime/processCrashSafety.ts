@@ -22,7 +22,12 @@ import type { DeadLetterQueue, DeadLetterEntry } from './deadLetterQueue';
 import type { LeaseManager } from '../atr/leaseManager';
 import { getExecutionScheduler } from '../atr/scheduler';
 
-export type CrashSource = 'uncaughtException' | 'unhandledRejection' | 'SIGTERM' | 'SIGINT' | 'exit_timeout';
+export type CrashSource =
+  | 'uncaughtException'
+  | 'unhandledRejection'
+  | 'SIGTERM'
+  | 'SIGINT'
+  | 'exit_timeout';
 
 export interface CrashSafetyDeps {
   dlq: DeadLetterQueue;
@@ -84,7 +89,10 @@ export function installProcessCrashHandlers(deps: CrashSafetyDeps): void {
         deps.dlq.record(entry);
         dlqWritten++;
       } catch (e) {
-        log.error('ProcessCrashSafety', 'DLQ record failed during crash shutdown', undefined, { runId, errorMessage: (e as Error).message });
+        log.error('ProcessCrashSafety', 'DLQ record failed during crash shutdown', undefined, {
+          runId,
+          errorMessage: (e as Error).message,
+        });
       }
 
       if (leaseToken) {
@@ -92,7 +100,10 @@ export function installProcessCrashHandlers(deps: CrashSafetyDeps): void {
           deps.leaseManager.release(runId, leaseToken, { tenantId });
           leasesReleased++;
         } catch (e) {
-          log.debug('ProcessCrashSafety', 'Lease release failed during crash', { runId, error: (e as Error).message });
+          log.debug('ProcessCrashSafety', 'Lease release failed during crash', {
+            runId,
+            error: (e as Error).message,
+          });
         }
       }
 
@@ -108,17 +119,28 @@ export function installProcessCrashHandlers(deps: CrashSafetyDeps): void {
           });
           runsAborted++;
         } catch (e) {
-          log.debug('ProcessCrashSafety', 'Scheduler abortRun failed during crash', { runId, error: (e as Error).message });
+          log.debug('ProcessCrashSafety', 'Scheduler abortRun failed during crash', {
+            runId,
+            error: (e as Error).message,
+          });
         }
       }
     }
 
-    log.error('ProcessCrashSafety', 'Crash shutdown complete', undefined, { source, dlqWritten, leasesReleased, runsAborted, errorMessage });
+    log.error('ProcessCrashSafety', 'Crash shutdown complete', undefined, {
+      source,
+      dlqWritten,
+      leasesReleased,
+      runsAborted,
+      errorMessage,
+    });
 
     try {
       deps.dlq.flush();
     } catch (e) {
-      log.error('ProcessCrashSafety', 'DLQ flush failed during crash shutdown', undefined, { errorMessage: (e as Error).message });
+      log.error('ProcessCrashSafety', 'DLQ flush failed during crash shutdown', undefined, {
+        errorMessage: (e as Error).message,
+      });
     }
 
     setTimeout(() => process.exit(1), exitTimeoutMs).unref();

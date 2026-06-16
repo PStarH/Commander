@@ -1,6 +1,10 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
-import { ApprovalSystem, type ApprovalRequest, type ApprovalDecision } from '../../src/sandbox/approval';
+import {
+  ApprovalSystem,
+  type ApprovalRequest,
+  type ApprovalDecision,
+} from '../../src/sandbox/approval';
 import { ExecPolicyEngine } from '../../src/sandbox/execPolicy';
 import { createTestEnvSync, type TestEnv } from '../helpers/testEnv';
 
@@ -62,44 +66,56 @@ describe('ApprovalSystem', () => {
     beforeEach(() => system.setMode('read-only'));
 
     it('allows file_read', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'file_read', action: 'read', riskLevel: 'low' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'file_read', action: 'read', riskLevel: 'low' },
+        }),
+      );
       assert.strictEqual(result.decision, 'approved');
     });
 
     it('blocks file_write', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'file_write', action: 'write', riskLevel: 'medium' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'file_write', action: 'write', riskLevel: 'medium' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied');
     });
 
     it('blocks shell_exec', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'shell_exec', action: 'exec', riskLevel: 'high' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'shell_exec', action: 'exec', riskLevel: 'high' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied');
     });
 
     it('blocks destructive', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'destructive', action: 'rm -rf /', riskLevel: 'critical' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'destructive', action: 'rm -rf /', riskLevel: 'critical' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied');
     });
 
     it('blocks network', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'network', action: 'curl', riskLevel: 'medium' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'network', action: 'curl', riskLevel: 'medium' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied');
     });
 
     it('blocks sandbox_escape', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'sandbox_escape', action: 'escape', riskLevel: 'critical' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'sandbox_escape', action: 'escape', riskLevel: 'critical' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied');
     });
   });
@@ -110,30 +126,38 @@ describe('ApprovalSystem', () => {
     beforeEach(() => system.setMode('plan'));
 
     it('blocks file_write', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'file_write', action: 'write', riskLevel: 'medium' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'file_write', action: 'write', riskLevel: 'medium' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied');
     });
 
     it('blocks destructive', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'destructive', action: 'destroy', riskLevel: 'critical' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'destructive', action: 'destroy', riskLevel: 'critical' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied');
     });
 
     it('allows file_read', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'file_read', action: 'read', riskLevel: 'low' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'file_read', action: 'read', riskLevel: 'low' },
+        }),
+      );
       assert.strictEqual(result.decision, 'approved');
     });
 
     it('blocks shell_exec (treated as write)', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'shell_exec', action: 'ls', riskLevel: 'low' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'shell_exec', action: 'ls', riskLevel: 'low' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied');
     });
   });
@@ -145,24 +169,30 @@ describe('ApprovalSystem', () => {
 
     it('allows file_write (defers to callback)', async () => {
       // No callback set, but non-destructive/non-escape should be approved
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'file_write', action: 'write', riskLevel: 'medium' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'file_write', action: 'write', riskLevel: 'medium' },
+        }),
+      );
       assert.strictEqual(result.decision, 'approved');
     });
 
     it('defers destructive to callback', async () => {
       // No callback → denied (safe default when deferred)
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'destructive', action: 'rm -rf', riskLevel: 'critical' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'destructive', action: 'rm -rf', riskLevel: 'critical' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied');
     });
 
     it('defers sandbox_escape to callback', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'sandbox_escape', action: 'escape', riskLevel: 'critical' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'sandbox_escape', action: 'escape', riskLevel: 'critical' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied');
     });
 
@@ -173,17 +203,21 @@ describe('ApprovalSystem', () => {
         return 'approved_once';
       });
 
-      await system.evaluate(makeRequest({
-        gate: { category: 'destructive', action: 'rm -rf', riskLevel: 'critical' },
-      }));
+      await system.evaluate(
+        makeRequest({
+          gate: { category: 'destructive', action: 'rm -rf', riskLevel: 'critical' },
+        }),
+      );
       assert.strictEqual(callbackCalled, true);
     });
 
     it('callback approved_once returns approved_once', async () => {
       system.setCallback(async () => 'approved_once');
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'destructive', action: 'rm -rf', riskLevel: 'critical' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'destructive', action: 'rm -rf', riskLevel: 'critical' },
+        }),
+      );
       assert.strictEqual(result.decision, 'approved_once');
     });
 
@@ -228,30 +262,38 @@ describe('ApprovalSystem', () => {
     beforeEach(() => system.setMode('auto-edit'));
 
     it('allows file_write', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'file_write', action: 'write', riskLevel: 'medium' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'file_write', action: 'write', riskLevel: 'medium' },
+        }),
+      );
       assert.strictEqual(result.decision, 'approved');
     });
 
     it('allows shell_exec', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'shell_exec', action: 'npm test', riskLevel: 'low' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'shell_exec', action: 'npm test', riskLevel: 'low' },
+        }),
+      );
       assert.strictEqual(result.decision, 'approved');
     });
 
     it('defers sandbox_escape', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'sandbox_escape', action: 'escape', riskLevel: 'critical' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'sandbox_escape', action: 'escape', riskLevel: 'critical' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied'); // no callback → denied
     });
 
     it('defers destructive', async () => {
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'destructive', action: 'rm -rf /', riskLevel: 'critical' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'destructive', action: 'rm -rf /', riskLevel: 'critical' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied');
     });
   });
@@ -262,11 +304,20 @@ describe('ApprovalSystem', () => {
     beforeEach(() => system.setMode('full-auto'));
 
     it('approves everything', async () => {
-      const categories = ['file_write', 'shell_exec', 'destructive', 'network', 'sandbox_escape', 'mcp'] as const;
+      const categories = [
+        'file_write',
+        'shell_exec',
+        'destructive',
+        'network',
+        'sandbox_escape',
+        'mcp',
+      ] as const;
       for (const category of categories) {
-        const result = await system.evaluate(makeRequest({
-          gate: { category, action: 'test', riskLevel: 'critical' },
-        }));
+        const result = await system.evaluate(
+          makeRequest({
+            gate: { category, action: 'test', riskLevel: 'critical' },
+          }),
+        );
         assert.strictEqual(result.decision, 'approved', `full-auto should approve ${category}`);
       }
     });
@@ -278,19 +329,23 @@ describe('ApprovalSystem', () => {
     it('blocks forbidden commands regardless of mode', async () => {
       system.setMode('full-auto');
       // Use the command directly as toolName so ExecPolicyEngine matches 'sudo' pattern
-      const result = await system.evaluate(makeRequest({
-        toolName: 'sudo',
-        toolArgs: { command: 'rm -rf /' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          toolName: 'sudo',
+          toolArgs: { command: 'rm -rf /' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied');
     });
 
     it('blocks mkfs regardless of mode', async () => {
       system.setMode('full-auto');
-      const result = await system.evaluate(makeRequest({
-        toolName: 'mkfs',
-        toolArgs: { device: '/dev/sda' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          toolName: 'mkfs',
+          toolArgs: { device: '/dev/sda' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied');
     });
   });
@@ -352,9 +407,11 @@ describe('ApprovalSystem', () => {
     it('denies deferred decisions when no callback is set', async () => {
       system.setMode('suggest');
       // No callback set
-      const result = await system.evaluate(makeRequest({
-        gate: { category: 'destructive', action: 'destroy', riskLevel: 'critical' },
-      }));
+      const result = await system.evaluate(
+        makeRequest({
+          gate: { category: 'destructive', action: 'destroy', riskLevel: 'critical' },
+        }),
+      );
       assert.strictEqual(result.decision, 'denied');
     });
   });

@@ -41,13 +41,13 @@ function scoreMessages({ messages, importanceConfig, failureFingerprints }) {
 
     if (msg.role === 'user') {
       const content = typeof msg.content === 'string' ? msg.content : '';
-      if (content.length > 20) score += (importanceConfig?.userInstructionBonus ?? 0.3);
+      if (content.length > 20) score += importanceConfig?.userInstructionBonus ?? 0.3;
       if (RE_QUESTION.test(content)) score += 0.1;
     }
 
     if (msg.role === 'assistant') {
       const content = typeof msg.content === 'string' ? msg.content : '';
-      if (RE_DECISION.test(content)) score += (importanceConfig?.decisionBonus ?? 0.3);
+      if (RE_DECISION.test(content)) score += importanceConfig?.decisionBonus ?? 0.3;
       if (msg.tool_calls && msg.tool_calls.length > 0) score += 0.1;
       if (content.length > 500) score += 0.15;
       if (content.length > 1000) score += 0.1;
@@ -55,7 +55,7 @@ function scoreMessages({ messages, importanceConfig, failureFingerprints }) {
 
     if (msg.role === 'tool') {
       const content = typeof msg.content === 'string' ? msg.content : '';
-      if (RE_ERROR.test(content)) score += (importanceConfig?.errorBonus ?? 0.4);
+      if (RE_ERROR.test(content)) score += importanceConfig?.errorBonus ?? 0.4;
       if (content.length > 1000) score += 0.1;
     }
 
@@ -63,7 +63,7 @@ function scoreMessages({ messages, importanceConfig, failureFingerprints }) {
     score += recencyFactor * (importanceConfig?.recencyBonus ?? 0.2);
 
     if (typeof msg.content === 'string' && msg.content.startsWith('__COMPACTED__')) {
-      score += (importanceConfig?.compactedPenalty ?? -0.2);
+      score += importanceConfig?.compactedPenalty ?? -0.2;
     }
 
     const fingerprint = makeFingerprint(msg);
@@ -164,8 +164,10 @@ function buildStructuredSummary({ turns, verbosity }) {
   if (userGoals) parts.push(`Goal: ${userGoals}`);
   if (toolCalls.size > 0) parts.push(`Tools: ${[...toolCalls].join(', ')}`);
   if (files.length > 0) parts.push(`Files: ${[...new Set(files)].slice(0, maxFiles).join(', ')}`);
-  if (decisions.length > 0) parts.push(`\n## Key Decisions\n${decisions.slice(0, maxDecisions).join('\n')}`);
-  if (keyFindings.length > 0) parts.push(`\n## Findings\n${keyFindings.slice(0, maxFindings).join('\n')}`);
+  if (decisions.length > 0)
+    parts.push(`\n## Key Decisions\n${decisions.slice(0, maxDecisions).join('\n')}`);
+  if (keyFindings.length > 0)
+    parts.push(`\n## Findings\n${keyFindings.slice(0, maxFindings).join('\n')}`);
   if (errors.length > 0) parts.push(`\n## Issues\n${errors.slice(0, maxErrors).join('\n')}`);
 
   return parts.join('\n') || `${turns.length} turn(s) compacted`;
@@ -189,7 +191,7 @@ function selectTopK({ scored, budget }) {
     }
   }
 
-  const keepSet = new Set(minHeap.map(h => h.idx));
+  const keepSet = new Set(minHeap.map((h) => h.idx));
   const result = scored.filter((_, i) => keepSet.has(i));
   result.sort((a, b) => b.costImpact - a.costImpact);
   return result;

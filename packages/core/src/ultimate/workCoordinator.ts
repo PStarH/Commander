@@ -106,9 +106,14 @@ export class WorkCoordinator {
         this.items.set(item.id, item);
       }
       if (reclaimedCount > 0) {
-        getGlobalLogger().info('WorkCoordinator', 'Reclaimed in-flight items from prior process', { reclaimedCount, totalRecovered: persisted.length });
+        getGlobalLogger().info('WorkCoordinator', 'Reclaimed in-flight items from prior process', {
+          reclaimedCount,
+          totalRecovered: persisted.length,
+        });
       } else if (persisted.length > 0) {
-        getGlobalLogger().info('WorkCoordinator', 'Recovered work items from store', { count: persisted.length });
+        getGlobalLogger().info('WorkCoordinator', 'Recovered work items from store', {
+          count: persisted.length,
+        });
       }
     } catch (err) {
       getGlobalLogger().error('WorkCoordinator', 'Failed to recover from store', err as Error);
@@ -140,14 +145,18 @@ export class WorkCoordinator {
       out.push(item);
       this.emit({ type: 'enqueued', item });
     }
-    this.publishBus('team.work.enqueued', { items: out.map(i => ({ id: i.id, runId: i.runId, goal: i.goal.slice(0, 80) })) });
+    this.publishBus('team.work.enqueued', {
+      items: out.map((i) => ({ id: i.id, runId: i.runId, goal: i.goal.slice(0, 80) })),
+    });
     this.enforceRetention();
     return out;
   }
 
   claim(agentId: string, filter?: ClaimFilter): WorkItem | null {
     if (this.hasCycle(filter?.runId)) {
-      getGlobalLogger().warn('WorkCoordinator', 'Dependency cycle detected, refusing claim', { agentId });
+      getGlobalLogger().warn('WorkCoordinator', 'Dependency cycle detected, refusing claim', {
+        agentId,
+      });
       return null;
     }
 
@@ -155,7 +164,7 @@ export class WorkCoordinator {
     for (const item of this.items.values()) {
       if (item.status !== 'PENDING') continue;
       if (filter?.runId && item.runId !== filter.runId) continue;
-      if (filter?.tools && !filter.tools.some(t => item.tools.includes(t))) continue;
+      if (filter?.tools && !filter.tools.some((t) => item.tools.includes(t))) continue;
       if (filter?.parentNodeId && item.parentNodeId !== filter.parentNodeId) continue;
       if (!this.dependenciesMet(item)) continue;
       candidates.push(item);
@@ -183,7 +192,12 @@ export class WorkCoordinator {
       this.store.update(item);
 
       this.emit({ type: 'claimed', item, agentId });
-      this.publishBus('team.work.claimed', { workId: item.id, agentId, runId: item.runId, goal: item.goal.slice(0, 80) });
+      this.publishBus('team.work.claimed', {
+        workId: item.id,
+        agentId,
+        runId: item.runId,
+        goal: item.goal.slice(0, 80),
+      });
       return item;
     }
     return null;
@@ -203,7 +217,11 @@ export class WorkCoordinator {
 
   complete(workId: string, agentId: string, result?: unknown): boolean {
     const item = this.items.get(workId);
-    if (!item || (item.status !== 'CLAIMED' && item.status !== 'RUNNING') || item.claimedBy !== agentId) {
+    if (
+      !item ||
+      (item.status !== 'CLAIMED' && item.status !== 'RUNNING') ||
+      item.claimedBy !== agentId
+    ) {
       return false;
     }
     item.status = 'COMPLETED';
@@ -212,13 +230,23 @@ export class WorkCoordinator {
     item.leaseToken = undefined;
     this.store.update(item);
     this.emit({ type: 'completed', item, agentId });
-    this.publishBus('team.work.completed', { workId, agentId, runId: item.runId, attempts: item.attempts, hasResult: result !== undefined });
+    this.publishBus('team.work.completed', {
+      workId,
+      agentId,
+      runId: item.runId,
+      attempts: item.attempts,
+      hasResult: result !== undefined,
+    });
     return true;
   }
 
   fail(workId: string, agentId: string, error: string): WorkItem | null {
     const item = this.items.get(workId);
-    if (!item || (item.status !== 'CLAIMED' && item.status !== 'RUNNING') || item.claimedBy !== agentId) {
+    if (
+      !item ||
+      (item.status !== 'CLAIMED' && item.status !== 'RUNNING') ||
+      item.claimedBy !== agentId
+    ) {
       return null;
     }
     item.lastError = error;
@@ -227,15 +255,31 @@ export class WorkCoordinator {
     item.leaseToken = undefined;
     this.store.update(item);
     this.emit({ type: 'failed', item, agentId, error });
-    this.publishBus('team.work.failed', { workId, agentId, runId: item.runId, error: error.slice(0, 200), attempts: item.attempts });
+    this.publishBus('team.work.failed', {
+      workId,
+      agentId,
+      runId: item.runId,
+      error: error.slice(0, 200),
+      attempts: item.attempts,
+    });
 
     if (item.attempts < item.maxAttempts) {
-      return this.reassignInternal(item, agentId, `attempt ${item.attempts} failed: ${error.slice(0, 100)}`);
+      return this.reassignInternal(
+        item,
+        agentId,
+        `attempt ${item.attempts} failed: ${error.slice(0, 100)}`,
+      );
     }
     item.status = 'FAILED';
     this.store.update(item);
     this.emit({ type: 'terminal', item, agentId, error });
-    this.publishBus('team.work.terminal', { workId: item.id, agentId, runId: item.runId, error: error.slice(0, 200), attempts: item.attempts });
+    this.publishBus('team.work.terminal', {
+      workId: item.id,
+      agentId,
+      runId: item.runId,
+      error: error.slice(0, 200),
+      attempts: item.attempts,
+    });
     return null;
   }
 
@@ -262,20 +306,46 @@ export class WorkCoordinator {
 
   getTeamStatus(runId: string): TeamStatus {
     const items = this.list({ runId });
-    const byAgent: Record<string, { claimed: number; running: number; completed: number; failed: number }> = {};
+    const byAgent: Record<
+      string,
+      { claimed: number; running: number; completed: number; failed: number }
+    > = {};
     const pendingByAgent: Record<string, number> = {};
-    let pending = 0, claimed = 0, running = 0, completed = 0, failed = 0, reassigned = 0;
+    let pending = 0,
+      claimed = 0,
+      running = 0,
+      completed = 0,
+      failed = 0,
+      reassigned = 0;
     for (const item of items) {
       const agent = item.claimedBy ?? 'unassigned';
       if (!byAgent[agent]) byAgent[agent] = { claimed: 0, running: 0, completed: 0, failed: 0 };
       switch (item.status) {
-        case 'PENDING': pending++; pendingByAgent[agent] = (pendingByAgent[agent] ?? 0) + 1; break;
-        case 'CLAIMED': claimed++; byAgent[agent].claimed++; break;
-        case 'RUNNING': running++; byAgent[agent].running++; break;
-        case 'COMPLETED': completed++; byAgent[agent].completed++; break;
-        case 'FAILED': failed++; byAgent[agent].failed++; break;
-        case 'REASSIGNED': reassigned++; break;
-        default: break;
+        case 'PENDING':
+          pending++;
+          pendingByAgent[agent] = (pendingByAgent[agent] ?? 0) + 1;
+          break;
+        case 'CLAIMED':
+          claimed++;
+          byAgent[agent].claimed++;
+          break;
+        case 'RUNNING':
+          running++;
+          byAgent[agent].running++;
+          break;
+        case 'COMPLETED':
+          completed++;
+          byAgent[agent].completed++;
+          break;
+        case 'FAILED':
+          failed++;
+          byAgent[agent].failed++;
+          break;
+        case 'REASSIGNED':
+          reassigned++;
+          break;
+        default:
+          break;
       }
     }
     return {
@@ -298,7 +368,9 @@ export class WorkCoordinator {
       return () => {};
     }
     this.handlers.add(handler);
-    return () => { this.handlers.delete(handler); };
+    return () => {
+      this.handlers.delete(handler);
+    };
   }
 
   clear(runId?: string): number {
@@ -308,7 +380,7 @@ export class WorkCoordinator {
       this.items.delete(id);
       removed++;
     }
-    this.store.remove(item => runId ? item.runId === runId : true);
+    this.store.remove((item) => (runId ? item.runId === runId : true));
     return removed;
   }
 
@@ -323,7 +395,7 @@ export class WorkCoordinator {
 
   private hasCycle(runId?: string): boolean {
     const items = runId
-      ? Array.from(this.items.values()).filter(i => i.runId === runId)
+      ? Array.from(this.items.values()).filter((i) => i.runId === runId)
       : Array.from(this.items.values());
     const visiting = new Set<string>();
     const visited = new Set<string>();
@@ -354,7 +426,13 @@ export class WorkCoordinator {
     item.claimedAt = undefined;
     this.store.update(item);
     this.emit({ type: 'reassigned', item, fromAgent, reason });
-    this.publishBus('team.work.reassigned', { workId: item.id, fromAgent, reason: reason.slice(0, 200), runId: item.runId, attempts: item.attempts });
+    this.publishBus('team.work.reassigned', {
+      workId: item.id,
+      fromAgent,
+      reason: reason.slice(0, 200),
+      runId: item.runId,
+      attempts: item.attempts,
+    });
     return item;
   }
 
@@ -371,7 +449,11 @@ export class WorkCoordinator {
   private publishBus(topic: string, payload: unknown): void {
     try {
       const bus = getMessageBus();
-      (bus.publish as (t: string, s: string, p: unknown) => unknown)(topic, 'work-coordinator', payload);
+      (bus.publish as (t: string, s: string, p: unknown) => unknown)(
+        topic,
+        'work-coordinator',
+        payload,
+      );
     } catch {
       // Bus may be uninitialized in tests
     }

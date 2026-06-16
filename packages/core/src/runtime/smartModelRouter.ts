@@ -20,11 +20,24 @@ import { getGlobalLogger } from '../logging';
 // ============================================================================
 
 export type ModelCapability =
-  | 'code' | 'reasoning' | 'analysis' | 'creative' | 'math'
-  | 'multimodal' | 'vision' | 'image_generation'
-  | 'long_context' | 'low_cost' | 'fast' | 'high_quality'
-  | 'function_calling' | 'json_mode' | 'streaming'
-  | 'translation' | 'summarization' | 'extraction';
+  | 'code'
+  | 'reasoning'
+  | 'analysis'
+  | 'creative'
+  | 'math'
+  | 'multimodal'
+  | 'vision'
+  | 'image_generation'
+  | 'long_context'
+  | 'low_cost'
+  | 'fast'
+  | 'high_quality'
+  | 'function_calling'
+  | 'json_mode'
+  | 'streaming'
+  | 'translation'
+  | 'summarization'
+  | 'extraction';
 
 // ============================================================================
 // User-configurable model definition
@@ -91,12 +104,9 @@ const TASK_CAPABILITY_MAP: Record<string, ModelCapability[]> = {
 // Capability scoring
 // ============================================================================
 
-function scoreCapabilityFit(
-  modelCaps: ModelCapability[],
-  requiredCaps: ModelCapability[],
-): number {
+function scoreCapabilityFit(modelCaps: ModelCapability[], requiredCaps: ModelCapability[]): number {
   if (requiredCaps.length === 0) return 1.0;
-  const matched = requiredCaps.filter(c => modelCaps.includes(c)).length;
+  const matched = requiredCaps.filter((c) => modelCaps.includes(c)).length;
   return matched / requiredCaps.length;
 }
 
@@ -107,10 +117,18 @@ function detectRequiredCapabilities(goal: string): ModelCapability[] {
   if (/\b(image|screenshot|photo|picture|visual|diagram|chart|graph)\b/i.test(lower)) {
     caps.push('multimodal', 'vision');
   }
-  if (/\b(generate|create|draw|paint|design|illustration)\b.*\b(image|picture|art|logo)\b/i.test(lower)) {
+  if (
+    /\b(generate|create|draw|paint|design|illustration)\b.*\b(image|picture|art|logo)\b/i.test(
+      lower,
+    )
+  ) {
     caps.push('image_generation');
   }
-  if (/\b(code|function|class|implement|refactor|debug|fix|typescript|javascript|python)\b/i.test(lower)) {
+  if (
+    /\b(code|function|class|implement|refactor|debug|fix|typescript|javascript|python)\b/i.test(
+      lower,
+    )
+  ) {
     caps.push('code');
   }
   if (/\b(reason|logic|proof|deduce|infer|analyze|evaluate|critique)\b/i.test(lower)) {
@@ -134,7 +152,11 @@ function detectRequiredCapabilities(goal: string): ModelCapability[] {
   if (/\b(analyze|analysis|research|compare|evaluate|assess)\b/i.test(lower)) {
     caps.push('analysis');
   }
-  if (/\b(long|entire|whole|full|complete|exhaustive)\b.*\b(document|file|codebase|repo)\b/i.test(lower)) {
+  if (
+    /\b(long|entire|whole|full|complete|exhaustive)\b.*\b(document|file|codebase|repo)\b/i.test(
+      lower,
+    )
+  ) {
     caps.push('long_context');
   }
 
@@ -148,7 +170,8 @@ function detectRequiredCapabilities(goal: string): ModelCapability[] {
 export class SmartModelRouter {
   private config: ModelRouterUserConfig;
   private models: Map<string, UserModelConfig> = new Map();
-  private outcomes: Map<string, { success: boolean; durationMs: number; timestamp: number }[]> = new Map();
+  private outcomes: Map<string, { success: boolean; durationMs: number; timestamp: number }[]> =
+    new Map();
   private readonly maxOutcomes = 500;
   private readonly decayHalfLifeMs = 20 * 60 * 1000;
 
@@ -183,7 +206,9 @@ export class SmartModelRouter {
       const config = JSON.parse(env) as ModelRouterUserConfig;
       return new SmartModelRouter(config);
     } catch (e) {
-      getGlobalLogger().warn('SmartModelRouter', 'Failed to parse COMMANDER_MODELS env var', { error: (e as Error).message });
+      getGlobalLogger().warn('SmartModelRouter', 'Failed to parse COMMANDER_MODELS env var', {
+        error: (e as Error).message,
+      });
       return null;
     }
   }
@@ -196,7 +221,12 @@ export class SmartModelRouter {
    */
   route(
     ctx: AgentExecutionContext,
-    options?: { preferredModel?: string; preferredTier?: ModelTier; governorPhase?: string; registeredProviders?: Set<string> },
+    options?: {
+      preferredModel?: string;
+      preferredTier?: ModelTier;
+      governorPhase?: string;
+      registeredProviders?: Set<string>;
+    },
   ): RoutingDecision & { escalationChain?: string[] } {
     const preferredModel = options?.preferredModel ?? this.config.defaultModel;
 
@@ -219,7 +249,7 @@ export class SmartModelRouter {
 
     // Prefer a specific tier when the orchestrator requests it (lead/specialist division).
     if (options?.preferredTier) {
-      const tierCandidates = candidates.filter(m => m.tier === options.preferredTier);
+      const tierCandidates = candidates.filter((m) => m.tier === options.preferredTier);
       if (tierCandidates.length > 0) {
         candidates = tierCandidates;
       }
@@ -233,7 +263,7 @@ export class SmartModelRouter {
       const chain = this.buildCascadeChain(requiredCaps, taskType);
       return {
         ...this.buildDecision(candidates[0], 'cascade_start', ctx),
-        escalationChain: chain.map(m => m.id),
+        escalationChain: chain.map((m) => m.id),
       };
     }
 
@@ -294,10 +324,10 @@ export class SmartModelRouter {
   listModels(filter?: { capability?: ModelCapability; tier?: ModelTier }): UserModelConfig[] {
     let models = Array.from(this.models.values());
     if (filter?.capability) {
-      models = models.filter(m => m.capabilities.includes(filter.capability!));
+      models = models.filter((m) => m.capabilities.includes(filter.capability!));
     }
     if (filter?.tier) {
-      models = models.filter(m => m.tier === filter.tier);
+      models = models.filter((m) => m.tier === filter.tier);
     }
     return models;
   }
@@ -322,7 +352,7 @@ export class SmartModelRouter {
    */
   removeModel(modelId: string): boolean {
     const deleted = this.models.delete(modelId);
-    this.config.modelPool = this.config.modelPool.filter(m => m.id !== modelId);
+    this.config.modelPool = this.config.modelPool.filter((m) => m.id !== modelId);
     return deleted;
   }
 
@@ -384,16 +414,16 @@ export class SmartModelRouter {
     let candidates = Array.from(this.models.values());
 
     if (registeredProviders && registeredProviders.size > 0) {
-      candidates = candidates.filter(m => registeredProviders.has(m.provider));
+      candidates = candidates.filter((m) => registeredProviders.has(m.provider));
     }
 
-    const scored = candidates.map(m => ({
+    const scored = candidates.map((m) => ({
       model: m,
       score: this.scoreModel(m, requiredCaps, taskType),
     }));
 
     scored.sort((a, b) => b.score - a.score);
-    return scored.map(s => s.model);
+    return scored.map((s) => s.model);
   }
 
   private scoreModel(
@@ -404,7 +434,7 @@ export class SmartModelRouter {
     const capFit = scoreCapabilityFit(model.capabilities, requiredCaps);
 
     const maxCost = Math.max(
-      ...Array.from(this.models.values()).map(m => m.costPer1KOutput),
+      ...Array.from(this.models.values()).map((m) => m.costPer1KOutput),
       0.001,
     );
     const costRatio = model.costPer1KOutput / maxCost;
@@ -425,9 +455,13 @@ export class SmartModelRouter {
     ctx: AgentExecutionContext,
   ): RoutingDecision {
     const estimatedInputTokens = Math.ceil(ctx.goal.length / 4) + 2048;
-    const estimatedOutputTokens = Math.min(ctx.tokenBudget, model.contextWindow - estimatedInputTokens);
-    const estimatedCost = (estimatedInputTokens / 1000) * model.costPer1KInput
-      + (estimatedOutputTokens / 1000) * model.costPer1KOutput;
+    const estimatedOutputTokens = Math.min(
+      ctx.tokenBudget,
+      model.contextWindow - estimatedInputTokens,
+    );
+    const estimatedCost =
+      (estimatedInputTokens / 1000) * model.costPer1KInput +
+      (estimatedOutputTokens / 1000) * model.costPer1KOutput;
 
     const requiredCaps = this.detectCapabilities(ctx.goal);
 
@@ -447,22 +481,19 @@ export class SmartModelRouter {
     };
   }
 
-  private buildCascadeChain(
-    requiredCaps: ModelCapability[],
-    taskType: string,
-  ): UserModelConfig[] {
+  private buildCascadeChain(requiredCaps: ModelCapability[], taskType: string): UserModelConfig[] {
     const tierOrder: ModelTier[] = ['eco', 'standard', 'power'];
     const chain: UserModelConfig[] = [];
 
     for (const tier of tierOrder) {
       const tierModels = Array.from(this.models.values())
-        .filter(m => (m.tier ?? 'standard') === tier)
-        .filter(m => scoreCapabilityFit(m.capabilities, requiredCaps) > 0.5)
+        .filter((m) => (m.tier ?? 'standard') === tier)
+        .filter((m) => scoreCapabilityFit(m.capabilities, requiredCaps) > 0.5)
         .sort((a, b) => a.costPer1KOutput - b.costPer1KOutput);
 
       for (const m of tierModels) {
         if (chain.length >= 3) break;
-        if (!chain.some(c => c.id === m.id)) {
+        if (!chain.some((c) => c.id === m.id)) {
           chain.push(m);
         }
       }
@@ -486,69 +517,153 @@ export class SmartModelRouter {
   private getDefaultModelPool(): UserModelConfig[] {
     return [
       {
-        id: 'gpt-4o-mini', provider: 'openai', tier: 'eco',
-        capabilities: ['code', 'analysis', 'fast', 'low_cost', 'function_calling', 'json_mode', 'streaming'],
-        costPer1KInput: 0.00015, costPer1KOutput: 0.0006, contextWindow: 128000,
+        id: 'gpt-4o-mini',
+        provider: 'openai',
+        tier: 'eco',
+        capabilities: [
+          'code',
+          'analysis',
+          'fast',
+          'low_cost',
+          'function_calling',
+          'json_mode',
+          'streaming',
+        ],
+        costPer1KInput: 0.00015,
+        costPer1KOutput: 0.0006,
+        contextWindow: 128000,
         displayName: 'GPT-4o Mini',
       },
       {
-        id: 'gpt-4o', provider: 'openai', tier: 'standard',
-        capabilities: ['code', 'reasoning', 'analysis', 'creative', 'multimodal', 'vision', 'function_calling', 'json_mode', 'streaming'],
-        costPer1KInput: 0.0025, costPer1KOutput: 0.01, contextWindow: 128000,
+        id: 'gpt-4o',
+        provider: 'openai',
+        tier: 'standard',
+        capabilities: [
+          'code',
+          'reasoning',
+          'analysis',
+          'creative',
+          'multimodal',
+          'vision',
+          'function_calling',
+          'json_mode',
+          'streaming',
+        ],
+        costPer1KInput: 0.0025,
+        costPer1KOutput: 0.01,
+        contextWindow: 128000,
         displayName: 'GPT-4o',
       },
       {
-        id: 'claude-haiku-4-5', provider: 'anthropic', tier: 'eco',
+        id: 'claude-haiku-4-5',
+        provider: 'anthropic',
+        tier: 'eco',
         capabilities: ['code', 'analysis', 'fast', 'low_cost', 'streaming'],
-        costPer1KInput: 0.0008, costPer1KOutput: 0.004, contextWindow: 200000,
+        costPer1KInput: 0.0008,
+        costPer1KOutput: 0.004,
+        contextWindow: 200000,
         displayName: 'Claude Haiku 4.5',
       },
       {
-        id: 'claude-sonnet-4-6', provider: 'anthropic', tier: 'standard',
-        capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math', 'multimodal', 'vision', 'long_context', 'streaming'],
-        costPer1KInput: 0.003, costPer1KOutput: 0.015, contextWindow: 200000,
+        id: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        tier: 'standard',
+        capabilities: [
+          'code',
+          'reasoning',
+          'analysis',
+          'creative',
+          'math',
+          'multimodal',
+          'vision',
+          'long_context',
+          'streaming',
+        ],
+        costPer1KInput: 0.003,
+        costPer1KOutput: 0.015,
+        contextWindow: 200000,
         displayName: 'Claude Sonnet 4.6',
       },
       {
-        id: 'claude-opus-4-8', provider: 'anthropic', tier: 'power',
-        capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math', 'multimodal', 'vision', 'long_context', 'high_quality', 'streaming'],
-        costPer1KInput: 0.015, costPer1KOutput: 0.075, contextWindow: 200000,
+        id: 'claude-opus-4-8',
+        provider: 'anthropic',
+        tier: 'power',
+        capabilities: [
+          'code',
+          'reasoning',
+          'analysis',
+          'creative',
+          'math',
+          'multimodal',
+          'vision',
+          'long_context',
+          'high_quality',
+          'streaming',
+        ],
+        costPer1KInput: 0.015,
+        costPer1KOutput: 0.075,
+        contextWindow: 200000,
         displayName: 'Claude Opus 4.8',
       },
       {
-        id: 'gemini-2-flash', provider: 'google', tier: 'eco',
+        id: 'gemini-2-flash',
+        provider: 'google',
+        tier: 'eco',
         capabilities: ['analysis', 'fast', 'low_cost', 'long_context', 'multimodal', 'vision'],
-        costPer1KInput: 0.0001, costPer1KOutput: 0.0004, contextWindow: 1000000,
+        costPer1KInput: 0.0001,
+        costPer1KOutput: 0.0004,
+        contextWindow: 1000000,
         displayName: 'Gemini 2.0 Flash',
       },
       {
-        id: 'gemini-2-pro', provider: 'google', tier: 'standard',
+        id: 'gemini-2-pro',
+        provider: 'google',
+        tier: 'standard',
         capabilities: ['reasoning', 'analysis', 'math', 'long_context', 'multimodal', 'vision'],
-        costPer1KInput: 0.0015, costPer1KOutput: 0.0075, contextWindow: 1000000,
+        costPer1KInput: 0.0015,
+        costPer1KOutput: 0.0075,
+        contextWindow: 1000000,
         displayName: 'Gemini 2.0 Pro',
       },
       {
-        id: 'deepseek-v4-flash', provider: 'deepseek', tier: 'eco',
+        id: 'deepseek-v4-flash',
+        provider: 'deepseek',
+        tier: 'eco',
         capabilities: ['code', 'reasoning', 'math', 'fast', 'low_cost'],
-        costPer1KInput: 0.00014, costPer1KOutput: 0.00028, contextWindow: 128000,
+        costPer1KInput: 0.00014,
+        costPer1KOutput: 0.00028,
+        contextWindow: 128000,
         displayName: 'DeepSeek V4 Flash',
       },
       {
-        id: 'deepseek-v4-pro', provider: 'deepseek', tier: 'power',
+        id: 'deepseek-v4-pro',
+        provider: 'deepseek',
+        tier: 'power',
         capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math', 'long_context'],
-        costPer1KInput: 0.002, costPer1KOutput: 0.008, contextWindow: 128000,
+        costPer1KInput: 0.002,
+        costPer1KOutput: 0.008,
+        contextWindow: 128000,
         displayName: 'DeepSeek V4 Pro',
       },
       {
-        id: 'mimo-v2.5-pro', provider: 'mimo', tier: 'power',
+        id: 'mimo-v2.5-pro',
+        provider: 'mimo',
+        tier: 'power',
         capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'],
-        costPer1KInput: 0.004, costPer1KOutput: 0.012, contextWindow: 128000,
+        costPer1KInput: 0.004,
+        costPer1KOutput: 0.012,
+        contextWindow: 128000,
         displayName: 'MiMo V2.5 Pro',
       },
       {
-        id: 'agnes-2.0-flash', provider: 'agnes', tier: 'eco',
+        id: 'agnes-2.0-flash',
+        provider: 'agnes',
+        tier: 'eco',
         capabilities: ['code', 'reasoning', 'analysis', 'fast', 'low_cost', 'streaming'],
-        costPer1KInput: 0, costPer1KOutput: 0, contextWindow: 128000, maxOutputTokens: 65536,
+        costPer1KInput: 0,
+        costPer1KOutput: 0,
+        contextWindow: 128000,
+        maxOutputTokens: 65536,
         displayName: 'Agnes 2.0 Flash',
       },
     ];

@@ -2,11 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import {
-  WorkCoordinator,
-  type WorkItem,
-  type WorkEvent,
-} from '../../src/ultimate/workCoordinator';
+import { WorkCoordinator, type WorkItem, type WorkEvent } from '../../src/ultimate/workCoordinator';
 import { SqliteWorkQueueStore } from '../../src/ultimate/sqliteWorkQueueStore';
 import { InMemoryWorkQueueStore } from '../../src/ultimate/inMemoryWorkQueueStore';
 
@@ -31,7 +27,13 @@ describe('WorkCoordinator — GAP-M1', () => {
   });
 
   it('claims highest-priority PENDING item whose deps are met', () => {
-    const a = coordinator.enqueue({ runId: 'r', parentNodeId: 'p1', goal: 'low', tools: [], priority: 10 })[0];
+    const a = coordinator.enqueue({
+      runId: 'r',
+      parentNodeId: 'p1',
+      goal: 'low',
+      tools: [],
+      priority: 10,
+    })[0];
     coordinator.enqueue({ runId: 'r', parentNodeId: 'p2', goal: 'high', tools: [], priority: 90 });
     coordinator.enqueue({ runId: 'r', parentNodeId: 'p3', goal: 'mid', tools: [], priority: 50 });
 
@@ -79,7 +81,13 @@ describe('WorkCoordinator — GAP-M1', () => {
   });
 
   it('reassigns failed work to PENDING when attempts < max', () => {
-    const item = coordinator.enqueue({ runId: 'r', parentNodeId: 'p', goal: 'work', tools: [], maxAttempts: 3 })[0];
+    const item = coordinator.enqueue({
+      runId: 'r',
+      parentNodeId: 'p',
+      goal: 'work',
+      tools: [],
+      maxAttempts: 3,
+    })[0];
     coordinator.claim('agent-A');
     const reassigned = coordinator.fail(item.id, 'agent-A', 'transient error');
 
@@ -87,7 +95,7 @@ describe('WorkCoordinator — GAP-M1', () => {
     expect(item.attempts).toBe(1);
     expect(reassigned?.status).toBe('PENDING');
 
-    return new Promise<void>(resolve => {
+    return new Promise<void>((resolve) => {
       setImmediate(() => {
         expect(item.status).toBe('PENDING');
         const reclaimed = coordinator.claim('agent-B');
@@ -99,11 +107,17 @@ describe('WorkCoordinator — GAP-M1', () => {
   });
 
   it('marks FAILED (not reassigned) when attempts reach maxAttempts', () => {
-    const item = coordinator.enqueue({ runId: 'r', parentNodeId: 'p', goal: 'work', tools: [], maxAttempts: 2 })[0];
+    const item = coordinator.enqueue({
+      runId: 'r',
+      parentNodeId: 'p',
+      goal: 'work',
+      tools: [],
+      maxAttempts: 2,
+    })[0];
     coordinator.claim('agent-A');
     coordinator.fail(item.id, 'agent-A', 'err1');
 
-    return new Promise<void>(resolve => {
+    return new Promise<void>((resolve) => {
       setImmediate(() => {
         coordinator.claim('agent-B');
         const reassigned = coordinator.fail(item.id, 'agent-B', 'err2');
@@ -145,13 +159,19 @@ describe('WorkCoordinator — GAP-M1', () => {
 
   it('emits subscribed events for claim, complete, fail, reassign', () => {
     const events: WorkEvent[] = [];
-    coordinator.subscribe(e => events.push(e));
+    coordinator.subscribe((e) => events.push(e));
 
-    const item = coordinator.enqueue({ runId: 'r', parentNodeId: 'p', goal: 'work', tools: [], maxAttempts: 2 })[0];
+    const item = coordinator.enqueue({
+      runId: 'r',
+      parentNodeId: 'p',
+      goal: 'work',
+      tools: [],
+      maxAttempts: 2,
+    })[0];
     coordinator.claim('agent-A');
     coordinator.complete(item.id, 'agent-A');
 
-    const types = events.map(e => e.type);
+    const types = events.map((e) => e.type);
     expect(types).toContain('enqueued');
     expect(types).toContain('claimed');
     expect(types).toContain('completed');
@@ -168,8 +188,18 @@ describe('WorkCoordinator — GAP-M1', () => {
   });
 
   it('parentNodeId filter scopes claim to specific work item', () => {
-    coordinator.enqueue({ runId: 'r', parentNodeId: 'target', goal: 'do the target thing', tools: [] });
-    coordinator.enqueue({ runId: 'r', parentNodeId: 'other', goal: 'do something else', tools: [] });
+    coordinator.enqueue({
+      runId: 'r',
+      parentNodeId: 'target',
+      goal: 'do the target thing',
+      tools: [],
+    });
+    coordinator.enqueue({
+      runId: 'r',
+      parentNodeId: 'other',
+      goal: 'do something else',
+      tools: [],
+    });
 
     const claimed = coordinator.claim('agent-A', { runId: 'r', parentNodeId: 'target' });
     expect(claimed).not.toBeNull();
@@ -195,8 +225,10 @@ describe('WorkCoordinator — GAP-M1', () => {
     coordinator.complete(b.id, 'agent-2', { ok: true });
     coordinator.fail(c.id, 'agent-3', 'OOM killed');
 
-    expect(coordinator.list({ runId: 'chaos' }).find(i => i.id === b.id)!.status).toBe('COMPLETED');
-    const cItem = coordinator.list({ runId: 'chaos' }).find(i => i.id === c.id)!;
+    expect(coordinator.list({ runId: 'chaos' }).find((i) => i.id === b.id)!.status).toBe(
+      'COMPLETED',
+    );
+    const cItem = coordinator.list({ runId: 'chaos' }).find((i) => i.id === c.id)!;
     expect(cItem.status).toBe('PENDING');
     expect(cItem.attempts).toBe(1);
     expect(cItem.claimedBy).toBeUndefined();
@@ -235,7 +267,9 @@ describe('WorkCoordinator — GAP-M2.2 Sqlite persistence', () => {
     expect(claimed).toHaveLength(1);
     coord1.start(claimed[0].id, 'agent-A');
     coord1.complete(claimed[0].id, 'agent-A');
-    void a; void b; void c;
+    void a;
+    void b;
+    void c;
 
     const store2 = new SqliteWorkQueueStore({ filePath: dbPath });
     const coord2 = new WorkCoordinator({ store: store2 });
@@ -263,11 +297,11 @@ describe('WorkCoordinator — GAP-M2.2 Sqlite persistence', () => {
     const coord2 = new WorkCoordinator({ store: store2 });
     const items = coord2.list({ runId: 'crash' });
     expect(items).toHaveLength(3);
-    const claimed = items.filter(i => i.status === 'CLAIMED');
-    const pending = items.filter(i => i.status === 'PENDING');
+    const claimed = items.filter((i) => i.status === 'CLAIMED');
+    const pending = items.filter((i) => i.status === 'PENDING');
     expect(claimed).toHaveLength(0);
     expect(pending).toHaveLength(3);
-    const rearmed = items.find(i => i.attempts === 1);
+    const rearmed = items.find((i) => i.attempts === 1);
     expect(rearmed).toBeDefined();
     expect(rearmed!.claimedBy).toBeUndefined();
     store2.close();
@@ -279,12 +313,22 @@ describe('WorkCoordinator — GAP-M2.2 Sqlite persistence', () => {
     const c1 = new WorkCoordinator({ store: inMemStore });
     const c2 = new WorkCoordinator({ store: sqliteStore });
 
-    c1.enqueue(Array.from({ length: 10 }, (_, i) => ({
-      runId: 'parity', parentNodeId: `p${i}`, goal: `goal-${i}`, tools: [],
-    })));
-    c2.enqueue(Array.from({ length: 10 }, (_, i) => ({
-      runId: 'parity', parentNodeId: `p${i}`, goal: `goal-${i}`, tools: [],
-    })));
+    c1.enqueue(
+      Array.from({ length: 10 }, (_, i) => ({
+        runId: 'parity',
+        parentNodeId: `p${i}`,
+        goal: `goal-${i}`,
+        tools: [],
+      })),
+    );
+    c2.enqueue(
+      Array.from({ length: 10 }, (_, i) => ({
+        runId: 'parity',
+        parentNodeId: `p${i}`,
+        goal: `goal-${i}`,
+        tools: [],
+      })),
+    );
 
     for (let round = 0; round < 3; round++) {
       const c = c1.claim('agent-A', { runId: 'parity' });
@@ -343,7 +387,7 @@ describe('WorkCoordinator — GAP-M2.3 resume (crash recovery)', () => {
     const store2 = new SqliteWorkQueueStore({ filePath: dbPath });
     const c2 = new WorkCoordinator({ store: store2 });
     const all = c2.list({ runId: 'team-R' });
-    const running = all.find(i => i.parentNodeId === 'n1');
+    const running = all.find((i) => i.parentNodeId === 'n1');
     expect(running).toBeDefined();
     expect(running!.status).toBe('PENDING');
     expect(running!.claimedBy).toBeUndefined();
@@ -370,8 +414,8 @@ describe('WorkCoordinator — GAP-M2.3 resume (crash recovery)', () => {
     const store2 = new SqliteWorkQueueStore({ filePath: dbPath });
     const c2 = new WorkCoordinator({ store: store2 });
     const all = c2.list({ runId: 'crash2' });
-    expect(all.every(i => i.status === 'PENDING')).toBe(true);
-    expect(all.every(i => i.claimedBy === undefined)).toBe(true);
+    expect(all.every((i) => i.status === 'PENDING')).toBe(true);
+    expect(all.every((i) => i.claimedBy === undefined)).toBe(true);
     store2.close();
   });
 
@@ -379,7 +423,9 @@ describe('WorkCoordinator — GAP-M2.3 resume (crash recovery)', () => {
     const dbPath = path.join(tmpDir, 'r3.db');
     const store1 = new SqliteWorkQueueStore({ filePath: dbPath });
     const c1 = new WorkCoordinator({ store: store1 });
-    c1.enqueue([{ runId: 'attempts-test', parentNodeId: 'p', goal: 'work', tools: [], maxAttempts: 2 }]);
+    c1.enqueue([
+      { runId: 'attempts-test', parentNodeId: 'p', goal: 'work', tools: [], maxAttempts: 2 },
+    ]);
     const item = c1.claim('agent-pre-crash', { runId: 'attempts-test' });
     c1.start(item!.id, 'agent-pre-crash');
     expect(item!.attempts).toBe(1);
@@ -424,7 +470,7 @@ describe('WorkCoordinator — GAP-M2.3 resume (crash recovery)', () => {
 
     const store2 = new SqliteWorkQueueStore({ filePath: dbPath });
     const c2 = new WorkCoordinator({ store: store2 });
-    const byId = (id: string) => c2.list({ runId: 'mixed' }).find(i => i.parentNodeId === id)!;
+    const byId = (id: string) => c2.list({ runId: 'mixed' }).find((i) => i.parentNodeId === id)!;
     expect(byId('P').status).toBe('PENDING');
     expect(byId('C').status).toBe('PENDING');
     expect(byId('RUN').status).toBe('PENDING');
@@ -454,7 +500,7 @@ describe('WorkCoordinator — GAP-M2.3 resume (crash recovery)', () => {
     c2.subscribe(() => {});
     void events;
     const rearmed = c2.list({ runId: 'log' });
-    const wasReClaimed = rearmed.filter(i => i.status === 'PENDING' && i.attempts >= 1);
+    const wasReClaimed = rearmed.filter((i) => i.status === 'PENDING' && i.attempts >= 1);
     expect(wasReClaimed.length).toBeGreaterThanOrEqual(2);
     store2.close();
   });

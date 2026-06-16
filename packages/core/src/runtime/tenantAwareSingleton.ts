@@ -54,7 +54,10 @@ export function createTenantAwareSingleton<T>(
     let oldest: string | null = null;
     let oldestTime = Infinity;
     for (const [tid, t] of tenantLastAccess) {
-      if (t < oldestTime) { oldestTime = t; oldest = tid; }
+      if (t < oldestTime) {
+        oldestTime = t;
+        oldest = tid;
+      }
     }
     if (oldest) {
       const inst = tenantInstances.get(oldest);

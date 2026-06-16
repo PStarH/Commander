@@ -89,9 +89,7 @@ export class ExecutionGraph {
 
     const parentId = this._parent.get(id);
     const siblings =
-      parentId === undefined
-        ? this.graph.nodes
-        : this.childrenOfNode(this.requireNode(parentId));
+      parentId === undefined ? this.graph.nodes : this.childrenOfNode(this.requireNode(parentId));
 
     const selfIndex = siblings.findIndex((n) => n.id === id);
     if (selfIndex === -1 || selfIndex === siblings.length - 1) {
@@ -106,9 +104,7 @@ export class ExecutionGraph {
 
     const parentId = this._parent.get(id);
     const siblings =
-      parentId === undefined
-        ? this.graph.nodes
-        : this.childrenOfNode(this.requireNode(parentId));
+      parentId === undefined ? this.graph.nodes : this.childrenOfNode(this.requireNode(parentId));
 
     const selfIndex = siblings.findIndex((n) => n.id === id);
     if (selfIndex <= 0) return undefined;
@@ -121,9 +117,7 @@ export class ExecutionGraph {
       const node = this._nodes.get(current);
       if (!node) return undefined;
       if (node.kind === 'parallel') {
-        const index = (node as SagaParallelNode).branches.findIndex((b) =>
-          this.containsId(b, id)
-        );
+        const index = (node as SagaParallelNode).branches.findIndex((b) => this.containsId(b, id));
         if (index === -1) return undefined;
         return { parallelId: current, index };
       }
@@ -168,26 +162,22 @@ export class ExecutionGraph {
   }
 
   stepNodes(): readonly SagaStepNode[] {
-    return Array.from(this._nodes.values()).filter(
-      (n): n is SagaStepNode => n.kind === 'step'
-    );
+    return Array.from(this._nodes.values()).filter((n): n is SagaStepNode => n.kind === 'step');
   }
 
   approvalNodes(): readonly SagaApprovalNode[] {
     return Array.from(this._nodes.values()).filter(
-      (n): n is SagaApprovalNode => n.kind === 'approval'
+      (n): n is SagaApprovalNode => n.kind === 'approval',
     );
   }
 
   nestedNodes(): readonly SagaNestedNode[] {
-    return Array.from(this._nodes.values()).filter(
-      (n): n is SagaNestedNode => n.kind === 'nested'
-    );
+    return Array.from(this._nodes.values()).filter((n): n is SagaNestedNode => n.kind === 'nested');
   }
 
   parallelNodes(): readonly SagaParallelNode[] {
     return Array.from(this._nodes.values()).filter(
-      (n): n is SagaParallelNode => n.kind === 'parallel'
+      (n): n is SagaParallelNode => n.kind === 'parallel',
     );
   }
 
@@ -206,9 +196,7 @@ export class ExecutionGraph {
   private buildIndex(): void {
     const visit = (node: SagaNode, parentId: string | undefined): void => {
       if (this._nodes.size >= MAX_NODES) {
-        throw new ExecutionGraphError(
-          `Saga exceeds maximum node count: ${MAX_NODES}`
-        );
+        throw new ExecutionGraphError(`Saga exceeds maximum node count: ${MAX_NODES}`);
       }
       if (this._nodes.has(node.id)) {
         throw new ExecutionGraphError(`Duplicate node id: ${node.id}`);
@@ -229,9 +217,7 @@ export class ExecutionGraph {
 
   private validate(): void {
     if (!this._nodes.has(this._rootId)) {
-      throw new ExecutionGraphError(
-        `Root node ${this._rootId} not found in nodes`
-      );
+      throw new ExecutionGraphError(`Root node ${this._rootId} not found in nodes`);
     }
 
     const stack = new Set<string>();
@@ -249,9 +235,7 @@ export class ExecutionGraph {
 
     for (const node of this._nodes.values()) {
       if (node.kind === 'nested' && node.child.nodes.length === 0) {
-        throw new ExecutionGraphError(
-          `Nested node ${node.id} has empty child graph`
-        );
+        throw new ExecutionGraphError(`Nested node ${node.id} has empty child graph`);
       }
     }
   }

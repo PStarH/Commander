@@ -1,11 +1,5 @@
 import type { TokenUsage } from '../runtime/types';
-import type {
-  TELOSBudget,
-  TokenCheckResult,
-  CostRecord,
-  CostSummary,
-  BudgetAlert,
-} from './types';
+import type { TELOSBudget, TokenCheckResult, CostRecord, CostSummary, BudgetAlert } from './types';
 import { getModelRouter } from '../runtime/modelRouter';
 
 // ============================================================================
@@ -36,10 +30,10 @@ function estimateTokenCount(text: string, modelId: string): number {
   for (const ch of text) {
     const code = ch.codePointAt(0) ?? 0;
     if (
-      (code >= 0x4E00 && code <= 0x9FFF) ||   // CJK Unified
-      (code >= 0x3040 && code <= 0x309F) ||   // Hiragana
-      (code >= 0x30A0 && code <= 0x30FF) ||   // Katakana
-      (code >= 0xAC00 && code <= 0xD7AF)      // Hangul
+      (code >= 0x4e00 && code <= 0x9fff) || // CJK Unified
+      (code >= 0x3040 && code <= 0x309f) || // Hiragana
+      (code >= 0x30a0 && code <= 0x30ff) || // Katakana
+      (code >= 0xac00 && code <= 0xd7af) // Hangul
     ) {
       eastAsianChars++;
     } else {
@@ -79,10 +73,10 @@ function estimateMessagesTokens(
 
 /** Per-provider cache pricing multipliers (applied to costPer1KInput). */
 const CACHE_MULTIPLIERS: Record<string, { read: number; write: number }> = {
-  anthropic: { read: 0.1, write: 1.25 },  // 90% off reads, 1.25x write (5min TTL)
-  openai: { read: 0.5, write: 1.0 },       // 50% off reads, automatic (no explicit write cost)
-  google: { read: 0.1, write: 1.0 },        // Gemini cachedContent ~90% off reads
-  default: { read: 1.0, write: 1.0 },       // No caching benefit assumed
+  anthropic: { read: 0.1, write: 1.25 }, // 90% off reads, 1.25x write (5min TTL)
+  openai: { read: 0.5, write: 1.0 }, // 50% off reads, automatic (no explicit write cost)
+  google: { read: 0.1, write: 1.0 }, // Gemini cachedContent ~90% off reads
+  default: { read: 1.0, write: 1.0 }, // No caching benefit assumed
 };
 
 export interface CostBreakdown {
@@ -111,8 +105,9 @@ export function calculateCostBreakdown(
     const fallbackRate = 0.002;
     const inputRate = fallbackRate * 0.8;
     const outputRate = fallbackRate * 0.2;
-    const total = ((inputTokens + cacheReadTokens + cacheWriteTokens) / 1000) * inputRate
-      + (outputTokens / 1000) * outputRate;
+    const total =
+      ((inputTokens + cacheReadTokens + cacheWriteTokens) / 1000) * inputRate +
+      (outputTokens / 1000) * outputRate;
     return {
       inputCostUsd: (inputTokens / 1000) * inputRate,
       outputCostUsd: (outputTokens / 1000) * outputRate,
@@ -155,7 +150,11 @@ function calculateCost(
   cacheWriteTokens: number = 0,
 ): number {
   return calculateCostBreakdown(
-    modelId, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens,
+    modelId,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
   ).totalUsd;
 }
 
@@ -172,11 +171,7 @@ export class TokenSentinel {
   private monthlyCostUsd: number = 0;
   private monthlyResetDate: string;
 
-  constructor(
-    maxRecords = 10000,
-    maxAlerts = 1000,
-    monthlyCostLimitUsd = 50.00,
-  ) {
+  constructor(maxRecords = 10000, maxAlerts = 1000, monthlyCostLimitUsd = 50.0) {
     this.maxRecords = maxRecords;
     this.maxAlerts = maxAlerts;
     this.monthlyCostLimitUsd = monthlyCostLimitUsd;
@@ -221,7 +216,7 @@ export class TokenSentinel {
     this.ensureCurrentMonth();
     const estimatedInput = estimateMessagesTokens(messages, modelId);
     const estimatedOutput = this.estimateOutputTokens(
-      messages.find(m => m.role === 'user')?.content ?? '',
+      messages.find((m) => m.role === 'user')?.content ?? '',
       modelId,
     );
     const totalEstimated = estimatedInput + estimatedOutput;
@@ -253,9 +248,8 @@ export class TokenSentinel {
       }
     }
 
-    const remaining = budget.hardCapTokens > 0
-      ? Math.max(0, budget.hardCapTokens - totalEstimated)
-      : Infinity;
+    const remaining =
+      budget.hardCapTokens > 0 ? Math.max(0, budget.hardCapTokens - totalEstimated) : Infinity;
 
     // Soft cap warning — log but allow
     if (budget.softCapTokens > 0 && totalEstimated > budget.softCapTokens) {
@@ -342,7 +336,7 @@ export class TokenSentinel {
 
   getCosts(runId?: string): CostRecord[] {
     if (runId) {
-      return this.costRecords.filter(r => r.runId === runId);
+      return this.costRecords.filter((r) => r.runId === runId);
     }
     return [...this.costRecords];
   }
@@ -390,11 +384,7 @@ export class TokenSentinel {
   // Budget Enforcement
   // ========================================================================
 
-  checkBudget(
-    runId: string,
-    currentTokens: number,
-    budget: TELOSBudget,
-  ): BudgetAlert | null {
+  checkBudget(runId: string, currentTokens: number, budget: TELOSBudget): BudgetAlert | null {
     if (budget.hardCapTokens > 0 && currentTokens > budget.hardCapTokens) {
       const alert: BudgetAlert = {
         type: 'hard_cap_reached',

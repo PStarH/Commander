@@ -96,7 +96,7 @@ export class CheckpointManager {
    * Get a checkpoint by ID.
    */
   get(id: string): Checkpoint | undefined {
-    return this.checkpoints.find(cp => cp.id === id);
+    return this.checkpoints.find((cp) => cp.id === id);
   }
 
   /**
@@ -110,7 +110,7 @@ export class CheckpointManager {
    * List all checkpoints (summaries only, no message data).
    */
   list(): CheckpointSummary[] {
-    return this.checkpoints.map(cp => ({
+    return this.checkpoints.map((cp) => ({
       id: cp.id,
       label: cp.label,
       timestamp: cp.timestamp,
@@ -127,7 +127,7 @@ export class CheckpointManager {
    * This effectively prunes all messages after the checkpoint.
    */
   rewind(id: string): LLMMessage[] | null {
-    const checkpoint = this.checkpoints.find(cp => cp.id === id);
+    const checkpoint = this.checkpoints.find((cp) => cp.id === id);
     if (!checkpoint) return null;
 
     // Remove all checkpoints after this one
@@ -142,7 +142,7 @@ export class CheckpointManager {
    * Returns a system message that summarizes what happened since the checkpoint.
    */
   collapse(id: string): string | null {
-    const checkpoint = this.checkpoints.find(cp => cp.id === id);
+    const checkpoint = this.checkpoints.find((cp) => cp.id === id);
     if (!checkpoint) return null;
 
     const parts: string[] = [
@@ -170,7 +170,7 @@ export class CheckpointManager {
       }
       if (msg.role === 'tool' && msg.content) {
         const lines = msg.content.split('\n');
-        const finding = lines.find(l => l.trim().length > 20 && l.trim().length < 150);
+        const finding = lines.find((l) => l.trim().length > 20 && l.trim().length < 150);
         if (finding) findings.push(finding.trim().slice(0, 100));
       }
     }

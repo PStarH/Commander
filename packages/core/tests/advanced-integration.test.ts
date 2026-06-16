@@ -14,7 +14,9 @@ describe('MetaLearner — Self-Optimization', () => {
     // Record diverse experiences
     for (let i = 0; i < 10; i++) {
       learner.recordExperience({
-        id: `exp-${i}`, runId: `run-${i}`, agentId: 'test-agent',
+        id: `exp-${i}`,
+        runId: `run-${i}`,
+        agentId: 'test-agent',
         taskType: i % 2 === 0 ? 'SIMPLE' : 'COMPLEX',
         modelUsed: i % 2 === 0 ? 'claude-3-5-haiku' : 'claude-3-5-sonnet',
         strategyUsed: i % 2 === 0 ? 'SIMPLE_SINGLE' : 'COMPLEX_HIERARCHICAL',
@@ -42,19 +44,23 @@ describe('MetaLearner — Self-Optimization', () => {
     // Make PARALLEL more successful for RESEARCH tasks
     for (let i = 0; i < 20; i++) {
       learner.recordExperience({
-        id: `exp-${i}`, runId: `run-${i}`, agentId: 'test',
+        id: `exp-${i}`,
+        runId: `run-${i}`,
+        agentId: 'test',
         taskType: 'RESEARCH',
         modelUsed: 'gpt-4o',
         strategyUsed: i < 15 ? 'COMPLEX_PARALLEL' : 'COMPLEX_HIERARCHICAL',
         success: i < 15, // PARALLEL has 100%, HIERARCHICAL has 0%
-        durationMs: 2000, tokenCost: 5000,
-        lessons: [], timestamp: new Date().toISOString(),
+        durationMs: 2000,
+        tokenCost: 5000,
+        lessons: [],
+        timestamp: new Date().toISOString(),
       });
     }
 
     // PARALLEL should be ranked higher for RESEARCH
     const scores = learner.getStrategyScores('RESEARCH');
-    const parallelScore = scores.find(s => s.strategy.includes('PARALLEL'));
+    const parallelScore = scores.find((s) => s.strategy.includes('PARALLEL'));
     assert.ok(parallelScore, 'PARALLEL should be tracked');
   });
 
@@ -63,15 +69,23 @@ describe('MetaLearner — Self-Optimization', () => {
     const persistPath = path.join(__dirname, '.test-meta-learner.json');
 
     // Clean up from previous runs
-    try { fs.unlinkSync(persistPath); } catch {}
+    try {
+      fs.unlinkSync(persistPath);
+    } catch {}
 
     const learner = new MetaLearner(100, 1, persistPath);
     learner.recordExperience({
-      id: 'exp-persist', runId: 'run-1', agentId: 'test',
-      taskType: 'FACTUAL', modelUsed: 'gpt-4o-mini',
-      strategyUsed: 'SIMPLE_SINGLE', success: true,
-      durationMs: 500, tokenCost: 200,
-      lessons: [], timestamp: new Date().toISOString(),
+      id: 'exp-persist',
+      runId: 'run-1',
+      agentId: 'test',
+      taskType: 'FACTUAL',
+      modelUsed: 'gpt-4o-mini',
+      strategyUsed: 'SIMPLE_SINGLE',
+      success: true,
+      durationMs: 500,
+      tokenCost: 200,
+      lessons: [],
+      timestamp: new Date().toISOString(),
     });
 
     assert.ok(fs.existsSync(persistPath), 'Persistence file should exist');
@@ -82,7 +96,9 @@ describe('MetaLearner — Self-Optimization', () => {
     assert.ok(stats2.totalExperiences >= 1, 'Should load persisted experiences');
 
     // Cleanup
-    try { fs.unlinkSync(persistPath); } catch {}
+    try {
+      fs.unlinkSync(persistPath);
+    } catch {}
     resetMetaLearner();
   });
 });
@@ -96,19 +112,45 @@ describe('Quality Gates — Auto-Fix', () => {
     const synth = new MultiAgentSynthesizer();
 
     const tree = {
-      id: 'root', parentId: null, goal: 'test', role: 'EXECUTOR',
-      isAtomic: true, subtasks: [], dependencies: [],
+      id: 'root',
+      parentId: null,
+      goal: 'test',
+      role: 'EXECUTOR',
+      isAtomic: true,
+      subtasks: [],
+      dependencies: [],
       context: { systemPrompt: '', availableTools: [], estimatedTokens: 100 },
-      status: 'COMPLETED', result: 'Key finding: data supports hypothesis.',
+      status: 'COMPLETED',
+      result: 'Key finding: data supports hypothesis.',
     };
 
-    const result = await synth.synthesize('LEAD_SYNTHESIS', {
-      strategy: 'LEAD_SYNTHESIS', maxRounds: 1, consensusThreshold: 0.5, includeDissent: false,
-      qualityGates: [
-        { name: 'hallucination', type: 'HALLUCINATION_CHECK', enabled: true, threshold: 0.6, autoFix: false },
-        { name: 'completeness', type: 'COMPLETENESS', enabled: true, threshold: 0.5, autoFix: false },
-      ],
-    }, tree, []);
+    const result = await synth.synthesize(
+      'LEAD_SYNTHESIS',
+      {
+        strategy: 'LEAD_SYNTHESIS',
+        maxRounds: 1,
+        consensusThreshold: 0.5,
+        includeDissent: false,
+        qualityGates: [
+          {
+            name: 'hallucination',
+            type: 'HALLUCINATION_CHECK',
+            enabled: true,
+            threshold: 0.6,
+            autoFix: false,
+          },
+          {
+            name: 'completeness',
+            type: 'COMPLETENESS',
+            enabled: true,
+            threshold: 0.5,
+            autoFix: false,
+          },
+        ],
+      },
+      tree,
+      [],
+    );
 
     assert.ok(result.gateResults.length >= 2);
     assert.ok(result.qualityScore >= 0);
@@ -132,7 +174,9 @@ describe('SSE Stream', () => {
     const stream = new SSEStream(['agent.started']);
     const events: string[] = [];
 
-    stream.onEvent((event) => { events.push(event); });
+    stream.onEvent((event) => {
+      events.push(event);
+    });
 
     const bus = getMessageBus();
     bus.publish('agent.started', 'test-agent', { taskId: '1' });
@@ -183,7 +227,7 @@ describe('CLI Integration', () => {
     assert.strictEqual(classifyEffortLevel('Hi'), 'SIMPLE');
     assert.strictEqual(
       classifyEffortLevel('A'.repeat(500) + 'Complex task analysis needed here'),
-      'MODERATE'
+      'MODERATE',
     );
   });
 });
@@ -197,7 +241,9 @@ describe('Memory System', () => {
     const store = new InMemoryMemoryStore();
 
     const item = await store.write({
-      projectId: 'test', kind: 'LESSON', title: 'Test lesson',
+      projectId: 'test',
+      kind: 'LESSON',
+      title: 'Test lesson',
       content: 'This is a test memory entry',
       tags: ['test'],
     });
@@ -213,8 +259,20 @@ describe('Memory System', () => {
     const { InMemoryMemoryStore } = require('../src/memory');
     const store = new InMemoryMemoryStore();
 
-    await store.write({ projectId: 'test', kind: 'LESSON', title: 'TypeScript', content: 'TypeScript is a typed language', tags: ['code'] });
-    await store.write({ projectId: 'test', kind: 'LESSON', title: 'Python', content: 'Python is dynamically typed', tags: ['code'] });
+    await store.write({
+      projectId: 'test',
+      kind: 'LESSON',
+      title: 'TypeScript',
+      content: 'TypeScript is a typed language',
+      tags: ['code'],
+    });
+    await store.write({
+      projectId: 'test',
+      kind: 'LESSON',
+      title: 'Python',
+      content: 'Python is dynamically typed',
+      tags: ['code'],
+    });
 
     const results = await store.searchSemantic('typed language', 'test');
     assert.ok(results.length >= 1);
@@ -280,7 +338,8 @@ describe('Company Mode', () => {
 
     const result = await pipeline.run(
       'This allegedly unverified report supposedly contains information as of my last update',
-      'analysis', 'agent-a'
+      'analysis',
+      'agent-a',
     );
     assert.ok(result.review.issues.length > 0);
   });
@@ -288,7 +347,9 @@ describe('Company Mode', () => {
   it('8.3 Scheduler manages tasks', () => {
     // Clean state to avoid pollution from previous runs
     const statePath = path.join(process.cwd(), '.commander_state', 'schedules.json');
-    try { fs.unlinkSync(statePath); } catch {}
+    try {
+      fs.unlinkSync(statePath);
+    } catch {}
     const { Scheduler } = require('../src/company');
     const sched = new Scheduler();
 

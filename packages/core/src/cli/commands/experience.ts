@@ -46,7 +46,7 @@ function backupFile(sourcePath: string, label: string): string | null {
 }
 
 async function readYesNo(prompt: string): Promise<boolean> {
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     process.stdout.write(`  ${$.yellow}${prompt}${$.reset} `);
     const onData = (data: Buffer) => {
       const answer = data.toString().trim().toLowerCase();
@@ -64,9 +64,15 @@ async function readYesNo(prompt: string): Promise<boolean> {
 // ============================================================================
 
 async function showStatus(): Promise<void> {
-  console.log(`\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`);
-  console.log(`  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}Commander Experience${$.reset} — Learned State                  ${$.cyan}${$.bold}│${$.reset}`);
-  console.log(`  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`);
+  console.log(
+    `\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}Commander Experience${$.reset} — Learned State                  ${$.cyan}${$.bold}│${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`,
+  );
 
   section('META-LEARNER');
   try {
@@ -97,7 +103,7 @@ async function showStatus(): Promise<void> {
       for (const [cat, count] of byCat) {
         kv(`  ${cat}`, `${count}`);
       }
-      const newest = skills.reduce((a, b) => a.createdAt > b.createdAt ? a : b);
+      const newest = skills.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
       kv('Newest', `${newest.name}`, $.dim);
     }
   } catch {
@@ -110,13 +116,15 @@ async function showStatus(): Promise<void> {
     const fl = getFailurePatternLearner();
     const patterns = fl.getPatterns();
     kv('Patterns', `${patterns.length}`);
-    const warnCount = patterns.filter(p => p.autoWarn).length;
+    const warnCount = patterns.filter((p) => p.autoWarn).length;
     if (warnCount > 0) kv('Active warnings', `${warnCount}`, $.yellow);
   } catch {
     kv('Status', 'Not initialized', $.dim);
   }
 
-  console.log(`\n  ${$.dim}Reset: ${$.cyan}commander experience reset${$.reset}${$.dim} [--skills|--patterns|--meta] [--force]${$.reset}\n`);
+  console.log(
+    `\n  ${$.dim}Reset: ${$.cyan}commander experience reset${$.reset}${$.dim} [--skills|--patterns|--meta] [--force]${$.reset}\n`,
+  );
 }
 
 // ============================================================================
@@ -130,13 +138,21 @@ async function doReset(flags: Record<string, string>): Promise<void> {
   const resetMeta = !!flags['meta'] || resetAll;
   const force = !!flags['force'];
 
-  console.log(`\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`);
-  console.log(`  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}Commander Experience Reset${$.reset}                         ${$.cyan}${$.bold}│${$.reset}`);
-  console.log(`  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`);
+  console.log(
+    `\n  ${$.cyan}${$.bold}╭────────────────────────────────────────────────────╮${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}${$.bold}│${$.reset}  ${$.bold}Commander Experience Reset${$.reset}                         ${$.cyan}${$.bold}│${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}${$.bold}╰────────────────────────────────────────────────────╯${$.reset}`,
+  );
 
   if (resetAll) {
     console.log(`\n  ${$.yellow}${$.bold}⚠  This will reset ALL learned experience:${$.reset}`);
-    console.log(`  ${$.yellow}   • MetaLearner (Thompson priors, reflections, strategy scores)${$.reset}`);
+    console.log(
+      `  ${$.yellow}   • MetaLearner (Thompson priors, reflections, strategy scores)${$.reset}`,
+    );
     console.log(`  ${$.yellow}   • Extracted skills${$.reset}`);
     console.log(`  ${$.yellow}   • Failure patterns${$.reset}`);
   } else {
@@ -170,7 +186,12 @@ async function doReset(flags: Record<string, string>): Promise<void> {
 
     // Backup and reset skills
     if (resetSkills) {
-      const skillsPath = path.join(process.cwd(), '.commander', 'intelligence', 'extracted-skills.json');
+      const skillsPath = path.join(
+        process.cwd(),
+        '.commander',
+        'intelligence',
+        'extracted-skills.json',
+      );
       const backup = backupFile(skillsPath, 'extracted-skills');
       if (backup) backups.push(backup);
 
@@ -181,12 +202,19 @@ async function doReset(flags: Record<string, string>): Promise<void> {
         // Also reset in-memory SkillExtractor
         const { getSkillExtractor } = await import('../../intelligence/skillExtractor');
         getSkillExtractor()['skills'].clear();
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
     }
 
     // Backup and reset failure patterns
     if (resetPatterns) {
-      const patternsPath = path.join(process.cwd(), '.commander', 'intelligence', 'failure-patterns.json');
+      const patternsPath = path.join(
+        process.cwd(),
+        '.commander',
+        'intelligence',
+        'failure-patterns.json',
+      );
       const backup = backupFile(patternsPath, 'failure-patterns');
       if (backup) backups.push(backup);
 
@@ -196,7 +224,9 @@ async function doReset(flags: Record<string, string>): Promise<void> {
         }
         const { getFailurePatternLearner } = await import('../../intelligence/failurePatterns');
         getFailurePatternLearner()['patterns'].clear();
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
     }
 
     done();
@@ -208,10 +238,14 @@ async function doReset(flags: Record<string, string>): Promise<void> {
         console.log(`  ${$.dim}  ${b}${$.reset}`);
       }
     }
-    console.log(`  ${$.dim}Run ${$.cyan}commander experience status${$.reset}${$.dim} to verify.${$.reset}\n`);
+    console.log(
+      `  ${$.dim}Run ${$.cyan}commander experience status${$.reset}${$.dim} to verify.${$.reset}\n`,
+    );
   } catch (err) {
     done();
-    console.log(`\n  ${$.red}Error: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`);
+    console.log(
+      `\n  ${$.red}Error: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`,
+    );
   }
 }
 
@@ -231,5 +265,7 @@ export async function cmdExperience(args: string[], flags: Record<string, string
   }
 
   console.log(`\n  ${$.yellow}Unknown subcommand: ${sub}${$.reset}`);
-  console.log(`  ${$.dim}Usage: commander experience [status|reset [--skills|--patterns|--meta] [--force]]${$.reset}\n`);
+  console.log(
+    `  ${$.dim}Usage: commander experience [status|reset [--skills|--patterns|--meta] [--force]]${$.reset}\n`,
+  );
 }

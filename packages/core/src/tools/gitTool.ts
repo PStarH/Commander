@@ -3,8 +3,36 @@ import type { Tool, ToolDefinition } from '../runtime/types';
 
 // Git subcommands that do NOT mutate repository state in dangerous ways.
 // Commands are grouped by safety profile so we can match precisely.
-const READ_COMMANDS = new Set(['status', 'log', 'diff', 'show', 'branch', 'stash', 'tag', 'remote', 'shortlog', 'rev-list', 'describe', 'blame', 'ls-files', 'ls-remote']);
-const WRITE_COMMANDS = new Set(['add', 'commit', 'push', 'pull', 'fetch', 'merge', 'rebase', 'checkout', 'reset', 'rm', 'mv', 'config']);
+const READ_COMMANDS = new Set([
+  'status',
+  'log',
+  'diff',
+  'show',
+  'branch',
+  'stash',
+  'tag',
+  'remote',
+  'shortlog',
+  'rev-list',
+  'describe',
+  'blame',
+  'ls-files',
+  'ls-remote',
+]);
+const WRITE_COMMANDS = new Set([
+  'add',
+  'commit',
+  'push',
+  'pull',
+  'fetch',
+  'merge',
+  'rebase',
+  'checkout',
+  'reset',
+  'rm',
+  'mv',
+  'config',
+]);
 const SAFE_COMMANDS = new Set([...READ_COMMANDS, ...WRITE_COMMANDS]);
 
 function assertValidSubcommand(subcommand: string): void {
@@ -16,7 +44,8 @@ function assertValidSubcommand(subcommand: string): void {
 export class GitTool implements Tool {
   definition: ToolDefinition = {
     name: 'git',
-    description: 'Execute git operations. Supports status, log, diff, branch, shortlog, blame, add, commit, push, pull, and other git commands. Do NOT use shell pipes (|) — use git flags like -n 20 instead of "| head -20".',
+    description:
+      'Execute git operations. Supports status, log, diff, branch, shortlog, blame, add, commit, push, pull, and other git commands. Do NOT use shell pipes (|) — use git flags like -n 20 instead of "| head -20".',
     inputSchema: {
       type: 'object',
       properties: {
@@ -24,7 +53,11 @@ export class GitTool implements Tool {
           type: 'string',
           description: 'Git subcommand and args (e.g. "status", "log --oneline -5", "diff --stat")',
         },
-        workdir: { type: 'string', description: 'Working directory (default: workspace root)', default: '.' },
+        workdir: {
+          type: 'string',
+          description: 'Working directory (default: workspace root)',
+          default: '.',
+        },
       },
       required: ['command'],
     },
@@ -102,7 +135,8 @@ export class GitTool implements Tool {
       const output = (stdout as string).trim();
       return output || `[Empty output | ${elapsed}ms]`;
     } catch (err: unknown) {
-      if (err instanceof Error && 'stderr' in err) return `[Error]\n${(err as { stderr: string }).stderr as string}`;
+      if (err instanceof Error && 'stderr' in err)
+        return `[Error]\n${(err as { stderr: string }).stderr as string}`;
       return `[Error] ${err instanceof Error ? err.message : String(err)}`;
     }
   }

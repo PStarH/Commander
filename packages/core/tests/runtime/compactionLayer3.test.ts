@@ -87,7 +87,11 @@ describe('SemanticToolCompactor', () => {
     it('returns original content when not eligible for compaction', async () => {
       const c = new SemanticToolCompactor();
       const provider = new MockCompactionProvider();
-      const result = await c.compact(SMALL_OUTPUT, 'file_read', provider as unknown as import('../../src/runtime/types.js').LLMProvider);
+      const result = await c.compact(
+        SMALL_OUTPUT,
+        'file_read',
+        provider as unknown as import('../../src/runtime/types.js').LLMProvider,
+      );
       assert.strictEqual(result.compacted, false);
       assert.strictEqual(result.content, SMALL_OUTPUT);
       assert.strictEqual(result.tokensSaved, 0);
@@ -96,9 +100,18 @@ describe('SemanticToolCompactor', () => {
     it('compacts large output via LLM', async () => {
       const c = new SemanticToolCompactor();
       const provider = new MockCompactionProvider();
-      provider.setResponse({ content: 'Summarized: this is a compact version', usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 }, model: 'test' });
+      provider.setResponse({
+        content: 'Summarized: this is a compact version',
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        model: 'test',
+      });
 
-      const result = await c.compact(LARGE_OUTPUT, 'file_read', provider as unknown as import('../../src/runtime/types.js').LLMProvider, 20000);
+      const result = await c.compact(
+        LARGE_OUTPUT,
+        'file_read',
+        provider as unknown as import('../../src/runtime/types.js').LLMProvider,
+        20000,
+      );
       assert.strictEqual(result.compacted, true);
       assert.ok(result.content.includes('[Compacted file_read output:'), `got: ${result.content}`);
       assert.ok(result.originalChars > result.compactedChars);
@@ -111,7 +124,12 @@ describe('SemanticToolCompactor', () => {
       const provider = new MockCompactionProvider();
       provider.setResponse(null as unknown as LLMResponse);
 
-      const result = await c.compact(LARGE_OUTPUT, 'file_read', provider as unknown as import('../../src/runtime/types.js').LLMProvider, 20000);
+      const result = await c.compact(
+        LARGE_OUTPUT,
+        'file_read',
+        provider as unknown as import('../../src/runtime/types.js').LLMProvider,
+        20000,
+      );
       assert.strictEqual(result.compacted, false);
       assert.strictEqual(result.content, LARGE_OUTPUT);
     });
@@ -119,9 +137,18 @@ describe('SemanticToolCompactor', () => {
     it('falls back to original content when LLM returns empty content', async () => {
       const c = new SemanticToolCompactor();
       const provider = new MockCompactionProvider();
-      provider.setResponse({ content: '', usage: { promptTokens: 100, completionTokens: 0, totalTokens: 100 }, model: 'test' });
+      provider.setResponse({
+        content: '',
+        usage: { promptTokens: 100, completionTokens: 0, totalTokens: 100 },
+        model: 'test',
+      });
 
-      const result = await c.compact(LARGE_OUTPUT, 'file_read', provider as unknown as import('../../src/runtime/types.js').LLMProvider, 20000);
+      const result = await c.compact(
+        LARGE_OUTPUT,
+        'file_read',
+        provider as unknown as import('../../src/runtime/types.js').LLMProvider,
+        20000,
+      );
       assert.strictEqual(result.compacted, false);
       assert.strictEqual(result.content, LARGE_OUTPUT);
     });
@@ -129,10 +156,17 @@ describe('SemanticToolCompactor', () => {
     it('falls back to original content when LLM throws', async () => {
       const c = new SemanticToolCompactor();
       const throwingProvider = {
-        async call() { throw new Error('Provider down'); },
+        async call() {
+          throw new Error('Provider down');
+        },
       };
 
-      const result = await c.compact(LARGE_OUTPUT, 'file_read', throwingProvider as unknown as import('../../src/runtime/types.js').LLMProvider, 20000);
+      const result = await c.compact(
+        LARGE_OUTPUT,
+        'file_read',
+        throwingProvider as unknown as import('../../src/runtime/types.js').LLMProvider,
+        20000,
+      );
       assert.strictEqual(result.compacted, false);
       assert.strictEqual(result.content, LARGE_OUTPUT);
     });
@@ -140,9 +174,18 @@ describe('SemanticToolCompactor', () => {
     it('uses tool-specific prompt for file_read', async () => {
       const c = new SemanticToolCompactor();
       const provider = new MockCompactionProvider();
-      provider.setResponse({ content: 'Compacted', usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110 }, model: 'test' });
+      provider.setResponse({
+        content: 'Compacted',
+        usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110 },
+        model: 'test',
+      });
 
-      await c.compact(LARGE_OUTPUT, 'file_read', provider as unknown as import('../../src/runtime/types.js').LLMProvider, 20000);
+      await c.compact(
+        LARGE_OUTPUT,
+        'file_read',
+        provider as unknown as import('../../src/runtime/types.js').LLMProvider,
+        20000,
+      );
       const req = provider.getLastRequest();
       assert.ok(req, 'LLM request should have been made');
       const msgs = (req as { messages: Array<{ content: string }> }).messages;
@@ -152,9 +195,18 @@ describe('SemanticToolCompactor', () => {
     it('uses default prompt for unknown tools', async () => {
       const c = new SemanticToolCompactor();
       const provider = new MockCompactionProvider();
-      provider.setResponse({ content: 'Compacted', usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110 }, model: 'test' });
+      provider.setResponse({
+        content: 'Compacted',
+        usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110 },
+        model: 'test',
+      });
 
-      await c.compact(LARGE_OUTPUT, 'unknown_tool', provider as unknown as import('../../src/runtime/types.js').LLMProvider, 20000);
+      await c.compact(
+        LARGE_OUTPUT,
+        'unknown_tool',
+        provider as unknown as import('../../src/runtime/types.js').LLMProvider,
+        20000,
+      );
       const req = provider.getLastRequest();
       assert.ok(req, 'LLM request should have been made');
       const msgs = (req as { messages: Array<{ content: string }> }).messages;
@@ -164,15 +216,27 @@ describe('SemanticToolCompactor', () => {
     it('truncates very long input before sending to LLM', async () => {
       const c = new SemanticToolCompactor();
       const provider = new MockCompactionProvider();
-      provider.setResponse({ content: 'Compacted', usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110 }, model: 'test' });
+      provider.setResponse({
+        content: 'Compacted',
+        usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110 },
+        model: 'test',
+      });
 
       const hugeOutput = 'x'.repeat(50000);
-      await c.compact(hugeOutput, 'file_read', provider as unknown as import('../../src/runtime/types.js').LLMProvider, 20000);
+      await c.compact(
+        hugeOutput,
+        'file_read',
+        provider as unknown as import('../../src/runtime/types.js').LLMProvider,
+        20000,
+      );
       const req = provider.getLastRequest();
       assert.ok(req, 'LLM request should have been made');
       const msgs = (req as { messages: Array<{ content: string }> }).messages;
       const userMsg = msgs[1].content;
-      assert.ok(userMsg.includes('[truncated:'), `Expected truncation marker, got: ${userMsg.slice(0, 500)}`);
+      assert.ok(
+        userMsg.includes('[truncated:'),
+        `Expected truncation marker, got: ${userMsg.slice(0, 500)}`,
+      );
       // User message should be approximately 12000 chars (maxInputChars)
       assert.ok(userMsg.length <= 20000, `User message too long: ${userMsg.length}`);
     });

@@ -27,11 +27,7 @@ export class OpenAIEmbeddingFunction implements EmbeddingFunction {
   private model: string;
   private baseUrl: string;
 
-  constructor(config: {
-    apiKey: string;
-    model?: string;
-    baseUrl?: string;
-  }) {
+  constructor(config: { apiKey: string; model?: string; baseUrl?: string }) {
     this.apiKey = config.apiKey;
     this.model = config.model ?? 'text-embedding-3-small';
     this.baseUrl = config.baseUrl ?? 'https://api.openai.com/v1';
@@ -42,7 +38,7 @@ export class OpenAIEmbeddingFunction implements EmbeddingFunction {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
         model: this.model,
@@ -79,7 +75,7 @@ export class MockEmbeddingFunction implements EmbeddingFunction {
     let hash = 0;
     for (let i = 0; i < text.length; i++) {
       const chr = text.charCodeAt(i);
-      hash = ((hash << 5) - hash) + chr;
+      hash = (hash << 5) - hash + chr;
       hash |= 0;
     }
     return Math.abs(hash);
@@ -155,7 +151,7 @@ export class LocalEmbeddingFunction implements EmbeddingFunction {
   private extractNgrams(text: string): string[] {
     const ngrams: string[] = [];
     // Also extract word-level tokens for better semantics
-    const words = text.split(/\s+/).filter(w => w.length > 0);
+    const words = text.split(/\s+/).filter((w) => w.length > 0);
 
     // Word-level n-grams
     for (let n = 1; n <= Math.min(this.ngramSize, words.length); n++) {
@@ -201,7 +197,9 @@ export class LocalEmbeddingFunction implements EmbeddingFunction {
 }
 
 export function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0, magA = 0, magB = 0;
+  let dot = 0,
+    magA = 0,
+    magB = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     magA += a[i] * a[i];

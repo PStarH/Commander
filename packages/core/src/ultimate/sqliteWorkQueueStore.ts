@@ -165,7 +165,7 @@ export class SqliteWorkQueueStore implements WorkQueueStore {
   private migrate(): void {
     if (!this.db) return;
     this.stmtColumnExists = this.db.prepare(`PRAGMA table_info(work_items)`);
-    const cols = (this.stmtColumnExists.all() as Array<{ name: string }>).map(c => c.name);
+    const cols = (this.stmtColumnExists.all() as Array<{ name: string }>).map((c) => c.name);
     if (!cols.includes('lease_token')) {
       this.db.exec(`ALTER TABLE work_items ADD COLUMN lease_token TEXT`);
     }

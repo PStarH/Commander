@@ -48,11 +48,7 @@ export class CohereProvider implements LLMProvider {
   private baseUrl: string;
   private defaultModel: string;
 
-  constructor(config: {
-    apiKey: string;
-    baseUrl?: string;
-    defaultModel?: string;
-  }) {
+  constructor(config: { apiKey: string; baseUrl?: string; defaultModel?: string }) {
     this.apiKey = config.apiKey || process.env.CO_API_KEY || process.env.COHERE_API_KEY || '';
     this.baseUrl = config.baseUrl ?? process.env.COHERE_BASE_URL ?? 'https://api.cohere.com';
     this.defaultModel = config.defaultModel ?? process.env.COHERE_MODEL ?? 'command-a-plus-05-2026';
@@ -66,8 +62,8 @@ export class CohereProvider implements LLMProvider {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
-        ...(request.cacheConfig?.useCacheControl ? { 'accept': 'text/event-stream' } : {}),
+        Authorization: `Bearer ${this.apiKey}`,
+        ...(request.cacheConfig?.useCacheControl ? { accept: 'text/event-stream' } : {}),
       },
       body: JSON.stringify(body),
     });
@@ -83,10 +79,10 @@ export class CohereProvider implements LLMProvider {
 
   private buildBody(request: LLMRequest, model: string): Record<string, unknown> {
     // Cohere v2 chat format: separate system message, then messages array
-    const systemMsg = request.messages.find(m => m.role === 'system');
-    const otherMessages = request.messages.filter(m => m.role !== 'system');
+    const systemMsg = request.messages.find((m) => m.role === 'system');
+    const otherMessages = request.messages.filter((m) => m.role !== 'system');
 
-    const messages: CohereMessage[] = otherMessages.map(m => {
+    const messages: CohereMessage[] = otherMessages.map((m) => {
       const msg: CohereMessage = {
         role: m.role === 'assistant' ? 'assistant' : m.role === 'tool' ? 'tool' : 'user',
         content: m.content,
@@ -110,7 +106,7 @@ export class CohereProvider implements LLMProvider {
 
     // Map tools to Cohere's tool format
     if (request.tools && request.tools.length > 0) {
-      body.tools = request.tools.map(t => ({
+      body.tools = request.tools.map((t) => ({
         name: t.name,
         description: t.description,
         parameter_definitions: this.cohereParameterDefs(t.inputSchema),
@@ -135,23 +131,57 @@ export class CohereProvider implements LLMProvider {
     return defs;
   }
 
-  private parseResponse(data: { finish_reason?: string; message?: { content?: Array<{ text?: string }> | string; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown }; name?: string; parameters?: unknown }> }; usage?: { input_tokens?: number; output_tokens?: number }; input_tokens?: number; output_tokens?: number; meta?: { billed_units?: { input_tokens?: number; output_tokens?: number } } }, model: string): LLMResponse {
+  private parseResponse(
+    data: {
+      finish_reason?: string;
+      message?: {
+        content?: Array<{ text?: string }> | string;
+        tool_calls?: Array<{
+          id?: string;
+          function?: { name?: string; arguments?: unknown };
+          name?: string;
+          parameters?: unknown;
+        }>;
+      };
+      usage?: { input_tokens?: number; output_tokens?: number };
+      input_tokens?: number;
+      output_tokens?: number;
+      meta?: { billed_units?: { input_tokens?: number; output_tokens?: number } };
+    },
+    model: string,
+  ): LLMResponse {
     const message = data.message || {};
-    const content = Array.isArray(message.content) ? (message.content[0]?.text ?? '') : (typeof message.content === 'string' ? message.content : '');
+    const content = Array.isArray(message.content)
+      ? (message.content[0]?.text ?? '')
+      : typeof message.content === 'string'
+        ? message.content
+        : '';
 
     // Parse tool calls
-    const toolCalls: CohereToolCall[] = (message.tool_calls || []).map((tc: { id?: string; function?: { name?: string; arguments?: unknown }; name?: string; parameters?: unknown }) => ({
-      id: tc.id || `call_${Date.now()}`,
-      type: 'function' as const,
-      function: {
-        name: tc.function?.name || tc.name || '',
-        arguments: (tc.function?.arguments || tc.parameters || {}) as Record<string, unknown>,
-      },
-    }));
+    const toolCalls: CohereToolCall[] = (message.tool_calls || []).map(
+      (tc: {
+        id?: string;
+        function?: { name?: string; arguments?: unknown };
+        name?: string;
+        parameters?: unknown;
+      }) => ({
+        id: tc.id || `call_${Date.now()}`,
+        type: 'function' as const,
+        function: {
+          name: tc.function?.name || tc.name || '',
+          arguments: (tc.function?.arguments || tc.parameters || {}) as Record<string, unknown>,
+        },
+      }),
+    );
 
     const usage: TokenUsage = {
-      promptTokens: data.usage?.input_tokens ?? data.input_tokens ?? data.meta?.billed_units?.input_tokens ?? 0,
-      completionTokens: data.usage?.output_tokens ?? data.output_tokens ?? data.meta?.billed_units?.output_tokens ?? 0,
+      promptTokens:
+        data.usage?.input_tokens ?? data.input_tokens ?? data.meta?.billed_units?.input_tokens ?? 0,
+      completionTokens:
+        data.usage?.output_tokens ??
+        data.output_tokens ??
+        data.meta?.billed_units?.output_tokens ??
+        0,
       totalTokens: 0,
     };
     usage.totalTokens = usage.promptTokens + usage.completionTokens;
@@ -160,15 +190,22 @@ export class CohereProvider implements LLMProvider {
       content,
       model,
       usage,
-      finishReason: data.finish_reason === 'COMPLETE' ? 'stop'
-        : data.finish_reason === 'MAX_TOKENS' ? 'length'
-        : data.finish_reason === 'ERROR' ? 'error'
-        : 'stop',
-      toolCalls: toolCalls.length > 0 ? toolCalls.map(tc => ({
-        id: tc.id,
-        name: tc.function.name,
-        arguments: tc.function.arguments,
-      })) : undefined,
+      finishReason:
+        data.finish_reason === 'COMPLETE'
+          ? 'stop'
+          : data.finish_reason === 'MAX_TOKENS'
+            ? 'length'
+            : data.finish_reason === 'ERROR'
+              ? 'error'
+              : 'stop',
+      toolCalls:
+        toolCalls.length > 0
+          ? toolCalls.map((tc) => ({
+              id: tc.id,
+              name: tc.function.name,
+              arguments: tc.function.arguments,
+            }))
+          : undefined,
     };
   }
 }

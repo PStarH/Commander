@@ -1,7 +1,7 @@
 /**
  * Inspector Agent
  * 基于 ULTIMATE-FRAMEWORK.md 设计
- * 
+ *
  * Core insight: 独立的监督 agent 检查整个系统
  * - 监控各组件健康状态
  * - 检测异常和性能问题
@@ -22,12 +22,12 @@ function generateUUID(): string {
 
 export type IssueSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
-export type IssueCategory = 
-  | 'performance'    // 性能问题
-  | 'reliability'    // 可靠性问题
-  | 'security'       // 安全问题
-  | 'memory'         // 内存问题
-  | 'coordination'   // 协作问题
+export type IssueCategory =
+  | 'performance' // 性能问题
+  | 'reliability' // 可靠性问题
+  | 'security' // 安全问题
+  | 'memory' // 内存问题
+  | 'coordination' // 协作问题
   | 'configuration'; // 配置问题
 
 export interface Issue {
@@ -47,7 +47,7 @@ export interface Issue {
 export interface ComponentHealth {
   name: string;
   status: 'healthy' | 'degraded' | 'unhealthy';
-  score: number;          // 0-1
+  score: number; // 0-1
   lastChecked: string;
   issues: Issue[];
   metrics: Record<string, number>;
@@ -86,15 +86,15 @@ export class InspectorAgent {
     name: string,
     status: 'healthy' | 'degraded' | 'unhealthy',
     score: number,
-    metrics: Record<string, number> = {}
+    metrics: Record<string, number> = {},
   ): void {
     const component: ComponentHealth = {
       name,
       status,
       score,
       lastChecked: new Date().toISOString(),
-      issues: this.getOpenIssues().filter(i => i.affectedComponent === name),
-      metrics
+      issues: this.getOpenIssues().filter((i) => i.affectedComponent === name),
+      metrics,
     };
 
     this.componentStates.set(name, component);
@@ -109,7 +109,7 @@ export class InspectorAgent {
     title: string,
     description: string,
     affectedComponent?: string,
-    suggestions: string[] = []
+    suggestions: string[] = [],
   ): Issue {
     const issue: Issue = {
       id: generateUUID(),
@@ -120,15 +120,16 @@ export class InspectorAgent {
       affectedComponent,
       detectedAt: new Date().toISOString(),
       status: 'open',
-      suggestions
+      suggestions,
     };
 
     this.issues.set(issue.id, issue);
 
     // Cap issues to prevent unbounded growth in long sessions
     if (this.issues.size > 500) {
-      const sorted = [...this.issues.entries()]
-        .sort((a, b) => a[1].detectedAt.localeCompare(b[1].detectedAt));
+      const sorted = [...this.issues.entries()].sort((a, b) =>
+        a[1].detectedAt.localeCompare(b[1].detectedAt),
+      );
       const toEvict = sorted.slice(0, sorted.length - 500 + 1);
       for (const [id] of toEvict) this.issues.delete(id);
     }
@@ -144,62 +145,72 @@ export class InspectorAgent {
 
     // 检测性能问题
     if (metrics.responseTime && metrics.responseTime > 1000) {
-      detected.push(this.detectIssue(
-        'performance',
-        metrics.responseTime > 5000 ? 'high' : 'medium',
-        'High response time detected',
-        `Response time: ${metrics.responseTime}ms (threshold: 1000ms)`,
-        componentName,
-        ['Consider optimizing query', 'Add caching', 'Scale horizontally']
-      ));
+      detected.push(
+        this.detectIssue(
+          'performance',
+          metrics.responseTime > 5000 ? 'high' : 'medium',
+          'High response time detected',
+          `Response time: ${metrics.responseTime}ms (threshold: 1000ms)`,
+          componentName,
+          ['Consider optimizing query', 'Add caching', 'Scale horizontally'],
+        ),
+      );
     }
 
     // 检测错误率
     if (metrics.errorRate && metrics.errorRate > 0.05) {
-      detected.push(this.detectIssue(
-        'reliability',
-        metrics.errorRate > 0.2 ? 'critical' : 'high',
-        'High error rate detected',
-        `Error rate: ${(metrics.errorRate * 100).toFixed(2)}% (threshold: 5%)`,
-        componentName,
-        ['Review error logs', 'Implement retry logic', 'Check dependencies']
-      ));
+      detected.push(
+        this.detectIssue(
+          'reliability',
+          metrics.errorRate > 0.2 ? 'critical' : 'high',
+          'High error rate detected',
+          `Error rate: ${(metrics.errorRate * 100).toFixed(2)}% (threshold: 5%)`,
+          componentName,
+          ['Review error logs', 'Implement retry logic', 'Check dependencies'],
+        ),
+      );
     }
 
     // 检测内存问题
     if (metrics.memoryUsage && metrics.memoryUsage > 0.9) {
-      detected.push(this.detectIssue(
-        'memory',
-        metrics.memoryUsage > 0.95 ? 'critical' : 'high',
-        'High memory usage',
-        `Memory usage: ${(metrics.memoryUsage * 100).toFixed(1)}% (threshold: 90%)`,
-        componentName,
-        ['Clear caches', 'Increase memory', 'Profile memory usage']
-      ));
+      detected.push(
+        this.detectIssue(
+          'memory',
+          metrics.memoryUsage > 0.95 ? 'critical' : 'high',
+          'High memory usage',
+          `Memory usage: ${(metrics.memoryUsage * 100).toFixed(1)}% (threshold: 90%)`,
+          componentName,
+          ['Clear caches', 'Increase memory', 'Profile memory usage'],
+        ),
+      );
     }
 
     // 检测队列积压
     if (metrics.queueDepth && metrics.queueDepth > 100) {
-      detected.push(this.detectIssue(
-        'performance',
-        metrics.queueDepth > 500 ? 'high' : 'medium',
-        'Queue depth excessive',
-        `Queue depth: ${metrics.queueDepth} (threshold: 100)`,
-        componentName,
-        ['Scale workers', 'Reduce submission rate', 'Optimize processing']
-      ));
+      detected.push(
+        this.detectIssue(
+          'performance',
+          metrics.queueDepth > 500 ? 'high' : 'medium',
+          'Queue depth excessive',
+          `Queue depth: ${metrics.queueDepth} (threshold: 100)`,
+          componentName,
+          ['Scale workers', 'Reduce submission rate', 'Optimize processing'],
+        ),
+      );
     }
 
     // 检测低成功率
     if (metrics.successRate && metrics.successRate < 0.8) {
-      detected.push(this.detectIssue(
-        'reliability',
-        metrics.successRate < 0.5 ? 'critical' : 'high',
-        'Low success rate',
-        `Success rate: ${(metrics.successRate * 100).toFixed(1)}% (threshold: 80%)`,
-        componentName,
-        ['Analyze failure patterns', 'Add validation', 'Review error handling']
-      ));
+      detected.push(
+        this.detectIssue(
+          'reliability',
+          metrics.successRate < 0.5 ? 'critical' : 'high',
+          'Low success rate',
+          `Success rate: ${(metrics.successRate * 100).toFixed(1)}% (threshold: 80%)`,
+          componentName,
+          ['Analyze failure patterns', 'Add validation', 'Review error handling'],
+        ),
+      );
     }
 
     return detected;
@@ -210,7 +221,7 @@ export class InspectorAgent {
    */
   getOpenIssues(): Issue[] {
     return Array.from(this.issues.values())
-      .filter(i => i.status === 'open')
+      .filter((i) => i.status === 'open')
       .sort((a, b) => this.severityWeight(b.severity) - this.severityWeight(a.severity));
   }
 
@@ -219,12 +230,18 @@ export class InspectorAgent {
    */
   private severityWeight(severity: IssueSeverity): number {
     switch (severity) {
-      case 'critical': return 5;
-      case 'high': return 4;
-      case 'medium': return 3;
-      case 'low': return 2;
-      case 'info': return 1;
-      default: return 1;
+      case 'critical':
+        return 5;
+      case 'high':
+        return 4;
+      case 'medium':
+        return 3;
+      case 'low':
+        return 2;
+      case 'info':
+        return 1;
+      default:
+        return 1;
     }
   }
 
@@ -258,7 +275,7 @@ export class InspectorAgent {
     const components = Array.from(this.componentStates.values());
     const openIssues = this.getOpenIssues();
     const resolvedIssues = Array.from(this.issues.values())
-      .filter(i => i.status === 'resolved')
+      .filter((i) => i.status === 'resolved')
       .slice(-10);
 
     // 计算整体健康度
@@ -299,7 +316,7 @@ export class InspectorAgent {
       openIssues,
       resolvedIssues,
       recommendations,
-      summary
+      summary,
     };
 
     this.inspectionHistory.push(report);
@@ -330,12 +347,12 @@ export class InspectorAgent {
     for (const [category, issues] of byCategory) {
       if (issues.length > 0) {
         recommendations.push(`${this.categoryLabel(category)}: ${issues.length} open issue(s)`);
-        
+
         // 添加第一问题的建议
-        const topIssue = issues.sort((a, b) => 
-          this.severityWeight(b.severity) - this.severityWeight(a.severity)
+        const topIssue = issues.sort(
+          (a, b) => this.severityWeight(b.severity) - this.severityWeight(a.severity),
         )[0];
-        
+
         if (topIssue.suggestions.length > 0) {
           recommendations.push(`  → ${topIssue.suggestions[0]}`);
         }
@@ -357,13 +374,20 @@ export class InspectorAgent {
    */
   private categoryLabel(category: IssueCategory): string {
     switch (category) {
-      case 'performance': return 'Performance';
-      case 'reliability': return 'Reliability';
-      case 'security': return 'Security';
-      case 'memory': return 'Memory';
-      case 'coordination': return 'Coordination';
-      case 'configuration': return 'Configuration';
-      default: return String(category);
+      case 'performance':
+        return 'Performance';
+      case 'reliability':
+        return 'Reliability';
+      case 'security':
+        return 'Security';
+      case 'memory':
+        return 'Memory';
+      case 'coordination':
+        return 'Coordination';
+      case 'configuration':
+        return 'Configuration';
+      default:
+        return String(category);
     }
   }
 
@@ -371,8 +395,8 @@ export class InspectorAgent {
    * 生成摘要
    */
   private generateSummary(status: string, openIssues: Issue[]): string {
-    const critical = openIssues.filter(i => i.severity === 'critical').length;
-    const high = openIssues.filter(i => i.severity === 'high').length;
+    const critical = openIssues.filter((i) => i.severity === 'critical').length;
+    const high = openIssues.filter((i) => i.severity === 'high').length;
     const total = openIssues.length;
 
     if (status === 'healthy' && total === 0) {
@@ -406,7 +430,7 @@ export class InspectorAgent {
     history: Array<{ timestamp: string; health: number }>;
   } {
     const history = this.inspectionHistory.slice(-20);
-    
+
     if (history.length < 2) {
       return { trend: 'stable', change: 0, history: [] };
     }
@@ -415,12 +439,13 @@ export class InspectorAgent {
     const older = history.slice(-10, -5);
 
     const recentAvg = recent.reduce((sum, r) => sum + r.overallHealth, 0) / recent.length;
-    const olderAvg = older.length > 0 
-      ? older.reduce((sum, r) => sum + r.overallHealth, 0) / older.length
-      : recentAvg;
+    const olderAvg =
+      older.length > 0
+        ? older.reduce((sum, r) => sum + r.overallHealth, 0) / older.length
+        : recentAvg;
 
     const change = recentAvg - olderAvg;
-    
+
     let trend: 'improving' | 'declining' | 'stable';
     if (change > 0.05) trend = 'improving';
     else if (change < -0.05) trend = 'declining';
@@ -429,7 +454,7 @@ export class InspectorAgent {
     return {
       trend,
       change,
-      history: history.map(r => ({ timestamp: r.timestamp, health: r.overallHealth }))
+      history: history.map((r) => ({ timestamp: r.timestamp, health: r.overallHealth })),
     };
   }
 
@@ -445,8 +470,8 @@ export class InspectorAgent {
     avgResolutionTime?: number;
   } {
     const allIssues = Array.from(this.issues.values());
-    const open = allIssues.filter(i => i.status === 'open');
-    const resolved = allIssues.filter(i => i.status === 'resolved');
+    const open = allIssues.filter((i) => i.status === 'open');
+    const resolved = allIssues.filter((i) => i.status === 'resolved');
 
     const byCategory: Record<IssueCategory, number> = {
       performance: 0,
@@ -454,7 +479,7 @@ export class InspectorAgent {
       security: 0,
       memory: 0,
       coordination: 0,
-      configuration: 0
+      configuration: 0,
     };
 
     const bySeverity: Record<IssueSeverity, number> = {
@@ -462,7 +487,7 @@ export class InspectorAgent {
       high: 0,
       medium: 0,
       low: 0,
-      info: 0
+      info: 0,
     };
 
     for (const issue of open) {
@@ -472,7 +497,7 @@ export class InspectorAgent {
 
     // 计算平均解决时间
     let avgResolutionTime: number | undefined;
-    const resolvedWithTime = resolved.filter(i => i.resolvedAt);
+    const resolvedWithTime = resolved.filter((i) => i.resolvedAt);
     if (resolvedWithTime.length > 0) {
       let totalTime = 0;
       for (const issue of resolvedWithTime) {
@@ -489,7 +514,7 @@ export class InspectorAgent {
       resolvedIssues: resolved.length,
       byCategory,
       bySeverity,
-      avgResolutionTime
+      avgResolutionTime,
     };
   }
 

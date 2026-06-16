@@ -44,7 +44,8 @@ const BUILTIN_META_SPECS: MetaToolSpec[] = [
   {
     sequence: ['web.search', 'web.fetch'],
     name: 'research_topic',
-    description: 'Search the web for a topic then fetch the top result. Single call replaces search+fetch.',
+    description:
+      'Search the web for a topic then fetch the top result. Single call replaces search+fetch.',
     steps: [
       { toolName: 'web', argumentMap: { query: 'query' }, constants: { action: 'search' } },
       { toolName: 'web', argumentMap: { url: 'url' }, constants: { action: 'fetch' } },
@@ -53,20 +54,30 @@ const BUILTIN_META_SPECS: MetaToolSpec[] = [
   {
     sequence: ['file.search', 'file.read'],
     name: 'find_and_read',
-    description: 'Search for a file by pattern then read its contents. Single call replaces search+read.',
+    description:
+      'Search for a file by pattern then read its contents. Single call replaces search+read.',
     steps: [
-      { toolName: 'file', argumentMap: { pattern: 'pattern', path: 'path' }, constants: { action: 'search' } },
+      {
+        toolName: 'file',
+        argumentMap: { pattern: 'pattern', path: 'path' },
+        constants: { action: 'search' },
+      },
       { toolName: 'file', argumentMap: { filePath: 'path' }, constants: { action: 'read' } },
     ],
   },
   {
     sequence: ['web.search', 'web.fetch', 'file.write'],
     name: 'research_and_save',
-    description: 'Search the web, fetch a page, and save to file. Three-step research workflow in one call.',
+    description:
+      'Search the web, fetch a page, and save to file. Three-step research workflow in one call.',
     steps: [
       { toolName: 'web', argumentMap: { query: 'query' }, constants: { action: 'search' } },
       { toolName: 'web', argumentMap: { url: 'url' }, constants: { action: 'fetch' } },
-      { toolName: 'file', argumentMap: { filePath: 'path', content: 'content' }, constants: { action: 'write' } },
+      {
+        toolName: 'file',
+        argumentMap: { filePath: 'path', content: 'content' },
+        constants: { action: 'write' },
+      },
     ],
   },
 ];
@@ -101,12 +112,18 @@ export class MetaTool implements Tool {
 
     const examples: Array<{ name: string; arguments: Record<string, unknown> }> = [];
     if (spec.name === 'research_topic') {
-      examples.push({ name: 'research_topic', arguments: { query: 'Latest AI research papers 2026' } });
+      examples.push({
+        name: 'research_topic',
+        arguments: { query: 'Latest AI research papers 2026' },
+      });
     } else if (spec.name === 'find_and_read') {
       examples.push({ name: 'find_and_read', arguments: { pattern: 'src/**/*.ts', path: '.' } });
       examples.push({ name: 'find_and_read', arguments: { pattern: 'package.json' } });
     } else if (spec.name === 'research_and_save') {
-      examples.push({ name: 'research_and_save', arguments: { query: 'TypeScript performance tips', filePath: 'research.md' } });
+      examples.push({
+        name: 'research_and_save',
+        arguments: { query: 'TypeScript performance tips', filePath: 'research.md' },
+      });
     }
 
     this.definition = {

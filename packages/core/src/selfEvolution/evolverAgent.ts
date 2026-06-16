@@ -1,12 +1,5 @@
-import type {
-  EvolutionInsight,
-  ExecutionExperience,
-  FailureCategory,
-} from '../runtime/types';
-import type {
-  UltimateOrchestratorConfig,
-  QualityGateConfig,
-} from '../ultimate/types';
+import type { EvolutionInsight, ExecutionExperience, FailureCategory } from '../runtime/types';
+import type { UltimateOrchestratorConfig, QualityGateConfig } from '../ultimate/types';
 import { getMetaLearner } from './metaLearner';
 import { getGlobalLogger } from '../logging';
 
@@ -74,7 +67,8 @@ const MUTATION_RULES: Record<FailureCategory, MutationRule[]> = {
       mode: 'delta',
       value: 0.9,
       minConfidence: 0.5,
-      description: 'Tighten hallucination gate threshold from {old} to {new} after detecting hallucination failures',
+      description:
+        'Tighten hallucination gate threshold from {old} to {new} after detecting hallucination failures',
       condition: (v) => typeof v === 'number' && v > 0.5,
     },
   ],
@@ -169,7 +163,8 @@ const MUTATION_RULES: Record<FailureCategory, MutationRule[]> = {
       mode: 'delta',
       value: 0.95,
       minConfidence: 0.5,
-      description: 'Tighten accuracy gate threshold from {old} to {new} after quality gate failures',
+      description:
+        'Tighten accuracy gate threshold from {old} to {new} after quality gate failures',
       condition: (v) => typeof v === 'number' && v > 0.3,
     },
   ],
@@ -180,7 +175,8 @@ const MUTATION_RULES: Record<FailureCategory, MutationRule[]> = {
       mode: 'delta',
       value: 0.8,
       minConfidence: 0.5,
-      description: 'Reduce parallel agents from {old} to {new} after tool misuse to reduce tool contention',
+      description:
+        'Reduce parallel agents from {old} to {new} after tool misuse to reduce tool contention',
       condition: (v) => typeof v === 'number' && v > 2,
     },
   ],
@@ -202,7 +198,8 @@ const MUTATION_RULES: Record<FailureCategory, MutationRule[]> = {
       mode: 'absolute',
       value: 'power',
       minConfidence: 0.5,
-      description: 'Upgrade model tier from {old} to {new} after auth failures (may need stronger model)',
+      description:
+        'Upgrade model tier from {old} to {new} after auth failures (may need stronger model)',
       condition: (v) => v !== 'power' && v !== 'consensus',
     },
   ],
@@ -278,7 +275,10 @@ function setConfigValue(config: Record<string, unknown>, path: string, value: un
  * Resolve a path that may reference nested array fields (e.g. "qualityGates.hallucination.threshold").
  * qualityGates is a QualityGateConfig[] array, so we need to find the right entry by name.
  */
-function resolvePath(config: Record<string, unknown>, path: string): { parent: Record<string, unknown>; key: string } | null {
+function resolvePath(
+  config: Record<string, unknown>,
+  path: string,
+): { parent: Record<string, unknown>; key: string } | null {
   const parts = path.split('.');
 
   // Handle qualityGates.{name}.{field} — look up by name in the array
@@ -348,7 +348,7 @@ export class EvolverAgent {
 
   // ── Canary Config Deployment ──────────────────────────────────────────
   private currentCanary: CanaryDeployment | null = null;
-  private defaultRolloutFraction = 0.10; // 10% of runs use canary config
+  private defaultRolloutFraction = 0.1; // 10% of runs use canary config
 
   /** Returns ms until the cooldown expires (0 = ready) */
   get cooldownRemaining(): number {
@@ -360,10 +360,7 @@ export class EvolverAgent {
    * Given trajectory analysis insights, produce config mutations tuned to the
    * observed failure patterns. Does NOT mutate config — just returns the plan.
    */
-  evolve(
-    insights: EvolutionInsight[],
-    config: UltimateOrchestratorConfig,
-  ): EvolverMutation[] {
+  evolve(insights: EvolutionInsight[], config: UltimateOrchestratorConfig): EvolverMutation[] {
     const mutations: EvolverMutation[] = [];
 
     for (const insight of insights) {
@@ -387,7 +384,11 @@ export class EvolverAgent {
 
         // Compute new value
         let newVal: unknown;
-        if (rule.mode === 'delta' && typeof currentVal === 'number' && typeof rule.value === 'number') {
+        if (
+          rule.mode === 'delta' &&
+          typeof currentVal === 'number' &&
+          typeof rule.value === 'number'
+        ) {
           newVal = Math.round(currentVal * rule.value * 100) / 100;
         } else {
           newVal = rule.value;
@@ -421,10 +422,7 @@ export class EvolverAgent {
    * Apply mutations to the config object. Mutations are idempotent — applying
    * the same mutation twice is a no-op (oldValue already matches newValue).
    */
-  applyMutations(
-    config: UltimateOrchestratorConfig,
-    mutations: EvolverMutation[],
-  ): number {
+  applyMutations(config: UltimateOrchestratorConfig, mutations: EvolverMutation[]): number {
     let applied = 0;
     for (const mutation of mutations) {
       const resolved = resolvePath(config, mutation.configPath);
@@ -445,10 +443,7 @@ export class EvolverAgent {
   /**
    * Revert mutations, restoring config to old values.
    */
-  revertMutations(
-    config: UltimateOrchestratorConfig,
-    mutations: EvolverMutation[],
-  ): number {
+  revertMutations(config: UltimateOrchestratorConfig, mutations: EvolverMutation[]): number {
     let reverted = 0;
     for (const mutation of mutations) {
       const resolved = resolvePath(config, mutation.configPath);
@@ -519,8 +514,11 @@ export class EvolverAgent {
       type: 'evolution_cycle',
       mutations: mutations.length,
       applied: 0,
-      canary: mutations.length > 0 ? `pending (${this.defaultRolloutFraction * 100}% rollout)` : undefined,
-      details: mutations.map(m => ({
+      canary:
+        mutations.length > 0
+          ? `pending (${this.defaultRolloutFraction * 100}% rollout)`
+          : undefined,
+      details: mutations.map((m) => ({
         id: m.id,
         domain: m.domain,
         description: m.description,
@@ -585,16 +583,20 @@ export class EvolverAgent {
 
     // Auto-decide when we have enough runs
     if (this.currentCanary.runIds.length >= this.currentCanary.minRuns) {
-      const successRate = this.currentCanary.verdicts.filter(v => v.success).length / this.currentCanary.verdicts.length;
+      const successRate =
+        this.currentCanary.verdicts.filter((v) => v.success).length /
+        this.currentCanary.verdicts.length;
 
       const ml = getMetaLearner();
-      const recentVerdicts = ml.getVerdicts().filter(
-        v => this.currentCanary!.mutations.some(m => m.id === v.predictionId)
-      );
+      const recentVerdicts = ml
+        .getVerdicts()
+        .filter((v) => this.currentCanary!.mutations.some((m) => m.id === v.predictionId));
 
       // Promote if success rate is good AND predictions are confirmed
-      const predictionsPositive = recentVerdicts.length === 0 ||
-        recentVerdicts.filter(v => v.netImpact === 'positive').length >= recentVerdicts.length * 0.5;
+      const predictionsPositive =
+        recentVerdicts.length === 0 ||
+        recentVerdicts.filter((v) => v.netImpact === 'positive').length >=
+          recentVerdicts.length * 0.5;
 
       if (successRate >= 0.5 && predictionsPositive) {
         this.promoteCanary();
@@ -617,9 +619,11 @@ export class EvolverAgent {
       type: 'canary_promoted',
       mutations: this.currentCanary.mutations.length,
       runs: this.currentCanary.runIds.length,
-      successRate: this.currentCanary.verdicts.length > 0
-        ? this.currentCanary.verdicts.filter(v => v.success).length / this.currentCanary.verdicts.length
-        : 0,
+      successRate:
+        this.currentCanary.verdicts.length > 0
+          ? this.currentCanary.verdicts.filter((v) => v.success).length /
+            this.currentCanary.verdicts.length
+          : 0,
     });
   }
 
@@ -644,14 +648,22 @@ export class EvolverAgent {
   getCanaryStatus(): CanaryStatus {
     if (!this.currentCanary) {
       return {
-        active: false, mutations: 0, runCount: 0, rolloutFraction: 0,
-        startedAt: 0, successRate: 0, decided: false, pendingRuns: 0,
+        active: false,
+        mutations: 0,
+        runCount: 0,
+        rolloutFraction: 0,
+        startedAt: 0,
+        successRate: 0,
+        decided: false,
+        pendingRuns: 0,
       };
     }
 
-    const successRate = this.currentCanary.verdicts.length > 0
-      ? this.currentCanary.verdicts.filter(v => v.success).length / this.currentCanary.verdicts.length
-      : 0;
+    const successRate =
+      this.currentCanary.verdicts.length > 0
+        ? this.currentCanary.verdicts.filter((v) => v.success).length /
+          this.currentCanary.verdicts.length
+        : 0;
 
     return {
       active: true,

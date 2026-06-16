@@ -180,7 +180,7 @@ describe('PheromoneRouter', () => {
       r.recordOutcome('RESEARCH', 'HYBRID', true);
       const stats = r.getStats();
       expect(stats.length).toBe(3);
-      const keys = stats.map(s => `${s.taskType}::${s.topology}`).sort();
+      const keys = stats.map((s) => `${s.taskType}::${s.topology}`).sort();
       expect(keys).toEqual(['CODING::PARALLEL', 'CODING::SINGLE', 'RESEARCH::HYBRID']);
     });
 
@@ -250,8 +250,8 @@ describe('TopologyRouter × PheromoneRouter integration', () => {
     for (let i = 0; i < 10; i++) customPr.recordOutcome('RESEARCH', pinnedBaseline, false, 0.0);
 
     const biasedScores = tr.route(plan).biasedScores ?? [];
-    const parallelEntry = biasedScores.find(s => s.topology === 'PARALLEL');
-    const baselineEntry = biasedScores.find(s => s.topology === pinnedBaseline);
+    const parallelEntry = biasedScores.find((s) => s.topology === 'PARALLEL');
+    const baselineEntry = biasedScores.find((s) => s.topology === pinnedBaseline);
 
     expect(parallelEntry).toBeDefined();
     expect(baselineEntry).toBeDefined();
@@ -272,11 +272,11 @@ describe('TopologyRouter × PheromoneRouter integration', () => {
     const result = tr.route(plan);
     expect(result.biasedScores).toBeDefined();
     expect(result.biasedScores!.length).toBe(10); // 10 topologies
-    const parallelEntry = result.biasedScores!.find(s => s.topology === 'PARALLEL');
+    const parallelEntry = result.biasedScores!.find((s) => s.topology === 'PARALLEL');
     expect(parallelEntry).toBeDefined();
     expect(parallelEntry!.pheromoneSamples).toBe(8);
     // reasoning should mention the pheromone adjustment (since PARALLEL has a positive bias)
-    const pheromoneLine = result.reasoning.find(r => r.includes('Pheromone'));
+    const pheromoneLine = result.reasoning.find((r) => r.includes('Pheromone'));
     expect(pheromoneLine).toBeDefined();
   });
 });

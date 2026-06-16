@@ -15,14 +15,28 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { DatasetStore } from '../../src/observability/dataset';
-import { EvalScorer, type JudgeProvider, type LLMRequest, type LLMResponse } from '../../src/observability/evalScorer';
-import { ExperimentRunner, type CaseExecutionResult, type CaseExecutor, type DatasetCase } from '../../src/observability/experimentRunner';
+import {
+  EvalScorer,
+  type JudgeProvider,
+  type LLMRequest,
+  type LLMResponse,
+} from '../../src/observability/evalScorer';
+import {
+  ExperimentRunner,
+  type CaseExecutionResult,
+  type CaseExecutor,
+  type DatasetCase,
+} from '../../src/observability/experimentRunner';
 
 function mockJudge(score: number, reasoning = 'ok'): JudgeProvider {
   return {
     name: 'mock',
     async call(): Promise<LLMResponse> {
-      return { content: JSON.stringify({ score, reasoning }), usage: { promptTokens: 5, completionTokens: 5, totalTokens: 10 }, finishReason: 'stop' };
+      return {
+        content: JSON.stringify({ score, reasoning }),
+        usage: { promptTokens: 5, completionTokens: 5, totalTokens: 10 },
+        finishReason: 'stop',
+      };
     },
   };
 }
@@ -79,19 +93,25 @@ describe('ExperimentRunner — sequential', () => {
     const scorer = new EvalScorer(mockJudge(0.9));
     const runner = new ExperimentRunner(store, scorer);
     const executor: CaseExecutor = async (): Promise<CaseExecutionResult> => ({
-      output: '', toolCallsMade: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-      costUsd: 0, durationMs: 0, error: 'boom',
+      output: '',
+      toolCallsMade: [],
+      tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      costUsd: 0,
+      durationMs: 0,
+      error: 'boom',
     });
     const run = await runner.run(id, executor);
     expect(run.summary.errored).toBe(2);
-    expect(run.results.every(r => r.status === 'errored')).toBe(true);
+    expect(run.results.every((r) => r.status === 'errored')).toBe(true);
   });
 
   it('judge errors are surfaced as errored with judgeError populated', async () => {
     const { store, id } = makeDataset(1);
     const broken: JudgeProvider = {
       name: 'broken',
-      async call(): Promise<LLMResponse> { throw new Error('judge down'); },
+      async call(): Promise<LLMResponse> {
+        throw new Error('judge down');
+      },
     };
     const scorer = new EvalScorer(broken);
     const runner = new ExperimentRunner(store, scorer);
@@ -120,15 +140,21 @@ describe('ExperimentRunner — sequential', () => {
       if (active.length > 0) {
         runner.cancel(active[0]!);
       }
-      await new Promise(r => setTimeout(r, 10));
-      return { output: 'ok', toolCallsMade: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, costUsd: 0, durationMs: 10 };
+      await new Promise((r) => setTimeout(r, 10));
+      return {
+        output: 'ok',
+        toolCallsMade: [],
+        tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        costUsd: 0,
+        durationMs: 10,
+      };
     };
     const run = await runner.runWithId(runId, id, executor);
     // The first case completes, the remaining 9 are marked 'cancelled'
     // (errored with error='cancelled') so the run summary reflects the
     // cancellation rather than silently dropping them.
     expect(run.results.length).toBe(10);
-    const cancelled = run.results.filter(r => r.error === 'cancelled');
+    const cancelled = run.results.filter((r) => r.error === 'cancelled');
     expect(cancelled.length).toBeGreaterThan(0);
     expect(run.summary.errored).toBe(cancelled.length);
   });
@@ -137,7 +163,10 @@ describe('ExperimentRunner — sequential', () => {
     const { store, id } = makeDataset(5);
     const scorer = new EvalScorer(mockJudge(0.2));
     const runner = new ExperimentRunner(store, scorer);
-    const run = await runner.run(id, stubExecutor('ok'), { passThreshold: 0.5, stopOnFailure: true });
+    const run = await runner.run(id, stubExecutor('ok'), {
+      passThreshold: 0.5,
+      stopOnFailure: true,
+    });
     expect(run.results.length).toBe(1);
     expect(run.results[0]!.status).toBe('failed');
   });
@@ -169,7 +198,7 @@ describe('ExperimentRunner — run registry', () => {
     const runner = new ExperimentRunner(store, scorer);
     const run = await runner.run(id, stubExecutor('ok'));
     expect(runner.getRun(run.id)).toBeDefined();
-    expect(runner.listRuns().map(r => r.id)).toContain(run.id);
+    expect(runner.listRuns().map((r) => r.id)).toContain(run.id);
   });
 
   it('maxCompletedRuns evicts the oldest entry', async () => {

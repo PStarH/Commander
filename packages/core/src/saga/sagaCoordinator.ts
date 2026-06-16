@@ -18,7 +18,11 @@ import type {
 import { DEFAULT_RETRY_POLICY } from './types';
 import { ExecutionGraph } from './executionGraph';
 import { CheckpointManager } from './checkpointManager';
-import { CompensationScheduler, type CompensableStep, type DeadLetterSink } from './compensationScheduler';
+import {
+  CompensationScheduler,
+  type CompensableStep,
+  type DeadLetterSink,
+} from './compensationScheduler';
 import { defaultCompensationRetryPolicy } from './compensationScheduler';
 import { ApprovalManager } from './approvalManager';
 import { WorkerPool, InProcessWorkerPool } from './workerPool';
@@ -58,7 +62,7 @@ export class SagaCoordinator {
     private readonly ctx: SagaContext,
     private readonly checkpointMgr: CheckpointManager,
     private readonly approvalMgr: ApprovalManager,
-    options: SagaCoordinatorOptions
+    options: SagaCoordinatorOptions,
   ) {
     this.graph = graphValue;
     this.compensation =
@@ -135,9 +139,7 @@ export class SagaCoordinator {
       }
       const node = this.graph.requireNode(currentId);
       this.nodeStates.set(currentId, 'running');
-      await this.appendEvent(
-        this.eventFor('step.started', { nodeId: currentId, name: node.name })
-      );
+      await this.appendEvent(this.eventFor('step.started', { nodeId: currentId, name: node.name }));
       await this.persist();
 
       try {
@@ -184,7 +186,7 @@ export class SagaCoordinator {
         const result = await this.runWithTimeout(
           () => node.fn(this.ctx),
           timeoutMs,
-          this.cancelController.signal
+          this.cancelController.signal,
         );
         this.results.set(node.id, result);
         this.ctx.results.set(node.name, result);
@@ -194,14 +196,13 @@ export class SagaCoordinator {
             nodeId: node.id,
             attempt,
             hasResult: result !== undefined,
-          })
+          }),
         );
         return;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         if (attempt >= policy.maxAttempts) break;
-        const retryable =
-          policy.retryOn === undefined || policy.retryOn(lastError);
+        const retryable = policy.retryOn === undefined || policy.retryOn(lastError);
         if (!retryable) break;
         const delay = this.computeBackoff(policy, attempt);
         await this.appendEvent(
@@ -209,7 +210,7 @@ export class SagaCoordinator {
             nodeId: node.id,
             attempt,
             delayMs: delay,
-          })
+          }),
         );
         await this.sleep(delay);
       }
@@ -248,7 +249,7 @@ export class SagaCoordinator {
           deadLetter: undefined,
           clock: this.clock,
           idGenerator: this.idGenerator,
-        }
+        },
       );
       promises.push(child.run().then(() => undefined));
     }
@@ -269,7 +270,7 @@ export class SagaCoordinator {
             }
             settled++;
             if (settled === promises.length) resolve();
-          }
+          },
         );
       }
     });
@@ -299,23 +300,17 @@ export class SagaCoordinator {
         deadLetter: undefined,
         clock: this.clock,
         idGenerator: this.idGenerator,
-      }
+      },
     );
     const result = await child.run();
     if (result.status === 'aborted') {
-      throw new SagaNodeError(
-        node.id,
-        node.name,
-        new Error(result.error ?? 'Nested saga aborted')
-      );
+      throw new SagaNodeError(node.id, node.name, new Error(result.error ?? 'Nested saga aborted'));
     }
   }
 
   private async executeApproval(node: SagaApprovalNode): Promise<void> {
     this.nodeStates.set(node.id, 'paused');
-    await this.appendEvent(
-      this.eventFor('pause', { nodeId: node.id, approver: node.approver })
-    );
+    await this.appendEvent(this.eventFor('pause', { nodeId: node.id, approver: node.approver }));
     await this.approvalMgr.request({
       runId: this.ctx.runId,
       nodeId: node.id,
@@ -333,21 +328,13 @@ export class SagaCoordinator {
 
     const signal = this.combineSignals(
       this.cancelController.signal,
-      node.timeoutMs
-        ? AbortSignal.timeout(node.timeoutMs)
-        : undefined
+      node.timeoutMs ? AbortSignal.timeout(node.timeoutMs) : undefined,
     );
-    const result = await this.approvalMgr.waitForDecision(
-      this.ctx.runId,
-      node.id,
-      { signal }
-    );
+    const result = await this.approvalMgr.waitForDecision(this.ctx.runId, node.id, { signal });
 
     if (result.decision === 'approve') {
       this.nodeStates.set(node.id, 'completed');
-      await this.appendEvent(
-        this.eventFor('resume', { nodeId: node.id, decision: 'approve' })
-      );
+      await this.appendEvent(this.eventFor('resume', { nodeId: node.id, decision: 'approve' }));
       return;
     }
     if (node.onTimeout === 'fail' && signal.aborted) {
@@ -355,15 +342,10 @@ export class SagaCoordinator {
       throw new Error(`Approval timed out for ${node.approver}`);
     }
     this.nodeStates.set(node.id, 'failed');
-    throw new Error(
-      `Approval rejected by ${result.decidedBy}: ${result.reason ?? 'no reason'}`
-    );
+    throw new Error(`Approval rejected by ${result.decidedBy}: ${result.reason ?? 'no reason'}`);
   }
 
-  private async handleFailure(
-    err: unknown,
-    options: SagaRunOptions
-  ): Promise<SagaResult> {
+  private async handleFailure(err: unknown, options: SagaRunOptions): Promise<SagaResult> {
     const sagaError =
       err instanceof SagaNodeError
         ? err
@@ -373,27 +355,24 @@ export class SagaCoordinator {
     this.error = sagaError.message;
     this.sagaState = 'ABORTED';
     await this.appendEvent(
-      this.eventFor('abort', { nodeId: sagaError.nodeId, error: sagaError.message })
+      this.eventFor('abort', { nodeId: sagaError.nodeId, error: sagaError.message }),
     );
 
     const compensablePath = this.collectCompensablePath(sagaError.nodeId);
-    const result = await this.compensation.compensate(
-      compensablePath,
-      this.ctx
-    );
+    const result = await this.compensation.compensate(compensablePath, this.ctx);
     if (result.failed.length > 0) {
       await this.appendEvent(
         this.eventFor('compensate.done', {
           compensated: result.compensated,
           failed: result.failed.map((f) => f.nodeId),
-        })
+        }),
       );
     } else {
       await this.appendEvent(
         this.eventFor('compensate.done', {
           compensated: result.compensated,
           failed: [],
-        })
+        }),
       );
     }
     await this.persist();
@@ -429,10 +408,7 @@ export class SagaCoordinator {
     return steps;
   }
 
-  private makeResult(
-    status: 'committed' | 'aborted',
-    options: SagaRunOptions
-  ): SagaResult {
+  private makeResult(status: 'committed' | 'aborted', options: SagaRunOptions): SagaResult {
     const results: Record<string, unknown> = {};
     if (options.includeResults !== false) {
       for (const [id, value] of this.results) {
@@ -498,7 +474,7 @@ export class SagaCoordinator {
   private async runWithTimeout<T>(
     fn: () => Promise<T>,
     ms: number,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -524,15 +500,12 @@ export class SagaCoordinator {
           clearTimeout(timer);
           signal.removeEventListener('abort', onAbort);
           reject(err);
-        }
+        },
       );
     });
   }
 
-  private computeBackoff(
-    policy: import('./types').RetryPolicy,
-    attempt: number
-  ): number {
+  private computeBackoff(policy: import('./types').RetryPolicy, attempt: number): number {
     const base =
       policy.backoff === 'fixed'
         ? policy.initialDelayMs
@@ -549,10 +522,7 @@ export class SagaCoordinator {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private combineSignals(
-    a: AbortSignal,
-    b?: AbortSignal
-  ): AbortSignal {
+  private combineSignals(a: AbortSignal, b?: AbortSignal): AbortSignal {
     if (!b) return a;
     const ctrl = new AbortController();
     const onAbort = () => ctrl.abort();
@@ -574,7 +544,7 @@ export class SagaNodeError extends Error {
   constructor(
     public readonly nodeId: string,
     public readonly nodeName: string,
-    public readonly cause: Error
+    public readonly cause: Error,
   ) {
     super(`Saga node ${nodeName} (${nodeId}) failed: ${cause.message}`);
     this.name = 'SagaNodeError';
@@ -593,7 +563,7 @@ export async function runSaga(
   context: SagaContext,
   checkpoint: CheckpointManager,
   approval: ApprovalManager,
-  options?: Partial<SagaCoordinatorOptions>
+  options?: Partial<SagaCoordinatorOptions>,
 ): Promise<SagaResult> {
   const eg = new ExecutionGraph(graph);
   const coord = new SagaCoordinator(eg, context, checkpoint, approval, {
@@ -616,7 +586,7 @@ export function startSaga(
   context: SagaContext,
   checkpoint: CheckpointManager,
   approval: ApprovalManager,
-  options?: Partial<SagaCoordinatorOptions>
+  options?: Partial<SagaCoordinatorOptions>,
 ): RunningSaga {
   const eg = new ExecutionGraph(graph);
   const coord = new SagaCoordinator(eg, context, checkpoint, approval, {
@@ -632,10 +602,7 @@ export function startSaga(
   };
 }
 
-export function attachSagaHandle(
-  runId: string,
-  coord: SagaCoordinator
-): SagaRunHandle {
+export function attachSagaHandle(runId: string, coord: SagaCoordinator): SagaRunHandle {
   return {
     runId,
     state: coord.state,

@@ -47,11 +47,7 @@ export class FailureCorrelationTracker {
     return `${normalized.length}:${normalized}`;
   }
 
-  record(
-    runId: string,
-    messages: LLMMessage[],
-    failureSignal?: string,
-  ): void {
+  record(runId: string, messages: LLMMessage[], failureSignal?: string): void {
     const fingerprints = new Set<string>();
     for (const msg of messages) {
       const content = typeof msg.content === 'string' ? msg.content : '';
@@ -125,20 +121,20 @@ export type CollapseVerbosity = 'detail' | 'balanced' | 'aggressive';
 
 export interface CompactConfig {
   maxContextTokens: number;
-  layer1Trigger: number;  // % full to trigger layer 1 (default: 0.60)
-  layer2Trigger: number;  // % full to trigger layer 2 (default: 0.70)
-  layer3Trigger: number;  // % full to trigger layer 3 (default: 0.82)
-  layer4Trigger: number;  // % full to trigger layer 4 (default: 0.92)
-  keepRecentTurns: number;  // turns to preserve in layers 1-3
-  maxToolOutputChars: number;  // max chars per tool output after microcompact
+  layer1Trigger: number; // % full to trigger layer 1 (default: 0.60)
+  layer2Trigger: number; // % full to trigger layer 2 (default: 0.70)
+  layer3Trigger: number; // % full to trigger layer 3 (default: 0.82)
+  layer4Trigger: number; // % full to trigger layer 4 (default: 0.92)
+  keepRecentTurns: number; // turns to preserve in layers 1-3
+  maxToolOutputChars: number; // max chars per tool output after microcompact
   /** Enable governor-aware threshold adjustment (default: true) */
   governorAware: boolean;
 }
 
 const DEFAULT_CONFIG: CompactConfig = {
   maxContextTokens: 128000,
-  layer1Trigger: 0.60,
-  layer2Trigger: 0.70,
+  layer1Trigger: 0.6,
+  layer2Trigger: 0.7,
   layer3Trigger: 0.82,
   layer4Trigger: 0.92,
   keepRecentTurns: 3,
@@ -186,10 +182,16 @@ export interface AdaptiveProfile {
 }
 
 const DEFAULT_PROFILE: AdaptiveProfile = {
-  layerTriggers: { layer1: 0.60, layer2: 0.70, layer3: 0.82, layer4: 0.92 },
+  layerTriggers: { layer1: 0.6, layer2: 0.7, layer3: 0.82, layer4: 0.92 },
   keepRecentTurns: 3,
   maxToolOutputChars: 500,
-  importanceConfig: { errorBonus: 0.4, decisionBonus: 0.3, userInstructionBonus: 0.3, recencyBonus: 0.2, compactedPenalty: -0.2 },
+  importanceConfig: {
+    errorBonus: 0.4,
+    decisionBonus: 0.3,
+    userInstructionBonus: 0.3,
+    recencyBonus: 0.2,
+    compactedPenalty: -0.2,
+  },
   collapseVerbosity: 'balanced',
 };
 
@@ -199,7 +201,13 @@ const ADAPTIVE_PROFILES: Record<CompactTaskType, AdaptiveProfile> = {
     layerTriggers: { layer1: 0.63, layer2: 0.73, layer3: 0.85, layer4: 0.94 },
     keepRecentTurns: 4,
     maxToolOutputChars: 800,
-    importanceConfig: { errorBonus: 0.5, decisionBonus: 0.3, userInstructionBonus: 0.4, recencyBonus: 0.15, compactedPenalty: -0.2 },
+    importanceConfig: {
+      errorBonus: 0.5,
+      decisionBonus: 0.3,
+      userInstructionBonus: 0.4,
+      recencyBonus: 0.15,
+      compactedPenalty: -0.2,
+    },
     collapseVerbosity: 'detail',
   },
   search: {
@@ -207,15 +215,27 @@ const ADAPTIVE_PROFILES: Record<CompactTaskType, AdaptiveProfile> = {
     layerTriggers: { layer1: 0.55, layer2: 0.65, layer3: 0.78, layer4: 0.88 },
     keepRecentTurns: 2,
     maxToolOutputChars: 300,
-    importanceConfig: { errorBonus: 0.3, decisionBonus: 0.2, userInstructionBonus: 0.2, recencyBonus: 0.3, compactedPenalty: -0.2 },
+    importanceConfig: {
+      errorBonus: 0.3,
+      decisionBonus: 0.2,
+      userInstructionBonus: 0.2,
+      recencyBonus: 0.3,
+      compactedPenalty: -0.2,
+    },
     collapseVerbosity: 'aggressive',
   },
   analysis: {
     // Default thresholds — analysis needs balanced context
-    layerTriggers: { layer1: 0.60, layer2: 0.70, layer3: 0.82, layer4: 0.92 },
+    layerTriggers: { layer1: 0.6, layer2: 0.7, layer3: 0.82, layer4: 0.92 },
     keepRecentTurns: 3,
     maxToolOutputChars: 500,
-    importanceConfig: { errorBonus: 0.4, decisionBonus: 0.4, userInstructionBonus: 0.3, recencyBonus: 0.2, compactedPenalty: -0.2 },
+    importanceConfig: {
+      errorBonus: 0.4,
+      decisionBonus: 0.4,
+      userInstructionBonus: 0.3,
+      recencyBonus: 0.2,
+      compactedPenalty: -0.2,
+    },
     collapseVerbosity: 'balanced',
   },
   structured: {
@@ -223,15 +243,27 @@ const ADAPTIVE_PROFILES: Record<CompactTaskType, AdaptiveProfile> = {
     layerTriggers: { layer1: 0.55, layer2: 0.65, layer3: 0.78, layer4: 0.88 },
     keepRecentTurns: 2,
     maxToolOutputChars: 400,
-    importanceConfig: { errorBonus: 0.3, decisionBonus: 0.2, userInstructionBonus: 0.3, recencyBonus: 0.3, compactedPenalty: -0.2 },
+    importanceConfig: {
+      errorBonus: 0.3,
+      decisionBonus: 0.2,
+      userInstructionBonus: 0.3,
+      recencyBonus: 0.3,
+      compactedPenalty: -0.2,
+    },
     collapseVerbosity: 'aggressive',
   },
   general: {
     // Default profile
-    layerTriggers: { layer1: 0.60, layer2: 0.70, layer3: 0.82, layer4: 0.92 },
+    layerTriggers: { layer1: 0.6, layer2: 0.7, layer3: 0.82, layer4: 0.92 },
     keepRecentTurns: 3,
     maxToolOutputChars: 500,
-    importanceConfig: { errorBonus: 0.4, decisionBonus: 0.3, userInstructionBonus: 0.3, recencyBonus: 0.2, compactedPenalty: -0.2 },
+    importanceConfig: {
+      errorBonus: 0.4,
+      decisionBonus: 0.3,
+      userInstructionBonus: 0.3,
+      recencyBonus: 0.2,
+      compactedPenalty: -0.2,
+    },
     collapseVerbosity: 'balanced',
   },
 };
@@ -243,7 +275,8 @@ const ADAPTIVE_PROFILES: Record<CompactTaskType, AdaptiveProfile> = {
 const RE_QUESTION_INSTRUCTION = /\?|please|do|write|create|fix|implement|analyze/i;
 const RE_DECISION_PATTERN = /I will|I'll|going to|plan to|the answer|in conclusion|therefore/i;
 const RE_ERROR_CONTENT = /error|fail|exception|cannot|unable/i;
-const RE_ERROR_MULTILINE = /(?:^|\n)\s*(?:error|Error|ERROR|fail|Fail|FAIL|exception|Exception|traceback|Traceback|cannot|Cannot|unable|Unable)/m;
+const RE_ERROR_MULTILINE =
+  /(?:^|\n)\s*(?:error|Error|ERROR|fail|Fail|FAIL|exception|Exception|traceback|Traceback|cannot|Cannot|unable|Unable)/m;
 const RE_HAS_DIGIT = /\d/;
 const RE_FINDING_KEYWORDS = /result|found|output|answer|total|sum|count/i;
 const RE_ERROR_LINE = /^(error|warning|fail|exception|traceback|cannot|unable)/i;
@@ -264,7 +297,7 @@ const RE_INJECTION_PATTERNS = [
 ];
 
 function containsInjectionPattern(content: string): boolean {
-  return RE_INJECTION_PATTERNS.some(p => p.test(content));
+  return RE_INJECTION_PATTERNS.some((p) => p.test(content));
 }
 
 function redactUnsafeToolContent(content: string): string | null {
@@ -328,7 +361,9 @@ function estimateCostWeightedTokens(messages: LLMMessage[]): number {
     total += tokens * weight;
     if (msg.tool_calls) {
       for (const tc of msg.tool_calls) {
-        total += (estimateTokens(tc.function.name) + estimateTokens(tc.function.arguments)) * OUTPUT_WEIGHT;
+        total +=
+          (estimateTokens(tc.function.name) + estimateTokens(tc.function.arguments)) *
+          OUTPUT_WEIGHT;
       }
     }
     if (msg.reasoning_content) {
@@ -349,7 +384,8 @@ function estimateMessageCostImpact(msg: LLMMessage): number {
   let total = tokens * weight;
   if (msg.tool_calls) {
     for (const tc of msg.tool_calls) {
-      total += (estimateTokens(tc.function.name) + estimateTokens(tc.function.arguments)) * OUTPUT_WEIGHT;
+      total +=
+        (estimateTokens(tc.function.name) + estimateTokens(tc.function.arguments)) * OUTPUT_WEIGHT;
     }
   }
   if (msg.reasoning_content) {
@@ -462,7 +498,8 @@ function analyzeComposition(messages: LLMMessage[]): CompositionScore {
 
   for (const msg of messages) {
     if (msg.role === 'tool') toolMessages++;
-    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) assistantWithTools++;
+    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0)
+      assistantWithTools++;
     const content = typeof msg.content === 'string' ? msg.content : '';
     if (RE_ERROR_MULTILINE.test(content)) {
       errorMessages++;
@@ -478,7 +515,10 @@ function analyzeComposition(messages: LLMMessage[]): CompositionScore {
   };
 }
 
-function adjustProfileByComposition(profile: AdaptiveProfile, composition: CompositionScore): AdaptiveProfile {
+function adjustProfileByComposition(
+  profile: AdaptiveProfile,
+  composition: CompositionScore,
+): AdaptiveProfile {
   const adjusted: AdaptiveProfile = {
     layerTriggers: { ...profile.layerTriggers },
     keepRecentTurns: profile.keepRecentTurns,
@@ -491,7 +531,10 @@ function adjustProfileByComposition(profile: AdaptiveProfile, composition: Compo
     adjusted.keepRecentTurns = Math.max(adjusted.keepRecentTurns, 4);
   }
   if (composition.errorDensity > 0.2) {
-    adjusted.importanceConfig.errorBonus = Math.min(0.8, adjusted.importanceConfig.errorBonus + 0.2);
+    adjusted.importanceConfig.errorBonus = Math.min(
+      0.8,
+      adjusted.importanceConfig.errorBonus + 0.2,
+    );
     adjusted.keepRecentTurns = Math.max(adjusted.keepRecentTurns, 3);
   }
   if (composition.codeBlockRatio > 0.3) {
@@ -576,7 +619,11 @@ export class ContextCompactor {
     return this.lastWasEmergency && this.compactionCount >= 2;
   }
 
-  compact(messages: LLMMessage[], provider?: LLMProvider, taskType?: CompactTaskType): { messages: LLMMessage[]; action: CompactAction } {
+  compact(
+    messages: LLMMessage[],
+    provider?: LLMProvider,
+    taskType?: CompactTaskType,
+  ): { messages: LLMMessage[]; action: CompactAction } {
     // Provider-aware context limit adjustment (research: Anthropic 200k, OpenAI 128k, smaller 32k)
     if (provider && this.config.maxContextTokens === DEFAULT_CONFIG.maxContextTokens) {
       const providerLimit = this.getProviderContextLimit(provider);
@@ -587,7 +634,16 @@ export class ContextCompactor {
 
     const layer = this.needsCompaction(messages, taskType);
     if (!layer) {
-      return { messages, action: { layer: 1, droppedCount: 0, tokensSaved: 0, description: 'No compaction needed', taskTypeApplied: taskType ?? null } };
+      return {
+        messages,
+        action: {
+          layer: 1,
+          droppedCount: 0,
+          tokensSaved: 0,
+          description: 'No compaction needed',
+          taskTypeApplied: taskType ?? null,
+        },
+      };
     }
 
     const profile = this.getEffectiveProfile(taskType, messages);
@@ -596,10 +652,18 @@ export class ContextCompactor {
     let result: { messages: LLMMessage[]; action: CompactAction };
 
     switch (layer) {
-      case 1: result = this.layer1Snip(messages, profile); break;
-      case 2: result = this.layer2Microcompact(messages, profile); break;
-      case 3: result = this.layer3Collapse(messages, provider, profile); break;
-      case 4: result = this.layer4Autocompact(messages, provider, profile); break;
+      case 1:
+        result = this.layer1Snip(messages, profile);
+        break;
+      case 2:
+        result = this.layer2Microcompact(messages, profile);
+        break;
+      case 3:
+        result = this.layer3Collapse(messages, provider, profile);
+        break;
+      case 4:
+        result = this.layer4Autocompact(messages, provider, profile);
+        break;
       case 5: {
         // Layer 5 is a marker — actual rebuild happens externally via rebuild()
         getGlobalLogger().info('ContextCompactor', 'Layer 5 rebuild recommended', {
@@ -616,7 +680,17 @@ export class ContextCompactor {
           },
         };
       }
-      default: return { messages, action: { layer: 1, droppedCount: 0, tokensSaved: 0, description: 'No compaction needed', taskTypeApplied: null } };
+      default:
+        return {
+          messages,
+          action: {
+            layer: 1,
+            droppedCount: 0,
+            tokensSaved: 0,
+            description: 'No compaction needed',
+            taskTypeApplied: null,
+          },
+        };
     }
 
     // Track emergency state for rebuild triggering
@@ -670,7 +744,7 @@ export class ContextCompactor {
         summary: result.description,
         description: result.description,
         rebuildResult: {
-          sections: result.sections.map(s => ({ name: s.name, cap: s.cap, used: s.used })),
+          sections: result.sections.map((s) => ({ name: s.name, cap: s.cap, used: s.used })),
           rebuildCount: 1,
           totalTokens: result.totalTokens,
         },
@@ -699,7 +773,11 @@ export class ContextCompactor {
    * - LLMLingua (Microsoft, 2023): prompt compression reduces tokens 2-5x with <5% quality loss
    * - Cost tradeoff: summarization costs ~500-1000 tokens but saves 5000-20000 tokens (8-20x ROI)
    */
-  async compactAsync(messages: LLMMessage[], provider?: LLMProvider, taskType?: CompactTaskType): Promise<{ messages: LLMMessage[]; action: CompactAction }> {
+  async compactAsync(
+    messages: LLMMessage[],
+    provider?: LLMProvider,
+    taskType?: CompactTaskType,
+  ): Promise<{ messages: LLMMessage[]; action: CompactAction }> {
     // Provider-aware context limit adjustment
     if (provider && this.config.maxContextTokens === DEFAULT_CONFIG.maxContextTokens) {
       const providerLimit = this.getProviderContextLimit(provider);
@@ -710,17 +788,40 @@ export class ContextCompactor {
 
     const layer = this.needsCompaction(messages, taskType);
     if (!layer) {
-      return { messages, action: { layer: 1, droppedCount: 0, tokensSaved: 0, description: 'No compaction needed', taskTypeApplied: taskType ?? null } };
+      return {
+        messages,
+        action: {
+          layer: 1,
+          droppedCount: 0,
+          tokensSaved: 0,
+          description: 'No compaction needed',
+          taskTypeApplied: taskType ?? null,
+        },
+      };
     }
 
     const profile = this.getEffectiveProfile(taskType, messages);
 
     switch (layer) {
-      case 1: return this.layer1Snip(messages, profile);
-      case 2: return this.layer2Microcompact(messages, profile);
-      case 3: return this.layer3CollapseAsync(messages, provider, profile);
-      case 4: return this.layer3CollapseAsync(messages, provider, profile); // Layer 4 also uses LLM summarization
-      default: return { messages, action: { layer: 1, droppedCount: 0, tokensSaved: 0, description: 'No compaction needed', taskTypeApplied: null } };
+      case 1:
+        return this.layer1Snip(messages, profile);
+      case 2:
+        return this.layer2Microcompact(messages, profile);
+      case 3:
+        return this.layer3CollapseAsync(messages, provider, profile);
+      case 4:
+        return this.layer3CollapseAsync(messages, provider, profile); // Layer 4 also uses LLM summarization
+      default:
+        return {
+          messages,
+          action: {
+            layer: 1,
+            droppedCount: 0,
+            tokensSaved: 0,
+            description: 'No compaction needed',
+            taskTypeApplied: null,
+          },
+        };
     }
   }
 
@@ -743,13 +844,24 @@ export class ContextCompactor {
 
     const layer = this.needsCompaction(messages, taskType);
     if (!layer) {
-      return { messages, action: { layer: 1, droppedCount: 0, tokensSaved: 0, description: 'No compaction needed', taskTypeApplied: taskType ?? null } };
+      return {
+        messages,
+        action: {
+          layer: 1,
+          droppedCount: 0,
+          tokensSaved: 0,
+          description: 'No compaction needed',
+          taskTypeApplied: taskType ?? null,
+        },
+      };
     }
 
     const profile = this.getEffectiveProfile(taskType, messages);
 
     if (layer <= 2) {
-      return layer === 1 ? this.layer1Snip(messages, profile) : this.layer2Microcompact(messages, profile);
+      return layer === 1
+        ? this.layer1Snip(messages, profile)
+        : this.layer2Microcompact(messages, profile);
     }
 
     return this.layerWithWorkerOffload(messages, workerPool, provider, profile, layer);
@@ -767,7 +879,10 @@ export class ContextCompactor {
     let current: LLMMessage[] = [];
 
     for (const msg of messages) {
-      if (msg.role === 'system') { system.push(msg); continue; }
+      if (msg.role === 'system') {
+        system.push(msg);
+        continue;
+      }
       if (msg.role === 'user' && current.length > 0) {
         turns.push(current);
         current = [msg];
@@ -779,7 +894,15 @@ export class ContextCompactor {
 
     const keep = Math.max(1, profile.keepRecentTurns);
     if (turns.length <= keep + 1) {
-      return { messages, action: { layer, droppedCount: 0, tokensSaved: 0, description: `Layer ${layer}: not enough turns` } };
+      return {
+        messages,
+        action: {
+          layer,
+          droppedCount: 0,
+          tokensSaved: 0,
+          description: `Layer ${layer}: not enough turns`,
+        },
+      };
     }
 
     const collapseTargets = turns.slice(0, turns.length - keep);
@@ -792,7 +915,9 @@ export class ContextCompactor {
 
     const summaryMsg: LLMMessage = {
       role: 'system',
-      content: markCompacted(`[Compacted summary of ${collapseTargets.length} earlier turns:\n${summary}]`),
+      content: markCompacted(
+        `[Compacted summary of ${collapseTargets.length} earlier turns:\n${summary}]`,
+      ),
     };
 
     const before = estimateMessagesTokens(messages);
@@ -809,7 +934,10 @@ export class ContextCompactor {
         summary,
         description: `Layer ${layer} collapse: compressed ${collapseTargets.length} turns into summary (worker-offloaded)`,
         taskTypeApplied: null,
-        compositionApplied: { toolDensity: composition.toolDensity, errorDensity: composition.errorDensity },
+        compositionApplied: {
+          toolDensity: composition.toolDensity,
+          errorDensity: composition.errorDensity,
+        },
       },
     };
   }
@@ -821,23 +949,31 @@ export class ContextCompactor {
   ): Promise<LLMMessage[]> {
     const allMsgs = turns.flat();
     const fingerprints = this.failureTracker
-      ? [...this.failureTracker.getRunRecord('current')?.messageFingerprints ?? []]
+      ? [...(this.failureTracker.getRunRecord('current')?.messageFingerprints ?? [])]
       : [];
 
     const workerResult = await workerPool.execute<
-      { messages: Array<{ role: string; content: string; tool_calls?: unknown[] }>; importanceConfig: typeof profile.importanceConfig; failureFingerprints: string[] },
+      {
+        messages: Array<{ role: string; content: string; tool_calls?: unknown[] }>;
+        importanceConfig: typeof profile.importanceConfig;
+        failureFingerprints: string[];
+      },
       Array<{ index: number; importance: number }>
     >('compact_score_messages', {
-      messages: allMsgs.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '', tool_calls: m.tool_calls })),
+      messages: allMsgs.map((m) => ({
+        role: m.role,
+        content: typeof m.content === 'string' ? m.content : '',
+        tool_calls: m.tool_calls,
+      })),
       importanceConfig: profile.importanceConfig,
       failureFingerprints: fingerprints,
     });
 
     return workerResult
-      .filter(s => s.importance > 0.6 && !isCompacted(allMsgs[s.index]))
+      .filter((s) => s.importance > 0.6 && !isCompacted(allMsgs[s.index]))
       .sort((a, b) => b.importance - a.importance)
       .slice(0, 5)
-      .map(s => allMsgs[s.index]);
+      .map((s) => allMsgs[s.index]);
   }
 
   private async buildSummaryWorker(
@@ -854,14 +990,19 @@ export class ContextCompactor {
     }
 
     return workerPool.execute<
-      { turns: Array<Array<{ role: string; content: string; tool_calls?: unknown[] }>>; verbosity: string },
+      {
+        turns: Array<Array<{ role: string; content: string; tool_calls?: unknown[] }>>;
+        verbosity: string;
+      },
       string
     >('compact_build_summary', {
-      turns: turns.map(t => t.map(m => ({
-        role: m.role,
-        content: typeof m.content === 'string' ? m.content : '',
-        tool_calls: m.tool_calls,
-      }))),
+      turns: turns.map((t) =>
+        t.map((m) => ({
+          role: m.role,
+          content: typeof m.content === 'string' ? m.content : '',
+          tool_calls: m.tool_calls,
+        })),
+      ),
       verbosity: profile.collapseVerbosity,
     });
   }
@@ -878,18 +1019,24 @@ export class ContextCompactor {
     }
     // Constructor config overrides take priority over adaptive profile.
     // Only overrides when value differs from DEFAULT_CONFIG (i.e., user explicitly set it).
-    if (this.config.layer1Trigger !== DEFAULT_CONFIG.layer1Trigger) profile.layerTriggers.layer1 = this.config.layer1Trigger;
-    if (this.config.layer2Trigger !== DEFAULT_CONFIG.layer2Trigger) profile.layerTriggers.layer2 = this.config.layer2Trigger;
-    if (this.config.layer3Trigger !== DEFAULT_CONFIG.layer3Trigger) profile.layerTriggers.layer3 = this.config.layer3Trigger;
-    if (this.config.layer4Trigger !== DEFAULT_CONFIG.layer4Trigger) profile.layerTriggers.layer4 = this.config.layer4Trigger;
-    if (this.config.keepRecentTurns !== DEFAULT_CONFIG.keepRecentTurns) profile.keepRecentTurns = this.config.keepRecentTurns;
-    if (this.config.maxToolOutputChars !== DEFAULT_CONFIG.maxToolOutputChars) profile.maxToolOutputChars = this.config.maxToolOutputChars;
+    if (this.config.layer1Trigger !== DEFAULT_CONFIG.layer1Trigger)
+      profile.layerTriggers.layer1 = this.config.layer1Trigger;
+    if (this.config.layer2Trigger !== DEFAULT_CONFIG.layer2Trigger)
+      profile.layerTriggers.layer2 = this.config.layer2Trigger;
+    if (this.config.layer3Trigger !== DEFAULT_CONFIG.layer3Trigger)
+      profile.layerTriggers.layer3 = this.config.layer3Trigger;
+    if (this.config.layer4Trigger !== DEFAULT_CONFIG.layer4Trigger)
+      profile.layerTriggers.layer4 = this.config.layer4Trigger;
+    if (this.config.keepRecentTurns !== DEFAULT_CONFIG.keepRecentTurns)
+      profile.keepRecentTurns = this.config.keepRecentTurns;
+    if (this.config.maxToolOutputChars !== DEFAULT_CONFIG.maxToolOutputChars)
+      profile.maxToolOutputChars = this.config.maxToolOutputChars;
     return profile;
   }
 
   /** Public for testing */
   getCurrentTaskTypeProfile(taskType: CompactTaskType): AdaptiveProfile {
-    return { ...ADAPTIVE_PROFILES[taskType] ?? DEFAULT_PROFILE };
+    return { ...(ADAPTIVE_PROFILES[taskType] ?? DEFAULT_PROFILE) };
   }
 
   /**
@@ -907,10 +1054,12 @@ export class ContextCompactor {
   private getProviderContextLimit(provider: LLMProvider): number {
     // Use explicit limit from provider if available (some providers expose this)
     const p = provider as unknown as Record<string, unknown>;
-    if (p.maxContextTokens && typeof p.maxContextTokens === 'number') return p.maxContextTokens as number;
+    if (p.maxContextTokens && typeof p.maxContextTokens === 'number')
+      return p.maxContextTokens as number;
     // Infer from model ID if available
     const model = (p.modelId as string)?.toLowerCase?.() ?? '';
-    if (model.includes('opus') || model.includes('sonnet') || model.includes('claude')) return 200000;
+    if (model.includes('opus') || model.includes('sonnet') || model.includes('claude'))
+      return 200000;
     if (model.includes('gpt-5') || model.includes('gpt-4')) return 128000;
     if (model.includes('gemini')) return 1000000;
     if (model.includes('haiku')) return 200000;
@@ -918,13 +1067,19 @@ export class ContextCompactor {
   }
 
   // Layer 1: Remove oldest turn-pairs, keeping recent turns
-  private layer1Snip(messages: LLMMessage[], profile: AdaptiveProfile): { messages: LLMMessage[]; action: CompactAction } {
+  private layer1Snip(
+    messages: LLMMessage[],
+    profile: AdaptiveProfile,
+  ): { messages: LLMMessage[]; action: CompactAction } {
     const system: LLMMessage[] = [];
     const pairs: LLMMessage[][] = [];
     let current: LLMMessage[] = [];
 
     for (const msg of messages) {
-      if (msg.role === 'system') { system.push(msg); continue; }
+      if (msg.role === 'system') {
+        system.push(msg);
+        continue;
+      }
       if (msg.role === 'user' && current.length > 0) {
         pairs.push(current);
         current = [msg];
@@ -946,18 +1101,31 @@ export class ContextCompactor {
 
     return {
       messages: result,
-      action: { layer: 1, droppedCount: dropped, tokensSaved: before - after, description: `Layer 1 snip: removed ${dropped} oldest turn(s)`, taskTypeApplied: null, compositionApplied: { toolDensity: composition.toolDensity, errorDensity: composition.errorDensity } },
+      action: {
+        layer: 1,
+        droppedCount: dropped,
+        tokensSaved: before - after,
+        description: `Layer 1 snip: removed ${dropped} oldest turn(s)`,
+        taskTypeApplied: null,
+        compositionApplied: {
+          toolDensity: composition.toolDensity,
+          errorDensity: composition.errorDensity,
+        },
+      },
     };
   }
 
   // Layer 2: Trim verbose tool outputs with intelligent preservation
-  private layer2Microcompact(messages: LLMMessage[], profile: AdaptiveProfile): { messages: LLMMessage[]; action: CompactAction } {
+  private layer2Microcompact(
+    messages: LLMMessage[],
+    profile: AdaptiveProfile,
+  ): { messages: LLMMessage[]; action: CompactAction } {
     const before = estimateMessagesTokens(messages);
     let trimmedCount = 0;
     let redactedCount = 0;
 
     const maxChars = profile.maxToolOutputChars;
-    const result = messages.map(msg => {
+    const result = messages.map((msg) => {
       if (msg.role === 'tool' && msg.content.length > maxChars) {
         // Security-first: redact unsafe tool content instead of normal truncation.
         const redacted = redactUnsafeToolContent(msg.content);
@@ -977,19 +1145,36 @@ export class ContextCompactor {
 
     return {
       messages: result,
-      action: { layer: 2, droppedCount: trimmedCount + redactedCount, tokensSaved: before - after, description: `Layer 2 microcompact: trimmed ${trimmedCount} tool outputs, redacted ${redactedCount} unsafe outputs`, taskTypeApplied: null, compositionApplied: { toolDensity: composition.toolDensity, errorDensity: composition.errorDensity } },
+      action: {
+        layer: 2,
+        droppedCount: trimmedCount + redactedCount,
+        tokensSaved: before - after,
+        description: `Layer 2 microcompact: trimmed ${trimmedCount} tool outputs, redacted ${redactedCount} unsafe outputs`,
+        taskTypeApplied: null,
+        compositionApplied: {
+          toolDensity: composition.toolDensity,
+          errorDensity: composition.errorDensity,
+        },
+      },
     };
   }
 
   // Layer 3: Collapse middle turns into summary, preserving important messages
   // Uses LLM summarization when provider is available for higher-quality compression
-  private async layer3CollapseAsync(messages: LLMMessage[], provider: LLMProvider | undefined, profile: AdaptiveProfile): Promise<{ messages: LLMMessage[]; action: CompactAction }> {
+  private async layer3CollapseAsync(
+    messages: LLMMessage[],
+    provider: LLMProvider | undefined,
+    profile: AdaptiveProfile,
+  ): Promise<{ messages: LLMMessage[]; action: CompactAction }> {
     const system: LLMMessage[] = [];
     const turns: LLMMessage[][] = [];
     let current: LLMMessage[] = [];
 
     for (const msg of messages) {
-      if (msg.role === 'system') { system.push(msg); continue; }
+      if (msg.role === 'system') {
+        system.push(msg);
+        continue;
+      }
       if (msg.role === 'user' && current.length > 0) {
         turns.push(current);
         current = [msg];
@@ -1001,7 +1186,15 @@ export class ContextCompactor {
 
     const keep = Math.max(1, profile.keepRecentTurns);
     if (turns.length <= keep + 1) {
-      return { messages, action: { layer: 3, droppedCount: 0, tokensSaved: 0, description: 'Layer 3 collapse: not enough turns' } };
+      return {
+        messages,
+        action: {
+          layer: 3,
+          droppedCount: 0,
+          tokensSaved: 0,
+          description: 'Layer 3 collapse: not enough turns',
+        },
+      };
     }
 
     const collapseTargets = turns.slice(0, turns.length - keep);
@@ -1030,7 +1223,9 @@ export class ContextCompactor {
 
     const summaryMsg: LLMMessage = {
       role: 'system',
-      content: markCompacted(`[Compacted summary of ${collapseTargets.length} earlier turns:\n${summary}]`),
+      content: markCompacted(
+        `[Compacted summary of ${collapseTargets.length} earlier turns:\n${summary}]`,
+      ),
     };
 
     const before = estimateMessagesTokens(messages);
@@ -1041,18 +1236,36 @@ export class ContextCompactor {
 
     return {
       messages: result,
-      action: { layer: 3, droppedCount: collapseTargets.length, tokensSaved: before - after, summary, description: `Layer 3 collapse: compressed ${collapseTargets.length} turns into summary (llm=${provider ? 'yes' : 'no'})`, taskTypeApplied: null, compositionApplied: { toolDensity: composition.toolDensity, errorDensity: composition.errorDensity } },
+      action: {
+        layer: 3,
+        droppedCount: collapseTargets.length,
+        tokensSaved: before - after,
+        summary,
+        description: `Layer 3 collapse: compressed ${collapseTargets.length} turns into summary (llm=${provider ? 'yes' : 'no'})`,
+        taskTypeApplied: null,
+        compositionApplied: {
+          toolDensity: composition.toolDensity,
+          errorDensity: composition.errorDensity,
+        },
+      },
     };
   }
 
   // Layer 3: Synchronous fallback (when async not available)
-  private layer3Collapse(messages: LLMMessage[], provider: LLMProvider | undefined, profile: AdaptiveProfile): { messages: LLMMessage[]; action: CompactAction } {
+  private layer3Collapse(
+    messages: LLMMessage[],
+    provider: LLMProvider | undefined,
+    profile: AdaptiveProfile,
+  ): { messages: LLMMessage[]; action: CompactAction } {
     const system: LLMMessage[] = [];
     const turns: LLMMessage[][] = [];
     let current: LLMMessage[] = [];
 
     for (const msg of messages) {
-      if (msg.role === 'system') { system.push(msg); continue; }
+      if (msg.role === 'system') {
+        system.push(msg);
+        continue;
+      }
       if (msg.role === 'user' && current.length > 0) {
         turns.push(current);
         current = [msg];
@@ -1064,7 +1277,15 @@ export class ContextCompactor {
 
     const keep = Math.max(1, profile.keepRecentTurns);
     if (turns.length <= keep + 1) {
-      return { messages, action: { layer: 3, droppedCount: 0, tokensSaved: 0, description: 'Layer 3 collapse: not enough turns' } };
+      return {
+        messages,
+        action: {
+          layer: 3,
+          droppedCount: 0,
+          tokensSaved: 0,
+          description: 'Layer 3 collapse: not enough turns',
+        },
+      };
     }
 
     const collapseTargets = turns.slice(0, turns.length - keep);
@@ -1076,7 +1297,9 @@ export class ContextCompactor {
     const summary = this.buildStructuredSummary(collapseTargets, provider, profile);
     const summaryMsg: LLMMessage = {
       role: 'system',
-      content: markCompacted(`[Compacted summary of ${collapseTargets.length} earlier turns:\n${summary}]`),
+      content: markCompacted(
+        `[Compacted summary of ${collapseTargets.length} earlier turns:\n${summary}]`,
+      ),
     };
 
     const before = estimateMessagesTokens(messages);
@@ -1087,26 +1310,43 @@ export class ContextCompactor {
 
     return {
       messages: result,
-      action: { layer: 3, droppedCount: collapseTargets.length, tokensSaved: before - after, summary, description: `Layer 3 collapse: compressed ${collapseTargets.length} turns into summary`, taskTypeApplied: null, compositionApplied: { toolDensity: composition.toolDensity, errorDensity: composition.errorDensity } },
+      action: {
+        layer: 3,
+        droppedCount: collapseTargets.length,
+        tokensSaved: before - after,
+        summary,
+        description: `Layer 3 collapse: compressed ${collapseTargets.length} turns into summary`,
+        taskTypeApplied: null,
+        compositionApplied: {
+          toolDensity: composition.toolDensity,
+          errorDensity: composition.errorDensity,
+        },
+      },
     };
   }
 
   // Layer 4: Emergency — keep by cost-weighted token budget, not message count
-  private layer4Autocompact(messages: LLMMessage[], provider: LLMProvider | undefined, profile: AdaptiveProfile): { messages: LLMMessage[]; action: CompactAction } {
-    const system: LLMMessage[] = messages.filter(m => m.role === 'system');
-    const nonSystem: LLMMessage[] = messages.filter(m => m.role !== 'system');
+  private layer4Autocompact(
+    messages: LLMMessage[],
+    provider: LLMProvider | undefined,
+    profile: AdaptiveProfile,
+  ): { messages: LLMMessage[]; action: CompactAction } {
+    const system: LLMMessage[] = messages.filter((m) => m.role === 'system');
+    const nonSystem: LLMMessage[] = messages.filter((m) => m.role !== 'system');
 
-    const retentionBudget = Math.floor(this.config.maxContextTokens * 0.20);
+    const retentionBudget = Math.floor(this.config.maxContextTokens * 0.2);
     const kept: LLMMessage[] = [];
     let usedCostWeightedTokens = 0;
 
-    const scored: Array<{ msg: LLMMessage; costImpact: number; index: number }> = nonSystem.map((msg, i) => ({
-      msg,
-      costImpact: this.failureTracker?.isCorrelated(msg)
-        ? Math.floor(estimateMessageCostImpact(msg) * 0.25)
-        : estimateMessageCostImpact(msg),
-      index: i,
-    }));
+    const scored: Array<{ msg: LLMMessage; costImpact: number; index: number }> = nonSystem.map(
+      (msg, i) => ({
+        msg,
+        costImpact: this.failureTracker?.isCorrelated(msg)
+          ? Math.floor(estimateMessageCostImpact(msg) * 0.25)
+          : estimateMessageCostImpact(msg),
+        index: i,
+      }),
+    );
 
     this.selectTopKByCost(scored, retentionBudget);
 
@@ -1137,7 +1377,18 @@ export class ContextCompactor {
 
     return {
       messages: result,
-      action: { layer: 4, droppedCount: nonSystem.length - kept.length, tokensSaved: before - after, summary, description: `Layer 4 autocompact: emergency, kept ${kept.length} messages by token budget`, taskTypeApplied: null, compositionApplied: { toolDensity: composition.toolDensity, errorDensity: composition.errorDensity } },
+      action: {
+        layer: 4,
+        droppedCount: nonSystem.length - kept.length,
+        tokensSaved: before - after,
+        summary,
+        description: `Layer 4 autocompact: emergency, kept ${kept.length} messages by token budget`,
+        taskTypeApplied: null,
+        compositionApplied: {
+          toolDensity: composition.toolDensity,
+          errorDensity: composition.errorDensity,
+        },
+      },
     };
   }
 
@@ -1150,17 +1401,23 @@ export class ContextCompactor {
     const scored: ScoredMessage[] = allMsgs.map((msg, i) => ({
       msg,
       index: i,
-      importance: scoreMessageImportance(msg, i, allMsgs.length, profile.importanceConfig, this.failureTracker),
+      importance: scoreMessageImportance(
+        msg,
+        i,
+        allMsgs.length,
+        profile.importanceConfig,
+        this.failureTracker,
+      ),
     }));
 
     // Keep messages with importance > 0.6 (errors, decisions, user instructions)
     // Lowered from 0.7 to preserve early user instructions that get low recency bonus
     // Cap at 5 messages to avoid blowing the budget
     return scored
-      .filter(s => s.importance > 0.6 && !isCompacted(s.msg))
+      .filter((s) => s.importance > 0.6 && !isCompacted(s.msg))
       .sort((a, b) => b.importance - a.importance)
       .slice(0, 5)
-      .map(s => s.msg);
+      .map((s) => s.msg);
   }
 
   private selectTopKByCost(
@@ -1184,7 +1441,7 @@ export class ContextCompactor {
       }
     }
 
-    const keepSet = new Set(minHeap.map(h => h.idx));
+    const keepSet = new Set(minHeap.map((h) => h.idx));
     let writeIdx = 0;
     for (let i = 0; i < scored.length; i++) {
       if (keepSet.has(i)) {
@@ -1218,7 +1475,10 @@ export class ContextCompactor {
     }
   }
 
-  private adjustThresholds(taskType?: CompactTaskType, messages?: LLMMessage[]): { layer1: number; layer2: number; layer3: number; layer4: number } {
+  private adjustThresholds(
+    taskType?: CompactTaskType,
+    messages?: LLMMessage[],
+  ): { layer1: number; layer2: number; layer3: number; layer4: number } {
     const profile = this.getEffectiveProfile(taskType, messages);
 
     let base = {
@@ -1237,7 +1497,8 @@ export class ContextCompactor {
       const phase = governor.getState().phase;
 
       // Under pressure, lower thresholds to compact earlier
-      const shift = phase === 'critical' ? 0.15 : phase === 'tight' ? 0.10 : phase === 'moderate' ? 0.05 : 0;
+      const shift =
+        phase === 'critical' ? 0.15 : phase === 'tight' ? 0.1 : phase === 'moderate' ? 0.05 : 0;
 
       base.layer1 = Math.max(0.3, base.layer1 - shift);
       base.layer2 = Math.max(0.4, base.layer2 - shift);
@@ -1246,12 +1507,18 @@ export class ContextCompactor {
 
       return base;
     } catch (e) {
-      getGlobalLogger().warn('ContextCompactor', 'Failed to adjust thresholds', { error: (e as Error)?.message });
+      getGlobalLogger().warn('ContextCompactor', 'Failed to adjust thresholds', {
+        error: (e as Error)?.message,
+      });
       return base;
     }
   }
 
-  private buildStructuredSummary(turns: LLMMessage[][], _provider?: LLMProvider, profile?: AdaptiveProfile): string {
+  private buildStructuredSummary(
+    turns: LLMMessage[][],
+    _provider?: LLMProvider,
+    profile?: AdaptiveProfile,
+  ): string {
     const verbosity = profile?.collapseVerbosity ?? 'balanced';
     const maxDecisions = verbosity === 'aggressive' ? 1 : verbosity === 'detail' ? 5 : 3;
     const maxFindings = verbosity === 'aggressive' ? 1 : verbosity === 'detail' ? 5 : 3;
@@ -1278,7 +1545,11 @@ export class ContextCompactor {
               const args = JSON.parse(tc.function.arguments);
               if (args.path) files.push(args.path);
               if (args.file_path) files.push(args.file_path);
-            } catch (e) { getGlobalLogger().debug('ContextCompactor', 'Failed to parse tool call arguments', { error: (e as Error)?.message }); }
+            } catch (e) {
+              getGlobalLogger().debug('ContextCompactor', 'Failed to parse tool call arguments', {
+                error: (e as Error)?.message,
+              });
+            }
           }
         }
         if (msg.role === 'tool') {
@@ -1300,7 +1571,7 @@ export class ContextCompactor {
             }
             // Per-message fallback: extract first long line if no keyword match found
             if (!foundFinding && keyFindings.length < maxFindings) {
-              const first = lines.find(l => l.trim().length > 20);
+              const first = lines.find((l) => l.trim().length > 20);
               if (first) keyFindings.push(first.trim().slice(0, 100));
             }
           }
@@ -1322,8 +1593,10 @@ export class ContextCompactor {
     if (userGoals) parts.push(`Goal: ${userGoals}`);
     if (toolCalls.size > 0) parts.push(`Tools: ${[...toolCalls].join(', ')}`);
     if (files.length > 0) parts.push(`Files: ${[...new Set(files)].slice(0, maxFiles).join(', ')}`);
-    if (decisions.length > 0) parts.push(`\n## Key Decisions\n${decisions.slice(0, maxDecisions).join('\n')}`);
-    if (keyFindings.length > 0) parts.push(`\n## Findings\n${keyFindings.slice(0, maxFindings).join('\n')}`);
+    if (decisions.length > 0)
+      parts.push(`\n## Key Decisions\n${decisions.slice(0, maxDecisions).join('\n')}`);
+    if (keyFindings.length > 0)
+      parts.push(`\n## Findings\n${keyFindings.slice(0, maxFindings).join('\n')}`);
     if (errors.length > 0) parts.push(`\n## Issues\n${errors.slice(0, maxErrors).join('\n')}`);
 
     return parts.join('\n') || `${turns.length} turn(s) compacted`;
@@ -1429,7 +1702,14 @@ export class ContextCompactor {
       for (const msg of turn) {
         const content = typeof msg.content === 'string' ? msg.content : '';
         if (content.length > 0) {
-          const prefix = msg.role === 'user' ? 'User' : msg.role === 'assistant' ? 'Assistant' : msg.role === 'tool' ? 'Tool' : 'System';
+          const prefix =
+            msg.role === 'user'
+              ? 'User'
+              : msg.role === 'assistant'
+                ? 'Assistant'
+                : msg.role === 'tool'
+                  ? 'Tool'
+                  : 'System';
           flatContent.push(`${prefix}: ${content.slice(0, 500)}`);
         }
       }
@@ -1441,7 +1721,8 @@ export class ContextCompactor {
     const summarizationPrompt: LLMMessage[] = [
       {
         role: 'system',
-        content: 'You are a conversation summarizer. Summarize the following conversation turns into a concise summary that preserves: (1) key decisions and their rationale, (2) important findings and results, (3) errors encountered and how they were resolved, (4) the current state of the task. Be factual and concise. Do not add information not present in the original.',
+        content:
+          'You are a conversation summarizer. Summarize the following conversation turns into a concise summary that preserves: (1) key decisions and their rationale, (2) important findings and results, (3) errors encountered and how they were resolved, (4) the current state of the task. Be factual and concise. Do not add information not present in the original.',
       },
       {
         role: 'user',

@@ -57,17 +57,16 @@ export interface HumanApprovalGate {
  * AdaptOrch research shows topology selection alone yields 12-23% improvement.
  */
 export type OrchestrationTopology =
-   | 'SINGLE'         // Single agent handles everything
-   | 'SEQUENTIAL'     // Chain of agents, one after another
-   | 'PARALLEL'       // Multiple agents in parallel, then synthesize
-   | 'HIERARCHICAL'   // Orchestrator delegates to workers with recursive decomposition
-   | 'HYBRID'         // Mixed topology based on subtask dependencies
-   | 'DEBATE'         // Multiple agents debate to reach consensus
-   | 'ENSEMBLE'       // Multiple agents independently solve, then vote
-   | 'EVALUATOR_OPTIMIZER' // Generator + Evaluator iterative loop
-   | 'HANDOFF'        // Agent handoff pattern
-   | 'CONSENSUS'      // Multi-agent consensus pattern
-   ;
+  | 'SINGLE' // Single agent handles everything
+  | 'SEQUENTIAL' // Chain of agents, one after another
+  | 'PARALLEL' // Multiple agents in parallel, then synthesize
+  | 'HIERARCHICAL' // Orchestrator delegates to workers with recursive decomposition
+  | 'HYBRID' // Mixed topology based on subtask dependencies
+  | 'DEBATE' // Multiple agents debate to reach consensus
+  | 'ENSEMBLE' // Multiple agents independently solve, then vote
+  | 'EVALUATOR_OPTIMIZER' // Generator + Evaluator iterative loop
+  | 'HANDOFF' // Agent handoff pattern
+  | 'CONSENSUS'; // Multi-agent consensus pattern
 
 /**
  * Task dependency graph for topology routing.
@@ -117,9 +116,9 @@ export interface DeliberationPlan {
   estimatedTokens: number;
   estimatedDurationMs: number; // Time budget for the entire execution
   tokenBudget: {
-    thinking: number;   // tokens for reasoning/planning
-    execution: number;  // tokens for tool use
-    synthesis: number;  // tokens for result aggregation
+    thinking: number; // tokens for reasoning/planning
+    execution: number; // tokens for tool use
+    synthesis: number; // tokens for result aggregation
   };
   decompositionStrategy: 'NONE' | 'ASPECT' | 'STEP' | 'RECURSIVE';
   capabilitiesNeeded: string[];
@@ -284,19 +283,18 @@ export interface ThinkingBudget {
  * Strategy for synthesizing results from multiple agents.
  */
 export type SynthesisStrategy =
-  | 'LEAD_SYNTHESIS'     // Orchestrator/lead agent writes final answer
-  | 'VOTE'               // Agents vote on best answer
-  | 'ROUND_ROBIN'        // Each agent contributes to sections
-  | 'DEBATE'             // Agents debate and refine
-  | 'HIERARCHICAL'       // Recursive aggregation per subtree
-  | 'ENSEMBLE'           // Multiple answers, pick best by quality score
-  ;
+  | 'LEAD_SYNTHESIS' // Orchestrator/lead agent writes final answer
+  | 'VOTE' // Agents vote on best answer
+  | 'ROUND_ROBIN' // Each agent contributes to sections
+  | 'DEBATE' // Agents debate and refine
+  | 'HIERARCHICAL' // Recursive aggregation per subtree
+  | 'ENSEMBLE'; // Multiple answers, pick best by quality score
 
 export interface SynthesisConfig {
   strategy: SynthesisStrategy;
   maxRounds: number;
   consensusThreshold: number; // 0-1, how much agreement needed
-  includeDissent: boolean;    // include minority opinions
+  includeDissent: boolean; // include minority opinions
   qualityGates: QualityGateConfig[];
 }
 
@@ -557,14 +555,20 @@ export const DEFAULT_SYNTHESIS_CONFIG: SynthesisConfig = {
   consensusThreshold: 0.7,
   includeDissent: true,
   qualityGates: [
-    { name: 'hallucination', type: 'HALLUCINATION_CHECK', enabled: true, threshold: 0.8, autoFix: false },
+    {
+      name: 'hallucination',
+      type: 'HALLUCINATION_CHECK',
+      enabled: true,
+      threshold: 0.8,
+      autoFix: false,
+    },
     { name: 'consistency', type: 'CONSISTENCY', enabled: true, threshold: 0.7, autoFix: false },
     { name: 'completeness', type: 'COMPLETENESS', enabled: true, threshold: 0.6, autoFix: false },
   ],
 };
 
 export const DEFAULT_ULTIMATE_CONFIG: UltimateOrchestratorConfig = {
-  defaultBudget: { hardCapTokens: 128000, softCapTokens: 96000, costCapUsd: 5.00 },
+  defaultBudget: { hardCapTokens: 128000, softCapTokens: 96000, costCapUsd: 5.0 },
   defaultThinkingBudget: DEFAULT_THINKING_BUDGET,
   defaultSynthesisConfig: DEFAULT_SYNTHESIS_CONFIG,
   defaultEffortLevel: 'MODERATE',
@@ -576,7 +580,13 @@ export const DEFAULT_ULTIMATE_CONFIG: UltimateOrchestratorConfig = {
   enableCapabilityRouting: true,
   enableCircuitBreaker: true,
   qualityGates: [
-    { name: 'hallucination', type: 'HALLUCINATION_CHECK', enabled: true, threshold: 0.8, autoFix: true },
+    {
+      name: 'hallucination',
+      type: 'HALLUCINATION_CHECK',
+      enabled: true,
+      threshold: 0.8,
+      autoFix: true,
+    },
     { name: 'consistency', type: 'CONSISTENCY', enabled: true, threshold: 0.7, autoFix: true },
     { name: 'completeness', type: 'COMPLETENESS', enabled: true, threshold: 0.6, autoFix: false },
     { name: 'accuracy', type: 'ACCURACY', enabled: true, threshold: 0.7, autoFix: false },

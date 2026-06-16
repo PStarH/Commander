@@ -77,11 +77,7 @@ export class Commander {
   private startTime: number;
   private disposed = false;
 
-  private constructor(
-    wired: WiredRuntime,
-    config: ResolvedConfig,
-    probe: ProbeResult,
-  ) {
+  private constructor(wired: WiredRuntime, config: ResolvedConfig, probe: ProbeResult) {
     this.runtime = wired.runtime;
     this.config = config;
     this.probe = probe;
@@ -161,8 +157,8 @@ export class Commander {
     if (!config.provider) {
       throw new Error(
         'No LLM provider available. ' +
-        'Set an API key (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.) ' +
-        'or start a local model (Ollama, vLLM).'
+          'Set an API key (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.) ' +
+          'or start a local model (Ollama, vLLM).',
       );
     }
 
@@ -242,8 +238,6 @@ export class Commander {
     return Date.now() - this.startTime;
   }
 
-
-
   // ==========================================================================
   // Lifecycle
   // ==========================================================================
@@ -260,7 +254,9 @@ export class Commander {
 
   private ensureActive(): void {
     if (this.disposed) {
-      throw new Error('Commander instance has been disposed. Create a new one with Commander.create().');
+      throw new Error(
+        'Commander instance has been disposed. Create a new one with Commander.create().',
+      );
     }
   }
 
@@ -278,7 +274,11 @@ export class Commander {
         content: s.content?.slice(0, 500) ?? '',
         durationMs: s.durationMs,
       })),
-      tokenUsage: result.totalTokenUsage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      tokenUsage: result.totalTokenUsage ?? {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      },
       durationMs: result.totalDurationMs,
       runId: result.runId,
       error: result.error,

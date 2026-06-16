@@ -12,8 +12,8 @@
 
 /** Beta distribution parameters for a single memory */
 interface MemoryUsefulness {
-  alpha: number;   // Success count (memory was useful when retrieved)
-  beta: number;    // Failure count (memory was not useful when retrieved)
+  alpha: number; // Success count (memory was useful when retrieved)
+  beta: number; // Failure count (memory was not useful when retrieved)
   lastUpdated: number;
   retrievalCount: number;
 }
@@ -181,7 +181,8 @@ export class ThompsonMemoryScorer {
     if (!entry) return null;
 
     const mean = entry.alpha / (entry.alpha + entry.beta);
-    const variance = (entry.alpha * entry.beta) /
+    const variance =
+      (entry.alpha * entry.beta) /
       ((entry.alpha + entry.beta) ** 2 * (entry.alpha + entry.beta + 1));
     const confidence = Math.min(entry.retrievalCount / 20, 1); // 20 retrievals = full confidence
 

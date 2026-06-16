@@ -16,7 +16,14 @@ import { classifyEffortLevel } from './effortScaler';
 import { getGlobalLogger } from '../logging';
 
 type DeliberationTaskType = DeliberationPlan['taskType'];
-const TASK_TYPES: readonly DeliberationTaskType[] = ['FACTUAL', 'REASONING', 'RESEARCH', 'ANALYSIS', 'CODING', 'CREATIVE'];
+const TASK_TYPES: readonly DeliberationTaskType[] = [
+  'FACTUAL',
+  'REASONING',
+  'RESEARCH',
+  'ANALYSIS',
+  'CODING',
+  'CREATIVE',
+];
 
 // ── Reasoning model detection ────────────────────────────────────────────────
 /** Providers where ALL models are reasoning/thinking models */
@@ -25,10 +32,10 @@ const REASONING_PROVIDERS = new Set(['mimo', 'xiaomi']);
 /** Model name patterns that indicate a reasoning/thinking model */
 const REASONING_MODEL_PATTERNS = [
   /reasoner/i,
-  /\bo[134]-/i,       // o1-preview, o3-mini, o4-mini
-  /think/i,            // generic "thinking" model variants
-  /mimo/i,             // MiMo reasoning models (may be proxied via OpenAI-compatible)
-  /deepseek-r/i,       // DeepSeek reasoning models
+  /\bo[134]-/i, // o1-preview, o3-mini, o4-mini
+  /think/i, // generic "thinking" model variants
+  /mimo/i, // MiMo reasoning models (may be proxied via OpenAI-compatible)
+  /deepseek-r/i, // DeepSeek reasoning models
 ];
 
 function isReasoningModel(provider: LLMProvider): boolean {
@@ -39,10 +46,10 @@ function isReasoningModel(provider: LLMProvider): boolean {
   const p = provider as unknown as Record<string, unknown>;
   const config = p.config as Record<string, unknown> | undefined;
   const model = String(p.defaultModel ?? p.model ?? config?.defaultModel ?? '');
-  return REASONING_MODEL_PATTERNS.some(re => re.test(model));
+  return REASONING_MODEL_PATTERNS.some((re) => re.test(model));
 }
 
-const REASONING_TIMEOUT_MS = 120_000;  // Reasoning models (MiMo, DeepSeek) need more time
+const REASONING_TIMEOUT_MS = 120_000; // Reasoning models (MiMo, DeepSeek) need more time
 const STANDARD_TIMEOUT_MS = 30_000;
 
 // Precompiled word-boundary regex for short keywords (<= 3 chars)
@@ -60,10 +67,7 @@ function getWordBoundaryRe(word: string): RegExp {
   return re;
 }
 
-export function deliberate(
-  goal: string,
-  context?: Record<string, unknown>,
-): DeliberationPlan {
+export function deliberate(goal: string, context?: Record<string, unknown>): DeliberationPlan {
   const reasoning: string[] = [];
 
   const taskType = classifyTaskType(goal);
@@ -102,7 +106,12 @@ export function deliberate(
 
   const estimatedTokens = estimateTotalTokens(effortLevel, estimatedSteps);
 
-  const estimatedDurationMs = estimateDuration(effortLevel, taskType, estimatedSteps, estimatedAgentCount);
+  const estimatedDurationMs = estimateDuration(
+    effortLevel,
+    taskType,
+    estimatedSteps,
+    estimatedAgentCount,
+  );
   reasoning.push(`Estimated duration: ${(estimatedDurationMs / 1000).toFixed(1)}s`);
 
   // SPAgent-inspired: determine if early steps are simple evidence-gathering
@@ -117,7 +126,11 @@ export function deliberate(
   reasoning.push(`Task nature: ${taskNature}`);
 
   // Chimera-inspired: per-agent time budget from total duration and topology
-  const timeBudgetPerAgentMs = allocateTimeBudget(estimatedDurationMs, estimatedAgentCount, recommendedTopology);
+  const timeBudgetPerAgentMs = allocateTimeBudget(
+    estimatedDurationMs,
+    estimatedAgentCount,
+    recommendedTopology,
+  );
   reasoning.push(`Per-agent time budget: ${(timeBudgetPerAgentMs / 1000).toFixed(1)}s`);
 
   const confidence = calculateConfidence(goal, taskType, context);
@@ -151,14 +164,24 @@ function classifyTaskType(goal: string): DeliberationTaskType {
     if (word.length <= 3) return getWordBoundaryRe(word).test(lower);
     return lower.includes(word);
   };
-  const coding = ['implement', 'code', 'function', 'api', 'refactor', 'bug', 'test', 'deploy', 'build'];
+  const coding = [
+    'implement',
+    'code',
+    'function',
+    'api',
+    'refactor',
+    'bug',
+    'test',
+    'deploy',
+    'build',
+  ];
   const research = ['research', 'find', 'search', 'look up', 'investigate', 'analyze', 'compare'];
   const reasoning = ['why', 'how', 'explain', 'reason', 'evaluate', 'assess', 'determine'];
   const creative = ['design', 'create', 'write', 'draft', 'compose', 'generate', 'brainstorm'];
   const analysis = ['review', 'audit', 'inspect', 'examine', 'summarize', 'report'];
   const factual = ['what is', 'who is', 'when did', 'list', 'show', 'tell me'];
 
-  const count = (kw: string[]) => kw.filter(w => wordMatch(w)).length;
+  const count = (kw: string[]) => kw.filter((w) => wordMatch(w)).length;
 
   const scores: Record<DeliberationTaskType, number> = {
     FACTUAL: count(factual),
@@ -170,7 +193,7 @@ function classifyTaskType(goal: string): DeliberationTaskType {
   };
 
   // Use TASK_TYPES (readonly const array) for deterministic iteration order
-  const maxScore = Math.max(...TASK_TYPES.map(t => scores[t]));
+  const maxScore = Math.max(...TASK_TYPES.map((t) => scores[t]));
   if (maxScore === 0) return 'FACTUAL';
   for (const taskType of TASK_TYPES) {
     if (scores[taskType] === maxScore) return taskType;
@@ -183,16 +206,29 @@ function detectRequiresExternalInfo(goal: string, taskType: DeliberationPlan['ta
   if (hasTemporalQuery(goal)) return true;
   const lower = goal.toLowerCase();
   const externalTriggers = [
-    'latest', 'current', 'recent', 'news', 'today', '2025', '2026',
-    'weather', 'stock', 'price', 'search', 'find', 'lookup',
+    'latest',
+    'current',
+    'recent',
+    'news',
+    'today',
+    '2025',
+    '2026',
+    'weather',
+    'stock',
+    'price',
+    'search',
+    'find',
+    'lookup',
   ];
-  return externalTriggers.some(t => lower.includes(t));
+  return externalTriggers.some((t) => lower.includes(t));
 }
 
 function hasTemporalQuery(goal: string): boolean {
   const lower = goal.toLowerCase();
-  return /202[5-9]|20[3-9]\d/.test(goal) ||
-    ['latest', 'current', 'recent', 'news', 'today', 'yesterday'].some(w => lower.includes(w));
+  return (
+    /202[5-9]|20[3-9]\d/.test(goal) ||
+    ['latest', 'current', 'recent', 'news', 'today', 'yesterday'].some((w) => lower.includes(w))
+  );
 }
 
 function selectTopology(
@@ -230,10 +266,14 @@ function inferCapabilities(taskType: DeliberationPlan['taskType'], goal: string)
 
   if (taskType === 'CODING' || taskType === 'ANALYSIS') caps.add('code_understanding');
   if (taskType === 'RESEARCH') caps.add('web_search');
-  if (lower.includes('image') || lower.includes('visual') || lower.includes('ui')) caps.add('vision');
-  if (lower.includes('math') || lower.includes('calculate') || lower.includes('compute')) caps.add('math');
-  if (lower.includes('data') || lower.includes('json') || lower.includes('parse')) caps.add('data_processing');
-  if (lower.includes('security') || lower.includes('vulnerab') || lower.includes('audit')) caps.add('security_analysis');
+  if (lower.includes('image') || lower.includes('visual') || lower.includes('ui'))
+    caps.add('vision');
+  if (lower.includes('math') || lower.includes('calculate') || lower.includes('compute'))
+    caps.add('math');
+  if (lower.includes('data') || lower.includes('json') || lower.includes('parse'))
+    caps.add('data_processing');
+  if (lower.includes('security') || lower.includes('vulnerab') || lower.includes('audit'))
+    caps.add('security_analysis');
 
   caps.add('reasoning');
   return Array.from(caps);
@@ -243,19 +283,25 @@ function allocateThinkingBudget(
   effortLevel: EffortLevel,
   taskType: DeliberationPlan['taskType'],
 ): { thinking: number; execution: number; synthesis: number } {
-  const base = effortLevel === 'SIMPLE' ? 512
-    : effortLevel === 'MODERATE' ? 2048
-    : effortLevel === 'COMPLEX' ? 4096
-    : 8192;
+  const base =
+    effortLevel === 'SIMPLE'
+      ? 512
+      : effortLevel === 'MODERATE'
+        ? 2048
+        : effortLevel === 'COMPLEX'
+          ? 4096
+          : 8192;
 
-  const thinkingRatio = taskType === 'REASONING' ? 0.4
-    : taskType === 'RESEARCH' ? 0.25
-    : taskType === 'CREATIVE' ? 0.3
-    : 0.2;
+  const thinkingRatio =
+    taskType === 'REASONING'
+      ? 0.4
+      : taskType === 'RESEARCH'
+        ? 0.25
+        : taskType === 'CREATIVE'
+          ? 0.3
+          : 0.2;
 
-  const synthesisRatio = taskType === 'RESEARCH' ? 0.3
-    : taskType === 'ANALYSIS' ? 0.25
-    : 0.15;
+  const synthesisRatio = taskType === 'RESEARCH' ? 0.3 : taskType === 'ANALYSIS' ? 0.25 : 0.15;
 
   return {
     thinking: Math.round(base * thinkingRatio),
@@ -274,26 +320,35 @@ function estimateAgentCount(
   return taskType === 'RESEARCH' ? 15 : 10;
 }
 
-function estimateSteps(
-  taskType: DeliberationPlan['taskType'],
-  effortLevel: EffortLevel,
-): number {
-  const base = effortLevel === 'SIMPLE' ? 5
-    : effortLevel === 'MODERATE' ? 15
-    : effortLevel === 'COMPLEX' ? 30
-    : 60;
-  const multiplier = taskType === 'RESEARCH' ? 1.5
-    : taskType === 'CODING' ? 1.3
-    : taskType === 'REASONING' ? 0.8
-    : 1.0;
+function estimateSteps(taskType: DeliberationPlan['taskType'], effortLevel: EffortLevel): number {
+  const base =
+    effortLevel === 'SIMPLE'
+      ? 5
+      : effortLevel === 'MODERATE'
+        ? 15
+        : effortLevel === 'COMPLEX'
+          ? 30
+          : 60;
+  const multiplier =
+    taskType === 'RESEARCH'
+      ? 1.5
+      : taskType === 'CODING'
+        ? 1.3
+        : taskType === 'REASONING'
+          ? 0.8
+          : 1.0;
   return Math.round(base * multiplier);
 }
 
 function estimateTotalTokens(effortLevel: EffortLevel, steps: number): number {
-  const perStepTokens = effortLevel === 'SIMPLE' ? 2000
-    : effortLevel === 'MODERATE' ? 4000
-    : effortLevel === 'COMPLEX' ? 8000
-    : 16000;
+  const perStepTokens =
+    effortLevel === 'SIMPLE'
+      ? 2000
+      : effortLevel === 'MODERATE'
+        ? 4000
+        : effortLevel === 'COMPLEX'
+          ? 8000
+          : 16000;
   return steps * perStepTokens;
 }
 
@@ -315,24 +370,33 @@ function estimateDuration(
   steps: number,
   agentCount: number,
 ): number {
-  const perStepMs = effortLevel === 'SIMPLE' ? 2000
-    : effortLevel === 'MODERATE' ? 4000
-    : effortLevel === 'COMPLEX' ? 8000
-    : 12000;
+  const perStepMs =
+    effortLevel === 'SIMPLE'
+      ? 2000
+      : effortLevel === 'MODERATE'
+        ? 4000
+        : effortLevel === 'COMPLEX'
+          ? 8000
+          : 12000;
 
   // Task-type multiplier: reasoning and research tasks tend to take longer per step
-  const taskMultiplier = taskType === 'REASONING' ? 1.3
-    : taskType === 'RESEARCH' ? 1.4
-    : taskType === 'CODING' ? 1.2
-    : taskType === 'CREATIVE' ? 1.1
-    : 1.0;
+  const taskMultiplier =
+    taskType === 'REASONING'
+      ? 1.3
+      : taskType === 'RESEARCH'
+        ? 1.4
+        : taskType === 'CODING'
+          ? 1.2
+          : taskType === 'CREATIVE'
+            ? 1.1
+            : 1.0;
 
   const rawDuration = steps * perStepMs * taskMultiplier;
 
   // Parallelism discount: more agents → more concurrency → shorter wall-clock time
   // Diminishing returns: 2 agents ≈ 0.6x, 5 agents ≈ 0.35x, 10+ agents ≈ 0.25x
-  const parallelismFactor = agentCount <= 1 ? 1.0
-    : Math.max(0.2, 1.0 / (1 + Math.log2(agentCount)));
+  const parallelismFactor =
+    agentCount <= 1 ? 1.0 : Math.max(0.2, 1.0 / (1 + Math.log2(agentCount)));
 
   const heuristicEstimate = rawDuration * parallelismFactor;
 
@@ -409,11 +473,16 @@ function allocateTimeBudget(
 
   // Parallel topologies: agents run concurrently, so each gets roughly the full time
   // but with diminishing returns (not all agents start at the same time)
-  const parallelFactor = topology === 'PARALLEL' || topology === 'ENSEMBLE' ? 0.85
-    : topology === 'HYBRID' ? 0.7
-    : topology === 'HIERARCHICAL' ? 0.5
-    : topology === 'DEBATE' || topology === 'CONSENSUS' ? 0.6
-    : 1.0 / agentCount; // sequential: divide evenly
+  const parallelFactor =
+    topology === 'PARALLEL' || topology === 'ENSEMBLE'
+      ? 0.85
+      : topology === 'HYBRID'
+        ? 0.7
+        : topology === 'HIERARCHICAL'
+          ? 0.5
+          : topology === 'DEBATE' || topology === 'CONSENSUS'
+            ? 0.6
+            : 1.0 / agentCount; // sequential: divide evenly
 
   return Math.round(totalDurationMs * parallelFactor);
 }
@@ -428,7 +497,8 @@ export function classifyTaskNature(
   taskType: DeliberationPlan['taskType'],
   requiresExternalInfo: boolean,
 ): 'IO_BOUND' | 'COMPUTE_BOUND' | 'MIXED' {
-  if (taskType === 'RESEARCH' || (taskType === 'FACTUAL' && requiresExternalInfo)) return 'IO_BOUND';
+  if (taskType === 'RESEARCH' || (taskType === 'FACTUAL' && requiresExternalInfo))
+    return 'IO_BOUND';
   if (taskType === 'REASONING' || taskType === 'CODING') return 'COMPUTE_BOUND';
   return 'MIXED';
 }
@@ -505,7 +575,10 @@ export async function deliberateWithLLM(
       model: String((provider as unknown as Record<string, unknown>).defaultModel ?? ''),
       messages: [
         { role: 'system', content: DELIBERATION_PROMPT },
-        { role: 'user', content: `Task: ${goal}\n\nAvailable tools: ${((context?.availableTools as string[] | undefined) ?? []).join(', ') || 'none'}` },
+        {
+          role: 'user',
+          content: `Task: ${goal}\n\nAvailable tools: ${((context?.availableTools as string[] | undefined) ?? []).join(', ') || 'none'}`,
+        },
       ],
       maxTokens: 1024,
       temperature: 0.2,
@@ -515,13 +588,20 @@ export async function deliberateWithLLM(
     const response = await Promise.race([
       provider.call(request).finally(() => clearTimeout(timeoutTimer)),
       new Promise<never>((_, reject) => {
-        timeoutTimer = setTimeout(() => reject(new Error(`Deliberation LLM call timed out after ${timeoutMs / 1000}s`)), timeoutMs);
+        timeoutTimer = setTimeout(
+          () => reject(new Error(`Deliberation LLM call timed out after ${timeoutMs / 1000}s`)),
+          timeoutMs,
+        );
         timeoutTimer.unref();
       }),
     ]);
     // Reasoning models (MiMo, DeepSeek-R) put output in reasoning_content.
     // Try content first, then reasoning_content.
-    const raw = (response.content || (response as { reasoning_content?: string }).reasoning_content || '').trim();
+    const raw = (
+      response.content ||
+      (response as { reasoning_content?: string }).reasoning_content ||
+      ''
+    ).trim();
 
     // Extract JSON from response — handle markdown code fences, text wrapping, etc.
     let jsonStr = raw;
@@ -545,21 +625,51 @@ export async function deliberateWithLLM(
     });
 
     const plan: DeliberationPlan = {
-      requiresExternalInfo: typeof parsed.requiresExternalInfo === 'boolean' ? parsed.requiresExternalInfo : keywordPlan.requiresExternalInfo,
+      requiresExternalInfo:
+        typeof parsed.requiresExternalInfo === 'boolean'
+          ? parsed.requiresExternalInfo
+          : keywordPlan.requiresExternalInfo,
       taskType: isValidTaskType(parsed.taskType) ? parsed.taskType : keywordPlan.taskType,
-      recommendedTopology: isValidTopology(parsed.recommendedTopology) ? parsed.recommendedTopology : keywordPlan.recommendedTopology,
+      recommendedTopology: isValidTopology(parsed.recommendedTopology)
+        ? parsed.recommendedTopology
+        : keywordPlan.recommendedTopology,
       effortLevel,
-      estimatedAgentCount: typeof parsed.estimatedAgentCount === 'number' ? parsed.estimatedAgentCount : keywordPlan.estimatedAgentCount,
-      estimatedSteps: typeof parsed.estimatedSteps === 'number' ? parsed.estimatedSteps : keywordPlan.estimatedSteps,
-      estimatedTokens: typeof parsed.estimatedTokens === 'number' ? parsed.estimatedTokens : keywordPlan.estimatedTokens,
-      estimatedDurationMs: typeof parsed.estimatedDurationMs === 'number' ? parsed.estimatedDurationMs : keywordPlan.estimatedDurationMs,
+      estimatedAgentCount:
+        typeof parsed.estimatedAgentCount === 'number'
+          ? parsed.estimatedAgentCount
+          : keywordPlan.estimatedAgentCount,
+      estimatedSteps:
+        typeof parsed.estimatedSteps === 'number'
+          ? parsed.estimatedSteps
+          : keywordPlan.estimatedSteps,
+      estimatedTokens:
+        typeof parsed.estimatedTokens === 'number'
+          ? parsed.estimatedTokens
+          : keywordPlan.estimatedTokens,
+      estimatedDurationMs:
+        typeof parsed.estimatedDurationMs === 'number'
+          ? parsed.estimatedDurationMs
+          : keywordPlan.estimatedDurationMs,
       tokenBudget: keywordPlan.tokenBudget,
-      decompositionStrategy: isValidDecomposition(parsed.decompositionStrategy) ? parsed.decompositionStrategy : keywordPlan.decompositionStrategy,
-      capabilitiesNeeded: Array.isArray(parsed.capabilitiesNeeded) ? parsed.capabilitiesNeeded : keywordPlan.capabilitiesNeeded,
-      confidence: typeof parsed.confidence === 'number' ? Math.max(0.1, Math.min(1.0, parsed.confidence)) : keywordPlan.confidence,
-      suitableForSpeculation: typeof parsed.suitableForSpeculation === 'boolean' ? parsed.suitableForSpeculation : keywordPlan.suitableForSpeculation,
+      decompositionStrategy: isValidDecomposition(parsed.decompositionStrategy)
+        ? parsed.decompositionStrategy
+        : keywordPlan.decompositionStrategy,
+      capabilitiesNeeded: Array.isArray(parsed.capabilitiesNeeded)
+        ? parsed.capabilitiesNeeded
+        : keywordPlan.capabilitiesNeeded,
+      confidence:
+        typeof parsed.confidence === 'number'
+          ? Math.max(0.1, Math.min(1.0, parsed.confidence))
+          : keywordPlan.confidence,
+      suitableForSpeculation:
+        typeof parsed.suitableForSpeculation === 'boolean'
+          ? parsed.suitableForSpeculation
+          : keywordPlan.suitableForSpeculation,
       taskNature: isValidTaskNature(parsed.taskNature) ? parsed.taskNature : keywordPlan.taskNature,
-      timeBudgetPerAgentMs: typeof parsed.timeBudgetPerAgentMs === 'number' ? parsed.timeBudgetPerAgentMs : keywordPlan.timeBudgetPerAgentMs,
+      timeBudgetPerAgentMs:
+        typeof parsed.timeBudgetPerAgentMs === 'number'
+          ? parsed.timeBudgetPerAgentMs
+          : keywordPlan.timeBudgetPerAgentMs,
       reasoning: [
         '=== LLM deliberation ===',
         ...llmReasoning.slice(0, 10),
@@ -569,17 +679,36 @@ export async function deliberateWithLLM(
 
     return plan;
   } catch (e) {
-    getGlobalLogger().warn('Deliberation', 'LLM deliberation failed, falling back to heuristic plan', { error: (e as Error)?.message });
+    getGlobalLogger().warn(
+      'Deliberation',
+      'LLM deliberation failed, falling back to heuristic plan',
+      { error: (e as Error)?.message },
+    );
     return deliberate(goal, context);
   }
 }
 
 function isValidTaskType(t: unknown): t is DeliberationPlan['taskType'] {
-  return typeof t === 'string' && ['FACTUAL', 'REASONING', 'CREATIVE', 'RESEARCH', 'CODING', 'ANALYSIS'].includes(t);
+  return (
+    typeof t === 'string' &&
+    ['FACTUAL', 'REASONING', 'CREATIVE', 'RESEARCH', 'CODING', 'ANALYSIS'].includes(t)
+  );
 }
 
 function isValidTopology(t: unknown): t is OrchestrationTopology {
-  return typeof t === 'string' && ['SINGLE', 'SEQUENTIAL', 'PARALLEL', 'HIERARCHICAL', 'HYBRID', 'DEBATE', 'ENSEMBLE', 'EVALUATOR_OPTIMIZER'].includes(t);
+  return (
+    typeof t === 'string' &&
+    [
+      'SINGLE',
+      'SEQUENTIAL',
+      'PARALLEL',
+      'HIERARCHICAL',
+      'HYBRID',
+      'DEBATE',
+      'ENSEMBLE',
+      'EVALUATOR_OPTIMIZER',
+    ].includes(t)
+  );
 }
 
 function isValidDecomposition(d: unknown): d is DeliberationPlan['decompositionStrategy'] {

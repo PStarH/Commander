@@ -55,7 +55,7 @@ describe('LearnedWeights', () => {
       const lw = new LearnedWeights(pr, { smoothingFactor: 0.3 });
       // 10 perfect successes → pheromone confidence ≈ 1.0, signal ≈ 0.5
       for (let i = 0; i < 10; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0);
-      const stats = lw.getStats().find(s => s.taskType === 'CODING' && s.topology === 'PARALLEL');
+      const stats = lw.getStats().find((s) => s.taskType === 'CODING' && s.topology === 'PARALLEL');
       expect(stats).toBeDefined();
       // EMA should be close to 0.5 (the signal max).
       expect(stats!.state.ema).toBeGreaterThan(0.4);
@@ -68,7 +68,7 @@ describe('LearnedWeights', () => {
       // α=0.5 + 30 failures: signal saturates near 1/(1+15)−0.5 = −0.437, EMA converges to ≈ −0.43.
       const lw = new LearnedWeights(pr, { smoothingFactor: 0.5 });
       for (let i = 0; i < 30; i++) lw.recordSignal('CODING', 'PARALLEL', false, 0.0);
-      const stats = lw.getStats().find(s => s.taskType === 'CODING' && s.topology === 'PARALLEL');
+      const stats = lw.getStats().find((s) => s.taskType === 'CODING' && s.topology === 'PARALLEL');
       expect(stats).toBeDefined();
       // EMA is well below 0 (clearly drifting negative).
       expect(stats!.state.ema).toBeLessThan(-0.3);
@@ -178,7 +178,13 @@ describe('LearnedWeights', () => {
         const pr = new PheromoneRouter();
         const lw = new LearnedWeights(pr, { smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
         // Set base so the target dimension is non-zero.
-        const base: TypeWeights = { research: 0, parallel: 0, sequential: 0, complex: 0, [expectedDim]: 2 } as TypeWeights;
+        const base: TypeWeights = {
+          research: 0,
+          parallel: 0,
+          sequential: 0,
+          complex: 0,
+          [expectedDim]: 2,
+        } as TypeWeights;
         for (let i = 0; i < 10; i++) lw.recordSignal('CODING', topology, true, 1.0);
         const result = lw.getAdjustedWeights('CODING', base);
         // The expected dimension is adjusted upward; others stay at 0.
@@ -195,8 +201,8 @@ describe('LearnedWeights', () => {
       for (let i = 0; i < 10; i++) lw.recordSignal('RESEARCH', 'HYBRID', false, 0.0);
       const stats = lw.getStats();
       expect(stats.length).toBe(2);
-      const coding = stats.find(s => s.taskType === 'CODING')!;
-      const research = stats.find(s => s.taskType === 'RESEARCH')!;
+      const coding = stats.find((s) => s.taskType === 'CODING')!;
+      const research = stats.find((s) => s.taskType === 'RESEARCH')!;
       expect(coding.state.ema).toBeGreaterThan(0);
       expect(research.state.ema).toBeLessThan(0);
     });
@@ -252,9 +258,11 @@ describe('TopologyRouter × LearnedWeights integration', () => {
     const pr = new PheromoneRouter();
     const tr = new TopologyRouter(pr);
     // Reinforce PARALLEL strongly for CODING.
-    for (let i = 0; i < 15; i++) tr.getLearnedWeights().recordSignal('CODING', 'PARALLEL', true, 1.0);
+    for (let i = 0; i < 15; i++)
+      tr.getLearnedWeights().recordSignal('CODING', 'PARALLEL', true, 1.0);
     // Penalize SINGLE strongly for CODING.
-    for (let i = 0; i < 15; i++) tr.getLearnedWeights().recordSignal('CODING', 'SINGLE', false, 0.0);
+    for (let i = 0; i < 15; i++)
+      tr.getLearnedWeights().recordSignal('CODING', 'SINGLE', false, 0.0);
 
     const baseline = tr.route(makePlan('CODING'));
     const result = tr.route(makePlan('CODING'));
@@ -272,9 +280,10 @@ describe('TopologyRouter × LearnedWeights integration', () => {
   it('reasoning includes the learned-weights line when mature pairs exist', () => {
     const pr = new PheromoneRouter();
     const tr = new TopologyRouter(pr);
-    for (let i = 0; i < 5; i++) tr.getLearnedWeights().recordSignal('CODING', 'PARALLEL', true, 1.0);
+    for (let i = 0; i < 5; i++)
+      tr.getLearnedWeights().recordSignal('CODING', 'PARALLEL', true, 1.0);
     const result = tr.route(makePlan('CODING'));
-    const learnedLine = result.reasoning.find(r => r.startsWith('Learned weights for'));
+    const learnedLine = result.reasoning.find((r) => r.startsWith('Learned weights for'));
     expect(learnedLine).toBeDefined();
     expect(learnedLine).toContain('parallel=');
   });
@@ -283,7 +292,7 @@ describe('TopologyRouter × LearnedWeights integration', () => {
     const pr = new PheromoneRouter();
     const tr = new TopologyRouter(pr);
     const result = tr.route(makePlan('CODING'));
-    const learnedLine = result.reasoning.find(r => r.startsWith('Learned weights for'));
+    const learnedLine = result.reasoning.find((r) => r.startsWith('Learned weights for'));
     expect(learnedLine).toBeUndefined();
   });
 });

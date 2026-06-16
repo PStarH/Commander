@@ -1,4 +1,9 @@
-import type { ExecutionExperience, EvolutionPrediction, FailureCategory, PredictionVerdict } from '../runtime/types';
+import type {
+  ExecutionExperience,
+  EvolutionPrediction,
+  FailureCategory,
+  PredictionVerdict,
+} from '../runtime/types';
 import { getMessageBus } from '../runtime/messageBus';
 import { getMetricsCollector } from '../runtime/metricsCollector';
 
@@ -78,9 +83,10 @@ export class PredictionLoop {
 
     // Strategy changed — find relevant prediction
     const relevant = this.predictions.filter(
-      p => p.targetStrategy === exp.strategyUsed
-        && p.modelId === exp.modelUsed
-        && p.taskTypes.includes(exp.taskType),
+      (p) =>
+        p.targetStrategy === exp.strategyUsed &&
+        p.modelId === exp.modelUsed &&
+        p.taskTypes.includes(exp.taskType),
     );
 
     for (const pred of relevant) {
@@ -105,7 +111,9 @@ export class PredictionLoop {
           // @ts-ignore — best-effort metric, may not be on collector yet
           getMetricsCollector().recordPredictionVerdict(verdict.netImpact);
         }
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
 
       const bus = getMessageBus();
       bus.publish('memory.written', 'meta-learner', {

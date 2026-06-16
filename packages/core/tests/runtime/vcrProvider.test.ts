@@ -15,12 +15,14 @@ class StubProvider implements LLMProvider {
 
   async call(request: LLMRequest): Promise<LLMResponse> {
     this.callCount++;
-    return this.responses[this.callCount - 1] ?? {
-      content: 'default',
-      model: request.model,
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      finishReason: 'stop',
-    };
+    return (
+      this.responses[this.callCount - 1] ?? {
+        content: 'default',
+        model: request.model,
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+        finishReason: 'stop',
+      }
+    );
   }
 }
 
@@ -105,7 +107,11 @@ describe('VCRProvider', () => {
       const stub2 = new StubProvider([makeResponse()]);
       const vcr2 = new VCRProvider(stub2, { cassetteDir: CASSETTE_DIR, mode: 'replay' });
       await vcr2.call(makeRequest());
-      try { await vcr2.call(makeRequest('different-request')); } catch { /* expected miss */ }
+      try {
+        await vcr2.call(makeRequest('different-request'));
+      } catch {
+        /* expected miss */
+      }
 
       const stats = vcr2.getStats();
       expect(stats.hits).toBe(1);

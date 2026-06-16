@@ -18,7 +18,7 @@ import * as fs from 'fs';
 // ============================================================================
 
 export interface ProbeResult {
-  /** API keys found in environment variables */ 
+  /** API keys found in environment variables */
   availableProviders: string[];
   /** Is Docker socket accessible? */
   dockerAvailable: boolean;
@@ -115,7 +115,10 @@ async function checkRedis(): Promise<string | null> {
       const { createConnection } = await import('net');
       await new Promise<void>((resolve, reject) => {
         const sock = createConnection({ host, port, signal: controller.signal });
-        sock.on('connect', () => { sock.destroy(); resolve(); });
+        sock.on('connect', () => {
+          sock.destroy();
+          resolve();
+        });
         sock.on('error', reject);
       });
       return parsed;
@@ -133,7 +136,8 @@ function checkKubernetes(): { inK8s: boolean; namespace: string | null } {
   let namespace: string | null = null;
   if (inK8s) {
     try {
-      namespace = process.env.KUBERNETES_NAMESPACE ??
+      namespace =
+        process.env.KUBERNETES_NAMESPACE ??
         fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/namespace', 'utf-8').trim();
     } catch {
       namespace = null;
@@ -168,7 +172,9 @@ async function checkVllm(): Promise<boolean> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 2000);
     try {
-      const response = await fetch(`${baseUrl.replace(/\/v1\/?$/, '')}/health`, { signal: controller.signal });
+      const response = await fetch(`${baseUrl.replace(/\/v1\/?$/, '')}/health`, {
+        signal: controller.signal,
+      });
       return response.ok;
     } catch {
       return false;
@@ -185,13 +191,28 @@ async function checkVllm(): Promise<boolean> {
 // ============================================================================
 
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
-  openai: 'OpenAI', anthropic: 'Anthropic', google: 'Google Gemini',
-  deepseek: 'DeepSeek', glm: 'GLM (Zhipu)', mimo: 'MiMo', xiaomi: 'Xiaomi MiMo',
-  openrouter: 'OpenRouter', cohere: 'Cohere', mistral: 'Mistral AI',
-  groq: 'Groq', together: 'Together AI', perplexity: 'Perplexity',
-  fireworks: 'Fireworks AI', replicate: 'Replicate', bedrock: 'AWS Bedrock',
-  xai: 'xAI Grok', anyscale: 'Anyscale', deepinfra: 'DeepInfra',
-  ollama: 'Ollama (Local)', vllm: 'vLLM (Local)', agnes: 'Agnes AI',
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  google: 'Google Gemini',
+  deepseek: 'DeepSeek',
+  glm: 'GLM (Zhipu)',
+  mimo: 'MiMo',
+  xiaomi: 'Xiaomi MiMo',
+  openrouter: 'OpenRouter',
+  cohere: 'Cohere',
+  mistral: 'Mistral AI',
+  groq: 'Groq',
+  together: 'Together AI',
+  perplexity: 'Perplexity',
+  fireworks: 'Fireworks AI',
+  replicate: 'Replicate',
+  bedrock: 'AWS Bedrock',
+  xai: 'xAI Grok',
+  anyscale: 'Anyscale',
+  deepinfra: 'DeepInfra',
+  ollama: 'Ollama (Local)',
+  vllm: 'vLLM (Local)',
+  agnes: 'Agnes AI',
 };
 
 const PROVIDER_DEFAULT_URLS: Record<string, string> = {
@@ -218,28 +239,51 @@ const PROVIDER_DEFAULT_URLS: Record<string, string> = {
 };
 
 const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
-  openai: 'gpt-4o', anthropic: 'claude-3-5-sonnet-20241022',
-  google: 'gemini-2.0-flash', deepseek: 'deepseek-v4-flash',
-  glm: 'glm-4.7', mimo: 'mimo-v2.5', xiaomi: 'mimo-v2-flash',
-  openrouter: 'openai/gpt-4o-mini', cohere: 'command-a-plus-05-2026',
-  mistral: 'mistral-large-latest', groq: 'llama-3.3-70b-versatile',
+  openai: 'gpt-4o',
+  anthropic: 'claude-3-5-sonnet-20241022',
+  google: 'gemini-2.0-flash',
+  deepseek: 'deepseek-v4-flash',
+  glm: 'glm-4.7',
+  mimo: 'mimo-v2.5',
+  xiaomi: 'mimo-v2-flash',
+  openrouter: 'openai/gpt-4o-mini',
+  cohere: 'command-a-plus-05-2026',
+  mistral: 'mistral-large-latest',
+  groq: 'llama-3.3-70b-versatile',
   together: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-  perplexity: 'sonar-pro', fireworks: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+  perplexity: 'sonar-pro',
+  fireworks: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
   replicate: 'meta/meta-llama-3.3-70b-instruct',
   bedrock: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
-  xai: 'grok-2-latest', anyscale: 'meta-llama/Llama-3.3-70B-Instruct',
+  xai: 'grok-2-latest',
+  anyscale: 'meta-llama/Llama-3.3-70B-Instruct',
   deepinfra: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
   agnes: 'agnes-2.0-flash',
 };
 
 const PROVIDER_TIERS: Record<string, 'local' | 'cloud' | 'premium'> = {
-  ollama: 'local', vllm: 'local',
-  openai: 'premium', anthropic: 'premium', google: 'premium',
-  openrouter: 'cloud', deepseek: 'cloud', glm: 'cloud',
-  mimo: 'cloud', xiaomi: 'cloud', cohere: 'cloud', mistral: 'cloud',
-  groq: 'cloud', together: 'cloud', perplexity: 'cloud', fireworks: 'cloud',
-  replicate: 'cloud', bedrock: 'premium', xai: 'premium',
-  anyscale: 'cloud', deepinfra: 'cloud', agnes: 'cloud',
+  ollama: 'local',
+  vllm: 'local',
+  openai: 'premium',
+  anthropic: 'premium',
+  google: 'premium',
+  openrouter: 'cloud',
+  deepseek: 'cloud',
+  glm: 'cloud',
+  mimo: 'cloud',
+  xiaomi: 'cloud',
+  cohere: 'cloud',
+  mistral: 'cloud',
+  groq: 'cloud',
+  together: 'cloud',
+  perplexity: 'cloud',
+  fireworks: 'cloud',
+  replicate: 'cloud',
+  bedrock: 'premium',
+  xai: 'premium',
+  anyscale: 'cloud',
+  deepinfra: 'cloud',
+  agnes: 'cloud',
 };
 
 // ============================================================================
@@ -270,12 +314,22 @@ async function testSingleProvider(
       const res = await fetch(`${host}/api/tags`, { signal: controller.signal });
       clearTimeout(t);
       return {
-        provider, displayName, status: res.ok ? 'reachable' : 'unreachable',
-        latencyMs: Date.now() - start, tier, defaultModel,
+        provider,
+        displayName,
+        status: res.ok ? 'reachable' : 'unreachable',
+        latencyMs: Date.now() - start,
+        tier,
+        defaultModel,
       };
     } catch {
-      return { provider, displayName, status: 'unreachable', tier, defaultModel,
-        error: 'Ollama not running. Start with: ollama serve' };
+      return {
+        provider,
+        displayName,
+        status: 'unreachable',
+        tier,
+        defaultModel,
+        error: 'Ollama not running. Start with: ollama serve',
+      };
     }
   }
 
@@ -285,29 +339,53 @@ async function testSingleProvider(
       const controller = new AbortController();
       const t = setTimeout(() => controller.abort(), timeoutMs);
       const start = Date.now();
-      const res = await fetch(`${baseUrl.replace(/\/v1\/?$/, '')}/health`, { signal: controller.signal });
+      const res = await fetch(`${baseUrl.replace(/\/v1\/?$/, '')}/health`, {
+        signal: controller.signal,
+      });
       clearTimeout(t);
       return {
-        provider, displayName, status: res.ok ? 'reachable' : 'unreachable',
-        latencyMs: Date.now() - start, tier, defaultModel,
+        provider,
+        displayName,
+        status: res.ok ? 'reachable' : 'unreachable',
+        latencyMs: Date.now() - start,
+        tier,
+        defaultModel,
       };
     } catch {
-      return { provider, displayName, status: 'unreachable', tier, defaultModel,
-        error: 'vLLM not running. Start with: vllm serve <model>' };
+      return {
+        provider,
+        displayName,
+        status: 'unreachable',
+        tier,
+        defaultModel,
+        error: 'vLLM not running. Start with: vllm serve <model>',
+      };
     }
   }
 
   // Bedrock: uses AWS credentials, can't easily test without SDK
   if (provider === 'bedrock') {
-    return { provider, displayName, status: 'skipped', tier, defaultModel,
-      error: 'AWS SDK connectivity test not available (requires @aws-sdk/client-bedrock-runtime)' };
+    return {
+      provider,
+      displayName,
+      status: 'skipped',
+      tier,
+      defaultModel,
+      error: 'AWS SDK connectivity test not available (requires @aws-sdk/client-bedrock-runtime)',
+    };
   }
 
   // Cloud providers
   const baseUrl = PROVIDER_DEFAULT_URLS[provider];
   if (!baseUrl) {
-    return { provider, displayName, status: 'skipped', tier, defaultModel,
-      error: `No default URL for provider: ${provider}` };
+    return {
+      provider,
+      displayName,
+      status: 'skipped',
+      tier,
+      defaultModel,
+      error: `No default URL for provider: ${provider}`,
+    };
   }
 
   try {
@@ -333,7 +411,7 @@ async function testSingleProvider(
     } else {
       // OpenAI-compatible: Bearer token
       response = await fetch(`${baseUrl}/models`, {
-        headers: { 'Authorization': `Bearer ${apiKey}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
         signal: controller.signal,
       });
     }
@@ -344,19 +422,45 @@ async function testSingleProvider(
       return { provider, displayName, status: 'reachable', latencyMs, tier, defaultModel };
     }
     if (response.status === 401 || response.status === 403) {
-      return { provider, displayName, status: 'auth_error', latencyMs, tier, defaultModel,
-        error: `HTTP ${response.status}: Invalid API key` };
+      return {
+        provider,
+        displayName,
+        status: 'auth_error',
+        latencyMs,
+        tier,
+        defaultModel,
+        error: `HTTP ${response.status}: Invalid API key`,
+      };
     }
-    return { provider, displayName, status: 'unreachable', latencyMs, tier, defaultModel,
-      error: `HTTP ${response.status}` };
+    return {
+      provider,
+      displayName,
+      status: 'unreachable',
+      latencyMs,
+      tier,
+      defaultModel,
+      error: `HTTP ${response.status}`,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('abort') || msg.includes('timeout')) {
-      return { provider, displayName, status: 'timeout', tier, defaultModel,
-        error: `Connection timed out after ${timeoutMs}ms` };
+      return {
+        provider,
+        displayName,
+        status: 'timeout',
+        tier,
+        defaultModel,
+        error: `Connection timed out after ${timeoutMs}ms`,
+      };
     }
-    return { provider, displayName, status: 'unreachable', tier, defaultModel,
-      error: msg.slice(0, 80) };
+    return {
+      provider,
+      displayName,
+      status: 'unreachable',
+      tier,
+      defaultModel,
+      error: msg.slice(0, 80),
+    };
   }
 }
 
@@ -424,7 +528,7 @@ export async function testConnectivity(
  * Returns an array of provider names in priority order (fastest → fallback).
  */
 export function recommendFallbackChain(results: ConnectivityResult[]): string[] {
-  const reachable = results.filter(r => r.status === 'reachable');
+  const reachable = results.filter((r) => r.status === 'reachable');
   // Prefer: local first (fast), then cloud by latency, then premium
   return reachable
     .sort((a, b) => {
@@ -434,7 +538,7 @@ export function recommendFallbackChain(results: ConnectivityResult[]): string[] 
       return (a.latencyMs ?? 9999) - (b.latencyMs ?? 9999);
     })
     .slice(0, 5)
-    .map(r => r.provider);
+    .map((r) => r.provider);
 }
 
 // ============================================================================

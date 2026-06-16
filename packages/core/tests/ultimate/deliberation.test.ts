@@ -15,7 +15,9 @@ describe('deliberate', () => {
     });
 
     it('classifies reasoning tasks', () => {
-      const plan = deliberate('explain why microservices are better than monoliths for this use case');
+      const plan = deliberate(
+        'explain why microservices are better than monoliths for this use case',
+      );
       assert.equal(plan.taskType, 'REASONING');
     });
 
@@ -43,7 +45,9 @@ describe('deliberate', () => {
   describe('effort level', () => {
     it('assigns effort level based on goal complexity', () => {
       const simple = deliberate('list files');
-      const complex = deliberate('implement a distributed consensus algorithm with fault tolerance, replication, and leader election');
+      const complex = deliberate(
+        'implement a distributed consensus algorithm with fault tolerance, replication, and leader election',
+      );
       assert.ok(['SIMPLE', 'MEDIUM', 'COMPLEX', 'DEEP_RESEARCH'].includes(simple.effortLevel));
       assert.ok(['SIMPLE', 'MEDIUM', 'COMPLEX', 'DEEP_RESEARCH'].includes(complex.effortLevel));
     });
@@ -68,7 +72,16 @@ describe('deliberate', () => {
 
   describe('topology selection', () => {
     it('selects a valid topology', () => {
-      const validTopologies = ['SINGLE', 'SEQUENTIAL', 'PARALLEL', 'HIERARCHICAL', 'HYBRID', 'DEBATE', 'ENSEMBLE', 'EVALUATOR_OPTIMIZER'];
+      const validTopologies = [
+        'SINGLE',
+        'SEQUENTIAL',
+        'PARALLEL',
+        'HIERARCHICAL',
+        'HYBRID',
+        'DEBATE',
+        'ENSEMBLE',
+        'EVALUATOR_OPTIMIZER',
+      ];
       const plan = deliberate('implement a new feature');
       assert.ok(validTopologies.includes(plan.recommendedTopology));
     });

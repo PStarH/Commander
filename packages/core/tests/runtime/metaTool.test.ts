@@ -49,10 +49,7 @@ describe('MetaTool', () => {
     const meta = new MetaTool(spec, subToolMap);
     await meta.execute({ query: 'AI news', url: 'https://example.com' });
 
-    expect(executionLog).toEqual([
-      'search:AI news',
-      'fetch:https://example.com',
-    ]);
+    expect(executionLog).toEqual(['search:AI news', 'fetch:https://example.com']);
   });
 
   it('handles missing sub-tools gracefully', async () => {
@@ -95,7 +92,7 @@ describe('getBuiltinMetaSpecs', () => {
   it('returns predefined specs', () => {
     const specs = getBuiltinMetaSpecs();
     expect(specs.length).toBeGreaterThanOrEqual(3);
-    const names = specs.map(s => s.name);
+    const names = specs.map((s) => s.name);
     expect(names).toContain('research_topic');
     expect(names).toContain('find_and_read');
     expect(names).toContain('research_and_save');
@@ -115,30 +112,18 @@ describe('getBuiltinMetaSpecs', () => {
 
 describe('findMatchingMetaSpec', () => {
   it('matches exact sequences', () => {
-    const match = findMatchingMetaSpec(
-      ['web.search', 'web.fetch'],
-      1,
-      () => 5,
-    );
+    const match = findMatchingMetaSpec(['web.search', 'web.fetch'], 1, () => 5);
     expect(match).toBeDefined();
     expect(match!.name).toBe('research_topic');
   });
 
   it('returns undefined for unknown sequences', () => {
-    const match = findMatchingMetaSpec(
-      ['unknown_tool'],
-      1,
-      () => 100,
-    );
+    const match = findMatchingMetaSpec(['unknown_tool'], 1, () => 100);
     expect(match).toBeUndefined();
   });
 
   it('returns undefined for below-minimum frequency', () => {
-    const match = findMatchingMetaSpec(
-      ['web_search', 'web_fetch'],
-      10,
-      () => 3,
-    );
+    const match = findMatchingMetaSpec(['web_search', 'web_fetch'], 10, () => 3);
     expect(match).toBeUndefined();
   });
 });

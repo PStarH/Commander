@@ -41,7 +41,7 @@ function makePlan(taskType: DeliberationPlan['taskType']): DeliberationPlan {
 function mulberry32(seed: number): () => number {
   let a = seed | 0;
   return () => {
-    a = (a + 0x6D2B79F5) | 0;
+    a = (a + 0x6d2b79f5) | 0;
     let t = a;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
@@ -194,7 +194,7 @@ describe('P4: ε-greedy exploration in TopologyRouter', () => {
         const r = tr.route(makePlan('CODING'));
         if (r.explorationTriggered) {
           foundDivergence = true;
-          const line = r.reasoning.find(x => x.startsWith('ε-greedy exploration'));
+          const line = r.reasoning.find((x) => x.startsWith('ε-greedy exploration'));
           expect(line).toBeDefined();
           expect(line).toContain('chose');
           expect(line).toContain('argmax');
@@ -209,7 +209,7 @@ describe('P4: ε-greedy exploration in TopologyRouter', () => {
       const tr = new TopologyRouter(undefined, undefined, { epsilon: 0 });
       for (let i = 0; i < 5; i++) {
         const r = tr.route(makePlan('CODING'));
-        const line = r.reasoning.find(x => x.startsWith('ε-greedy exploration'));
+        const line = r.reasoning.find((x) => x.startsWith('ε-greedy exploration'));
         expect(line).toBeUndefined();
         expect(r.explorationTriggered).toBe(false);
       }

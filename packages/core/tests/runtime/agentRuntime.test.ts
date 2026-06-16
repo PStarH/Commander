@@ -165,7 +165,10 @@ describe('AgentRuntime', () => {
 
   describe('configuration', () => {
     it('uses custom configuration', () => {
-      const custom = new AgentRuntime({ maxStepsPerRun: 5, maxRetries: 3, timeoutMs: 30000 }, router);
+      const custom = new AgentRuntime(
+        { maxStepsPerRun: 5, maxRetries: 3, timeoutMs: 30000 },
+        router,
+      );
       const config = custom.getConfig();
       expect(config.maxStepsPerRun).toBe(5);
       expect(config.maxRetries).toBe(3);

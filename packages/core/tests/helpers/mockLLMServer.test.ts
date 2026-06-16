@@ -12,7 +12,10 @@ import {
 } from './mockLLMServer';
 
 describe('CapturedRequest', () => {
-  function makeRequest(messages: ParsedMessage[], extra?: Record<string, unknown>): CapturedRequest {
+  function makeRequest(
+    messages: ParsedMessage[],
+    extra?: Record<string, unknown>,
+  ): CapturedRequest {
     return new CapturedRequest(
       Date.now(),
       { model: 'test-model', messages, stream: false, ...extra },
@@ -56,7 +59,17 @@ describe('CapturedRequest', () => {
       { role: 'user', content: 'Hello' },
       { role: 'assistant', content: 'Hi there!' },
       { role: 'user', content: 'Search for AI papers' },
-      { role: 'assistant', content: '', tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"q":"AI papers"}' } }] },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'call_1',
+            type: 'function',
+            function: { name: 'web_search', arguments: '{"q":"AI papers"}' },
+          },
+        ],
+      },
       { role: 'tool', tool_call_id: 'call_1', name: 'web_search', content: 'Found 10 papers' },
       { role: 'assistant', content: 'I found 10 papers about AI.' },
     ];
@@ -105,15 +118,35 @@ describe('CapturedRequest', () => {
   describe('tool call introspection', () => {
     const messages: ParsedMessage[] = [
       { role: 'user', content: 'Do something' },
-      { role: 'assistant', content: '', tool_calls: [
-        { id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"q":"AI"}' } },
-        { id: 'call_2', type: 'function', function: { name: 'file_read', arguments: '{"path":"/tmp/test"}' } },
-      ]},
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'call_1',
+            type: 'function',
+            function: { name: 'web_search', arguments: '{"q":"AI"}' },
+          },
+          {
+            id: 'call_2',
+            type: 'function',
+            function: { name: 'file_read', arguments: '{"path":"/tmp/test"}' },
+          },
+        ],
+      },
       { role: 'tool', tool_call_id: 'call_1', name: 'web_search', content: 'results' },
       { role: 'tool', tool_call_id: 'call_2', name: 'file_read', content: 'file contents' },
-      { role: 'assistant', content: '', tool_calls: [
-        { id: 'call_3', type: 'function', function: { name: 'web_search', arguments: '{"q":"ML"}' } },
-      ]},
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'call_3',
+            type: 'function',
+            function: { name: 'web_search', arguments: '{"q":"ML"}' },
+          },
+        ],
+      },
       { role: 'tool', tool_call_id: 'call_3', name: 'web_search', content: 'more results' },
     ];
 
@@ -156,10 +189,14 @@ describe('CapturedRequest', () => {
   describe('tool output introspection', () => {
     const messages: ParsedMessage[] = [
       { role: 'user', content: 'Do something' },
-      { role: 'assistant', content: '', tool_calls: [
-        { id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{}' } },
-        { id: 'call_2', type: 'function', function: { name: 'file_read', arguments: '{}' } },
-      ]},
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{}' } },
+          { id: 'call_2', type: 'function', function: { name: 'file_read', arguments: '{}' } },
+        ],
+      },
       { role: 'tool', tool_call_id: 'call_1', name: 'web_search', content: 'search results' },
       { role: 'tool', tool_call_id: 'call_2', name: 'file_read', content: 'file data' },
     ];
@@ -192,10 +229,7 @@ describe('CapturedRequest', () => {
   describe('requested tools', () => {
     it('returns requested tool names', () => {
       const req = makeRequest([], {
-        tools: [
-          { function: { name: 'web_search' } },
-          { function: { name: 'file_read' } },
-        ],
+        tools: [{ function: { name: 'web_search' } }, { function: { name: 'file_read' } }],
       });
       assert.deepStrictEqual(req.requestedToolNames(), ['web_search', 'file_read']);
     });
@@ -225,9 +259,13 @@ describe('validateRequestInvariants', () => {
   it('passes for well-formed request', () => {
     const req = makeRequest([
       { role: 'user', content: 'search' },
-      { role: 'assistant', content: '', tool_calls: [
-        { id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{}' } },
-      ]},
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{}' } },
+        ],
+      },
       { role: 'tool', tool_call_id: 'call_1', name: 'web_search', content: 'results' },
       { role: 'assistant', content: 'Found results.' },
     ]);
@@ -250,10 +288,14 @@ describe('validateRequestInvariants', () => {
   it('detects missing tool output (call without matching output)', () => {
     const req = makeRequest([
       { role: 'user', content: 'search' },
-      { role: 'assistant', content: '', tool_calls: [
-        { id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{}' } },
-        { id: 'call_2', type: 'function', function: { name: 'file_read', arguments: '{}' } },
-      ]},
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{}' } },
+          { id: 'call_2', type: 'function', function: { name: 'file_read', arguments: '{}' } },
+        ],
+      },
       { role: 'tool', tool_call_id: 'call_1', name: 'web_search', content: 'results' },
       // call_2 has no output!
     ]);
@@ -266,9 +308,13 @@ describe('validateRequestInvariants', () => {
   it('detects multiple violations', () => {
     const req = makeRequest([
       { role: 'user', content: 'test' },
-      { role: 'assistant', content: '', tool_calls: [
-        { id: 'call_1', type: 'function', function: { name: 'tool_a', arguments: '{}' } },
-      ]},
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'tool_a', arguments: '{}' } },
+        ],
+      },
       { role: 'tool', tool_call_id: 'call_1', name: 'tool_a', content: 'ok' },
       { role: 'tool', tool_call_id: 'call_orphan', name: 'tool_b', content: 'orphan' },
     ]);
@@ -278,9 +324,7 @@ describe('validateRequestInvariants', () => {
   });
 
   it('passes for single-message request with no tool calls', () => {
-    const req = makeRequest([
-      { role: 'user', content: 'hello' },
-    ]);
+    const req = makeRequest([{ role: 'user', content: 'hello' }]);
     const violations = validateRequestInvariants(req);
     assert.strictEqual(violations.length, 0);
   });
@@ -335,7 +379,9 @@ describe('MockLLMServer invariant validation', () => {
     let callbackViolations: InvariantViolation[] = [];
     server = new MockLLMServer({
       validateInvariants: true,
-      onInvariantViolation: (v) => { callbackViolations = v; },
+      onInvariantViolation: (v) => {
+        callbackViolations = v;
+      },
     });
     await server.start();
     server.enqueueResponse({ content: 'ok' });

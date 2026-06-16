@@ -21,8 +21,12 @@ describe('ModelPerformanceStore', () => {
   describe('record and getAll', () => {
     it('records and retrieves outcomes', () => {
       store.record({
-        modelId: 'gpt-4o', taskType: 'code', success: true,
-        durationMs: 1000, tokensUsed: 5000, timestamp: Date.now(),
+        modelId: 'gpt-4o',
+        taskType: 'code',
+        success: true,
+        durationMs: 1000,
+        tokensUsed: 5000,
+        timestamp: Date.now(),
       });
       const all = store.getAll();
       expect(all).toHaveLength(1);
@@ -32,8 +36,12 @@ describe('ModelPerformanceStore', () => {
     it('accumulates multiple records', () => {
       for (let i = 0; i < 5; i++) {
         store.record({
-          modelId: `model-${i}`, taskType: 'code', success: true,
-          durationMs: 1000, tokensUsed: 5000, timestamp: Date.now(),
+          modelId: `model-${i}`,
+          taskType: 'code',
+          success: true,
+          durationMs: 1000,
+          tokensUsed: 5000,
+          timestamp: Date.now(),
         });
       }
       expect(store.getAll()).toHaveLength(5);
@@ -43,8 +51,12 @@ describe('ModelPerformanceStore', () => {
   describe('flush', () => {
     it('persists records to disk', () => {
       store.record({
-        modelId: 'gpt-4o', taskType: 'code', success: true,
-        durationMs: 1000, tokensUsed: 5000, timestamp: Date.now(),
+        modelId: 'gpt-4o',
+        taskType: 'code',
+        success: true,
+        durationMs: 1000,
+        tokensUsed: 5000,
+        timestamp: Date.now(),
       });
       store.flush();
 
@@ -58,12 +70,30 @@ describe('ModelPerformanceStore', () => {
       // Write records directly
       const filePath = path.join(TEST_DIR, 'model_outcomes.ndjson');
       const records = [
-        { modelId: 'gpt-4o', taskType: 'code', success: true, durationMs: 1000, tokensUsed: 5000, timestamp: Date.now() },
-        { modelId: 'claude', taskType: 'search', success: false, durationMs: 2000, tokensUsed: 3000, timestamp: Date.now() },
+        {
+          modelId: 'gpt-4o',
+          taskType: 'code',
+          success: true,
+          durationMs: 1000,
+          tokensUsed: 5000,
+          timestamp: Date.now(),
+        },
+        {
+          modelId: 'claude',
+          taskType: 'search',
+          success: false,
+          durationMs: 2000,
+          tokensUsed: 3000,
+          timestamp: Date.now(),
+        },
       ];
-      fs.writeFileSync(filePath, records.map(r => JSON.stringify(r)).join('\n') + '\n');
+      fs.writeFileSync(filePath, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
 
-      const newStore = new ModelPerformanceStore({ baseDir: TEST_DIR, flushIntervalMs: 0, maxRecords: 100 });
+      const newStore = new ModelPerformanceStore({
+        baseDir: TEST_DIR,
+        flushIntervalMs: 0,
+        maxRecords: 100,
+      });
       expect(newStore.getAll()).toHaveLength(2);
       newStore.dispose();
     });
@@ -71,8 +101,22 @@ describe('ModelPerformanceStore', () => {
 
   describe('getFiltered', () => {
     it('filters by model ID', () => {
-      store.record({ modelId: 'gpt-4o', taskType: 'code', success: true, durationMs: 1000, tokensUsed: 5000, timestamp: Date.now() });
-      store.record({ modelId: 'claude', taskType: 'code', success: true, durationMs: 1000, tokensUsed: 5000, timestamp: Date.now() });
+      store.record({
+        modelId: 'gpt-4o',
+        taskType: 'code',
+        success: true,
+        durationMs: 1000,
+        tokensUsed: 5000,
+        timestamp: Date.now(),
+      });
+      store.record({
+        modelId: 'claude',
+        taskType: 'code',
+        success: true,
+        durationMs: 1000,
+        tokensUsed: 5000,
+        timestamp: Date.now(),
+      });
 
       const filtered = store.getFiltered({ modelId: 'gpt-4o' });
       expect(filtered).toHaveLength(1);
@@ -80,8 +124,22 @@ describe('ModelPerformanceStore', () => {
     });
 
     it('filters by task type', () => {
-      store.record({ modelId: 'gpt-4o', taskType: 'code', success: true, durationMs: 1000, tokensUsed: 5000, timestamp: Date.now() });
-      store.record({ modelId: 'gpt-4o', taskType: 'search', success: true, durationMs: 1000, tokensUsed: 5000, timestamp: Date.now() });
+      store.record({
+        modelId: 'gpt-4o',
+        taskType: 'code',
+        success: true,
+        durationMs: 1000,
+        tokensUsed: 5000,
+        timestamp: Date.now(),
+      });
+      store.record({
+        modelId: 'gpt-4o',
+        taskType: 'search',
+        success: true,
+        durationMs: 1000,
+        tokensUsed: 5000,
+        timestamp: Date.now(),
+      });
 
       const filtered = store.getFiltered({ taskType: 'code' });
       expect(filtered).toHaveLength(1);
@@ -92,9 +150,23 @@ describe('ModelPerformanceStore', () => {
   describe('getAggregatedStats', () => {
     it('computes success rate per model per task type', () => {
       for (let i = 0; i < 8; i++) {
-        store.record({ modelId: 'gpt-4o', taskType: 'code', success: true, durationMs: 1000, tokensUsed: 5000, timestamp: Date.now() });
+        store.record({
+          modelId: 'gpt-4o',
+          taskType: 'code',
+          success: true,
+          durationMs: 1000,
+          tokensUsed: 5000,
+          timestamp: Date.now(),
+        });
       }
-      store.record({ modelId: 'gpt-4o', taskType: 'code', success: false, durationMs: 2000, tokensUsed: 3000, timestamp: Date.now() });
+      store.record({
+        modelId: 'gpt-4o',
+        taskType: 'code',
+        success: false,
+        durationMs: 2000,
+        tokensUsed: 3000,
+        timestamp: Date.now(),
+      });
 
       const stats = store.getAggregatedStats();
       expect(stats).toHaveLength(1);
@@ -104,9 +176,23 @@ describe('ModelPerformanceStore', () => {
 
     it('sorts by count descending', () => {
       for (let i = 0; i < 10; i++) {
-        store.record({ modelId: 'gpt-4o', taskType: 'code', success: true, durationMs: 1000, tokensUsed: 5000, timestamp: Date.now() });
+        store.record({
+          modelId: 'gpt-4o',
+          taskType: 'code',
+          success: true,
+          durationMs: 1000,
+          tokensUsed: 5000,
+          timestamp: Date.now(),
+        });
       }
-      store.record({ modelId: 'claude', taskType: 'search', success: true, durationMs: 1000, tokensUsed: 5000, timestamp: Date.now() });
+      store.record({
+        modelId: 'claude',
+        taskType: 'search',
+        success: true,
+        durationMs: 1000,
+        tokensUsed: 5000,
+        timestamp: Date.now(),
+      });
 
       const stats = store.getAggregatedStats();
       expect(stats[0].modelId).toBe('gpt-4o');
@@ -117,7 +203,14 @@ describe('ModelPerformanceStore', () => {
   describe('size', () => {
     it('returns correct count', () => {
       expect(store.size).toBe(0);
-      store.record({ modelId: 'gpt-4o', taskType: 'code', success: true, durationMs: 1000, tokensUsed: 5000, timestamp: Date.now() });
+      store.record({
+        modelId: 'gpt-4o',
+        taskType: 'code',
+        success: true,
+        durationMs: 1000,
+        tokensUsed: 5000,
+        timestamp: Date.now(),
+      });
       expect(store.size).toBe(1);
     });
   });

@@ -1,6 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { CompensationScheduler, defaultCompensationRetryPolicy } from '../../src/saga/compensationScheduler';
+import {
+  CompensationScheduler,
+  defaultCompensationRetryPolicy,
+} from '../../src/saga/compensationScheduler';
 import type { SagaStepNode, SagaContext } from '../../src/saga/types';
 
 function makeStepNode(id: string, name: string): SagaStepNode {

@@ -8,7 +8,13 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { FileReadTool, FileWriteTool, FileEditTool, FileSearchTool, FileListTool } from '../../src/tools/fileSystemTool';
+import {
+  FileReadTool,
+  FileWriteTool,
+  FileEditTool,
+  FileSearchTool,
+  FileListTool,
+} from '../../src/tools/fileSystemTool';
 
 describe('FileReadTool', () => {
   let tool: FileReadTool;

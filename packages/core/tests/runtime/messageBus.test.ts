@@ -33,7 +33,9 @@ describe('MessageBus', () => {
 
   it('does not deliver to subscribers on other topics', () => {
     let called = false;
-    bus.subscribe('system.alert', () => { called = true; });
+    bus.subscribe('system.alert', () => {
+      called = true;
+    });
     bus.publish('agent.message', 'agent-1', 'hi');
     assert.equal(called, false);
   });
@@ -294,7 +296,7 @@ describe('MessageBus', () => {
 
   it('handles async handlers without blocking publish', () => {
     bus.subscribe('agent.message', async () => {
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 100));
     });
     assert.doesNotThrow(() => {
       bus.publish('agent.message', 'agent-1', 'async test');

@@ -83,7 +83,7 @@ export class RunRecovery {
   }
 
   listRecoverableRuns(): Array<{ runId: string; phase: string; timestamp: string }> {
-    return this.checkpointer.listCheckpoints().map(entry => ({
+    return this.checkpointer.listCheckpoints().map((entry) => ({
       runId: entry.runId,
       phase: entry.phase,
       timestamp: entry.timestamp,

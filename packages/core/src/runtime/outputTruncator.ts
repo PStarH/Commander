@@ -161,7 +161,10 @@ export class OutputTruncator {
       headEnd--;
     }
     let tailStart = Math.max(0, content.length - tailBytes);
-    while (tailStart < content.length && (content.charCodeAt(tailStart) & 0b11000000) === 0b10000000) {
+    while (
+      tailStart < content.length &&
+      (content.charCodeAt(tailStart) & 0b11000000) === 0b10000000
+    ) {
       tailStart++;
     }
 
@@ -199,7 +202,7 @@ export class OutputTruncator {
     const importantMatches: Array<{ line: string; index: number }> = [];
     for (let i = 0; i < middle.length; i++) {
       const line = middle[i] ?? '';
-      if (this.config.importantPatterns.some(p => p.test(line))) {
+      if (this.config.importantPatterns.some((p) => p.test(line))) {
         importantMatches.push({ line, index: headLines + i });
       }
       if (importantMatches.length >= maxImportant) break;
@@ -212,9 +215,10 @@ export class OutputTruncator {
       head.length + tail.length + importantMatches.reduce((s, m) => s + m.line.length + 1, 0),
     );
 
-    const importantBlock = importantMatches.length > 0
-      ? `\n[retained ${importantMatches.length} important middle lines]\n${importantMatches.map(m => `L${m.index + 1}: ${m.line}`).join('\n')}\n`
-      : '';
+    const importantBlock =
+      importantMatches.length > 0
+        ? `\n[retained ${importantMatches.length} important middle lines]\n${importantMatches.map((m) => `L${m.index + 1}: ${m.line}`).join('\n')}\n`
+        : '';
 
     const truncated = `${head}${importantBlock}${marker}${tail}`;
 

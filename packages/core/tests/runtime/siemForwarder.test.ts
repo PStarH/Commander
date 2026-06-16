@@ -7,7 +7,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { SIEMForwarder, createSIEMForwarderFromEnv, SIEMEvent } from '../../src/runtime/siemForwarder';
+import {
+  SIEMForwarder,
+  createSIEMForwarderFromEnv,
+  SIEMEvent,
+} from '../../src/runtime/siemForwarder';
 
 // ============================================================================
 // Helpers
@@ -33,12 +37,22 @@ function testEvent(overrides: Partial<SIEMEvent> = {}): SIEMEvent {
 
 describe('SIEMForwarder — Syslog formatting', () => {
   it('formats RFC 5424 message with correct PRI, timestamp, and appname', () => {
-    const fwd = new SIEMForwarder({ type: 'syslog', endpoint: '127.0.0.1:514', sourceName: 'commander' });
+    const fwd = new SIEMForwarder({
+      type: 'syslog',
+      endpoint: '127.0.0.1:514',
+      sourceName: 'commander',
+    });
     const msg = (fwd as any).formatSyslogMessage(
-      testEvent({ eventId: 'evt-1', severity: 'high', type: 'auth_failure', message: 'Login failed' }),
-      'commander', 'test-host',
+      testEvent({
+        eventId: 'evt-1',
+        severity: 'high',
+        type: 'auth_failure',
+        message: 'Login failed',
+      }),
+      'commander',
+      'test-host',
     );
-    expect(msg).toContain('<11>1');       // facility=1, sev=3 → 11
+    expect(msg).toContain('<11>1'); // facility=1, sev=3 → 11
     expect(msg).toContain('2026-06-15T10:00:00.000Z');
     expect(msg).toContain('commander');
     expect(msg).toContain('auth_failure');
@@ -95,13 +109,20 @@ describe('SIEMForwarder — Protocol dispatch', () => {
 describe('SIEMForwarder — Splunk HEC', () => {
   it('sends JSON payload with event and metadata', async () => {
     const fwd = new SIEMForwarder({
-      type: 'splunk-hec', endpoint: 'https://splunk.example.com:8088/services/collector',
-      token: 'hec-token', sourceName: 'commander',
+      type: 'splunk-hec',
+      endpoint: 'https://splunk.example.com:8088/services/collector',
+      token: 'hec-token',
+      sourceName: 'commander',
     });
     let captured: unknown[] = [];
-    vi.spyOn(fwd as any, 'httpPost').mockImplementation((_u: URL, p: unknown[]) => { captured = p; return Promise.resolve(); });
+    vi.spyOn(fwd as any, 'httpPost').mockImplementation((_u: URL, p: unknown[]) => {
+      captured = p;
+      return Promise.resolve();
+    });
 
-    await (fwd as any).sendSplunkHEC([testEvent({ eventId: 'evt-splunk', type: 'auth_success', severity: 'low' })]);
+    await (fwd as any).sendSplunkHEC([
+      testEvent({ eventId: 'evt-splunk', type: 'auth_success', severity: 'low' }),
+    ]);
 
     expect(captured).toHaveLength(1);
     expect(captured[0]).toHaveProperty('time');
@@ -118,11 +139,18 @@ describe('SIEMForwarder — Splunk HEC', () => {
 describe('SIEMForwarder — Datadog', () => {
   it('sends JSON with DD-API-KEY header', async () => {
     const fwd = new SIEMForwarder({
-      type: 'datadog', endpoint: 'https://http-intake.logs.datadoghq.com/api/v2/logs',
-      token: 'dd-key-456', sourceName: 'commander',
+      type: 'datadog',
+      endpoint: 'https://http-intake.logs.datadoghq.com/api/v2/logs',
+      token: 'dd-key-456',
+      sourceName: 'commander',
     });
     let headers: Record<string, string> = {};
-    vi.spyOn(fwd as any, 'httpPost').mockImplementation((_u: URL, _p: unknown[], h: Record<string, string>) => { headers = h; return Promise.resolve(); });
+    vi.spyOn(fwd as any, 'httpPost').mockImplementation(
+      (_u: URL, _p: unknown[], h: Record<string, string>) => {
+        headers = h;
+        return Promise.resolve();
+      },
+    );
 
     await (fwd as any).sendDatadog([testEvent({ eventId: 'evt-dd' })]);
 
@@ -179,7 +207,7 @@ describe('SIEMForwarder — processQueue', () => {
     // Mock sendBatch via direct assignment instead of spy
     const origSendBatch = (fwd as any).sendBatch;
     let wasCalled = false;
-    (fwd as any).sendBatch = ({ __synchronousMock: true }) as any;
+    (fwd as any).sendBatch = { __synchronousMock: true } as any;
 
     // Call processQueue directly to avoid async timing issues
     const batch = [testEvent()];
@@ -223,7 +251,11 @@ describe('SIEMForwarder — processQueue', () => {
   });
 
   it('re-queues failed events to the front', async () => {
-    const fwd = new SIEMForwarder({ type: 'syslog', endpoint: '127.0.0.1:514', retryIntervalMs: 50 });
+    const fwd = new SIEMForwarder({
+      type: 'syslog',
+      endpoint: '127.0.0.1:514',
+      retryIntervalMs: 50,
+    });
     const origSendBatch = (fwd as any).sendBatch;
     (fwd as any).sendBatch = vi.fn().mockRejectedValue(new Error('fail'));
 
@@ -244,7 +276,9 @@ describe('SIEMForwarder — processQueue', () => {
 // ============================================================================
 
 describe('createSIEMForwarderFromEnv', () => {
-  afterEach(() => { vi.unstubAllEnvs(); });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
   it('creates syslog forwarder', () => {
     vi.stubEnv('SIEM_TYPE', 'syslog');

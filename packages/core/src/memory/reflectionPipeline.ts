@@ -19,9 +19,9 @@ import type { ThreeLayerMemory } from '../threeLayerMemory.js';
 /** A synthesized reflection insight */
 export interface ReflectionInsight {
   id: string;
-  insight: string;           // 1-2 sentence summary
+  insight: string; // 1-2 sentence summary
   sourceMemoryIds: string[]; // Source memory IDs
-  importance: number;        // 0-1
+  importance: number; // 0-1
   timestamp: number;
   category: 'pattern' | 'lesson' | 'strategy' | 'warning';
 }
@@ -146,7 +146,7 @@ export class ReflectionPipeline {
   private async synthesize(memories: MemoryEntry[]): Promise<ReflectionInsight | null> {
     if (!this.llm) return null;
 
-    const memoryTexts = memories.map(m => `- ${m.content}`).join('\n');
+    const memoryTexts = memories.map((m) => `- ${m.content}`).join('\n');
 
     const prompt = `基于以下经历，总结一条可复用的经验洞察。
 
@@ -172,7 +172,7 @@ ${memoryTexts}
     return {
       id: `insight-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       insight: response.trim(),
-      sourceMemoryIds: memories.map(m => m.id),
+      sourceMemoryIds: memories.map((m) => m.id),
       importance: this.calculateInsightImportance(memories),
       timestamp: Date.now(),
       category,
@@ -236,7 +236,7 @@ ${memoryTexts}
         reflectionId: insight.id,
         sourceMemoryIds: insight.sourceMemoryIds,
         category: insight.category,
-      }
+      },
     );
   }
 
@@ -259,9 +259,7 @@ ${memoryTexts}
     const insights = this.getRecentInsights(n);
     if (insights.length === 0) return '';
 
-    return insights
-      .map((ins, i) => `[经验${i + 1}] ${ins.insight}`)
-      .join('\n');
+    return insights.map((ins, i) => `[经验${i + 1}] ${ins.insight}`).join('\n');
   }
 
   /**

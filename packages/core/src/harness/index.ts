@@ -11,7 +11,11 @@ export * from './harnessTypes';
 
 // Concrete harness implementations
 export { DefaultHarness, DEFAULT_HARNESS_CAPABILITIES } from './defaultHarness';
-export { CodeAgentHarness, CODE_AGENT_HARNESS_CAPABILITIES, DEFAULT_GUARDIAN_CONFIG } from './codeAgentHarness';
+export {
+  CodeAgentHarness,
+  CODE_AGENT_HARNESS_CAPABILITIES,
+  DEFAULT_GUARDIAN_CONFIG,
+} from './codeAgentHarness';
 export { McpHarness, MCP_HARNESS_CAPABILITIES } from './mcpHarness';
 
 // Registry

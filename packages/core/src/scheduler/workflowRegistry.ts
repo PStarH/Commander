@@ -30,7 +30,10 @@ import type { WorkflowDefinition, WorkflowStep, WorkflowTrigger } from './types'
  *   model-tier: best
  *   depends-on: [step-1]
  */
-export function parseWorkflowMarkdown(filePath: string, content: string): WorkflowDefinition | null {
+export function parseWorkflowMarkdown(
+  filePath: string,
+  content: string,
+): WorkflowDefinition | null {
   const baseName = path.basename(filePath, '.md');
   const id = baseName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 
@@ -54,7 +57,12 @@ export function parseWorkflowMarkdown(filePath: string, content: string): Workfl
   if (fm.trigger && typeof fm.trigger === 'object') {
     const t = fm.trigger as Record<string, unknown>;
     if (t.cron) triggers.push({ type: 'cron', cron: t.cron as string, label: `cron:${t.cron}` });
-    if (t.interval) triggers.push({ type: 'interval', interval: t.interval as string, label: `every ${t.interval}` });
+    if (t.interval)
+      triggers.push({
+        type: 'interval',
+        interval: t.interval as string,
+        label: `every ${t.interval}`,
+      });
     if (t.at) triggers.push({ type: 'once', at: t.at as string, label: `at ${t.at}` });
   }
 
@@ -99,10 +107,20 @@ function parseSteps(body: string): WorkflowStep[] {
     steps.push({
       id: stepId,
       goal: goalMatch?.[1]?.trim() ?? headerMatch[1].trim(),
-      tools: toolsMatch ? toolsMatch[1].split(',').map(s => s.trim()).filter(Boolean) : [],
+      tools: toolsMatch
+        ? toolsMatch[1]
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [],
       modelTier: (modelMatch?.[1]?.trim() as WorkflowStep['modelTier']) ?? 'standard',
       parallelizable: parallelMatch?.[1] === 'true',
-      dependsOn: dependsMatch ? dependsMatch[1].split(',').map(s => s.trim()).filter(Boolean) : [],
+      dependsOn: dependsMatch
+        ? dependsMatch[1]
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [],
       timeoutMs: timeoutMatch ? parseInt(timeoutMatch[1], 10) : 60_000,
     });
   }
@@ -199,7 +217,9 @@ export class WorkflowRegistry {
           }
         }
       } catch (err) {
-        getGlobalLogger().warn('WorkflowRegistry', `Failed to scan ${dir}`, { error: (err as Error).message });
+        getGlobalLogger().warn('WorkflowRegistry', `Failed to scan ${dir}`, {
+          error: (err as Error).message,
+        });
       }
     }
 

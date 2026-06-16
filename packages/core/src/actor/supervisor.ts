@@ -43,11 +43,7 @@ export class Supervisor {
   private readonly children = new Map<ActorId, ChildActor>();
   private readonly restartHistory: RestartRecord[] = [];
 
-  constructor(
-    supervisorId: ActorId,
-    config: SupervisorConfig,
-    logger: ActorLogger,
-  ) {
+  constructor(supervisorId: ActorId, config: SupervisorConfig, logger: ActorLogger) {
     this.supervisorId = supervisorId;
     this.config = config;
     this.logger = logger;
@@ -145,9 +141,8 @@ export class Supervisor {
 
   private getRecentRestarts(childId: ActorId): number {
     const windowStart = Date.now() - this.config.restartWindowMs;
-    return this.restartHistory.filter(
-      (r) => r.actorId === childId && r.timestamp >= windowStart,
-    ).length;
+    return this.restartHistory.filter((r) => r.actorId === childId && r.timestamp >= windowStart)
+      .length;
   }
 
   private calculateBackoff(restartCount: number): number {

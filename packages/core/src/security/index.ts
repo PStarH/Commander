@@ -19,22 +19,11 @@ export type {
   SecurityStats,
 } from './securityAuditLogger';
 
-export {
-  SecurityMonitor,
-  getSecurityMonitor,
-  resetSecurityMonitor,
-} from './securityMonitor';
+export { SecurityMonitor, getSecurityMonitor, resetSecurityMonitor } from './securityMonitor';
 
-export type {
-  SecurityAlert,
-  SecurityHealth,
-} from './securityMonitor';
+export type { SecurityAlert, SecurityHealth } from './securityMonitor';
 
-export {
-  GuardianAgent,
-  getGuardianAgent,
-  resetGuardianAgent,
-} from './guardianAgent';
+export { GuardianAgent, getGuardianAgent, resetGuardianAgent } from './guardianAgent';
 
 export type {
   GuardianAction,

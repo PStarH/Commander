@@ -149,9 +149,9 @@ export class GitShadowWorkspace {
     }
 
     try {
-      const mainBranch = await this.gitAsync('rev-parse --verify main').catch(() => 
-        this.gitAsync('rev-parse --verify master')
-      ).catch(() => 'main');
+      const mainBranch = await this.gitAsync('rev-parse --verify main')
+        .catch(() => this.gitAsync('rev-parse --verify master'))
+        .catch(() => 'main');
 
       await this.gitAsync(`checkout ${mainBranch}`);
       await this.gitAsync(`branch -D ${this.currentBranch.branchName}`);
@@ -162,11 +162,13 @@ export class GitShadowWorkspace {
     }
   }
 
-  async mergeToMain(options: {
-    prTitle?: string;
-    prBody?: string;
-    deleteBranch?: boolean;
-  } = {}): Promise<MergeResult> {
+  async mergeToMain(
+    options: {
+      prTitle?: string;
+      prBody?: string;
+      deleteBranch?: boolean;
+    } = {},
+  ): Promise<MergeResult> {
     if (!this.currentBranch) {
       return { success: false, error: 'No shadow branch active' };
     }
@@ -177,12 +179,14 @@ export class GitShadowWorkspace {
     }
 
     try {
-      const mainBranch = await this.gitAsync('rev-parse --verify main').catch(() =>
-        this.gitAsync('rev-parse --verify master')
-      ).catch(() => 'main');
+      const mainBranch = await this.gitAsync('rev-parse --verify main')
+        .catch(() => this.gitAsync('rev-parse --verify master'))
+        .catch(() => 'main');
 
       await this.gitAsync(`checkout ${mainBranch}`);
-      await this.gitAsync(`merge --no-ff ${this.currentBranch.branchName} -m "${options.prTitle ?? 'Merge agent changes'}"`);
+      await this.gitAsync(
+        `merge --no-ff ${this.currentBranch.branchName} -m "${options.prTitle ?? 'Merge agent changes'}"`,
+      );
 
       const mergeCommit = await this.getCurrentCommit();
 
@@ -221,13 +225,21 @@ export class GitShadowWorkspace {
     }
 
     if (this.dryRun) {
-      return { branch: this.currentBranch.branchName, baseCommit: this.currentBranch.baseCommit, filesChanged: 0, insertions: 0, deletions: 0 };
+      return {
+        branch: this.currentBranch.branchName,
+        baseCommit: this.currentBranch.baseCommit,
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+      };
     }
 
     const diffStat = await this.gitAsync(`diff --stat ${this.currentBranch.baseCommit}..HEAD`);
     const lines = diffStat.split('\n');
     const lastLine = lines[lines.length - 1] || '';
-    const match = lastLine.match(/(\d+) files? changed(?:, (\d+) insertions?)?(?:, (\d+) deletions?)?/);
+    const match = lastLine.match(
+      /(\d+) files? changed(?:, (\d+) insertions?)?(?:, (\d+) deletions?)?/,
+    );
 
     return {
       branch: this.currentBranch.branchName,
@@ -251,7 +263,12 @@ export function createGitShadowCompensationHandler(workspace: GitShadowWorkspace
 }
 
 export function registerGitShadowCompensation(
-  registry: { register: (toolName: string, handler: () => Promise<{ success: boolean; error?: string }>) => void },
+  registry: {
+    register: (
+      toolName: string,
+      handler: () => Promise<{ success: boolean; error?: string }>,
+    ) => void;
+  },
   workspace: GitShadowWorkspace,
 ): void {
   registry.register('git:shadow:rollback', createGitShadowCompensationHandler(workspace));

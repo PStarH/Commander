@@ -89,7 +89,7 @@ export class SLOManager {
           actualValue = trace.summary.errors / Math.max(trace.summary.totalEvents, 1);
           break;
         case 'success_rate':
-          actualValue = 1 - (trace.summary.errors / Math.max(trace.summary.totalEvents, 1));
+          actualValue = 1 - trace.summary.errors / Math.max(trace.summary.totalEvents, 1);
           break;
         case 'cost_usd':
           actualValue = 0;
@@ -100,15 +100,26 @@ export class SLOManager {
 
       let violated = false;
       switch (slo.operator) {
-        case 'lt': violated = actualValue < slo.threshold; break;
-        case 'lte': violated = actualValue <= slo.threshold; break;
-        case 'gt': violated = actualValue > slo.threshold; break;
-        case 'gte': violated = actualValue >= slo.threshold; break;
-        case 'eq': violated = actualValue === slo.threshold; break;
+        case 'lt':
+          violated = actualValue < slo.threshold;
+          break;
+        case 'lte':
+          violated = actualValue <= slo.threshold;
+          break;
+        case 'gt':
+          violated = actualValue > slo.threshold;
+          break;
+        case 'gte':
+          violated = actualValue >= slo.threshold;
+          break;
+        case 'eq':
+          violated = actualValue === slo.threshold;
+          break;
       }
 
       if (violated) {
-        const severity: SLOViolation['severity'] = slo.metric === 'error_rate' ? 'critical' : 'warning';
+        const severity: SLOViolation['severity'] =
+          slo.metric === 'error_rate' ? 'critical' : 'warning';
         const violation: SLOViolation = {
           sloId: slo.id,
           timestamp: new Date().toISOString(),
@@ -127,15 +138,13 @@ export class SLOManager {
   }
 
   getViolations(sloId?: string): SLOViolation[] {
-    if (sloId) return this.violations.filter(v => v.sloId === sloId);
+    if (sloId) return this.violations.filter((v) => v.sloId === sloId);
     return [...this.violations];
   }
 
   getStatus(): SLOStatus[] {
-    return Array.from(this.slos.values()).map(slo => {
-      const recentViolations = this.violations
-        .filter(v => v.sloId === slo.id)
-        .slice(-100);
+    return Array.from(this.slos.values()).map((slo) => {
+      const recentViolations = this.violations.filter((v) => v.sloId === slo.id).slice(-100);
       const violationCount = recentViolations.length;
       const lastViolation = recentViolations[recentViolations.length - 1];
       const currentValue = lastViolation?.actualValue ?? 0;
@@ -146,7 +155,9 @@ export class SLOManager {
         metric: slo.metric,
         threshold: slo.threshold,
         currentValue,
-        isViolating: violationCount > 0 && lastViolation &&
+        isViolating:
+          violationCount > 0 &&
+          lastViolation &&
           new Date(lastViolation.timestamp).getTime() > Date.now() - 60000,
         violationCount,
         lastChecked: new Date().toISOString(),

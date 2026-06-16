@@ -23,16 +23,17 @@ function named(mod: any, name: string): any {
 let _modules: any = null;
 async function loadModules() {
   if (_modules) return _modules;
-  const [agentMod, telosMod, ultMod, mimoMod, webMod, fileMod, codeMod, persistMod] = await Promise.all([
-    import('../src/runtime/agentRuntime'),
-    import('../src/telos/telosOrchestrator'),
-    import('../src/ultimate/orchestrator'),
-    import('../src/runtime/providers/mimoProvider'),
-    import('../src/tools/webSearchTool'),
-    import('../src/tools/fileSystemTool'),
-    import('../src/tools/codeExecutionTool'),
-    import('../src/tools/persistenceTool'),
-  ]);
+  const [agentMod, telosMod, ultMod, mimoMod, webMod, fileMod, codeMod, persistMod] =
+    await Promise.all([
+      import('../src/runtime/agentRuntime'),
+      import('../src/telos/telosOrchestrator'),
+      import('../src/ultimate/orchestrator'),
+      import('../src/runtime/providers/mimoProvider'),
+      import('../src/tools/webSearchTool'),
+      import('../src/tools/fileSystemTool'),
+      import('../src/tools/codeExecutionTool'),
+      import('../src/tools/persistenceTool'),
+    ]);
   _modules = {
     AgentRuntime: named(agentMod, 'AgentRuntime'),
     TELOSOrchestrator: named(telosMod, 'TELOSOrchestrator'),
@@ -63,11 +64,16 @@ async function createRuntime() {
   runtime.registerProvider('mimo', provider);
   runtime.registerProvider('openai', provider);
   const tools: Record<string, any> = {
-    web_search: new M.WebSearchTool(), web_fetch: new M.WebFetchTool(),
-    file_write: new M.FileWriteTool(), file_read: new M.FileReadTool(),
-    file_list: new M.FileListTool(), file_edit: new M.FileEditTool(),
-    file_search: new M.FileSearchTool(), shell_execute: new M.ShellExecuteTool(),
-    memory_store: new M.MemoryStoreTool(), memory_recall: new M.MemoryRecallTool(),
+    web_search: new M.WebSearchTool(),
+    web_fetch: new M.WebFetchTool(),
+    file_write: new M.FileWriteTool(),
+    file_read: new M.FileReadTool(),
+    file_list: new M.FileListTool(),
+    file_edit: new M.FileEditTool(),
+    file_search: new M.FileSearchTool(),
+    shell_execute: new M.ShellExecuteTool(),
+    memory_store: new M.MemoryStoreTool(),
+    memory_recall: new M.MemoryRecallTool(),
   };
   for (const [name, tool] of Object.entries(tools)) runtime.registerTool(name, tool);
   return runtime;
@@ -238,7 +244,18 @@ ${TASK}`;
       goal: prompt,
       maxSteps: 20,
       tokenBudget: 400_000,
-      availableTools: ['web_search', 'web_fetch', 'file_write', 'file_read', 'file_list', 'file_edit', 'file_search', 'shell_execute', 'memory_store', 'memory_recall'],
+      availableTools: [
+        'web_search',
+        'web_fetch',
+        'file_write',
+        'file_read',
+        'file_list',
+        'file_edit',
+        'file_search',
+        'shell_execute',
+        'memory_store',
+        'memory_recall',
+      ],
       contextData: {},
     });
 
@@ -249,36 +266,53 @@ ${TASK}`;
     const checks: Record<string, { passed: boolean; detail: string }> = {};
 
     // 编排: 核心模块完整
-    const srcFiles = files.filter(f => f.startsWith('src/') && f.endsWith('.ts'));
-    const coreModules = ['scheduler.ts', 'job.ts', 'dag.ts', 'sandbox.ts', 'metrics.ts', 'optimizer.ts'];
-    const missingCore = coreModules.filter(m => !srcFiles.some(f => f.endsWith(m)));
+    const srcFiles = files.filter((f) => f.startsWith('src/') && f.endsWith('.ts'));
+    const coreModules = [
+      'scheduler.ts',
+      'job.ts',
+      'dag.ts',
+      'sandbox.ts',
+      'metrics.ts',
+      'optimizer.ts',
+    ];
+    const missingCore = coreModules.filter((m) => !srcFiles.some((f) => f.endsWith(m)));
     checks['编排-核心模块'] = {
       passed: missingCore.length === 0 && srcFiles.length >= 5,
-      detail: missingCore.length === 0 ? `${srcFiles.length}个源码模块完整` : `缺少: ${missingCore.join(', ')}`,
+      detail:
+        missingCore.length === 0
+          ? `${srcFiles.length}个源码模块完整`
+          : `缺少: ${missingCore.join(', ')}`,
     };
 
     // 质量门禁: 测试计划+性能分析
-    const hasTestPlan = files.some(f => f.includes('test-plan'));
-    const hasPerf = files.some(f => f.includes('performance'));
+    const hasTestPlan = files.some((f) => f.includes('test-plan'));
+    const hasPerf = files.some((f) => f.includes('performance'));
     checks['质量门禁'] = {
       passed: hasTestPlan && hasPerf,
-      detail: hasTestPlan && hasPerf ? '测试计划+性能分析完整' : `测试计划:${hasTestPlan}, 性能分析:${hasPerf}`,
+      detail:
+        hasTestPlan && hasPerf
+          ? '测试计划+性能分析完整'
+          : `测试计划:${hasTestPlan}, 性能分析:${hasPerf}`,
     };
 
     // 安全沙箱: 审计+策略
-    const hasAudit = files.some(f => f.includes('audit'));
-    const hasPolicy = files.some(f => f.includes('policy'));
+    const hasAudit = files.some((f) => f.includes('audit'));
+    const hasPolicy = files.some((f) => f.includes('policy'));
     checks['安全沙箱'] = {
       passed: hasAudit && hasPolicy,
-      detail: hasAudit && hasPolicy ? '安全审计+执行策略完整' : `审计:${hasAudit}, 策略:${hasPolicy}`,
+      detail:
+        hasAudit && hasPolicy ? '安全审计+执行策略完整' : `审计:${hasAudit}, 策略:${hasPolicy}`,
     };
 
     // 自我进化: 优化日志+策略评分
-    const hasOptLog = files.some(f => f.includes('optimization-log'));
-    const hasScores = files.some(f => f.includes('strategy-scores'));
+    const hasOptLog = files.some((f) => f.includes('optimization-log'));
+    const hasScores = files.some((f) => f.includes('strategy-scores'));
     checks['自我进化'] = {
       passed: hasOptLog && hasScores,
-      detail: hasOptLog && hasScores ? '优化日志+策略评分完整' : `优化日志:${hasOptLog}, 评分:${hasScores}`,
+      detail:
+        hasOptLog && hasScores
+          ? '优化日志+策略评分完整'
+          : `优化日志:${hasOptLog}, 评分:${hasScores}`,
     };
 
     // 配置+文档
@@ -286,11 +320,14 @@ ${TASK}`;
     const hasReadme = files.includes('README.md');
     checks['配置文档'] = {
       passed: hasPkg && hasReadme,
-      detail: hasPkg && hasReadme ? 'package.json+README完整' : `package.json:${hasPkg}, README:${hasReadme}`,
+      detail:
+        hasPkg && hasReadme
+          ? 'package.json+README完整'
+          : `package.json:${hasPkg}, README:${hasReadme}`,
     };
 
     // 内容验证: 关键文件有实际实现
-    const schedulerPath = files.find(f => f.endsWith('scheduler.ts'));
+    const schedulerPath = files.find((f) => f.endsWith('scheduler.ts'));
     let schedulerOk = false;
     if (schedulerPath) {
       const content = fs.readFileSync(path.join(tempDir, schedulerPath), 'utf-8');
@@ -302,7 +339,7 @@ ${TASK}`;
     };
 
     // ── 输出 ───────────────────────────────────────────────────────────
-    const passed = Object.values(checks).filter(c => c.passed).length;
+    const passed = Object.values(checks).filter((c) => c.passed).length;
     const total = Object.keys(checks).length;
 
     console.log(`\n${'═'.repeat(70)}`);
@@ -328,15 +365,23 @@ ${TASK}`;
     // Save
     const outDir = path.join(process.cwd(), '.combined-test-output');
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-    fs.writeFileSync(path.join(outDir, 'results.json'), JSON.stringify({
-      timestamp: new Date().toISOString(),
-      durationSec,
-      filesCount: files.length,
-      srcFilesCount: srcFiles.length,
-      passed, total,
-      checks,
-      files,
-    }, null, 2));
+    fs.writeFileSync(
+      path.join(outDir, 'results.json'),
+      JSON.stringify(
+        {
+          timestamp: new Date().toISOString(),
+          durationSec,
+          filesCount: files.length,
+          srcFilesCount: srcFiles.length,
+          passed,
+          total,
+          checks,
+          files,
+        },
+        null,
+        2,
+      ),
+    );
 
     let md = `# Commander 综合压力测试报告\n\n> ${new Date().toISOString()} | mimo-v2.5 | ${durationSec.toFixed(0)}s\n\n`;
     md += `## 评分: ${passed}/${total}\n\n`;
@@ -345,12 +390,11 @@ ${TASK}`;
       md += `| ${name} | ${check.passed ? '✅' : '❌'} | ${check.detail} |\n`;
     }
     md += `\n## 文件清单 (${files.length}个)\n\n`;
-    md += files.map(f => `- ${f}`).join('\n') + '\n';
+    md += files.map((f) => `- ${f}`).join('\n') + '\n';
     fs.writeFileSync(path.join(outDir, 'report.md'), md);
 
     console.log(`\n  结果: ${outDir}/results.json`);
     console.log(`  报告: ${outDir}/report.md`);
-
   } catch (e: any) {
     console.error(`  ❌ 执行异常: ${e.message?.slice(0, 300)}`);
   }

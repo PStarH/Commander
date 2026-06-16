@@ -23,17 +23,17 @@ export class SkillManager {
   // CRUD
   // ========================================================================
 
-  async create(
-    name: string,
-    content: string,
-    metadata: Partial<SkillMetadata>,
-  ): Promise<Skill> {
+  async create(name: string, content: string, metadata: Partial<SkillMetadata>): Promise<Skill> {
     const now = new Date().toISOString();
-    const id = name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    const id = name
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
     const skill: Skill = {
       id,
       name: id,
-      description: (content.split('\n')[0]?.replace(/^#\s*/, '').trim()) || name,
+      description: content.split('\n')[0]?.replace(/^#\s*/, '').trim() || name,
       content,
       tools: [],
       metadata: {
@@ -117,29 +117,28 @@ export class SkillManager {
 
     if (query.text) {
       const lower = query.text.toLowerCase();
-      results = results.filter(s =>
-        s.name.toLowerCase().includes(lower) ||
-        s.description.toLowerCase().includes(lower) ||
-        s.tags.some(t => t.toLowerCase().includes(lower)),
+      results = results.filter(
+        (s) =>
+          s.name.toLowerCase().includes(lower) ||
+          s.description.toLowerCase().includes(lower) ||
+          s.tags.some((t) => t.toLowerCase().includes(lower)),
       );
     }
 
     if (query.category) {
-      results = results.filter(s => s.category === query.category);
+      results = results.filter((s) => s.category === query.category);
     }
 
     if (query.tags && query.tags.length > 0) {
-      results = results.filter(s =>
-        query.tags!.every(t => s.tags.includes(t)),
-      );
+      results = results.filter((s) => query.tags!.every((t) => s.tags.includes(t)));
     }
 
     if (query.source) {
-      results = results.filter(s => s.source === query.source);
+      results = results.filter((s) => s.source === query.source);
     }
 
     if (query.minQuality !== undefined) {
-      results = results.filter(s => s.qualityScore >= query.minQuality!);
+      results = results.filter((s) => s.qualityScore >= query.minQuality!);
     }
 
     results.sort((a, b) => b.qualityScore - a.qualityScore);
@@ -166,7 +165,7 @@ export class SkillManager {
       }
     }
 
-    const cachedNames = new Set(entries.map(e => e.name));
+    const cachedNames = new Set(entries.map((e) => e.name));
     for (const name of names) {
       if (cachedNames.has(name)) continue;
       const skill = await this.store.load(name);
@@ -185,24 +184,24 @@ export class SkillManager {
     if (keywords.length === 0) return [];
 
     const allSkills = await this.list();
-    const scored = allSkills.map(entry => {
+    const scored = allSkills.map((entry) => {
       const searchText = `${entry.name} ${entry.description} ${entry.tags.join(' ')}`.toLowerCase();
       let score = 0;
-      const matchCount = keywords.filter(kw => searchText.includes(kw)).length;
+      const matchCount = keywords.filter((kw) => searchText.includes(kw)).length;
       score = Math.min(1, matchCount / keywords.length);
 
       return { entry, score };
     });
 
     return scored
-      .filter(s => s.score > 0)
+      .filter((s) => s.score > 0)
       .sort((a, b) => {
         const scoreDiff = b.score - a.score;
         if (Math.abs(scoreDiff) > 0.1) return scoreDiff;
         return b.entry.qualityScore - a.entry.qualityScore;
       })
       .slice(0, limit)
-      .map(s => s.entry);
+      .map((s) => s.entry);
   }
 
   // ========================================================================
@@ -216,7 +215,7 @@ export class SkillManager {
     skill.metadata.usageCount++;
     const total = skill.metadata.usageCount;
     const currentAvg = skill.metadata.avgSuccessRate;
-    skill.metadata.avgSuccessRate = ((currentAvg * (total - 1)) + (success ? 1 : 0)) / total;
+    skill.metadata.avgSuccessRate = (currentAvg * (total - 1) + (success ? 1 : 0)) / total;
     skill.metadata.updatedAt = new Date().toISOString();
 
     await this.store.save(skill);
@@ -326,24 +325,110 @@ export class SkillManager {
 
   private extractKeywords(text: string): string[] {
     const stopWords = new Set([
-      'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-      'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-      'should', 'may', 'might', 'shall', 'can', 'need', 'dare', 'ought',
-      'used', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from',
-      'as', 'into', 'through', 'during', 'before', 'after', 'above', 'below',
-      'between', 'out', 'off', 'over', 'under', 'again', 'further', 'then',
-      'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'each',
-      'every', 'both', 'few', 'more', 'most', 'other', 'some', 'such', 'no',
-      'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very',
-      'just', 'because', 'but', 'and', 'or', 'if', 'while', 'that', 'this',
-      'these', 'those', 'it', 'its', 'what', 'which', 'who', 'whom',
+      'the',
+      'a',
+      'an',
+      'is',
+      'are',
+      'was',
+      'were',
+      'be',
+      'been',
+      'being',
+      'have',
+      'has',
+      'had',
+      'do',
+      'does',
+      'did',
+      'will',
+      'would',
+      'could',
+      'should',
+      'may',
+      'might',
+      'shall',
+      'can',
+      'need',
+      'dare',
+      'ought',
+      'used',
+      'to',
+      'of',
+      'in',
+      'for',
+      'on',
+      'with',
+      'at',
+      'by',
+      'from',
+      'as',
+      'into',
+      'through',
+      'during',
+      'before',
+      'after',
+      'above',
+      'below',
+      'between',
+      'out',
+      'off',
+      'over',
+      'under',
+      'again',
+      'further',
+      'then',
+      'once',
+      'here',
+      'there',
+      'when',
+      'where',
+      'why',
+      'how',
+      'all',
+      'each',
+      'every',
+      'both',
+      'few',
+      'more',
+      'most',
+      'other',
+      'some',
+      'such',
+      'no',
+      'nor',
+      'not',
+      'only',
+      'own',
+      'same',
+      'so',
+      'than',
+      'too',
+      'very',
+      'just',
+      'because',
+      'but',
+      'and',
+      'or',
+      'if',
+      'while',
+      'that',
+      'this',
+      'these',
+      'those',
+      'it',
+      'its',
+      'what',
+      'which',
+      'who',
+      'whom',
     ]);
 
     return text
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, ' ')
       .split(/\s+/)
-      .filter(w => w.length > 2 && !stopWords.has(w))
+      .filter((w) => w.length > 2 && !stopWords.has(w))
       .slice(0, 10);
   }
 }

@@ -39,10 +39,7 @@ describe('ExecutionTraceRecorder', () => {
   });
 
   it('throws when completing a non-existent run', () => {
-    assert.throws(
-      () => tracer.completeRun('no-such-run'),
-      /No trace found for run: no-such-run/,
-    );
+    assert.throws(() => tracer.completeRun('no-such-run'), /No trace found for run: no-such-run/);
   });
 
   it('returns undefined for getTrace on non-existent run', () => {
@@ -64,8 +61,12 @@ describe('ExecutionTraceRecorder', () => {
   it('records LLM call events with full token tracking', () => {
     tracer.startRun('run-1', 'agent-1');
     const event = tracer.recordLLMCall(
-      'run-1', 'gpt-4', 'openai', 'power',
-      'input text', 'output text',
+      'run-1',
+      'gpt-4',
+      'openai',
+      'power',
+      'input text',
+      'output text',
       { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
       200,
     );
@@ -109,8 +110,12 @@ describe('ExecutionTraceRecorder', () => {
 
   it('returns a fallback event for non-existent run', () => {
     const event = tracer.recordLLMCall(
-      'no-such-run', 'gpt-4', 'openai', 'standard',
-      'in', 'out',
+      'no-such-run',
+      'gpt-4',
+      'openai',
+      'standard',
+      'in',
+      'out',
       { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       0,
     );
@@ -145,14 +150,23 @@ describe('ExecutionTraceRecorder', () => {
   it('supports nested traces with parentSpanId', () => {
     tracer.startRun('run-1', 'agent-1');
     const parent = tracer.recordLLMCall(
-      'run-1', 'gpt-4', 'openai', 'standard',
-      'in', 'out',
+      'run-1',
+      'gpt-4',
+      'openai',
+      'standard',
+      'in',
+      'out',
       { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       100,
     );
     const child = tracer.recordToolExecution(
-      'run-1', 'search', { q: 'test' }, 'results', 50,
-      undefined, parent.spanId,
+      'run-1',
+      'search',
+      { q: 'test' },
+      'results',
+      50,
+      undefined,
+      parent.spanId,
     );
     assert.equal(child.parentSpanId, parent.spanId);
   });
@@ -163,8 +177,26 @@ describe('ExecutionTraceRecorder', () => {
 
   it('provides accurate summary statistics across multiple events', () => {
     tracer.startRun('run-1', 'agent-1');
-    tracer.recordLLMCall('run-1', 'gpt-4', 'openai', 'power', 'in', 'out', { promptTokens: 100, completionTokens: 50, totalTokens: 150 }, 200);
-    tracer.recordLLMCall('run-1', 'gpt-4', 'openai', 'power', 'in2', 'out2', { promptTokens: 50, completionTokens: 25, totalTokens: 75 }, 100);
+    tracer.recordLLMCall(
+      'run-1',
+      'gpt-4',
+      'openai',
+      'power',
+      'in',
+      'out',
+      { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+      200,
+    );
+    tracer.recordLLMCall(
+      'run-1',
+      'gpt-4',
+      'openai',
+      'power',
+      'in2',
+      'out2',
+      { promptTokens: 50, completionTokens: 25, totalTokens: 75 },
+      100,
+    );
     tracer.recordToolExecution('run-1', 'search', { q: 'test' }, 'results', 50);
     tracer.recordError('run-1', 'minor issue', 10);
     tracer.completeRun('run-1');
@@ -178,7 +210,16 @@ describe('ExecutionTraceRecorder', () => {
 
   it('aggregates summary across multiple traces', () => {
     tracer.startRun('run-a', 'agent-1');
-    tracer.recordLLMCall('run-a', 'gpt-4', 'openai', 'power', 'in', 'out', { promptTokens: 100, completionTokens: 50, totalTokens: 150 }, 200);
+    tracer.recordLLMCall(
+      'run-a',
+      'gpt-4',
+      'openai',
+      'power',
+      'in',
+      'out',
+      { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+      200,
+    );
     tracer.completeRun('run-a');
 
     tracer.startRun('run-b', 'agent-2');
@@ -206,9 +247,9 @@ describe('ExecutionTraceRecorder', () => {
 
   it('lists traces newest first', async () => {
     tracer.startRun('run-1', 'agent-1');
-    await new Promise(r => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 5));
     tracer.completeRun('run-1');
-    await new Promise(r => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 5));
     tracer.startRun('run-2', 'agent-1');
     tracer.completeRun('run-2');
     const list = tracer.listTraces();
@@ -293,8 +334,12 @@ describe('ExecutionTraceRecorder', () => {
     const appended: TraceEvent[] = [];
     const flushedRuns: string[] = [];
     const mockStore: TraceStore = {
-      append: (e) => { appended.push(e); },
-      flush: (runId) => { flushedRuns.push(runId); },
+      append: (e) => {
+        appended.push(e);
+      },
+      flush: (runId) => {
+        flushedRuns.push(runId);
+      },
     };
     tracer.setStore(mockStore);
     tracer.startRun('run-1', 'agent-1');

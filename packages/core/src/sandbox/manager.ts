@@ -1,4 +1,9 @@
-import type { PlatformSandbox, SandboxProfile, SandboxMechanism, SandboxExecutionResult } from './types';
+import type {
+  PlatformSandbox,
+  SandboxProfile,
+  SandboxMechanism,
+  SandboxExecutionResult,
+} from './types';
 import { discoverSandboxes, NoopSB } from './platforms';
 import { PROFILES } from './profiles';
 import { getGlobalLogger } from '../logging';
@@ -10,12 +15,15 @@ export class SandboxManager {
   constructor() {
     this.sandboxes = discoverSandboxes();
     if (this.sandboxes.length === 0) {
-      getGlobalLogger().debug('SandboxManager', 'No OS-level sandbox available, using noop fallback');
+      getGlobalLogger().debug(
+        'SandboxManager',
+        'No OS-level sandbox available, using noop fallback',
+      );
     }
   }
 
   getAvailableMechanisms(): SandboxMechanism[] {
-    return this.sandboxes.map(s => s.name);
+    return this.sandboxes.map((s) => s.name);
   }
 
   hasSandbox(): boolean {
@@ -24,14 +32,20 @@ export class SandboxManager {
 
   getSandbox(mechanism?: SandboxMechanism): PlatformSandbox {
     if (mechanism) {
-      const found = this.sandboxes.find(s => s.name === mechanism);
+      const found = this.sandboxes.find((s) => s.name === mechanism);
       if (found) return found;
       // SECURITY FIX: warn on silent fallback instead of quietly using NoopSB
-      getGlobalLogger().warn('SandboxManager', `Requested sandbox "${mechanism}" not available, falling back to ${this.sandboxes[0]?.name ?? 'none (UNSANDBOXED)'}`);
+      getGlobalLogger().warn(
+        'SandboxManager',
+        `Requested sandbox "${mechanism}" not available, falling back to ${this.sandboxes[0]?.name ?? 'none (UNSANDBOXED)'}`,
+      );
     }
     const fallback = this.sandboxes[0] ?? this.noop;
     if (fallback.name === 'none') {
-      getGlobalLogger().warn('SandboxManager', '⚠️  No OS-level sandbox available — commands will run UNSANDBOXED');
+      getGlobalLogger().warn(
+        'SandboxManager',
+        '⚠️  No OS-level sandbox available — commands will run UNSANDBOXED',
+      );
     }
     return fallback;
   }
@@ -53,7 +67,8 @@ export class SandboxManager {
     workdir?: string,
     mechanism?: SandboxMechanism,
   ): Promise<SandboxExecutionResult> {
-    const p = typeof profile === 'string' ? this.getProfile(profile) : (profile ?? this.getProfile());
+    const p =
+      typeof profile === 'string' ? this.getProfile(profile) : (profile ?? this.getProfile());
     const sb = this.getSandbox(mechanism);
     return sb.execute(command, p, workdir);
   }

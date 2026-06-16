@@ -84,11 +84,14 @@ export function classifyEffortLevel(
   return 'SIMPLE';
 }
 
-export function selectTopologyForEffort(level: EffortLevel, dag?: {
-  parallelismWidth: number;
-  criticalPathDepth: number;
-  interSubtaskCoupling: number;
-}): OrchestrationTopology {
+export function selectTopologyForEffort(
+  level: EffortLevel,
+  dag?: {
+    parallelismWidth: number;
+    criticalPathDepth: number;
+    interSubtaskCoupling: number;
+  },
+): OrchestrationTopology {
   const rules = getEffortRules(level);
 
   if (!dag) return rules.recommendedTopology;

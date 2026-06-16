@@ -27,7 +27,12 @@ import { DeepInfraProvider } from '../../runtime/providers/deepinfraProvider';
 import { AgnesProvider } from '../../runtime/providers/agnesProvider';
 import { getModelRouter } from '../../runtime/modelRouter';
 import { createAllTools, wireResourceToolDependencies } from '../../tools/index';
-import { executeReview, formatReviewOutput, reviewReportToJson, loadReviewGuidelines } from '../../reviewAgent';
+import {
+  executeReview,
+  formatReviewOutput,
+  reviewReportToJson,
+  loadReviewGuidelines,
+} from '../../reviewAgent';
 import type { LLMProvider, ModelConfig } from '../../runtime/types';
 import type { EffortLevel, OrchestrationTopology } from '../../ultimate/types';
 import { UltimateOrchestrator } from '../../ultimate/orchestrator';
@@ -38,7 +43,13 @@ import { getMessageBus } from '../../runtime/messageBus';
 import { getTraceRecorder } from '../../runtime/executionTrace';
 import { getMetaLearner } from '../../selfEvolution/metaLearner';
 import {
-  detectProvider, getEffectiveModel, setConfig, showConfig, listProviders, listModels, resetConfig,
+  detectProvider,
+  getEffectiveModel,
+  setConfig,
+  showConfig,
+  listProviders,
+  listModels,
+  resetConfig,
 } from '../../config/commanderConfig';
 import type { ProviderInfo } from '../../config/commanderConfig';
 import { getApprovalSystem } from '../../sandbox';
@@ -56,12 +67,29 @@ import { DriveOrchestrator } from '../../drive/driveOrchestrator';
 import type { DriveConfig } from '../../drive/types';
 import { Scheduler, WorkflowRegistry } from '../../scheduler';
 import type { ScheduleEntry, WorkflowTrigger } from '../../scheduler';
-import { section, kv, bullet, cmdHeader, startSpinner, startSpinnerWithFailure, progressBar, StepProgress, onboardingMessage, $, parseFlags, fatalError, warn, setTheme, getThemeName, listThemes } from '../util';
+import {
+  section,
+  kv,
+  bullet,
+  cmdHeader,
+  startSpinner,
+  startSpinnerWithFailure,
+  progressBar,
+  StepProgress,
+  onboardingMessage,
+  $,
+  parseFlags,
+  fatalError,
+  warn,
+  setTheme,
+  getThemeName,
+  listThemes,
+} from '../util';
 
 const DEFAULT_TOOLS = 'web,file,exec,git';
 
 export function loadTools(): string[] {
-  return (process.env.COMMANDER_TOOLS || DEFAULT_TOOLS).split(',').map(s => s.trim());
+  return (process.env.COMMANDER_TOOLS || DEFAULT_TOOLS).split(',').map((s) => s.trim());
 }
 
 export function createRuntime(): AgentRuntime | null {
@@ -69,7 +97,10 @@ export function createRuntime(): AgentRuntime | null {
   if (!provider) return null;
 
   const modelId = getEffectiveModel();
-  const runtime = new AgentRuntime({ budgetHardCapTokens: 200000, smartModelRouter: { enabled: true } });
+  const runtime = new AgentRuntime({
+    budgetHardCapTokens: 200000,
+    smartModelRouter: { enabled: true },
+  });
   const allTools = createAllTools();
   for (const [name, tool] of allTools) {
     runtime.registerTool(name, tool);
@@ -113,11 +144,14 @@ export function createRuntime(): AgentRuntime | null {
   };
   const ProviderClass = ProviderMap[provider.type] ?? OpenAIProvider;
 
-  runtime.registerProvider(provider.type, new ProviderClass({
-    apiKey: provider.apiKey,
-    baseUrl: provider.baseUrl,
-    defaultModel: modelId,
-  }));
+  runtime.registerProvider(
+    provider.type,
+    new ProviderClass({
+      apiKey: provider.apiKey,
+      baseUrl: provider.baseUrl,
+      defaultModel: modelId,
+    }),
+  );
 
   const router = getModelRouter();
   for (const tier of ['eco', 'standard', 'power', 'consensus'] as const) {
@@ -138,15 +172,50 @@ export function createRuntime(): AgentRuntime | null {
 
 export type { EffortLevel, OrchestrationTopology };
 export {
-  deliberate, deliberateWithLLM, classifyEffortLevel,
-  detectProvider, getEffectiveModel, onboardingMessage, $, section, kv, bullet, cmdHeader, startSpinner,
-  startSpinnerWithFailure, progressBar, StepProgress,
-  parseFlags, fatalError, warn,
-  setTheme, getThemeName, listThemes,
-  getGlobalLogger, getMetaLearner, getApprovalSystem, StateCheckpointer, spawn, TaskPool,
-  GoalOrchestrator, GoalConfig, SwarmOrchestrator, SwarmConfig, DriveOrchestrator, DriveConfig,
-  CompanyEngine, SSEStream, TELOSOrchestrator, UltimateOrchestrator,
-  executeReview, formatReviewOutput, reviewReportToJson, loadReviewGuidelines,
-  Scheduler, WorkflowRegistry, ScheduleEntry, WorkflowTrigger,
+  deliberate,
+  deliberateWithLLM,
+  classifyEffortLevel,
+  detectProvider,
+  getEffectiveModel,
+  onboardingMessage,
+  $,
+  section,
+  kv,
+  bullet,
+  cmdHeader,
+  startSpinner,
+  startSpinnerWithFailure,
+  progressBar,
+  StepProgress,
+  parseFlags,
+  fatalError,
+  warn,
+  setTheme,
+  getThemeName,
+  listThemes,
+  getGlobalLogger,
+  getMetaLearner,
+  getApprovalSystem,
+  StateCheckpointer,
+  spawn,
+  TaskPool,
+  GoalOrchestrator,
+  GoalConfig,
+  SwarmOrchestrator,
+  SwarmConfig,
+  DriveOrchestrator,
+  DriveConfig,
+  CompanyEngine,
+  SSEStream,
+  TELOSOrchestrator,
+  UltimateOrchestrator,
+  executeReview,
+  formatReviewOutput,
+  reviewReportToJson,
+  loadReviewGuidelines,
+  Scheduler,
+  WorkflowRegistry,
+  ScheduleEntry,
+  WorkflowTrigger,
   AgentRuntime,
 };

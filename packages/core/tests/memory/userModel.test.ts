@@ -70,7 +70,8 @@ describe('UserModelManager', () => {
     it('updates communication style from user messages', () => {
       // Formal, verbose message
       manager.recordInteraction('user-1', {
-        message: 'I would appreciate it if you could provide a comprehensive analysis of the authentication system, including a detailed examination of the security implications and potential vulnerabilities.',
+        message:
+          'I would appreciate it if you could provide a comprehensive analysis of the authentication system, including a detailed examination of the security implications and potential vulnerabilities.',
         role: 'user',
       });
       const profile = manager.getProfile('user-1');
@@ -183,7 +184,7 @@ describe('UserModelManager', () => {
       const profile = mgr.getProfile('user-1');
       assert.ok(profile.observations.length <= 3);
       // Should keep highest confidence ones
-      const confidences = profile.observations.map(o => o.confidence);
+      const confidences = profile.observations.map((o) => o.confidence);
       assert.ok(confidences[0] >= confidences[1]);
     });
   });
@@ -229,7 +230,11 @@ describe('UserModelManager', () => {
 
   describe('saveProfile / loadProfile', () => {
     it('round-trips profile through disk', () => {
-      manager.recordInteraction('user-1', { message: 'hello world test', role: 'user', toolUsed: 'git' });
+      manager.recordInteraction('user-1', {
+        message: 'hello world test',
+        role: 'user',
+        toolUsed: 'git',
+      });
       manager.addObservation('user-1', {
         category: 'preference',
         content: 'Likes TypeScript',

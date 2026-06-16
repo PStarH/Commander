@@ -1,13 +1,27 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
-import { eventToOtelAttrs, spanNameForEvent, SPAN_KIND_TO_OTEL_KIND, isGenAiSemConvOptIn } from '../../src/observability/otelSemConv';
+import {
+  eventToOtelAttrs,
+  spanNameForEvent,
+  SPAN_KIND_TO_OTEL_KIND,
+  isGenAiSemConvOptIn,
+} from '../../src/observability/otelSemConv';
 import type { TraceEvent } from '../../src/runtime/types';
 
 function makeEvent(overrides: Partial<TraceEvent> = {}): TraceEvent {
   return {
-    spanId: 's1', parentSpanId: undefined, traceId: 't1', runId: 'r1', agentId: 'a1',
-    type: 'llm_call', timestamp: '2026-06-05T00:00:00.000Z', durationMs: 100,
-    data: { modelInfo: { provider: 'openai', model: 'gpt-4o' }, tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 } },
+    spanId: 's1',
+    parentSpanId: undefined,
+    traceId: 't1',
+    runId: 'r1',
+    agentId: 'a1',
+    type: 'llm_call',
+    timestamp: '2026-06-05T00:00:00.000Z',
+    durationMs: 100,
+    data: {
+      modelInfo: { provider: 'openai', model: 'gpt-4o' },
+      tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+    },
     ...overrides,
   };
 }
@@ -53,7 +67,12 @@ describe('eventToOtelAttrs', () => {
 
 describe('eventToOtelAttrs (OTel GenAI 1.36+ compliance)', () => {
   it('emits gen_ai.response.id when responseId is set', () => {
-    const e = makeEvent({ data: { responseId: 'resp-abc-123', modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'premium' as any } } });
+    const e = makeEvent({
+      data: {
+        responseId: 'resp-abc-123',
+        modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'premium' as any },
+      },
+    });
     const attrs = eventToOtelAttrs(e, {});
     assert.strictEqual(attrs['gen_ai.response.id'], 'resp-abc-123');
   });
@@ -83,13 +102,25 @@ describe('eventToOtelAttrs (OTel GenAI 1.36+ compliance)', () => {
   });
 
   it('emits gen_ai.tool.call.id for tool events when toolCallId is set', () => {
-    const e = makeEvent({ type: 'tool_execution', data: { input: 'web_search', toolCallId: 'call_42' } });
+    const e = makeEvent({
+      type: 'tool_execution',
+      data: { input: 'web_search', toolCallId: 'call_42' },
+    });
     const attrs = eventToOtelAttrs(e, {});
     assert.strictEqual(attrs['gen_ai.tool.call.id'], 'call_42');
   });
 
   it('emits gen_ai.usage.cached_input_tokens when cacheReadTokens > 0', () => {
-    const e = makeEvent({ data: { tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150, cacheReadTokens: 80 } as any } });
+    const e = makeEvent({
+      data: {
+        tokenUsage: {
+          promptTokens: 100,
+          completionTokens: 50,
+          totalTokens: 150,
+          cacheReadTokens: 80,
+        } as any,
+      },
+    });
     const attrs = eventToOtelAttrs(e, {});
     assert.strictEqual(attrs['gen_ai.usage.cached_input_tokens'], 80);
   });
@@ -102,8 +133,12 @@ describe('eventToOtelAttrs (OTel GenAI 1.36+ compliance)', () => {
 
 describe('isGenAiSemConvOptIn', () => {
   const original = process.env.OTEL_SEMCONV_STABILITY_OPT_IN;
-  before(() => { delete process.env.OTEL_SEMCONV_STABILITY_OPT_IN; });
-  after(() => { if (original !== undefined) process.env.OTEL_SEMCONV_STABILITY_OPT_IN = original; });
+  before(() => {
+    delete process.env.OTEL_SEMCONV_STABILITY_OPT_IN;
+  });
+  after(() => {
+    if (original !== undefined) process.env.OTEL_SEMCONV_STABILITY_OPT_IN = original;
+  });
 
   it('defaults to enabled (true) when env var is unset', () => {
     delete process.env.OTEL_SEMCONV_STABILITY_OPT_IN;
@@ -136,10 +171,16 @@ describe('spanNameForEvent', () => {
     assert.strictEqual(spanNameForEvent(makeEvent()), 'chat gpt-4o');
   });
   it('produces "execute_tool <name>" for tool events', () => {
-    assert.strictEqual(spanNameForEvent(makeEvent({ type: 'tool_execution', data: { input: 'shell' } })), 'execute_tool shell');
+    assert.strictEqual(
+      spanNameForEvent(makeEvent({ type: 'tool_execution', data: { input: 'shell' } })),
+      'execute_tool shell',
+    );
   });
   it('produces "invoke_agent <id>" for state change', () => {
-    assert.strictEqual(spanNameForEvent(makeEvent({ type: 'state_change', agentId: 'a-1' })), 'invoke_agent a-1');
+    assert.strictEqual(
+      spanNameForEvent(makeEvent({ type: 'state_change', agentId: 'a-1' })),
+      'invoke_agent a-1',
+    );
   });
 });
 

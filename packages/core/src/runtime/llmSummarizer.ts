@@ -73,13 +73,23 @@ export class LLMSummarizerImpl {
     return response.content;
   }
 
-  private async callWithAbort(provider: LLMProvider, request: LLMRequest, signal: AbortSignal): Promise<LLMResponse> {
+  private async callWithAbort(
+    provider: LLMProvider,
+    request: LLMRequest,
+    signal: AbortSignal,
+  ): Promise<LLMResponse> {
     return await new Promise<LLMResponse>((resolve, reject) => {
       const onAbort = () => reject(new Error('LLMSummarizer: aborted'));
       signal.addEventListener('abort', onAbort, { once: true });
       provider.call(request).then(
-        (resp) => { signal.removeEventListener('abort', onAbort); resolve(resp); },
-        (err) => { signal.removeEventListener('abort', onAbort); reject(err); },
+        (resp) => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(resp);
+        },
+        (err) => {
+          signal.removeEventListener('abort', onAbort);
+          reject(err);
+        },
       );
     });
   }

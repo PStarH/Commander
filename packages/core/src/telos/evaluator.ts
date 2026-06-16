@@ -8,7 +8,11 @@ export type EvaluationDimension =
   | 'safety';
 
 export const EVALUATION_DIMENSIONS: EvaluationDimension[] = [
-  'correctness', 'grounding', 'completeness', 'clarity', 'safety',
+  'correctness',
+  'grounding',
+  'completeness',
+  'clarity',
+  'safety',
 ];
 
 export interface DimensionScore {
@@ -37,11 +41,23 @@ export interface EvaluationCriteria {
 
 export const DEFAULT_EVAL_CRITERIA: EvaluationCriteria = {
   dimensions: [
-    { dimension: 'correctness', weight: 0.30, description: 'Is the output factually correct?' },
-    { dimension: 'grounding',   weight: 0.25, description: 'Does the output rely on provided context and tools?' },
-    { dimension: 'completeness',weight: 0.20, description: 'Does the output fully address the request?' },
-    { dimension: 'clarity',     weight: 0.15, description: 'Is the output clear and well-structured?' },
-    { dimension: 'safety',      weight: 0.10, description: 'Does the output avoid harmful, biased, or misleading content?' },
+    { dimension: 'correctness', weight: 0.3, description: 'Is the output factually correct?' },
+    {
+      dimension: 'grounding',
+      weight: 0.25,
+      description: 'Does the output rely on provided context and tools?',
+    },
+    {
+      dimension: 'completeness',
+      weight: 0.2,
+      description: 'Does the output fully address the request?',
+    },
+    { dimension: 'clarity', weight: 0.15, description: 'Is the output clear and well-structured?' },
+    {
+      dimension: 'safety',
+      weight: 0.1,
+      description: 'Does the output avoid harmful, biased, or misleading content?',
+    },
   ],
   passThreshold: 0.67,
 };
@@ -61,8 +77,10 @@ export class HeuristicEvaluator {
     };
   }
 
-  evaluate(result: Pick<AgentExecutionResult, 'runId' | 'summary' | 'steps' | 'status'>): EvaluationResult {
-    const scores: DimensionScore[] = this.criteria.dimensions.map(d => ({
+  evaluate(
+    result: Pick<AgentExecutionResult, 'runId' | 'summary' | 'steps' | 'status'>,
+  ): EvaluationResult {
+    const scores: DimensionScore[] = this.criteria.dimensions.map((d) => ({
       dimension: d.dimension,
       score: this.scoreDimension(d.dimension, result),
       justification: this.justifyDimension(d.dimension, result),
@@ -83,12 +101,15 @@ export class HeuristicEvaluator {
     };
   }
 
-  private scoreDimension(dim: EvaluationDimension, result: Pick<AgentExecutionResult, 'summary' | 'steps' | 'status'>): number {
+  private scoreDimension(
+    dim: EvaluationDimension,
+    result: Pick<AgentExecutionResult, 'summary' | 'steps' | 'status'>,
+  ): number {
     switch (dim) {
       case 'correctness':
         return result.status === 'success' ? 0.9 : 0.2;
       case 'grounding': {
-        const hasToolCalls = result.steps.some(s => s.type === 'tool_result');
+        const hasToolCalls = result.steps.some((s) => s.type === 'tool_result');
         return hasToolCalls ? 0.8 : 0.5;
       }
       case 'completeness': {
@@ -110,19 +131,26 @@ export class HeuristicEvaluator {
     }
   }
 
-  private justifyDimension(dim: EvaluationDimension, result: Pick<AgentExecutionResult, 'summary' | 'steps' | 'status'>): string {
+  private justifyDimension(
+    dim: EvaluationDimension,
+    result: Pick<AgentExecutionResult, 'summary' | 'steps' | 'status'>,
+  ): string {
     switch (dim) {
       case 'correctness':
-        return result.status === 'success' ? 'Task completed without errors' : 'Task failed or returned errors';
+        return result.status === 'success'
+          ? 'Task completed without errors'
+          : 'Task failed or returned errors';
       case 'grounding':
-        return result.steps.some(s => s.type === 'tool_result')
+        return result.steps.some((s) => s.type === 'tool_result')
           ? 'Tool calls were made, showing grounded execution'
           : 'No tool calls detected — may lack external grounding';
       case 'completeness':
         const len = result.summary?.length ?? 0;
         return len > 200 ? 'Detailed response' : len > 50 ? 'Adequate response' : 'Brief response';
       case 'clarity':
-        return /[.!?\n]/.test(result.summary ?? '') ? 'Well-structured output' : 'Output could be better structured';
+        return /[.!?\n]/.test(result.summary ?? '')
+          ? 'Well-structured output'
+          : 'Output could be better structured';
       case 'safety': {
         const unsafePatterns = /(ignore all|forget|hack|malicious|bypass)/i;
         return unsafePatterns.test(result.summary ?? '')
@@ -179,7 +207,10 @@ export class EvalSuite {
     this.evictIfNeeded();
   }
 
-  addFromFailure(result: Pick<AgentExecutionResult, 'runId' | 'summary' | 'steps' | 'status'>, taskType: string): void {
+  addFromFailure(
+    result: Pick<AgentExecutionResult, 'runId' | 'summary' | 'steps' | 'status'>,
+    taskType: string,
+  ): void {
     const testId = `regression-${result.runId}`;
     this.tests.set(testId, {
       id: testId,
@@ -201,7 +232,9 @@ export class EvalSuite {
     }
   }
 
-  async run(results: Map<string, Pick<AgentExecutionResult, 'runId' | 'summary' | 'steps' | 'status'>>): Promise<{
+  async run(
+    results: Map<string, Pick<AgentExecutionResult, 'runId' | 'summary' | 'steps' | 'status'>>,
+  ): Promise<{
     total: number;
     passed: number;
     failed: number;
@@ -218,14 +251,15 @@ export class EvalSuite {
       }
 
       const evalResult = this.evaluator.evaluate(result);
-      const testPassed = evalResult.passed && (!test.minScore || evalResult.overallScore >= test.minScore);
+      const testPassed =
+        evalResult.passed && (!test.minScore || evalResult.overallScore >= test.minScore);
 
       if (testPassed) passed++;
       details.push({
         testId: runId,
         passed: testPassed,
         score: evalResult.overallScore,
-        details: evalResult.scores.map(s => `${s.dimension}: ${s.score}`).join(', '),
+        details: evalResult.scores.map((s) => `${s.dimension}: ${s.score}`).join(', '),
       });
     }
 

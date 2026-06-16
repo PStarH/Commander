@@ -145,7 +145,7 @@ export class ToolOutputManager {
    */
   manage(toolCall: ToolCall, result: ToolResult): ManagedOutput {
     if (!this.config.enabled) {
-      this.turnUsed += (result.output?.length ?? 0);
+      this.turnUsed += result.output?.length ?? 0;
       return {
         output: result.output,
         truncated: false,
@@ -191,7 +191,9 @@ export class ToolOutputManager {
       `Output truncated: ${originalSize} → ${truncated.length} chars`,
       persistedPath ? `Full output saved: ${persistedPath}` : '',
       `Tool: ${toolCall.name}`,
-    ].filter(Boolean).join('. ');
+    ]
+      .filter(Boolean)
+      .join('. ');
 
     return {
       output: truncated,
@@ -206,9 +208,7 @@ export class ToolOutputManager {
    * Manage multiple tool results for a turn.
    * Applies turn budget across all results, prioritizing earlier calls.
    */
-  manageBatch(
-    calls: Array<{ toolCall: ToolCall; result: ToolResult }>,
-  ): ManagedOutput[] {
+  manageBatch(calls: Array<{ toolCall: ToolCall; result: ToolResult }>): ManagedOutput[] {
     this.resetTurn();
     return calls.map(({ toolCall, result }) => this.manage(toolCall, result));
   }
@@ -267,7 +267,10 @@ export class ToolOutputManager {
     }
 
     const remaining = maxChars - tail.length - 80;
-    const head = lines.slice(0, lines.length - keepLast).join('\n').slice(0, remaining);
+    const head = lines
+      .slice(0, lines.length - keepLast)
+      .join('\n')
+      .slice(0, remaining);
     return `${head}\n[... ${lines.length - keepLast} lines truncated ...]\n${tail}`;
   }
 
@@ -288,7 +291,11 @@ export class ToolOutputManager {
         }
         return JSON.stringify(kept, null, 2);
       }
-    } catch (e) { getGlobalLogger().debug('ToolOutputManager', 'Output was not JSON', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().debug('ToolOutputManager', 'Output was not JSON', {
+        error: (e as Error)?.message,
+      });
+    }
 
     // Text-based search results: truncate at result boundaries
     // Pattern: numbered results like "[1] Title" or "1. Title" or "Result 1:"
@@ -304,7 +311,9 @@ export class ToolOutputManager {
         used += r.length + 1;
       }
       const truncated = results.length - kept.length;
-      return kept.join('\n') + (truncated > 0 ? `\n[... ${truncated} more results truncated ...]` : '');
+      return (
+        kept.join('\n') + (truncated > 0 ? `\n[... ${truncated} more results truncated ...]` : '')
+      );
     }
 
     // Fallback: truncate at sentence/line boundary
@@ -350,7 +359,6 @@ export class ToolOutputManager {
 
   private persistOutput(toolCall: ToolCall, output: string): string {
     try {
-
       const dir = path.resolve(this.config.persistDir);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -364,7 +372,10 @@ export class ToolOutputManager {
       this.cleanupPersistedDir(dir);
       return filepath;
     } catch (e) {
-      getGlobalLogger().warn('ToolOutputManager', 'Failed to persist tool output', { error: (e as Error)?.message, toolName: toolCall.name });
+      getGlobalLogger().warn('ToolOutputManager', 'Failed to persist tool output', {
+        error: (e as Error)?.message,
+        toolName: toolCall.name,
+      });
       return '';
     }
   }
@@ -374,12 +385,17 @@ export class ToolOutputManager {
       const files = fs.readdirSync(dir);
       if (files.length <= ToolOutputManager.MAX_PERSISTED_FILES) return;
       const sorted = files
-        .map(f => ({ name: f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+        .map((f) => ({ name: f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
         .sort((a, b) => a.mtime - b.mtime);
       for (const f of sorted.slice(0, sorted.length - ToolOutputManager.MAX_PERSISTED_FILES)) {
         fs.unlinkSync(path.join(dir, f.name));
       }
-    } catch (e) { getGlobalLogger().debug('ToolOutputManager', 'Best-effort cleanup failed', { error: (e as Error)?.message, dir }); }
+    } catch (e) {
+      getGlobalLogger().debug('ToolOutputManager', 'Best-effort cleanup failed', {
+        error: (e as Error)?.message,
+        dir,
+      });
+    }
   }
 
   private isShellTool(name: string): boolean {

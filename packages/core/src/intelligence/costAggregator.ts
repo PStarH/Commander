@@ -236,10 +236,7 @@ function finalizeAggregate(agg: CostAggregate): CostAggregate {
 /**
  * Build a full cost report from raw LLM call records.
  */
-export function aggregateCost(
-  records: LLMCallRow[],
-  filter: CostFilter = {},
-): CostReport {
+export function aggregateCost(records: LLMCallRow[], filter: CostFilter = {}): CostReport {
   const total = emptyAggregate();
   const byModel: Record<string, CostAggregate> = {};
   const byAgent: Record<string, CostAggregate> = {};
@@ -257,13 +254,13 @@ export function aggregateCost(
     if (maxTs === undefined || ts > maxTs) maxTs = ts;
 
     addToAggregate(total, row);
-    addToAggregate(byModel[row.model] ??= emptyAggregate(), row);
-    addToAggregate(byAgent[row.agentId ?? '(unknown)'] ??= emptyAggregate(), row);
-    addToAggregate(byDay[dayKey(row.timestamp)] ??= emptyAggregate(), row);
+    addToAggregate((byModel[row.model] ??= emptyAggregate()), row);
+    addToAggregate((byAgent[row.agentId ?? '(unknown)'] ??= emptyAggregate()), row);
+    addToAggregate((byDay[dayKey(row.timestamp)] ??= emptyAggregate()), row);
 
     const router = getModelRouter();
     const provider = router.getModel(row.model)?.provider ?? row.provider ?? '(unknown)';
-    addToAggregate(byProvider[provider] ??= emptyAggregate(), row);
+    addToAggregate((byProvider[provider] ??= emptyAggregate()), row);
   }
 
   for (const k of Object.keys(byModel)) byModel[k] = finalizeAggregate(byModel[k]);
@@ -317,22 +314,40 @@ function buildCacheTypeBreakdown(records: LLMCallRow[]): Record<CacheType, Cache
 
   // --- semantic cache: events from semantic_cache_events_total ---
   const semantic = empty();
-  semantic.events.hit = metrics.getCounter('semantic_cache_events_total', [{ name: 'outcome', value: 'hit' }]);
-  semantic.events.miss = metrics.getCounter('semantic_cache_events_total', [{ name: 'outcome', value: 'miss' }]);
-  semantic.events.store = metrics.getCounter('semantic_cache_events_total', [{ name: 'outcome', value: 'store' }]);
-  semantic.events.error = metrics.getCounter('semantic_cache_events_total', [{ name: 'outcome', value: 'embedding_error' }]);
-  const semanticHitCost = metrics.getCounter('semantic_cache_cost_saved_usd_total', [{ name: 'outcome', value: 'hit' }]);
+  semantic.events.hit = metrics.getCounter('semantic_cache_events_total', [
+    { name: 'outcome', value: 'hit' },
+  ]);
+  semantic.events.miss = metrics.getCounter('semantic_cache_events_total', [
+    { name: 'outcome', value: 'miss' },
+  ]);
+  semantic.events.store = metrics.getCounter('semantic_cache_events_total', [
+    { name: 'outcome', value: 'store' },
+  ]);
+  semantic.events.error = metrics.getCounter('semantic_cache_events_total', [
+    { name: 'outcome', value: 'embedding_error' },
+  ]);
+  const semanticHitCost = metrics.getCounter('semantic_cache_cost_saved_usd_total', [
+    { name: 'outcome', value: 'hit' },
+  ]);
   semantic.savingsUsd = round5(semanticHitCost);
-  semantic.totalEvents = semantic.events.hit + semantic.events.miss + semantic.events.store + semantic.events.error;
+  semantic.totalEvents =
+    semantic.events.hit + semantic.events.miss + semantic.events.store + semantic.events.error;
   const semanticTotal = semantic.events.hit + semantic.events.miss;
   semantic.hitRate = semanticTotal === 0 ? 0 : semantic.events.hit / semanticTotal;
 
   // --- single_flight cache: events from single_flight_events_total ---
   const singleFlight = empty();
-  singleFlight.events.hit = metrics.getCounter('single_flight_events_total', [{ name: 'outcome', value: 'hit' }]);
-  singleFlight.events.miss = metrics.getCounter('single_flight_events_total', [{ name: 'outcome', value: 'miss' }]);
-  singleFlight.events.eviction = metrics.getCounter('single_flight_events_total', [{ name: 'outcome', value: 'eviction' }]);
-  singleFlight.totalEvents = singleFlight.events.hit + singleFlight.events.miss + singleFlight.events.eviction;
+  singleFlight.events.hit = metrics.getCounter('single_flight_events_total', [
+    { name: 'outcome', value: 'hit' },
+  ]);
+  singleFlight.events.miss = metrics.getCounter('single_flight_events_total', [
+    { name: 'outcome', value: 'miss' },
+  ]);
+  singleFlight.events.eviction = metrics.getCounter('single_flight_events_total', [
+    { name: 'outcome', value: 'eviction' },
+  ]);
+  singleFlight.totalEvents =
+    singleFlight.events.hit + singleFlight.events.miss + singleFlight.events.eviction;
   const sfTotal = singleFlight.events.hit + singleFlight.events.miss;
   singleFlight.hitRate = sfTotal === 0 ? 0 : singleFlight.events.hit / sfTotal;
   // Single-flight savings: each dedup hit saves a full call. Approximate as average call cost × hit count.
@@ -340,11 +355,23 @@ function buildCacheTypeBreakdown(records: LLMCallRow[]): Record<CacheType, Cache
 
   // --- gemini prompt cache: events from gemini_cache_events_total (counts as a "prompt" cache source) ---
   const gemini = empty();
-  gemini.events.hit = metrics.getCounter('gemini_cache_events_total', [{ name: 'outcome', value: 'hit' }]);
-  (gemini.events as { create?: number }).create = metrics.getCounter('gemini_cache_events_total', [{ name: 'outcome', value: 'create' }]);
-  gemini.events.eviction = metrics.getCounter('gemini_cache_events_total', [{ name: 'outcome', value: 'evict' }]);
-  gemini.events.error = metrics.getCounter('gemini_cache_events_total', [{ name: 'outcome', value: 'error' }]);
-  gemini.totalEvents = gemini.events.hit + ((gemini.events as { create?: number }).create ?? 0) + gemini.events.eviction + gemini.events.error;
+  gemini.events.hit = metrics.getCounter('gemini_cache_events_total', [
+    { name: 'outcome', value: 'hit' },
+  ]);
+  (gemini.events as { create?: number }).create = metrics.getCounter('gemini_cache_events_total', [
+    { name: 'outcome', value: 'create' },
+  ]);
+  gemini.events.eviction = metrics.getCounter('gemini_cache_events_total', [
+    { name: 'outcome', value: 'evict' },
+  ]);
+  gemini.events.error = metrics.getCounter('gemini_cache_events_total', [
+    { name: 'outcome', value: 'error' },
+  ]);
+  gemini.totalEvents =
+    gemini.events.hit +
+    ((gemini.events as { create?: number }).create ?? 0) +
+    gemini.events.eviction +
+    gemini.events.error;
   const gTotal = gemini.events.hit + ((gemini.events as { create?: number }).create ?? 0);
   gemini.hitRate = gTotal === 0 ? 0 : gemini.events.hit / gTotal;
   // Gemini savings come through cacheReadTokens on individual records — they are
@@ -358,19 +385,33 @@ function buildCacheTypeBreakdown(records: LLMCallRow[]): Record<CacheType, Cache
   const prompt = empty();
   const promptHits = semanticHitCost > 0 ? 0 : 0; // placeholder: tracked at hit level only
   prompt.events.hit = promptHits; // not tracked per record
-  prompt.savingsUsd = round5(records.reduce((sum, r) => {
-    if (r.error) return sum;
-    const breakdown = calculateCostBreakdown(r.model, r.promptTokens, r.completionTokens, r.cacheReadTokens ?? 0, r.cacheWriteTokens ?? 0);
-    return sum + breakdown.cacheSavingsUsd;
-  }, 0));
+  prompt.savingsUsd = round5(
+    records.reduce((sum, r) => {
+      if (r.error) return sum;
+      const breakdown = calculateCostBreakdown(
+        r.model,
+        r.promptTokens,
+        r.completionTokens,
+        r.cacheReadTokens ?? 0,
+        r.cacheWriteTokens ?? 0,
+      );
+      return sum + breakdown.cacheSavingsUsd;
+    }, 0),
+  );
   prompt.totalEvents = prompt.events.hit + prompt.events.miss;
   prompt.hitRate = 0; // not trackable at this level — would need per-call attribution
 
   // --- tool result cache: events from tool_cache_events_total ---
   const tool = empty();
-  tool.events.hit = metrics.getCounter('tool_cache_events_total', [{ name: 'outcome', value: 'hit' }]);
-  tool.events.miss = metrics.getCounter('tool_cache_events_total', [{ name: 'outcome', value: 'miss' }]);
-  tool.events.store = metrics.getCounter('tool_cache_events_total', [{ name: 'outcome', value: 'store' }]);
+  tool.events.hit = metrics.getCounter('tool_cache_events_total', [
+    { name: 'outcome', value: 'hit' },
+  ]);
+  tool.events.miss = metrics.getCounter('tool_cache_events_total', [
+    { name: 'outcome', value: 'miss' },
+  ]);
+  tool.events.store = metrics.getCounter('tool_cache_events_total', [
+    { name: 'outcome', value: 'store' },
+  ]);
   tool.totalEvents = tool.events.hit + tool.events.miss + tool.events.store;
   const toolTotal = tool.events.hit + tool.events.miss;
   tool.hitRate = toolTotal === 0 ? 0 : tool.events.hit / toolTotal;
@@ -389,7 +430,13 @@ function estimateSingleFlightSavings(records: LLMCallRow[], hitCount: number): n
   if (hitCount === 0 || records.length === 0) return 0;
   const totalCost = records.reduce((s, r) => {
     if (r.error) return s;
-    const breakdown = calculateCostBreakdown(r.model, r.promptTokens, r.completionTokens, r.cacheReadTokens ?? 0, r.cacheWriteTokens ?? 0);
+    const breakdown = calculateCostBreakdown(
+      r.model,
+      r.promptTokens,
+      r.completionTokens,
+      r.cacheReadTokens ?? 0,
+      r.cacheWriteTokens ?? 0,
+    );
     return s + breakdown.totalUsd;
   }, 0);
   const avgCost = totalCost / records.length;
@@ -409,10 +456,14 @@ export function formatCostTable(report: CostReport, topN = 10): string {
   const t = report.total;
 
   lines.push('Total');
-  lines.push(`  calls:           ${t.calls.toLocaleString()} (${t.successfulCalls} ok, ${t.failedCalls} failed)`);
+  lines.push(
+    `  calls:           ${t.calls.toLocaleString()} (${t.successfulCalls} ok, ${t.failedCalls} failed)`,
+  );
   lines.push(`  input tokens:    ${t.inputTokens.toLocaleString()}`);
   lines.push(`  output tokens:   ${t.outputTokens.toLocaleString()}`);
-  lines.push(`  cache reads:     ${t.cacheReadTokens.toLocaleString()} (saved $${t.cacheSavingsUsd.toFixed(4)})`);
+  lines.push(
+    `  cache reads:     ${t.cacheReadTokens.toLocaleString()} (saved $${t.cacheSavingsUsd.toFixed(4)})`,
+  );
   lines.push(`  cache writes:    ${t.cacheWriteTokens.toLocaleString()}`);
   lines.push(`  total cost:      $${t.costUsd.toFixed(4)}`);
   if (t.durationMs > 0) {
@@ -431,15 +482,20 @@ export function formatCostTable(report: CostReport, topN = 10): string {
     .sort((a, b) => b[1].costUsd - a[1].costUsd)
     .slice(0, topN);
   for (const [model, agg] of modelEntries) {
-    lines.push(`  ${model.padEnd(36)} ${String(agg.calls).padStart(5)} calls  $${agg.costUsd.toFixed(4).padStart(10)}`);
+    lines.push(
+      `  ${model.padEnd(36)} ${String(agg.calls).padStart(5)} calls  $${agg.costUsd.toFixed(4).padStart(10)}`,
+    );
   }
 
   lines.push('');
   lines.push(`By provider:`);
-  const providerEntries = Object.entries(report.byProvider)
-    .sort((a, b) => b[1].costUsd - a[1].costUsd);
+  const providerEntries = Object.entries(report.byProvider).sort(
+    (a, b) => b[1].costUsd - a[1].costUsd,
+  );
   for (const [provider, agg] of providerEntries) {
-    lines.push(`  ${provider.padEnd(20)} ${String(agg.calls).padStart(5)} calls  $${agg.costUsd.toFixed(4).padStart(10)}`);
+    lines.push(
+      `  ${provider.padEnd(20)} ${String(agg.calls).padStart(5)} calls  $${agg.costUsd.toFixed(4).padStart(10)}`,
+    );
   }
 
   lines.push('');
@@ -449,15 +505,18 @@ export function formatCostTable(report: CostReport, topN = 10): string {
     .slice(0, topN);
   for (const [agent, agg] of agentEntries) {
     const label = agent.length > 36 ? agent.slice(0, 33) + '…' : agent;
-    lines.push(`  ${label.padEnd(36)} ${String(agg.calls).padStart(5)} calls  $${agg.costUsd.toFixed(4).padStart(10)}`);
+    lines.push(
+      `  ${label.padEnd(36)} ${String(agg.calls).padStart(5)} calls  $${agg.costUsd.toFixed(4).padStart(10)}`,
+    );
   }
 
   lines.push('');
   lines.push(`By day:`);
-  const dayEntries = Object.entries(report.byDay)
-    .sort((a, b) => a[0].localeCompare(b[0]));
+  const dayEntries = Object.entries(report.byDay).sort((a, b) => a[0].localeCompare(b[0]));
   for (const [day, agg] of dayEntries) {
-    lines.push(`  ${day}    ${String(agg.calls).padStart(5)} calls  $${agg.costUsd.toFixed(4).padStart(10)}`);
+    lines.push(
+      `  ${day}    ${String(agg.calls).padStart(5)} calls  $${agg.costUsd.toFixed(4).padStart(10)}`,
+    );
   }
 
   lines.push('');
@@ -467,9 +526,9 @@ export function formatCostTable(report: CostReport, topN = 10): string {
     const hitRatePct = (stats.hitRate * 100).toFixed(1);
     lines.push(
       `  ${type.padEnd(14)} ${String(stats.totalEvents).padStart(6)} events  ` +
-      `hit_rate=${hitRatePct.padStart(5)}%  saved=$${stats.savingsUsd.toFixed(4)}  ` +
-      `(hit=${stats.events.hit} miss=${stats.events.miss} ` +
-      `store=${stats.events.store} evict=${stats.events.eviction})`,
+        `hit_rate=${hitRatePct.padStart(5)}%  saved=$${stats.savingsUsd.toFixed(4)}  ` +
+        `(hit=${stats.events.hit} miss=${stats.events.miss} ` +
+        `store=${stats.events.store} evict=${stats.events.eviction})`,
     );
   }
 
@@ -482,23 +541,27 @@ export function formatCostJson(report: CostReport): string {
 
 export function formatCostCsv(report: CostReport): string {
   const rows: string[] = [];
-  rows.push('category,key,calls,successful,failed,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,cache_savings_usd,duration_ms');
+  rows.push(
+    'category,key,calls,successful,failed,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,cache_savings_usd,duration_ms',
+  );
 
   const push = (category: string, key: string, agg: CostAggregate) => {
-    rows.push([
-      category,
-      csvEscape(key),
-      agg.calls,
-      agg.successfulCalls,
-      agg.failedCalls,
-      agg.inputTokens,
-      agg.outputTokens,
-      agg.cacheReadTokens,
-      agg.cacheWriteTokens,
-      agg.costUsd,
-      agg.cacheSavingsUsd,
-      agg.durationMs,
-    ].join(','));
+    rows.push(
+      [
+        category,
+        csvEscape(key),
+        agg.calls,
+        agg.successfulCalls,
+        agg.failedCalls,
+        agg.inputTokens,
+        agg.outputTokens,
+        agg.cacheReadTokens,
+        agg.cacheWriteTokens,
+        agg.costUsd,
+        agg.cacheSavingsUsd,
+        agg.durationMs,
+      ].join(','),
+    );
   };
 
   push('total', 'all', report.total);

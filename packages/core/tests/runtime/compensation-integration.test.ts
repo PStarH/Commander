@@ -340,8 +340,16 @@ describe('End-to-end — tool failure triggers compensation flow', () => {
           usage: { promptTokens: 10, completionTokens: 10, totalTokens: 20 },
           finishReason: 'tool_calls' as const,
           toolCalls: [
-            { id: 'call_1', name: 'file_write', arguments: { path: '/tmp/a.txt', content: 'hello' } },
-            { id: 'call_2', name: 'file_write', arguments: { path: '/tmp/b.txt', content: 'world' } },
+            {
+              id: 'call_1',
+              name: 'file_write',
+              arguments: { path: '/tmp/a.txt', content: 'hello' },
+            },
+            {
+              id: 'call_2',
+              name: 'file_write',
+              arguments: { path: '/tmp/b.txt', content: 'world' },
+            },
           ],
         };
       },
@@ -417,8 +425,16 @@ describe('End-to-end — tool failure triggers compensation flow', () => {
           usage: { promptTokens: 10, completionTokens: 10, totalTokens: 20 },
           finishReason: 'tool_calls' as const,
           toolCalls: [
-            { id: 'call_1', name: 'file_write', arguments: { path: '/tmp/a.txt', content: 'hello' } },
-            { id: 'call_2', name: 'file_write', arguments: { path: '/tmp/b.txt', content: 'world' } },
+            {
+              id: 'call_1',
+              name: 'file_write',
+              arguments: { path: '/tmp/a.txt', content: 'hello' },
+            },
+            {
+              id: 'call_2',
+              name: 'file_write',
+              arguments: { path: '/tmp/b.txt', content: 'world' },
+            },
           ],
         };
       },
@@ -523,7 +539,11 @@ describe('Typed bus integration', () => {
       steps: [
         {
           description: 'Undo file_write to /tmp/test.txt',
-          forwardAction: { actionId: 'e2e-action', toolName: 'file_write', args: { path: '/tmp/test.txt' } },
+          forwardAction: {
+            actionId: 'e2e-action',
+            toolName: 'file_write',
+            args: { path: '/tmp/test.txt' },
+          },
           inverse: { toolName: 'file_write', args: { path: '/tmp/test.txt' } },
           risk: 'safe' as const,
           estimatedCostUsd: 0.01,
@@ -540,9 +560,7 @@ describe('Typed bus integration', () => {
     await rt.compensateViaSaga(plan);
 
     // Verify tool.compensation_step events were published with correct types
-    const stepCalls = publishSpy.mock.calls.filter(
-      (call) => call[0] === 'tool.compensation_step',
-    );
+    const stepCalls = publishSpy.mock.calls.filter((call) => call[0] === 'tool.compensation_step');
 
     expect(stepCalls.length).toBeGreaterThanOrEqual(2);
 

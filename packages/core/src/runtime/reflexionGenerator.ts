@@ -51,7 +51,9 @@ export interface Reflexion {
 
 interface HeuristicPattern {
   match: (ctx: ReflexionContext) => boolean;
-  reflect: (ctx: ReflexionContext) => Pick<Reflexion, 'whatFailed' | 'whyFailed' | 'whatToTryNext' | 'confidence'>;
+  reflect: (
+    ctx: ReflexionContext,
+  ) => Pick<Reflexion, 'whatFailed' | 'whyFailed' | 'whatToTryNext' | 'confidence'>;
 }
 
 /**
@@ -72,7 +74,9 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
   },
   {
     match: (ctx) =>
-      /\b(ENOENT|not\s+found|does\s+not\s+exist|no\s+such\s+file|cannot\s+find|missing)\b/i.test(ctx.error),
+      /\b(ENOENT|not\s+found|does\s+not\s+exist|no\s+such\s+file|cannot\s+find|missing)\b/i.test(
+        ctx.error,
+      ),
     reflect: (ctx) => ({
       whatFailed: `Resource referenced in the action was not found`,
       whyFailed: `The path or identifier is incorrect, the resource was deleted, or the action is looking in the wrong location.`,
@@ -82,7 +86,9 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
   },
   {
     match: (ctx) =>
-      /\b(EACCES|permission\s+denied|forbidden|unauthorized|401|403|insufficient\s+permissions)\b/i.test(ctx.error),
+      /\b(EACCES|permission\s+denied|forbidden|unauthorized|401|403|insufficient\s+permissions)\b/i.test(
+        ctx.error,
+      ),
     reflect: (ctx) => ({
       whatFailed: `Action was denied due to permissions`,
       whyFailed: `The agent or user does not have the required permissions to perform this action.`,
@@ -91,8 +97,7 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
     }),
   },
   {
-    match: (ctx) =>
-      /\b(429|rate\s*limit|too\s+many\s+requests|throttl)/i.test(ctx.error),
+    match: (ctx) => /\b(429|rate\s*limit|too\s+many\s+requests|throttl)/i.test(ctx.error),
     reflect: (ctx) => ({
       whatFailed: `External service rate-limited the request`,
       whyFailed: `Too many requests were sent in a short period, exceeding the service's quota.`,
@@ -102,7 +107,9 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
   },
   {
     match: (ctx) =>
-      /\b(invalid\s+(argument|param|input|format)|validation\s+failed|missing\s+required|required\s+field|schema\s+validation)\b/i.test(ctx.error),
+      /\b(invalid\s+(argument|param|input|format)|validation\s+failed|missing\s+required|required\s+field|schema\s+validation)\b/i.test(
+        ctx.error,
+      ),
     reflect: (ctx) => ({
       whatFailed: `Input failed validation`,
       whyFailed: `One or more arguments do not match the expected format, type, or required schema.`,
@@ -112,7 +119,9 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
   },
   {
     match: (ctx) =>
-      /\b(TypeError|cannot\s+read\s+(property|properties)|is\s+not\s+a\s+function|undefined\s+is\s+not|null\s+is\s+not)\b/i.test(ctx.error),
+      /\b(TypeError|cannot\s+read\s+(property|properties)|is\s+not\s+a\s+function|undefined\s+is\s+not|null\s+is\s+not)\b/i.test(
+        ctx.error,
+      ),
     reflect: (ctx) => ({
       whatFailed: `Code threw a type error (likely null/undefined access)`,
       whyFailed: `A value was assumed to be present but was null/undefined, or a function was called on the wrong type.`,
@@ -122,7 +131,9 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
   },
   {
     match: (ctx) =>
-      /\b(SyntaxError|Unexpected\s+token|JSON\.parse|invalid\s+JSON|unexpected\s+end\s+of\s+JSON|malformed)\b/i.test(ctx.error),
+      /\b(SyntaxError|Unexpected\s+token|JSON\.parse|invalid\s+JSON|unexpected\s+end\s+of\s+JSON|malformed)\b/i.test(
+        ctx.error,
+      ),
     reflect: (ctx) => ({
       whatFailed: `Failed to parse input (likely JSON, code, or structured data)`,
       whyFailed: `The input was not valid for the parser — likely truncated, malformed, or contains unexpected characters.`,
@@ -132,7 +143,9 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
   },
   {
     match: (ctx) =>
-      /\b(ECONNREFUSED|ENETUNREACH|ECONNRESET|EHOSTUNREACH|network\s+error|fetch\s+failed|getaddrinfo|socket\s+hang\s+up)\b/i.test(ctx.error),
+      /\b(ECONNREFUSED|ENETUNREACH|ECONNRESET|EHOSTUNREACH|network\s+error|fetch\s+failed|getaddrinfo|socket\s+hang\s+up)\b/i.test(
+        ctx.error,
+      ),
     reflect: (ctx) => ({
       whatFailed: `Network request failed`,
       whyFailed: `Could not establish or maintain a connection to the target host. Common causes: host is down, DNS failure, firewall, or proxy issues.`,
@@ -152,7 +165,9 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
   },
   {
     match: (ctx) =>
-      /\b(ENOSPC|out\s+of\s+(memory|disk|space)|heap\s+space|allocation\s+failed|memory\s+exhausted)\b/i.test(ctx.error),
+      /\b(ENOSPC|out\s+of\s+(memory|disk|space)|heap\s+space|allocation\s+failed|memory\s+exhausted)\b/i.test(
+        ctx.error,
+      ),
     reflect: (ctx) => ({
       whatFailed: `Ran out of memory, disk, or other resource`,
       whyFailed: `The operation required more resources than were available.`,
@@ -203,7 +218,8 @@ export class ReflexionGenerator {
   };
 
   private readonly llmProvider: LLMProvider | undefined;
-  private readonly options: Required<Omit<ReflexionGeneratorOptions, 'heuristicOnly' | 'llmOnly'>> & ReflexionGeneratorOptions;
+  private readonly options: Required<Omit<ReflexionGeneratorOptions, 'heuristicOnly' | 'llmOnly'>> &
+    ReflexionGeneratorOptions;
 
   constructor(llmProvider?: LLMProvider, options?: ReflexionGeneratorOptions) {
     this.llmProvider = llmProvider;
@@ -229,9 +245,13 @@ export class ReflexionGenerator {
         return await this.generateWithLLM(ctx);
       } catch (e) {
         this.stats.llmFailures++;
-        getGlobalLogger().debug('ReflexionGenerator', 'LLM reflexion failed, using generic fallback', {
-          error: e instanceof Error ? e.message : 'unknown',
-        });
+        getGlobalLogger().debug(
+          'ReflexionGenerator',
+          'LLM reflexion failed, using generic fallback',
+          {
+            error: e instanceof Error ? e.message : 'unknown',
+          },
+        );
       }
     }
 
@@ -261,11 +281,12 @@ export class ReflexionGenerator {
   }
 
   private buildPrompt(ctx: ReflexionContext): string {
-    const previousStrategies = ctx.previousReflexions && ctx.previousReflexions.length > 0
-      ? `\nPREVIOUS REFLEXIONS (do NOT repeat these strategies — try a fundamentally different approach):\n${ctx.previousReflexions
-        .map((r, i) => `  Attempt ${i + 1}: ${r.whatToTryNext}`)
-        .join('\n')}\n`
-      : '';
+    const previousStrategies =
+      ctx.previousReflexions && ctx.previousReflexions.length > 0
+        ? `\nPREVIOUS REFLEXIONS (do NOT repeat these strategies — try a fundamentally different approach):\n${ctx.previousReflexions
+            .map((r, i) => `  Attempt ${i + 1}: ${r.whatToTryNext}`)
+            .join('\n')}\n`
+        : '';
 
     return `You are analyzing a failed action in an autonomous agent. Produce a concise self-reflection.
 
@@ -307,10 +328,7 @@ Be specific. Avoid generic advice like "try again" or "be more careful".`;
     });
 
     try {
-      const response = await Promise.race([
-        this.llmProvider.call(request),
-        timeoutPromise,
-      ]);
+      const response = await Promise.race([this.llmProvider.call(request), timeoutPromise]);
       return response.content || '';
     } finally {
       if (timer) clearTimeout(timer);
@@ -347,7 +365,8 @@ Be specific. Avoid generic advice like "try again" or "be more careful".`;
         };
       }
       return {
-        whatFailed: truncate(parsed.whatFailed, 500) || `Action failed: ${truncate(ctx.error, 100)}`,
+        whatFailed:
+          truncate(parsed.whatFailed, 500) || `Action failed: ${truncate(ctx.error, 100)}`,
         whyFailed: truncate(parsed.whyFailed, 500) || 'Unknown',
         whatToTryNext: truncate(parsed.whatToTryNext, 500) || 'Try a different approach.',
         confidence: 0.7,
@@ -385,10 +404,16 @@ function truncate(s: string, maxLen: number): string {
   return s.slice(0, maxLen) + '…';
 }
 
-function isReflexionShape(value: unknown): value is { whatFailed: string; whyFailed: string; whatToTryNext: string } {
+function isReflexionShape(
+  value: unknown,
+): value is { whatFailed: string; whyFailed: string; whatToTryNext: string } {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
-  return typeof v.whatFailed === 'string' && typeof v.whyFailed === 'string' && typeof v.whatToTryNext === 'string';
+  return (
+    typeof v.whatFailed === 'string' &&
+    typeof v.whyFailed === 'string' &&
+    typeof v.whatToTryNext === 'string'
+  );
 }
 
 /**

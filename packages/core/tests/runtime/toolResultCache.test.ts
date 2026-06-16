@@ -126,8 +126,16 @@ describe('ToolResultCache', async () => {
 
     it('does not cache all default neverCache tools', async () => {
       cache = makeCache();
-      const blocked = ['shell_execute', 'python_execute', 'file_write', 'file_edit',
-        'git_push', 'git_commit', 'agent', 'memory_store'];
+      const blocked = [
+        'shell_execute',
+        'python_execute',
+        'file_write',
+        'file_edit',
+        'git_push',
+        'git_commit',
+        'agent',
+        'memory_store',
+      ];
       for (const name of blocked) {
         const call = makeToolCall(name, {});
         await cache.set(call, makeResult('ok'));

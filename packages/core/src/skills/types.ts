@@ -7,13 +7,7 @@
 
 export type SkillSource = 'builtin' | 'learned' | 'community' | 'user';
 
-export type SkillCategory =
-  | 'coding'
-  | 'research'
-  | 'analysis'
-  | 'writing'
-  | 'strategy'
-  | 'general';
+export type SkillCategory = 'coding' | 'research' | 'analysis' | 'writing' | 'strategy' | 'general';
 
 export interface SkillMetadata {
   category: SkillCategory;

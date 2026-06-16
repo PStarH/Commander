@@ -81,7 +81,7 @@ describe('UltimateOrchestrator tree helpers', () => {
   it('flattenTree returns all nodes', () => {
     const nodes = flattenTree(makeTree());
     expect(nodes).toHaveLength(3);
-    expect(nodes.map(n => n.id)).toEqual(['root', 'child', 'grandchild']);
+    expect(nodes.map((n) => n.id)).toEqual(['root', 'child', 'grandchild']);
   });
 });
 

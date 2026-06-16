@@ -8,7 +8,7 @@ import type { TaskTreeNode } from '../../src/ultimate/types';
 function computeCriticalPath(nodes: TaskTreeNode[], dependencyMap: Map<string, string[]>): void {
   if (nodes.length === 0) return;
 
-  const nodeMap = new Map(nodes.map(n => [n.id, n]));
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
   const est = new Map<string, number>();
   const eft = new Map<string, number>();
   const lft = new Map<string, number>();
@@ -43,7 +43,7 @@ function computeCriticalPath(nodes: TaskTreeNode[], dependencyMap: Map<string, s
     const current = queue.shift()!;
     const currentEft = eft.get(current) ?? 0;
 
-    for (const successor of (adjList.get(current) ?? [])) {
+    for (const successor of adjList.get(current) ?? []) {
       const newEst = currentEft;
       const currentEst = est.get(successor) ?? 0;
       if (newEst > currentEst) {
@@ -86,10 +86,11 @@ function computeCriticalPath(nodes: TaskTreeNode[], dependencyMap: Map<string, s
 
   while (reverseQueue.length > 0) {
     const current = reverseQueue.shift()!;
-    const currentLst = (lft.get(current) ?? projectFinish) - (nodeMap.get(current)?.estimatedDurationMs ?? 10000);
+    const currentLst =
+      (lft.get(current) ?? projectFinish) - (nodeMap.get(current)?.estimatedDurationMs ?? 10000);
     lst.set(current, currentLst);
 
-    for (const dep of (dependencyMap.get(current) ?? [])) {
+    for (const dep of dependencyMap.get(current) ?? []) {
       const newLft = currentLst;
       const currentLft = lft.get(dep) ?? projectFinish;
       if (newLft < currentLft) {
@@ -131,7 +132,11 @@ describe('CriticalPath - linear DAG (A → B → C)', () => {
   const b = makeNode('B', 2000, ['A']);
   const c = makeNode('C', 500, ['B']);
   const nodes = [a, b, c];
-  const deps = new Map([['A', []], ['B', ['A']], ['C', ['B']]]);
+  const deps = new Map([
+    ['A', []],
+    ['B', ['A']],
+    ['C', ['B']],
+  ]);
 
   computeCriticalPath(nodes, deps);
 

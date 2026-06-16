@@ -61,7 +61,7 @@ describe('Snapshot Framework', () => {
           assert.ok(err.message.includes('original'));
           assert.ok(err.message.includes('changed'));
           return true;
-        }
+        },
       );
     });
 
@@ -101,8 +101,8 @@ describe('Snapshot Framework', () => {
 
       // File should exist with sanitized name
       const files = fs.readdirSync(testDir);
-      assert.ok(files.some(f => f.includes('special')));
-      assert.ok(files.some(f => f.includes('chars')));
+      assert.ok(files.some((f) => f.includes('special')));
+      assert.ok(files.some((f) => f.includes('chars')));
     });
   });
 

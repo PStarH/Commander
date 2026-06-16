@@ -100,7 +100,8 @@ function deepEqual(a: unknown, b: unknown): boolean {
     if (ak.length !== bk.length) return false;
     for (let i = 0; i < ak.length; i++) {
       if (ak[i] !== bk[i]) return false;
-      if (!deepEqual((a as Record<string, unknown>)[ak[i]], (b as Record<string, unknown>)[bk[i]])) return false;
+      if (!deepEqual((a as Record<string, unknown>)[ak[i]], (b as Record<string, unknown>)[bk[i]]))
+        return false;
     }
     return true;
   }

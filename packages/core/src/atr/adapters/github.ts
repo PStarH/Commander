@@ -28,7 +28,10 @@
 
 import type { Tool } from '../../runtime/types';
 import type { IdempotencyKeyContext } from '../../runtime/types';
-import type { CompensableAction as LegacyCompensableAction, CompensationHandler } from '../../runtime/compensationRegistry';
+import type {
+  CompensableAction as LegacyCompensableAction,
+  CompensationHandler,
+} from '../../runtime/compensationRegistry';
 import { canonicalJson, sha256OfCanonical } from '../canonicalJson';
 
 export interface CreatePrArgs {
@@ -90,7 +93,7 @@ export function defaultGitHubClient(token?: string): GitHubClient {
   if (!authToken) {
     throw new Error(
       'GitHub adapter requires GITHUB_TOKEN env var (or pass a custom GitHubClient). ' +
-      'The ATR kernel never reads tokens directly; the adapter owns credential resolution.',
+        'The ATR kernel never reads tokens directly; the adapter owns credential resolution.',
     );
   }
   const base = 'https://api.github.com';
@@ -110,7 +113,10 @@ export function defaultGitHubClient(token?: string): GitHubClient {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new GitHubClientError(`GitHub ${method} ${path} → ${res.status}: ${text.slice(0, 200)}`, res.status);
+      throw new GitHubClientError(
+        `GitHub ${method} ${path} → ${res.status}: ${text.slice(0, 200)}`,
+        res.status,
+      );
     }
     return res.json() as Promise<T>;
   };
@@ -228,9 +234,13 @@ export function createGitHubTools(client: GitHubClient): Map<string, Tool> {
   return tools;
 }
 
-export function getGitHubCompensationHandlers(client: GitHubClient): Record<string, CompensationHandler> {
+export function getGitHubCompensationHandlers(
+  client: GitHubClient,
+): Record<string, CompensationHandler> {
   return {
-    github_create_pr: async (action: LegacyCompensableAction): Promise<{ success: boolean; error?: string }> => {
+    github_create_pr: async (
+      action: LegacyCompensableAction,
+    ): Promise<{ success: boolean; error?: string }> => {
       const repo = action.args.repo as string;
       let number: number | null = null;
       const result = (action as { result?: string }).result;
@@ -238,10 +248,15 @@ export function getGitHubCompensationHandlers(client: GitHubClient): Record<stri
         try {
           const parsed = JSON.parse(result) as { number?: number };
           number = safeNumber(parsed);
-        } catch { /* swallow */ }
+        } catch {
+          /* swallow */
+        }
       }
       if (!repo || number === null) {
-        return { success: false, error: 'create_pr compensation missing repo/PR number in action result' };
+        return {
+          success: false,
+          error: 'create_pr compensation missing repo/PR number in action result',
+        };
       }
       try {
         await client.closePr({ repo, number });
@@ -251,7 +266,9 @@ export function getGitHubCompensationHandlers(client: GitHubClient): Record<stri
       }
     },
 
-    github_merge_pr: async (action: LegacyCompensableAction): Promise<{ success: boolean; error?: string }> => {
+    github_merge_pr: async (
+      action: LegacyCompensableAction,
+    ): Promise<{ success: boolean; error?: string }> => {
       const repo = action.args.repo as string;
       const number = safeNumber(action.args);
       if (!repo || number === null) {
@@ -265,15 +282,20 @@ export function getGitHubCompensationHandlers(client: GitHubClient): Record<stri
       }
     },
 
-    github_revert_pr: async (_action: LegacyCompensableAction): Promise<{ success: boolean; error?: string }> => {
+    github_revert_pr: async (
+      _action: LegacyCompensableAction,
+    ): Promise<{ success: boolean; error?: string }> => {
       return {
         success: false,
-        error: 'github_revert_pr is non-compensable: a revert is itself a side effect. ' +
-               'The original merge has already been undone; further automatic rollback is unsafe.',
+        error:
+          'github_revert_pr is non-compensable: a revert is itself a side effect. ' +
+          'The original merge has already been undone; further automatic rollback is unsafe.',
       };
     },
 
-    github_close_pr: async (_action: LegacyCompensableAction): Promise<{ success: boolean; error?: string }> => {
+    github_close_pr: async (
+      _action: LegacyCompensableAction,
+    ): Promise<{ success: boolean; error?: string }> => {
       return { success: true };
     },
   };
@@ -286,4 +308,4 @@ export const GITHUB_TOOL_NAMES = [
   'github_close_pr',
 ] as const;
 
-export type GitHubToolName = typeof GITHUB_TOOL_NAMES[number];
+export type GitHubToolName = (typeof GITHUB_TOOL_NAMES)[number];

@@ -1,6 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import type { TaskTreeNode, ExecutionError, HumanApprovalGate, UltimateOrchestratorConfig, EffortLevel } from './types';
+import type {
+  TaskTreeNode,
+  ExecutionError,
+  HumanApprovalGate,
+  UltimateOrchestratorConfig,
+  EffortLevel,
+} from './types';
 import type { AgentRuntimeInterface } from '../runtime';
 import type { AgentExecutionContext, AgentExecutionResult, ModelTier } from '../runtime/types';
 import type { StateCheckpointer } from '../runtime/stateCheckpointer';
@@ -14,7 +20,11 @@ import { getDeadLetterQueue } from '../runtime/deadLetterQueueSingleton';
 import { getExecutionScheduler } from '../atr/scheduler';
 import type { RunHandle } from '../atr/scheduler';
 import { getWorkCoordinator } from './workCoordinator';
-import { MIN_TOKENS_PER_AGENT, MAX_TOKENS_PER_AGENT, ESTIMATED_DURATION_DEFAULT } from '../config/constants';
+import {
+  MIN_TOKENS_PER_AGENT,
+  MAX_TOKENS_PER_AGENT,
+  ESTIMATED_DURATION_DEFAULT,
+} from '../config/constants';
 import { getIntentLog } from '../runtime/intentLog';
 import { getMetricsCollector } from '../runtime/metricsCollector';
 import { SubAgentGuard, SubAgentLimitError } from './subAgentGuard';
@@ -145,7 +155,13 @@ export class SubAgentExecutor {
     baseContext: Record<string, unknown>,
     errors: ExecutionError[],
   ): Promise<void> {
-    if (node.status === 'COMPLETED' || node.status === 'FAILED' || node.status === 'SKIPPED' || node.status === 'PARTIAL') return;
+    if (
+      node.status === 'COMPLETED' ||
+      node.status === 'FAILED' ||
+      node.status === 'SKIPPED' ||
+      node.status === 'PARTIAL'
+    )
+      return;
 
     // Check approval gate before executing
     if (this.approvalGate?.enabled) {
@@ -220,18 +236,21 @@ export class SubAgentExecutor {
       const batches = this.chunkArray(sorted, this.maxParallel);
       for (const batch of batches) {
         // LAMaS: allocate more tokens to critical path tasks
-        const adjustedBatch = batch.map(sub => {
+        const adjustedBatch = batch.map((sub) => {
           if (sub.isOnCriticalPath) {
-            sub.context.estimatedTokens = Math.round((sub.context.estimatedTokens ?? MIN_TOKENS_PER_AGENT) * CRITICAL_PATH_TOKEN_MULTIPLIER);
+            sub.context.estimatedTokens = Math.round(
+              (sub.context.estimatedTokens ?? MIN_TOKENS_PER_AGENT) *
+                CRITICAL_PATH_TOKEN_MULTIPLIER,
+            );
           }
           return sub;
         });
 
-        const promises = adjustedBatch.map(sub => 
-          this.executeNode(sub, projectId, baseContext, errors)
+        const promises = adjustedBatch.map((sub) =>
+          this.executeNode(sub, projectId, baseContext, errors),
         );
         const results = await Promise.allSettled(promises);
-        
+
         for (let i = 0; i < results.length; i++) {
           const result = results[i];
           if (result.status === 'rejected') {
@@ -255,13 +274,10 @@ export class SubAgentExecutor {
    * delays the entire execution. These nodes get scheduling priority
    * and larger token budgets.
    */
-  private computeCriticalPath(
-    nodes: TaskTreeNode[],
-    dependencyMap: Map<string, string[]>,
-  ): void {
+  private computeCriticalPath(nodes: TaskTreeNode[], dependencyMap: Map<string, string[]>): void {
     if (nodes.length === 0) return;
 
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    const nodeMap = new Map(nodes.map((n) => [n.id, n]));
     const est = new Map<string, number>();
     const eft = new Map<string, number>();
     const lft = new Map<string, number>();
@@ -298,7 +314,7 @@ export class SubAgentExecutor {
       const current = queue[qIdx++];
       const currentEft = eft.get(current) ?? 0;
 
-      for (const successor of (adjList.get(current) ?? [])) {
+      for (const successor of adjList.get(current) ?? []) {
         const newEst = currentEft;
         const currentEst = est.get(successor) ?? 0;
         if (newEst > currentEst) {
@@ -344,10 +360,12 @@ export class SubAgentExecutor {
     let rqIdx = 0;
     while (rqIdx < reverseQueue.length) {
       const current = reverseQueue[rqIdx++];
-      const currentLst = (lft.get(current) ?? projectFinish) - (nodeMap.get(current)?.estimatedDurationMs ?? DEFAULT_NODE_DURATION_MS);
+      const currentLst =
+        (lft.get(current) ?? projectFinish) -
+        (nodeMap.get(current)?.estimatedDurationMs ?? DEFAULT_NODE_DURATION_MS);
       lst.set(current, currentLst);
 
-      for (const dep of (dependencyMap.get(current) ?? [])) {
+      for (const dep of dependencyMap.get(current) ?? []) {
         const newLft = currentLst;
         const currentLft = lft.get(dep) ?? projectFinish;
         if (newLft < currentLft) {
@@ -379,7 +397,7 @@ export class SubAgentExecutor {
       const workCoord = getWorkCoordinator();
       const existing = workCoord
         .list({ runId: this.currentRunId })
-        .find(i => i.parentNodeId === node.id);
+        .find((i) => i.parentNodeId === node.id);
       if (!existing) {
         workCoord.enqueue({
           runId: this.currentRunId,
@@ -417,18 +435,22 @@ export class SubAgentExecutor {
       let inboxContext = '';
       if (this.currentTeamId && node.dependencies.length > 0) {
         const teamManager = getTeamManager();
-        const inboxMessages = teamManager.readMessages(this.currentTeamId, node.id, MAX_INBOX_MESSAGES, false);
+        const inboxMessages = teamManager.readMessages(
+          this.currentTeamId,
+          node.id,
+          MAX_INBOX_MESSAGES,
+          false,
+        );
         if (inboxMessages.length > 0) {
-          inboxContext = '\n\n=== Messages from team members ===\n' +
-            inboxMessages.map(m =>
-              `[${m.from}] ${m.subject}: ${m.body.slice(0, MAX_INBOX_MESSAGE_CHARS)}`
-            ).join('\n---\n');
+          inboxContext =
+            '\n\n=== Messages from team members ===\n' +
+            inboxMessages
+              .map((m) => `[${m.from}] ${m.subject}: ${m.body.slice(0, MAX_INBOX_MESSAGE_CHARS)}`)
+              .join('\n---\n');
         }
       }
 
-      const enrichedGoal = inboxContext
-        ? `${node.goal}\n\n${inboxContext}`
-        : node.goal;
+      const enrichedGoal = inboxContext ? `${node.goal}\n\n${inboxContext}` : node.goal;
 
       // Anthropic fresh-context: structured task brief with output format + constraints
       const rolePrompt = this.getRolePrompt(node.role);
@@ -460,7 +482,8 @@ export class SubAgentExecutor {
       ].join('\n');
 
       // Filter tools per role — sub-agents don't need all tools
-      const fullTools = (baseContext?.availableTools as string[] | undefined) ?? node.context.availableTools ?? [];
+      const fullTools =
+        (baseContext?.availableTools as string[] | undefined) ?? node.context.availableTools ?? [];
       const tools = this.filterToolsForRole(fullTools, node.role);
 
       // Per-agent output directory for file write isolation
@@ -486,28 +509,50 @@ export class SubAgentExecutor {
         availableTools: tools,
         outputDir,
         maxSteps: 10,
-        tokenBudget: Math.max(MIN_TOKENS_PER_AGENT, Math.min(MAX_TOKENS_PER_AGENT, node.context.estimatedTokens)),
+        tokenBudget: Math.max(
+          MIN_TOKENS_PER_AGENT,
+          Math.min(MAX_TOKENS_PER_AGENT, node.context.estimatedTokens),
+        ),
         parentRunId: this.currentRunId ?? undefined,
         subAgentRole: node.role ?? 'sub-agent',
         subAgentDepth: (baseContext as { __depth?: number }).__depth ?? 1,
         preferredModelTier: node.preferredModelTier ?? specialist,
       };
-      try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId: this.currentRunId ?? ctx.runId ?? node.id, capturedAt: new Date().toISOString(), stage: 'subAgentExecutor.spawn', decision: 'spawn', reason: 'sub-agent execution started', payload: { agentId: node.id, parentRunId: this.currentRunId, subAgentRole: node.role, depth: (baseContext as { __depth?: number }).__depth ?? 1 } }); } catch { /* best-effort */ }
+      try {
+        getIntentLog(ctx.tenantId).write({
+          schemaVersion: 1,
+          runId: this.currentRunId ?? ctx.runId ?? node.id,
+          capturedAt: new Date().toISOString(),
+          stage: 'subAgentExecutor.spawn',
+          decision: 'spawn',
+          reason: 'sub-agent execution started',
+          payload: {
+            agentId: node.id,
+            parentRunId: this.currentRunId,
+            subAgentRole: node.role,
+            depth: (baseContext as { __depth?: number }).__depth ?? 1,
+          },
+        });
+      } catch {
+        /* best-effort */
+      }
 
       let execResult: AgentExecutionResult;
       // Create per-node sub-agent guard to enforce limits (steps, tokens, wall clock)
       const guard = new SubAgentGuard({
         maxSteps: 10,
-        maxTokens: Math.max(MIN_TOKENS_PER_AGENT, Math.min(MAX_TOKENS_PER_AGENT, node.context.estimatedTokens)),
+        maxTokens: Math.max(
+          MIN_TOKENS_PER_AGENT,
+          Math.min(MAX_TOKENS_PER_AGENT, node.context.estimatedTokens),
+        ),
         maxWallClockMs: 5 * 60 * 1000,
       });
       // Pass guard into execution context so agentRuntime enforces limits per-step
       ctx.guard = guard;
 
       try {
-        execResult = await agentContext.run(
-          { agentId: node.id, outputDir },
-          () => this.runtime.execute(ctx),
+        execResult = await agentContext.run({ agentId: node.id, outputDir }, () =>
+          this.runtime.execute(ctx),
         );
       } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : String(err);
@@ -515,8 +560,36 @@ export class SubAgentExecutor {
           node.status = 'FAILED';
           node.result = `Sub-agent limit exceeded (${err.reason}): ${err.observed} >= ${err.limit}`;
           node.durationMs = Date.now() - startTime;
-          try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId: this.currentRunId ?? ctx.runId ?? node.id, capturedAt: new Date().toISOString(), stage: 'subAgentExecutor.complete', decision: 'failed', reason: `limit_exceeded: ${err.reason}`, payload: { agentId: node.id, status: 'failed', parentRunId: this.currentRunId, limitReason: err.reason, observed: err.observed, limit: err.limit } }); } catch { /* best-effort */ }
-          try { getMetricsCollector().recordSubAgentOutcome(node.id, 'failed', (baseContext as { __depth?: number }).__depth ?? 1, ctx.tenantId); } catch { /* best-effort */ }
+          try {
+            getIntentLog(ctx.tenantId).write({
+              schemaVersion: 1,
+              runId: this.currentRunId ?? ctx.runId ?? node.id,
+              capturedAt: new Date().toISOString(),
+              stage: 'subAgentExecutor.complete',
+              decision: 'failed',
+              reason: `limit_exceeded: ${err.reason}`,
+              payload: {
+                agentId: node.id,
+                status: 'failed',
+                parentRunId: this.currentRunId,
+                limitReason: err.reason,
+                observed: err.observed,
+                limit: err.limit,
+              },
+            });
+          } catch {
+            /* best-effort */
+          }
+          try {
+            getMetricsCollector().recordSubAgentOutcome(
+              node.id,
+              'failed',
+              (baseContext as { __depth?: number }).__depth ?? 1,
+              ctx.tenantId,
+            );
+          } catch {
+            /* best-effort */
+          }
           errors.push({
             nodeId: node.id,
             agentId: node.id,
@@ -533,8 +606,29 @@ export class SubAgentExecutor {
         });
         node.status = 'FAILED';
         node.durationMs = Date.now() - startTime;
-        try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId: this.currentRunId ?? ctx.runId ?? node.id, capturedAt: new Date().toISOString(), stage: 'subAgentExecutor.complete', decision: 'failed', reason: errorMsg.slice(0, 200), payload: { agentId: node.id, status: 'failed', parentRunId: this.currentRunId } }); } catch { /* best-effort */ }
-        try { getMetricsCollector().recordSubAgentOutcome(node.id, 'failed', (baseContext as { __depth?: number }).__depth ?? 1, ctx.tenantId); } catch { /* best-effort */ }
+        try {
+          getIntentLog(ctx.tenantId).write({
+            schemaVersion: 1,
+            runId: this.currentRunId ?? ctx.runId ?? node.id,
+            capturedAt: new Date().toISOString(),
+            stage: 'subAgentExecutor.complete',
+            decision: 'failed',
+            reason: errorMsg.slice(0, 200),
+            payload: { agentId: node.id, status: 'failed', parentRunId: this.currentRunId },
+          });
+        } catch {
+          /* best-effort */
+        }
+        try {
+          getMetricsCollector().recordSubAgentOutcome(
+            node.id,
+            'failed',
+            (baseContext as { __depth?: number }).__depth ?? 1,
+            ctx.tenantId,
+          );
+        } catch {
+          /* best-effort */
+        }
         return;
       }
 
@@ -558,9 +652,19 @@ export class SubAgentExecutor {
       try {
         const { getTokenBudgetManager } = await import('../runtime/tokenBudgetManager');
         const bm = getTokenBudgetManager();
-        bm.recordUsage(this.currentRunId ?? node.id, node.id, execResult.totalTokenUsage.totalTokens);
-        bm.markSubAgentComplete(this.currentRunId ?? node.id, node.id, execResult.totalTokenUsage.totalTokens);
-      } catch { /* best-effort */ }
+        bm.recordUsage(
+          this.currentRunId ?? node.id,
+          node.id,
+          execResult.totalTokenUsage.totalTokens,
+        );
+        bm.markSubAgentComplete(
+          this.currentRunId ?? node.id,
+          node.id,
+          execResult.totalTokenUsage.totalTokens,
+        );
+      } catch {
+        /* best-effort */
+      }
 
       if (execResult.status !== 'success') {
         const errorMsg = execResult.error || `Execution returned status: ${execResult.status}`;
@@ -576,8 +680,35 @@ export class SubAgentExecutor {
         // This prevents context pollution — the parent sees distilled findings, not the
         // sub-agent's full conversation history.
         node.result = execResult.summary;
-        try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId: this.currentRunId ?? ctx.runId ?? node.id, capturedAt: new Date().toISOString(), stage: 'subAgentExecutor.complete', decision: 'success', reason: 'sub-agent execution succeeded', payload: { agentId: node.id, status: 'success', parentRunId: this.currentRunId, durationMs: node.durationMs, tokenUsage: node.tokenUsage } }); } catch { /* best-effort */ }
-        try { getMetricsCollector().recordSubAgentOutcome(node.id, 'success', (baseContext as { __depth?: number }).__depth ?? 1, ctx.tenantId); } catch { /* best-effort */ }
+        try {
+          getIntentLog(ctx.tenantId).write({
+            schemaVersion: 1,
+            runId: this.currentRunId ?? ctx.runId ?? node.id,
+            capturedAt: new Date().toISOString(),
+            stage: 'subAgentExecutor.complete',
+            decision: 'success',
+            reason: 'sub-agent execution succeeded',
+            payload: {
+              agentId: node.id,
+              status: 'success',
+              parentRunId: this.currentRunId,
+              durationMs: node.durationMs,
+              tokenUsage: node.tokenUsage,
+            },
+          });
+        } catch {
+          /* best-effort */
+        }
+        try {
+          getMetricsCollector().recordSubAgentOutcome(
+            node.id,
+            'success',
+            (baseContext as { __depth?: number }).__depth ?? 1,
+            ctx.tenantId,
+          );
+        } catch {
+          /* best-effort */
+        }
       }
 
       await this.artifactSystem.write(
@@ -586,7 +717,11 @@ export class SubAgentExecutor {
         `Result: ${node.goal.slice(0, 60)}`,
         execResult.summary.slice(0, 500),
         execResult.summary,
-        ['completed', (node.role ?? 'sub-agent').toLowerCase(), ...(execResult.status === 'success' ? ['success'] : ['partial'])],
+        [
+          'completed',
+          (node.role ?? 'sub-agent').toLowerCase(),
+          ...(execResult.status === 'success' ? ['success'] : ['partial']),
+        ],
       );
 
       node.status = execResult.status === 'success' ? 'COMPLETED' : 'FAILED';
@@ -639,7 +774,10 @@ export class SubAgentExecutor {
           });
         }
       } catch (compErr) {
-        getGlobalLogger().warn('subAgentExecutor', 'compensateAll failed', { nodeId: node.id, error: (compErr as Error)?.message });
+        getGlobalLogger().warn('subAgentExecutor', 'compensateAll failed', {
+          nodeId: node.id,
+          error: (compErr as Error)?.message,
+        });
       }
       // Phase 3: notify the centralized ExecutionScheduler that this sub-agent run failed
       try {
@@ -650,7 +788,10 @@ export class SubAgentExecutor {
           reason: errorMsg,
         });
       } catch (schedErr) {
-        getGlobalLogger().debug('subAgentExecutor', 'scheduler abortRun no-op for sub-agent', { nodeId: node.id, error: (schedErr as Error).message });
+        getGlobalLogger().debug('subAgentExecutor', 'scheduler abortRun no-op for sub-agent', {
+          nodeId: node.id,
+          error: (schedErr as Error).message,
+        });
       }
     }
 
@@ -658,7 +799,7 @@ export class SubAgentExecutor {
       const workCoord = getWorkCoordinator();
       const myItem = workCoord
         .list({ runId: this.currentRunId })
-        .find(i => i.parentNodeId === node.id);
+        .find((i) => i.parentNodeId === node.id);
       if (myItem) {
         if (node.status === 'COMPLETED') {
           workCoord.complete(myItem.id, node.id);
@@ -674,7 +815,11 @@ export class SubAgentExecutor {
                 reason: `terminal work failure: ${lastError.slice(0, 200)}`,
               });
             } catch (abortErr) {
-              getGlobalLogger().debug('subAgentExecutor', 'ATR abortRun on terminal failure no-op', { nodeId: node.id, error: (abortErr as Error).message });
+              getGlobalLogger().debug(
+                'subAgentExecutor',
+                'ATR abortRun on terminal failure no-op',
+                { nodeId: node.id, error: (abortErr as Error).message },
+              );
             }
             try {
               const compResult = await this.runtime.getCompensationRegistry().compensateAll();
@@ -684,7 +829,10 @@ export class SubAgentExecutor {
                 failed: compResult.failed,
               });
             } catch (compErr) {
-              getGlobalLogger().debug('subAgentExecutor', 'compensateAll failed', { nodeId: node.id, error: (compErr as Error).message });
+              getGlobalLogger().debug('subAgentExecutor', 'compensateAll failed', {
+                nodeId: node.id,
+                error: (compErr as Error).message,
+              });
             }
           }
         }
@@ -701,19 +849,19 @@ export class SubAgentExecutor {
     // Merge per-agent output directories into the workspace before synthesis
     this.mergeAgentOutputs(node);
 
-    const completed = node.subtasks.filter(s => s.status === 'COMPLETED');
-    const failed = node.subtasks.filter(s => s.status === 'FAILED');
+    const completed = node.subtasks.filter((s) => s.status === 'COMPLETED');
+    const failed = node.subtasks.filter((s) => s.status === 'FAILED');
 
     // Preserve the FULL concatenated results before synthesis agent runs.
     // This ensures the orchestrator's leadSynthesis always has access to complete data.
     const fullResults = completed
-      .map(s => `### ${s.goal.slice(0, 120)}\n\n${s.result ?? ''}`)
+      .map((s) => `### ${s.goal.slice(0, 120)}\n\n${s.result ?? ''}`)
       .join('\n\n---\n\n');
     node.fullSubtaskResults = fullResults;
 
     // Pass full results to synthesis agent (no truncation)
     const summaries = completed
-      .map(s => `[${s.id}] ${s.goal.slice(0, 100)}: ${s.result ?? ''}`)
+      .map((s) => `[${s.id}] ${s.goal.slice(0, 100)}: ${s.result ?? ''}`)
       .join('\n\n');
 
     const synthesisGoal = [
@@ -722,9 +870,11 @@ export class SubAgentExecutor {
       '',
       'Subtask results:',
       summaries,
-    ].filter(Boolean).join('\n');
+    ]
+      .filter(Boolean)
+      .join('\n');
 
-    const fullTools = (baseContext?.availableTools as string[] | undefined);
+    const fullTools = baseContext?.availableTools as string[] | undefined;
     const tools = fullTools?.length ? fullTools : node.context.availableTools;
 
     const narrowContext = this.buildNarrowContext(baseContext);
@@ -742,12 +892,27 @@ export class SubAgentExecutor {
       subAgentDepth: ((baseContext as { __depth?: number }).__depth ?? 1) + 1,
       preferredModelTier: node.preferredModelTier ?? lead,
     };
-    try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId: this.currentRunId ?? ctx.runId ?? node.id, capturedAt: new Date().toISOString(), stage: 'subAgentExecutor.synthesize', decision: 'spawn', reason: 'synthesizer sub-agent spawned', payload: { agentId: ctx.agentId, parentRunId: this.currentRunId, subAgentRole: 'synthesizer' } }); } catch { /* best-effort */ }
+    try {
+      getIntentLog(ctx.tenantId).write({
+        schemaVersion: 1,
+        runId: this.currentRunId ?? ctx.runId ?? node.id,
+        capturedAt: new Date().toISOString(),
+        stage: 'subAgentExecutor.synthesize',
+        decision: 'spawn',
+        reason: 'synthesizer sub-agent spawned',
+        payload: {
+          agentId: ctx.agentId,
+          parentRunId: this.currentRunId,
+          subAgentRole: 'synthesizer',
+        },
+      });
+    } catch {
+      /* best-effort */
+    }
 
     try {
-      const result = await agentContext.run(
-        { agentId: `synthesizer-${node.id}` },
-        () => this.runtime.execute(ctx),
+      const result = await agentContext.run({ agentId: `synthesizer-${node.id}` }, () =>
+        this.runtime.execute(ctx),
       );
       // Preserve original results: use synthesis as summary, keep full results accessible
       node.result = result.summary;
@@ -789,7 +954,8 @@ export class SubAgentExecutor {
         fs.rmSync(outputDir, { recursive: true, force: true });
       } catch (e) {
         getGlobalLogger().warn('SubAgentExecutor', 'Failed to merge agent output', {
-          nodeId: sub.id, error: (e as Error)?.message,
+          nodeId: sub.id,
+          error: (e as Error)?.message,
         });
       }
     }
@@ -800,7 +966,9 @@ export class SubAgentExecutor {
         const remaining = fs.readdirSync(commanderOutputDir);
         if (remaining.length === 0) fs.rmSync(commanderOutputDir, { recursive: true });
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   private copyDirRecursive(src: string, dest: string, safeRoot?: string): void {
@@ -812,7 +980,9 @@ export class SubAgentExecutor {
       // Prevent directory traversal: resolved dest must stay within root
       const resolved = path.resolve(destPath);
       if (!resolved.startsWith(path.resolve(root))) {
-        getGlobalLogger().warn('SubAgentExecutor', 'Blocked directory traversal', { destPath: resolved });
+        getGlobalLogger().warn('SubAgentExecutor', 'Blocked directory traversal', {
+          destPath: resolved,
+        });
         continue;
       }
       if (entry.isDirectory()) {
@@ -837,13 +1007,14 @@ export class SubAgentExecutor {
       this.copyDirRecursive(nodeOutputDir, safeRoot);
       fs.rmSync(nodeOutputDir, { recursive: true, force: true });
     } catch (e) {
-      getGlobalLogger().warn('SubAgentExecutor', 'Failed to cleanup output dir', { nodeId: node.id, error: (e as Error)?.message });
+      getGlobalLogger().warn('SubAgentExecutor', 'Failed to cleanup output dir', {
+        nodeId: node.id,
+        error: (e as Error)?.message,
+      });
     }
   }
 
-  private buildDependencyMap(
-    subtasks: TaskTreeNode[],
-  ): Map<string, string[]> {
+  private buildDependencyMap(subtasks: TaskTreeNode[]): Map<string, string[]> {
     const map = new Map<string, string[]>();
     for (const sub of subtasks) {
       map.set(sub.id, sub.dependencies);
@@ -856,15 +1027,15 @@ export class SubAgentExecutor {
     allNodes: TaskTreeNode[],
   ): TaskTreeNode[][] {
     const levels: TaskTreeNode[][] = [];
-    const nodeMap = new Map(allNodes.map(n => [n.id, n]));
-    const remaining = new Set(allNodes.map(n => n.id));
+    const nodeMap = new Map(allNodes.map((n) => [n.id, n]));
+    const remaining = new Set(allNodes.map((n) => n.id));
     const completed = new Set<string>();
 
     while (remaining.size > 0) {
       const currentLevel: TaskTreeNode[] = [];
       for (const nodeId of remaining) {
         const deps = dependencyMap.get(nodeId) ?? [];
-        const allDepsMet = deps.every(d => completed.has(d));
+        const allDepsMet = deps.every((d) => completed.has(d));
         if (allDepsMet) {
           const node = nodeMap.get(nodeId);
           if (node) currentLevel.push(node);
@@ -913,8 +1084,25 @@ export class SubAgentExecutor {
     const roleLower = (role ?? '').toLowerCase();
 
     const roleToolHints: Record<string, string[]> = {
-      researcher: ['webSearch', 'web_search', 'web_fetch', 'file_read', 'read_file', 'grep', 'file_search'],
-      coder: ['file_read', 'read_file', 'file_write', 'write_file', 'file_edit', 'edit_file', 'bash', 'grep'],
+      researcher: [
+        'webSearch',
+        'web_search',
+        'web_fetch',
+        'file_read',
+        'read_file',
+        'grep',
+        'file_search',
+      ],
+      coder: [
+        'file_read',
+        'read_file',
+        'file_write',
+        'write_file',
+        'file_edit',
+        'edit_file',
+        'bash',
+        'grep',
+      ],
       reviewer: ['file_read', 'read_file', 'grep', 'file_search', 'diff'],
       synthesizer: ['file_read', 'read_file', 'file_write', 'write_file'],
       planner: ['file_read', 'read_file', 'grep', 'file_search'],
@@ -923,7 +1111,7 @@ export class SubAgentExecutor {
     const hints = roleToolHints[roleLower];
     if (!hints) return allTools;
 
-    const filtered = hints.filter(t => allTools.includes(t));
+    const filtered = hints.filter((t) => allTools.includes(t));
     return filtered.length > 0 ? filtered : allTools;
   }
 
@@ -952,7 +1140,7 @@ export class SubAgentExecutor {
       reviewer: [
         'You are a Code Reviewer focused on correctness, security, and maintainability.',
         'Examine code for bugs, edge cases, security vulnerabilities, and performance issues.',
-        'Check that changes follow existing conventions and don\'t break downstream consumers.',
+        "Check that changes follow existing conventions and don't break downstream consumers.",
         'Be critical and thorough. Flag potential issues even if uncertain.',
       ].join(' '),
       planner: [
@@ -968,11 +1156,14 @@ export class SubAgentExecutor {
         'Give more weight to high-confidence results and flag low-confidence findings.',
       ].join(' '),
     };
-    return prompts[roleLower] ?? [
-      'You are a Specialist Agent. Complete your assigned task accurately and efficiently.',
-      'Focus on the specific sub-task. Do not expand scope beyond what was assigned.',
-      'Report outcomes faithfully. If something fails, say so with details.',
-    ].join(' ');
+    return (
+      prompts[roleLower] ??
+      [
+        'You are a Specialist Agent. Complete your assigned task accurately and efficiently.',
+        'Focus on the specific sub-task. Do not expand scope beyond what was assigned.',
+        'Report outcomes faithfully. If something fails, say so with details.',
+      ].join(' ')
+    );
   }
 
   private chunkArray<T>(arr: T[], size: number): T[][] {

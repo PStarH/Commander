@@ -31,11 +31,7 @@ export class AnthropicProvider implements LLMProvider {
   private baseUrl: string;
   private defaultModel: string;
 
-  constructor(config: {
-    apiKey: string;
-    baseUrl?: string;
-    defaultModel?: string;
-  }) {
+  constructor(config: { apiKey: string; baseUrl?: string; defaultModel?: string }) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://api.anthropic.com/v1';
     this.defaultModel = config.defaultModel ?? 'claude-3-5-sonnet-20241022';
@@ -87,7 +83,7 @@ export class AnthropicProvider implements LLMProvider {
         'Content-Type': 'application/json',
         'x-api-key': this.apiKey,
         'anthropic-version': '2023-06-01',
-        ...(useStreaming ? { 'accept': 'text/event-stream' } : {}),
+        ...(useStreaming ? { accept: 'text/event-stream' } : {}),
       },
       body: JSON.stringify(useStreaming ? { ...body, stream: true } : body),
     });
@@ -144,7 +140,7 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   private buildSystemWithCache(request: LLMRequest): AnthropicContent[] | undefined {
-    const systemMsg = request.messages.find(m => m.role === 'system');
+    const systemMsg = request.messages.find((m) => m.role === 'system');
     if (!systemMsg) return undefined;
 
     const blocks: AnthropicContent[] = [
@@ -156,7 +152,8 @@ export class AnthropicProvider implements LLMProvider {
 
     if (request.cacheConfig?.cacheSystemPrompt) {
       blocks[0].cache_control = { type: 'ephemeral' };
-      if (request.cacheConfig?.cacheTtl) blocks[0].cache_control!.ttl = request.cacheConfig.cacheTtl;
+      if (request.cacheConfig?.cacheTtl)
+        blocks[0].cache_control!.ttl = request.cacheConfig.cacheTtl;
     }
 
     return blocks;
@@ -200,7 +197,11 @@ export class AnthropicProvider implements LLMProvider {
                 inputBuffer: '',
               };
             }
-            if (event.type === 'content_block_delta' && event.delta?.type === 'input_json_delta' && currentToolBlock) {
+            if (
+              event.type === 'content_block_delta' &&
+              event.delta?.type === 'input_json_delta' &&
+              currentToolBlock
+            ) {
               currentToolBlock.inputBuffer += event.delta.partial_json;
             }
             if (event.type === 'content_block_stop' && currentToolBlock) {
@@ -210,7 +211,11 @@ export class AnthropicProvider implements LLMProvider {
                   name: currentToolBlock.name,
                   arguments: JSON.parse(currentToolBlock.inputBuffer || '{}'),
                 });
-              } catch (e) { getGlobalLogger().debug('AnthropicProvider', 'Skipping malformed tool args', { error: (e as Error)?.message }); }
+              } catch (e) {
+                getGlobalLogger().debug('AnthropicProvider', 'Skipping malformed tool args', {
+                  error: (e as Error)?.message,
+                });
+              }
               currentToolBlock = null;
             }
             if (event.type === 'message_delta' && event.usage) {
@@ -219,7 +224,11 @@ export class AnthropicProvider implements LLMProvider {
             if (event.type === 'message_start' && event.message?.usage) {
               usage = event.message.usage;
             }
-          } catch (e) { getGlobalLogger().debug('AnthropicProvider', 'Skipping malformed stream event', { error: (e as Error)?.message }); }
+          } catch (e) {
+            getGlobalLogger().debug('AnthropicProvider', 'Skipping malformed stream event', {
+              error: (e as Error)?.message,
+            });
+          }
         }
       }
     }
@@ -232,9 +241,9 @@ export class AnthropicProvider implements LLMProvider {
       cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
     };
 
-    const structuredTool = toolCalls.find(tc => tc.name === 'structured_output');
+    const structuredTool = toolCalls.find((tc) => tc.name === 'structured_output');
     const parsed = structuredTool?.arguments;
-    const normalToolCalls = toolCalls.filter(tc => tc.name !== 'structured_output');
+    const normalToolCalls = toolCalls.filter((tc) => tc.name !== 'structured_output');
 
     return {
       content,
@@ -246,10 +255,23 @@ export class AnthropicProvider implements LLMProvider {
     };
   }
 
-  private parseResponse(data: { content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>; usage?: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } }, model: string): LLMResponse {
+  private parseResponse(
+    data: {
+      content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_creation_input_tokens?: number;
+        cache_read_input_tokens?: number;
+      };
+    },
+    model: string,
+  ): LLMResponse {
     const content = data.content ?? [];
     const textBlocks = content.filter((c): c is typeof c & { text: string } => c.type === 'text');
-    const toolBlocks = content.filter((c): c is typeof c & { id: string; name: string; input: unknown } => c.type === 'tool_use');
+    const toolBlocks = content.filter(
+      (c): c is typeof c & { id: string; name: string; input: unknown } => c.type === 'tool_use',
+    );
 
     const usage: TokenUsage = {
       promptTokens: data.usage?.input_tokens ?? 0,
@@ -259,12 +281,13 @@ export class AnthropicProvider implements LLMProvider {
       cacheWriteTokens: data.usage?.cache_creation_input_tokens ?? 0,
     };
 
-    const structuredTool = toolBlocks.find(b => b.name === 'structured_output');
-    const parsed = structuredTool?.input && typeof structuredTool.input === 'object'
-      ? (structuredTool.input as Record<string, unknown>)
-      : undefined;
+    const structuredTool = toolBlocks.find((b) => b.name === 'structured_output');
+    const parsed =
+      structuredTool?.input && typeof structuredTool.input === 'object'
+        ? (structuredTool.input as Record<string, unknown>)
+        : undefined;
     const normalToolCalls = toolBlocks
-      .filter(b => b.name !== 'structured_output')
+      .filter((b) => b.name !== 'structured_output')
       .map((b) => ({
         id: b.id,
         name: b.name,

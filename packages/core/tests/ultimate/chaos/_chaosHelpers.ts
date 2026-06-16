@@ -23,7 +23,11 @@ export function makeTmpQueue(): TmpQueue {
   };
 }
 
-export function forkWorker<TReq, TRes>(entryScript: string, req: TReq, timeoutMs = 60_000): Promise<TRes> {
+export function forkWorker<TReq, TRes>(
+  entryScript: string,
+  req: TReq,
+  timeoutMs = 60_000,
+): Promise<TRes> {
   return new Promise((resolve, reject) => {
     const child: ChildProcess = fork(entryScript, [], {
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
@@ -37,20 +41,26 @@ export function forkWorker<TReq, TRes>(entryScript: string, req: TReq, timeoutMs
       reject(new Error(`worker timeout after ${timeoutMs}ms. stderr: ${err.slice(-500)}`));
     }, timeoutMs);
 
-    child.stdout?.on('data', d => { out += d.toString(); });
-    child.stderr?.on('data', d => { err += d.toString(); });
-    child.on('message', msg => {
+    child.stdout?.on('data', (d) => {
+      out += d.toString();
+    });
+    child.stderr?.on('data', (d) => {
+      err += d.toString();
+    });
+    child.on('message', (msg) => {
       clearTimeout(timer);
       resolve(msg as TRes);
     });
-    child.on('error', e => {
+    child.on('error', (e) => {
       clearTimeout(timer);
       reject(new Error(`worker error: ${e.message}. stderr: ${err.slice(-500)}`));
     });
     child.on('exit', (code, signal) => {
       if (code !== 0 && signal !== 'SIGKILL' && signal !== 'SIGTERM') {
         clearTimeout(timer);
-        reject(new Error(`worker exited code=${code} signal=${signal}. stderr: ${err.slice(-500)}`));
+        reject(
+          new Error(`worker exited code=${code} signal=${signal}. stderr: ${err.slice(-500)}`),
+        );
       }
     });
     child.send(req);

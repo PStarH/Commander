@@ -12,7 +12,15 @@ import { getCheckpointWriter } from '../../runtime/checkpointWriter';
 
 export async function cmdCheckpoint(args: string[]): Promise<void> {
   const writer = getCheckpointWriter();
-  const $ = { bold: (s: string) => `\x1b[1m${s}\x1b[0m`, dim: (s: string) => `\x1b[2m${s}\x1b[0m`, cyan: (s: string) => `\x1b[36m${s}\x1b[0m`, green: (s: string) => `\x1b[32m${s}\x1b[0m`, yellow: (s: string) => `\x1b[33m${s}\x1b[0m`, red: (s: string) => `\x1b[31m${s}\x1b[0m`, reset: '\x1b[0m' };
+  const $ = {
+    bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
+    dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
+    cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
+    green: (s: string) => `\x1b[32m${s}\x1b[0m`,
+    yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
+    red: (s: string) => `\x1b[31m${s}\x1b[0m`,
+    reset: '\x1b[0m',
+  };
 
   const runId = args[0] && !args[0].startsWith('--') ? args[0] : undefined;
   const pruneIdx = args.indexOf('--prune');
@@ -29,7 +37,9 @@ export async function cmdCheckpoint(args: string[]): Promise<void> {
     for (const cp of toDelete) {
       writer.deleteCheckpoints(cp.runId);
     }
-    console.log(`  ${$.green}✓${$.reset} Pruned ${toDelete.length} old checkpoints (kept ${pruneCount} newest)`);
+    console.log(
+      `  ${$.green}✓${$.reset} Pruned ${toDelete.length} old checkpoints (kept ${pruneCount} newest)`,
+    );
     return;
   }
 
@@ -43,7 +53,9 @@ export async function cmdCheckpoint(args: string[]): Promise<void> {
 
     console.log(`\n${$.bold}Checkpoint — ${runId}${$.reset}\n`);
     console.log(`  ${$.bold}Version:${$.reset}     ${doc.version}`);
-    console.log(`  ${$.bold}Trigger:${$.reset}     ${doc.triggerPercent > 0 ? `${doc.triggerPercent}%` : 'manual'}`);
+    console.log(
+      `  ${$.bold}Trigger:${$.reset}     ${doc.triggerPercent > 0 ? `${doc.triggerPercent}%` : 'manual'}`,
+    );
     console.log(`  ${$.bold}Timestamp:${$.reset}   ${doc.timestamp}`);
     console.log(`  ${$.bold}Phase:${$.reset}       ${doc.phase}`);
     console.log(`  ${$.bold}Step:${$.reset}        ${doc.stepNumber}`);
@@ -75,17 +87,19 @@ export async function cmdCheckpoint(args: string[]): Promise<void> {
     }
 
     // Token budget bar
-    const budgetPct = doc.budgetHardCap > 0
-      ? (doc.tokensUsed / doc.budgetHardCap * 100)
-      : 0;
+    const budgetPct = doc.budgetHardCap > 0 ? (doc.tokensUsed / doc.budgetHardCap) * 100 : 0;
     const barWidth = 30;
-    const filled = Math.min(barWidth, Math.round(budgetPct / 100 * barWidth));
+    const filled = Math.min(barWidth, Math.round((budgetPct / 100) * barWidth));
     const bar = '█'.repeat(filled) + '░'.repeat(barWidth - filled);
     const budgetColor = budgetPct > 90 ? $.red : budgetPct > 70 ? $.yellow : $.green;
 
     console.log(``);
-    console.log(`  ${$.bold}Token Budget:${$.reset}  ${budgetColor}${bar}${$.reset} ${budgetPct.toFixed(0)}%`);
-    console.log(`                  ${doc.tokensUsed.toLocaleString()} / ${doc.budgetHardCap.toLocaleString()} tokens`);
+    console.log(
+      `  ${$.bold}Token Budget:${$.reset}  ${budgetColor}${bar}${$.reset} ${budgetPct.toFixed(0)}%`,
+    );
+    console.log(
+      `                  ${doc.tokensUsed.toLocaleString()} / ${doc.budgetHardCap.toLocaleString()} tokens`,
+    );
 
     if (doc.keyDecisions.length > 0) {
       console.log(``);
@@ -109,9 +123,7 @@ export async function cmdCheckpoint(args: string[]): Promise<void> {
     console.log(``);
 
     // Show file path
-    const filePath = path.join(
-      process.cwd(), '.commander', 'memory', 'checkpoints', `${runId}.md`,
-    );
+    const filePath = path.join(process.cwd(), '.commander', 'memory', 'checkpoints', `${runId}.md`);
     console.log(`  ${$.dim}Full file: ${filePath}${$.reset}`);
     console.log(``);
     return;
@@ -121,7 +133,9 @@ export async function cmdCheckpoint(args: string[]): Promise<void> {
   const checkpoints = writer.listCheckpoints();
 
   if (checkpoints.length === 0) {
-    console.log(`  ${$.dim}No checkpoints yet. Checkpoints are written automatically during execution at 20%, 45%, and 70% token budget.${$.reset}`);
+    console.log(
+      `  ${$.dim}No checkpoints yet. Checkpoints are written automatically during execution at 20%, 45%, and 70% token budget.${$.reset}`,
+    );
     return;
   }
 
@@ -138,19 +152,24 @@ export async function cmdCheckpoint(args: string[]): Promise<void> {
     const budgetHardCap = doc?.budgetHardCap ?? 0;
 
     const progressBar = buildMiniBar(completedCount, pendingCount, failedCount);
-    const budgetBar = budgetHardCap > 0
-      ? ` [${Math.round(tokensUsed / budgetHardCap * 100)}% budget]`
-      : '';
+    const budgetBar =
+      budgetHardCap > 0 ? ` [${Math.round((tokensUsed / budgetHardCap) * 100)}% budget]` : '';
 
     console.log(`  ${$.cyan}${cp.runId.slice(0, 32)}${$.reset}`);
-    console.log(`    Trigger: ${triggerLabel} | ${progressBar} | v${doc?.version ?? '?'}${budgetBar}`);
+    console.log(
+      `    Trigger: ${triggerLabel} | ${progressBar} | v${doc?.version ?? '?'}${budgetBar}`,
+    );
     console.log(`    Written: ${cp.modifiedAt} | ${(cp.size / 1024).toFixed(1)}KB`);
     console.log(``);
   }
 }
 
 function buildMiniBar(completed: number, pending: number, failed: number): string {
-  const $ = { green: (s: string) => `\x1b[32m${s}\x1b[0m`, yellow: (s: string) => `\x1b[33m${s}\x1b[0m`, red: (s: string) => `\x1b[31m${s}\x1b[0m` };
+  const $ = {
+    green: (s: string) => `\x1b[32m${s}\x1b[0m`,
+    yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
+    red: (s: string) => `\x1b[31m${s}\x1b[0m`,
+  };
   const total = completed + pending + failed;
   if (total === 0) return 'no tasks';
   const parts: string[] = [];

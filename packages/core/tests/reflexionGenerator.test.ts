@@ -22,9 +22,15 @@ const baseCtx: ReflexionContext = {
 /** A no-op DLQ stub for boundary tests. */
 function makeStubDLQ(): DeadLetterQueue {
   return {
-    record(_entry: DeadLetterEntry): void { /* no-op */ },
-    drain(): DeadLetterEntry[] { return []; },
-    size(): number { return 0; },
+    record(_entry: DeadLetterEntry): void {
+      /* no-op */
+    },
+    drain(): DeadLetterEntry[] {
+      return [];
+    },
+    size(): number {
+      return 0;
+    },
   };
 }
 
@@ -46,14 +52,20 @@ describe('ReflexionGenerator', () => {
     });
 
     it('matches not_found via ENOENT', async () => {
-      const ctx: ReflexionContext = { ...baseCtx, error: 'ENOENT: no such file or directory, open \'/tmp/x\'' };
+      const ctx: ReflexionContext = {
+        ...baseCtx,
+        error: "ENOENT: no such file or directory, open '/tmp/x'",
+      };
       const r = await gen.generate(ctx);
       assert.strictEqual(r.source, 'heuristic');
       assert.match(r.whatFailed, /not found|resource/i);
     });
 
     it('matches permission via EACCES', async () => {
-      const ctx: ReflexionContext = { ...baseCtx, error: 'EACCES: permission denied, open \'/etc/shadow\'' };
+      const ctx: ReflexionContext = {
+        ...baseCtx,
+        error: "EACCES: permission denied, open '/etc/shadow'",
+      };
       const r = await gen.generate(ctx);
       assert.strictEqual(r.source, 'heuristic');
       assert.match(r.whatFailed, /permission|denied/i);
@@ -81,7 +93,10 @@ describe('ReflexionGenerator', () => {
     });
 
     it('matches parse via SyntaxError', async () => {
-      const ctx: ReflexionContext = { ...baseCtx, error: 'SyntaxError: Unexpected token } in JSON at position 42' };
+      const ctx: ReflexionContext = {
+        ...baseCtx,
+        error: 'SyntaxError: Unexpected token } in JSON at position 42',
+      };
       const r = await gen.generate(ctx);
       assert.strictEqual(r.source, 'heuristic');
       assert.match(r.whatFailed, /parse|json|syntax/i);
@@ -114,7 +129,8 @@ describe('ReflexionGenerator', () => {
         name: 'fake',
         async call(_req: LLMRequest): Promise<LLMResponse> {
           return {
-            content: '```json\n{"whatFailed":"novel error","whyFailed":"unknown cause","whatToTryNext":"check logs"}\n```',
+            content:
+              '```json\n{"whatFailed":"novel error","whyFailed":"unknown cause","whatToTryNext":"check logs"}\n```',
             tokenUsage: { prompt: 10, completion: 20, total: 30 },
             model: 'fake',
           };
@@ -148,7 +164,11 @@ describe('ReflexionGenerator', () => {
       const badProvider: LLMProvider = {
         name: 'bad',
         async call(): Promise<LLMResponse> {
-          return { content: 'not json at all', tokenUsage: { prompt: 5, completion: 5, total: 10 }, model: 'bad' };
+          return {
+            content: 'not json at all',
+            tokenUsage: { prompt: 5, completion: 5, total: 10 },
+            model: 'bad',
+          };
         },
       };
       const gen = new ReflexionGenerator(badProvider);
@@ -207,7 +227,10 @@ describe('ReflexionGenerator', () => {
         attemptNumber: 2,
       });
       assert.strictEqual(reflexion.source, 'heuristic');
-      assert.ok(reflexion.whatToTryNext.length > 10, 'heuristic should produce actionable next-step guidance');
+      assert.ok(
+        reflexion.whatToTryNext.length > 10,
+        'heuristic should produce actionable next-step guidance',
+      );
     });
   });
 });

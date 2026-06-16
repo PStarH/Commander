@@ -19,7 +19,11 @@
 
 import type { ToolCall, ToolResult } from '../runtime/types';
 import { getRunLedgerBundle } from './runLedger';
-import { defaultCompensationHandlers, resolveMutationFlag, takeSnapshot } from './defaultCompensation';
+import {
+  defaultCompensationHandlers,
+  resolveMutationFlag,
+  takeSnapshot,
+} from './defaultCompensation';
 import { generateIdempotencyKey, hashIntent } from './canonicalJson';
 import { getGlobalLogger } from '../logging';
 
@@ -67,7 +71,9 @@ export function startATRRun(
     tenantId: options?.tenantId,
     metadata: options?.metadata,
   });
-  bundle.ledger.beginExecuting(runId, tx.leaseToken, tx.fencingEpoch, { tenantId: options?.tenantId });
+  bundle.ledger.beginExecuting(runId, tx.leaseToken, tx.fencingEpoch, {
+    tenantId: options?.tenantId,
+  });
   for (const [name, handler] of Object.entries(defaultCompensationHandlers)) {
     bundle.ledger.registerCompensation(name, handler);
   }
@@ -141,7 +147,8 @@ export async function wrapToolExecutionWithATR(
 
   // 2. Idempotency check
   const mutation = resolveMutationFlag(toolCall.name, toolDefinition);
-  const externalSystem = toolDefinition?.externalSystem ?? (mutation.isMutation ? 'unknown' : 'read');
+  const externalSystem =
+    toolDefinition?.externalSystem ?? (mutation.isMutation ? 'unknown' : 'read');
   const idempotencyKey = generateIdempotencyKey({
     externalSystem,
     toolName: toolCall.name,
@@ -162,7 +169,10 @@ export async function wrapToolExecutionWithATR(
       const cached = beginResult.record.result ?? '';
       ctx.completedToolCallIds.add(toolCall.id);
       ctx.completedActionResults.set(toolCall.id, { result: cached });
-      log.debug('ATR', `Replay (idempotency hit) for ${toolCall.name}`, { runId: ctx.runId, key: idempotencyKey.slice(0, 8) });
+      log.debug('ATR', `Replay (idempotency hit) for ${toolCall.name}`, {
+        runId: ctx.runId,
+        key: idempotencyKey.slice(0, 8),
+      });
       return {
         result: { toolCallId: toolCall.id, name: toolCall.name, output: cached, durationMs: 0 },
         replayed: true,
@@ -171,7 +181,13 @@ export async function wrapToolExecutionWithATR(
     if (beginResult.record.state === 'failed') {
       const cachedErr = beginResult.record.error ?? 'unknown';
       return {
-        result: { toolCallId: toolCall.id, name: toolCall.name, output: '', error: cachedErr, durationMs: 0 },
+        result: {
+          toolCallId: toolCall.id,
+          name: toolCall.name,
+          output: '',
+          error: cachedErr,
+          durationMs: 0,
+        },
         replayed: true,
       };
     }
@@ -197,7 +213,9 @@ export async function wrapToolExecutionWithATR(
     });
     if (action) {
       actionId = action.actionId;
-      const filePath = (toolCall.arguments.path ?? toolCall.arguments.filePath) as string | undefined;
+      const filePath = (toolCall.arguments.path ?? toolCall.arguments.filePath) as
+        | string
+        | undefined;
       if (typeof filePath === 'string' && toolCall.name !== 'file_delete') {
         takeSnapshot(filePath, actionId);
       }
@@ -213,7 +231,13 @@ export async function wrapToolExecutionWithATR(
     bundle.idempotency.fail(idempotencyKey, errorMsg, { tenantId: ctx.tenantId });
     if (actionId) bundle.ledger.recordError(actionId, errorMsg);
     return {
-      result: { toolCallId: toolCall.id, name: toolCall.name, output: '', error: errorMsg, durationMs: 0 },
+      result: {
+        toolCallId: toolCall.id,
+        name: toolCall.name,
+        output: '',
+        error: errorMsg,
+        durationMs: 0,
+      },
       replayed: false,
     };
   }

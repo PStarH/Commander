@@ -64,7 +64,8 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
   protected bus = getMessageBus();
   protected status: ChannelStatus = 'disconnected';
   protected eventHandlers: Map<string, Set<(data: unknown) => void>> = new Map();
-  protected sessions: Map<string, { userId: string; lastMessage: number; threadId?: string }> = new Map();
+  protected sessions: Map<string, { userId: string; lastMessage: number; threadId?: string }> =
+    new Map();
   private busUnsubscribers: Array<() => void> = [];
 
   async initialize(config: ChannelConfig, agentLoop: CommanderAgentLoop): Promise<void> {
@@ -103,7 +104,9 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
     this.bus.publish('channel.disconnected', this.config.channelId, { platform: this.platform });
   }
 
-  getStatus(): ChannelStatus { return this.status; }
+  getStatus(): ChannelStatus {
+    return this.status;
+  }
 
   onEvent(event: string, handler: (data: unknown) => void): void {
     if (!this.eventHandlers.has(event)) this.eventHandlers.set(event, new Set());
@@ -111,12 +114,13 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
   }
 
   protected emitEvent(event: string, data: unknown): void {
-    this.eventHandlers.get(event)?.forEach(h => h(data));
+    this.eventHandlers.get(event)?.forEach((h) => h(data));
   }
 
   protected isUserAllowed(userId: string): boolean {
     if (this.config.blockedUsers?.includes(userId)) return false;
-    if (this.config.allowedUsers?.length && !this.config.allowedUsers.includes(userId)) return false;
+    if (this.config.allowedUsers?.length && !this.config.allowedUsers.includes(userId))
+      return false;
     return true;
   }
 
@@ -124,7 +128,10 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
     return this.config.adminUsers?.includes(userId) ?? false;
   }
 
-  protected manageSession(userId: string, threadId?: string): { isNew: boolean; sessionId: string } {
+  protected manageSession(
+    userId: string,
+    threadId?: string,
+  ): { isNew: boolean; sessionId: string } {
     const sessionKey = `${userId}:${threadId ?? 'default'}`;
     const existing = this.sessions.get(sessionKey);
     if (existing) {
@@ -170,7 +177,11 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
   }
 
   protected normalizeMessage(msg: ChannelMessage): ChannelMessage {
-    return { ...msg, channelId: this.config.channelId, timestamp: msg.timestamp || new Date().toISOString() };
+    return {
+      ...msg,
+      channelId: this.config.channelId,
+      timestamp: msg.timestamp || new Date().toISOString(),
+    };
   }
 
   protected onAgentEvent(_type: 'started' | 'completed' | 'failed', _data: unknown): void {
@@ -179,5 +190,9 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
 
   protected abstract connectPlatform(): Promise<void>;
   protected abstract disconnectPlatform(): Promise<void>;
-  abstract sendMessage(channelMessage: ChannelMessage, text: string, options?: SendOptions): Promise<void>;
+  abstract sendMessage(
+    channelMessage: ChannelMessage,
+    text: string,
+    options?: SendOptions,
+  ): Promise<void>;
 }

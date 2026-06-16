@@ -29,11 +29,19 @@ import type { DeliberationPlan } from '../src/ultimate/types';
 // ============================================================================
 
 function percentile(sorted: number[], p: number): number {
-  const idx = Math.ceil(sorted.length * p / 100) - 1;
+  const idx = Math.ceil((sorted.length * p) / 100) - 1;
   return sorted[Math.max(0, idx)];
 }
 
-function stats(times: number[]): { min: number; max: number; avg: number; p50: number; p95: number; p99: number; total: number } {
+function stats(times: number[]): {
+  min: number;
+  max: number;
+  avg: number;
+  p50: number;
+  p95: number;
+  p99: number;
+  total: number;
+} {
   const sorted = [...times].sort((a, b) => a - b);
   const sum = sorted.reduce((a, b) => a + b, 0);
   return {
@@ -92,7 +100,11 @@ function generateMessages(
     });
 
     // Assistant with tool calls
-    const toolCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> = [];
+    const toolCalls: Array<{
+      id: string;
+      type: 'function';
+      function: { name: string; arguments: string };
+    }> = [];
     const toolCount = 1 + Math.floor(Math.random() * 3);
     for (let t = 0; t < toolCount; t++) {
       toolCalls.push({
@@ -117,9 +129,10 @@ function generateMessages(
 
     // Tool results with varying sizes
     for (let t = 0; t < toolCount; t++) {
-      const outputSize = avgToolOutputChars + Math.floor((Math.random() - 0.5) * avgToolOutputChars * 0.5);
+      const outputSize =
+        avgToolOutputChars + Math.floor((Math.random() - 0.5) * avgToolOutputChars * 0.5);
       let content = `Tool result for call_${i}_${t}:\n`;
-      
+
       if (includeCodeBlocks && t % 2 === 0) {
         content += '```typescript\n';
         content += '// Generated code block\n'.repeat(Math.ceil(outputSize / 200));
@@ -184,11 +197,16 @@ describe('1. ContextCompactor — CPU Cost per Layer', () => {
     console.log('\n  Layer 1 (Snip) — Cost Scaling:');
     console.log('  ─────────────────────────────────────────');
     for (const r of results) {
-      console.log(`  ${r.messages.toString().padStart(4)} msgs: ${r.avgMs.toFixed(2).padStart(8)} ms/op  (${r.opsPerSec.toFixed(1).padStart(8)} ops/sec)`);
+      console.log(
+        `  ${r.messages.toString().padStart(4)} msgs: ${r.avgMs.toFixed(2).padStart(8)} ms/op  (${r.opsPerSec.toFixed(1).padStart(8)} ops/sec)`,
+      );
     }
 
     const ratio200_50 = results[2].avgMs / results[0].avgMs;
-    assert.ok(ratio200_50 < 100, `200 msgs should not be >100x slower than 50 msgs, got ${ratio200_50.toFixed(1)}x`);
+    assert.ok(
+      ratio200_50 < 100,
+      `200 msgs should not be >100x slower than 50 msgs, got ${ratio200_50.toFixed(1)}x`,
+    );
   });
 
   it('Layer 2 (Microcompact): measures tool output trimming cost', () => {
@@ -220,11 +238,16 @@ describe('1. ContextCompactor — CPU Cost per Layer', () => {
     console.log('\n  Layer 2 (Microcompact) — Tool Output Size Impact:');
     console.log('  ─────────────────────────────────────────');
     for (const r of results) {
-      console.log(`  ${r.outputChars.toString().padStart(6)} chars: ${r.avgMs.toFixed(2).padStart(8)} ms/op`);
+      console.log(
+        `  ${r.outputChars.toString().padStart(6)} chars: ${r.avgMs.toFixed(2).padStart(8)} ms/op`,
+      );
     }
 
     const ratio = results[3].avgMs / results[0].avgMs;
-    assert.ok(ratio < 150, `50K chars should not be >150x slower than 1K chars, got ${ratio.toFixed(1)}x`);
+    assert.ok(
+      ratio < 150,
+      `50K chars should not be >150x slower than 1K chars, got ${ratio.toFixed(1)}x`,
+    );
   });
 
   it('Layer 3 (Collapse): measures summary generation cost', () => {
@@ -255,13 +278,17 @@ describe('1. ContextCompactor — CPU Cost per Layer', () => {
     console.log('\n  Layer 3 (Collapse) — Summary Generation Cost:');
     console.log('  ─────────────────────────────────────────');
     for (const r of results) {
-      console.log(`  ${r.turns.toString().padStart(4)} turns: ${r.avgMs.toFixed(2).padStart(8)} ms/op  (${r.opsPerSec.toFixed(1).padStart(8)} ops/sec)`);
+      console.log(
+        `  ${r.turns.toString().padStart(4)} turns: ${r.avgMs.toFixed(2).padStart(8)} ms/op  (${r.opsPerSec.toFixed(1).padStart(8)} ops/sec)`,
+      );
     }
 
     // This is the most CPU-intensive path — flag if > 50ms for 200 turns
     const worst = results[results.length - 1];
     if (worst.avgMs > 50) {
-      console.log(`  ⚠️  Layer 3 at ${worst.turns} turns: ${worst.avgMs.toFixed(1)}ms avg — candidate for worker_threads`);
+      console.log(
+        `  ⚠️  Layer 3 at ${worst.turns} turns: ${worst.avgMs.toFixed(1)}ms avg — candidate for worker_threads`,
+      );
     }
   });
 
@@ -293,13 +320,17 @@ describe('1. ContextCompactor — CPU Cost per Layer', () => {
     console.log('\n  Layer 4 (Autocompact) — Emergency Compaction Cost:');
     console.log('  ─────────────────────────────────────────');
     for (const r of results) {
-      console.log(`  ${r.turns.toString().padStart(4)} turns: ${r.avgMs.toFixed(2).padStart(8)} ms/op  (${r.opsPerSec.toFixed(1).padStart(8)} ops/sec)`);
+      console.log(
+        `  ${r.turns.toString().padStart(4)} turns: ${r.avgMs.toFixed(2).padStart(8)} ms/op  (${r.opsPerSec.toFixed(1).padStart(8)} ops/sec)`,
+      );
     }
 
     // Layer 4 is the heaviest — flag if > 100ms for 200 turns
     const worst = results[results.length - 1];
     if (worst.avgMs > 100) {
-      console.log(`  🔴 Layer 4 at ${worst.turns} turns: ${worst.avgMs.toFixed(1)}ms avg — STRONG candidate for worker_threads`);
+      console.log(
+        `  🔴 Layer 4 at ${worst.turns} turns: ${worst.avgMs.toFixed(1)}ms avg — STRONG candidate for worker_threads`,
+      );
     }
   });
 
@@ -335,13 +366,17 @@ describe('1. ContextCompactor — CPU Cost per Layer', () => {
     console.log('\n  Injection Detection — Large Tool Output Cost:');
     console.log('  ─────────────────────────────────────────');
     for (const r of results) {
-      console.log(`  ${r.chars.toString().padStart(6)} chars: ${r.avgMs.toFixed(2).padStart(8)} ms/op`);
+      console.log(
+        `  ${r.chars.toString().padStart(6)} chars: ${r.avgMs.toFixed(2).padStart(8)} ms/op`,
+      );
     }
 
     // 500KB output should not cause > 20ms delay
     const worst = results[results.length - 1];
     if (worst.avgMs > 20) {
-      console.log(`  ⚠️  Injection scan at ${worst.chars} chars: ${worst.avgMs.toFixed(1)}ms — consider lazy scanning`);
+      console.log(
+        `  ⚠️  Injection scan at ${worst.chars} chars: ${worst.avgMs.toFixed(1)}ms — consider lazy scanning`,
+      );
     }
   });
 });
@@ -377,11 +412,16 @@ describe('2. ToolResultCache — FNV-1a Hashing Throughput', () => {
     console.log('\n  FNV-1a Key Computation Throughput:');
     console.log('  ─────────────────────────────────────────');
     for (const r of results) {
-      console.log(`  ${r.argChars.toString().padStart(6)} chars: ${r.avgNs.toFixed(0).padStart(6)} ns/op  (${r.opsPerSec.toFixed(0).padStart(8)} ops/sec)`);
+      console.log(
+        `  ${r.argChars.toString().padStart(6)} chars: ${r.avgNs.toFixed(0).padStart(6)} ns/op  (${r.opsPerSec.toFixed(0).padStart(8)} ops/sec)`,
+      );
     }
 
     // Should handle > 100K ops/sec for small args
-    assert.ok(results[0].opsPerSec > 100000, `Small args should achieve >100K ops/sec, got ${results[0].opsPerSec.toFixed(0)}`);
+    assert.ok(
+      results[0].opsPerSec > 100000,
+      `Small args should achieve >100K ops/sec, got ${results[0].opsPerSec.toFixed(0)}`,
+    );
   });
 
   it('Cache get/set throughput under concurrent access', () => {
@@ -417,8 +457,10 @@ describe('2. ToolResultCache — FNV-1a Hashing Throughput', () => {
 
     console.log('\n  Cache Concurrent Access:');
     console.log(`  Operations: ${times.length}, Hit rate: ${(cs.hitRate * 100).toFixed(1)}%`);
-    console.log(`  Latency: avg=${s.avg.toFixed(3)}ms, p50=${s.p50.toFixed(3)}ms, p95=${s.p95.toFixed(3)}ms, p99=${s.p99.toFixed(3)}ms`);
-    console.log(`  Throughput: ${(1000 / s.avg * times.length).toFixed(0)} ops/sec`);
+    console.log(
+      `  Latency: avg=${s.avg.toFixed(3)}ms, p50=${s.p50.toFixed(3)}ms, p95=${s.p95.toFixed(3)}ms, p99=${s.p99.toFixed(3)}ms`,
+    );
+    console.log(`  Throughput: ${((1000 / s.avg) * times.length).toFixed(0)} ops/sec`);
 
     assert.ok(s.p99 < 10, `P99 should be < 10ms, got ${s.p99.toFixed(3)}ms`);
     cache.dispose();
@@ -485,12 +527,17 @@ describe('3. TopologyRouter — DAG Operations Scaling', () => {
     console.log('\n  TopologyRouter — DAG Build + Route Scaling:');
     console.log('  ─────────────────────────────────────────');
     for (const r of results) {
-      console.log(`  ${r.nodes.toString().padStart(4)} nodes: ${r.avgMs.toFixed(2).padStart(8)} ms/op  (${r.opsPerSec.toFixed(1).padStart(8)} ops/sec)`);
+      console.log(
+        `  ${r.nodes.toString().padStart(4)} nodes: ${r.avgMs.toFixed(2).padStart(8)} ms/op  (${r.opsPerSec.toFixed(1).padStart(8)} ops/sec)`,
+      );
     }
 
     // Should scale sub-quadratically
     const ratio = results[4].avgMs / results[0].avgMs;
-    assert.ok(ratio < 100, `100 nodes should not be >100x slower than 5 nodes, got ${ratio.toFixed(1)}x`);
+    assert.ok(
+      ratio < 100,
+      `100 nodes should not be >100x slower than 5 nodes, got ${ratio.toFixed(1)}x`,
+    );
   });
 });
 
@@ -504,9 +551,33 @@ describe('4. ToolPlanner — O(n²) Dependency Detection', () => {
     const results: Array<{ tools: number; avgMs: number; opsPerSec: number }> = [];
 
     const mockTools = new Map<string, Tool>();
-    mockTools.set('file_read', { name: 'file_read', isReadOnly: true, definition: { name: 'file_read', description: '', inputSchema: { type: 'object', properties: {} } } });
-    mockTools.set('file_write', { name: 'file_write', isReadOnly: false, definition: { name: 'file_write', description: '', inputSchema: { type: 'object', properties: {} } } });
-    mockTools.set('web_search', { name: 'web_search', isReadOnly: true, definition: { name: 'web_search', description: '', inputSchema: { type: 'object', properties: {} } } });
+    mockTools.set('file_read', {
+      name: 'file_read',
+      isReadOnly: true,
+      definition: {
+        name: 'file_read',
+        description: '',
+        inputSchema: { type: 'object', properties: {} },
+      },
+    });
+    mockTools.set('file_write', {
+      name: 'file_write',
+      isReadOnly: false,
+      definition: {
+        name: 'file_write',
+        description: '',
+        inputSchema: { type: 'object', properties: {} },
+      },
+    });
+    mockTools.set('web_search', {
+      name: 'web_search',
+      isReadOnly: true,
+      definition: {
+        name: 'web_search',
+        description: '',
+        inputSchema: { type: 'object', properties: {} },
+      },
+    });
 
     for (const toolCount of toolCounts) {
       const planner = new ToolPlanner();
@@ -535,7 +606,9 @@ describe('4. ToolPlanner — O(n²) Dependency Detection', () => {
     console.log('\n  ToolPlanner — Dependency Detection Scaling:');
     console.log('  ─────────────────────────────────────────');
     for (const r of results) {
-      console.log(`  ${r.tools.toString().padStart(4)} tools: ${r.avgMs.toFixed(2).padStart(8)} ms/op  (${r.opsPerSec.toFixed(1).padStart(8)} ops/sec)`);
+      console.log(
+        `  ${r.tools.toString().padStart(4)} tools: ${r.avgMs.toFixed(2).padStart(8)} ms/op  (${r.opsPerSec.toFixed(1).padStart(8)} ops/sec)`,
+      );
     }
 
     // O(n²) should still be fast for n=100
@@ -555,7 +628,10 @@ describe('5. TokenGovernor — CJK Token Estimation', () => {
       { name: 'CJK only', text: '你好世界。'.repeat(500) },
       { name: 'Mixed 50/50', text: 'Hello 你好. '.repeat(700) },
       { name: 'Code block', text: 'const x = 1;\n'.repeat(800) },
-      { name: 'Large JSON', text: '{"key": "value", "nested": {"a": 1, "b": "test"}}\n'.repeat(300) },
+      {
+        name: 'Large JSON',
+        text: '{"key": "value", "nested": {"a": 1, "b": "test"}}\n'.repeat(300),
+      },
     ];
 
     console.log('\n  TokenGovernor — Estimation Throughput:');
@@ -573,7 +649,9 @@ describe('5. TokenGovernor — CJK Token Estimation', () => {
 
       const s = stats(times);
       const charsPerMs = text.length / s.avg;
-      console.log(`  ${name.padStart(15)}: ${s.avg.toFixed(3).padStart(8)} ms/op  (${(1000 / s.avg).toFixed(0).padStart(8)} ops/sec, ${charsPerMs.toFixed(0).padStart(6)} chars/ms)`);
+      console.log(
+        `  ${name.padStart(15)}: ${s.avg.toFixed(3).padStart(8)} ms/op  (${(1000 / s.avg).toFixed(0).padStart(8)} ops/sec, ${charsPerMs.toFixed(0).padStart(6)} chars/ms)`,
+      );
     }
 
     // All content types should achieve > 10K ops/sec
@@ -607,7 +685,9 @@ describe('5. TokenGovernor — CJK Token Estimation', () => {
 
     const s = stats(warmTimes);
     console.log('\n  TokenGovernor — Recommendation Caching:');
-    console.log(`  Cold call: ${coldTime.toFixed(3)}ms, Warm avg: ${s.avg.toFixed(4)}ms (speedup: ${(coldTime / s.avg).toFixed(0)}x)`);
+    console.log(
+      `  Cold call: ${coldTime.toFixed(3)}ms, Warm avg: ${s.avg.toFixed(4)}ms (speedup: ${(coldTime / s.avg).toFixed(0)}x)`,
+    );
     assert.ok(s.avg < 0.01, `Cached calls should be < 0.01ms, got ${s.avg.toFixed(4)}ms`);
   });
 });
@@ -622,7 +702,9 @@ describe('6. Event Loop Lag Measurement', () => {
     const s = stats(lags);
 
     console.log('\n  Event Loop Lag — Baseline (no load):');
-    console.log(`  avg=${s.avg.toFixed(2)}ms, p50=${s.p50.toFixed(2)}ms, p95=${s.p95.toFixed(2)}ms, p99=${s.p99.toFixed(2)}ms`);
+    console.log(
+      `  avg=${s.avg.toFixed(2)}ms, p50=${s.p50.toFixed(2)}ms, p95=${s.p95.toFixed(2)}ms, p99=${s.p99.toFixed(2)}ms`,
+    );
 
     assert.ok(s.p95 < 15, `Baseline P95 lag should be < 15ms, got ${s.p95.toFixed(2)}ms`);
   });
@@ -652,13 +734,19 @@ describe('6. Event Loop Lag Measurement', () => {
 
     console.log('\n  Event Loop Lag — During Layer 3/4 Compaction:');
     console.log(`  CPU time: ${cpuTime.toFixed(1)}ms for ${iterations} iterations`);
-    console.log(`  Lag: avg=${s.avg.toFixed(2)}ms, p50=${s.p50.toFixed(2)}ms, p95=${s.p95.toFixed(2)}ms, p99=${s.p99.toFixed(2)}ms`);
+    console.log(
+      `  Lag: avg=${s.avg.toFixed(2)}ms, p50=${s.p50.toFixed(2)}ms, p95=${s.p95.toFixed(2)}ms, p99=${s.p99.toFixed(2)}ms`,
+    );
 
     // Lag should not spike dramatically during compaction
     if (s.p95 > 30) {
-      console.log(`  🔴 Event loop lag P95=${s.p95.toFixed(1)}ms during compaction — candidate for worker_threads`);
+      console.log(
+        `  🔴 Event loop lag P95=${s.p95.toFixed(1)}ms during compaction — candidate for worker_threads`,
+      );
     } else if (s.p95 > 15) {
-      console.log(`  ⚠️  Event loop lag P95=${s.p95.toFixed(1)}ms during compaction — monitor closely`);
+      console.log(
+        `  ⚠️  Event loop lag P95=${s.p95.toFixed(1)}ms during compaction — monitor closely`,
+      );
     }
   });
 
@@ -683,27 +771,37 @@ describe('6. Event Loop Lag Measurement', () => {
     const promises: Promise<void>[] = [];
 
     for (let t = 0; t < concurrency; t++) {
-      promises.push((async () => {
-        for (let i = 0; i < opsPerTenant; i++) {
-          // Mix of CPU-intensive operations
-          const msgs = generateMessages(50, 2000);
-          compactor.compact(msgs);
+      promises.push(
+        (async () => {
+          for (let i = 0; i < opsPerTenant; i++) {
+            // Mix of CPU-intensive operations
+            const msgs = generateMessages(50, 2000);
+            compactor.compact(msgs);
 
-          const tc: ToolCall = {
-            id: `tc_${t}_${i}`,
-            name: 'web_search',
-            arguments: { query: `tenant${t} query${i}` },
-          };
-          cache.get(tc) ?? cache.set(tc, { toolCallId: tc.id, name: 'web_search', output: 'result', durationMs: 10 });
+            const tc: ToolCall = {
+              id: `tc_${t}_${i}`,
+              name: 'web_search',
+              arguments: { query: `tenant${t} query${i}` },
+            };
+            cache.get(tc) ??
+              cache.set(tc, {
+                toolCallId: tc.id,
+                name: 'web_search',
+                output: 'result',
+                durationMs: 10,
+              });
 
-          // Small DAG operation
-          const nodes: TaskDAGNode[] = Array.from({ length: 5 }, (_, j) => ({
-            id: `t${j}`, label: `T${j}`, effort: 'SIMPLE' as const,
-          }));
-          const edges: TaskDAGEdge[] = [{ from: 't0', to: 't1' }];
-          router.buildDAG(nodes, edges);
-        }
-      })());
+            // Small DAG operation
+            const nodes: TaskDAGNode[] = Array.from({ length: 5 }, (_, j) => ({
+              id: `t${j}`,
+              label: `T${j}`,
+              effort: 'SIMPLE' as const,
+            }));
+            const edges: TaskDAGEdge[] = [{ from: 't0', to: 't1' }];
+            router.buildDAG(nodes, edges);
+          }
+        })(),
+      );
     }
 
     await Promise.all(promises);
@@ -713,14 +811,22 @@ describe('6. Event Loop Lag Measurement', () => {
     const s = stats(lags);
 
     console.log('\n  Event Loop Lag — Concurrent Multi-Tenant Load:');
-    console.log(`  ${concurrency} tenants × ${opsPerTenant} ops = ${concurrency * opsPerTenant} total operations`);
+    console.log(
+      `  ${concurrency} tenants × ${opsPerTenant} ops = ${concurrency * opsPerTenant} total operations`,
+    );
     console.log(`  CPU time: ${cpuTime.toFixed(1)}ms`);
-    console.log(`  Lag: avg=${s.avg.toFixed(2)}ms, p50=${s.p50.toFixed(2)}ms, p95=${s.p95.toFixed(2)}ms, p99=${s.p99.toFixed(2)}ms`);
+    console.log(
+      `  Lag: avg=${s.avg.toFixed(2)}ms, p50=${s.p50.toFixed(2)}ms, p95=${s.p95.toFixed(2)}ms, p99=${s.p99.toFixed(2)}ms`,
+    );
 
     if (s.p95 > 50) {
-      console.log(`  🔴 Event loop lag P95=${s.p95.toFixed(1)}ms under concurrent load — worker_threads recommended`);
+      console.log(
+        `  🔴 Event loop lag P95=${s.p95.toFixed(1)}ms under concurrent load — worker_threads recommended`,
+      );
     } else if (s.p95 > 20) {
-      console.log(`  ⚠️  Event loop lag P95=${s.p95.toFixed(1)}ms under concurrent load — consider worker_threads for hot paths`);
+      console.log(
+        `  ⚠️  Event loop lag P95=${s.p95.toFixed(1)}ms under concurrent load — consider worker_threads for hot paths`,
+      );
     } else {
       console.log(`  ✅ Event loop lag acceptable under concurrent load`);
     }

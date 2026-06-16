@@ -104,7 +104,12 @@ export class SIEMForwarder {
   }
 
   /** Get forwarder stats */
-  getStats(): { totalForwarded: number; totalFailed: number; totalDropped: number; queueSize: number } {
+  getStats(): {
+    totalForwarded: number;
+    totalFailed: number;
+    totalDropped: number;
+    queueSize: number;
+  } {
     return {
       totalForwarded: this.totalForwarded,
       totalFailed: this.totalFailed,
@@ -153,7 +158,7 @@ export class SIEMForwarder {
         await this.processQueue();
         this.processing = false;
       } else {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
   }
@@ -176,7 +181,10 @@ export class SIEMForwarder {
         this.totalFailed += batch.length;
         // Re-queue failed events to the FRONT to preserve ordering.
         // Use splice to insert at position 0 without creating a new array.
-        const reQueueCount = Math.min(batch.length, (this.config.maxQueueSize ?? 1000) - this.queue.length);
+        const reQueueCount = Math.min(
+          batch.length,
+          (this.config.maxQueueSize ?? 1000) - this.queue.length,
+        );
         if (reQueueCount > 0) {
           const toRequeue = batch.slice(0, reQueueCount);
           this.queue.splice(0, 0, ...toRequeue);
@@ -237,7 +245,7 @@ export class SIEMForwarder {
     const [host, portStr] = this.config.endpoint.split(':');
     const port = parseInt(portStr ?? '514', 10);
     const appName = this.config.sourceName ?? 'commander';
-    const messages = events.map(event => this.formatSyslogMessage(event, appName, this.hostname));
+    const messages = events.map((event) => this.formatSyslogMessage(event, appName, this.hostname));
     const payload = messages.join('\n');
 
     if (this.config.protocol === 'tcp') {
@@ -264,11 +272,16 @@ export class SIEMForwarder {
     const facility = 1; // user-level
     const sev = (sev: string): number => {
       switch (sev) {
-        case 'critical': return 2; // Critical
-        case 'high': return 3; // Error
-        case 'medium': return 4; // Warning
-        case 'low': return 6; // Informational
-        default: return 6;
+        case 'critical':
+          return 2; // Critical
+        case 'high':
+          return 3; // Error
+        case 'medium':
+          return 4; // Warning
+        case 'low':
+          return 6; // Informational
+        default:
+          return 6;
       }
     };
     return facility * 8 + sev(severity);
@@ -319,7 +332,7 @@ export class SIEMForwarder {
     const token = this.config.token ?? '';
     const source = this.config.sourceName ?? 'commander';
 
-    const payload = events.map(event => ({
+    const payload = events.map((event) => ({
       time: new Date(event.timestamp).getTime() / 1000,
       host: this.hostname,
       source,
@@ -352,7 +365,7 @@ export class SIEMForwarder {
     const url = new URL(this.config.endpoint);
     const apiKey = this.config.token ?? '';
 
-    const payload = events.map(event => ({
+    const payload = events.map((event) => ({
       ddsource: this.config.sourceName ?? 'commander',
       ddtags: `severity:${event.severity},type:${event.type}`,
       hostname: this.hostname,
@@ -396,7 +409,9 @@ export class SIEMForwarder {
       const mod = url.protocol === 'https:' ? https : http;
       const req = mod.request(options, (res) => {
         let responseBody = '';
-        res.on('data', (chunk: string) => { responseBody += chunk; });
+        res.on('data', (chunk: string) => {
+          responseBody += chunk;
+        });
         res.on('end', () => {
           if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
             resolve();
@@ -407,7 +422,10 @@ export class SIEMForwarder {
       });
 
       req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('HTTP request timeout')); });
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('HTTP request timeout'));
+      });
       req.write(data);
       req.end();
     });
@@ -441,7 +459,10 @@ export function createSIEMForwarderFromEnv(): SIEMForwarder | null {
   }
 
   if (!['syslog', 'splunk-hec', 'datadog'].includes(type)) {
-    getGlobalLogger().warn('SIEMForwarder', `Unsupported SIEM_TYPE: ${type}. Use syslog, splunk-hec, or datadog.`);
+    getGlobalLogger().warn(
+      'SIEMForwarder',
+      `Unsupported SIEM_TYPE: ${type}. Use syslog, splunk-hec, or datadog.`,
+    );
     return null;
   }
 

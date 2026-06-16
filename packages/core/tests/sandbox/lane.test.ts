@@ -73,7 +73,12 @@ describe('LaneManager', () => {
     });
 
     it('routes by tenant id', () => {
-      manager.registerLane({ name: 'tenant-lane', maxConcurrency: 5, priority: 3, tenantIds: ['tenant-1'] });
+      manager.registerLane({
+        name: 'tenant-lane',
+        maxConcurrency: 5,
+        priority: 3,
+        tenantIds: ['tenant-1'],
+      });
       const lane = manager.selectLane({
         agentId: 'agent-1',
         tenantId: 'tenant-1',
@@ -82,7 +87,12 @@ describe('LaneManager', () => {
     });
 
     it('falls back to default when tenant has no specific lane', () => {
-      manager.registerLane({ name: 'tenant-lane', maxConcurrency: 5, priority: 3, tenantIds: ['tenant-1'] });
+      manager.registerLane({
+        name: 'tenant-lane',
+        maxConcurrency: 5,
+        priority: 3,
+        tenantIds: ['tenant-1'],
+      });
       const lane = manager.selectLane({
         agentId: 'agent-1',
         tenantId: 'tenant-999',
@@ -134,13 +144,21 @@ describe('LaneManager', () => {
 
     it('acquireSlot waits when lane is full and resolves on release', async () => {
       manager.registerLane({ name: 'full-lane', maxConcurrency: 1, priority: 3 });
-      const acquired = await manager.acquireSlot({ agentId: 'agent-1', args: { lane: 'full-lane' } });
+      const acquired = await manager.acquireSlot({
+        agentId: 'agent-1',
+        args: { lane: 'full-lane' },
+      });
       expect(acquired).toBe('full-lane');
       // Second acquire should wait (not return immediately)
       let resolved = false;
-      const p2 = manager.acquireSlot({ agentId: 'agent-2', args: { lane: 'full-lane' } }).then(r => { resolved = true; return r; });
+      const p2 = manager
+        .acquireSlot({ agentId: 'agent-2', args: { lane: 'full-lane' } })
+        .then((r) => {
+          resolved = true;
+          return r;
+        });
       // Verify it hasn't resolved yet (next microtask)
-      await new Promise(r => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, 5));
       expect(resolved).toBe(false);
       // Release should unblock
       manager.releaseSlot('full-lane');
@@ -170,7 +188,7 @@ describe('LaneManager', () => {
       manager.registerLane({ name: 'stats-lane', maxConcurrency: 5, priority: 3 });
       const stats = manager.getStats();
       expect(stats.length).toBeGreaterThanOrEqual(2);
-      const laneStats = stats.find(s => s.name === 'stats-lane');
+      const laneStats = stats.find((s) => s.name === 'stats-lane');
       expect(laneStats).toBeDefined();
       expect(laneStats!.maxConcurrency).toBe(5);
       expect(laneStats!.running).toBe(0);
@@ -179,7 +197,12 @@ describe('LaneManager', () => {
 
   describe('getLaneBackend', () => {
     it('returns backend name for pinned lane', () => {
-      manager.registerLane({ name: 'pinned', maxConcurrency: 5, priority: 3, backendName: 'gpu-cluster' });
+      manager.registerLane({
+        name: 'pinned',
+        maxConcurrency: 5,
+        priority: 3,
+        backendName: 'gpu-cluster',
+      });
       const backend = manager.getLaneBackend({
         agentId: 'agent-1',
         args: { lane: 'pinned' },

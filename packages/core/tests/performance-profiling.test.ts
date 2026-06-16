@@ -20,11 +20,18 @@ import type { LLMMessage } from '../src/runtime/types';
 // ============================================================================
 
 function percentile(sorted: number[], p: number): number {
-  const idx = Math.ceil(sorted.length * p / 100) - 1;
+  const idx = Math.ceil((sorted.length * p) / 100) - 1;
   return sorted[Math.max(0, idx)];
 }
 
-function stats(times: number[]): { min: number; max: number; avg: number; p50: number; p95: number; p99: number } {
+function stats(times: number[]): {
+  min: number;
+  max: number;
+  avg: number;
+  p50: number;
+  p95: number;
+  p99: number;
+} {
   const sorted = [...times].sort((a, b) => a - b);
   const sum = sorted.reduce((a, b) => a + b, 0);
   return {
@@ -48,7 +55,11 @@ function heapMB(): number {
 
 describe('1. Memory Profiling — 200K Token Context', () => {
   it('ContextCompactor does not leak memory across 100 compaction cycles', () => {
-    const compactor = new ContextCompactor({ maxContextTokens: 50000, layer1Trigger: 0.3, keepRecentTurns: 3 });
+    const compactor = new ContextCompactor({
+      maxContextTokens: 50000,
+      layer1Trigger: 0.3,
+      keepRecentTurns: 3,
+    });
 
     global.gc?.();
     const heapBefore = heapMB();
@@ -69,9 +80,14 @@ describe('1. Memory Profiling — 200K Token Context', () => {
     const heapAfter = heapMB();
     const growth = heapAfter - heapBefore;
 
-    console.log(`  [Memory] ContextCompactor: before=${heapBefore.toFixed(1)}MB, after=${heapAfter.toFixed(1)}MB, growth=${growth.toFixed(1)}MB`);
+    console.log(
+      `  [Memory] ContextCompactor: before=${heapBefore.toFixed(1)}MB, after=${heapAfter.toFixed(1)}MB, growth=${growth.toFixed(1)}MB`,
+    );
     // Should not grow more than 50MB after 100 cycles (all intermediate arrays should be GC'd)
-    assert.ok(growth < 50, `ContextCompactor memory growth should be < 50MB, got ${growth.toFixed(1)}MB`);
+    assert.ok(
+      growth < 50,
+      `ContextCompactor memory growth should be < 50MB, got ${growth.toFixed(1)}MB`,
+    );
   });
 
   it('InMemoryMemoryStore bounded by LRU eviction (GAP-22 fix)', async () => {
@@ -97,9 +113,15 @@ describe('1. Memory Profiling — 200K Token Context', () => {
     const growth = heapAfter - heapBefore;
     const stats = await store.getStats('test');
 
-    console.log(`  [Memory] InMemoryMemoryStore (maxEntries=${maxEntries}): ${stats.totalItems} items, growth=${growth.toFixed(1)}MB`);
+    console.log(
+      `  [Memory] InMemoryMemoryStore (maxEntries=${maxEntries}): ${stats.totalItems} items, growth=${growth.toFixed(1)}MB`,
+    );
     // LRU eviction should cap items at maxEntries
-    assert.strictEqual(stats.totalItems, maxEntries, `Should be capped at ${maxEntries}, got ${stats.totalItems}`);
+    assert.strictEqual(
+      stats.totalItems,
+      maxEntries,
+      `Should be capped at ${maxEntries}, got ${stats.totalItems}`,
+    );
     // Growth should be bounded (not proportional to 10K writes)
     assert.ok(growth < 50, `Bounded growth should be < 50MB, got ${growth.toFixed(1)}MB`);
 
@@ -137,7 +159,11 @@ describe('1. Memory Profiling — 200K Token Context', () => {
 
 describe('2. Concurrent Request Latency Distribution', () => {
   it('ContextCompactor under 10 concurrent calls', async () => {
-    const compactor = new ContextCompactor({ maxContextTokens: 20000, layer1Trigger: 0.3, keepRecentTurns: 3 });
+    const compactor = new ContextCompactor({
+      maxContextTokens: 20000,
+      layer1Trigger: 0.3,
+      keepRecentTurns: 3,
+    });
     const makeMsgs = (): LLMMessage[] => {
       const msgs: LLMMessage[] = [{ role: 'system', content: 'System prompt' }];
       for (let i = 0; i < 100; i++) {
@@ -162,7 +188,9 @@ describe('2. Concurrent Request Latency Distribution', () => {
     await Promise.all(promises);
 
     const s = stats(times);
-    console.log(`  [Latency] ContextCompactor x${concurrency}: avg=${s.avg.toFixed(2)}ms, p50=${s.p50.toFixed(2)}ms, p95=${s.p95.toFixed(2)}ms, p99=${s.p99.toFixed(2)}ms`);
+    console.log(
+      `  [Latency] ContextCompactor x${concurrency}: avg=${s.avg.toFixed(2)}ms, p50=${s.p50.toFixed(2)}ms, p95=${s.p95.toFixed(2)}ms, p99=${s.p99.toFixed(2)}ms`,
+    );
     assert.ok(s.p95 < 100, `P95 should be < 100ms, got ${s.p95.toFixed(2)}ms`);
   });
 
@@ -182,7 +210,9 @@ describe('2. Concurrent Request Latency Distribution', () => {
     }
 
     const s = stats(times);
-    console.log(`  [Latency] TokenGovernor x${concurrency}: avg=${s.avg.toFixed(3)}ms, p50=${s.p50.toFixed(3)}ms, p95=${s.p95.toFixed(3)}ms`);
+    console.log(
+      `  [Latency] TokenGovernor x${concurrency}: avg=${s.avg.toFixed(3)}ms, p50=${s.p50.toFixed(3)}ms, p95=${s.p95.toFixed(3)}ms`,
+    );
     assert.ok(s.p95 < 1, `P95 should be < 1ms, got ${s.p95.toFixed(3)}ms`);
   });
 
@@ -202,7 +232,12 @@ describe('2. Concurrent Request Latency Distribution', () => {
       if (i % 3 === 0) {
         // Write
         const tc = { id: `new${i}`, name: 'search', arguments: { query: `new${i}` } };
-        cache.set(tc, { toolCallId: `new${i}`, name: 'search', output: `result${i}`, durationMs: 10 });
+        cache.set(tc, {
+          toolCallId: `new${i}`,
+          name: 'search',
+          output: `result${i}`,
+          durationMs: 10,
+        });
       } else {
         // Read
         const tc = { id: `tc${i % 50}`, name: 'search', arguments: { query: `test${i % 50}` } };
@@ -214,7 +249,9 @@ describe('2. Concurrent Request Latency Distribution', () => {
 
     const s = stats(times);
     const cs = cache.getStats();
-    console.log(`  [Latency] ToolResultCache x100: avg=${s.avg.toFixed(3)}ms, p50=${s.p50.toFixed(3)}ms, p95=${s.p95.toFixed(3)}ms, hitRate=${(cs.hitRate * 100).toFixed(1)}%`);
+    console.log(
+      `  [Latency] ToolResultCache x100: avg=${s.avg.toFixed(3)}ms, p50=${s.p50.toFixed(3)}ms, p95=${s.p95.toFixed(3)}ms, hitRate=${(cs.hitRate * 100).toFixed(1)}%`,
+    );
     assert.ok(s.p95 < 5, `P95 should be < 5ms, got ${s.p95.toFixed(3)}ms`);
     cache.dispose();
   });
@@ -233,7 +270,9 @@ describe('2. Concurrent Request Latency Distribution', () => {
     }
 
     const s = stats(times);
-    console.log(`  [Latency] CircuitBreaker x100: avg=${s.avg.toFixed(4)}ms, p50=${s.p50.toFixed(4)}ms, p95=${s.p95.toFixed(4)}ms`);
+    console.log(
+      `  [Latency] CircuitBreaker x100: avg=${s.avg.toFixed(4)}ms, p50=${s.p50.toFixed(4)}ms, p95=${s.p95.toFixed(4)}ms`,
+    );
     assert.ok(s.p95 < 1, `P95 should be < 1ms`);
   });
 });
@@ -254,10 +293,12 @@ describe('3. Long-Running 1000-Round Degradation', () => {
     }
 
     // Estimation should be deterministic — same input always gives same output
-    const unique = new Set(estimations.map((t, i) => {
-      const text = `Round ${i}: This is a realistic message with some content that varies slightly per round. The quick brown fox jumps over the lazy dog.`;
-      return `${text.length}:${t}`;
-    }));
+    const unique = new Set(
+      estimations.map((t, i) => {
+        const text = `Round ${i}: This is a realistic message with some content that varies slightly per round. The quick brown fox jumps over the lazy dog.`;
+        return `${text.length}:${t}`;
+      }),
+    );
 
     // Each unique text length should map to exactly one token count
     const textToTokens = new Map<string, number>();
@@ -266,12 +307,18 @@ describe('3. Long-Running 1000-Round Degradation', () => {
       const tokens = TokenGovernor.estimateTokens(text);
       const key = text;
       if (textToTokens.has(key)) {
-        assert.strictEqual(tokens, textToTokens.get(key), `Estimation should be deterministic at round ${i}`);
+        assert.strictEqual(
+          tokens,
+          textToTokens.get(key),
+          `Estimation should be deterministic at round ${i}`,
+        );
       }
       textToTokens.set(key, tokens);
     }
 
-    console.log(`  [Degradation] Token estimation: ${unique.size} unique (length,token) pairs over 1000 rounds — deterministic`);
+    console.log(
+      `  [Degradation] Token estimation: ${unique.size} unique (length,token) pairs over 1000 rounds — deterministic`,
+    );
   });
 
   it('cache hit rate improves over 1000 rounds with repeated patterns', () => {
@@ -284,19 +331,30 @@ describe('3. Long-Running 1000-Round Degradation', () => {
       // 70% repeated queries (should hit cache), 30% new queries
       const isRepeat = Math.random() < 0.7;
       const queryId = isRepeat ? i % 50 : i;
-      const tc = { id: `tc${queryId}`, name: 'web_search', arguments: { query: `query ${queryId}` } };
+      const tc = {
+        id: `tc${queryId}`,
+        name: 'web_search',
+        arguments: { query: `query ${queryId}` },
+      };
 
       const result = cache.get(tc);
       if (result) {
         hits++;
       } else {
         misses++;
-        cache.set(tc, { toolCallId: `tc${queryId}`, name: 'web_search', output: `result for query ${queryId}`, durationMs: 100 });
+        cache.set(tc, {
+          toolCallId: `tc${queryId}`,
+          name: 'web_search',
+          output: `result for query ${queryId}`,
+          durationMs: 100,
+        });
       }
     }
 
     const cs = cache.getStats();
-    console.log(`  [Degradation] Cache over 1000 rounds: hits=${hits}, misses=${misses}, hitRate=${(cs.hitRate * 100).toFixed(1)}%, entries=${cs.totalEntries}`);
+    console.log(
+      `  [Degradation] Cache over 1000 rounds: hits=${hits}, misses=${misses}, hitRate=${(cs.hitRate * 100).toFixed(1)}%, entries=${cs.totalEntries}`,
+    );
 
     // With 70% repeated queries, hit rate should be meaningful
     assert.ok(cs.hitRate > 0.3, `Hit rate should be > 30%, got ${(cs.hitRate * 100).toFixed(1)}%`);
@@ -304,11 +362,17 @@ describe('3. Long-Running 1000-Round Degradation', () => {
   });
 
   it('compaction quality does not degrade over 100 rounds', () => {
-    const compactor = new ContextCompactor({ maxContextTokens: 10000, layer1Trigger: 0.3, keepRecentTurns: 3 });
+    const compactor = new ContextCompactor({
+      maxContextTokens: 10000,
+      layer1Trigger: 0.3,
+      keepRecentTurns: 3,
+    });
     const dropRatios: number[] = [];
 
     for (let round = 0; round < 100; round++) {
-      const msgs: LLMMessage[] = [{ role: 'system', content: 'System prompt for consistency test.' }];
+      const msgs: LLMMessage[] = [
+        { role: 'system', content: 'System prompt for consistency test.' },
+      ];
       for (let i = 0; i < 50; i++) {
         msgs.push({ role: 'user', content: `Round ${round} msg ${i}: ${'noise '.repeat(20)}` });
         msgs.push({ role: 'assistant', content: `Response ${i}: ${'data '.repeat(10)}` });
@@ -325,7 +389,9 @@ describe('3. Long-Running 1000-Round Degradation', () => {
     const avgFirst = first10.reduce((a, b) => a + b, 0) / first10.length;
     const avgLast = last10.reduce((a, b) => a + b, 0) / last10.length;
 
-    console.log(`  [Degradation] Compaction: first10 avg drop=${(avgFirst * 100).toFixed(1)}%, last10 avg drop=${(avgLast * 100).toFixed(1)}%`);
+    console.log(
+      `  [Degradation] Compaction: first10 avg drop=${(avgFirst * 100).toFixed(1)}%, last10 avg drop=${(avgLast * 100).toFixed(1)}%`,
+    );
 
     // The compaction behavior should not change significantly
     const drift = Math.abs(avgFirst - avgLast);
@@ -356,8 +422,13 @@ describe('3. Long-Running 1000-Round Degradation', () => {
     }
 
     const s = stats(queryTimes);
-    console.log(`  [Degradation] MemoryStore query at 5K entries: avg=${s.avg.toFixed(2)}ms, p95=${s.p95.toFixed(2)}ms`);
-    assert.ok(s.p95 < 50, `P95 query time should be < 50ms at 5K entries, got ${s.p95.toFixed(2)}ms`);
+    console.log(
+      `  [Degradation] MemoryStore query at 5K entries: avg=${s.avg.toFixed(2)}ms, p95=${s.p95.toFixed(2)}ms`,
+    );
+    assert.ok(
+      s.p95 < 50,
+      `P95 query time should be < 50ms at 5K entries, got ${s.p95.toFixed(2)}ms`,
+    );
 
     await store.close();
   });
@@ -373,7 +444,14 @@ describe('4. Tool Call Cache Effectiveness', () => {
       enabled: true,
       maxEntries: 256,
       defaultTtlMs: 300000,
-      neverCache: ['shell_execute', 'python_execute', 'file_write', 'file_edit', 'git_push', 'git_commit'],
+      neverCache: [
+        'shell_execute',
+        'python_execute',
+        'file_write',
+        'file_edit',
+        'git_push',
+        'git_commit',
+      ],
     });
 
     let totalGets = 0;
@@ -395,27 +473,43 @@ describe('4. Tool Call Cache Effectiveness', () => {
       let tool = tools[0];
       for (let j = 0; j < tools.length; j++) {
         cumulative += toolWeights[j];
-        if (r < cumulative) { tool = tools[j]; break; }
+        if (r < cumulative) {
+          tool = tools[j];
+          break;
+        }
       }
 
       // For web_search and file_read, 60% are repeated queries
       const isRepeat = (tool === 'web_search' || tool === 'file_read') && Math.random() < 0.6;
       const queryId = isRepeat ? i % 30 : i;
 
-      const tc = { id: `tc${i}`, name: tool, arguments: { query: `query ${queryId}`, path: `/file/${queryId}` } };
+      const tc = {
+        id: `tc${i}`,
+        name: tool,
+        arguments: { query: `query ${queryId}`, path: `/file/${queryId}` },
+      };
 
       totalGets++;
       const cached = cache.get(tc);
       if (cached) {
         totalHits++;
       } else {
-        cache.set(tc, { toolCallId: `tc${i}`, name: tool, output: `result for ${tool} query ${queryId}`, durationMs: 50 });
+        cache.set(tc, {
+          toolCallId: `tc${i}`,
+          name: tool,
+          output: `result for ${tool} query ${queryId}`,
+          durationMs: 50,
+        });
       }
     }
 
     const cs = cache.getStats();
-    console.log(`  [Cache] Realistic workload: gets=${totalGets}, hits=${totalHits}, hitRate=${(cs.hitRate * 100).toFixed(1)}%`);
-    console.log(`  [Cache] entries=${cs.totalEntries}, evictions=${cs.evictions}, memory=${(cs.memoryEstimateBytes / 1024).toFixed(1)}KB`);
+    console.log(
+      `  [Cache] Realistic workload: gets=${totalGets}, hits=${totalHits}, hitRate=${(cs.hitRate * 100).toFixed(1)}%`,
+    );
+    console.log(
+      `  [Cache] entries=${cs.totalEntries}, evictions=${cs.evictions}, memory=${(cs.memoryEstimateBytes / 1024).toFixed(1)}KB`,
+    );
 
     // With 60% repeat rate on cacheable tools, hit rate should be meaningful
     assert.ok(cs.hitRate > 0.1, `Hit rate should be > 10%, got ${(cs.hitRate * 100).toFixed(1)}%`);
@@ -436,7 +530,7 @@ describe('4. Tool Call Cache Effectiveness', () => {
     assert.ok(cache.get(tc), 'Should hit within TTL');
 
     // Wait for expiry
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, 150));
 
     // Should miss after TTL
     assert.strictEqual(cache.get(tc), undefined, 'Should miss after TTL expiry');

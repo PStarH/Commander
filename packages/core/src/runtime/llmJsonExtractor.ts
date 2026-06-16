@@ -26,14 +26,18 @@ export function extractJSON<T>(raw: string): T | null {
   // Strategy 1: Direct parse
   try {
     return JSON.parse(trimmed) as T;
-  } catch { /* continue */ }
+  } catch {
+    /* continue */
+  }
 
   // Strategy 2: Strip markdown code fences
   const fenceMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
   if (fenceMatch) {
     try {
       return JSON.parse(fenceMatch[1].trim()) as T;
-    } catch { /* continue */ }
+    } catch {
+      /* continue */
+    }
   }
 
   // Strategy 3: Find first balanced {...} block
@@ -44,12 +48,17 @@ export function extractJSON<T>(raw: string): T | null {
     for (let i = firstBrace; i < trimmed.length; i++) {
       if (trimmed[i] === '{') depth++;
       if (trimmed[i] === '}') depth--;
-      if (depth === 0) { end = i; break; }
+      if (depth === 0) {
+        end = i;
+        break;
+      }
     }
     if (end > firstBrace) {
       try {
         return JSON.parse(trimmed.slice(firstBrace, end + 1)) as T;
-      } catch { /* continue */ }
+      } catch {
+        /* continue */
+      }
     }
   }
 
@@ -61,12 +70,17 @@ export function extractJSON<T>(raw: string): T | null {
     for (let i = lastBrace; i >= 0; i--) {
       if (trimmed[i] === '}') depth++;
       if (trimmed[i] === '{') depth--;
-      if (depth === 0) { start = i; break; }
+      if (depth === 0) {
+        start = i;
+        break;
+      }
     }
     if (start >= 0 && start < lastBrace) {
       try {
         return JSON.parse(trimmed.slice(start, lastBrace + 1)) as T;
-      } catch { /* continue */ }
+      } catch {
+        /* continue */
+      }
     }
   }
 
@@ -96,7 +110,8 @@ export async function callLLMJSON<T>(
     });
 
     // Try content first, then reasoning_content (for reasoning models)
-    const raw = response.content || (response as { reasoning_content?: string }).reasoning_content || '';
+    const raw =
+      response.content || (response as { reasoning_content?: string }).reasoning_content || '';
     const data = extractJSON<T>(raw);
 
     if (!data) {

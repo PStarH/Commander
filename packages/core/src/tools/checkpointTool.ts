@@ -26,16 +26,31 @@ Returns a checkpoint ID for later use with checkpoint_rewind.`,
     inputSchema: {
       type: 'object',
       properties: {
-        label: { type: 'string', description: 'Human-readable label for this checkpoint (e.g., "before refactor", "approach A")' },
-        messages: { type: 'array', description: 'Current conversation messages (pass the messages array)', items: { type: 'object' } },
+        label: {
+          type: 'string',
+          description:
+            'Human-readable label for this checkpoint (e.g., "before refactor", "approach A")',
+        },
+        messages: {
+          type: 'array',
+          description: 'Current conversation messages (pass the messages array)',
+          items: { type: 'object' },
+        },
         stepNumber: { type: 'number', description: 'Current step number' },
         filesRead: { type: 'array', description: 'Files read so far', items: { type: 'string' } },
-        filesModified: { type: 'array', description: 'Files modified so far', items: { type: 'string' } },
+        filesModified: {
+          type: 'array',
+          description: 'Files modified so far',
+          items: { type: 'string' },
+        },
       },
       required: ['label', 'messages', 'stepNumber'],
     },
     examples: [
-      { name: 'checkpoint_save', arguments: { label: 'before refactor', messages: [], stepNumber: 5 } },
+      {
+        name: 'checkpoint_save',
+        arguments: { label: 'before refactor', messages: [], stepNumber: 5 },
+      },
     ],
     category: 'workflow',
   };
@@ -72,9 +87,7 @@ Returns the restored messages.`,
       },
       required: ['checkpointId'],
     },
-    examples: [
-      { name: 'checkpoint_rewind', arguments: { checkpointId: 'cp_1234567890_abc123' } },
-    ],
+    examples: [{ name: 'checkpoint_rewind', arguments: { checkpointId: 'cp_1234567890_abc123' } }],
     category: 'workflow',
   };
 
@@ -87,7 +100,10 @@ Returns the restored messages.`,
     const messages = manager.rewind(checkpointId);
 
     if (!messages) {
-      return `Error: Checkpoint not found: ${checkpointId}. Available: ${manager.list().map(cp => cp.id).join(', ')}`;
+      return `Error: Checkpoint not found: ${checkpointId}. Available: ${manager
+        .list()
+        .map((cp) => cp.id)
+        .join(', ')}`;
     }
 
     return `Rewound to checkpoint: ${checkpointId}\nRestored ${messages.length} messages.\nAll messages after this checkpoint have been discarded.`;
@@ -106,9 +122,7 @@ export class CheckpointListTool implements Tool {
       type: 'object',
       properties: {},
     },
-    examples: [
-      { name: 'checkpoint_list', arguments: {} },
-    ],
+    examples: [{ name: 'checkpoint_list', arguments: {} }],
     category: 'workflow',
   };
 
@@ -120,7 +134,7 @@ export class CheckpointListTool implements Tool {
       return 'No checkpoints saved. Use checkpoint_save to save a checkpoint before trying an approach.';
     }
 
-    const lines = checkpoints.map(cp => {
+    const lines = checkpoints.map((cp) => {
       const age = Math.round((Date.now() - cp.timestamp) / 1000);
       return `${cp.id} | ${cp.label} | step ${cp.stepNumber} | ${cp.messageCount} msgs | ${cp.tokenCount} tok | ${age}s ago`;
     });
@@ -136,7 +150,8 @@ export class CheckpointListTool implements Tool {
 export class CheckpointCollapseTool implements Tool {
   definition: ToolDefinition = {
     name: 'checkpoint_collapse',
-    description: 'Collapse a checkpoint into a concise summary. Use this to compress context from an exploratory phase.',
+    description:
+      'Collapse a checkpoint into a concise summary. Use this to compress context from an exploratory phase.',
     inputSchema: {
       type: 'object',
       properties: {

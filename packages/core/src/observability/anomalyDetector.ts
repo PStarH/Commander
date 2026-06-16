@@ -28,16 +28,22 @@ export class TokenUsageAnomalyDetector {
     const history = this.history.get(agentId) ?? { mean: 0, stdDev: 0, samples: 0 };
     const n = history.samples;
     const newMean = (history.mean * n + tokenUsage) / (n + 1);
-    const variance = n > 0
-      ? ((history.stdDev ** 2) * n + (tokenUsage - history.mean) * (tokenUsage - newMean)) / (n + 1)
-      : 0;
+    const variance =
+      n > 0
+        ? (history.stdDev ** 2 * n + (tokenUsage - history.mean) * (tokenUsage - newMean)) / (n + 1)
+        : 0;
     history.mean = newMean;
     history.stdDev = Math.sqrt(Math.max(variance, 0));
     history.samples = Math.min(n + 1, this.windowSize);
     this.history.set(agentId, history);
   }
 
-  checkForAnomaly(agentId: string, runId: string, stepNumber: number, tokenUsage: number): AnomalyAlert | null {
+  checkForAnomaly(
+    agentId: string,
+    runId: string,
+    stepNumber: number,
+    tokenUsage: number,
+  ): AnomalyAlert | null {
     const history = this.history.get(agentId);
     if (!history || history.samples < 10) return null;
 
@@ -45,8 +51,11 @@ export class TokenUsageAnomalyDetector {
       if (tokenUsage !== history.mean) {
         const alert: AnomalyAlert = {
           timestamp: new Date().toISOString(),
-          runId, agentId, stepNumber,
-          tokenUsage, baseline: history.mean,
+          runId,
+          agentId,
+          stepNumber,
+          tokenUsage,
+          baseline: history.mean,
           zScore: Infinity,
           severity: 'critical',
         };
@@ -61,8 +70,11 @@ export class TokenUsageAnomalyDetector {
     if (Math.abs(zScore) < this.zScoreThreshold) return null;
 
     const severity: AnomalyAlert['severity'] =
-      Math.abs(zScore) >= this.criticalZScore ? 'critical' :
-      Math.abs(zScore) >= this.zScoreThreshold ? 'warning' : 'info';
+      Math.abs(zScore) >= this.criticalZScore
+        ? 'critical'
+        : Math.abs(zScore) >= this.zScoreThreshold
+          ? 'warning'
+          : 'info';
 
     const alert: AnomalyAlert = {
       timestamp: new Date().toISOString(),
@@ -82,7 +94,7 @@ export class TokenUsageAnomalyDetector {
 
   getAlerts(agentId?: string): AnomalyAlert[] {
     if (!agentId) return [...this.alerts];
-    return this.alerts.filter(a => a.agentId === agentId);
+    return this.alerts.filter((a) => a.agentId === agentId);
   }
 
   getHistory(agentId: string): TokenUsageHistory | undefined {

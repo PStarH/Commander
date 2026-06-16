@@ -24,26 +24,26 @@ const BLOCKED_HOSTS = new Set([
   '127.0.0.1',
   '::1',
   '0.0.0.0',
-  '169.254.169.254',        // AWS / OpenStack / Azure instance metadata
+  '169.254.169.254', // AWS / OpenStack / Azure instance metadata
   'metadata.google.internal', // GCP metadata
 ]);
 
 const BLOCKED_IPV4_CIDRS: RegExp[] = [
-  /^10\./,                                          // 10.0.0.0/8
-  /^172\.(1[6-9]|2[0-9]|3[01])\./,                  // 172.16.0.0/12
-  /^192\.168\./,                                    // 192.168.0.0/16
-  /^169\.254\./,                                    // 169.254.0.0/16 (link-local)
+  /^10\./, // 10.0.0.0/8
+  /^172\.(1[6-9]|2[0-9]|3[01])\./, // 172.16.0.0/12
+  /^192\.168\./, // 192.168.0.0/16
+  /^169\.254\./, // 169.254.0.0/16 (link-local)
 ];
 
 const BLOCKED_PORTS: number[] = [
-  6379,   // Redis
-  27017,  // MongoDB
-  5432,   // PostgreSQL
-  9200,   // Elasticsearch
-  11211,  // Memcached
-  8500,   // Consul
-  8300,   // Consul RPC
-  8501,   // Consul UI
+  6379, // Redis
+  27017, // MongoDB
+  5432, // PostgreSQL
+  9200, // Elasticsearch
+  11211, // Memcached
+  8500, // Consul
+  8300, // Consul RPC
+  8501, // Consul UI
 ];
 
 export interface UrlSafetyResult {
@@ -79,7 +79,7 @@ export function isUrlSafe(url: string): UrlSafetyResult {
     return { safe: false, reason: `blocked host: ${host}` };
   }
 
-  if (BLOCKED_IPV4_CIDRS.some(re => re.test(host))) {
+  if (BLOCKED_IPV4_CIDRS.some((re) => re.test(host))) {
     return { safe: false, reason: `private IPv4 range: ${host}` };
   }
 

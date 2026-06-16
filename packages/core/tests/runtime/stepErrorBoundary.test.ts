@@ -47,9 +47,18 @@ describe('StepErrorBoundary', () => {
   it('skips on permanent error with skip strategy', async () => {
     const { boundary } = createBoundary({ onPermanent: 'skip', maxRetries: 3, retryDelayMs: 5 });
     let skipped = false;
-    const result = await boundary.execute('test-op', 'tool', async () => {
-      throw Object.assign(new Error('Invalid'), { statusCode: 422 });
-    }, { onSkip: () => { skipped = true; } });
+    const result = await boundary.execute(
+      'test-op',
+      'tool',
+      async () => {
+        throw Object.assign(new Error('Invalid'), { statusCode: 422 });
+      },
+      {
+        onSkip: () => {
+          skipped = true;
+        },
+      },
+    );
     expect(result.success).toBe(false);
     expect(skipped).toBe(true);
     expect(result.attempts).toBe(1);
@@ -58,9 +67,18 @@ describe('StepErrorBoundary', () => {
   it('exhausts retries and applies onExhausted skip strategy', async () => {
     const { boundary } = createBoundary({ maxRetries: 2, retryDelayMs: 5, onExhausted: 'skip' });
     let skipped = false;
-    const result = await boundary.execute('test-op', 'tool', async () => {
-      throw new Error('Connection timed out');
-    }, { onSkip: () => { skipped = true; } });
+    const result = await boundary.execute(
+      'test-op',
+      'tool',
+      async () => {
+        throw new Error('Connection timed out');
+      },
+      {
+        onSkip: () => {
+          skipped = true;
+        },
+      },
+    );
     expect(result.success).toBe(false);
     expect(result.attempts).toBe(3);
     expect(skipped).toBe(true);
@@ -79,11 +97,20 @@ describe('StepErrorBoundary', () => {
     const { boundary } = createBoundary({ maxRetries: 2, retryDelayMs: 5 });
     const retryCalls: number[] = [];
     let callCount = 0;
-    await boundary.execute('test-op', 'tool', async () => {
-      callCount++;
-      if (callCount < 3) throw new Error('Connection timed out');
-      return 'ok';
-    }, { onRetry: (attempt, err) => { retryCalls.push(attempt); } });
+    await boundary.execute(
+      'test-op',
+      'tool',
+      async () => {
+        callCount++;
+        if (callCount < 3) throw new Error('Connection timed out');
+        return 'ok';
+      },
+      {
+        onRetry: (attempt, err) => {
+          retryCalls.push(attempt);
+        },
+      },
+    );
     expect(retryCalls).toEqual([0, 1]);
   });
 

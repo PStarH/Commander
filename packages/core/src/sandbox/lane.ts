@@ -104,7 +104,7 @@ function tenantLaneSelector(ctx: LaneContext, lanes: ExecutionLane[]): string | 
 
 /** Route to default lane as final fallback */
 function defaultLaneSelector(ctx: LaneContext, lanes: ExecutionLane[]): string | null {
-  const defaultLane = lanes.find(l => l.config.name === 'default');
+  const defaultLane = lanes.find((l) => l.config.name === 'default');
   return defaultLane ? 'default' : null;
 }
 
@@ -156,17 +156,27 @@ export class LaneManager {
       existing.config.backendName = config.backendName;
       existing.config.tags = config.tags;
       existing.config.description = config.description;
-      getGlobalLogger().info('LaneManager', `Updated lane "${config.name}" (max=${config.maxConcurrency}, priority=${config.priority})`);
+      getGlobalLogger().info(
+        'LaneManager',
+        `Updated lane "${config.name}" (max=${config.maxConcurrency}, priority=${config.priority})`,
+      );
     } else {
       this.lanes.set(config.name, {
-        config: { ...config, maxConcurrency: config.maxConcurrency ?? 5, priority: config.priority ?? 5 },
+        config: {
+          ...config,
+          maxConcurrency: config.maxConcurrency ?? 5,
+          priority: config.priority ?? 5,
+        },
         runningCount: 0,
         waitingQueue: [],
         totalEnqueued: 0,
         totalCompleted: 0,
         totalRejected: 0,
       });
-      getGlobalLogger().info('LaneManager', `Registered lane "${config.name}" (max=${config.maxConcurrency}, priority=${config.priority})`);
+      getGlobalLogger().info(
+        'LaneManager',
+        `Registered lane "${config.name}" (max=${config.maxConcurrency}, priority=${config.priority})`,
+      );
     }
   }
 
@@ -176,7 +186,10 @@ export class LaneManager {
     const lane = this.lanes.get(name);
     if (!lane) return false;
     if (lane.runningCount > 0 || lane.waitingQueue.length > 0) {
-      getGlobalLogger().warn('LaneManager', `Cannot remove lane "${name}": has ${lane.runningCount} running, ${lane.waitingQueue.length} waiting`);
+      getGlobalLogger().warn(
+        'LaneManager',
+        `Cannot remove lane "${name}": has ${lane.runningCount} running, ${lane.waitingQueue.length} waiting`,
+      );
       return false;
     }
     this.lanes.delete(name);
@@ -222,7 +235,9 @@ export class LaneManager {
           return this.lanes.get(name)!;
         }
       } catch (err) {
-        getGlobalLogger().warn('LaneManager', `Custom lane selector failed`, { error: (err as Error)?.message });
+        getGlobalLogger().warn('LaneManager', `Custom lane selector failed`, {
+          error: (err as Error)?.message,
+        });
       }
     }
 
@@ -261,7 +276,7 @@ export class LaneManager {
       if (timeoutMs) {
         timer = setTimeout(() => {
           lane.totalRejected++;
-          lane.waitingQueue = lane.waitingQueue.filter(w => w !== enqueue);
+          lane.waitingQueue = lane.waitingQueue.filter((w) => w !== enqueue);
           reject(new Error(`Lane "${lane.config.name}" slot timeout after ${timeoutMs}ms`));
         }, timeoutMs);
         timer.unref();
@@ -292,7 +307,7 @@ export class LaneManager {
       if (timeoutMs) {
         timer = setTimeout(() => {
           lane.totalRejected++;
-          lane.waitingQueue = lane.waitingQueue.filter(w => w !== enqueue);
+          lane.waitingQueue = lane.waitingQueue.filter((w) => w !== enqueue);
           reject(new Error(`Lane "${laneName}" slot timeout after ${timeoutMs}ms`));
         }, timeoutMs);
         timer.unref();
@@ -327,7 +342,7 @@ export class LaneManager {
    * Get statistics for all lanes.
    */
   getStats(): LaneStats[] {
-    return this.getAllLanes().map(lane => ({
+    return this.getAllLanes().map((lane) => ({
       name: lane.config.name,
       maxConcurrency: lane.config.maxConcurrency,
       running: lane.runningCount,

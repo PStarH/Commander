@@ -88,22 +88,22 @@ export class ReflexionInjector {
    */
   getRecentReflectionsFromMetaLearner(
     metaLearner: MetaLearner,
-    taskType?: string
+    taskType?: string,
   ): ReflectionEntry[] {
     const rawReflections = metaLearner.getReflections(this.config.maxReflections * 2);
 
     const entries: ReflectionEntry[] = rawReflections.map((text, i) => ({
       id: `meta-${i}`,
       insight: this.extractInsight(text),
-      type: text.includes('[Reflection: SUCCESS]') ? 'success' as const : 'failure' as const,
-      timestamp: Date.now() - (i * 60000), // Approximate timestamps
+      type: text.includes('[Reflection: SUCCESS]') ? ('success' as const) : ('failure' as const),
+      timestamp: Date.now() - i * 60000, // Approximate timestamps
       taskType: this.extractTaskType(text),
     }));
 
     // Optionally filter by task type
     let filtered = entries;
     if (this.config.filterByTaskType && taskType) {
-      filtered = entries.filter(e => !e.taskType || e.taskType === taskType);
+      filtered = entries.filter((e) => !e.taskType || e.taskType === taskType);
     }
 
     return filtered.slice(0, this.config.maxReflections);
@@ -114,10 +114,7 @@ export class ReflexionInjector {
    *
    * Token cost: ~100 tokens (3 reflections)
    */
-  injectReflections(
-    originalPrompt: string,
-    reflections: ReflectionEntry[]
-  ): string {
+  injectReflections(originalPrompt: string, reflections: ReflectionEntry[]): string {
     if (reflections.length === 0) return originalPrompt;
 
     const recent = reflections.slice(0, this.config.maxReflections);
@@ -125,9 +122,7 @@ export class ReflexionInjector {
     const reflectionText = recent
       .map((r, i) => {
         const typeLabel = r.type === 'success' ? '成功经验' : '失败教训';
-        const taskLabel = this.config.includeTaskType && r.taskType
-          ? ` (${r.taskType})`
-          : '';
+        const taskLabel = this.config.includeTaskType && r.taskType ? ` (${r.taskType})` : '';
         return `[${typeLabel}${taskLabel}] ${r.insight}`;
       })
       .join('\n');
@@ -148,7 +143,7 @@ ${reflectionText}
   injectFromMetaLearner(
     originalPrompt: string,
     metaLearner: MetaLearner,
-    taskType?: string
+    taskType?: string,
   ): string {
     const reflections = this.getRecentReflectionsFromMetaLearner(metaLearner, taskType);
     return this.injectReflections(originalPrompt, reflections);
@@ -215,6 +210,8 @@ ${reflectionText}
  *
  * Convenience function for quick integration.
  */
-export function createReflexionInjector(config?: Partial<ReflexionInjectorConfig>): ReflexionInjector {
+export function createReflexionInjector(
+  config?: Partial<ReflexionInjectorConfig>,
+): ReflexionInjector {
   return new ReflexionInjector(config);
 }

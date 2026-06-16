@@ -10,17 +10,20 @@ export function createRequestHumanInputTool(): Tool {
   return {
     definition: {
       name: 'request_human_input',
-      description: 'Pause execution and request input from a human. Use when you need approval, clarification, or a decision before continuing. The human response will be returned as the tool result.',
+      description:
+        'Pause execution and request input from a human. Use when you need approval, clarification, or a decision before continuing. The human response will be returned as the tool result.',
       category: 'control',
       inputSchema: {
         type: 'object' as const,
         properties: {
           reason: {
             type: 'string',
-            description: 'Why you need human input (e.g., "Approve destructive action?", "Which approach should I take?")',
+            description:
+              'Why you need human input (e.g., "Approve destructive action?", "Which approach should I take?")',
           },
           value: {
-            description: 'Optional payload to present to the human (proposed action, options, etc.)',
+            description:
+              'Optional payload to present to the human (proposed action, options, etc.)',
           },
         },
         required: ['reason'],

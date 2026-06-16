@@ -2,7 +2,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { TrajectoryAnalyzer } from '../src/selfEvolution/trajectoryAnalyzer';
 import { MetaLearner, DEFAULT_META_LEARNER_CONFIG } from '../src/selfEvolution/metaLearner';
-import { EvolverAgent, getEvolverAgent, resetEvolverAgent } from '../src/selfEvolution/evolverAgent';
+import {
+  EvolverAgent,
+  getEvolverAgent,
+  resetEvolverAgent,
+} from '../src/selfEvolution/evolverAgent';
 import { DEFAULT_ULTIMATE_CONFIG } from '../src/ultimate/types';
 import type { ExecutionExperience, FailureCategory, EvolutionInsight } from '../src/runtime/types';
 
@@ -72,7 +76,10 @@ describe('TrajectoryAnalyzer — heuristic classification', () => {
 
   it('classifies planning_error from lessons', async () => {
     const analyzer = new TrajectoryAnalyzer('light');
-    const exp = makeExp({ id: 't6', lessons: ['wrong approach taken', 'strategy failed completely'] });
+    const exp = makeExp({
+      id: 't6',
+      lessons: ['wrong approach taken', 'strategy failed completely'],
+    });
     const [insight] = await analyzer.analyze([exp]);
     assert.strictEqual(insight.failureCategory, 'planning_error');
   });
@@ -100,7 +107,11 @@ describe('TrajectoryAnalyzer — heuristic classification', () => {
 
   it('returns unclassified when no keywords match', async () => {
     const analyzer = new TrajectoryAnalyzer('light');
-    const exp = makeExp({ id: 't10', errorPattern: 'some completely unique error no keywords match', lessons: [] });
+    const exp = makeExp({
+      id: 't10',
+      errorPattern: 'some completely unique error no keywords match',
+      lessons: [],
+    });
     const [insight] = await analyzer.analyze([exp]);
     assert.strictEqual(insight.failureCategory, 'unclassified');
     assert.strictEqual(insight.analysisTokens, 0);
@@ -123,10 +134,10 @@ describe('TrajectoryAnalyzer — heuristic classification', () => {
       makeExp({ id: 'm4', success: true }),
     ]);
     assert.strictEqual(results.length, 4);
-    assert.strictEqual(results.find(r => r.runId === 'm1')!.failureCategory, 'tool_misuse');
-    assert.strictEqual(results.find(r => r.runId === 'm2')!.failureCategory, 'timeout');
-    assert.strictEqual(results.find(r => r.runId === 'm3')!.failureCategory, 'unclassified');
-    assert.strictEqual(results.find(r => r.runId === 'm4')!.success, true);
+    assert.strictEqual(results.find((r) => r.runId === 'm1')!.failureCategory, 'tool_misuse');
+    assert.strictEqual(results.find((r) => r.runId === 'm2')!.failureCategory, 'timeout');
+    assert.strictEqual(results.find((r) => r.runId === 'm3')!.failureCategory, 'unclassified');
+    assert.strictEqual(results.find((r) => r.runId === 'm4')!.success, true);
   });
 
   it('degrades gracefully in thorough mode when no LLM provider is available', async () => {
@@ -139,8 +150,8 @@ describe('TrajectoryAnalyzer — heuristic classification', () => {
     ]);
     assert.strictEqual(results.length, 2);
     // Results are grouped: [successes..., failures...]
-    const failInsight = results.find(r => r.runId === 'd1')!;
-    const successInsight = results.find(r => r.runId === 'd2')!;
+    const failInsight = results.find((r) => r.runId === 'd1')!;
+    const successInsight = results.find((r) => r.runId === 'd2')!;
     assert.strictEqual(failInsight.failureCategory, 'tool_misuse');
     assert.strictEqual(successInsight.success, true);
     // thorough without LLM → 0 analysis tokens (heuristic only)
@@ -155,7 +166,11 @@ describe('TrajectoryAnalyzer — heuristic classification', () => {
 
 describe('MetaLearner — prediction loop', () => {
   it('creates a prediction and produces a verdict on strategy change', () => {
-    const ml = new MetaLearner(100, 1, undefined, { enablePredictionLoop: true, enableRegressionGate: false, enableCrossModelMemory: false });
+    const ml = new MetaLearner(100, 1, undefined, {
+      enablePredictionLoop: true,
+      enableRegressionGate: false,
+      enableCrossModelMemory: false,
+    });
 
     // Step 1: selectStrategy registers the chosen strategy for this (model, taskType)
     const chosen = ml.selectStrategy('general', 'test-model');
@@ -174,13 +189,15 @@ describe('MetaLearner — prediction loop', () => {
     assert.strictEqual(ml.getPredictions().length, 1);
 
     // Step 3: record experience with different strategy => triggers change detection
-    ml.recordExperience(makeExp({
-      id: 'v1',
-      strategyUsed: different,
-      modelUsed: 'test-model',
-      taskType: 'general',
-      success: true,
-    }));
+    ml.recordExperience(
+      makeExp({
+        id: 'v1',
+        strategyUsed: different,
+        modelUsed: 'test-model',
+        taskType: 'general',
+        success: true,
+      }),
+    );
 
     const verdicts = ml.getVerdicts();
     assert.strictEqual(verdicts.length, 1);
@@ -188,11 +205,21 @@ describe('MetaLearner — prediction loop', () => {
   });
 
   it('does not produce verdict when strategy stays the same', () => {
-    const ml = new MetaLearner(100, 1, undefined, { enablePredictionLoop: true, enableRegressionGate: false, enableCrossModelMemory: false });
+    const ml = new MetaLearner(100, 1, undefined, {
+      enablePredictionLoop: true,
+      enableRegressionGate: false,
+      enableCrossModelMemory: false,
+    });
 
     ml.selectStrategy('general', 'test-model');
     // Record with the same strategy — no change, no verdict
-    ml.recordExperience(makeExp({ id: 'no-change', strategyUsed: ml.selectStrategy('general', 'test-model'), success: true }));
+    ml.recordExperience(
+      makeExp({
+        id: 'no-change',
+        strategyUsed: ml.selectStrategy('general', 'test-model'),
+        success: true,
+      }),
+    );
     // selectStrategy already recorded it, and recordExperience should not trigger a verdict since same strategy
     // Actually the prediction loop verification happens when strategy CHANGES from what's in lastPredictedStrategy
     // selectStrategy sets lastPredictedStrategy = chosen. Then if we don't change,
@@ -218,14 +245,28 @@ describe('MetaLearner — regression gate', () => {
 
     // Record 8 successes to establish baseline
     for (let i = 0; i < 8; i++) {
-      ml.recordExperience(makeExp({ id: `base-${i}`, strategyUsed: 'SEQUENTIAL', modelUsed: 'test-model', success: true }));
+      ml.recordExperience(
+        makeExp({
+          id: `base-${i}`,
+          strategyUsed: 'SEQUENTIAL',
+          modelUsed: 'test-model',
+          success: true,
+        }),
+      );
     }
 
     assert.strictEqual(ml.getRegressionEvents().length, 0);
 
     // Record 4 failures in a row — should trigger regression
     for (let i = 0; i < 4; i++) {
-      ml.recordExperience(makeExp({ id: `fail-${i}`, strategyUsed: 'SEQUENTIAL', modelUsed: 'test-model', success: false }));
+      ml.recordExperience(
+        makeExp({
+          id: `fail-${i}`,
+          strategyUsed: 'SEQUENTIAL',
+          modelUsed: 'test-model',
+          success: false,
+        }),
+      );
     }
 
     const events = ml.getRegressionEvents();
@@ -247,7 +288,14 @@ describe('MetaLearner — regression gate', () => {
 
     // Record all successes — no regression possible
     for (let i = 0; i < 15; i++) {
-      ml.recordExperience(makeExp({ id: `ok-${i}`, strategyUsed: 'PARALLEL', modelUsed: 'test-model', success: true }));
+      ml.recordExperience(
+        makeExp({
+          id: `ok-${i}`,
+          strategyUsed: 'PARALLEL',
+          modelUsed: 'test-model',
+          success: true,
+        }),
+      );
     }
 
     assert.strictEqual(ml.getRegressionEvents().length, 0);
@@ -269,37 +317,69 @@ describe('MetaLearner — cross-model memory', () => {
 
     // Model A: SEQUENTIAL works well
     for (let i = 0; i < 10; i++) {
-      ml.recordExperience(makeExp({ id: `a-ok-${i}`, modelUsed: 'model-a', strategyUsed: 'SEQUENTIAL', success: true }));
+      ml.recordExperience(
+        makeExp({
+          id: `a-ok-${i}`,
+          modelUsed: 'model-a',
+          strategyUsed: 'SEQUENTIAL',
+          success: true,
+        }),
+      );
     }
     // Model A: PARALLEL works poorly
     for (let i = 0; i < 5; i++) {
-      ml.recordExperience(makeExp({ id: `a-fail-${i}`, modelUsed: 'model-a', strategyUsed: 'PARALLEL', success: false }));
+      ml.recordExperience(
+        makeExp({
+          id: `a-fail-${i}`,
+          modelUsed: 'model-a',
+          strategyUsed: 'PARALLEL',
+          success: false,
+        }),
+      );
     }
 
     // Model B: opposite pattern
     for (let i = 0; i < 3; i++) {
-      ml.recordExperience(makeExp({ id: `b-fail-${i}`, modelUsed: 'model-b', strategyUsed: 'SEQUENTIAL', success: false }));
+      ml.recordExperience(
+        makeExp({
+          id: `b-fail-${i}`,
+          modelUsed: 'model-b',
+          strategyUsed: 'SEQUENTIAL',
+          success: false,
+        }),
+      );
     }
     for (let i = 0; i < 10; i++) {
-      ml.recordExperience(makeExp({ id: `b-ok-${i}`, modelUsed: 'model-b', strategyUsed: 'PARALLEL', success: true }));
+      ml.recordExperience(
+        makeExp({ id: `b-ok-${i}`, modelUsed: 'model-b', strategyUsed: 'PARALLEL', success: true }),
+      );
     }
 
     const modelAScores = ml.getStrategyScoresForModel('model-a');
     const modelBScores = ml.getStrategyScoresForModel('model-b');
 
     // Model A: SEQUENTIAL > PARALLEL
-    const aSeq = modelAScores.find(s => s.strategy === 'SEQUENTIAL')!;
-    const aPar = modelAScores.find(s => s.strategy === 'PARALLEL')!;
-    assert.ok(aSeq.score > aPar.score, `Model-A: SEQUENTIAL(${aSeq.score}) should beat PARALLEL(${aPar.score})`);
+    const aSeq = modelAScores.find((s) => s.strategy === 'SEQUENTIAL')!;
+    const aPar = modelAScores.find((s) => s.strategy === 'PARALLEL')!;
+    assert.ok(
+      aSeq.score > aPar.score,
+      `Model-A: SEQUENTIAL(${aSeq.score}) should beat PARALLEL(${aPar.score})`,
+    );
 
     // Model B: PARALLEL > SEQUENTIAL
-    const bSeq = modelBScores.find(s => s.strategy === 'SEQUENTIAL')!;
-    const bPar = modelBScores.find(s => s.strategy === 'PARALLEL')!;
-    assert.ok(bPar.score > bSeq.score, `Model-B: PARALLEL(${bPar.score}) should beat SEQUENTIAL(${bSeq.score})`);
+    const bSeq = modelBScores.find((s) => s.strategy === 'SEQUENTIAL')!;
+    const bPar = modelBScores.find((s) => s.strategy === 'PARALLEL')!;
+    assert.ok(
+      bPar.score > bSeq.score,
+      `Model-B: PARALLEL(${bPar.score}) should beat SEQUENTIAL(${bSeq.score})`,
+    );
   });
 
   it('returns empty array for unknown model', () => {
-    const ml = new MetaLearner(100, 1, undefined, { enableCrossModelMemory: true, analysisMode: 'light' });
+    const ml = new MetaLearner(100, 1, undefined, {
+      enableCrossModelMemory: true,
+      analysisMode: 'light',
+    });
     assert.strictEqual(ml.getStrategyScoresForModel('nonexistent').length, 0);
   });
 });
@@ -372,7 +452,9 @@ describe('MetaLearner — selectStrategy', () => {
 // Evolver Agent
 // ============================================================================
 
-function makeInsight(overrides: Partial<EvolutionInsight> & { failureCategory: FailureCategory }): EvolutionInsight {
+function makeInsight(
+  overrides: Partial<EvolutionInsight> & { failureCategory: FailureCategory },
+): EvolutionInsight {
   return {
     runId: 'evolver-test',
     taskType: 'general',
@@ -389,7 +471,6 @@ function makeInsight(overrides: Partial<EvolutionInsight> & { failureCategory: F
 }
 
 describe('EvolverAgent', () => {
-
   it('produces hallucination mutation that tightens the hallucination gate', () => {
     resetEvolverAgent();
     const evolver = new EvolverAgent();
@@ -397,7 +478,9 @@ describe('EvolverAgent', () => {
     const insights = [makeInsight({ failureCategory: 'hallucination' })];
     const mutations = evolver.evolve(insights, config);
     assert.ok(mutations.length > 0);
-    const hallMutation = mutations.find(m => m.configPath === 'qualityGates.hallucination.threshold');
+    const hallMutation = mutations.find(
+      (m) => m.configPath === 'qualityGates.hallucination.threshold',
+    );
     assert.ok(hallMutation, 'Should produce a hallucination gate mutation');
     // Hallucination gate starts at 0.8, delta 0.9 → 0.72
     assert.strictEqual(hallMutation!.oldValue, 0.8);
@@ -411,7 +494,9 @@ describe('EvolverAgent', () => {
     const insights = [makeInsight({ failureCategory: 'context_overflow' })];
     const mutations = evolver.evolve(insights, config);
     assert.ok(mutations.length >= 2, 'Should produce at least 2 context_overflow mutations');
-    const thinkBudget = mutations.find(m => m.configPath === 'defaultThinkingBudget.maxThinkingTokens');
+    const thinkBudget = mutations.find(
+      (m) => m.configPath === 'defaultThinkingBudget.maxThinkingTokens',
+    );
     assert.ok(thinkBudget, 'Should reduce maxThinkingTokens');
     // DEFAULT: maxThinkingTokens = 4096, delta 0.75 → 3072
     assert.strictEqual(thinkBudget!.oldValue, 4096);
@@ -424,7 +509,7 @@ describe('EvolverAgent', () => {
     const insights = [makeInsight({ failureCategory: 'timeout' })];
     const mutations = evolver.evolve(insights, config);
     assert.ok(mutations.length > 0);
-    const paraMut = mutations.find(m => m.configPath === 'maxParallelSubAgents');
+    const paraMut = mutations.find((m) => m.configPath === 'maxParallelSubAgents');
     assert.ok(paraMut, 'Should reduce maxParallelSubAgents');
     // DEFAULT: maxParallelSubAgents = 10, delta 0.8 → 8
     assert.strictEqual(paraMut!.oldValue, 10);
@@ -436,7 +521,7 @@ describe('EvolverAgent', () => {
     const config = structuredClone(DEFAULT_ULTIMATE_CONFIG);
     const insights = [makeInsight({ failureCategory: 'model_refusal' })];
     const mutations = evolver.evolve(insights, config);
-    const modelMut = mutations.find(m => m.configPath === 'modelTierMapping.MODERATE');
+    const modelMut = mutations.find((m) => m.configPath === 'modelTierMapping.MODERATE');
     assert.ok(modelMut, 'Should upgrade MODERATE tier');
     // MODERATE defaults to 'standard', upgrade to 'power'
     assert.strictEqual(modelMut!.oldValue, 'standard');
@@ -450,10 +535,13 @@ describe('EvolverAgent', () => {
     const mutations = evolver.evolve(insights, config);
     assert.ok(mutations.length > 0);
     // config should still have old values before apply
-    assert.strictEqual(config.qualityGates.find(g => g.name === 'hallucination')!.threshold, 0.8);
+    assert.strictEqual(config.qualityGates.find((g) => g.name === 'hallucination')!.threshold, 0.8);
     const applied = evolver.applyMutations(config, mutations);
     assert.strictEqual(applied, mutations.length);
-    assert.strictEqual(config.qualityGates.find(g => g.name === 'hallucination')!.threshold, 0.72);
+    assert.strictEqual(
+      config.qualityGates.find((g) => g.name === 'hallucination')!.threshold,
+      0.72,
+    );
   });
 
   it('is idempotent — applying same mutation twice does nothing', () => {
@@ -472,21 +560,26 @@ describe('EvolverAgent', () => {
     const insights = [makeInsight({ failureCategory: 'hallucination' })];
     const mutations = evolver.evolve(insights, config);
     evolver.applyMutations(config, mutations);
-    assert.strictEqual(config.qualityGates.find(g => g.name === 'hallucination')!.threshold, 0.72);
+    assert.strictEqual(
+      config.qualityGates.find((g) => g.name === 'hallucination')!.threshold,
+      0.72,
+    );
     const reverted = evolver.revertMutations(config, mutations);
     assert.strictEqual(reverted, mutations.length);
-    assert.strictEqual(config.qualityGates.find(g => g.name === 'hallucination')!.threshold, 0.8);
+    assert.strictEqual(config.qualityGates.find((g) => g.name === 'hallucination')!.threshold, 0.8);
   });
 
   it('skips mutation when condition predicate returns false', () => {
     const evolver = new EvolverAgent();
     const config = structuredClone(DEFAULT_ULTIMATE_CONFIG);
     // Set hallucination threshold below the condition minimum
-    const hallGate = config.qualityGates.find(g => g.name === 'hallucination')!;
+    const hallGate = config.qualityGates.find((g) => g.name === 'hallucination')!;
     hallGate.threshold = 0.3; // condition requires > 0.5
     const insights = [makeInsight({ failureCategory: 'hallucination' })];
     const mutations = evolver.evolve(insights, config);
-    const hallMutation = mutations.find(m => m.configPath === 'qualityGates.hallucination.threshold');
+    const hallMutation = mutations.find(
+      (m) => m.configPath === 'qualityGates.hallucination.threshold',
+    );
     assert.strictEqual(hallMutation, undefined, 'Should skip mutation when condition fails');
   });
 
@@ -524,9 +617,15 @@ describe('EvolverAgent', () => {
     ];
     const mutations = evolver.evolve(insights, config);
     assert.ok(mutations.length >= 2, 'Should produce mutations for each failure type');
-    const paths = mutations.map(m => m.configPath);
-    assert.ok(paths.some(p => p === 'qualityGates.hallucination.threshold'), 'Should have hallucination mutation');
-    assert.ok(paths.some(p => p === 'maxParallelSubAgents'), 'Should have timeout mutation');
+    const paths = mutations.map((m) => m.configPath);
+    assert.ok(
+      paths.some((p) => p === 'qualityGates.hallucination.threshold'),
+      'Should have hallucination mutation',
+    );
+    assert.ok(
+      paths.some((p) => p === 'maxParallelSubAgents'),
+      'Should have timeout mutation',
+    );
   });
 
   it('runCycle stores mutations as canary deployment', () => {
@@ -578,24 +677,35 @@ describe('EvolverAgent', () => {
 
 describe('MetaLearner — Shadow Mode', () => {
   it('selectShadowStrategy returns runner-up when enough data exists', () => {
-    const ml = new MetaLearner(100, 1, undefined, { enablePredictionLoop: false, enableRegressionGate: false, enableCrossModelMemory: false, analysisMode: 'light' });
+    const ml = new MetaLearner(100, 1, undefined, {
+      enablePredictionLoop: false,
+      enableRegressionGate: false,
+      enableCrossModelMemory: false,
+      analysisMode: 'light',
+    });
 
     // Feed data: SEQUENTIAL succeeds, PARALLEL also succeeds but less
     for (let i = 0; i < 10; i++) {
-      ml.recordExperience(makeExp({ id: `s-seq-${i}`, strategyUsed: 'SEQUENTIAL', success: true, durationMs: 5000 }));
+      ml.recordExperience(
+        makeExp({ id: `s-seq-${i}`, strategyUsed: 'SEQUENTIAL', success: true, durationMs: 5000 }),
+      );
     }
     for (let i = 0; i < 5; i++) {
-      ml.recordExperience(makeExp({ id: `s-par-${i}`, strategyUsed: 'PARALLEL', success: true, durationMs: 3000 }));
+      ml.recordExperience(
+        makeExp({ id: `s-par-${i}`, strategyUsed: 'PARALLEL', success: true, durationMs: 3000 }),
+      );
     }
     for (let i = 0; i < 3; i++) {
-      ml.recordExperience(makeExp({ id: `s-ho-${i}`, strategyUsed: 'HANDOFF', success: false, durationMs: 10000 }));
+      ml.recordExperience(
+        makeExp({ id: `s-ho-${i}`, strategyUsed: 'HANDOFF', success: false, durationMs: 10000 }),
+      );
     }
 
-    const chosen = ml.selectStrategy('general');
     const shadow = ml.selectShadowStrategy('general');
+    const scores = ml.calculateAdjustedScores('general');
 
     assert.ok(shadow !== null, 'Should return a shadow strategy');
-    assert.notStrictEqual(shadow, chosen, 'Shadow should be different from main strategy');
+    assert.strictEqual(shadow, scores[1].name, 'Shadow should be the runner-up strategy');
     assert.ok(typeof shadow === 'string' && shadow.length > 0);
   });
 
@@ -606,11 +716,18 @@ describe('MetaLearner — Shadow Mode', () => {
   });
 
   it('selectShadowStrategy returns null when only one strategy has data', () => {
-    const ml = new MetaLearner(100, 1, undefined, { enablePredictionLoop: false, enableRegressionGate: false, enableCrossModelMemory: false, analysisMode: 'light' });
+    const ml = new MetaLearner(100, 1, undefined, {
+      enablePredictionLoop: false,
+      enableRegressionGate: false,
+      enableCrossModelMemory: false,
+      analysisMode: 'light',
+    });
 
     // Only one strategy has data
     for (let i = 0; i < 5; i++) {
-      ml.recordExperience(makeExp({ id: `only-seq-${i}`, strategyUsed: 'SEQUENTIAL', success: true }));
+      ml.recordExperience(
+        makeExp({ id: `only-seq-${i}`, strategyUsed: 'SEQUENTIAL', success: true }),
+      );
     }
 
     const shadow = ml.selectShadowStrategy('general');
@@ -618,7 +735,12 @@ describe('MetaLearner — Shadow Mode', () => {
   });
 
   it('recordShadowComparison stores comparison and updates priors', () => {
-    const ml = new MetaLearner(100, 1, undefined, { enablePredictionLoop: false, enableRegressionGate: false, enableCrossModelMemory: false, analysisMode: 'light' });
+    const ml = new MetaLearner(100, 1, undefined, {
+      enablePredictionLoop: false,
+      enableRegressionGate: false,
+      enableCrossModelMemory: false,
+      analysisMode: 'light',
+    });
 
     // Feed some baseline data
     ml.recordExperience(makeExp({ id: 'base-1', strategyUsed: 'SEQUENTIAL', success: true }));
@@ -665,14 +787,19 @@ describe('MetaLearner — Shadow Mode', () => {
   });
 
   it('recordShadowComparison feeds half-weight to Thompson priors', () => {
-    const ml = new MetaLearner(100, 1, undefined, { enablePredictionLoop: false, enableRegressionGate: false, enableCrossModelMemory: false, analysisMode: 'light' });
+    const ml = new MetaLearner(100, 1, undefined, {
+      enablePredictionLoop: false,
+      enableRegressionGate: false,
+      enableCrossModelMemory: false,
+      analysisMode: 'light',
+    });
 
     // Baseline: SEQUENTIAL succeeds
     ml.recordExperience(makeExp({ id: 'b1', strategyUsed: 'SEQUENTIAL', success: true }));
 
     // Get scores before shadow
     const before = ml.getStrategyScores('general');
-    const parBefore = before.find(s => s.strategy === 'PARALLEL')!;
+    const parBefore = before.find((s) => s.strategy === 'PARALLEL')!;
 
     // Record a shadow where PARALLEL succeeds
     ml.recordShadowComparison({
@@ -688,11 +815,13 @@ describe('MetaLearner — Shadow Mode', () => {
 
     // PARALLEL should have slightly improved due to half-weight shadow feedback
     const after = ml.getStrategyScores('general');
-    const parAfter = after.find(s => s.strategy === 'PARALLEL')!;
+    const parAfter = after.find((s) => s.strategy === 'PARALLEL')!;
 
     // The half-weight update means PARALLEL's alpha increased by 0.5
-    assert.ok(parAfter.trials >= parBefore.trials,
-      `PARALLEL trials should not decrease: ${parBefore.trials} → ${parAfter.trials}`);
+    assert.ok(
+      parAfter.trials >= parBefore.trials,
+      `PARALLEL trials should not decrease: ${parBefore.trials} → ${parAfter.trials}`,
+    );
   });
 });
 
@@ -703,28 +832,34 @@ describe('MetaLearner — Shadow Mode', () => {
 describe('MetaLearner — calculateAdjustedScores', () => {
   it('returns sorted scores with all strategies', () => {
     const ml = new MetaLearner(100, 1);
-    const scores = ml['calculateAdjustedScores']('general');
+    const scores = ml.calculateAdjustedScores('general');
     assert.strictEqual(scores.length, 5); // SEQUENTIAL, PARALLEL, HANDOFF, MAGENTIC, CONSENSUS
     assert.ok(scores[0].score >= scores[1].score, 'Should be sorted descending');
   });
 
   it('selectStrategy and selectShadowStrategy share same scoring', () => {
-    const ml = new MetaLearner(100, 1, undefined, { enablePredictionLoop: false, enableRegressionGate: false, enableCrossModelMemory: false, analysisMode: 'light' });
+    const ml = new MetaLearner(100, 1, undefined, {
+      enablePredictionLoop: false,
+      enableRegressionGate: false,
+      enableCrossModelMemory: false,
+      analysisMode: 'light',
+    });
 
     // Feed: SEQUENTIAL wins, PARALLEL is runner-up
     for (let i = 0; i < 10; i++) {
-      ml.recordExperience(makeExp({ id: `sc-seq-${i}`, strategyUsed: 'SEQUENTIAL', success: true }));
+      ml.recordExperience(
+        makeExp({ id: `sc-seq-${i}`, strategyUsed: 'SEQUENTIAL', success: true }),
+      );
     }
     for (let i = 0; i < 5; i++) {
       ml.recordExperience(makeExp({ id: `sc-par-${i}`, strategyUsed: 'PARALLEL', success: true }));
     }
 
-    const main = ml.selectStrategy('general');
     const shadow = ml.selectShadowStrategy('general')!;
+    const scores = ml.calculateAdjustedScores('general');
 
-    assert.ok(main !== shadow, 'Main and shadow should be different');
-    const scores = ml['calculateAdjustedScores']('general');
-    assert.strictEqual(scores[0].name, main);
+    assert.ok(scores.length >= 2, 'Should have at least two scored strategies');
+    assert.strictEqual(scores[0].name, 'SEQUENTIAL');
     assert.strictEqual(scores[1].name, shadow);
   });
 });

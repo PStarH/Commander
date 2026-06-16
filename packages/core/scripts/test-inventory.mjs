@@ -40,16 +40,16 @@ function readVitestIncludes() {
   if (!includeMatch) return new Set();
   return new Set(
     Array.from(includeMatch[1].matchAll(/['"]([^'"]+\.test\.ts)['"]/g))
-      .map(match => match[1])
+      .map((match) => match[1])
       .sort(),
   );
 }
 
-const testFiles = roots.flatMap(root =>
-  collectFiles(root, file => file.endsWith('.test.ts')),
-).sort();
+const testFiles = roots
+  .flatMap((root) => collectFiles(root, (file) => file.endsWith('.test.ts')))
+  .sort();
 
-const entries = testFiles.map(file => {
+const entries = testFiles.map((file) => {
   const source = readFileSync(file, 'utf8');
   return {
     file,
@@ -59,12 +59,14 @@ const entries = testFiles.map(file => {
 });
 
 const vitestIncludes = readVitestIncludes();
-const vitestFiles = entries.filter(e => e.runner === 'vitest').map(e => e.file);
-const nodeFiles = entries.filter(e => e.runner === 'node').map(e => e.file);
-const unknownFiles = entries.filter(e => e.runner === 'unknown').map(e => e.file);
-const missingVitestIncludes = vitestFiles.filter(file => !vitestIncludes.has(file));
-const staleVitestIncludes = Array.from(vitestIncludes).filter(file => !vitestFiles.includes(file));
-const benchmarkFiles = entries.filter(e => e.file.startsWith('benchmarks/')).map(e => e.file);
+const vitestFiles = entries.filter((e) => e.runner === 'vitest').map((e) => e.file);
+const nodeFiles = entries.filter((e) => e.runner === 'node').map((e) => e.file);
+const unknownFiles = entries.filter((e) => e.runner === 'unknown').map((e) => e.file);
+const missingVitestIncludes = vitestFiles.filter((file) => !vitestIncludes.has(file));
+const staleVitestIncludes = Array.from(vitestIncludes).filter(
+  (file) => !vitestFiles.includes(file),
+);
+const benchmarkFiles = entries.filter((e) => e.file.startsWith('benchmarks/')).map((e) => e.file);
 
 const summary = {
   totalFiles: entries.length,
@@ -98,6 +100,9 @@ if (json) {
   }
 }
 
-if (verify && (unknownFiles.length > 0 || missingVitestIncludes.length > 0 || staleVitestIncludes.length > 0)) {
+if (
+  verify &&
+  (unknownFiles.length > 0 || missingVitestIncludes.length > 0 || staleVitestIncludes.length > 0)
+) {
   process.exit(1);
 }

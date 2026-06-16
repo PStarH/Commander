@@ -142,7 +142,9 @@ interface TaskResult {
 async function runCommander(task: ComparisonTask): Promise<TaskResult> {
   const start = Date.now();
   try {
-    try { fs.unlinkSync(task.outputFile); } catch {}
+    try {
+      fs.unlinkSync(task.outputFile);
+    } catch {}
 
     const { AgentRuntime } = await import('../src/runtime/agentRuntime');
     const { TELOSOrchestrator } = await import('../src/telos/telosOrchestrator');
@@ -163,7 +165,8 @@ async function runCommander(task: ComparisonTask): Promise<TaskResult> {
     runtime.registerProvider('openai', provider);
 
     const { WebSearchTool, WebFetchTool } = await import('../src/tools/webSearchTool');
-    const { FileReadTool, FileWriteTool, FileEditTool, FileListTool, FileSearchTool } = await import('../src/tools/fileSystemTool');
+    const { FileReadTool, FileWriteTool, FileEditTool, FileListTool, FileSearchTool } =
+      await import('../src/tools/fileSystemTool');
 
     runtime.registerTool('web_search', new WebSearchTool());
     runtime.registerTool('web_fetch', new WebFetchTool());
@@ -186,15 +189,27 @@ async function runCommander(task: ComparisonTask): Promise<TaskResult> {
       agentId: `compare-${task.name}`,
       goal: task.prompt,
       contextData: {
-        availableTools: ['web_search', 'web_fetch', 'file_write', 'file_read', 'file_list', 'file_edit', 'file_search'],
+        availableTools: [
+          'web_search',
+          'web_fetch',
+          'file_write',
+          'file_read',
+          'file_list',
+          'file_edit',
+          'file_search',
+        ],
       },
     });
 
     const durationMs = Date.now() - start;
     const tokens = result.metrics?.totalTokens ?? 0;
     let outputSize = 0;
-    try { outputSize = fs.statSync(task.outputFile).size; } catch {}
-    const preview = fs.existsSync(task.outputFile) ? fs.readFileSync(task.outputFile, 'utf-8').slice(0, 200) : '';
+    try {
+      outputSize = fs.statSync(task.outputFile).size;
+    } catch {}
+    const preview = fs.existsSync(task.outputFile)
+      ? fs.readFileSync(task.outputFile, 'utf-8').slice(0, 200)
+      : '';
 
     return {
       system: 'commander',
@@ -222,9 +237,13 @@ async function runCommander(task: ComparisonTask): Promise<TaskResult> {
 async function runClaudeCode(task: ComparisonTask): Promise<TaskResult> {
   const start = Date.now();
   try {
-    try { fs.unlinkSync(task.outputFile); } catch {}
+    try {
+      fs.unlinkSync(task.outputFile);
+    } catch {}
 
-    const prompt = task.prompt + '\n\nIMPORTANT: You MUST write the output to the specified file using the Write tool. Do not just describe what you would do — actually write the file.';
+    const prompt =
+      task.prompt +
+      '\n\nIMPORTANT: You MUST write the output to the specified file using the Write tool. Do not just describe what you would do — actually write the file.';
 
     const result = execSync(
       `claude -p ${JSON.stringify(prompt)} --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch" --permission-mode bypassPermissions 2>&1`,
@@ -233,12 +252,14 @@ async function runClaudeCode(task: ComparisonTask): Promise<TaskResult> {
         timeout: 600000,
         cwd: process.cwd(),
         maxBuffer: 10 * 1024 * 1024,
-      }
+      },
     );
 
     const durationSec = (Date.now() - start) / 1000;
     const outputBytes = fs.existsSync(task.outputFile) ? fs.statSync(task.outputFile).size : 0;
-    const preview = fs.existsSync(task.outputFile) ? fs.readFileSync(task.outputFile, 'utf-8').slice(0, 200) : result.slice(0, 200);
+    const preview = fs.existsSync(task.outputFile)
+      ? fs.readFileSync(task.outputFile, 'utf-8').slice(0, 200)
+      : result.slice(0, 200);
 
     return {
       system: 'claude-code',
@@ -266,9 +287,13 @@ async function runClaudeCode(task: ComparisonTask): Promise<TaskResult> {
 async function runOpenClaw(task: ComparisonTask): Promise<TaskResult> {
   const start = Date.now();
   try {
-    try { fs.unlinkSync(task.outputFile); } catch {}
+    try {
+      fs.unlinkSync(task.outputFile);
+    } catch {}
 
-    const prompt = task.prompt + '\n\nIMPORTANT: You MUST write the output to the specified file. Do not just describe what you would do — actually write the file.';
+    const prompt =
+      task.prompt +
+      '\n\nIMPORTANT: You MUST write the output to the specified file. Do not just describe what you would do — actually write the file.';
 
     const sessionId = `compare-${task.name}-${Date.now()}`;
     const result = execSync(
@@ -278,12 +303,14 @@ async function runOpenClaw(task: ComparisonTask): Promise<TaskResult> {
         timeout: 310000,
         cwd: process.cwd(),
         maxBuffer: 10 * 1024 * 1024,
-      }
+      },
     );
 
     const durationSec = (Date.now() - start) / 1000;
     const outputBytes = fs.existsSync(task.outputFile) ? fs.statSync(task.outputFile).size : 0;
-    const preview = fs.existsSync(task.outputFile) ? fs.readFileSync(task.outputFile, 'utf-8').slice(0, 200) : result.slice(0, 200);
+    const preview = fs.existsSync(task.outputFile)
+      ? fs.readFileSync(task.outputFile, 'utf-8').slice(0, 200)
+      : result.slice(0, 200);
 
     return {
       system: 'openclaw',
@@ -330,30 +357,36 @@ async function main() {
     console.log('  ├─ Running Commander...');
     const commanderResult = await runCommander(task);
     const cmdStatus = commanderResult.success ? '✅' : '❌';
-    console.log(`  │  ${cmdStatus} ${commanderResult.durationSec.toFixed(1)}s | ${commanderResult.outputBytes} bytes`);
+    console.log(
+      `  │  ${cmdStatus} ${commanderResult.durationSec.toFixed(1)}s | ${commanderResult.outputBytes} bytes`,
+    );
     allResults.push(commanderResult);
 
     console.log('  ├─ Running Claude Code...');
     const claudeResult = await runClaudeCode(task);
     const claudeStatus = claudeResult.success ? '✅' : '❌';
-    console.log(`  │  ${claudeStatus} ${claudeResult.durationSec.toFixed(1)}s | ${claudeResult.outputBytes} bytes`);
+    console.log(
+      `  │  ${claudeStatus} ${claudeResult.durationSec.toFixed(1)}s | ${claudeResult.outputBytes} bytes`,
+    );
     allResults.push(claudeResult);
 
     console.log('  ├─ Running OpenClaw...');
     const openclawResult = await runOpenClaw(task);
     const openclawStatus = openclawResult.success ? '✅' : '❌';
-    console.log(`  │  ${openclawStatus} ${openclawResult.durationSec.toFixed(1)}s | ${openclawResult.outputBytes} bytes`);
+    console.log(
+      `  │  ${openclawStatus} ${openclawResult.durationSec.toFixed(1)}s | ${openclawResult.outputBytes} bytes`,
+    );
     allResults.push(openclawResult);
   }
 
   // ── Summary ──────────────────────────────────────────────────────────────
-  const commanderResults = allResults.filter(r => r.system === 'commander');
-  const claudeResults = allResults.filter(r => r.system === 'claude-code');
-  const openclawResults = allResults.filter(r => r.system === 'openclaw');
+  const commanderResults = allResults.filter((r) => r.system === 'commander');
+  const claudeResults = allResults.filter((r) => r.system === 'claude-code');
+  const openclawResults = allResults.filter((r) => r.system === 'openclaw');
 
-  const commanderSuccess = commanderResults.filter(r => r.success).length;
-  const claudeSuccess = claudeResults.filter(r => r.success).length;
-  const openclawSuccess = openclawResults.filter(r => r.success).length;
+  const commanderSuccess = commanderResults.filter((r) => r.success).length;
+  const claudeSuccess = claudeResults.filter((r) => r.success).length;
+  const openclawSuccess = openclawResults.filter((r) => r.success).length;
 
   const commanderOutput = commanderResults.reduce((s, r) => s + r.outputBytes, 0);
   const claudeOutput = claudeResults.reduce((s, r) => s + r.outputBytes, 0);
@@ -369,28 +402,47 @@ async function main() {
 
   console.log('                        Commander    Claude Code  OpenClaw');
   console.log('                        ─────────    ───────────  ────────');
-  console.log(`  Success Rate:         ${commanderSuccess}/${TASKS.length}            ${claudeSuccess}/${TASKS.length}           ${openclawSuccess}/${TASKS.length}`);
-  console.log(`  Total Time:           ${commanderTime.toFixed(0)}s           ${claudeTime.toFixed(0)}s          ${openclawTime.toFixed(0)}s`);
-  console.log(`  Avg Time/Task:        ${(commanderTime / TASKS.length).toFixed(0)}s           ${(claudeTime / TASKS.length).toFixed(0)}s          ${(openclawTime / TASKS.length).toFixed(0)}s`);
-  console.log(`  Output Generated:     ${commanderOutput} bytes   ${claudeOutput} bytes  ${openclawOutput} bytes`);
+  console.log(
+    `  Success Rate:         ${commanderSuccess}/${TASKS.length}            ${claudeSuccess}/${TASKS.length}           ${openclawSuccess}/${TASKS.length}`,
+  );
+  console.log(
+    `  Total Time:           ${commanderTime.toFixed(0)}s           ${claudeTime.toFixed(0)}s          ${openclawTime.toFixed(0)}s`,
+  );
+  console.log(
+    `  Avg Time/Task:        ${(commanderTime / TASKS.length).toFixed(0)}s           ${(claudeTime / TASKS.length).toFixed(0)}s          ${(openclawTime / TASKS.length).toFixed(0)}s`,
+  );
+  console.log(
+    `  Output Generated:     ${commanderOutput} bytes   ${claudeOutput} bytes  ${openclawOutput} bytes`,
+  );
 
   console.log('\nPer-task comparison:\n');
   for (const task of TASKS) {
-    const cmd = allResults.find(r => r.system === 'commander' && r.task === task.name)!;
-    const claude = allResults.find(r => r.system === 'claude-code' && r.task === task.name)!;
-    const openclaw = allResults.find(r => r.system === 'openclaw' && r.task === task.name)!;
+    const cmd = allResults.find((r) => r.system === 'commander' && r.task === task.name)!;
+    const claude = allResults.find((r) => r.system === 'claude-code' && r.task === task.name)!;
+    const openclaw = allResults.find((r) => r.system === 'openclaw' && r.task === task.name)!;
 
-    const winner = cmd.success && !claude.success && !openclaw.success ? 'Commander'
-      : !cmd.success && claude.success && !openclaw.success ? 'Claude Code'
-      : !cmd.success && !claude.success && openclaw.success ? 'OpenClaw'
-      : cmd.success && claude.success && openclaw.success ? 'All pass'
-      : 'Partial';
+    const winner =
+      cmd.success && !claude.success && !openclaw.success
+        ? 'Commander'
+        : !cmd.success && claude.success && !openclaw.success
+          ? 'Claude Code'
+          : !cmd.success && !claude.success && openclaw.success
+            ? 'OpenClaw'
+            : cmd.success && claude.success && openclaw.success
+              ? 'All pass'
+              : 'Partial';
 
     console.log(`  ${task.name} [${task.category}]:`);
     console.log(`    Winner: ${winner}`);
-    console.log(`    Commander:    ${cmd.success ? '✅' : '❌'} ${cmd.durationSec.toFixed(1)}s | ${cmd.outputBytes} bytes${cmd.error ? ' | ' + cmd.error : ''}`);
-    console.log(`    Claude Code:  ${claude.success ? '✅' : '❌'} ${claude.durationSec.toFixed(1)}s | ${claude.outputBytes} bytes${claude.error ? ' | ' + claude.error : ''}`);
-    console.log(`    OpenClaw:     ${openclaw.success ? '✅' : '❌'} ${openclaw.durationSec.toFixed(1)}s | ${openclaw.outputBytes} bytes${openclaw.error ? ' | ' + openclaw.error : ''}`);
+    console.log(
+      `    Commander:    ${cmd.success ? '✅' : '❌'} ${cmd.durationSec.toFixed(1)}s | ${cmd.outputBytes} bytes${cmd.error ? ' | ' + cmd.error : ''}`,
+    );
+    console.log(
+      `    Claude Code:  ${claude.success ? '✅' : '❌'} ${claude.durationSec.toFixed(1)}s | ${claude.outputBytes} bytes${claude.error ? ' | ' + claude.error : ''}`,
+    );
+    console.log(
+      `    OpenClaw:     ${openclaw.success ? '✅' : '❌'} ${openclaw.durationSec.toFixed(1)}s | ${openclaw.outputBytes} bytes${openclaw.error ? ' | ' + openclaw.error : ''}`,
+    );
     console.log('');
   }
 
@@ -400,12 +452,27 @@ async function main() {
     model: 'mimo-v2.5-pro',
     tasksPerSystem: TASKS.length,
     focus: 'general-purpose agent capabilities',
-    commander: { successRate: `${commanderSuccess}/${TASKS.length}`, totalTimeSec: commanderTime.toFixed(0), totalOutputBytes: commanderOutput },
-    claudeCode: { successRate: `${claudeSuccess}/${TASKS.length}`, totalTimeSec: claudeTime.toFixed(0), totalOutputBytes: claudeOutput },
-    openclaw: { successRate: `${openclawSuccess}/${TASKS.length}`, totalTimeSec: openclawTime.toFixed(0), totalOutputBytes: openclawOutput },
+    commander: {
+      successRate: `${commanderSuccess}/${TASKS.length}`,
+      totalTimeSec: commanderTime.toFixed(0),
+      totalOutputBytes: commanderOutput,
+    },
+    claudeCode: {
+      successRate: `${claudeSuccess}/${TASKS.length}`,
+      totalTimeSec: claudeTime.toFixed(0),
+      totalOutputBytes: claudeOutput,
+    },
+    openclaw: {
+      successRate: `${openclawSuccess}/${TASKS.length}`,
+      totalTimeSec: openclawTime.toFixed(0),
+      totalOutputBytes: openclawOutput,
+    },
     perTask: allResults,
   };
-  fs.writeFileSync(path.join(OUTPUT_DIR, 'comparison-summary.json'), JSON.stringify(summary, null, 2));
+  fs.writeFileSync(
+    path.join(OUTPUT_DIR, 'comparison-summary.json'),
+    JSON.stringify(summary, null, 2),
+  );
   console.log(`\nFull results: ${OUTPUT_DIR}`);
 }
 

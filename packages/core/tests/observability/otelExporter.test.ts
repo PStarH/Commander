@@ -44,9 +44,9 @@ function makeTrace(events: TraceEvent[], traceId: string = 'trace_1_xyz'): Execu
       totalEvents: events.length,
       totalDurationMs: events.reduce((s, e) => s + e.durationMs, 0),
       totalTokens: events.reduce((s, e) => s + (e.data.tokenUsage?.totalTokens ?? 0), 0),
-      llmCalls: events.filter(e => e.type === 'llm_call').length,
-      toolExecutions: events.filter(e => e.type === 'tool_execution').length,
-      errors: events.filter(e => e.type === 'error').length,
+      llmCalls: events.filter((e) => e.type === 'llm_call').length,
+      toolExecutions: events.filter((e) => e.type === 'tool_execution').length,
+      errors: events.filter((e) => e.type === 'error').length,
       modelUsed: 'gpt-4o-mini',
     },
   };
@@ -56,11 +56,13 @@ function makeTrace(events: TraceEvent[], traceId: string = 'trace_1_xyz'): Execu
  * Spin up a tiny HTTP server that captures every POST and lets the
  * test control the response code. Returns a clean-up function.
  */
-async function startMockCollector(handler: (req: CapturedRequest, res: ServerResponse) => void): Promise<{ port: number; captured: CapturedRequest[]; stop: () => Promise<void> }> {
+async function startMockCollector(
+  handler: (req: CapturedRequest, res: ServerResponse) => void,
+): Promise<{ port: number; captured: CapturedRequest[]; stop: () => Promise<void> }> {
   const captured: CapturedRequest[] = [];
   const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const chunks: Buffer[] = [];
-    req.on('data', c => chunks.push(c));
+    req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
       const body = Buffer.concat(chunks).toString('utf-8');
       captured.push({
@@ -72,17 +74,19 @@ async function startMockCollector(handler: (req: CapturedRequest, res: ServerRes
       handler(captured[captured.length - 1]!, res);
     });
   });
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
   const port = (server.address() as { port: number }).port;
   return {
     port,
     captured,
-    stop: () => new Promise<void>(resolve => server.close(() => resolve())),
+    stop: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }
 
 describe('OtelSpanExporter', () => {
-  let collector: { port: number; captured: CapturedRequest[]; stop: () => Promise<void> } | undefined;
+  let collector:
+    | { port: number; captured: CapturedRequest[]; stop: () => Promise<void> }
+    | undefined;
 
   afterEach(async () => {
     if (collector) {
@@ -93,7 +97,8 @@ describe('OtelSpanExporter', () => {
 
   it('emits a single POST to /v1/traces with a resourceSpans payload', async () => {
     collector = await startMockCollector((_req, res) => {
-      res.writeHead(200); res.end();
+      res.writeHead(200);
+      res.end();
     });
     const exp = new OtelSpanExporter({
       endpoint: `http://127.0.0.1:${collector.port}`,
@@ -129,7 +134,9 @@ describe('OtelSpanExporter', () => {
     // gen_ai.* attributes emitted
     const genAiOp = span.attributes.find((a: { key: string }) => a.key === 'gen_ai.operation.name');
     expect(genAiOp.value.stringValue).toBe('chat');
-    const tokens = span.attributes.find((a: { key: string }) => a.key === 'gen_ai.usage.input_tokens');
+    const tokens = span.attributes.find(
+      (a: { key: string }) => a.key === 'gen_ai.usage.input_tokens',
+    );
     expect(String(tokens.value.intValue)).toBe('10');
     // timestamps
     expect(span.startTimeUnixNano).toMatch(/^\d+$/);
@@ -137,7 +144,10 @@ describe('OtelSpanExporter', () => {
   });
 
   it('drops traces that fail the sampling policy', async () => {
-    collector = await startMockCollector((_req, res) => { res.writeHead(200); res.end(); });
+    collector = await startMockCollector((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
     const exp = new OtelSpanExporter({
       endpoint: `http://127.0.0.1:${collector.port}`,
       samplingPolicy: new SamplingPolicy({ baseRate: 0 }), // never keep
@@ -149,14 +159,15 @@ describe('OtelSpanExporter', () => {
   });
 
   it('keeps traces with errors (tail rule beats head rule)', async () => {
-    collector = await startMockCollector((_req, res) => { res.writeHead(200); res.end(); });
+    collector = await startMockCollector((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
     const exp = new OtelSpanExporter({
       endpoint: `http://127.0.0.1:${collector.port}`,
       samplingPolicy: new SamplingPolicy({ baseRate: 0 }),
     });
-    exp.enqueue(makeTrace([
-      makeEvent({ type: 'error', data: { error: 'boom' } }),
-    ]));
+    exp.enqueue(makeTrace([makeEvent({ type: 'error', data: { error: 'boom' } })]));
     await exp.flush();
     expect(collector.captured.length).toBeGreaterThanOrEqual(1);
     expect(exp.getStats().totalTracesSampled).toBe(1);
@@ -166,7 +177,8 @@ describe('OtelSpanExporter', () => {
     let attempts = 0;
     collector = await startMockCollector((_req, res) => {
       attempts += 1;
-      res.writeHead(503); res.end('try again');
+      res.writeHead(503);
+      res.end('try again');
     });
     const exp = new OtelSpanExporter({
       endpoint: `http://127.0.0.1:${collector.port}`,
@@ -184,7 +196,8 @@ describe('OtelSpanExporter', () => {
     let attempts = 0;
     collector = await startMockCollector((_req, res) => {
       attempts += 1;
-      res.writeHead(400); res.end('bad');
+      res.writeHead(400);
+      res.end('bad');
     });
     const exp = new OtelSpanExporter({
       endpoint: `http://127.0.0.1:${collector.port}`,
@@ -199,7 +212,10 @@ describe('OtelSpanExporter', () => {
   });
 
   it('sends Authorization header when authToken is set', async () => {
-    collector = await startMockCollector((_req, res) => { res.writeHead(200); res.end(); });
+    collector = await startMockCollector((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
     const exp = new OtelSpanExporter({
       endpoint: `http://127.0.0.1:${collector.port}`,
       authToken: 'secret-abc',
@@ -221,12 +237,19 @@ describe('OtelSpanExporter', () => {
   });
 
   it('maps tool_execution to execute_tool operation', async () => {
-    collector = await startMockCollector((_req, res) => { res.writeHead(200); res.end(); });
+    collector = await startMockCollector((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
     const exp = new OtelSpanExporter({
       endpoint: `http://127.0.0.1:${collector.port}`,
       samplingPolicy: new SamplingPolicy({ baseRate: 1 }),
     });
-    exp.enqueue(makeTrace([makeEvent({ type: 'tool_execution', data: { input: 'web_search', output: 'result' } })]));
+    exp.enqueue(
+      makeTrace([
+        makeEvent({ type: 'tool_execution', data: { input: 'web_search', output: 'result' } }),
+      ]),
+    );
     await exp.flush();
     const span = JSON.parse(collector.captured[0]!.body).resourceSpans[0].scopeSpans[0].spans[0];
     const op = span.attributes.find((a: { key: string }) => a.key === 'gen_ai.operation.name');
@@ -236,7 +259,10 @@ describe('OtelSpanExporter', () => {
   });
 
   it('marks error spans with status code 2', async () => {
-    collector = await startMockCollector((_req, res) => { res.writeHead(200); res.end(); });
+    collector = await startMockCollector((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
     const exp = new OtelSpanExporter({
       endpoint: `http://127.0.0.1:${collector.port}`,
       samplingPolicy: new SamplingPolicy({ baseRate: 1 }),
@@ -249,17 +275,25 @@ describe('OtelSpanExporter', () => {
   });
 
   it('preserves parentSpanId as a 16-char hex string', async () => {
-    collector = await startMockCollector((_req, res) => { res.writeHead(200); res.end(); });
+    collector = await startMockCollector((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
     const exp = new OtelSpanExporter({
       endpoint: `http://127.0.0.1:${collector.port}`,
       samplingPolicy: new SamplingPolicy({ baseRate: 1 }),
     });
     const parent = makeEvent({ spanId: 'span_parent_aaaa1111' });
-    const child = makeEvent({ spanId: 'span_child_bbbb2222', parentSpanId: 'span_parent_aaaa1111' });
+    const child = makeEvent({
+      spanId: 'span_child_bbbb2222',
+      parentSpanId: 'span_parent_aaaa1111',
+    });
     exp.enqueue(makeTrace([parent, child]));
     await exp.flush();
     const spans = JSON.parse(collector.captured[0]!.body).resourceSpans[0].scopeSpans[0].spans;
-    const parentSpan = spans.find((s: { name: string }) => s.name.includes(parent.spanId) === false);
+    const parentSpan = spans.find(
+      (s: { name: string }) => s.name.includes(parent.spanId) === false,
+    );
     // The exporter doesn't preserve Commander's spanId in the span name; instead,
     // verify the derived spanId+parentSpanId shape.
     expect(spans).toHaveLength(2);
@@ -267,7 +301,10 @@ describe('OtelSpanExporter', () => {
   });
 
   it('getStats reflects totals', async () => {
-    collector = await startMockCollector((_req, res) => { res.writeHead(200); res.end(); });
+    collector = await startMockCollector((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
     const exp = new OtelSpanExporter({
       endpoint: `http://127.0.0.1:${collector.port}`,
       samplingPolicy: new SamplingPolicy({ baseRate: 1 }),

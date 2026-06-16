@@ -55,7 +55,9 @@ describe('StateCheckpointer + LeaseManager', () => {
 
   afterEach(() => {
     lm.close();
-    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    } catch {}
   });
 
   it('writes checkpoint when lease is valid and bumps version', () => {
@@ -86,7 +88,7 @@ describe('StateCheckpointer + LeaseManager', () => {
     const v1 = cp.resume('run-1')!.version;
     assert.strictEqual(v1, 1);
 
-    await new Promise(r => setTimeout(r, 1100));
+    await new Promise((r) => setTimeout(r, 1100));
 
     const fresh = lm.acquire('run-1');
     assert.strictEqual(fresh.acquired, true);
@@ -119,7 +121,7 @@ describe('StateCheckpointer + LeaseManager', () => {
     const old = lm.acquire('run-1', { ttlSeconds: 1 }).lease;
     cp.checkpoint(baseState({ leaseToken: old.token, fencingEpoch: old.fencingEpoch }));
 
-    await new Promise(r => setTimeout(r, 1100));
+    await new Promise((r) => setTimeout(r, 1100));
     const fresh = lm.acquire('run-1');
     assert.strictEqual(fresh.reclaimed, true, 'expired lease must be reclaimed');
 

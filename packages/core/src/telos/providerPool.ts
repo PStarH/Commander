@@ -1,9 +1,12 @@
-import type { LLMProvider, LLMRequest, LLMResponse, ModelTier, TokenUsage, ToolCall } from '../runtime/types';
 import type {
-  ProviderEndpoint,
-  ProviderHealth,
-  ProviderSelection,
-} from './types';
+  LLMProvider,
+  LLMRequest,
+  LLMResponse,
+  ModelTier,
+  TokenUsage,
+  ToolCall,
+} from '../runtime/types';
+import type { ProviderEndpoint, ProviderHealth, ProviderSelection } from './types';
 import { getModelRouter } from '../runtime/modelRouter';
 
 // ============================================================================
@@ -12,7 +15,9 @@ import { getModelRouter } from '../runtime/modelRouter';
 
 class NoOpProvider implements LLMProvider {
   readonly name: string;
-  constructor(name: string) { this.name = name; }
+  constructor(name: string) {
+    this.name = name;
+  }
   async call(_request: LLMRequest): Promise<LLMResponse> {
     throw new Error(`${this.name} provider not configured — set API key`);
   }
@@ -48,7 +53,7 @@ export class ProviderPool {
   registerProvider(provider: LLMProvider): void {
     this.providers.set(provider.name, provider);
     // Auto-create endpoint if not exists
-    if (!this.endpoints.find(e => e.provider === provider.name)) {
+    if (!this.endpoints.find((e) => e.provider === provider.name)) {
       this.endpoints.push({
         provider: provider.name,
         modelId: '*',
@@ -65,7 +70,7 @@ export class ProviderPool {
   configureEndpoints(endpoints: ProviderEndpoint[]): void {
     for (const ep of endpoints) {
       const existing = this.endpoints.findIndex(
-        e => e.provider === ep.provider && e.modelId === ep.modelId,
+        (e) => e.provider === ep.provider && e.modelId === ep.modelId,
       );
       if (existing >= 0) {
         this.endpoints[existing] = { ...this.endpoints[existing], ...ep };
@@ -83,13 +88,11 @@ export class ProviderPool {
     const router = getModelRouter();
     const eligible: Array<{ endpoint: ProviderEndpoint; modelId: string }> = [];
 
-    const models = modelTier
-      ? router.listModels(modelTier)
-      : router.listModels();
+    const models = modelTier ? router.listModels(modelTier) : router.listModels();
 
     for (const model of models) {
       const eps = this.endpoints.filter(
-        e => (e.modelId === '*' || e.modelId === model.id) && e.isEnabled,
+        (e) => (e.modelId === '*' || e.modelId === model.id) && e.isEnabled,
       );
       for (const ep of eps) {
         const health = this.healthCache.get(`${ep.provider}:${model.id}`);
@@ -100,8 +103,11 @@ export class ProviderPool {
 
     if (eligible.length === 0) {
       // Fallback: use any enabled endpoint
-      for (const ep of this.endpoints.filter(e => e.isEnabled)) {
-        eligible.push({ endpoint: ep, modelId: ep.modelId === '*' ? 'claude-3-5-sonnet' : ep.modelId });
+      for (const ep of this.endpoints.filter((e) => e.isEnabled)) {
+        eligible.push({
+          endpoint: ep,
+          modelId: ep.modelId === '*' ? 'claude-3-5-sonnet' : ep.modelId,
+        });
       }
     }
 
@@ -135,17 +141,17 @@ export class ProviderPool {
   /**
    * Get all eligible endpoints for a tier, sorted by weight (descending).
    */
-  private getAllEligible(modelTier?: ModelTier): Array<{ endpoint: ProviderEndpoint; modelId: string }> {
+  private getAllEligible(
+    modelTier?: ModelTier,
+  ): Array<{ endpoint: ProviderEndpoint; modelId: string }> {
     const router = getModelRouter();
     const eligible: Array<{ endpoint: ProviderEndpoint; modelId: string }> = [];
 
-    const models = modelTier
-      ? router.listModels(modelTier)
-      : router.listModels();
+    const models = modelTier ? router.listModels(modelTier) : router.listModels();
 
     for (const model of models) {
       const eps = this.endpoints.filter(
-        e => (e.modelId === '*' || e.modelId === model.id) && e.isEnabled,
+        (e) => (e.modelId === '*' || e.modelId === model.id) && e.isEnabled,
       );
       for (const ep of eps) {
         const health = this.healthCache.get(`${ep.provider}:${model.id}`);
@@ -155,8 +161,11 @@ export class ProviderPool {
     }
 
     if (eligible.length === 0) {
-      for (const ep of this.endpoints.filter(e => e.isEnabled)) {
-        eligible.push({ endpoint: ep, modelId: ep.modelId === '*' ? 'claude-3-5-sonnet' : ep.modelId });
+      for (const ep of this.endpoints.filter((e) => e.isEnabled)) {
+        eligible.push({
+          endpoint: ep,
+          modelId: ep.modelId === '*' ? 'claude-3-5-sonnet' : ep.modelId,
+        });
       }
     }
 
@@ -169,10 +178,7 @@ export class ProviderPool {
    * Execute a request with automatic failover across providers.
    * Cycles through eligible providers deterministically (by weight).
    */
-  async executeWithFailover(
-    request: LLMRequest,
-    modelTier?: ModelTier,
-  ): Promise<LLMResponse> {
+  async executeWithFailover(request: LLMRequest, modelTier?: ModelTier): Promise<LLMResponse> {
     const allEligible = this.getAllEligible(modelTier);
     if (allEligible.length === 0) {
       throw new Error('No eligible providers available');
@@ -367,7 +373,7 @@ export class ProviderPool {
   }
 
   private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   // GAP-27: Periodically attempt recovery of 'down' providers

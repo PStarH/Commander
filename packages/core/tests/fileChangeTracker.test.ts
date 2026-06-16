@@ -99,16 +99,32 @@ describe('FileChangeTracker', () => {
   describe('query — filtering', () => {
     beforeEach(async () => {
       await tracker.recordChange({
-        runId: 'run-1', agentId: 'a1', toolName: 'file_write', stepNumber: 1,
-        operation: 'create', filePath: '/tmp/a.txt', afterContent: 'A',
+        runId: 'run-1',
+        agentId: 'a1',
+        toolName: 'file_write',
+        stepNumber: 1,
+        operation: 'create',
+        filePath: '/tmp/a.txt',
+        afterContent: 'A',
       });
       await tracker.recordChange({
-        runId: 'run-1', agentId: 'a2', toolName: 'file_edit', stepNumber: 2,
-        operation: 'modify', filePath: '/tmp/a.txt', beforeContent: 'A', afterContent: 'AB',
+        runId: 'run-1',
+        agentId: 'a2',
+        toolName: 'file_edit',
+        stepNumber: 2,
+        operation: 'modify',
+        filePath: '/tmp/a.txt',
+        beforeContent: 'A',
+        afterContent: 'AB',
       });
       await tracker.recordChange({
-        runId: 'run-2', agentId: 'a1', toolName: 'file_write', stepNumber: 1,
-        operation: 'create', filePath: '/tmp/b.txt', afterContent: 'B',
+        runId: 'run-2',
+        agentId: 'a1',
+        toolName: 'file_write',
+        stepNumber: 1,
+        operation: 'create',
+        filePath: '/tmp/b.txt',
+        afterContent: 'B',
       });
       await tracker.flush();
     });
@@ -116,19 +132,19 @@ describe('FileChangeTracker', () => {
     it('filters by runId', () => {
       const r1 = tracker.query({ runId: 'run-1' });
       assert.equal(r1.length, 2);
-      assert.ok(r1.every(r => r.runId === 'run-1'));
+      assert.ok(r1.every((r) => r.runId === 'run-1'));
     });
 
     it('filters by agentId', () => {
       const r = tracker.query({ agentId: 'a1' });
       assert.equal(r.length, 2);
-      assert.ok(r.every(rec => rec.agentId === 'a1'));
+      assert.ok(r.every((rec) => rec.agentId === 'a1'));
     });
 
     it('filters by operation', () => {
       const r = tracker.query({ operation: 'create' });
       assert.equal(r.length, 2);
-      assert.ok(r.every(rec => rec.operation === 'create'));
+      assert.ok(r.every((rec) => rec.operation === 'create'));
     });
 
     it('filters by path', () => {
@@ -153,20 +169,41 @@ describe('FileChangeTracker', () => {
   describe('summarize', () => {
     it('computes per-run summary', async () => {
       await tracker.recordChange({
-        runId: 'run-1', agentId: 'a1', toolName: 'file_write', stepNumber: 1,
-        operation: 'create', filePath: '/tmp/a.txt', afterContent: 'A',
+        runId: 'run-1',
+        agentId: 'a1',
+        toolName: 'file_write',
+        stepNumber: 1,
+        operation: 'create',
+        filePath: '/tmp/a.txt',
+        afterContent: 'A',
       });
       await tracker.recordChange({
-        runId: 'run-1', agentId: 'a1', toolName: 'file_write', stepNumber: 2,
-        operation: 'create', filePath: '/tmp/b.txt', afterContent: 'BB',
+        runId: 'run-1',
+        agentId: 'a1',
+        toolName: 'file_write',
+        stepNumber: 2,
+        operation: 'create',
+        filePath: '/tmp/b.txt',
+        afterContent: 'BB',
       });
       await tracker.recordChange({
-        runId: 'run-1', agentId: 'a1', toolName: 'file_edit', stepNumber: 3,
-        operation: 'modify', filePath: '/tmp/a.txt', beforeContent: 'A', afterContent: 'AA',
+        runId: 'run-1',
+        agentId: 'a1',
+        toolName: 'file_edit',
+        stepNumber: 3,
+        operation: 'modify',
+        filePath: '/tmp/a.txt',
+        beforeContent: 'A',
+        afterContent: 'AA',
       });
       await tracker.recordChange({
-        runId: 'run-1', agentId: 'a1', toolName: 'shell_execute', stepNumber: 4,
-        operation: 'delete', filePath: '/tmp/c.txt', beforeContent: 'CCC',
+        runId: 'run-1',
+        agentId: 'a1',
+        toolName: 'shell_execute',
+        stepNumber: 4,
+        operation: 'delete',
+        filePath: '/tmp/c.txt',
+        beforeContent: 'CCC',
       });
       await tracker.flush();
       const summary = tracker.summarize('run-1');
@@ -188,8 +225,14 @@ describe('FileChangeTracker', () => {
       fs.writeFileSync(targetFile, originalContent);
 
       await tracker.recordChange({
-        runId: 'run-1', agentId: 'a1', toolName: 'file_write', stepNumber: 1,
-        operation: 'modify', filePath: targetFile, beforeContent: originalContent, afterContent: 'new content',
+        runId: 'run-1',
+        agentId: 'a1',
+        toolName: 'file_write',
+        stepNumber: 1,
+        operation: 'modify',
+        filePath: targetFile,
+        beforeContent: originalContent,
+        afterContent: 'new content',
       });
       fs.writeFileSync(targetFile, 'new content');
       await tracker.flush();
@@ -209,8 +252,13 @@ describe('FileChangeTracker', () => {
 
     it('returns no_snapshot when record has no snapshot', async () => {
       await tracker.recordChange({
-        runId: 'run-1', agentId: 'a1', toolName: 'file_write', stepNumber: 1,
-        operation: 'create', filePath: '/tmp/no-snap.txt', afterContent: 'x',
+        runId: 'run-1',
+        agentId: 'a1',
+        toolName: 'file_write',
+        stepNumber: 1,
+        operation: 'create',
+        filePath: '/tmp/no-snap.txt',
+        afterContent: 'x',
       });
       await tracker.flush();
       const records = tracker.query({ runId: 'run-1' });
@@ -225,12 +273,22 @@ describe('FileChangeTracker', () => {
       const tenantA = new FileChangeTracker(dir, 'tenant-A');
       const tenantB = new FileChangeTracker(dir, 'tenant-B');
       await tenantA.recordChange({
-        runId: 'r', agentId: 'a', toolName: 'file_write', stepNumber: 1,
-        operation: 'create', filePath: '/tmp/x.txt', afterContent: 'a',
+        runId: 'r',
+        agentId: 'a',
+        toolName: 'file_write',
+        stepNumber: 1,
+        operation: 'create',
+        filePath: '/tmp/x.txt',
+        afterContent: 'a',
       });
       await tenantB.recordChange({
-        runId: 'r', agentId: 'a', toolName: 'file_write', stepNumber: 1,
-        operation: 'create', filePath: '/tmp/x.txt', afterContent: 'b',
+        runId: 'r',
+        agentId: 'a',
+        toolName: 'file_write',
+        stepNumber: 1,
+        operation: 'create',
+        filePath: '/tmp/x.txt',
+        afterContent: 'b',
       });
       await tenantA.flush();
       await tenantB.flush();
@@ -250,12 +308,17 @@ describe('FileChangeTracker', () => {
       });
       for (let i = 0; i < 10; i++) {
         await tinyTracker.recordChange({
-          runId: 'r', agentId: 'a', toolName: 'file_write', stepNumber: i,
-          operation: 'create', filePath: `/tmp/f${i}.txt`, afterContent: 'x'.repeat(50),
+          runId: 'r',
+          agentId: 'a',
+          toolName: 'file_write',
+          stepNumber: i,
+          operation: 'create',
+          filePath: `/tmp/f${i}.txt`,
+          afterContent: 'x'.repeat(50),
         });
       }
       await tinyTracker.flush();
-      const entries = fs.readdirSync(dir).filter(f => f.startsWith('changes.ndjson'));
+      const entries = fs.readdirSync(dir).filter((f) => f.startsWith('changes.ndjson'));
       assert.ok(entries.length > 1, `Expected rotation, found: ${entries.join(', ')}`);
     });
   });

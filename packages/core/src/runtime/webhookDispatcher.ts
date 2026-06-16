@@ -90,7 +90,13 @@ export class WebhookDispatcher {
   /** Stop listening and clean up. */
   stop(): void {
     for (const unsub of this.unsubscribers) {
-      try { unsub(); } catch (e) { getGlobalLogger().debug('WebhookDispatcher', 'Failed to unsubscribe', { error: (e as Error)?.message }); }
+      try {
+        unsub();
+      } catch (e) {
+        getGlobalLogger().debug('WebhookDispatcher', 'Failed to unsubscribe', {
+          error: (e as Error)?.message,
+        });
+      }
     }
     this.unsubscribers = [];
     this.started = false;
@@ -111,7 +117,11 @@ export class WebhookDispatcher {
     };
     this.webhooks.set(id, webhook);
     this.save();
-    getGlobalLogger().info('WebhookDispatcher', 'Registered webhook', { id, url: config.url, events: config.events });
+    getGlobalLogger().info('WebhookDispatcher', 'Registered webhook', {
+      id,
+      url: config.url,
+      events: config.events,
+    });
     return webhook;
   }
 
@@ -137,8 +147,9 @@ export class WebhookDispatcher {
   /** Dispatch an event to all matching webhooks. Non-blocking — fires and forgets. */
   dispatch(event: string, payload: unknown, source: string = 'system'): void {
     if (!this.started) return;
-    const matching = Array.from(this.webhooks.values())
-      .filter(wh => wh.enabled && (wh.events.includes('*') || wh.events.includes(event)));
+    const matching = Array.from(this.webhooks.values()).filter(
+      (wh) => wh.enabled && (wh.events.includes('*') || wh.events.includes(event)),
+    );
 
     if (matching.length === 0) return;
 
@@ -176,10 +187,7 @@ export class WebhookDispatcher {
 
   private sendWithRetry(wh: WebhookConfig, event: WebhookEvent, attempt: number): void {
     const body = JSON.stringify(event);
-    const signature = crypto
-      .createHmac('sha256', wh.secret!)
-      .update(body)
-      .digest('hex');
+    const signature = crypto.createHmac('sha256', wh.secret!).update(body).digest('hex');
 
     const url = new URL(wh.url);
     const isHttps = url.protocol === 'https:';
@@ -204,16 +212,27 @@ export class WebhookDispatcher {
 
     const req = client.request(options, (res) => {
       let responseBody = '';
-      res.on('data', (chunk: Buffer) => { responseBody += chunk.toString(); });
+      res.on('data', (chunk: Buffer) => {
+        responseBody += chunk.toString();
+      });
       res.on('end', () => {
         const statusCode = res.statusCode ?? 0;
         const success = statusCode >= 200 && statusCode < 300;
-        this.logDelivery(wh.id, event.event, success ? 'success' : 'failed', statusCode, attempt + 1);
+        this.logDelivery(
+          wh.id,
+          event.event,
+          success ? 'success' : 'failed',
+          statusCode,
+          attempt + 1,
+        );
 
         if (!success && attempt < (wh.retryMax ?? DEFAULT_RETRY_MAX)) {
           const delay = RETRY_DELAYS_MS[attempt] ?? 15000;
           getGlobalLogger().warn('WebhookDispatcher', 'Retrying webhook', {
-            id: wh.id, statusCode, attempt: attempt + 1, nextDelay: delay,
+            id: wh.id,
+            statusCode,
+            attempt: attempt + 1,
+            nextDelay: delay,
           });
           const retryTimer = setTimeout(() => this.sendWithRetry(wh, event, attempt + 1), delay);
           if (typeof retryTimer.unref === 'function') retryTimer.unref();
@@ -230,13 +249,19 @@ export class WebhookDispatcher {
       if (attempt < (wh.retryMax ?? DEFAULT_RETRY_MAX)) {
         const delay = RETRY_DELAYS_MS[attempt] ?? 15000;
         getGlobalLogger().warn('WebhookDispatcher', 'Retrying webhook after error', {
-          id: wh.id, error: err.message, attempt: attempt + 1, nextDelay: delay,
+          id: wh.id,
+          error: err.message,
+          attempt: attempt + 1,
+          nextDelay: delay,
         });
         const retryTimer = setTimeout(() => this.sendWithRetry(wh, event, attempt + 1), delay);
         if (typeof retryTimer.unref === 'function') retryTimer.unref();
       } else {
         getGlobalLogger().error('WebhookDispatcher', 'Webhook max retries exceeded', err, {
-          id: wh.id, url: wh.url, event: event.event, attempts: attempt + 1,
+          id: wh.id,
+          url: wh.url,
+          event: event.event,
+          attempts: attempt + 1,
         });
       }
     });
@@ -246,7 +271,10 @@ export class WebhookDispatcher {
       req.destroy();
       this.logDelivery(wh.id, event.event, 'failed', undefined, attempt + 1, 'timeout');
       if (attempt < (wh.retryMax ?? DEFAULT_RETRY_MAX)) {
-        const retryTimer = setTimeout(() => this.sendWithRetry(wh, event, attempt + 1), RETRY_DELAYS_MS[attempt] ?? 15000);
+        const retryTimer = setTimeout(
+          () => this.sendWithRetry(wh, event, attempt + 1),
+          RETRY_DELAYS_MS[attempt] ?? 15000,
+        );
         if (typeof retryTimer.unref === 'function') retryTimer.unref();
       }
     });
@@ -255,9 +283,22 @@ export class WebhookDispatcher {
     req.end();
   }
 
-  private logDelivery(webhookId: string, event: string, status: WebhookDelivery['status'], statusCode?: number, attempts: number = 1, error?: string): void {
+  private logDelivery(
+    webhookId: string,
+    event: string,
+    status: WebhookDelivery['status'],
+    statusCode?: number,
+    attempts: number = 1,
+    error?: string,
+  ): void {
     this.deliveryLog.push({
-      webhookId, event, status, statusCode, attempts, error, deliveredAt: new Date().toISOString(),
+      webhookId,
+      event,
+      status,
+      statusCode,
+      attempts,
+      error,
+      deliveredAt: new Date().toISOString(),
     });
     if (this.deliveryLog.length > this.maxDeliveryLog) {
       this.deliveryLog.splice(0, this.deliveryLog.length - this.maxDeliveryLog);

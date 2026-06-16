@@ -216,7 +216,9 @@ export class SamplesStore {
       try {
         records.push(JSON.parse(line) as ApiCallRecord);
       } catch (e) {
-        getGlobalLogger().debug('SamplesStore', 'Skipped corrupt line', { error: (e as Error)?.message });
+        getGlobalLogger().debug('SamplesStore', 'Skipped corrupt line', {
+          error: (e as Error)?.message,
+        });
       }
     }
     return records;
@@ -273,7 +275,12 @@ export class SamplesStore {
           this.rotateFile(fileName);
         }
       }
-    } catch (e) { getGlobalLogger().warn('SamplesStore', 'Failed to inspect sample file before append', { error: (e as Error)?.message, fileName }); }
+    } catch (e) {
+      getGlobalLogger().warn('SamplesStore', 'Failed to inspect sample file before append', {
+        error: (e as Error)?.message,
+        fileName,
+      });
+    }
     const line = JSON.stringify(data) + '\n';
     fs.appendFileSync(filePath, line, 'utf-8');
   }
@@ -285,19 +292,41 @@ export class SamplesStore {
     // Delete oldest rotation
     const oldest = `${base}.${this.MAX_ROTATED_FILES}`;
     if (fs.existsSync(oldest)) {
-      try { fs.unlinkSync(oldest); } catch (e) { getGlobalLogger().warn('SamplesStore', 'Failed to delete oldest rotated sample file', { error: (e as Error)?.message, oldest }); }
+      try {
+        fs.unlinkSync(oldest);
+      } catch (e) {
+        getGlobalLogger().warn('SamplesStore', 'Failed to delete oldest rotated sample file', {
+          error: (e as Error)?.message,
+          oldest,
+        });
+      }
     }
     // Shift existing rotations: .2 → .3, .1 → .2
     for (let i = this.MAX_ROTATED_FILES - 1; i >= 1; i--) {
       const from = `${base}.${i}`;
       const to = `${base}.${i + 1}`;
       if (fs.existsSync(from)) {
-        try { fs.renameSync(from, to); } catch (e) { getGlobalLogger().warn('SamplesStore', 'Failed to rotate sample file', { error: (e as Error)?.message, from, to }); }
+        try {
+          fs.renameSync(from, to);
+        } catch (e) {
+          getGlobalLogger().warn('SamplesStore', 'Failed to rotate sample file', {
+            error: (e as Error)?.message,
+            from,
+            to,
+          });
+        }
       }
     }
     // Current → .1
     if (fs.existsSync(base)) {
-      try { fs.renameSync(base, `${base}.1`); } catch (e) { getGlobalLogger().warn('SamplesStore', 'Failed to rotate current sample file', { error: (e as Error)?.message, base }); }
+      try {
+        fs.renameSync(base, `${base}.1`);
+      } catch (e) {
+        getGlobalLogger().warn('SamplesStore', 'Failed to rotate current sample file', {
+          error: (e as Error)?.message,
+          base,
+        });
+      }
     }
   }
 
@@ -307,6 +336,6 @@ export class SamplesStore {
     if (!fs.existsSync(p)) return [];
     const content = fs.readFileSync(p, 'utf-8').trim();
     if (!content) return [];
-    return content.split('\n').filter(l => l.length > 0);
+    return content.split('\n').filter((l) => l.length > 0);
   }
 }

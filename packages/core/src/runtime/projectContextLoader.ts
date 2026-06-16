@@ -64,15 +64,18 @@ export function loadProjectContext(projectPath: string = process.cwd()): Project
       if (code !== 'ENOENT' && code !== 'EACCES' && code !== 'EPERM') {
         // Best-effort warning for unexpected errors; do not fail the run.
         // eslint-disable-next-line no-console
-        console.warn(`[projectContextLoader] Could not read ${filePath}: ${(err as Error).message}`);
+        console.warn(
+          `[projectContextLoader] Could not read ${filePath}: ${(err as Error).message}`,
+        );
       }
     }
   }
 
-  const filesRead = snapshots.map(s => s.filePath);
-  const content = snapshots.length > 0
-    ? snapshots.map(s => `<!-- ${path.basename(s.filePath)} -->\n${s.content}`).join('\n\n')
-    : '';
+  const filesRead = snapshots.map((s) => s.filePath);
+  const content =
+    snapshots.length > 0
+      ? snapshots.map((s) => `<!-- ${path.basename(s.filePath)} -->\n${s.content}`).join('\n\n')
+      : '';
   const cacheKey = computeCacheKey(snapshots);
 
   return { filesRead, content, cacheKey };
@@ -88,7 +91,7 @@ export function buildProjectContextBlock(ctx: ProjectContext): string {
   return [
     '<project_context>',
     '## Project Context',
-    `The following instructions come from: ${ctx.filesRead.map(p => path.basename(p)).join(', ')}`,
+    `The following instructions come from: ${ctx.filesRead.map((p) => path.basename(p)).join(', ')}`,
     '',
     ctx.content,
     '</project_context>',

@@ -1,7 +1,7 @@
 /**
  * Logging and Monitoring
  * Phase 2: 日志和监控
- * 
+ *
  * 提供统一的日志记录、指标收集和监控接口
  */
 
@@ -18,7 +18,7 @@ export interface LogEntry {
   component: string;
   message: string;
   context?: Record<string, unknown>;
-  duration?: number;      // Operation duration in ms
+  duration?: number; // Operation duration in ms
   error?: {
     name: string;
     message: string;
@@ -57,7 +57,7 @@ const DEFAULT_CONFIG: LoggerConfig = {
   enableConsole: true,
   enableStorage: true,
   maxEntries: 10000,
-  prettyPrint: true
+  prettyPrint: true,
 };
 
 const LEVEL_PRIORITY: Record<LogLevel, number> = {
@@ -65,7 +65,7 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
   info: 1,
   warn: 2,
   error: 3,
-  critical: 4
+  critical: 4,
 };
 
 export class Logger {
@@ -106,12 +106,19 @@ export class Logger {
     this.log('warn', component, message, context);
   }
 
-  error(component: string, message: string, error?: Error, context?: Record<string, unknown>): void {
-    const errorInfo = error ? {
-      name: error.name,
-      message: error.message,
-      stack: error.stack
-    } : undefined;
+  error(
+    component: string,
+    message: string,
+    error?: Error,
+    context?: Record<string, unknown>,
+  ): void {
+    const errorInfo = error
+      ? {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+        }
+      : undefined;
     this.log('error', component, message, context, errorInfo);
   }
 
@@ -124,7 +131,7 @@ export class Logger {
     component: string,
     message: string,
     context?: Record<string, unknown>,
-    error?: LogEntry['error']
+    error?: LogEntry['error'],
   ): void {
     // Check level threshold
     if (LEVEL_PRIORITY[level] < LEVEL_PRIORITY[this.config.level]) {
@@ -138,7 +145,7 @@ export class Logger {
       component,
       message,
       context,
-      error
+      error,
     };
 
     // Store entry
@@ -155,7 +162,7 @@ export class Logger {
     }
 
     // Notify listeners
-    this.listeners.forEach(listener => listener(entry));
+    this.listeners.forEach((listener) => listener(entry));
   }
 
   /**
@@ -167,19 +174,19 @@ export class Logger {
       info: 'ℹ️ ',
       warn: '⚠️ ',
       error: '❌',
-      critical: '🚨'
+      critical: '🚨',
     };
 
     const levelName = entry.level.toUpperCase().padEnd(8);
     const component = entry.component.padEnd(20);
     const icon = icons[entry.level];
-    
+
     let output = `${icon} [${levelName}] [${component}] ${entry.message}`;
-    
+
     if (entry.context) {
       output += ` ${JSON.stringify(entry.context)}`;
     }
-    
+
     if (entry.error) {
       output += `\n   Error: ${entry.error.message}`;
     }
@@ -217,7 +224,7 @@ export class Logger {
    * Remove log listener
    */
   offLog(listener: (entry: LogEntry) => void): void {
-    this.listeners = this.listeners.filter(l => l !== listener);
+    this.listeners = this.listeners.filter((l) => l !== listener);
   }
 
   /**
@@ -225,11 +232,11 @@ export class Logger {
    */
   getRecent(limit: number = 100, level?: LogLevel): LogEntry[] {
     let entries = this.entries;
-    
+
     if (level) {
-      entries = entries.filter(e => e.level === level);
+      entries = entries.filter((e) => e.level === level);
     }
-    
+
     return entries.slice(-limit);
   }
 
@@ -237,7 +244,7 @@ export class Logger {
    * Get logs by component
    */
   getByComponent(component: string, limit?: number): LogEntry[] {
-    const entries = this.entries.filter(e => e.component === component);
+    const entries = this.entries.filter((e) => e.component === component);
     return limit ? entries.slice(-limit) : entries;
   }
 
@@ -245,9 +252,7 @@ export class Logger {
    * Get error logs
    */
   getErrors(limit?: number): LogEntry[] {
-    const entries = this.entries.filter(e => 
-      e.level === 'error' || e.level === 'critical'
-    );
+    const entries = this.entries.filter((e) => e.level === 'error' || e.level === 'critical');
     return limit ? entries.slice(-limit) : entries;
   }
 
@@ -268,7 +273,11 @@ export class Logger {
     errorRate: number;
   } {
     const byLevel: Record<LogLevel, number> = {
-      debug: 0, info: 0, warn: 0, error: 0, critical: 0
+      debug: 0,
+      info: 0,
+      warn: 0,
+      error: 0,
+      critical: 0,
     };
     const byComponent: Record<string, number> = {};
     let errorCount = 0;
@@ -285,7 +294,7 @@ export class Logger {
       total: this.entries.length,
       byLevel,
       byComponent,
-      errorRate: this.entries.length > 0 ? errorCount / this.entries.length : 0
+      errorRate: this.entries.length > 0 ? errorCount / this.entries.length : 0,
     };
   }
 }
@@ -295,13 +304,13 @@ export class Logger {
 // ========================================
 
 export interface MetricsConfig {
-  retentionPeriod: number;  // ms
-  sampleInterval: number;    // ms
+  retentionPeriod: number; // ms
+  sampleInterval: number; // ms
 }
 
 const DEFAULT_METRICS_CONFIG: MetricsConfig = {
   retentionPeriod: 3600000, // 1 hour
-  sampleInterval: 10000      // 10 seconds
+  sampleInterval: 10000, // 10 seconds
 };
 
 export class MetricsCollector {
@@ -312,7 +321,7 @@ export class MetricsCollector {
 
   constructor(config?: Partial<MetricsConfig>) {
     this.config = { ...DEFAULT_METRICS_CONFIG, ...config };
-    
+
     // Cleanup old data periodically — run at half the retention period so stale
     // data is evicted promptly instead of sitting around for up to 2x retention.
     this.cleanupTimer = setInterval(() => this.cleanup(), this.config.retentionPeriod / 2);
@@ -363,17 +372,17 @@ export class MetricsCollector {
     type: Metric['type'],
     name: string,
     value: number,
-    labels: Record<string, string>
+    labels: Record<string, string>,
   ): void {
     let metric = this.metrics.get(name);
-    
+
     if (!metric) {
       metric = {
         name,
         type,
         description: '',
         values: [],
-        unit: type === 'timer' || type === 'histogram' ? 'ms' : 'count'
+        unit: type === 'timer' || type === 'histogram' ? 'ms' : 'count',
       };
       this.metrics.set(name, metric);
     }
@@ -381,7 +390,7 @@ export class MetricsCollector {
     const point: MetricPoint = {
       timestamp: new Date().toISOString(),
       value,
-      labels
+      labels,
     };
 
     metric.values.push(point);
@@ -391,7 +400,7 @@ export class MetricsCollector {
     }
 
     // Notify listeners
-    this.listeners.forEach(listener => listener(name, point));
+    this.listeners.forEach((listener) => listener(name, point));
   }
 
   /**
@@ -419,24 +428,20 @@ export class MetricsCollector {
   /**
    * Get time series data
    */
-  getTimeSeries(
-    name: string,
-    fromTimestamp?: string,
-    toTimestamp?: string
-  ): MetricPoint[] {
+  getTimeSeries(name: string, fromTimestamp?: string, toTimestamp?: string): MetricPoint[] {
     const metric = this.metrics.get(name);
     if (!metric) return [];
 
     let points = metric.values;
-    
+
     if (fromTimestamp) {
       const from = new Date(fromTimestamp).getTime();
-      points = points.filter(p => new Date(p.timestamp).getTime() >= from);
+      points = points.filter((p) => new Date(p.timestamp).getTime() >= from);
     }
-    
+
     if (toTimestamp) {
       const to = new Date(toTimestamp).getTime();
-      points = points.filter(p => new Date(p.timestamp).getTime() <= to);
+      points = points.filter((p) => new Date(p.timestamp).getTime() <= to);
     }
 
     return points;
@@ -459,7 +464,7 @@ export class MetricsCollector {
     const metric = this.metrics.get(name);
     if (!metric || metric.values.length === 0) return null;
 
-    const values = metric.values.map(p => p.value).sort((a, b) => a - b);
+    const values = metric.values.map((p) => p.value).sort((a, b) => a - b);
     const sum = values.reduce((a, b) => a + b, 0);
     const count = values.length;
 
@@ -472,7 +477,7 @@ export class MetricsCollector {
       latest: values[values.length - 1],
       p50: this.percentile(values, 50),
       p95: this.percentile(values, 95),
-      p99: this.percentile(values, 99)
+      p99: this.percentile(values, 99),
     };
   }
 
@@ -496,7 +501,7 @@ export class MetricsCollector {
    * Remove metric listener
    */
   offMetric(listener: (name: string, point: MetricPoint) => void): void {
-    this.listeners = this.listeners.filter(l => l !== listener);
+    this.listeners = this.listeners.filter((l) => l !== listener);
   }
 
   /**
@@ -504,11 +509,9 @@ export class MetricsCollector {
    */
   private cleanup(): void {
     const cutoff = Date.now() - this.config.retentionPeriod;
-    
+
     for (const metric of this.metrics.values()) {
-      metric.values = metric.values.filter(
-        p => new Date(p.timestamp).getTime() > cutoff
-      );
+      metric.values = metric.values.filter((p) => new Date(p.timestamp).getTime() > cutoff);
     }
   }
 

@@ -1,9 +1,4 @@
-import type {
-  SagaStateSnapshot,
-  SagaEvent,
-  RunState,
-  NodeState,
-} from './types';
+import type { SagaStateSnapshot, SagaEvent, RunState, NodeState } from './types';
 import type { SagaStore } from './sagaStore';
 
 export interface RecoveredState {
@@ -19,9 +14,7 @@ export class CheckpointManager {
     await this.store.writeSnapshot(snapshot);
   }
 
-  async loadSnapshot(
-    runId: string
-  ): Promise<SagaStateSnapshot | undefined> {
+  async loadSnapshot(runId: string): Promise<SagaStateSnapshot | undefined> {
     return this.store.readSnapshot(runId);
   }
 
@@ -44,14 +37,12 @@ export class CheckpointManager {
     }
 
     if (!snapshot) {
-      throw new CheckpointError(
-        `Run ${runId} has events but no snapshot — cannot recover`
-      );
+      throw new CheckpointError(`Run ${runId} has events but no snapshot — cannot recover`);
     }
 
     const snapshotTime = new Date(snapshot.updatedAt).getTime();
     const eventsAfterSnapshot = allEvents.filter(
-      (e) => new Date(e.timestamp).getTime() > snapshotTime
+      (e) => new Date(e.timestamp).getTime() > snapshotTime,
     );
 
     return { snapshot, eventsAfterSnapshot, allEvents };
@@ -107,7 +98,7 @@ export class CheckpointError extends Error {
 export function snapshotFor(
   runId: string,
   state: RunState,
-  nodeStates: Record<string, NodeState>
+  nodeStates: Record<string, NodeState>,
 ): SagaStateSnapshot {
   const now = new Date().toISOString();
   return {

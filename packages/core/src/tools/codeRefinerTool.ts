@@ -6,21 +6,43 @@ import * as path from 'path';
 
 const DEFINITION: ToolDefinition = {
   name: 'refine_code',
-  description: 'Generate code, run tests, read failures, and auto-fix in a loop. Wraps the Self-Refine pattern for test-driven development. Provide a function signature and test expectations, and this tool will iterate until the code passes all tests.',
+  description:
+    'Generate code, run tests, read failures, and auto-fix in a loop. Wraps the Self-Refine pattern for test-driven development. Provide a function signature and test expectations, and this tool will iterate until the code passes all tests.',
   inputSchema: {
     type: 'object',
     properties: {
       prompt: { type: 'string', description: 'The code generation task description' },
-      language: { type: 'string', enum: ['python', 'javascript', 'typescript', 'go', 'rust'], description: 'Programming language' },
-      testCommand: { type: 'string', description: 'Command to run tests (e.g., "python -m pytest test.py")' },
+      language: {
+        type: 'string',
+        enum: ['python', 'javascript', 'typescript', 'go', 'rust'],
+        description: 'Programming language',
+      },
+      testCommand: {
+        type: 'string',
+        description: 'Command to run tests (e.g., "python -m pytest test.py")',
+      },
       codeFile: { type: 'string', description: 'File to write the generated code to' },
-      maxIterations: { type: 'number', description: 'Maximum refinement iterations (default: 3)', default: 3 },
-      verifyOnly: { type: 'boolean', description: 'If true, only run verification without generating code' },
+      maxIterations: {
+        type: 'number',
+        description: 'Maximum refinement iterations (default: 3)',
+        default: 3,
+      },
+      verifyOnly: {
+        type: 'boolean',
+        description: 'If true, only run verification without generating code',
+      },
     },
     required: ['prompt', 'language'],
   },
   examples: [
-    { name: 'refine_code', arguments: { prompt: 'Write a function to find the longest common substring', language: 'python', testCommand: 'python -m pytest test_lcs.py' } },
+    {
+      name: 'refine_code',
+      arguments: {
+        prompt: 'Write a function to find the longest common substring',
+        language: 'python',
+        testCommand: 'python -m pytest test_lcs.py',
+      },
+    },
   ],
   category: 'development',
 };
@@ -56,7 +78,9 @@ export class CodeRefinerTool implements Tool {
 
     if (!codeFile && !testCommand) {
       // No test-driven refinement possible, just return template
-      output.push('\nTo enable full test-driven refinement, provide both codeFile and testCommand.');
+      output.push(
+        '\nTo enable full test-driven refinement, provide both codeFile and testCommand.',
+      );
       output.push(`\nCode template for ${language}:\n${this.getTemplate(language, prompt)}`);
       return output.join('\n');
     }
@@ -99,7 +123,9 @@ export class CodeRefinerTool implements Tool {
   private async runTests(command: string, cwd: string): Promise<string> {
     const result = await execSandboxed(command, 60, cwd);
     if (result.exitCode === 0) return result.stdout.slice(0, 3000);
-    return result.stdout?.slice(0, 3000) || result.stderr?.slice(0, 3000) || 'Test execution failed';
+    return (
+      result.stdout?.slice(0, 3000) || result.stderr?.slice(0, 3000) || 'Test execution failed'
+    );
   }
 
   private getTemplate(language: string, task: string): string {

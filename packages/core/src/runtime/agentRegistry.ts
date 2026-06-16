@@ -44,7 +44,10 @@ export class AgentRegistry {
   }
 
   /** Get or create a persistent agent ID by name. Returns stable ID for the agent type. */
-  getOrCreateAgentId(name: string, meta?: { description?: string; capabilities?: string[] }): string {
+  getOrCreateAgentId(
+    name: string,
+    meta?: { description?: string; capabilities?: string[] },
+  ): string {
     const stableId = `agent-${name}`;
     if (!this.agents.has(stableId)) {
       this.register({
@@ -92,8 +95,9 @@ export class AgentRegistry {
 
     // Enforce max agents with LRU eviction
     if (this.agents.size >= MAX_AGENTS) {
-      const oldest = Array.from(this.agents.values())
-        .sort((a, b) => new Date(a.lastUsedAt).getTime() - new Date(b.lastUsedAt).getTime())[0];
+      const oldest = Array.from(this.agents.values()).sort(
+        (a, b) => new Date(a.lastUsedAt).getTime() - new Date(b.lastUsedAt).getTime(),
+      )[0];
       if (oldest) this.agents.delete(oldest.id);
     }
 
@@ -103,12 +107,15 @@ export class AgentRegistry {
   }
 
   /** Record task completion for an agent */
-  recordTask(agentId: string, outcome: {
-    success: boolean;
-    tokensUsed: number;
-    durationMs: number;
-    toolsUsed?: string[];
-  }): void {
+  recordTask(
+    agentId: string,
+    outcome: {
+      success: boolean;
+      tokensUsed: number;
+      durationMs: number;
+      toolsUsed?: string[];
+    },
+  ): void {
     const agent = this.agents.get(agentId);
     if (!agent) return;
 
@@ -119,9 +126,9 @@ export class AgentRegistry {
     agent.lastUsedAt = new Date().toISOString();
 
     // Update rolling average duration
-    agent.averageTaskDurationMs = (
-      (agent.averageTaskDurationMs * (agent.totalTasks - 1) + outcome.durationMs) / agent.totalTasks
-    );
+    agent.averageTaskDurationMs =
+      (agent.averageTaskDurationMs * (agent.totalTasks - 1) + outcome.durationMs) /
+      agent.totalTasks;
 
     // Track preferred tools
     if (outcome.toolsUsed) {
@@ -147,21 +154,29 @@ export class AgentRegistry {
   /** Find agents by capability, sorted by success rate */
   findByCapability(capability: string): AgentProfile[] {
     return Array.from(this.agents.values())
-      .filter(a => a.capabilities.includes(capability))
-      .sort((a, b) => (b.successfulTasks / Math.max(b.totalTasks, 1)) - (a.successfulTasks / Math.max(a.totalTasks, 1)));
+      .filter((a) => a.capabilities.includes(capability))
+      .sort(
+        (a, b) =>
+          b.successfulTasks / Math.max(b.totalTasks, 1) -
+          a.successfulTasks / Math.max(a.totalTasks, 1),
+      );
   }
 
   /** Find the best agent for a task based on capabilities and success rate */
   findBestForTask(requiredCapabilities: string[]): AgentProfile | undefined {
     const candidates = Array.from(this.agents.values())
-      .filter(a => requiredCapabilities.some(c => a.capabilities.includes(c)))
+      .filter((a) => requiredCapabilities.some((c) => a.capabilities.includes(c)))
       .sort((a, b) => {
         // Score: capability match ratio * success rate
-        const aMatch = requiredCapabilities.filter(c => a.capabilities.includes(c)).length / requiredCapabilities.length;
-        const bMatch = requiredCapabilities.filter(c => b.capabilities.includes(c)).length / requiredCapabilities.length;
+        const aMatch =
+          requiredCapabilities.filter((c) => a.capabilities.includes(c)).length /
+          requiredCapabilities.length;
+        const bMatch =
+          requiredCapabilities.filter((c) => b.capabilities.includes(c)).length /
+          requiredCapabilities.length;
         const aRate = a.totalTasks > 0 ? a.successfulTasks / a.totalTasks : 0.5;
         const bRate = b.totalTasks > 0 ? b.successfulTasks / b.totalTasks : 0.5;
-        return (bMatch * bRate) - (aMatch * aRate);
+        return bMatch * bRate - aMatch * aRate;
       });
     return candidates[0];
   }
@@ -205,7 +220,9 @@ export class AgentRegistry {
         }
       }
     } catch (e) {
-      getGlobalLogger().warn('AgentRegistry', 'Failed to load registry', { error: (e as Error)?.message });
+      getGlobalLogger().warn('AgentRegistry', 'Failed to load registry', {
+        error: (e as Error)?.message,
+      });
     }
   }
 
@@ -216,7 +233,9 @@ export class AgentRegistry {
       const data: RegistryData = { agents: Array.from(this.agents.values()), version: 1 };
       fs.writeFileSync(this.registryPath, JSON.stringify(data, null, 2), { mode: 0o600 });
     } catch (e) {
-      getGlobalLogger().warn('AgentRegistry', 'Failed to save registry', { error: (e as Error)?.message });
+      getGlobalLogger().warn('AgentRegistry', 'Failed to save registry', {
+        error: (e as Error)?.message,
+      });
     }
   }
 }

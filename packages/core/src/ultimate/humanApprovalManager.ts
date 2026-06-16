@@ -98,7 +98,10 @@ export class HumanApprovalManager {
         requestedAt: fullRequest.requestedAt,
       });
       getGlobalLogger().info('HumanApprovalManager', 'Approval timed out', {
-        approvalId, runId: fullRequest.runId, nodeId: fullRequest.nodeId, decision: onTimeout,
+        approvalId,
+        runId: fullRequest.runId,
+        nodeId: fullRequest.nodeId,
+        decision: onTimeout,
       });
       entry.resolve(resolution);
     }, timeoutMs);
@@ -175,14 +178,14 @@ export class HumanApprovalManager {
     this.responses.set(approvalId, resolution);
     this.pending.delete(approvalId);
 
-    const topic = decision === 'reject'
-      ? 'human.approval_rejected'
-      : 'human.approval_received';
+    const topic = decision === 'reject' ? 'human.approval_rejected' : 'human.approval_received';
     getMessageBus().publish(topic, approverId, {
       approvalId,
       runId: entry.request.runId,
       nodeId: entry.request.nodeId,
-      ...(decision === 'reject' ? { reason: note ?? 'No reason provided' } : { approverId, decision, ...(note ? { note } : {}) }),
+      ...(decision === 'reject'
+        ? { reason: note ?? 'No reason provided' }
+        : { approverId, decision, ...(note ? { note } : {}) }),
     });
 
     entry.resolve(resolution);

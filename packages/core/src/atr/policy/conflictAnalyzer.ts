@@ -19,7 +19,9 @@ export function detectCycles(pack: PolicyPackAst): CycleResult {
   }
 
   const cycles = new Set<string>();
-  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const WHITE = 0,
+    GRAY = 1,
+    BLACK = 2;
   const color = new Map<string, number>();
   for (const name of ruleNames) color.set(name, WHITE);
   const stackPath: string[] = [];
@@ -59,7 +61,10 @@ function collectRuleRefs(rule: PolicyRuleAst): string[] {
   return refs;
 }
 
-function walk(expr: import('./types').PolicyExpr, visit: (e: import('./types').PolicyExpr) => void): void {
+function walk(
+  expr: import('./types').PolicyExpr,
+  visit: (e: import('./types').PolicyExpr) => void,
+): void {
   visit(expr);
   switch (expr.kind) {
     case 'unary':

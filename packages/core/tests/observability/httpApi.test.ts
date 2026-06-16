@@ -5,7 +5,10 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import type { IncomingMessage, ServerResponse } from 'http';
-import { handleObservabilityRequest, type ObservabilityDeps } from '../../src/observability/httpApi';
+import {
+  handleObservabilityRequest,
+  type ObservabilityDeps,
+} from '../../src/observability/httpApi';
 import { ExecutionTraceRecorder } from '../../src/runtime/executionTrace';
 import { PersistentTraceStore } from '../../src/runtime/traceStore';
 import { resetTraceRecorder } from '../../src/runtime/executionTrace';
@@ -56,7 +59,13 @@ function makeDeps(tmpDir: string, tenantId: string | undefined): ObservabilityDe
   };
 }
 
-async function dispatch(req: IncomingMessage, res: MockRes, deps: ObservabilityDeps, segments: string[], queryStr = ''): Promise<MockRes> {
+async function dispatch(
+  req: IncomingMessage,
+  res: MockRes,
+  deps: ObservabilityDeps,
+  segments: string[],
+  queryStr = '',
+): Promise<MockRes> {
   await handleObservabilityRequest(req, res as unknown as ServerResponse, deps, segments, queryStr);
   return res;
 }
@@ -90,7 +99,11 @@ describe('handleObservabilityRequest', () => {
 
   it('returns 404 for missing run', async () => {
     const deps = makeDeps(tmpDir, 't1');
-    const res = await dispatch(makeReq('GET'), new MockRes(), deps, ['runs', 'no-such-run', 'timeline']);
+    const res = await dispatch(makeReq('GET'), new MockRes(), deps, [
+      'runs',
+      'no-such-run',
+      'timeline',
+    ]);
     assert.strictEqual(res.statusCode, 404);
   });
 
@@ -98,8 +111,12 @@ describe('handleObservabilityRequest', () => {
     const deps = makeDeps(tmpDir, 't1');
     deps.recorder.startRun('r1', 'a1', undefined, 't1', { tenantId: 't1' });
     deps.recorder.recordEvent('r1', {
-      type: 'llm_call', durationMs: 100,
-      data: { modelInfo: { provider: 'openai', model: 'gpt-4o' }, tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 } },
+      type: 'llm_call',
+      durationMs: 100,
+      data: {
+        modelInfo: { provider: 'openai', model: 'gpt-4o' },
+        tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+      },
     });
     const res = await dispatch(makeReq('GET'), new MockRes(), deps, ['runs', 'r1', 'timeline']);
     assert.strictEqual(res.statusCode, 200);
@@ -113,8 +130,12 @@ describe('handleObservabilityRequest', () => {
     const deps = makeDeps(tmpDir, 't1');
     deps.recorder.startRun('r1', 'a1', undefined, 't1', { tenantId: 't1' });
     deps.recorder.recordEvent('r1', {
-      type: 'llm_call', durationMs: 100,
-      data: { modelInfo: { provider: 'openai', model: 'gpt-4o' }, tokenUsage: { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 } },
+      type: 'llm_call',
+      durationMs: 100,
+      data: {
+        modelInfo: { provider: 'openai', model: 'gpt-4o' },
+        tokenUsage: { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 },
+      },
     });
     const res = await dispatch(makeReq('GET'), new MockRes(), deps, ['runs', 'r1', 'cost']);
     assert.strictEqual(res.statusCode, 200);
@@ -127,11 +148,17 @@ describe('handleObservabilityRequest', () => {
     const deps = makeDeps(tmpDir, 't1');
     deps.recorder.startRun('r1', 'a1', undefined, 't1', { tenantId: 't1' });
     const llm = deps.recorder.recordEvent('r1', {
-      type: 'llm_call', durationMs: 100,
-      data: { output: { content: 'I will use web_search' }, modelInfo: { provider: 'openai', model: 'gpt-4o' } },
+      type: 'llm_call',
+      durationMs: 100,
+      data: {
+        output: { content: 'I will use web_search' },
+        modelInfo: { provider: 'openai', model: 'gpt-4o' },
+      },
     });
     deps.recorder.recordEvent('r1', {
-      type: 'tool_execution', durationMs: 50, parentSpanId: llm.spanId,
+      type: 'tool_execution',
+      durationMs: 50,
+      parentSpanId: llm.spanId,
       data: { input: 'web_search', output: { ok: true } },
     });
     const res = await dispatch(makeReq('GET'), new MockRes(), deps, ['runs', 'r1', 'decisions']);
@@ -145,11 +172,16 @@ describe('handleObservabilityRequest', () => {
     const deps = makeDeps(tmpDir, 't1');
     deps.recorder.startRun('r1', 'a1', undefined, 't1', { tenantId: 't1' });
     const t = deps.recorder.recordEvent('r1', {
-      type: 'tool_execution', durationMs: 50,
+      type: 'tool_execution',
+      durationMs: 50,
       data: { input: 'shell', output: { exit: 0 } },
     });
     const res = await dispatch(
-      makeReq('POST', { runId: 'r1', substitutions: [{ target: 'tool_output', spanId: t.spanId, value: { exit: 1 } }], reExecuteLlm: false }),
+      makeReq('POST', {
+        runId: 'r1',
+        substitutions: [{ target: 'tool_output', spanId: t.spanId, value: { exit: 1 } }],
+        reExecuteLlm: false,
+      }),
       new MockRes(),
       deps,
       ['runs', 'r1', 'replay'],
@@ -206,7 +238,8 @@ describe('handleObservabilityRequest', () => {
     // Create a realistic multi-step trace with LLM and tool events
     deps.recorder.startRun('r-live', 'agent-1', undefined, 't-live', { tenantId: 't1' });
     const llm1 = deps.recorder.recordEvent('r-live', {
-      type: 'llm_call', durationMs: 100,
+      type: 'llm_call',
+      durationMs: 100,
       data: {
         output: 'I will read the config file',
         modelInfo: { provider: 'openai', model: 'gpt-4o' },
@@ -214,11 +247,14 @@ describe('handleObservabilityRequest', () => {
       },
     });
     deps.recorder.recordEvent('r-live', {
-      type: 'tool_execution', durationMs: 50, parentSpanId: llm1.spanId,
+      type: 'tool_execution',
+      durationMs: 50,
+      parentSpanId: llm1.spanId,
       data: { input: 'read_file', output: { path: 'config.json', content: '{}' } },
     });
     const llm2 = deps.recorder.recordEvent('r-live', {
-      type: 'llm_call', durationMs: 100,
+      type: 'llm_call',
+      durationMs: 100,
       data: {
         output: 'Config loaded, writing implementation',
         modelInfo: { provider: 'openai', model: 'gpt-4o' },
@@ -226,11 +262,14 @@ describe('handleObservabilityRequest', () => {
       },
     });
     deps.recorder.recordEvent('r-live', {
-      type: 'tool_execution', durationMs: 50, parentSpanId: llm2.spanId,
+      type: 'tool_execution',
+      durationMs: 50,
+      parentSpanId: llm2.spanId,
       data: { input: 'write_file', output: { path: 'src/main.ts', success: true } },
     });
     deps.recorder.recordEvent('r-live', {
-      type: 'llm_call', durationMs: 100,
+      type: 'llm_call',
+      durationMs: 100,
       data: {
         output: 'Implementation complete',
         modelInfo: { provider: 'openai', model: 'gpt-4o' },
@@ -245,7 +284,11 @@ describe('handleObservabilityRequest', () => {
       reExecuteLlm: true,
       modelOverride: 'claude-3-opus',
     };
-    const res = await dispatch(makeReq('POST', body), new MockRes(), deps, ['runs', 'r-live', 'replay']);
+    const res = await dispatch(makeReq('POST', body), new MockRes(), deps, [
+      'runs',
+      'r-live',
+      'replay',
+    ]);
 
     // Verify HTTP response
     assert.strictEqual(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${res.body}`);
@@ -256,14 +299,22 @@ describe('handleObservabilityRequest', () => {
 
     // All 3 LLM spans re-executed (tool spans skipped)
     assert.ok(Array.isArray(j.reExecutedSpans), 'reExecutedSpans should be an array');
-    assert.strictEqual(j.reExecutedSpans.length, 3, `expected 3 reExecutedSpans, got ${j.reExecutedSpans?.length}`);
+    assert.strictEqual(
+      j.reExecutedSpans.length,
+      3,
+      `expected 3 reExecutedSpans, got ${j.reExecutedSpans?.length}`,
+    );
     // The span IDs match the LLM calls we recorded
     const reExecutedIds: string[] = j.reExecutedSpans;
     assert.ok(reExecutedIds.includes(llm1.spanId), `missing ${llm1.spanId}`);
     assert.ok(reExecutedIds.includes(llm2.spanId), `missing ${llm2.spanId}`);
 
     // All LLM invocations received the modelOverride
-    assert.strictEqual(invokedModels.length, 3, `expected 3 invocations, got ${invokedModels.length}`);
+    assert.strictEqual(
+      invokedModels.length,
+      3,
+      `expected 3 invocations, got ${invokedModels.length}`,
+    );
     for (const m of invokedModels) {
       assert.strictEqual(m, 'claude-3-opus');
     }
@@ -297,7 +348,11 @@ describe('handleObservabilityRequest', () => {
     // tokenDelta should match the exact diff: replayTokens - originalTokens
     assert.ok(typeof j.diff.tokenDelta === 'number');
     assert.ok(!Number.isNaN(j.diff.tokenDelta));
-    assert.strictEqual(j.diff.tokenDelta, 300 - j.originalSummary.totalTokens.total, `expected tokenDelta = 300 - ${j.originalSummary.totalTokens.total}`);
+    assert.strictEqual(
+      j.diff.tokenDelta,
+      300 - j.originalSummary.totalTokens.total,
+      `expected tokenDelta = 300 - ${j.originalSummary.totalTokens.total}`,
+    );
   });
 
   it('live replay: falls back to dry mode when reExecuteLlm=true but no liveReplayContext', async () => {
@@ -305,7 +360,8 @@ describe('handleObservabilityRequest', () => {
     const deps = makeDeps(tmpDir, 't1');
     deps.recorder.startRun('r-dry', 'a1', undefined, 't-dry', { tenantId: 't1' });
     deps.recorder.recordEvent('r-dry', {
-      type: 'llm_call', durationMs: 100,
+      type: 'llm_call',
+      durationMs: 100,
       data: {
         output: 'hello',
         modelInfo: { provider: 'openai', model: 'gpt-4o' },
@@ -318,13 +374,20 @@ describe('handleObservabilityRequest', () => {
       substitutions: [],
       reExecuteLlm: true, // true, but no liveCtx → falls back to dry
     };
-    const res = await dispatch(makeReq('POST', body), new MockRes(), deps, ['runs', 'r-dry', 'replay']);
+    const res = await dispatch(makeReq('POST', body), new MockRes(), deps, [
+      'runs',
+      'r-dry',
+      'replay',
+    ]);
 
     assert.strictEqual(res.statusCode, 200);
     const j = res.json();
     // Should be a dry replay result (no mode or mode=dry)
     assert.ok(!j.mode || j.mode === 'dry', `expected no mode or dry, got ${j.mode}`);
-    assert.ok(!j.reExecutedSpans || j.reExecutedSpans.length === 0, 'should have no reExecutedSpans in dry mode');
+    assert.ok(
+      !j.reExecutedSpans || j.reExecutedSpans.length === 0,
+      'should have no reExecutedSpans in dry mode',
+    );
   });
 
   it('live replay: modelOverride from body wires through to invokeLlm', async () => {
@@ -332,7 +395,11 @@ describe('handleObservabilityRequest', () => {
     const liveCtx: LiveReplayContext = {
       invokeLlm: async ({ model }) => {
         receivedModel = model;
-        return { text: 'ok', tokens: { promptTokens: 10, completionTokens: 5, totalTokens: 15 }, costUsd: 0 };
+        return {
+          text: 'ok',
+          tokens: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+          costUsd: 0,
+        };
       },
     };
     const deps: ObservabilityDeps = {
@@ -341,7 +408,8 @@ describe('handleObservabilityRequest', () => {
     };
     deps.recorder.startRun('r-mo', 'a1', undefined, 't-mo', { tenantId: 't1' });
     deps.recorder.recordEvent('r-mo', {
-      type: 'llm_call', durationMs: 100,
+      type: 'llm_call',
+      durationMs: 100,
       data: {
         output: 'hi',
         modelInfo: { provider: 'openai', model: 'gpt-3.5-turbo' },
@@ -355,10 +423,18 @@ describe('handleObservabilityRequest', () => {
       reExecuteLlm: true,
       modelOverride: 'gemini-2.5-pro',
     };
-    const res = await dispatch(makeReq('POST', body), new MockRes(), deps, ['runs', 'r-mo', 'replay']);
+    const res = await dispatch(makeReq('POST', body), new MockRes(), deps, [
+      'runs',
+      'r-mo',
+      'replay',
+    ]);
 
     assert.strictEqual(res.statusCode, 200);
-    assert.strictEqual(receivedModel, 'gemini-2.5-pro', `expected gemini-2.5-pro, got ${receivedModel}`);
+    assert.strictEqual(
+      receivedModel,
+      'gemini-2.5-pro',
+      `expected gemini-2.5-pro, got ${receivedModel}`,
+    );
     const j = res.json();
     assert.strictEqual(j.mode, 'live');
     assert.strictEqual(j.reExecutedSpans.length, 1);
@@ -366,14 +442,22 @@ describe('handleObservabilityRequest', () => {
 
   it('live replay: returns 404 for unknown runId', async () => {
     const liveCtx: LiveReplayContext = {
-      invokeLlm: async () => ({ text: '', tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, costUsd: 0 }),
+      invokeLlm: async () => ({
+        text: '',
+        tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        costUsd: 0,
+      }),
     };
     const deps: ObservabilityDeps = {
       ...makeDeps(tmpDir, 't1'),
       liveReplayContext: liveCtx,
     };
     const body = { runId: 'nonexistent', substitutions: [], reExecuteLlm: true };
-    const res = await dispatch(makeReq('POST', body), new MockRes(), deps, ['runs', 'nonexistent', 'replay']);
+    const res = await dispatch(makeReq('POST', body), new MockRes(), deps, [
+      'runs',
+      'nonexistent',
+      'replay',
+    ]);
     assert.strictEqual(res.statusCode, 404);
   });
 
@@ -383,7 +467,11 @@ describe('handleObservabilityRequest', () => {
     const liveCtx: LiveReplayContext = {
       invokeLlm: async ({ spanId }) => {
         invokedSpanIds.push(spanId);
-        return { text: `ok-${spanId}`, tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, costUsd: 0 };
+        return {
+          text: `ok-${spanId}`,
+          tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          costUsd: 0,
+        };
       },
     };
     const deps: ObservabilityDeps = {
@@ -392,7 +480,8 @@ describe('handleObservabilityRequest', () => {
     };
     deps.recorder.startRun('r-only', 'a1', undefined, 't-only', { tenantId: 't1' });
     const s1 = deps.recorder.recordEvent('r-only', {
-      type: 'llm_call', durationMs: 100,
+      type: 'llm_call',
+      durationMs: 100,
       data: {
         output: 'first',
         modelInfo: { provider: 'openai', model: 'gpt-4o' },
@@ -400,7 +489,8 @@ describe('handleObservabilityRequest', () => {
       },
     });
     const s2 = deps.recorder.recordEvent('r-only', {
-      type: 'llm_call', durationMs: 100,
+      type: 'llm_call',
+      durationMs: 100,
       data: {
         output: 'second',
         modelInfo: { provider: 'openai', model: 'gpt-4o' },
@@ -408,7 +498,8 @@ describe('handleObservabilityRequest', () => {
       },
     });
     const s3 = deps.recorder.recordEvent('r-only', {
-      type: 'llm_call', durationMs: 100,
+      type: 'llm_call',
+      durationMs: 100,
       data: {
         output: 'third',
         modelInfo: { provider: 'openai', model: 'gpt-4o' },
@@ -422,7 +513,11 @@ describe('handleObservabilityRequest', () => {
       reExecuteLlm: true,
       onlySpanIds: [s1.spanId, s3.spanId], // only first and third
     };
-    const res = await dispatch(makeReq('POST', body), new MockRes(), deps, ['runs', 'r-only', 'replay']);
+    const res = await dispatch(makeReq('POST', body), new MockRes(), deps, [
+      'runs',
+      'r-only',
+      'replay',
+    ]);
 
     assert.strictEqual(res.statusCode, 200);
     const j = res.json();
@@ -453,7 +548,8 @@ describe('handleObservabilityRequest', () => {
     };
     deps.recorder.startRun('r-sub', 'a1', undefined, 't-sub', { tenantId: 't1' });
     const llmSpan = deps.recorder.recordEvent('r-sub', {
-      type: 'llm_call', durationMs: 100,
+      type: 'llm_call',
+      durationMs: 100,
       data: {
         output: 'original reasoning',
         modelInfo: { provider: 'openai', model: 'gpt-4o' },
@@ -461,19 +557,29 @@ describe('handleObservabilityRequest', () => {
       },
     });
     const toolSpan = deps.recorder.recordEvent('r-sub', {
-      type: 'tool_execution', durationMs: 50, parentSpanId: llmSpan.spanId,
+      type: 'tool_execution',
+      durationMs: 50,
+      parentSpanId: llmSpan.spanId,
       data: { input: 'shell', output: { exit: 0 } },
     });
 
     const body = {
       runId: 'r-sub',
       substitutions: [
-        { target: 'tool_output', spanId: toolSpan.spanId, value: { exit: 1, stderr: 'injected failure' } },
+        {
+          target: 'tool_output',
+          spanId: toolSpan.spanId,
+          value: { exit: 1, stderr: 'injected failure' },
+        },
       ],
       reExecuteLlm: true,
       modelOverride: 'claude-3-haiku',
     };
-    const res = await dispatch(makeReq('POST', body), new MockRes(), deps, ['runs', 'r-sub', 'replay']);
+    const res = await dispatch(makeReq('POST', body), new MockRes(), deps, [
+      'runs',
+      'r-sub',
+      'replay',
+    ]);
 
     assert.strictEqual(res.statusCode, 200);
     const j = res.json();

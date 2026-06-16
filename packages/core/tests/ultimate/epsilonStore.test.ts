@@ -61,7 +61,7 @@ describe('EpsilonStore', () => {
     store.set('A', 0.2);
     store.set('B', 0.3);
     const list = store.list();
-    expect(list.map(e => e.tenantId)).toEqual(['A', 'B', 'C']);
+    expect(list.map((e) => e.tenantId)).toEqual(['A', 'B', 'C']);
     list[0]!.epsilon = 999; // mutate returned array
     expect(store.get('A')?.epsilon).toBe(0.2); // store unchanged
   });

@@ -54,7 +54,7 @@ export function looksLikeStackTrace(content: string): boolean {
   ];
   let frameCount = 0;
   for (const line of lines) {
-    if (framePatterns.some(p => p.test(line))) frameCount++;
+    if (framePatterns.some((p) => p.test(line))) frameCount++;
   }
   return frameCount >= 3;
 }
@@ -63,10 +63,17 @@ export function looksLikeStackTrace(content: string): boolean {
 export function containsErrorSignal(content: string): boolean {
   const lower = content.toLowerCase();
   const errorMarkers = [
-    'error:', 'exception:', 'traceback', 'failed', 'failure',
-    'cannot ', 'unable to', 'exit code', 'fatal',
+    'error:',
+    'exception:',
+    'traceback',
+    'failed',
+    'failure',
+    'cannot ',
+    'unable to',
+    'exit code',
+    'fatal',
   ];
-  return errorMarkers.some(m => lower.includes(m));
+  return errorMarkers.some((m) => lower.includes(m));
 }
 
 /**
@@ -107,7 +114,10 @@ export function purifyHtml(content: string, maxChars = 0): string {
     .replace(/&nbsp;/g, ' ');
 
   // Collapse whitespace
-  text = text.replace(/\n\s*\n/g, '\n').replace(/[ \t]+/g, ' ').trim();
+  text = text
+    .replace(/\n\s*\n/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
 
   if (maxChars > 0 && text.length > maxChars) {
     text = text.slice(0, maxChars) + `\n...[purified HTML truncated at ${maxChars} chars]`;
@@ -133,7 +143,13 @@ export function purifyJson(content: string, options: PurifyOptions = {}): string
       : minified;
   }
 
-  if (jsonKey && parsed && typeof parsed === 'object' && !Array.isArray(parsed) && jsonKey in parsed) {
+  if (
+    jsonKey &&
+    parsed &&
+    typeof parsed === 'object' &&
+    !Array.isArray(parsed) &&
+    jsonKey in parsed
+  ) {
     parsed = (parsed as Record<string, unknown>)[jsonKey];
   }
 
@@ -196,7 +212,11 @@ export function purifyStackTrace(content: string, options: PurifyOptions = {}): 
 /**
  * Route output to the appropriate purifier based on content shape.
  */
-export function purifyObservation(content: string, toolName?: string, options: PurifyOptions = {}): string {
+export function purifyObservation(
+  content: string,
+  toolName?: string,
+  options: PurifyOptions = {},
+): string {
   if (!content || content.length === 0) return content;
 
   // Never purify away error signals blindly
@@ -222,7 +242,7 @@ export function purifyObservation(content: string, toolName?: string, options: P
     // Search results: collapse duplicate blank lines and trim per-line
     return content
       .split('\n')
-      .map(l => l.trimEnd())
+      .map((l) => l.trimEnd())
       .filter((l, i, arr) => l.length > 0 || (i > 0 && arr[i - 1].length > 0))
       .join('\n');
   }
@@ -234,7 +254,13 @@ export function purifyObservation(content: string, toolName?: string, options: P
  * Purify a batch of tool results, preserving error outputs.
  */
 export function purifyToolResults(
-  results: Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }>,
+  results: Array<{
+    toolCallId: string;
+    name: string;
+    output: string;
+    error?: string;
+    durationMs: number;
+  }>,
 ): Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }> {
   return results.map((r) => {
     if (r.error) return r;

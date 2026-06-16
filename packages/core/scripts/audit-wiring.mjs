@@ -39,7 +39,7 @@ function collectFiles(dir, out = []) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       collectFiles(full, out);
-    } else if (entry.isFile() && (full.endsWith('.ts') && !full.endsWith('.d.ts'))) {
+    } else if (entry.isFile() && full.endsWith('.ts') && !full.endsWith('.d.ts')) {
       out.push(full);
     }
   }
@@ -67,7 +67,7 @@ function countImportSites(filePath, modulePathSuffix) {
   const baseName = escaped.split('/').pop();
   const re = new RegExp(
     `from\\s+['"](?:[^'"]*${escaped}['"]|\\.\\/${baseName}['"]|\\.\\.\\/${baseName}['"]|\\.\\.\\/\\.\\.\\/${baseName}['"])`,
-    'g'
+    'g',
   );
   return (source.match(re) || []).length;
 }
@@ -109,9 +109,7 @@ for (const mode of matrix.modes) {
     }
 
     const minRequired = mod.minCallSites ?? 1;
-    const status = externalImportSites >= minRequired
-      ? 'ok'
-      : (mod.optional ? 'warn' : 'fail');
+    const status = externalImportSites >= minRequired ? 'ok' : mod.optional ? 'warn' : 'fail';
     if (status === 'fail') fail++;
     if (status === 'warn') warn++;
     rows.push({
@@ -130,19 +128,23 @@ for (const mode of matrix.modes) {
 
 const pad = (s, n) => String(s).padEnd(n);
 console.log('');
-console.log(`${pad('Mode', 5)} ${pad('Module', 32)} ${pad('Imports', 8)} ${pad('Self', 5)} ${pad('Min', 4)} ${pad('Status', 7)} Tier`);
+console.log(
+  `${pad('Mode', 5)} ${pad('Module', 32)} ${pad('Imports', 8)} ${pad('Self', 5)} ${pad('Min', 4)} ${pad('Status', 7)} Tier`,
+);
 console.log('-'.repeat(85));
 for (const r of rows) {
   const color = r.status === 'ok' ? OK : r.status === 'warn' ? WARN : FAIL;
   const label = r.status === 'ok' ? 'PASS' : r.status === 'warn' ? 'WARN' : 'FAIL';
-  console.log(`${pad('M' + r.mode, 5)} ${pad(r.module, 32)} ${pad(String(r.callSites), 8)} ${pad(String(r.selfRefs), 5)} ${pad(String(r.minRequired), 4)} ${color}${pad(label, 7)}${RESET} ${r.tier}`);
+  console.log(
+    `${pad('M' + r.mode, 5)} ${pad(r.module, 32)} ${pad(String(r.callSites), 8)} ${pad(String(r.selfRefs), 5)} ${pad(String(r.minRequired), 4)} ${color}${pad(label, 7)}${RESET} ${r.tier}`,
+  );
 }
 console.log('-'.repeat(85));
 console.log(`Total modules audited: ${rows.length}`);
-console.log(`  Pass: ${rows.filter(r => r.status === 'ok').length}`);
+console.log(`  Pass: ${rows.filter((r) => r.status === 'ok').length}`);
 console.log(`  Warn: ${warn}`);
 console.log(`  Fail: ${fail}`);
-if (rows.some(r => r.callSites === 0 && r.status !== 'warn')) {
+if (rows.some((r) => r.callSites === 0 && r.status !== 'warn')) {
   console.log('');
   console.log('Unwired modules (import sites: 0):');
   for (const r of rows) {
@@ -154,8 +156,12 @@ if (rows.some(r => r.callSites === 0 && r.status !== 'warn')) {
 console.log('');
 
 if (fail > 0) {
-  console.error(`${FAIL}[audit-wiring] FAIL${RESET}: ${fail} module(s) have 0 import sites in src/.`);
-  console.error('These are reversibility components that exist as files but are not wired into the runtime.');
+  console.error(
+    `${FAIL}[audit-wiring] FAIL${RESET}: ${fail} module(s) have 0 import sites in src/.`,
+  );
+  console.error(
+    'These are reversibility components that exist as files but are not wired into the runtime.',
+  );
   console.error('See docs/rfcs/reversibility-rfc-v2.md for the wire-up tiers.');
   process.exit(1);
 }

@@ -34,15 +34,17 @@ export type {
 
 export { ModelRouter, getModelRouter, resetModelRouter } from './modelRouter';
 export { MessageBus, getMessageBus, resetMessageBus } from './messageBus';
-export {
-  ExecutionTraceRecorder,
-  getTraceRecorder,
-  resetTraceRecorder,
-} from './executionTrace';
+export { ExecutionTraceRecorder, getTraceRecorder, resetTraceRecorder } from './executionTrace';
 export { AgentRuntime } from './agentRuntime';
 export type { AgentRuntimeInterface } from './agentRuntimeInterface';
 export type { EmbeddingFunction } from './embedding';
-export { MockEmbeddingFunction, cosineSimilarity, l2Distance, InMemoryEmbeddingStore, calculateMemoryScore } from './embedding';
+export {
+  MockEmbeddingFunction,
+  cosineSimilarity,
+  l2Distance,
+  InMemoryEmbeddingStore,
+  calculateMemoryScore,
+} from './embedding';
 export { OpenAIProvider } from './providers/openaiProvider';
 export { AnthropicProvider } from './providers/anthropicProvider';
 export { GoogleProvider } from './providers/googleProvider';
@@ -65,7 +67,13 @@ export { XAIProvider } from './providers/xaiProvider';
 export { AnyscaleProvider } from './providers/anyscaleProvider';
 export { DeepInfraProvider } from './providers/deepinfraProvider';
 export { AgnesProvider } from './providers/agnesProvider';
-export { BaseOpenAICompatibleProvider, callOpenAICompatibleAPI, parseOpenAIStream, parseOpenAIResponse, buildOpenAIBody } from './providers/baseOpenAICompatible';
+export {
+  BaseOpenAICompatibleProvider,
+  callOpenAICompatibleAPI,
+  parseOpenAIStream,
+  parseOpenAIResponse,
+  buildOpenAIBody,
+} from './providers/baseOpenAICompatible';
 export { MCPRemoteRuntime } from './mcpRemoteRuntime';
 export type { MCPRemoteRuntimeConfig } from './mcpRemoteRuntime';
 export { SSEStream } from './sseStream';
@@ -82,23 +90,45 @@ export {
   planSpeculativeExecution,
   isSpeculativelySafe,
 } from './speculativeExecutor';
-export { OpenTelemetryExporter, getOTelExporter, resetOTelExporter, executionTraceToOtlpSpans } from './openTelemetryExporter';
+export {
+  OpenTelemetryExporter,
+  getOTelExporter,
+  resetOTelExporter,
+  executionTraceToOtlpSpans,
+} from './openTelemetryExporter';
 export type { OTelExporterConfig, OTelSpan } from './openTelemetryExporter';
 export { UnifiedVerificationPipeline } from './unifiedVerification';
 export { detectTaskType, classifyProvisionIntent } from './taskAnalyzer';
-export type { VerificationSignal, VerificationReport, UVPTaskContext, UVPConfig, TaskType, ProvisionIntentScores } from './unifiedVerificationTypes';
+export type {
+  VerificationSignal,
+  VerificationReport,
+  UVPTaskContext,
+  UVPConfig,
+  TaskType,
+  ProvisionIntentScores,
+} from './unifiedVerificationTypes';
 export { StateCheckpointer } from './stateCheckpointer';
 export type { CheckpointState } from './stateCheckpointer';
 export { ReliabilityEngine } from './reliabilityEngine';
 export type { ReliabilityEngineConfig, ReliabilityStats } from './reliabilityEngine';
 export { PrivacyRouter, getPrivacyRouter, resetPrivacyRouter } from './privacyRouter';
-export type { PrivacyRouterConfig, PrivacyDecision, PrivacyRoute, SensitivityMatch, SensitivityCategory } from './privacyRouter';
+export type {
+  PrivacyRouterConfig,
+  PrivacyDecision,
+  PrivacyRoute,
+  SensitivityMatch,
+  SensitivityCategory,
+} from './privacyRouter';
 export { PersistentTraceStore } from './traceStore';
 export type { TraceStore } from './traceStore';
 export { DeadLetterQueue } from './deadLetterQueue';
 export type { DeadLetterEntry, DLQCategory } from './deadLetterQueue';
 export { StepErrorBoundary } from './stepErrorBoundary';
-export type { RecoveryStrategy, ErrorBoundaryConfig, ErrorBoundaryResult } from './stepErrorBoundary';
+export type {
+  RecoveryStrategy,
+  ErrorBoundaryConfig,
+  ErrorBoundaryResult,
+} from './stepErrorBoundary';
 export { CompensationRegistry } from './compensationRegistry';
 export type { CompensableAction, CompensationHandler } from './compensationRegistry';
 export { AgentInbox } from './agentInbox';
@@ -108,30 +138,60 @@ export type { TeamSpec, TeamMember, TeamRole } from './teamRegistry';
 export { AgentHandoff } from './agentHandoff';
 export type { HandoffRequest, HandoffStatus } from './agentHandoff';
 export { TokenGovernor, getTokenGovernor, resetTokenGovernor } from './tokenGovernor';
-export type { OptimizationStrategy, BudgetState, GovernorDecision, GovernorConfig, TaskCategory } from './tokenGovernor';
+export type {
+  OptimizationStrategy,
+  BudgetState,
+  GovernorDecision,
+  GovernorConfig,
+  TaskCategory,
+} from './tokenGovernor';
 export { ToolResultCache } from './toolResultCache';
 export type { ToolCacheConfig, ToolCacheStats } from './toolResultCache';
 export { ToolOutputManager } from './toolOutputManager';
 export type { ToolOutputConfig, ManagedOutput, TurnBudgetState } from './toolOutputManager';
 export { ToolOrchestrator } from './toolOrchestrator';
-export type { OrchestratorConfig, OrchestratedResult, ToolExecutionPlan, ToolExecutionContext } from './toolOrchestrator';
-export { ToolAvailabilityManager, evaluate, allOf, anyOf, not, always, never, earlySteps, budgetRelaxed, budgetNotCritical, taskType, notYetUsed, requiresTool, maxErrors, createDefaultRules } from './toolAvailability';
-export type { AvailabilityContext, AvailabilityExpression, ToolAvailabilityRule } from './toolAvailability';
+export type {
+  OrchestratorConfig,
+  OrchestratedResult,
+  ToolExecutionPlan,
+  ToolExecutionContext,
+} from './toolOrchestrator';
+export {
+  ToolAvailabilityManager,
+  evaluate,
+  allOf,
+  anyOf,
+  not,
+  always,
+  never,
+  earlySteps,
+  budgetRelaxed,
+  budgetNotCritical,
+  taskType,
+  notYetUsed,
+  requiresTool,
+  maxErrors,
+  createDefaultRules,
+} from './toolAvailability';
+export type {
+  AvailabilityContext,
+  AvailabilityExpression,
+  ToolAvailabilityRule,
+} from './toolAvailability';
 export { ToolPlanner } from './toolPlanner';
-export type { ExecutionPlan, ExecutionStage, DependencyEdge, ResourceConflict } from './toolPlanner';
+export type {
+  ExecutionPlan,
+  ExecutionStage,
+  DependencyEdge,
+  ResourceConflict,
+} from './toolPlanner';
 export {
   exportSOPFromTrace,
   exportSOPFromResult,
   formatSOPAsMarkdown,
   formatSOPAsContext,
 } from './sopExport';
-export type {
-  SOPTemplate,
-  SOPPhase,
-  SOPDecision,
-  SOPToolCall,
-  SOPFileAccess,
-} from './sopExport';
+export type { SOPTemplate, SOPPhase, SOPDecision, SOPToolCall, SOPFileAccess } from './sopExport';
 
 export {
   listSOPs,

@@ -77,7 +77,8 @@ describe('P2: LearnedWeights tenant isolation', () => {
       const pr = new PheromoneRouter();
       const lw = new LearnedWeights(pr);
       for (let i = 0; i < 5; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0); // no tenantId
-      for (let i = 0; i < 5; i++) lw.recordSignal('CODING', 'SEQUENTIAL', true, 1.0, DEFAULT_TENANT_ID);
+      for (let i = 0; i < 5; i++)
+        lw.recordSignal('CODING', 'SEQUENTIAL', true, 1.0, DEFAULT_TENANT_ID);
       // Both writes land in the default bucket — total 2 triples, both in default.
       expect(lw.listTenants()).toEqual([DEFAULT_TENANT_ID]);
       expect(lw.size()).toBe(2);
@@ -198,8 +199,8 @@ describe('P2: PheromoneRouter tenant isolation', () => {
     ];
     const aBiased = pr.biasFor('a', 'CODING', scores);
     const bBiased = pr.biasFor('b', 'CODING', scores);
-    const aP = aBiased.find(s => s.topology === 'PARALLEL')!;
-    const bP = bBiased.find(s => s.topology === 'PARALLEL')!;
+    const aP = aBiased.find((s) => s.topology === 'PARALLEL')!;
+    const bP = bBiased.find((s) => s.topology === 'PARALLEL')!;
     expect(aP.pheromoneBias).toBeGreaterThan(0);
     expect(bP.pheromoneBias).toBeLessThan(0);
   });

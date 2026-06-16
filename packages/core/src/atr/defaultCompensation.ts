@@ -20,7 +20,9 @@ import { getGlobalLogger } from '../logging';
 const log = getGlobalLogger();
 
 /** Marker for actions we acknowledge cannot be undone. */
-async function nonCompensable(action: CompensableAction): Promise<{ success: false; error: string }> {
+async function nonCompensable(
+  action: CompensableAction,
+): Promise<{ success: false; error: string }> {
   log.warn('ATR', `Tool ${action.toolName} is non-compensable; side effect committed`, {
     actionId: action.actionId,
     description: action.description,
@@ -37,7 +39,9 @@ async function nonCompensable(action: CompensableAction): Promise<{ success: fal
  *   <originalPath>.atr-snapshot.<actionId>
  * This is the recovery side of the snapshot-before-mutate pattern.
  */
-async function restoreFromSnapshot(action: CompensableAction): Promise<{ success: boolean; error?: string }> {
+async function restoreFromSnapshot(
+  action: CompensableAction,
+): Promise<{ success: boolean; error?: string }> {
   const filePath = action.args.path ?? action.args.filePath;
   if (typeof filePath !== 'string') return { success: true };
   const snapshotPath = `${filePath}.atr-snapshot.${action.actionId}`;
@@ -73,7 +77,10 @@ export function takeSnapshot(filePath: string, actionId: string): void {
   }
 }
 
-export const defaultCompensationHandlers: Record<string, (action: CompensableAction) => Promise<{ success: boolean; error?: string }>> = {
+export const defaultCompensationHandlers: Record<
+  string,
+  (action: CompensableAction) => Promise<{ success: boolean; error?: string }>
+> = {
   file_write: restoreFromSnapshot,
   file_edit: restoreFromSnapshot,
   apply_patch: restoreFromSnapshot,
@@ -122,7 +129,12 @@ export const defaultCompensationHandlers: Record<string, (action: CompensableAct
  * Idempotent — safe to call multiple times.
  */
 export function registerCompensationHandler(
-  ledger: { registerCompensation: (toolName: string, handler: (action: CompensableAction) => Promise<{ success: boolean; error?: string }>) => void },
+  ledger: {
+    registerCompensation: (
+      toolName: string,
+      handler: (action: CompensableAction) => Promise<{ success: boolean; error?: string }>,
+    ) => void;
+  },
   toolName?: string,
   handler?: (action: CompensableAction) => Promise<{ success: boolean; error?: string }>,
 ): void {
@@ -143,7 +155,20 @@ export interface MutationDetectionResult {
   handlerName?: string;
 }
 
-const HEURISTIC_KEYWORDS = ['write', 'edit', 'delete', 'mkdir', 'mv', 'cp', 'bash', 'shell', 'git', 'patch', 'fixer', 'refiner'];
+const HEURISTIC_KEYWORDS = [
+  'write',
+  'edit',
+  'delete',
+  'mkdir',
+  'mv',
+  'cp',
+  'bash',
+  'shell',
+  'git',
+  'patch',
+  'fixer',
+  'refiner',
+];
 
 /**
  * Resolve whether a tool is a mutation, using the explicit `mutation` flag

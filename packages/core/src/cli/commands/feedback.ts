@@ -44,7 +44,7 @@ function loadFeedback(): FeedbackEntry[] {
   if (!fs.existsSync(file)) return [];
   try {
     const lines = fs.readFileSync(file, 'utf-8').trim().split('\n').filter(Boolean);
-    return lines.map(line => JSON.parse(line));
+    return lines.map((line) => JSON.parse(line));
   } catch {
     return [];
   }
@@ -100,7 +100,9 @@ function showFeedbackStats() {
   kv('Total feedback', `${entries.length}`, $.cyan);
   if (ratingCount > 0) {
     const avg = (totalRating / ratingCount).toFixed(1);
-    const stars = '★'.repeat(Math.round(totalRating / ratingCount)) + '☆'.repeat(5 - Math.round(totalRating / ratingCount));
+    const stars =
+      '★'.repeat(Math.round(totalRating / ratingCount)) +
+      '☆'.repeat(5 - Math.round(totalRating / ratingCount));
     kv('Average rating', `${avg}/5 ${stars}`, $.yellow);
   }
   kv('Ratings', `${byType.rating}`, $.dim);
@@ -114,7 +116,14 @@ function showFeedbackStats() {
     console.log();
     console.log(`  ${$.dim}Recent feedback:${$.reset}`);
     for (const e of recent) {
-      const typeIcon = e.type === 'bug' ? `${$.red}🐛${$.reset}` : e.type === 'feature' ? `${$.cyan}💡${$.reset}` : e.type === 'rating' ? `${$.yellow}⭐${$.reset}` : `${$.dim}💬${$.reset}`;
+      const typeIcon =
+        e.type === 'bug'
+          ? `${$.red}🐛${$.reset}`
+          : e.type === 'feature'
+            ? `${$.cyan}💡${$.reset}`
+            : e.type === 'rating'
+              ? `${$.yellow}⭐${$.reset}`
+              : `${$.dim}💬${$.reset}`;
       const rating = e.rating ? ` ${'★'.repeat(e.rating)}${'☆'.repeat(5 - e.rating)}` : '';
       const time = new Date(e.timestamp).toLocaleDateString();
       const msg = e.message.slice(0, 60) + (e.message.length > 60 ? '...' : '');
@@ -180,7 +189,9 @@ export async function cmdFeedback(args: string[]) {
     };
     appendFeedback(entry);
     const stars = '★'.repeat(rating) + '☆'.repeat(5 - rating);
-    console.log(`  ${$.green}✓${$.reset} Rating saved: ${$.yellow}${stars}${$.reset} ${$.dim}(${entry.id})${$.reset}\n`);
+    console.log(
+      `  ${$.green}✓${$.reset} Rating saved: ${$.yellow}${stars}${$.reset} ${$.dim}(${entry.id})${$.reset}\n`,
+    );
     return;
   }
 
