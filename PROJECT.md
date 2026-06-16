@@ -20,7 +20,10 @@ Commander/
 │   └── web/          # Vite + React frontend
 ├── packages/
 │   └── core/         # Domain models and logic
-├── docs/             # PRD, research notes
+├── packages/
+│   ├── core/         # Multi-agent orchestration engine
+│   ├── sdk/          # Agent SDK
+│   └── plugin-sdk/   # Plugin development kit
 └── memory/           # Memory index (Layer 2)
 ```
 
@@ -85,7 +88,7 @@ pnpm dev
 | `apps/api/src/memoryStore.ts` | ProjectMemory CRUD |
 | `apps/api/src/governanceObserver.ts` | Governance statistics |
 | `packages/core/src/index.ts` | Domain types and logic |
-| `docs/iterative-research.md` | Research findings |
+| `AGENTS.md` | Architecture & operator's manual |
 
 ## Memory System
 
@@ -124,7 +127,6 @@ pnpm dev
 
 ## Future Improvements
 
-See `docs/iterative-research.md` for research-backed improvements:
 - Token Budget mechanism
 - Parallel agent execution
 - Semantic memory retrieval

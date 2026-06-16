@@ -2,7 +2,7 @@
   <img src="https://img.shields.io/badge/GAIA-TBD-lightgrey?style=flat-square" />
   <img src="https://img.shields.io/badge/PinchBench-97.7%25-green?style=flat-square" />
   <img src="https://img.shields.io/badge/HumanEval+-91.5%25-orange?style=flat-square" />
-  <img src="https://img.shields.io/badge/providers-21-purple?style=flat-square" />
+  <img src="https://img.shields.io/badge/providers-22-purple?style=flat-square" />
   <img src="https://img.shields.io/badge/topologies-8-red?style=flat-square" />
   <img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" />
 </p>

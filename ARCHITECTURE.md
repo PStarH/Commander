@@ -99,12 +99,21 @@ Token budget enforcement, provider pooling, and cost-aware routing.
 ## CLI Usage
 
 ```bash
-commander "task"              # Quick plan (default, no API key needed)
 commander run "task"          # Full execution with streaming progress
-commander plan "task"         # Show deliberation plan
-commander watch "task"        # Execute with real-time SSE stream
-commander company "task"      # Company mode execution
+commander plan "task"         # Show deliberation plan (alias: run --dry-run)
+commander watch "task"        # Execute with real-time SSE stream (alias: run --stream)
+commander company "task"      # Enterprise: quality gating + memory
+commander swarm "task"        # Recursive decomposition + parallel
+commander drive "task"        # Autonomous step-by-step execution
+commander goal "task"         # Multi-round convergence loop
+commander review --commit     # Code review with P0-P3 findings
 commander status              # Show system status
+commander config              # View or change settings
+commander doctor              # Run diagnostics
+commander history             # Session management
+commander gui                 # Web dashboard (Agent War Room)
+commander tui                 # Terminal dashboard
+commander skill               # Learnable skill management
 commander help                # Show this help
 ```
 
@@ -112,12 +121,15 @@ commander help                # Show this help
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/orchestrator/execute` | POST | Full multi-agent execution |
-| `/api/orchestrator/deliberate` | POST | Task deliberation only |
-| `/api/orchestrator/stream` | GET | SSE stream for real-time agent events |
-| `/api/runtime/execute` | POST | Single agent execution |
-| `/api/runtime/traces` | GET | Execution trace history |
-| `/api/runtime/learner/stats` | GET | Meta-learner statistics |
+| `/api/v1/execute` | POST | Agent execution |
+| `/api/v1/mcp` | POST | MCP JSON-RPC 2.0 (tool discovery + execution) |
+| `/api/v1/runtime` | POST | Create runtime session |
+| `/api/v1/runtime/{id}` | GET/DELETE | Get or delete runtime session |
+| `/api/v1/bus` | POST | Message bus publish |
+| `/api/v1/status` | GET | System status |
+| `/health` | GET | Health check (bypasses auth + rate limit) |
+| `/readyz` | GET | Readiness probe |
+| `/stream/runtime/{id}` | GET | SSE stream for real-time agent events |
 
 ## Environment Variables
 
