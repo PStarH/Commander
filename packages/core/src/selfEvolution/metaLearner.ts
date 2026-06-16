@@ -123,7 +123,9 @@ export class MetaLearner {
     try {
       // @ts-ignore — best-effort metric, may not be on collector yet
       getMetricsCollector().recordMetaLearnerExperienceCount(this.experiences.length);
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
   // ========================================================================
@@ -149,10 +151,7 @@ export class MetaLearner {
    * Select the runner-up (second-best) strategy for shadow mode comparison.
    */
   selectShadowStrategy(taskType: string): string | null {
-    return this.selector.selectShadowStrategy(
-      taskType,
-      this.perfTracker.getStrategyPerformance(),
-    );
+    return this.selector.selectShadowStrategy(taskType, this.perfTracker.getStrategyPerformance());
   }
 
   /**
@@ -202,16 +201,53 @@ export class MetaLearner {
   // Query Methods
   // ========================================================================
 
-  getStrategyScores(taskType: string): Array<{ strategy: string; score: number; trials: number; avgDurationMs?: number; p95DurationMs?: number }> {
+  getStrategyScores(taskType: string): Array<{
+    strategy: string;
+    score: number;
+    trials: number;
+    avgDurationMs?: number;
+    p95DurationMs?: number;
+  }> {
     return this.selector.getStrategyScores(taskType, this.perfTracker.getStrategyPerformance());
+  }
+
+  /**
+   * Calculate adjusted scores for all strategies on a task type.
+   * Mirrors the scoring used by selectStrategy/selectShadowStrategy.
+   */
+  calculateAdjustedScores(taskType: string): Array<{
+    name: string;
+    score: number;
+    trials: number;
+    avgDurationMs?: number;
+    p95DurationMs?: number;
+  }> {
+    return this.selector
+      .getStrategyScores(taskType, this.perfTracker.getStrategyPerformance())
+      .map((s) => ({
+        name: s.strategy,
+        score: s.score,
+        trials: s.trials,
+        avgDurationMs: s.avgDurationMs,
+        p95DurationMs: s.p95DurationMs,
+      }));
   }
 
   getTrackedTaskTypes(): string[] {
     return this.selector.getTrackedTaskTypes();
   }
 
-  getStrategyScoresForModel(modelId: string): Array<{ strategy: string; score: number; trials: number; avgDurationMs?: number; p95DurationMs?: number }> {
-    return this.crossModel.getStrategyScoresForModel(modelId, this.perfTracker.getStrategyPerformance());
+  getStrategyScoresForModel(modelId: string): Array<{
+    strategy: string;
+    score: number;
+    trials: number;
+    avgDurationMs?: number;
+    p95DurationMs?: number;
+  }> {
+    return this.crossModel.getStrategyScoresForModel(
+      modelId,
+      this.perfTracker.getStrategyPerformance(),
+    );
   }
 
   getPerModelStats(): PerModelStrategyStats[] {
@@ -258,7 +294,7 @@ export class MetaLearner {
 
   getExperiences(taskType?: string): ExecutionExperience[] {
     if (taskType) {
-      return this.experiences.filter(e => e.taskType === taskType);
+      return this.experiences.filter((e) => e.taskType === taskType);
     }
     return [...this.experiences];
   }
@@ -313,9 +349,10 @@ export class MetaLearner {
     totalReflections: number;
   } {
     const strategies = Array.from(this.perfTracker.getStrategyPerformance().values());
-    const avgSuccessRate = strategies.length > 0
-      ? strategies.reduce((s, sp) => s + sp.successRate, 0) / strategies.length
-      : 0;
+    const avgSuccessRate =
+      strategies.length > 0
+        ? strategies.reduce((s, sp) => s + sp.successRate, 0) / strategies.length
+        : 0;
 
     return {
       totalExperiences: this.experiences.length,
@@ -330,11 +367,21 @@ export class MetaLearner {
   // Private helpers
   // ========================================================================
 
-  private analyzeModelPerformance(): Map<string, { totalRuns: number; successRate: number; avgTokens: number }> {
-    const modelMap = new Map<string, { totalRuns: number; successCount: number; totalTokens: number }>();
+  private analyzeModelPerformance(): Map<
+    string,
+    { totalRuns: number; successRate: number; avgTokens: number }
+  > {
+    const modelMap = new Map<
+      string,
+      { totalRuns: number; successCount: number; totalTokens: number }
+    >();
 
     for (const exp of this.experiences) {
-      const entry = modelMap.get(exp.modelUsed) ?? { totalRuns: 0, successCount: 0, totalTokens: 0 };
+      const entry = modelMap.get(exp.modelUsed) ?? {
+        totalRuns: 0,
+        successCount: 0,
+        totalTokens: 0,
+      };
       entry.totalRuns++;
       if (exp.success) entry.successCount++;
       entry.totalTokens += exp.tokenCost;
@@ -407,8 +454,13 @@ export class MetaLearner {
 
 let _metaLearnerPath: string | undefined;
 
-const metaLearnerSingleton = createTenantAwareSingleton(() =>
-  new MetaLearner(500, 5, _metaLearnerPath ?? nodePath.join(process.cwd(), '.commander_memory', 'meta-learner.json')),
+const metaLearnerSingleton = createTenantAwareSingleton(
+  () =>
+    new MetaLearner(
+      500,
+      5,
+      _metaLearnerPath ?? nodePath.join(process.cwd(), '.commander_memory', 'meta-learner.json'),
+    ),
 );
 
 export function getMetaLearner(persistPath?: string): MetaLearner {

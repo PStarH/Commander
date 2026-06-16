@@ -37,25 +37,44 @@ async function provisionTool(
   const tool = tools.get(config.toolName);
   if (!tool) return false;
 
-  const toolCall = { id: config.toolCallId, name: config.toolName, arguments: config.buildArgs(goal) };
+  const toolCall = {
+    id: config.toolCallId,
+    name: config.toolName,
+    arguments: config.buildArgs(goal),
+  };
   const cached = toolCache.get(toolCall);
 
   if (cached && !cached.error) {
-    request.messages.push({ role: 'system', content: `[Tool: ${config.label}]\n${cached.output.slice(0, config.maxOutputChars)}` });
+    request.messages.push({
+      role: 'system',
+      content: `[Tool: ${config.label}]\n${cached.output.slice(0, config.maxOutputChars)}`,
+    });
     return true;
   }
 
   try {
     const result = await tool.execute(toolCall.arguments);
-    const isValid = config.validateOutput ? config.validateOutput(result) : (result && !result.startsWith('Error'));
+    const isValid = config.validateOutput
+      ? config.validateOutput(result)
+      : result && !result.startsWith('Error');
     if (isValid) {
-      const toolResult: ToolResult = { toolCallId: config.toolCallId, name: config.toolName, output: result, durationMs: 0 };
-      await toolCache.set(toolCall, toolResult);
-      request.messages.push({ role: 'system', content: `[Tool: ${config.label}]\n${result.slice(0, config.maxOutputChars)}` });
+      const toolResult: ToolResult = {
+        toolCallId: config.toolCallId,
+        name: config.toolName,
+        output: result,
+        durationMs: 0,
+      };
+      toolCache.set(toolCall, toolResult);
+      request.messages.push({
+        role: 'system',
+        content: `[Tool: ${config.label}]\n${result.slice(0, config.maxOutputChars)}`,
+      });
       return true;
     }
   } catch (e) {
-    getGlobalLogger().debug('AgentRuntime', `Provision ${config.toolName} failed`, { error: (e as Error)?.message });
+    getGlobalLogger().debug('AgentRuntime', `Provision ${config.toolName} failed`, {
+      error: (e as Error)?.message,
+    });
   }
 
   return false;
@@ -71,7 +90,9 @@ const PROVISION_CONFIGS: ProvisionConfig[] = [
     toolCallId: 'provision_calc',
     label: 'Calculation result',
     maxOutputChars: 500,
-    buildArgs: (goal) => ({ code: `import math\nprint(${goal.replace(/[^0-9+\-*/.() ]/g, '').trim()})` }),
+    buildArgs: (goal) => ({
+      code: `import math\nprint(${goal.replace(/[^0-9+\-*/.() ]/g, '').trim()})`,
+    }),
   },
   {
     toolName: 'web_search',
@@ -86,7 +107,9 @@ const PROVISION_CONFIGS: ProvisionConfig[] = [
     label: 'File content',
     maxOutputChars: 2000,
     buildArgs: (goal) => {
-      const fileMatch = goal.match(/(?:read|open|analyze|load|parse)\s+(?:the\s+)?(?:file\s+)?['"]?([\w./\\-]+\.[a-z]{2,4})['"]?/i);
+      const fileMatch = goal.match(
+        /(?:read|open|analyze|load|parse)\s+(?:the\s+)?(?:file\s+)?['"]?([\w./\\-]+\.[a-z]{2,4})['"]?/i,
+      );
       return { path: fileMatch?.[1] ?? '' };
     },
     validateOutput: (output) => {
@@ -101,7 +124,12 @@ const PROVISION_CONFIGS: ProvisionConfig[] = [
     maxOutputChars: 2000,
     buildArgs: (goal) => {
       const patternMatch = goal.match(/(TODO|FIXME|HACK|XXX|comment)/i);
-      const pattern = patternMatch?.[1] ?? goal.replace(/count |find |search |all |the |in |this |project |code /gi, '').trim().slice(0, 50);
+      const pattern =
+        patternMatch?.[1] ??
+        goal
+          .replace(/count |find |search |all |the |in |this |project |code /gi, '')
+          .trim()
+          .slice(0, 50);
       return { pattern, maxResults: 30, contextLines: 2 };
     },
     validateOutput: (output) => !output.startsWith('Error') && !output.startsWith('No results'),

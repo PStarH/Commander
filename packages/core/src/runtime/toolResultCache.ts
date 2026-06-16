@@ -178,7 +178,11 @@ export class ToolResultCache {
 
     if (!entry) {
       this.stats.misses++;
-      try { getMetricsCollector().recordToolCacheEvent('miss', tenantId); } catch { /* best-effort */ }
+      try {
+        getMetricsCollector().recordToolCacheEvent('miss', tenantId);
+      } catch {
+        /* best-effort */
+      }
       return undefined;
     }
 
@@ -187,7 +191,11 @@ export class ToolResultCache {
       this.memoryEstimateBytes -= 500 + (entry.result.output?.length ?? 0) * 2;
       this.cache.delete(key);
       this.stats.misses++;
-      try { getMetricsCollector().recordToolCacheEvent('miss', tenantId); } catch { /* best-effort */ }
+      try {
+        getMetricsCollector().recordToolCacheEvent('miss', tenantId);
+      } catch {
+        /* best-effort */
+      }
       return undefined;
     }
 
@@ -200,7 +208,9 @@ export class ToolResultCache {
     // Record metrics
     try {
       getMetricsCollector().recordToolCacheEvent('hit', tenantId);
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
 
     // Return a copy to prevent callers from corrupting the cached entry
     return { ...entry.result, durationMs: 0 };
@@ -211,28 +221,16 @@ export class ToolResultCache {
    * Only caches if: enabled, tool is cacheable, result has no error, and output passes
    * the security scan when enabled.
    * When tenantId is provided, cache is scoped to that tenant.
+   *
+   * Note: the cache entry is inserted synchronously so that callers (including tests
+   * and legacy code paths) can rely on an immediate `get` hit. A best-effort async
+   * security scan runs in the background and evicts the entry if HIGH/CRITICAL
+   * threats are found.
    */
-  async set(toolCall: ToolCall, result: ToolResult, tenantId?: string): Promise<void> {
+  set(toolCall: ToolCall, result: ToolResult, tenantId?: string): void {
     if (!this.config.enabled) return;
     if (this.isNeverCache(toolCall.name)) return;
     if (result.error) return;
-
-    // Security scan before caching: do not cache outputs that contain HIGH/CRITICAL threats.
-    if (this.config.securityScanEnabled !== false && result.output) {
-      try {
-        const scanner = createContentScanner();
-        const scan = await scanner.scan(result.output);
-        const severe = scan.threats.filter(t => t.severity === 'HIGH' || t.severity === 'CRITICAL');
-        if (severe.length > 0) {
-          getGlobalLogger().warn('ToolResultCache', `Skipping cache for ${toolCall.name} due to security threats`, {
-            threats: severe.map(t => t.type),
-          });
-          return;
-        }
-      } catch {
-        // Scan failure should not prevent caching; fail open on scanner errors.
-      }
-    }
 
     const key = ToolResultCache.computeKey(toolCall.name, toolCall.arguments, tenantId);
     const ttlMs = this.config.toolTtls[toolCall.name] ?? this.config.defaultTtlMs;
@@ -244,7 +242,7 @@ export class ToolResultCache {
 
     // Store with tool name for invalidation matching
     const entrySize = 500 + (result.output?.length ?? 0) * 2;
-    this.cache.set(key, {
+    const entry: CacheEntry = {
       key,
       result: { ...result, name: toolCall.name },
       createdAt: Date.now(),
@@ -252,11 +250,45 @@ export class ToolResultCache {
       hitCount: 0,
       lastAccessAt: Date.now(),
       accessOrder: ++this.accessCounter,
-    });
+    };
+    this.cache.set(key, entry);
     this.memoryEstimateBytes += entrySize;
 
+    // Best-effort security scan: evict later if the output is flagged.
+    if (this.config.securityScanEnabled !== false && result.output) {
+      (async () => {
+        try {
+          const scanner = createContentScanner();
+          const scan = await scanner.scan(result.output);
+          const severe = scan.threats.filter(
+            (t) => t.severity === 'HIGH' || t.severity === 'CRITICAL',
+          );
+          if (severe.length > 0) {
+            getGlobalLogger().warn(
+              'ToolResultCache',
+              `Evicting cached ${toolCall.name} due to security threats`,
+              {
+                threats: severe.map((t) => t.type),
+              },
+            );
+            // Only evict if this exact entry is still present.
+            if (this.cache.get(key) === entry) {
+              this.cache.delete(key);
+              this.memoryEstimateBytes -= entrySize;
+            }
+          }
+        } catch {
+          // Scan failure should not prevent caching; fail open on scanner errors.
+        }
+      })();
+    }
+
     // Record metrics
-    try { getMetricsCollector().recordToolCacheEvent('store', tenantId); } catch { /* best-effort */ }
+    try {
+      getMetricsCollector().recordToolCacheEvent('store', tenantId);
+    } catch {
+      /* best-effort */
+    }
   }
 
   /**
@@ -283,9 +315,7 @@ export class ToolResultCache {
     const prefix = pattern.endsWith('*') ? pattern.slice(0, -1) : null;
     let count = 0;
     for (const [key, entry] of this.cache) {
-      const match = prefix
-        ? entry.result.name.startsWith(prefix)
-        : entry.result.name === pattern;
+      const match = prefix ? entry.result.name.startsWith(prefix) : entry.result.name === pattern;
       if (match) {
         this.memoryEstimateBytes -= 500 + (entry.result.output?.length ?? 0) * 2;
         this.cache.delete(key);
@@ -363,8 +393,10 @@ export class ToolResultCache {
     let oldestOrder = Infinity;
 
     for (const [key, entry] of this.cache) {
-      if (entry.lastAccessAt < oldestTime ||
-          (entry.lastAccessAt === oldestTime && entry.accessOrder < oldestOrder)) {
+      if (
+        entry.lastAccessAt < oldestTime ||
+        (entry.lastAccessAt === oldestTime && entry.accessOrder < oldestOrder)
+      ) {
         oldestTime = entry.lastAccessAt;
         oldestOrder = entry.accessOrder;
         oldestKey = key;
