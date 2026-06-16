@@ -6,8 +6,47 @@
  * DOVA, FoA, RecursiveMAS, and other state-of-the-art systems.
  */
 
-import type { ModelTier, TokenUsage } from '../runtime/types';
+import type {
+  ModelTier,
+  TokenUsage,
+  TaskTreeNode,
+  ROMARole,
+  ArtifactReference,
+  ArtifactStore,
+} from '../shared/types';
 import type { TELOSBudget } from '../telos/types';
+
+// ============================================================================
+// Risk & Approval Types
+// ============================================================================
+
+/**
+ * Risk level for a sub-agent node.
+ */
+export type NodeRiskLevel = 'low' | 'medium' | 'high' | 'critical';
+
+/**
+ * Assessment of a node's risk.
+ */
+export interface NodeRiskAssessment {
+  nodeId: string;
+  level: NodeRiskLevel;
+  reasons: string[];
+  confidence: number;
+}
+
+/**
+ * Gate configuration for human-in-the-loop approval.
+ */
+export interface HumanApprovalGate {
+  enabled: boolean;
+  nodeIds?: string[];
+  tags?: string[];
+  riskThreshold?: NodeRiskLevel;
+  sampling?: number;
+  timeoutMs?: number;
+  onTimeout?: 'approve' | 'reject' | 'modify';
+}
 
 // ============================================================================
 // Orchestration Topologies (AdaptOrch-inspired)
@@ -96,77 +135,17 @@ export interface DeliberationPlan {
 
 // ============================================================================
 // Recursive Decomposition (ROMA-inspired)
+// Re-exported from runtime/types — shared across runtime and orchestration layers
 // ============================================================================
 
-/**
- * ROMA's four core roles for recursive agent construction.
- */
-export type ROMARole = 'ATOMIZER' | 'PLANNER' | 'EXECUTOR' | 'AGGREGATOR';
-
-/**
- * A node in the recursive task decomposition tree.
- */
-export interface TaskTreeNode {
-  id: string;
-  parentId: string | null;
-  goal: string;
-  role: ROMARole;
-  isAtomic: boolean;
-  subtasks: TaskTreeNode[];
-  dependencies: string[]; // IDs of sibling tasks this depends on
-context: {
-     systemPrompt: string;
-     availableTools: string[];
-     estimatedTokens: number;
-     splitFrom?: string;
-     mergedFrom?: string[];
-   };
-  artifact?: ArtifactReference;
-  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PARTIAL';
-  result?: string;
-  /** Full concatenated subtask results (preserved before synthesis agent overwrites result) */
-  fullSubtaskResults?: string;
-  tokenUsage?: TokenUsage;
-  durationMs?: number;
-  /** LAMaS: estimated execution duration in ms (for critical path scheduling) */
-  estimatedDurationMs?: number;
-  /** LAMaS: true if this node is on the critical path of the DAG */
-  isOnCriticalPath?: boolean;
-}
+export type { ROMARole, TaskTreeNode };
 
 // ============================================================================
 // Artifact System (Anthropic-inspired)
+// Re-exported from runtime/types
 // ============================================================================
 
-/**
- * Reference to a stored artifact.
- * Instead of passing full content, agents pass lightweight references.
- * The artifact pattern prevents information loss from "telephone game."
- */
-export interface ArtifactReference {
-  id: string;
-  type: 'RESEARCH_FINDING' | 'CODE_DIFF' | 'ANALYSIS' | 'SUMMARY' | 'REPORT' | 'RAW_DATA';
-  title: string;
-  summary: string; // ~100 char summary for the orchestrator
-  createdBy: string; // agent ID
-  createdAt: string;
-  tokenCount: number;
-  tags: string[];
-  /** The actual stored content (retrieved on demand) */
-  content?: string;
-  /** If stored externally, the URI to fetch from */
-  externalUri?: string;
-}
-
-/**
- * Shared artifact store for agent communication.
- */
-export interface ArtifactStore {
-  write(artifact: Omit<ArtifactReference, 'id' | 'createdAt'>, content: string): Promise<ArtifactReference>;
-  read(id: string): Promise<ArtifactReference | null>;
-  find(tags: string[], type?: string): Promise<ArtifactReference[]>;
-  delete(id: string): Promise<boolean>;
-}
+export type { ArtifactReference, ArtifactStore };
 
 // ============================================================================
 // Agent Teams (Claude Code Agent Teams-inspired)
@@ -273,6 +252,10 @@ export interface EffortScalingRules {
   recommendedTopology: OrchestrationTopology;
   thinkingTokens: number;
   maxDepth: number; // max recursive decomposition depth
+  /** Model tier for lead/synthesizer agents (stronger model). */
+  leadModelTier: ModelTier;
+  /** Model tier for specialist/atomic agents (cheaper model). */
+  specialistModelTier: ModelTier;
 }
 
 // ============================================================================

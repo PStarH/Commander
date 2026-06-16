@@ -105,6 +105,8 @@ export class HeuristicEvaluator {
         const unsafePatterns = /(ignore all|forget|hack|malicious|bypass)/i;
         return unsafePatterns.test(result.summary ?? '') ? 0.1 : 0.95;
       }
+      default:
+        return 0.5;
     }
   }
 
@@ -127,6 +129,8 @@ export class HeuristicEvaluator {
           ? 'Unsafe patterns detected in output'
           : 'No safety concerns detected';
       }
+      default:
+        return 'No evaluation available for this dimension';
     }
   }
 

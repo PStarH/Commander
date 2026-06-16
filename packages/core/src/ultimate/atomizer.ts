@@ -112,6 +112,9 @@ export class RecursiveAtomizer {
             .filter((id): id is string => !!id);
         }
         node.subtasks = children;
+      } else {
+        // Not enough subtasks generated — treat as atomic
+        node.isAtomic = true;
       }
     }
 

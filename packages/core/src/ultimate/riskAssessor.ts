@@ -78,9 +78,6 @@ export function assessNodeRisk(
       if (RISK_RANK.critical > RISK_RANK[level]) {
         level = 'critical';
         reasons.push(`Goal references critical concept: '${keyword}'`);
-      } else if (level === 'low') {
-        level = 'high';
-        reasons.push(`Goal references sensitive concept: '${keyword}'`);
       }
     }
   }
@@ -104,13 +101,16 @@ export function assessNodeRisk(
     }
   }
 
-  if (riskProfile === 'CRITICAL' && level !== 'critical') {
+  // Normalize to lowercase so both typed NodeRiskLevel values ('critical') and
+  // config string values ('CRITICAL') match correctly.
+  const profile = riskProfile?.toLowerCase();
+  if (profile === 'critical' && level !== 'critical') {
     level = 'critical';
     reasons.push('Tenant risk profile is CRITICAL — escalating all nodes');
-  } else if (riskProfile === 'HIGH' && RISK_RANK[level] < RISK_RANK.high) {
+  } else if (profile === 'high' && RISK_RANK[level] < RISK_RANK.high) {
     level = 'high';
     reasons.push('Tenant risk profile is HIGH — escalating to high');
-  } else if (riskProfile === 'MEDIUM' && level === 'low') {
+  } else if (profile === 'medium' && level === 'low') {
     level = 'medium';
     reasons.push('Tenant risk profile is MEDIUM — escalating low to medium');
   }

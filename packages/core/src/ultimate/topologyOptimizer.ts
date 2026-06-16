@@ -592,6 +592,8 @@ return {
         case 'reorder_nodes':
           this.reorderNodes(newTree, action.nodeIds);
           break;
+        default:
+          break;
       }
     }
 

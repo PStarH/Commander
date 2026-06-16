@@ -1,5 +1,7 @@
 export type { SandboxMode, NetworkPolicy, SandboxMechanism, FileAccessPolicy, SandboxProfile, SandboxExecutionResult, PlatformSandbox, ExecutionBackendType, ExecutionBackend, SSHConfig, DockerExecConfig, BackendConfig } from './types';
-export { READ_ONLY, WORKSPACE_WRITE, FULL_ACCESS, PROFILES } from './profiles';
+export { READ_ONLY, WORKSPACE_WRITE, FULL_ACCESS, HARDENED, PROFILES } from './profiles';
+export { getLLMAPIDomains, generateProxyScript, writeProxyScript, wrapCommandWithProxy } from './networkProxy';
+export type { ProxySandboxConfig } from './networkProxy';
 export { SandboxManager, getSandboxManager } from './manager';
 export { ExecPolicyEngine } from './execPolicy';
 export { ApprovalSystem, getApprovalSystem } from './approval';

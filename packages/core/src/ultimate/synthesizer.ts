@@ -326,6 +326,9 @@ export class MultiAgentSynthesizer {
         case 'SAFETY':
           score = this.checkSafety(synthesis);
           break;
+        default:
+          score = 0;
+          break;
       }
 
       results.push({

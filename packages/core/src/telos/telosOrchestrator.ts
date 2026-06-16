@@ -1,5 +1,5 @@
 import type { AgentExecutionContext, LLMRequest, TokenUsage, ModelTier } from '../runtime/types';
-import { AgentRuntime } from '../runtime/agentRuntime';
+import type { AgentRuntimeInterface } from '../runtime';
 import { getModelRouter } from '../runtime/modelRouter';
 import { getMessageBus } from '../runtime/messageBus';
 import { getTraceRecorder } from '../runtime/executionTrace';
@@ -173,14 +173,14 @@ function buildPlanContext(
 // ============================================================================
 
 export class TELOSOrchestrator {
-  private runtime: AgentRuntime;
+  private runtime: AgentRuntimeInterface;
   private sentinel: TokenSentinel;
   private pool: ProviderPool;
   private config: TELOSConfig;
   private activePlans: Map<string, TELOSPlanContext> = new Map();
 
   constructor(
-    runtime: AgentRuntime,
+    runtime: AgentRuntimeInterface,
     config?: Partial<TELOSConfig>,
     sentinel?: TokenSentinel,
     pool?: ProviderPool,

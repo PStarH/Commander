@@ -5,6 +5,7 @@ import * as os from 'os';
 import type { PlatformSandbox, SandboxProfile, SandboxExecutionResult } from './types';
 import { getGlobalLogger } from '../logging';
 import { buildSeccompFilter, countAllowedSyscalls } from './seccompBpf';
+import { getLLMAPIDomains, writeProxyScript } from './networkProxy';
 
 // Expanded deny list — covers common secret-bearing env vars beyond the original 5
 const EXTRA_DENY = ['DATABASE_URL', 'REDIS_URL', 'MONGO_URL', 'PGPASSWORD', 'MYSQL_PASSWORD',
@@ -392,38 +393,111 @@ class BwrapSB implements PlatformSandbox {
   }
 }
 
-// Docker
-class DockerSB implements PlatformSandbox {
-  readonly name = 'docker' as const;
+// gVisor (runsc) — kernel-level sandbox providing stronger isolation than standard Docker.
+// Uses the runsc OCI runtime (gVisor's user-space kernel) which intercepts all syscalls.
+// Falls back to DockerSB if runsc is not available.
+class GVisorSB implements PlatformSandbox {
+  readonly name = 'gvisor' as const;
   readonly available: boolean;
+
   constructor() {
-    this.available = (() => { try { execSync('docker info 2>/dev/null', { timeout: 5000 }); return true; } catch (e) { getGlobalLogger().debug('DockerSB', 'docker unavailable', { error: (e as Error)?.message }); return false; } })();
+    // Check if runsc (gVisor's runtime binary) is installed
+    this.available = (() => {
+      try {
+        execSync('runsc --version 2>/dev/null', { timeout: 3000 });
+        return true;
+      } catch {
+        // Also check if Docker has a runsc runtime configured
+        try {
+          const info = execSync('docker info --format "{{.Runtimes}}" 2>/dev/null', { timeout: 3000, encoding: 'utf-8' });
+          return info.includes('runsc');
+        } catch {
+          getGlobalLogger().debug('GVisorSB', 'gVisor (runsc) not available');
+          return false;
+        }
+      }
+    })();
   }
+
   async execute(cmd: string, p: SandboxProfile, wd?: string): Promise<SandboxExecutionResult> {
     const start = Date.now();
     const workdir = wd ?? process.cwd();
-    // SECURITY FIX: validate image against allowlist — prevent env var from pointing to malicious image
+    const image = process.env.COMMANDER_SANDBOX_IMAGE || 'node:22-slim';
     const ALLOWED_IMAGES = ['node:22-slim', 'node:20-slim', 'python:3.12-slim', 'python:3.11-slim', 'ubuntu:22.04'];
-    const requestedImage = process.env.COMMANDER_SANDBOX_IMAGE || 'node:22-slim';
-    const image = ALLOWED_IMAGES.includes(requestedImage) ? requestedImage : 'node:22-slim';
-    if (requestedImage && !ALLOWED_IMAGES.includes(requestedImage)) {
-      getGlobalLogger().warn('DockerSB', `Image "${requestedImage}" not in allowlist, using node:22-slim`);
-    }
-    const args: string[] = ['run', '--rm', '-v', `${workdir}:${workdir}:${p.mode === 'read-only' ? 'ro' : 'rw'}`, '-w', workdir];
-    if (p.network === 'blocked') args.push('--network', 'none');
-    if (p.memoryLimitMB && p.memoryLimitMB > 0) args.push('--memory', `${p.memoryLimitMB}m`);
+    const resolvedImage = ALLOWED_IMAGES.includes(image) ? image : 'node:22-slim';
+
+    const args: string[] = [
+      'run', '--rm',
+      '--runtime', 'runsc',                    // Use gVisor as the OCI runtime
+      '-v', `${workdir}:${workdir}:${p.mode === 'read-only' ? 'ro' : 'rw'}`,
+      '-w', workdir,
+    ];
+
+    // gVisor-specific security: no-new-privileges is enforced by default
     args.push('--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only', '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m');
-    // SECURITY FIX: use --env-file to prevent env var injection via special characters
+
+    // Network isolation
+    if (p.network === 'blocked') {
+      args.push('--network', 'none');
+    } else if (p.network === 'proxy') {
+      // For proxy mode, use the network proxy (same as DockerSB)
+      const domains = getLLMAPIDomains();
+      if (domains.length > 0) {
+        const scriptPath = writeProxyScript(domains);
+        args.push('-v', `${scriptPath}:/proxy.js:ro`);
+        cmd = [
+          `node /proxy.js &`,
+          `PROXY_PID=$!`,
+          `sleep 0.3`,
+          `export HTTP_PROXY=http://127.0.0.1:1999`,
+          `export HTTPS_PROXY=http://127.0.0.1:1999`,
+          `export NO_PROXY=''`,
+          cmd,
+          `EXIT_CODE=$?`,
+          `kill $PROXY_PID 2>/dev/null`,
+          `exit $EXIT_CODE`,
+        ].join('; ');
+        args.push('-e', 'HTTP_PROXY=http://127.0.0.1:1999');
+        args.push('-e', 'HTTPS_PROXY=http://127.0.0.1:1999');
+        args.push('-e', 'NO_PROXY=');
+      } else {
+        args.push('--network', 'none');
+      }
+    }
+
+    if (p.memoryLimitMB && p.memoryLimitMB > 0) args.push('--memory', `${p.memoryLimitMB}m`);
+
+    // Environment filtering
     const env = filterEnv(p);
+    const cleanupPaths: string[] = [];
     const envFile = path.join(os.tmpdir(), `.cmd-env-${Date.now()}.txt`);
     try {
       fs.writeFileSync(envFile, Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n'), 'utf-8');
       args.push('--env-file', envFile);
+      cleanupPaths.push(envFile);
     } catch {
-      // Fallback to -e flags if env-file fails
       for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`);
     }
-    args.push(image, '/bin/sh', '-c', cmd);
+
+    // Track proxy script for cleanup
+    const proxyScriptPaths: string[] = [];
+    if (p.network === 'proxy' && args.some(a => a.includes('/proxy.js'))) {
+      // Find the proxy.js mount arg and clean up the source directory
+      const proxyMount = args.find(a => a.endsWith(':/proxy.js:ro'));
+      if (proxyMount) {
+        const scriptPath = proxyMount.split(':')[0];
+        const tmpDir = path.dirname(scriptPath);
+        proxyScriptPaths.push(tmpDir);
+      }
+    }
+
+    args.push(resolvedImage, '/bin/sh', '-c', cmd);
+
+    const cleanup = () => {
+      for (const p of cleanupPaths) { try { fs.unlinkSync(p); } catch { /* best-effort */ } }
+      for (const d of proxyScriptPaths) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best-effort */ } }
+    };
+
     return new Promise(resolve => {
       const child = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] });
       let so = '', se = '';
@@ -433,17 +507,129 @@ class DockerSB implements PlatformSandbox {
       let timedOut = false;
       const killTimer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, p.timeout ?? 120000);
       killTimer.unref();
-      child.on('close', ec => {
-        clearTimeout(killTimer);
-        // Clean up env file
-        try { fs.unlinkSync(envFile); } catch { /* ignore */ }
-        resolve({ stdout: soTrunc ? so + '\n[truncated]' : so, stderr: seTrunc ? se + '\n[truncated]' : se, exitCode: timedOut ? 137 : (ec ?? -1), durationMs: Date.now() - start, sandboxMechanism: 'docker' });
-      });
-      child.on('error', err => {
-        clearTimeout(killTimer);
-        try { fs.unlinkSync(envFile); } catch { /* ignore */ }
-        resolve({ stdout: so, stderr: se || err.message, exitCode: -1, durationMs: Date.now() - start, sandboxMechanism: 'docker' });
-      });
+      const finalize = () => { clearTimeout(killTimer); cleanup(); };
+      child.on('close', ec => { finalize(); resolve({ stdout: soTrunc ? so + '\n[truncated]' : so, stderr: seTrunc ? se + '\n[truncated]' : se, exitCode: timedOut ? 137 : (ec ?? -1), durationMs: Date.now() - start, sandboxMechanism: 'gvisor' }); });
+      child.on('error', err => { finalize(); resolve({ stdout: so, stderr: se || err.message, exitCode: -1, durationMs: Date.now() - start, sandboxMechanism: 'gvisor' }); });
+    });
+  }
+}
+
+// Docker — supports network isolation via HTTP CONNECT proxy in 'proxy' mode
+// Uses local cleanup per execution (not instance state) to avoid concurrency hazards
+class DockerSB implements PlatformSandbox {
+  readonly name = 'docker' as const;
+  readonly available: boolean;
+
+  constructor() {
+    this.available = (() => { try { execSync('docker info 2>/dev/null', { timeout: 5000 }); return true; } catch (e) { getGlobalLogger().debug('DockerSB', 'docker unavailable', { error: (e as Error)?.message }); return false; } })();
+  }
+
+  /** Clean up temp files locally — called once per execute() call. */
+  private static doCleanup(paths: string[]): void {
+    for (const p of paths) {
+      try {
+        const stat = fs.statSync(p);
+        if (stat.isDirectory()) {
+          fs.rmSync(p, { recursive: true, force: true });
+        } else {
+          fs.unlinkSync(p);
+        }
+      } catch { /* best-effort cleanup */ }
+    }
+  }
+
+  async execute(cmd: string, p: SandboxProfile, wd?: string): Promise<SandboxExecutionResult> {
+    const start = Date.now();
+    const workdir = wd ?? process.cwd();
+    const cleanupPaths: string[] = []; // Local to this execution — concurrency-safe
+
+    // SECURITY FIX: validate image against allowlist
+    const ALLOWED_IMAGES = ['node:22-slim', 'node:20-slim', 'python:3.12-slim', 'python:3.11-slim', 'ubuntu:22.04'];
+    const requestedImage = process.env.COMMANDER_SANDBOX_IMAGE || 'node:22-slim';
+    const image = ALLOWED_IMAGES.includes(requestedImage) ? requestedImage : 'node:22-slim';
+    if (requestedImage && !ALLOWED_IMAGES.includes(requestedImage)) {
+      getGlobalLogger().warn('DockerSB', `Image "${requestedImage}" not in allowlist, using node:22-slim`);
+    }
+
+    const args: string[] = ['run', '--rm', '-v', `${workdir}:${workdir}:${p.mode === 'read-only' ? 'ro' : 'rw'}`, '-w', workdir];
+
+    // Network isolation: 'none' for blocked, proxy gate for 'proxy' mode
+    if (p.network === 'blocked') {
+      args.push('--network', 'none');
+    } else if (p.network === 'proxy') {
+      // Proxy mode: set up HTTP CONNECT proxy as network gate
+      const domains = getLLMAPIDomains();
+      if (domains.length === 0) {
+        // No LLM APIs configured — default to full network block
+        getGlobalLogger().warn('DockerSB', 'Proxy mode but no LLM API domains detected — falling back to network isolation');
+        args.push('--network', 'none');
+      } else {
+        // Warn if the container image may not have Node.js (proxy script is JS)
+        const NON_NODE_IMAGES = ['python:3.12-slim', 'python:3.11-slim', 'ubuntu:22.04'];
+        if (NON_NODE_IMAGES.includes(image)) {
+          getGlobalLogger().warn('DockerSB', `Image "${image}" may not have Node.js — proxy mode requires node for the network gate`);
+        }
+
+        const scriptPath = writeProxyScript(domains);
+        cleanupPaths.push(path.dirname(scriptPath)); // Track the temp directory
+        args.push('-v', `${scriptPath}:/proxy.js:ro`);
+
+        getGlobalLogger().info('DockerSB', `Network proxy allowlist: ${domains.join(', ')}`);
+
+        // Wrap the command: start proxy in background, then run actual command
+        cmd = [
+          `node /proxy.js &`,
+          `PROXY_PID=$!`,
+          `sleep 0.3`,
+          `export HTTP_PROXY=http://127.0.0.1:1999`,
+          `export HTTPS_PROXY=http://127.0.0.1:1999`,
+          `export NO_PROXY=''`,
+          cmd,
+          `EXIT_CODE=$?`,
+          `kill $PROXY_PID 2>/dev/null`,
+          `exit $EXIT_CODE`,
+        ].join('; ');
+      }
+    }
+
+    if (p.memoryLimitMB && p.memoryLimitMB > 0) args.push('--memory', `${p.memoryLimitMB}m`);
+    args.push('--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only', '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m');
+
+    // Use --env-file to prevent env var injection via special characters
+    const env = filterEnv(p);
+    const envFile = path.join(os.tmpdir(), `.cmd-env-${Date.now()}.txt`);
+    try {
+      fs.writeFileSync(envFile, Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n'), 'utf-8');
+      args.push('--env-file', envFile);
+      cleanupPaths.push(envFile);
+    } catch {
+      // Fallback to -e flags if env-file fails
+      for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`);
+    }
+
+    // For proxy mode, also set proxy env vars via -e (override env-file)
+    if (p.network === 'proxy') {
+      args.push('-e', 'HTTP_PROXY=http://127.0.0.1:1999');
+      args.push('-e', 'HTTPS_PROXY=http://127.0.0.1:1999');
+      args.push('-e', 'NO_PROXY=');
+    }
+
+    args.push(image, '/bin/sh', '-c', cmd);
+
+    const cleanup = () => DockerSB.doCleanup(cleanupPaths);
+
+    return new Promise(resolve => {
+      const child = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+      let so = '', se = '';
+      let soTrunc = false, seTrunc = false;
+      child.stdout?.on('data', (d: Buffer) => { if (so.length < MAX_OUTPUT_BYTES) { so += d.toString(); if (so.length > MAX_OUTPUT_BYTES) { so = so.slice(0, MAX_OUTPUT_BYTES); soTrunc = true; } } });
+      child.stderr?.on('data', (d: Buffer) => { if (se.length < MAX_OUTPUT_BYTES) { se += d.toString(); if (se.length > MAX_OUTPUT_BYTES) { se = se.slice(0, MAX_OUTPUT_BYTES); seTrunc = true; } } });
+      let timedOut = false;
+      const killTimer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, p.timeout ?? 120000);
+      killTimer.unref();
+      const finalize = () => { clearTimeout(killTimer); cleanup(); };
+      child.on('close', ec => { finalize(); resolve({ stdout: soTrunc ? so + '\n[truncated]' : so, stderr: seTrunc ? se + '\n[truncated]' : se, exitCode: timedOut ? 137 : (ec ?? -1), durationMs: Date.now() - start, sandboxMechanism: 'docker' }); });
+      child.on('error', err => { finalize(); resolve({ stdout: so, stderr: se || err.message, exitCode: -1, durationMs: Date.now() - start, sandboxMechanism: 'docker' }); });
     });
   }
 }
@@ -458,7 +644,7 @@ class NoopSB implements PlatformSandbox {
 }
 
 export function discoverSandboxes(): PlatformSandbox[] {
-  const candidates: PlatformSandbox[] = [new SeatbeltSB(), new BwrapSB(), new DockerSB()];
+  const candidates: PlatformSandbox[] = [new SeatbeltSB(), new BwrapSB(), new DockerSB(), new GVisorSB()];
   return candidates.filter(s => s.available);
 }
 

@@ -14,6 +14,28 @@ import type {
   EffortLevel,
 } from './types';
 import { COST_PER_TOKEN } from '../config/constants';
+import { evaluateCoordinationPolicy, type CoordinationDecision } from './coordinationPolicy';
+import { PheromoneRouter } from './pheromoneRouter';
+import { LearnedWeights, type TypeWeights } from './learnedWeights';
+
+/**
+ * Configuration for epsilon-greedy exploration in topology selection.
+ */
+export interface EpsilonGreedyConfig {
+  /** Probability of exploring (non-argmax) in [0, 1]. Default 0.05. */
+  epsilon?: number;
+  /** Boltzmann temperature: higher = more uniform exploration. Default 1.0. */
+  explorationTemperature?: number;
+  /** Seeded PRNG for deterministic tests. Default Math.random. */
+  rng?: () => number;
+}
+
+/** Exploration statistics exposed by getExplorationStats(). */
+export interface ExplorationStats {
+  routingCount: number;
+  explorationCount: number;
+  explorationRate: number;
+}
 
 /** Weight multipliers for task type scoring */
 const TASK_TYPE_WEIGHTS = {
@@ -58,6 +80,49 @@ const SPECULATION_BONUSES = { PARALLEL: 2, ENSEMBLE: 1 } as const;
 const BUDGET_PENALTY = 5;
 
 export class TopologyRouter {
+  /** ε-greedy exploration rate in [0, 1]. */
+  private epsilon: number;
+  /** Boltzmann temperature for exploration draws. */
+  private readonly explorationTemperature: number;
+  /** Random number generator (seeded for deterministic tests). */
+  private readonly rng: () => number;
+  /** Total routing calls made through this router. */
+  private routingCount = 0;
+  /** Number of times the ε-greedy draw actually diverged from argmax. */
+  private explorationCount = 0;
+  /** Pheromone router for experience-based score biasing. */
+  private readonly pheromoneRouter: PheromoneRouter;
+  /** Learned weights for online meta-learning. */
+  private readonly learnedWeights: LearnedWeights;
+  /** Per-tenant epsilon override store. */
+  private readonly epsilonStore?: import('./epsilonStore').EpsilonStore;
+
+  constructor(
+    pheromoneRouter?: PheromoneRouter,
+    learnedWeights?: LearnedWeights,
+    config?: EpsilonGreedyConfig & { epsilonStore?: import('./epsilonStore').EpsilonStore },
+  ) {
+    const rawEpsilon = config?.epsilon ?? 0;
+    this.epsilon = Number.isNaN(rawEpsilon) ? 0 : Math.max(0, Math.min(1, rawEpsilon));
+    this.explorationTemperature = config?.explorationTemperature ?? 1.0;
+    this.rng = config?.rng ?? Math.random;
+    this.epsilonStore = config?.epsilonStore;
+    // Create or store pheromone router
+    this.pheromoneRouter = pheromoneRouter ?? new PheromoneRouter();
+    // Create or store learned weights (shares the pheromone router by default)
+    this.learnedWeights = learnedWeights ?? new LearnedWeights(this.pheromoneRouter);
+  }
+
+  /** Expose the internal PheromoneRouter for tests and observability. */
+  getPheromoneRouter(): PheromoneRouter {
+    return this.pheromoneRouter;
+  }
+
+  /** Expose the internal LearnedWeights for tests and observability. */
+  getLearnedWeights(): LearnedWeights {
+    return this.learnedWeights;
+  }
+
 private readonly topologyPerformance: Record<OrchestrationTopology, {
      sequential: number;  // suitability for sequential tasks 0-1
      parallel: number;    // suitability for parallel tasks 0-1
@@ -81,11 +146,29 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
     deliberation: DeliberationPlan,
     dag?: TaskDAG,
     budgetConstraint?: { maxCostUsd: number; maxTokens: number },
+    _tenantId?: string,
+    perCallConfig?: EpsilonGreedyConfig,
   ): {
     topology: OrchestrationTopology;
     reasoning: string[];
     expectedCost: number;
     expectedLatency: string;
+    explorationTriggered: boolean;
+    epsilonUsed: number;
+    argmaxTopology: OrchestrationTopology;
+    coordination?: CoordinationDecision;
+    biasedScores?: Array<{
+      topology: OrchestrationTopology;
+      score: number;
+      pheromoneBias: number;
+      pheromoneSamples: number;
+      expectedSuccess: number;
+    }>;
+    adjustedWeights?: {
+      adjusted: TypeWeights;
+      adjustments: Record<string, number>;
+      maturePairs: number;
+    };
   } {
     const reasoning: string[] = [];
 
@@ -93,15 +176,36 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
     const taskType = deliberation.taskType;
     const effortLevel = this.classifyEffort(deliberation.estimatedAgentCount);
 
+    // Resolve epsilon: per-call > per-tenant > constructor default
+    const perCallEpsilon = perCallConfig?.epsilon;
+    const effectiveEpsilon = perCallEpsilon !== undefined
+      ? (Number.isNaN(perCallEpsilon) ? 0.05 : Math.max(0, Math.min(1, perCallEpsilon)))
+      : this.resolveEpsilon(_tenantId);
+
     const scores: Array<{ topology: OrchestrationTopology; score: number }> = [];
 
     const topologies = Object.keys(this.topologyPerformance) as OrchestrationTopology[];
+
+    // Get adjusted weights from learned weights (may be boosted/penalized by experience)
+    const baseWeights = TASK_TYPE_WEIGHTS[taskType] ?? TASK_TYPE_WEIGHTS.FACTUAL;
+    const adjustedWeightsResult = this.learnedWeights.getAdjustedWeights(taskType, baseWeights, _tenantId);
+    const typeWeights = adjustedWeightsResult.adjusted;
+
+    // If mature pairs exist, log the learned-weights line
+    if (adjustedWeightsResult.maturePairs > 0) {
+      const adjStr = Object.entries(adjustedWeightsResult.adjustments)
+        .filter(([, v]) => v !== 0)
+        .map(([t, v]) => `${t.toLowerCase()}=${v.toFixed(2)}`)
+        .join(', ');
+      reasoning.push(`Learned weights for ${taskType}: ${adjStr}`);
+    }
+
     for (const topology of topologies) {
       const perf = this.topologyPerformance[topology];
       let score = 0;
 
-      // Task type scoring using structured weights
-      const typeWeights = TASK_TYPE_WEIGHTS[taskType] ?? TASK_TYPE_WEIGHTS.FACTUAL;
+      // Task type scoring using structured weights (may be learned-adjusted)
+
       score += perf.research * typeWeights.research;
       score += perf.parallel * typeWeights.parallel;
       score += perf.sequential * typeWeights.sequential;
@@ -149,10 +253,72 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
       scores.push({ topology, score });
     }
 
+    // Apply pheromone biasing if there's enough data
+    let biasedScores: Array<{
+      topology: OrchestrationTopology;
+      score: number;
+      pheromoneBias: number;
+      pheromoneSamples: number;
+      expectedSuccess: number;
+    }> | undefined;
+
+    try {
+      const biased = this.pheromoneRouter.bias(taskType, scores);
+      if (biased && biased.length > 0) {
+        biasedScores = biased.map(b => ({
+          topology: b.topology as OrchestrationTopology,
+          score: b.score,
+          pheromoneBias: b.pheromoneBias,
+          pheromoneSamples: b.pheromoneSamples,
+          expectedSuccess: b.expectedSuccess,
+        }));
+        // Apply the biased scores in place
+        for (const b of biased) {
+          const existing = scores.find(s => s.topology === (b.topology as OrchestrationTopology));
+          if (existing) existing.score = b.score;
+        }
+        const positiveCount = biased.filter(b => b.pheromoneBias > 0).length;
+        if (positiveCount > 0) {
+          reasoning.push(`Pheromone bias applied: ${positiveCount} topologies boosted`);
+        }
+      }
+    } catch {
+      // Pheromone bias is best-effort; if the router isn't ready, continue unscored
+    }
+
     scores.sort((a, b) => b.score - a.score);
-    const selected = scores[0].topology;
+    const argmaxTopology = scores[0].topology;
+    const argmaxScore = scores[0].score;
+
+    // ε-greedy exploration: with probability epsilon, draw from a
+    // Boltzmann distribution over the scored candidates instead of
+    // always picking the argmax.
+    const effectiveTemp = perCallConfig?.explorationTemperature ?? this.explorationTemperature;
+    const activeRng = perCallConfig?.rng ?? this.rng;
+
+    this.routingCount++;
+    let selected: OrchestrationTopology;
+    let explorationTriggered = false;
+
+    // ε-greedy gate: only explore when there are at least 2 candidates
+    if (effectiveEpsilon > 0 && scores.length > 1 && activeRng() < effectiveEpsilon) {
+      // Boltzmann draw over all candidates
+      selected = boltzmannDraw(scores, effectiveTemp, activeRng);
+      if (selected !== argmaxTopology) {
+        explorationTriggered = true;
+        this.explorationCount++;
+        reasoning.push(
+          `ε-greedy exploration (ε=${effectiveEpsilon}): chose ${selected} instead of argmax ${argmaxTopology} (score: ${argmaxScore})`,
+        );
+      }
+    } else {
+      selected = argmaxTopology;
+    }
+
     reasoning.push(`Topology scores: ${scores.slice(0, 4).map(s => `${s.topology}=${s.score}`).join(', ')}`);
-    reasoning.push(`Selected ${selected} (score: ${scores[0].score})`);
+    if (!explorationTriggered) {
+      reasoning.push(`Selected ${selected} (score: ${scores[0].score})`);
+    }
 
     const costPerf = this.topologyPerformance[selected];
     const expectedCost = deliberation.estimatedTokens * COST_PER_TOKEN * costPerf.costMultiplier;
@@ -170,12 +336,41 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
       CONSENSUS: '20-60s',
     };
 
+    // Compute coordination decision
+    const coordination = evaluateCoordinationPolicy(deliberation, selected, dag, this.learnedWeights, _tenantId);
+    reasoning.push(`Coordination ROI: ${coordination.gain.netRoi.toFixed(3)}`);
+
     return {
       topology: selected,
       reasoning,
       expectedCost,
       expectedLatency: latencyMap[selected],
+      explorationTriggered,
+      epsilonUsed: effectiveEpsilon,
+      argmaxTopology,
+      coordination,
+      biasedScores,
+      adjustedWeights: adjustedWeightsResult,
     };
+  }
+
+  /**
+   * Return exploration statistics (routing count, exploration count, rate).
+   */
+  getExplorationStats(): ExplorationStats {
+    return {
+      routingCount: this.routingCount,
+      explorationCount: this.explorationCount,
+      explorationRate: this.routingCount > 0 ? this.explorationCount / this.routingCount : 0,
+    };
+  }
+
+  /**
+   * Reset exploration counters without affecting pheromone or learned weight state.
+   */
+  resetExplorationCounters(): void {
+    this.routingCount = 0;
+    this.explorationCount = 0;
   }
 
   /**
@@ -353,4 +548,38 @@ private readonly topologyPerformance: Record<OrchestrationTopology, {
     if (estimatedAgentCount <= 10) return 'COMPLEX';
     return 'DEEP_RESEARCH';
   }
+
+  /**
+   * Resolve the effective epsilon for a given tenant.
+   * Priority: per-tenant override > constructor default.
+   */
+  private resolveEpsilon(tenantId?: string): number {
+    if (this.epsilonStore && tenantId) {
+      const stored = this.epsilonStore.get(tenantId);
+      if (stored) return stored.epsilon;
+    }
+    return this.epsilon;
+  }
+}
+
+/**
+ * Boltzmann (softmax) draw over scored candidates.
+ * Higher temperature → more uniform distribution.
+ * Lower temperature → concentrates probability on top-scored candidates.
+ */
+function boltzmannDraw(
+  scores: Array<{ topology: OrchestrationTopology; score: number }>,
+  temperature: number,
+  rng: () => number,
+): OrchestrationTopology {
+  const maxScore = Math.max(...scores.map(s => s.score));
+  const shifted = scores.map(s => Math.exp((s.score - maxScore) / Math.max(temperature, 0.001)));
+  const sum = shifted.reduce((a, b) => a + b, 0);
+  const target = rng() * sum;
+  let cumulative = 0;
+  for (let i = 0; i < shifted.length; i++) {
+    cumulative += shifted[i];
+    if (target <= cumulative) return scores[i].topology;
+  }
+  return scores[scores.length - 1].topology;
 }

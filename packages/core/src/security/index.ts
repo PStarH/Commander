@@ -4,6 +4,7 @@
  * Exports:
  * - SecurityAuditLogger: audit trail for all security events
  * - SecurityMonitor: continuous monitoring, anomaly detection, alerting
+ * - GuardianAgent: semantic drift, anomaly, and safety monitoring for agents
  */
 export {
   SecurityAuditLogger,
@@ -28,3 +29,16 @@ export type {
   SecurityAlert,
   SecurityHealth,
 } from './securityMonitor';
+
+export {
+  GuardianAgent,
+  getGuardianAgent,
+  resetGuardianAgent,
+} from './guardianAgent';
+
+export type {
+  GuardianAction,
+  GuardianInterventionType,
+  GuardianEvidencePack,
+  GuardianConfig,
+} from './guardianAgent';

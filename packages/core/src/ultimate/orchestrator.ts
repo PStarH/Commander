@@ -15,7 +15,7 @@ import type {
 } from './types';
 import { DEFAULT_ULTIMATE_CONFIG } from './types';
 import type { ModelTier, TokenUsage } from '../runtime/types';
-import type { AgentRuntime } from '../runtime/agentRuntime';
+import type { AgentRuntimeInterface } from '../runtime';
 import { TELOSOrchestrator } from '../telos/telosOrchestrator';
 import { getMessageBus } from '../runtime/messageBus';
 import { getTraceRecorder } from '../runtime/executionTrace';
@@ -42,6 +42,7 @@ import { getEvolutionEngine } from '../runtime/evolutionaryWorkflowEngine';
 import { COST_PER_TOKEN } from '../config/constants';
 import { getGlobalLogger } from '../logging';
 import { createInitialSharedState, mergeSharedState } from './stateManager';
+import { TokenBudgetManager, getTokenBudgetManager } from '../runtime/tokenBudgetManager';
 
 function generateExecId(counter: { value: number }): string {
   return `ultimate_${Date.now()}_${++counter.value}`;
@@ -71,10 +72,24 @@ const MIN_AGENT_FILE_SIZE = 200;
 /** Buffer time in ms before execution start for file modification detection */
 const FILE_DETECTION_BUFFER_MS = 1000;
 
+// ============================================================================
+// Session Pinning — version-lock config per run
+// ============================================================================
+
+export interface PinnedSessionConfig {
+  runId: string;
+  configHash: string;
+  topology: string;
+  effortLevel: string;
+  modelTierMapping: Record<string, string>;
+  qualityGateThresholds: Record<string, number>;
+  pinnedAt: string;
+}
+
 export class UltimateOrchestrator {
    private config: UltimateOrchestratorConfig;
    private telos: TELOSOrchestrator;
-   private runtime: AgentRuntime;
+   private runtime: AgentRuntimeInterface;
    private atomizer: RecursiveAtomizer;
    private topologyRouter: TopologyRouter;
    private subAgentExecutor: SubAgentExecutor;
@@ -86,10 +101,13 @@ export class UltimateOrchestrator {
    private evolutionEngine: ReturnType<typeof getEvolutionEngine> | null = null;
    private activeExecutions: Map<string, UltimateExecutionContext> = new Map();
    private executionCounter = { value: 0 };
+   /** Session-pinned configs: per-run config snapshot to prevent mid-task changes */
+   private pinnedSessions: Map<string, PinnedSessionConfig> = new Map();
+   private maxPinnedSessions = 100;
 
   constructor(
     telos: TELOSOrchestrator,
-    runtime: AgentRuntime,
+    runtime: AgentRuntimeInterface,
     config?: Partial<UltimateOrchestratorConfig>,
     artifactSystem?: ArtifactSystem,
     capabilityRegistry?: CapabilityRegistry,
@@ -113,6 +131,7 @@ this.topologyRouter = new TopologyRouter();
       runtime,
       this.artifactSystem,
       this.config.maxParallelSubAgents,
+      this.config,
     );
     this.synthesizer = new MultiAgentSynthesizer();
   }
@@ -146,6 +165,9 @@ this.topologyRouter = new TopologyRouter();
     const ctx = this.buildContext(execId, params);
     this.activeExecutions.set(execId, ctx);
 
+    // Session Pinning: snapshot config at execution start
+    this.pinSessionConfig(execId, params.topology || ctx.topology, params.effortLevel);
+
     try {
     // Phase 1: Deliberation (LLM-powered when a provider is registered)
      emit('DELIBERATION', 'Analyzing task requirements...');
@@ -176,6 +198,7 @@ this.topologyRouter = new TopologyRouter();
     ctx.effortLevel = effortLevel;
     const scalingRules = getEffortRules(effortLevel);
     ctx.scalingRules = scalingRules;
+    this.subAgentExecutor.setEffortLevel(effortLevel);
     reasoning.push(`Effort level: ${effortLevel} (${scalingRules.minSubAgents}-${scalingRules.maxSubAgents} agents)`);
 
 // Phase 3: Topology Routing — use DAG-aware router when available
@@ -202,7 +225,66 @@ this.topologyRouter = new TopologyRouter();
       (params.contextData?.availableTools as string[] | undefined) ?? [],
     );
     ctx.taskTree = taskTree;
+
+    // If the root task is atomic (simple enough to execute directly),
+    // wrap it as the single subtask instead of failing
+    if (taskTree.subtasks.length === 0 && taskTree.isAtomic) {
+      taskTree.subtasks = [{
+        ...taskTree,
+        id: `${taskTree.id}_sub`,
+        parentId: taskTree.id,
+        role: 'EXECUTOR',
+        subtasks: [],
+      }];
+    }
+
+    if (taskTree.subtasks.length === 0) {
+      return {
+        id: execId,
+        status: 'FAILED',
+        summary: 'Task decomposition produced 0 subtasks',
+        synthesis: `Task decomposition produced 0 subtasks. The task may be too vague or malformed. Try rephrasing with more specific details.`,
+        reasoning,
+        metrics: {
+          totalTokens: 0,
+          totalCostUsd: 0,
+          totalDurationMs: Date.now() - startTime,
+          llmCalls: 0,
+          toolCalls: 0,
+          subAgentsSpawned: 0,
+          artifactsCreated: 0,
+          qualityScore: 0,
+          topologyUsed: topology,
+          effortLevelUsed: effortLevel,
+        },
+        errors: [{ nodeId: 'root', agentId: 'orchestrator', message: 'Task decomposition produced 0 subtasks', recovered: false }],
+        artifacts: [],
+        executionTree: [],
+      };
+    }
+
     reasoning.push(`Task tree: ${countNodes(taskTree)} nodes, depth ${measureDepth(taskTree)}`);
+
+    // ── Token Budget Allocation ───────────────────────────────────────────
+    // Split the total budget proportionally across sub-agents based on
+    // their estimated token needs (from deliberation/atomizer).
+    const totalBudget = this.config.defaultBudget.hardCapTokens;
+    const budgetManager = getTokenBudgetManager();
+    budgetManager.startRun(execId, { hardCap: totalBudget });
+    const subAgentEstimates = taskTree.subtasks.map(s => ({
+      nodeId: s.id,
+      estimatedTokens: s.context.estimatedTokens || Math.ceil(totalBudget / taskTree.subtasks.length),
+    }));
+    if (subAgentEstimates.length > 0) {
+      const allocations = budgetManager.allocateToSubAgents(execId, subAgentEstimates);
+      for (const sub of taskTree.subtasks) {
+        const allocated = allocations.get(sub.id);
+        if (allocated !== undefined) {
+          sub.context.estimatedTokens = allocated;
+        }
+      }
+      reasoning.push(`Budget: ${totalBudget.toLocaleString()} tokens across ${subAgentEstimates.length} sub-agents`);
+    }
 
     // Phase 5: Team Formation (if topology needs it)
     let teamId: string | null = null;
@@ -252,6 +334,9 @@ this.topologyRouter = new TopologyRouter();
     const failedCount = countFailed(taskTree);
     reasoning.push(`Execution: ${completedCount} completed, ${failedCount} failed`);
 
+    // Fetch artifacts before merging shared state (allArtifacts needed for merge + synthesis)
+    const allArtifacts = await this.artifactSystem.find({ tags: ['completed'] }, 50);
+
     // Merge sub-agent results into shared state using per-key reducers
     const completedNodes = flattenTree(taskTree).filter(n => n.status === 'COMPLETED' && n.result);
     const failedNodes = flattenTree(taskTree).filter(n => n.status === 'FAILED');
@@ -264,7 +349,6 @@ this.topologyRouter = new TopologyRouter();
 
     // Phase 7: Multi-Agent Synthesis
     emit('SYNTHESIS', `Synthesizing results from ${completedCount} completed subtasks...`);
-    const allArtifacts = await this.artifactSystem.find({ tags: ['completed'] }, 50);
     const synthesis = await this.synthesizer.synthesize(
       this.config.defaultSynthesisConfig.strategy,
       this.config.defaultSynthesisConfig,
@@ -429,6 +513,50 @@ if (topologyAction && 'to' in topologyAction) {
 
     // Self-optimize: apply meta-learner suggestions after each execution
     this.applyOptimizationSuggestions(exp);
+
+    // ── Shadow Mode: run challenger strategy with read-only tools ──────
+    let shadowResult: { strategy: string; success: boolean; durationMs: number } | null = null;
+    try {
+      const shadowStrategy = getMetaLearner().selectShadowStrategy(topology);
+      if (shadowStrategy) {
+        const shadowStart = Date.now();
+        reasoning.push(`Shadow mode: testing ${shadowStrategy} vs ${exp.strategyUsed}...`);
+
+        // Run shadow with the same goal but read-only tools only
+        const shadowExec = await this.runtime.execute({
+          agentId: `shadow-${execId}`,
+          projectId: params.projectId,
+          goal: params.goal,
+          contextData: { ...params.contextData },
+          availableTools: (params.contextData?.availableTools as string[])?.filter(
+            t => !['file_write', 'file_edit', 'apply_patch', 'git', 'shell_execute'].includes(t)
+          ) ?? [],
+          maxSteps: 3,
+          tokenBudget: 10000,
+        });
+
+        shadowResult = {
+          strategy: shadowStrategy,
+          success: shadowExec.status === 'success',
+          durationMs: Date.now() - shadowStart,
+        };
+
+        reasoning.push(`Shadow: ${shadowStrategy} ${shadowResult.success ? '✅ would succeed' : '❌ would fail'} (${(shadowResult.durationMs / 1000).toFixed(1)}s)`);
+
+        getMetaLearner().recordShadowComparison({
+          runId: execId,
+          taskType: topology,
+          mainStrategy: exp.strategyUsed,
+          shadowStrategy: shadowResult.strategy,
+          mainSuccess: allSuccess,
+          shadowSuccess: shadowResult.success,
+          mainDurationMs: totalDurationMs,
+          shadowDurationMs: shadowResult.durationMs,
+        });
+      }
+    } catch (e) {
+      getGlobalLogger().warn('UltimateOrchestrator', 'Shadow mode failed', { error: (e as Error)?.message });
+    }
 
     // Unified trajectory analysis + evolution cycle (deduplicated: single TrajectoryAnalyzer call)
     if (!allSuccess) {
@@ -690,6 +818,10 @@ if (topologyAction && 'to' in topologyAction) {
       reasoning,
     };
     } finally {
+      // Clean up budget tracking for completed runs
+      try {
+        getTokenBudgetManager().completeRun(execId);
+      } catch { /* best-effort */ }
       this.activeExecutions.delete(execId);
     }
   }
@@ -772,6 +904,72 @@ if (topologyAction && 'to' in topologyAction) {
 
   getConfig(): UltimateOrchestratorConfig {
     return { ...this.config };
+  }
+
+  // ========================================================================
+  // Session Pinning
+  // ========================================================================
+
+  /** Snapshots the current config for a run, preventing mid-task mutations. */
+  pinSessionConfig(runId: string, topology: string | undefined, effortLevel: string | undefined): void {
+    const hash = this.computeConfigHash();
+    const modelTierMapping: Record<string, string> = {};
+    for (const [k, v] of Object.entries(this.config.modelTierMapping)) {
+      modelTierMapping[k] = v;
+    }
+    const qualityGateThresholds: Record<string, number> = {};
+    for (const g of this.config.qualityGates) {
+      qualityGateThresholds[g.name] = g.threshold;
+    }
+
+    this.pinnedSessions.set(runId, {
+      runId,
+      configHash: hash,
+      topology: topology ?? 'SINGLE',
+      effortLevel: effortLevel ?? 'MODERATE',
+      modelTierMapping,
+      qualityGateThresholds,
+      pinnedAt: new Date().toISOString(),
+    });
+
+    // Evict oldest if over capacity
+    if (this.pinnedSessions.size > this.maxPinnedSessions) {
+      const oldest = this.pinnedSessions.keys().next().value;
+      if (oldest) this.pinnedSessions.delete(oldest);
+    }
+  }
+
+  /** Get pinned config for a session, or null if not pinned. */
+  getSessionPinnedConfig(runId: string): PinnedSessionConfig | null {
+    return this.pinnedSessions.get(runId) ?? null;
+  }
+
+  /** List all active pinned sessions. */
+  getPinnedSessions(): PinnedSessionConfig[] {
+    return Array.from(this.pinnedSessions.values())
+      .sort((a, b) => b.pinnedAt.localeCompare(a.pinnedAt));
+  }
+
+  /** Number of active pinned sessions. */
+  getPinnedSessionCount(): number {
+    return this.pinnedSessions.size;
+  }
+
+  /** Simple hash of key config properties for version comparison. */
+  private computeConfigHash(): string {
+    const keyValues = [
+      JSON.stringify(this.config.modelTierMapping),
+      this.config.defaultSynthesisConfig.consensusThreshold,
+      this.config.maxParallelSubAgents,
+      this.config.maxRecursiveDepth,
+      ...this.config.qualityGates.map(g => `${g.name}=${g.threshold}`),
+    ].join('|');
+    // Simple 8-char hash
+    let hash = 0;
+    for (let i = 0; i < keyValues.length; i++) {
+      hash = ((hash << 5) - hash + keyValues.charCodeAt(i)) | 0;
+    }
+    return Math.abs(hash).toString(16).padStart(8, '0');
   }
 
   /**
@@ -863,6 +1061,8 @@ case 'strategy_change': {
           });
           break;
         }
+        default:
+          break;
       }
     }
   }

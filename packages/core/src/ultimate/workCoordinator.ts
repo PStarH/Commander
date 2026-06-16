@@ -275,6 +275,7 @@ export class WorkCoordinator {
         case 'COMPLETED': completed++; byAgent[agent].completed++; break;
         case 'FAILED': failed++; byAgent[agent].failed++; break;
         case 'REASSIGNED': reassigned++; break;
+        default: break;
       }
     }
     return {

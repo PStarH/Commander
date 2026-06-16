@@ -261,9 +261,11 @@ export class SqliteWorkQueueStore implements WorkQueueStore {
       for (const item of items) this.update(item);
       return;
     }
-    type BatchTx = (fn: (batch: WorkItem[]) => void) => (batch: WorkItem[]) => void;
-    const txFn = this.db.transaction as BatchTx;
-    const tx = txFn((batch: WorkItem[]) => {
+    // Use db.transaction directly (not extracted) to preserve `this` binding.
+    // The transaction callback receives unknown[] args from better-sqlite3's wrapper;
+    // we cast at the call site since we know we pass WorkItem[] as the only argument.
+    const tx = this.db.transaction((...args: unknown[]) => {
+      const batch = args[0] as WorkItem[];
       for (const item of batch) this.update(item);
     });
     tx(items);
