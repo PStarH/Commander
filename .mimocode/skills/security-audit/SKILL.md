@@ -27,6 +27,7 @@ ls -la packages/core/src/runtime/*.ts
 ### 2. Analyze Each File
 
 For each target file, examine:
+
 - Input validation and sanitization
 - Injection risks (command injection, path traversal, prototype pollution)
 - Sandbox escape possibilities
@@ -63,9 +64,11 @@ Write report to `/tmp/security-audit-[TARGET].md` with:
 ---
 
 ## Executive Summary
+
 [2-3 sentence overview]
 
 ## Severity Scale
+
 - CRITICAL: Immediate exploitation risk
 - HIGH: Significant vulnerability requiring prompt fix
 - MEDIUM: Vulnerability requiring attention
@@ -75,6 +78,7 @@ Write report to `/tmp/security-audit-[TARGET].md` with:
 ## Findings
 
 ### [F1] [Title]
+
 **Severity:** [CRITICAL/HIGH/MEDIUM/LOW/INFO]
 **Location:** [file:line]
 **Description:** [detailed description]
@@ -84,6 +88,7 @@ Write report to `/tmp/security-audit-[TARGET].md` with:
 [Repeat for each finding]
 
 ## Recommendations Summary
+
 [Prioritized list of fixes]
 ```
 
@@ -99,10 +104,13 @@ cat /tmp/security-audit-*.md > /tmp/security-audit-unified.md
 ## Example Prompts
 
 **Single file:**
+
 > Analyze the file packages/core/src/runtime/agentRuntime.ts for security vulnerabilities. Focus on: input validation, injection risks, sandbox escape possibilities.
 
 **Multi-file:**
+
 > Analyze ALL of these files for security vulnerabilities and produce a unified report:
+>
 > 1. packages/core/src/runtime/agentRuntime.ts
 > 2. packages/core/src/sandbox/execPolicy.ts
 > 3. packages/core/src/runtime/toolCallValidator.ts
@@ -115,6 +123,7 @@ cat /tmp/security-audit-*.md > /tmp/security-audit-unified.md
 ## Validation
 
 After generating report:
+
 1. Verify all findings reference actual code locations
 2. Ensure recommendations are specific and actionable
 3. Check severity ratings align with CVSS-like assessment

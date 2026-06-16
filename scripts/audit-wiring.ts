@@ -45,7 +45,12 @@ function countMatches(content: string, pattern: string): number {
   }
 }
 
-function auditModule(mod: WiringExpectation): { name: string; wired: boolean; imports: number; callSites: number } {
+function auditModule(mod: WiringExpectation): {
+  name: string;
+  wired: boolean;
+  imports: number;
+  callSites: number;
+} {
   let totalImports = 0;
   let totalCallSites = 0;
 

@@ -30,8 +30,8 @@ jobs:
           host: ${{ secrets.STAGING_HOST }}
           username: ${{ secrets.STAGING_USER }}
           key: ${{ secrets.STAGING_KEY }}
-          source: "deploy/*"
-          target: "/opt/commander-staging"
+          source: 'deploy/*'
+          target: '/opt/commander-staging'
           strip_components: 1
 
       - name: Restart staging services
@@ -88,8 +88,8 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          source: "deploy/*"
-          target: "/opt/commander"
+          source: 'deploy/*'
+          target: '/opt/commander'
           strip_components: 1
 
       - name: Restart services

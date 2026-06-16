@@ -82,6 +82,7 @@ EOF
 ## Common Issues
 
 ### Process Not Starting
+
 ```bash
 # Check if port is in use
 lsof -i :3000
@@ -91,6 +92,7 @@ pkill -f "run_pinchbench"
 ```
 
 ### API Key Issues
+
 ```bash
 # Verify key is set
 echo $OPENAI_API_KEY | head -c 10
@@ -100,6 +102,7 @@ curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models
 ```
 
 ### Timeout Issues
+
 ```bash
 # Increase timeout
 timeout 600 npx tsx benchmarks/pinchbench/run_pinchbench_commander.ts 2>&1
@@ -114,6 +117,7 @@ timeout 600 npx tsx benchmarks/pinchbench/run_pinchbench_commander.ts 2>&1
 ## Validation
 
 After running:
+
 1. Verify all tasks completed (check summary.json)
 2. Validate success rate against baseline
 3. Check for regressions in specific task categories
@@ -122,10 +126,13 @@ After running:
 ## Example Usage
 
 **Full benchmark:**
+
 > Run PinchBench and compare with Claude Code and Codex CLI
 
 **Quick check:**
+
 > Run PinchBench calendar task and check result
 
 **Regression test:**
+
 > Run PinchBench to verify recent changes didn't break anything

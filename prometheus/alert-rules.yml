@@ -26,7 +26,6 @@ groups:
   - name: commander_compensation
     interval: 30s
     rules:
-
       # ── Sustained Compensation Step Failures ────────────────────────────
       # Fires when more than 5 compensation steps have failed in the last
       # 5 minutes across all tools. Use a rate query (per-second rate)
@@ -39,13 +38,13 @@ groups:
           severity: warning
           team: infra
         annotations:
-          summary: "High rate of compensation step failures ({{ $value | humanize }} per second)"
+          summary: 'High rate of compensation step failures ({{ $value | humanize }} per second)'
           description: >
             Compensation steps are failing at {{ $value | humanize }} per second
             over the last 5 minutes. This may indicate a systemic issue with
             rollback operations (e.g., permission errors, missing snapshots).
             Check /dashboard/compensation for per-tool and per-status breakdowns.
-          runbook_url: "https://commander.dev/docs/runbooks/compensation-failures"
+          runbook_url: 'https://commander.dev/docs/runbooks/compensation-failures'
 
       # ── Compensation Exhaustion ─────────────────────────────────────────
       # Fires when any tool exhausts its compensation retries, meaning the
@@ -59,13 +58,13 @@ groups:
           severity: critical
           team: infra
         annotations:
-          summary: "Compensation exhausted for {{ $labels.tool }}"
+          summary: 'Compensation exhausted for {{ $labels.tool }}'
           description: >
             Compensation retries have been exhausted for tool "{{ $labels.tool }}".
             The system was unable to undo a mutation. Manual investigation and
             remediation are required. Check dead-letter queue entries with
             category "compensation" for detailed error context.
-          runbook_url: "https://commander.dev/docs/runbooks/compensation-exhausted"
+          runbook_url: 'https://commander.dev/docs/runbooks/compensation-exhausted'
 
       # ── Total Compensation Failure Rate ─────────────────────────────────
       # Fires when the overall failure rate of compensation operations
@@ -83,7 +82,7 @@ groups:
           severity: warning
           team: infra
         annotations:
-          summary: "Compensation failure rate {{ $value | humanizePercentage }} exceeded 20%"
+          summary: 'Compensation failure rate {{ $value | humanizePercentage }} exceeded 20%'
           description: >
             {{ $value | humanizePercentage }} of compensation operations failed
             or were exhausted over the last 10 minutes. High failure rates may
@@ -104,7 +103,7 @@ groups:
           severity: info
           team: infra
         annotations:
-          summary: "No compensation plans created in the last 30 minutes"
+          summary: 'No compensation plans created in the last 30 minutes'
           description: >
             No compensation plans have been created in the last 30 minutes. If
             mutation tools are active, this may indicate that the compensation
@@ -145,7 +144,7 @@ groups:
           severity: warning
           team: infra
         annotations:
-          summary: "Compensation step failures for tool {{ $labels.tool }}"
+          summary: 'Compensation step failures for tool {{ $labels.tool }}'
           description: >
             Tool "{{ $labels.tool }}" has {{ $value | humanize }} compensation
             step failures per second over 5 minutes. This may indicate that the

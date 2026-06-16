@@ -44,19 +44,19 @@ This directory contains Prometheus configuration for monitoring the Commander co
 
 See [packages/core/src/runtime/metricsCollector.ts](../packages/core/src/runtime/metricsCollector.ts) for the full list of exported metrics.
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `compensation_planned_total` | Counter | `tool`, `risk` | Plans created when a mutation tool fails |
-| `compensation_steps_total` | Counter | `tool`, `status` | Individual compensation steps executed |
-| `compensation_total` | Counter | `tool`, `outcome` | Compensation action outcomes |
+| Metric                       | Type    | Labels            | Description                              |
+| ---------------------------- | ------- | ----------------- | ---------------------------------------- |
+| `compensation_planned_total` | Counter | `tool`, `risk`    | Plans created when a mutation tool fails |
+| `compensation_steps_total`   | Counter | `tool`, `status`  | Individual compensation steps executed   |
+| `compensation_total`         | Counter | `tool`, `outcome` | Compensation action outcomes             |
 
 ## Alert Severity Levels
 
-| Severity | Meaning | Response |
-|----------|---------|----------|
-| `info` | Informational, no action required | Monitor |
-| `warning` | Degraded behavior, investigate soon | Check dashboard |
-| `critical` | Manual intervention required | Immediate action |
+| Severity   | Meaning                             | Response         |
+| ---------- | ----------------------------------- | ---------------- |
+| `info`     | Informational, no action required   | Monitor          |
+| `warning`  | Degraded behavior, investigate soon | Check dashboard  |
+| `critical` | Manual intervention required        | Immediate action |
 
 ## Dashboard
 

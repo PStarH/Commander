@@ -8,7 +8,10 @@ export default tseslint.config(
     extends: [tseslint.configs.base],
     rules: {
       'no-console': ['error', { allow: ['warn', 'error'] }],
-      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-require-imports': 'off',
       'prefer-const': 'warn',
@@ -41,10 +44,7 @@ export default tseslint.config(
   },
   // Tools with inline code templates containing console.log references
   {
-    files: [
-      'packages/core/src/tools/scriptTool.ts',
-      'packages/core/src/tools/codeRefinerTool.ts',
-    ],
+    files: ['packages/core/src/tools/scriptTool.ts', 'packages/core/src/tools/codeRefinerTool.ts'],
     rules: { 'no-console': 'off' },
   },
   // SDK and web app — separate packages with their own conventions

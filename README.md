@@ -34,18 +34,23 @@ AI agents are becoming production infrastructure. But most frameworks were built
 ## Technical moats
 
 ### Live SSE streaming
+
 Every agent thought, tool call, and decision streams to your terminal in real time via Server-Sent Events. Not polling. Not logs after the fact. You watch your agents reason, step by step. The only multi-agent framework with built-in streaming.
 
 ### Automatic topology selection
+
 The deliberation engine classifies each task (CODING / RESEARCH / ANALYSIS / FACTUAL), estimates complexity, and picks from 8 orchestration topologies — SINGLE, SEQUENTIAL, PARALLEL, HIERARCHICAL, HYBRID, DEBATE, ENSEMBLE, EVALUATOR-OPTIMIZER. A one-line task uses 1 agent. A cross-repository audit spins up 20. Zero configuration.
 
 ### 22 providers with automatic failover
+
 Set any one API key. Commander detects your provider, and if it fails, falls through a configurable chain. OpenAI → Anthropic → DeepSeek → Groq → Ollama — you define the order, Commander handles the routing. No single-vendor lock-in.
 
 ### Quality gates on every output
+
 Before returning any result, Commander runs a 5-gate verification pipeline: hallucination detection, consistency check, completeness verification, accuracy validation, and safety scanning. If the output fails any gate, the system retries or reports the failure with full context.
 
 ### Self-optimizing runtime
+
 A meta-learner using Thompson Sampling and Reflexion tunes agent configurations across runs. It learns which topologies work best for which task types, which providers are fastest, and which parameter combinations produce the highest quality results. The system gets better the more you use it.
 
 ---
@@ -97,38 +102,38 @@ A meta-learner using Thompson Sampling and Reflexion tunes agent configurations 
 
 Every component that belongs in a production system exists in Commander:
 
-| Capability | Implementation |
-|---|---|
-| **Circuit breakers** | 3-state (CLOSED / OPEN / HALF-OPEN), 5 failures → 30s cooldown, per-provider |
-| **Crash-safe checkpoints** | Atomic write-tmp-rename at every step. Recover from any failure. |
-| **Dead letter queue** | Unrecoverable errors persisted for analysis, with replay support |
-| **Multi-tenancy** | Per-tenant token budgets, concurrency limits, rate limits, storage isolation |
-| **Rate limiting** | Per-tenant and per-provider, configurable windows |
-| **Metrics** | OpenMetrics / Prometheus counters, gauges, histograms with tenant labels |
-| **Tracing** | Span-based execution traces with persistent store |
-| **Security** | Bearer auth, CORS allow-lists, request body limits, request IDs, privacy router |
-| **Hallucination detection** | Signal-based detector with configurable thresholds |
-| **Semantic caching** | SHA-256 + semantic similarity deduplication, per-tenant key isolation |
-| **Fallback chains** | Auto-failover between providers, configurable order and timeouts |
-| **Plugin system** | 19 hook points: LLM, tool, agent lifecycle, context compaction, session lifecycle |
-| **SSE streaming** | Real-time agent thinking, tool calls, decisions streamed via Server-Sent Events |
+| Capability                  | Implementation                                                                    |
+| --------------------------- | --------------------------------------------------------------------------------- |
+| **Circuit breakers**        | 3-state (CLOSED / OPEN / HALF-OPEN), 5 failures → 30s cooldown, per-provider      |
+| **Crash-safe checkpoints**  | Atomic write-tmp-rename at every step. Recover from any failure.                  |
+| **Dead letter queue**       | Unrecoverable errors persisted for analysis, with replay support                  |
+| **Multi-tenancy**           | Per-tenant token budgets, concurrency limits, rate limits, storage isolation      |
+| **Rate limiting**           | Per-tenant and per-provider, configurable windows                                 |
+| **Metrics**                 | OpenMetrics / Prometheus counters, gauges, histograms with tenant labels          |
+| **Tracing**                 | Span-based execution traces with persistent store                                 |
+| **Security**                | Bearer auth, CORS allow-lists, request body limits, request IDs, privacy router   |
+| **Hallucination detection** | Signal-based detector with configurable thresholds                                |
+| **Semantic caching**        | SHA-256 + semantic similarity deduplication, per-tenant key isolation             |
+| **Fallback chains**         | Auto-failover between providers, configurable order and timeouts                  |
+| **Plugin system**           | 19 hook points: LLM, tool, agent lifecycle, context compaction, session lifecycle |
+| **SSE streaming**           | Real-time agent thinking, tool calls, decisions streamed via Server-Sent Events   |
 
 ---
 
 ## How Commander compares
 
-| | Commander | LangGraph | CrewAI | AutoGen |
-|---|---|---|---|---|
-| **SSE streaming** | Built-in | ❌ | ❌ | ❌ |
-| **Auto topology** | 8 patterns, auto-chosen | Manual DAG | Fixed sequential | Manual |
-| **Providers** | 22, auto-failover | 1-3 (LangChain) | 3-5 | Mostly OpenAI |
-| **Self-optimization** | Thompson Sampling + Reflexion | ❌ | ❌ | ❌ |
-| **Multi-tenant** | Per-tenant isolation | ❌ | ❌ | ❌ |
-| **Crash safety** | Atomic checkpoints | ❌ | ❌ | ❌ |
-| **Quality gates** | 5-stage pipeline | ❌ | ❌ | ❌ |
-| **Circuit breakers** | Per-provider 3-state | ❌ | ❌ | ❌ |
-| **Dead letter queue** | Persistent with replay | ❌ | ❌ | ❌ |
-| **Cost per task** | ~$0.10 (verified) | Unknown | Unknown | Unknown |
+|                       | Commander                     | LangGraph       | CrewAI           | AutoGen       |
+| --------------------- | ----------------------------- | --------------- | ---------------- | ------------- |
+| **SSE streaming**     | Built-in                      | ❌              | ❌               | ❌            |
+| **Auto topology**     | 8 patterns, auto-chosen       | Manual DAG      | Fixed sequential | Manual        |
+| **Providers**         | 22, auto-failover             | 1-3 (LangChain) | 3-5              | Mostly OpenAI |
+| **Self-optimization** | Thompson Sampling + Reflexion | ❌              | ❌               | ❌            |
+| **Multi-tenant**      | Per-tenant isolation          | ❌              | ❌               | ❌            |
+| **Crash safety**      | Atomic checkpoints            | ❌              | ❌               | ❌            |
+| **Quality gates**     | 5-stage pipeline              | ❌              | ❌               | ❌            |
+| **Circuit breakers**  | Per-provider 3-state          | ❌              | ❌               | ❌            |
+| **Dead letter queue** | Persistent with replay        | ❌              | ❌               | ❌            |
+| **Cost per task**     | ~$0.10 (verified)             | Unknown         | Unknown          | Unknown       |
 
 ---
 

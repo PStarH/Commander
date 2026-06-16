@@ -12,33 +12,33 @@ User Task → Deliberation → EffortScaling → TopologyRoute → Decompose →
 
 ### `packages/core/src/ultimate/` — Orchestration Engine
 
-| File | Purpose |
-|------|---------|
-| `deliberation.ts` | Task classification (keyword + LLM). Determines topology, effort, capabilities |
-| `effortScaler.ts` | Anthropic-style effort scaling: SIMPLE→MODERATE→COMPLEX→DEEP_RESEARCH |
-| `topologyRouter.ts` | 8 topologies: SINGLE, SEQUENTIAL, PARALLEL, HIERARCHICAL, HYBRID, DEBATE, ENSEMBLE, EVALUATOR_OPTIMIZER |
-| `atomizer.ts` | Recursive decomposition (ROMA-inspired). Aspect/Step/Recursive strategies |
-| `subAgentExecutor.ts` | Executes decomposed tasks with dependency-aware topological ordering |
-| `synthesizer.ts` | Multi-agent synthesis with 5 quality gates (hallucination, consistency, completeness, accuracy, safety) |
-| `artifactSystem.ts` | Reference-based agent communication (prevents telephone game) |
-| `agentTeamManager.ts` | Persistent teams with shared tasks and inbox messaging |
-| `capabilityRegistry.ts` | FoA-inspired semantic agent capability matching |
-| `orchestrator.ts` | Top-level orchestrator wiring all phases together + self-optimization |
-| `types.ts` | All orchestration types, configs, and defaults |
+| File                    | Purpose                                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------------------------------- |
+| `deliberation.ts`       | Task classification (keyword + LLM). Determines topology, effort, capabilities                          |
+| `effortScaler.ts`       | Anthropic-style effort scaling: SIMPLE→MODERATE→COMPLEX→DEEP_RESEARCH                                   |
+| `topologyRouter.ts`     | 8 topologies: SINGLE, SEQUENTIAL, PARALLEL, HIERARCHICAL, HYBRID, DEBATE, ENSEMBLE, EVALUATOR_OPTIMIZER |
+| `atomizer.ts`           | Recursive decomposition (ROMA-inspired). Aspect/Step/Recursive strategies                               |
+| `subAgentExecutor.ts`   | Executes decomposed tasks with dependency-aware topological ordering                                    |
+| `synthesizer.ts`        | Multi-agent synthesis with 5 quality gates (hallucination, consistency, completeness, accuracy, safety) |
+| `artifactSystem.ts`     | Reference-based agent communication (prevents telephone game)                                           |
+| `agentTeamManager.ts`   | Persistent teams with shared tasks and inbox messaging                                                  |
+| `capabilityRegistry.ts` | FoA-inspired semantic agent capability matching                                                         |
+| `orchestrator.ts`       | Top-level orchestrator wiring all phases together + self-optimization                                   |
+| `types.ts`              | All orchestration types, configs, and defaults                                                          |
 
 ### `packages/core/src/runtime/` — Execution Engine
 
-| File | Purpose |
-|------|---------|
-| `agentRuntime.ts` | Core agent execution loop with caching, retry, observation masking |
-| `modelRouter.ts` | Model tier routing (eco→standard→power→consensus) |
-| `messageBus.ts` | Event-driven inter-agent communication (pub/sub) |
-| `executionTrace.ts` | Full execution tracing for debugging and analysis |
-| `embedding.ts` | Vector embedding with OpenAI real + mock providers |
-| `sseStream.ts` | Server-Sent Events bridge for real-time agent visibility |
-| `mcpRemoteRuntime.ts` | Distributed execution via MCP protocol |
-| `providers/openaiProvider.ts` | OpenAI API provider with streaming |
-| `providers/anthropicProvider.ts` | Anthropic API provider with streaming |
+| File                             | Purpose                                                            |
+| -------------------------------- | ------------------------------------------------------------------ |
+| `agentRuntime.ts`                | Core agent execution loop with caching, retry, observation masking |
+| `modelRouter.ts`                 | Model tier routing (eco→standard→power→consensus)                  |
+| `messageBus.ts`                  | Event-driven inter-agent communication (pub/sub)                   |
+| `executionTrace.ts`              | Full execution tracing for debugging and analysis                  |
+| `embedding.ts`                   | Vector embedding with OpenAI real + mock providers                 |
+| `sseStream.ts`                   | Server-Sent Events bridge for real-time agent visibility           |
+| `mcpRemoteRuntime.ts`            | Distributed execution via MCP protocol                             |
+| `providers/openaiProvider.ts`    | OpenAI API provider with streaming                                 |
+| `providers/anthropicProvider.ts` | Anthropic API provider with streaming                              |
 
 ### `packages/core/src/mcp/` — Model Context Protocol
 
@@ -46,8 +46,8 @@ MCP client/server implementation for tool exposure and distributed agent executi
 
 ### `packages/core/src/selfEvolution/` — Meta-Learning
 
-| File | Purpose |
-|------|---------|
+| File             | Purpose                                                   |
+| ---------------- | --------------------------------------------------------- |
 | `metaLearner.ts` | Thompson Sampling + Reflexion + cross-session persistence |
 
 ### `packages/core/src/telos/` — Token-Efficient Orchestration
@@ -57,41 +57,49 @@ Token budget enforcement, provider pooling, and cost-aware routing.
 ## Pipeline Phases
 
 ### Phase 1: Deliberation
+
 - Keyword-based (`deliberate()`) for zero-cost fast path
 - LLM-powered (`deliberateWithLLM()`) for richer classification when a provider is available
 - Outputs: task type, effort level, recommended topology, capabilities, token budget
 
 ### Phase 2: Effort Scaling
+
 - Maps task complexity to agent count (1 for SIMPLE, up to 20 for DEEP_RESEARCH)
 - Sets token budgets per agent
 - Configures recursive decomposition depth
 
 ### Phase 3: Topology Routing
+
 - 8 topology types selected based on task DAG analysis
 - AdaptOrch-inspired: topology selection yields 12-23% improvement
 - Cost-aware: adjusts topology under budget constraints
 
 ### Phase 4: Task Decomposition
+
 - Recursive decomposition into subtask trees
 - Three strategies: ASPECT (by concern), STEP (by workflow), RECURSIVE (by chunking)
 - Dependency graph with topological ordering ensures sequential correctness
 
 ### Phase 5: Team Formation
+
 - Creates persistent agent teams with shared task lists
 - Inbox messaging for inter-agent communication
 - Status tracking per member
 
 ### Phase 6: Parallel Execution
+
 - Dependency-aware parallel execution with topological ordering
 - Max parallelism configurable (default 10)
 - Error isolation: one failed subtask doesn't kill siblings
 
 ### Phase 7: Multi-Agent Synthesis
+
 - Combines subtask results using configurable strategy
 - Strategies: LEAD_SYNTHESIS, HIERARCHICAL, VOTE, ENSEMBLE
 - Includes dissent reporting for transparency
 
 ### Phase 8: Quality Gates
+
 - 5 gates: hallucination, consistency, completeness, accuracy, safety
 - Auto-fix retry loop with targeted repair prompts
 - Configurable thresholds per gate
@@ -119,28 +127,28 @@ commander help                # Show this help
 
 ## API Endpoints
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/v1/execute` | POST | Agent execution |
-| `/api/v1/mcp` | POST | MCP JSON-RPC 2.0 (tool discovery + execution) |
-| `/api/v1/runtime` | POST | Create runtime session |
-| `/api/v1/runtime/{id}` | GET/DELETE | Get or delete runtime session |
-| `/api/v1/bus` | POST | Message bus publish |
-| `/api/v1/status` | GET | System status |
-| `/health` | GET | Health check (bypasses auth + rate limit) |
-| `/readyz` | GET | Readiness probe |
-| `/stream/runtime/{id}` | GET | SSE stream for real-time agent events |
+| Endpoint               | Method     | Purpose                                       |
+| ---------------------- | ---------- | --------------------------------------------- |
+| `/api/v1/execute`      | POST       | Agent execution                               |
+| `/api/v1/mcp`          | POST       | MCP JSON-RPC 2.0 (tool discovery + execution) |
+| `/api/v1/runtime`      | POST       | Create runtime session                        |
+| `/api/v1/runtime/{id}` | GET/DELETE | Get or delete runtime session                 |
+| `/api/v1/bus`          | POST       | Message bus publish                           |
+| `/api/v1/status`       | GET        | System status                                 |
+| `/health`              | GET        | Health check (bypasses auth + rate limit)     |
+| `/readyz`              | GET        | Readiness probe                               |
+| `/stream/runtime/{id}` | GET        | SSE stream for real-time agent events         |
 
 ## Environment Variables
 
-| Variable | Purpose |
-|----------|---------|
-| `OPENAI_API_KEY` | OpenAI provider key |
-| `ANTHROPIC_API_KEY` | Anthropic provider key |
-| `OPENAI_BASE_URL` | Custom API endpoint |
-| `OPENAI_MODEL` | Model override (default: gpt-4o) |
-| `COMMANDER_TOOLS` | Comma-separated tool list |
-| `COMMANDER_EFFORT` | Force effort level |
+| Variable            | Purpose                          |
+| ------------------- | -------------------------------- |
+| `OPENAI_API_KEY`    | OpenAI provider key              |
+| `ANTHROPIC_API_KEY` | Anthropic provider key           |
+| `OPENAI_BASE_URL`   | Custom API endpoint              |
+| `OPENAI_MODEL`      | Model override (default: gpt-4o) |
+| `COMMANDER_TOOLS`   | Comma-separated tool list        |
+| `COMMANDER_EFFORT`  | Force effort level               |
 
 ## Benchmarks
 

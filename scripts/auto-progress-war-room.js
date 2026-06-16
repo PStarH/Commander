@@ -31,11 +31,11 @@ function nextId(prefix) {
 
 function chooseMission(missions) {
   // Prefer RUNNING, then BLOCKED, then PLANNED
-  const running = missions.find(m => m.status === 'RUNNING');
+  const running = missions.find((m) => m.status === 'RUNNING');
   if (running) return running;
-  const blocked = missions.find(m => m.status === 'BLOCKED');
+  const blocked = missions.find((m) => m.status === 'BLOCKED');
   if (blocked) return blocked;
-  const planned = missions.find(m => m.status === 'PLANNED');
+  const planned = missions.find((m) => m.status === 'PLANNED');
   if (planned) return planned;
   return null;
 }
@@ -57,8 +57,8 @@ function main() {
     return;
   }
 
-  const agent = data.agents.find(a => a.id === mission.assignedAgentId);
-  const logsForMission = (data.logs || []).filter(l => l.missionId === mission.id);
+  const agent = data.agents.find((a) => a.id === mission.assignedAgentId);
+  const logsForMission = (data.logs || []).filter((l) => l.missionId === mission.id);
 
   let message;
   let level = 'INFO';
@@ -104,7 +104,14 @@ function main() {
   data.logs.push(log);
   saveData(data);
 
-  console.log('[auto-progress] updated mission', mission.id, 'status =', mission.status, '| log:', message);
+  console.log(
+    '[auto-progress] updated mission',
+    mission.id,
+    'status =',
+    mission.status,
+    '| log:',
+    message,
+  );
 }
 
 main();

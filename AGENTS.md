@@ -196,26 +196,26 @@ NullTenantProvider = no isolation, backward compatible. SimpleTenantProvider = s
 
 ## Key Data Types
 
-| Type | File | Fields |
-|------|------|--------|
-| `AgentExecutionContext` | `runtime/types.ts` | `agentId, projectId, goal, tenantId?, userId?, tokenBudget, maxSteps, availableTools, contextData` |
-| `AgentExecutionResult` | `runtime/types.ts` | `status, summary, steps[], totalTokenUsage, totalDurationMs, error?` |
-| `AgentRuntimeConfig` | `runtime/types.ts` | `maxStepsPerRun, maxRetries, timeoutMs, maxConcurrency, budgetHardCapTokens, ...` |
-| `TenantConfig` | `runtime/tenantProvider.ts` | `tenantId, tokenBudget, maxConcurrency, maxRunsPerMinute, enabled, workspacePath?` |
-| `CheckpointState` | `runtime/stateCheckpointer.ts` | `runId, phase, stepNumber, messages[], tokenUsage, context, ...` |
+| Type                    | File                           | Fields                                                                                             |
+| ----------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `AgentExecutionContext` | `runtime/types.ts`             | `agentId, projectId, goal, tenantId?, userId?, tokenBudget, maxSteps, availableTools, contextData` |
+| `AgentExecutionResult`  | `runtime/types.ts`             | `status, summary, steps[], totalTokenUsage, totalDurationMs, error?`                               |
+| `AgentRuntimeConfig`    | `runtime/types.ts`             | `maxStepsPerRun, maxRetries, timeoutMs, maxConcurrency, budgetHardCapTokens, ...`                  |
+| `TenantConfig`          | `runtime/tenantProvider.ts`    | `tenantId, tokenBudget, maxConcurrency, maxRunsPerMinute, enabled, workspacePath?`                 |
+| `CheckpointState`       | `runtime/stateCheckpointer.ts` | `runId, phase, stepNumber, messages[], tokenUsage, context, ...`                                   |
 
 ## Extension Points
 
-| Point | Interface | When it fires |
-|-------|-----------|---------------|
-| LLM call | `HookManager.fireBeforeLLMCall / fireAfterLLMCall` | Before/after every LLM request |
-| Tool call | `HookManager.fireBeforeToolCall / fireAfterToolCall` | Before/after every tool execution |
-| Run lifecycle | `HookManager.fireOnAgentComplete / fireOnError` | Run finished or failed |
-| Plugin | `CommanderPlugin` interface | Register via `getHookManager().register(plugin)` |
-| Custom provider | `LLMProvider` interface | `runtime.registerProvider(name, provider)` |
-| Custom tool | `Tool` interface | `runtime.registerTool(name, tool)` |
-| Channel adapter | `ChannelAdapter` interface | Telegram etc. |
-| Topology | Add case in `topologyRouter.ts` | New orchestration pattern |
+| Point           | Interface                                            | When it fires                                    |
+| --------------- | ---------------------------------------------------- | ------------------------------------------------ |
+| LLM call        | `HookManager.fireBeforeLLMCall / fireAfterLLMCall`   | Before/after every LLM request                   |
+| Tool call       | `HookManager.fireBeforeToolCall / fireAfterToolCall` | Before/after every tool execution                |
+| Run lifecycle   | `HookManager.fireOnAgentComplete / fireOnError`      | Run finished or failed                           |
+| Plugin          | `CommanderPlugin` interface                          | Register via `getHookManager().register(plugin)` |
+| Custom provider | `LLMProvider` interface                              | `runtime.registerProvider(name, provider)`       |
+| Custom tool     | `Tool` interface                                     | `runtime.registerTool(name, tool)`               |
+| Channel adapter | `ChannelAdapter` interface                           | Telegram etc.                                    |
+| Topology        | Add case in `topologyRouter.ts`                      | New orchestration pattern                        |
 
 ## Testing Strategy
 
@@ -236,6 +236,7 @@ tests/
 ```
 
 Rules:
+
 - **Zero tolerance for failures**: `# fail 0` is non-negotiable
 - **New feature → new tests**: every addition needs isolation + integration coverage
 - **Chaos tests are first-class**: they must pass, not just "informational"

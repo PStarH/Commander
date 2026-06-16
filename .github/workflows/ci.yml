@@ -57,7 +57,7 @@ jobs:
         run: pnpm --filter @commander/core test:node:pathsec
 
       - name: CLI check
-        run: npx tsx cli.ts status
+        run: cd packages/core && npx tsx src/cli.ts status
 
       - name: Build core package
         run: cd packages/core && npx tsc -p tsconfig.json

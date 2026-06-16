@@ -118,6 +118,7 @@ print(json.dumps(report, indent=2))
 ## Validation
 
 After analysis:
+
 1. Verify JSONL file is valid (no malformed lines)
 2. Check for missing fields in metrics
 3. Validate cost estimates against actual provider bills
@@ -126,10 +127,13 @@ After analysis:
 ## Example Usage
 
 **Quick summary:**
+
 > Analyze stress test metrics and show success rate
 
 **Failure investigation:**
+
 > Find all failed tasks and their error messages
 
 **Cost analysis:**
+
 > Calculate total cost and cost per successful task

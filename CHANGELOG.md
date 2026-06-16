@@ -8,16 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
 - CHANGELOG.md, CODE_OF_CONDUCT.md, SECURITY.md for project governance
 - Dependabot configuration for automated dependency updates
 - Pull request template for consistent PR descriptions
 - npm audit and test coverage checks in CI pipeline
 
 ### Security
+
 - CD pipeline now generates random API key on first deploy instead of using example default
 - Post-deploy smoke tests validate health, status, and OpenAPI endpoints
 
 ### Added (v0.2.1-pre)
+
 - **SQLite persistence**: `SqliteWarRoomStore` with WAL mode, 9 indexes, transaction safety
   - Enable with `WARROOM_STORAGE=sqlite` environment variable
   - `createWarRoomStore()` factory for transparent storage switching
@@ -33,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - API: `securityMiddleware`, `governanceCheckpoint`, `episodicMemoryStore`
 
 ### Changed
+
 - ESLint `no-explicit-any` promoted from warn to error (with legacy file exemptions)
 - Coverage thresholds raised: statements 40→60%, functions 55→70%, lines 40→60%
 - API orchestrator now delegates to core `deliberate()` instead of inline keyword matching
@@ -40,12 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shutdown handler now logs persist errors instead of silent catch
 
 ### Fixed
+
 - Empty catch block in API shutdown handler
 - TypeScript type errors in `orchestrator.ts` (runContext, invocationProfile)
 
 ## [0.2.0] — 2026-05-19
 
 ### Added
+
 - Agent War Room dashboard GUI (`commander gui` command)
 - OpenAPI 3.0 specification served at `/openapi.json`
 - Readiness probe (`/ready`) for Kubernetes-style deployment checks
@@ -58,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependabot configuration for automated dependency updates
 
 ### Changed
+
 - HTTP server binds to localhost by default (security hardening)
 - All empty catch blocks replaced with structured logging
 - All `console.*` calls replaced with structured logger (zero in production code)
@@ -67,6 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dockerfile: 6-stage multi-architecture build with health checks
 
 ### Fixed
+
 - agentRuntime.ts corruption from earlier catch-block edits (373 lines restored)
 - httpServer.ts type errors (3 `string | undefined` → `string` fallbacks)
 - `getDefaultProvider` return type (`any` → `LLMProvider`)
@@ -75,6 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GAIA evidence audit trail (broken 10-task run replaced with real 165-task results)
 
 ### Removed
+
 - **GAIA benchmark content** — Previous 69.7% result was invalidated by a scoring
   bug (empty `expected` field marked responses as correct). Scoring fixed, full
   re-run pending. All claim/badge references removed from `README*.md`.
@@ -82,6 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] — 2026-05-18
 
 ### Added
+
 - GAIA 69.7% benchmark (+48.5pp over bare MiMo 21.2%)
 - PinchBench 97.7% (42/43) on core tasks (beat OpenClaw 89.5%; multifile.json failed)
 - BFCL 30-task subset evaluation (80.0% tool/param accuracy; NOT official 2000+ leaderboard)
@@ -106,10 +116,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TaskPool: parallel multi-agent execution engine
 
 ### Changed
+
 - All benchmark reports updated with evidence chains and verified results
 - module audit marking `@experimental` components
 
 ### Fixed
+
 - Silent catch blocks in authentication provider, HTTP server
 - JSON.parse crash in edge cases
 - unhandled LSP rejection
@@ -119,18 +131,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.0.2] — 2026-05-15
 
 ### Added
+
 - Browser search and fetch using stealth Playwright (DuckDuckGo/Brave)
 - Public benchmark comparison report
 - Transparent performance comparison methodology
 - CI workflow setup
 
 ### Fixed
+
 - Multi-turn tool loop for MiMo reasoning models
 - Skill system integration from OpenClaw/Hermes
 
 ## [0.0.1] — 2026-05-14
 
 ### Added
+
 - Initial multi-agent orchestration system
 - AgentRuntime with LLM → tools → verification → retry loop
 - 6 providers (OpenAI, Anthropic, Google, DeepSeek, GLM, Xiaomi)

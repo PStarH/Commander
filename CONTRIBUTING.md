@@ -19,16 +19,19 @@ pnpm build:core        # Build the core package
 ## What We Need Help With
 
 ### 🎯 High Priority
+
 - **Channel adapters**: WhatsApp, Telegram, Discord, Slack integrations
 - **Tool improvements**: Better web search, PDF parsing, image analysis
 - **Documentation**: Tutorials, API docs, example projects
 
 ### 🧪 Testing
+
 - **More benchmarks**: Run Commander on your own datasets
 - **Integration tests**: End-to-end workflows with real LLM APIs
 - **Performance profiling**: Find and fix bottlenecks
 
 ### 🌐 Community
+
 - **Translations**: README and docs in other languages
 - **Showcases**: Build something cool with Commander and share it
 - **Tutorials**: Video tutorials, blog posts, example repos
@@ -36,6 +39,7 @@ pnpm build:core        # Build the core package
 ## Contributor License Agreement
 
 By submitting a pull request, you agree to the terms in [CLA.md](CLA.md). In short:
+
 - You grant the project license to use your contribution under the MIT license
 - You represent that you own the rights to your contribution
 - You acknowledge there is no obligation to accept your contribution
@@ -76,6 +80,7 @@ By submitting a pull request, you agree to the terms in [CLA.md](CLA.md). In sho
 ### Adding New Tests
 
 Tests use two runners:
+
 - **node:test** for most tests in `packages/core/tests/` — use `describe`/`it` from `node:test` and `assert` from `node:assert`
 - **Vitest** for runtime tests in `packages/core/tests/runtime/` — use `describe`/`it`/`expect` from `vitest`
 

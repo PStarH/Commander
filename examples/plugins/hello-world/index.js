@@ -24,32 +24,37 @@ module.exports = createPlugin({
 
   async register(api) {
     // ── Register a tool ──
-    api.registerTool(defineTool({
-      name: 'greet',
-      description: 'Say hello to someone. Use this when the user wants a greeting.',
-      inputSchema: schema({
-        name: stringProperty('The name of the person to greet', { default: 'World' }),
-        language: stringProperty('Language for the greeting', { enum: ['en', 'zh', 'es', 'ja'], default: 'en' }),
+    api.registerTool(
+      defineTool({
+        name: 'greet',
+        description: 'Say hello to someone. Use this when the user wants a greeting.',
+        inputSchema: schema({
+          name: stringProperty('The name of the person to greet', { default: 'World' }),
+          language: stringProperty('Language for the greeting', {
+            enum: ['en', 'zh', 'es', 'ja'],
+            default: 'en',
+          }),
+        }),
+        async execute(args) {
+          const name = args.name || 'World';
+          const lang = args.language || 'en';
+
+          const greetings = {
+            en: `Hello, ${name}! Welcome to Commander! 🚀`,
+            zh: `你好，${name}！欢迎使用 Commander！🚀`,
+            es: `¡Hola, ${name}! ¡Bienvenido a Commander! 🚀`,
+            ja: `こんにちは、${name}！Commanderへようこそ！🚀`,
+          };
+
+          const greeting = greetings[lang] || greetings.en;
+          api.logger.info(`Greeted "${name}" in ${lang}`);
+          return greeting;
+        },
+        isReadOnly: true,
+        isConcurrencySafe: true,
+        category: 'general',
       }),
-      async execute(args) {
-        const name = args.name || 'World';
-        const lang = args.language || 'en';
-
-        const greetings = {
-          en: `Hello, ${name}! Welcome to Commander! 🚀`,
-          zh: `你好，${name}！欢迎使用 Commander！🚀`,
-          es: `¡Hola, ${name}! ¡Bienvenido a Commander! 🚀`,
-          ja: `こんにちは、${name}！Commanderへようこそ！🚀`,
-        };
-
-        const greeting = greetings[lang] || greetings.en;
-        api.logger.info(`Greeted "${name}" in ${lang}`);
-        return greeting;
-      },
-      isReadOnly: true,
-      isConcurrencySafe: true,
-      category: 'general',
-    }));
+    );
 
     // ── Subscribe to hooks ──
     api.on('onAgentStart', async (ctx) => {

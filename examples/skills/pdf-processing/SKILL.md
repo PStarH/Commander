@@ -1,9 +1,9 @@
 ---
 name: pdf-processing
-description: "Process PDF files — read, extract text, merge, split, create, fill forms, OCR. Trigger when user mentions PDF files or needs to work with PDFs."
-version: "1.0.0"
-author: "Commander Team"
-license: "MIT"
+description: 'Process PDF files — read, extract text, merge, split, create, fill forms, OCR. Trigger when user mentions PDF files or needs to work with PDFs.'
+version: '1.0.0'
+author: 'Commander Team'
+license: 'MIT'
 argument-hint: <file.pdf> or <action>
 allowed-tools: python_execute shell_execute file_read file_write file_edit
 metadata:
@@ -20,6 +20,7 @@ Use Python libraries to process PDF files. This skill covers common PDF operatio
 ## Required Libraries
 
 Install if not available:
+
 ```bash
 pip install pypdf pymupdf pdfplumber reportlab
 ```
@@ -27,6 +28,7 @@ pip install pypdf pymupdf pdfplumber reportlab
 ## Quick Reference
 
 ### Read PDF and Extract Text
+
 ```python
 from pypdf import PdfReader
 
@@ -40,6 +42,7 @@ for i, page in enumerate(reader.pages):
 ```
 
 ### Merge PDFs
+
 ```python
 from pypdf import PdfWriter, PdfReader
 
@@ -54,6 +57,7 @@ with open("merged.pdf", "wb") as output:
 ```
 
 ### Split PDF
+
 ```python
 from pypdf import PdfReader, PdfWriter
 
@@ -66,6 +70,7 @@ for i, page in enumerate(reader.pages):
 ```
 
 ### Extract Tables (pdfplumber)
+
 ```python
 import pdfplumber
 
@@ -78,6 +83,7 @@ with pdfplumber.open("document.pdf") as pdf:
 ```
 
 ### Create PDF (reportlab)
+
 ```python
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
@@ -89,6 +95,7 @@ c.save()
 ```
 
 ### OCR Scanned PDFs
+
 ```python
 import subprocess
 
@@ -98,14 +105,14 @@ subprocess.run(["ocrmypdf", "input.pdf", "output.pdf"], check=True)
 
 ## Decision Guide
 
-| Task | Library | Approach |
-|------|---------|----------|
-| Extract text | pypdf | `page.extract_text()` |
-| Extract tables | pdfplumber | `page.extract_tables()` |
-| Merge/split | pypdf | PdfWriter + add_page |
-| Fill forms | pypdf | `writer.update_page_form_field_values()` |
-| Create new | reportlab | canvas.Canvas |
-| OCR | ocrmypdf | CLI tool |
+| Task           | Library    | Approach                                 |
+| -------------- | ---------- | ---------------------------------------- |
+| Extract text   | pypdf      | `page.extract_text()`                    |
+| Extract tables | pdfplumber | `page.extract_tables()`                  |
+| Merge/split    | pypdf      | PdfWriter + add_page                     |
+| Fill forms     | pypdf      | `writer.update_page_form_field_values()` |
+| Create new     | reportlab  | canvas.Canvas                            |
+| OCR            | ocrmypdf   | CLI tool                                 |
 
 ## Error Handling
 

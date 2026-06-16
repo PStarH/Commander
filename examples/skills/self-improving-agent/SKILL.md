@@ -1,9 +1,9 @@
 ---
 name: self-improving-agent
-description: "Continuous learning from errors and successes. Trigger after task completion to log learnings, or when the agent encounters errors it should remember for next time."
-version: "1.0.0"
-author: "Commander Team"
-license: "MIT"
+description: 'Continuous learning from errors and successes. Trigger after task completion to log learnings, or when the agent encounters errors it should remember for next time.'
+version: '1.0.0'
+author: 'Commander Team'
+license: 'MIT'
 allowed-tools: file_read file_write file_list memory_store memory_recall
 metadata:
   category: strategy
@@ -29,6 +29,7 @@ Create/update a learning entry in `.commander/learnings/`:
 
 ```markdown
 ## [Topic]
+
 - **Date**: YYYY-MM-DD
 - **Context**: What was being attempted
 - **Error/Observation**: What went wrong or what was noticed
@@ -41,25 +42,33 @@ Create/update a learning entry in `.commander/learnings/`:
 ## Learning Categories
 
 ### 1. Error Patterns
+
 Log when tools fail and why:
+
 - API rate limits → implement backoff
 - File not found → check path resolution
 - Type errors → validate inputs first
 
 ### 2. User Preferences
+
 Log when user corrects behavior:
+
 - "Don't use that library" → avoid in future
 - "Always use TypeScript" → prefer TS
 - "Be more concise" → adjust output style
 
 ### 3. Environment Quirks
+
 Log platform-specific issues:
+
 - macOS vs Linux path differences
 - Node.js version compatibility
 - Package manager quirks (pnpm vs npm)
 
 ### 4. Workflow Optimizations
+
 Log shortcuts discovered:
+
 - Parallel tool calls for independent tasks
 - Cache-friendly patterns
 - Token-saving techniques
@@ -67,12 +76,14 @@ Log shortcuts discovered:
 ## Storage Location
 
 Learnings are stored in:
+
 - `.commander/learnings/` (project-local)
 - `~/.commander/learnings/` (global patterns)
 
 ## Integration with Memory
 
 When a learning is confirmed (used successfully 3+ times):
+
 1. Promote to `memory_store` for faster recall
 2. Consider adding to a relevant SKILL.md
 3. Share with team if using shared workspace
@@ -80,6 +91,7 @@ When a learning is confirmed (used successfully 3+ times):
 ## Example
 
 After a failed shell command:
+
 ```
 ## Shell Command Escaping
 - **Date**: 2026-06-01

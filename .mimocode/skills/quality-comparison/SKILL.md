@@ -31,14 +31,14 @@ const TASK = `[YOUR_TASK_HERE]`;
 
 async function runComparison() {
   const results = [];
-  
+
   // Run with different configurations
   for (const config of configurations) {
     const start = Date.now();
     // ... run test
     results.push({ config, duration: Date.now() - start, ... });
   }
-  
+
   // Analyze results
   console.log(JSON.stringify(results, null, 2));
 }
@@ -55,6 +55,7 @@ npx tsx packages/core/tests/quality-comparison.ts 2>&1
 ### 3. Analyze Results
 
 Parse output for:
+
 - Success rate per configuration
 - Average token usage
 - Cost per successful task
@@ -69,6 +70,7 @@ rm -f packages/core/tests/quality-comparison.ts
 ## Common Test Patterns
 
 ### Model Comparison
+
 ```typescript
 const configurations = [
   { name: 'gpt-4o', model: 'gpt-4o' },
@@ -78,6 +80,7 @@ const configurations = [
 ```
 
 ### Prompt Variation
+
 ```typescript
 const configurations = [
   { name: 'baseline', systemPrompt: DEFAULT },
@@ -87,6 +90,7 @@ const configurations = [
 ```
 
 ### Cost Efficiency
+
 ```typescript
 // Track cost per successful task
 const costPerSuccess = totalCost / successfulTasks;
@@ -100,6 +104,7 @@ const costPerSuccess = totalCost / successfulTasks;
 ## Validation
 
 After running:
+
 1. Verify all configurations completed successfully
 2. Check for statistical significance (multiple runs)
 3. Validate cost calculations against provider pricing
@@ -108,10 +113,13 @@ After running:
 ## Example Usage
 
 **Compare models:**
+
 > Run quality comparison between gpt-4o and claude-opus on security audit task
 
 **Test prompt improvement:**
+
 > Test if structured output prompt improves success rate on multi-file analysis
 
 **Cost optimization:**
+
 > Compare cost efficiency of different model configurations for the same task

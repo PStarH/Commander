@@ -65,18 +65,18 @@ npx tsx cli.ts watch "debug the failing test"     # 实时查看智能体推理
 
 ## Commander 与其他框架对比
 
-| | Commander | LangGraph | CrewAI | AutoGen |
-|---|---|---|---|---|
-| **实时 SSE 流式传输** | ✅ 内置 | ❌ | ❌ | ❌ |
-| **自动拓扑选择** | ✅ 8 种拓扑 | ❌ 手动构建图 | ❌ 固定顺序执行 | ❌ 手动编排 |
-| **质量门控** | ✅ 多层验证 | ❌ | ❌ | ❌ |
-| **幻觉检测** | ✅ 内置 | ❌ | ❌ | ❌ |
-| **推理引擎** | ✅ 智能任务分析 | ❌ | ❌ | ❌ |
-| **Meta-learner** | ✅ 自动调优 | ❌ | ❌ | ❌ |
-| **提供商数量** | ✅ 21 个 | ❌ 1-2 个 | ❌ 1-2 个 | ❌ 1-2 个 |
-| **CLI 体验** | ✅ 14 个命令 | ❌ 仅 API | ❌ 仅 API | ❌ 仅 API |
-| **Web GUI** | ✅ Agent War Room | ❌ | ❌ | ❌ |
-| **TUI 仪表盘** | ✅ 终端 UI | ❌ | ❌ | ❌ |
+|                       | Commander         | LangGraph     | CrewAI          | AutoGen     |
+| --------------------- | ----------------- | ------------- | --------------- | ----------- |
+| **实时 SSE 流式传输** | ✅ 内置           | ❌            | ❌              | ❌          |
+| **自动拓扑选择**      | ✅ 8 种拓扑       | ❌ 手动构建图 | ❌ 固定顺序执行 | ❌ 手动编排 |
+| **质量门控**          | ✅ 多层验证       | ❌            | ❌              | ❌          |
+| **幻觉检测**          | ✅ 内置           | ❌            | ❌              | ❌          |
+| **推理引擎**          | ✅ 智能任务分析   | ❌            | ❌              | ❌          |
+| **Meta-learner**      | ✅ 自动调优       | ❌            | ❌              | ❌          |
+| **提供商数量**        | ✅ 21 个          | ❌ 1-2 个     | ❌ 1-2 个       | ❌ 1-2 个   |
+| **CLI 体验**          | ✅ 14 个命令      | ❌ 仅 API     | ❌ 仅 API       | ❌ 仅 API   |
+| **Web GUI**           | ✅ Agent War Room | ❌            | ❌              | ❌          |
+| **TUI 仪表盘**        | ✅ 终端 UI        | ❌            | ❌              | ❌          |
 
 ---
 
@@ -194,13 +194,13 @@ npx commander benchmark    # A/B 测试：优化版 vs 基线版
 
 ---
 
-| 基准测试 | Commander | 裸 LLM (MiMo) | OpenClaw | Δ |
-|-----------|:---------:|:----------------:|:--------:|:-:|
-| **GAIA**（165 个多步推理任务） | ⏳ 待重跑 | 21.2% | — | — |
-| **BFCL** 工具选择（35 场景非官方子集） | **77.1%** | — | — | — |
-| **BFCL** 参数预测（35 场景非官方子集） | **77.1%** | — | — | — |
-| **PinchBench**（43 个智能体任务） | **100.0%** | — | 89.5% | **+10.5pp** |
-| **HumanEval+**（164 个 Python 问题） | **96.3%** | — | — | — |
+| 基准测试                               | Commander  | 裸 LLM (MiMo) | OpenClaw |      Δ      |
+| -------------------------------------- | :--------: | :-----------: | :------: | :---------: |
+| **GAIA**（165 个多步推理任务）         | ⏳ 待重跑  |     21.2%     |    —     |      —      |
+| **BFCL** 工具选择（35 场景非官方子集） | **77.1%**  |       —       |    —     |      —      |
+| **BFCL** 参数预测（35 场景非官方子集） | **77.1%**  |       —       |    —     |      —      |
+| **PinchBench**（43 个智能体任务）      | **100.0%** |       —       |  89.5%   | **+10.5pp** |
+| **HumanEval+**（164 个 Python 问题）   | **96.3%**  |       —       |    —     |      —      |
 
 BFCL 在本仓库中使用了多个非官方子集：35 场景通用子集（`benchmarks/bfcl/results_full.json`，77.1% 工具 / 77.1% 参数）、30 任务 Commander 重跑（`docs/benchmark-results/bfcl/results.json`，80.0% / 80.0%）以及 12 核心子集（`benchmarks/bfcl/results.json`，91.7% / 91.7%）。这些都不是官方 BFCL 排行榜运行结果。
 
@@ -215,22 +215,22 @@ pnpm benchmark:multiagent        # 多智能体编排基准测试
 
 ## 命令
 
-| 命令 | 功能说明 |
-|---------|-------------|
-| `commander run <task>` | 完整多智能体执行 |
-| `commander plan <task>` | 执行前查看拓扑、智能体数量、预算 |
-| `commander watch <task>` | **核心功能**——实时 SSE 智能体思考流 |
-| `commander company <task>` | 多智能体公司模式：计划 → 构建 → 审查 → 改进 |
-| `commander review` | 结构化代码审查，P0-P3 级别发现 |
-| `commander gui` | Web 仪表盘（Agent War Room） |
-| `commander tui` | 终端仪表盘 |
-| `commander workers <topics>` | 并行研究工作者 |
-| `commander mode <mode>` | 计划 / 只读 / 自动编辑 / 全自动 / 建议 |
-| `commander status` | 系统状态、提供商健康状况、MetaLearner 统计 |
-| `commander history` | 会话管理 |
-| `commander skill` | 可学习技能管理 |
-| `commander config` | 查看或修改设置 |
-| `commander doctor` | 运行诊断 |
+| 命令                         | 功能说明                                    |
+| ---------------------------- | ------------------------------------------- |
+| `commander run <task>`       | 完整多智能体执行                            |
+| `commander plan <task>`      | 执行前查看拓扑、智能体数量、预算            |
+| `commander watch <task>`     | **核心功能**——实时 SSE 智能体思考流         |
+| `commander company <task>`   | 多智能体公司模式：计划 → 构建 → 审查 → 改进 |
+| `commander review`           | 结构化代码审查，P0-P3 级别发现              |
+| `commander gui`              | Web 仪表盘（Agent War Room）                |
+| `commander tui`              | 终端仪表盘                                  |
+| `commander workers <topics>` | 并行研究工作者                              |
+| `commander mode <mode>`      | 计划 / 只读 / 自动编辑 / 全自动 / 建议      |
+| `commander status`           | 系统状态、提供商健康状况、MetaLearner 统计  |
+| `commander history`          | 会话管理                                    |
+| `commander skill`            | 可学习技能管理                              |
+| `commander config`           | 查看或修改设置                              |
+| `commander doctor`           | 运行诊断                                    |
 
 ---
 

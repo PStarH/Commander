@@ -20,5 +20,16 @@
     "secret": "35fdf38891f01156d6af81997c45d7dd575fe24a3fe4ddcd767eb3da23af3023",
     "retryMax": 3,
     "createdAt": "2026-05-30T01:19:09.478Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1781617581482_9l6d8p",
+    "secret": "fccaa48edbfd1c44d144eb798d4dbc45f4983fc7521f4a3faf7496fc2a810c59",
+    "retryMax": 3,
+    "createdAt": "2026-06-16T13:46:21.482Z"
   }
 ]
