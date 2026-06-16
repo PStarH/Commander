@@ -41,8 +41,11 @@ import {
 import { createEvaluationRunnerRouter } from './evaluationRunnerEndpoints';
 import { createOrchestratorRouter } from './orchestratorEndpoints';
 
-const PROJECT_ID = 'project-war-room';
+const PROJECT_ID = process.env.COMMANDER_PROJECT_ID ?? 'project-war-room';
 const app = express();
+
+let API_VERSION = '0.0.0';
+try { API_VERSION = require('../package.json').version; } catch { /* use default */ }
 
 // ── Shared state ────────────────────────────────────────────────────────────
 const store = createWarRoomStore();
@@ -80,10 +83,13 @@ app.use((_req, res, next) => {
 app.use(rateLimitMiddleware);
 
 // 4. CORS whitelist (not wildcard)
+const API_PORT = parseInt(process.env.PORT ?? '4000', 10);
+const WEB_PORT = parseInt(process.env.WEB_PORT ?? '5173', 10);
+
 const ALLOWED_ORIGINS = new Set([
-  'http://localhost:3000',
-  'http://localhost:4000',
-  'http://localhost:5173',
+  `http://localhost:${WEB_PORT}`,
+  `http://localhost:${API_PORT}`,
+  `http://127.0.0.1:${WEB_PORT}`,
   ...(process.env.CORS_ORIGINS?.split(',').map(s => s.trim()) ?? []),
 ]);
 
@@ -130,7 +136,7 @@ app.get('/health', (_req, res) => {
       heapTotal: `${heapTotalMB}MB`,
       heapPercent: Math.round((heapUsedMB / heapTotalMB) * 100),
     },
-    version: '0.2.0',
+    version: API_VERSION,
     timestamp: new Date().toISOString(),
   });
 });
@@ -205,10 +211,10 @@ app.get('/api/openapi.json', (_req, res) => {
     openapi: '3.1.0',
     info: {
       title: 'Commander Multi-Agent Framework API',
-      version: '1.0.0',
+      version: API_VERSION,
       description: 'Production-grade multi-agent orchestration with governance, quality gates, and memory management.',
     },
-    servers: [{ url: 'http://localhost:3000', description: 'Local development' }],
+    servers: [{ url: `http://localhost:${API_PORT}`, description: 'Local development' }],
     tags: [
       { name: 'Projects', description: 'Project and agent management' },
       { name: 'Missions', description: 'Mission lifecycle' },
@@ -216,7 +222,6 @@ app.get('/api/openapi.json', (_req, res) => {
       { name: 'Quality', description: 'Quality gates: hallucination, consensus, handoff' },
       { name: 'Governance', description: 'Governance monitoring and alerts' },
       { name: 'Evaluation', description: 'Agent evaluation and grading' },
-      { name: 'Benchmark', description: 'Agent benchmarking' },
       { name: 'A2A', description: 'Google Agent-to-Agent protocol' },
       { name: 'System', description: 'Health and status' },
     ],
@@ -239,8 +244,6 @@ app.get('/api/openapi.json', (_req, res) => {
       '/projects/{projectId}/governance/stats': { get: { tags: ['Governance'], summary: 'Governance statistics', responses: { '200': { description: 'Stats' } } } },
       '/projects/{projectId}/governance/alerts': { get: { tags: ['Governance'], summary: 'Governance alerts', responses: { '200': { description: 'Alerts' } } } },
       '/projects/{projectId}/governance/weekly-report': { get: { tags: ['Governance'], summary: 'Weekly governance report', responses: { '200': { description: 'Report' } } } },
-      '/api/benchmark/run': { post: { tags: ['Benchmark'], summary: 'Run agent benchmark', responses: { '200': { description: 'Benchmark results' } } } },
-      '/api/benchmark/health-check-tasks': { get: { tags: ['Benchmark'], summary: 'List benchmark tasks', responses: { '200': { description: 'Tasks' } } } },
       '/api/namespaced-memory/{namespace}/write': { post: { tags: ['Memory'], summary: 'RBAC memory write', responses: { '200': { description: 'Written' }, '403': { description: 'Permission denied' } } } },
       '/api/namespaced-memory/{namespace}/read/{id}': { get: { tags: ['Memory'], summary: 'RBAC memory read', responses: { '200': { description: 'Memory item' }, '403': { description: 'Permission denied' } } } },
       '/api/namespaced-memory/{namespace}/search': { get: { tags: ['Memory'], summary: 'RBAC memory search', responses: { '200': { description: 'Search results' } } } },

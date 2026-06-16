@@ -2,7 +2,6 @@ import { Router } from 'express';
 import { SequentialPipeline } from '@commander/core';
 import { PatternStateMachineFactory, PatternStateMachine } from './patternStateMachine';
 import { SequentialExecutor, createMockAgentExecutor } from './sequentialExecutor';
-import { AgentBenchmarkRunner, createCommanderHealthCheckBenchmark, visualizeBenchmark } from './agentBenchmarkRunner';
 
 export function createPipelineRouter(): Router {
   const router = Router();
@@ -100,7 +99,8 @@ export function createPipelineRouter(): Router {
       pipelineRuns.set(run.id, run);
       res.json(run);
     } catch (err: unknown) {
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      process.stderr.write(`[Pipeline] Execute error: ${err instanceof Error ? err.message : String(err)}\n`);
+      res.status(500).json({ error: 'Pipeline execution failed. Check server logs for details.' });
     }
   });
 
@@ -112,30 +112,6 @@ export function createPipelineRouter(): Router {
 
   router.get('/api/pipeline/runs', (_req, res) => {
     res.json(Array.from(pipelineRuns.values()));
-  });
-
-  // Agent Benchmark Runner
-  router.post('/api/benchmark/run', async (req, res) => {
-    const { tasks, maxConcurrency, name: benchName } = req.body ?? {};
-    const benchmarkTasks = tasks ?? createCommanderHealthCheckBenchmark();
-    const runner = new AgentBenchmarkRunner({
-      name: benchName ?? 'Commander Health Check',
-      tasks: benchmarkTasks,
-      maxConcurrency: maxConcurrency ?? 1,
-      executor: { execute: async (prompt: string) => `Benchmark response for: ${prompt}` },
-    });
-    try {
-      const result = await runner.run();
-      const visualization = visualizeBenchmark(result);
-      res.json({ result, visualization });
-    } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  router.get('/api/benchmark/health-check-tasks', (_req, res) => {
-    const tasks = createCommanderHealthCheckBenchmark();
-    res.json({ tasks, count: tasks.length });
   });
 
   return router;

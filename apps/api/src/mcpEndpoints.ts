@@ -1,6 +1,6 @@
 import express, { Router } from 'express';
-import { MCPServer, getModelRouter } from '@commander/core';
-import type { MCPTool, MCPToolResult, MCPContentItem, ModelTier } from '@commander/core';
+import { MCPServer, getModelRouter, getCapabilityRegistry, MCPClient, createMCPClient } from '@commander/core';
+import type { MCPTool, MCPToolResult, MCPContentItem, ModelTier, MCPClientConfig } from '@commander/core';
 
 export function createMCPRouter(): Router {
   const router = express.Router();
@@ -25,6 +25,79 @@ export function createMCPRouter(): Router {
       version: '1.0.0',
       capabilities: server.getCapabilities(),
     });
+  });
+
+  // POST /mcp/discover — Auto-discover and inject an external MCP server's tools
+  router.post('/discover', async (req, res) => {
+    const { url, transport, command, args: toolArgs, headers, label } = req.body ?? {};
+
+    if (!url && !command) {
+      return res.status(400).json({
+        error: 'url (streamable-http) or command (stdio) is required',
+      });
+    }
+
+    const startTime = Date.now();
+    const discoveryLabel = label ?? `mcp-${Date.now()}`;
+
+    try {
+      const config: MCPClientConfig = url
+        ? { url, transport: 'http', headers: headers ?? {} }
+        : { command, args: toolArgs ?? [], transport: 'stdio', env: {} };
+
+      const client = createMCPClient(config);
+      await client.connect();
+
+      const tools = await client.listTools();
+      const resources = await client.listResources().catch(() => []);
+      const prompts = await client.listPrompts().catch(() => []);
+      const serverInfo = client.getServerInfo();
+
+      // Inject tools into CapabilityRegistry
+      const registry = getCapabilityRegistry();
+      let registeredCount = 0;
+      for (const tool of tools) {
+        try {
+          const toolName = `mcp:${discoveryLabel}:${tool.name}`;
+          registry.register({
+            id: toolName,
+            type: 'tool',
+            description: tool.description ?? `MCP tool: ${tool.name}`,
+            source: 'mcp_discovery',
+            metadata: {
+              mcpServer: url ?? `stdio:${command}`,
+              discoveredAt: new Date().toISOString(),
+              label: discoveryLabel,
+              inputSchema: tool.inputSchema,
+            },
+          });
+          registeredCount++;
+        } catch { /* tool already registered — skip */ }
+      }
+
+      await client.disconnect();
+
+      res.json({
+        status: 'discovered',
+        label: discoveryLabel,
+        server: { name: serverInfo.name, version: serverInfo.version, transport: url ? 'streamable-http' : 'stdio', url: url ?? `stdio:${command}` },
+        tools: tools.map(t => ({ name: t.name, description: t.description, registered: true })),
+        toolCount: tools.length,
+        registeredCount,
+        resources: resources.map(r => ({ uri: r.uri, name: r.name })),
+        prompts: prompts.map(p => ({ name: p.name, description: p.description })),
+        durationMs: Date.now() - startTime,
+        instruction: `MCP server "${discoveryLabel}" discovered. ${registeredCount} tools registered as mcp:${discoveryLabel}:<tool>.`,
+      });
+    } catch (err) {
+      res.status(502).json({
+        status: 'failed',
+        label: discoveryLabel,
+        error: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startTime,
+        hint: 'Verify the MCP server is running and accessible.',
+      });
+    }
   });
 
   return router;
