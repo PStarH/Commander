@@ -17,17 +17,17 @@ describe('ImpactAnalyzer', () => {
     assert.ok(instance instanceof ImpactAnalyzer);
   });
 
-  it('analyze returns an ImpactAnalysis with a non-negative affected count', async () => {
+  it('analyze returns an ImpactAnalysis with correct fields', async () => {
     const { getImpactAnalyzer } = await import('../../src/intelligence/impactAnalyzer');
     const analyzer = getImpactAnalyzer();
-    const result = analyzer.analyze({
-      target: 'module:auth',
-      changeType: 'refactor',
-      maxDepth: 3,
-    });
+    const result = await analyzer.analyze('module:auth');
     assert.ok(typeof result === 'object' && result !== null);
-    assert.ok(typeof result.affectedCount === 'number');
-    assert.ok(result.affectedCount >= 0);
-    assert.ok(Array.isArray(result.affected));
+    assert.strictEqual(result.targetFile, 'module:auth');
+    assert.ok(Array.isArray(result.directDependencies));
+    assert.ok(Array.isArray(result.indirectDependencies));
+    assert.ok(Array.isArray(result.affectedTests));
+    assert.ok(Array.isArray(result.affectedApis));
+    assert.ok(['low', 'medium', 'high', 'critical'].includes(result.riskLevel));
+    assert.ok(typeof result.summary === 'string');
   });
 });

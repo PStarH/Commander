@@ -319,11 +319,11 @@ describe('Chaos Monkey — Multi-Tenant Isolation', () => {
 
     // Tenant A stores a value
     const tcA = { id: 'a1', name: 'read_file', arguments: args, cached: false };
-    cache.set(tcA, { toolCallId: 'a1', name: 'read_file', output: 'TENANT_A_DATA', durationMs: 5 }, 'tenant-a');
+    await cache.set(tcA, { toolCallId: 'a1', name: 'read_file', output: 'TENANT_A_DATA', durationMs: 5 }, 'tenant-a');
 
     // Tenant B writes different data for same args
     const tcB = { id: 'b1', name: 'read_file', arguments: args, cached: false };
-    cache.set(tcB, { toolCallId: 'b1', name: 'read_file', output: 'TENANT_B_DATA', durationMs: 5 }, 'tenant-b');
+    await cache.set(tcB, { toolCallId: 'b1', name: 'read_file', output: 'TENANT_B_DATA', durationMs: 5 }, 'tenant-b');
 
     // Read back — should get tenant-specific values
     const gotA = cache.get(tcA, 'tenant-a');

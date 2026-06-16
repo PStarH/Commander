@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it } from 'node:test';
+import assert from 'node:assert';
 import { buildTimeline } from '../src/observability/timelineBuilder';
 import { buildExecutiveSummary } from '../src/observability/executiveSummary';
 import { TokenUsageAnomalyDetector, resetAnomalyDetector } from '../src/observability/anomalyDetector';
@@ -34,44 +35,44 @@ function verificationEvent(passed: boolean, score: number): TraceEvent {
   };
 }
 
-describe('Observability P1 features (vitest)', () => {
+describe('Observability P1 features', () => {
   it('timeline includes evaluationScore/evaluationPassed from verification events', () => {
     const trace = makeTrace([verificationEvent(true, 0.95)]);
     const timeline = buildTimeline(trace);
     const node = timeline.nodes.find(n => n.type === 'EVALUATOR');
-    expect(node).toBeDefined();
-    expect(node!.evaluationScore).toBe(0.95);
-    expect(node!.evaluationPassed).toBe(true);
+    assert.ok(node);
+    assert.strictEqual(node!.evaluationScore, 0.95);
+    assert.strictEqual(node!.evaluationPassed, true);
   });
 
   it('timeline includes promptContent/completionContent from LLM events', () => {
     const trace = makeTrace([llmEvent('What is 2+2?', 'The answer is 4.')]);
     const timeline = buildTimeline(trace);
     const node = timeline.nodes.find(n => n.type === 'LLM');
-    expect(node).toBeDefined();
-    expect(node!.promptContent).toBe('What is 2+2?');
-    expect(node!.completionContent).toBe('The answer is 4.');
+    assert.ok(node);
+    assert.strictEqual(node!.promptContent, 'What is 2+2?');
+    assert.strictEqual(node!.completionContent, 'The answer is 4.');
   });
 
   it('executive summary produces narrative with timeline events', () => {
     const trace = makeTrace([llmEvent('q', 'a'), verificationEvent(true, 0.9)]);
     const summary = buildExecutiveSummary(trace);
-    expect(summary.narrative).toContain('Run run-1');
-    expect(summary.timeline.length).toBeGreaterThan(0);
-    expect(summary.totalCostUsd).toBeGreaterThanOrEqual(0);
+    assert.ok(summary.narrative.includes('Run run-1'));
+    assert.ok(summary.timeline.length > 0);
+    assert.ok(summary.totalCostUsd >= 0);
   });
 
   it('anomaly detector tracks baseline and detects outliers', () => {
     resetAnomalyDetector();
     const detector = new TokenUsageAnomalyDetector();
     for (let i = 0; i < 20; i++) detector.recordUsage('agent-1', 100);
-    expect(detector.getBaseline('agent-1')).toBe(100);
+    assert.strictEqual(detector.getBaseline('agent-1'), 100);
 
     const anomaly = detector.checkForAnomaly('agent-1', 'run-1', 21, 1000);
-    expect(anomaly).not.toBeNull();
-    expect(anomaly!.severity).toBe('critical');
+    assert.ok(anomaly !== null);
+    assert.strictEqual(anomaly!.severity, 'critical');
 
-    expect(detector.checkForAnomaly('agent-1', 'run-1', 22, 100)).toBeNull();
+    assert.strictEqual(detector.checkForAnomaly('agent-1', 'run-1', 22, 100), null);
   });
 
   it('feedback field type is valid on TraceEvent.data', () => {
@@ -83,8 +84,8 @@ describe('Observability P1 features (vitest)', () => {
         feedback: { rating: 'positive', comment: 'Great job', tags: ['helpful'], timestamp: new Date().toISOString() },
       },
     };
-    expect(event.data.feedback).toBeDefined();
-    expect(event.data.feedback!.rating).toBe('positive');
-    expect(event.data.feedback!.tags).toContain('helpful');
+    assert.ok(event.data.feedback);
+    assert.strictEqual(event.data.feedback!.rating, 'positive');
+    assert.ok(event.data.feedback!.tags.includes('helpful'));
   });
 });

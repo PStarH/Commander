@@ -431,16 +431,16 @@ describe('ThreeLayerMemory', () => {
 
   it('getAll returns all entries', () => {
     const mem = new ThreeLayerMemory();
-    mem.add('a', 'working');
-    mem.add('b', 'episodic');
+    mem.add('a longer entry for getAll test', 'working');
+    mem.add('b longer entry for getAll test', 'episodic');
     const all = mem.getAll();
     assert.strictEqual(all.length, 2);
   });
 
   it('getStats returns MemoryStats', () => {
     const mem = new ThreeLayerMemory();
-    mem.add('a', 'working');
-    mem.add('b', 'episodic', '', 0.9);
+    mem.add('a longer entry for stats test', 'working');
+    mem.add('b longer entry for stats test', 'episodic', '', 0.9);
     const stats = mem.getStats();
     assert.strictEqual(stats.totalEntries, 2);
     assert.strictEqual(stats.byLayer.working, 1);

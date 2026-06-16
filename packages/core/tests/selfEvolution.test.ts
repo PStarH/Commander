@@ -529,7 +529,7 @@ describe('EvolverAgent', () => {
     assert.ok(paths.some(p => p === 'maxParallelSubAgents'), 'Should have timeout mutation');
   });
 
-  it('runCycle applies mutations and creates predictions', () => {
+  it('runCycle stores mutations as canary deployment', () => {
     const evolver = new EvolverAgent();
     const config = structuredClone(DEFAULT_ULTIMATE_CONFIG);
     const insights = [makeInsight({ failureCategory: 'hallucination' })];
@@ -547,8 +547,13 @@ describe('EvolverAgent', () => {
     };
     const cycle = evolver.runCycle(insights, config, exp, ['general']);
     assert.ok(cycle.mutations.length > 0);
-    assert.ok(cycle.applied > 0);
+    // Mutations are stored as canary (not applied globally) — applied always 0
+    assert.strictEqual(cycle.applied, 0);
     assert.ok(cycle.cycleId.startsWith('evolve_'));
+    // Verify canary is active
+    const status = evolver.getCanaryStatus();
+    assert.ok(status.active);
+    assert.ok(status.mutations > 0);
   });
 
   it('getEvolverAgent returns a singleton', () => {
@@ -564,6 +569,163 @@ describe('EvolverAgent', () => {
     resetEvolverAgent();
     const b = getEvolverAgent();
     assert.notStrictEqual(a, b);
+  });
+});
+
+// ============================================================================
+// MetaLearner — Shadow Mode (selectShadowStrategy, recordShadowComparison)
+// ============================================================================
+
+describe('MetaLearner — Shadow Mode', () => {
+  it('selectShadowStrategy returns runner-up when enough data exists', () => {
+    const ml = new MetaLearner(100, 1, undefined, { enablePredictionLoop: false, enableRegressionGate: false, enableCrossModelMemory: false, analysisMode: 'light' });
+
+    // Feed data: SEQUENTIAL succeeds, PARALLEL also succeeds but less
+    for (let i = 0; i < 10; i++) {
+      ml.recordExperience(makeExp({ id: `s-seq-${i}`, strategyUsed: 'SEQUENTIAL', success: true, durationMs: 5000 }));
+    }
+    for (let i = 0; i < 5; i++) {
+      ml.recordExperience(makeExp({ id: `s-par-${i}`, strategyUsed: 'PARALLEL', success: true, durationMs: 3000 }));
+    }
+    for (let i = 0; i < 3; i++) {
+      ml.recordExperience(makeExp({ id: `s-ho-${i}`, strategyUsed: 'HANDOFF', success: false, durationMs: 10000 }));
+    }
+
+    const chosen = ml.selectStrategy('general');
+    const shadow = ml.selectShadowStrategy('general');
+
+    assert.ok(shadow !== null, 'Should return a shadow strategy');
+    assert.notStrictEqual(shadow, chosen, 'Shadow should be different from main strategy');
+    assert.ok(typeof shadow === 'string' && shadow.length > 0);
+  });
+
+  it('selectShadowStrategy returns null with no data', () => {
+    const ml = new MetaLearner(100, 1);
+    const shadow = ml.selectShadowStrategy('unknown_task');
+    assert.strictEqual(shadow, null);
+  });
+
+  it('selectShadowStrategy returns null when only one strategy has data', () => {
+    const ml = new MetaLearner(100, 1, undefined, { enablePredictionLoop: false, enableRegressionGate: false, enableCrossModelMemory: false, analysisMode: 'light' });
+
+    // Only one strategy has data
+    for (let i = 0; i < 5; i++) {
+      ml.recordExperience(makeExp({ id: `only-seq-${i}`, strategyUsed: 'SEQUENTIAL', success: true }));
+    }
+
+    const shadow = ml.selectShadowStrategy('general');
+    assert.strictEqual(shadow, null);
+  });
+
+  it('recordShadowComparison stores comparison and updates priors', () => {
+    const ml = new MetaLearner(100, 1, undefined, { enablePredictionLoop: false, enableRegressionGate: false, enableCrossModelMemory: false, analysisMode: 'light' });
+
+    // Feed some baseline data
+    ml.recordExperience(makeExp({ id: 'base-1', strategyUsed: 'SEQUENTIAL', success: true }));
+    ml.recordExperience(makeExp({ id: 'base-2', strategyUsed: 'PARALLEL', success: false }));
+
+    // Record shadow comparison
+    ml.recordShadowComparison({
+      runId: 'shadow-test-1',
+      taskType: 'general',
+      mainStrategy: 'SEQUENTIAL',
+      shadowStrategy: 'PARALLEL',
+      mainSuccess: true,
+      shadowSuccess: false,
+      mainDurationMs: 5000,
+      shadowDurationMs: 3000,
+    });
+
+    const comparisons = ml.getShadowComparisons();
+    assert.strictEqual(comparisons.length, 1);
+    assert.strictEqual(comparisons[0].mainStrategy, 'SEQUENTIAL');
+    assert.strictEqual(comparisons[0].shadowStrategy, 'PARALLEL');
+    assert.strictEqual(comparisons[0].mainSuccess, true);
+    assert.strictEqual(comparisons[0].shadowSuccess, false);
+  });
+
+  it('getShadowComparisons respects limit', () => {
+    const ml = new MetaLearner(100, 1);
+
+    for (let i = 0; i < 5; i++) {
+      ml.recordShadowComparison({
+        runId: `shadow-${i}`,
+        taskType: 'general',
+        mainStrategy: 'SEQUENTIAL',
+        shadowStrategy: 'PARALLEL',
+        mainSuccess: true,
+        shadowSuccess: i % 2 === 0,
+        mainDurationMs: 5000,
+        shadowDurationMs: 3000 + i * 100,
+      });
+    }
+
+    const limited = ml.getShadowComparisons(3);
+    assert.strictEqual(limited.length, 3);
+  });
+
+  it('recordShadowComparison feeds half-weight to Thompson priors', () => {
+    const ml = new MetaLearner(100, 1, undefined, { enablePredictionLoop: false, enableRegressionGate: false, enableCrossModelMemory: false, analysisMode: 'light' });
+
+    // Baseline: SEQUENTIAL succeeds
+    ml.recordExperience(makeExp({ id: 'b1', strategyUsed: 'SEQUENTIAL', success: true }));
+
+    // Get scores before shadow
+    const before = ml.getStrategyScores('general');
+    const parBefore = before.find(s => s.strategy === 'PARALLEL')!;
+
+    // Record a shadow where PARALLEL succeeds
+    ml.recordShadowComparison({
+      runId: 'shadow-priors',
+      taskType: 'general',
+      mainStrategy: 'SEQUENTIAL',
+      shadowStrategy: 'PARALLEL',
+      mainSuccess: true,
+      shadowSuccess: true,
+      mainDurationMs: 5000,
+      shadowDurationMs: 3000,
+    });
+
+    // PARALLEL should have slightly improved due to half-weight shadow feedback
+    const after = ml.getStrategyScores('general');
+    const parAfter = after.find(s => s.strategy === 'PARALLEL')!;
+
+    // The half-weight update means PARALLEL's alpha increased by 0.5
+    assert.ok(parAfter.trials >= parBefore.trials,
+      `PARALLEL trials should not decrease: ${parBefore.trials} → ${parAfter.trials}`);
+  });
+});
+
+// ============================================================================
+// MetaLearner — calculateAdjustedScores (shared scoring logic)
+// ============================================================================
+
+describe('MetaLearner — calculateAdjustedScores', () => {
+  it('returns sorted scores with all strategies', () => {
+    const ml = new MetaLearner(100, 1);
+    const scores = ml['calculateAdjustedScores']('general');
+    assert.strictEqual(scores.length, 5); // SEQUENTIAL, PARALLEL, HANDOFF, MAGENTIC, CONSENSUS
+    assert.ok(scores[0].score >= scores[1].score, 'Should be sorted descending');
+  });
+
+  it('selectStrategy and selectShadowStrategy share same scoring', () => {
+    const ml = new MetaLearner(100, 1, undefined, { enablePredictionLoop: false, enableRegressionGate: false, enableCrossModelMemory: false, analysisMode: 'light' });
+
+    // Feed: SEQUENTIAL wins, PARALLEL is runner-up
+    for (let i = 0; i < 10; i++) {
+      ml.recordExperience(makeExp({ id: `sc-seq-${i}`, strategyUsed: 'SEQUENTIAL', success: true }));
+    }
+    for (let i = 0; i < 5; i++) {
+      ml.recordExperience(makeExp({ id: `sc-par-${i}`, strategyUsed: 'PARALLEL', success: true }));
+    }
+
+    const main = ml.selectStrategy('general');
+    const shadow = ml.selectShadowStrategy('general')!;
+
+    assert.ok(main !== shadow, 'Main and shadow should be different');
+    const scores = ml['calculateAdjustedScores']('general');
+    assert.strictEqual(scores[0].name, main);
+    assert.strictEqual(scores[1].name, shadow);
   });
 });
 

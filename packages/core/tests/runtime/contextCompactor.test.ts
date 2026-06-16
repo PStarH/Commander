@@ -517,32 +517,79 @@ describe('ContextCompactor (upgraded)', () => {
     });
   });
 
-  describe('CacheConfig integration', () => {
-    it('CacheConfig interface supports all required caching modes', () => {
-      // This test validates the CacheConfig shape is available and correct
-      const config: CacheConfig = {
-        cacheSystemPrompt: true,
-        cacheTools: true,
-        cacheHistory: 3,
-        useCacheControl: true,
-      };
-      assert.equal(config.cacheSystemPrompt, true);
-      assert.equal(config.cacheTools, true);
-      assert.equal(config.cacheHistory, 3);
-      assert.equal(config.useCacheControl, true);
+  describe('failure-driven compression', () => {
+    it('records failure correlation for messages', () => {
+      const compactor = new ContextCompactor();
+      const messages: LLMMessage[] = [
+        { role: 'user', content: 'Implement feature X using approach A' },
+        { role: 'assistant', content: 'I will use approach A' },
+      ];
+      compactor.recordFailureCorrelation('run-1', messages, 'verification_failed');
+      const tracker = compactor.getFailureTracker();
+      assert.ok(tracker.getRunRecord('run-1'));
     });
 
-    it('produces expected CacheConfig values matching agentRuntime production code', () => {
-      // Mirrors the production CacheConfig construction in agentRuntime.ts line 389-393
-      const toolDefs = [{ name: 'read', description: 'read a file' }];
-      const cacheConfig: CacheConfig = {
-        cacheSystemPrompt: true,
-        cacheTools: toolDefs.length > 0,
-        useCacheControl: true,
-      };
-      assert.equal(cacheConfig.cacheSystemPrompt, true, 'System prompt should always be cached');
-      assert.equal(cacheConfig.cacheTools, true, 'Tools should be cached when present');
-      assert.equal(cacheConfig.useCacheControl, true, 'cache_control markers should be enabled');
+    it('deprioritizes failure-correlated messages in layer3', () => {
+      const compactor = new ContextCompactor({
+        maxContextTokens: 300,
+        layer1Trigger: 0.99,
+        layer2Trigger: 0.99,
+        layer3Trigger: 0.01,
+        keepRecentTurns: 1,
+        governorAware: false,
+      });
+
+      const padding = 'word '.repeat(40);
+      const failedApproach = 'Use approach A to implement feature X. ' + padding;
+      const messages: LLMMessage[] = [
+        systemMsg('sys'),
+        { role: 'user', content: failedApproach },
+        { role: 'assistant', content: 'I will use approach A. ' + padding },
+        { role: 'user', content: 'Try approach B instead. ' + padding },
+        { role: 'assistant', content: 'I will use approach B. ' + padding },
+        { role: 'user', content: 'Final approach C. ' + padding },
+        { role: 'assistant', content: 'I will use approach C. ' + padding },
+      ];
+
+      compactor.recordFailureCorrelation('run-2', messages.slice(0, 3), 'verification_failed');
+      const { messages: result } = compactor.compact(messages);
+
+      // Full (non-summary) messages should not contain the failed approach A.
+      const fullMessages = result.filter((m) =>
+        typeof m.content === 'string' && !m.content.startsWith('__COMPACTED__'),
+      );
+      const hasFailedApproachFull = fullMessages.some(
+        (m) =>
+          typeof m.content === 'string' && m.content.includes('approach A'),
+      );
+      assert.ok(!hasFailedApproachFull, 'Failure-correlated approach A full messages should be dropped');
+    });
+
+    it('deprioritizes failure-correlated messages in layer4', () => {
+      const compactor = new ContextCompactor({
+        maxContextTokens: 400,
+        layer1Trigger: 0.99,
+        layer2Trigger: 0.99,
+        layer3Trigger: 0.99,
+        layer4Trigger: 0.01,
+        governorAware: false,
+      });
+
+      const failedContent = 'a'.repeat(200);
+      const messages: LLMMessage[] = [
+        systemMsg('sys'),
+        { role: 'user', content: failedContent },
+        ...Array.from({ length: 30 }, (_, i) => ({
+          role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: `msg ${i}`,
+        })),
+      ];
+
+      compactor.recordFailureCorrelation('run-3', messages.slice(0, 2), 'verification_failed');
+      const { action } = compactor.compact(messages);
+      assert.equal(action.layer, 4);
+      // Should successfully compact without throwing
+      assert.ok(action.droppedCount >= 0);
     });
   });
 });

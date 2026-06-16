@@ -517,12 +517,12 @@ describe('Provider registration consistency', () => {
       'openai', 'anthropic', 'google', 'openrouter', 'deepseek',
       'glm', 'mimo', 'xiaomi', 'cohere', 'mistral', 'groq',
       'together', 'perplexity', 'fireworks', 'replicate', 'ollama',
-      'vllm', 'bedrock', 'xai', 'anyscale', 'deepinfra',
+      'vllm', 'bedrock', 'xai', 'anyscale', 'deepinfra', 'agnes',
     ];
     for (const provider of expectedVars) {
       assert.ok(ENV_MAP[provider], `Missing ENV_MAP entry for ${provider}`);
     }
-    assert.strictEqual(Object.keys(ENV_MAP).length, 21);
+    assert.strictEqual(Object.keys(ENV_MAP).length, 22);
   });
 
   it('all providers are in PROVIDER_ORDER', async () => {
@@ -531,27 +531,27 @@ describe('Provider registration consistency', () => {
       'openai', 'anthropic', 'google', 'openrouter', 'deepseek',
       'glm', 'mimo', 'xiaomi', 'cohere', 'mistral', 'groq',
       'together', 'perplexity', 'fireworks', 'replicate', 'ollama',
-      'vllm', 'bedrock', 'xai', 'anyscale', 'deepinfra',
+      'vllm', 'bedrock', 'xai', 'anyscale', 'deepinfra', 'agnes',
     ];
     for (const provider of expectedProviders) {
       assert.ok(PROVIDER_ORDER.includes(provider), `Missing from PROVIDER_ORDER: ${provider}`);
     }
-    assert.strictEqual(PROVIDER_ORDER.length, 21);
+    assert.strictEqual(PROVIDER_ORDER.length, 22);
   });
 
   it('all providers are in DEFAULT_MODELS', async () => {
     const { DEFAULT_MODELS } = await import('../src/config/commanderConfig');
-    assert.strictEqual(Object.keys(DEFAULT_MODELS).length, 21);
+    assert.strictEqual(Object.keys(DEFAULT_MODELS).length, 22);
   });
 
   it('all providers are in DEFAULT_URLS', async () => {
     const { DEFAULT_URLS } = await import('../src/config/commanderConfig');
-    assert.strictEqual(Object.keys(DEFAULT_URLS).length, 21);
+    assert.strictEqual(Object.keys(DEFAULT_URLS).length, 22);
   });
 
   it('all providers are in API_TYPE', async () => {
     const { API_TYPE } = await import('../src/config/commanderConfig');
-    assert.strictEqual(Object.keys(API_TYPE).length, 21);
+    assert.strictEqual(Object.keys(API_TYPE).length, 22);
   });
 });
 

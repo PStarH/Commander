@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it, before } from 'node:test';
 import assert from 'node:assert';
 
 // Import the ultimate orchestration system
@@ -20,6 +20,7 @@ import {
   DEFAULT_THINKING_BUDGET,
   DEFAULT_SYNTHESIS_CONFIG,
   DEFAULT_ULTIMATE_CONFIG,
+  UltimateOrchestrator,
 } from '../src/ultimate/index';
 
 import type {
@@ -28,6 +29,12 @@ import type {
   TaskTreeNode,
   EffortLevel,
 } from '../src/ultimate/index';
+
+import type { PinnedSessionConfig } from '../src/ultimate/orchestrator';
+import { TELOSOrchestrator } from '../src/telos/telosOrchestrator';
+import type { AgentRuntimeInterface } from '../src/runtime/agentRuntimeInterface';
+import type { ExecutionExperience } from '../src/runtime/types';
+import { getMetaLearner, clearMetaLearnerState } from '../src/selfEvolution/metaLearner';
 
 // ============================================================================
 // Unit Tests for Effort Scaler
@@ -576,5 +583,513 @@ describe('Configuration Validation', () => {
       assert.ok(gate.threshold > 0 && gate.threshold <= 1.0);
       assert.ok(gate.name.length > 0);
     }
+  });
+});
+
+// ============================================================================
+// Session Pinning — config version-locking per run
+// ============================================================================
+
+/** Minimal mock AgentRuntimeInterface for testing session pinning. */
+function createMockRuntime(): AgentRuntimeInterface {
+  return {
+    execute: async () => ({ status: 'success', summary: '', steps: [], totalTokenUsage: { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, reasoningTokens: 0 }, totalDurationMs: 0, artifacts: [] }),
+    registerProvider: () => {},
+    registerTool: () => {},
+    getProvider: () => undefined,
+    getSmartRouter: () => null,
+    getTool: () => undefined,
+    getConfig: () => ({ maxStepsPerRun: 10, maxRetries: 3, timeoutMs: 60000, maxConcurrency: 5, budgetHardCapTokens: 200000, budgetSoftCapTokens: 100000, budgetCostCapUsd: 5, defaultModel: 'test-model', enableReflection: false, enableThinking: false }),
+    getMemoryStore: () => null,
+    getCheckpointer: () => ({ save: () => {}, load: () => null, delete: () => {}, list: () => [] } as any),
+    getInbox: () => ({ send: () => {}, receive: () => [], acknowledge: () => {} } as any),
+    getTeamRegistry: () => ({ register: () => {}, get: () => null, list: () => [] } as any),
+    getHandoff: () => ({ handoff: async () => ({ accepted: false }), cancel: () => {} } as any),
+    getExecutionScheduler: () => ({ schedule: () => {}, cancel: () => {}, list: () => [] } as any),
+    getCompensationRegistry: () => ({ register: () => {}, get: () => null, list: () => [] } as any),
+    cancelAllSteps: () => 0,
+    getStepTimeoutManager: () => ({ register: () => '', cancel: () => {}, cancelAll: () => 0 } as any),
+    listUnfinishedRuns: () => [],
+    resume: async () => null,
+    listResumableRuns: () => [],
+    pauseRun: () => false,
+    unpauseRun: () => {},
+    isPaused: () => false,
+    getActiveRuns: () => [],
+    getActiveRunCount: () => 0,
+    isRunActive: () => false,
+    getSemanticCacheStats: () => ({ hits: 0, misses: 0, size: 0, hitRate: 0, evictions: 0 }),
+    getSingleFlightStats: () => ({ hits: 0, misses: 0, inflight: 0 }),
+    getGeminiCacheStats: () => ({ activeCaches: 0, totalTokensCached: 0, estimatedSavingsUsd: 0 }),
+    getCostEstimatorHistory: () => [],
+    dispose: () => {},
+  };
+}
+
+describe('Session Pinning', () => {
+  let orchestrator: UltimateOrchestrator;
+
+  before(() => {
+    const mockRuntime = createMockRuntime();
+    const telos = new TELOSOrchestrator(mockRuntime);
+    orchestrator = new UltimateOrchestrator(telos, mockRuntime);
+  });
+
+  it('pins a session config and retrieves it', () => {
+    orchestrator.pinSessionConfig('run-001', 'PARALLEL', 'MODERATE');
+    const pinned = orchestrator.getSessionPinnedConfig('run-001');
+
+    assert.ok(pinned !== null);
+    assert.strictEqual(pinned!.runId, 'run-001');
+    assert.strictEqual(pinned!.topology, 'PARALLEL');
+    assert.strictEqual(pinned!.effortLevel, 'MODERATE');
+    assert.strictEqual(typeof pinned!.configHash, 'string');
+    assert.strictEqual(pinned!.configHash.length, 8);
+    assert.ok(typeof pinned!.pinnedAt === 'string');
+  });
+
+  it('returns null for unpinned session', () => {
+    const pinned = orchestrator.getSessionPinnedConfig('nonexistent');
+    assert.strictEqual(pinned, null);
+  });
+
+  it('produces deterministic config hash for same config', () => {
+    const hash1 = orchestrator['computeConfigHash']();
+    const hash2 = orchestrator['computeConfigHash']();
+
+    assert.strictEqual(hash1, hash2);
+    assert.strictEqual(hash1.length, 8);
+    // Hash should be hex
+    assert.ok(/^[0-9a-f]{8}$/.test(hash1), `Hash "${hash1}" should be 8 hex chars`);
+  });
+
+  it('records modelTierMapping in pinned session', () => {
+    orchestrator.pinSessionConfig('run-002', 'SEQUENTIAL', 'SIMPLE');
+    const pinned = orchestrator.getSessionPinnedConfig('run-002')!;
+
+    assert.ok(pinned.modelTierMapping);
+    assert.strictEqual(typeof pinned.modelTierMapping, 'object');
+    // Default config maps SIMPLE → eco
+    assert.strictEqual(pinned.modelTierMapping.SIMPLE, 'eco');
+  });
+
+  it('records qualityGateThresholds in pinned session', () => {
+    orchestrator.pinSessionConfig('run-003', 'HIERARCHICAL', 'COMPLEX');
+    const pinned = orchestrator.getSessionPinnedConfig('run-003')!;
+
+    assert.ok(pinned.qualityGateThresholds);
+    assert.strictEqual(typeof pinned.qualityGateThresholds, 'object');
+    // Should have known quality gates like hallucination, consistency
+    const gateNames = Object.keys(pinned.qualityGateThresholds);
+    assert.ok(gateNames.length >= 3, `Expected >= 3 quality gates, got ${gateNames.length}`);
+    for (const name of gateNames) {
+      assert.ok(pinned.qualityGateThresholds[name] > 0 && pinned.qualityGateThresholds[name] <= 1);
+    }
+  });
+
+  it('lists pinned sessions sorted by pin time (newest first)', async () => {
+    orchestrator.pinSessionConfig('run-a', 'SINGLE', 'SIMPLE');
+    // Small delay to ensure different pinnedAt timestamps
+    await new Promise(r => setTimeout(r, 5));
+    orchestrator.pinSessionConfig('run-b', 'SEQUENTIAL', 'MODERATE');
+    const sessions = orchestrator.getPinnedSessions();
+
+    assert.ok(sessions.length >= 2);
+    // Newest (run-b) should be first
+    assert.strictEqual(sessions[0].runId, 'run-b');
+    // Config hashes are identical because the orchestrator config hasn't changed
+    assert.strictEqual(sessions[0].configHash, sessions[1].configHash);
+  });
+
+  it('getPinnedSessionCount reflects pinned sessions', () => {
+    const before = orchestrator.getPinnedSessionCount();
+    orchestrator.pinSessionConfig('run-count', 'SINGLE', 'SIMPLE');
+    assert.strictEqual(orchestrator.getPinnedSessionCount(), before + 1);
+  });
+
+  it('evicts oldest session when exceeding max capacity', () => {
+    // Use a fresh orchestrator to avoid pollution from other tests
+    const mockRuntime = createMockRuntime();
+    const telos = new TELOSOrchestrator(mockRuntime);
+    const freshOrch = new UltimateOrchestrator(telos, mockRuntime);
+
+    // Pin sessions up to max + extras
+    const maxPinned = 100;
+    for (let i = 0; i < maxPinned + 5; i++) {
+      freshOrch.pinSessionConfig(`evict-${i}`, 'SINGLE', 'SIMPLE');
+    }
+
+    // The Map should not grow beyond maxPinnedSessions
+    const count = freshOrch.getPinnedSessionCount();
+    assert.ok(count <= maxPinned, `Expected <= ${maxPinned} pinned sessions, got ${count}`);
+
+    // The first pinned (evict-0) should be evicted
+    const first = freshOrch.getSessionPinnedConfig('evict-0');
+    assert.strictEqual(first, null);
+
+    // But recent sessions should still be there
+    const last = freshOrch.getSessionPinnedConfig(`evict-${maxPinned + 4}`);
+    assert.ok(last !== null);
+  });
+
+  it('hashes diverge when config changes', () => {
+    // Create a fresh orchestrator with DEFAULT_ULTIMATE_CONFIG
+    const mockRuntime2 = createMockRuntime();
+    const telos2 = new TELOSOrchestrator(mockRuntime2);
+    const orch2 = new UltimateOrchestrator(telos2, mockRuntime2);
+
+    const hash1 = orch2['computeConfigHash']();
+
+    // Modify config
+    const config2 = orch2.getConfig();
+    config2.maxParallelSubAgents = 999;
+    const orch3 = new UltimateOrchestrator(telos2, mockRuntime2, config2);
+    const hash2 = orch3['computeConfigHash']();
+
+    assert.notStrictEqual(hash1, hash2, 'Different configs should produce different hashes');
+  });
+
+  it('PinnedSessionConfig has the correct shape', () => {
+    orchestrator.pinSessionConfig('run-shape', 'HYBRID', 'DEEP_RESEARCH');
+    const pinned = orchestrator.getSessionPinnedConfig('run-shape')!;
+
+    assert.strictEqual(typeof pinned.runId, 'string');
+    assert.strictEqual(typeof pinned.configHash, 'string');
+    assert.strictEqual(typeof pinned.topology, 'string');
+    assert.strictEqual(typeof pinned.effortLevel, 'string');
+    assert.strictEqual(typeof pinned.modelTierMapping, 'object');
+    assert.strictEqual(typeof pinned.qualityGateThresholds, 'object');
+    assert.strictEqual(typeof pinned.pinnedAt, 'string');
+  });
+});
+
+// ============================================================================
+// Session Pinning — Integration (full execute() pipeline)
+// ============================================================================
+
+describe('Session Pinning — Integration', () => {
+  it('pins session config during execute() with correct topology and effortLevel', async () => {
+    const mockRuntime = createMockRuntime();
+    const telos = new TELOSOrchestrator(mockRuntime);
+    const orchestrator = new UltimateOrchestrator(telos, mockRuntime);
+
+    const result = await orchestrator.execute({
+      projectId: 'test-pin-project',
+      agentId: 'test-pin-agent',
+      goal: 'Summarize the key benefits of using TypeScript for large-scale applications.',
+      topology: 'SEQUENTIAL',
+      effortLevel: 'MODERATE',
+    });
+
+    assert.ok(result.id, 'Execution should return a run ID');
+
+    // Verify the session was pinned during execution
+    const pinned = orchestrator.getSessionPinnedConfig(result.id);
+    assert.ok(pinned !== null, `Session ${result.id} should be pinned`);
+    assert.strictEqual(pinned!.runId, result.id);
+    assert.strictEqual(pinned!.topology, 'SEQUENTIAL');
+    assert.strictEqual(pinned!.effortLevel, 'MODERATE');
+    assert.strictEqual(pinned!.configHash.length, 8);
+    assert.ok(/^[0-9a-f]{8}$/.test(pinned!.configHash));
+    assert.ok(new Date(pinned!.pinnedAt).getTime() > 0, 'pinnedAt should be a valid ISO timestamp');
+  });
+
+  it('pinned modelTierMapping and qualityGateThresholds match orchestrator config', async () => {
+    const mockRuntime = createMockRuntime();
+    const telos = new TELOSOrchestrator(mockRuntime);
+    const orchestrator = new UltimateOrchestrator(telos, mockRuntime);
+
+    const result = await orchestrator.execute({
+      projectId: 'test-pin-config',
+      agentId: 'test-pin-config-agent',
+      goal: 'Explain the difference between async/await and Promises in JavaScript.',
+      topology: 'SINGLE',
+      effortLevel: 'SIMPLE',
+    });
+
+    const pinned = orchestrator.getSessionPinnedConfig(result.id)!;
+    const config = orchestrator.getConfig();
+
+    // Model tier mapping should match
+    for (const [effortLevel, model] of Object.entries(config.modelTierMapping)) {
+      assert.strictEqual(pinned.modelTierMapping[effortLevel], model,
+        `modelTierMapping.${effortLevel} should match orchestrator config`);
+    }
+
+    // Quality gate thresholds should match
+    for (const gate of config.qualityGates) {
+      assert.strictEqual(pinned.qualityGateThresholds[gate.name], gate.threshold,
+        `qualityGateThresholds.${gate.name} should match orchestrator config`);
+    }
+  });
+
+  it('multiple execute() calls each produce distinct pinned sessions', async () => {
+    const mockRuntime = createMockRuntime();
+    const telos = new TELOSOrchestrator(mockRuntime);
+    const orchestrator = new UltimateOrchestrator(telos, mockRuntime);
+
+    const result1 = await orchestrator.execute({
+      projectId: 'test-multi-1',
+      agentId: 'test-multi-agent-1',
+      goal: 'What is TypeScript?',
+      topology: 'SINGLE',
+      effortLevel: 'SIMPLE',
+    });
+
+    const result2 = await orchestrator.execute({
+      projectId: 'test-multi-2',
+      agentId: 'test-multi-agent-2',
+      goal: 'Explain the Node.js event loop in detail for a developer audience.',
+      topology: 'PARALLEL',
+      effortLevel: 'MODERATE',
+    });
+
+    const pinned1 = orchestrator.getSessionPinnedConfig(result1.id);
+    const pinned2 = orchestrator.getSessionPinnedConfig(result2.id);
+
+    assert.ok(pinned1 !== null, 'First session should be pinned');
+    assert.ok(pinned2 !== null, 'Second session should be pinned');
+    assert.notStrictEqual(pinned1!.runId, pinned2!.runId);
+    assert.strictEqual(pinned1!.topology, 'SINGLE');
+    assert.strictEqual(pinned2!.topology, 'PARALLEL');
+    assert.strictEqual(pinned1!.effortLevel, 'SIMPLE');
+    assert.strictEqual(pinned2!.effortLevel, 'MODERATE');
+    // Different runs → different pinnedAt timestamps
+    assert.notStrictEqual(pinned1!.pinnedAt, pinned2!.pinnedAt);
+    // Same config → same config hash
+    assert.strictEqual(pinned1!.configHash, pinned2!.configHash);
+  });
+
+  it('pinned session is retrievable after execute() completes (not cleaned up)', async () => {
+    const mockRuntime = createMockRuntime();
+    const telos = new TELOSOrchestrator(mockRuntime);
+    const orchestrator = new UltimateOrchestrator(telos, mockRuntime);
+
+    const result = await orchestrator.execute({
+      projectId: 'test-persist',
+      agentId: 'test-persist-agent',
+      goal: 'List three advantages of functional programming.',
+      effortLevel: 'SIMPLE',
+    });
+
+    // Session should still be retrievable after execution completes
+    const pinned = orchestrator.getSessionPinnedConfig(result.id);
+    assert.ok(pinned !== null,
+      'Pinned session should persist after execute() completes (not cleaned up by finally block)');
+    assert.strictEqual(pinned!.runId, result.id);
+  });
+
+  it('pinned session count increases with each execute() call', async () => {
+    const mockRuntime = createMockRuntime();
+    const telos = new TELOSOrchestrator(mockRuntime);
+    const orchestrator = new UltimateOrchestrator(telos, mockRuntime);
+
+    const before = orchestrator.getPinnedSessionCount();
+
+    await orchestrator.execute({
+      projectId: 'test-count',
+      agentId: 'test-count-agent',
+      goal: 'What are the SOLID principles?',
+      topology: 'SINGLE',
+      effortLevel: 'SIMPLE',
+    });
+
+    const after = orchestrator.getPinnedSessionCount();
+    assert.strictEqual(after, before + 1,
+      `Pinned session count should increase by 1 after execute(), got ${before} → ${after}`);
+  });
+});
+
+// ============================================================================
+// Shadow Mode — Integration (full execute() pipeline with challenger)
+// ============================================================================
+
+/** Feed MetaLearner experiences so selectShadowStrategy returns a runner-up. */
+function feedShadowExperiences(taskType: string): void {
+  const ml = getMetaLearner();
+  const makeExp = (id: string, strategy: string, success: boolean, durationMs: number, tokenCost: number): ExecutionExperience => ({
+    id, runId: id, agentId: 'test-shadow-agent', taskType, modelUsed: 'test-model',
+    strategyUsed: strategy, success, durationMs, tokenCost, lessons: [], timestamp: new Date().toISOString(),
+  });
+  // Primary strategy: SEQUENTIAL (10 successes)
+  for (let i = 0; i < 10; i++) {
+    ml.recordExperience(makeExp(`shadow-feed-seq-${i}`, 'SEQUENTIAL', true, 3000, 500));
+  }
+  // Runner-up: PARALLEL (5 successes)
+  for (let i = 0; i < 5; i++) {
+    ml.recordExperience(makeExp(`shadow-feed-par-${i}`, 'PARALLEL', true, 2000, 400));
+  }
+}
+
+describe('Shadow Mode — Integration', () => {
+  // Ensure MetaLearner isolation: clear state before each shadow test
+  function resetShadowState(): void {
+    clearMetaLearnerState();
+  }
+
+  it('shadow mode runs challenger strategy and records comparison in MetaLearner', async () => {
+    resetShadowState();
+    feedShadowExperiences('SEQUENTIAL');
+
+    // Track runtime.execute calls to observe shadow execution
+    const executeCalls: Array<{ agentId: string; tools: string[] }> = [];
+    const mockRuntime = createMockRuntime();
+    const originalExecute = mockRuntime.execute;
+    mockRuntime.execute = async (ctx) => {
+      executeCalls.push({
+        agentId: ctx.agentId as string,
+        tools: (ctx.availableTools as string[]) ?? [],
+      });
+      return originalExecute(ctx);
+    };
+
+    const telos = new TELOSOrchestrator(mockRuntime);
+    const orchestrator = new UltimateOrchestrator(telos, mockRuntime);
+
+    const beforeComparisons = getMetaLearner().getShadowComparisons().length;
+
+    await orchestrator.execute({
+      projectId: 'test-shadow',
+      agentId: 'test-shadow-agent',
+      goal: 'Summarize the key features of TypeScript for a developer audience.',
+      topology: 'SEQUENTIAL',
+      effortLevel: 'MODERATE',
+    });
+
+    // Verify shadow comparison was recorded
+    const comparisons = getMetaLearner().getShadowComparisons();
+    assert.ok(comparisons.length > beforeComparisons,
+      `Expected shadow comparisons to increase from ${beforeComparisons}, got ${comparisons.length}`);
+
+    const latest = comparisons[comparisons.length - 1];
+    assert.ok(latest.mainStrategy.includes('SEQUENTIAL'),
+      `mainStrategy should include SEQUENTIAL, got: ${latest.mainStrategy}`);
+    assert.ok(latest.shadowStrategy.length > 0,
+      `shadowStrategy should be non-empty, got: ${latest.shadowStrategy}`);
+    assert.notStrictEqual(latest.shadowStrategy, latest.mainStrategy,
+      'Shadow strategy should differ from main strategy');
+
+    // Verify shadow execution call was made
+    const shadowCalls = executeCalls.filter(c => c.agentId.startsWith('shadow-'));
+    assert.ok(shadowCalls.length >= 1,
+      `Expected at least 1 shadow execute call, got ${shadowCalls.length}`);
+  });
+
+  it('shadow execution filters out write tools (read-only execution)', async () => {
+    resetShadowState();
+    feedShadowExperiences('SEQUENTIAL');
+
+    // Rich tool list including write tools
+    const allTools = ['file_read', 'file_write', 'file_edit', 'web_search', 'grep', 'bash'];
+
+    const executeCalls: Array<{ agentId: string; tools: string[] }> = [];
+    const mockRuntime = createMockRuntime();
+    const originalExecute = mockRuntime.execute;
+    mockRuntime.execute = async (ctx) => {
+      executeCalls.push({
+        agentId: ctx.agentId as string,
+        tools: (ctx.availableTools as string[]) ?? [],
+      });
+      return originalExecute(ctx);
+    };
+
+    const telos = new TELOSOrchestrator(mockRuntime);
+    const orchestrator = new UltimateOrchestrator(telos, mockRuntime);
+
+    await orchestrator.execute({
+      projectId: 'test-shadow-tools',
+      agentId: 'test-shadow-tools-agent',
+      goal: 'Summarize TypeScript benefits.',
+      topology: 'SEQUENTIAL',
+      effortLevel: 'MODERATE',
+      contextData: { availableTools: allTools },
+    });
+
+    // Find the shadow execution call
+    const shadowCall = executeCalls.find(c => c.agentId.startsWith('shadow-'));
+    assert.ok(shadowCall, 'Shadow execution should have been triggered');
+
+    // Verify write tools are filtered out of shadow execution
+    const writeTools = ['file_write', 'file_edit', 'apply_patch', 'git', 'shell_execute'];
+    const leakedWriteTools = shadowCall!.tools.filter(t => writeTools.includes(t));
+    assert.strictEqual(leakedWriteTools.length, 0,
+      `Shadow execution should not receive write tools, got: ${leakedWriteTools.join(', ')}`);
+
+    // Verify read tools are preserved
+    assert.ok(shadowCall!.tools.includes('file_read'),
+      'Shadow execution should retain read tools like file_read');
+    assert.ok(shadowCall!.tools.includes('web_search'),
+      'Shadow execution should retain safe tools like web_search');
+  });
+
+  it('shadow mode is skipped when MetaLearner has insufficient data (no challenger)', async () => {
+    resetShadowState();
+    // After clearing state, selectShadowStrategy returns null — no challenger available
+    const executeCalls: Array<{ agentId: string }> = [];
+    const mockRuntime = createMockRuntime();
+    const originalExecute = mockRuntime.execute;
+    mockRuntime.execute = async (ctx) => {
+      executeCalls.push({ agentId: ctx.agentId as string });
+      return originalExecute(ctx);
+    };
+
+    const telos = new TELOSOrchestrator(mockRuntime);
+    const orchestrator = new UltimateOrchestrator(telos, mockRuntime);
+
+    const beforeComparisons = getMetaLearner().getShadowComparisons().length;
+
+    await orchestrator.execute({
+      projectId: 'test-shadow-skip',
+      agentId: 'test-shadow-skip-agent',
+      goal: 'What is 2+2?',
+      topology: 'SINGLE',
+      effortLevel: 'SIMPLE',
+    });
+
+    // No shadow calls should have been made
+    const shadowCalls = executeCalls.filter(c => c.agentId.startsWith('shadow-'));
+    assert.strictEqual(shadowCalls.length, 0,
+      'No shadow execution should happen without a challenger');
+
+    // No new shadow comparison should be recorded
+    const comparisons = getMetaLearner().getShadowComparisons();
+    assert.strictEqual(comparisons.length, beforeComparisons,
+      'Shadow comparisons should not increase without a challenger');
+  });
+
+  it('shadow comparison records correct success/failure and timing', async () => {
+    resetShadowState();
+    feedShadowExperiences('SEQUENTIAL');
+
+    const mockRuntime = createMockRuntime();
+    const telos = new TELOSOrchestrator(mockRuntime);
+    const orchestrator = new UltimateOrchestrator(telos, mockRuntime);
+
+    await orchestrator.execute({
+      projectId: 'test-shadow-timing',
+      agentId: 'test-shadow-timing-agent',
+      goal: 'Explain the benefits of statically typed languages.',
+      topology: 'SEQUENTIAL',
+      effortLevel: 'MODERATE',
+    });
+
+    const comparisons = getMetaLearner().getShadowComparisons();
+    const latest = comparisons[comparisons.length - 1];
+
+    // Verify comparison fields are populated
+    assert.ok(latest.runId.length > 0);
+    assert.ok(latest.taskType.length > 0);
+    assert.strictEqual(typeof latest.mainSuccess, 'boolean');
+    assert.strictEqual(typeof latest.shadowSuccess, 'boolean');
+    assert.ok(latest.mainDurationMs >= 0);
+    assert.ok(latest.shadowDurationMs >= 0);
+    assert.ok(new Date(latest.timestamp).getTime() > 0);
+
+    // mainSuccess should be true (mock runtime returns success)
+    assert.strictEqual(latest.mainSuccess, true,
+      'Main execution should succeed with mock runtime');
+    // shadowSuccess should be true (mock runtime returns success)
+    assert.strictEqual(latest.shadowSuccess, true,
+      'Shadow execution should succeed with mock runtime');
   });
 });

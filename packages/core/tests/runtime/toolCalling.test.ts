@@ -291,8 +291,9 @@ describe('AgentRuntime - New Feature Integration', () => {
 
     const lastRequest = simpleProvider.lastRequest!;
     expect(lastRequest.tools).toBeDefined();
-    // With maxTools=2, only 2 tool defs should be sent
-    expect(lastRequest.tools!.length).toBeLessThanOrEqual(2);
+    // With maxTools=2, 2 tools go active + 1 goes to registry → request_tool is added
+    expect(lastRequest.tools!.length).toBe(3); // 2 active tools + 1 request_tool
+    expect(lastRequest.tools!.some(t => t.name === 'web_search')).toBe(true);
   });
 
   it('toolRetrieval defaults to all tools when disabled', async () => {

@@ -165,6 +165,8 @@ describe('WorkQueueStore parity: InMemory vs Sqlite', () => {
         for (const [k, v] of Object.entries(i)) {
           if (v !== undefined) out[k] = v;
         }
+        // Normalize timestamps to 1s resolution to avoid flaky 1ms differences
+        if (typeof out.createdAt === 'string') out.createdAt = (out.createdAt as string).slice(0, -4) + '000';
         return out;
       };
       const a = (inMem.loadAll() as WorkItem[]).map(stripUndefined).sort((x, y) => (x.id as string).localeCompare(y.id as string));

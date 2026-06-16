@@ -32,7 +32,8 @@ describe('Sandbox Profiles', () => {
     assert.strictEqual(FULL_ACCESS.mode, 'full-access');
     assert.strictEqual(FULL_ACCESS.network, 'full');
     assert.ok(FULL_ACCESS.filesystem.writablePaths.includes('/'));
-    assert.strictEqual(FULL_ACCESS.filesystem.protectedPaths.length, 0);
+    // Full-access protects critical system paths (git, auth, cloud credentials)
+    assert.strictEqual(FULL_ACCESS.filesystem.protectedPaths.length, 12);
   });
 
   it('all profiles deny secret env vars', async () => {

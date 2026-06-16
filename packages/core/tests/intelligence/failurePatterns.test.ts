@@ -23,12 +23,9 @@ describe('FailurePatternLearner', () => {
     const learner = getFailurePatternLearner();
     for (let i = 0; i < 3; i++) {
       learner.recordFailure({
-        runId: `run-${i}`,
-        agentId: 'agent-a',
-        tool: 'echo',
-        errorType: 'TIMEOUT',
-        message: 'Timed out after 30s',
-        timestamp: new Date().toISOString(),
+        task: 'echo',
+        error: 'Timed out after 30s',
+        context: 'running echo tool',
       });
     }
     const patterns = learner.getPatterns();

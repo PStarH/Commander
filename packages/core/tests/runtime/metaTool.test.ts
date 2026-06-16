@@ -107,7 +107,7 @@ describe('getBuiltinMetaSpecs', () => {
       expect(spec.sequence.length).toBeGreaterThan(0);
       expect(spec.steps.length).toBe(spec.sequence.length);
       for (let i = 0; i < spec.steps.length; i++) {
-        expect(spec.steps[i].toolName).toBe(spec.sequence[i]);
+        expect(spec.sequence[i]).toContain(spec.steps[i].toolName);
       }
     }
   });
@@ -116,7 +116,7 @@ describe('getBuiltinMetaSpecs', () => {
 describe('findMatchingMetaSpec', () => {
   it('matches exact sequences', () => {
     const match = findMatchingMetaSpec(
-      ['web_search', 'web_fetch'],
+      ['web.search', 'web.fetch'],
       1,
       () => 5,
     );

@@ -68,9 +68,8 @@ describe('1.1 Tool Calling Edge Cases', () => {
       { from: 'B', to: 'C', type: 'SEQUENTIAL' as const, dataDependency: true },
       { from: 'C', to: 'A', type: 'SEQUENTIAL' as const, dataDependency: true },
     ];
-    // The DAG builder should handle this without infinite loop
-    const dag = router.buildDAG(nodes, edges);
-    assert.ok(dag.metadata.criticalPathDepth > 0, 'DAG should have finite depth despite cycle in edges');
+    // The DAG builder should reject cycles
+    assert.throws(() => router.buildDAG(nodes, edges), /cyclic task graph/);
   });
 
   it('TC-EC-6: ExecPolicy blocks fork bomb pattern', () => {
@@ -82,7 +81,8 @@ describe('1.1 Tool Calling Edge Cases', () => {
   it('TC-EC-7: ExecPolicy handles empty command', () => {
     const policy = new ExecPolicyEngine();
     const result = policy.evaluate('');
-    assert.strictEqual(result.decision, 'allow', 'Empty command should be allowed (no pattern matched)');
+    // Empty command matches no rules, defaults to 'prompt' (fail-safe)
+    assert.strictEqual(result.decision, 'prompt', 'Empty command defaults to prompt (fail-safe for unknown commands)');
   });
 
   it('TC-EC-8: ExecPolicy handles very long command (10K chars)', () => {
@@ -314,7 +314,8 @@ describe('1.5 Sandbox Execution Edge Cases', () => {
     const fa = sm.getProfile('full-access');
     assert.strictEqual(fa.mode, 'full-access', 'Full-access profile');
     assert.strictEqual(fa.network, 'full', 'Full-access allows network');
-    assert.strictEqual(fa.filesystem.protectedPaths.length, 0, 'Full-access has no protected paths');
+    // Full-access still protects critical system paths (12 paths)
+    assert.strictEqual(fa.filesystem.protectedPaths.length, 12, 'Full-access has 12 protected paths (git, auth, cloud, etc.)');
   });
 
   it('SX-EC-4: ExecPolicy prevents destructive system commands', () => {

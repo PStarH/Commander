@@ -84,9 +84,11 @@ describe('AgentRuntime', () => {
 
     it('includes system and user messages', async () => {
       await runtime.execute(makeContext());
-      expect(mockProvider.lastRequest!.messages.length).toBeGreaterThanOrEqual(2);
+      expect(mockProvider.lastRequest!.messages.length).toBeGreaterThanOrEqual(3);
+      // buildSystemPrompt split: cache-stable prefix + dynamic suffix = 2 system messages
       expect(mockProvider.lastRequest!.messages[0].role).toBe('system');
-      expect(mockProvider.lastRequest!.messages[1].role).toBe('user');
+      expect(mockProvider.lastRequest!.messages[1].role).toBe('system');
+      expect(mockProvider.lastRequest!.messages[2].role).toBe('user');
     });
   });
 

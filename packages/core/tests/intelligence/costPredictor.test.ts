@@ -18,23 +18,41 @@ describe('CostPredictor', () => {
     assert.ok(instance instanceof CostPredictor);
   });
 
-  it('predictNext returns a CostEstimate shape with valid bounds', async () => {
+  it('predict returns a CostEstimate shape with valid bounds', async () => {
     const { getCostPredictor } = await import('../../src/intelligence/costPredictor');
     const predictor = getCostPredictor();
-    const estimate = predictor.predictNext('test-model', 1000, 500);
-    assert.ok(typeof estimate.expectedUsd === 'number');
-    assert.ok(estimate.expectedUsd >= 0);
-    assert.ok(typeof estimate.lowerUsd === 'number');
-    assert.ok(typeof estimate.upperUsd === 'number');
-    assert.ok(estimate.lowerUsd <= estimate.expectedUsd);
-    assert.ok(estimate.upperUsd >= estimate.expectedUsd);
+    const estimate = predictor.predict({
+      taskType: 'code-generation',
+      effortLevel: 'medium',
+      topology: 'single',
+      estimatedTokens: 1000,
+      estimatedDurationMs: 500,
+      agentCount: 1,
+      modelId: 'gpt-4o-mini',
+    });
+    assert.ok(typeof estimate.estimatedTokens === 'number');
+    assert.ok(estimate.estimatedTokens >= 0);
+    assert.ok(typeof estimate.estimatedCostUsd === 'number');
+    assert.ok(estimate.estimatedCostUsd >= 0);
+    assert.ok(typeof estimate.estimatedDurationMs === 'number');
+    assert.ok(estimate.estimatedDurationMs >= 0);
+    assert.ok(typeof estimate.confidence === 'number');
+    assert.ok(estimate.confidence >= 0 && estimate.confidence <= 1);
   });
 
   it('prediction handles unknown model gracefully', async () => {
     const { getCostPredictor } = await import('../../src/intelligence/costPredictor');
     const predictor = getCostPredictor();
-    const estimate = predictor.predictNext('brand-new-unseen-model', 100, 50);
-    assert.ok(typeof estimate.expectedUsd === 'number');
-    assert.ok(Number.isFinite(estimate.expectedUsd));
+    const estimate = predictor.predict({
+      taskType: 'unknown-task',
+      effortLevel: 'unknown',
+      topology: 'unknown',
+      estimatedTokens: 100,
+      estimatedDurationMs: 50,
+      agentCount: 1,
+      modelId: 'brand-new-unseen-model',
+    });
+    assert.ok(typeof estimate.estimatedCostUsd === 'number');
+    assert.ok(Number.isFinite(estimate.estimatedCostUsd));
   });
 });

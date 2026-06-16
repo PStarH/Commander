@@ -167,6 +167,12 @@ describe('SmartModelRouter', () => {
 
     it('learning affects model ranking', () => {
       const router = new ModelRouter();
+      // Register a model specifically for this test
+      router.registerModel({
+        id: 'claude-3-5-haiku', provider: 'anthropic', tier: 'eco',
+        costPer1KInput: 0.0008, costPer1KOutput: 0.004,
+        capabilities: ['code', 'analysis'], contextWindow: 200000, priority: 0,
+      });
       // Record many failures for gpt-4o-mini on code tasks
       for (let i = 0; i < 20; i++) {
         router.recordOutcome('gpt-4o-mini', 'code', false, 5000, 3000);
@@ -187,16 +193,16 @@ describe('SmartModelRouter', () => {
   describe('fallback chain', () => {
     it('returns next model in tier on fallback', () => {
       const router = new ModelRouter();
-      const fallback = router.getFallbackModel('claude-3-5-sonnet', 'code');
+      const fallback = router.getFallbackModel('claude-sonnet-4-6', 'code');
       assert.ok(fallback);
-      assert.notEqual(fallback.id, 'claude-3-5-sonnet');
+      assert.notEqual(fallback.id, 'claude-sonnet-4-6');
     });
 
     it('steps down tier when no same-tier fallback', () => {
       const router = new ModelRouter();
-      const fallback = router.getFallbackModel('claude-3-opus', 'general');
+      const fallback = router.getFallbackModel('claude-opus-4-8', 'general');
       assert.ok(fallback);
-      assert.ok(fallback.tier !== 'power' || fallback.id !== 'claude-3-opus');
+      assert.ok(fallback.tier !== 'power' || fallback.id !== 'claude-opus-4-8');
     });
 
     it('returns undefined for unknown model', () => {

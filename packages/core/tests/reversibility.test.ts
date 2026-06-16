@@ -111,7 +111,7 @@ describe('M1: Tool call fails → compensation queue, 3 retries, then DLQ', () =
   });
 
   it('v2 fix: compensationQueue module ships (Tier 2.4 build)', () => {
-    const queuePath = path.join(process.cwd(), 'packages/core/src/atr/compensationQueue.ts');
+    const queuePath = path.join(process.cwd(), 'src/atr/compensationQueue.ts');
     assert.ok(fs.existsSync(queuePath), 'compensationQueue.ts not yet created (Tier 2.4 not implemented)');
   });
 });
@@ -127,7 +127,8 @@ describe('M2: LLM call fails → primary 503 → fallback in <1s', () => {
     const d0 = computeBackoff(0, 100, 5000);
     const d1 = computeBackoff(1, 100, 5000);
     const d2 = computeBackoff(2, 100, 5000);
-    assert.ok(d0 >= 100 && d0 <= 5000, `d0=${d0} out of bounds`);
+    // Allow ±10 jitter (20% * baseMs * (random - 0.5)) on baseMs=100
+    assert.ok(d0 >= 90 && d0 <= 110, `d0=${d0} out of bounds (expected 90-110)`);
     assert.ok(d1 >= d0 * 0.5, `d1 should be exponential-ish from d0: d0=${d0}, d1=${d1}`);
     assert.ok(d2 >= d1 * 0.5, `d2 should be exponential-ish from d1: d1=${d1}, d2=${d2}`);
   });
@@ -163,7 +164,7 @@ describe('M3: Sub-agent fails → subAgentGuard aborts on limit violation', () =
 
   it('v2 fix: subAgentExecutor references SubAgentGuard (Tier 2.2 wire-up)', () => {
     const execSrc = fs.readFileSync(
-      path.join(process.cwd(), 'packages/core/src/ultimate/subAgentExecutor.ts'),
+      path.join(process.cwd(), 'src/ultimate/subAgentExecutor.ts'),
       'utf-8',
     );
     assert.ok(
@@ -417,7 +418,7 @@ describe('M12: Compensation fails → durable queue, not dropped', () => {
   });
 
   it('v2 fix: compensationQueue module ships with durable retry (Tier 2.4)', () => {
-    const queuePath = path.join(process.cwd(), 'packages/core/src/atr/compensationQueue.ts');
+    const queuePath = path.join(process.cwd(), 'src/atr/compensationQueue.ts');
     assert.ok(fs.existsSync(queuePath), 'compensationQueue.ts not yet created (Tier 2.4 not implemented)');
   });
 });
@@ -507,7 +508,7 @@ describe('M18: Sub-agent forever → noProgressThreshold aborts, cycle detector 
 
   it('v2 fix: subAgentExecutor instantiates SubAgentGuard (Tier 2.2 wire-up)', () => {
     const execSrc = fs.readFileSync(
-      path.join(process.cwd(), 'packages/core/src/ultimate/subAgentExecutor.ts'),
+      path.join(process.cwd(), 'src/ultimate/subAgentExecutor.ts'),
       'utf-8',
     );
     assert.ok(

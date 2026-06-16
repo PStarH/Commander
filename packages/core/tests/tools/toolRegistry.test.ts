@@ -12,7 +12,7 @@ describe('ToolRegistry', () => {
   });
 
   it('can be instantiated', () => {
-    const registry = new ToolRegistry();
+    const registry = ToolRegistry.getInstance();
     assert.ok(registry);
   });
 });
@@ -39,12 +39,11 @@ describe('createAllTools', () => {
   it('includes core tools', () => {
     const tools = createAllTools();
 
+    // STRAP consolidation exposes domain-level resource tools rather than
+    // granular CRUD names.
     const expectedTools = [
-      'web_search', 'web_fetch',
-      'file_read', 'file_write', 'file_edit', 'file_search', 'file_list',
-      'python_execute', 'shell_execute',
-      'memory_store', 'memory_recall', 'memory_list',
-      'git',
+      'web', 'file', 'exec', 'memory', 'git',
+      'browser', 'code', 'checkpoint', 'handoff', 'media', 'system',
     ];
 
     for (const name of expectedTools) {

@@ -58,7 +58,7 @@ function makeMessages(count: number, avgLen = 500): LLMMessage[] {
 }
 
 function makeToolResults(count: number, avgLen = 2000): Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }> {
-  const results = [];
+  const results: Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }> = [];
   for (let i = 0; i < count; i++) {
     results.push({
       toolCallId: `call_${i}`,
@@ -217,18 +217,18 @@ describe('Token Usage Benchmarks', () => {
   });
 
   describe('Observation Mask Effectiveness', () => {
-    it('measures token savings from observation masking', () => {
+    it('measures token savings from observation masking', async () => {
       const results = makeToolResults(10, 2000);
       const windowSize = 4;
 
       const before = results.reduce((sum, r) => sum + estimateTokens(r.output), 0);
-      const masked = applyObservationMask(results, windowSize);
+      const masked = await applyObservationMask(results, windowSize);
       const after = masked.reduce((sum, r) => sum + estimateTokens(r.output), 0);
 
       console.log(`Observation mask (window=${windowSize}): ${before} → ${after} tokens (saved ${before - after})`);
 
       // Should mask older results
-      const maskedCount = masked.filter(r => r.output.startsWith('[observation masked:')).length;
+      const maskedCount = masked.filter(r => r.output.startsWith('[observation purified:')).length;
       expect(maskedCount).toBeGreaterThan(0);
       expect(after).toBeLessThan(before);
     });

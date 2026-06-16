@@ -27,7 +27,7 @@ describe('FileReadTool', () => {
   it('reads package.json', async () => {
     const result = await tool.execute({ path: 'package.json' });
     assert.ok(result.includes('name') || result.includes('version'));
-    assert.ok(result.startsWith('1:'));
+    assert.ok(result.includes('1:'), 'Should have hashline numbered content');
   });
 
   it('returns error for missing path', async () => {
@@ -49,8 +49,8 @@ describe('FileReadTool', () => {
 
   it('includes line numbers', async () => {
     const result = await tool.execute({ path: 'package.json' });
-    assert.ok(result.match(/^1: /m));
-    assert.ok(result.match(/^2: /m));
+    assert.ok(result.match(/^1:/m), 'Line 1 should be numbered');
+    assert.ok(result.match(/^2:/m), 'Line 2 should be numbered');
   });
 
   it('blocks path traversal', async () => {

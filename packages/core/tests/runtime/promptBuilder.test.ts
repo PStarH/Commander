@@ -35,16 +35,17 @@ function makeTools(names: string[]): Map<string, Tool> {
 describe('buildSystemPrompt (P0 #3 #4 #5)', () => {
   it('includes the pre-yield verification checklist', () => {
     const prompt = buildSystemPrompt(makeCtx(), makeRouting(), { maxStepsPerRun: 30 } as never, makeTools(['file_read']), new TokenGovernor({ totalBudget: 100000 }));
-    assert.match(prompt, /Pre-yield checklist/);
+    assert.match(prompt, /Pre-yield Checklist/);
     assert.match(prompt, /Goal coverage/);
     assert.match(prompt, /Artifact propagation/);
     assert.match(prompt, /Evidence/);
   });
 
-  it('includes the preamble (think before acting) section', () => {
+  it('includes the thinking protocol section with plan-before-acting directive', () => {
     const prompt = buildSystemPrompt(makeCtx(), makeRouting(), { maxStepsPerRun: 30 } as never, makeTools(['file_read']), new TokenGovernor({ totalBudget: 100000 }));
-    assert.match(prompt, /Preamble: Think Before Acting/);
-    assert.match(prompt, /1\u20132 sentences of plain text/);
+    assert.match(prompt, /Thinking Protocol/);
+    assert.match(prompt, /Plan before acting/);
+    assert.match(prompt, /1-2 sentences/);
   });
 
   it('includes multi-file refactoring workflow for complex tasks', () => {

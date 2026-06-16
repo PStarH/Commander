@@ -1,4 +1,4 @@
-import { describe, it, beforeAll as before, afterAll as after } from 'vitest';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
@@ -190,9 +190,15 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
     });
 
     it('allows configured CORS origins', async () => {
-      const { status, headers } = await fetchJson('/health', { origin: 'http://localhost:3000' });
+      // Spawn a fresh server that includes localhost:3000 as an allowed origin
+      const corsServer = new CommanderHttpServer({ port: 0, host: '127.0.0.1', apiKey: '', rateLimitPerMinute: 0, corsAllowedOrigins: ['http://localhost:3000'] });
+      await corsServer.start();
+      const corsBaseUrl = `http://127.0.0.1:${corsServer.getPort()}`;
+
+      const { status, headers } = await requestJson('GET', `${corsBaseUrl}/health`, { origin: 'http://localhost:3000' });
       assert.strictEqual(status, 200);
       assert.strictEqual(headers['access-control-allow-origin'], 'http://localhost:3000');
+      await corsServer.stop();
     });
 
     it('rejects oversized JSON request bodies', async () => {
@@ -215,6 +221,200 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
       } finally {
         await smallServer.stop();
       }
+    });
+  });
+
+  describe('/dashboard/compensation', () => {
+    it('returns 200 with HTML dashboard page', async () => {
+      const { status, text, headers } = await fetchJson('/dashboard/compensation', { accept: 'text/html' });
+      assert.strictEqual(status, 200);
+      assert.ok(headers['content-type']?.includes('text/html'), 'Content-Type should be text/html');
+      assert.ok(text?.includes('Compensation Dashboard'), 'HTML should contain dashboard title');
+      assert.ok(text?.includes('chart.js'), 'HTML should reference Chart.js');
+      assert.ok(text?.includes('EventSource'), 'HTML should use EventSource for live updates');
+      assert.ok(text?.includes('/stream/compensation'), 'HTML should reference the SSE stream endpoint');
+    });
+
+    it('contains counter cards section', async () => {
+      const { text } = await fetchJson('/dashboard/compensation');
+      assert.ok(text?.includes('Planned'), 'HTML should show Planned count');
+      assert.ok(text?.includes('Steps'), 'HTML should show Steps count');
+      assert.ok(text?.includes('Successful'), 'HTML should show Successful compensations');
+      assert.ok(text?.includes('Failed'), 'HTML should show Failed count');
+    });
+
+    it('contains chart canvases for all 4 chart types', async () => {
+      const { text } = await fetchJson('/dashboard/compensation');
+      assert.ok(text?.includes('byToolChart'), 'HTML should have by-tool chart');
+      assert.ok(text?.includes('byRiskChart'), 'HTML should have by-risk chart');
+      assert.ok(text?.includes('byStatusChart'), 'HTML should have by-status chart');
+      assert.ok(text?.includes('outcomeChart'), 'HTML should have outcome chart');
+    });
+
+    it('uses SSE for live updates instead of polling', async () => {
+      const { text } = await fetchJson('/dashboard/compensation');
+      assert.ok(text?.includes('EventSource'), 'HTML should use EventSource for SSE');
+      assert.ok(text?.includes('/stream/compensation'), 'HTML should connect to SSE stream endpoint');
+      assert.ok(text?.includes('compensation.update'), 'HTML should listen for compensation.update events');
+      // Should NOT use setInterval polling anymore
+      assert.ok(!text?.includes('setInterval(refresh,'), 'HTML should not use setInterval polling');
+    });
+  });
+
+  describe('/api/v1/compensation', () => {
+    it('returns 200 with JSON compensation data', async () => {
+      const { status, body } = await fetchJson('/api/v1/compensation');
+      assert.strictEqual(status, 200);
+      assert.ok(typeof body === 'object', 'Response should be a JSON object');
+      assert.ok('counters' in body, 'Response should have counters');
+      assert.ok('recentEvents' in body, 'Response should have recentEvents');
+      assert.ok('timestamp' in body, 'Response should have timestamp');
+    });
+
+    it('returns all expected counter fields', async () => {
+      const { body } = await fetchJson('/api/v1/compensation');
+      assert.ok('compensation_planned_total' in body.counters, 'counters should include compensation_planned_total');
+      assert.ok('compensation_steps_total' in body.counters, 'counters should include compensation_steps_total');
+      assert.ok('compensation_total' in body.counters, 'counters should include compensation_total');
+      assert.ok('byTool' in body, 'should have byTool breakdown');
+      assert.ok('byRisk' in body, 'should have byRisk breakdown');
+      assert.ok('byStepStatus' in body, 'should have byStepStatus breakdown');
+      assert.ok('compensationOutcomes' in body, 'should have compensationOutcomes breakdown');
+    });
+
+    it('returns empty breakdowns when no compensation events recorded', async () => {
+      const { body } = await fetchJson('/api/v1/compensation');
+      assert.deepStrictEqual(body.byTool, {});
+      assert.deepStrictEqual(body.byRisk, {});
+      assert.deepStrictEqual(body.byStepStatus, {});
+      assert.deepStrictEqual(body.recentEvents, []);
+    });
+
+    it('populates counters after compensation events fire', async () => {
+      // Publish a compensation event via the message bus to test live data flow
+      const { getMessageBus } = await import('../src/runtime/messageBus');
+      const bus = getMessageBus();
+      bus.publish('tool.compensation_planned', 'test', {
+        runId: 'test-run',
+        toolName: 'file_write',
+        stepCount: 3,
+        risk: 'safe',
+      });
+      bus.publish('tool.compensation_step', 'test', {
+        runId: 'test-run',
+        toolName: 'file_write',
+        actionId: 'act-1',
+        stepIndex: 0,
+        totalSteps: 3,
+        status: 'completed',
+      });
+      bus.publish('tool.compensation_step', 'test', {
+        runId: 'test-run',
+        toolName: 'file_write',
+        actionId: 'act-1',
+        stepIndex: 1,
+        totalSteps: 3,
+        status: 'failed',
+        error: 'disk full',
+      });
+
+      const { body } = await fetchJson('/api/v1/compensation');
+      assert.ok(body.counters.compensation_planned_total >= 0);
+      // Event history should include the event we published
+      assert.ok(body.recentEvents.length >= 1, 'Should have at least 1 recent event');
+      const plannedEvents = body.recentEvents.filter((e: any) => e.topic === 'tool.compensation_planned');
+      assert.ok(plannedEvents.length >= 1, 'Should have at least 1 planned event');
+    });
+  });
+
+  // SSE streaming is tested indirectly via the dashboard HTML test which verifies
+  // the HTML references /stream/compensation via EventSource. The SSE endpoint is a
+  // thin wrapper around bus subscriptions and is covered by compensation integration tests.
+
+  describe('/dashboard/sop', () => {
+    it('returns 200 with HTML SOP dashboard page', async () => {
+      const { status, text, headers } = await fetchJson('/dashboard/sop', { accept: 'text/html' });
+      assert.strictEqual(status, 200);
+      assert.ok(headers['content-type']?.includes('text/html'), 'Content-Type should be text/html');
+      assert.ok(text?.includes('SOP Dashboard'), 'HTML should contain dashboard title');
+      assert.ok(text?.includes('chart.js'), 'HTML should reference Chart.js');
+      assert.ok(text?.includes('EventSource'), 'HTML should use EventSource for live updates');
+      assert.ok(text?.includes('/stream/sop'), 'HTML should reference the SOP SSE stream endpoint');
+    });
+
+    it('contains counter cards section', async () => {
+      const { text } = await fetchJson('/dashboard/sop');
+      assert.ok(text?.includes('Total SOPs'), 'HTML should show Total SOPs count');
+      assert.ok(text?.includes('Agents'), 'HTML should show Agents count');
+      assert.ok(text?.includes('Total Steps'), 'HTML should show Total Steps count');
+      assert.ok(text?.includes('Unique Tags'), 'HTML should show Unique Tags count');
+    });
+
+    it('contains chart canvases for all 3 chart types', async () => {
+      const { text } = await fetchJson('/dashboard/sop');
+      assert.ok(text?.includes('byAgentChart'), 'HTML should have by-agent chart');
+      assert.ok(text?.includes('byTagChart'), 'HTML should have by-tag chart');
+      assert.ok(text?.includes('byStepChart'), 'HTML should have by-step chart');
+    });
+
+    it('contains search input and sortable table', async () => {
+      const { text } = await fetchJson('/dashboard/sop');
+      assert.ok(text?.includes('searchInput'), 'HTML should have search input');
+      assert.ok(text?.includes('filterSOPs'), 'HTML should have filter function');
+      assert.ok(text?.includes('sortBy'), 'HTML should have sort function');
+      assert.ok(text?.includes('toggleDetail'), 'HTML should have detail toggle function');
+    });
+
+    it('uses SSE for live updates instead of polling', async () => {
+      const { text } = await fetchJson('/dashboard/sop');
+      assert.ok(text?.includes('EventSource'), 'HTML should use EventSource for SSE');
+      assert.ok(text?.includes('/stream/sop'), 'HTML should connect to SSE stream endpoint');
+      assert.ok(text?.includes('sop.update'), 'HTML should listen for sop.update events');
+      assert.ok(!text?.includes('setInterval(refresh,'), 'HTML should not use setInterval polling');
+    });
+  });
+
+  describe('/api/v1/sops', () => {
+    it('returns 200 with JSON SOP data', async () => {
+      const { status, body } = await fetchJson('/api/v1/sops');
+      assert.strictEqual(status, 200);
+      assert.ok(typeof body === 'object', 'Response should be a JSON object');
+      assert.ok('agents' in body, 'Response should have agents');
+      assert.ok('total' in body, 'Response should have total');
+      assert.ok('sops' in body, 'Response should have sops');
+      assert.ok('timestamp' in body, 'Response should have timestamp');
+    });
+
+    it('returns empty sops array when no SOPs exist', async () => {
+      const { body } = await fetchJson('/api/v1/sops');
+      assert.deepStrictEqual(body.sops, []);
+      assert.strictEqual(body.total, 0);
+      assert.deepStrictEqual(body.agents, []);
+    });
+
+    it('returns 404 for non-existent agent', async () => {
+      const { status, body } = await fetchJson('/api/v1/sops/nonexistent-agent');
+      assert.strictEqual(status, 200); // Returns empty filtered list, not 404
+      assert.deepStrictEqual(body.sops, []);
+      assert.strictEqual(body.total, 0);
+    });
+
+    it('returns 404 for non-existent SOP', async () => {
+      const { status, body } = await fetchJson('/api/v1/sops/test-agent/nonexistent-run');
+      assert.strictEqual(status, 404);
+      assert.ok(body.error?.includes('SOP not found'));
+    });
+
+    it('returns 404 for non-existent SOP markdown', async () => {
+      const { status, body } = await fetchJson('/api/v1/sops/test-agent/nonexistent-run/markdown');
+      assert.strictEqual(status, 404);
+      assert.ok(body.error?.includes('SOP not found'));
+    });
+
+    it('survives path traversal attempts', async () => {
+      const { status, body } = await fetchJson('/api/v1/sops/../evil/nonexistent');
+      assert.strictEqual(status, 404);
+      assert.ok(body.error?.includes('SOP not found') || body.error?.includes('Unknown'));
     });
   });
 

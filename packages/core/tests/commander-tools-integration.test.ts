@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import {
-  WebSearchTool, WebFetchTool,
+  WebSearchTool,
   FileReadTool, FileWriteTool, FileEditTool, FileSearchTool, FileListTool,
   PythonExecuteTool, ShellExecuteTool,
   MemoryStoreTool, MemoryRecallTool, MemoryListTool,
@@ -117,7 +117,7 @@ describe('Commander Tools Integration', () => {
     const result = await recall.execute({ key: 'test/key', namespace: 'test' });
     assert.ok(result.includes('test value'), 'Should recall stored memory');
 
-    const listed = await new MemoryListTool().execute({});
+    const listed = await new MemoryListTool().execute();
     assert.ok(listed.includes('test'), 'Should list namespace');
     console.log('  [memory] Store/recall/list OK');
   });
@@ -133,19 +133,18 @@ describe('Commander Tools Integration', () => {
   it('createAllTools returns all tools', () => {
     const tools = createAllTools();
     assert.ok(tools.size >= 9, 'Should have at least 9 tools');
-    assert.ok(tools.has('web_search'));
-    assert.ok(tools.has('web_fetch'));
-    assert.ok(tools.has('file_read'));
-    assert.ok(tools.has('file_write'));
-    assert.ok(tools.has('file_edit'));
-    assert.ok(tools.has('file_search'));
-    assert.ok(tools.has('file_list'));
-    assert.ok(tools.has('python_execute'));
-    assert.ok(tools.has('shell_execute'));
+    // Legacy granular tools are consolidated into STRAP resource tools.
+    assert.ok(tools.has('web'));
+    assert.ok(tools.has('file'));
+    assert.ok(tools.has('exec'));
+    assert.ok(tools.has('memory'));
     assert.ok(tools.has('git'));
-    assert.ok(tools.has('memory_store'));
-    assert.ok(tools.has('memory_recall'));
-    assert.ok(tools.has('memory_list'));
+    assert.ok(tools.has('browser'));
+    assert.ok(tools.has('code'));
+    assert.ok(tools.has('checkpoint'));
+    assert.ok(tools.has('handoff'));
+    assert.ok(tools.has('media'));
+    assert.ok(tools.has('system'));
     console.log(`  [createAllTools] ${tools.size} tools: ${Array.from(tools.keys()).join(', ')}`);
   });
 });

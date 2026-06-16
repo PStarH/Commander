@@ -17,13 +17,17 @@ describe('SkillExtractor', () => {
     assert.ok(instance instanceof SkillExtractor);
   });
 
-  it('extractSkills returns an array (possibly empty)', async () => {
+  it('extract returns an ExtractionResult with skills array', async () => {
     const { getSkillExtractor } = await import('../../src/intelligence/skillExtractor');
     const extractor = getSkillExtractor();
-    const skills = extractor.extractSkills({
-      runId: 'test-run',
-      traces: [],
+    const result = extractor.extract({
+      task: 'test task',
+      taskType: 'general',
+      steps: [],
+      tokens: 0,
+      success: true,
     });
-    assert.ok(Array.isArray(skills));
+    assert.ok(Array.isArray(result.skills));
+    assert.ok(typeof result.summary === 'string');
   });
 });

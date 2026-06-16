@@ -23,7 +23,7 @@ function makeCache(config: Record<string, unknown> = {}) {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('ToolResultCache', () => {
+describe('ToolResultCache', async () => {
   let cache: ToolResultCache;
 
   afterEach(() => {
@@ -34,34 +34,34 @@ describe('ToolResultCache', () => {
   // 1. Basic hit / miss
   // =========================================================================
 
-  describe('basic hit/miss', () => {
-    it('returns undefined on miss when enabled', () => {
+  describe('basic hit/miss', async () => {
+    it('returns undefined on miss when enabled', async () => {
       cache = makeCache();
       const result = cache.get(makeToolCall('search', { q: 'hello' }));
       expect(result).toBeUndefined();
     });
 
-    it('returns cached result on hit', () => {
+    it('returns cached result on hit', async () => {
       cache = makeCache();
       const call = makeToolCall('search', { q: 'hello' });
       const res = makeResult('found 3 results');
-      cache.set(call, res);
+      await cache.set(call, res);
       const hit = cache.get(call);
       expect(hit).toBeDefined();
       expect(hit!.output).toBe('found 3 results');
     });
 
-    it('returns undefined when caching is disabled', () => {
+    it('returns undefined when caching is disabled', async () => {
       cache = new ToolResultCache({ enabled: false });
       const call = makeToolCall('search', { q: 'test' });
-      cache.set(call, makeResult('data'));
+      await cache.set(call, makeResult('data'));
       expect(cache.get(call)).toBeUndefined();
     });
 
-    it('returns a copy, not a reference, to prevent corruption', () => {
+    it('returns a copy, not a reference, to prevent corruption', async () => {
       cache = makeCache();
       const call = makeToolCall('read', { path: '/tmp' });
-      cache.set(call, makeResult('original'));
+      await cache.set(call, makeResult('original'));
       const hit1 = cache.get(call);
       hit1!.output = 'mutated';
       const hit2 = cache.get(call);
@@ -73,12 +73,12 @@ describe('ToolResultCache', () => {
   // 2. TTL expiry
   // =========================================================================
 
-  describe('TTL expiry', () => {
-    it('returns undefined after TTL expires', () => {
+  describe('TTL expiry', async () => {
+    it('returns undefined after TTL expires', async () => {
       vi.useFakeTimers();
       cache = makeCache({ defaultTtlMs: 1000 });
       const call = makeToolCall('fetch', { url: 'a' });
-      cache.set(call, makeResult('data'));
+      await cache.set(call, makeResult('data'));
 
       expect(cache.get(call)).toBeDefined();
 
@@ -87,22 +87,22 @@ describe('ToolResultCache', () => {
       vi.useRealTimers();
     });
 
-    it('respects per-tool TTL overrides', () => {
+    it('respects per-tool TTL overrides', async () => {
       vi.useFakeTimers();
       cache = makeCache({ defaultTtlMs: 10000, toolTtls: { fast_tool: 500 } });
       const call = makeToolCall('fast_tool', {});
-      cache.set(call, makeResult('quick'));
+      await cache.set(call, makeResult('quick'));
 
       vi.advanceTimersByTime(501);
       expect(cache.get(call)).toBeUndefined();
       vi.useRealTimers();
     });
 
-    it('counts expired entries as misses in stats', () => {
+    it('counts expired entries as misses in stats', async () => {
       vi.useFakeTimers();
       cache = makeCache({ defaultTtlMs: 100 });
       const call = makeToolCall('t', {});
-      cache.set(call, makeResult('v'));
+      await cache.set(call, makeResult('v'));
       vi.advanceTimersByTime(101);
       cache.get(call);
       const stats = cache.getStats();
@@ -116,33 +116,33 @@ describe('ToolResultCache', () => {
   // 3. neverCache tools
   // =========================================================================
 
-  describe('neverCache', () => {
-    it('does not cache tools in the neverCache list', () => {
+  describe('neverCache', async () => {
+    it('does not cache tools in the neverCache list', async () => {
       cache = makeCache();
       const call = makeToolCall('shell_execute', { cmd: 'ls' });
-      cache.set(call, makeResult('file1\nfile2'));
+      await cache.set(call, makeResult('file1\nfile2'));
       expect(cache.get(call)).toBeUndefined();
     });
 
-    it('does not cache all default neverCache tools', () => {
+    it('does not cache all default neverCache tools', async () => {
       cache = makeCache();
       const blocked = ['shell_execute', 'python_execute', 'file_write', 'file_edit',
         'git_push', 'git_commit', 'agent', 'memory_store'];
       for (const name of blocked) {
         const call = makeToolCall(name, {});
-        cache.set(call, makeResult('ok'));
+        await cache.set(call, makeResult('ok'));
         expect(cache.get(call), `expected ${name} to be blocked`).toBeUndefined();
       }
     });
 
-    it('supports wildcard prefix patterns in neverCache', () => {
+    it('supports wildcard prefix patterns in neverCache', async () => {
       cache = makeCache({ neverCache: ['danger_*'] });
       const call = makeToolCall('danger_exec', {});
-      cache.set(call, makeResult('boom'));
+      await cache.set(call, makeResult('boom'));
       expect(cache.get(call)).toBeUndefined();
     });
 
-    it('get returns undefined for neverCache tools even if somehow stored', () => {
+    it('get returns undefined for neverCache tools even if somehow stored', async () => {
       cache = makeCache();
       const call = makeToolCall('file_write', { path: '/tmp' });
       // set is also blocked, but get should independently block
@@ -154,18 +154,18 @@ describe('ToolResultCache', () => {
   // 4. Error results are not cached
   // =========================================================================
 
-  describe('error results', () => {
-    it('does not cache results with errors', () => {
+  describe('error results', async () => {
+    it('does not cache results with errors', async () => {
       cache = makeCache();
       const call = makeToolCall('api_call', {});
-      cache.set(call, makeResult('', 'timeout'));
+      await cache.set(call, makeResult('', 'timeout'));
       expect(cache.get(call)).toBeUndefined();
     });
 
-    it('caches results with output and no error', () => {
+    it('caches results with output and no error', async () => {
       cache = makeCache();
       const call = makeToolCall('api_call', {});
-      cache.set(call, makeResult('success'));
+      await cache.set(call, makeResult('success'));
       expect(cache.get(call)).toBeDefined();
     });
   });
@@ -174,32 +174,32 @@ describe('ToolResultCache', () => {
   // 5. LRU eviction
   // =========================================================================
 
-  describe('LRU eviction', () => {
-    it('evicts least recently used entry when at capacity', () => {
+  describe('LRU eviction', async () => {
+    it('evicts least recently used entry when at capacity', async () => {
       cache = makeCache({ maxEntries: 2 });
 
       const call1 = makeToolCall('a', { x: 1 });
       const call2 = makeToolCall('b', { x: 2 });
       const call3 = makeToolCall('c', { x: 3 });
 
-      cache.set(call1, makeResult('r1'));
-      cache.set(call2, makeResult('r2'));
+      await cache.set(call1, makeResult('r1'));
+      await cache.set(call2, makeResult('r2'));
 
       // Access call1 to make it more recent
       cache.get(call1);
 
       // Insert call3, should evict call2 (least recently used)
-      cache.set(call3, makeResult('r3'));
+      await cache.set(call3, makeResult('r3'));
 
       expect(cache.get(call1)).toBeDefined();
       expect(cache.get(call2)).toBeUndefined();
       expect(cache.get(call3)).toBeDefined();
     });
 
-    it('increments eviction count in stats', () => {
+    it('increments eviction count in stats', async () => {
       cache = makeCache({ maxEntries: 1 });
-      cache.set(makeToolCall('a', {}), makeResult('r1'));
-      cache.set(makeToolCall('b', {}), makeResult('r2'));
+      await cache.set(makeToolCall('a', {}), makeResult('r1'));
+      await cache.set(makeToolCall('b', {}), makeResult('r2'));
       expect(cache.getStats().evictions).toBe(1);
     });
   });
@@ -208,38 +208,38 @@ describe('ToolResultCache', () => {
   // 6. Key determinism
   // =========================================================================
 
-  describe('key determinism', () => {
-    it('produces the same key for identical inputs', () => {
+  describe('key determinism', async () => {
+    it('produces the same key for identical inputs', async () => {
       const k1 = ToolResultCache.computeKey('search', { q: 'hello', limit: 10 });
       const k2 = ToolResultCache.computeKey('search', { q: 'hello', limit: 10 });
       expect(k1).toBe(k2);
     });
 
-    it('produces different keys for different arguments', () => {
+    it('produces different keys for different arguments', async () => {
       const k1 = ToolResultCache.computeKey('search', { q: 'hello' });
       const k2 = ToolResultCache.computeKey('search', { q: 'world' });
       expect(k1).not.toBe(k2);
     });
 
-    it('produces different keys for different tool names', () => {
+    it('produces different keys for different tool names', async () => {
       const k1 = ToolResultCache.computeKey('search', { q: 'x' });
       const k2 = ToolResultCache.computeKey('fetch', { q: 'x' });
       expect(k1).not.toBe(k2);
     });
 
-    it('sorts top-level keys for deterministic canonicalization', () => {
+    it('sorts top-level keys for deterministic canonicalization', async () => {
       const k1 = ToolResultCache.computeKey('t', { b: 2, a: 1 });
       const k2 = ToolResultCache.computeKey('t', { a: 1, b: 2 });
       expect(k1).toBe(k2);
     });
 
-    it('includes tenantId in key when provided', () => {
+    it('includes tenantId in key when provided', async () => {
       const k1 = ToolResultCache.computeKey('search', { q: 'x' }, 'tenant-a');
       const k2 = ToolResultCache.computeKey('search', { q: 'x' }, 'tenant-b');
       expect(k1).not.toBe(k2);
     });
 
-    it('produces different keys with vs without tenantId', () => {
+    it('produces different keys with vs without tenantId', async () => {
       const k1 = ToolResultCache.computeKey('search', { q: 'x' });
       const k2 = ToolResultCache.computeKey('search', { q: 'x' }, 'tenant-a');
       expect(k1).not.toBe(k2);
@@ -250,12 +250,12 @@ describe('ToolResultCache', () => {
   // 7. Invalidation
   // =========================================================================
 
-  describe('invalidation', () => {
-    it('invalidateTool removes all entries for a tool', () => {
+  describe('invalidation', async () => {
+    it('invalidateTool removes all entries for a tool', async () => {
       cache = makeCache();
-      cache.set(makeToolCall('search', { q: 'a' }), makeResult('r1'));
-      cache.set(makeToolCall('search', { q: 'b' }), makeResult('r2'));
-      cache.set(makeToolCall('fetch', {}), makeResult('r3'));
+      await cache.set(makeToolCall('search', { q: 'a' }), makeResult('r1'));
+      await cache.set(makeToolCall('search', { q: 'b' }), makeResult('r2'));
+      await cache.set(makeToolCall('fetch', {}), makeResult('r3'));
 
       const removed = cache.invalidateTool('search');
       expect(removed).toBe(2);
@@ -264,31 +264,31 @@ describe('ToolResultCache', () => {
       expect(cache.get(makeToolCall('fetch', {}))).toBeDefined();
     });
 
-    it('invalidatePattern with exact name matches', () => {
+    it('invalidatePattern with exact name matches', async () => {
       cache = makeCache();
-      cache.set(makeToolCall('file_read', {}), makeResult('r'));
-      cache.set(makeToolCall('file_write', {}), makeResult('r'));
-      cache.set(makeToolCall('git_push', {}), makeResult('r'));
+      await cache.set(makeToolCall('file_read', {}), makeResult('r'));
+      await cache.set(makeToolCall('file_write', {}), makeResult('r'));
+      await cache.set(makeToolCall('git_push', {}), makeResult('r'));
 
       const removed = cache.invalidatePattern('file_read');
       expect(removed).toBe(1);
     });
 
-    it('invalidatePattern with wildcard prefix', () => {
+    it('invalidatePattern with wildcard prefix', async () => {
       cache = makeCache({ neverCache: [] });
-      cache.set(makeToolCall('file_read', {}), makeResult('r'));
-      cache.set(makeToolCall('file_write', {}), makeResult('r'));
-      cache.set(makeToolCall('git_push', {}), makeResult('r'));
+      await cache.set(makeToolCall('file_read', {}), makeResult('r'));
+      await cache.set(makeToolCall('file_write', {}), makeResult('r'));
+      await cache.set(makeToolCall('git_push', {}), makeResult('r'));
 
       const removed = cache.invalidatePattern('file_*');
       expect(removed).toBe(2);
       expect(cache.get(makeToolCall('git_push', {}))).toBeDefined();
     });
 
-    it('clear removes all entries', () => {
+    it('clear removes all entries', async () => {
       cache = makeCache();
-      cache.set(makeToolCall('a', {}), makeResult('1'));
-      cache.set(makeToolCall('b', {}), makeResult('2'));
+      await cache.set(makeToolCall('a', {}), makeResult('1'));
+      await cache.set(makeToolCall('b', {}), makeResult('2'));
       cache.clear();
       expect(cache.getStats().totalEntries).toBe(0);
     });
@@ -298,11 +298,11 @@ describe('ToolResultCache', () => {
   // 8. Statistics
   // =========================================================================
 
-  describe('statistics', () => {
-    it('tracks hits and misses correctly', () => {
+  describe('statistics', async () => {
+    it('tracks hits and misses correctly', async () => {
       cache = makeCache();
       const call = makeToolCall('x', {});
-      cache.set(call, makeResult('v'));
+      await cache.set(call, makeResult('v'));
 
       cache.get(call); // hit
       cache.get(call); // hit
@@ -314,23 +314,23 @@ describe('ToolResultCache', () => {
       expect(stats.hitRate).toBeCloseTo(2 / 3);
     });
 
-    it('returns zero hit rate when no accesses', () => {
+    it('returns zero hit rate when no accesses', async () => {
       cache = makeCache();
       const stats = cache.getStats();
       expect(stats.hitRate).toBe(0);
     });
 
-    it('tracks total entries', () => {
+    it('tracks total entries', async () => {
       cache = makeCache();
-      cache.set(makeToolCall('a', {}), makeResult('1'));
-      cache.set(makeToolCall('b', {}), makeResult('2'));
+      await cache.set(makeToolCall('a', {}), makeResult('1'));
+      await cache.set(makeToolCall('b', {}), makeResult('2'));
       expect(cache.getStats().totalEntries).toBe(2);
     });
 
-    it('updates memoryEstimateBytes on set and delete', () => {
+    it('updates memoryEstimateBytes on set and delete', async () => {
       cache = makeCache();
       const before = cache.getStats().memoryEstimateBytes;
-      cache.set(makeToolCall('a', {}), makeResult('hello world'));
+      await cache.set(makeToolCall('a', {}), makeResult('hello world'));
       const after = cache.getStats().memoryEstimateBytes;
       expect(after).toBeGreaterThan(before);
 
@@ -343,12 +343,12 @@ describe('ToolResultCache', () => {
   // 9. Prune
   // =========================================================================
 
-  describe('prune', () => {
-    it('removes expired entries and returns count', () => {
+  describe('prune', async () => {
+    it('removes expired entries and returns count', async () => {
       vi.useFakeTimers();
       cache = makeCache({ defaultTtlMs: 1000 });
-      cache.set(makeToolCall('a', {}), makeResult('1'));
-      cache.set(makeToolCall('b', {}), makeResult('2'));
+      await cache.set(makeToolCall('a', {}), makeResult('1'));
+      await cache.set(makeToolCall('b', {}), makeResult('2'));
 
       vi.advanceTimersByTime(1001);
       const pruned = cache.prune();
@@ -357,10 +357,10 @@ describe('ToolResultCache', () => {
       vi.useRealTimers();
     });
 
-    it('does not remove unexpired entries', () => {
+    it('does not remove unexpired entries', async () => {
       vi.useFakeTimers();
       cache = makeCache({ defaultTtlMs: 5000 });
-      cache.set(makeToolCall('a', {}), makeResult('1'));
+      await cache.set(makeToolCall('a', {}), makeResult('1'));
 
       vi.advanceTimersByTime(1000);
       const pruned = cache.prune();
@@ -374,21 +374,21 @@ describe('ToolResultCache', () => {
   // 10. Tenant isolation
   // =========================================================================
 
-  describe('tenant isolation', () => {
-    it('isolates cache entries by tenantId', () => {
+  describe('tenant isolation', async () => {
+    it('isolates cache entries by tenantId', async () => {
       cache = makeCache();
       const call = makeToolCall('search', { q: 'x' });
-      cache.set(call, makeResult('tenant-a-data'), 'tenant-a');
-      cache.set(call, makeResult('tenant-b-data'), 'tenant-b');
+      await cache.set(call, makeResult('tenant-a-data'), 'tenant-a');
+      await cache.set(call, makeResult('tenant-b-data'), 'tenant-b');
 
       expect(cache.get(call, 'tenant-a')!.output).toBe('tenant-a-data');
       expect(cache.get(call, 'tenant-b')!.output).toBe('tenant-b-data');
     });
 
-    it('tenant-scoped miss does not affect other tenants', () => {
+    it('tenant-scoped miss does not affect other tenants', async () => {
       cache = makeCache();
       const call = makeToolCall('s', { q: '1' });
-      cache.set(call, makeResult('data'), 't1');
+      await cache.set(call, makeResult('data'), 't1');
 
       expect(cache.get(call, 't2')).toBeUndefined();
       expect(cache.get(call, 't1')).toBeDefined();
@@ -399,13 +399,13 @@ describe('ToolResultCache', () => {
   // 11. dispose
   // =========================================================================
 
-  describe('dispose', () => {
-    it('dispose clears the prune timer without error', () => {
+  describe('dispose', async () => {
+    it('dispose clears the prune timer without error', async () => {
       cache = new ToolResultCache({ enabled: true });
       expect(() => cache.dispose()).not.toThrow();
     });
 
-    it('dispose is idempotent', () => {
+    it('dispose is idempotent', async () => {
       cache = new ToolResultCache({ enabled: true });
       cache.dispose();
       expect(() => cache.dispose()).not.toThrow();
