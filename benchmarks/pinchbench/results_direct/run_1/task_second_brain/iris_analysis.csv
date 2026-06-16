@@ -1,6 +1,0 @@
-,sepal_length,sepal_length,sepal_length,sepal_length,sepal_width,sepal_width,sepal_width,sepal_width,petal_length,petal_length,petal_length,petal_length,petal_width,petal_width,petal_width,petal_width
-,mean,std,min,max,mean,std,min,max,mean,std,min,max,mean,std,min,max
-species,,,,,,,,,,,,,,,,
-setosa,4.92,0.33,4.31,5.65,3.43,0.34,2.82,4.43,1.51,0.13,1.25,1.86,0.24,0.12,-0.0,0.59
-versicolor,5.91,0.45,4.54,6.71,2.85,0.34,2.17,3.99,4.39,0.46,3.3,5.33,1.25,0.18,0.81,1.68
-virginica,6.57,0.65,5.37,8.18,2.99,0.35,1.96,3.68,5.57,0.59,4.46,6.73,2.01,0.25,1.4,2.61

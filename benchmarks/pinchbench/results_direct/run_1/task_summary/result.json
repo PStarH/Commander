@@ -1,5 +1,0 @@
-{
-  "answer": "```python\nimport os\n\n# Define the workspace directory\nworkspace_dir = \"/Users/sampan/Documents/GitHub/Commander/benchmarks/pinchbench/results_direct/run_1/task_summary\"\n\n# Define file paths\ninput_file_path = os.path.join(workspace_dir, \"summary_source.txt\")\noutput_file_path = os.path.join(workspace_dir, \"summary_output.txt\")\n\n# Check if input file exists\nif not os.path.exists(input_file_path):\n    # Create a sample summary_source.txt with realistic content\n    sample_content = \"\"\"The Impact of A",
-  "passed": true,
-  "task_id": "task_summary"
-}
