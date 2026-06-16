@@ -76,7 +76,7 @@ export class Agent {
       name: this.config.name,
       role: this.config.role,
       tools: this.config.tools ?? [],
-      topology: this.config.topology ?? 'SINGLE' as Topology,
+      topology: this.config.topology ?? ('SINGLE' as Topology),
       runCount: this.runCount,
       totalTokensUsed: this.totalTokensUsed,
       createdAt: this.createdAt,
@@ -105,7 +105,8 @@ export class Agent {
 
 export class CommanderClient {
   private config: CommanderClientConfig;
-  private commander: Awaited<ReturnType<typeof import('@commander/core').Commander.create>> | null = null;
+  private commander: Awaited<ReturnType<typeof import('@commander/core').Commander.create>> | null =
+    null;
   private connected = false;
   private startTime: number = 0;
   private runCount = 0;
@@ -148,9 +149,17 @@ export class CommanderClient {
     // Wire SSE events
     const { getMessageBus } = await import('@commander/core');
     const bus = getMessageBus();
-    bus.subscribe('agent.started', () => { this.activeSessions++; });
-    bus.subscribe('agent.completed', () => { this.runCount++; this.activeSessions = Math.max(0, this.activeSessions - 1); });
-    bus.subscribe('agent.failed', () => { this.runCount++; this.activeSessions = Math.max(0, this.activeSessions - 1); });
+    bus.subscribe('agent.started', () => {
+      this.activeSessions++;
+    });
+    bus.subscribe('agent.completed', () => {
+      this.runCount++;
+      this.activeSessions = Math.max(0, this.activeSessions - 1);
+    });
+    bus.subscribe('agent.failed', () => {
+      this.runCount++;
+      this.activeSessions = Math.max(0, this.activeSessions - 1);
+    });
 
     this.connected = true;
   }
@@ -163,7 +172,9 @@ export class CommanderClient {
     this.connected = false;
   }
 
-  get isConnected(): boolean { return this.connected; }
+  get isConnected(): boolean {
+    return this.connected;
+  }
 
   // ==========================================================================
   // Agent Management
@@ -175,13 +186,19 @@ export class CommanderClient {
     return agent;
   }
 
-  getAgent(id: string): Agent | undefined { return this.agents.get(id); }
-  listAgents(): Agent[] { return Array.from(this.agents.values()); }
+  getAgent(id: string): Agent | undefined {
+    return this.agents.get(id);
+  }
+  listAgents(): Agent[] {
+    return Array.from(this.agents.values());
+  }
 
-  removeAgent(id: string): boolean { return this.agents.delete(id); }
+  removeAgent(id: string): boolean {
+    return this.agents.delete(id);
+  }
 
   getAgentSnapshots(): AgentSnapshot[] {
-    return this.listAgents().map(a => a.snapshot());
+    return this.listAgents().map((a) => a.snapshot());
   }
 
   // ==========================================================================
@@ -191,12 +208,15 @@ export class CommanderClient {
   submitTask(agent: Agent, task: Task): TaskHandle {
     const id = `task_${++this.taskCounter}`;
     const handle: TaskHandle = {
-      id, task, status: 'pending', agentId: agent.id,
+      id,
+      task,
+      status: 'pending',
+      agentId: agent.id,
       submittedAt: new Date().toISOString(),
     };
     this.tasks.set(id, handle);
 
-    this.executeTask(agent, handle).catch(err => {
+    this.executeTask(agent, handle).catch((err) => {
       handle.status = 'failed';
       handle.completedAt = new Date().toISOString();
       handle.result = {
@@ -217,14 +237,16 @@ export class CommanderClient {
     if (handle.result) return handle.result;
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 200));
       const h = this.tasks.get(taskId);
       if (h?.result) return h.result;
     }
     return null;
   }
 
-  getTaskHandle(id: string): TaskHandle | undefined { return this.tasks.get(id); }
+  getTaskHandle(id: string): TaskHandle | undefined {
+    return this.tasks.get(id);
+  }
 
   cancelTask(id: string): boolean {
     const handle = this.tasks.get(id);
@@ -289,7 +311,7 @@ export class CommanderClient {
         task: task.slice(0, 80),
         status: result.status.toUpperCase(),
         agentId: agent?.id ?? 'commander-sdk',
-        topology: agent?.config.topology ?? this.config.defaultTopology ?? 'SINGLE' as Topology,
+        topology: agent?.config.topology ?? this.config.defaultTopology ?? ('SINGLE' as Topology),
         tokenUsage: result.tokenUsage.totalTokens,
         durationMs: result.durationMs,
         timestamp: new Date().toISOString(),
@@ -297,9 +319,7 @@ export class CommanderClient {
     }
 
     const status: ExecutionResult['status'] =
-      result.status === 'success' ? 'SUCCESS'
-        : result.status === 'failed' ? 'FAILED'
-          : 'PARTIAL';
+      result.status === 'success' ? 'SUCCESS' : result.status === 'failed' ? 'FAILED' : 'PARTIAL';
 
     return {
       status,
@@ -321,9 +341,17 @@ export class CommanderClient {
       const { getGlobalThreeLayerMemory } = await import('@commander/core');
       const memory = getGlobalThreeLayerMemory();
       const id = `mem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      memory.add(content, options.layer ?? 'episodic', `id:${id}`, options.importance ?? 0.5, options.tags ?? []);
+      memory.add(
+        content,
+        options.layer ?? 'episodic',
+        `id:${id}`,
+        options.importance ?? 0.5,
+        options.tags ?? [],
+      );
       return id;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }
 
   queryMemory(options: MemoryQueryOptions = {}): MemoryItem[] {
@@ -333,7 +361,14 @@ export class CommanderClient {
 
   async getMemoryStats(): Promise<MemoryStats> {
     // Memory stats via core Commander — best-effort, returns zeros on failure
-    return { workingCount: 0, episodicCount: 0, longTermCount: 0, totalCount: 0, oldestEntry: '', newestEntry: '' };
+    return {
+      workingCount: 0,
+      episodicCount: 0,
+      longTermCount: 0,
+      totalCount: 0,
+      oldestEntry: '',
+      newestEntry: '',
+    };
   }
 
   // ==========================================================================
@@ -342,7 +377,9 @@ export class CommanderClient {
 
   onEvent(handler: (event: ExecutionEvent) => void): () => void {
     this.eventHandlers.add(handler);
-    return () => { this.eventHandlers.delete(handler); };
+    return () => {
+      this.eventHandlers.delete(handler);
+    };
   }
 
   // ==========================================================================
@@ -369,13 +406,19 @@ export class CommanderClient {
       totalRuns: this.runCount,
       activeSessions: this.activeSessions,
       memoryUsage: process.memoryUsage().heapUsed,
-      topologyDefaults: this.config.defaultTopology ?? 'SINGLE' as Topology,
+      topologyDefaults: this.config.defaultTopology ?? ('SINGLE' as Topology),
       agentCount: this.agents.size,
     };
   }
 
   getReliabilityStats(): SDKReliabilityStats {
-    return { circuitState: 'CLOSED', circuitFailures: 0, dlqTotalEntries: 0, pendingCompensations: 0, checkpointCount: 0 };
+    return {
+      circuitState: 'CLOSED',
+      circuitFailures: 0,
+      dlqTotalEntries: 0,
+      pendingCompensations: 0,
+      checkpointCount: 0,
+    };
   }
 
   // ==========================================================================

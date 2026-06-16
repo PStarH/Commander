@@ -34,7 +34,9 @@ export function dryReplay(trace: ExecutionTrace, spec: ReplaySpec): ReplayResult
   const replayedNodes = originalTimeline.nodes.map((n) => applySubstitution(n, spec));
   const replaySummary = recomputeSummary(replayedNodes);
 
-  const newSpans = replayedNodes.filter((n) => !originalTimeline.nodes.some((o) => o.spanId === n.spanId)).length;
+  const newSpans = replayedNodes.filter(
+    (n) => !originalTimeline.nodes.some((o) => o.spanId === n.spanId),
+  ).length;
   const changedSpans = replayedNodes.filter((n) => {
     const o = originalTimeline.nodes.find((x) => x.spanId === n.spanId);
     if (!o) return false;
@@ -44,7 +46,8 @@ export function dryReplay(trace: ExecutionTrace, spec: ReplaySpec): ReplayResult
       o.toolInputPreview !== n.toolInputPreview
     );
   }).length;
-  const costDelta = replaySummary.totalCost.totalCostUsd - originalTimeline.summary.totalCost.totalCostUsd;
+  const costDelta =
+    replaySummary.totalCost.totalCostUsd - originalTimeline.summary.totalCost.totalCostUsd;
   const tokenDelta = replaySummary.totalTokens.total - originalTimeline.summary.totalTokens.total;
 
   return {
@@ -114,10 +117,7 @@ export async function liveReplay(
         prompt,
         originalTokens,
       });
-      const substituted = applySubstitution(
-        { ...originalNode, reasoning: result.text },
-        spec,
-      );
+      const substituted = applySubstitution({ ...originalNode, reasoning: result.text }, spec);
       replayedNodes.push({
         ...substituted,
         model,
@@ -141,7 +141,9 @@ export async function liveReplay(
   }
 
   const replaySummary = recomputeSummary(replayedNodes);
-  const newSpans = replayedNodes.filter((n) => !originalTimeline.nodes.some((o) => o.spanId === n.spanId)).length;
+  const newSpans = replayedNodes.filter(
+    (n) => !originalTimeline.nodes.some((o) => o.spanId === n.spanId),
+  ).length;
   const changedSpans = replayedNodes.filter((n) => {
     const o = originalTimeline.nodes.find((x) => x.spanId === n.spanId);
     if (!o) return false;
@@ -152,7 +154,8 @@ export async function liveReplay(
       o.model !== n.model
     );
   }).length;
-  const costDelta = replaySummary.totalCost.totalCostUsd - originalTimeline.summary.totalCost.totalCostUsd;
+  const costDelta =
+    replaySummary.totalCost.totalCostUsd - originalTimeline.summary.totalCost.totalCostUsd;
   const tokenDelta = replaySummary.totalTokens.total - originalTimeline.summary.totalTokens.total;
 
   return {
@@ -174,7 +177,10 @@ function findEventForNode(trace: ExecutionTrace, spanId: string): TraceEvent | u
 function recomputeSummary(nodes: TimelineNode[]): TimelineView['summary'] {
   const cost = { totalCostUsd: 0, inputCostUsd: 0, outputCostUsd: 0 };
   const tokens = { input: 0, output: 0, cached: 0, reasoning: 0, total: 0 };
-  let llmCalls = 0, toolCalls = 0, agentInvocations = 0, errors = 0;
+  let llmCalls = 0,
+    toolCalls = 0,
+    agentInvocations = 0,
+    errors = 0;
   for (const n of nodes) {
     if (n.tokens) {
       tokens.input += n.tokens.input;
@@ -195,7 +201,12 @@ function recomputeSummary(nodes: TimelineNode[]): TimelineView['summary'] {
   }
   return {
     totalSpans: nodes.length,
-    llmCalls, toolCalls, agentInvocations, errors,
-    totalTokens: tokens, totalCost: cost, modelsUsed: [],
+    llmCalls,
+    toolCalls,
+    agentInvocations,
+    errors,
+    totalTokens: tokens,
+    totalCost: cost,
+    modelsUsed: [],
   };
 }

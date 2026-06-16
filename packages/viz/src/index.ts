@@ -15,9 +15,7 @@
 import { listTraceFiles, readTraceFile, readLatestTrace } from './traceReader';
 import { renderSnapshot } from './liveViewer';
 import { renderSummary, buildTree, renderTree } from './topology';
-import {
-  fg, dim, bold, cursorShow, formatDuration, formatTokens,
-} from './ansi';
+import { fg, dim, bold, cursorShow, formatDuration, formatTokens } from './ansi';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pkg = require('../package.json') as { version: string };
@@ -64,13 +62,27 @@ function parseArgs(): CLIOptions {
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
-      case '--help': printHelp(0); break;
-      case '--version': printVersion(); break;
-      case '--list': opts.mode = 'list'; break;
-      case '--json': opts.asJson = true; break;
-      case '--no-tokens': opts.showTokens = false; break;
-      case '--no-timing': opts.showTiming = false; break;
-      case '--live': opts.mode = 'live'; break;
+      case '--help':
+        printHelp(0);
+        break;
+      case '--version':
+        printVersion();
+        break;
+      case '--list':
+        opts.mode = 'list';
+        break;
+      case '--json':
+        opts.asJson = true;
+        break;
+      case '--no-tokens':
+        opts.showTokens = false;
+        break;
+      case '--no-timing':
+        opts.showTiming = false;
+        break;
+      case '--live':
+        opts.mode = 'live';
+        break;
       case '--file':
         opts.mode = 'file';
         opts.filePath = args[++i];
@@ -119,7 +131,7 @@ async function main(): Promise<void> {
     for (const f of files) {
       const sizeKb = (f.size / 1024).toFixed(1);
       console.log(
-        `  ${fg('green', f.runId)} ${dim(`(${sizeKb}KB, ${f.modifiedAt.toISOString().slice(0, 16)})`)}`
+        `  ${fg('green', f.runId)} ${dim(`(${sizeKb}KB, ${f.modifiedAt.toISOString().slice(0, 16)})`)}`,
       );
     }
     process.exit(0);
@@ -129,7 +141,9 @@ async function main(): Promise<void> {
     // Live mode requires MessageBus from core
     console.error(fg('yellow', 'Live mode requires Commander MessageBus.'));
     console.error(fg('yellow', 'Run: npx tsx packages/core/src/cli.ts watch "task"'));
-    console.error(dim('  (Live mode via MessageBus subscription will be available in the next iteration)'));
+    console.error(
+      dim('  (Live mode via MessageBus subscription will be available in the next iteration)'),
+    );
     console.error('');
     console.error(dim('For now, run without --live to read saved traces:'));
     console.error(dim('  npx tsx packages/viz/src/index.ts'));
@@ -156,7 +170,9 @@ async function main(): Promise<void> {
     execData = readLatestTrace(opts.tracesDir);
     if (!execData) {
       console.error(fg('yellow', 'No trace files found.'));
-      console.error(dim('  Run a Commander task first: npx tsx packages/core/src/cli.ts run "..."'));
+      console.error(
+        dim('  Run a Commander task first: npx tsx packages/core/src/cli.ts run "..."'),
+      );
       console.error(dim('  Then view the execution topology: npx tsx packages/viz/src/index.ts'));
       process.exit(1);
     }

@@ -42,7 +42,10 @@ function runSync<T>(def: ValifySchemaDef<T>, input: unknown): { value: T; issues
   return { value: validated, issues };
 }
 
-async function runAsync<T>(def: ValifySchemaDef<T>, input: unknown): Promise<{ value: T; issues: ValifyIssue[] }> {
+async function runAsync<T>(
+  def: ValifySchemaDef<T>,
+  input: unknown,
+): Promise<{ value: T; issues: ValifyIssue[] }> {
   const issues: ValifyIssue[] = [];
   const path: (string | number)[] = [];
 
@@ -109,7 +112,12 @@ interface UnionMeta {
   schemas: ValifySchema<any>[];
 }
 
-function validateByType<T>(def: ValifySchemaDef<T>, input: unknown, path: (string | number)[], issues: ValifyIssue[]): T {
+function validateByType<T>(
+  def: ValifySchemaDef<T>,
+  input: unknown,
+  path: (string | number)[],
+  issues: ValifyIssue[],
+): T {
   const m = (def as any).__meta;
 
   switch (def._type) {
@@ -121,19 +129,30 @@ function validateByType<T>(def: ValifySchemaDef<T>, input: unknown, path: (strin
       const meta = m as StringMeta | undefined;
       if (meta) {
         if (meta.minLength !== undefined && input.length < meta.minLength)
-          issues.push(createIssue(path, `String must be at least ${meta.minLength} characters`, 'too_small'));
+          issues.push(
+            createIssue(path, `String must be at least ${meta.minLength} characters`, 'too_small'),
+          );
         if (meta.maxLength !== undefined && input.length > meta.maxLength)
-          issues.push(createIssue(path, `String must be at most ${meta.maxLength} characters`, 'too_big'));
+          issues.push(
+            createIssue(path, `String must be at most ${meta.maxLength} characters`, 'too_big'),
+          );
         if (meta.regex && !meta.regex.test(input))
-          issues.push(createIssue(path, `String does not match pattern ${meta.regex}`, 'invalid_string'));
+          issues.push(
+            createIssue(path, `String does not match pattern ${meta.regex}`, 'invalid_string'),
+          );
         if (meta.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input))
           issues.push(createIssue(path, 'Invalid email', 'invalid_email'));
         if (meta.url) {
-          try { new URL(input); } catch {
+          try {
+            new URL(input);
+          } catch {
             issues.push(createIssue(path, 'Invalid URL', 'invalid_url'));
           }
         }
-        if (meta.uuid && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input))
+        if (
+          meta.uuid &&
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input)
+        )
           issues.push(createIssue(path, 'Invalid UUID', 'invalid_uuid'));
       }
       return input as T;
@@ -170,7 +189,9 @@ function validateByType<T>(def: ValifySchemaDef<T>, input: unknown, path: (strin
     case 'literal': {
       const meta = m as LiteralMeta<any>;
       if (input !== meta.value) {
-        issues.push(createIssue(path, `Expected literal ${JSON.stringify(meta.value)}`, 'invalid_literal'));
+        issues.push(
+          createIssue(path, `Expected literal ${JSON.stringify(meta.value)}`, 'invalid_literal'),
+        );
       }
       return input as T;
     }
@@ -183,9 +204,13 @@ function validateByType<T>(def: ValifySchemaDef<T>, input: unknown, path: (strin
       const meta = m as ArrayMeta<any> | undefined;
       if (meta) {
         if (meta.minItems !== undefined && input.length < meta.minItems)
-          issues.push(createIssue(path, `Array must have at least ${meta.minItems} items`, 'too_small'));
+          issues.push(
+            createIssue(path, `Array must have at least ${meta.minItems} items`, 'too_small'),
+          );
         if (meta.maxItems !== undefined && input.length > meta.maxItems)
-          issues.push(createIssue(path, `Array must have at most ${meta.maxItems} items`, 'too_big'));
+          issues.push(
+            createIssue(path, `Array must have at most ${meta.maxItems} items`, 'too_big'),
+          );
         if (meta.itemSchema) {
           for (let i = 0; i < input.length; i++) {
             const r = syncParse(meta.itemSchema, input[i]);
@@ -229,7 +254,10 @@ function validateByType<T>(def: ValifySchemaDef<T>, input: unknown, path: (strin
         let matched = false;
         for (const s of meta.schemas) {
           const r = syncParse(s, input);
-          if (r.success) { matched = true; break; }
+          if (r.success) {
+            matched = true;
+            break;
+          }
         }
         if (!matched) {
           issues.push(createIssue(path, 'No union member matched', 'invalid_union'));
@@ -327,47 +355,96 @@ abstract class SchemaBuilder<T, Meta = {}> {
 // ==================== STRING SCHEMA ====================
 
 class StringSchema extends SchemaBuilder<string, StringMeta> {
-  constructor() { super('string', {}); }
+  constructor() {
+    super('string', {});
+  }
 
-  min(n: number): this { (this._def as any).__meta.minLength = n; return this; }
-  max(n: number): this { (this._def as any).__meta.maxLength = n; return this; }
-  regex(r: RegExp): this { (this._def as any).__meta.regex = r; return this; }
-  email(): this { (this._def as any).__meta.email = true; return this; }
-  url(): this { (this._def as any).__meta.url = true; return this; }
-  uuid(): this { (this._def as any).__meta.uuid = true; return this; }
+  min(n: number): this {
+    (this._def as any).__meta.minLength = n;
+    return this;
+  }
+  max(n: number): this {
+    (this._def as any).__meta.maxLength = n;
+    return this;
+  }
+  regex(r: RegExp): this {
+    (this._def as any).__meta.regex = r;
+    return this;
+  }
+  email(): this {
+    (this._def as any).__meta.email = true;
+    return this;
+  }
+  url(): this {
+    (this._def as any).__meta.url = true;
+    return this;
+  }
+  uuid(): this {
+    (this._def as any).__meta.uuid = true;
+    return this;
+  }
 }
 
 // ==================== NUMBER SCHEMA ====================
 
 class NumberSchema extends SchemaBuilder<number, NumberMeta> {
-  constructor() { super('number', {}); }
+  constructor() {
+    super('number', {});
+  }
 
-  min(n: number): this { (this._def as any).__meta.min = n; return this; }
-  max(n: number): this { (this._def as any).__meta.max = n; return this; }
-  integer(): this { (this._def as any).__meta.integer = true; return this; }
-  positive(): this { (this._def as any).__meta.positive = true; return this; }
-  negative(): this { (this._def as any).__meta.negative = true; return this; }
+  min(n: number): this {
+    (this._def as any).__meta.min = n;
+    return this;
+  }
+  max(n: number): this {
+    (this._def as any).__meta.max = n;
+    return this;
+  }
+  integer(): this {
+    (this._def as any).__meta.integer = true;
+    return this;
+  }
+  positive(): this {
+    (this._def as any).__meta.positive = true;
+    return this;
+  }
+  negative(): this {
+    (this._def as any).__meta.negative = true;
+    return this;
+  }
 }
 
 // ==================== BOOLEAN SCHEMA ====================
 
 class BooleanSchema extends SchemaBuilder<boolean, {}> {
-  constructor() { super('boolean', {}); }
+  constructor() {
+    super('boolean', {});
+  }
 }
 
 // ==================== LITERAL SCHEMA ====================
 
 class LiteralSchema<T extends string | number | boolean> extends SchemaBuilder<T, { value: T }> {
-  constructor(value: T) { super('literal', { value }); }
+  constructor(value: T) {
+    super('literal', { value });
+  }
 }
 
 // ==================== ARRAY SCHEMA ====================
 
 class ArraySchema<T> extends SchemaBuilder<T[], ArrayMeta<T>> {
-  constructor(itemSchema: ValifySchema<T>) { super('array', { itemSchema }); }
+  constructor(itemSchema: ValifySchema<T>) {
+    super('array', { itemSchema });
+  }
 
-  min(n: number): this { (this._def as any).__meta.minItems = n; return this; }
-  max(n: number): this { (this._def as any).__meta.maxItems = n; return this; }
+  min(n: number): this {
+    (this._def as any).__meta.minItems = n;
+    return this;
+  }
+  max(n: number): this {
+    (this._def as any).__meta.maxItems = n;
+    return this;
+  }
 }
 
 // ==================== OBJECT SCHEMA ====================
@@ -376,8 +453,13 @@ type ShapeOutput<S extends Record<string, ValifySchema<any>>> = {
   [K in keyof S]: S[K] extends ValifySchema<infer U> ? U : never;
 };
 
-class ObjectSchema<S extends Record<string, ValifySchema<any>>> extends SchemaBuilder<ShapeOutput<S>, ObjectMeta<S>> {
-  constructor(shape: S) { super('object', { shape, passthrough: false }); }
+class ObjectSchema<S extends Record<string, ValifySchema<any>>> extends SchemaBuilder<
+  ShapeOutput<S>,
+  ObjectMeta<S>
+> {
+  constructor(shape: S) {
+    super('object', { shape, passthrough: false });
+  }
 
   passthrough(): this {
     (this._def as any).__meta.passthrough = true;
@@ -388,17 +470,48 @@ class ObjectSchema<S extends Record<string, ValifySchema<any>>> extends SchemaBu
 // ==================== UNION SCHEMA ====================
 
 class UnionSchema<T> extends SchemaBuilder<T, UnionMeta> {
-  constructor(schemas: ValifySchema<any>[]) { super('union', { schemas }); }
+  constructor(schemas: ValifySchema<any>[]) {
+    super('union', { schemas });
+  }
 }
 
 // ==================== PUBLIC API ====================
 
-function string(): StringSchema { return new StringSchema(); }
-function number(): NumberSchema { return new NumberSchema(); }
-function boolean(): BooleanSchema { return new BooleanSchema(); }
-function literal<T extends string | number | boolean>(value: T): LiteralSchema<T> { return new LiteralSchema<T>(value); }
-function array<T>(itemSchema: ValifySchema<T>): ArraySchema<T> { return new ArraySchema<T>(itemSchema); }
-function object<S extends Record<string, ValifySchema<any>>>(shape: S): ObjectSchema<S> { return new ObjectSchema<S>(shape); }
-function union<T extends ValifySchema<any>[]>(...schemas: T): UnionSchema<any> { return new UnionSchema(schemas); }
+function string(): StringSchema {
+  return new StringSchema();
+}
+function number(): NumberSchema {
+  return new NumberSchema();
+}
+function boolean(): BooleanSchema {
+  return new BooleanSchema();
+}
+function literal<T extends string | number | boolean>(value: T): LiteralSchema<T> {
+  return new LiteralSchema<T>(value);
+}
+function array<T>(itemSchema: ValifySchema<T>): ArraySchema<T> {
+  return new ArraySchema<T>(itemSchema);
+}
+function object<S extends Record<string, ValifySchema<any>>>(shape: S): ObjectSchema<S> {
+  return new ObjectSchema<S>(shape);
+}
+function union<T extends ValifySchema<any>[]>(...schemas: T): UnionSchema<any> {
+  return new UnionSchema(schemas);
+}
 
-export { string, number, boolean, literal, array, object, union, StringSchema, NumberSchema, BooleanSchema, LiteralSchema, ArraySchema, ObjectSchema, UnionSchema };
+export {
+  string,
+  number,
+  boolean,
+  literal,
+  array,
+  object,
+  union,
+  StringSchema,
+  NumberSchema,
+  BooleanSchema,
+  LiteralSchema,
+  ArraySchema,
+  ObjectSchema,
+  UnionSchema,
+};

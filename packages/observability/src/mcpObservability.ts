@@ -16,7 +16,8 @@ interface McpObsDeps {
 function loadTrace(recorder: ExecutionTraceRecorder, runId: string, store: TraceStore) {
   const fromRecorder = recorder.getTrace(runId);
   if (fromRecorder && fromRecorder.events.length > 0) return fromRecorder;
-  const fromStore = (store as { readTrace?: (runId: string) => unknown[] }).readTrace?.(runId) ?? [];
+  const fromStore =
+    (store as { readTrace?: (runId: string) => unknown[] }).readTrace?.(runId) ?? [];
   if (fromStore.length === 0) return null;
   return fromRecorder;
 }
@@ -25,7 +26,8 @@ export function registerObservabilityTools(server: MCPServer, deps: McpObsDeps):
   server.registerTool(
     {
       name: 'observability_get_timeline',
-      description: 'Get the execution timeline for a run. Returns structured nodes showing LLM calls, tool executions, decisions, and errors.',
+      description:
+        'Get the execution timeline for a run. Returns structured nodes showing LLM calls, tool executions, decisions, and errors.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -45,7 +47,8 @@ export function registerObservabilityTools(server: MCPServer, deps: McpObsDeps):
   server.registerTool(
     {
       name: 'observability_get_summary',
-      description: 'Get an executive summary of a run. Provides a 30-second understanding narrative with cost, tokens, and key events.',
+      description:
+        'Get an executive summary of a run. Provides a 30-second understanding narrative with cost, tokens, and key events.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -78,14 +81,26 @@ export function registerObservabilityTools(server: MCPServer, deps: McpObsDeps):
       const trace = loadTrace(deps.recorder, args.runId as string, deps.traceStore);
       if (!trace) return { content: [{ type: 'text', text: `Run ${args.runId} not found` }] };
       const decisions = buildDecisions(trace);
-      return { content: [{ type: 'text', text: JSON.stringify({ runId: args.runId, decisions, summary: decisionsSummary(decisions) }, null, 2) }] };
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              { runId: args.runId, decisions, summary: decisionsSummary(decisions) },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
     },
   );
 
   server.registerTool(
     {
       name: 'observability_compare_runs',
-      description: 'Compare two execution traces side by side. Shows added/removed/modified events, cost delta, and token delta.',
+      description:
+        'Compare two execution traces side by side. Shows added/removed/modified events, cost delta, and token delta.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -108,7 +123,8 @@ export function registerObservabilityTools(server: MCPServer, deps: McpObsDeps):
   server.registerTool(
     {
       name: 'observability_get_tool_metrics',
-      description: 'Get aggregated tool usage metrics across all runs. Shows success rates, invocation counts, and average durations.',
+      description:
+        'Get aggregated tool usage metrics across all runs. Shows success rates, invocation counts, and average durations.',
       inputSchema: {
         type: 'object' as const,
         properties: {},
@@ -125,7 +141,8 @@ export function registerObservabilityTools(server: MCPServer, deps: McpObsDeps):
   server.registerTool(
     {
       name: 'observability_list_runs',
-      description: 'List all recorded runs with basic metadata (runId, agentId, token usage, status).',
+      description:
+        'List all recorded runs with basic metadata (runId, agentId, token usage, status).',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -136,7 +153,28 @@ export function registerObservabilityTools(server: MCPServer, deps: McpObsDeps):
     async (args) => {
       const limit = Math.min((args.limit as number) || 50, 500);
       const all = deps.recorder.listTraces(undefined, limit);
-      return { content: [{ type: 'text', text: JSON.stringify({ count: all.length, runs: all.map(t => ({ runId: t.runId, agentId: t.agentId, startedAt: t.startedAt, completedAt: t.completedAt, tokens: t.summary.totalTokens, llmCalls: t.summary.llmCalls })) }, null, 2) }] };
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                count: all.length,
+                runs: all.map((t) => ({
+                  runId: t.runId,
+                  agentId: t.agentId,
+                  startedAt: t.startedAt,
+                  completedAt: t.completedAt,
+                  tokens: t.summary.totalTokens,
+                  llmCalls: t.summary.llmCalls,
+                })),
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
     },
   );
 }

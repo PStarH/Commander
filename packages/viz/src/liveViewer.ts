@@ -123,9 +123,7 @@ export class LiveViewer {
     // Footer with live indicator
     lines.push('');
     const status = this.frameCount % 2 === 0 ? fg('green', '● LIVE') : fg('cyan', '● LIVE');
-    lines.push(
-      status + dim(` ${this.events.length} events · q to quit`)
-    );
+    lines.push(status + dim(` ${this.events.length} events · q to quit`));
 
     process.stdout.write(lines.join('\n'));
   }
@@ -141,9 +139,15 @@ export function renderSnapshot(exec: ExecutionData): string {
 
   parts.push(renderSummary(exec));
   parts.push('');
-  parts.push(renderTree(tree, {
-    showTokens: true, showTiming: true, showCost: false, compact: false, maxDepth: 10,
-  }));
+  parts.push(
+    renderTree(tree, {
+      showTokens: true,
+      showTiming: true,
+      showCost: false,
+      compact: false,
+      maxDepth: 10,
+    }),
+  );
 
   return parts.join('\n');
 }

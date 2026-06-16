@@ -36,9 +36,7 @@ function object<S extends Record<string, ValifySchema<any>>>(shape: S): ObjectSc
   return new ObjectSchema<S>(shape);
 }
 
-function union<T extends ValifySchema<any>[]>(
-  ...schemas: T
-): UnionSchema<Infer<T[number]>> {
+function union<T extends ValifySchema<any>[]>(...schemas: T): UnionSchema<Infer<T[number]>> {
   return new UnionSchema<Infer<T[number]>>(schemas);
 }
 
@@ -56,15 +54,6 @@ const valify = {
 };
 
 export default valify;
-export {
-  string,
-  number,
-  boolean,
-  literal,
-  array,
-  object,
-  union,
-  ValifyError,
-};
+export { string, number, boolean, literal, array, object, union, ValifyError };
 
 export type { ValifySchema, Infer, ParseResult, SafeParseReturnType, ValifyIssue };

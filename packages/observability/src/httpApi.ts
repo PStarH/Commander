@@ -44,7 +44,11 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-function loadTrace(recorder: ExecutionTraceRecorder, runId: string, store: TraceStore): ExecutionTrace | null {
+function loadTrace(
+  recorder: ExecutionTraceRecorder,
+  runId: string,
+  store: TraceStore,
+): ExecutionTrace | null {
   const fromRecorder = recorder.getTrace(runId);
   if (fromRecorder && fromRecorder.events.length > 0) return fromRecorder;
   const fromStore = (store as PersistentTraceStore).readTrace?.(runId) ?? [];
@@ -60,14 +64,20 @@ function traceFromEvents(runId: string, events: TraceEvent[]): ExecutionTrace {
     traceId: first.traceId,
     agentId: first.agentId,
     startedAt: first.timestamp,
-    completedAt: last ? new Date(new Date(last.timestamp).getTime() + last.durationMs).toISOString() : undefined,
+    completedAt: last
+      ? new Date(new Date(last.timestamp).getTime() + last.durationMs).toISOString()
+      : undefined,
     events,
     summary: summarizeEvents(events),
   };
 }
 
 function summarizeEvents(events: TraceEvent[]): ExecutionTrace['summary'] {
-  let totalDurationMs = 0, totalTokens = 0, llmCalls = 0, toolExecutions = 0, errors = 0;
+  let totalDurationMs = 0,
+    totalTokens = 0,
+    llmCalls = 0,
+    toolExecutions = 0,
+    errors = 0;
   let modelUsed = '';
   for (const e of events) {
     totalDurationMs += e.durationMs;
@@ -79,14 +89,40 @@ function summarizeEvents(events: TraceEvent[]): ExecutionTrace['summary'] {
     if (e.type === 'tool_execution') toolExecutions++;
     if (e.type === 'error') errors++;
   }
-  return { totalEvents: events.length, totalDurationMs, totalTokens, llmCalls, toolExecutions, errors, modelUsed };
+  return {
+    totalEvents: events.length,
+    totalDurationMs,
+    totalTokens,
+    llmCalls,
+    toolExecutions,
+    errors,
+    modelUsed,
+  };
 }
 
 function buildCostReport(trace: ExecutionTrace): CostReport {
   const costModel = getCostModel();
-  const byModel = new Map<string, { model: string; provider: string; tokens: ReturnType<typeof costModel.emptyTokens>; cost: ReturnType<typeof costModel.emptyCost>; calls: number }>();
-  const byTool = new Map<string, { invocations: number; downstreamCost: ReturnType<typeof costModel.emptyCost> }>();
-  const byAgent = new Map<string, { tokens: ReturnType<typeof costModel.emptyTokens>; cost: ReturnType<typeof costModel.emptyCost> }>();
+  const byModel = new Map<
+    string,
+    {
+      model: string;
+      provider: string;
+      tokens: ReturnType<typeof costModel.emptyTokens>;
+      cost: ReturnType<typeof costModel.emptyCost>;
+      calls: number;
+    }
+  >();
+  const byTool = new Map<
+    string,
+    { invocations: number; downstreamCost: ReturnType<typeof costModel.emptyCost> }
+  >();
+  const byAgent = new Map<
+    string,
+    {
+      tokens: ReturnType<typeof costModel.emptyTokens>;
+      cost: ReturnType<typeof costModel.emptyCost>;
+    }
+  >();
   let total = costModel.emptyCost();
   let totalTokens = costModel.emptyTokens();
 
@@ -96,7 +132,8 @@ function buildCostReport(trace: ExecutionTrace): CostReport {
       const tokens = {
         input: e.data.tokenUsage.promptTokens ?? 0,
         output: e.data.tokenUsage.completionTokens ?? 0,
-        cached: 0, reasoning: 0,
+        cached: 0,
+        reasoning: 0,
         total: e.data.tokenUsage.totalTokens ?? 0,
       };
       const cost = costModel.calculate(e.data.modelInfo.provider, e.data.modelInfo.model, tokens);
@@ -109,7 +146,13 @@ function buildCostReport(trace: ExecutionTrace): CostReport {
         cur.cost = costModel.addCost(cur.cost, cost);
         cur.calls++;
       } else {
-        byModel.set(key, { model: e.data.modelInfo.model, provider: e.data.modelInfo.provider, tokens, cost, calls: 1 });
+        byModel.set(key, {
+          model: e.data.modelInfo.model,
+          provider: e.data.modelInfo.provider,
+          tokens,
+          cost,
+          calls: 1,
+        });
       }
       const aCur = byAgent.get(e.agentId);
       if (aCur) {
@@ -135,7 +178,8 @@ function buildCostReport(trace: ExecutionTrace): CostReport {
         const tokens = {
           input: e.data.tokenUsage.promptTokens ?? 0,
           output: e.data.tokenUsage.completionTokens ?? 0,
-          cached: 0, reasoning: 0,
+          cached: 0,
+          reasoning: 0,
           total: e.data.tokenUsage.totalTokens ?? 0,
         };
         const cost = costModel.calculate(
@@ -155,15 +199,32 @@ function buildCostReport(trace: ExecutionTrace): CostReport {
     total,
     byModel: Array.from(byModel.values()),
     byTool: Array.from(byTool.entries()).map(([toolName, v]) => ({
-      toolName, invocations: v.invocations, downstreamCost: v.downstreamCost,
+      toolName,
+      invocations: v.invocations,
+      downstreamCost: v.downstreamCost,
     })),
     byAgent: Array.from(byAgent.entries()).map(([agentId, v]) => ({
-      agentId, tokens: v.tokens, cost: v.cost,
+      agentId,
+      tokens: v.tokens,
+      cost: v.cost,
     })),
   };
 }
 
-function listAllTraces(recorder: ExecutionTraceRecorder, tenantId: string | undefined): Array<{ runId: string; agentId: string; traceId: string; startedAt: string; tenantId?: string; llmCalls: number; toolExecutions: number; totalTokens: number; status: 'running' | 'completed' }> {
+function listAllTraces(
+  recorder: ExecutionTraceRecorder,
+  tenantId: string | undefined,
+): Array<{
+  runId: string;
+  agentId: string;
+  traceId: string;
+  startedAt: string;
+  tenantId?: string;
+  llmCalls: number;
+  toolExecutions: number;
+  totalTokens: number;
+  status: 'running' | 'completed';
+}> {
   const all = recorder.listTraces(undefined, 1000);
   return all
     .filter((t) => !tenantId || t.tenantId === tenantId)
@@ -215,35 +276,50 @@ export async function handleObservabilityRequest(
 
       if (method === 'GET' && !action) {
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
-        if (!trace) { sendJson(res, 404, { error: 'Run not found' }); return { handled: true, status: 404 }; }
+        if (!trace) {
+          sendJson(res, 404, { error: 'Run not found' });
+          return { handled: true, status: 404 };
+        }
         sendJson(res, 200, trace);
         return { handled: true, status: 200 };
       }
 
       if (method === 'GET' && action === 'timeline') {
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
-        if (!trace) { sendJson(res, 404, { error: 'Run not found' }); return { handled: true, status: 404 }; }
+        if (!trace) {
+          sendJson(res, 404, { error: 'Run not found' });
+          return { handled: true, status: 404 };
+        }
         sendJson(res, 200, buildTimeline(trace));
         return { handled: true, status: 200 };
       }
 
       if (method === 'GET' && action === 'tree') {
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
-        if (!trace) { sendJson(res, 404, { error: 'Run not found' }); return { handled: true, status: 404 }; }
+        if (!trace) {
+          sendJson(res, 404, { error: 'Run not found' });
+          return { handled: true, status: 404 };
+        }
         sendJson(res, 200, buildSpanTree(trace));
         return { handled: true, status: 200 };
       }
 
       if (method === 'GET' && action === 'cost') {
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
-        if (!trace) { sendJson(res, 404, { error: 'Run not found' }); return { handled: true, status: 404 }; }
+        if (!trace) {
+          sendJson(res, 404, { error: 'Run not found' });
+          return { handled: true, status: 404 };
+        }
         sendJson(res, 200, buildCostReport(trace));
         return { handled: true, status: 200 };
       }
 
       if (method === 'GET' && action === 'decisions') {
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
-        if (!trace) { sendJson(res, 404, { error: 'Run not found' }); return { handled: true, status: 404 }; }
+        if (!trace) {
+          sendJson(res, 404, { error: 'Run not found' });
+          return { handled: true, status: 404 };
+        }
         const decisions = buildDecisions(trace);
         sendJson(res, 200, { runId, decisions, summary: decisionsSummary(decisions) });
         return { handled: true, status: 200 };
@@ -251,7 +327,10 @@ export async function handleObservabilityRequest(
 
       if (method === 'GET' && action === 'summary') {
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
-        if (!trace) { sendJson(res, 404, { error: 'Run not found' }); return { handled: true, status: 404 }; }
+        if (!trace) {
+          sendJson(res, 404, { error: 'Run not found' });
+          return { handled: true, status: 404 };
+        }
         sendJson(res, 200, buildExecutiveSummary(trace));
         return { handled: true, status: 200 };
       }
@@ -259,15 +338,19 @@ export async function handleObservabilityRequest(
       if (method === 'POST' && action === 'replay') {
         const body = await readBody(req);
         const trace = loadTrace(deps.recorder, runId, deps.traceStore);
-        if (!trace) { sendJson(res, 404, { error: 'Run not found' }); return { handled: true, status: 404 }; }
+        if (!trace) {
+          sendJson(res, 404, { error: 'Run not found' });
+          return { handled: true, status: 404 };
+        }
         const liveCtx = deps.liveReplayContext;
         const useLive = !!body?.reExecuteLlm && !!liveCtx;
-        const result = useLive && liveCtx
-          ? await liveReplay(trace, body, liveCtx, {
-              ...(body?.modelOverride ? { modelOverride: body.modelOverride } : {}),
-              ...(body?.onlySpanIds?.length ? { onlySpanIds: body.onlySpanIds } : {}),
-            })
-          : dryReplay(trace, body);
+        const result =
+          useLive && liveCtx
+            ? await liveReplay(trace, body, liveCtx, {
+                ...(body?.modelOverride ? { modelOverride: body.modelOverride } : {}),
+                ...(body?.onlySpanIds?.length ? { onlySpanIds: body.onlySpanIds } : {}),
+              })
+            : dryReplay(trace, body);
         sendJson(res, 200, result);
         return { handled: true, status: 200 };
       }
@@ -277,10 +360,19 @@ export async function handleObservabilityRequest(
       const agentId = segments[1]!;
       const all = deps.recorder.listTraces(agentId, 200);
       const filtered = all.filter((t) => !tenantId || t.tenantId === tenantId);
-      sendJson(res, 200, { agentId, count: filtered.length, runs: filtered.map((t) => ({
-        runId: t.runId, traceId: t.traceId, startedAt: t.startedAt, completedAt: t.completedAt,
-        llmCalls: t.summary.llmCalls, toolExecutions: t.summary.toolExecutions, errors: t.summary.errors,
-      })) });
+      sendJson(res, 200, {
+        agentId,
+        count: filtered.length,
+        runs: filtered.map((t) => ({
+          runId: t.runId,
+          traceId: t.traceId,
+          startedAt: t.startedAt,
+          completedAt: t.completedAt,
+          llmCalls: t.summary.llmCalls,
+          toolExecutions: t.summary.toolExecutions,
+          errors: t.summary.errors,
+        })),
+      });
       return { handled: true, status: 200 };
     }
 
@@ -303,10 +395,15 @@ export async function handleObservabilityRequest(
             const tokens = {
               input: e.data.tokenUsage.promptTokens ?? 0,
               output: e.data.tokenUsage.completionTokens ?? 0,
-              cached: 0, reasoning: 0,
+              cached: 0,
+              reasoning: 0,
               total: e.data.tokenUsage.totalTokens ?? 0,
             };
-            const cost = costModel.calculate(e.data.modelInfo.provider, e.data.modelInfo.model, tokens);
+            const cost = costModel.calculate(
+              e.data.modelInfo.provider,
+              e.data.modelInfo.model,
+              tokens,
+            );
             runCost = costModel.addCost(runCost, cost);
             runTokens = costModel.addTokens(runTokens, tokens);
           }
@@ -337,19 +434,36 @@ export async function handleObservabilityRequest(
     if (segments[0] === 'search' && method === 'GET') {
       const since = q.get('since') ? Date.parse(q.get('since')!) : undefined;
       const limit = Math.min(parseInt(q.get('limit') ?? '50', 10) || 50, 500);
-      const all = deps.recorder.listTraces(undefined, 1000)
+      const all = deps.recorder
+        .listTraces(undefined, 1000)
         .filter((t) => !tenantId || t.tenantId === tenantId)
         .filter((t) => !since || new Date(t.startedAt).getTime() >= since)
         .slice(0, limit);
-      sendJson(res, 200, { count: all.length, runs: all.map((t) => ({ runId: t.runId, traceId: t.traceId, agentId: t.agentId, startedAt: t.startedAt })) });
+      sendJson(res, 200, {
+        count: all.length,
+        runs: all.map((t) => ({
+          runId: t.runId,
+          traceId: t.traceId,
+          agentId: t.agentId,
+          startedAt: t.startedAt,
+        })),
+      });
       return { handled: true, status: 200 };
     }
 
-    if (segments[0] === 'runs' && segments.length === 3 && segments[2] === 'feedback' && method === 'POST') {
+    if (
+      segments[0] === 'runs' &&
+      segments.length === 3 &&
+      segments[2] === 'feedback' &&
+      method === 'POST'
+    ) {
       const runId = segments[1]!;
       const body = await readFeedbackBody(req);
       const trace = deps.recorder.getTrace(runId);
-      if (!trace) { sendJson(res, 404, { error: 'Run not found' }); return { handled: true, status: 404 }; }
+      if (!trace) {
+        sendJson(res, 404, { error: 'Run not found' });
+        return { handled: true, status: 404 };
+      }
       deps.recorder.recordEvent(runId, {
         type: 'state_change',
         durationMs: 0,
@@ -369,7 +483,8 @@ export async function handleObservabilityRequest(
     }
 
     if (segments[0] === 'tools' && segments.length === 1 && method === 'GET') {
-      const all = deps.recorder.listTraces(undefined, 1000)
+      const all = deps.recorder
+        .listTraces(undefined, 1000)
         .filter((t) => !tenantId || t.tenantId === tenantId);
       const collector = new ToolMetricsCollector();
       for (const trace of all) collector.recordFromTrace(trace.events);
@@ -382,14 +497,21 @@ export async function handleObservabilityRequest(
       const runIdB = segments[2]!;
       const traceA = loadTrace(deps.recorder, runIdA, deps.traceStore);
       const traceB = loadTrace(deps.recorder, runIdB, deps.traceStore);
-      if (!traceA) { sendJson(res, 404, { error: `Run ${runIdA} not found` }); return { handled: true, status: 404 }; }
-      if (!traceB) { sendJson(res, 404, { error: `Run ${runIdB} not found` }); return { handled: true, status: 404 }; }
+      if (!traceA) {
+        sendJson(res, 404, { error: `Run ${runIdA} not found` });
+        return { handled: true, status: 404 };
+      }
+      if (!traceB) {
+        sendJson(res, 404, { error: `Run ${runIdB} not found` });
+        return { handled: true, status: 404 };
+      }
       sendJson(res, 200, compareTraces(traceA, traceB));
       return { handled: true, status: 200 };
     }
 
     if (segments[0] === 'prompts' && segments.length === 1 && method === 'GET') {
-      const all = deps.recorder.listTraces(undefined, 1000)
+      const all = deps.recorder
+        .listTraces(undefined, 1000)
         .filter((t) => !tenantId || t.tenantId === tenantId);
       const tracker = new PromptVersionTracker();
       for (const trace of all) tracker.recordFromTrace(trace);
@@ -408,7 +530,10 @@ export async function handleObservabilityRequest(
     if (segments[0] === 'datasets') {
       const ds = deps.datasetStore;
       const runner = deps.experimentRunner;
-      if (!ds) { sendJson(res, 501, { error: 'DatasetStore not configured' }); return { handled: true, status: 501 }; }
+      if (!ds) {
+        sendJson(res, 501, { error: 'DatasetStore not configured' });
+        return { handled: true, status: 501 };
+      }
 
       if (segments.length === 1 && method === 'GET') {
         const datasets = ds.list();
@@ -437,20 +562,29 @@ export async function handleObservabilityRequest(
         const datasetId = segments[1]!;
         if (method === 'GET') {
           const dataset = ds.get(datasetId);
-          if (!dataset) { sendJson(res, 404, { error: 'Dataset not found' }); return { handled: true, status: 404 }; }
+          if (!dataset) {
+            sendJson(res, 404, { error: 'Dataset not found' });
+            return { handled: true, status: 404 };
+          }
           sendJson(res, 200, dataset);
           return { handled: true, status: 200 };
         }
         if (method === 'PUT') {
           const body = await readJsonBody(req);
           const updated = ds.update(datasetId, body ?? {});
-          if (!updated) { sendJson(res, 404, { error: 'Dataset not found' }); return { handled: true, status: 404 }; }
+          if (!updated) {
+            sendJson(res, 404, { error: 'Dataset not found' });
+            return { handled: true, status: 404 };
+          }
           sendJson(res, 200, updated);
           return { handled: true, status: 200 };
         }
         if (method === 'DELETE') {
           const ok = ds.delete(datasetId);
-          if (!ok) { sendJson(res, 404, { error: 'Dataset not found' }); return { handled: true, status: 404 }; }
+          if (!ok) {
+            sendJson(res, 404, { error: 'Dataset not found' });
+            return { handled: true, status: 404 };
+          }
           sendJson(res, 200, { ok: true });
           return { handled: true, status: 200 };
         }
@@ -459,8 +593,14 @@ export async function handleObservabilityRequest(
       if (segments.length === 3 && segments[2] === 'run' && method === 'POST') {
         const datasetId = segments[1]!;
         const body = await readJsonBody(req);
-        if (!ds.get(datasetId)) { sendJson(res, 404, { error: 'Dataset not found' }); return { handled: true, status: 404 }; }
-        if (!runner) { sendJson(res, 501, { error: 'ExperimentRunner not configured' }); return { handled: true, status: 501 }; }
+        if (!ds.get(datasetId)) {
+          sendJson(res, 404, { error: 'Dataset not found' });
+          return { handled: true, status: 404 };
+        }
+        if (!runner) {
+          sendJson(res, 501, { error: 'ExperimentRunner not configured' });
+          return { handled: true, status: 501 };
+        }
 
         const runId = runner.allocateRunId();
         const passThreshold = (body?.passThreshold as number) ?? 0.5;
@@ -468,8 +608,12 @@ export async function handleObservabilityRequest(
 
         // Fire-and-forget: start the experiment asynchronously, return 202 immediately
         runner.runWithId(runId, datasetId, caseExecutor, { passThreshold }).then(
-          () => { /* completed */ },
-          () => { /* best-effort */ },
+          () => {
+            /* completed */
+          },
+          () => {
+            /* best-effort */
+          },
         );
 
         sendJson(res, 202, { runId, datasetId, status: 'running' });
@@ -479,7 +623,10 @@ export async function handleObservabilityRequest(
 
     if (segments[0] === 'experiments') {
       const runner = deps.experimentRunner;
-      if (!runner) { sendJson(res, 501, { error: 'ExperimentRunner not configured' }); return { handled: true, status: 501 }; }
+      if (!runner) {
+        sendJson(res, 501, { error: 'ExperimentRunner not configured' });
+        return { handled: true, status: 501 };
+      }
 
       if (segments.length === 1 && method === 'GET') {
         const runs = runner.listRuns(50);
@@ -489,7 +636,10 @@ export async function handleObservabilityRequest(
 
       if (segments.length === 2 && method === 'GET') {
         const run = runner.getRun(segments[1]!);
-        if (!run) { sendJson(res, 404, { error: 'Experiment not found' }); return { handled: true, status: 404 }; }
+        if (!run) {
+          sendJson(res, 404, { error: 'Experiment not found' });
+          return { handled: true, status: 404 };
+        }
         sendJson(res, 200, run);
         return { handled: true, status: 200 };
       }
@@ -497,7 +647,10 @@ export async function handleObservabilityRequest(
 
     if (segments[0] === 'auto-score') {
       const as = deps.autoScorer;
-      if (!as) { sendJson(res, 501, { error: 'AutoScorer not configured' }); return { handled: true, status: 501 }; }
+      if (!as) {
+        sendJson(res, 501, { error: 'AutoScorer not configured' });
+        return { handled: true, status: 501 };
+      }
 
       if (segments[1] === 'config' && method === 'GET') {
         sendJson(res, 200, as.getConfig());
@@ -526,7 +679,10 @@ export async function handleObservabilityRequest(
 
     if (segments[0] === 'rubrics') {
       const es = deps.evalScorer;
-      if (!es) { sendJson(res, 501, { error: 'EvalScorer not configured' }); return { handled: true, status: 501 }; }
+      if (!es) {
+        sendJson(res, 501, { error: 'EvalScorer not configured' });
+        return { handled: true, status: 501 };
+      }
 
       if (segments.length === 1 && method === 'GET') {
         const rubrics = es.listRubrics();
@@ -555,27 +711,48 @@ export async function handleObservabilityRequest(
   }
 }
 
-async function readFeedbackBody(req: IncomingMessage): Promise<{ rating?: 'positive' | 'negative' | 'neutral'; comment?: string; tags?: string[] }> {
+async function readFeedbackBody(
+  req: IncomingMessage,
+): Promise<{ rating?: 'positive' | 'negative' | 'neutral'; comment?: string; tags?: string[] }> {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (chunk: Buffer) => { data += chunk.toString('utf-8'); });
+    req.on('data', (chunk: Buffer) => {
+      data += chunk.toString('utf-8');
+    });
     req.on('end', () => {
       try {
         resolve(data ? JSON.parse(data) : {});
-      } catch { reject(new Error('Invalid JSON')); }
+      } catch {
+        reject(new Error('Invalid JSON'));
+      }
     });
     req.on('error', reject);
   });
 }
 
-async function readBody(req: IncomingMessage): Promise<{ runId: string; substitutions: Array<{ target: 'tool_output' | 'llm_response' | 'tool_input'; spanId: string; field?: string; value: unknown }>; reExecuteLlm: boolean; modelOverride?: string; onlySpanIds?: string[] }> {
+async function readBody(req: IncomingMessage): Promise<{
+  runId: string;
+  substitutions: Array<{
+    target: 'tool_output' | 'llm_response' | 'tool_input';
+    spanId: string;
+    field?: string;
+    value: unknown;
+  }>;
+  reExecuteLlm: boolean;
+  modelOverride?: string;
+  onlySpanIds?: string[];
+}> {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (chunk: Buffer) => { data += chunk.toString('utf-8'); });
+    req.on('data', (chunk: Buffer) => {
+      data += chunk.toString('utf-8');
+    });
     req.on('end', () => {
       try {
         resolve(data ? JSON.parse(data) : { runId: '', substitutions: [], reExecuteLlm: false });
-      } catch { reject(new Error('Invalid JSON')); }
+      } catch {
+        reject(new Error('Invalid JSON'));
+      }
     });
     req.on('error', reject);
   });
@@ -585,10 +762,19 @@ async function readBody(req: IncomingMessage): Promise<{ runId: string; substitu
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | undefined> {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (chunk: Buffer) => { data += chunk.toString('utf-8'); });
+    req.on('data', (chunk: Buffer) => {
+      data += chunk.toString('utf-8');
+    });
     req.on('end', () => {
-      if (data.length === 0) { resolve(undefined); return; }
-      try { resolve(JSON.parse(data)); } catch { reject(new Error('Invalid JSON')); }
+      if (data.length === 0) {
+        resolve(undefined);
+        return;
+      }
+      try {
+        resolve(JSON.parse(data));
+      } catch {
+        reject(new Error('Invalid JSON'));
+      }
     });
     req.on('error', reject);
   });

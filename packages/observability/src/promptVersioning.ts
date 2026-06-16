@@ -24,7 +24,7 @@ function hashPrompt(prompt: string): string {
   let hash = 0;
   for (let i = 0; i < prompt.length; i++) {
     const char = prompt.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
+    hash = (hash << 5) - hash + char;
     hash |= 0;
   }
   return Math.abs(hash).toString(36);
@@ -74,7 +74,8 @@ export class PromptVersionTracker {
 
     const tokens = event.data.tokenUsage?.totalTokens ?? 0;
     version.avgTokens = (version.avgTokens * (version.runCount - 1) + tokens) / version.runCount;
-    version.avgDurationMs = (version.avgDurationMs * (version.runCount - 1) + event.durationMs) / version.runCount;
+    version.avgDurationMs =
+      (version.avgDurationMs * (version.runCount - 1) + event.durationMs) / version.runCount;
 
     this.eventVersions.set(event.spanId, versionId);
   }
@@ -129,7 +130,11 @@ export class PromptVersionTracker {
       totalVersions: versions.length,
       totalEvents,
       mostUsedVersion: versions[0],
-      avgTokensByVersion: versions.map(v => ({ versionId: v.versionId, avgTokens: v.avgTokens, runCount: v.runCount })),
+      avgTokensByVersion: versions.map((v) => ({
+        versionId: v.versionId,
+        avgTokens: v.avgTokens,
+        runCount: v.runCount,
+      })),
     };
   }
 }

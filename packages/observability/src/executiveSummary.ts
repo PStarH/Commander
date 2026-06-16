@@ -37,7 +37,19 @@ export function buildExecutiveSummary(trace: ExecutionTrace): ExecutiveSummary {
   if (totalCostUsd > 1.0) highlights.push(`High cost: $${totalCostUsd.toFixed(4)}`);
   if (durationMs > 60000) highlights.push(`Long execution: ${(durationMs / 1000).toFixed(1)}s`);
 
-  const narrative = buildNarrative(trace, timeline, status, durationMs, totalCostUsd, totalTokens, llmCalls, toolCalls, errors, modelsUsed, toolsUsed);
+  const narrative = buildNarrative(
+    trace,
+    timeline,
+    status,
+    durationMs,
+    totalCostUsd,
+    totalTokens,
+    llmCalls,
+    toolCalls,
+    errors,
+    modelsUsed,
+    toolsUsed,
+  );
 
   const timelineEvents = buildTimelineEvents(trace);
 
@@ -76,7 +88,9 @@ function buildNarrative(
 ): string {
   const parts: string[] = [];
 
-  parts.push(`Run ${trace.runId.slice(0, 12)} ${status === 'success' ? 'completed successfully' : 'had errors'}.`);
+  parts.push(
+    `Run ${trace.runId.slice(0, 12)} ${status === 'success' ? 'completed successfully' : 'had errors'}.`,
+  );
 
   const durationSec = (durationMs / 1000).toFixed(1);
   parts.push(`Duration: ${durationSec}s`);
@@ -146,19 +160,16 @@ function buildTimelineEvents(trace: ExecutionTrace): ExecutiveSummary['timeline'
       label,
       detail,
       durationMs: e.durationMs,
-      costUsd: e.data.modelInfo && e.data.tokenUsage
-        ? getCostModel().calculate(
-            e.data.modelInfo.provider,
-            e.data.modelInfo.model,
-            {
+      costUsd:
+        e.data.modelInfo && e.data.tokenUsage
+          ? getCostModel().calculate(e.data.modelInfo.provider, e.data.modelInfo.model, {
               input: e.data.tokenUsage.promptTokens ?? 0,
               output: e.data.tokenUsage.completionTokens ?? 0,
               cached: 0,
               reasoning: 0,
               total: e.data.tokenUsage.totalTokens ?? 0,
-            },
-          ).totalCostUsd
-        : undefined,
+            }).totalCostUsd
+          : undefined,
     });
   }
 
@@ -169,7 +180,11 @@ function extractTopology(trace: ExecutionTrace): string | undefined {
   for (const e of trace.events) {
     if (e.type === 'decision' && typeof e.data.output === 'string') {
       const output = e.data.output.toLowerCase();
-      if (output.includes('topology') || output.includes('sequential') || output.includes('parallel')) {
+      if (
+        output.includes('topology') ||
+        output.includes('sequential') ||
+        output.includes('parallel')
+      ) {
         return e.data.output;
       }
     }

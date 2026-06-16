@@ -26,11 +26,7 @@
  */
 
 // ── Sandbox ─────────────────────────────────────────────────────────────────
-export {
-  SandboxManager,
-  getSandboxManager,
-  resetSandboxManager,
-} from '@commander/core';
+export { SandboxManager, getSandboxManager, resetSandboxManager } from '@commander/core';
 
 export type {
   SandboxMode,
@@ -46,11 +42,7 @@ export type {
 export { ExecPolicyEngine } from '@commander/core';
 
 // ── Privacy ─────────────────────────────────────────────────────────────────
-export {
-  PrivacyRouter,
-  getPrivacyRouter,
-  resetPrivacyRouter,
-} from '@commander/core';
+export { PrivacyRouter, getPrivacyRouter, resetPrivacyRouter } from '@commander/core';
 
 export type {
   PrivacyRouterConfig,

@@ -1,4 +1,13 @@
-import valify, { string, number, boolean, literal, array, object, union, ValifyError } from '../src/valify.js';
+import valify, {
+  string,
+  number,
+  boolean,
+  literal,
+  array,
+  object,
+  union,
+  ValifyError,
+} from '../src/valify.js';
 import type { Infer } from '../src/valify.js';
 import { describe, it, expect } from 'vitest';
 
@@ -9,7 +18,9 @@ const _num: Infer<ReturnType<typeof number>> = 42;
 const _bool: Infer<ReturnType<typeof boolean>> = true;
 const _lit: Infer<ReturnType<typeof literal<'a'>>> = 'a';
 const _arr: Infer<ReturnType<typeof array<ReturnType<typeof number>>>> = [1, 2];
-const _obj: Infer<ReturnType<typeof object<{ name: ReturnType<typeof string>; age: ReturnType<typeof number> }>>> = { name: 'x', age: 1 };
+const _obj: Infer<
+  ReturnType<typeof object<{ name: ReturnType<typeof string>; age: ReturnType<typeof number> }>>
+> = { name: 'x', age: 1 };
 
 // ==================== STRING ====================
 
@@ -50,7 +61,9 @@ describe('string()', () => {
   });
 
   it('regex', () => {
-    const s = string().regex(/^[a-z]+$/).build();
+    const s = string()
+      .regex(/^[a-z]+$/)
+      .build();
     expect(s.parse('abc')).toBe('abc');
     expect(() => s.parse('ABC')).toThrow();
     expect(() => s.parse('abc123')).toThrow();
@@ -71,7 +84,9 @@ describe('string()', () => {
 
   it('uuid', () => {
     const s = string().uuid().build();
-    expect(s.parse('550e8400-e29b-41d4-a716-446655440000')).toBe('550e8400-e29b-41d4-a716-446655440000');
+    expect(s.parse('550e8400-e29b-41d4-a716-446655440000')).toBe(
+      '550e8400-e29b-41d4-a716-446655440000',
+    );
     expect(() => s.parse('not-a-uuid')).toThrow();
   });
 });
@@ -221,7 +236,7 @@ describe('object()', () => {
     const result = schema.safeParse({ name: '', age: -5, email: 'bad' });
     expect(result.success).toBe(false);
     if (!result.success) {
-      const paths = result.error.map(e => e.path.join('.'));
+      const paths = result.error.map((e) => e.path.join('.'));
       expect(paths).toContain('name');
       expect(paths).toContain('age');
       expect(paths).toContain('email');
@@ -232,7 +247,7 @@ describe('object()', () => {
     const result = schema.safeParse({ name: 'A', age: 1, email: 'a@b.com', extra: true });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.some(e => e.code === 'unrecognized_keys')).toBe(true);
+      expect(result.error.some((e) => e.code === 'unrecognized_keys')).toBe(true);
     }
   });
 
@@ -324,12 +339,16 @@ describe('default()', () => {
 
 describe('refine()', () => {
   it('custom validation passes', () => {
-    const s = string().refine(v => v.includes('@'), 'Must contain @').build();
+    const s = string()
+      .refine((v) => v.includes('@'), 'Must contain @')
+      .build();
     expect(s.parse('hello@world')).toBe('hello@world');
   });
 
   it('custom validation fails', () => {
-    const s = string().refine(v => v.includes('@'), 'Must contain @').build();
+    const s = string()
+      .refine((v) => v.includes('@'), 'Must contain @')
+      .build();
     const result = s.safeParse('helloworld');
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -340,8 +359,8 @@ describe('refine()', () => {
 
   it('multiple refinements', () => {
     const s = number()
-      .refine(v => v % 2 === 0, 'Must be even')
-      .refine(v => v > 0, 'Must be positive')
+      .refine((v) => v % 2 === 0, 'Must be even')
+      .refine((v) => v > 0, 'Must be positive')
       .build();
 
     expect(s.parse(4)).toBe(4);
@@ -407,9 +426,11 @@ describe('parseAsync()', () => {
   });
 
   it('works with async refinements', async () => {
-    const s = string().refine(async (v) => {
-      return new Promise(resolve => setTimeout(() => resolve(v.length > 0), 10));
-    }, 'Must not be empty').build();
+    const s = string()
+      .refine(async (v) => {
+        return new Promise((resolve) => setTimeout(() => resolve(v.length > 0), 10));
+      }, 'Must not be empty')
+      .build();
 
     const result = await s.parseAsync('hello');
     expect(result).toBe('hello');
@@ -433,7 +454,9 @@ describe('complex integration', () => {
   const addressSchema = object({
     street: string().min(1),
     city: string().min(1),
-    zip: string().regex(/^\d{5}$/).build(),
+    zip: string()
+      .regex(/^\d{5}$/)
+      .build(),
   }).build();
 
   const userSchema = object({
@@ -473,7 +496,7 @@ describe('complex integration', () => {
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      const paths = result.error.map(e => e.path.join('.'));
+      const paths = result.error.map((e) => e.path.join('.'));
       expect(paths).toContain('tags.0');
       expect(paths).toContain('role');
       expect(paths).toContain('address.street');

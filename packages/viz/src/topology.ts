@@ -5,10 +5,7 @@
  * parentSpanId links, then renders as a Unicode topology graph.
  */
 
-import {
-  fg, dim, bold, formatDuration, formatTokens,
-  BOX, type ColorName,
-} from './ansi';
+import { fg, dim, bold, formatDuration, formatTokens, BOX, type ColorName } from './ansi';
 
 // Types (subset of runtime types — avoids importing packages/core)
 
@@ -131,11 +128,13 @@ export function buildTree(data: ExecutionData): VizNode {
     const firstEvent = agentEvents[0];
     const lastEvent = agentEvents[agentEvents.length - 1];
     const totalAgentTokens = agentEvents.reduce(
-      (sum, e) => sum + (e.data?.tokenUsage?.totalTokens ?? 0), 0
+      (sum, e) => sum + (e.data?.tokenUsage?.totalTokens ?? 0),
+      0,
     );
-    const agentDur = firstEvent && lastEvent
-      ? new Date(lastEvent.timestamp).getTime() - new Date(firstEvent.timestamp).getTime()
-      : undefined;
+    const agentDur =
+      firstEvent && lastEvent
+        ? new Date(lastEvent.timestamp).getTime() - new Date(firstEvent.timestamp).getTime()
+        : undefined;
 
     const agentNode: VizNode = {
       id: `agent:${agentId}`,
@@ -181,9 +180,13 @@ export function buildTree(data: ExecutionData): VizNode {
       } else if (ev.type === 'tool_execution') {
         const n: VizNode = {
           id: ev.spanId,
-          label: String(ev.data?.output && typeof ev.data.output === 'object'
-            && 'name' in (ev.data.output as Record<string, unknown>)
-            ? (ev.data.output as Record<string, string>).name : extractToolName(ev.data)),
+          label: String(
+            ev.data?.output &&
+              typeof ev.data.output === 'object' &&
+              'name' in (ev.data.output as Record<string, unknown>)
+              ? (ev.data.output as Record<string, string>).name
+              : extractToolName(ev.data),
+          ),
           type: 'tool_execution',
           status: ev.data?.error ? 'failed' : 'completed',
           depth: 2,
@@ -233,7 +236,7 @@ export function buildTree(data: ExecutionData): VizNode {
 
     // Wire parentSpanId for proper nesting
     for (const [spanId, node] of childNodes) {
-      const parentEv = agentEvents.find(e => e.spanId === spanId);
+      const parentEv = agentEvents.find((e) => e.spanId === spanId);
       if (parentEv?.parentSpanId && childNodes.has(parentEv.parentSpanId)) {
         childNodes.get(parentEv.parentSpanId)!.children.push(node);
       } else {
@@ -283,10 +286,7 @@ export function renderTree(node: VizNode, options?: Partial<RenderOptions>): str
 
   // Header
   const statusColor = STATUS_COLORS[node.status];
-  lines.push(
-    fg('cyan', BOX.TL + BOX.H.repeat(4)) + ' ' +
-    bold(fg('white', node.label))
-  );
+  lines.push(fg('cyan', BOX.TL + BOX.H.repeat(4)) + ' ' + bold(fg('white', node.label)));
 
   // Summary bar
   const summaryParts: string[] = [];
@@ -307,8 +307,12 @@ export function renderTree(node: VizNode, options?: Partial<RenderOptions>): str
 }
 
 function renderNode(
-  n: VizNode, lines: string[], prefix: string, isLast: boolean,
-  opts: RenderOptions, siblingCount: number,
+  n: VizNode,
+  lines: string[],
+  prefix: string,
+  isLast: boolean,
+  opts: RenderOptions,
+  siblingCount: number,
 ): void {
   if (n.depth > opts.maxDepth) return;
 
@@ -336,9 +340,7 @@ function renderNode(
     errorSuffix = ' ' + fg('red', '✗ ' + truncate(n.error, 60));
   }
 
-  lines.push(
-    prefix + connector + ' ' + labelParts.join('') + errorSuffix
-  );
+  lines.push(prefix + connector + ' ' + labelParts.join('') + errorSuffix);
 
   // Children
   for (let i = 0; i < n.children.length; i++) {
@@ -369,7 +371,9 @@ export function renderSummary(exec: ExecutionData): string {
 // ---------------------------------------------------------------------------
 
 function hasFailedEvents(events: TraceEvent[]): boolean {
-  return events.some(e => e.type === 'error' || (e.type === 'verification' && e.data?.evaluationPassed === false));
+  return events.some(
+    (e) => e.type === 'error' || (e.type === 'verification' && e.data?.evaluationPassed === false),
+  );
 }
 
 function eventToNode(ev: TraceEvent): VizNode | null {

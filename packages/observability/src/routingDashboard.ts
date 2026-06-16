@@ -29,7 +29,7 @@ import type {
   ExplorationEventLogFilter,
   ExplorationSnapshot,
 } from '@commander/core';
-import type {  EpsilonStore } from '@commander/core';
+import type { EpsilonStore } from '@commander/core';
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;

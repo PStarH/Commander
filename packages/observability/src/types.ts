@@ -108,7 +108,13 @@ export interface TimelineView {
     errors: number;
     totalTokens: TokenBreakdown;
     totalCost: CostBreakdown;
-    modelsUsed: Array<{ model: string; provider: string; calls: number; tokens: number; costUsd: number }>;
+    modelsUsed: Array<{
+      model: string;
+      provider: string;
+      calls: number;
+      tokens: number;
+      costUsd: number;
+    }>;
   };
 }
 

@@ -1,8 +1,6 @@
 import type { ValifyIssue } from './errors.js';
 
-export type ParseResult<T> =
-  | { success: true; data: T }
-  | { success: false; error: ValifyIssue[] };
+export type ParseResult<T> = { success: true; data: T } | { success: false; error: ValifyIssue[] };
 
 export interface ValifySchemaDef<T> {
   _type: string;

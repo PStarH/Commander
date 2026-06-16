@@ -13,14 +13,18 @@ export function buildDecisions(trace: ExecutionTrace): DecisionNode[] {
     const thinkDurationMs = llmEvent
       ? Math.max(0, new Date(e.timestamp).getTime() - new Date(llmEvent.timestamp).getTime())
       : 0;
-    const args = typeof e.data.input === 'object' && e.data.input !== null
-      ? (e.data.input as Record<string, unknown>)
-      : {};
+    const args =
+      typeof e.data.input === 'object' && e.data.input !== null
+        ? (e.data.input as Record<string, unknown>)
+        : {};
     decisions.push({
       spanId: e.spanId,
       parentSpanId: e.parentSpanId,
       timestamp: e.timestamp,
-      toolName: typeof e.data.input === 'string' ? e.data.input : (args['toolName'] as string) ?? String(e.data.input ?? 'unknown'),
+      toolName:
+        typeof e.data.input === 'string'
+          ? e.data.input
+          : ((args['toolName'] as string) ?? String(e.data.input ?? 'unknown')),
       toolArgs: args,
       decisionReason: extractReason(llmEvent),
       llmSpanId: llmEvent?.spanId,
@@ -97,7 +101,9 @@ export function decisionsSummary(decisions: DecisionNode[]): {
     avgThinkMs: Math.round(avg),
     p95ThinkMs: p95,
     byTool: Array.from(toolAgg.entries()).map(([tool, v]) => ({
-      tool, count: v.count, avgThinkMs: Math.round(v.total / v.count),
+      tool,
+      count: v.count,
+      avgThinkMs: Math.round(v.total / v.count),
     })),
   };
 }

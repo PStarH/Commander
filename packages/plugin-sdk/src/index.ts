@@ -79,10 +79,7 @@ export type {
 } from './types';
 
 // ── Type-safe hook handlers ──
-export {
-  HookSubscriptions,
-  createHookSubscriptions,
-} from './hooks';
+export { HookSubscriptions, createHookSubscriptions } from './hooks';
 
 export type {
   BeforeToolCallHandler,
@@ -107,11 +104,7 @@ export type {
   HookHandlerMap,
 } from './hooks';
 
-import type {
-  CommanderPluginDef,
-  PluginTool,
-  JsonSchema,
-} from './types';
+import type { CommanderPluginDef, PluginTool, JsonSchema } from './types';
 
 /**
  * Create a Commander plugin with validation.
@@ -132,7 +125,7 @@ export function createPlugin(def: CommanderPluginDef): CommanderPluginDef {
   }
   if (!/^[a-z0-9][a-z0-9_-]*$/i.test(def.id)) {
     throw new Error(
-      `Plugin id "${def.id}" must start with a letter/number and contain only alphanumeric, hyphens, and underscores`
+      `Plugin id "${def.id}" must start with a letter/number and contain only alphanumeric, hyphens, and underscores`,
     );
   }
   return def;
@@ -165,12 +158,18 @@ export function schema(properties: Record<string, JsonSchema>, required?: string
 }
 
 /** Helper to define a string property in a JSON Schema. */
-export function stringProperty(description?: string, opts?: { enum?: string[]; default?: string }): JsonSchema {
+export function stringProperty(
+  description?: string,
+  opts?: { enum?: string[]; default?: string },
+): JsonSchema {
   return { type: 'string', description, ...opts };
 }
 
 /** Helper to define a number property in a JSON Schema. */
-export function numberProperty(description?: string, opts?: { minimum?: number; maximum?: number }): JsonSchema {
+export function numberProperty(
+  description?: string,
+  opts?: { minimum?: number; maximum?: number },
+): JsonSchema {
   return { type: 'number', description, ...opts };
 }
 

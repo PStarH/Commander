@@ -54,7 +54,8 @@ export interface OtelGenAiAttrs {
 }
 
 export function isGenAiSemConvOptIn(): boolean {
-  const envVal = typeof process !== 'undefined' ? process.env?.OTEL_SEMCONV_STABILITY_OPT_IN : undefined;
+  const envVal =
+    typeof process !== 'undefined' ? process.env?.OTEL_SEMCONV_STABILITY_OPT_IN : undefined;
   if (!envVal) return true;
   return envVal
     .split(',')
@@ -79,14 +80,18 @@ export function eventToOtelAttrs(
   // Extract request parameters from LLM call input
   if (e.type === 'llm_call' && e.data.input && typeof e.data.input === 'object') {
     const req = e.data.input as Record<string, unknown>;
-    if (typeof req['temperature'] === 'number') attrs['gen_ai.request.temperature'] = req['temperature'];
+    if (typeof req['temperature'] === 'number')
+      attrs['gen_ai.request.temperature'] = req['temperature'];
     if (typeof req['top_p'] === 'number') attrs['gen_ai.request.top_p'] = req['top_p'];
   }
   if (e.data.tokenUsage) {
     attrs['gen_ai.usage.input_tokens'] = e.data.tokenUsage.promptTokens ?? 0;
     attrs['gen_ai.usage.output_tokens'] = e.data.tokenUsage.completionTokens ?? 0;
     attrs['gen_ai.usage.total_tokens'] = e.data.tokenUsage.totalTokens ?? 0;
-    if (typeof e.data.tokenUsage.cacheReadTokens === 'number' && e.data.tokenUsage.cacheReadTokens > 0) {
+    if (
+      typeof e.data.tokenUsage.cacheReadTokens === 'number' &&
+      e.data.tokenUsage.cacheReadTokens > 0
+    ) {
       attrs['gen_ai.usage.cached_input_tokens'] = e.data.tokenUsage.cacheReadTokens;
     }
   }
@@ -103,7 +108,9 @@ export function eventToOtelAttrs(
     // The exporter stashes the original tool name in `data.toolName` before
     // redacting `data.input` to '[redacted]'. Check `toolName` first, then
     // fall back to `input` for backward compat.
-    const toolName = String((e.data as Record<string, unknown>).toolName ?? e.data.input ?? 'unknown');
+    const toolName = String(
+      (e.data as Record<string, unknown>).toolName ?? e.data.input ?? 'unknown',
+    );
     attrs['gen_ai.tool.name'] = toolName;
     if (e.data.toolCallId) attrs['gen_ai.tool.call.id'] = e.data.toolCallId;
   }
@@ -139,4 +146,3 @@ export function spanNameForEvent(e: TraceEvent): string {
   if (op === 'invoke_agent') return `invoke_agent ${e.agentId}`;
   return `${op} ${e.type}`;
 }
-

@@ -26,7 +26,7 @@
 
 import type { ExecutionTrace, TraceEvent, TokenUsage } from '@commander/core';
 import { eventToOtelAttrs, spanNameForEvent } from './otelSemConv';
-import {  formatTraceparent } from './traceContext';
+import { formatTraceparent } from './traceContext';
 import { SamplingPolicy, type SamplingDecision } from './samplingPolicy';
 
 const OTLP_HTTP_PATH = '/v1/traces';

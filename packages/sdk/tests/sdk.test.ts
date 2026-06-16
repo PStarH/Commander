@@ -72,19 +72,13 @@ void describe('@commander/sdk — CommanderClient', () => {
   void it('throws on run before connect', async () => {
     const { CommanderClient } = require('../src/commanderClient');
     const client = new CommanderClient();
-    await assert.rejects(
-      () => client.run('test task'),
-      /not connected/
-    );
+    await assert.rejects(() => client.run('test task'), /not connected/);
   });
 
   void it('throws on plan before connect', async () => {
     const { CommanderClient } = require('../src/commanderClient');
     const client = new CommanderClient();
-    await assert.rejects(
-      () => client.plan('test task'),
-      /not connected/
-    );
+    await assert.rejects(() => client.plan('test task'), /not connected/);
   });
 
   void it('returns empty session list before any runs', () => {

@@ -25,7 +25,11 @@ interface DatadogExporterConfig {
   environment?: string;
 }
 
-function eventToDatadogSpan(event: TraceEvent, serviceName: string, environment: string): DatadogSpan {
+function eventToDatadogSpan(
+  event: TraceEvent,
+  serviceName: string,
+  environment: string,
+): DatadogSpan {
   const startTime = new Date(event.timestamp).getTime() * 1_000_000;
   const duration = event.durationMs * 1_000_000;
 
@@ -33,7 +37,7 @@ function eventToDatadogSpan(event: TraceEvent, serviceName: string, environment:
     'commander.run_id': event.runId,
     'commander.agent_id': event.agentId,
     'commander.event_type': event.type,
-    'env': environment,
+    env: environment,
   };
 
   if (event.data.modelInfo) {
@@ -126,12 +130,17 @@ export class DatadogExporter {
     return new Promise((resolve, reject) => {
       const req = https.request(url, { method: 'POST', headers }, (res) => {
         let data = '';
-        res.on('data', (chunk) => { data += chunk; });
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
         res.on('end', () => {
           if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
             resolve();
           } else {
-            getGlobalLogger().warn('DatadogExporter', `Failed to send spans: ${res.statusCode} ${data}`);
+            getGlobalLogger().warn(
+              'DatadogExporter',
+              `Failed to send spans: ${res.statusCode} ${data}`,
+            );
             this.queue.unshift(...batch);
             resolve();
           }
