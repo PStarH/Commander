@@ -55,23 +55,23 @@ reg.closeAll();
 
 ### `TenantWorkCoordinatorRegistry`
 
-| Method | Returns | Notes |
-|--------|---------|-------|
+| Method                         | Returns           | Notes                                                |
+| ------------------------------ | ----------------- | ---------------------------------------------------- |
 | `getWorkCoordinator(tenantId)` | `WorkCoordinator` | Lazy: creates per-tenant coord + store on first call |
-| `hasTenant(tenantId)` | `boolean` | True if coord was ever created for this id |
-| `listTenants()` | `string[]` | All tenant ids that have been initialized |
-| `size()` | `number` | Number of initialized tenants |
-| `closeAll()` | `void` | Closes all SqliteWorkQueueStores (call on shutdown) |
+| `hasTenant(tenantId)`          | `boolean`         | True if coord was ever created for this id           |
+| `listTenants()`                | `string[]`        | All tenant ids that have been initialized            |
+| `size()`                       | `number`          | Number of initialized tenants                        |
+| `closeAll()`                   | `void`            | Closes all SqliteWorkQueueStores (call on shutdown)  |
 
 ## Isolation Guarantees
 
-| Property | How |
-|----------|-----|
-| **No cross-tenant visibility** | `coordA.list()` only reads tenant A's `.db` file; `coordB.list()` only reads tenant B's |
-| **No shared runId conflicts** | runId is unique *within* a tenant's queue, not globally. Two tenants can each have `runId: "shared-run-id"` |
+| Property                               | How                                                                                                                                                                       |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **No cross-tenant visibility**         | `coordA.list()` only reads tenant A's `.db` file; `coordB.list()` only reads tenant B's                                                                                   |
+| **No shared runId conflicts**          | runId is unique _within_ a tenant's queue, not globally. Two tenants can each have `runId: "shared-run-id"`                                                               |
 | **No shared state in WorkCoordinator** | Each tenant gets its own `WorkCoordinator` instance, with its own `WorkQueueStore`, its own `messageBus` subscription, its own `currentRunId`/`currentRunHandle` sidecars |
-| **Crash isolation** | One tenant's corrupted `.db` doesn't affect others (separate files, separate connections) |
-| **Write isolation** | All writes go to per-tenant `.db`; tenant A's writes never touch tenant B's file |
+| **Crash isolation**                    | One tenant's corrupted `.db` doesn't affect others (separate files, separate connections)                                                                                 |
+| **Write isolation**                    | All writes go to per-tenant `.db`; tenant A's writes never touch tenant B's file                                                                                          |
 
 ## Lazy Initialization
 
@@ -88,7 +88,8 @@ const coordA = reg.getWorkCoordinator('alpha');
 ```
 
 This means:
-- Memory cost scales with number of *active* tenants, not declared tenants
+
+- Memory cost scales with number of _active_ tenants, not declared tenants
 - A tenant that has never submitted work has zero disk footprint
 - Tests can use `mkdtempSync` + fresh registries without leaving stale files
 
@@ -106,14 +107,14 @@ Sanitization: `tenantId.replace(/[^a-zA-Z0-9_.-]/g, '_')`. Rejects path traversa
 
 ## What's NOT in M2.5
 
-| Gap | When |
-|-----|------|
-| Per-tenant token budget enforcement on `enqueue` | M3 (cost-aware router) |
-| Cross-tenant visibility for admin (list-all queue lengths) | M3 (admin tool) |
-| Tenant-scoped metrics in `MetricsCollector` | M3 |
-| Automatic `closeAll()` on process exit | Out of scope (call explicitly or use process signal handler) |
-| Dynamic basePath resolution (e.g., from `TenantConfig.workspacePath`) | M3 |
-| Integration with `HttpServer.resolveTenantFromAuth` for automatic tenant resolution | M3 |
+| Gap                                                                                 | When                                                         |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Per-tenant token budget enforcement on `enqueue`                                    | M3 (cost-aware router)                                       |
+| Cross-tenant visibility for admin (list-all queue lengths)                          | M3 (admin tool)                                              |
+| Tenant-scoped metrics in `MetricsCollector`                                         | M3                                                           |
+| Automatic `closeAll()` on process exit                                              | Out of scope (call explicitly or use process signal handler) |
+| Dynamic basePath resolution (e.g., from `TenantConfig.workspacePath`)               | M3                                                           |
+| Integration with `HttpServer.resolveTenantFromAuth` for automatic tenant resolution | M3                                                           |
 
 ## Migration Path from Singleton
 
@@ -134,9 +135,9 @@ const coord = reg.getWorkCoordinator(req.tenantId);
 
 ## Failure Modes
 
-| Scenario | Behavior |
-|----------|----------|
-| Two processes open same tenant file | Sqlite WAL allows concurrent reads; writes serialize via WAL writer lock. No data loss. (Multi-process coordination is M2.4's `tryClaim` guarantee.) |
-| Tenant id contains `../` | Sanitized to `___`, so path traversal blocked. Tenant directory stays under `basePath`. |
-| `closeAll()` not called on process exit | Sqlite WAL might not be checkpointed; in-flight writes are lost. Caller's responsibility. |
-| `getWorkCoordinator` called for tenant A, then `resetTenantWorkCoordinatorRegistry`, then call again | New registry → new coord → new store. Tenant A's previous store is NOT closed. Memory leak in tests; production should never reset. |
+| Scenario                                                                                             | Behavior                                                                                                                                             |
+| ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Two processes open same tenant file                                                                  | Sqlite WAL allows concurrent reads; writes serialize via WAL writer lock. No data loss. (Multi-process coordination is M2.4's `tryClaim` guarantee.) |
+| Tenant id contains `../`                                                                             | Sanitized to `___`, so path traversal blocked. Tenant directory stays under `basePath`.                                                              |
+| `closeAll()` not called on process exit                                                              | Sqlite WAL might not be checkpointed; in-flight writes are lost. Caller's responsibility.                                                            |
+| `getWorkCoordinator` called for tenant A, then `resetTenantWorkCoordinatorRegistry`, then call again | New registry → new coord → new store. Tenant A's previous store is NOT closed. Memory leak in tests; production should never reset.                  |

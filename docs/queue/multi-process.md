@@ -21,6 +21,7 @@ WHERE id = ? AND status = 'PENDING'
 ```
 
 `changes` returns:
+
 - `1` — won the race, the row was PENDING
 - `0` — lost, the row was already CLAIMED/RUNNING/etc.
 
@@ -77,8 +78,8 @@ These are deferred to M2.6 (chaos) and beyond:
 ```typescript
 export interface WorkItem {
   // ... existing fields
-  leaseToken?: string;    // M2.4: UUID of current claim
-  fencingEpoch?: number;  // M2.4: monotonic counter
+  leaseToken?: string; // M2.4: UUID of current claim
+  fencingEpoch?: number; // M2.4: monotonic counter
 }
 ```
 

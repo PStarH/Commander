@@ -33,13 +33,13 @@ This RFC proposes a **2-week hardening plan** that:
 
 We surveyed 8 production-grade systems and 4 LLM-agent failure-mode studies. The full research is documented separately in `docs/rfcs/reversibility-research.md`. Top 5 universal principles:
 
-| # | Principle | Source |
-|---|-----------|--------|
-| 1 | **Event sourcing + replay** is the foundation. All durable engines record immutable event logs and replay to reconstruct state. | [Temporal Workflow Concepts](https://docs.temporal.io/workflows) |
-| 2 | **Deterministic workflow, non-deterministic activities** is the only safe separation. | [Temporal determinism](https://docs.temporal.io/workflows#how-workflow-replay-works) |
-| 3 | **Transactional outbox** for cross-component consistency — write state + queue in one local transaction. | [Temporal "Workflow Engine Design Principles"](https://temporal.io/blog/workflow-engine-principles) |
-| 4 | **Idempotency keys for safe retry** — Stripe's pattern is the gold standard. | [Stripe Blog: Designing robust APIs with idempotency](https://stripe.com/blog/idempotency) |
-| 5 | **Compensation ≠ fallback**. Fallback is dangerous (Amazon's 2001 outage); compensation is the saga answer. | [Amazon Builders' Library: Avoiding fallback](https://aws.amazon.com/builders-library/avoiding-fallback-in-distributed-systems/) |
+| #   | Principle                                                                                                                       | Source                                                                                                                           |
+| --- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Event sourcing + replay** is the foundation. All durable engines record immutable event logs and replay to reconstruct state. | [Temporal Workflow Concepts](https://docs.temporal.io/workflows)                                                                 |
+| 2   | **Deterministic workflow, non-deterministic activities** is the only safe separation.                                           | [Temporal determinism](https://docs.temporal.io/workflows#how-workflow-replay-works)                                             |
+| 3   | **Transactional outbox** for cross-component consistency — write state + queue in one local transaction.                        | [Temporal "Workflow Engine Design Principles"](https://temporal.io/blog/workflow-engine-principles)                              |
+| 4   | **Idempotency keys for safe retry** — Stripe's pattern is the gold standard.                                                    | [Stripe Blog: Designing robust APIs with idempotency](https://stripe.com/blog/idempotency)                                       |
+| 5   | **Compensation ≠ fallback**. Fallback is dangerous (Amazon's 2001 outage); compensation is the saga answer.                     | [Amazon Builders' Library: Avoiding fallback](https://aws.amazon.com/builders-library/avoiding-fallback-in-distributed-systems/) |
 
 **Top 5 anti-patterns observed in production outages**:
 
@@ -55,26 +55,26 @@ We surveyed 8 production-grade systems and 4 LLM-agent failure-mode studies. The
 
 For each failure mode: what Commander currently does, what's missing, and the proposed fix.
 
-| # | Failure | Current handler | Correct? | Gap | Priority |
-|---|---------|----------------|----------|-----|----------|
-| 1 | **Tool call fails** (network, validation, execution) | `StepErrorBoundary` (line 1684) + DLQ + `compensationRegistry.compensate` | ✅ Mostly | Compensation is *retried* with simple loop, not idempotency-tracked. If compensation itself fails, only logged. | 🟡 Med |
-| 2 | **LLM call fails** (provider error, timeout) | `circuitBreaker.onFailure` + `llmRetry` with jitter | ✅ Mostly | No automatic fallback to next provider. Circuit open = user-visible failure. | 🔴 High |
-| 3 | **Sub-agent fails** | `subAgentExecutor` catch → `compensateAll` + DLQ + scheduler abort | ✅ Mostly | No verifier agent to validate sub-agent output. State conflicts not detected. | 🟡 Med |
-| 4 | **Process crashes mid-run** | `StateCheckpointer` writes after every step | ✅ Mostly | **No `process.on('uncaughtException')` handler** — crashes lose leases, hold tokens indefinitely, never flush DLQ. | 🔴 **Critical** |
-| 5 | **Process crashes mid-tool-call** | Idempotency key in `toolResultCache` + `idempotencyStore` | ✅ Mostly | On resume, no automatic walk through completed-tool-call-IDs in checkpoint. Manual resume only. | 🟡 Med |
-| 6 | **Two processes resume same run** | Lease manager + fencing epoch in `scheduler.beginRun` | ✅ Correct | None | — |
-| 7 | **LLM hallucinates tool call** | `toolCallValidator` + `toolCallRepair` + hallucination gate (`promotedTools`) | ✅ Mostly | `formatValidationErrors` not consistently fed back to LLM as retryable error. No PALADIN-style failure-exemplar retrieval. | 🟡 Med |
-| 8 | **Tool returns wrong output** | `UnifiedVerificationPipeline` (5 gates) + `hallucinationDetector` (13 signals) | ✅ Strong | No multi-sample consistency check (SelfCheckGPT). No cross-tool contradiction detection. | 🟢 Low |
-| 9 | **Tenant quota exceeded** | `tenantProvider` + rate limiting | ✅ Correct | None | — |
-| 10 | **Provider rate limit** | `circuitBreaker` + `llmRetry` backoff | ✅ Correct | None | — |
-| 11 | **All retries exhausted** | DLQ entry + `circuitBreaker.open` | ✅ Mostly | DLQ has no automated re-attempt with backoff. Stays "dead" forever. | 🟢 Low |
-| 12 | **Compensation itself fails** | Logged to DLQ (`category: 'execution'`) | ⚠️ Gap | **No escalation, no retry of compensation, no manual re-attempt mechanism.** | 🔴 High |
-| 13 | **Checkpoint write fails** | Atomic `write-tmp-rename` | ✅ Strong | If `fs.rename` fails on disk full / permission, in-memory state still works for current run, but next restart loses recovery. | 🟡 Med |
-| 14 | **Network partition during multi-agent handoff** | `agentInbox` (persistent) + `agentHandoff` | ✅ Correct | None | — |
-| 15 | **Lease expires during long tool call** | Fencing epoch rejects stale writes | ✅ Correct | None | — |
-| 16 | **Token budget exhausted** | `TokenGovernor` (soft cap + hard cap) | ✅ Correct | None | — |
-| 17 | **LLM takes 10+ minutes on a single step** | `effectiveTimeout = tool.timeout ?? config.timeoutMs` for tools | ⚠️ Gap | **No step-level timeout in LLM call path itself.** A 10-minute CoT call is unprotected. | 🔴 High |
-| 18 | **Sub-agent runs forever** (infinite reasoning) | `cycleDetector` catches exact/alternating/drift loops | ✅ Mostly | No `maxStepsPerAgent` hard cap. No "no-progress" detection (steps continue but goal not advancing). | 🔴 High |
+| #   | Failure                                              | Current handler                                                                | Correct?   | Gap                                                                                                                           | Priority        |
+| --- | ---------------------------------------------------- | ------------------------------------------------------------------------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| 1   | **Tool call fails** (network, validation, execution) | `StepErrorBoundary` (line 1684) + DLQ + `compensationRegistry.compensate`      | ✅ Mostly  | Compensation is _retried_ with simple loop, not idempotency-tracked. If compensation itself fails, only logged.               | 🟡 Med          |
+| 2   | **LLM call fails** (provider error, timeout)         | `circuitBreaker.onFailure` + `llmRetry` with jitter                            | ✅ Mostly  | No automatic fallback to next provider. Circuit open = user-visible failure.                                                  | 🔴 High         |
+| 3   | **Sub-agent fails**                                  | `subAgentExecutor` catch → `compensateAll` + DLQ + scheduler abort             | ✅ Mostly  | No verifier agent to validate sub-agent output. State conflicts not detected.                                                 | 🟡 Med          |
+| 4   | **Process crashes mid-run**                          | `StateCheckpointer` writes after every step                                    | ✅ Mostly  | **No `process.on('uncaughtException')` handler** — crashes lose leases, hold tokens indefinitely, never flush DLQ.            | 🔴 **Critical** |
+| 5   | **Process crashes mid-tool-call**                    | Idempotency key in `toolResultCache` + `idempotencyStore`                      | ✅ Mostly  | On resume, no automatic walk through completed-tool-call-IDs in checkpoint. Manual resume only.                               | 🟡 Med          |
+| 6   | **Two processes resume same run**                    | Lease manager + fencing epoch in `scheduler.beginRun`                          | ✅ Correct | None                                                                                                                          | —               |
+| 7   | **LLM hallucinates tool call**                       | `toolCallValidator` + `toolCallRepair` + hallucination gate (`promotedTools`)  | ✅ Mostly  | `formatValidationErrors` not consistently fed back to LLM as retryable error. No PALADIN-style failure-exemplar retrieval.    | 🟡 Med          |
+| 8   | **Tool returns wrong output**                        | `UnifiedVerificationPipeline` (5 gates) + `hallucinationDetector` (13 signals) | ✅ Strong  | No multi-sample consistency check (SelfCheckGPT). No cross-tool contradiction detection.                                      | 🟢 Low          |
+| 9   | **Tenant quota exceeded**                            | `tenantProvider` + rate limiting                                               | ✅ Correct | None                                                                                                                          | —               |
+| 10  | **Provider rate limit**                              | `circuitBreaker` + `llmRetry` backoff                                          | ✅ Correct | None                                                                                                                          | —               |
+| 11  | **All retries exhausted**                            | DLQ entry + `circuitBreaker.open`                                              | ✅ Mostly  | DLQ has no automated re-attempt with backoff. Stays "dead" forever.                                                           | 🟢 Low          |
+| 12  | **Compensation itself fails**                        | Logged to DLQ (`category: 'execution'`)                                        | ⚠️ Gap     | **No escalation, no retry of compensation, no manual re-attempt mechanism.**                                                  | 🔴 High         |
+| 13  | **Checkpoint write fails**                           | Atomic `write-tmp-rename`                                                      | ✅ Strong  | If `fs.rename` fails on disk full / permission, in-memory state still works for current run, but next restart loses recovery. | 🟡 Med          |
+| 14  | **Network partition during multi-agent handoff**     | `agentInbox` (persistent) + `agentHandoff`                                     | ✅ Correct | None                                                                                                                          | —               |
+| 15  | **Lease expires during long tool call**              | Fencing epoch rejects stale writes                                             | ✅ Correct | None                                                                                                                          | —               |
+| 16  | **Token budget exhausted**                           | `TokenGovernor` (soft cap + hard cap)                                          | ✅ Correct | None                                                                                                                          | —               |
+| 17  | **LLM takes 10+ minutes on a single step**           | `effectiveTimeout = tool.timeout ?? config.timeoutMs` for tools                | ⚠️ Gap     | **No step-level timeout in LLM call path itself.** A 10-minute CoT call is unprotected.                                       | 🔴 High         |
+| 18  | **Sub-agent runs forever** (infinite reasoning)      | `cycleDetector` catches exact/alternating/drift loops                          | ✅ Mostly  | No `maxStepsPerAgent` hard cap. No "no-progress" detection (steps continue but goal not advancing).                           | 🔴 High         |
 
 ---
 
@@ -82,32 +82,32 @@ For each failure mode: what Commander currently does, what's missing, and the pr
 
 ### 3.1 What Commander Already Has (excellent)
 
-| File | LOC | Pattern | Production-ready? |
-|------|-----|---------|------------------|
-| `runtime/circuitBreaker.ts` | 250+ | Hystrix-style sliding window, per-provider | ✅ |
-| `runtime/llmRetry.ts` | 100+ | Error classification + exp backoff + jitter | ✅ |
-| `runtime/stepErrorBoundary.ts` | 200+ | Per-step recovery (retry/skip/abort) | ✅ |
-| `runtime/deadLetterQueue.ts` | 250+ | Persistent NDJSON failure log | ✅ |
-| `runtime/cycleDetector.ts` | 200+ | 3-type loop detection (consecutive/alternating/drift) | ✅ |
-| `runtime/toolCallValidator.ts` | 200+ | Compiled JSON schema validation | ✅ |
-| `runtime/toolCallRepair.ts` | 100+ | 7-strategy malformed arg repair | ✅ |
-| `runtime/compensationRegistry.ts` | 200+ | Saga pattern with idempotent compensation | ✅ |
-| `runtime/structuredOutput.ts` | 150+ | 5-strategy JSON extraction | ✅ |
-| `runtime/hallucinationDetector.ts` | 400+ | 13-signal hallucination detection | ✅ |
-| `runtime/unifiedVerification.ts` | 400+ | 5-stage verification pipeline | ✅ |
-| `runtime/contextCompactor.ts` | 200+ | 4-layer progressive compaction | ✅ |
-| `runtime/tokenGovernor.ts` | 100+ | Token budget enforcement | ✅ |
-| `runtime/toolOutputManager.ts` | 100+ | Per-tool output caps | ✅ |
-| `runtime/stateCheckpointer.ts` | 350+ | Atomic crash-safe checkpoints | ✅ |
-| `runtime/agentHandoff.ts` | — | Persistent inbox for handoffs | ✅ |
-| `runtime/agentInbox.ts` | — | Persistent inbox for async messages | ✅ |
-| `runtime/modelRouter.ts` | 200+ | Provider selection by task complexity | ✅ |
-| `runtime/tenantProvider.ts` | 200+ | Per-tenant quotas + isolation | ✅ |
-| `atr/scheduler.ts` | 365 | `getExecutionScheduler()` singleton | ✅ (new) |
-| `atr/compensationBridge.ts` | 125 | Bridge between ATR saga and registry | ✅ |
-| `atr/runLedger.ts` | 717 | Per-run ledger with actions | ✅ |
-| `atr/idempotencyStore.ts` | 386 | Idempotency keys + replay | ✅ |
-| `atr/leaseManager.ts` | 359 | Lease tokens + fencing epochs | ✅ |
+| File                               | LOC  | Pattern                                               | Production-ready? |
+| ---------------------------------- | ---- | ----------------------------------------------------- | ----------------- |
+| `runtime/circuitBreaker.ts`        | 250+ | Hystrix-style sliding window, per-provider            | ✅                |
+| `runtime/llmRetry.ts`              | 100+ | Error classification + exp backoff + jitter           | ✅                |
+| `runtime/stepErrorBoundary.ts`     | 200+ | Per-step recovery (retry/skip/abort)                  | ✅                |
+| `runtime/deadLetterQueue.ts`       | 250+ | Persistent NDJSON failure log                         | ✅                |
+| `runtime/cycleDetector.ts`         | 200+ | 3-type loop detection (consecutive/alternating/drift) | ✅                |
+| `runtime/toolCallValidator.ts`     | 200+ | Compiled JSON schema validation                       | ✅                |
+| `runtime/toolCallRepair.ts`        | 100+ | 7-strategy malformed arg repair                       | ✅                |
+| `runtime/compensationRegistry.ts`  | 200+ | Saga pattern with idempotent compensation             | ✅                |
+| `runtime/structuredOutput.ts`      | 150+ | 5-strategy JSON extraction                            | ✅                |
+| `runtime/hallucinationDetector.ts` | 400+ | 13-signal hallucination detection                     | ✅                |
+| `runtime/unifiedVerification.ts`   | 400+ | 5-stage verification pipeline                         | ✅                |
+| `runtime/contextCompactor.ts`      | 200+ | 4-layer progressive compaction                        | ✅                |
+| `runtime/tokenGovernor.ts`         | 100+ | Token budget enforcement                              | ✅                |
+| `runtime/toolOutputManager.ts`     | 100+ | Per-tool output caps                                  | ✅                |
+| `runtime/stateCheckpointer.ts`     | 350+ | Atomic crash-safe checkpoints                         | ✅                |
+| `runtime/agentHandoff.ts`          | —    | Persistent inbox for handoffs                         | ✅                |
+| `runtime/agentInbox.ts`            | —    | Persistent inbox for async messages                   | ✅                |
+| `runtime/modelRouter.ts`           | 200+ | Provider selection by task complexity                 | ✅                |
+| `runtime/tenantProvider.ts`        | 200+ | Per-tenant quotas + isolation                         | ✅                |
+| `atr/scheduler.ts`                 | 365  | `getExecutionScheduler()` singleton                   | ✅ (new)          |
+| `atr/compensationBridge.ts`        | 125  | Bridge between ATR saga and registry                  | ✅                |
+| `atr/runLedger.ts`                 | 717  | Per-run ledger with actions                           | ✅                |
+| `atr/idempotencyStore.ts`          | 386  | Idempotency keys + replay                             | ✅                |
+| `atr/leaseManager.ts`              | 359  | Lease tokens + fencing epochs                         | ✅                |
 
 **Total: ~5,500 lines of resilience infrastructure.** This is more than LangGraph, AutoGen, CrewAI, or any other open-source agent framework ships out of the box.
 
@@ -115,20 +115,20 @@ For each failure mode: what Commander currently does, what's missing, and the pr
 
 **`src/saga/` (3,193 LOC, 12 files, 10 test files):**
 
-| File | LOC | Wired into runtime? |
-|------|-----|---------------------|
-| `sagaCoordinator.ts` | 646 | ❌ Only used by `cli/commands/saga.ts` |
-| `sagaBuilder.ts` | 239 | ❌ Only used by `sagaCoordinator.ts` |
-| `executionGraph.ts` | 281 | ❌ Only used by `sagaCoordinator.ts` |
-| `workerPool.ts` | 93 | ❌ Only used by `sagaCoordinator.ts` |
-| `checkpointManager.ts` | 124 | ❌ Only used by `sagaCoordinator.ts` |
-| `compensationScheduler.ts` | 163 | ❌ Only used by `sagaCoordinator.ts` |
-| `approvalManager.ts` | 326 | ❌ Only used by `sagaCoordinator.ts` |
-| `retryController.ts` | 114 | ❌ Only used by `sagaCoordinator.ts` |
-| `sagaStore.ts` | 137 | ❌ Only used by `sagaCoordinator.ts` |
-| `examples.ts` | 127 | ❌ Only used by `sagaCoordinator.ts` |
-| `types.ts` | 225 | ❌ Only used by `sagaCoordinator.ts` |
-| `index.ts` | 17 | ❌ Only exports to CLI |
+| File                       | LOC | Wired into runtime?                    |
+| -------------------------- | --- | -------------------------------------- |
+| `sagaCoordinator.ts`       | 646 | ❌ Only used by `cli/commands/saga.ts` |
+| `sagaBuilder.ts`           | 239 | ❌ Only used by `sagaCoordinator.ts`   |
+| `executionGraph.ts`        | 281 | ❌ Only used by `sagaCoordinator.ts`   |
+| `workerPool.ts`            | 93  | ❌ Only used by `sagaCoordinator.ts`   |
+| `checkpointManager.ts`     | 124 | ❌ Only used by `sagaCoordinator.ts`   |
+| `compensationScheduler.ts` | 163 | ❌ Only used by `sagaCoordinator.ts`   |
+| `approvalManager.ts`       | 326 | ❌ Only used by `sagaCoordinator.ts`   |
+| `retryController.ts`       | 114 | ❌ Only used by `sagaCoordinator.ts`   |
+| `sagaStore.ts`             | 137 | ❌ Only used by `sagaCoordinator.ts`   |
+| `examples.ts`              | 127 | ❌ Only used by `sagaCoordinator.ts`   |
+| `types.ts`                 | 225 | ❌ Only used by `sagaCoordinator.ts`   |
+| `index.ts`                 | 17  | ❌ Only exports to CLI                 |
 
 **`src/atr/runtimeIntegration.ts` (253 LOC):**
 
@@ -186,15 +186,22 @@ export function installProcessCrashHandlers(deps: {
   let shuttingDown = false;
   const log = getGlobalLogger();
 
-  const gracefulShutdown = async (source: 'uncaught' | 'unhandled' | 'SIGTERM' | 'SIGINT', err?: Error) => {
+  const gracefulShutdown = async (
+    source: 'uncaught' | 'unhandled' | 'SIGTERM' | 'SIGINT',
+    err?: Error,
+  ) => {
     if (shuttingDown) return;
     shuttingDown = true;
 
     log.error('AgentRuntime', `Process crash: ${source}`, { error: err?.message });
 
     // 1. Force-flush all in-flight checkpointer writes
-    try { await deps.checkpointer.flushAll(); } catch (e) {
-      log.error('AgentRuntime', 'Failed to flush checkpointer on crash', { error: (e as Error).message });
+    try {
+      await deps.checkpointer.flushAll();
+    } catch (e) {
+      log.error('AgentRuntime', 'Failed to flush checkpointer on crash', {
+        error: (e as Error).message,
+      });
     }
 
     // 2. Record to DLQ
@@ -252,7 +259,7 @@ export async function attemptRunRecovery(
   runId: string,
   checkpointer: StateCheckpointer,
   leaseManager: LeaseManager,
-  options?: { tenantId?: string; maxLeaseAgeMs?: number }
+  options?: { tenantId?: string; maxLeaseAgeMs?: number },
 ): Promise<RunRecoveryResult> {
   const state = await checkpointer.loadCheckpoint(runId);
   if (!state) return { status: 'not_found', completedToolCallIds: new Set() };
@@ -292,7 +299,7 @@ export class StepTimeoutManager {
     fn: (signal: AbortSignal) => Promise<T>,
     timeoutMs: number,
     fallback: T,
-    onTimeout?: () => void
+    onTimeout?: () => void,
   ): Promise<T> {
     const timer = setTimeout(() => {
       this.abortController.abort(new Error(`Step timeout after ${timeoutMs}ms`));
@@ -332,10 +339,10 @@ Wire into `agentRuntime.execute()`: pass `AbortSignal` to provider's `call()` me
 ```typescript
 // New file: src/ultimate/subAgentGuard.ts
 export interface SubAgentLimits {
-  maxSteps: number;        // 25
-  maxTokens: number;       // 50_000
-  maxWallClockMs: number;  // 5 * 60_000
-  maxCostUsd: number;      // 0.50
+  maxSteps: number; // 25
+  maxTokens: number; // 50_000
+  maxWallClockMs: number; // 5 * 60_000
+  maxCostUsd: number; // 0.50
   noProgressSteps: number; // 5 steps with no measurable progress
 }
 
@@ -389,9 +396,9 @@ Wire into `subAgentExecutor.executeNode()`.
 ```typescript
 // New file: src/runtime/providerFallbackChain.ts
 export interface ProviderChainConfig {
-  primary: string;          // 'claude-sonnet-4'
-  fallbacks: string[];      // ['gpt-4o', 'gemini-2.5-pro']
-  degradeModel?: string;    // 'gpt-4o-mini' (cheap, always works)
+  primary: string; // 'claude-sonnet-4'
+  fallbacks: string[]; // ['gpt-4o', 'gemini-2.5-pro']
+  degradeModel?: string; // 'gpt-4o-mini' (cheap, always works)
   circuitBreakerPerProvider: boolean;
 }
 
@@ -399,7 +406,7 @@ export class ProviderFallbackChain {
   constructor(
     private config: ProviderChainConfig,
     private router: ModelRouter,
-    private breakers: Map<string, CircuitBreaker>
+    private breakers: Map<string, CircuitBreaker>,
   ) {}
 
   async call(prompt: LLMRequest, context: AgentExecutionContext): Promise<LLMResponse> {
@@ -429,13 +436,21 @@ export class ProviderFallbackChain {
     if (this.config.degradeModel) {
       try {
         const result = await this.router.callByName(this.config.degradeModel, prompt, context);
-        return { ...result, provider: this.config.degradeModel, tried, fellBackFrom: true, degraded: true };
+        return {
+          ...result,
+          provider: this.config.degradeModel,
+          tried,
+          fellBackFrom: true,
+          degraded: true,
+        };
       } catch (err) {
         lastError.push(err as Error);
       }
     }
 
-    throw new AllProvidersExhaustedError(`All providers failed: ${lastError.map(e => e.message).join('; ')}`);
+    throw new AllProvidersExhaustedError(
+      `All providers failed: ${lastError.map((e) => e.message).join('; ')}`,
+    );
   }
 }
 ```
@@ -455,14 +470,17 @@ export interface QueuedCompensation {
   toolName: string;
   args: Record<string, unknown>;
   attempts: number;
-  nextAttemptAt: string;  // ISO timestamp
+  nextAttemptAt: string; // ISO timestamp
   lastError?: string;
 }
 
 export class CompensationQueue {
   private store: NDJSONStore<QueuedCompensation>;
 
-  async enqueue(action: CompensableAction, opts: { tenantId?: string; delayMs?: number }): Promise<void> {
+  async enqueue(
+    action: CompensableAction,
+    opts: { tenantId?: string; delayMs?: number },
+  ): Promise<void> {
     const entry: QueuedCompensation = {
       id: generateId(),
       actionId: action.actionId,
@@ -475,7 +493,9 @@ export class CompensationQueue {
     await this.store.append(entry);
   }
 
-  async processPending(handlers: Map<string, CompensationHandler>): Promise<{ succeeded: number; failed: number }> {
+  async processPending(
+    handlers: Map<string, CompensationHandler>,
+  ): Promise<{ succeeded: number; failed: number }> {
     // Background task — runs every 30s
     // Reads pending, attempts each, re-queues failures with exponential backoff
     // Max 10 attempts, then moves to manual review
@@ -492,6 +512,7 @@ export class CompensationQueue {
 **3.2 Add Reflexion self-correction loop** (2 days)
 
 When `UnifiedVerificationPipeline` flags an output as low-confidence, automatically:
+
 1. Generate a verbal reflection (LLM self-critique)
 2. Re-prompt the LLM with the reflection as additional context
 3. Re-run the verification
@@ -632,7 +653,9 @@ describe('Reversibility — process crash safety', () => {
     await executePromise.catch(() => {});
 
     const dlqEntries = runtime.dlq.list({ runId: ctx.runId });
-    expect(dlqEntries.some(e => e.category === 'execution' && e.tags.includes('crash'))).toBe(true);
+    expect(dlqEntries.some((e) => e.category === 'execution' && e.tags.includes('crash'))).toBe(
+      true,
+    );
   });
 
   it('flushes in-flight checkpointer on SIGTERM', async () => {
@@ -643,7 +666,11 @@ describe('Reversibility — process crash safety', () => {
 describe('Reversibility — provider fallback', () => {
   it('falls back to secondary provider when primary circuit opens', async () => {
     const breaker = new CircuitBreaker(2, 1000);
-    const chain = new ProviderFallbackChain({ primary: 'openai', fallbacks: ['anthropic'] }, router, new Map([['openai', breaker]]));
+    const chain = new ProviderFallbackChain(
+      { primary: 'openai', fallbacks: ['anthropic'] },
+      router,
+      new Map([['openai', breaker]]),
+    );
 
     // Force openai to fail
     breaker.onFailure();
@@ -660,18 +687,18 @@ describe('Reversibility — provider fallback', () => {
 
 ## Part 7: Implementation Timeline
 
-| Week | Day | Task | LOC | Risk |
-|------|-----|------|-----|------|
-| 1 | Mon | Tier 1.1: Process crash safety | 100 | Low |
-| 1 | Tue | Tier 1.2: Delete dead code (runtimeIntegration, decide saga fate) | -3,500 | Low |
-| 1 | Wed | Tier 1.3: Automatic run recovery from checkpoint | 200 | Med |
-| 1 | Thu | Tier 2.1: Step-level timeout with AbortController | 80 | Low |
-| 1 | Fri | Tier 2.2: Sub-agent lifetime guard | 150 | Med |
-| 2 | Mon | Tier 2.3: Provider fallback chain | 200 | Med |
-| 2 | Tue | Tier 2.4: Compensation retry queue | 250 | Med |
-| 2 | Wed | Tier 3.1: Validation feedback → LLM retry | 100 | Low |
-| 2 | Thu | Tier 3.2: Reflexion self-correction loop | 200 | Med |
-| 2 | Fri | Tier 4: Observability + tests + docs | 300 | Low |
+| Week | Day | Task                                                              | LOC    | Risk |
+| ---- | --- | ----------------------------------------------------------------- | ------ | ---- |
+| 1    | Mon | Tier 1.1: Process crash safety                                    | 100    | Low  |
+| 1    | Tue | Tier 1.2: Delete dead code (runtimeIntegration, decide saga fate) | -3,500 | Low  |
+| 1    | Wed | Tier 1.3: Automatic run recovery from checkpoint                  | 200    | Med  |
+| 1    | Thu | Tier 2.1: Step-level timeout with AbortController                 | 80     | Low  |
+| 1    | Fri | Tier 2.2: Sub-agent lifetime guard                                | 150    | Med  |
+| 2    | Mon | Tier 2.3: Provider fallback chain                                 | 200    | Med  |
+| 2    | Tue | Tier 2.4: Compensation retry queue                                | 250    | Med  |
+| 2    | Wed | Tier 3.1: Validation feedback → LLM retry                         | 100    | Low  |
+| 2    | Thu | Tier 3.2: Reflexion self-correction loop                          | 200    | Med  |
+| 2    | Fri | Tier 4: Observability + tests + docs                              | 300    | Low  |
 
 **Total: ~10 days, ~1,500 LOC added, ~3,500 LOC removed.**
 
@@ -746,32 +773,32 @@ After 2 weeks:
 
 ### A.2 The Saga Files (3,193 LOC, 12 files)
 
-| File | What's there | Wired? |
-|------|--------------|--------|
-| `sagaCoordinator.ts` (646) | Full saga orchestrator with nested coordinators, parallel branches, error handling | ❌ only CLI |
-| `sagaBuilder.ts` (239) | Fluent API for building saga definitions | ❌ only coordinator |
-| `executionGraph.ts` (281) | DAG representation with topological sort | ❌ only coordinator |
-| `workerPool.ts` (93) | Concurrent worker pool for saga steps | ❌ only coordinator |
-| `checkpointManager.ts` (124) | Saga-specific checkpointing | ❌ only coordinator |
-| `compensationScheduler.ts` (163) | Compensate in reverse dependency order | ❌ only coordinator |
-| `approvalManager.ts` (326) | Human-in-the-loop approval gates | ❌ only coordinator |
-| `retryController.ts` (114) | Per-step retry policies | ❌ only coordinator |
-| `sagaStore.ts` (137) | Persistent saga state (NDJSON) | ❌ only coordinator |
-| `examples.ts` (127) | Built-in example sagas (order-fulfillment, refund-approval) | ❌ only coordinator |
-| `types.ts` (225) | Saga type definitions | ❌ only coordinator |
-| `index.ts` (17) | Barrel export | ❌ only CLI |
+| File                             | What's there                                                                       | Wired?              |
+| -------------------------------- | ---------------------------------------------------------------------------------- | ------------------- |
+| `sagaCoordinator.ts` (646)       | Full saga orchestrator with nested coordinators, parallel branches, error handling | ❌ only CLI         |
+| `sagaBuilder.ts` (239)           | Fluent API for building saga definitions                                           | ❌ only coordinator |
+| `executionGraph.ts` (281)        | DAG representation with topological sort                                           | ❌ only coordinator |
+| `workerPool.ts` (93)             | Concurrent worker pool for saga steps                                              | ❌ only coordinator |
+| `checkpointManager.ts` (124)     | Saga-specific checkpointing                                                        | ❌ only coordinator |
+| `compensationScheduler.ts` (163) | Compensate in reverse dependency order                                             | ❌ only coordinator |
+| `approvalManager.ts` (326)       | Human-in-the-loop approval gates                                                   | ❌ only coordinator |
+| `retryController.ts` (114)       | Per-step retry policies                                                            | ❌ only coordinator |
+| `sagaStore.ts` (137)             | Persistent saga state (NDJSON)                                                     | ❌ only coordinator |
+| `examples.ts` (127)              | Built-in example sagas (order-fulfillment, refund-approval)                        | ❌ only coordinator |
+| `types.ts` (225)                 | Saga type definitions                                                              | ❌ only coordinator |
+| `index.ts` (17)                  | Barrel export                                                                      | ❌ only CLI         |
 
 ### A.3 Test Coverage
 
-| Test | Status | Count |
-|------|--------|-------|
-| `tests/atr/` (ExecutionScheduler, lease, idempotency, etc.) | ✅ 223 pass | 223 |
-| `tests/chaos-monkey.test.ts` | ✅ 10 scenarios pass | 10 |
-| `tests/runtime/dagConverter.test.ts` (C1) | ✅ 7 pass | 7 |
-| `tests/runtime/toolPlanner.test.ts` (C1) | ✅ 8 pass | 8 |
-| `tests/ultimate/topologyRouter.test.ts` (C1) | ✅ 70 pass | 70 |
-| `tests/saga/` (10 files) | ✅ all pass | ~80 |
-| Total | | ~400 |
+| Test                                                        | Status               | Count |
+| ----------------------------------------------------------- | -------------------- | ----- |
+| `tests/atr/` (ExecutionScheduler, lease, idempotency, etc.) | ✅ 223 pass          | 223   |
+| `tests/chaos-monkey.test.ts`                                | ✅ 10 scenarios pass | 10    |
+| `tests/runtime/dagConverter.test.ts` (C1)                   | ✅ 7 pass            | 7     |
+| `tests/runtime/toolPlanner.test.ts` (C1)                    | ✅ 8 pass            | 8     |
+| `tests/ultimate/topologyRouter.test.ts` (C1)                | ✅ 70 pass           | 70    |
+| `tests/saga/` (10 files)                                    | ✅ all pass          | ~80   |
+| Total                                                       |                      | ~400  |
 
 ### A.4 What's Missing in Tests
 

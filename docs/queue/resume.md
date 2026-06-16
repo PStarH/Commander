@@ -9,13 +9,13 @@ When WorkCoordinator starts with a `SqliteWorkQueueStore`, it scans persisted it
 ## State transitions
 
 | Pre-crash state | Post-recover state | `attempts` | `claimedBy` |
-|-----------------|--------------------|-----------:|-------------|
-| `PENDING`       | `PENDING`          | unchanged  | `undefined`  |
-| `CLAIMED`       | `PENDING`          | unchanged  | `undefined`  |
-| `RUNNING`       | `PENDING`          | unchanged  | `undefined`  |
-| `COMPLETED`     | `COMPLETED`        | unchanged  | preserved    |
-| `FAILED`        | `FAILED`           | unchanged  | preserved    |
-| `REASSIGNED`    | `REASSIGNED`       | unchanged  | preserved    |
+| --------------- | ------------------ | ---------: | ----------- |
+| `PENDING`       | `PENDING`          |  unchanged | `undefined` |
+| `CLAIMED`       | `PENDING`          |  unchanged | `undefined` |
+| `RUNNING`       | `PENDING`          |  unchanged | `undefined` |
+| `COMPLETED`     | `COMPLETED`        |  unchanged | preserved   |
+| `FAILED`        | `FAILED`           |  unchanged | preserved   |
+| `REASSIGNED`    | `REASSIGNED`       |  unchanged | preserved   |
 
 **In-flight items** (`CLAIMED`, `RUNNING`) are reset to `PENDING` because the prior claimer is dead.
 
@@ -23,9 +23,9 @@ When WorkCoordinator starts with a `SqliteWorkQueueStore`, it scans persisted it
 
 A process crash does **not** count as an attempt. If the work item was on attempt 1 of 2 when the process died, the next claim makes it attempt 2. The semantic is "the prior in-flight claim is lost, the next claim counts as `attempts + 1`".
 
-| Pre-crash | After recover | After re-claim | After fail | Result |
-|-----------|---------------|----------------|------------|--------|
-| attempts=1, maxAttempts=2, RUNNING | attempts=1, PENDING | attempts=2, CLAIMED | attempts=2 | FAILED (2 ≥ 2) |
+| Pre-crash                          | After recover       | After re-claim      | After fail | Result                                        |
+| ---------------------------------- | ------------------- | ------------------- | ---------- | --------------------------------------------- |
+| attempts=1, maxAttempts=2, RUNNING | attempts=1, PENDING | attempts=2, CLAIMED | attempts=2 | FAILED (2 ≥ 2)                                |
 | attempts=1, maxAttempts=3, RUNNING | attempts=1, PENDING | attempts=2, CLAIMED | attempts=2 | REASSIGNED → PENDING (one more retry allowed) |
 
 ## Compensation (M2.1) integration

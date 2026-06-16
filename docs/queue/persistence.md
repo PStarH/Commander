@@ -4,21 +4,23 @@
 
 WorkCoordinator accepts a `WorkQueueStore` dependency injection. Two implementations ship:
 
-| Backend | Class | When to use |
-|---------|-------|-------------|
-| **In-memory** (default) | `InMemoryWorkQueueStore` | Tests, single-process dev, ephemeral agents |
-| **SQLite** | `SqliteWorkQueueStore` | Production, crash recovery, multi-step workflows |
+| Backend                 | Class                    | When to use                                      |
+| ----------------------- | ------------------------ | ------------------------------------------------ |
+| **In-memory** (default) | `InMemoryWorkQueueStore` | Tests, single-process dev, ephemeral agents      |
+| **SQLite**              | `SqliteWorkQueueStore`   | Production, crash recovery, multi-step workflows |
 
 Both implement the same interface, so swapping is zero-cost.
 
 ## When to switch
 
 Use **InMemory** when:
+
 - Writing unit/integration tests (zero setup)
 - Running a one-shot CLI command (`commander run "task"`)
 - Process death means losing the run is acceptable
 
 Use **SQLite** when:
+
 - The run spans minutes/hours and a crash would lose progress
 - The orchestrator might be killed mid-execution (deploys, OOM, manual kill)
 - You need an audit trail of work claims
@@ -81,13 +83,13 @@ CREATE INDEX idx_work_tenant ON work_items(tenant_id) WHERE tenant_id IS NOT NUL
 
 ## Performance
 
-| Operation | InMemory | Sqlite (WAL) |
-|-----------|----------|--------------|
-| `enqueue` | ~0.01ms | ~0.2ms |
-| `update` (status flip) | ~0.01ms | ~0.2ms |
-| `loadAll` (1000 items) | ~0.5ms | ~3ms |
-| `updateMany` (50 items) | n/a | ~5ms (in transaction) |
-| 1000 enqueue + loadAll | ~10ms | ~220ms |
+| Operation               | InMemory | Sqlite (WAL)          |
+| ----------------------- | -------- | --------------------- |
+| `enqueue`               | ~0.01ms  | ~0.2ms                |
+| `update` (status flip)  | ~0.01ms  | ~0.2ms                |
+| `loadAll` (1000 items)  | ~0.5ms   | ~3ms                  |
+| `updateMany` (50 items) | n/a      | ~5ms (in transaction) |
+| 1000 enqueue + loadAll  | ~10ms    | ~220ms                |
 
 Hot path: `claim` is O(1) Map lookup + 1 SQLite UPDATE = still sub-millisecond.
 
@@ -101,10 +103,11 @@ Concurrent writes from two processes may corrupt the SQLite DB. The single-proce
 
 ```typescript
 import { resetWorkCoordinator } from '@commander/core';
-resetWorkCoordinator();  // clears in-memory + closes store
+resetWorkCoordinator(); // clears in-memory + closes store
 ```
 
 For a hard reset (drop the SQLite file):
+
 ```bash
 rm -rf .commander/work_queue.db .commander/work_queue.db-shm .commander/work_queue.db-wal
 ```
