@@ -1,3 +1,14 @@
+.claude/
+apps/api/.commander/
+packages/core/.commander/intelligence/
+packages/core/.commander/skills/
+packages/core/screenshots/
+*.orig
+*.rej
+*.tsbuildinfo
+/test-output.txt
+/hello.ts
+
 # Dependencies
 node_modules/
 .pnpm-store/
