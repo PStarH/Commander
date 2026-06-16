@@ -1,0 +1,18 @@
+apiVersion: v2
+name: commander
+description: Commander Multi-Agent Orchestration System — production-grade Helm chart
+type: application
+version: 0.3.0
+appVersion: "0.3.0"
+keywords:
+  - agent
+  - orchestration
+  - multi-agent
+  - llm
+  - ai
+maintainers:
+  - name: Commander Team
+home: https://github.com/Commander/Commander
+sources:
+  - https://github.com/Commander/Commander
+icon: https://raw.githubusercontent.com/Commander/Commander/main/docs/assets/commander-icon.png

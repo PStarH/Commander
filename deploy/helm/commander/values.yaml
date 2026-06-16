@@ -1,0 +1,160 @@
+# =============================================================================
+# Commander Helm Chart — Values
+# =============================================================================
+
+# Deployment tier: hobbyist | team | enterprise
+# Overrides auto-detection when set.
+tier: "team"
+
+# Global image settings
+image:
+  repository: commander
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# API Server
+api:
+  replicas: 2
+  port: 4000
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  # Health check configuration
+  health:
+    livenessPath: /health
+    readinessPath: /health
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  # Autoscaling
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+# Web GUI
+web:
+  enabled: true
+  replicas: 1
+  port: 80
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# LLM Provider configuration
+llm:
+  # Primary provider (auto-detected from env if not set)
+  provider: ""
+  model: ""
+  # API keys — use existing secrets or set via env
+  openaiApiKeySecret: ""
+  anthropicApiKeySecret: ""
+  googleApiKeySecret: ""
+
+# Redis configuration (Enterprise tier)
+redis:
+  enabled: false
+  image:
+    repository: redis
+    tag: "7-alpine"
+  port: 6379
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+
+# Persistence
+persistence:
+  enabled: true
+  # Storage class for state/traces/memory volumes
+  storageClass: ""
+  # Size per volume
+  stateSize: 5Gi
+  tracesSize: 10Gi
+  memorySize: 5Gi
+  resultsSize: 10Gi
+
+# Commander configuration
+config:
+  # Node environment
+  nodeEnv: production
+  # Log level: debug | info | warn | error
+  logLevel: info
+  # CORS allowed origins (comma-separated)
+  corsOrigins: ""
+  # API rate limit (requests per minute per IP)
+  rateLimitPerMinute: 120
+  # Token budget hard cap per run
+  tokenBudgetHardCap: 200000
+  # Max concurrent runs
+  maxConcurrency: 20
+  # Multi-tenant provider: null | simple | multi
+  tenantProvider: "simple"
+
+# Observability
+observability:
+  # Prometheus metrics
+  metrics:
+    enabled: true
+    port: 9090
+    path: /metrics
+  # OpenTelemetry export
+  otel:
+    enabled: false
+    endpoint: ""
+    serviceName: commander
+
+# Ingress
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: commander.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Service account
+serviceAccount:
+  create: true
+  name: ""
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+# Security context
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}
