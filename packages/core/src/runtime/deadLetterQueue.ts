@@ -102,10 +102,12 @@ export class DeadLetterQueue {
     recovered?: boolean;
     tags?: string[];
     failureMode?: FailureMode;
+    failureModeNumber?: number;
     payload?: Record<string, unknown>;
   }): void {
     const tags = [...(spec.tags ?? [])];
     if (spec.failureMode) tags.push(failureModeTag(spec.failureMode));
+    if (spec.failureModeNumber !== undefined) tags.push(`mode:${spec.failureModeNumber}`);
     const entry: DeadLetterEntry = {
       id: `${spec.category}-${spec.operationName}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       category: spec.category,

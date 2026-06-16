@@ -8,6 +8,7 @@ export const DEFAULT_CONFIG: AgentRuntimeConfig = {
   maxRetries: 2,
   retryDelayMs: 1000,
   timeoutMs: 180000,
+  llmTimeoutMs: 120000,
   maxConcurrency: 5,
   observationMaskWindow: 10,
   enableDescendingScheduler: true,

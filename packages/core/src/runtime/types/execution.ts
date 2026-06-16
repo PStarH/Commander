@@ -185,6 +185,10 @@ export interface AgentRuntimeConfig {
   maxRetries: number;
   retryDelayMs: number;
   timeoutMs: number;
+  /** Dedicated timeout for LLM provider calls (default: 120000ms). */
+  llmTimeoutMs?: number;
+  /** Max reflexion self-correction iterations on low-confidence verification failure (default: 2). */
+  reflexionMaxIterations?: number;
   maxConcurrency: number;
   /** Smart model router: user-configurable, capability-based model selection. */
   smartModelRouter?: {

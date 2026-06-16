@@ -239,6 +239,12 @@ export class MetricsCollector {
     this.recordHistogram('step_latency_ms', 'Per-step latency in ms (Tier 4.2)', durationMs, LATENCY_BUCKETS_MS, labels);
   }
 
+  recordCostByFailureMode(mode: string, costUsd: number, tenantId?: string): void {
+    const labels: MetricLabel[] = [{ name: 'failure_mode', value: mode }];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('cost_by_failure_mode_usd', 'Cost attributed to failure mode (USD)', costUsd, labels);
+  }
+
   // ── Export ──
 
   /** Export metrics as OpenMetrics (Prometheus-compatible) text format */

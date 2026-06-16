@@ -116,6 +116,15 @@ export interface AgentRuntimeInterface {
   /** Return cost estimator history. */
   getCostEstimatorHistory(): HistoricalTaskCost[][];
 
+  /** Return per-provider health snapshot for the dashboard. */
+  getProviderHealth(): Array<{
+    provider: string;
+    state: string;
+    errorRate: number;
+    requestCount: number;
+    lastFailureAt: number;
+  }>;
+
   /** Dispose sub-resources (timers, file handles) when this runtime is discarded. */
   dispose(): void;
 }

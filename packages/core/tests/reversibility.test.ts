@@ -27,6 +27,11 @@ import { StateCheckpointer, type CheckpointState } from '../src/runtime/stateChe
 import { CircuitBreaker } from '../src/runtime/circuitBreaker';
 import { classifyLLMError, computeBackoff } from '../src/runtime/llmRetry';
 import { AgentRuntime } from '../src/runtime/agentRuntime';
+import { MockLLMProvider } from '../src/runtime/mockLLMProvider';
+import { ModelRouter, resetModelRouter } from '../src/runtime/modelRouter';
+import { resetMessageBus } from '../src/runtime/messageBus';
+import { resetTraceRecorder } from '../src/runtime/executionTrace';
+import { getMetricsCollector, resetMetricsCollector } from '../src/runtime/metricsCollector';
 import { SimpleTenantProvider } from '../src/runtime/tenantProvider';
 import type { AgentExecutionContext } from '../src/runtime/types';
 
@@ -325,6 +330,119 @@ describe('M8: Tool wrong output → verification fail → reflexion → correct 
     const mod = require('../src/memory/reflexionInjector') as Record<string, unknown>;
     assert.ok(mod, 'reflexionInjector module loads');
   });
+
+  it('v2 fix: explicit reflexion self-correction loop recovers from low-confidence verification failure', async () => {
+    resetModelRouter();
+    resetMessageBus();
+    resetTraceRecorder();
+    const router = new ModelRouter();
+    const runtime = new AgentRuntime(
+      {
+        maxRetries: 1,
+        timeoutMs: 5000,
+        llmTimeoutMs: 5000,
+        reflexionMaxIterations: 2,
+      } as import('../src/runtime/types').AgentRuntimeConfig,
+      router,
+    );
+
+    let callIndex = 0;
+    const provider = new MockLLMProvider('reflexion', {
+      defaultResponse: 'fallback',
+    });
+    provider.call = async (req) => {
+      callIndex++;
+      const content = callIndex === 1 ? 'bad output' : 'good output';
+      return {
+        content,
+        model: req.model,
+        usage: { promptTokens: 10, completionTokens: content.length, totalTokens: 10 + content.length },
+        finishReason: 'stop',
+      };
+    };
+    runtime.registerProvider('openai', provider);
+
+    let verifyIndex = 0;
+    (runtime as any).verificationPipeline.verify = async () => {
+      verifyIndex++;
+      if (verifyIndex === 1) {
+        return {
+          passed: false,
+          confidence: 0.3,
+          signals: [{ message: 'missing required field', severity: 'high' }],
+          tokensUsed: 0,
+          stagesRun: ['schema'],
+          taskType: 'coding',
+        };
+      }
+      return {
+        passed: true,
+        confidence: 0.9,
+        signals: [],
+        tokensUsed: 0,
+        stagesRun: ['schema'],
+        taskType: 'coding',
+      };
+    };
+
+    const result = await runtime.execute({
+      agentId: 'reflexion-agent',
+      projectId: 'reflexion-test',
+      goal: 'Return a valid JSON object.',
+      contextData: {},
+      availableTools: [],
+      maxSteps: 3,
+      tokenBudget: 1000,
+    });
+
+    assert.strictEqual(result.status, 'success');
+    assert.ok(callIndex >= 2, `Expected >=2 LLM calls (reflexion loop), got ${callIndex}`);
+    assert.ok(verifyIndex >= 2, `Expected >=2 verification calls, got ${verifyIndex}`);
+    assert.ok((runtime as any).reflexionInjector.size >= 1, 'ReflexionInjector should have recorded a failure reflection');
+  });
+
+  it('v2 fix: reflexion loop does not run when confidence is high', async () => {
+    resetModelRouter();
+    resetMessageBus();
+    resetTraceRecorder();
+    const router = new ModelRouter();
+    const runtime = new AgentRuntime(
+      {
+        maxRetries: 1,
+        timeoutMs: 5000,
+        llmTimeoutMs: 5000,
+        reflexionMaxIterations: 2,
+      } as import('../src/runtime/types').AgentRuntimeConfig,
+      router,
+    );
+
+    const provider = new MockLLMProvider('reflexion', { defaultResponse: 'fallback' });
+    runtime.registerProvider('openai', provider);
+
+    (runtime as any).verificationPipeline.verify = async () => ({
+      passed: false,
+      confidence: 0.7,
+      signals: [{ message: 'minor style issue' }],
+      tokensUsed: 0,
+      stagesRun: ['style'],
+      taskType: 'coding',
+    });
+
+    await runtime.execute({
+      agentId: 'reflexion-agent',
+      projectId: 'reflexion-test',
+      goal: 'Return a valid JSON object.',
+      contextData: {},
+      availableTools: [],
+      maxSteps: 3,
+      tokenBudget: 1000,
+    });
+
+    const guidance = provider.lastRequest?.messages.find(
+      (m: { role: string; content: string }) => m.role === 'system' && m.content.includes('[Reflexion guidance'),
+    );
+    assert.strictEqual(guidance, undefined, 'High-confidence failure should not trigger reflexion guidance');
+  });
 });
 
 describe('M9: Tenant quota exceeded → TENANT_RATE_LIMIT or TENANT_CONCURRENCY_LIMIT', () => {
@@ -461,7 +579,37 @@ describe('M16: Token budget exhausted → tokenGovernor aborts', () => {
   });
 });
 
-describe('M17: LLM 10+ min → llmTimeoutMs aborts at 2s, fallback in <1s', () => {
+describe('M17: LLM call hangs → llmTimeoutMs aborts with StepTimeoutManager', () => {
+  function makeRuntime(config: Partial<import('../src/runtime/types').AgentRuntimeConfig> = {}, provider: MockLLMProvider) {
+    resetModelRouter();
+    resetMessageBus();
+    resetTraceRecorder();
+    const router = new ModelRouter();
+    const runtime = new AgentRuntime(
+      {
+        maxRetries: 0,
+        timeoutMs: 5000,
+        llmTimeoutMs: 200,
+        ...config,
+      } as import('../src/runtime/types').AgentRuntimeConfig,
+      router,
+    );
+    runtime.registerProvider('openai', provider);
+    return runtime;
+  }
+
+  function makeCtx(): AgentExecutionContext {
+    return {
+      agentId: 'timeout-agent',
+      projectId: 'timeout-test',
+      goal: 'Return a short greeting.',
+      contextData: {},
+      availableTools: [],
+      maxSteps: 3,
+      tokenBudget: 1000,
+    };
+  }
+
   it('regression: StepTimeoutManager.wrap() rejects with StepTimeoutError on timeout', async () => {
     const mgr = new StepTimeoutManager();
     const slow = new Promise<string>((resolve) => setTimeout(() => resolve('late'), 500));
@@ -486,6 +634,33 @@ describe('M17: LLM 10+ min → llmTimeoutMs aborts at 2s, fallback in <1s', () =
   it('v2 fix: AgentRuntimeConfig accepts llmTimeoutMs (Tier 2.1 type addition)', () => {
     const runtime = new AgentRuntime({ maxConcurrency: 1 });
     assert.ok(runtime, 'AgentRuntime constructs with default config');
+  });
+
+  it('v2 fix: AgentRuntime aborts a hanging LLM call using llmTimeoutMs', async () => {
+    const hangingProvider = new MockLLMProvider('hanger', { defaultResponse: 'never' });
+    hangingProvider.call = async () => new Promise(() => { /* hang forever */ });
+    const runtime = makeRuntime({}, hangingProvider);
+
+    const start = Date.now();
+    const result = await runtime.execute(makeCtx());
+    const elapsed = Date.now() - start;
+
+    assert.strictEqual(result.status, 'failed');
+    assert.ok(elapsed < 1000, `Expected LLM timeout ~200ms, got ${elapsed}ms`);
+  });
+
+  it('v2 fix: custom llmTimeoutMs overrides the default', async () => {
+    const hangingProvider = new MockLLMProvider('hanger', { defaultResponse: 'never' });
+    hangingProvider.call = async () => new Promise(() => { /* hang forever */ });
+    const runtime = makeRuntime({ llmTimeoutMs: 500 }, hangingProvider);
+
+    const start = Date.now();
+    const result = await runtime.execute(makeCtx());
+    const elapsed = Date.now() - start;
+
+    assert.strictEqual(result.status, 'failed');
+    assert.ok(elapsed >= 400, `Expected timeout >=400ms with custom config, got ${elapsed}ms`);
+    assert.ok(elapsed < 1500, `Expected timeout <1500ms, got ${elapsed}ms`);
   });
 });
 
@@ -515,6 +690,115 @@ describe('M18: Sub-agent forever → noProgressThreshold aborts, cycle detector 
       execSrc.includes('SubAgentGuard') || execSrc.includes('subAgentGuard'),
       'subAgentExecutor should reference SubAgentGuard after Tier 2.2',
     );
+  });
+});
+
+describe('M19: Tier 4 observability → DLQ tags, latency histograms, cost-by-failure-mode, provider health', () => {
+  it('v2 fix: DLQ entries carry numeric failure-mode tags', () => {
+    const tmp = freshTmpDir('m19-dlq');
+    const dlq = new DeadLetterQueue(tmp);
+    dlq.enqueue({
+      category: 'compensation',
+      operationName: 'compensation.exhausted',
+      errorMessage: 'exhausted',
+      failureMode: 'compensation_exhausted',
+      failureModeNumber: 12,
+    });
+    dlq.flush();
+
+    const files = fs.readdirSync(tmp);
+    assert.ok(files.length >= 1, 'DLQ file should be written');
+    const content = fs.readFileSync(path.join(tmp, files[0]), 'utf-8');
+    assert.ok(content.includes('mode:12'), `Expected mode:12 tag in DLQ entry, got: ${content}`);
+    assert.ok(content.includes('mode:compensation_exhausted'), `Expected string failure mode tag, got: ${content}`);
+  });
+
+  it('v2 fix: verification latency is recorded as a step_latency_ms histogram', async () => {
+    resetMetricsCollector();
+    resetModelRouter();
+    resetMessageBus();
+    resetTraceRecorder();
+    const router = new ModelRouter();
+    const runtime = new AgentRuntime(
+      { maxRetries: 0, timeoutMs: 5000, llmTimeoutMs: 5000 } as import('../src/runtime/types').AgentRuntimeConfig,
+      router,
+    );
+    const provider = new MockLLMProvider('obs', { defaultResponse: 'ok' });
+    runtime.registerProvider('openai', provider);
+
+    (runtime as any).verificationPipeline.verify = async () => ({
+      passed: false,
+      confidence: 0.3,
+      signals: [{ message: 'bad' }],
+      tokensUsed: 0,
+      stagesRun: ['schema'],
+      taskType: 'coding',
+    });
+
+    await runtime.execute({
+      agentId: 'obs-agent',
+      projectId: 'obs-test',
+      goal: 'Return valid JSON.',
+      contextData: {},
+      availableTools: [],
+      maxSteps: 2,
+      tokenBudget: 1000,
+    });
+
+    const metrics = getMetricsCollector().exportOpenMetrics();
+    assert.ok(metrics.includes('step_latency_ms'), 'Expected step_latency_ms metric');
+  });
+
+  it('v2 fix: verification failure attributes cost to failure mode', async () => {
+    resetMetricsCollector();
+    resetModelRouter();
+    resetMessageBus();
+    resetTraceRecorder();
+    const router = new ModelRouter();
+    const runtime = new AgentRuntime(
+      { maxRetries: 0, timeoutMs: 5000, llmTimeoutMs: 5000 } as import('../src/runtime/types').AgentRuntimeConfig,
+      router,
+    );
+    const provider = new MockLLMProvider('obs', { defaultResponse: 'ok' });
+    runtime.registerProvider('openai', provider);
+
+    (runtime as any).verificationPipeline.verify = async () => ({
+      passed: false,
+      confidence: 0.3,
+      signals: [{ message: 'bad' }],
+      tokensUsed: 0,
+      stagesRun: ['schema'],
+      taskType: 'coding',
+    });
+
+    await runtime.execute({
+      agentId: 'obs-agent',
+      projectId: 'obs-test',
+      goal: 'Return valid JSON.',
+      contextData: {},
+      availableTools: [],
+      maxSteps: 2,
+      tokenBudget: 1000,
+    });
+
+    const metrics = getMetricsCollector().exportOpenMetrics();
+    assert.ok(metrics.includes('cost_by_failure_mode_usd'), 'Expected cost_by_failure_mode_usd metric');
+    assert.ok(metrics.includes('failure_mode="verification"'), 'Expected verification failure mode label');
+  });
+
+  it('v2 fix: getProviderHealth returns per-provider snapshot', () => {
+    resetModelRouter();
+    resetMessageBus();
+    resetTraceRecorder();
+    const router = new ModelRouter();
+    const runtime = new AgentRuntime(
+      { maxConcurrency: 1 } as import('../src/runtime/types').AgentRuntimeConfig,
+      router,
+    );
+    runtime.registerProvider('openai', new MockLLMProvider('openai'));
+    const health = runtime.getProviderHealth();
+    assert.ok(health.some(h => h.provider === 'openai'), 'Expected openai in provider health');
+    assert.ok(health.every(h => typeof h.errorRate === 'number'), 'Expected errorRate for all providers');
   });
 });
 

@@ -324,6 +324,14 @@ export class CostEstimator {
   }
 
   /**
+   * Tier 4.4: Estimate cost for a concrete token usage. Useful when attributing
+   * cost to a specific failure mode without re-running the full estimate pipeline.
+   */
+  estimateCostFromUsage(model: string, promptTokens: number, completionTokens: number): number {
+    return this.estimateCostFromTokens(model, promptTokens, completionTokens);
+  }
+
+  /**
    * Export history for persistence (e.g., writing to disk between sessions).
    */
   exportHistory(): HistoricalTaskCost[][] {

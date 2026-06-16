@@ -110,6 +110,7 @@ import { OpenTelemetryExporter, getOTelExporter, executionTraceToOtlpSpans } fro
 import { exportSOPFromTrace, formatSOPAsMarkdown } from './sopExport';
 import type { OTelSpan } from './openTelemetryExporter';
 import { buildSystemPrompt, buildCacheAwareUserPrompt, computePrefixCacheKey } from './promptBuilder';
+import { loadProjectContext } from './projectContextLoader';
 import { ReflexionGenerator, type Reflexion, type ReflexionContext } from './reflexionGenerator';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -218,7 +219,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
     this.circuitBreaker.setObservability({
       onTransition: (from, to, provider) => {
         try { getMetricsCollector().recordCircuitTransition(from, to, provider ?? 'agentRuntime'); } catch { /* best-effort */ }
-        try { this.dlq.enqueue({ category: 'circuit_breaker', operationName: 'circuit.transition', errorMessage: `${from}->${to}`, tags: [`from:${from}`, `to:${to}`, `provider:${provider ?? 'agentRuntime'}`], failureMode: 'circuit_open' }); } catch { /* best-effort */ }
+        try { this.dlq.enqueue({ category: 'circuit_breaker', operationName: 'circuit.transition', errorMessage: `${from}->${to}`, tags: [`from:${from}`, `to:${to}`, `provider:${provider ?? 'agentRuntime'}`], failureMode: 'circuit_open', failureModeNumber: 11 }); } catch { /* best-effort */ }
         try { getIntentLog(undefined).write({ schemaVersion: 1, runId: 'circuit-breaker', capturedAt: new Date().toISOString(), stage: 'agentRuntime.circuit', decision: 'transition', reason: `circuit ${from}->${to}`, payload: { from, to, provider: provider ?? 'agentRuntime' } }); } catch { /* best-effort */ }
       },
     });
@@ -240,6 +241,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
           errorMessage: `Semantic circuit tripped after ${consecutiveFailures} consecutive verification failures: ${reason}`,
           tags: ['semantic_drift', 'verification_failure', `count:${consecutiveFailures}`],
           failureMode: 'verification',
+          failureModeNumber: 7,
         });
       } catch { /* best-effort */ }
       try {
@@ -277,7 +279,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       onFailed: (action, err) => { try { getMetricsCollector().recordCompensation(action.toolName, 'failed'); } catch { /* best-effort */ } try { getIntentLog(undefined).write({ schemaVersion: 1, runId: 'compensation', capturedAt: new Date().toISOString(), stage: 'agentRuntime.compensation', decision: 'failed', reason: err.slice(0, 200), payload: { toolName: action.toolName, actionId: action.actionId, args: JSON.stringify(action.args).slice(0, 500) } }); } catch { /* best-effort */ } },
       onExhausted: (action, err) => {
         try { getMetricsCollector().recordCompensation(action.toolName, 'exhausted'); } catch { /* best-effort */ }
-        try { this.dlq.enqueue({ category: 'compensation', operationName: 'compensation.exhausted', errorMessage: err, tags: [action.toolName], failureMode: 'compensation_exhausted' }); } catch { /* best-effort */ }
+        try { this.dlq.enqueue({ category: 'compensation', operationName: 'compensation.exhausted', errorMessage: err, tags: [action.toolName], failureMode: 'compensation_exhausted', failureModeNumber: 12 }); } catch { /* best-effort */ }
         try { getIntentLog(undefined).write({ schemaVersion: 1, runId: 'compensation', capturedAt: new Date().toISOString(), stage: 'agentRuntime.compensation', decision: 'exhausted', reason: err.slice(0, 200), payload: { toolName: action.toolName, actionId: action.actionId } }); } catch { /* best-effort */ }
       },
     });
@@ -1042,15 +1044,19 @@ export class AgentRuntime implements AgentRuntimeInterface {
     // Build registry summary for system prompt
     const registrySummary = buildRegistrySummary(twoTier.registry);
 
-    const systemPrompt = buildSystemPrompt(ctx, routing, this.config, this.tools, this.governor, registrySummary, twoTier.active.map(t => t.name));
+    // Load project context once per run. This is cached by file mtime and
+    // injected into the stable prefix so it participates in KV-cache reuse.
+    const projectContext = loadProjectContext();
+
+    const systemPrompt = buildSystemPrompt(ctx, routing, this.config, this.tools, this.governor, registrySummary, twoTier.active.map(t => t.name), taskType, projectContext);
 
     // KV-cache: track whether the stable system-prompt prefix changed
     // since the prior call. The prefix is tool-list + governance +
-    // registry summary + max-steps — all cacheable across requests.
+    // registry summary + max-steps + task-type + project-context — all cacheable across requests.
     // A hit lets the provider reuse prefix tokens, cutting cost and
     // latency (Anthropic reports 5x cost reduction on cached prefixes).
     const activeToolNames = twoTier.active.map(t => t.name);
-    const newPrefixKey = computePrefixCacheKey(this.config, this.tools, this.governor, registrySummary, activeToolNames);
+    const newPrefixKey = computePrefixCacheKey(this.config, this.tools, this.governor, registrySummary, activeToolNames, taskType, projectContext.cacheKey);
     const cacheHit = this.lastPrefixCacheKey !== undefined && this.lastPrefixCacheKey === newPrefixKey;
     this.lastPrefixCacheKey = newPrefixKey;
     try {
@@ -1131,6 +1137,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
         projectId: ctx.projectId, goal: ctx.goal,
         availableTools: ctx.availableTools,
         maxSteps: ctx.maxSteps, tokenBudget: ctx.tokenBudget,
+        projectContextCacheKey: projectContext.cacheKey,
+        projectContextFiles: projectContext.filesRead,
       },
       totalDurationMs: 0,
     });
@@ -1968,8 +1976,13 @@ export class AgentRuntime implements AgentRuntimeInterface {
             tokenBudgetRemaining: this.governor.getState().remainingTokens,
             previousFailures: lastError ? [lastError] : undefined,
           };
+          const verifStart = Date.now();
           verifReport = await this.verificationPipeline.verify(verifCtx);
           this.governor.reportUsage(verifReport.tokensUsed);
+          try { getMetricsCollector().recordStepLatency('verification', Date.now() - verifStart, getGlobalTenantProvider().getCurrentTenantId() ?? undefined); } catch { /* best-effort */ }
+          if (!verifReport.passed) {
+            this.recordCostByFailureMode('verification', response);
+          }
         }
 
         // Record verification result to samples store
@@ -2028,8 +2041,75 @@ export class AgentRuntime implements AgentRuntimeInterface {
         }
 
         if (!verifReport.passed && attempt < this.config.maxRetries) {
+          const maxReflexion = this.config.reflexionMaxIterations ?? 2;
+
+          // Tier 3.2 (RFC v2): explicit reflection-driven self-correction loop for
+          // low-confidence verification failures. Heuristic-only generation avoids
+          // an extra LLM call; cap iterations to prevent runaway cost.
+          if (verifReport.confidence < 0.5 && maxReflexion > 0) {
+            let reflexionAttempt = 0;
+            let currentFeedback = this.verificationPipeline.toFeedback(verifReport);
+
+            while (reflexionAttempt < maxReflexion && currentFeedback && !verifReport.passed) {
+              reflexionAttempt++;
+
+              const firstSignal = verifReport.signals[0];
+              const reflexionCtx: ReflexionContext = {
+                goal: ctx.goal,
+                attemptedAction: 'LLM response generation',
+                actionResult: response.content,
+                error: (firstSignal && ((firstSignal as { message?: string }).message ?? (firstSignal as { name?: string }).name)) || 'verification failed',
+                errorClass: 'permanent',
+                attemptNumber: reflexionAttempt,
+              };
+
+              const reflexion = await this.reflexionGenerator.generate(reflexionCtx);
+
+              this.reflexionInjector.addReflection({
+                id: `${runId}-${attempt}-reflexion-${reflexionAttempt}`,
+                insight: ReflexionGenerator.formatForContext(reflexionCtx, reflexion),
+                type: 'failure',
+                timestamp: Date.now(),
+              });
+
+              request.messages.push({
+                role: 'system',
+                content: `[Reflexion guidance ${reflexionAttempt}/${maxReflexion}]\n${ReflexionGenerator.formatForContext(reflexionCtx, reflexion)}`,
+              });
+              request.messages.push({ role: 'user', content: currentFeedback });
+
+              const reflexionStart = Date.now();
+              const reflexionResponse = await this.callWithTimeout(request, routing, attempt);
+              if (!reflexionResponse) break;
+
+              response = reflexionResponse;
+              totalTokens.promptTokens += reflexionResponse.usage.promptTokens;
+              totalTokens.completionTokens += reflexionResponse.usage.completionTokens;
+              totalTokens.totalTokens += reflexionResponse.usage.totalTokens;
+              this.governor.reportUsage(reflexionResponse.usage.totalTokens);
+
+              verifReport = await this.verificationPipeline.verify({
+                goal: ctx.goal,
+                output: response.content,
+                language: typeof ctx.goal === 'string' ? ctx.goal.toLowerCase().includes('python') ? 'python' : undefined : undefined,
+                schema: ctx.outputSchema,
+                toolsUsed: ctx.availableTools,
+                tokenBudgetRemaining: this.governor.getState().remainingTokens,
+                previousFailures: lastError ? [lastError] : undefined,
+              });
+              this.governor.reportUsage(verifReport.tokensUsed);
+
+              try { getMetricsCollector().recordStepLatency('reflexion', Date.now() - reflexionStart, getGlobalTenantProvider().getCurrentTenantId() ?? undefined); } catch { /* best-effort */ }
+
+              if (!verifReport.passed) {
+                currentFeedback = this.verificationPipeline.toFeedback(verifReport);
+              }
+            }
+          }
+
           const feedback = this.verificationPipeline.toFeedback(verifReport);
-          if (feedback) {
+          if (feedback && !verifReport.passed) {
+            this.recordCostByFailureMode('verification', response);
             lastError = feedback;
             tracer.recordDecision(runId, `verification (attempt ${attempt + 1}, confidence ${verifReport.confidence.toFixed(2)}): ${feedback.slice(0, 100)}`, 0);
 
@@ -2523,18 +2603,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
   ): Promise<LLMResponse | null> {
     const startMs = Date.now();
     try {
-      // AbortController wired into a rejection-based timeout.
-      // When the timeout fires, the abort promise rejects, ending the race.
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.config.timeoutMs);
-
-      const abortPromise = new Promise<never>((_, reject) => {
-        controller.signal.addEventListener('abort', () => {
-          reject(new Error(`LLM call timed out after ${this.config.timeoutMs}ms`));
-        });
-      });
-
-      let result: LLMResponse;
       const cached = await this.semanticCache.lookup(request);
       if (cached) {
         try {
@@ -2544,7 +2612,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
             getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
           );
         } catch { /* best-effort */ }
-        clearTimeout(timeoutId);
         return cached;
       }
       try {
@@ -2590,14 +2657,18 @@ export class AgentRuntime implements AgentRuntimeInterface {
       const flightKey = SingleFlightRequestCache.computeKey(request, tenantIdForFlight);
       const evictionsBefore = this.singleFlight.getStats().evictions;
       const inflightBefore = this.singleFlight.inflightCount();
+      let result: LLMResponse;
+      const llmTimeoutMs = this.config.llmTimeoutMs ?? 120000;
       result = await this.singleFlight.dedupe(
         flightKey,
         async () => {
-          try {
-            return await Promise.race([provider.call(request), abortPromise]);
-          } finally {
-            clearTimeout(timeoutId);
-          }
+          return this.stepTimeout.wrap(
+            provider.call(request),
+            {
+              timeoutMs: llmTimeoutMs,
+              stepId: `llm-${providerName}-${attemptNumber}-${taskId ?? 'main'}`,
+            },
+          );
         },
         tenantIdForFlight,
       );
@@ -2638,6 +2709,19 @@ export class AgentRuntime implements AgentRuntimeInterface {
     }
   }
 
+  /** Tier 4.4 helper: estimate cost of a failed step and attribute it to a failure mode. */
+  private recordCostByFailureMode(mode: string, response?: LLMResponse | null): void {
+    if (!response) return;
+    try {
+      const costUsd = getCostEstimator().estimateCostFromUsage(
+        response.model,
+        response.usage.promptTokens,
+        response.usage.completionTokens,
+      );
+      getMetricsCollector().recordCostByFailureMode(mode, costUsd, getGlobalTenantProvider().getCurrentTenantId() ?? undefined);
+    } catch { /* best-effort */ }
+  }
+
   /**
    * Execute a tool call and return STRUCTURED error context to the model.
    * Instead of silently logging errors, the model receives enough context
@@ -2654,6 +2738,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
     const tracer = getTraceRecorder();
     const bus = getMessageBus();
     const startTime = Date.now();
+    try {
 
     // Sub-agent tool whitelist enforcement: if an allowlist is provided,
     // reject any tool call outside the allowed set.
@@ -2706,7 +2791,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
         inputSnapshot: JSON.stringify(toolCall.arguments).slice(0, 500),
         compensated: false,
         recovered: false,
-        tags: ['tool_not_found'],
+        tags: ['tool_not_found', 'mode:1'],
       });
       const errorMsg = `error: ${error}\nadvice: Check the tool name and try again with a registered tool.`;
       return {
@@ -3034,7 +3119,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
       output: typeof output === 'string' ? output : JSON.stringify(output),
       durationMs,
     };
+  } finally {
+    const durationMs = Date.now() - startTime;
+    try { getMetricsCollector().recordStepLatency('tool_execution', durationMs, tenantId); } catch { /* best-effort */ }
   }
+}
 
   /** Register default compensation handlers for mutation tools */
   private registerDefaultCompensation(): void {
@@ -3225,6 +3314,25 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
   getCostEstimatorHistory() {
     return getCostEstimator().exportHistory();
+  }
+
+  /** Tier 4.3: Return a per-provider health snapshot for the dashboard. */
+  getProviderHealth(): Array<{ provider: string; state: string; errorRate: number; requestCount: number; lastFailureAt: number }> {
+    const breakerStats = this.circuitBreaker.getStats();
+    const health: Array<{ provider: string; state: string; errorRate: number; requestCount: number; lastFailureAt: number }> = [];
+    for (const [name] of this.providers) {
+      const success = getMetricsCollector().getCounter('llm_success_total', [{ name: 'provider', value: name }]);
+      const errors = getMetricsCollector().getCounter('llm_errors_total', [{ name: 'provider', value: name }]);
+      const total = success + errors;
+      health.push({
+        provider: name,
+        state: breakerStats.state,
+        errorRate: total > 0 ? errors / total : 0,
+        requestCount: total,
+        lastFailureAt: breakerStats.lastFailureTime,
+      });
+    }
+    return health;
   }
 
   /** Dispose sub-resources (timers, file handles) when this runtime is discarded */
