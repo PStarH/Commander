@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSandboxed } from './sandboxedExec';
 import { getGlobalLogger } from '../logging';
+import { safePath } from './fileSystemTool';
 
 /** Reject paths containing shell metacharacters that could enable injection. */
 const SHELL_UNSAFE_RE = /[;&|`$(){}[\]!#~<>*\n\t'"\\\x00-\x1f]/;
@@ -67,15 +68,14 @@ export class ApplyPatchTool implements Tool {
         return 'Error: Could not determine target file from patch. Specify targetFile or include path in diff header (--- a/... / +++ b/...).';
       }
 
-      const targetPath = path.resolve(cwd, fileToPatch);
+      let targetPath: string;
+      try {
+        targetPath = safePath(fileToPatch);
+      } catch {
+        return `Error: Target file "${fileToPatch}" is outside the workspace.`;
+      }
       if (!fs.existsSync(targetPath)) {
-        // Check if file exists relative to cwd
-        const altPath = path.join(cwd, fileToPatch);
-        if (fs.existsSync(altPath)) {
-          // Patch already has the right path, proceed
-        } else {
-          return `Error: Target file not found: ${fileToPatch}. Searched at: ${targetPath}`;
-        }
+        return `Error: Target file not found: ${fileToPatch}. Searched at: ${targetPath}`;
       }
 
       assertShellSafePath(targetPath, 'targetPath');

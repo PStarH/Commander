@@ -47,15 +47,25 @@ export class ScreenshotCaptureTool implements Tool {
     const path = await import('path');
     const crypto = await import('crypto');
 
-    const screenshotDir = path.resolve(process.cwd(), 'screenshots');
-    if (!fs.existsSync(screenshotDir)) fs.mkdirSync(screenshotDir, { recursive: true });
+    const { safePath } = await import('../fileSystemTool');
     const hash = crypto.randomBytes(4).toString('hex');
-    const outputPath = String(args.outputPath ?? path.join(screenshotDir, `screenshot-${Date.now()}-${hash}.png`));
+    const outputPath = String(args.outputPath ?? '');
     // Validate output path: reject shell metacharacters to prevent injection (P1-15)
-    if (/[;&|`$(){}[\]!#~<>*\n\t'"\\]/.test(outputPath)) {
+    if (outputPath && /[;&|`$(){}[\]!#~<>*\n\t'"\\]/.test(outputPath)) {
       return `Error: outputPath contains shell-unsafe characters`;
     }
-    const resolvedPath = path.resolve(outputPath);
+    let resolvedPath: string;
+    if (outputPath) {
+      try {
+        resolvedPath = safePath(outputPath);
+      } catch {
+        return `Error: Access denied: path "${outputPath}" is outside workspace`;
+      }
+    } else {
+      // Default: save in workspace with unique filename
+      const hash = crypto.randomBytes(4).toString('hex');
+      resolvedPath = safePath(`screenshots/screenshot-${Date.now()}-${hash}.png`);
+    }
     const outDir = path.dirname(resolvedPath);
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 

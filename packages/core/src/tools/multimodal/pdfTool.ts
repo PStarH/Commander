@@ -37,14 +37,20 @@ export class PdfExtractTool implements Tool {
 
     try {
       const fs = await import('fs');
-      const path = await import('path');
-      const resolved = path.resolve(filePath);
+      const pathModule = await import('path');
+      const { safePath } = await import('../fileSystemTool');
+      let resolved: string;
+      try {
+        resolved = safePath(filePath);
+      } catch {
+        return `Error: Access denied: path "${filePath}" is outside workspace`;
+      }
       if (!fs.existsSync(resolved)) return `Error: File not found: ${filePath}`;
       const stat = fs.statSync(resolved);
       if (!stat.isFile()) return `Error: Not a file: ${filePath}`;
       if (stat.size > 100 * 1024 * 1024) return `Error: PDF too large (${(stat.size / 1024 / 1024).toFixed(1)}MB). Max: 100MB.`;
 
-       const ext = path.extname(resolved).toLowerCase();
+       const ext = pathModule.extname(resolved).toLowerCase();
        if (ext !== '.pdf') return `Error: Not a PDF file: ${filePath}`;
 
         try {

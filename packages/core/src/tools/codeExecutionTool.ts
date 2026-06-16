@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSandboxed } from './sandboxedExec';
 import { getGlobalLogger } from '../logging';
+import { safePath } from './fileSystemTool';
 
 const TEMP_DIR = path.join(process.cwd(), '.commander_exec');
 
@@ -185,7 +186,12 @@ Using specialized tools is REQUIRED because they return hashline-anchored output
     const interceptResult = interceptBashCommand(command, availableTools);
     if (interceptResult) return interceptResult;
 
-    const resolvedWorkdir = path.resolve(process.cwd(), workdir);
+    let resolvedWorkdir: string;
+    try {
+      resolvedWorkdir = safePath(workdir);
+    } catch {
+      return `Error: Access denied: workdir "${workdir}" is outside workspace`;
+    }
     // Pass full args as backendArgs so the router can pick the right backend
     return formatExecResult(await execSandboxed(command, timeout, resolvedWorkdir, args));
   }

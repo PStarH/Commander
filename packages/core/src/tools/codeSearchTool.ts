@@ -1,5 +1,6 @@
 import { execFileSync } from 'child_process';
 import type { Tool, ToolDefinition } from '../runtime/types';
+import { getSafeRoot } from './fileSystemTool';
 
 const EXCLUDE_DIRS = ['node_modules', '.git', 'dist', 'build', 'coverage', '.cache', 'target'];
 
@@ -43,7 +44,7 @@ export class CodeSearchTool implements Tool {
     if (!pattern) return 'Error: No search pattern provided.';
     if (pattern.length < 2) return 'Error: Search pattern too short (min 2 chars).';
 
-    const cwd = process.cwd();
+    const cwd = getSafeRoot();
     let searchDir = cwd;
     if (searchDomain === 'tests') searchDir = `${cwd}/tests`;
     else if (searchDomain === 'docs') searchDir = `${cwd}/docs`;
@@ -84,12 +85,12 @@ export class CodeSearchTool implements Tool {
         });
       } catch (grepErr: unknown) {
         // grep exits 1 when no matches (not an error), 2 for actual errors
-        const err = grepErr as { status?: number; stdout?: string; message?: string };
-        if (err.status === 1 && err.stdout) {
-          stdout = err.stdout; // partial results before no-match exit
-        } else {
-          throw grepErr;
+        const err = grepErr as { status?: number; stdout?: string; stderr?: string; message?: string };
+        if (err.status === 1) {
+          // No matches found — return clean message regardless of stdout presence
+          return `No results found for pattern: ${pattern}`;
         }
+        throw grepErr;
       }
 
       const lines = stdout.trim().split('\n').filter(Boolean);

@@ -66,6 +66,34 @@ export class AnswerFormatTool implements Tool {
         }
         break;
 
+      case 'code':
+        if (answer.trim().length === 0) issues.push('Code answer is empty');
+        break;
+
+      case 'explanation':
+        if (answer.split(/\s+/).length < 5) issues.push('Explanation is too short (minimum 5 words)');
+        break;
+
+      case 'json':
+        try {
+          JSON.parse(answer);
+        } catch {
+          issues.push('Answer is not valid JSON');
+        }
+        break;
+
+      case 'boolean':
+        if (!['yes', 'no', 'true', 'false', '1', '0'].includes(answer.trim().toLowerCase())) {
+          issues.push(`"${answer}" is not a valid boolean`);
+        }
+        break;
+
+      case 'list': {
+        const items = answer.split('\n').filter(l => l.trim().length > 0);
+        if (items.length === 0) issues.push('List is empty');
+        break;
+      }
+
       case 'url':
         if (!answer.startsWith('http://') && !answer.startsWith('https://')) {
           issues.push(`"${answer}" is not a valid URL (must start with http:// or https://)`);
@@ -78,26 +106,14 @@ export class AnswerFormatTool implements Tool {
         }
         break;
 
-      case 'code':
-        if (answer.length < 5) issues.push('Code snippet too short');
-        if (constraints.includes('python') && !answer.includes('def ') && !answer.includes('import ')) {
-          issues.push('Expected Python code with function definition');
-        }
-        break;
-
-      case 'list':
-        const items = answer.split('\n').filter(l => l.trim().startsWith('-') || l.trim().startsWith('*') || /^\d+[.)]/.test(l.trim()));
-        if (items.length === 0 && answer.includes(',')) {
-          // Comma-separated list is acceptable
-        } else if (items.length < 2 && !answer.includes(',')) {
-          issues.push('List must have at least 2 items');
-        }
-        break;
-
       case 'file_path':
         if (!answer.startsWith('/') && !answer.match(/^[A-Z]:\\/)) {
           issues.push(`"${answer}" is not an absolute path`);
         }
+        break;
+
+      default:
+        issues.push(`Unknown format: ${format}`);
         break;
     }
 

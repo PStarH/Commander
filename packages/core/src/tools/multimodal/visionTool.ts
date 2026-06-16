@@ -55,11 +55,17 @@ export class VisionAnalyzeTool implements Tool {
         imageData = match[2];
       } else {
         const fs = await import('fs');
-        const path = await import('path');
-        const resolved = path.resolve(source);
+        const pathModule = await import('path');
+        const { safePath } = await import('../fileSystemTool');
+        let resolved: string;
+        try {
+          resolved = safePath(source);
+        } catch {
+          return `Error: Access denied: path "${source}" is outside workspace`;
+        }
         if (!fs.existsSync(resolved)) return `Error: File not found: ${source}`;
         const buffer = fs.readFileSync(resolved);
-        const ext = path.extname(resolved).toLowerCase();
+        const ext = pathModule.extname(resolved).toLowerCase();
         const mediaTypes: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp' };
         mediaType = mediaTypes[ext] ?? 'image/png';
         const maxSize = 20 * 1024 * 1024;

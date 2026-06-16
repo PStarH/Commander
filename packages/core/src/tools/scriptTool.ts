@@ -116,13 +116,11 @@ export class ExecuteScriptTool implements Tool {
       // Use timeout via Promise.race
       const executionPromise = this.runScript(wrappedScript, availableTools, safeConsole);
 
-      let timedOut = false;
       let timeoutTimer: ReturnType<typeof setTimeout>;
-      const result = await Promise.race([
+      await Promise.race([
         executionPromise.finally(() => clearTimeout(timeoutTimer)),
         new Promise<string>((_, reject) => {
           timeoutTimer = setTimeout(() => {
-            timedOut = true;
             reject(new Error(`Script execution timed out after ${timeout}s`));
           }, timeout * 1000);
           timeoutTimer.unref();
@@ -156,52 +154,132 @@ export class ExecuteScriptTool implements Tool {
     // SECURITY FIX: wrap all sandbox objects in Proxy to prevent prototype chain escape
     // Node.js vm module is NOT a security sandbox — this.constructor.constructor('return process')()
     // can escape. We use Proxy to block access to constructor, __proto__, and other prototype paths.
-    const BLOCKED = new Set(['constructor', '__proto__', 'prototype', '__defineGetter__', '__defineSetter__',
-      '__lookupGetter__', '__lookupSetter__', 'toLocaleString', 'valueOf', 'hasOwnProperty', 'isPrototypeOf',
+    const BLOCKED = new Set(['constructor', '__proto__', 'prototype', 'apply', 'call', 'bind',
+      '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__',
+      'toLocaleString', 'valueOf', 'hasOwnProperty', 'isPrototypeOf',
       'propertyIsEnumerable', 'toString']);
 
-    function makeSafeProxy<T extends object>(target: T, depth = 0): T {
-      if (depth > 3) return target; // limit proxy depth to avoid infinite recursion
-      return new Proxy(target, {
-        get(obj, prop) {
-          if (typeof prop === 'symbol') return undefined; // block Symbol access
-          if (BLOCKED.has(prop)) return undefined; // block prototype escape paths
-          const val = (obj as Record<string, unknown>)[prop];
-          if (typeof val === 'function') {
-            // Wrap functions to return safe proxies for objects
-            return (...args: unknown[]) => {
-              const result = val.apply(obj, args);
-              if (result && typeof result === 'object') return makeSafeProxy(result, depth + 1);
-              return result;
-            };
-          }
-          if (val && typeof val === 'object') return makeSafeProxy(val as object, depth + 1);
-          return val;
-        },
-        has(_, prop) { return typeof prop === 'string' && !BLOCKED.has(prop); },
-        set() { return false; }, // read-only
-        getPrototypeOf() { return null; }, // block __proto__ chain
-        ownKeys(target) {
-          return Reflect.ownKeys(target).filter(k => typeof k === 'string' && !BLOCKED.has(k));
-        },
-      }) as unknown as T;
+    /**
+     * Block dangerous prototype-chain properties on a function by defining own
+     * properties that shadow Function.prototype/Object.prototype accessors.
+     * We use a plain wrapper function (not a Proxy) because Node's vm module
+     * cannot reliably resume `await` on Promises returned by Proxy-wrapped
+     * functions across multiple awaits.
+     */
+    function shadowBlockedProperties(fn: (...args: unknown[]) => unknown): void {
+      for (const key of BLOCKED) {
+        try {
+          Object.defineProperty(fn, key, { value: undefined, writable: false, configurable: false });
+        } catch {
+          // Some properties (e.g. __proto__ on some objects) may be non-configurable;
+          // ignore silently — the Proxy layer still blocks them at the object level.
+        }
+      }
     }
 
-    // Create a frozen, proxy-wrapped tools object
+    /** Minimal Proxy trap that blocks prototype-chain property access (get only).
+     *  Does NOT define has/set/getPrototypeOf/ownKeys traps — those would interfere
+     *  with function calling in VM contexts (async/await and Promise chains). The get
+     *  trap alone is sufficient to block `.constructor`/`.apply`/`.call`/`.bind` on
+     *  tool functions while keeping them fully callable. */
+    const safeProxyHandler: ProxyHandler<object> = {
+      get(obj, prop) {
+        if (typeof prop === 'symbol') return undefined;
+        if (BLOCKED.has(prop)) return undefined;
+        const val = (obj as Record<string, unknown>)[prop];
+        if (typeof val === 'function') {
+          const wrapper = (...args: unknown[]) => {
+            const result = val.apply(obj, args);
+            if (result && typeof result === 'object' && !(result instanceof Promise) && !(typeof (result as Record<string, unknown>).then === 'function')) {
+              return new Proxy(result as object, safeProxyHandler);
+            }
+            return result;
+          };
+          // Block dangerous properties with own properties instead of a Proxy.
+          // Proxy-wrapped functions break repeated `await` on returned Promises
+          // inside Node's vm.runInNewContext.
+          shadowBlockedProperties(wrapper);
+          return wrapper;
+        }
+        if (val && typeof val === 'object') return new Proxy(val as object, safeProxyHandler);
+        return val;
+      },
+      getPrototypeOf() { return null; },
+      has(_, prop) { return typeof prop === 'string' && !BLOCKED.has(prop); },
+      ownKeys(target) {
+        return Reflect.ownKeys(target).filter(k => typeof k !== 'string' || !BLOCKED.has(k));
+      },
+    };
+
+    function makeSafeProxy<T extends object>(target: T): T {
+      return new Proxy(target, safeProxyHandler) as unknown as T;
+    }
+
+    /**
+     * Wrap a host function (e.g. setTimeout) so it remains callable but exposes
+     * no prototype-chain escape hatches.
+     */
+    function makeSafeFunction<T extends (...args: unknown[]) => unknown>(fn: T): T {
+      const wrapped = ((...args: unknown[]) => fn(...args)) as unknown as T;
+      shadowBlockedProperties(wrapped as unknown as (...args: unknown[]) => unknown);
+      return wrapped;
+    }
+
+    /**
+     * Wrap the host Promise constructor so async/await works inside the VM while
+     * blocking prototype-chain escape paths (constructor/apply/call/bind/proto).
+     */
+    const safePromise = new Proxy(Promise, {
+      get(target, prop) {
+        if (prop === 'constructor' || prop === '__proto__' || prop === 'prototype' || prop === 'apply' || prop === 'call' || prop === 'bind') {
+          return undefined;
+        }
+        if (typeof prop === 'symbol') return undefined;
+        return Reflect.get(target, prop);
+      },
+      apply(target, thisArg, args) {
+        return Reflect.apply(target as unknown as (...args: unknown[]) => unknown, thisArg, args);
+      },
+      construct(target, args) {
+        return Reflect.construct(target as unknown as new (...args: unknown[]) => object, args);
+      },
+    });
+
+    // Create a proxy-wrapped tools object
     const safeTools = makeSafeProxy(tools);
 
-    const sandbox = {
+    // Wrap each sandbox value individually to block constructor/__proto__/
+    // prototype chain access on ALL sandbox values — not just at the top level.
+    // This prevents `setTimeout.constructor('return process')()` and similar escapes.
+    const rawSandbox = {
       tools: safeTools,
       console: console_,
-      setTimeout,
-      clearTimeout,
-      // Block access to dangerous globals by not providing them
+      setTimeout: makeSafeFunction(setTimeout as unknown as (...args: unknown[]) => unknown),
+      clearTimeout: makeSafeFunction(clearTimeout as unknown as (...args: unknown[]) => unknown),
+      Promise: safePromise,
     };
+    // Top-level sandbox Proxy blocks direct access to dangerous globals
+    const sandbox = new Proxy(rawSandbox, {
+      get(target, prop) {
+        if (prop === 'constructor' || prop === '__proto__' || prop === 'prototype') return undefined;
+        if (typeof prop === 'symbol') return undefined;
+        return Reflect.get(target, prop);
+      },
+      has(target, prop) {
+        if (prop === 'constructor' || prop === '__proto__' || prop === 'prototype') return false;
+        return Reflect.has(target, prop);
+      },
+      ownKeys(target) {
+        return Reflect.ownKeys(target).filter(k => typeof k !== 'string' || !['constructor', '__proto__', 'prototype'].includes(k));
+      },
+    });
     const context = vm.createContext(sandbox, { name: 'script-sandbox' });
-    const result = vm.runInNewContext(script, context, { timeout: 120000 });
+    const result = vm.runInNewContext(script, context, {
+      timeout: 120000,
+    });
 
-    if (result instanceof Promise) {
-      await result;
+    if (result && typeof (result as { then?: unknown }).then === 'function') {
+      await result as Promise<unknown>;
     }
   }
 }

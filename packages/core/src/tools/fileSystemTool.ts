@@ -8,16 +8,21 @@ import { getInternalUrlRouter, isInternalUrl } from '../runtime/internalUrls';
 import { atomicWriteFile } from './_utils/atomicWrite';
 
 /** Get the safe root directory. Dynamic to support runtime COMMANDER_WORKSPACE changes. */
-function getSafeRoot(): string {
+export function getSafeRoot(): string {
   return path.resolve(process.env.COMMANDER_WORKSPACE || process.cwd());
 }
 
 /** Check that a resolved path is within SAFE_ROOT (prevents prefix collision like workspace-evil). */
-function isWithinRoot(resolved: string, root: string): boolean {
+export function isWithinRoot(resolved: string, root: string): boolean {
   return resolved === root || resolved.startsWith(root + path.sep);
 }
 
-function safePath(target: string): string {
+/**
+ * Resolve a user-provided path relative to the safe workspace root.
+ * Rejects paths that resolve outside the workspace, including symlink-based traversal.
+ * Re-exports for use by other tools (patchTool, multimodal tools).
+ */
+export function safePath(target: string): string {
   const resolved = path.resolve(getSafeRoot(), target);
   // Resolve symlinks for the resolved path (e.g., /tmp -> /private/tmp on macOS)
   let resolvedReal: string;
@@ -384,16 +389,27 @@ export class FileSearchTool implements Tool {
     const dirPattern = parts.join('/');
 
     let searchDir: string;
+    let deep = false;  // Whether to recurse into subdirectories
     if (dirPattern) {
-      const candidate = path.resolve(root, dirPattern);
-      if (!isWithinRoot(candidate, getSafeRoot())) return [];
-      searchDir = candidate;
+      // Handle ** at the end of the directory pattern (e.g., "src/**" or "**")
+      if (dirPattern.endsWith('/**') || dirPattern === '**') {
+        const baseDir = dirPattern === '**' ? '' : dirPattern.replace('/**', '');
+        searchDir = baseDir ? path.resolve(root, baseDir) : root;
+        deep = true;
+      } else {
+        searchDir = path.resolve(root, dirPattern);
+      }
+      if (!isWithinRoot(searchDir, getSafeRoot())) return [];
     } else {
       searchDir = root;
     }
     if (!fs.existsSync(searchDir)) return [];
 
-    this.globRecurse(searchDir, root, filePattern, results);
+    if (deep) {
+      this.globRecurseDeep(searchDir, root, filePattern, results);
+    } else {
+      this.globRecurse(searchDir, root, filePattern, results);
+    }
     return results;
   }
 
@@ -406,13 +422,27 @@ export class FileSearchTool implements Tool {
         const relPath = path.relative(root, fullPath);
 
         if (entry.isDirectory()) {
-          if (filePattern.startsWith('**')) {
-            this.globRecurse(fullPath, root, filePattern, results);
-          } else {
-            const dirMatch = filePattern.includes('*') ? false : entry.name === filePattern;
-            if (!dirMatch) this.globRecurse(fullPath, root, filePattern, results);
-          }
-        } else if (entry.isFile() && this.matchGlob(entry.name, filePattern.replace('**/', ''))) {
+          // For simple patterns like *.ts, do not recurse — * should not match /
+        } else if (entry.isFile() && this.matchGlob(entry.name, filePattern)) {
+          results.push(relPath);
+        }
+      }
+    } catch (e) { getGlobalLogger().warn('FileSystemTool', 'Directory scan failed', { error: (e as Error)?.message }); }
+  }
+
+  /** Recursive version used when the pattern contains ** — recurses into all subdirectories */
+  private globRecurseDeep(dir: string, root: string, filePattern: string, results: string[]) {
+    if (!fs.existsSync(dir)) return;
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        const relPath = path.relative(root, fullPath);
+
+        if (entry.isDirectory()) {
+          if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+          this.globRecurseDeep(fullPath, root, filePattern, results);
+        } else if (entry.isFile() && this.matchGlob(entry.name, filePattern)) {
           results.push(relPath);
         }
       }

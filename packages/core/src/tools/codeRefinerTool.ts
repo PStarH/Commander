@@ -1,5 +1,6 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSandboxed } from './sandboxedExec';
+import { safePath } from './fileSystemTool';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -63,17 +64,27 @@ export class CodeRefinerTool implements Tool {
     for (let iteration = 1; iteration <= maxIterations; iteration++) {
       output.push(`\n--- Iteration ${iteration}/${maxIterations} ---`);
 
-      if (codeFile && fs.existsSync(path.resolve(cwd, codeFile))) {
-        // Code exists, just run tests
-        if (testCommand) {
-          const testResult = await this.runTests(testCommand, cwd);
-          const passed = !testResult.includes('FAILED') && !testResult.includes('Error');
-          output.push(`Tests: ${passed ? '✅ PASSED' : '❌ FAILED'}`);
-          output.push(testResult.slice(0, 500));
-          if (passed) {
-            output.push(`\n✅ All tests passed at iteration ${iteration}.`);
-            return output.join('\n');
+      if (codeFile) {
+        let resolvedCodeFile: string;
+        try {
+          resolvedCodeFile = safePath(codeFile);
+        } catch {
+          return `Error: Access denied: codeFile "${codeFile}" is outside workspace`;
+        }
+        if (fs.existsSync(resolvedCodeFile)) {
+          // Code exists, just run tests
+          if (testCommand) {
+            const testResult = await this.runTests(testCommand, cwd);
+            const passed = !testResult.includes('FAILED') && !testResult.includes('Error');
+            output.push(`Tests: ${passed ? '✅ PASSED' : '❌ FAILED'}`);
+            output.push(testResult.slice(0, 500));
+            if (passed) {
+              output.push(`\n✅ All tests passed at iteration ${iteration}.`);
+              return output.join('\n');
+            }
           }
+        } else {
+          output.push(`Code file not found yet: ${codeFile}, will generate new code.`);
         }
       }
 

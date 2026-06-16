@@ -12,7 +12,7 @@
  * - Hard depth limit of 1 (sub-agents cannot spawn sub-agents)
  */
 import type { Tool, ToolDefinition, AgentExecutionContext, AgentExecutionResult } from '../runtime/types';
-import type { AgentRuntime } from '../runtime/agentRuntime';
+import type { AgentRuntimeInterface } from '../runtime';
 import { getHookManager } from '../pluginManager';
 import { getGlobalLogger } from '../logging';
 
@@ -57,10 +57,10 @@ export class AgentTool implements Tool {
   timeout = 180000;
   maxOutputSize = 50000;
 
-  private runtime: AgentRuntime;
+  private runtime: AgentRuntimeInterface;
   private registeredAgents: Map<string, AgentDef> = new Map();
 
-  constructor(runtime: AgentRuntime) {
+  constructor(runtime: AgentRuntimeInterface) {
     this.runtime = runtime;
   }
 

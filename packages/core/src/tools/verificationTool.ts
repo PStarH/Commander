@@ -1,5 +1,6 @@
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSandboxed } from './sandboxedExec';
+import { safePath } from './fileSystemTool';
 import { getGlobalLogger } from '../logging';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -55,7 +56,16 @@ export class VerificationTool implements Tool {
 
   async execute(args: Record<string, unknown>): Promise<string> {
     const checks = (args.checks as string[]) ?? ['lint', 'typecheck'];
-    const directory = String(args.directory ?? process.cwd());
+    let directory: string;
+    if (args.directory) {
+      try {
+        directory = safePath(String(args.directory));
+      } catch {
+        return `Error: Access denied: directory "${args.directory}" is outside workspace`;
+      }
+    } else {
+      directory = process.cwd();
+    }
     const testPattern = String(args.testPattern ?? '');
     const autoFix = Boolean(args.fix);
 
@@ -66,6 +76,7 @@ export class VerificationTool implements Tool {
         case 'typecheck': results.push(await this.runTypeCheck(directory)); break;
         case 'test': results.push(await this.runTests(directory, testPattern)); break;
         case 'build': results.push(await this.runBuild(directory)); break;
+        default: results.push({ name: check, passed: false, errors: 1, warnings: 0, output: `Unknown check: ${check}`, durationMs: 0 }); break;
       }
     }
 
