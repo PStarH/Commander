@@ -40,12 +40,12 @@ export async function fetchMemoryItems(filters?: {
   tags?: string;
 }): Promise<ProjectMemoryItem[]> {
   const hasFilters = Boolean(
-    filters?.query?.trim() || filters?.tags?.trim() || (filters?.kind && filters.kind !== 'ALL')
+    filters?.query?.trim() || filters?.tags?.trim() || (filters?.kind && filters.kind !== 'ALL'),
   );
   const url = new URL(
     hasFilters
       ? `${API_BASE}/projects/${PROJECT_ID}/memory/search`
-      : `${API_BASE}/projects/${PROJECT_ID}/memory`
+      : `${API_BASE}/projects/${PROJECT_ID}/memory`,
   );
 
   if (hasFilters) {
@@ -189,7 +189,10 @@ export async function fetchReplayRuns(): Promise<ReplayRunsResponse> {
   return response.json() as Promise<ReplayRunsResponse>;
 }
 
-export async function fetchReplayEvents(runId: string, type?: string): Promise<ReplayEventsResponse> {
+export async function fetchReplayEvents(
+  runId: string,
+  type?: string,
+): Promise<ReplayEventsResponse> {
   const url = new URL(`${API_BASE}/api/replay/runs/${runId}/events`);
   if (type) url.searchParams.set('type', type);
   const response = await fetch(url.toString());

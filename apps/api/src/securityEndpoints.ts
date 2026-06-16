@@ -40,7 +40,10 @@ export function createSecurityRouter(): Router {
       if (!content) {
         return res.status(400).json({ error: 'Content is required' });
       }
-      const result: ScanResult = await contentScanner.scan(content, contentType as 'html' | 'markdown' | 'text' | 'json');
+      const result: ScanResult = await contentScanner.scan(
+        content,
+        contentType as 'html' | 'markdown' | 'text' | 'json',
+      );
       res.json({
         safe: result.safe,
         threats: result.threats,

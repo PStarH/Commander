@@ -123,15 +123,26 @@ export const MISSION_PRIORITY_OPTIONS: MissionPriority[] = ['LOW', 'MEDIUM', 'HI
 export const MISSION_RISK_OPTIONS: MissionRiskLevel[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
 export const MISSION_GOVERNANCE_OPTIONS: MissionGovernanceMode[] = ['AUTO', 'GUARDED', 'MANUAL'];
 export const LOG_LEVEL_OPTIONS: LogLevel[] = ['INFO', 'SUCCESS', 'WARN', 'ERROR'];
-export const MEMORY_KIND_OPTIONS: MemoryKindFilter[] = ['ALL', 'DECISION', 'ISSUE', 'LESSON', 'SUMMARY'];
+export const MEMORY_KIND_OPTIONS: MemoryKindFilter[] = [
+  'ALL',
+  'DECISION',
+  'ISSUE',
+  'LESSON',
+  'SUMMARY',
+];
 
 export function nextMissionActions(status: MissionStatus): MissionStatus[] {
   switch (status) {
-    case 'PLANNED': return ['RUNNING', 'BLOCKED'];
-    case 'RUNNING': return ['DONE', 'BLOCKED'];
-    case 'BLOCKED': return ['RUNNING', 'DONE'];
-    case 'DONE': return [];
-    default: return [];
+    case 'PLANNED':
+      return ['RUNNING', 'BLOCKED'];
+    case 'RUNNING':
+      return ['DONE', 'BLOCKED'];
+    case 'BLOCKED':
+      return ['RUNNING', 'DONE'];
+    case 'DONE':
+      return [];
+    default:
+      return [];
   }
 }
 

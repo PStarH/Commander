@@ -41,13 +41,16 @@ interface SortableMissionProps {
   onApprove: (missionId: string) => void;
 }
 
-function DroppableColumn({ status, children }: { status: MissionStatus; children: React.ReactNode }) {
+function DroppableColumn({
+  status,
+  children,
+}: {
+  status: MissionStatus;
+  children: React.ReactNode;
+}) {
   const { setNodeRef, isOver } = useDroppable({ id: `col-${status}` });
   return (
-    <div
-      ref={setNodeRef}
-      className={`mission-col ${isOver ? 'mission-col-over' : ''}`}
-    >
+    <div ref={setNodeRef} className={`mission-col ${isOver ? 'mission-col-over' : ''}`}>
       {children}
     </div>
   );
@@ -95,12 +98,11 @@ export function MissionBoard({
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 8 },
-    })
+    }),
   );
 
-  const filteredMissions = filterPriority === 'ALL'
-    ? missions
-    : missions.filter(m => m.priority === filterPriority);
+  const filteredMissions =
+    filterPriority === 'ALL' ? missions : missions.filter((m) => m.priority === filterPriority);
 
   const missionsByStatus = new Map<MissionStatus, Mission[]>();
   for (const status of MISSION_STATUS_ORDER) {
@@ -119,7 +121,7 @@ export function MissionBoard({
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const mission = missions.find(m => m.id === active.id);
+    const mission = missions.find((m) => m.id === active.id);
     if (!mission) return;
 
     if (typeof over.id === 'string' && over.id.startsWith('col-')) {
@@ -130,7 +132,7 @@ export function MissionBoard({
       return;
     }
 
-    const overMission = missions.find(m => m.id === over.id);
+    const overMission = missions.find((m) => m.id === over.id);
     if (!overMission) return;
 
     if (mission.status !== overMission.status) {
@@ -162,7 +164,7 @@ export function MissionBoard({
           <h2>Missions</h2>
         </div>
         <div className="section-acts">
-          <Select value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
+          <Select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)}>
             <option value="ALL">All priorities</option>
             <option value="LOW">Low</option>
             <option value="MEDIUM">Medium</option>
@@ -180,21 +182,25 @@ export function MissionBoard({
         <form className="composer" onSubmit={handleSubmit}>
           <Input
             value={title}
-            onChange={e => setTitle(e.target.value)}
+            onChange={(e) => setTitle(e.target.value)}
             placeholder="Mission title"
             required
           />
           <Input
             value={objective}
-            onChange={e => setObjective(e.target.value)}
+            onChange={(e) => setObjective(e.target.value)}
             placeholder="Objective"
           />
-          <Select value={agentId} onChange={e => setAgentId(e.target.value)}>
-            {agents.map(a => (
-              <option key={a.agentId} value={a.agentId}>{a.agentName}</option>
+          <Select value={agentId} onChange={(e) => setAgentId(e.target.value)}>
+            {agents.map((a) => (
+              <option key={a.agentId} value={a.agentId}>
+                {a.agentName}
+              </option>
             ))}
           </Select>
-          <Button type="submit" variant="primary">Create</Button>
+          <Button type="submit" variant="primary">
+            Create
+          </Button>
         </form>
       )}
 
@@ -205,7 +211,7 @@ export function MissionBoard({
         onDragEnd={handleDragEnd}
       >
         <div className="mission-cols">
-          {MISSION_STATUS_ORDER.map(status => {
+          {MISSION_STATUS_ORDER.map((status) => {
             const statusMissions = missionsByStatus.get(status) || [];
             return (
               <DroppableColumn key={status} status={status}>
@@ -214,11 +220,11 @@ export function MissionBoard({
                   <strong>{statusMissions.length}</strong>
                 </div>
                 <SortableContext
-                  items={statusMissions.map(m => m.id)}
+                  items={statusMissions.map((m) => m.id)}
                   strategy={verticalListSortingStrategy}
                 >
                   <div className="mission-list">
-                    {statusMissions.map(mission => (
+                    {statusMissions.map((mission) => (
                       <SortableMission
                         key={mission.id}
                         mission={mission}
@@ -240,8 +246,10 @@ export function MissionBoard({
           {activeId ? (
             <div className="drag-overlay">
               <MissionCard
-                mission={missions.find(m => m.id === activeId)!}
-                agentName={agentNameById.get(missions.find(m => m.id === activeId)!.assignedAgentId)}
+                mission={missions.find((m) => m.id === activeId)!}
+                agentName={agentNameById.get(
+                  missions.find((m) => m.id === activeId)!.assignedAgentId,
+                )}
                 onStatusChange={onStatusChange}
                 onApprove={onApprove}
               />

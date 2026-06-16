@@ -86,7 +86,7 @@ function getLayoutedElements(
 
   dagre.layout(g);
 
-  const layoutedNodes = nodes.map(node => {
+  const layoutedNodes = nodes.map((node) => {
     const pos = g.node(node.id);
     return {
       ...node,
@@ -124,9 +124,7 @@ function deriveEdges(missions: Mission[]): Edge[] {
 
   // For each agent, create sequential edges ordered by status progression
   for (const [, agentMissions] of byAgent) {
-    const sorted = [...agentMissions].sort(
-      (a, b) => statusOrder[a.status] - statusOrder[b.status],
-    );
+    const sorted = [...agentMissions].sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
     for (let i = 0; i < sorted.length - 1; i++) {
       // Only connect if there's a logical progression
       if (statusOrder[sorted[i].status] < statusOrder[sorted[i + 1].status]) {
@@ -142,12 +140,12 @@ function deriveEdges(missions: Mission[]): Edge[] {
   }
 
   // BLOCKED missions depend on the first RUNNING mission (if any)
-  const running = missions.filter(m => m.status === 'RUNNING');
-  const blocked = missions.filter(m => m.status === 'BLOCKED');
+  const running = missions.filter((m) => m.status === 'RUNNING');
+  const blocked = missions.filter((m) => m.status === 'BLOCKED');
   if (running.length > 0 && blocked.length > 0) {
     for (const b of blocked) {
       // Don't duplicate edges
-      const alreadyConnected = edges.some(e => e.target === b.id);
+      const alreadyConnected = edges.some((e) => e.target === b.id);
       if (!alreadyConnected) {
         edges.push({
           id: `e-${running[0].id}-${b.id}`,
@@ -268,7 +266,7 @@ const nodeTypes: NodeTypes = {
 
 export function DAGVisualization({ missions, agents, agentNameById }: DAGVisualizationProps) {
   const { initialNodes, initialEdges } = useMemo(() => {
-    const nodes: Node<MissionNodeData>[] = missions.map(m => ({
+    const nodes: Node<MissionNodeData>[] = missions.map((m) => ({
       id: m.id,
       type: 'mission',
       position: { x: 0, y: 0 },
@@ -354,9 +352,7 @@ export function DAGVisualization({ missions, agents, agentNameById }: DAGVisuali
             </span>
           );
         })}
-        <span style={{ color: 'rgba(148, 163, 184, 0.5)' }}>
-          {edges.length} edges
-        </span>
+        <span style={{ color: 'rgba(148, 163, 184, 0.5)' }}>{edges.length} edges</span>
       </div>
 
       <ReactFlow

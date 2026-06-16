@@ -12,7 +12,9 @@ export function createPipelineRouter(): Router {
   router.post('/api/state-machine/create', (req, res) => {
     const { pattern } = req.body ?? {};
     if (!pattern) {
-      return res.status(400).json({ error: 'pattern is required (orchestrator-worker, hierarchical, swarm, pipeline)' });
+      return res.status(400).json({
+        error: 'pattern is required (orchestrator-worker, hierarchical, swarm, pipeline)',
+      });
     }
     try {
       const machine = PatternStateMachineFactory.create(pattern);
@@ -59,18 +61,33 @@ export function createPipelineRouter(): Router {
   const pipelineRuns = new Map<string, any>();
   const sequentialExecutor = new SequentialExecutor({
     agentExecutor: createMockAgentExecutor(),
-    runContextProvider: (async (ctx: { projectId?: string }) => ({
+    runContextProvider: async (ctx: { projectId?: string }) => ({
       projectId: ctx?.projectId ?? 'default',
       run: { runId: 'run', issuedAt: new Date().toISOString() },
       slimSnapshot: {
-        project: { id: 'default', codename: 'default', objective: '', status: 'ACTIVE', updatedAt: new Date().toISOString() },
+        project: {
+          id: 'default',
+          codename: 'default',
+          objective: '',
+          status: 'ACTIVE',
+          updatedAt: new Date().toISOString(),
+        },
         missionBoard: { running: [], blocked: [], planned: [], done: [] },
-        battleMetrics: { health: 'GREEN', runningMissionCount: 0, blockedMissionCount: 0, completedMissionCount: 0, highRiskMissionCount: 0, manualGovernanceMissionCount: 0, logVolume24h: 0, completionRate: 0 },
+        battleMetrics: {
+          health: 'GREEN',
+          runningMissionCount: 0,
+          blockedMissionCount: 0,
+          completedMissionCount: 0,
+          highRiskMissionCount: 0,
+          manualGovernanceMissionCount: 0,
+          logVolume24h: 0,
+          completionRate: 0,
+        },
       },
       recentMemory: [],
       recommendedMemory: { items: [] },
       agentRoster: [],
-    })),
+    }),
   });
 
   router.post('/api/pipeline/execute', async (req, res) => {
@@ -99,7 +116,9 @@ export function createPipelineRouter(): Router {
       pipelineRuns.set(run.id, run);
       res.json(run);
     } catch (err: unknown) {
-      process.stderr.write(`[Pipeline] Execute error: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.stderr.write(
+        `[Pipeline] Execute error: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
       res.status(500).json({ error: 'Pipeline execution failed. Check server logs for details.' });
     }
   });

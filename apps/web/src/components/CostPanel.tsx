@@ -1,11 +1,16 @@
 import { useState, useEffect } from 'react';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
 } from 'recharts';
-import {
-  DollarSign, Cpu, Hash, AlertTriangle, TrendingUp,
-} from 'lucide-react';
+import { DollarSign, Cpu, Hash, AlertTriangle, TrendingUp } from 'lucide-react';
 import { MetricCard } from './ui';
 import { fetchCostSummary, fetchCostRecords, fetchBudgetStatus } from '../api';
 import { formatTimestamp } from '../types';
@@ -24,7 +29,14 @@ const COLORS = {
   textPrimary: '#e5f0da',
 };
 
-const MODEL_COLORS = [COLORS.green, COLORS.blue, COLORS.purple, COLORS.amber, COLORS.cyan, COLORS.red];
+const MODEL_COLORS = [
+  COLORS.green,
+  COLORS.blue,
+  COLORS.purple,
+  COLORS.amber,
+  COLORS.cyan,
+  COLORS.red,
+];
 
 export function CostPanel() {
   const [summary, setSummary] = useState<CostSummary | null>(null);
@@ -51,7 +63,9 @@ export function CostPanel() {
       }
       if (!cancelled) setLoading(false);
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (loading) {
@@ -78,8 +92,8 @@ export function CostPanel() {
           <span className="section-tag">Run a task to see costs</span>
         </div>
         <div className="narrative narrative-green">
-          Cost tracking activates automatically when agents make LLM calls.
-          Each call's token usage and cost is recorded per-model and per-agent.
+          Cost tracking activates automatically when agents make LLM calls. Each call's token usage
+          and cost is recorded per-model and per-agent.
         </div>
       </div>
     );
@@ -87,7 +101,12 @@ export function CostPanel() {
 
   // Prepare chart data
   const modelData = Object.entries(summary.perModel)
-    .map(([name, data]) => ({ name: name.split('/').pop() || name, cost: data.costUsd, tokens: data.tokens, calls: data.calls }))
+    .map(([name, data]) => ({
+      name: name.split('/').pop() || name,
+      cost: data.costUsd,
+      tokens: data.tokens,
+      calls: data.calls,
+    }))
     .sort((a, b) => b.cost - a.cost)
     .slice(0, 6);
 
@@ -97,7 +116,8 @@ export function CostPanel() {
     .slice(0, 6);
 
   const budgetPercent = budget?.usagePercent ?? 0;
-  const budgetColor = budgetPercent >= 90 ? COLORS.red : budgetPercent >= 70 ? COLORS.amber : COLORS.green;
+  const budgetColor =
+    budgetPercent >= 90 ? COLORS.red : budgetPercent >= 70 ? COLORS.amber : COLORS.green;
 
   return (
     <div className="cost-panel">
@@ -106,9 +126,7 @@ export function CostPanel() {
           <div className="section-label">Cost Transparency</div>
           <h2>Token & budget overview</h2>
         </div>
-        <span className="section-tag">
-          {summary.totalCalls} LLM calls tracked
-        </span>
+        <span className="section-tag">{summary.totalCalls} LLM calls tracked</span>
       </div>
 
       {/* Metric Cards */}
@@ -120,11 +138,13 @@ export function CostPanel() {
         />
         <MetricCard
           label="Total tokens"
-          value={summary.totalTokens >= 1000000
-            ? `${(summary.totalTokens / 1000000).toFixed(1)}M`
-            : summary.totalTokens >= 1000
-              ? `${(summary.totalTokens / 1000).toFixed(0)}K`
-              : String(summary.totalTokens)}
+          value={
+            summary.totalTokens >= 1000000
+              ? `${(summary.totalTokens / 1000000).toFixed(1)}M`
+              : summary.totalTokens >= 1000
+                ? `${(summary.totalTokens / 1000).toFixed(0)}K`
+                : String(summary.totalTokens)
+          }
           icon={<Cpu size={14} />}
         />
         <MetricCard
@@ -136,9 +156,14 @@ export function CostPanel() {
           label="Budget used"
           value={`${budgetPercent}%`}
           icon={budgetPercent >= 70 ? <AlertTriangle size={14} /> : <TrendingUp size={14} />}
-          trend={budget
-            ? { value: `$${budget.monthlyUsed.toFixed(2)}/$${budget.monthlyLimit.toFixed(2)}`, positive: budgetPercent < 70 }
-            : undefined}
+          trend={
+            budget
+              ? {
+                  value: `$${budget.monthlyUsed.toFixed(2)}/$${budget.monthlyLimit.toFixed(2)}`,
+                  positive: budgetPercent < 70,
+                }
+              : undefined
+          }
         />
       </div>
 
@@ -147,7 +172,9 @@ export function CostPanel() {
         <div className="budget-bar-container">
           <div className="budget-bar-label">
             <span>Monthly Budget</span>
-            <span style={{ color: budgetColor }}>${budget.monthlyUsed.toFixed(2)} / ${budget.monthlyLimit.toFixed(2)}</span>
+            <span style={{ color: budgetColor }}>
+              ${budget.monthlyUsed.toFixed(2)} / ${budget.monthlyLimit.toFixed(2)}
+            </span>
           </div>
           <div className="budget-bar-track">
             <div
@@ -176,7 +203,11 @@ export function CostPanel() {
                 textAnchor="end"
                 height={50}
               />
-              <YAxis type="number" tick={{ fill: COLORS.text, fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
+              <YAxis
+                type="number"
+                tick={{ fill: COLORS.text, fontSize: 11 }}
+                tickFormatter={(v) => `$${v}`}
+              />
               <Tooltip
                 contentStyle={{
                   background: COLORS.surface,
@@ -229,7 +260,10 @@ export function CostPanel() {
           <div className="chart-legend">
             {agentData.map((item, i) => (
               <span key={item.name} className="legend-item">
-                <span className="legend-dot" style={{ background: MODEL_COLORS[i % MODEL_COLORS.length] }} />
+                <span
+                  className="legend-dot"
+                  style={{ background: MODEL_COLORS[i % MODEL_COLORS.length] }}
+                />
                 {item.name}: ${item.cost.toFixed(2)}
               </span>
             ))}
@@ -243,7 +277,10 @@ export function CostPanel() {
           <div className="chart-title">Budget Alerts</div>
           <div className="alerts-list">
             {budget.alerts.slice(0, 5).map((alert, i) => (
-              <div key={i} className={`alert-item alert-${alert.type.includes('exhausted') || alert.type.includes('cap_reached') ? 'error' : 'warning'}`}>
+              <div
+                key={i}
+                className={`alert-item alert-${alert.type.includes('exhausted') || alert.type.includes('cap_reached') ? 'error' : 'warning'}`}
+              >
                 <AlertTriangle size={14} />
                 <span>{alert.message}</span>
                 <span className="alert-time">{formatTimestamp(alert.runId)}</span>

@@ -6,7 +6,12 @@
  * indigo design system applied via CSS classes.
  */
 
-import type { ReactNode, InputHTMLAttributes, SelectHTMLAttributes, ButtonHTMLAttributes } from 'react';
+import type {
+  ReactNode,
+  InputHTMLAttributes,
+  SelectHTMLAttributes,
+  ButtonHTMLAttributes,
+} from 'react';
 
 // ============================================================================
 // Card — Container panel with border + shadow
@@ -28,11 +33,7 @@ const cardVariantClass: Record<CardVariant, string> = {
 
 export function Card({ children, className, variant = 'default' }: CardProps) {
   const variantClass = cardVariantClass[variant];
-  return (
-    <div className={`card ${variantClass} ${className ?? ''}`}>
-      {children}
-    </div>
-  );
+  return <div className={`card ${variantClass} ${className ?? ''}`}>{children}</div>;
 }
 
 // ============================================================================
@@ -54,11 +55,7 @@ const badgeClass: Record<BadgeVariant, string> = {
 };
 
 export function Badge({ children, variant }: BadgeProps) {
-  return (
-    <span className={badgeClass[variant] ?? 'bdg bdg-default'}>
-      {children}
-    </span>
-  );
+  return <span className={badgeClass[variant] ?? 'bdg bdg-default'}>{children}</span>;
 }
 
 // ============================================================================
@@ -110,19 +107,17 @@ export function Button({
 // Input — Styled text input
 // ============================================================================
 
-interface InputProps extends InputHTMLAttributes<HTMLInputElement> { }
+interface InputProps extends InputHTMLAttributes<HTMLInputElement> {}
 
 export function Input({ className, ...rest }: InputProps) {
-  return (
-    <input className={`inp ${className ?? ''}`} {...rest} />
-  );
+  return <input className={`inp ${className ?? ''}`} {...rest} />;
 }
 
 // ============================================================================
 // Select — Styled dropdown
 // ============================================================================
 
-interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> { }
+interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {}
 
 export function Select({ className, children, ...rest }: SelectProps) {
   return (

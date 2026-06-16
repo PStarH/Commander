@@ -49,15 +49,18 @@ export function AgentRoster({ agents, runId, pollMs = 1500 }: AgentRosterProps) 
     };
   }, [runId, pollMs]);
 
-  const merged: AgentWorkload[] = agents.map(a => {
-    const row = live?.find(l => l.agentId === a.agentId);
+  const merged: AgentWorkload[] = agents.map((a) => {
+    const row = live?.find((l) => l.agentId === a.agentId);
     if (!row) return a;
     const active = row.claimed + row.pending;
     const nextStatus =
-      row.failed > 0 && row.completed === 0 ? 'BLOCKED' as const :
-      active > 0 ? 'RUNNING' as const :
-      row.completed > 0 ? 'READY' as const :
-      a.status;
+      row.failed > 0 && row.completed === 0
+        ? ('BLOCKED' as const)
+        : active > 0
+          ? ('RUNNING' as const)
+          : row.completed > 0
+            ? ('READY' as const)
+            : a.status;
     return {
       ...a,
       status: nextStatus,
@@ -69,19 +72,24 @@ export function AgentRoster({ agents, runId, pollMs = 1500 }: AgentRosterProps) 
     };
   });
 
-  const fallbackAgents = live && agents.length === 0
-    ? live.map(row => ({
-        agentId: row.agentId,
-        agentName: row.agentId,
-        callsign: row.agentId.slice(-6),
-        status: (row.claimed > 0 ? 'RUNNING' : row.failed > 0 ? 'BLOCKED' : 'READY') as AgentWorkload['status'],
-        specialty: row.currentGoal?.slice(0, 60) ?? 'idle',
-        assignedMissionCount: row.claimed + row.completed + row.failed + row.pending,
-        activeMissionCount: row.claimed + row.pending,
-        completedMissionCount: row.completed,
-        latestLogAt: lastUpdate ? new Date(lastUpdate).toISOString() : undefined,
-      }))
-    : null;
+  const fallbackAgents =
+    live && agents.length === 0
+      ? live.map((row) => ({
+          agentId: row.agentId,
+          agentName: row.agentId,
+          callsign: row.agentId.slice(-6),
+          status: (row.claimed > 0
+            ? 'RUNNING'
+            : row.failed > 0
+              ? 'BLOCKED'
+              : 'READY') as AgentWorkload['status'],
+          specialty: row.currentGoal?.slice(0, 60) ?? 'idle',
+          assignedMissionCount: row.claimed + row.completed + row.failed + row.pending,
+          activeMissionCount: row.claimed + row.pending,
+          completedMissionCount: row.completed,
+          latestLogAt: lastUpdate ? new Date(lastUpdate).toISOString() : undefined,
+        }))
+      : null;
 
   const display = fallbackAgents ?? merged;
 
@@ -99,7 +107,7 @@ export function AgentRoster({ agents, runId, pollMs = 1500 }: AgentRosterProps) 
       </div>
 
       <div className="agent-grid">
-        {display.map(agent => (
+        {display.map((agent) => (
           <AgentCard key={agent.agentId} agent={agent} />
         ))}
       </div>

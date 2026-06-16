@@ -37,7 +37,7 @@ export function persistConsistencySnapshot(report: ConsistencyReport, missionId?
         agentCount: report.agentCount,
         consistencyLevel: report.consistencyLevel,
         agreementScore: report.agreementScore,
-        conflicts: report.conflicts.map(c => ({
+        conflicts: report.conflicts.map((c) => ({
           agentIds: c.agentIds,
           conflictType: c.conflictType,
           severity: c.severity,
@@ -57,12 +57,14 @@ export function persistConsistencySnapshot(report: ConsistencyReport, missionId?
 /**
  * Load persisted consistency snapshots from disk.
  */
-export function loadConsistencySnapshots(limit = 100): Array<{ timestamp: string; missionId?: string; report: Partial<ConsistencyReport> }> {
+export function loadConsistencySnapshots(
+  limit = 100,
+): Array<{ timestamp: string; missionId?: string; report: Partial<ConsistencyReport> }> {
   try {
     const filePath = path.resolve(process.cwd(), PERSISTENCE_DIR, SNAPSHOT_FILE);
     if (!fs.existsSync(filePath)) return [];
     const lines = fs.readFileSync(filePath, 'utf-8').trim().split('\n').filter(Boolean);
-    const records = lines.map(line => JSON.parse(line));
+    const records = lines.map((line) => JSON.parse(line));
     return records.slice(-limit).reverse();
   } catch {
     return [];
@@ -71,17 +73,9 @@ export function loadConsistencySnapshots(limit = 100): Array<{ timestamp: string
 
 // ==================== 类型定义 ====================
 
-export type AgentOutputType =
-  | 'decision'
-  | 'analysis'
-  | 'recommendation'
-  | 'fact';
+export type AgentOutputType = 'decision' | 'analysis' | 'recommendation' | 'fact';
 
-export type ConsistencyLevel =
-  | 'high'
-  | 'medium'
-  | 'low'
-  | 'conflicting';
+export type ConsistencyLevel = 'high' | 'medium' | 'low' | 'conflicting';
 
 export interface AgentOutput {
   agentId: string;
@@ -171,26 +165,176 @@ export interface CompletenessReport {
 // ==================== Stop Words & Normalization ====================
 
 const STOP_WORDS = new Set([
-  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-  'should', 'may', 'might', 'shall', 'can', 'to', 'of', 'in', 'for',
-  'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during',
-  'before', 'after', 'above', 'below', 'between', 'and', 'but', 'or',
-  'not', 'no', 'nor', 'so', 'yet', 'both', 'either', 'neither', 'each',
-  'every', 'all', 'any', 'few', 'more', 'most', 'other', 'some', 'such',
-  'than', 'too', 'very', 'just', 'about', 'above', 'again', 'also',
-  'because', 'been', 'before', 'being', 'below', 'between', 'both',
-  'but', 'by', 'came', 'come', 'did', 'does', 'each', 'else', 'for',
-  'from', 'get', 'got', 'has', 'had', 'he', 'her', 'here', 'him',
-  'himself', 'his', 'how', 'if', 'in', 'into', 'is', 'it', 'its',
-  'like', 'make', 'many', 'me', 'might', 'more', 'most', 'much', 'must',
-  'my', 'never', 'now', 'of', 'on', 'only', 'or', 'other', 'our', 'out',
-  'over', 're', 'said', 'she', 'should', 'since', 'so', 'some', 'still',
-  'such', 'take', 'than', 'that', 'the', 'their', 'them', 'then',
-  'there', 'these', 'they', 'this', 'those', 'through', 'to', 'too',
-  'under', 'up', 'us', 'very', 'want', 'was', 'way', 'we', 'well',
-  'were', 'what', 'when', 'where', 'which', 'while', 'who', 'will',
-  'with', 'would', 'you', 'your',
+  'the',
+  'a',
+  'an',
+  'is',
+  'are',
+  'was',
+  'were',
+  'be',
+  'been',
+  'being',
+  'have',
+  'has',
+  'had',
+  'do',
+  'does',
+  'did',
+  'will',
+  'would',
+  'could',
+  'should',
+  'may',
+  'might',
+  'shall',
+  'can',
+  'to',
+  'of',
+  'in',
+  'for',
+  'on',
+  'with',
+  'at',
+  'by',
+  'from',
+  'as',
+  'into',
+  'through',
+  'during',
+  'before',
+  'after',
+  'above',
+  'below',
+  'between',
+  'and',
+  'but',
+  'or',
+  'not',
+  'no',
+  'nor',
+  'so',
+  'yet',
+  'both',
+  'either',
+  'neither',
+  'each',
+  'every',
+  'all',
+  'any',
+  'few',
+  'more',
+  'most',
+  'other',
+  'some',
+  'such',
+  'than',
+  'too',
+  'very',
+  'just',
+  'about',
+  'above',
+  'again',
+  'also',
+  'because',
+  'been',
+  'before',
+  'being',
+  'below',
+  'between',
+  'both',
+  'but',
+  'by',
+  'came',
+  'come',
+  'did',
+  'does',
+  'each',
+  'else',
+  'for',
+  'from',
+  'get',
+  'got',
+  'has',
+  'had',
+  'he',
+  'her',
+  'here',
+  'him',
+  'himself',
+  'his',
+  'how',
+  'if',
+  'in',
+  'into',
+  'is',
+  'it',
+  'its',
+  'like',
+  'make',
+  'many',
+  'me',
+  'might',
+  'more',
+  'most',
+  'much',
+  'must',
+  'my',
+  'never',
+  'now',
+  'of',
+  'on',
+  'only',
+  'or',
+  'other',
+  'our',
+  'out',
+  'over',
+  're',
+  'said',
+  'she',
+  'should',
+  'since',
+  'so',
+  'some',
+  'still',
+  'such',
+  'take',
+  'than',
+  'that',
+  'the',
+  'their',
+  'them',
+  'then',
+  'there',
+  'these',
+  'they',
+  'this',
+  'those',
+  'through',
+  'to',
+  'too',
+  'under',
+  'up',
+  'us',
+  'very',
+  'want',
+  'was',
+  'way',
+  'we',
+  'well',
+  'were',
+  'what',
+  'when',
+  'where',
+  'which',
+  'while',
+  'who',
+  'will',
+  'with',
+  'would',
+  'you',
+  'your',
 ]);
 
 /**
@@ -211,8 +355,8 @@ function normalizeWord(word: string): string {
 function extractContentWords(text: string): string[] {
   return text
     .split(/\s+/)
-    .map(w => normalizeWord(w))
-    .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+    .map((w) => normalizeWord(w))
+    .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
 }
 
 /**
@@ -242,7 +386,7 @@ function extractKeyPhrases(text: string): string[] {
   for (const pattern of npPatterns) {
     const matches = text.match(pattern);
     if (matches) {
-      phrases.push(...matches.map(m => m.toLowerCase()));
+      phrases.push(...matches.map((m) => m.toLowerCase()));
     }
   }
 
@@ -297,8 +441,10 @@ export class ConsistencyMonitor {
       bftStatus,
     };
 
-    if (this.config.onConsistencyChange &&
-        (!this.lastReport || this.lastReport.consistencyLevel !== consistencyLevel)) {
+    if (
+      this.config.onConsistencyChange &&
+      (!this.lastReport || this.lastReport.consistencyLevel !== consistencyLevel)
+    ) {
       this.config.onConsistencyChange(consistencyLevel, report);
     }
 
@@ -328,11 +474,11 @@ export class ConsistencyMonitor {
       const reqPhrases = extractKeyPhrases(req);
 
       // Check if requirement's key words appear in output
-      const wordMatches = reqWords.filter(w => outputWordsSet.has(w)).length;
+      const wordMatches = reqWords.filter((w) => outputWordsSet.has(w)).length;
       const wordCoverage = reqWords.length > 0 ? wordMatches / reqWords.length : 1;
 
       // Check if requirement's key phrases appear in output
-      const phraseMatches = reqPhrases.filter(p => outputLower.includes(p)).length;
+      const phraseMatches = reqPhrases.filter((p) => outputLower.includes(p)).length;
       const phraseCoverage = reqPhrases.length > 0 ? phraseMatches / reqPhrases.length : 1;
 
       // Combined coverage
@@ -346,7 +492,7 @@ export class ConsistencyMonitor {
     }
 
     const score = requirements.length > 0 ? covered.length / requirements.length : 1;
-    const suggestions = missing.map(r => `Address missing requirement: "${r}"`);
+    const suggestions = missing.map((r) => `Address missing requirement: "${r}"`);
 
     return { requirements, covered, missing, score, suggestions };
   }
@@ -354,7 +500,11 @@ export class ConsistencyMonitor {
   /**
    * Combined consistency + completeness check
    */
-  checkQuality(missionId: string, input?: string, outputs?: Map<string, string>): ConsistencyReport {
+  checkQuality(
+    missionId: string,
+    input?: string,
+    outputs?: Map<string, string>,
+  ): ConsistencyReport {
     const report = this.checkConsistency(missionId);
 
     if (input && outputs && outputs.size > 0) {
@@ -366,12 +516,13 @@ export class ConsistencyMonitor {
       });
 
       // Average completeness
-      const avgScore = completenessReports.length > 0
-        ? completenessReports.reduce((s, r) => s + r.score, 0) / completenessReports.length
-        : 1;
+      const avgScore =
+        completenessReports.length > 0
+          ? completenessReports.reduce((s, r) => s + r.score, 0) / completenessReports.length
+          : 1;
 
-      const missingSet = new Set(completenessReports.flatMap(r => r.missing));
-      const coveredSet = new Set(completenessReports.flatMap(r => r.covered));
+      const missingSet = new Set(completenessReports.flatMap((r) => r.missing));
+      const coveredSet = new Set(completenessReports.flatMap((r) => r.covered));
       const allMissing = Array.from(missingSet);
       const allCovered = Array.from(coveredSet);
 
@@ -380,7 +531,7 @@ export class ConsistencyMonitor {
         covered: allCovered,
         missing: allMissing,
         score: avgScore,
-        suggestions: allMissing.map(r => `Address missing requirement: "${r}"`),
+        suggestions: allMissing.map((r) => `Address missing requirement: "${r}"`),
       };
     }
 
@@ -389,7 +540,7 @@ export class ConsistencyMonitor {
 
   private getRecentOutputs(): AgentOutput[] {
     const recent: AgentOutput[] = [];
-    this.outputHistory.forEach(outputs => {
+    this.outputHistory.forEach((outputs) => {
       if (outputs.length > 0) {
         recent.push(outputs[outputs.length - 1]);
       }
@@ -401,10 +552,12 @@ export class ConsistencyMonitor {
 
   private buildSimilarityMatrix(outputs: AgentOutput[]): number[][] {
     const n = outputs.length;
-    const matrix: number[][] = Array(n).fill(null).map(() => Array(n).fill(0));
+    const matrix: number[][] = Array(n)
+      .fill(null)
+      .map(() => Array(n).fill(0));
 
     // Pre-compute features for each output
-    const features = outputs.map(o => ({
+    const features = outputs.map((o) => ({
       contentWords: extractContentWords(o.content),
       bigrams: extractBigrams(extractContentWords(o.content)),
       keyPhrases: extractKeyPhrases(o.content),
@@ -416,9 +569,7 @@ export class ConsistencyMonitor {
         if (i === j) {
           matrix[i][j] = 1.0;
         } else {
-          const similarity = this.calculateEnhancedSimilarity(
-            features[i], features[j]
-          );
+          const similarity = this.calculateEnhancedSimilarity(features[i], features[j]);
           matrix[i][j] = similarity;
           matrix[j][i] = similarity;
         }
@@ -437,39 +588,33 @@ export class ConsistencyMonitor {
    */
   private calculateEnhancedSimilarity(
     f1: { contentWords: string[]; bigrams: string[]; keyPhrases: string[]; rawLower: string },
-    f2: { contentWords: string[]; bigrams: string[]; keyPhrases: string[]; rawLower: string }
+    f2: { contentWords: string[]; bigrams: string[]; keyPhrases: string[]; rawLower: string },
   ): number {
     // 1. Content word Jaccard
     const words1 = new Set(f1.contentWords);
     const words2 = new Set(f2.contentWords);
-    const wordIntersection = f1.contentWords.filter(x => words2.has(x));
+    const wordIntersection = f1.contentWords.filter((x) => words2.has(x));
     const wordUnion = new Set(f1.contentWords.concat(f2.contentWords));
     const wordJaccard = wordUnion.size > 0 ? wordIntersection.length / wordUnion.size : 1;
 
     // 2. Bigram overlap
     const bigrams2Set = new Set(f2.bigrams);
-    const bigramIntersection = f1.bigrams.filter(x => bigrams2Set.has(x));
+    const bigramIntersection = f1.bigrams.filter((x) => bigrams2Set.has(x));
     const bigramUnion = new Set(f1.bigrams.concat(f2.bigrams));
     const bigramOverlap = bigramUnion.size > 0 ? bigramIntersection.length / bigramUnion.size : 1;
 
     // 3. Key phrase overlap
-    const phraseIntersection = f1.keyPhrases.filter(p => f2.rawLower.includes(p));
-    const phraseScore = f1.keyPhrases.length > 0 ? phraseIntersection.length / f1.keyPhrases.length : 1;
+    const phraseIntersection = f1.keyPhrases.filter((p) => f2.rawLower.includes(p));
+    const phraseScore =
+      f1.keyPhrases.length > 0 ? phraseIntersection.length / f1.keyPhrases.length : 1;
 
     // 4. Length ratio
     const len1 = f1.contentWords.length;
     const len2 = f2.contentWords.length;
-    const lengthRatio = Math.max(len1, len2) > 0
-      ? Math.min(len1, len2) / Math.max(len1, len2)
-      : 1;
+    const lengthRatio = Math.max(len1, len2) > 0 ? Math.min(len1, len2) / Math.max(len1, len2) : 1;
 
     // Weighted combination
-    return (
-      0.35 * wordJaccard +
-      0.25 * bigramOverlap +
-      0.25 * phraseScore +
-      0.15 * lengthRatio
-    );
+    return 0.35 * wordJaccard + 0.25 * bigramOverlap + 0.25 * phraseScore + 0.15 * lengthRatio;
   }
 
   private calculateAgreementScore(similarityMatrix: number[][]): number {
@@ -498,7 +643,7 @@ export class ConsistencyMonitor {
 
   private detectConflicts(
     outputs: AgentOutput[],
-    similarityMatrix: number[][]
+    similarityMatrix: number[][],
   ): ConsistencyConflict[] {
     const conflicts: ConsistencyConflict[] = [];
     const n = outputs.length;
@@ -531,7 +676,7 @@ export class ConsistencyMonitor {
    */
   private classifyConflictType(
     output1: AgentOutput,
-    output2: AgentOutput
+    output2: AgentOutput,
   ): 'semantic' | 'logical' | 'factual' {
     const words1 = extractContentWords(output1.content);
     const words2 = extractContentWords(output2.content);
@@ -540,7 +685,7 @@ export class ConsistencyMonitor {
     const nums1: string[] = output1.content.match(/\b\d+(?:\.\d+)?\b/g) || [];
     const nums2: string[] = output2.content.match(/\b\d+(?:\.\d+)?\b/g) || [];
     const nums2Set = new Set(nums2);
-    const sharedNums = nums1.filter(n => nums2Set.has(n));
+    const sharedNums = nums1.filter((n) => nums2Set.has(n));
     if (nums1.length > 0 && nums2.length > 0 && sharedNums.length === 0) {
       return 'factual';
     }
@@ -559,7 +704,7 @@ export class ConsistencyMonitor {
 
   private attemptConsensus(
     outputs: AgentOutput[],
-    agreementScore: number
+    agreementScore: number,
   ): ConsistencyReport['consensus'] | undefined {
     if (outputs.length === 0) return undefined;
 
@@ -567,7 +712,7 @@ export class ConsistencyMonitor {
       const mostRepresentative = this.findMostRepresentativeOutput(outputs);
       return {
         agreedOutput: mostRepresentative.content,
-        supportingAgents: outputs.map(o => o.agentId),
+        supportingAgents: outputs.map((o) => o.agentId),
         opposingAgents: [],
         confidence: agreementScore,
       };
@@ -602,7 +747,7 @@ export class ConsistencyMonitor {
               bigrams: extractBigrams(extractContentWords(outputs[j].content)),
               keyPhrases: extractKeyPhrases(outputs[j].content),
               rawLower: outputs[j].content.toLowerCase(),
-            }
+            },
           );
         }
       }
@@ -635,7 +780,7 @@ export class ConsistencyMonitor {
             bigrams: extractBigrams(extractContentWords(key)),
             keyPhrases: extractKeyPhrases(key),
             rawLower: key.toLowerCase(),
-          }
+          },
         );
         if (sim >= 0.7) {
           group.push(output);
@@ -655,10 +800,10 @@ export class ConsistencyMonitor {
       }
     }
 
-    const supportingAgents = largestGroup.map(o => o.agentId);
+    const supportingAgents = largestGroup.map((o) => o.agentId);
     const opposingAgents = outputs
-      .filter(o => !supportingAgents.includes(o.agentId))
-      .map(o => o.agentId);
+      .filter((o) => !supportingAgents.includes(o.agentId))
+      .map((o) => o.agentId);
 
     return {
       agreedOutput: largestGroup[0].content,
@@ -672,12 +817,12 @@ export class ConsistencyMonitor {
 
   private checkBFTStatus(
     totalNodes: number,
-    conflicts: ConsistencyConflict[]
+    conflicts: ConsistencyConflict[],
   ): ConsistencyReport['bftStatus'] {
     const faultyNodes = new Set<string>();
     for (const conflict of conflicts) {
       if (conflict.severity === 'critical' || conflict.severity === 'high') {
-        conflict.agentIds.forEach(id => faultyNodes.add(id));
+        conflict.agentIds.forEach((id) => faultyNodes.add(id));
       }
     }
 
@@ -733,7 +878,9 @@ export class ConsistencyMonitor {
 
   // ==================== 查询操作 ====================
 
-  getLastReport(): ConsistencyReport | undefined { return this.lastReport; }
+  getLastReport(): ConsistencyReport | undefined {
+    return this.lastReport;
+  }
   getSnapshots(limit?: number): ConsistencySnapshot[] {
     return limit ? this.snapshots.slice(-limit) : [...this.snapshots];
   }
@@ -792,7 +939,7 @@ export class ConsistencyMonitorManager {
   }
 
   clearAll(): void {
-    this.monitors.forEach(monitor => monitor.clearHistory());
+    this.monitors.forEach((monitor) => monitor.clearHistory());
   }
 }
 

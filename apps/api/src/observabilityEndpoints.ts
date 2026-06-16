@@ -26,7 +26,12 @@ const deps: ObservabilityDeps = { recorder, traceStore, resolveTenant };
 
 const RUN_ID_PATTERN = /^[a-zA-Z0-9_.-]+$/;
 function isValidRunId(runId: string): boolean {
-  return typeof runId === 'string' && runId.length > 0 && runId.length < 200 && RUN_ID_PATTERN.test(runId);
+  return (
+    typeof runId === 'string' &&
+    runId.length > 0 &&
+    runId.length < 200 &&
+    RUN_ID_PATTERN.test(runId)
+  );
 }
 
 export function createObservabilityRouter(): Router {
@@ -43,7 +48,13 @@ export function createObservabilityRouter(): Router {
     }
 
     try {
-      const result = await handleObservabilityRequest(req, res, deps, segments, req.url.split('?')[1] ?? '');
+      const result = await handleObservabilityRequest(
+        req,
+        res,
+        deps,
+        segments,
+        req.url.split('?')[1] ?? '',
+      );
       if (!result.handled && !res.headersSent) {
         res.status(404).json({ error: 'Not found' });
       }

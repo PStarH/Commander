@@ -47,9 +47,9 @@ export interface ConfidenceTrend {
 }
 
 export interface ConfidenceThresholds {
-  low: number;      // Below this = low confidence alert
-  warning: number;  // Below this = warning
-  target: number;   // Target confidence level
+  low: number; // Below this = low confidence alert
+  warning: number; // Below this = warning
+  target: number; // Target confidence level
 }
 
 export const DEFAULT_THRESHOLDS: ConfidenceThresholds = {
@@ -87,7 +87,7 @@ export class ConfidenceReporter {
   generateAgentReport(projectId: string, agentId: string, missionId?: string): ConfidenceReport {
     let rationales = this.store.getByAgent(projectId, agentId);
     if (missionId) {
-      rationales = rationales.filter(r => r.missionId === missionId);
+      rationales = rationales.filter((r) => r.missionId === missionId);
     }
     return this.buildReport(rationales, missionId || 'multiple', agentId);
   }
@@ -100,12 +100,14 @@ export class ConfidenceReporter {
     const alerts: ConfidenceAlert[] = [];
 
     // Find decisions below target threshold
-    const lowConfidence = rationales.filter(r => r.confidence.score < this.thresholds.target);
+    const lowConfidence = rationales.filter((r) => r.confidence.score < this.thresholds.target);
 
     for (const r of lowConfidence) {
       const severity: 'low' | 'medium' | 'high' =
-        r.confidence.score < this.thresholds.low ? 'high'
-          : r.confidence.score < this.thresholds.warning ? 'medium'
+        r.confidence.score < this.thresholds.low
+          ? 'high'
+          : r.confidence.score < this.thresholds.warning
+            ? 'medium'
             : 'low';
 
       alerts.push({
@@ -139,14 +141,15 @@ export class ConfidenceReporter {
       };
     }
 
-    const scores = rationales.map(r => r.confidence.score);
+    const scores = rationales.map((r) => r.confidence.score);
     const sum = scores.reduce((a, b) => a + b, 0);
     const avg = sum / scores.length;
 
     const sorted = [...scores].sort((a, b) => a - b);
-    const median = sorted.length % 2 === 0
-      ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
-      : sorted[Math.floor(sorted.length / 2)];
+    const median =
+      sorted.length % 2 === 0
+        ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+        : sorted[Math.floor(sorted.length / 2)];
 
     const variance = scores.reduce((acc, s) => acc + Math.pow(s - avg, 2), 0) / scores.length;
     const stdDev = Math.sqrt(variance);
@@ -163,7 +166,11 @@ export class ConfidenceReporter {
 
   // Private methods
 
-  buildReport(rationales: ActionRationale[], missionId: string, agentId?: string): ConfidenceReport {
+  buildReport(
+    rationales: ActionRationale[],
+    missionId: string,
+    agentId?: string,
+  ): ConfidenceReport {
     const totalDecisions = rationales.length;
 
     if (totalDecisions === 0) {
@@ -181,19 +188,20 @@ export class ConfidenceReporter {
 
     // Calculate distribution
     const distribution = {
-      low: rationales.filter(r => r.confidence.level === 'low').length,
-      medium: rationales.filter(r => r.confidence.level === 'medium').length,
-      high: rationales.filter(r => r.confidence.level === 'high').length,
-      'very-high': rationales.filter(r => r.confidence.level === 'very-high').length,
+      low: rationales.filter((r) => r.confidence.level === 'low').length,
+      medium: rationales.filter((r) => r.confidence.level === 'medium').length,
+      high: rationales.filter((r) => r.confidence.level === 'high').length,
+      'very-high': rationales.filter((r) => r.confidence.level === 'very-high').length,
     };
 
     // Calculate average confidence
-    const avgConfidence = rationales.reduce((sum, r) => sum + r.confidence.score, 0) / totalDecisions;
+    const avgConfidence =
+      rationales.reduce((sum, r) => sum + r.confidence.score, 0) / totalDecisions;
 
     // Find low confidence actions
     const lowConfidenceActions = rationales
-      .filter(r => r.confidence.score < this.thresholds.warning)
-      .map(r => ({
+      .filter((r) => r.confidence.score < this.thresholds.warning)
+      .map((r) => ({
         actionId: r.id,
         actionType: r.actionType,
         confidenceScore: r.confidence.score,
@@ -207,7 +215,11 @@ export class ConfidenceReporter {
     const trend = this.calculateTrend(rationales);
 
     // Generate recommendations
-    const recommendations = this.generateRecommendations(avgConfidence, distribution, lowConfidenceActions.length);
+    const recommendations = this.generateRecommendations(
+      avgConfidence,
+      distribution,
+      lowConfidenceActions.length,
+    );
 
     return {
       missionId,
@@ -230,8 +242,8 @@ export class ConfidenceReporter {
     }
 
     // Group by time windows (last 5 windows)
-    const sorted = [...rationales].sort((a, b) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    const sorted = [...rationales].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
     );
 
     const windowSize = Math.ceil(sorted.length / 5);
@@ -276,25 +288,40 @@ export class ConfidenceReporter {
   private generateRecommendations(
     avgConfidence: number,
     distribution: { low: number; medium: number; high: number; 'very-high': number },
-    lowCount: number
+    lowCount: number,
   ): string[] {
     const recommendations: string[] = [];
 
     if (avgConfidence < this.thresholds.warning) {
-      recommendations.push('Overall confidence is below target. Consider reviewing decision criteria.');
+      recommendations.push(
+        'Overall confidence is below target. Consider reviewing decision criteria.',
+      );
     }
 
     if (distribution.low > 0) {
-      const pct = Math.round((distribution.low / (distribution.low + distribution.medium + distribution.high + distribution['very-high'])) * 100);
-      recommendations.push(`${pct}% of decisions have low confidence. Review these for potential issues.`);
+      const pct = Math.round(
+        (distribution.low /
+          (distribution.low +
+            distribution.medium +
+            distribution.high +
+            distribution['very-high'])) *
+          100,
+      );
+      recommendations.push(
+        `${pct}% of decisions have low confidence. Review these for potential issues.`,
+      );
     }
 
     if (lowCount > 5) {
-      recommendations.push(`${lowCount} low-confidence decisions detected. Consider human review for critical actions.`);
+      recommendations.push(
+        `${lowCount} low-confidence decisions detected. Consider human review for critical actions.`,
+      );
     }
 
     if (distribution['very-high'] > distribution.low + distribution.medium) {
-      recommendations.push('Good confidence distribution. Decision-making process is working well.');
+      recommendations.push(
+        'Good confidence distribution. Decision-making process is working well.',
+      );
     }
 
     if (recommendations.length === 0) {
@@ -304,7 +331,10 @@ export class ConfidenceReporter {
     return recommendations;
   }
 
-  private generateAlertRecommendation(r: ActionRationale, severity: 'low' | 'medium' | 'high'): string {
+  private generateAlertRecommendation(
+    r: ActionRationale,
+    severity: 'low' | 'medium' | 'high',
+  ): string {
     if (severity === 'high') {
       return `Critical: Review "${r.actionType}" action. Confidence at ${(r.confidence.score * 100).toFixed(1)}% - below safe threshold. Consider human oversight.`;
     } else if (severity === 'medium') {
@@ -341,7 +371,7 @@ export interface ConfidenceStatistics {
  */
 export function createConfidenceReport(
   rationales: ActionRationale[],
-  missionId: string
+  missionId: string,
 ): ConfidenceReport {
   const reporter = new ConfidenceReporter();
   return reporter.buildReport(rationales, missionId);

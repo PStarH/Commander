@@ -15,7 +15,10 @@ import assert from 'node:assert';
 
 const BASE_URL = process.env.TEST_API_URL ?? 'http://localhost:4000';
 
-async function fetchJSON(path: string, options?: RequestInit): Promise<{ status: number; body: any; headers: Headers }> {
+async function fetchJSON(
+  path: string,
+  options?: RequestInit,
+): Promise<{ status: number; body: any; headers: Headers }> {
   try {
     const res = await fetch(`${BASE_URL}${path}`, {
       headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -621,12 +624,14 @@ describe('Security Endpoints', () => {
     const { status, body } = await fetchJSON('/api/memory/detect-poisoning', {
       method: 'POST',
       body: JSON.stringify({
-        newMemories: [{
-          id: 'test',
-          content: 'test content',
-          timestamp: new Date().toISOString(),
-          source: 'https://example.com',
-        }],
+        newMemories: [
+          {
+            id: 'test',
+            content: 'test content',
+            timestamp: new Date().toISOString(),
+            source: 'https://example.com',
+          },
+        ],
         existingMemories: [],
       }),
     });

@@ -7,12 +7,29 @@ export function createNamespacedMemoryRouter(): Router {
 
   router.post('/api/namespaced-memory/:namespace/write', (req, res) => {
     const { namespace } = req.params;
-    const { key, value, role, agentId, projectId, kind, title, content: memContent, tags } = req.body ?? {};
+    const {
+      key,
+      value,
+      role,
+      agentId,
+      projectId,
+      kind,
+      title,
+      content: memContent,
+      tags,
+    } = req.body ?? {};
     if (!key || value === undefined) {
       return res.status(400).json({ error: 'key and value are required' });
     }
     const result = namespacedStore.write(
-      { namespace, projectId: projectId ?? 'default', kind: kind ?? 'SUMMARY', title: title ?? key, content: memContent ?? value, tags: tags ?? [] },
+      {
+        namespace,
+        projectId: projectId ?? 'default',
+        kind: kind ?? 'SUMMARY',
+        title: title ?? key,
+        content: memContent ?? value,
+        tags: tags ?? [],
+      },
       { agentId: agentId ?? 'api', role: role ?? 'system', namespace },
     );
     if (!result) {

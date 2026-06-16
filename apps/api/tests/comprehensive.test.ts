@@ -16,7 +16,10 @@ import assert from 'node:assert';
 
 const BASE_URL = process.env.TEST_API_URL ?? 'http://localhost:4000';
 
-async function fetchJSON(path: string, options?: RequestInit): Promise<{ status: number; body: any; headers: Headers }> {
+async function fetchJSON(
+  path: string,
+  options?: RequestInit,
+): Promise<{ status: number; body: any; headers: Headers }> {
   try {
     const res = await fetch(`${BASE_URL}${path}`, {
       headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -101,25 +104,40 @@ describe('Security Headers', () => {
 
 describe('Input Validation', () => {
   it('Rejects oversized bodies (413)', async () => {
-    const { status } = await fetchJSON('/projects', { method: 'POST', body: 'x'.repeat(2 * 1024 * 1024) });
+    const { status } = await fetchJSON('/projects', {
+      method: 'POST',
+      body: 'x'.repeat(2 * 1024 * 1024),
+    });
     assert.strictEqual(status, 413);
   });
 
   it('Rejects malformed JSON (400)', async () => {
-    const res = await fetch(`${BASE_URL}/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{bad' });
+    const res = await fetch(`${BASE_URL}/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{bad',
+    });
     assert.strictEqual(res.status, 400);
   });
 
   it('Accepts valid JSON', async () => {
     const { status } = await fetchJSON('/projects/project-war-room/memory', {
       method: 'POST',
-      body: JSON.stringify({ kind: 'LESSON', title: `Test ${Date.now()}`, content: 'Test', tags: ['test'] }),
+      body: JSON.stringify({
+        kind: 'LESSON',
+        title: `Test ${Date.now()}`,
+        content: 'Test',
+        tags: ['test'],
+      }),
     });
     assert.ok([200, 201].includes(status));
   });
 
   it('OPTIONS preflight returns 204', async () => {
-    const res = await fetch(`${BASE_URL}/health`, { method: 'OPTIONS', headers: { Origin: 'http://localhost:3000', 'Access-Control-Request-Method': 'POST' } });
+    const res = await fetch(`${BASE_URL}/health`, {
+      method: 'OPTIONS',
+      headers: { Origin: 'http://localhost:3000', 'Access-Control-Request-Method': 'POST' },
+    });
     assert.strictEqual(res.status, 204);
   });
 });
@@ -148,7 +166,8 @@ describe('Projects', () => {
 
   it('POST /projects/:id/missions — creates mission', async () => {
     const { status } = await fetchJSON('/projects/project-war-room/missions', {
-      method: 'POST', body: JSON.stringify({ name: 'test', description: 'test' }),
+      method: 'POST',
+      body: JSON.stringify({ name: 'test', description: 'test' }),
     });
     assert.ok([200, 201, 400].includes(status));
   });
@@ -167,7 +186,13 @@ describe('Memory', () => {
 
   it('POST /projects/:id/memory — creates memory', async () => {
     const { status, body } = await fetchJSON('/projects/project-war-room/memory', {
-      method: 'POST', body: JSON.stringify({ kind: 'LESSON', title: `Test ${Date.now()}`, content: 'Test', tags: ['test'] }),
+      method: 'POST',
+      body: JSON.stringify({
+        kind: 'LESSON',
+        title: `Test ${Date.now()}`,
+        content: 'Test',
+        tags: ['test'],
+      }),
     });
     assert.ok([200, 201].includes(status));
     assert.ok(body);
@@ -218,7 +243,8 @@ describe('Memory', () => {
 describe('Quality Gates', () => {
   it('POST /api/quality/check — runs gates', async () => {
     const { status, body } = await fetchJSON('/api/quality/check', {
-      method: 'POST', body: JSON.stringify({ input: 'What is 2+2?', output: '4' }),
+      method: 'POST',
+      body: JSON.stringify({ input: 'What is 2+2?', output: '4' }),
     });
     assert.strictEqual(status, 200);
     assert.ok(body);
@@ -226,7 +252,12 @@ describe('Quality Gates', () => {
 
   it('POST /api/quality/hallucination-check — detects', async () => {
     const { status, body } = await fetchJSON('/api/quality/hallucination-check', {
-      method: 'POST', body: JSON.stringify({ input: 'Capital of France?', output: 'Paris', context: 'France capital is Paris' }),
+      method: 'POST',
+      body: JSON.stringify({
+        input: 'Capital of France?',
+        output: 'Paris',
+        context: 'France capital is Paris',
+      }),
     });
     assert.strictEqual(status, 200);
     assert.ok(body);
@@ -234,7 +265,8 @@ describe('Quality Gates', () => {
 
   it('POST /api/quality/check — rejects empty', async () => {
     const { status } = await fetchJSON('/api/quality/check', {
-      method: 'POST', body: JSON.stringify({ input: '', output: '' }),
+      method: 'POST',
+      body: JSON.stringify({ input: '', output: '' }),
     });
     assert.ok([400, 422].includes(status));
   });
@@ -259,7 +291,14 @@ describe('Namespaced Memory', () => {
 
   it('POST /api/namespaced-memory/:ns/write — writes', async () => {
     const { status } = await fetchJSON('/api/namespaced-memory/shared/write', {
-      method: 'POST', body: JSON.stringify({ projectId: 'test', kind: 'SUMMARY', title: 'Test', content: 'Test', namespace: 'shared' }),
+      method: 'POST',
+      body: JSON.stringify({
+        projectId: 'test',
+        kind: 'SUMMARY',
+        title: 'Test',
+        content: 'Test',
+        namespace: 'shared',
+      }),
     });
     assert.ok([200, 201, 403].includes(status));
   });
@@ -300,7 +339,8 @@ describe('A2A Protocol', () => {
 
   it('POST /a2a/tasks — creates task', async () => {
     const { status } = await fetchJSON('/a2a/tasks', {
-      method: 'POST', body: JSON.stringify({ name: 'test' }),
+      method: 'POST',
+      body: JSON.stringify({ name: 'test' }),
     });
     assert.ok([200, 201, 400].includes(status));
   });
@@ -331,7 +371,8 @@ describe('Governance', () => {
 
   it('POST /api/agents/:id/self-assess — returns assessment', async () => {
     const { status } = await fetchJSON('/api/agents/test/self-assess', {
-      method: 'POST', body: JSON.stringify({ taskType: 'general' }),
+      method: 'POST',
+      body: JSON.stringify({ taskType: 'general' }),
     });
     assert.ok([200, 404].includes(status));
   });
@@ -344,7 +385,8 @@ describe('Governance', () => {
 describe('Self-Assessment', () => {
   it('POST /api/agents/:id/self-assess — works', async () => {
     const { status } = await fetchJSON('/api/agents/test/self-assess', {
-      method: 'POST', body: JSON.stringify({ taskType: 'general' }),
+      method: 'POST',
+      body: JSON.stringify({ taskType: 'general' }),
     });
     assert.ok([200, 404].includes(status));
   });
@@ -367,7 +409,8 @@ describe('Evaluation', () => {
 
   it('POST /api/evaluation/run — runs eval', async () => {
     const { status } = await fetchJSON('/api/evaluation/run', {
-      method: 'POST', body: JSON.stringify({ tasks: [] }),
+      method: 'POST',
+      body: JSON.stringify({ tasks: [] }),
     });
     assert.ok([200, 201, 400].includes(status));
   });
@@ -390,7 +433,8 @@ describe('Orchestrator', () => {
 
   it('POST /api/orchestrator/run — runs', async () => {
     const { status } = await fetchJSON('/api/orchestrator/run', {
-      method: 'POST', body: JSON.stringify({ task: 'test' }),
+      method: 'POST',
+      body: JSON.stringify({ task: 'test' }),
     });
     assert.ok([200, 201, 400].includes(status));
   });
@@ -408,7 +452,8 @@ describe('Pipeline', () => {
 
   it('POST /api/pipeline/run — runs', async () => {
     const { status } = await fetchJSON('/api/pipeline/run', {
-      method: 'POST', body: JSON.stringify({ steps: [] }),
+      method: 'POST',
+      body: JSON.stringify({ steps: [] }),
     });
     assert.ok([200, 201, 400].includes(status));
   });
@@ -468,7 +513,8 @@ describe('Reasoning Config', () => {
 
   it('PUT /api/reasoning/config — updates', async () => {
     const { status } = await fetchJSON('/api/reasoning/config', {
-      method: 'PUT', body: JSON.stringify({ enabled: true }),
+      method: 'PUT',
+      body: JSON.stringify({ enabled: true }),
     });
     assert.ok([200, 404].includes(status));
   });
@@ -486,7 +532,8 @@ describe('Evaluation Runner', () => {
 
   it('POST /api/evaluation-runner/run — runs', async () => {
     const { status } = await fetchJSON('/api/evaluation-runner/run', {
-      method: 'POST', body: JSON.stringify({ tasks: [] }),
+      method: 'POST',
+      body: JSON.stringify({ tasks: [] }),
     });
     assert.ok([200, 201, 400].includes(status));
   });
@@ -504,7 +551,8 @@ describe('State Machine', () => {
 
   it('POST /api/state-machine/create — creates', async () => {
     const { status } = await fetchJSON('/api/state-machine/create', {
-      method: 'POST', body: JSON.stringify({ pattern: 'sequential' }),
+      method: 'POST',
+      body: JSON.stringify({ pattern: 'sequential' }),
     });
     assert.ok([200, 201, 400].includes(status));
   });
@@ -522,7 +570,8 @@ describe('Conflict Detection', () => {
 
   it('POST /projects/:id/conflicts/detect — detects', async () => {
     const { status } = await fetchJSON('/projects/project-war-room/conflicts/detect', {
-      method: 'POST', body: JSON.stringify({ memories: [] }),
+      method: 'POST',
+      body: JSON.stringify({ memories: [] }),
     });
     assert.ok([200, 404].includes(status));
   });
@@ -540,7 +589,8 @@ describe('Confidence', () => {
 
   it('POST /projects/:id/confidence/report — reports', async () => {
     const { status } = await fetchJSON('/projects/project-war-room/confidence/report', {
-      method: 'POST', body: JSON.stringify({ score: 0.8 }),
+      method: 'POST',
+      body: JSON.stringify({ score: 0.8 }),
     });
     assert.ok([200, 404].includes(status));
   });
@@ -553,7 +603,15 @@ describe('Confidence', () => {
 describe('Security', () => {
   it('POST /api/memory/assess-credibility — assesses', async () => {
     const { status, body } = await fetchJSON('/api/memory/assess-credibility', {
-      method: 'POST', body: JSON.stringify({ source: { id: 'test', content: 'test', timestamp: new Date().toISOString(), source: 'https://example.com' } }),
+      method: 'POST',
+      body: JSON.stringify({
+        source: {
+          id: 'test',
+          content: 'test',
+          timestamp: new Date().toISOString(),
+          source: 'https://example.com',
+        },
+      }),
     });
     assert.strictEqual(status, 200);
     assert.ok(body);
@@ -561,7 +619,18 @@ describe('Security', () => {
 
   it('POST /api/memory/detect-poisoning — detects', async () => {
     const { status, body } = await fetchJSON('/api/memory/detect-poisoning', {
-      method: 'POST', body: JSON.stringify({ newMemories: [{ id: 'test', content: 'test', timestamp: new Date().toISOString(), source: 'https://example.com' }], existingMemories: [] }),
+      method: 'POST',
+      body: JSON.stringify({
+        newMemories: [
+          {
+            id: 'test',
+            content: 'test',
+            timestamp: new Date().toISOString(),
+            source: 'https://example.com',
+          },
+        ],
+        existingMemories: [],
+      }),
     });
     assert.strictEqual(status, 200);
     assert.ok(body);
@@ -569,7 +638,8 @@ describe('Security', () => {
 
   it('POST /api/security/scan — scans', async () => {
     const { status } = await fetchJSON('/api/security/scan', {
-      method: 'POST', body: JSON.stringify({ content: 'test' }),
+      method: 'POST',
+      body: JSON.stringify({ content: 'test' }),
     });
     assert.ok([200, 404].includes(status));
   });
@@ -618,7 +688,9 @@ describe('Edge Cases', () => {
   });
 
   it('Special characters in query params are handled', async () => {
-    const { status } = await fetchJSON('/projects/project-war-room/memory/search?q=<script>alert(1)</script>');
+    const { status } = await fetchJSON(
+      '/projects/project-war-room/memory/search?q=<script>alert(1)</script>',
+    );
     assert.ok([200, 400].includes(status));
   });
 });

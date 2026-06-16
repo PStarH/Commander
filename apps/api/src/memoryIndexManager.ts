@@ -1,7 +1,7 @@
 /**
  * Memory Index System
  * Based on Claude Code's three-layer memory architecture
- * 
+ *
  * Architecture:
  * - Layer 1: In-Context Memory (active window) - handled by LLM
  * - Layer 2: memory/index.json (pointer index) - this module
@@ -56,11 +56,11 @@ const INDEX_FILE = path.join(MEMORY_DIR, 'index.json');
 
 export class MemoryIndexManager {
   private index: MemoryIndex | null = null;
-  
+
   constructor(private readonly projectId: string) {
     this.loadIndex();
   }
-  
+
   /**
    * Get or create memory index
    */
@@ -68,7 +68,7 @@ export class MemoryIndexManager {
     if (!fs.existsSync(MEMORY_DIR)) {
       fs.mkdirSync(MEMORY_DIR, { recursive: true });
     }
-    
+
     if (fs.existsSync(INDEX_FILE)) {
       try {
         const raw = fs.readFileSync(INDEX_FILE, 'utf8');
@@ -78,40 +78,40 @@ export class MemoryIndexManager {
         this.index = null;
       }
     }
-    
+
     if (!this.index) {
       this.index = {
         version: '1.0',
         projectId: this.projectId,
-        pointers: []
+        pointers: [],
       };
       this.persistIndex();
     }
   }
-  
+
   /**
    * Add a new memory domain
    */
   addDomain(domain: string, description: string): MemoryPointer {
     const fileName = `${domain.toLowerCase().replace(/\s+/g, '-')}.json`;
     const filePath = path.join(MEMORY_DIR, fileName);
-    
+
     const pointer: MemoryPointer = {
       domain,
       filePath: fileName,
       description,
-      lastUpdated: new Date().toISOString()
+      lastUpdated: new Date().toISOString(),
     };
-    
+
     // Check if domain already exists
-    const existing = this.index!.pointers.find(p => p.domain === domain);
+    const existing = this.index!.pointers.find((p) => p.domain === domain);
     if (existing) {
       return existing;
     }
-    
+
     this.index!.pointers.push(pointer);
     this.persistIndex();
-    
+
     // Initialize domain file if not exists
     if (!fs.existsSync(filePath)) {
       const domainMemory: DomainMemory = {
@@ -120,39 +120,39 @@ export class MemoryIndexManager {
         metadata: {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
-          entryCount: 0
-        }
+          entryCount: 0,
+        },
       };
       fs.writeFileSync(filePath, JSON.stringify(domainMemory, null, 2));
     }
-    
+
     return pointer;
   }
-  
+
   /**
    * Get pointer for a domain
    */
   getPointer(domain: string): MemoryPointer | undefined {
-    return this.index!.pointers.find(p => p.domain === domain);
+    return this.index!.pointers.find((p) => p.domain === domain);
   }
-  
+
   /**
    * List all domains
    */
   listDomains(): MemoryPointer[] {
     return this.index!.pointers;
   }
-  
+
   /**
    * Read domain memory
    */
   readDomain(domain: string): DomainMemory | null {
     const pointer = this.getPointer(domain);
     if (!pointer) return null;
-    
+
     const filePath = path.join(MEMORY_DIR, pointer.filePath);
     if (!fs.existsSync(filePath)) return null;
-    
+
     try {
       const raw = fs.readFileSync(filePath, 'utf8');
       return JSON.parse(raw);
@@ -161,7 +161,7 @@ export class MemoryIndexManager {
       return null;
     }
   }
-  
+
   /**
    * Write entry to domain memory (self-healing: append, don't overwrite)
    */
@@ -176,14 +176,14 @@ export class MemoryIndexManager {
       metadata: {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        entryCount: 0
-      }
+        entryCount: 0,
+      },
     };
 
     // Check for duplicates before writing
     const entryTitle = entry.title.toLowerCase().trim();
-    const existing = domainMemory.entries.find(e =>
-      e.type === entry.type && e.title.toLowerCase().trim() === entryTitle
+    const existing = domainMemory.entries.find(
+      (e) => e.type === entry.type && e.title.toLowerCase().trim() === entryTitle,
     );
 
     if (existing) {
@@ -206,7 +206,7 @@ export class MemoryIndexManager {
       accessCount: 0,
       lastAccessedAt: new Date().toISOString(),
       importance: 0.5,
-      ...entry
+      ...entry,
     };
 
     domainMemory.entries.push(newEntry);
@@ -232,7 +232,7 @@ export class MemoryIndexManager {
     const domainMemory = this.readDomain(domain);
     if (!domainMemory) return false;
 
-    const index = domainMemory.entries.findIndex(e => e.id === entryId);
+    const index = domainMemory.entries.findIndex((e) => e.id === entryId);
     if (index === -1) return false;
 
     domainMemory.entries.splice(index, 1);
@@ -247,24 +247,27 @@ export class MemoryIndexManager {
 
     return true;
   }
-  
+
   /**
    * Search across all domains for entries matching a query.
    * Returns results sorted by relevance (keyword match + recency + importance).
    */
-  search(query: string, options?: {
-    domains?: string[];
-    type?: MemoryEntry['type'];
-    tags?: string[];
-    limit?: number;
-  }): Array<{ domain: string; entry: MemoryEntry; score: number }> {
+  search(
+    query: string,
+    options?: {
+      domains?: string[];
+      type?: MemoryEntry['type'];
+      tags?: string[];
+      limit?: number;
+    },
+  ): Array<{ domain: string; entry: MemoryEntry; score: number }> {
     const { domains, type, tags, limit = 20 } = options ?? {};
     const queryLower = query.toLowerCase();
-    const queryTerms = queryLower.split(/\s+/).filter(t => t.length >= 2);
+    const queryTerms = queryLower.split(/\s+/).filter((t) => t.length >= 2);
 
     const results: Array<{ domain: string; entry: MemoryEntry; score: number }> = [];
 
-    const searchDomains = domains ?? this.index!.pointers.map(p => p.domain);
+    const searchDomains = domains ?? this.index!.pointers.map((p) => p.domain);
 
     for (const domainName of searchDomains) {
       const domainMemory = this.readDomain(domainName);
@@ -274,11 +277,11 @@ export class MemoryIndexManager {
         // Filter by type
         if (type && entry.type !== type) continue;
         // Filter by tags
-        if (tags && tags.length > 0 && !tags.some(t => entry.tags.includes(t))) continue;
+        if (tags && tags.length > 0 && !tags.some((t) => entry.tags.includes(t))) continue;
 
         // Score: keyword match + recency + importance
         const text = `${entry.title} ${entry.content} ${entry.tags.join(' ')}`.toLowerCase();
-        const termHits = queryTerms.filter(t => text.includes(t)).length;
+        const termHits = queryTerms.filter((t) => text.includes(t)).length;
         const keywordScore = queryTerms.length > 0 ? termHits / queryTerms.length : 0;
 
         const ageHours = (Date.now() - new Date(entry.timestamp).getTime()) / (1000 * 60 * 60);
@@ -348,7 +351,7 @@ export class MemoryIndexManager {
 
     return { removed, merged };
   }
-  
+
   private persistIndex(): void {
     fs.writeFileSync(INDEX_FILE, JSON.stringify(this.index, null, 2));
   }
@@ -361,5 +364,5 @@ export const DEFAULT_DOMAINS = [
   { domain: 'Patterns', description: 'Code patterns and conventions' },
   { domain: 'Preferences', description: 'User preferences and settings' },
   { domain: 'Issues', description: 'Known issues and workarounds' },
-  { domain: 'Lessons', description: 'Lessons learned from iterations' }
+  { domain: 'Lessons', description: 'Lessons learned from iterations' },
 ];

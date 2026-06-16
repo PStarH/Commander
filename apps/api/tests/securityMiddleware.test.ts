@@ -78,8 +78,8 @@ describe('securityMiddleware', () => {
     });
 
     it('preserves tabs, newlines, and carriage returns', () => {
-      const input = "hello\tworld\n\r";
-      assert.equal(sanitizeString(input), "hello\tworld\n\r");
+      const input = 'hello\tworld\n\r';
+      assert.equal(sanitizeString(input), 'hello\tworld\n\r');
     });
 
     it('truncates to maxLength', () => {

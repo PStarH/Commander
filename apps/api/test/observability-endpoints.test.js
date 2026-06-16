@@ -17,7 +17,7 @@ async function waitForServer(url, timeoutMs = 60000) {
       const response = await fetch(`${url}/health`);
       if (response.ok) return;
     } catch {}
-    await new Promise(resolve => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, 150));
   }
   throw new Error('API server did not become healthy in time');
 }

@@ -1,5 +1,9 @@
 import { Router } from 'express';
-import { createEvaluationRunner, StringMatchGrader, OutcomeVerificationGrader } from './evaluationRunner';
+import {
+  createEvaluationRunner,
+  StringMatchGrader,
+  OutcomeVerificationGrader,
+} from './evaluationRunner';
 
 export function createEvaluationRunnerRouter(): Router {
   const router = Router();
@@ -10,15 +14,21 @@ export function createEvaluationRunnerRouter(): Router {
       return res.status(400).json({ error: 'trials array is required' });
     }
 
-    const grader = graderType === 'outcome'
-      ? new OutcomeVerificationGrader('outcome-check', (t: unknown) => (t as Record<string, unknown>)?.output?.status === 'success')
-      : new StringMatchGrader('string-match', expectedOutput ?? '');
+    const grader =
+      graderType === 'outcome'
+        ? new OutcomeVerificationGrader(
+            'outcome-check',
+            (t: unknown) => (t as Record<string, unknown>)?.output?.status === 'success',
+          )
+        : new StringMatchGrader('string-match', expectedOutput ?? '');
 
     const runner = createEvaluationRunner();
     const results = await runner.gradeTrials(trials, [grader]);
 
     const output: Record<string, any> = {};
-    results.forEach((v, k) => { output[k] = v; });
+    results.forEach((v, k) => {
+      output[k] = v;
+    });
     res.json({ results: output });
   });
 

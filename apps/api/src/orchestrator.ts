@@ -18,7 +18,7 @@ import {
   getTaskAllocator,
   AllocationResult,
   TaskPriority,
-  ReleaseResult
+  ReleaseResult,
 } from './deterministicTaskAllocator';
 import { deliberate, classifyEffortLevel } from '@commander/core';
 import type { EffortLevel } from '@commander/core';
@@ -59,8 +59,10 @@ export interface DelegationRequest {
  */
 function effortToComplexity(effort: EffortLevel): TaskComplexity {
   switch (effort) {
-    case 'SIMPLE': return 'simple';
-    case 'MODERATE': return 'moderate';
+    case 'SIMPLE':
+      return 'simple';
+    case 'MODERATE':
+      return 'moderate';
     case 'COMPLEX':
     case 'DEEP_RESEARCH':
       return 'complex';
@@ -85,9 +87,12 @@ export function assessComplexity(query: string): TaskComplexity {
  */
 export function calculateSubagentCount(complexity: TaskComplexity): number {
   switch (complexity) {
-    case 'simple': return 1;
-    case 'moderate': return 3; // midpoint of core's MODERATE range (2-4)
-    case 'complex': return 8; // lower bound of core's COMPLEX/DEEP_RESEARCH range
+    case 'simple':
+      return 1;
+    case 'moderate':
+      return 3; // midpoint of core's MODERATE range (2-4)
+    case 'complex':
+      return 8; // lower bound of core's COMPLEX/DEEP_RESEARCH range
   }
 }
 
@@ -117,13 +122,13 @@ export function createDelegationPlan(request: DelegationRequest): OrchestratorPl
       outputFormat: 'Direct answer with supporting evidence',
       tools: ['search', 'fetch'],
       boundaries: ['Focus on authoritative sources', 'Limit to 3-5 sources'],
-      status: 'pending'
+      status: 'pending',
     });
   } else {
     // For moderate/complex, decompose using the deliberation's capabilities
     // and task type to generate more targeted subtasks
     const aspects = extractAspects(request.query, deliberation.capabilitiesNeeded);
-    aspects.slice(0, Math.min(subagentCount, aspects.length)).forEach(aspect => {
+    aspects.slice(0, Math.min(subagentCount, aspects.length)).forEach((aspect) => {
       tasks.push({
         id: uuidv4(),
         objective: aspect,
@@ -132,9 +137,9 @@ export function createDelegationPlan(request: DelegationRequest): OrchestratorPl
         boundaries: [
           'Do not duplicate work of other agents',
           'Focus on primary sources',
-          'Return comprehensive findings'
+          'Return comprehensive findings',
         ],
-        status: 'pending'
+        status: 'pending',
       });
     });
   }
@@ -146,7 +151,7 @@ export function createDelegationPlan(request: DelegationRequest): OrchestratorPl
     subagentCount,
     tasks,
     createdAt: new Date().toISOString(),
-    allocationEnabled: true
+    allocationEnabled: true,
   };
 }
 
@@ -160,7 +165,7 @@ function extractAspects(query: string, capabilities?: string[]): string[] {
 
   // Check for common patterns
   if (query.includes(' and ') || query.includes('&')) {
-    aspects.push(...query.split(/\s+(?:and|&)\s+/).map(s => s.trim()));
+    aspects.push(...query.split(/\s+(?:and|&)\s+/).map((s) => s.trim()));
   } else if (query.includes(' vs ') || query.includes('versus')) {
     const parts = query.split(/\s+(?:vs|versus)\s+/);
     aspects.push(`Compare: ${parts[0]}`, `Compare: ${parts[1]}`);
@@ -171,11 +176,9 @@ function extractAspects(query: string, capabilities?: string[]): string[] {
   // If the deliberation identified specific capabilities, generate
   // capability-focused aspects for moderate/complex tasks
   if (capabilities && capabilities.length > 1) {
-    const capsWithoutReasoning = capabilities.filter(c => c !== 'reasoning');
+    const capsWithoutReasoning = capabilities.filter((c) => c !== 'reasoning');
     if (capsWithoutReasoning.length > 0 && aspects.length === 1) {
-      return capsWithoutReasoning.map(cap =>
-        `[${cap}] ${query}`
-      );
+      return capsWithoutReasoning.map((cap) => `[${cap}] ${query}`);
     }
   }
 
@@ -217,21 +220,21 @@ export class Orchestrator {
       priority?: TaskPriority;
       timeoutMs?: number;
       dependencies?: string[];
-    } = {}
+    } = {},
   ): AllocationResult {
     const plan = this.activePlans.get(planId);
     if (!plan) {
       return {
         success: false,
-        error: 'PLAN_NOT_FOUND'
+        error: 'PLAN_NOT_FOUND',
       };
     }
 
-    const task = plan.tasks.find(t => t.id === taskId);
+    const task = plan.tasks.find((t) => t.id === taskId);
     if (!task) {
       return {
         success: false,
-        error: 'TASK_NOT_FOUND'
+        error: 'TASK_NOT_FOUND',
       };
     }
 
@@ -245,8 +248,8 @@ export class Orchestrator {
       dependencies: options.dependencies,
       metadata: {
         planId,
-        objective: task.objective
-      }
+        objective: task.objective,
+      },
     });
 
     if (result.success && result.allocation) {
@@ -267,20 +270,20 @@ export class Orchestrator {
     taskId: string,
     agentId: string,
     reason: 'completed' | 'failed' | 'timeout' | 'manual',
-    result?: string
+    result?: string,
   ): ReleaseResult {
     const plan = this.activePlans.get(planId);
     if (!plan) {
       return { success: false, error: 'PLAN_NOT_FOUND' };
     }
 
-    const task = plan.tasks.find(t => t.id === taskId);
-    
+    const task = plan.tasks.find((t) => t.id === taskId);
+
     const releaseResult = this.taskAllocator.release({
       taskId,
       ownerId: agentId,
       reason,
-      result
+      result,
     });
 
     if (releaseResult.success && task) {
@@ -316,12 +319,12 @@ export class Orchestrator {
     planId: string,
     taskId: string,
     status: SubagentTask['status'],
-    result?: string
+    result?: string,
   ): void {
     const plan = this.activePlans.get(planId);
     if (!plan) return;
 
-    const task = plan.tasks.find(t => t.id === taskId);
+    const task = plan.tasks.find((t) => t.id === taskId);
     if (task) {
       task.status = status;
       if (result) task.result = result;
@@ -332,14 +335,14 @@ export class Orchestrator {
     const plan = this.activePlans.get(planId);
     if (!plan) return [];
 
-    return plan.tasks.filter(t => t.status === 'completed');
+    return plan.tasks.filter((t) => t.status === 'completed');
   }
 
   isPlanComplete(planId: string): boolean {
     const plan = this.activePlans.get(planId);
     if (!plan) return false;
 
-    return plan.tasks.every(t => t.status === 'completed' || t.status === 'failed');
+    return plan.tasks.every((t) => t.status === 'completed' || t.status === 'failed');
   }
 
   clearPlan(planId: string): void {
@@ -351,7 +354,7 @@ export class Orchestrator {
           this.taskAllocator.release({
             taskId: task.id,
             ownerId: task.assignedAgentId,
-            reason: 'manual'
+            reason: 'manual',
           });
         }
       }
@@ -393,7 +396,13 @@ export interface RunAgentStepDeps {
 }
 
 const WRITE_OPS_MATRIX: Record<string, string[]> = {
-  ALLOW_EXECUTION: ['WRITE_LOG', 'WRITE_MEMORY', 'UPDATE_MISSION_STATUS', 'UPDATE_MISSION_FIELDS', 'UPDATE_AGENT_STATE'],
+  ALLOW_EXECUTION: [
+    'WRITE_LOG',
+    'WRITE_MEMORY',
+    'UPDATE_MISSION_STATUS',
+    'UPDATE_MISSION_FIELDS',
+    'UPDATE_AGENT_STATE',
+  ],
   PROPOSE_ONLY: ['WRITE_LOG', 'WRITE_MEMORY'],
   REQUIRE_APPROVAL: ['WRITE_LOG', 'WRITE_MEMORY'],
   DENY: [],
@@ -416,11 +425,16 @@ export async function runAgentStep(
   deps: RunAgentStepDeps,
 ): Promise<string> {
   // 1. Fetch run context
-  const runContext = (await deps.http.fetchJson(`/runs/${input.missionId}/context`)) as Record<string, unknown>;
+  const runContext = (await deps.http.fetchJson(`/runs/${input.missionId}/context`)) as Record<
+    string,
+    unknown
+  >;
   const embeddedGuidance = (runContext.guidance as Record<string, unknown>) ?? null;
 
   // 2. Always try guidance endpoint
-  const explicitGuidance = (await deps.http.tryFetchJson(`/runs/${input.missionId}/guidance`)) as Record<string, unknown> | null;
+  const explicitGuidance = (await deps.http.tryFetchJson(
+    `/runs/${input.missionId}/guidance`,
+  )) as Record<string, unknown> | null;
   const guidance = (explicitGuidance ?? embeddedGuidance) as Record<string, unknown> | null;
 
   // 3. Determine invocation profile — use guidance only when agentId matches
@@ -453,7 +467,9 @@ export async function runAgentStep(
     contextParts.push(`focusMission: ${input.missionId}`);
   }
   if (invocationProfile.allowedOperations) {
-    contextParts.push(`allowedOperations: ${(invocationProfile.allowedOperations as string[]).join(', ')}`);
+    contextParts.push(
+      `allowedOperations: ${(invocationProfile.allowedOperations as string[]).join(', ')}`,
+    );
   }
   const context = contextParts.join('\n');
 
@@ -488,7 +504,10 @@ export async function runAgentStep(
 
   // Agent state patch — UPDATE_AGENT_STATE
   if (isOpAllowed(disposition, 'UPDATE_AGENT_STATE') && result.agentStatePatch) {
-    await deps.http.patchJson(`/projects/${projectId}/agents/${input.agentId}/state`, result.agentStatePatch);
+    await deps.http.patchJson(
+      `/projects/${projectId}/agents/${input.agentId}/state`,
+      result.agentStatePatch,
+    );
   }
 
   return result.summary;

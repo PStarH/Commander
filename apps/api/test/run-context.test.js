@@ -16,7 +16,7 @@ async function waitForServer(url, timeoutMs = 10000) {
       const response = await fetch(`${url}/health`);
       if (response.ok) return;
     } catch {}
-    await new Promise(resolve => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, 150));
   }
   throw new Error('API server did not become healthy in time');
 }
@@ -42,7 +42,7 @@ test.after(() => {
 
 test('run-context returns guidance for manual approval missions', async () => {
   const response = await fetch(
-    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-api-spine&intent=EXECUTE&memoryLimit=8`
+    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-api-spine&intent=EXECUTE&memoryLimit=8`,
   );
   assert.equal(response.status, 200);
 
@@ -59,7 +59,7 @@ test('run-context returns guidance for manual approval missions', async () => {
 
 test('run-context returns guarded execution guidance for guarded missions', async () => {
   const response = await fetch(
-    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-scout&missionId=mission-dashboard&intent=EXECUTE&memoryLimit=8`
+    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-scout&missionId=mission-dashboard&intent=EXECUTE&memoryLimit=8`,
   );
   assert.equal(response.status, 200);
 
@@ -75,7 +75,7 @@ test('run-context returns guarded execution guidance for guarded missions', asyn
 
 test('run-context falls back to single-agent guidance when no mission is focused', async () => {
   const response = await fetch(
-    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&intent=PLAN&memoryLimit=5`
+    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&intent=PLAN&memoryLimit=5`,
   );
   assert.equal(response.status, 200);
 
@@ -106,7 +106,7 @@ test('run-context mission-scopes recommendedMemory when matching memory exists',
   assert.equal(createResponse.status, 201);
 
   const response = await fetch(
-    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-api-spine&intent=EXECUTE&memoryLimit=8`
+    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-api-spine&intent=EXECUTE&memoryLimit=8`,
   );
   assert.equal(response.status, 200);
 
@@ -114,12 +114,12 @@ test('run-context mission-scopes recommendedMemory when matching memory exists',
   assert.ok(Array.isArray(body.recommendedMemory.items));
   assert.ok(body.recommendedMemory.items.length >= 1);
   assert.equal(body.recommendedMemory.sourceTags[0], 'mission-scoped');
-  assert.ok(body.recommendedMemory.items.every(item => item.missionId === 'mission-api-spine'));
+  assert.ok(body.recommendedMemory.items.every((item) => item.missionId === 'mission-api-spine'));
 });
 
 test('run-context falls back to recent recommendedMemory when mission-scoped memory is absent', async () => {
   const response = await fetch(
-    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-dashboard&intent=EXECUTE&memoryLimit=8`
+    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-dashboard&intent=EXECUTE&memoryLimit=8`,
   );
   assert.equal(response.status, 200);
 
@@ -131,7 +131,7 @@ test('run-context falls back to recent recommendedMemory when mission-scoped mem
 
 test('run-context exposes a stable guidance + snapshot contract for manual-approval missions', async () => {
   const response = await fetch(
-    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-api-spine&intent=EXECUTE&memoryLimit=8`
+    `${baseUrl}/projects/project-war-room/run-context?agentId=agent-builder&missionId=mission-api-spine&intent=EXECUTE&memoryLimit=8`,
   );
   assert.equal(response.status, 200);
 

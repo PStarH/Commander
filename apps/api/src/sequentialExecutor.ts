@@ -1,6 +1,6 @@
 /**
  * Sequential Pipeline Executor
- * 
+ *
  * Implements the Sequential Orchestration Pattern from Microsoft's AI Agent Design Patterns.
  * Each step executes in order, with the output of one step becoming input to the next.
  */
@@ -81,7 +81,7 @@ export class InMemoryPipelineRunStore implements PipelineRunStore {
   }
 
   list(projectId: string): SequentialPipelineRun[] {
-    return Array.from(this.runs.values()).filter(r => r.projectId === projectId);
+    return Array.from(this.runs.values()).filter((r) => r.projectId === projectId);
   }
 }
 
@@ -113,7 +113,7 @@ export class SequentialExecutor {
     options?: {
       input?: TInput;
       metadata?: Record<string, unknown>;
-    }
+    },
   ): Promise<SequentialPipelineRun> {
     const runId = `${pipeline.id}-run-${Date.now()}`;
     const startedAt = new Date().toISOString();
@@ -160,9 +160,9 @@ export class SequentialExecutor {
 
       // Execute steps sequentially
       for (let i = 0; i < pipeline.steps.length; i++) {
-      // Re-fetch run status from store (may have been cancelled externally)
-      const currentRun = this.runStore.get(runId);
-      if (currentRun?.status === 'CANCELLED') {
+        // Re-fetch run status from store (may have been cancelled externally)
+        const currentRun = this.runStore.get(runId);
+        if (currentRun?.status === 'CANCELLED') {
           break;
         }
 
@@ -175,7 +175,7 @@ export class SequentialExecutor {
           currentInput,
           context,
           runId,
-          pipeline.projectId
+          pipeline.projectId,
         );
 
         run.results.push(result);
@@ -258,7 +258,7 @@ export class SequentialExecutor {
     input: unknown,
     context: SequentialContext,
     runId: string,
-    projectId: string
+    projectId: string,
   ): Promise<SequentialStepResult> {
     const stepStartedAt = new Date().toISOString();
     const maxRetries = step.maxRetries ?? this.defaultMaxRetries;
@@ -306,7 +306,7 @@ export class SequentialExecutor {
             context: runContext,
             timeoutMs,
           }),
-          timeoutMs
+          timeoutMs,
         );
 
         // Apply output transformation if provided
@@ -366,10 +366,7 @@ export class SequentialExecutor {
   /**
    * Execute with timeout.
    */
-  private async executeWithTimeout<T>(
-    promise: Promise<T>,
-    timeoutMs: number
-  ): Promise<T> {
+  private async executeWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
     let timer: ReturnType<typeof setTimeout>;
     return Promise.race([
       promise.finally(() => clearTimeout(timer)),
@@ -383,7 +380,7 @@ export class SequentialExecutor {
    * Sleep utility.
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -444,11 +441,13 @@ export class SequentialExecutor {
  */
 export function createMockAgentExecutor(): AgentExecutor {
   return async ({ agentId, input }) => {
-    process.stdout.write(`[SequentialExecutor] MockAgentExecutor agent ${agentId} called with: ${JSON.stringify(input)}\n`);
-    
+    process.stdout.write(
+      `[SequentialExecutor] MockAgentExecutor agent ${agentId} called with: ${JSON.stringify(input)}\n`,
+    );
+
     // Simulate processing time
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
     return {
       output: {
         processed: true,

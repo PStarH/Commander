@@ -81,7 +81,7 @@ export function proactiveConflictCheck(
       totalApiCalls?: number;
       totalComputeUnits?: number;
     };
-  }
+  },
 ): ConflictDetectionResult {
   // 1. Goal Conflict: Check if agents have competing objectives
   const goalConflict = detectGoalConflict(agent, proposedAction, context);
@@ -118,7 +118,7 @@ export function proactiveConflictCheck(
  */
 export function reactiveConflictMonitor(
   agents: Agent[],
-  recentActions: ProposedAction[]
+  recentActions: ProposedAction[],
 ): Conflict[] {
   const conflicts: Conflict[] = [];
 
@@ -135,7 +135,7 @@ export function reactiveConflictMonitor(
   // Detect resource contention (multiple agents targeting same resource)
   for (const [resource, actions] of resourceActions) {
     if (actions.length > 1) {
-      const uniqueAgents = [...new Set(actions.map(a => a.agentId))];
+      const uniqueAgents = [...new Set(actions.map((a) => a.agentId))];
       if (uniqueAgents.length > 1) {
         conflicts.push({
           id: `conflict-resource-${resource}-${Date.now()}`,
@@ -163,7 +163,7 @@ export function reactiveConflictMonitor(
   }
 
   for (const [missionId, actions] of missionActions) {
-    const priorities = actions.map(a => a.priority);
+    const priorities = actions.map((a) => a.priority);
     const uniquePriorities = [...new Set(priorities)];
     if (uniquePriorities.length > 1) {
       conflicts.push({
@@ -171,7 +171,7 @@ export function reactiveConflictMonitor(
         type: 'GOAL',
         severity: 'medium',
         description: `Agents have different priority levels for mission ${missionId}: ${uniquePriorities.join(', ')}`,
-        involvedAgents: [...new Set(actions.map(a => a.agentId))],
+        involvedAgents: [...new Set(actions.map((a) => a.agentId))],
         proposedActions: actions,
         detectedAt: new Date().toISOString(),
         detectionMode: 'reactive',
@@ -190,12 +190,15 @@ export function reactiveConflictMonitor(
 function detectGoalConflict(
   agent: Agent,
   proposedAction: ProposedAction,
-  context: { otherAgents: Agent[]; activeMissions?: Array<{ id: string; assignedAgentId: string; priority: string }> }
+  context: {
+    otherAgents: Agent[];
+    activeMissions?: Array<{ id: string; assignedAgentId: string; priority: string }>;
+  },
 ): ConflictDetectionResult {
   // Check if agent is trying to work on a mission assigned to another agent
   if (context.activeMissions) {
     const targetMission = context.activeMissions.find(
-      m => m.id === proposedAction.metadata?.targetMissionId
+      (m) => m.id === proposedAction.metadata?.targetMissionId,
     );
     if (targetMission && targetMission.assignedAgentId !== agent.id) {
       return {
@@ -218,9 +221,9 @@ function detectGoalConflict(
 
   // Check if multiple agents with same specialty are trying to work on similar tasks
   if (agent.specialties && agent.specialties.length > 0) {
-    const conflictingAgents = context.otherAgents.filter(other => {
+    const conflictingAgents = context.otherAgents.filter((other) => {
       if (!other.specialties || other.specialties.length === 0) return false;
-      const overlap = agent.specialties!.filter(s => other.specialties!.includes(s));
+      const overlap = agent.specialties!.filter((s) => other.specialties!.includes(s));
       return overlap.length > 0 && other.currentTaskId !== agent.currentTaskId;
     });
 
@@ -232,7 +235,7 @@ function detectGoalConflict(
           type: 'GOAL',
           severity: 'low',
           description: `Agents with overlapping specialties (${agent.specialties!.join(', ')}) may have competing goals`,
-          involvedAgents: [agent.id, ...conflictingAgents.map(a => a.id)],
+          involvedAgents: [agent.id, ...conflictingAgents.map((a) => a.id)],
           proposedActions: [proposedAction],
           detectedAt: new Date().toISOString(),
           detectionMode: 'proactive',
@@ -255,11 +258,12 @@ function detectResourceConflict(
       totalApiCalls?: number;
       totalComputeUnits?: number;
     };
-  }
+  },
 ): ConflictDetectionResult {
   // Check token budget
   if (proposedAction.estimatedTokens && context.resourcePool?.totalTokens) {
-    const totalUsage = proposedAction.estimatedTokens +
+    const totalUsage =
+      proposedAction.estimatedTokens +
       context.otherAgents.reduce((sum, a) => sum + (a.resourceUsage?.tokenBudget || 0), 0);
 
     if (totalUsage > context.resourcePool.totalTokens) {
@@ -270,7 +274,7 @@ function detectResourceConflict(
           type: 'RESOURCE',
           severity: 'high',
           description: `Token budget exceeded: ${totalUsage} > ${context.resourcePool.totalTokens}`,
-          involvedAgents: [agent.id, ...context.otherAgents.map(a => a.id)],
+          involvedAgents: [agent.id, ...context.otherAgents.map((a) => a.id)],
           proposedActions: [proposedAction],
           detectedAt: new Date().toISOString(),
           detectionMode: 'proactive',
@@ -286,7 +290,8 @@ function detectResourceConflict(
 
   // Check API rate limits
   if (proposedAction.estimatedApiCalls && context.resourcePool?.totalApiCalls) {
-    const totalCalls = proposedAction.estimatedApiCalls +
+    const totalCalls =
+      proposedAction.estimatedApiCalls +
       context.otherAgents.reduce((sum, a) => sum + (a.resourceUsage?.apiCallsRemaining || 0), 0);
 
     if (totalCalls > context.resourcePool.totalApiCalls) {
@@ -314,7 +319,7 @@ function detectResourceConflict(
   // Check target resource contention
   if (proposedAction.targetResource) {
     const agentsUsingResource = context.otherAgents.filter(
-      a => a.currentTaskId === proposedAction.targetResource
+      (a) => a.currentTaskId === proposedAction.targetResource,
     );
 
     if (agentsUsingResource.length > 0) {
@@ -325,7 +330,7 @@ function detectResourceConflict(
           type: 'RESOURCE',
           severity: 'medium',
           description: `Resource ${proposedAction.targetResource} is currently in use by ${agentsUsingResource.length} agent(s)`,
-          involvedAgents: [agent.id, ...agentsUsingResource.map(a => a.id)],
+          involvedAgents: [agent.id, ...agentsUsingResource.map((a) => a.id)],
           proposedActions: [proposedAction],
           detectedAt: new Date().toISOString(),
           detectionMode: 'proactive',
@@ -342,7 +347,7 @@ function detectResourceConflict(
 function detectPolicyConflict(
   agent: Agent,
   proposedAction: ProposedAction,
-  context: { governanceMode?: 'AUTO' | 'GUARDED' | 'MANUAL' }
+  context: { governanceMode?: 'AUTO' | 'GUARDED' | 'MANUAL' },
 ): ConflictDetectionResult {
   // Check governance level permissions
   if (proposedAction.governanceLevel === 'APPROVER' && agent.role !== 'APPROVER') {
@@ -410,13 +415,13 @@ function detectPolicyConflict(
 function detectInterpretationConflict(
   agent: Agent,
   proposedAction: ProposedAction,
-  context: { otherAgents: Agent[] }
+  context: { otherAgents: Agent[] },
 ): ConflictDetectionResult {
   // Check for potential terminology conflicts via metadata
   const terminology = proposedAction.metadata?.terminology as Record<string, string> | undefined;
   if (terminology && context.otherAgents.length > 0) {
     // If action uses domain-specific terminology, flag for potential interpretation issues
-    const domainTerms = Object.keys(terminology).filter(k => terminology[k] !== 'common');
+    const domainTerms = Object.keys(terminology).filter((k) => terminology[k] !== 'common');
     if (domainTerms.length > 0) {
       return {
         hasConflict: true,
@@ -444,7 +449,7 @@ function detectInterpretationConflict(
 // ============================================
 
 function assessResourceConflictSeverity(actions: ProposedAction[]): ConflictSeverity {
-  const priorities = actions.map(a => a.priority);
+  const priorities = actions.map((a) => a.priority);
 
   if (priorities.includes('CRITICAL')) {
     return 'critical';
@@ -454,7 +459,7 @@ function assessResourceConflictSeverity(actions: ProposedAction[]): ConflictSeve
     return 'high';
   }
 
-  if (priorities.filter(p => p === 'MEDIUM').length >= 2) {
+  if (priorities.filter((p) => p === 'MEDIUM').length >= 2) {
     return 'medium';
   }
 
@@ -464,17 +469,15 @@ function assessResourceConflictSeverity(actions: ProposedAction[]): ConflictSeve
 /**
  * Assess overall severity based on conflict type and context
  */
-export function assessConflictSeverity(
-  conflict: Omit<Conflict, 'severity'>
-): ConflictSeverity {
+export function assessConflictSeverity(conflict: Omit<Conflict, 'severity'>): ConflictSeverity {
   const { type, proposedActions } = conflict;
 
   // Critical severity conditions
-  if (type === 'POLICY' && proposedActions.some(a => a.governanceLevel === 'APPROVER')) {
+  if (type === 'POLICY' && proposedActions.some((a) => a.governanceLevel === 'APPROVER')) {
     return 'critical';
   }
 
-  if (type === 'RESOURCE' && proposedActions.some(a => a.priority === 'CRITICAL')) {
+  if (type === 'RESOURCE' && proposedActions.some((a) => a.priority === 'CRITICAL')) {
     return 'critical';
   }
 
@@ -507,14 +510,12 @@ export function assessConflictSeverity(
 /**
  * Classify conflict type based on characteristics
  */
-export function classifyConflict(
-  characteristics: {
-    involvesResources?: boolean;
-    involvesPermissions?: boolean;
-    involvesCompetingObjectives?: boolean;
-    involvesTerminology?: boolean;
-  }
-): ConflictType {
+export function classifyConflict(characteristics: {
+  involvesResources?: boolean;
+  involvesPermissions?: boolean;
+  involvesCompetingObjectives?: boolean;
+  involvesTerminology?: boolean;
+}): ConflictType {
   if (characteristics.involvesPermissions) {
     return 'POLICY';
   }

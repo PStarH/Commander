@@ -115,7 +115,10 @@ export function sanitizeError(err: Error, requestId?: string): SanitizedError {
   if (err.message?.includes('JSON')) {
     return { status: 400, message: 'Invalid JSON in request body', requestId };
   }
-  if (err.message?.includes('too large') || (err as Error & { type?: string }).type === 'entity.too.large') {
+  if (
+    err.message?.includes('too large') ||
+    (err as Error & { type?: string }).type === 'entity.too.large'
+  ) {
     return { status: 413, message: 'Request body too large', requestId };
   }
 

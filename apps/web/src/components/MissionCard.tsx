@@ -17,27 +17,27 @@ const priorityColors: Record<string, 'success' | 'warning' | 'error' | 'info'> =
 };
 
 const riskGovColors: Record<string, string> = {
-  'LOW': 'rgba(126, 167, 191, 0.7)',
-  'MEDIUM': 'rgba(255, 196, 92, 0.8)',
-  'HIGH': 'rgba(255, 105, 120, 0.8)',
-  'CRITICAL': 'rgba(255, 105, 120, 0.95)',
-  'AUTO': 'rgba(77, 233, 140, 0.6)',
-  'GUARDED': 'rgba(255, 196, 92, 0.7)',
-  'MANUAL': 'rgba(255, 105, 120, 0.7)',
+  LOW: 'rgba(126, 167, 191, 0.7)',
+  MEDIUM: 'rgba(255, 196, 92, 0.8)',
+  HIGH: 'rgba(255, 105, 120, 0.8)',
+  CRITICAL: 'rgba(255, 105, 120, 0.95)',
+  AUTO: 'rgba(77, 233, 140, 0.6)',
+  GUARDED: 'rgba(255, 196, 92, 0.7)',
+  MANUAL: 'rgba(255, 105, 120, 0.7)',
 };
 
 export function MissionCard({ mission, agentName, onStatusChange, onApprove }: MissionCardProps) {
   const highRisk = isMissionHighRisk(mission);
   const cardVariant = highRisk
-    ? mission.riskLevel === 'CRITICAL' ? 'critical-risk' : 'high-risk'
+    ? mission.riskLevel === 'CRITICAL'
+      ? 'critical-risk'
+      : 'high-risk'
     : 'default';
 
   return (
     <Card className="mission" variant={cardVariant}>
       <div className="mission-top">
-        <Badge variant={priorityColors[mission.priority] || 'info'}>
-          {mission.priority}
-        </Badge>
+        <Badge variant={priorityColors[mission.priority] || 'info'}>{mission.priority}</Badge>
         <span className="mission-time">{formatTimestamp(mission.updatedAt)}</span>
       </div>
 
@@ -68,13 +68,16 @@ export function MissionCard({ mission, agentName, onStatusChange, onApprove }: M
       <div className="mission-foot">
         <span className="mission-agent">{agentName || mission.assignedAgentId}</span>
         <div className="mission-acts">
-          {nextMissionActions(mission.status).map(next => (
+          {nextMissionActions(mission.status).map((next) => (
             <Button
               key={next}
               size="sm"
               variant="ghost"
               onClick={() => {
-                if (next === 'BLOCKED' && !window.confirm(`Block mission "${mission.title}"? This may pause the workflow.`)) {
+                if (
+                  next === 'BLOCKED' &&
+                  !window.confirm(`Block mission "${mission.title}"? This may pause the workflow.`)
+                ) {
                   return;
                 }
                 onStatusChange(mission.id, next);

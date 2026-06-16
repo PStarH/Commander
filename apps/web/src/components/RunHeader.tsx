@@ -1,4 +1,13 @@
-import { Clock, Cpu, Zap, DollarSign, AlertTriangle, CheckCircle, Play, type LucideIcon } from 'lucide-react';
+import {
+  Clock,
+  Cpu,
+  Zap,
+  DollarSign,
+  AlertTriangle,
+  CheckCircle,
+  Play,
+  type LucideIcon,
+} from 'lucide-react';
 import type { ObservabilityTimelineView, ObservabilityCostReport } from '../types';
 
 const C = {
@@ -45,31 +54,46 @@ export function RunHeader({ timeline, cost }: RunHeaderProps) {
   const StatusIcon = isError ? AlertTriangle : isRunning ? Play : CheckCircle;
 
   return (
-    <div style={{
-      border: `1px solid ${C.border}`,
-      background: C.card,
-      borderRadius: 8,
-      padding: '16px 20px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 24,
-      flexWrap: 'wrap',
-    }}>
+    <div
+      style={{
+        border: `1px solid ${C.border}`,
+        background: C.card,
+        borderRadius: 8,
+        padding: '16px 20px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 24,
+        flexWrap: 'wrap',
+      }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 240 }}>
         <StatusIcon size={20} style={{ color: statusColor }} />
         <div>
-          <div style={{ fontSize: '0.68rem', letterSpacing: '0.16em', textTransform: 'uppercase', color: C.textDim }}>
+          <div
+            style={{
+              fontSize: '0.68rem',
+              letterSpacing: '0.16em',
+              textTransform: 'uppercase',
+              color: C.textDim,
+            }}
+          >
             {isRunning ? 'Running' : isError ? 'Failed' : 'Completed'}
           </div>
           <div style={{ fontSize: '1.05rem', color: C.text, fontWeight: 600, marginTop: 2 }}>
-            {timeline.runId.slice(0, 16)}{timeline.runId.length > 16 ? '…' : ''}
+            {timeline.runId.slice(0, 16)}
+            {timeline.runId.length > 16 ? '…' : ''}
           </div>
         </div>
       </div>
 
       <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
-        <Stat icon={Clock} label="Duration" value={formatDuration(timeline.totalDurationMs)} color={C.blue} />
+        <Stat
+          icon={Clock}
+          label="Duration"
+          value={formatDuration(timeline.totalDurationMs)}
+          color={C.blue}
+        />
         <Stat icon={Cpu} label="LLM calls" value={String(s.llmCalls)} color={C.purple} />
         <Stat icon={Zap} label="Tool calls" value={String(s.toolCalls)} color={C.amber} />
         <Stat
@@ -109,10 +133,19 @@ function Stat({ icon: Icon, label, value, color, sub }: StatProps) {
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <Icon size={16} style={{ color }} />
       <div>
-        <div style={{ fontSize: '0.6rem', letterSpacing: '0.12em', textTransform: 'uppercase', color: C.textDim }}>
+        <div
+          style={{
+            fontSize: '0.6rem',
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            color: C.textDim,
+          }}
+        >
           {label}
         </div>
-        <div style={{ fontSize: '1.05rem', color: C.text, fontWeight: 600, marginTop: 1 }}>{value}</div>
+        <div style={{ fontSize: '1.05rem', color: C.text, fontWeight: 600, marginTop: 1 }}>
+          {value}
+        </div>
         {sub && <div style={{ fontSize: '0.7rem', color: C.textDim }}>{sub}</div>}
       </div>
     </div>

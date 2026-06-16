@@ -61,7 +61,11 @@ export interface IWarRoomStore {
   getProjectSnapshot(projectId: string): ReturnType<typeof getProjectWarRoomSnapshot>;
   listAgents(projectId: string): Agent[];
   createMission(input: CreateMissionInput): Mission;
-  updateMission(missionId: string, input: UpdateMissionInput, options?: { bypassGovernance?: boolean }): Mission;
+  updateMission(
+    missionId: string,
+    input: UpdateMissionInput,
+    options?: { bypassGovernance?: boolean },
+  ): Mission;
   createLog(input: CreateLogInput): ExecutionLog;
   /** Release resources (e.g., close database connections). No-op for JSON store. */
   close(): void;
@@ -86,16 +90,19 @@ export class WarRoomStore implements IWarRoomStore {
    * 获取治理统计数据 (Governance Observer v1)
    */
   getGovernanceStats(projectId: string): GovernanceStats {
-    const missions = this.data.missions.filter(m => m.projectId === projectId);
+    const missions = this.data.missions.filter((m) => m.projectId === projectId);
     const total = missions.length;
-    const highRisk = missions.filter(m => m.riskLevel === 'HIGH' || m.riskLevel === 'CRITICAL').length;
-    const manualGovernance = missions.filter(m => m.governanceMode === 'MANUAL').length;
-    const pendingApproval = missions.filter(
-      m => m.governanceMode === 'MANUAL' &&
-           (m.riskLevel === 'HIGH' || m.riskLevel === 'CRITICAL') &&
-           m.status !== 'DONE'
+    const highRisk = missions.filter(
+      (m) => m.riskLevel === 'HIGH' || m.riskLevel === 'CRITICAL',
     ).length;
-    const completed = missions.filter(m => m.status === 'DONE').length;
+    const manualGovernance = missions.filter((m) => m.governanceMode === 'MANUAL').length;
+    const pendingApproval = missions.filter(
+      (m) =>
+        m.governanceMode === 'MANUAL' &&
+        (m.riskLevel === 'HIGH' || m.riskLevel === 'CRITICAL') &&
+        m.status !== 'DONE',
+    ).length;
+    const completed = missions.filter((m) => m.status === 'DONE').length;
     const manualApprovalRate = total > 0 ? (manualGovernance / total) * 100 : 0;
 
     return {
@@ -113,10 +120,11 @@ export class WarRoomStore implements IWarRoomStore {
    */
   getPendingApprovals(projectId: string): Mission[] {
     return this.data.missions.filter(
-      m => m.projectId === projectId &&
-           m.governanceMode === 'MANUAL' &&
-           (m.riskLevel === 'HIGH' || m.riskLevel === 'CRITICAL') &&
-           m.status !== 'DONE'
+      (m) =>
+        m.projectId === projectId &&
+        m.governanceMode === 'MANUAL' &&
+        (m.riskLevel === 'HIGH' || m.riskLevel === 'CRITICAL') &&
+        m.status !== 'DONE',
     );
   }
 
@@ -125,11 +133,11 @@ export class WarRoomStore implements IWarRoomStore {
   }
 
   listAgents(projectId: string): Agent[] {
-    return this.data.agents.filter(agent => agent.projectId === projectId);
+    return this.data.agents.filter((agent) => agent.projectId === projectId);
   }
 
   createMission(input: CreateMissionInput): Mission {
-    const project = this.data.projects.find(item => item.id === input.projectId);
+    const project = this.data.projects.find((item) => item.id === input.projectId);
     if (!project) {
       throw new Error('PROJECT_NOT_FOUND');
     }
@@ -172,8 +180,12 @@ export class WarRoomStore implements IWarRoomStore {
     return mission;
   }
 
-  updateMission(missionId: string, input: UpdateMissionInput, options?: { bypassGovernance?: boolean }): Mission {
-    const mission = this.data.missions.find(item => item.id === missionId);
+  updateMission(
+    missionId: string,
+    input: UpdateMissionInput,
+    options?: { bypassGovernance?: boolean },
+  ): Mission {
+    const mission = this.data.missions.find((item) => item.id === missionId);
     if (!mission) {
       throw new Error('MISSION_NOT_FOUND');
     }
@@ -234,7 +246,7 @@ export class WarRoomStore implements IWarRoomStore {
       delete mission.completedAt;
     }
 
-    const project = this.data.projects.find(item => item.id === mission.projectId);
+    const project = this.data.projects.find((item) => item.id === mission.projectId);
     if (project) {
       project.updatedAt = now;
     }
@@ -256,7 +268,7 @@ export class WarRoomStore implements IWarRoomStore {
   }
 
   createLog(input: CreateLogInput): ExecutionLog {
-    const mission = this.data.missions.find(item => item.id === input.missionId);
+    const mission = this.data.missions.find((item) => item.id === input.missionId);
     if (!mission) {
       throw new Error('MISSION_NOT_FOUND');
     }
@@ -273,12 +285,12 @@ export class WarRoomStore implements IWarRoomStore {
     };
 
     mission.updatedAt = now;
-    const agent = this.data.agents.find(item => item.id === mission.assignedAgentId);
+    const agent = this.data.agents.find((item) => item.id === mission.assignedAgentId);
     if (agent) {
       agent.lastHeartbeatAt = now;
     }
 
-    const project = this.data.projects.find(item => item.id === mission.projectId);
+    const project = this.data.projects.find((item) => item.id === mission.projectId);
     if (project) {
       project.updatedAt = now;
     }
@@ -289,7 +301,7 @@ export class WarRoomStore implements IWarRoomStore {
   }
 
   private assertProjectAgent(projectId: string, agentId: string): Agent {
-    const agent = this.data.agents.find(item => {
+    const agent = this.data.agents.find((item) => {
       return item.projectId === projectId && item.id === agentId;
     });
 
@@ -374,7 +386,7 @@ export class SqliteWarRoomStore implements IWarRoomStore {
     } catch {
       throw new Error(
         'SqliteWarRoomStore requires the "better-sqlite3" package. ' +
-        'Install it with: npm install better-sqlite3'
+          'Install it with: npm install better-sqlite3',
       );
     }
 
@@ -473,19 +485,19 @@ export class SqliteWarRoomStore implements IWarRoomStore {
     const seed = normalizeWarRoomData(createSeedWarRoomData());
     const insertProject = this.db.prepare(
       `INSERT INTO projects (id, name, codename, objective, status, created_at, updated_at)
-       VALUES (@id, @name, @codename, @objective, @status, @createdAt, @updatedAt)`
+       VALUES (@id, @name, @codename, @objective, @status, @createdAt, @updatedAt)`,
     );
     const insertAgent = this.db.prepare(
       `INSERT INTO agents (id, project_id, name, callsign, role, model, status, specialty, governance_role, last_heartbeat_at)
-       VALUES (@id, @projectId, @name, @callsign, @role, @model, @status, @specialty, @governanceRole, @lastHeartbeatAt)`
+       VALUES (@id, @projectId, @name, @callsign, @role, @model, @status, @specialty, @governanceRole, @lastHeartbeatAt)`,
     );
     const insertMission = this.db.prepare(
       `INSERT INTO missions (id, project_id, title, objective, status, priority, risk_level, governance_mode, assigned_agent_id, created_at, updated_at, started_at, completed_at)
-       VALUES (@id, @projectId, @title, @objective, @status, @priority, @riskLevel, @governanceMode, @assignedAgentId, @createdAt, @updatedAt, @startedAt, @completedAt)`
+       VALUES (@id, @projectId, @title, @objective, @status, @priority, @riskLevel, @governanceMode, @assignedAgentId, @createdAt, @updatedAt, @startedAt, @completedAt)`,
     );
     const insertLog = this.db.prepare(
       `INSERT INTO execution_logs (id, project_id, mission_id, agent_id, level, message, created_at)
-       VALUES (@id, @projectId, @missionId, @agentId, @level, @message, @createdAt)`
+       VALUES (@id, @projectId, @missionId, @agentId, @level, @message, @createdAt)`,
     );
 
     this.db.exec('BEGIN');
@@ -523,14 +535,17 @@ export class SqliteWarRoomStore implements IWarRoomStore {
   getGovernanceStats(projectId: string): GovernanceStats {
     const missions = this.getMissionsByProject(projectId);
     const total = missions.length;
-    const highRisk = missions.filter(m => m.riskLevel === 'HIGH' || m.riskLevel === 'CRITICAL').length;
-    const manualGovernance = missions.filter(m => m.governanceMode === 'MANUAL').length;
-    const pendingApproval = missions.filter(
-      m => m.governanceMode === 'MANUAL' &&
-           (m.riskLevel === 'HIGH' || m.riskLevel === 'CRITICAL') &&
-           m.status !== 'DONE'
+    const highRisk = missions.filter(
+      (m) => m.riskLevel === 'HIGH' || m.riskLevel === 'CRITICAL',
     ).length;
-    const completed = missions.filter(m => m.status === 'DONE').length;
+    const manualGovernance = missions.filter((m) => m.governanceMode === 'MANUAL').length;
+    const pendingApproval = missions.filter(
+      (m) =>
+        m.governanceMode === 'MANUAL' &&
+        (m.riskLevel === 'HIGH' || m.riskLevel === 'CRITICAL') &&
+        m.status !== 'DONE',
+    ).length;
+    const completed = missions.filter((m) => m.status === 'DONE').length;
     const manualApprovalRate = total > 0 ? (manualGovernance / total) * 100 : 0;
 
     return {
@@ -544,13 +559,15 @@ export class SqliteWarRoomStore implements IWarRoomStore {
   }
 
   getPendingApprovals(projectId: string): Mission[] {
-    const rows = this.db.prepare(
-      `SELECT * FROM missions
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM missions
        WHERE project_id = ?
          AND governance_mode = 'MANUAL'
          AND risk_level IN ('HIGH', 'CRITICAL')
-         AND status != 'DONE'`
-    ).all(projectId);
+         AND status != 'DONE'`,
+      )
+      .all(projectId);
     return rows.map(rowToMission);
   }
 
@@ -560,16 +577,12 @@ export class SqliteWarRoomStore implements IWarRoomStore {
   }
 
   listAgents(projectId: string): Agent[] {
-    const rows = this.db.prepare(
-      'SELECT * FROM agents WHERE project_id = ?'
-    ).all(projectId);
+    const rows = this.db.prepare('SELECT * FROM agents WHERE project_id = ?').all(projectId);
     return rows.map(rowToAgent);
   }
 
   createMission(input: CreateMissionInput): Mission {
-    const project = this.db.prepare(
-      'SELECT * FROM projects WHERE id = ?'
-    ).get(input.projectId);
+    const project = this.db.prepare('SELECT * FROM projects WHERE id = ?').get(input.projectId);
     if (!project) {
       throw new Error('PROJECT_NOT_FOUND');
     }
@@ -598,25 +611,41 @@ export class SqliteWarRoomStore implements IWarRoomStore {
 
     this.db.exec('BEGIN');
     try {
-      this.db.prepare(
-        `INSERT INTO missions (id, project_id, title, objective, status, priority, risk_level, governance_mode, assigned_agent_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        mission.id, mission.projectId, mission.title, mission.objective,
-        mission.status, mission.priority, mission.riskLevel, mission.governanceMode,
-        mission.assignedAgentId, mission.createdAt, mission.updatedAt
-      );
+      this.db
+        .prepare(
+          `INSERT INTO missions (id, project_id, title, objective, status, priority, risk_level, governance_mode, assigned_agent_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          mission.id,
+          mission.projectId,
+          mission.title,
+          mission.objective,
+          mission.status,
+          mission.priority,
+          mission.riskLevel,
+          mission.governanceMode,
+          mission.assignedAgentId,
+          mission.createdAt,
+          mission.updatedAt,
+        );
 
-      this.db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?')
-        .run(now, input.projectId);
+      this.db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(now, input.projectId);
 
-      this.db.prepare(
-        `INSERT INTO execution_logs (id, project_id, mission_id, agent_id, level, message, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        nextId('log'), input.projectId, mission.id, agent.id,
-        'INFO', `Mission created and assigned to ${agent.name}.`, now
-      );
+      this.db
+        .prepare(
+          `INSERT INTO execution_logs (id, project_id, mission_id, agent_id, level, message, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          nextId('log'),
+          input.projectId,
+          mission.id,
+          agent.id,
+          'INFO',
+          `Mission created and assigned to ${agent.name}.`,
+          now,
+        );
 
       this.db.exec('COMMIT');
     } catch (err) {
@@ -627,7 +656,11 @@ export class SqliteWarRoomStore implements IWarRoomStore {
     return mission;
   }
 
-  updateMission(missionId: string, input: UpdateMissionInput, options?: { bypassGovernance?: boolean }): Mission {
+  updateMission(
+    missionId: string,
+    input: UpdateMissionInput,
+    options?: { bypassGovernance?: boolean },
+  ): Mission {
     const row = this.db.prepare('SELECT * FROM missions WHERE id = ?').get(missionId);
     if (!row) {
       throw new Error('MISSION_NOT_FOUND');
@@ -691,31 +724,49 @@ export class SqliteWarRoomStore implements IWarRoomStore {
 
     this.db.exec('BEGIN');
     try {
-      this.db.prepare(
-        `UPDATE missions SET
+      this.db
+        .prepare(
+          `UPDATE missions SET
            title = ?, objective = ?, status = ?, priority = ?,
            risk_level = ?, governance_mode = ?, assigned_agent_id = ?,
            updated_at = ?, started_at = ?, completed_at = ?
-         WHERE id = ?`
-      ).run(
-        mission.title, mission.objective, mission.status, mission.priority,
-        mission.riskLevel, mission.governanceMode, mission.assignedAgentId,
-        mission.updatedAt, mission.startedAt ?? null, mission.completedAt ?? null,
-        mission.id
-      );
+         WHERE id = ?`,
+        )
+        .run(
+          mission.title,
+          mission.objective,
+          mission.status,
+          mission.priority,
+          mission.riskLevel,
+          mission.governanceMode,
+          mission.assignedAgentId,
+          mission.updatedAt,
+          mission.startedAt ?? null,
+          mission.completedAt ?? null,
+          mission.id,
+        );
 
-      this.db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?')
+      this.db
+        .prepare('UPDATE projects SET updated_at = ? WHERE id = ?')
         .run(now, mission.projectId);
 
       if (input.status && input.status !== previousStatus) {
-        const logLevel = input.status === 'BLOCKED' ? 'WARN' : input.status === 'DONE' ? 'SUCCESS' : 'INFO';
-        this.db.prepare(
-          `INSERT INTO execution_logs (id, project_id, mission_id, agent_id, level, message, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
-        ).run(
-          nextId('log'), mission.projectId, mission.id, mission.assignedAgentId,
-          logLevel, `Mission status changed from ${previousStatus} to ${input.status}.`, now
-        );
+        const logLevel =
+          input.status === 'BLOCKED' ? 'WARN' : input.status === 'DONE' ? 'SUCCESS' : 'INFO';
+        this.db
+          .prepare(
+            `INSERT INTO execution_logs (id, project_id, mission_id, agent_id, level, message, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            nextId('log'),
+            mission.projectId,
+            mission.id,
+            mission.assignedAgentId,
+            logLevel,
+            `Mission status changed from ${previousStatus} to ${input.status}.`,
+            now,
+          );
       }
 
       this.db.exec('COMMIT');
@@ -748,18 +799,29 @@ export class SqliteWarRoomStore implements IWarRoomStore {
 
     this.db.exec('BEGIN');
     try {
-      this.db.prepare(
-        `INSERT INTO execution_logs (id, project_id, mission_id, agent_id, level, message, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run(log.id, log.projectId, log.missionId, log.agentId, log.level, log.message, log.createdAt);
+      this.db
+        .prepare(
+          `INSERT INTO execution_logs (id, project_id, mission_id, agent_id, level, message, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          log.id,
+          log.projectId,
+          log.missionId,
+          log.agentId,
+          log.level,
+          log.message,
+          log.createdAt,
+        );
 
-      this.db.prepare('UPDATE missions SET updated_at = ? WHERE id = ?')
-        .run(now, mission.id);
+      this.db.prepare('UPDATE missions SET updated_at = ? WHERE id = ?').run(now, mission.id);
 
-      this.db.prepare('UPDATE agents SET last_heartbeat_at = ? WHERE id = ?')
+      this.db
+        .prepare('UPDATE agents SET last_heartbeat_at = ? WHERE id = ?')
         .run(now, mission.assignedAgentId);
 
-      this.db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?')
+      this.db
+        .prepare('UPDATE projects SET updated_at = ? WHERE id = ?')
         .run(now, mission.projectId);
 
       this.db.exec('COMMIT');
@@ -779,9 +841,9 @@ export class SqliteWarRoomStore implements IWarRoomStore {
   // -- Private helpers ------------------------------------------------------
 
   private assertProjectAgent(projectId: string, agentId: string): Agent {
-    const row = this.db.prepare(
-      'SELECT * FROM agents WHERE project_id = ? AND id = ?'
-    ).get(projectId, agentId);
+    const row = this.db
+      .prepare('SELECT * FROM agents WHERE project_id = ? AND id = ?')
+      .get(projectId, agentId);
 
     if (!row) {
       throw new Error('AGENT_NOT_FOUND');
@@ -791,9 +853,7 @@ export class SqliteWarRoomStore implements IWarRoomStore {
   }
 
   private getMissionsByProject(projectId: string): Mission[] {
-    const rows = this.db.prepare(
-      'SELECT * FROM missions WHERE project_id = ?'
-    ).all(projectId);
+    const rows = this.db.prepare('SELECT * FROM missions WHERE project_id = ?').all(projectId);
     return rows.map(rowToMission);
   }
 
@@ -807,9 +867,9 @@ export class SqliteWarRoomStore implements IWarRoomStore {
     const project = projectRow ? [rowToProject(projectRow)] : [];
     const agents = this.listAgents(projectId);
     const missions = this.getMissionsByProject(projectId);
-    const logRows = this.db.prepare(
-      'SELECT * FROM execution_logs WHERE project_id = ?'
-    ).all(projectId);
+    const logRows = this.db
+      .prepare('SELECT * FROM execution_logs WHERE project_id = ?')
+      .all(projectId);
     const logs = logRows.map(rowToExecutionLog);
 
     return { projects: project, agents, missions, logs };
@@ -896,7 +956,7 @@ function getDefaultRiskLevel(priority: MissionPriority): MissionRiskLevel {
 
 function getDefaultGovernanceMode(
   riskLevel: MissionRiskLevel,
-  priority: MissionPriority
+  priority: MissionPriority,
 ): MissionGovernanceMode {
   if (riskLevel === 'HIGH' || priority === 'CRITICAL') {
     return 'MANUAL';
@@ -912,7 +972,7 @@ function getDefaultGovernanceMode(
 function normalizeWarRoomData(data: WarRoomData): WarRoomData {
   return {
     ...data,
-    agents: data.agents.map(agent => ({
+    agents: data.agents.map((agent) => ({
       ...agent,
       governanceRole:
         agent.governanceRole ??
@@ -922,10 +982,11 @@ function normalizeWarRoomData(data: WarRoomData): WarRoomData {
             ? 'SENATE'
             : 'EXECUTOR'),
     })),
-    missions: data.missions.map(mission => {
+    missions: data.missions.map((mission) => {
       const priority = mission.priority ?? 'MEDIUM';
       const riskLevel = mission.riskLevel ?? getDefaultRiskLevel(priority);
-      const governanceMode = mission.governanceMode ?? getDefaultGovernanceMode(riskLevel, priority);
+      const governanceMode =
+        mission.governanceMode ?? getDefaultGovernanceMode(riskLevel, priority);
       return {
         ...mission,
         priority,

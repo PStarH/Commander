@@ -34,12 +34,14 @@ export function persistGovernanceSnapshot(stats: GovernanceStats, alerts: Govern
  * Load persisted governance snapshots from disk.
  * Returns newest-first, limited to `limit` entries.
  */
-export function loadGovernanceSnapshots(limit = 100): Array<{ timestamp: string; stats: GovernanceStats; alerts: GovernanceAlert[] }> {
+export function loadGovernanceSnapshots(
+  limit = 100,
+): Array<{ timestamp: string; stats: GovernanceStats; alerts: GovernanceAlert[] }> {
   try {
     const filePath = path.resolve(process.cwd(), PERSISTENCE_DIR, SNAPSHOT_FILE);
     if (!fs.existsSync(filePath)) return [];
     const lines = fs.readFileSync(filePath, 'utf-8').trim().split('\n').filter(Boolean);
-    const records = lines.map(line => JSON.parse(line));
+    const records = lines.map((line) => JSON.parse(line));
     return records.slice(-limit).reverse();
   } catch {
     return [];
@@ -67,65 +69,63 @@ export interface GovernanceAlert {
 // 计算治理统计
 export function calculateGovernanceStats(
   missions: Record<string, unknown>[],
-  agents: Record<string, unknown>[]
+  agents: Record<string, unknown>[],
 ): GovernanceStats {
-  const highRiskMissions = missions.filter(m => m.riskLevel === 'HIGH' || m.riskLevel === 'CRITICAL');
-  
-  const completed = highRiskMissions.filter(m => m.status === 'DONE').length;
-  const pending = highRiskMissions.filter(m => m.status !== 'DONE').length;
-  
+  const highRiskMissions = missions.filter(
+    (m) => m.riskLevel === 'HIGH' || m.riskLevel === 'CRITICAL',
+  );
+
+  const completed = highRiskMissions.filter((m) => m.status === 'DONE').length;
+  const pending = highRiskMissions.filter((m) => m.status !== 'DONE').length;
+
   // 计算手动审批率
-  const manualMissions = missions.filter(m => m.governanceMode === 'MANUAL');
-  const approvedManual = manualMissions.filter(m => m.approvalStatus === 'APPROVED').length;
-  const manualApprovalRate = manualMissions.length > 0 
-    ? approvedManual / manualMissions.length 
-    : 0;
-  
+  const manualMissions = missions.filter((m) => m.governanceMode === 'MANUAL');
+  const approvedManual = manualMissions.filter((m) => m.approvalStatus === 'APPROVED').length;
+  const manualApprovalRate = manualMissions.length > 0 ? approvedManual / manualMissions.length : 0;
+
   // Agent 风险分布
   const agentRiskDistribution: Record<string, number> = {};
-  highRiskMissions.forEach(m => {
+  highRiskMissions.forEach((m) => {
     if (m.assignedAgentId) {
-      agentRiskDistribution[m.assignedAgentId] = 
+      agentRiskDistribution[m.assignedAgentId] =
         (agentRiskDistribution[m.assignedAgentId] || 0) + 1;
     }
   });
-  
+
   return {
     highRiskTasks: {
       total: highRiskMissions.length,
       completed,
-      pending
+      pending,
     },
     manualApprovalRate,
     agentRiskDistribution,
-    lastUpdated: new Date().toISOString()
+    lastUpdated: new Date().toISOString(),
   };
 }
 
 // 生成治理警报
-export function generateGovernanceAlerts(
-  stats: GovernanceStats
-): GovernanceAlert[] {
+export function generateGovernanceAlerts(stats: GovernanceStats): GovernanceAlert[] {
   const alerts: GovernanceAlert[] = [];
-  
+
   // 高风险任务积压警告
   if (stats.highRiskTasks.pending > 5) {
     alerts.push({
       type: 'WARNING',
       message: `高风险任务积压: ${stats.highRiskTasks.pending} 个待处理`,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
-  
+
   // 审批率过低警告
   if (stats.manualApprovalRate < 0.5 && stats.highRiskTasks.total > 0) {
     alerts.push({
       type: 'ISSUE',
       message: `手动审批率过低: ${(stats.manualApprovalRate * 100).toFixed(1)}%`,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
-  
+
   // 高风险 Agent 识别
   for (const [agentId, count] of Object.entries(stats.agentRiskDistribution)) {
     if (count >= 3) {
@@ -133,18 +133,18 @@ export function generateGovernanceAlerts(
         type: 'LESSON',
         message: `Agent ${agentId} 频繁执行高风险任务 (${count} 次)，需要关注`,
         agentId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
     }
   }
-  
+
   return alerts;
 }
 
 // 生成周报格式的 ProjectMemory
 export function generateWeeklyGovernanceReport(
   stats: GovernanceStats,
-  alerts: GovernanceAlert[]
+  alerts: GovernanceAlert[],
 ): string {
   const lines = [
     `# 治理周报 - ${new Date().toISOString().split('T')[0]}`,
@@ -157,19 +157,19 @@ export function generateWeeklyGovernanceReport(
     '## 审批统计',
     `- 手动审批率: ${(stats.manualApprovalRate * 100).toFixed(1)}%`,
     '',
-    '## Agent 风险分布'
+    '## Agent 风险分布',
   ];
-  
+
   for (const [agentId, count] of Object.entries(stats.agentRiskDistribution)) {
     lines.push(`- ${agentId}: ${count} 个高风险任务`);
   }
-  
+
   if (alerts.length > 0) {
     lines.push('', '## 警报');
-    alerts.forEach(a => {
+    alerts.forEach((a) => {
       lines.push(`- [${a.type}] ${a.message}`);
     });
   }
-  
+
   return lines.join('\n');
 }

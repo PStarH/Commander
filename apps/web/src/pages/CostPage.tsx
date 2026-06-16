@@ -5,11 +5,7 @@ export function CostPage() {
   return (
     <div className="page cost-page">
       <CostPanel />
-      <TokenTrendChart
-        data={[]}
-        series={[]}
-        title="Token Cost Breakdown"
-      />
+      <TokenTrendChart data={[]} series={[]} title="Token Cost Breakdown" />
     </div>
   );
 }

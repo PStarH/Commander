@@ -4,7 +4,12 @@ import { getWorkCoordinator, type TeamStatus, type WorkItem } from '@commander/c
 const RUN_ID_PATTERN = /^[a-zA-Z0-9_.-]+$/;
 
 function isValidRunId(runId: unknown): runId is string {
-  return typeof runId === 'string' && runId.length > 0 && runId.length < 128 && RUN_ID_PATTERN.test(runId);
+  return (
+    typeof runId === 'string' &&
+    runId.length > 0 &&
+    runId.length < 128 &&
+    RUN_ID_PATTERN.test(runId)
+  );
 }
 
 export function createTeamRouter(): Router {
@@ -37,10 +42,19 @@ export function createTeamRouter(): Router {
     }
     const coord = getWorkCoordinator();
     const items = coord.list({ runId });
-    const byAgent = new Map<string, { claimed: number; completed: number; failed: number; pending: number; totalTokens: number }>();
+    const byAgent = new Map<
+      string,
+      { claimed: number; completed: number; failed: number; pending: number; totalTokens: number }
+    >();
     for (const it of items) {
       const agentId = it.claimedBy ?? it.parentNodeId;
-      const slot = byAgent.get(agentId) ?? { claimed: 0, completed: 0, failed: 0, pending: 0, totalTokens: 0 };
+      const slot = byAgent.get(agentId) ?? {
+        claimed: 0,
+        completed: 0,
+        failed: 0,
+        pending: 0,
+        totalTokens: 0,
+      };
       if (it.status === 'PENDING') slot.pending++;
       else if (it.status === 'CLAIMED' || it.status === 'RUNNING') slot.claimed++;
       else if (it.status === 'COMPLETED') slot.completed++;
@@ -51,7 +65,11 @@ export function createTeamRouter(): Router {
     const agents = Array.from(byAgent.entries()).map(([agentId, counts]) => ({
       agentId,
       ...counts,
-      currentGoal: items.find(i => (i.claimedBy ?? i.parentNodeId) === agentId && (i.status === 'CLAIMED' || i.status === 'RUNNING'))?.goal,
+      currentGoal: items.find(
+        (i) =>
+          (i.claimedBy ?? i.parentNodeId) === agentId &&
+          (i.status === 'CLAIMED' || i.status === 'RUNNING'),
+      )?.goal,
     }));
     res.json({ runId, agents, total: agents.length });
   });

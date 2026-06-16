@@ -83,19 +83,28 @@ interface TopologyLiveViewProps {
 }
 
 const ALL_TOPOLOGIES: TopologyType[] = [
-  'SINGLE', 'SEQUENTIAL', 'PARALLEL', 'HIERARCHICAL',
-  'HYBRID', 'DEBATE', 'ENSEMBLE', 'EVALUATOR_OPTIMIZER',
+  'SINGLE',
+  'SEQUENTIAL',
+  'PARALLEL',
+  'HIERARCHICAL',
+  'HYBRID',
+  'DEBATE',
+  'ENSEMBLE',
+  'EVALUATOR_OPTIMIZER',
 ];
 
-const TOPOLOGY_LABELS: Record<TopologyType, { label: string; desc: string; icon: typeof GitBranch }> = {
-  SINGLE:              { label: 'Single',     desc: 'Single agent execution', icon: Activity },
-  SEQUENTIAL:          { label: 'Sequential',  desc: 'Linear chain of agents', icon: GitBranch },
-  PARALLEL:            { label: 'Parallel',    desc: 'Fan-out / fan-in broadcast', icon: GitMerge },
-  HIERARCHICAL:        { label: 'Hierarchical', desc: 'Tree-structured delegation', icon: Layers },
-  HYBRID:              { label: 'Hybrid',      desc: 'Mixed pattern execution', icon: Network },
-  DEBATE:              { label: 'Debate',      desc: 'Dual-agent adversarial', icon: Activity },
-  ENSEMBLE:            { label: 'Ensemble',    desc: 'Multi-agent voting', icon: Layers },
-  EVALUATOR_OPTIMIZER: { label: 'Eval-Opt',    desc: 'Loopback with quality gate', icon: GitBranch },
+const TOPOLOGY_LABELS: Record<
+  TopologyType,
+  { label: string; desc: string; icon: typeof GitBranch }
+> = {
+  SINGLE: { label: 'Single', desc: 'Single agent execution', icon: Activity },
+  SEQUENTIAL: { label: 'Sequential', desc: 'Linear chain of agents', icon: GitBranch },
+  PARALLEL: { label: 'Parallel', desc: 'Fan-out / fan-in broadcast', icon: GitMerge },
+  HIERARCHICAL: { label: 'Hierarchical', desc: 'Tree-structured delegation', icon: Layers },
+  HYBRID: { label: 'Hybrid', desc: 'Mixed pattern execution', icon: Network },
+  DEBATE: { label: 'Debate', desc: 'Dual-agent adversarial', icon: Activity },
+  ENSEMBLE: { label: 'Ensemble', desc: 'Multi-agent voting', icon: Layers },
+  EVALUATOR_OPTIMIZER: { label: 'Eval-Opt', desc: 'Loopback with quality gate', icon: GitBranch },
 };
 
 const NODE_STATUS_COLORS: Record<string, string> = {
@@ -105,9 +114,16 @@ const NODE_STATUS_COLORS: Record<string, string> = {
   failed: COLORS.coral,
 };
 
-function buildTopologyGraph(topology: TopologyType): { nodes: TopologyNode[]; edges: TopologyEdge[] } {
-  const n = (id: string, label: string, role: string, status: TopologyNode['status'] = 'idle'): TopologyNode =>
-    ({ id, label, role, status });
+function buildTopologyGraph(topology: TopologyType): {
+  nodes: TopologyNode[];
+  edges: TopologyEdge[];
+} {
+  const n = (
+    id: string,
+    label: string,
+    role: string,
+    status: TopologyNode['status'] = 'idle',
+  ): TopologyNode => ({ id, label, role, status });
   const e = (from: string, to: string, label?: string): TopologyEdge => ({ from, to, label });
 
   switch (topology) {
@@ -135,9 +151,12 @@ function buildTopologyGraph(topology: TopologyType): { nodes: TopologyNode[]; ed
           n('merger', 'Merger', 'synthesis', 'idle'),
         ],
         edges: [
-          e('dispatcher', 'worker-a'), e('dispatcher', 'worker-b'),
+          e('dispatcher', 'worker-a'),
+          e('dispatcher', 'worker-b'),
           e('dispatcher', 'worker-c'),
-          e('worker-a', 'merger'), e('worker-b', 'merger'), e('worker-c', 'merger'),
+          e('worker-a', 'merger'),
+          e('worker-b', 'merger'),
+          e('worker-c', 'merger'),
         ],
       };
     case 'HIERARCHICAL':
@@ -149,7 +168,12 @@ function buildTopologyGraph(topology: TopologyType): { nodes: TopologyNode[]; ed
           n('leaf-1', 'Leaf 1', 'executor', 'idle'),
           n('leaf-2', 'Leaf 2', 'executor', 'idle'),
         ],
-        edges: [e('orchestrator', 'sub-a'), e('orchestrator', 'sub-b'), e('sub-b', 'leaf-1'), e('sub-b', 'leaf-2')],
+        edges: [
+          e('orchestrator', 'sub-a'),
+          e('orchestrator', 'sub-b'),
+          e('sub-b', 'leaf-1'),
+          e('sub-b', 'leaf-2'),
+        ],
       };
     case 'HYBRID':
       return {
@@ -180,8 +204,12 @@ function buildTopologyGraph(topology: TopologyType): { nodes: TopologyNode[]; ed
           n('synthesizer', 'Synthesizer', 'vote', 'idle'),
         ],
         edges: [
-          e('task', 'model-a'), e('task', 'model-b'), e('task', 'model-c'),
-          e('model-a', 'synthesizer'), e('model-b', 'synthesizer'), e('model-c', 'synthesizer'),
+          e('task', 'model-a'),
+          e('task', 'model-b'),
+          e('task', 'model-c'),
+          e('model-a', 'synthesizer'),
+          e('model-b', 'synthesizer'),
+          e('model-c', 'synthesizer'),
         ],
       };
     case 'EVALUATOR_OPTIMIZER':
@@ -227,14 +255,15 @@ export function TopologyLiveView({
         </div>
         {agentCount > 0 && (
           <span className="section-tag">
-            {agentCount} agents · {runningCount} running · {completedCount} done{failedCount > 0 ? ` · ${failedCount} failed` : ''}
+            {agentCount} agents · {runningCount} running · {completedCount} done
+            {failedCount > 0 ? ` · ${failedCount} failed` : ''}
           </span>
         )}
       </div>
 
       {/* Topology Selector */}
       <div className="topology-tabs">
-        {ALL_TOPOLOGIES.map(topo => {
+        {ALL_TOPOLOGIES.map((topo) => {
           const info = TOPOLOGY_LABELS[topo];
           const Icon = info.icon;
           const isActive = selectedTopo === topo;
@@ -261,7 +290,8 @@ export function TopologyLiveView({
               key={node.id}
               className={`topology-node ${node.status}`}
               style={{
-                borderColor: node.status === 'idle' ? COLORS.border : NODE_STATUS_COLORS[node.status],
+                borderColor:
+                  node.status === 'idle' ? COLORS.border : NODE_STATUS_COLORS[node.status],
               }}
             >
               {/* Status indicator ring */}
@@ -274,13 +304,15 @@ export function TopologyLiveView({
                 <div className="node-role">{node.role}</div>
               </div>
               {/* Edge connectors */}
-              {edges.filter(e => e.from === node.id).length > 0 && (
+              {edges.filter((e) => e.from === node.id).length > 0 && (
                 <div className="node-edges">
-                  {edges.filter(e => e.from === node.id).map(e => (
-                    <div key={`${e.from}-${e.to}`} className="edge-label" title={`→ ${e.to}`}>
-                      {e.label ? `${e.label} →` : '→'}
-                    </div>
-                  ))}
+                  {edges
+                    .filter((e) => e.from === node.id)
+                    .map((e) => (
+                      <div key={`${e.from}-${e.to}`} className="edge-label" title={`→ ${e.to}`}>
+                        {e.label ? `${e.label} →` : '→'}
+                      </div>
+                    ))}
                 </div>
               )}
             </div>
@@ -289,11 +321,15 @@ export function TopologyLiveView({
           {/* Edges rendered as visual connectors between nodes */}
           {edges.length > 0 && (
             <div className="topology-edge-list">
-              {edges.map(edge => (
+              {edges.map((edge) => (
                 <div key={`edge-${edge.from}-${edge.to}`} className="topology-edge-item">
-                  <span className="edge-from">{nodes.find(n => n.id === edge.from)?.label ?? edge.from}</span>
+                  <span className="edge-from">
+                    {nodes.find((n) => n.id === edge.from)?.label ?? edge.from}
+                  </span>
                   <span className="edge-arrow">→</span>
-                  <span className="edge-to">{nodes.find(n => n.id === edge.to)?.label ?? edge.to}</span>
+                  <span className="edge-to">
+                    {nodes.find((n) => n.id === edge.to)?.label ?? edge.to}
+                  </span>
                   {edge.label && <span className="edge-label-text">{edge.label}</span>}
                 </div>
               ))}

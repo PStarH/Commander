@@ -13,8 +13,14 @@
 
 import { useState, useMemo } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
 } from 'recharts';
 import { Cpu, TrendingUp, Clock, Activity } from 'lucide-react';
 import { MetricCard } from './ui';
@@ -39,8 +45,14 @@ const COLORS = {
 };
 
 const SERIES_COLORS = [
-  COLORS.indigo, COLORS.green, COLORS.amber, COLORS.coral,
-  COLORS.purple, COLORS.cyan, COLORS.slate, '#38bdf8',
+  COLORS.indigo,
+  COLORS.green,
+  COLORS.amber,
+  COLORS.coral,
+  COLORS.purple,
+  COLORS.cyan,
+  COLORS.slate,
+  '#38bdf8',
 ];
 
 // ============================================================================
@@ -98,7 +110,7 @@ export function TokenTrendChart({
 
     // Filter data points that fall within the time window
     // We assume timestamps are ISO strings or epoch ms
-    return data.filter(point => {
+    return data.filter((point) => {
       const ts = new Date(point.timestamp).getTime();
       return ts >= cutoff;
     });
@@ -115,8 +127,8 @@ export function TokenTrendChart({
           <span className="section-tag">No data yet</span>
         </div>
         <div className="narrative narrative-green">
-          Token consumption tracking activates when agents start executing tasks.
-          Data will appear here in real-time.
+          Token consumption tracking activates when agents start executing tasks. Data will appear
+          here in real-time.
         </div>
       </div>
     );
@@ -136,7 +148,7 @@ export function TokenTrendChart({
           <h2>{title}</h2>
         </div>
         <div className="time-window-selector">
-          {(['1h', '6h', '24h', '7d'] as TimeWindow[]).map(w => (
+          {(['1h', '6h', '24h', '7d'] as TimeWindow[]).map((w) => (
             <button
               key={w}
               className={`time-window-btn ${window === w ? 'active' : ''}`}
@@ -174,19 +186,10 @@ export function TokenTrendChart({
 
       {/* Line Chart */}
       <div className="chart-card" style={{ marginTop: 16 }}>
-        <div className="chart-title">
-          Token consumption ({window})
-        </div>
+        <div className="chart-title">Token consumption ({window})</div>
         <ResponsiveContainer width="100%" height={280}>
-          <LineChart
-            data={filteredData}
-            margin={{ top: 8, right: 16, left: 0, bottom: 8 }}
-          >
-            <CartesianGrid
-              strokeDasharray="4 4"
-              stroke={COLORS.gridLine}
-              vertical={false}
-            />
+          <LineChart data={filteredData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+            <CartesianGrid strokeDasharray="4 4" stroke={COLORS.gridLine} vertical={false} />
             <XAxis
               dataKey="label"
               tick={{ fill: COLORS.text, fontSize: 11 }}

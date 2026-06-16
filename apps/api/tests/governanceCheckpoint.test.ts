@@ -43,8 +43,16 @@ describe('CheckpointManager', () => {
   describe('create', () => {
     it('creates an automatic checkpoint for AUTO mode', () => {
       const ckpt = manager.create(
-        'mission-1', 'task-1', 'agent-1', 'executor', 'test task',
-        'AUTO', 0, 'LOW', [], [],
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test task',
+        'AUTO',
+        0,
+        'LOW',
+        [],
+        [],
       );
       assert.equal(ckpt.type, 'automatic');
       assert.equal(ckpt.status, 'approved');
@@ -53,8 +61,16 @@ describe('CheckpointManager', () => {
 
     it('creates a mandatory checkpoint for MANUAL mode', () => {
       const ckpt = manager.create(
-        'mission-1', 'task-1', 'agent-1', 'executor', 'deploy task',
-        'MANUAL', 80, 'CRITICAL', [], ['approver-1'],
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'deploy task',
+        'MANUAL',
+        80,
+        'CRITICAL',
+        [],
+        ['approver-1'],
       );
       assert.equal(ckpt.type, 'mandatory');
       assert.equal(ckpt.status, 'pending');
@@ -62,18 +78,36 @@ describe('CheckpointManager', () => {
     });
 
     it('stores risk factors in context', () => {
-      const factors = [{ category: 'security' as const, description: 'test', severity: 'high' as const }];
+      const factors = [
+        { category: 'security' as const, description: 'test', severity: 'high' as const },
+      ];
       const ckpt = manager.create(
-        'mission-1', 'task-1', 'agent-1', 'executor', 'test',
-        'AUTO', 0, 'LOW', factors, [],
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'AUTO',
+        0,
+        'LOW',
+        factors,
+        [],
       );
       assert.deepEqual(ckpt.context.riskFactors, factors);
     });
 
     it('checkpoint is retrievable by ID', () => {
       const ckpt = manager.create(
-        'mission-1', 'task-1', 'agent-1', 'executor', 'test',
-        'AUTO', 0, 'LOW', [], [],
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'AUTO',
+        0,
+        'LOW',
+        [],
+        [],
       );
       assert.equal(manager.get(ckpt.id), ckpt);
     });
@@ -82,8 +116,16 @@ describe('CheckpointManager', () => {
   describe('approve', () => {
     it('approves a pending checkpoint', () => {
       const ckpt = manager.create(
-        'mission-1', 'task-1', 'agent-1', 'executor', 'test',
-        'MANUAL', 80, 'HIGH', [], ['approver-1'],
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'MANUAL',
+        80,
+        'HIGH',
+        [],
+        ['approver-1'],
       );
       manager.approve(ckpt.id, 'approver-1', 'Looks good');
       const updated = manager.get(ckpt.id)!;
@@ -97,24 +139,48 @@ describe('CheckpointManager', () => {
 
     it('throws for non-pending checkpoint', () => {
       const ckpt = manager.create(
-        'mission-1', 'task-1', 'agent-1', 'executor', 'test',
-        'AUTO', 0, 'LOW', [], [],
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'AUTO',
+        0,
+        'LOW',
+        [],
+        [],
       );
       assert.throws(() => manager.approve(ckpt.id, 'user'), /not pending/);
     });
 
     it('throws for unauthorized reviewer', () => {
       const ckpt = manager.create(
-        'mission-1', 'task-1', 'agent-1', 'executor', 'test',
-        'MANUAL', 80, 'HIGH', [], ['approver-1'],
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'MANUAL',
+        80,
+        'HIGH',
+        [],
+        ['approver-1'],
       );
       assert.throws(() => manager.approve(ckpt.id, 'unauthorized'), /not authorized/);
     });
 
     it('throws for duplicate approval when checkpoint still pending', () => {
       const ckpt = manager.create(
-        'mission-1', 'task-1', 'agent-1', 'executor', 'test',
-        'MANUAL', 80, 'HIGH', [], ['approver-1', 'approver-2'],
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'MANUAL',
+        80,
+        'HIGH',
+        [],
+        ['approver-1', 'approver-2'],
       );
       manager.approve(ckpt.id, 'approver-1');
       assert.throws(() => manager.approve(ckpt.id, 'approver-1'), /Already approved/);
@@ -122,8 +188,16 @@ describe('CheckpointManager', () => {
 
     it('requires all approvers for multi-approver checkpoint', () => {
       const ckpt = manager.create(
-        'mission-1', 'task-1', 'agent-1', 'executor', 'test',
-        'MANUAL', 80, 'HIGH', [], ['approver-1', 'approver-2'],
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'MANUAL',
+        80,
+        'HIGH',
+        [],
+        ['approver-1', 'approver-2'],
       );
       manager.approve(ckpt.id, 'approver-1');
       const partial = manager.get(ckpt.id)!;
@@ -138,8 +212,16 @@ describe('CheckpointManager', () => {
   describe('reject', () => {
     it('rejects a pending checkpoint', () => {
       const ckpt = manager.create(
-        'mission-1', 'task-1', 'agent-1', 'executor', 'test',
-        'MANUAL', 80, 'HIGH', [], ['approver-1'],
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'MANUAL',
+        80,
+        'HIGH',
+        [],
+        ['approver-1'],
       );
       manager.reject(ckpt.id, 'approver-1', 'Too risky');
       const updated = manager.get(ckpt.id)!;
@@ -148,8 +230,16 @@ describe('CheckpointManager', () => {
 
     it('throws for non-pending checkpoint', () => {
       const ckpt = manager.create(
-        'mission-1', 'task-1', 'agent-1', 'executor', 'test',
-        'AUTO', 0, 'LOW', [], [],
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'AUTO',
+        0,
+        'LOW',
+        [],
+        [],
       );
       assert.throws(() => manager.reject(ckpt.id, 'user', 'reason'), /not pending/);
     });
@@ -157,8 +247,30 @@ describe('CheckpointManager', () => {
 
   describe('getPendingByMission', () => {
     it('returns only pending checkpoints for a mission', () => {
-      manager.create('mission-1', 'task-1', 'agent-1', 'executor', 'test', 'MANUAL', 80, 'HIGH', [], ['a1']);
-      manager.create('mission-1', 'task-2', 'agent-1', 'executor', 'test', 'AUTO', 0, 'LOW', [], []);
+      manager.create(
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'MANUAL',
+        80,
+        'HIGH',
+        [],
+        ['a1'],
+      );
+      manager.create(
+        'mission-1',
+        'task-2',
+        'agent-1',
+        'executor',
+        'test',
+        'AUTO',
+        0,
+        'LOW',
+        [],
+        [],
+      );
       const pending = manager.getPendingByMission('mission-1');
       assert.equal(pending.length, 1);
       assert.equal(pending[0].taskId, 'task-1');
@@ -167,13 +279,35 @@ describe('CheckpointManager', () => {
 
   describe('getPendingForApprover', () => {
     it('returns checkpoints pending for a specific approver', () => {
-      manager.create('mission-1', 'task-1', 'agent-1', 'executor', 'test', 'MANUAL', 80, 'HIGH', [], ['a1', 'a2']);
+      manager.create(
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'MANUAL',
+        80,
+        'HIGH',
+        [],
+        ['a1', 'a2'],
+      );
       const pending = manager.getPendingForApprover('a1');
       assert.equal(pending.length, 1);
     });
 
     it('excludes already-approved checkpoints', () => {
-      const ckpt = manager.create('mission-1', 'task-1', 'agent-1', 'executor', 'test', 'MANUAL', 80, 'HIGH', [], ['a1']);
+      const ckpt = manager.create(
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'MANUAL',
+        80,
+        'HIGH',
+        [],
+        ['a1'],
+      );
       manager.approve(ckpt.id, 'a1');
       assert.equal(manager.getPendingForApprover('a1').length, 0);
     });
@@ -182,26 +316,48 @@ describe('CheckpointManager', () => {
   describe('checkExpirations', () => {
     it('marks expired checkpoints', () => {
       const ckpt = manager.create(
-        'mission-1', 'task-1', 'agent-1', 'executor', 'test',
-        'MANUAL', 80, 'HIGH', [], ['a1'], 1, // 1ms timeout
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'MANUAL',
+        80,
+        'HIGH',
+        [],
+        ['a1'],
+        1, // 1ms timeout
       );
       // Wait for expiration
       const start = Date.now();
-      while (Date.now() - start < 10) { /* spin */ }
+      while (Date.now() - start < 10) {
+        /* spin */
+      }
       const expired = manager.checkExpirations();
       assert.ok(expired.length >= 1);
     });
 
     it('applies proceed fallback for expired checkpoints', () => {
       const ckpt = manager.create(
-        'mission-1', 'task-1', 'agent-1', 'executor', 'test',
-        'GUARDED', 60, 'HIGH', [], ['a1'], 1,
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'GUARDED',
+        60,
+        'HIGH',
+        [],
+        ['a1'],
+        1,
       );
       // Override fallback to proceed
       const c = manager.get(ckpt.id)!;
       (c as any).fallbackAction = 'proceed';
       const start = Date.now();
-      while (Date.now() - start < 10) { /* spin */ }
+      while (Date.now() - start < 10) {
+        /* spin */
+      }
       manager.checkExpirations();
       const updated = manager.get(ckpt.id)!;
       assert.equal(updated.status, 'approved');
@@ -211,8 +367,16 @@ describe('CheckpointManager', () => {
   describe('addEvidence', () => {
     it('adds evidence to a checkpoint', () => {
       const ckpt = manager.create(
-        'mission-1', 'task-1', 'agent-1', 'executor', 'test',
-        'AUTO', 0, 'LOW', [], [],
+        'mission-1',
+        'task-1',
+        'agent-1',
+        'executor',
+        'test',
+        'AUTO',
+        0,
+        'LOW',
+        [],
+        [],
       );
       manager.addEvidence(ckpt.id, {
         type: 'log',
@@ -221,7 +385,7 @@ describe('CheckpointManager', () => {
         source: 'test',
       });
       const updated = manager.get(ckpt.id)!;
-      assert.ok(updated.context.evidence.some(e => e.content === 'test evidence'));
+      assert.ok(updated.context.evidence.some((e) => e.content === 'test evidence'));
     });
   });
 
@@ -265,7 +429,12 @@ describe('RiskScoreCalculator', () => {
     });
 
     it('caps at 100', () => {
-      const score = RiskScoreCalculator.calculate('MANUAL', 'CRITICAL', ['deploy production'], 'restricted');
+      const score = RiskScoreCalculator.calculate(
+        'MANUAL',
+        'CRITICAL',
+        ['deploy production'],
+        'restricted',
+      );
       assert.equal(score, 100);
     });
   });

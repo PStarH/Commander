@@ -21,7 +21,9 @@ export function PauseResumeControls() {
     try {
       const data = await fetchActiveRuns();
       setRuns(data.runs);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   useEffect(() => {
@@ -31,7 +33,7 @@ export function PauseResumeControls() {
   }, [loadRuns]);
 
   async function handlePause(runId: string) {
-    setActionLoading(prev => ({ ...prev, [runId]: true }));
+    setActionLoading((prev) => ({ ...prev, [runId]: true }));
     try {
       const result = await pauseRun(runId);
       setMessage({ type: 'success', text: result.message });
@@ -39,21 +41,21 @@ export function PauseResumeControls() {
     } catch (err) {
       setMessage({ type: 'error', text: (err as Error).message });
     }
-    setActionLoading(prev => ({ ...prev, [runId]: false }));
+    setActionLoading((prev) => ({ ...prev, [runId]: false }));
   }
 
   async function handleResume(runId: string) {
-    setActionLoading(prev => ({ ...prev, [runId]: true }));
+    setActionLoading((prev) => ({ ...prev, [runId]: true }));
     try {
       const instructions = resumeInput[runId] || undefined;
       const result = await resumeRun(runId, instructions);
       setMessage({ type: 'success', text: result.message });
-      setResumeInput(prev => ({ ...prev, [runId]: '' }));
+      setResumeInput((prev) => ({ ...prev, [runId]: '' }));
       await loadRuns();
     } catch (err) {
       setMessage({ type: 'error', text: (err as Error).message });
     }
-    setActionLoading(prev => ({ ...prev, [runId]: false }));
+    setActionLoading((prev) => ({ ...prev, [runId]: false }));
   }
 
   // Auto-dismiss messages
@@ -74,14 +76,10 @@ export function PauseResumeControls() {
         <span className="run-count">{runs.length}</span>
       </div>
 
-      {message && (
-        <div className={`pause-message ${message.type}`}>
-          {message.text}
-        </div>
-      )}
+      {message && <div className={`pause-message ${message.type}`}>{message.text}</div>}
 
       <div className="pause-run-list">
-        {runs.map(run => (
+        {runs.map((run) => (
           <div key={run.runId} className="pause-run-item">
             <div className="pause-run-info">
               <span className="pause-run-id">{run.runId.slice(0, 16)}</span>
@@ -107,8 +105,12 @@ export function PauseResumeControls() {
                     className="inp"
                     placeholder="Optional instructions for resume..."
                     value={resumeInput[run.runId] || ''}
-                    onChange={(e) => setResumeInput(prev => ({ ...prev, [run.runId]: e.target.value }))}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleResume(run.runId); }}
+                    onChange={(e) =>
+                      setResumeInput((prev) => ({ ...prev, [run.runId]: e.target.value }))
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleResume(run.runId);
+                    }}
                   />
                   <Button
                     variant="primary"

@@ -45,7 +45,11 @@ const PROJECT_ID = process.env.COMMANDER_PROJECT_ID ?? 'project-war-room';
 const app = express();
 
 let API_VERSION = '0.0.0';
-try { API_VERSION = require('../package.json').version; } catch { /* use default */ }
+try {
+  API_VERSION = require('../package.json').version;
+} catch {
+  /* use default */
+}
 
 // ── Shared state ────────────────────────────────────────────────────────────
 const store = createWarRoomStore();
@@ -90,7 +94,7 @@ const ALLOWED_ORIGINS = new Set([
   `http://localhost:${WEB_PORT}`,
   `http://localhost:${API_PORT}`,
   `http://127.0.0.1:${WEB_PORT}`,
-  ...(process.env.CORS_ORIGINS?.split(',').map(s => s.trim()) ?? []),
+  ...(process.env.CORS_ORIGINS?.split(',').map((s) => s.trim()) ?? []),
 ]);
 
 app.use(express.json({ limit: '1mb' }));
@@ -212,7 +216,8 @@ app.get('/api/openapi.json', (_req, res) => {
     info: {
       title: 'Commander Multi-Agent Framework API',
       version: API_VERSION,
-      description: 'Production-grade multi-agent orchestration with governance, quality gates, and memory management.',
+      description:
+        'Production-grade multi-agent orchestration with governance, quality gates, and memory management.',
     },
     servers: [{ url: `http://localhost:${API_PORT}`, description: 'Local development' }],
     tags: [
@@ -226,33 +231,210 @@ app.get('/api/openapi.json', (_req, res) => {
       { name: 'System', description: 'Health and status' },
     ],
     paths: {
-      '/health': { get: { tags: ['System'], summary: 'Health check', responses: { '200': { description: 'OK' } } } },
-      '/system/status': { get: { tags: ['System'], summary: 'Module health status', responses: { '200': { description: 'Status of all modules' } } } },
-      '/projects': { get: { tags: ['Projects'], summary: 'List all projects', responses: { '200': { description: 'Project list' } } } },
-      '/projects/{projectId}/war-room': { get: { tags: ['Projects'], summary: 'War room snapshot', parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'War room data' } } } },
-      '/projects/{projectId}/missions': { post: { tags: ['Missions'], summary: 'Create mission', responses: { '201': { description: 'Created' } } } },
-      '/missions/{missionId}': { patch: { tags: ['Missions'], summary: 'Update mission', responses: { '200': { description: 'Updated' } } } },
-      '/missions/{missionId}/logs': { post: { tags: ['Missions'], summary: 'Add mission log', responses: { '200': { description: 'OK' } } } },
-      '/projects/{projectId}/memory': { get: { tags: ['Memory'], summary: 'List memories' }, post: { tags: ['Memory'], summary: 'Create memory' } },
-      '/projects/{projectId}/memory/search': { get: { tags: ['Memory'], summary: 'Search memories' } },
-      '/api/quality/check': { post: { tags: ['Quality'], summary: 'Run all quality gates', requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { input: { type: 'string' }, output: { type: 'string', required: true } } } } } }, responses: { '200': { description: 'Quality gate results' } } } },
-      '/api/quality/hallucination-check': { post: { tags: ['Quality'], summary: 'Hallucination detection', responses: { '200': { description: 'Hallucination report' } } } },
-      '/api/memory/assess-credibility': { post: { tags: ['Memory'], summary: 'Source credibility assessment', responses: { '200': { description: 'Credibility score' } } } },
-      '/api/memory/detect-poisoning': { post: { tags: ['Memory'], summary: 'Batch poisoning detection', responses: { '200': { description: 'Poisoning indicators' } } } },
-      '/api/agents/{agentId}/self-assess': { post: { tags: ['Governance'], summary: 'Agent self-assessment', responses: { '200': { description: 'Assessment result' } } } },
-      '/api/agents/{agentId}/self-model': { get: { tags: ['Governance'], summary: 'Agent self-model', responses: { '200': { description: 'Self model' } } } },
-      '/projects/{projectId}/governance/stats': { get: { tags: ['Governance'], summary: 'Governance statistics', responses: { '200': { description: 'Stats' } } } },
-      '/projects/{projectId}/governance/alerts': { get: { tags: ['Governance'], summary: 'Governance alerts', responses: { '200': { description: 'Alerts' } } } },
-      '/projects/{projectId}/governance/weekly-report': { get: { tags: ['Governance'], summary: 'Weekly governance report', responses: { '200': { description: 'Report' } } } },
-      '/api/namespaced-memory/{namespace}/write': { post: { tags: ['Memory'], summary: 'RBAC memory write', responses: { '200': { description: 'Written' }, '403': { description: 'Permission denied' } } } },
-      '/api/namespaced-memory/{namespace}/read/{id}': { get: { tags: ['Memory'], summary: 'RBAC memory read', responses: { '200': { description: 'Memory item' }, '403': { description: 'Permission denied' } } } },
-      '/api/namespaced-memory/{namespace}/search': { get: { tags: ['Memory'], summary: 'RBAC memory search', responses: { '200': { description: 'Search results' } } } },
-      '/api/namespaced-memory/{namespace}/stats': { get: { tags: ['Memory'], summary: 'Namespace stats', responses: { '200': { description: 'Stats' } } } },
-      '/api/namespaced-memory/{namespace}/audit': { get: { tags: ['Memory'], summary: 'Audit log', responses: { '200': { description: 'Audit entries' } } } },
-      '/api/namespaced-memory/acl': { get: { tags: ['Memory'], summary: 'ACL rules', responses: { '200': { description: 'Rules' } } } },
-      '/a2a/.well-known/agent-card': { get: { tags: ['A2A'], summary: 'Agent card (A2A protocol)', responses: { '200': { description: 'Agent card' } } } },
-      '/a2a/agent-cards': { get: { tags: ['A2A'], summary: 'List agent cards', responses: { '200': { description: 'Cards' } } } },
-      '/a2a/tasks': { post: { tags: ['A2A'], summary: 'Create A2A task', responses: { '201': { description: 'Task created' } } } },
+      '/health': {
+        get: {
+          tags: ['System'],
+          summary: 'Health check',
+          responses: { '200': { description: 'OK' } },
+        },
+      },
+      '/system/status': {
+        get: {
+          tags: ['System'],
+          summary: 'Module health status',
+          responses: { '200': { description: 'Status of all modules' } },
+        },
+      },
+      '/projects': {
+        get: {
+          tags: ['Projects'],
+          summary: 'List all projects',
+          responses: { '200': { description: 'Project list' } },
+        },
+      },
+      '/projects/{projectId}/war-room': {
+        get: {
+          tags: ['Projects'],
+          summary: 'War room snapshot',
+          parameters: [
+            { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'War room data' } },
+        },
+      },
+      '/projects/{projectId}/missions': {
+        post: {
+          tags: ['Missions'],
+          summary: 'Create mission',
+          responses: { '201': { description: 'Created' } },
+        },
+      },
+      '/missions/{missionId}': {
+        patch: {
+          tags: ['Missions'],
+          summary: 'Update mission',
+          responses: { '200': { description: 'Updated' } },
+        },
+      },
+      '/missions/{missionId}/logs': {
+        post: {
+          tags: ['Missions'],
+          summary: 'Add mission log',
+          responses: { '200': { description: 'OK' } },
+        },
+      },
+      '/projects/{projectId}/memory': {
+        get: { tags: ['Memory'], summary: 'List memories' },
+        post: { tags: ['Memory'], summary: 'Create memory' },
+      },
+      '/projects/{projectId}/memory/search': {
+        get: { tags: ['Memory'], summary: 'Search memories' },
+      },
+      '/api/quality/check': {
+        post: {
+          tags: ['Quality'],
+          summary: 'Run all quality gates',
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    input: { type: 'string' },
+                    output: { type: 'string', required: true },
+                  },
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'Quality gate results' } },
+        },
+      },
+      '/api/quality/hallucination-check': {
+        post: {
+          tags: ['Quality'],
+          summary: 'Hallucination detection',
+          responses: { '200': { description: 'Hallucination report' } },
+        },
+      },
+      '/api/memory/assess-credibility': {
+        post: {
+          tags: ['Memory'],
+          summary: 'Source credibility assessment',
+          responses: { '200': { description: 'Credibility score' } },
+        },
+      },
+      '/api/memory/detect-poisoning': {
+        post: {
+          tags: ['Memory'],
+          summary: 'Batch poisoning detection',
+          responses: { '200': { description: 'Poisoning indicators' } },
+        },
+      },
+      '/api/agents/{agentId}/self-assess': {
+        post: {
+          tags: ['Governance'],
+          summary: 'Agent self-assessment',
+          responses: { '200': { description: 'Assessment result' } },
+        },
+      },
+      '/api/agents/{agentId}/self-model': {
+        get: {
+          tags: ['Governance'],
+          summary: 'Agent self-model',
+          responses: { '200': { description: 'Self model' } },
+        },
+      },
+      '/projects/{projectId}/governance/stats': {
+        get: {
+          tags: ['Governance'],
+          summary: 'Governance statistics',
+          responses: { '200': { description: 'Stats' } },
+        },
+      },
+      '/projects/{projectId}/governance/alerts': {
+        get: {
+          tags: ['Governance'],
+          summary: 'Governance alerts',
+          responses: { '200': { description: 'Alerts' } },
+        },
+      },
+      '/projects/{projectId}/governance/weekly-report': {
+        get: {
+          tags: ['Governance'],
+          summary: 'Weekly governance report',
+          responses: { '200': { description: 'Report' } },
+        },
+      },
+      '/api/namespaced-memory/{namespace}/write': {
+        post: {
+          tags: ['Memory'],
+          summary: 'RBAC memory write',
+          responses: {
+            '200': { description: 'Written' },
+            '403': { description: 'Permission denied' },
+          },
+        },
+      },
+      '/api/namespaced-memory/{namespace}/read/{id}': {
+        get: {
+          tags: ['Memory'],
+          summary: 'RBAC memory read',
+          responses: {
+            '200': { description: 'Memory item' },
+            '403': { description: 'Permission denied' },
+          },
+        },
+      },
+      '/api/namespaced-memory/{namespace}/search': {
+        get: {
+          tags: ['Memory'],
+          summary: 'RBAC memory search',
+          responses: { '200': { description: 'Search results' } },
+        },
+      },
+      '/api/namespaced-memory/{namespace}/stats': {
+        get: {
+          tags: ['Memory'],
+          summary: 'Namespace stats',
+          responses: { '200': { description: 'Stats' } },
+        },
+      },
+      '/api/namespaced-memory/{namespace}/audit': {
+        get: {
+          tags: ['Memory'],
+          summary: 'Audit log',
+          responses: { '200': { description: 'Audit entries' } },
+        },
+      },
+      '/api/namespaced-memory/acl': {
+        get: {
+          tags: ['Memory'],
+          summary: 'ACL rules',
+          responses: { '200': { description: 'Rules' } },
+        },
+      },
+      '/a2a/.well-known/agent-card': {
+        get: {
+          tags: ['A2A'],
+          summary: 'Agent card (A2A protocol)',
+          responses: { '200': { description: 'Agent card' } },
+        },
+      },
+      '/a2a/agent-cards': {
+        get: {
+          tags: ['A2A'],
+          summary: 'List agent cards',
+          responses: { '200': { description: 'Cards' } },
+        },
+      },
+      '/a2a/tasks': {
+        post: {
+          tags: ['A2A'],
+          summary: 'Create A2A task',
+          responses: { '201': { description: 'Task created' } },
+        },
+      },
     },
   });
 });

@@ -64,19 +64,40 @@ export function TimelineBar({ nodes, totalDurationMs, startedAt }: TimelineBarPr
 
   if (nodes.length === 0) {
     return (
-      <div style={{ padding: 24, textAlign: 'center', color: C.textDim, border: `1px dashed ${C.border}`, borderRadius: 8 }}>
+      <div
+        style={{
+          padding: 24,
+          textAlign: 'center',
+          color: C.textDim,
+          border: `1px dashed ${C.border}`,
+          borderRadius: 8,
+        }}
+      >
         No timeline nodes
       </div>
     );
   }
 
   return (
-    <div style={{ border: `1px solid ${C.border}`, background: C.card, borderRadius: 8, padding: 16 }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        marginBottom: 12,
-      }}>
-        <div style={{ fontSize: '0.68rem', letterSpacing: '0.16em', textTransform: 'uppercase', color: C.textDim }}>
+    <div
+      style={{ border: `1px solid ${C.border}`, background: C.card, borderRadius: 8, padding: 16 }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 12,
+        }}
+      >
+        <div
+          style={{
+            fontSize: '0.68rem',
+            letterSpacing: '0.16em',
+            textTransform: 'uppercase',
+            color: C.textDim,
+          }}
+        >
           Timeline · {nodes.length} spans · {formatDuration(totalDurationMs)}
         </div>
         <div style={{ display: 'flex', gap: 12, fontSize: '0.7rem', color: C.textDim }}>
@@ -92,7 +113,7 @@ export function TimelineBar({ nodes, totalDurationMs, startedAt }: TimelineBarPr
           const nodeStart = new Date(node.startedAt).getTime() - startMs;
           const leftPct = Math.max(0, (nodeStart / max) * 100);
           const widthPct = Math.max(0.4, (node.durationMs / max) * 100);
-          const color = node.status === 'error' ? C.red : KIND_COLOR[node.type] ?? C.textDim;
+          const color = node.status === 'error' ? C.red : (KIND_COLOR[node.type] ?? C.textDim);
           const Icon = KIND_ICON[node.type] ?? GitBranch;
           return (
             <div
@@ -132,55 +153,105 @@ export function TimelineBar({ nodes, totalDurationMs, startedAt }: TimelineBarPr
       </div>
 
       {hovered && (
-        <div style={{
-          marginTop: 12,
-          padding: '10px 12px',
-          background: C.track,
-          borderRadius: 6,
-          border: `1px solid ${C.border}`,
-          fontSize: '0.78rem',
-          color: C.text,
-          display: 'flex',
-          gap: 16,
-          flexWrap: 'wrap',
-        }}>
+        <div
+          style={{
+            marginTop: 12,
+            padding: '10px 12px',
+            background: C.track,
+            borderRadius: 6,
+            border: `1px solid ${C.border}`,
+            fontSize: '0.78rem',
+            color: C.text,
+            display: 'flex',
+            gap: 16,
+            flexWrap: 'wrap',
+          }}
+        >
           <div>
-            <div style={{ fontSize: '0.6rem', color: C.textDim, textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+            <div
+              style={{
+                fontSize: '0.6rem',
+                color: C.textDim,
+                textTransform: 'uppercase',
+                letterSpacing: '0.12em',
+              }}
+            >
               Span
             </div>
             <div>{hovered.name}</div>
           </div>
           <div>
-            <div style={{ fontSize: '0.6rem', color: C.textDim, textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+            <div
+              style={{
+                fontSize: '0.6rem',
+                color: C.textDim,
+                textTransform: 'uppercase',
+                letterSpacing: '0.12em',
+              }}
+            >
               Type
             </div>
-            <div>{hovered.type} · {hovered.operation}</div>
+            <div>
+              {hovered.type} · {hovered.operation}
+            </div>
           </div>
           <div>
-            <div style={{ fontSize: '0.6rem', color: C.textDim, textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+            <div
+              style={{
+                fontSize: '0.6rem',
+                color: C.textDim,
+                textTransform: 'uppercase',
+                letterSpacing: '0.12em',
+              }}
+            >
               Duration
             </div>
             <div>{formatDuration(hovered.durationMs)}</div>
           </div>
           {hovered.model && (
             <div>
-              <div style={{ fontSize: '0.6rem', color: C.textDim, textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+              <div
+                style={{
+                  fontSize: '0.6rem',
+                  color: C.textDim,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.12em',
+                }}
+              >
                 Model
               </div>
-              <div>{hovered.model} ({hovered.provider})</div>
+              <div>
+                {hovered.model} ({hovered.provider})
+              </div>
             </div>
           )}
           {hovered.tokens && (
             <div>
-              <div style={{ fontSize: '0.6rem', color: C.textDim, textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+              <div
+                style={{
+                  fontSize: '0.6rem',
+                  color: C.textDim,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.12em',
+                }}
+              >
                 Tokens
               </div>
-              <div>{hovered.tokens.input} in / {hovered.tokens.output} out</div>
+              <div>
+                {hovered.tokens.input} in / {hovered.tokens.output} out
+              </div>
             </div>
           )}
           {hovered.cost && (
             <div>
-              <div style={{ fontSize: '0.6rem', color: C.textDim, textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+              <div
+                style={{
+                  fontSize: '0.6rem',
+                  color: C.textDim,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.12em',
+                }}
+              >
                 Cost
               </div>
               <div>${hovered.cost.totalCostUsd.toFixed(4)}</div>
@@ -188,7 +259,14 @@ export function TimelineBar({ nodes, totalDurationMs, startedAt }: TimelineBarPr
           )}
           {hovered.errorMessage && (
             <div style={{ flexBasis: '100%' }}>
-              <div style={{ fontSize: '0.6rem', color: C.red, textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+              <div
+                style={{
+                  fontSize: '0.6rem',
+                  color: C.red,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.12em',
+                }}
+              >
                 Error
               </div>
               <div style={{ color: C.red }}>{hovered.errorMessage}</div>

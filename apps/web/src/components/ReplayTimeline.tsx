@@ -1,8 +1,18 @@
 import { useState, useEffect } from 'react';
 import {
-  Brain, Wrench, GitBranch, AlertTriangle, ArrowRight,
-  Clock, Cpu, Zap, ChevronDown, ChevronRight, Play,
-  CheckCircle, XCircle,
+  Brain,
+  Wrench,
+  GitBranch,
+  AlertTriangle,
+  ArrowRight,
+  Clock,
+  Cpu,
+  Zap,
+  ChevronDown,
+  ChevronRight,
+  Play,
+  CheckCircle,
+  XCircle,
 } from 'lucide-react';
 import { Badge, Button } from './ui';
 import { fetchReplayRuns, fetchReplayEvents } from '../api';
@@ -55,7 +65,9 @@ export function ReplayTimeline() {
   const [loading, setLoading] = useState(true);
   const [eventsLoading, setEventsLoading] = useState(false);
 
-  useEffect(() => { loadRuns(); }, []);
+  useEffect(() => {
+    loadRuns();
+  }, []);
 
   useEffect(() => {
     if (selectedRun) loadEvents(selectedRun.runId, typeFilter);
@@ -69,7 +81,9 @@ export function ReplayTimeline() {
       if (data.runs.length > 0 && !selectedRun) {
         setSelectedRun(data.runs[0]);
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setLoading(false);
   }
 
@@ -78,7 +92,9 @@ export function ReplayTimeline() {
     try {
       const data = await fetchReplayEvents(runId, type || undefined);
       setEvents(data.events);
-    } catch { setEvents([]); }
+    } catch {
+      setEvents([]);
+    }
     setEventsLoading(false);
   }
 
@@ -91,9 +107,10 @@ export function ReplayTimeline() {
       }
       case 'tool_execution': {
         const name = event.data.toolName ?? 'unknown tool';
-        const input = typeof event.data.input === 'string'
-          ? truncate(event.data.input, 60)
-          : truncate(JSON.stringify(event.data.input ?? ''), 60);
+        const input =
+          typeof event.data.input === 'string'
+            ? truncate(event.data.input, 60)
+            : truncate(JSON.stringify(event.data.input ?? ''), 60);
         return `${name}${input ? ` · ${input}` : ''}`;
       }
       case 'decision':
@@ -131,8 +148,8 @@ export function ReplayTimeline() {
           </div>
         </div>
         <div className="narrative narrative-green">
-          Run an agent task to see execution traces here.
-          Each run's LLM calls, tool executions, and decisions are recorded for replay.
+          Run an agent task to see execution traces here. Each run's LLM calls, tool executions, and
+          decisions are recorded for replay.
         </div>
       </div>
     );
@@ -147,21 +164,21 @@ export function ReplayTimeline() {
           <span className="run-count">{runs.length}</span>
         </div>
         <div className="replay-run-list">
-          {runs.map(run => (
+          {runs.map((run) => (
             <button
               key={run.runId}
               className={`replay-run-item ${selectedRun?.runId === run.runId ? 'active' : ''}`}
               onClick={() => setSelectedRun(run)}
             >
               <div className="run-item-header">
-                {run.status === 'completed'
-                  ? <CheckCircle size={14} style={{ color: COLORS.green }} />
-                  : <XCircle size={14} style={{ color: COLORS.red }} />}
+                {run.status === 'completed' ? (
+                  <CheckCircle size={14} style={{ color: COLORS.green }} />
+                ) : (
+                  <XCircle size={14} style={{ color: COLORS.red }} />
+                )}
                 <span className="run-id">{run.runId.slice(0, 12)}</span>
               </div>
-              {run.goal && (
-                <div className="run-goal">{truncate(run.goal, 60)}</div>
-              )}
+              {run.goal && <div className="run-goal">{truncate(run.goal, 60)}</div>}
               <div className="run-meta">
                 <span>{run.totalEvents} events</span>
                 <span>{formatDuration(run.durationMs)}</span>
@@ -211,7 +228,11 @@ export function ReplayTimeline() {
                     key={type}
                     className={`filter-chip ${typeFilter === type ? 'active' : ''}`}
                     onClick={() => setTypeFilter(typeFilter === type ? '' : type)}
-                    style={typeFilter === type ? { borderColor: config.color, color: config.color } : undefined}
+                    style={
+                      typeFilter === type
+                        ? { borderColor: config.color, color: config.color }
+                        : undefined
+                    }
                   >
                     <config.icon size={12} />
                     {config.label}
@@ -246,21 +267,28 @@ export function ReplayTimeline() {
                         onClick={() => setExpandedEvent(isExpanded ? null : event.id)}
                       >
                         <div className="timeline-header">
-                          <span className="bdg bdg-default" style={{ borderColor: config.color, color: config.color }}>
+                          <span
+                            className="bdg bdg-default"
+                            style={{ borderColor: config.color, color: config.color }}
+                          >
                             {config.label}
                           </span>
                           <span className="timeline-time">{formatTimestamp(event.timestamp)}</span>
                           {event.durationMs > 0 && (
-                            <span className="timeline-duration">{formatDuration(event.durationMs)}</span>
+                            <span className="timeline-duration">
+                              {formatDuration(event.durationMs)}
+                            </span>
                           )}
                           {event.data.tokenUsage && (
                             <span className="timeline-tokens">
                               {formatTokens(event.data.tokenUsage.totalTokens)} tok
                             </span>
                           )}
-                          {isExpanded
-                            ? <ChevronDown size={14} className="timeline-chevron" />
-                            : <ChevronRight size={14} className="timeline-chevron" />}
+                          {isExpanded ? (
+                            <ChevronDown size={14} className="timeline-chevron" />
+                          ) : (
+                            <ChevronRight size={14} className="timeline-chevron" />
+                          )}
                         </div>
                         <div className="timeline-summary">{getEventSummary(event)}</div>
 
@@ -270,27 +298,45 @@ export function ReplayTimeline() {
                             {event.data.modelInfo && (
                               <div className="detail-row">
                                 <span className="detail-label">Model</span>
-                                <span className="detail-value">{event.data.modelInfo.model} ({event.data.modelInfo.provider})</span>
+                                <span className="detail-value">
+                                  {event.data.modelInfo.model} ({event.data.modelInfo.provider})
+                                </span>
                               </div>
                             )}
                             {event.data.tokenUsage && (
                               <div className="detail-row">
                                 <span className="detail-label">Tokens</span>
                                 <span className="detail-value">
-                                  {event.data.tokenUsage.promptTokens} prompt + {event.data.tokenUsage.completionTokens} completion = {event.data.tokenUsage.totalTokens}
+                                  {event.data.tokenUsage.promptTokens} prompt +{' '}
+                                  {event.data.tokenUsage.completionTokens} completion ={' '}
+                                  {event.data.tokenUsage.totalTokens}
                                 </span>
                               </div>
                             )}
                             {event.data.input != null && (
                               <div className="detail-row">
                                 <span className="detail-label">Input</span>
-                                <pre className="detail-pre">{truncate(typeof event.data.input === 'string' ? event.data.input : JSON.stringify(event.data.input, null, 2), 500)}</pre>
+                                <pre className="detail-pre">
+                                  {truncate(
+                                    typeof event.data.input === 'string'
+                                      ? event.data.input
+                                      : JSON.stringify(event.data.input, null, 2),
+                                    500,
+                                  )}
+                                </pre>
                               </div>
                             )}
                             {event.data.output != null && (
                               <div className="detail-row">
                                 <span className="detail-label">Output</span>
-                                <pre className="detail-pre">{truncate(typeof event.data.output === 'string' ? event.data.output : JSON.stringify(event.data.output, null, 2), 500)}</pre>
+                                <pre className="detail-pre">
+                                  {truncate(
+                                    typeof event.data.output === 'string'
+                                      ? event.data.output
+                                      : JSON.stringify(event.data.output, null, 2),
+                                    500,
+                                  )}
+                                </pre>
                               </div>
                             )}
                             {event.data.error && (
@@ -309,7 +355,8 @@ export function ReplayTimeline() {
                               <div className="detail-row">
                                 <span className="detail-label">Transition</span>
                                 <span className="detail-value">
-                                  {event.data.stateTransition.from} <ArrowRight size={12} /> {event.data.stateTransition.to}
+                                  {event.data.stateTransition.from} <ArrowRight size={12} />{' '}
+                                  {event.data.stateTransition.to}
                                 </span>
                               </div>
                             )}

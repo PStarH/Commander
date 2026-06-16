@@ -1,6 +1,18 @@
 import express, { Router } from 'express';
-import { MCPServer, getModelRouter, getCapabilityRegistry, MCPClient, createMCPClient } from '@commander/core';
-import type { MCPTool, MCPToolResult, MCPContentItem, ModelTier, MCPClientConfig } from '@commander/core';
+import {
+  MCPServer,
+  getModelRouter,
+  getCapabilityRegistry,
+  MCPClient,
+  createMCPClient,
+} from '@commander/core';
+import type {
+  MCPTool,
+  MCPToolResult,
+  MCPContentItem,
+  ModelTier,
+  MCPClientConfig,
+} from '@commander/core';
 
 export function createMCPRouter(): Router {
   const router = express.Router();
@@ -72,7 +84,9 @@ export function createMCPRouter(): Router {
             },
           });
           registeredCount++;
-        } catch { /* tool already registered — skip */ }
+        } catch {
+          /* tool already registered — skip */
+        }
       }
 
       await client.disconnect();
@@ -80,12 +94,17 @@ export function createMCPRouter(): Router {
       res.json({
         status: 'discovered',
         label: discoveryLabel,
-        server: { name: serverInfo.name, version: serverInfo.version, transport: url ? 'streamable-http' : 'stdio', url: url ?? `stdio:${command}` },
-        tools: tools.map(t => ({ name: t.name, description: t.description, registered: true })),
+        server: {
+          name: serverInfo.name,
+          version: serverInfo.version,
+          transport: url ? 'streamable-http' : 'stdio',
+          url: url ?? `stdio:${command}`,
+        },
+        tools: tools.map((t) => ({ name: t.name, description: t.description, registered: true })),
         toolCount: tools.length,
         registeredCount,
-        resources: resources.map(r => ({ uri: r.uri, name: r.name })),
-        prompts: prompts.map(p => ({ name: p.name, description: p.description })),
+        resources: resources.map((r) => ({ uri: r.uri, name: r.name })),
+        prompts: prompts.map((p) => ({ name: p.name, description: p.description })),
         durationMs: Date.now() - startTime,
         instruction: `MCP server "${discoveryLabel}" discovered. ${registeredCount} tools registered as mcp:${discoveryLabel}:<tool>.`,
       });
@@ -107,7 +126,8 @@ function registerCoreTools(server: MCPServer): void {
   server.registerTool(
     {
       name: 'execute_agent',
-      description: 'Execute an agent task with the TELOS runtime. Provide a goal and optional context.',
+      description:
+        'Execute an agent task with the TELOS runtime. Provide a goal and optional context.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -120,7 +140,9 @@ function registerCoreTools(server: MCPServer): void {
     },
     async (args) => {
       return {
-        content: [{ type: 'text', text: `Agent ${args.agentId ?? 'default'} executed: ${args.goal}` }],
+        content: [
+          { type: 'text', text: `Agent ${args.agentId ?? 'default'} executed: ${args.goal}` },
+        ],
       };
     },
   );
@@ -140,7 +162,16 @@ function registerCoreTools(server: MCPServer): void {
       const router = getModelRouter();
       const models = router.listModels(args.tier as ModelTier | undefined);
       return {
-        content: [{ type: 'text', text: JSON.stringify(models.map(m => ({ id: m.id, tier: m.tier, provider: m.provider })), null, 2) }],
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              models.map((m) => ({ id: m.id, tier: m.tier, provider: m.provider })),
+              null,
+              2,
+            ),
+          },
+        ],
       };
     },
   );
@@ -148,7 +179,8 @@ function registerCoreTools(server: MCPServer): void {
   server.registerTool(
     {
       name: 'route_task',
-      description: 'Preview which model tier a task would be routed to based on its goal and context',
+      description:
+        'Preview which model tier a task would be routed to based on its goal and context',
       inputSchema: {
         type: 'object',
         properties: {

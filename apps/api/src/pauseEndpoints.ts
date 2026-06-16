@@ -9,7 +9,12 @@ const RESUME_COOLDOWN_MS = 10_000; // 10s cooldown between resumes of same run
 const resumeCooldowns: Map<string, number> = new Map();
 
 function isValidRunId(runId: unknown): runId is string {
-  return typeof runId === 'string' && runId.length > 0 && runId.length < 128 && RUN_ID_PATTERN.test(runId);
+  return (
+    typeof runId === 'string' &&
+    runId.length > 0 &&
+    runId.length < 128 &&
+    RUN_ID_PATTERN.test(runId)
+  );
 }
 
 function sanitizeInstructions(input: unknown): string | null {
@@ -35,7 +40,10 @@ export function createPauseRouter(): Router {
       return res.status(404).json({ error: 'Run not found or already completed' });
     }
 
-    res.json({ status: 'pause_signaled', message: 'Pause signal sent. Execution will stop at the next checkpoint.' });
+    res.json({
+      status: 'pause_signaled',
+      message: 'Pause signal sent. Execution will stop at the next checkpoint.',
+    });
   });
 
   // ── Resume a paused execution ──────────────────────────────────────────
@@ -49,7 +57,9 @@ export function createPauseRouter(): Router {
     const now = Date.now();
     const lastResume = resumeCooldowns.get(runId) ?? 0;
     if (now - lastResume < RESUME_COOLDOWN_MS) {
-      return res.status(429).json({ error: `Please wait ${Math.ceil((RESUME_COOLDOWN_MS - (now - lastResume)) / 1000)}s before resuming again` });
+      return res.status(429).json({
+        error: `Please wait ${Math.ceil((RESUME_COOLDOWN_MS - (now - lastResume)) / 1000)}s before resuming again`,
+      });
     }
     resumeCooldowns.set(runId, now);
 

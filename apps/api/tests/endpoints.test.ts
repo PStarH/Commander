@@ -22,7 +22,10 @@ import assert from 'node:assert';
 
 const BASE_URL = process.env.TEST_API_URL ?? 'http://localhost:4000';
 
-async function fetchJSON(path: string, options?: RequestInit): Promise<{ status: number; body: any }> {
+async function fetchJSON(
+  path: string,
+  options?: RequestInit,
+): Promise<{ status: number; body: any }> {
   try {
     const res = await fetch(`${BASE_URL}${path}`, {
       headers: { 'Content-Type': 'application/json', ...options?.headers },

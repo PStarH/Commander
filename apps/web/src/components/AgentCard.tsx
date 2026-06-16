@@ -9,7 +9,10 @@ interface AgentCardProps {
   agent: AgentWorkload;
 }
 
-const statusConfig: Record<string, { label: string; color: 'success' | 'warning' | 'error' | 'info'; icon: typeof Activity }> = {
+const statusConfig: Record<
+  string,
+  { label: string; color: 'success' | 'warning' | 'error' | 'info'; icon: typeof Activity }
+> = {
   READY: { label: 'Ready', color: 'success', icon: CheckCircle },
   RUNNING: { label: 'Running', color: 'info', icon: Activity },
   BLOCKED: { label: 'Blocked', color: 'warning', icon: AlertCircle },
@@ -60,7 +63,7 @@ export function AgentCard({ agent }: AgentCardProps) {
 
       {showDetail && (
         <div className="modal-overlay" onClick={() => setShowDetail(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
               <h3>{agent.agentName}</h3>
               <Button variant="ghost" size="sm" onClick={() => setShowDetail(false)}>
@@ -97,11 +100,13 @@ export function AgentCard({ agent }: AgentCardProps) {
               <div className="agent-perf-chart">
                 <div className="chart-title">Workload</div>
                 <ResponsiveContainer width="100%" height={100}>
-                  <BarChart data={[
-                    { name: 'Assigned', count: agent.assignedMissionCount },
-                    { name: 'Active', count: agent.activeMissionCount },
-                    { name: 'Completed', count: agent.completedMissionCount },
-                  ]}>
+                  <BarChart
+                    data={[
+                      { name: 'Assigned', count: agent.assignedMissionCount },
+                      { name: 'Active', count: agent.activeMissionCount },
+                      { name: 'Completed', count: agent.completedMissionCount },
+                    ]}
+                  >
                     <XAxis dataKey="name" tick={{ fill: '#7f8c86', fontSize: 10 }} />
                     <Bar dataKey="count" fill="#4de98c" radius={[2, 2, 0, 0]} />
                   </BarChart>

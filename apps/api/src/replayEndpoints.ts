@@ -61,7 +61,11 @@ async function readNdjsonFile(filePath: string): Promise<TraceEvent[]> {
     if (!raw) return [];
     const events: TraceEvent[] = [];
     for (const line of raw.split('\n')) {
-      try { events.push(JSON.parse(line)); } catch { /* skip corrupt lines */ }
+      try {
+        events.push(JSON.parse(line));
+      } catch {
+        /* skip corrupt lines */
+      }
     }
     return events;
   } catch {
@@ -73,7 +77,12 @@ async function readNdjsonFile(filePath: string): Promise<TraceEvent[]> {
 
 const RUN_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 function isValidRunId(runId: string): boolean {
-  return typeof runId === 'string' && runId.length > 0 && runId.length < 128 && RUN_ID_PATTERN.test(runId);
+  return (
+    typeof runId === 'string' &&
+    runId.length > 0 &&
+    runId.length < 128 &&
+    RUN_ID_PATTERN.test(runId)
+  );
 }
 
 // ── Router ─────────────────────────────────────────────────────────────────
@@ -91,7 +100,11 @@ export function createReplayRouter(): Router {
     // Scan completed checkpoints
     try {
       let files: string[] = [];
-      try { files = (await fsp.readdir(completedDir)).filter(f => f.endsWith('.json')); } catch { /* dir may not exist */ }
+      try {
+        files = (await fsp.readdir(completedDir)).filter((f) => f.endsWith('.json'));
+      } catch {
+        /* dir may not exist */
+      }
       for (const file of files) {
         const runId = file.replace(/\.json$/, '');
         const checkpoint = await readJsonFile<any>(path.join(completedDir, file));
@@ -116,24 +129,31 @@ export function createReplayRouter(): Router {
           status: checkpoint.phase === 'completed' ? 'completed' : 'failed',
           phase: checkpoint.phase,
           startedAt: manifest?.timestamp ?? checkpoint.timestamp,
-          completedAt: checkpoint.phase === 'completed' || checkpoint.phase === 'failed'
-            ? checkpoint.timestamp
-            : undefined,
+          completedAt:
+            checkpoint.phase === 'completed' || checkpoint.phase === 'failed'
+              ? checkpoint.timestamp
+              : undefined,
           totalEvents: events.length,
           totalTokens,
           durationMs: checkpoint.totalDurationMs ?? 0,
           stepCount: checkpoint.stepNumber ?? 0,
         });
       }
-    } catch { /* ignore scan errors */ }
+    } catch {
+      /* ignore scan errors */
+    }
 
     // Also scan in-flight checkpoints (not yet completed)
     try {
       let files: string[] = [];
-      try { files = (await fsp.readdir(stateDir)).filter(f => f.endsWith('.checkpoint')); } catch { /* dir may not exist */ }
+      try {
+        files = (await fsp.readdir(stateDir)).filter((f) => f.endsWith('.checkpoint'));
+      } catch {
+        /* dir may not exist */
+      }
       for (const file of files) {
         const runId = file.replace(/\.checkpoint$/, '');
-        if (runs.some(r => r.runId === runId)) continue;
+        if (runs.some((r) => r.runId === runId)) continue;
 
         const [checkpoint, events] = await Promise.all([
           readJsonFile<any>(path.join(stateDir, file)),
@@ -155,7 +175,9 @@ export function createReplayRouter(): Router {
           stepCount: checkpoint.stepNumber ?? 0,
         });
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     // Sort by timestamp descending
     runs.sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''));
@@ -201,9 +223,10 @@ export function createReplayRouter(): Router {
       status,
       phase: checkpoint.phase,
       startedAt: manifest?.timestamp ?? checkpoint.timestamp,
-      completedAt: checkpoint.phase === 'completed' || checkpoint.phase === 'failed'
-        ? checkpoint.timestamp
-        : undefined,
+      completedAt:
+        checkpoint.phase === 'completed' || checkpoint.phase === 'failed'
+          ? checkpoint.timestamp
+          : undefined,
       totalEvents: events.length,
       totalTokens,
       durationMs: checkpoint.totalDurationMs ?? 0,
@@ -222,9 +245,7 @@ export function createReplayRouter(): Router {
     const events = await readNdjsonFile(path.join(tracesDir, `${runId}.ndjson`));
 
     const typeFilter = req.query.type as string | undefined;
-    const filtered = typeFilter
-      ? events.filter(e => e.type === typeFilter)
-      : events;
+    const filtered = typeFilter ? events.filter((e) => e.type === typeFilter) : events;
 
     res.json({ events: filtered, total: filtered.length });
   });

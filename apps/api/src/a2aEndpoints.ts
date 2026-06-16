@@ -16,7 +16,7 @@ export interface A2AServerConfig {
 export function createA2ARouter(
   taskManager: TaskManager,
   artifactManager: ArtifactManager,
-  cardRegistry: AgentCardRegistry
+  cardRegistry: AgentCardRegistry,
 ): Router {
   const router = express.Router();
   router.use(express.json());
@@ -37,7 +37,7 @@ export function createA2ARouter(
    */
   router.get('/agent-cards', (req: Request, res: Response) => {
     const { tag, capability } = req.query;
-    
+
     let cards;
     if (tag) {
       cards = cardRegistry.findByTags([tag as string]);
@@ -46,7 +46,7 @@ export function createA2ARouter(
     } else {
       cards = cardRegistry.listAll();
     }
-    
+
     res.json({ cards, count: cards.length });
   });
 
@@ -68,20 +68,15 @@ export function createA2ARouter(
    */
   router.post('/tasks', (req: Request, res: Response) => {
     const { clientId, description, input, priority } = req.body;
-    
+
     if (!clientId || !description) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: clientId, description' 
+      return res.status(400).json({
+        error: 'Missing required fields: clientId, description',
       });
     }
-    
-    const task = taskManager.create(
-      clientId,
-      description,
-      input || {},
-      priority || 'medium'
-    );
-    
+
+    const task = taskManager.create(clientId, description, input || {}, priority || 'medium');
+
     res.status(201).json(task);
   });
 
@@ -103,11 +98,11 @@ export function createA2ARouter(
    */
   router.post('/tasks/:id/start', (req: Request, res: Response) => {
     const { agentId } = req.body;
-    
+
     if (!agentId) {
       return res.status(400).json({ error: 'Missing agentId' });
     }
-    
+
     try {
       const task = taskManager.start(req.params.id, agentId);
       res.json(task);
@@ -161,21 +156,16 @@ export function createA2ARouter(
    */
   router.post('/tasks/:id/complete', (req: Request, res: Response) => {
     const { contentType, content, metadata } = req.body;
-    
+
     if (!contentType || content === undefined) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: contentType, content' 
+      return res.status(400).json({
+        error: 'Missing required fields: contentType, content',
       });
     }
-    
+
     try {
-      const artifact = artifactManager.create(
-        req.params.id,
-        contentType,
-        content,
-        metadata
-      );
-      
+      const artifact = artifactManager.create(req.params.id, contentType, content, metadata);
+
       const task = taskManager.complete(req.params.id, artifact);
       res.json(task);
     } catch (error) {
@@ -189,11 +179,11 @@ export function createA2ARouter(
    */
   router.post('/tasks/:id/fail', (req: Request, res: Response) => {
     const { error } = req.body;
-    
+
     if (!error) {
       return res.status(400).json({ error: 'Missing error message' });
     }
-    
+
     try {
       const task = taskManager.fail(req.params.id, error);
       res.json(task);
@@ -208,11 +198,11 @@ export function createA2ARouter(
    */
   router.post('/tasks/:id/progress', (req: Request, res: Response) => {
     const { progress } = req.body;
-    
+
     if (typeof progress !== 'number') {
       return res.status(400).json({ error: 'Progress must be a number' });
     }
-    
+
     try {
       const task = taskManager.updateProgress(req.params.id, progress);
       res.json(task);
@@ -227,21 +217,15 @@ export function createA2ARouter(
    */
   router.post('/tasks/:id/messages', (req: Request, res: Response) => {
     const { sender, type, content, metadata } = req.body;
-    
+
     if (!sender || !type || !content) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: sender, type, content' 
+      return res.status(400).json({
+        error: 'Missing required fields: sender, type, content',
       });
     }
-    
+
     try {
-      const message = taskManager.addMessage(
-        req.params.id,
-        sender,
-        type,
-        content,
-        metadata
-      );
+      const message = taskManager.addMessage(req.params.id, sender, type, content, metadata);
       res.status(201).json(message);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
@@ -254,19 +238,19 @@ export function createA2ARouter(
    */
   router.get('/tasks', (req: Request, res: Response) => {
     const { status, clientId, agentId } = req.query;
-    
+
     let tasks: Task[];
-    
-if (status) {
-       tasks = taskManager.listByStatus(status as TaskStatus);
-     } else if (clientId) {
-       tasks = taskManager.listByClient(clientId as string);
-     } else if (agentId) {
-       tasks = taskManager.listByAgent(agentId as string);
-     } else {
-       tasks = Array.from(taskManager.listAll());
-     }
-    
+
+    if (status) {
+      tasks = taskManager.listByStatus(status as TaskStatus);
+    } else if (clientId) {
+      tasks = taskManager.listByClient(clientId as string);
+    } else if (agentId) {
+      tasks = taskManager.listByAgent(agentId as string);
+    } else {
+      tasks = Array.from(taskManager.listAll());
+    }
+
     res.json({ tasks, count: tasks.length });
   });
 
@@ -276,11 +260,11 @@ if (status) {
    */
   router.get('/artifacts/:id', (req: Request, res: Response) => {
     const artifact = artifactManager.get(req.params.id);
-    
+
     if (!artifact) {
       return res.status(404).json({ error: 'Artifact not found' });
     }
-    
+
     res.json(artifact);
   });
 
@@ -301,29 +285,29 @@ if (status) {
  */
 export function startA2AServer(config: A2AServerConfig) {
   const app = express();
-  
+
   const taskManager = new TaskManager();
   const artifactManager = new ArtifactManager();
   const cardRegistry = new AgentCardRegistry();
-  
+
   // Register self
-  const selfCard = AgentCardGenerator.generateCommanderCard(
-    `http://localhost:${config.port}`
-  );
+  const selfCard = AgentCardGenerator.generateCommanderCard(`http://localhost:${config.port}`);
   cardRegistry.register(selfCard);
-  
+
   // Mount A2A routes
   app.use('/a2a', createA2ARouter(taskManager, artifactManager, cardRegistry));
-  
+
   // Health check
   app.get('/health', (req, res) => {
     res.json({ status: 'ok', version: '2.0.0' });
   });
-  
+
   return new Promise<void>((resolve) => {
     app.listen(config.port, () => {
       process.stdout.write(`A2A Server running on http://localhost:${config.port}\n`);
-      process.stdout.write(`Agent Card: http://localhost:${config.port}/a2a/.well-known/agent-card\n`);
+      process.stdout.write(
+        `Agent Card: http://localhost:${config.port}/a2a/.well-known/agent-card\n`,
+      );
       resolve();
     });
   });

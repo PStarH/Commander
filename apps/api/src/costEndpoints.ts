@@ -17,13 +17,12 @@ export function createCostRouter(): Router {
     const sentinel = getTokenSentinel();
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 500);
     const rawRunId = req.query.runId as string | undefined;
-    const runId = rawRunId && /^[a-zA-Z0-9_-]+$/.test(rawRunId) && rawRunId.length < 128 ? rawRunId : undefined;
+    const runId =
+      rawRunId && /^[a-zA-Z0-9_-]+$/.test(rawRunId) && rawRunId.length < 128 ? rawRunId : undefined;
 
     let records: CostRecord[] = sentinel.getCosts(runId);
     // Sort newest first, apply limit
-    records = records
-      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-      .slice(0, limit);
+    records = records.sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, limit);
 
     res.json({ records, total: records.length });
   });
@@ -38,9 +37,7 @@ export function createCostRouter(): Router {
     res.json({
       monthlyUsed,
       monthlyLimit,
-      usagePercent: monthlyLimit > 0
-        ? Math.round((monthlyUsed / monthlyLimit) * 100)
-        : 0,
+      usagePercent: monthlyLimit > 0 ? Math.round((monthlyUsed / monthlyLimit) * 100) : 0,
       alertCount: alerts.length,
       alerts: alerts.slice(-20), // Last 20 alerts
     });

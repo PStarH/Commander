@@ -26,7 +26,10 @@ interface DashboardProps {
   onStatusChange: (missionId: string, status: string) => void;
   onApprove: (missionId: string) => void;
   onCreateMission: (payload: any) => void;
-  onCreateLog: (missionId: string, payload: { level: 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR'; message: string }) => void;
+  onCreateLog: (
+    missionId: string,
+    payload: { level: 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR'; message: string },
+  ) => void;
   onSearchMemory: (filters?: any) => void;
 }
 
@@ -81,11 +84,7 @@ export function Dashboard({
         onCreateLog={onCreateLog}
       />
 
-      <MemoryBrowser
-        items={memoryItems}
-        overview={memoryOverview}
-        onSearch={onSearchMemory}
-      />
+      <MemoryBrowser items={memoryItems} overview={memoryOverview} onSearch={onSearchMemory} />
     </div>
   );
 }
