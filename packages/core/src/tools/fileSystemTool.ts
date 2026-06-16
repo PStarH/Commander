@@ -4,6 +4,7 @@ import type { Tool, ToolDefinition } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
 import { getSnapshotStore, computeFileHash } from '../edit/snapshotStore';
 import { parseHashline, applyHashlineSection, isHashlineFormat, formatHashlineHeader, formatNumberedLines } from '../edit/hashline';
+import { formatAnchoredOutput } from '../edit/hashAnchoredEditor';
 import { getInternalUrlRouter, isInternalUrl } from '../runtime/internalUrls';
 import { atomicWriteFile } from './_utils/atomicWrite';
 
@@ -78,7 +79,7 @@ export function safePath(target: string): string {
 export class FileReadTool implements Tool {
   definition: ToolDefinition = {
     name: 'file_read',
-    description: 'Read a file. Returns content with line numbers in hashline format (¶path#HASH followed by LINE:content). The hash tag enables safe edits — use it with file_edit.',
+    description: 'Read a file. Returns content with line numbers in hashline format (¶path#HASH followed by LINE:content). Set includeHashes:true to get per-line content hashes (#XXXXXX) for drift-proof hash-anchored edits with file_hash_edit.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -86,6 +87,7 @@ export class FileReadTool implements Tool {
         maxChars: { type: 'number', description: 'Maximum characters to return (default: 10000)', default: 10000 },
         offset: { type: 'number', description: 'Start at this line number (1-indexed)' },
         limit: { type: 'number', description: 'Maximum number of lines to return' },
+        includeHashes: { type: 'boolean', description: 'Include per-line content hashes (#XXXXXX) for hash-anchored edits (default: false)', default: false },
       },
       required: ['path'],
     },
@@ -101,6 +103,7 @@ export class FileReadTool implements Tool {
     const maxChars = Math.min(Math.max(Number(args.maxChars) || 10000, 1), 100000);
     const offset = Math.max(Number(args.offset) || 1, 1);
     const limit = args.limit ? Math.max(Number(args.limit), 1) : undefined;
+    const includeHashes = args.includeHashes === true;
 
     if (!filePath) return 'Error: path is required';
 
@@ -140,6 +143,12 @@ export class FileReadTool implements Tool {
       const startIdx = offset - 1; // 0-indexed
       const endIdx = limit ? Math.min(startIdx + limit, allLines.length) : allLines.length;
       const displayLines = allLines.slice(startIdx, endIdx);
+
+      // Format output: use anchored format if hashes requested, otherwise plain hashline
+      if (includeHashes) {
+        const result = formatAnchoredOutput(filePath, content, { offset, limit, maxChars });
+        return result;
+      }
 
       // Build header
       const header = formatHashlineHeader(filePath, hash);

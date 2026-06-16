@@ -1,5 +1,6 @@
 export { WebSearchTool, WebFetchTool } from './webSearchTool';
 export { FileReadTool, FileWriteTool, FileEditTool, FileSearchTool, FileListTool, GlobTool } from './fileSystemTool';
+export { FileHashEditTool } from './fileHashEditTool';
 export { PythonExecuteTool, ShellExecuteTool } from './codeExecutionTool';
 export { MemoryStoreTool, MemoryRecallTool, MemoryListTool } from './persistenceTool';
 export { GitTool } from './gitTool';
@@ -54,6 +55,7 @@ import {
   HandoffResourceTool, ExecResourceTool, MediaResourceTool,
   SystemResourceTool,
 } from './resourceTools';
+import { FileHashEditTool } from './fileHashEditTool';
 
 /**
  * Create the full set of tools exposed to the LLM.
@@ -82,6 +84,7 @@ export function createAllTools(options?: { enableMetaTools?: boolean }): Map<str
     ['git', new GitTool()],
     ['verify', new VerificationTool()],
     ['apply_patch', new ApplyPatchTool()],
+    ['file_hash_edit', new FileHashEditTool()],
     ['verify_answer', new AnswerFormatTool()],
     ['skill_view', new SkillViewTool()],
     ['search_conversations', new SearchConversationsTool()],

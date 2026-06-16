@@ -16,6 +16,7 @@ import { getGlobalLogger } from '../logging';
 import type { TaskType, VerificationSignal, VerificationReport, UVPTaskContext, UVPConfig } from './unifiedVerificationTypes';
 import { DEFAULT_UVP_CONFIG } from './unifiedVerificationTypes';
 import { detectTaskType } from './taskAnalyzer';
+import { getGoalJudge } from './goalJudge';
 
 // Re-export for backward compatibility
 export type { TaskType, VerificationSignal, VerificationReport, UVPTaskContext, UVPConfig } from './unifiedVerificationTypes';
@@ -582,6 +583,63 @@ export class UnifiedVerificationPipeline {
       stagesRun.push(2);
     }
 
+    // Stage 3: Goal Judge — independent model verification
+    // Triggered when: judge is enabled, confidence is borderline (below triggerConfidence
+    // but not critically low), output looks like a completion, and budget allows.
+    let judgeVerdict: VerificationReport['judgeVerdict'] | undefined;
+    const judgeConfig = this.config.judgeGate;
+    const shouldRunJudge = judgeConfig?.enabled
+      && overallConfidence < judgeConfig.triggerConfidence
+      && overallConfidence >= 0.4
+      && !allSignals.some(s => s.severity === 'critical')
+      && ctx.output.length > 0
+      && budgetRemaining >= judgeConfig.tokenBudget;
+
+    if (shouldRunJudge) {
+      try {
+        const goalJudge = getGoalJudge();
+        if (this.provider) {
+          goalJudge.setProvider(this.provider);
+        }
+        const verdict = await goalJudge.judge({
+          runId: `uvp-${Date.now()}`,
+          goal: ctx.goal,
+          output: ctx.output,
+          evidenceCount: ctx.toolsUsed?.length ?? 0,
+        });
+        tokensUsed += verdict.tokensUsed;
+        this.totalTokensUsed += verdict.tokensUsed;
+        stagesRun.push(3);
+
+        judgeVerdict = {
+          passed: verdict.passed,
+          confidence: verdict.confidence,
+          reasoning: verdict.reasoning,
+          evidence: verdict.evidence,
+          modelUsed: verdict.modelUsed,
+        };
+
+        if (!verdict.passed) {
+          allSignals.push({
+            stage: 3,
+            source: 'goal_judge',
+            severity: verdict.confidence < 0.5 ? 'high' : 'medium',
+            message: `Judge rejected completion: ${verdict.reasoning.slice(0, 200)}`,
+            suggestion: 'Address the issues identified by the judge before declaring done',
+          });
+          overallConfidence = Math.min(overallConfidence, verdict.confidence);
+        } else {
+          // Judge passed — slightly boost confidence
+          overallConfidence = Math.min(1, overallConfidence + 0.05);
+        }
+      } catch (err) {
+        getGlobalLogger().warn('UnifiedVerification', 'Goal judge failed (best-effort)', {
+          error: (err as Error).message,
+        });
+        // Judge failure is non-blocking
+      }
+    }
+
     const passed = overallConfidence >= 0.5 && !allSignals.some(s => s.severity === 'critical');
 
     if (this.config.enableLearning) {
@@ -594,7 +652,7 @@ export class UnifiedVerificationPipeline {
       });
     }
 
-    return this.buildReport(passed, overallConfidence, allSignals, tokensUsed, stagesRun, taskType);
+    return this.buildReport(passed, overallConfidence, allSignals, tokensUsed, stagesRun, taskType, undefined, judgeVerdict);
   }
 
   /**
@@ -643,6 +701,7 @@ export class UnifiedVerificationPipeline {
     stagesRun: number[],
     taskType: TaskType,
     skipReason?: string,
+    judgeVerdict?: VerificationReport['judgeVerdict'],
   ): VerificationReport {
     return {
       passed,
@@ -653,6 +712,7 @@ export class UnifiedVerificationPipeline {
       taskType,
       skipped: !!skipReason,
       skipReason,
+      judgeVerdict,
     };
   }
 }

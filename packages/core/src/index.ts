@@ -61,6 +61,7 @@ export {
 export {
   WebSearchTool, WebFetchTool, FileReadTool, FileWriteTool,
   FileEditTool, FileSearchTool, FileListTool,
+  FileHashEditTool,
   PythonExecuteTool, ShellExecuteTool,
   createAllTools, MetaTool,
   getBuiltinMetaSpecs, findMatchingMetaSpec,
@@ -322,6 +323,30 @@ export {
 export type {
   SubAgentAllocation, RunBudgetStatus, TokenBudgetConfig,
 } from './runtime/tokenBudgetManager';
+
+// Checkpoint Writer — MiMo-style independent checkpoint sub-agent
+export {
+  CheckpointWriter, getCheckpointWriter, resetCheckpointWriter,
+} from './runtime/checkpointWriter';
+export type {
+  CheckpointWriterConfig, CheckpointTrigger, CheckpointDocument, CheckpointResult,
+} from './runtime/checkpointWriter';
+
+// Goal Judge — Independent judge model for verifying task completion
+export {
+  GoalJudge, getGoalJudge, resetGoalJudge,
+} from './runtime/goalJudge';
+export type {
+  StopCondition, StopConditionResult, JudgeVerdict, GoalJudgeConfig,
+} from './runtime/goalJudge';
+
+// Rebuild Prompt — Layer 5: complete context window reset + reconstruction
+export {
+  RebuildPrompt, getRebuildPrompt, resetRebuildPrompt, isRebuilt,
+} from './runtime/rebuildPrompt';
+export type {
+  RebuildParams, RebuildSection, RebuildResult,
+} from './runtime/rebuildPrompt';
 export type {
   OptimizationStrategy, BudgetState, GovernorDecision,
   GovernorConfig, TaskCategory,

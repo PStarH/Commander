@@ -13,3 +13,5 @@ export { cmdCost, cmdAsk, cmdDiff, cmdUndo, cmdApprovalHistory, cmdIntelligence,
 export { cmdExperience } from './commands/experience';
 export { cmdDebugIntent } from './commands/debug';
 export { cmdBudget } from './commands/budget';
+export { cmdCheckpoint } from './commands/checkpoint';
+export { cmdGoalJudge } from './commands/goalJudge';

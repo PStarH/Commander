@@ -32,6 +32,17 @@ function makeTools(names: string[]): Map<string, Tool> {
   return map;
 }
 
+function makeToolsByDescription(...descs: string[]): Map<string, Tool> {
+  const m = new Map<string, Tool>();
+  descs.forEach((d, i) => {
+    m.set(`t${i}`, {
+      definition: { name: `t${i}`, description: d, parameters: [] },
+      async execute() { return { output: '' }; },
+    } as unknown as Tool);
+  });
+  return m;
+}
+
 describe('buildSystemPrompt (P0 #3 #4 #5)', () => {
   it('includes the pre-yield verification checklist', () => {
     const prompt = buildSystemPrompt(makeCtx(), makeRouting(), { maxStepsPerRun: 30 } as never, makeTools(['file_read']), new TokenGovernor({ totalBudget: 100000 }));
@@ -206,5 +217,154 @@ describe('buildSystemPrompt (cache split)', () => {
     const prompt = buildSystemPrompt(makeCtx(), makeRouting(), config, tools, tight);
     assert.match(prompt, /Agent a1 \| Project p1/);
     assert.doesNotMatch(prompt, /Preamble: Think Before Acting/);
+  });
+});
+
+describe('buildStableSystemPrefix (task-type conditioning)', () => {
+  const config: AgentRuntimeConfig = { maxStepsPerRun: 30 } as AgentRuntimeConfig;
+
+  it('includes coding workflow for code tasks', () => {
+    const tools = makeToolsByDescription('read files');
+    const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], 'code');
+    assert.match(prefix, /Multi-File Editing Workflow/);
+    assert.match(prefix, /Cross-file consistency/);
+  });
+
+  it('includes coding workflow for analysis tasks', () => {
+    const tools = makeToolsByDescription('read files');
+    const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], 'analysis');
+    assert.match(prefix, /Multi-File Editing Workflow/);
+  });
+
+  it('uses general workflow for general tasks', () => {
+    const tools = makeToolsByDescription('read files');
+    const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], 'general');
+    assert.doesNotMatch(prefix, /Multi-File Editing Workflow/);
+    assert.match(prefix, /General Workflow/);
+    assert.match(prefix, /Clarify/);
+    assert.match(prefix, /Synthesize/);
+  });
+
+  it('uses general workflow when no task type is provided', () => {
+    const tools = makeToolsByDescription('read files');
+    const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0']);
+    assert.doesNotMatch(prefix, /Multi-File Editing Workflow/);
+    assert.match(prefix, /General Workflow/);
+  });
+
+  it('includes general quality standards for general tasks', () => {
+    const tools = makeToolsByDescription('read files');
+    const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], 'general');
+    assert.doesNotMatch(prefix, /Code Quality Standards/);
+    assert.match(prefix, /Quality Standards/);
+    assert.match(prefix, /well-structured/);
+  });
+
+  it('includes code quality standards for code tasks', () => {
+    const tools = makeToolsByDescription('read files');
+    const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], 'code');
+    assert.match(prefix, /Code Quality Standards/);
+    assert.match(prefix, /idiomatic, production-quality code/);
+  });
+});
+
+describe('buildStableSystemPrefix (prompt engineering improvements)', () => {
+  const config: AgentRuntimeConfig = { maxStepsPerRun: 30 } as AgentRuntimeConfig;
+
+  it('includes U-shaped critical rules at start and end', () => {
+    const tools = makeToolsByDescription('read files');
+    const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], 'general');
+    const firstCritical = prefix.indexOf('<critical_rules>');
+    const lastCritical = prefix.lastIndexOf('<critical_rules_reminder>');
+    assert.notStrictEqual(firstCritical, -1);
+    assert.notStrictEqual(lastCritical, -1);
+    assert.ok(lastCritical > firstCritical);
+    assert.match(prefix, /Evidence-first reasoning/);
+  });
+
+  it('includes tool discipline section for all task types', () => {
+    const tools = makeToolsByDescription('read files');
+    for (const taskType of ['general', 'code', 'analysis', 'search', 'creative', 'structured'] as const) {
+      const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], taskType);
+      assert.match(prefix, /Tool Use Discipline/);
+      assert.match(prefix, /Think first/);
+      assert.match(prefix, /Batch reads/);
+      assert.match(prefix, /Parallelize safely/);
+    }
+  });
+
+  it('output format encourages thorough, evidence-based responses', () => {
+    const tools = makeToolsByDescription('read files');
+    const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], 'general');
+    assert.doesNotMatch(prefix, /short answers for simple questions/i);
+    assert.doesNotMatch(prefix, /verbose prose/i);
+    assert.match(prefix, /thorough, evidence-based, complete/i);
+    assert.match(prefix, /Do not truncate prematurely/i);
+    assert.match(prefix, /reasoning chain/);
+  });
+
+  it('output format still allows brevity for simple factual lookups', () => {
+    const tools = makeToolsByDescription('read files');
+    const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], 'general');
+    assert.match(prefix, /simple factual lookups can be brief/i);
+  });
+
+  it('coding output format includes code block guidance', () => {
+    const tools = makeToolsByDescription('read files');
+    const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], 'code');
+    assert.match(prefix, /runnable code blocks with language annotation/i);
+  });
+
+  it('general output format does not include code block guidance', () => {
+    const tools = makeToolsByDescription('read files');
+    const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], 'general');
+    assert.doesNotMatch(prefix, /runnable code blocks with language annotation/i);
+  });
+
+  it('includes project context block when provided', () => {
+    const tools = makeToolsByDescription('read files');
+    const projectCtx = {
+      filesRead: ['/path/AGENTS.md'],
+      content: '<!-- AGENTS.md -->\nUse TypeScript strict mode.',
+      cacheKey: 'abc123',
+    };
+    const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], 'general', projectCtx);
+    assert.match(prefix, /<project_context>/);
+    assert.match(prefix, /AGENTS\.md/);
+    assert.match(prefix, /Use TypeScript strict mode/);
+  });
+
+  it('omits project context block when not provided', () => {
+    const tools = makeToolsByDescription('read files');
+    const prefix = buildStableSystemPrefix(config, tools, null, undefined, ['t0'], 'general');
+    assert.doesNotMatch(prefix, /<project_context>/);
+  });
+});
+
+describe('computePrefixCacheKey (task-type sensitivity)', () => {
+  const config: AgentRuntimeConfig = { maxStepsPerRun: 30 } as AgentRuntimeConfig;
+
+  it('different task types produce different cache keys', () => {
+    const tools = makeToolsByDescription('read files');
+    const keyGeneral = computePrefixCacheKey(config, tools, null, undefined, ['t0'], 'general');
+    const keyCode = computePrefixCacheKey(config, tools, null, undefined, ['t0'], 'code');
+    const keyAnalysis = computePrefixCacheKey(config, tools, null, undefined, ['t0'], 'analysis');
+    assert.notStrictEqual(keyGeneral, keyCode);
+    assert.notStrictEqual(keyGeneral, keyAnalysis);
+    assert.notStrictEqual(keyCode, keyAnalysis);
+  });
+
+  it('omitted task type defaults to general and matches explicit general key', () => {
+    const tools = makeToolsByDescription('read files');
+    const implicit = computePrefixCacheKey(config, tools, null, undefined, ['t0']);
+    const explicit = computePrefixCacheKey(config, tools, null, undefined, ['t0'], 'general');
+    assert.strictEqual(implicit, explicit);
+  });
+
+  it('different project context cache keys produce different prefix keys', () => {
+    const tools = makeToolsByDescription('read files');
+    const a = computePrefixCacheKey(config, tools, null, undefined, ['t0'], 'general', 'key-a');
+    const b = computePrefixCacheKey(config, tools, null, undefined, ['t0'], 'general', 'key-b');
+    assert.notStrictEqual(a, b);
   });
 });

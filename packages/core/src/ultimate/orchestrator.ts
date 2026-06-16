@@ -43,6 +43,8 @@ import { COST_PER_TOKEN } from '../config/constants';
 import { getGlobalLogger } from '../logging';
 import { createInitialSharedState, mergeSharedState } from './stateManager';
 import { TokenBudgetManager, getTokenBudgetManager } from '../runtime/tokenBudgetManager';
+import { CheckpointWriter, getCheckpointWriter } from '../runtime/checkpointWriter';
+import { getRebuildPrompt } from '../runtime/rebuildPrompt';
 
 function generateExecId(counter: { value: number }): string {
   return `ultimate_${Date.now()}_${++counter.value}`;
@@ -168,6 +170,8 @@ this.topologyRouter = new TopologyRouter();
     // Session Pinning: snapshot config at execution start
     this.pinSessionConfig(execId, params.topology || ctx.topology, params.effortLevel);
 
+    let taskTree!: TaskTreeNode;
+
     try {
     // Phase 1: Deliberation (LLM-powered when a provider is registered)
      emit('DELIBERATION', 'Analyzing task requirements...');
@@ -217,7 +221,7 @@ this.topologyRouter = new TopologyRouter();
 
      // Phase 4: Recursive Task Decomposition
     emit('DECOMPOSITION', `Decomposing task into subtasks...`);
-    const taskTree = this.atomizer.decompose(
+    taskTree = this.atomizer.decompose(
       params.goal,
       deliberation,
       null,
@@ -271,6 +275,7 @@ this.topologyRouter = new TopologyRouter();
     const totalBudget = this.config.defaultBudget.hardCapTokens;
     const budgetManager = getTokenBudgetManager();
     budgetManager.startRun(execId, { hardCap: totalBudget });
+    const checkpointWriter = getCheckpointWriter();
     const subAgentEstimates = taskTree.subtasks.map(s => ({
       nodeId: s.id,
       estimatedTokens: s.context.estimatedTokens || Math.ceil(totalBudget / taskTree.subtasks.length),
@@ -334,6 +339,13 @@ this.topologyRouter = new TopologyRouter();
     const failedCount = countFailed(taskTree);
     reasoning.push(`Execution: ${completedCount} completed, ${failedCount} failed`);
 
+    // ── Checkpoint Trigger (MiMo-style: 20%/45%/70% token budget) ──────
+    // Runs an independent LLM call outside the main agent's attention.
+    // Writes checkpoint.md for crash recovery and rebuild prompt injection.
+    this.maybeCheckpoint(execId, taskTree, params, errors, reasoning).catch(() => {
+      // Background task — ignore failures, don't block the main loop
+    });
+
     // Fetch artifacts before merging shared state (allArtifacts needed for merge + synthesis)
     const allArtifacts = await this.artifactSystem.find({ tags: ['completed'] }, 50);
 
@@ -395,7 +407,10 @@ if (topologyAction && 'to' in topologyAction) {
        }
      }
 
-     // Phase 8: Quality Gates with Reflexion-inspired auto-fix retry loop
+     // ── Checkpoint after synthesis (captures final state before quality gates) ──
+    this.maybeCheckpoint(execId, taskTree, params, errors, reasoning).catch(() => {});
+
+    // Phase 8: Quality Gates with Reflexion-inspired auto-fix retry loop
     // Optimized: early exit when score doesn't improve, reduced token budget for fixes
     let finalSynthesis = synthesis.synthesis;
     let finalQualityScore = synthesis.qualityScore;
@@ -818,6 +833,10 @@ if (topologyAction && 'to' in topologyAction) {
       reasoning,
     };
     } finally {
+      // Terminal checkpoint: capture final state for future rebuild
+      this.maybeCheckpoint(execId, taskTree, params, errors, reasoning).catch(() => {});
+      // Clean up rebuild tracking for this run (prevents unbounded Map growth)
+      try { getRebuildPrompt().resetRun(execId); } catch { /* best-effort */ }
       this.activeExecutions.delete(execId);
     }
   }
@@ -949,6 +968,116 @@ if (topologyAction && 'to' in topologyAction) {
   /** Number of active pinned sessions. */
   getPinnedSessionCount(): number {
     return this.pinnedSessions.size;
+  }
+
+  /**
+   * Fire-and-forget checkpoint trigger (MiMo-style).
+   * Evaluates token usage against trigger points (20%/45%/70%) and writes
+   * a structured checkpoint.md via an independent LLM call.
+   *
+   * This runs OUTSIDE the main agent's attention — the main execution loop
+   * does not block on checkpoint completion.
+   */
+  private async maybeCheckpoint(
+    execId: string,
+    taskTree: TaskTreeNode,
+    params: { goal: string; contextData?: Record<string, unknown> },
+    errors: ExecutionError[],
+    reasoning: string[],
+  ): Promise<void> {
+    try {
+      const hardCap = this.config.defaultBudget.hardCapTokens;
+      if (hardCap <= 0) return;
+
+      const tokensUsed = this.sumTokenUsage(taskTree);
+      const writer = getCheckpointWriter();
+
+      const trigger = writer.shouldTrigger(execId, tokensUsed, hardCap);
+      if (!trigger) return;
+
+      // Build checkpoint data from current execution state
+      const completedNodes = flattenTree(taskTree).filter(n => n.status === 'COMPLETED' && n.result);
+      const pendingNodes = flattenTree(taskTree).filter(n => n.status !== 'COMPLETED' && n.status !== 'FAILED');
+      const failedNodes = flattenTree(taskTree).filter(n => n.status === 'FAILED');
+
+      // Extract key decisions from reasoning
+      const decisions = reasoning.filter(r =>
+        r.includes('Topology:') || r.includes('Effort level:') ||
+        r.includes('Confidence:') || r.includes('Budget:') ||
+        r.includes('Synthesis quality:') || r.includes('Shadow')
+      );
+
+      // Extract file paths from available context data
+      const filesRead: string[] = [];
+      const filesModified: string[] = [];
+      if (params.contextData?.availableTools) {
+        filesRead.push(...(Array.isArray(params.contextData.filesRead)
+          ? params.contextData.filesRead as string[] : []));
+        filesModified.push(...(Array.isArray(params.contextData.filesModified)
+          ? params.contextData.filesModified as string[] : []));
+      }
+
+      // Collect recent messages from the execution context
+      const recentMessages: Array<{ role: string; content: string }> = [];
+      for (const node of completedNodes.slice(-3)) {
+        if (node.result) {
+          recentMessages.push({ role: 'assistant', content: node.result.slice(0, 200) });
+        }
+      }
+
+      // Resolve a provider (use first available, same as deliberation)
+      const provider = this.runtime.getProvider('openai')
+        ?? this.runtime.getProvider('anthropic')
+        ?? this.runtime.getProvider('openrouter')
+        ?? this.runtime.getProvider('mimo')
+        ?? this.runtime.getProvider('deepseek')
+        ?? this.runtime.getProvider('glm')
+        ?? this.runtime.getProvider('xiaomi')
+        ?? this.runtime.getProvider('google');
+
+      const result = await writer.writeCheckpoint(
+        {
+          runId: execId,
+          goal: params.goal,
+          phase: pendingNodes.length > 0 ? 'executing' : 'synthesis',
+          stepNumber: completedNodes.length,
+          completedSubtasks: completedNodes.map(n => ({
+            id: n.id,
+            goal: n.goal.slice(0, 200),
+            result: n.result?.slice(0, 300) ?? '',
+            tokensUsed: n.tokenUsage?.totalTokens ?? 0,
+            durationMs: 0,
+          })),
+          pendingSubtasks: pendingNodes.map(n => ({
+            id: n.id,
+            goal: n.goal.slice(0, 200),
+            estimatedTokens: n.context.estimatedTokens ?? Math.ceil(hardCap / Math.max(1, pendingNodes.length)),
+          })),
+          failedSubtasks: failedNodes.map(n => ({
+            id: n.id,
+            goal: n.goal.slice(0, 200),
+            error: n.result?.slice(0, 200) ?? 'Unknown error',
+          })),
+          keyDecisions: decisions,
+          filesRead,
+          filesModified,
+          errors: errors.map(e => ({ nodeId: e.nodeId, message: e.message.slice(0, 150), recovered: e.recovered })),
+          tokensUsed,
+          tokensHardCap: hardCap,
+          recentMessages,
+          trigger,
+        },
+        provider ?? undefined,
+      );
+
+      reasoning.push(
+        `Checkpoint v${result.version}: ${trigger.percent}% budget (${result.completedCount} done, ${result.pendingCount} pending, ${result.failedCount} failed)`,
+      );
+    } catch (e) {
+      getGlobalLogger().debug('UltimateOrchestrator', 'Checkpoint trigger failed', {
+        error: (e as Error)?.message,
+      });
+    }
   }
 
   /** Simple hash of key config properties for version comparison. */
@@ -1202,7 +1331,7 @@ case 'strategy_change': {
   }
 }
 
-function countNodes(node: TaskTreeNode): number {
+export function countNodes(node: TaskTreeNode): number {
   let count = 1;
   for (const sub of node.subtasks) {
     count += countNodes(sub);
@@ -1210,7 +1339,7 @@ function countNodes(node: TaskTreeNode): number {
   return count;
 }
 
-function measureDepth(node: TaskTreeNode): number {
+export function measureDepth(node: TaskTreeNode): number {
   if (node.subtasks.length === 0) return 0;
   let maxDepth = 0;
   for (const sub of node.subtasks) {
@@ -1235,7 +1364,7 @@ function countFailed(node: TaskTreeNode): number {
   return count;
 }
 
-function flattenTree(node: TaskTreeNode): TaskTreeNode[] {
+export function flattenTree(node: TaskTreeNode): TaskTreeNode[] {
   const nodes: TaskTreeNode[] = [node];
   for (const sub of node.subtasks) {
     nodes.push(...flattenTree(sub));

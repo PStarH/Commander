@@ -32,6 +32,8 @@ import {
   cmdExperience,
   cmdDebugIntent,
   cmdBudget,
+  cmdCheckpoint,
+  cmdGoalJudge,
 } from './cli/commands';
 import { cmdFix } from './cli/commands/convenience';
 
@@ -64,7 +66,9 @@ const COMMAND_HELP: Record<string, string> = {
   feedback:   `  ${$.bold}commander feedback [flags]${$.reset}\n\n  Submit feedback to help improve Commander.\n\n  ${$.bold}Flags:${$.reset}\n    --rating=<1-5>        Rate your experience\n    --message="<text>"    General feedback\n    --bug="<text>"        Report a bug\n    --feature="<text>"    Request a feature\n\n  ${$.bold}Subcommands:${$.reset}\n    stats                 View feedback summary\n\n  ${$.dim}Example:${$.reset}\n    commander feedback --rating=5 --message="Great tool!"\n    commander feedback --bug="crash on empty input"\n`,
   experience: `  ${$.bold}commander experience [subcommand] [flags]${$.reset}\n\n  Manage Commander's learned experience — skills, patterns, and MetaLearner.\n\n  ${$.bold}Subcommands:${$.reset}\n    status               Show what's currently learned (default)\n    reset                Reset learned experience\n\n  ${$.bold}Reset flags:${$.reset}\n    --skills             Reset extracted skills only\n    --patterns           Reset failure patterns only\n    --meta               Reset MetaLearner state only\n    --force              Skip confirmation prompt\n    (no flag)            Reset ALL experience\n\n  ${$.dim}Examples:${$.reset}\n    commander experience\n    commander experience reset --skills\n    commander experience reset --force\n`,
   debug:      `  ${$.bold}commander debug intent [runId]${$.reset}\n\n  Show why the agent made a specific decision — the full decision chain.\n\n  ${$.bold}Usage:${$.reset}\n    commander debug intent              List all intent-captured runs\n    commander debug intent <runId>      Show decision chain tree\n\n  ${$.bold}Renders:${$.reset}\n    Goal → Model Selection → Thompson Sample → Strategy → Tool Choice → Verification Result\n\n  ${$.dim}Example:${$.reset}\n    commander debug intent\n    commander debug intent run_abc123\n`,
+  goal:       `  ${$.bold}commander goal <subcommand> [flags]${$.reset}\n\n  Multi-round goal-driven execution with independent judge verification.\n\n  ${$.bold}Subcommands:${$.reset}\n    judge <task>                   Judge a task against stop conditions\n    conditions [subcmd]            Manage global stop conditions\n\n  ${$.bold}Conditions subcommands:${$.reset}\n    list                           List all global stop conditions\n    set --add=<id> [...]           Add/update a stop condition\n    delete --delete=<id>           Remove a stop condition\n    clear                          Clear all stop conditions\n\n  ${$.bold}Condition flags (set):${$.reset}\n    --add=<id>                     Condition ID (e.g., "no-ts-errors")\n    --desc=<text>                  Human-readable description\n    --type=<type>                  MUST_HAVE | MUST_NOT_HAVE | MUST_MATCH | MUST_BE_ABOVE | CUSTOM\n    --pattern=<regex>              Pattern to match\n    --threshold=<N>                Numeric threshold (for MUST_BE_ABOVE)\n    --custom=<prompt>              Custom evaluation prompt (for CUSTOM)\n\n  ${$.dim}Examples:${$.reset}\n    commander goal conditions set --add=no-ts --desc="No TS errors" --type=MUST_NOT_HAVE --pattern="error TS"\n    commander goal conditions list\n    commander goal judge "Fix all TypeScript errors in src/"\n`,
   budget:     `  ${$.bold}commander budget [runId]${$.reset}\n\n  View real-time token budget status across active runs.\n\n  ${$.bold}Usage:${$.reset}\n    commander budget                    List all active token budgets\n    commander budget <runId>            Detailed budget breakdown for a run\n\n  ${$.bold}Shows:${$.reset}\n    Per-run: phase (relaxed/moderate/tight/critical/exceeded), utilization bar chart\n    Per-sub-agent: allocated vs used tokens, over-budget warnings\n\n  ${$.dim}Example:${$.reset}\n    commander budget\n    commander budget ultimate_1718_42\n`,
+  checkpoint: `  ${$.bold}commander checkpoint [runId] [flags]${$.reset}\n\n  View MiMo-style checkpoint documents. Written automatically at 20%, 45%, and 70%\n  token budget by an independent checkpoint-writer sub-agent (outside main agent attention).\n\n  ${$.bold}Usage:${$.reset}\n    commander checkpoint               List all checkpoint files\n    commander checkpoint <runId>       View specific checkpoint (progress + decisions)\n    commander checkpoint --prune N     Keep only the N newest checkpoints\n\n  ${$.bold}Shows:${$.reset}\n    Per-checkpoint: version, trigger%, progress (completed/pending/failed),\n    token budget bar, key decisions, errors, next action\n\n  ${$.dim}Examples:${$.reset}\n    commander checkpoint\n    commander checkpoint ultimate_1718_42\n    commander checkpoint --prune 20\n`,
 };
 
 function showCommandHelp(cmd: string): boolean {
@@ -229,8 +233,21 @@ async function main() {
       break;
     }
 
+    // ── Checkpoint ──
+    case 'checkpoint':
+    case 'cp':
+      await cmdCheckpoint(rest);
+      break;
+
+    // ── Goal ──
+    case 'goal': {
+      const { positional, flags } = parseFlags(rest);
+      await cmdGoalJudge(positional, flags);
+      break;
+    }
+
     default: {
-      const validCmds = ['run', 'review', 'fix', 'init', 'status', 'config', 'doctor', 'gui', 'mode', 'history', 'skill', 'intelligence', 'experience', 'debug', 'budget', 'company', 'swarm', 'drive', 'saga', 'resume', 'compensation', 'cost', 'completion', 'feedback'];
+      const validCmds = ['run', 'review', 'fix', 'init', 'status', 'config', 'doctor', 'gui', 'mode', 'history', 'skill', 'intelligence', 'experience', 'debug', 'budget', 'checkpoint', 'cp', 'goal', 'company', 'swarm', 'drive', 'saga', 'resume', 'compensation', 'cost', 'completion', 'feedback'];
       const didYouMean = validCmds.filter(c => c.startsWith(cmd.toLowerCase()));
       const hint = didYouMean.length > 0 ? ` Did you mean ${$.cyan}${didYouMean[0]}${$.reset}?` : '';
       console.error(`\n  ${$.red}${$.bold}Unknown command:${$.reset} ${cmd}${hint}\n\n  Run ${$.cyan}commander help${$.reset} to see available commands.\n`);

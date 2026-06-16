@@ -1,7 +1,7 @@
 export type TaskType = 'code' | 'search' | 'analysis' | 'creative' | 'structured' | 'general';
 
 export interface VerificationSignal {
-  stage: 0 | 1 | 2;
+  stage: 0 | 1 | 2 | 3;
   source: string;
   severity: 'low' | 'medium' | 'high' | 'critical';
   message: string;
@@ -19,6 +19,14 @@ export interface VerificationReport {
   taskType: TaskType;
   skipped: boolean;
   skipReason?: string;
+  /** Stage 3 judge verdict (only present when judge gate runs) */
+  judgeVerdict?: {
+    passed: boolean;
+    confidence: number;
+    reasoning: string;
+    evidence: string[];
+    modelUsed: string;
+  };
 }
 
 export interface UVPTaskContext {
@@ -38,6 +46,16 @@ export interface UVPConfig {
   llmVerificationBudget: number;
   llmVerificationModel?: string;
   enableLearning: boolean;
+  /** Stage 3: Independent goal judge gate */
+  judgeGate?: {
+    enabled: boolean;
+    /** Confidence below which the judge is triggered (default: 0.85) */
+    triggerConfidence: number;
+    /** Minimum judge confidence to pass (default: 0.8) */
+    passThreshold: number;
+    /** Max token budget for the judge call (default: 800) */
+    tokenBudget: number;
+  };
 }
 
 export const DEFAULT_UVP_CONFIG: UVPConfig = {
@@ -46,6 +64,12 @@ export const DEFAULT_UVP_CONFIG: UVPConfig = {
   budgetFloorTokens: 2000,
   llmVerificationBudget: 300,
   enableLearning: true,
+  judgeGate: {
+    enabled: true,
+    triggerConfidence: 0.85,
+    passThreshold: 0.8,
+    tokenBudget: 800,
+  },
 };
 
 export interface ProvisionIntentScores {

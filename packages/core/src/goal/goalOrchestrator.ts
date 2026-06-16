@@ -16,6 +16,7 @@ import { getMessageBus } from '../runtime/messageBus';
 import { getGlobalLogger } from '../logging';
 import { validateShape } from '../runtime/structuredOutput';
 import { callLLMJSON } from '../runtime/llmJsonExtractor';
+import { getGoalJudge } from '../runtime/goalJudge';
 
 const MANAGER_DECOMPOSE_PROMPT = `You are a Manager Agent. Your job is to break down a complex goal into smaller, independent sub-goals that can be worked on in parallel.
 
@@ -412,9 +413,9 @@ export class GoalOrchestrator {
       if (improvementRate < 0.02) plateauRounds++;
       else plateauRounds = 0;
 
-      const decision = this.makeDecision(
+      const decision = await this.makeDecision(
         round, totalTokensUsed, currentFindings, plateauRounds,
-        allNodes,
+        allNodes, goal,
       );
 
       prevFindingsSet = currentFindingsSet;
@@ -556,13 +557,14 @@ export class GoalOrchestrator {
     return result;
   }
 
-  private makeDecision(
+  private async makeDecision(
     round: number,
     totalTokensUsed: number,
     findingsCount: number,
     plateauRounds: number,
     allNodes: GoalNode[],
-  ): { decision: RoundDecision; reason: string } {
+    goal?: string,
+  ): Promise<{ decision: RoundDecision; reason: string }> {
     if (totalTokensUsed >= this.config.budgetTokens) {
       return { decision: 'stop_budget', reason: `Token budget (${this.config.budgetTokens}) exhausted.` };
     }
@@ -576,6 +578,43 @@ export class GoalOrchestrator {
     ).length;
 
     if (activeCount === 0 && findingsCount === 0) {
+      if (goal) {
+        const output = allNodes
+          .filter(n => n.workerOutput)
+          .map(n => `[${n.goal.slice(0, 60)}]: ${n.workerOutput?.slice(0, 300) ?? ''}`)
+          .join('\n');
+        try {
+          const goalJudge = getGoalJudge();
+          if (this.provider) {
+            goalJudge.setProvider(this.provider);
+          }
+          const verdict = await goalJudge.judge({
+            runId: `goal-orch-${Date.now()}`,
+            goal: goal,
+            output: output || 'All sub-goals completed',
+            evidenceCount: allNodes.filter(n => n.status === 'completed').length,
+          });
+
+          if (!verdict.passed) {
+            getGlobalLogger().warn('GoalOrchestrator', 'Judge rejected completion, continuing', {
+              confidence: verdict.confidence,
+              reasoning: verdict.reasoning.slice(0, 200),
+            });
+            // Override: force continue instead of stopping prematurely
+            return {
+              decision: 'continue',
+              reason: `Judge rejected completion (confidence ${(verdict.confidence * 100).toFixed(0)}%): ${verdict.reasoning.slice(0, 150)}`,
+            };
+          }
+        } catch (err) {
+          getGlobalLogger().debug('GoalOrchestrator', 'Judge check failed, allowing completion (best-effort)', {
+            error: (err as Error).message,
+          });
+          // Judge failure is non-blocking — allow completion
+        }
+      } else {
+        getGlobalLogger().warn('GoalOrchestrator', 'makeDecision called without goal — judge protection skipped');
+      }
       return { decision: 'stop_achieved', reason: 'All sub-goals completed with zero findings.' };
     }
 

@@ -51,6 +51,8 @@ export type MessageBusTopic =
   | 'goal.critic_completed'
   | 'goal.manager_review'
   | 'goal.completed'
+  | 'goal.judge_started'
+  | 'goal.judge_completed'
   | 'swarm.started'
   | 'swarm.fission'
   | 'swarm.fusion_conflict'
@@ -61,7 +63,9 @@ export type MessageBusTopic =
   | 'drive.step_started'
   | 'drive.step_completed'
   | 'drive.step_failed'
-  | 'drive.completed';
+  | 'drive.completed'
+  | 'checkpoint.written'
+  | 'context.rebuilt';
 
 /**
  * Priority levels for messages.
@@ -89,6 +93,8 @@ export interface BusPayloadMap {
   'goal.critic_completed': { goalId: string };
   'goal.manager_review': { round: number };
   'goal.completed': { goal: string; status: string; summary: string };
+  'goal.judge_started': { runId: string; conditionCount: number; evidenceCount: number };
+  'goal.judge_completed': { runId: string; passed: boolean; confidence: number; tokensUsed: number; modelUsed?: string };
   'drive.started': { goal: string; mode: string };
   'drive.step_started': { stepId: string; description: string };
   'drive.step_completed': { stepId: string; result?: string };
@@ -126,6 +132,8 @@ export interface BusPayloadMap {
   'mission.blocked': { missionId: string; reason: string };
   'mission.completed': { missionId: string; result: string };
   'trace.recorded': { traceId: string; spanCount: number };
+  'checkpoint.written': { runId: string; version: number; triggerPercent: number; tokensUsed: number; completedCount: number; pendingCount: number; filePath: string };
+  'context.rebuilt': { runId: string; rebuildCount: number; totalTokens: number; sections: Array<{ name: string; used: number; cap: number }>; durationMs: number };
 }
 
 /**

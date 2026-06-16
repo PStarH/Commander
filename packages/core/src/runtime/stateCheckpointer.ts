@@ -32,6 +32,10 @@ export interface CheckpointState {
     availableTools: string[];
     maxSteps: number;
     tokenBudget: number;
+    /** Cache key of loaded project context files, for resumability. */
+    projectContextCacheKey?: string;
+    /** Project context files read at run start. */
+    projectContextFiles?: string[];
   };
   lastError?: string;
   totalDurationMs: number;

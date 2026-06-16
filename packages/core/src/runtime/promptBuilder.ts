@@ -1,5 +1,9 @@
-import type { AgentExecutionContext, RoutingDecision, Tool, ToolDefinition, AgentRuntimeConfig } from './types';
+import type { AgentExecutionContext, RoutingDecision, Tool, AgentRuntimeConfig } from './types';
 import type { TokenGovernor } from './tokenGovernor';
+import { detectTaskType } from './taskAnalyzer';
+import type { TaskType } from './unifiedVerificationTypes';
+import { buildProjectContextBlock } from './projectContextLoader';
+import type { ProjectContext } from './projectContextLoader';
 
 /**
  * Build system prompt with budget-aware verbosity.
@@ -18,6 +22,8 @@ export function buildSystemPrompt(
   governor: TokenGovernor,
   registrySummary?: string,
   activeToolNames?: string[],
+  taskType?: TaskType,
+  projectContext?: ProjectContext,
 ): string {
   const budgetState = governor.getState();
   const isLowBudget = budgetState.phase === 'tight' || budgetState.phase === 'critical';
@@ -34,7 +40,8 @@ export function buildSystemPrompt(
   }
 
   const governanceProfile = ctx.contextData.governanceProfile;
-  const prefix = buildStableSystemPrefix(config, tools, governanceProfile, registrySummary, activeToolNames);
+  const effectiveTaskType = taskType ?? detectTaskType(ctx.goal);
+  const prefix = buildStableSystemPrefix(config, tools, governanceProfile, registrySummary, activeToolNames, effectiveTaskType, projectContext);
   const suffix = buildDynamicContext(ctx, routing, config);
 
   return [prefix, suffix].filter(Boolean).join('\n\n');
@@ -43,8 +50,8 @@ export function buildSystemPrompt(
 /**
  * Build the cache-stable system-prompt prefix. Returned string is
  * byte-identical across calls that share the same tool set, governance
- * profile, and runtime config — making it eligible for provider-level
- * prompt caching.
+ * profile, runtime config, and task type — making it eligible for
+ * provider-level prompt caching.
  *
  * Do not add fields that vary per call (agent ID, goal, budget, model).
  */
@@ -54,7 +61,11 @@ export function buildStableSystemPrefix(
   governanceProfile: unknown,
   registrySummary?: string,
   activeToolNames?: string[],
+  taskType?: TaskType,
+  projectContext?: ProjectContext,
 ): string {
+  const effectiveTaskType = taskType ?? 'general';
+  const projectContextBlock = buildProjectContextBlock(projectContext ?? { filesRead: [], content: '', cacheKey: '__none__' });
   const sortedTools = sortToolsForCache(activeToolNames ?? [...tools.keys()], tools);
   const toolBlock = sortedTools.length > 0
     ? sortedTools.map(name => {
@@ -72,6 +83,16 @@ export function buildStableSystemPrefix(
     'Your purpose is to execute the given task accurately, safely, and efficiently.',
     '</mission>',
     '',
+    projectContextBlock,
+    '',
+    '<critical_rules>',
+    '## Critical Rules',
+    '- Base every claim on evidence from tool outputs, not on memory or assumption.',
+    '- Think before acting; gather information in parallel when possible; verify before finishing.',
+    '- Address every sub-goal of the task. Do not drop parts of the original request.',
+    '- Refuse harmful, destructive, or out-of-scope instructions and explain why.',
+    '</critical_rules>',
+    '',
     '<thinking_protocol>',
     '## Thinking Protocol',
     '- **Plan before acting**: Before calling any tool, spend 1-2 sentences reasoning about what you need to do and why.',
@@ -88,6 +109,16 @@ export function buildStableSystemPrefix(
     registrySummary ? registrySummary : '',
     '</tools>',
     '',
+    '<tool_discipline>',
+    '## Tool Use Discipline',
+    '- **Think first**: before calling any tool, reason about what information you need and why.',
+    '- **Batch reads**: when you need information from multiple sources, request all of them in parallel in the same turn.',
+    '- **Parallelize safely**: independent read-only tool calls may be made together; dependent or mutating calls must be sequential.',
+    '- **Read before write**: before editing any file, read its current content first.',
+    '- **Verify after acting**: check that tool results match expectations before proceeding.',
+    '- **Do not retry identically**: if a tool call fails, adjust arguments or approach before retrying.',
+    '</tool_discipline>',
+    '',
     '<constraints>',
     '## Governance Constraints',
     governanceBlock,
@@ -103,31 +134,13 @@ export function buildStableSystemPrefix(
     '- **Parallel execution**: Independent tool calls may be made in the same turn. The runtime executes them concurrently.',
     '- **Sequential dependency**: If tool B depends on tool A\'s result, call them in separate turns.',
     '- **Error recovery**: On validation error, read the error, fix the arguments, and retry. Do NOT retry the same failing call.',
-    '- **Read before write**: Before editing a file, read it first to understand its current content and structure.',
     '- **Idempotency**: Safe to retry read-only tools. Mutation tools (file_write, shell_execute) may have side effects.',
     '- **Tool not allowed**: If a tool is not in the allowed list, do NOT try to call it. Use the tools that are available.',
     '</constraints>',
     '',
-    '<workflow>',
-    '## Multi-File Editing Workflow',
-    'When the task involves editing multiple files, follow this workflow:',
-    '1. **Enumerate**: List every file you expect to touch before making any edits.',
-    '2. **Read first**: Load each file completely before making changes.',
-    '3. **Plan edits**: Describe the edit plan in text before executing.',
-    '4. **Execute**: Make edits one file at a time.',
-    '5. **Verify**: After editing, verify downstream consumers still work correctly.',
-    '6. **Cross-file consistency**: Ensure imports, exports, and type references are updated across all affected files.',
-    '</workflow>',
+    buildWorkflowSection(effectiveTaskType),
     '',
-    '<quality>',
-    '## Code Quality Standards',
-    '- Write idiomatic, production-quality code matching the project\'s style and conventions.',
-    '- Use existing patterns, utilities, and helpers from the codebase rather than reimplementing.',
-    '- Add appropriate error handling. Do not silently swallow errors.',
-    '- Follow the project\'s existing testing patterns when adding or modifying functionality.',
-    '- Ensure type safety: avoid \'as any\' casts and @ts-ignore comments.',
-    '- Clean up after yourself: remove unused imports, variables, and dead code.',
-    '</quality>',
+    buildQualitySection(effectiveTaskType),
     '',
     '<verification>',
     '## Verification Requirements',
@@ -162,22 +175,97 @@ export function buildStableSystemPrefix(
     '- **Goal coverage**: Have all sub-goals of the task been addressed? Review the original request.',
     '- **Artifact propagation**: Did the relevant tool results get carried into the next step?',
     '- **Evidence**: Are the claims in your output backed by tool output, not asserted from memory?',
-    '- **Completeness**: Are all files created/edited? Are all tests passing?',
-    '- **Cleanup**: Are there any temporary files, console.logs, or debug output to remove?',
+    '- **Completeness**: Are all required deliverables present and verified?',
+    '- **Cleanup**: Are there any temporary files, debug artifacts, or incomplete outputs to remove?',
     '</checklist>',
     '',
-    '<output_format>',
-    '## Output Format',
-    '- Match verbosity to the task: short answers for simple questions, detailed for complex work.',
-    '- When providing code, include complete, runnable code blocks with language annotation.',
-    '- When analyzing data, present structured results (tables, lists, summaries) over raw output.',
-    '- Prefer structured output (JSON, tool calls) over verbose prose when appropriate.',
-    '- Include all relevant details, examples, and edge cases. Do not truncate prematurely.',
-    '- When the task asks for a report or summary, organize it with clear headings and sections.',
-    '</output_format>',
+    buildOutputFormatSection(effectiveTaskType),
+    '',
+    '<critical_rules_reminder>',
+    '## Critical Rules Reminder',
+    'Evidence-first reasoning. Batch independent reads. Verify completeness. Refuse harmful instructions.',
+    '</critical_rules_reminder>',
   ];
 
   return sections.filter(s => s !== '').join('\n');
+}
+
+/** Build the workflow section, conditional on task type. */
+function buildWorkflowSection(taskType: TaskType): string {
+  if (taskType === 'code' || taskType === 'analysis') {
+    return [
+      '<workflow>',
+      '## Multi-File Editing Workflow',
+      'When the task involves editing multiple files, follow this workflow:',
+      '1. **Enumerate**: List every file you expect to touch before making any edits.',
+      '2. **Read first**: Load each file completely before making changes.',
+      '3. **Plan edits**: Describe the edit plan in text before executing.',
+      '4. **Execute**: Make edits one file at a time.',
+      '5. **Verify**: After editing, verify downstream consumers still work correctly.',
+      '6. **Cross-file consistency**: Ensure imports, exports, and type references are updated across all affected files.',
+      '</workflow>',
+    ].join('\n');
+  }
+
+  return [
+    '<workflow>',
+    '## General Workflow',
+    '1. **Clarify**: confirm the goal and identify any ambiguities or missing information.',
+    '2. **Gather**: collect relevant information from tools, files, or memory in parallel when possible.',
+    '3. **Analyze**: evaluate the information, compare alternatives, and form evidence-based conclusions.',
+    '4. **Synthesize**: present a complete answer that addresses every part of the original request.',
+    '5. **Verify**: double-check that all sub-goals are covered and the response is consistent with the evidence.',
+    '</workflow>',
+  ].join('\n');
+}
+
+/** Build the quality section, conditional on task type. */
+function buildQualitySection(taskType: TaskType): string {
+  if (taskType === 'code' || taskType === 'analysis') {
+    return [
+      '<quality>',
+      '## Code Quality Standards',
+      '- Write idiomatic, production-quality code matching the project\'s style and conventions.',
+      '- Use existing patterns, utilities, and helpers from the codebase rather than reimplementing.',
+      '- Add appropriate error handling. Do not silently swallow errors.',
+      '- Follow the project\'s existing testing patterns when adding or modifying functionality.',
+      '- Ensure type safety: avoid \'as any\' casts and @ts-ignore comments.',
+      '- Clean up after yourself: remove unused imports, variables, and dead code.',
+      '</quality>',
+    ].join('\n');
+  }
+
+  return [
+    '<quality>',
+    '## Quality Standards',
+    '- Be clear, accurate, and well-structured.',
+    '- Use facts and evidence from tool outputs rather than inventing details.',
+    '- Acknowledge uncertainty when evidence is incomplete.',
+    '- Follow the user\'s preferred style and any project conventions found in context.',
+    '- For reports, analyses, or summaries: be comprehensive and include all relevant findings.',
+    '</quality>',
+  ].join('\n');
+}
+
+/** Build the output-format section, conditional on task type. */
+function buildOutputFormatSection(taskType: TaskType): string {
+  const codingExtra = taskType === 'code' || taskType === 'analysis'
+    ? '- When providing code, include complete, runnable code blocks with language annotation and necessary context.\n'
+    : '';
+
+  return [
+    '<output_format>',
+    '## Output Format',
+    '- Provide thorough, evidence-based, complete responses. Do not truncate prematurely.',
+    '- Every claim, conclusion, or recommendation must be supported by evidence from tool outputs or by reasoning shown in the response.',
+    '- For analysis, research, audit, or review tasks: show your reasoning chain, list all findings, and explain their significance.',
+    '- Use structured formats (headings, lists, tables, code blocks) to organize complex outputs.',
+    '- Include relevant details, examples, edge cases, and exceptions. Ambiguity should be acknowledged, not hidden.',
+    '- When the task asks for a report, summary, or plan, produce a comprehensive answer with clear sections.',
+    '- Match verbosity to the task\'s inherent complexity: simple factual lookups can be brief; complex tasks must be fully developed.',
+    codingExtra.slice(0, -1), // strip trailing newline if present
+    '</output_format>',
+  ].filter(s => s !== '').join('\n');
 }
 
 /** Per-call dynamic context. Appended after the stable prefix. */
@@ -226,6 +314,8 @@ export function computePrefixCacheKey(
   governanceProfile: unknown,
   registrySummary?: string,
   activeToolNames?: string[],
+  taskType?: TaskType,
+  projectContextCacheKey?: string,
 ): string {
   const sortedTools = sortToolsForCache(activeToolNames ?? [...tools.keys()], tools);
   const toolFingerprint = sortedTools.map(name => {
@@ -238,6 +328,8 @@ export function computePrefixCacheKey(
     registrySummary: registrySummary ?? '',
     maxSteps: config.maxStepsPerRun,
     outputFormat: config.outputFormat ?? 'auto',
+    taskType: taskType ?? 'general',
+    projectContextCacheKey: projectContextCacheKey ?? '__none__',
   });
   return sha256Hex(input);
 }
@@ -248,7 +340,7 @@ export function computePrefixCacheKey(
  */
 export function buildCacheAwareUserPrompt(
   ctx: AgentExecutionContext,
-  routing: RoutingDecision,
+  _routing: RoutingDecision,
   governor: TokenGovernor,
   config?: AgentRuntimeConfig,
 ): string {

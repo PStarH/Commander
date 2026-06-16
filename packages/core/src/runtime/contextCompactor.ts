@@ -18,6 +18,8 @@ import type { LLMMessage, LLMProvider } from './types';
 import { TokenGovernor, getTokenGovernor } from './tokenGovernor';
 import { getGlobalLogger } from '../logging';
 import { CPUWorkerPool } from './cpuWorkerPool';
+import type { RebuildParams, RebuildResult } from './rebuildPrompt';
+import { getRebuildPrompt, resetRebuildPrompt } from './rebuildPrompt';
 
 // ============================================================================
 // Failure correlation tracker
@@ -115,7 +117,7 @@ export class FailureCorrelationTracker {
 // Types
 // ============================================================================
 
-export type CompactLayer = 1 | 2 | 3 | 4;
+export type CompactLayer = 1 | 2 | 3 | 4 | 5;
 
 export type CompactTaskType = 'code' | 'search' | 'analysis' | 'structured' | 'general';
 
@@ -152,6 +154,12 @@ export interface CompactAction {
   description: string;
   taskTypeApplied?: CompactTaskType | null;
   compositionApplied?: { toolDensity: number; errorDensity: number };
+  /** For Layer 5: the rebuild result details */
+  rebuildResult?: {
+    sections: Array<{ name: string; cap: number; used: number }>;
+    rebuildCount: number;
+    totalTokens: number;
+  };
 }
 
 // ============================================================================
@@ -515,6 +523,10 @@ function getProfile(taskType?: CompactTaskType): AdaptiveProfile {
 export class ContextCompactor {
   private config: CompactConfig;
   private failureTracker: FailureCorrelationTracker;
+  /** Counts how many times compaction has been applied to current messages */
+  private compactionCount = 0;
+  /** Tracks whether the last compaction was layer 4 (emergency) */
+  private lastWasEmergency = false;
 
   constructor(config?: Partial<CompactConfig>, failureTracker?: FailureCorrelationTracker) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -544,11 +556,24 @@ export class ContextCompactor {
 
     const adjusted = this.adjustThresholds(taskType, messages);
 
+    // Layer 5 trigger: if we've already compacted at layer 4 and still >95% full
+    // OR if this run has exceeded the rebuild threshold (>97%)
+    const layer5Threshold = Math.min(0.97, adjusted.layer4 + 0.03);
+    if (pct >= layer5Threshold && this.lastWasEmergency) return 5;
+
     if (pct >= adjusted.layer4) return 4;
     if (pct >= adjusted.layer3) return 3;
     if (pct >= adjusted.layer2) return 2;
     if (pct >= adjusted.layer1) return 1;
     return null;
+  }
+
+  /**
+   * Check if rebuild (Layer 5) should be triggered for a given run.
+   * Public for use by agentRuntime to decide whether to invoke rebuild.
+   */
+  needsRebuild(runId: string): boolean {
+    return this.lastWasEmergency && this.compactionCount >= 2;
   }
 
   compact(messages: LLMMessage[], provider?: LLMProvider, taskType?: CompactTaskType): { messages: LLMMessage[]; action: CompactAction } {
@@ -567,13 +592,101 @@ export class ContextCompactor {
 
     const profile = this.getEffectiveProfile(taskType, messages);
 
+    this.compactionCount++;
+    let result: { messages: LLMMessage[]; action: CompactAction };
+
     switch (layer) {
-      case 1: return this.layer1Snip(messages, profile);
-      case 2: return this.layer2Microcompact(messages, profile);
-      case 3: return this.layer3Collapse(messages, provider, profile);
-      case 4: return this.layer4Autocompact(messages, provider, profile);
+      case 1: result = this.layer1Snip(messages, profile); break;
+      case 2: result = this.layer2Microcompact(messages, profile); break;
+      case 3: result = this.layer3Collapse(messages, provider, profile); break;
+      case 4: result = this.layer4Autocompact(messages, provider, profile); break;
+      case 5: {
+        // Layer 5 is a marker — actual rebuild happens externally via rebuild()
+        getGlobalLogger().info('ContextCompactor', 'Layer 5 rebuild recommended', {
+          compactionCount: this.compactionCount,
+        });
+        return {
+          messages,
+          action: {
+            layer: 5,
+            droppedCount: messages.length,
+            tokensSaved: 0,
+            description: 'Layer 5 rebuild recommended — call rebuild() to reconstruct context',
+            taskTypeApplied: taskType ?? null,
+          },
+        };
+      }
       default: return { messages, action: { layer: 1, droppedCount: 0, tokensSaved: 0, description: 'No compaction needed', taskTypeApplied: null } };
     }
+
+    // Track emergency state for rebuild triggering
+    if (layer >= 4) this.lastWasEmergency = true;
+
+    return result;
+  }
+
+  /**
+   * Layer 5: Rebuild — completely reset the context window and reconstruct
+   * from persistent state (checkpoint.md + ThreeLayerMemory).
+   *
+   * This is different from Layers 1-4: instead of compressing existing messages,
+   * we DISCARD all history and build a fresh prompt from structured records.
+   *
+   * @returns The rebuilt messages and action metadata
+   */
+  async rebuild(
+    runId: string,
+    goal: string,
+    phase: string,
+    stepNumber: number,
+    systemPrompt: LLMMessage[],
+    recentUserMessages: LLMMessage[],
+    tokenUsage: { totalTokens: number; budgetHardCap: number },
+  ): Promise<{ messages: LLMMessage[]; action: CompactAction }> {
+    const rebuildPrompt = getRebuildPrompt();
+
+    const params: RebuildParams = {
+      runId,
+      goal,
+      phase,
+      stepNumber,
+      systemPrompt,
+      recentUserMessages,
+      tokenUsage,
+    };
+
+    const result = await rebuildPrompt.rebuild(params);
+
+    // Reset compaction tracking since we rebuilt
+    this.compactionCount = 0;
+    this.lastWasEmergency = false;
+
+    return {
+      messages: result.messages,
+      action: {
+        layer: 5,
+        droppedCount: -1, // All history discarded
+        tokensSaved: 0,
+        summary: result.description,
+        description: result.description,
+        rebuildResult: {
+          sections: result.sections.map(s => ({ name: s.name, cap: s.cap, used: s.used })),
+          rebuildCount: 1,
+          totalTokens: result.totalTokens,
+        },
+      },
+    };
+  }
+
+  /** Reset compaction tracking (e.g., after rebuild or new run). */
+  resetCompactionTracking(): void {
+    this.compactionCount = 0;
+    this.lastWasEmergency = false;
+  }
+
+  /** Get the current compaction count (for diagnostics). */
+  getCompactionCount(): number {
+    return this.compactionCount;
   }
 
   /**
