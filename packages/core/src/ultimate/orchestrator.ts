@@ -818,10 +818,6 @@ if (topologyAction && 'to' in topologyAction) {
       reasoning,
     };
     } finally {
-      // Clean up budget tracking for completed runs
-      try {
-        getTokenBudgetManager().completeRun(execId);
-      } catch { /* best-effort */ }
       this.activeExecutions.delete(execId);
     }
   }
