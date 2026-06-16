@@ -190,6 +190,8 @@ export function evaluate(expr: AvailabilityExpression, ctx: AvailabilityContext)
       return true;
     case 'never':
       return false;
+    default:
+      return false;
   }
 }
 

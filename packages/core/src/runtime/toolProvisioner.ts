@@ -50,7 +50,7 @@ async function provisionTool(
     const isValid = config.validateOutput ? config.validateOutput(result) : (result && !result.startsWith('Error'));
     if (isValid) {
       const toolResult: ToolResult = { toolCallId: config.toolCallId, name: config.toolName, output: result, durationMs: 0 };
-      toolCache.set(toolCall, toolResult);
+      await toolCache.set(toolCall, toolResult);
       request.messages.push({ role: 'system', content: `[Tool: ${config.label}]\n${result.slice(0, config.maxOutputChars)}` });
       return true;
     }

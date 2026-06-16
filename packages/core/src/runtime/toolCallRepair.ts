@@ -37,9 +37,9 @@ export function repairToolCallArguments(
 ): RepairResult {
   // Strategy 1: Already an object (Anthropic returns parsed objects)
   if (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)) {
-    // Guard against prototype pollution
+    // Guard against prototype pollution (use hasOwnProperty to avoid false positives from inherited properties)
     const args = rawArgs as Record<string, unknown>;
-    if ('__proto__' in args || 'constructor' in args || 'prototype' in args) {
+    if (Object.prototype.hasOwnProperty.call(args, '__proto__') || Object.prototype.hasOwnProperty.call(args, 'constructor') || Object.prototype.hasOwnProperty.call(args, 'prototype')) {
       const sanitized: Record<string, unknown> = {};
       for (const key of Object.keys(args)) {
         if (key !== '__proto__' && key !== 'constructor' && key !== 'prototype') {

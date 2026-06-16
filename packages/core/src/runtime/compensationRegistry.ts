@@ -161,14 +161,14 @@ export class CompensationRegistry {
         if (result.success) {
           this.queue.markCompleted(item.id);
         } else {
-          const outcome = this.queue.markFailed(item.id, result.error ?? 'unknown', item.attemptCount + 1);
+          const outcome = this.queue.markFailed(item.id, result.error ?? 'unknown', item.attemptCount);
           if (outcome === 'escalated') {
             try { this.observability?.onExhausted?.(action, `Queue compensation exhausted: ${result.error}`); } catch { /* best-effort */ }
           }
         }
       } catch (err) {
         const errStr = err instanceof Error ? err.message : String(err);
-        const outcome = this.queue.markFailed(item.id, errStr, item.attemptCount + 1);
+        const outcome = this.queue.markFailed(item.id, errStr, item.attemptCount);
         if (outcome === 'escalated') {
           try { this.observability?.onExhausted?.({ actionId: item.id, toolName: item.toolName, args: {}, description: '', tags: [] }, `Queue compensation error: ${errStr}`); } catch { /* best-effort */ }
         }
@@ -185,6 +185,11 @@ export class CompensationRegistry {
       const first = this.compensated.values().next().value;
       if (first) this.compensated.delete(first);
     }
+  }
+
+  /** Look up a compensation handler by tool name. Returns undefined if not registered. */
+  getHandler(toolName: string): CompensationHandler | undefined {
+    return this.handlers.get(toolName);
   }
 
   getPendingCount(): number { return this.pendingActions.size; }

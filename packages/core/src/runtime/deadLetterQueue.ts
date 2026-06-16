@@ -9,7 +9,7 @@ import * as path from 'path';
 import { getGlobalLogger } from '../logging';
 import type { ErrorClass } from './llmRetry';
 
-export type DLQCategory = 'llm' | 'tool' | 'execution' | 'verification' | 'circuit_breaker' | 'compensation';
+export type DLQCategory = 'llm' | 'tool' | 'execution' | 'verification' | 'circuit_breaker' | 'compensation' | 'semantic_drift';
 
 /**
  * Tier 4.1: Standardized failure-mode discriminator. Each DLQ entry should
@@ -30,6 +30,7 @@ export type FailureMode =
   | 'cascade_escalation'
   | 'subagent_limit'
   | 'circuit_open'
+  | 'semantic_degradation'
   | 'unknown';
 
 export const failureModeTag = (mode: FailureMode): string => `mode:${mode}`;
@@ -128,7 +129,7 @@ export class DeadLetterQueue {
   private static readonly MAX_ENTRIES_PER_FILE = 1000;
 
   flush(category?: DLQCategory): void {
-    const cats = category ? [category] : (['llm', 'tool', 'execution', 'verification', 'circuit_breaker', 'compensation'] as DLQCategory[]);
+    const cats = category ? [category] : Array.from(this.buffers.keys()) as DLQCategory[];
     for (const cat of cats) {
       // Atomic swap: take the buffer out first so concurrent record() calls
       // go into a fresh buffer instead of getting lost when we clear below.

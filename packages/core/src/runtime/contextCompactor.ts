@@ -17,6 +17,99 @@
 import type { LLMMessage, LLMProvider } from './types';
 import { TokenGovernor, getTokenGovernor } from './tokenGovernor';
 import { getGlobalLogger } from '../logging';
+import { CPUWorkerPool } from './cpuWorkerPool';
+
+// ============================================================================
+// Failure correlation tracker
+//
+// Records which messages correlated with verification failures. When compacting
+// before a retry, those messages are deprioritized so the model is less likely
+// to replay the same failed reasoning.
+// ============================================================================
+
+export interface FailureCorrelationRecord {
+  runId: string;
+  timestamp: number;
+  failureSignal?: string;
+  messageFingerprints: Set<string>;
+}
+
+export class FailureCorrelationTracker {
+  private records = new Map<string, FailureCorrelationRecord>();
+  private globalFingerprints = new Set<string>();
+  private readonly maxRecords = 1000;
+
+  private fingerprint(content: string): string {
+    // Normalize whitespace and truncate for stable matching
+    const normalized = content.replace(/\s+/g, ' ').trim().slice(0, 400);
+    return `${normalized.length}:${normalized}`;
+  }
+
+  record(
+    runId: string,
+    messages: LLMMessage[],
+    failureSignal?: string,
+  ): void {
+    const fingerprints = new Set<string>();
+    for (const msg of messages) {
+      const content = typeof msg.content === 'string' ? msg.content : '';
+      if (content.length > 10) {
+        fingerprints.add(this.fingerprint(content));
+      }
+      if (msg.tool_calls) {
+        for (const tc of msg.tool_calls) {
+          const args = tc.function.arguments ?? '';
+          if (args.length > 10) fingerprints.add(this.fingerprint(args));
+        }
+      }
+    }
+
+    this.records.set(runId, {
+      runId,
+      timestamp: Date.now(),
+      failureSignal,
+      messageFingerprints: fingerprints,
+    });
+
+    for (const fp of fingerprints) {
+      this.globalFingerprints.add(fp);
+    }
+
+    // Prevent unbounded growth
+    if (this.records.size > this.maxRecords) {
+      let oldest: FailureCorrelationRecord | undefined;
+      for (const r of this.records.values()) {
+        if (!oldest || r.timestamp < oldest.timestamp) oldest = r;
+      }
+      if (oldest) this.records.delete(oldest.runId);
+    }
+  }
+
+  isCorrelated(msg: LLMMessage): boolean {
+    const content = typeof msg.content === 'string' ? msg.content : '';
+    if (content.length > 10 && this.globalFingerprints.has(this.fingerprint(content))) {
+      return true;
+    }
+    if (msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        const args = tc.function.arguments ?? '';
+        if (args.length > 10 && this.globalFingerprints.has(this.fingerprint(args))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  getRunRecord(runId: string): FailureCorrelationRecord | undefined {
+    return this.records.get(runId);
+  }
+
+  reset(): void {
+    this.records.clear();
+    this.globalFingerprints.clear();
+  }
+}
 
 // ============================================================================
 // Types
@@ -146,6 +239,32 @@ const RE_ERROR_MULTILINE = /(?:^|\n)\s*(?:error|Error|ERROR|fail|Fail|FAIL|excep
 const RE_HAS_DIGIT = /\d/;
 const RE_FINDING_KEYWORDS = /result|found|output|answer|total|sum|count/i;
 const RE_ERROR_LINE = /^(error|warning|fail|exception|traceback|cannot|unable)/i;
+const RE_INJECTION_PATTERNS = [
+  /ignore\s+(all\s+)?previous\s+instructions?/gi,
+  /disregard\s+(all\s+)?(previous\s+)?instructions?/gi,
+  /system\s*:\s*you\s+are\s+now/gi,
+  /you\s+are\s+now\s+a\s+helpful/gi,
+  /forget\s+(all\s+)?(previous\s+)?(rules|instructions)/gi,
+  /new\s+instruction\s*:/gi,
+  /override\s+(default\s+)?(rules|behavior)/gi,
+  /jailbreak/gi,
+  /DAN\s*:/gi,
+  /developer\s+mode/gi,
+  /sudo\s+mode/gi,
+  /<script\b[^>]*>/gi,
+  /<!--[\s\S]*?-->/g,
+];
+
+function containsInjectionPattern(content: string): boolean {
+  return RE_INJECTION_PATTERNS.some(p => p.test(content));
+}
+
+function redactUnsafeToolContent(content: string): string | null {
+  if (containsInjectionPattern(content)) {
+    return '[security redacted: unsafe tool content removed by compactor]';
+  }
+  return null;
+}
 const RE_KV_PAIR = /^["']?\w+["']?\s*[:=]/;
 const RE_NEWLINE = /\n/g;
 
@@ -269,6 +388,7 @@ function scoreMessageImportance(
   index: number,
   total: number,
   importanceConfig: AdaptiveProfile['importanceConfig'] = DEFAULT_PROFILE.importanceConfig,
+  failureTracker?: FailureCorrelationTracker,
 ): number {
   let score = 0.5; // baseline
 
@@ -315,6 +435,12 @@ function scoreMessageImportance(
 
   // Already-compacted messages get lower priority (don't double-compact)
   if (isCompacted(msg)) score += importanceConfig.compactedPenalty;
+
+  // Failure correlation: messages that preceded a verification failure are
+  // less valuable to keep because they led to a dead end.
+  if (failureTracker?.isCorrelated(msg)) {
+    score = Math.max(0, score - 0.35);
+  }
 
   return Math.max(0, Math.min(1, score));
 }
@@ -388,9 +514,24 @@ function getProfile(taskType?: CompactTaskType): AdaptiveProfile {
 
 export class ContextCompactor {
   private config: CompactConfig;
+  private failureTracker: FailureCorrelationTracker;
 
-  constructor(config?: Partial<CompactConfig>) {
+  constructor(config?: Partial<CompactConfig>, failureTracker?: FailureCorrelationTracker) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.failureTracker = failureTracker ?? new FailureCorrelationTracker();
+  }
+
+  /**
+   * Record that the current messages correlated with a verification failure.
+   * Future compactions will deprioritize these messages.
+   */
+  recordFailureCorrelation(runId: string, messages: LLMMessage[], failureSignal?: string): void {
+    this.failureTracker.record(runId, messages, failureSignal);
+  }
+
+  /** Access the failure tracker (for testing/inspection). */
+  getFailureTracker(): FailureCorrelationTracker {
+    return this.failureTracker;
   }
 
   getUsage(messages: LLMMessage[]): { total: number; pct: number } {
@@ -431,6 +572,7 @@ export class ContextCompactor {
       case 2: return this.layer2Microcompact(messages, profile);
       case 3: return this.layer3Collapse(messages, provider, profile);
       case 4: return this.layer4Autocompact(messages, provider, profile);
+      default: return { messages, action: { layer: 1, droppedCount: 0, tokensSaved: 0, description: 'No compaction needed', taskTypeApplied: null } };
     }
   }
 
@@ -465,7 +607,150 @@ export class ContextCompactor {
       case 2: return this.layer2Microcompact(messages, profile);
       case 3: return this.layer3CollapseAsync(messages, provider, profile);
       case 4: return this.layer3CollapseAsync(messages, provider, profile); // Layer 4 also uses LLM summarization
+      default: return { messages, action: { layer: 1, droppedCount: 0, tokensSaved: 0, description: 'No compaction needed', taskTypeApplied: null } };
     }
+  }
+
+  /**
+   * CPU-offloaded compaction for layer3/4 — delegates scoring + summary building to worker_threads.
+   * Falls back to sync path if worker pool is unavailable or layer is 1/2 (fast enough on main thread).
+   */
+  async compactWithWorkerOffload(
+    messages: LLMMessage[],
+    workerPool: CPUWorkerPool,
+    provider?: LLMProvider,
+    taskType?: CompactTaskType,
+  ): Promise<{ messages: LLMMessage[]; action: CompactAction }> {
+    if (provider && this.config.maxContextTokens === DEFAULT_CONFIG.maxContextTokens) {
+      const providerLimit = this.getProviderContextLimit(provider);
+      if (providerLimit !== this.config.maxContextTokens) {
+        this.config = { ...this.config, maxContextTokens: providerLimit };
+      }
+    }
+
+    const layer = this.needsCompaction(messages, taskType);
+    if (!layer) {
+      return { messages, action: { layer: 1, droppedCount: 0, tokensSaved: 0, description: 'No compaction needed', taskTypeApplied: taskType ?? null } };
+    }
+
+    const profile = this.getEffectiveProfile(taskType, messages);
+
+    if (layer <= 2) {
+      return layer === 1 ? this.layer1Snip(messages, profile) : this.layer2Microcompact(messages, profile);
+    }
+
+    return this.layerWithWorkerOffload(messages, workerPool, provider, profile, layer);
+  }
+
+  private async layerWithWorkerOffload(
+    messages: LLMMessage[],
+    workerPool: CPUWorkerPool,
+    provider: LLMProvider | undefined,
+    profile: AdaptiveProfile,
+    layer: CompactLayer,
+  ): Promise<{ messages: LLMMessage[]; action: CompactAction }> {
+    const system: LLMMessage[] = [];
+    const turns: LLMMessage[][] = [];
+    let current: LLMMessage[] = [];
+
+    for (const msg of messages) {
+      if (msg.role === 'system') { system.push(msg); continue; }
+      if (msg.role === 'user' && current.length > 0) {
+        turns.push(current);
+        current = [msg];
+      } else {
+        current.push(msg);
+      }
+    }
+    if (current.length > 0) turns.push(current);
+
+    const keep = Math.max(1, profile.keepRecentTurns);
+    if (turns.length <= keep + 1) {
+      return { messages, action: { layer, droppedCount: 0, tokensSaved: 0, description: `Layer ${layer}: not enough turns` } };
+    }
+
+    const collapseTargets = turns.slice(0, turns.length - keep);
+    const recent = turns.slice(turns.length - keep);
+
+    const [importantMessages, summary] = await Promise.all([
+      this.extractImportantMessagesWorker(collapseTargets, profile, workerPool),
+      this.buildSummaryWorker(collapseTargets, provider, profile, workerPool),
+    ]);
+
+    const summaryMsg: LLMMessage = {
+      role: 'system',
+      content: markCompacted(`[Compacted summary of ${collapseTargets.length} earlier turns:\n${summary}]`),
+    };
+
+    const before = estimateMessagesTokens(messages);
+    const result = [...system, summaryMsg, ...importantMessages, ...recent.flat()];
+    const after = estimateMessagesTokens(result);
+    const composition = analyzeComposition(messages);
+
+    return {
+      messages: result,
+      action: {
+        layer,
+        droppedCount: collapseTargets.length,
+        tokensSaved: before - after,
+        summary,
+        description: `Layer ${layer} collapse: compressed ${collapseTargets.length} turns into summary (worker-offloaded)`,
+        taskTypeApplied: null,
+        compositionApplied: { toolDensity: composition.toolDensity, errorDensity: composition.errorDensity },
+      },
+    };
+  }
+
+  private async extractImportantMessagesWorker(
+    turns: LLMMessage[][],
+    profile: AdaptiveProfile,
+    workerPool: CPUWorkerPool,
+  ): Promise<LLMMessage[]> {
+    const allMsgs = turns.flat();
+    const fingerprints = this.failureTracker
+      ? [...this.failureTracker.getRunRecord('current')?.messageFingerprints ?? []]
+      : [];
+
+    const workerResult = await workerPool.execute<
+      { messages: Array<{ role: string; content: string; tool_calls?: unknown[] }>; importanceConfig: typeof profile.importanceConfig; failureFingerprints: string[] },
+      Array<{ index: number; importance: number }>
+    >('compact_score_messages', {
+      messages: allMsgs.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '', tool_calls: m.tool_calls })),
+      importanceConfig: profile.importanceConfig,
+      failureFingerprints: fingerprints,
+    });
+
+    return workerResult
+      .filter(s => s.importance > 0.6 && !isCompacted(allMsgs[s.index]))
+      .sort((a, b) => b.importance - a.importance)
+      .slice(0, 5)
+      .map(s => allMsgs[s.index]);
+  }
+
+  private async buildSummaryWorker(
+    turns: LLMMessage[][],
+    provider: LLMProvider | undefined,
+    profile: AdaptiveProfile,
+    workerPool: CPUWorkerPool,
+  ): Promise<string> {
+    const collapseTokens = estimateMessagesTokens(turns.flat());
+
+    if (provider && collapseTokens > 2000) {
+      const llmSummary = await this.llmSummarize(turns, provider, 500);
+      if (llmSummary) return llmSummary;
+    }
+
+    return workerPool.execute<
+      { turns: Array<Array<{ role: string; content: string; tool_calls?: unknown[] }>>; verbosity: string },
+      string
+    >('compact_build_summary', {
+      turns: turns.map(t => t.map(m => ({
+        role: m.role,
+        content: typeof m.content === 'string' ? m.content : '',
+        tool_calls: m.tool_calls,
+      }))),
+      verbosity: profile.collapseVerbosity,
+    });
   }
 
   /**
@@ -556,10 +841,17 @@ export class ContextCompactor {
   private layer2Microcompact(messages: LLMMessage[], profile: AdaptiveProfile): { messages: LLMMessage[]; action: CompactAction } {
     const before = estimateMessagesTokens(messages);
     let trimmedCount = 0;
+    let redactedCount = 0;
 
     const maxChars = profile.maxToolOutputChars;
     const result = messages.map(msg => {
       if (msg.role === 'tool' && msg.content.length > maxChars) {
+        // Security-first: redact unsafe tool content instead of normal truncation.
+        const redacted = redactUnsafeToolContent(msg.content);
+        if (redacted) {
+          redactedCount++;
+          return { ...msg, content: redacted };
+        }
         trimmedCount++;
         const truncated = this.intelligentTruncate(msg.content, maxChars);
         return { ...msg, content: truncated };
@@ -572,7 +864,7 @@ export class ContextCompactor {
 
     return {
       messages: result,
-      action: { layer: 2, droppedCount: trimmedCount, tokensSaved: before - after, description: `Layer 2 microcompact: trimmed ${trimmedCount} tool outputs`, taskTypeApplied: null, compositionApplied: { toolDensity: composition.toolDensity, errorDensity: composition.errorDensity } },
+      action: { layer: 2, droppedCount: trimmedCount + redactedCount, tokensSaved: before - after, description: `Layer 2 microcompact: trimmed ${trimmedCount} tool outputs, redacted ${redactedCount} unsafe outputs`, taskTypeApplied: null, compositionApplied: { toolDensity: composition.toolDensity, errorDensity: composition.errorDensity } },
     };
   }
 
@@ -691,23 +983,20 @@ export class ContextCompactor {
     const system: LLMMessage[] = messages.filter(m => m.role === 'system');
     const nonSystem: LLMMessage[] = messages.filter(m => m.role !== 'system');
 
-    // Cost-weighted retention: keep messages that fit within 20% of budget,
-    // prioritizing expensive messages (assistant responses, long tool outputs)
     const retentionBudget = Math.floor(this.config.maxContextTokens * 0.20);
     const kept: LLMMessage[] = [];
     let usedCostWeightedTokens = 0;
 
-    // Score all messages by cost impact and importance
     const scored: Array<{ msg: LLMMessage; costImpact: number; index: number }> = nonSystem.map((msg, i) => ({
       msg,
-      costImpact: estimateMessageCostImpact(msg),
+      costImpact: this.failureTracker?.isCorrelated(msg)
+        ? Math.floor(estimateMessageCostImpact(msg) * 0.25)
+        : estimateMessageCostImpact(msg),
       index: i,
     }));
 
-    // Sort by cost impact (most expensive first) to prioritize keeping expensive messages
-    scored.sort((a, b) => b.costImpact - a.costImpact);
+    this.selectTopKByCost(scored, retentionBudget);
 
-    // Greedily select messages that fit within budget, preserving order
     const selectedIndices = new Set<number>();
     for (const s of scored) {
       if (usedCostWeightedTokens + s.costImpact > retentionBudget) break;
@@ -715,7 +1004,6 @@ export class ContextCompactor {
       usedCostWeightedTokens += s.costImpact;
     }
 
-    // Restore original order for kept messages
     for (let i = nonSystem.length - 1; i >= 0; i--) {
       if (selectedIndices.has(i)) {
         kept.unshift(nonSystem[i]);
@@ -749,7 +1037,7 @@ export class ContextCompactor {
     const scored: ScoredMessage[] = allMsgs.map((msg, i) => ({
       msg,
       index: i,
-      importance: scoreMessageImportance(msg, i, allMsgs.length, profile.importanceConfig),
+      importance: scoreMessageImportance(msg, i, allMsgs.length, profile.importanceConfig, this.failureTracker),
     }));
 
     // Keep messages with importance > 0.6 (errors, decisions, user instructions)
@@ -762,10 +1050,61 @@ export class ContextCompactor {
       .map(s => s.msg);
   }
 
-  /**
-   * Governor-aware + task-type-aware threshold adjustment.
-   * Under budget pressure, trigger compaction earlier.
-   */
+  private selectTopKByCost(
+    scored: Array<{ msg: LLMMessage; costImpact: number; index: number }>,
+    budget: number,
+  ): void {
+    const minHeap: Array<{ costImpact: number; idx: number }> = [];
+    let totalCost = 0;
+
+    for (let i = 0; i < scored.length; i++) {
+      const item = scored[i];
+      if (totalCost + item.costImpact <= budget) {
+        minHeap.push({ costImpact: item.costImpact, idx: i });
+        totalCost += item.costImpact;
+        this.bubbleUp(minHeap, minHeap.length - 1);
+      } else if (minHeap.length > 0 && item.costImpact > minHeap[0].costImpact) {
+        totalCost -= minHeap[0].costImpact;
+        minHeap[0] = { costImpact: item.costImpact, idx: i };
+        totalCost += item.costImpact;
+        this.bubbleDown(minHeap, 0);
+      }
+    }
+
+    const keepSet = new Set(minHeap.map(h => h.idx));
+    let writeIdx = 0;
+    for (let i = 0; i < scored.length; i++) {
+      if (keepSet.has(i)) {
+        scored[writeIdx++] = scored[i];
+      }
+    }
+    scored.length = writeIdx;
+    scored.sort((a, b) => b.costImpact - a.costImpact);
+  }
+
+  private bubbleUp(heap: Array<{ costImpact: number; idx: number }>, i: number): void {
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (heap[parent].costImpact <= heap[i].costImpact) break;
+      [heap[parent], heap[i]] = [heap[i], heap[parent]];
+      i = parent;
+    }
+  }
+
+  private bubbleDown(heap: Array<{ costImpact: number; idx: number }>, i: number): void {
+    const n = heap.length;
+    while (true) {
+      let smallest = i;
+      const left = 2 * i + 1;
+      const right = 2 * i + 2;
+      if (left < n && heap[left].costImpact < heap[smallest].costImpact) smallest = left;
+      if (right < n && heap[right].costImpact < heap[smallest].costImpact) smallest = right;
+      if (smallest === i) break;
+      [heap[smallest], heap[i]] = [heap[i], heap[smallest]];
+      i = smallest;
+    }
+  }
+
   private adjustThresholds(taskType?: CompactTaskType, messages?: LLMMessage[]): { layer1: number; layer2: number; layer3: number; layer4: number } {
     const profile = this.getEffectiveProfile(taskType, messages);
 
@@ -883,6 +1222,17 @@ export class ContextCompactor {
   private intelligentTruncate(content: string, maxChars: number): string {
     if (content.length <= maxChars) return content;
 
+    const redacted = redactUnsafeToolContent(content);
+    if (redacted) return redacted;
+
+    if (content.length <= maxChars * 2) {
+      return this.truncateSmall(content, maxChars);
+    }
+
+    return this.truncateLarge(content, maxChars);
+  }
+
+  private truncateSmall(content: string, maxChars: number): string {
     const lines = content.split('\n');
     const lineCount = lines.length;
     const important: string[] = [];
@@ -915,6 +1265,28 @@ export class ContextCompactor {
     }
 
     return `${result}\n...[+${content.length - result.length} more chars]`;
+  }
+
+  private truncateLarge(content: string, maxChars: number): string {
+    const headSize = Math.floor(maxChars * 0.7);
+    const tailSize = Math.floor(maxChars * 0.2);
+    const head = content.slice(0, headSize);
+    const tail = content.slice(content.length - tailSize);
+    const omitted = content.length - headSize - tailSize;
+    const omittedLines = this.countNewlinesFast(content, headSize, content.length - tailSize);
+    return `${head}\n...[+${omittedLines} lines, ${omitted} chars omitted]...\n${tail}`;
+  }
+
+  private countNewlinesFast(content: string, start: number, end: number): number {
+    let count = 0;
+    const chunkSize = 8192;
+    for (let i = start; i < end; i += chunkSize) {
+      const chunkEnd = Math.min(i + chunkSize, end);
+      for (let j = i; j < chunkEnd; j++) {
+        if (content.charCodeAt(j) === 10) count++;
+      }
+    }
+    return count;
   }
 
   /**

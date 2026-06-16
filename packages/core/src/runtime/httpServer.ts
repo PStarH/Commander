@@ -37,10 +37,15 @@ import { openApiSpec } from './openapi';
 import { handleAtrHttpRequest, type AtrHttpDeps } from '../atr/atrHttp';
 import { getExecutionScheduler } from '../atr/scheduler';
 import { handleObservabilityRequest, type ObservabilityDeps } from '../observability/httpApi';
+import { getCompensationData, renderDashboardHtml } from './compensationDashboard';
+import { getSOPDashboardData, listSOPs, getSOP, getSOPMarkdown, renderSOPDashboardHtml } from './sopDashboard';
 import { getTraceRecorder } from './executionTrace';
 import { getCostModel } from '../observability/costModel';
 import { PersistentTraceStore } from './traceStore';
 import { LeaseManager } from '../atr/leaseManager';
+import type { AuthPlugin } from './oidcAuthPlugin';
+import type { SIEMEvent, SIEMForwarder } from './siemForwarder';
+import { type SecurityEvent, getSecurityAuditLogger } from '../security/securityAuditLogger';
 
 export interface HttpServerConfig {
   port: number;
@@ -63,13 +68,20 @@ export interface HttpServerConfig {
   tenantApiKeys?: Record<string, string>;
   /** Optional mapping of SHA-256 API key hash → tenant ID for multi-tenant deployments. */
   tenantApiKeyHashes?: Record<string, string>;
+  /** OIDC authentication plugin config (loaded from env if available) */
+  oidcEnabled?: boolean;
+  /** SIEM forwarder instance for log forwarding (loaded from env if available) */
+  siemForwarder?: SIEMForwarder;
 }
 
 const DEFAULT_CONFIG: HttpServerConfig = {
-  port: 3001,
-  host: '127.0.0.1', // Localhost-only by default (was 0.0.0.0 — GAP-12)
+  port: parseInt(process.env.COMMANDER_PORT ?? '3001', 10),
+  host: '127.0.0.1',
   cors: true,
-  corsAllowedOrigins: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+  corsAllowedOrigins: process.env.CORS_ORIGINS?.split(',').map(s => s.trim()) ?? [
+    `http://localhost:${process.env.WEB_PORT ?? '5173'}`,
+    `http://127.0.0.1:${process.env.WEB_PORT ?? '5173'}`,
+  ],
   maxBodyBytes: 1024 * 1024,
   rateLimitPerMinute: 120,
 };
@@ -136,12 +148,27 @@ function extractAuthKey(req: IncomingMessage): string | undefined {
   return auth.startsWith('Bearer ') ? auth.slice(7) : auth;
 }
 
-function authenticate(req: IncomingMessage, authDisabled: boolean, apiKeyHash?: string): boolean {
-  if (authDisabled) return true;
-  if (!apiKeyHash) return false;
+/** Extended authenticate that also tries registered auth plugins (OIDC). */
+function authenticate(req: IncomingMessage, authDisabled: boolean, apiKeyHash?: string, authPlugins?: AuthPlugin[]): { success: boolean; userId?: string; role?: string } {
+  if (authDisabled) return { success: true };
+
   const key = extractAuthKey(req);
-  if (!key) return false;
-  return timingSafeHexEqual(hashSecret(key), apiKeyHash);
+  if (!key) return { success: false };
+
+  // 1. Try API key auth first
+  if (apiKeyHash && timingSafeHexEqual(hashSecret(key), apiKeyHash)) {
+    return { success: true };
+  }
+
+  // 2. Try registered auth plugins (OIDC, SAML, etc.)
+  if (authPlugins && authPlugins.length > 0) {
+    // Find the first plugin that accepts this token
+    // Note: this is synchronous for API key auth; OIDC plugins are async
+    // and handled via the async request handler path.
+    return { success: false, userId: '__plugin_pending__' };
+  }
+
+  return { success: false };
 }
 
 export class CommanderHttpServer {
@@ -161,6 +188,9 @@ export class CommanderHttpServer {
   private authDisabled = false;
   private apiKeyHash: string | undefined;
   private tenantApiKeyHashes: Map<string, string> = new Map();
+  private authPlugins: AuthPlugin[] = [];
+  private siemForwarder: SIEMForwarder | null = null;
+  private securityEventUnsub: (() => void) | null = null;
 
   constructor(config?: Partial<HttpServerConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -189,6 +219,41 @@ export class CommanderHttpServer {
     // Drop raw secrets from retained server config after one-way hashing.
     this.config.apiKey = undefined;
     this.config.tenantApiKeys = undefined;
+
+    // Initialize OIDC auth plugin from env if enabled
+    if (this.config.oidcEnabled !== false) {
+      try {
+        const { createOIDCPluginFromEnv } = require('./oidcAuthPlugin');
+        const plugin = createOIDCPluginFromEnv();
+        if (plugin) {
+          this.registerAuthPlugin(plugin);
+          getGlobalLogger().info('HttpServer', 'OIDC auth plugin initialized', {
+            issuer: plugin['config']?.issuer,
+          });
+        }
+      } catch (e) {
+        getGlobalLogger().debug('HttpServer', 'OIDC plugin not available', { error: (e as Error)?.message });
+      }
+    }
+
+    // Initialize SIEM forwarder from env if configured
+    if (this.config.siemForwarder) {
+      this.registerSIEMForwarder(this.config.siemForwarder);
+    } else {
+      try {
+        const { createSIEMForwarderFromEnv } = require('./siemForwarder');
+        const forwarder = createSIEMForwarderFromEnv();
+        if (forwarder) {
+          this.registerSIEMForwarder(forwarder);
+          getGlobalLogger().info('HttpServer', 'SIEM forwarder initialized', {
+            type: forwarder['config']?.type,
+            endpoint: forwarder['config']?.endpoint,
+          });
+        }
+      } catch (e) {
+        getGlobalLogger().debug('HttpServer', 'SIEM forwarder not available', { error: (e as Error)?.message });
+      }
+    }
   }
 
   async start(): Promise<void> {
@@ -361,6 +426,20 @@ export class CommanderHttpServer {
       return;
     }
 
+    // Compensation dashboard (HTML page — bypasses auth for local dev, but not rate limiting)
+    if (segments[0] === 'dashboard' && segments[1] === 'compensation' && (req.method ?? 'GET') === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(renderDashboardHtml(this.bus));
+      return;
+    }
+
+    // SOP dashboard (HTML page — bypasses auth for local dev)
+    if (segments[0] === 'dashboard' && segments[1] === 'sop' && (req.method ?? 'GET') === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(renderSOPDashboardHtml());
+      return;
+    }
+
     // Readiness probe (separate from health — checks deps)
     if (segments[0] === 'ready' && (req.method ?? 'GET') === 'GET') {
       const mem = process.memoryUsage();
@@ -376,10 +455,41 @@ export class CommanderHttpServer {
       return;
     }
 
-    if (!authenticate(req, this.authDisabled, this.apiKeyHash)) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Unauthorized. Provide Authorization: Bearer <api-key> header.' }));
-      return;
+    // Authenticate: try API key first, then registered auth plugins (OIDC)
+    const authResult = authenticate(req, this.authDisabled, this.apiKeyHash, this.authPlugins);
+    if (!authResult.success) {
+      // If auth plugins are registered, try async OIDC authentication
+      if (this.authPlugins.length > 0) {
+        const bearerToken = extractAuthKey(req);
+        if (bearerToken) {
+          let oidcAuthenticated = false;
+          for (const plugin of this.authPlugins) {
+            try {
+              const result = await plugin.authenticate(bearerToken);
+              if (result) {
+                oidcAuthenticated = true;
+                break;
+              }
+            } catch {
+              continue;
+            }
+          }
+          if (!oidcAuthenticated) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Unauthorized. Provide Authorization: Bearer <api-key> or valid OIDC token.' }));
+            return;
+          }
+          // Passed OIDC auth — continue to request handling
+        } else {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Unauthorized. Provide Authorization: Bearer <token> header.' }));
+          return;
+        }
+      } else {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized. Provide Authorization: Bearer <api-key> header.' }));
+        return;
+      }
     }
 
     // Reject new run requests during graceful shutdown to prevent new runtimes
@@ -411,6 +521,10 @@ export class CommanderHttpServer {
         const streamSegments = segments.slice(1);
         if (streamSegments[0] === 'cost') {
           await this.handleCostStreamRequest(req, res);
+        } else if (streamSegments[0] === 'compensation') {
+          await this.handleCompensationStreamRequest(req, res);
+        } else if (streamSegments[0] === 'sop') {
+          await this.handleSOPStreamRequest(req, res);
         } else {
           await this.handleStreamRequest(req, res, streamSegments);
         }
@@ -531,6 +645,44 @@ export class CommanderHttpServer {
         const r = await handleAtrHttpRequest(req, res, atrDeps, atrSegments, queryStr, { maxBodyBytes: this.config.maxBodyBytes });
         if (r.handled) return;
       }
+      if (resource === 'compensation' && method === 'GET') {
+        // GET /api/v1/compensation — JSON compensation metrics snapshot
+        sendJson(res, 200, getCompensationData(this.bus));
+        return;
+      }
+      if (resource === 'sops') {
+        // GET /api/v1/sops — list all SOPs
+        // GET /api/v1/sops/:agentId — list SOPs for an agent
+        // GET /api/v1/sops/:agentId/:runId — retrieve specific SOP as JSON
+        // GET /api/v1/sops/:agentId/:runId/markdown — retrieve SOP as Markdown
+        if (method === 'GET') {
+          // Skip 'v1' and 'sops' (2 elements) to get agentId, runId, format
+          const [,            ,            agentId,            runId,            format,          ] = segments;
+          if (!agentId) {
+            sendJson(res, 200, getSOPDashboardData());
+            return;
+          }
+          if (!runId) {
+            // List SOPs for a specific agent
+            const allSops = listSOPs();
+            const filtered = allSops.filter(s => s.agentId === agentId);
+            sendJson(res, 200, { agentId, sops: filtered, total: filtered.length });
+            return;
+          }
+          if (format === 'markdown') {
+            const md = getSOPMarkdown(agentId, runId);
+            if (!md) { sendJson(res, 404, { error: 'SOP not found' }); return; }
+            res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8' });
+            res.end(md);
+            return;
+          }
+          // Default: return structured JSON
+          const sop = getSOP(agentId, runId);
+          if (!sop) { sendJson(res, 404, { error: 'SOP not found' }); return; }
+          sendJson(res, 200, sop);
+          return;
+        }
+      }
       if (resource === 'observability') {
         const traceStore = new PersistentTraceStore();
         const obsDeps: ObservabilityDeps = {
@@ -560,6 +712,48 @@ export class CommanderHttpServer {
     const unsubComplete = this.bus.subscribe('agent.completed', () => { stream.emitStatus('agent.completed'); });
     const unsubError = this.bus.subscribe('agent.failed', () => { stream.emitStatus('agent.error'); });
     req.on('close', () => { unsubStart(); unsubComplete(); unsubError(); stream.close(); });
+  }
+
+  private async handleCompensationStreamRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const stream = new SSEStream();
+    // Write headers after pipe() so data path is fully wired (SSEStream dispatches
+    // retry directive in constructor before subscribers exist — acceptable since the
+    // browser default reconnect timing is sufficient)
+    stream.pipe(res);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+
+    // Subscribe to compensation bus events and emit structured snapshots
+    const unsubPlanned = this.bus.subscribe('tool.compensation_planned', () => {
+      if (stream.isClosed) return;
+      stream.emitStructured('compensation.update', getCompensationData(this.bus) as unknown as Record<string, unknown>);
+    });
+    const unsubStep = this.bus.subscribe('tool.compensation_step', () => {
+      if (stream.isClosed) return;
+      stream.emitStructured('compensation.update', getCompensationData(this.bus) as unknown as Record<string, unknown>);
+    });
+
+    req.on('close', () => {
+      unsubPlanned();
+      unsubStep();
+      stream.close();
+    });
+  }
+
+  private async handleSOPStreamRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const stream = new SSEStream();
+    stream.pipe(res);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+
+    // Subscribe to SOP bus events and emit structured snapshots
+    const unsubGenerated = this.bus.subscribe('sop.generated', () => {
+      if (stream.isClosed) return;
+      stream.emitStructured('sop.update', getSOPDashboardData() as unknown as Record<string, unknown>);
+    });
+
+    req.on('close', () => {
+      unsubGenerated();
+      stream.close();
+    });
   }
 
   private async handleCostStreamRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -639,6 +833,46 @@ export class CommanderHttpServer {
         error: { code: -32700, message: `Parse error: ${err instanceof Error ? err.message : String(err)}` },
       });
     }
+  }
+
+  /**
+   * Register an authentication plugin (e.g. OIDC, SAML).
+   * Plugins are tried after the built-in API key auth.
+   */
+  registerAuthPlugin(plugin: AuthPlugin): void {
+    this.authPlugins.push(plugin);
+    getGlobalLogger().info('HttpServer', `Auth plugin registered: ${plugin.name}`);
+  }
+
+  /**
+   * Register a SIEM forwarder for security log forwarding.
+   * Wire security audit events from the bus to the forwarder.
+   */
+  registerSIEMForwarder(forwarder: SIEMForwarder): void {
+    this.siemForwarder = forwarder;
+
+    // Subscribe to security events on the message bus
+    if (this.securityEventUnsub) {
+      this.securityEventUnsub();
+    }
+    this.securityEventUnsub = this.bus.subscribe('security.event' as any, (msg) => {
+      if (!this.siemForwarder) return;
+      const event = msg.payload as unknown as SecurityEvent;
+      if (!event || !event.type) return;
+
+      this.siemForwarder.forward({
+        timestamp: event.timestamp,
+        type: event.type,
+        severity: event.severity,
+        source: event.source,
+        message: event.message,
+        details: event.details,
+        context: event.context,
+        eventId: event.id,
+      });
+    });
+
+    getGlobalLogger().info('HttpServer', `SIEM forwarder registered: ${forwarder['config']?.type}`);
   }
 
   /** Resolve tenant ID from the Authorization header using configured API key mapping. */

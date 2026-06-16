@@ -3,7 +3,7 @@
  * Extracted from evolutionaryWorkflowEngine.ts to keep modules under 500 lines.
  */
 
-import type { TaskTreeNode } from '../ultimate/types';
+import type { TaskTreeNode } from './types';
 import type {
   WorkflowNode,
   WorkflowEdge,

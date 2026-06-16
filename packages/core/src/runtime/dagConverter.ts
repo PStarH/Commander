@@ -4,7 +4,7 @@
  */
 
 import type { WorkflowNode, WorkflowEdge, WorkflowDAG } from './evolutionaryWorkflowTypes';
-import type { TaskTreeNode, ROMARole } from '../ultimate/types';
+import type { TaskTreeNode, ROMARole } from './types';
 
 /**
  * Convert a WorkflowDAG to a TaskTreeNode hierarchy.

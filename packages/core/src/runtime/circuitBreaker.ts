@@ -8,6 +8,8 @@ export interface CircuitStats {
   threshold: number;
   recoveryTimeMs: number;
   openCount: number;
+  semanticFailureCount: number;
+  securityEventCount: number;
 }
 
 export class CircuitBreaker {
@@ -32,14 +34,26 @@ export class CircuitBreaker {
   private volumeThreshold: number;
   /** Error rate threshold (0-1) to trip circuit (Hystrix: circuitBreakerErrorThresholdPercentage) */
   private errorRateThreshold: number;
+  // Semantic drift tracking (P1: semantic circuit breaker)
+  private consecutiveSemanticFailures = 0;
+  private semanticFailureThreshold = 3;
+  private lastSemanticFailureTime = 0;
+  private onSemanticTrip?: (consecutiveFailures: number, reason: string) => void;
+  // Aggregated counters for semantic drift and security events
+  private semanticFailureCount = 0;
+  private securityEventCount = 0;
+  private semanticThreshold: number;
+  private securityThreshold: number;
 
-  constructor(threshold = 5, recoveryTimeMs = 30000, halfOpenMaxTests = 1, onStateChange?: (from: CircuitState, to: CircuitState) => void, options?: { volumeThreshold?: number; errorRateThreshold?: number }) {
+  constructor(threshold = 5, recoveryTimeMs = 30000, halfOpenMaxTests = 1, onStateChange?: (from: CircuitState, to: CircuitState) => void, options?: { volumeThreshold?: number; errorRateThreshold?: number; semanticThreshold?: number; securityThreshold?: number }) {
     this.threshold = threshold;
     this.recoveryTimeMs = recoveryTimeMs;
     this.halfOpenMaxTests = halfOpenMaxTests;
     this.onStateChange = onStateChange;
     this.volumeThreshold = options?.volumeThreshold ?? 0;
     this.errorRateThreshold = options?.errorRateThreshold ?? 0.5;
+    this.semanticThreshold = options?.semanticThreshold ?? 3;
+    this.securityThreshold = options?.securityThreshold ?? 2;
   }
 
   setProviderName(name: string): void {
@@ -61,10 +75,22 @@ export class CircuitBreaker {
       threshold: this.threshold,
       recoveryTimeMs: this.recoveryTimeMs,
       openCount: this.openCount,
+      semanticFailureCount: this.semanticFailureCount,
+      securityEventCount: this.securityEventCount,
     };
   }
 
   isAvailable(): boolean {
+    // Trip the circuit if semantic failures or security events exceed their thresholds,
+    // even when conventional operational failures have not reached the volume/error rate gate.
+    if (this.semanticFailureCount >= this.semanticThreshold || this.securityEventCount >= this.securityThreshold) {
+      if (this.state !== 'OPEN') {
+        this.transitionTo('OPEN');
+        this.openCount++;
+      }
+      return false;
+    }
+
     if (this.state === 'CLOSED') return true;
     if (this.state === 'OPEN') {
       if (Date.now() - this.lastFailureTime >= this.recoveryTimeMs) {
@@ -131,6 +157,64 @@ export class CircuitBreaker {
     }
   }
 
+  /**
+   * Record a semantic/quality failure (e.g., verification failed, hallucination detected).
+   * Tracks consecutive failures as a proxy for semantic drift.
+   * When threshold is reached, fires onSemanticTrip callback.
+   * This is separate from operational failures (network errors, timeouts).
+   */
+  recordSemanticFailure(reason: string): void {
+    this.consecutiveSemanticFailures++;
+    this.lastSemanticFailureTime = Date.now();
+    if (this.consecutiveSemanticFailures >= this.semanticFailureThreshold) {
+      this.onSemanticTrip?.(this.consecutiveSemanticFailures, reason);
+    }
+  }
+
+  /** Reset semantic failure counter after a successful recovery. */
+  recordSemanticSuccess(): void {
+    this.consecutiveSemanticFailures = 0;
+  }
+
+  /** Get current semantic health status. */
+  getSemanticHealth(): { consecutiveFailures: number; tripped: boolean; lastFailureTime: number } {
+    return {
+      consecutiveFailures: this.consecutiveSemanticFailures,
+      tripped: this.consecutiveSemanticFailures >= this.semanticFailureThreshold,
+      lastFailureTime: this.lastSemanticFailureTime,
+    };
+  }
+
+  /** Set callback for semantic trip events. */
+  setSemanticTripHandler(handler: (consecutiveFailures: number, reason: string) => void): void {
+    this.onSemanticTrip = handler;
+  }
+
+  /**
+   * Record a semantic drift event with a severity score (0-1).
+   * Increments the aggregated semantic failure counter; when the configured
+   * threshold is reached, subsequent isAvailable() calls will keep the circuit open.
+   */
+  onSemanticDrift(score: number): void {
+    if (score > 0) {
+      this.semanticFailureCount++;
+      this.lastSemanticFailureTime = Date.now();
+    }
+  }
+
+  /**
+   * Record a security event (e.g., HIGH/CRITICAL content threat detected).
+   * Critical events count for 2, others for 1. When the security threshold is
+   * reached, the circuit stays open until reset.
+   */
+  onSecurityEvent(severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'): void {
+    const weight = severity === 'CRITICAL' ? 2 : severity === 'HIGH' ? 1 : 0;
+    if (weight > 0) {
+      this.securityEventCount += weight;
+      this.lastSemanticFailureTime = Date.now();
+    }
+  }
+
   reset(): void {
     const was = this.state;
     this.state = 'CLOSED';
@@ -140,6 +224,9 @@ export class CircuitBreaker {
     this.halfOpenInFlight = 0;
     this.failureTimestamps = [];
     this.requestTimestamps = [];
+    this.consecutiveSemanticFailures = 0;
+    this.semanticFailureCount = 0;
+    this.securityEventCount = 0;
     if (was !== 'CLOSED') this.onStateChange?.(was, 'CLOSED');
   }
 

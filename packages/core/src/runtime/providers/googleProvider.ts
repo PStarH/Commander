@@ -65,6 +65,14 @@ export class GoogleProvider implements LLMProvider {
       body.system_instruction = { parts: [{ text: systemInstruction }] };
     }
 
+    // Provider-native structured output (Gemini responseSchema)
+    if (request.responseFormat?.type === 'json_schema' && request.responseFormat.schema) {
+      (body.generationConfig as Record<string, unknown>).responseMimeType = 'application/json';
+      (body.generationConfig as Record<string, unknown>).responseSchema = request.responseFormat.schema;
+    } else if (request.responseFormat?.type === 'json_object') {
+      (body.generationConfig as Record<string, unknown>).responseMimeType = 'application/json';
+    }
+
     // Gemini cachedContent wiring: when a server-side cached content name is provided in
     // cacheConfig, reference it instead of inline contents. This is a >4K token optimization;
     // cached tokens are billed at 90% discount. The system instruction and tools can stay
@@ -86,7 +94,7 @@ export class GoogleProvider implements LLMProvider {
     }
 
     const data: GeminiResponse = await response.json();
-    return this.parseResponse(data, model);
+    return this.parseResponse(data, model, request.responseFormat);
   }
 
   private buildContents(request: LLMRequest): GeminiContent[] {
@@ -109,11 +117,17 @@ export class GoogleProvider implements LLMProvider {
     return sysMsg?.content;
   }
 
-  private parseResponse(data: GeminiResponse, model: string): LLMResponse {
+  private parseResponse(
+    data: GeminiResponse,
+    model: string,
+    responseFormat?: LLMRequest['responseFormat'],
+  ): LLMResponse {
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
     const finishReason = data.candidates?.[0]?.finishReason ?? 'stop';
 
     const usage = data.usageMetadata ?? { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 };
+
+    const parsed = tryParseGeminiResponse(text, responseFormat);
 
     return {
       content: text,
@@ -124,6 +138,23 @@ export class GoogleProvider implements LLMProvider {
         totalTokens: usage.totalTokenCount,
       },
       finishReason: finishReason === 'STOP' ? 'stop' : finishReason === 'MAX_TOKENS' ? 'length' : 'stop',
+      parsed,
     };
+  }
+}
+
+function tryParseGeminiResponse(
+  content: string,
+  responseFormat?: LLMRequest['responseFormat'],
+): Record<string, unknown> | undefined {
+  if (!responseFormat || responseFormat.type === 'text' || !content.trim()) return undefined;
+
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
+
+  try {
+    return JSON.parse(trimmed) as Record<string, unknown>;
+  } catch {
+    return undefined;
   }
 }

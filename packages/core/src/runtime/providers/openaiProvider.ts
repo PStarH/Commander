@@ -58,11 +58,11 @@ export class OpenAIProvider implements LLMProvider {
     }
 
     if (useStreaming) {
-      return this.handleStreamingResponse(response, model);
+      return this.handleStreamingResponse(response, model, request.responseFormat);
     }
 
     const data = await response.json();
-    return this.parseResponse(data, model);
+    return this.parseResponse(data, model, request.responseFormat);
   }
 
   private buildBody(request: LLMRequest, model: string): Record<string, unknown> {
@@ -86,6 +86,22 @@ export class OpenAIProvider implements LLMProvider {
       body.parallel_tool_calls = true;
     }
 
+    // Provider-native structured output
+    if (request.responseFormat) {
+      if (request.responseFormat.type === 'json_schema' && request.responseFormat.schema) {
+        body.response_format = {
+          type: 'json_schema',
+          json_schema: {
+            name: request.responseFormat.name ?? 'response',
+            schema: request.responseFormat.schema,
+            strict: true,
+          },
+        };
+      } else if (request.responseFormat.type === 'json_object') {
+        body.response_format = { type: 'json_object' };
+      }
+    }
+
     // OpenAI auto-caches prompts >1024 tokens — no explicit markers needed
     if (request.cacheConfig?.cacheSystemPrompt) {
       // OpenAI's prompt caching is automatic for repeated prefixes
@@ -98,7 +114,11 @@ export class OpenAIProvider implements LLMProvider {
     return body;
   }
 
-  private async handleStreamingResponse(response: Response, model: string): Promise<LLMResponse> {
+  private async handleStreamingResponse(
+    response: Response,
+    model: string,
+    responseFormat?: LLMRequest['responseFormat'],
+  ): Promise<LLMResponse> {
     const reader = response.body?.getReader();
     if (!reader) throw new Error('OpenAI: No response body from streaming endpoint');
 
@@ -158,6 +178,8 @@ export class OpenAIProvider implements LLMProvider {
         }
       : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
+    const parsed = tryParseResponseFormat(content, responseFormat);
+
     return {
       content,
       model,
@@ -170,11 +192,16 @@ export class OpenAIProvider implements LLMProvider {
             arguments: JSON.parse(tc.arguments || '{}'),
           }))
         : undefined,
+      parsed,
       reasoning_content: reasoningContent || undefined,
     };
   }
 
-  private parseResponse(data: { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>; reasoning_content?: string }; finish_reason?: string }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } }, model: string): LLMResponse {
+  private parseResponse(
+    data: { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>; reasoning_content?: string }; finish_reason?: string }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } },
+    model: string,
+    responseFormat?: LLMRequest['responseFormat'],
+  ): LLMResponse {
     const choice = data.choices?.[0];
     const message = choice?.message ?? {};
 
@@ -191,6 +218,8 @@ export class OpenAIProvider implements LLMProvider {
       arguments: JSON.parse(tc.function.arguments || '{}'),
     }));
 
+    const parsed = tryParseResponseFormat(message.content ?? '', responseFormat);
+
     return {
       content: message.content ?? '',
       model,
@@ -200,8 +229,27 @@ export class OpenAIProvider implements LLMProvider {
         : choice?.finish_reason === 'length' ? 'length'
         : 'stop',
       toolCalls,
+      parsed,
       // Capture reasoning_content for MiMo reasoning models
       reasoning_content: message.reasoning_content,
     };
+  }
+}
+
+function tryParseResponseFormat(
+  content: string,
+  responseFormat?: LLMRequest['responseFormat'],
+): Record<string, unknown> | undefined {
+  if (!responseFormat || !content.trim()) return undefined;
+  if (responseFormat.type !== 'json_schema' && responseFormat.type !== 'json_object') return undefined;
+
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
+
+  try {
+    return JSON.parse(trimmed) as Record<string, unknown>;
+  } catch (e) {
+    getGlobalLogger().debug('OpenAIProvider', 'Failed to parse structured response content', { error: (e as Error)?.message });
+    return undefined;
   }
 }

@@ -40,6 +40,7 @@ export {
   resetTraceRecorder,
 } from './executionTrace';
 export { AgentRuntime } from './agentRuntime';
+export type { AgentRuntimeInterface } from './agentRuntimeInterface';
 export type { EmbeddingFunction } from './embedding';
 export { MockEmbeddingFunction, cosineSimilarity, l2Distance, InMemoryEmbeddingStore, calculateMemoryScore } from './embedding';
 export { OpenAIProvider } from './providers/openaiProvider';
@@ -63,6 +64,7 @@ export { BedrockProvider } from './providers/bedrockProvider';
 export { XAIProvider } from './providers/xaiProvider';
 export { AnyscaleProvider } from './providers/anyscaleProvider';
 export { DeepInfraProvider } from './providers/deepinfraProvider';
+export { AgnesProvider } from './providers/agnesProvider';
 export { BaseOpenAICompatibleProvider, callOpenAICompatibleAPI, parseOpenAIStream, parseOpenAIResponse, buildOpenAIBody } from './providers/baseOpenAICompatible';
 export { MCPRemoteRuntime } from './mcpRemoteRuntime';
 export type { MCPRemoteRuntimeConfig } from './mcpRemoteRuntime';
@@ -87,6 +89,10 @@ export { detectTaskType, classifyProvisionIntent } from './taskAnalyzer';
 export type { VerificationSignal, VerificationReport, UVPTaskContext, UVPConfig, TaskType, ProvisionIntentScores } from './unifiedVerificationTypes';
 export { StateCheckpointer } from './stateCheckpointer';
 export type { CheckpointState } from './stateCheckpointer';
+export { ReliabilityEngine } from './reliabilityEngine';
+export type { ReliabilityEngineConfig, ReliabilityStats } from './reliabilityEngine';
+export { PrivacyRouter, getPrivacyRouter, resetPrivacyRouter } from './privacyRouter';
+export type { PrivacyRouterConfig, PrivacyDecision, PrivacyRoute, SensitivityMatch, SensitivityCategory } from './privacyRouter';
 export { PersistentTraceStore } from './traceStore';
 export type { TraceStore } from './traceStore';
 export { DeadLetterQueue } from './deadLetterQueue';
@@ -113,6 +119,30 @@ export { ToolAvailabilityManager, evaluate, allOf, anyOf, not, always, never, ea
 export type { AvailabilityContext, AvailabilityExpression, ToolAvailabilityRule } from './toolAvailability';
 export { ToolPlanner } from './toolPlanner';
 export type { ExecutionPlan, ExecutionStage, DependencyEdge, ResourceConflict } from './toolPlanner';
+export {
+  exportSOPFromTrace,
+  exportSOPFromResult,
+  formatSOPAsMarkdown,
+  formatSOPAsContext,
+} from './sopExport';
+export type {
+  SOPTemplate,
+  SOPPhase,
+  SOPDecision,
+  SOPToolCall,
+  SOPFileAccess,
+} from './sopExport';
+
+export {
+  listSOPs,
+  getSOP,
+  getSOPMarkdown,
+  getSOPDashboardData,
+  renderSOPDashboardHtml,
+  type SOPListItem,
+  type SOPDashboardData,
+} from './sopDashboard';
+
 export { CommanderHttpServer, createHttpServer } from './httpServer';
 export { BaseChannelAdapter } from './channelAdapter';
 export { TelegramAdapter, createTelegramAdapter } from './adapters/telegramAdapter';
@@ -137,3 +167,7 @@ export {
   LSPDiagnosticsTool,
   LSPAttachTool,
 } from './lspIntegration';
+export { VCRProvider, createVCRProvider } from './vcrProvider';
+export type { VCREntry, VCRCassette, VCRConfig } from './vcrProvider';
+export { BatchLLMProvider, createBatchProvider } from './batchProvider';
+export type { BatchJob, BatchProviderConfig } from './batchProvider';

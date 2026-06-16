@@ -68,6 +68,19 @@ export class AnthropicProvider implements LLMProvider {
       }
     }
 
+    // Anthropic does not support response_format natively. Use a dummy tool
+    // with the output schema as its input_schema so the model can emit
+    // structured data via tool_use.
+    if (request.responseFormat?.type === 'json_schema' && request.responseFormat.schema) {
+      const structuredTool = {
+        name: 'structured_output',
+        description: 'Emit the final answer as structured JSON matching the requested schema.',
+        input_schema: request.responseFormat.schema,
+      };
+      if (!body.tools) body.tools = [];
+      (body.tools as Record<string, unknown>[]).push(structuredTool);
+    }
+
     const response = await fetch(`${this.baseUrl}/messages`, {
       method: 'POST',
       headers: {
@@ -219,12 +232,17 @@ export class AnthropicProvider implements LLMProvider {
       cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
     };
 
+    const structuredTool = toolCalls.find(tc => tc.name === 'structured_output');
+    const parsed = structuredTool?.arguments;
+    const normalToolCalls = toolCalls.filter(tc => tc.name !== 'structured_output');
+
     return {
       content,
       model,
       usage: tokenUsage,
       finishReason: 'stop',
-      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      toolCalls: normalToolCalls.length > 0 ? normalToolCalls : undefined,
+      parsed,
     };
   }
 
@@ -241,16 +259,25 @@ export class AnthropicProvider implements LLMProvider {
       cacheWriteTokens: data.usage?.cache_creation_input_tokens ?? 0,
     };
 
+    const structuredTool = toolBlocks.find(b => b.name === 'structured_output');
+    const parsed = structuredTool?.input && typeof structuredTool.input === 'object'
+      ? (structuredTool.input as Record<string, unknown>)
+      : undefined;
+    const normalToolCalls = toolBlocks
+      .filter(b => b.name !== 'structured_output')
+      .map((b) => ({
+        id: b.id,
+        name: b.name,
+        arguments: (b.input ?? {}) as Record<string, unknown>,
+      }));
+
     return {
       content: textBlocks.map((b) => b.text).join(''),
       model,
       usage,
       finishReason: 'stop',
-      toolCalls: toolBlocks.map((b) => ({
-        id: b.id,
-        name: b.name,
-        arguments: (b.input ?? {}) as Record<string, unknown>,
-      })),
+      toolCalls: normalToolCalls.length > 0 ? normalToolCalls : undefined,
+      parsed,
     };
   }
 }

@@ -8,7 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { AgentExecutionContext, AgentExecutionResult, ExecutionExperience } from './types';
-import type { TaskTreeNode } from '../ultimate/types';
+import type { TaskTreeNode } from './types';
 import { getMetaLearner } from '../selfEvolution/metaLearner';
 import { getGlobalReflectionEngine } from '../reflectionEngine';
 import { getGlobalLogger } from '../logging';

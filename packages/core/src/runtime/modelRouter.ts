@@ -25,38 +25,38 @@ import { detectTaskType } from './unifiedVerification';
 
 const DEFAULT_MODELS: ModelConfig[] = [
   // ===== Eco tier — cheap & fast =====
-  { id: 'claude-haiku-4-5', provider: 'anthropic', tier: 'eco', costPer1KInput: 0.0008, costPer1KOutput: 0.004, capabilities: ['code', 'analysis'], contextWindow: 200000, priority: 0 },
-  { id: 'gpt-4o-mini', provider: 'openai', tier: 'eco', costPer1KInput: 0.00015, costPer1KOutput: 0.0006, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 1 },
-  { id: 'gemini-2-flash', provider: 'google', tier: 'eco', costPer1KInput: 0.0001, costPer1KOutput: 0.0004, capabilities: ['analysis'], contextWindow: 1000000, priority: 2 },
-  { id: 'llama-3.3-70b-versatile', provider: 'groq', tier: 'eco', costPer1KInput: 0.00059, costPer1KOutput: 0.00079, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 3 },
-  { id: 'mistral-small-latest', provider: 'mistral', tier: 'eco', costPer1KInput: 0.001, costPer1KOutput: 0.001, capabilities: ['code', 'analysis'], contextWindow: 32000, priority: 4 },
-  { id: 'command-r-08-2024', provider: 'cohere', tier: 'eco', costPer1KInput: 0.0005, costPer1KOutput: 0.0015, capabilities: ['analysis'], contextWindow: 128000, priority: 5 },
-  { id: 'sonar', provider: 'perplexity', tier: 'eco', costPer1KInput: 0.001, costPer1KOutput: 0.001, capabilities: ['analysis'], contextWindow: 128000, priority: 6 },
+  { id: 'claude-haiku-4-5', provider: 'anthropic', tier: 'eco', costPer1KInput: 0.0008, costPer1KOutput: 0.004, capabilities: ['code', 'analysis'], contextWindow: 200000, priority: 0, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'gpt-4o-mini', provider: 'openai', tier: 'eco', costPer1KInput: 0.00015, costPer1KOutput: 0.0006, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 1, supportsJSONMode: true, supportsStructuredOutput: true },
+  { id: 'gemini-2-flash', provider: 'google', tier: 'eco', costPer1KInput: 0.0001, costPer1KOutput: 0.0004, capabilities: ['analysis'], contextWindow: 1000000, priority: 2, supportsJSONMode: true, supportsStructuredOutput: true },
+  { id: 'llama-3.3-70b-versatile', provider: 'groq', tier: 'eco', costPer1KInput: 0.00059, costPer1KOutput: 0.00079, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 3, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'mistral-small-latest', provider: 'mistral', tier: 'eco', costPer1KInput: 0.001, costPer1KOutput: 0.001, capabilities: ['code', 'analysis'], contextWindow: 32000, priority: 4, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'command-r-08-2024', provider: 'cohere', tier: 'eco', costPer1KInput: 0.0005, costPer1KOutput: 0.0015, capabilities: ['analysis'], contextWindow: 128000, priority: 5, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'sonar', provider: 'perplexity', tier: 'eco', costPer1KInput: 0.001, costPer1KOutput: 0.001, capabilities: ['analysis'], contextWindow: 128000, priority: 6, supportsJSONMode: false, supportsStructuredOutput: false },
   // Local providers — effectively free
-  { id: 'llama3.2', provider: 'ollama', tier: 'eco', costPer1KInput: 0, costPer1KOutput: 0, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 7 },
-  { id: 'meta-llama/Llama-3.2-3B-Instruct', provider: 'vllm', tier: 'eco', costPer1KInput: 0, costPer1KOutput: 0, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 8 },
+  { id: 'llama3.2', provider: 'ollama', tier: 'eco', costPer1KInput: 0, costPer1KOutput: 0, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 7, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'meta-llama/Llama-3.2-3B-Instruct', provider: 'vllm', tier: 'eco', costPer1KInput: 0, costPer1KOutput: 0, capabilities: ['code', 'analysis'], contextWindow: 128000, priority: 8, supportsJSONMode: false, supportsStructuredOutput: false },
 
   // ===== Standard tier — balanced quality/cost =====
-  { id: 'claude-sonnet-4-6', provider: 'anthropic', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 200000, priority: 0 },
-  { id: 'gpt-4o', provider: 'openai', tier: 'standard', costPer1KInput: 0.0025, costPer1KOutput: 0.01, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 1 },
-  { id: 'gemini-2-pro', provider: 'google', tier: 'standard', costPer1KInput: 0.0015, costPer1KOutput: 0.0075, capabilities: ['reasoning', 'analysis'], contextWindow: 1000000, priority: 2 },
-  { id: 'mistral-large-latest', provider: 'mistral', tier: 'standard', costPer1KInput: 0.002, costPer1KOutput: 0.006, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 3 },
-  { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', provider: 'together', tier: 'standard', costPer1KInput: 0.0009, costPer1KOutput: 0.0009, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 131072, priority: 4 },
-  { id: 'sonar-pro', provider: 'perplexity', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['reasoning', 'analysis'], contextWindow: 128000, priority: 5 },
-  { id: 'accounts/fireworks/models/llama-v3p3-70b-instruct', provider: 'fireworks', tier: 'standard', costPer1KInput: 0.0009, costPer1KOutput: 0.0009, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 6 },
-  { id: 'llama3-70b-8192', provider: 'groq', tier: 'standard', costPer1KInput: 0.00059, costPer1KOutput: 0.00079, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 8192, priority: 7 },
-  { id: 'command-r-plus-08-2024', provider: 'cohere', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['reasoning', 'analysis'], contextWindow: 128000, priority: 8 },
-  { id: 'anthropic.claude-sonnet-4-6-v1:0', provider: 'bedrock', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 200000, priority: 9 },
-  { id: 'meta/meta-llama-3.3-70b-instruct', provider: 'replicate', tier: 'standard', costPer1KInput: 0.00065, costPer1KOutput: 0.00275, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 10 },
-  { id: 'grok-3', provider: 'xai', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 131072, priority: 11 },
+  { id: 'claude-sonnet-4-6', provider: 'anthropic', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 200000, priority: 0, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'gpt-4o', provider: 'openai', tier: 'standard', costPer1KInput: 0.0025, costPer1KOutput: 0.01, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 1, supportsJSONMode: true, supportsStructuredOutput: true },
+  { id: 'gemini-2-pro', provider: 'google', tier: 'standard', costPer1KInput: 0.0015, costPer1KOutput: 0.0075, capabilities: ['reasoning', 'analysis'], contextWindow: 1000000, priority: 2, supportsJSONMode: true, supportsStructuredOutput: true },
+  { id: 'mistral-large-latest', provider: 'mistral', tier: 'standard', costPer1KInput: 0.002, costPer1KOutput: 0.006, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 3, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', provider: 'together', tier: 'standard', costPer1KInput: 0.0009, costPer1KOutput: 0.0009, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 131072, priority: 4, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'sonar-pro', provider: 'perplexity', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['reasoning', 'analysis'], contextWindow: 128000, priority: 5, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'accounts/fireworks/models/llama-v3p3-70b-instruct', provider: 'fireworks', tier: 'standard', costPer1KInput: 0.0009, costPer1KOutput: 0.0009, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 6, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'llama3-70b-8192', provider: 'groq', tier: 'standard', costPer1KInput: 0.00059, costPer1KOutput: 0.00079, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 8192, priority: 7, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'command-r-plus-08-2024', provider: 'cohere', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['reasoning', 'analysis'], contextWindow: 128000, priority: 8, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'anthropic.claude-sonnet-4-6-v1:0', provider: 'bedrock', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 200000, priority: 9, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'meta/meta-llama-3.3-70b-instruct', provider: 'replicate', tier: 'standard', costPer1KInput: 0.00065, costPer1KOutput: 0.00275, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 128000, priority: 10, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'grok-3', provider: 'xai', tier: 'standard', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis'], contextWindow: 131072, priority: 11, supportsJSONMode: false, supportsStructuredOutput: false },
 
   // ===== Power tier — strongest reasoning =====
-  { id: 'claude-opus-4-8', provider: 'anthropic', tier: 'power', costPer1KInput: 0.015, costPer1KOutput: 0.075, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 200000, priority: 0 },
-  { id: 'gpt-5', provider: 'openai', tier: 'power', costPer1KInput: 0.01, costPer1KOutput: 0.04, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 256000, priority: 1 },
-  { id: 'claude-sonnet-4-6', provider: 'bedrock', tier: 'power', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 200000, priority: 2 },
-  { id: 'deepseek-v4-pro', provider: 'deepseek', tier: 'power', costPer1KInput: 0.002, costPer1KOutput: 0.008, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 128000, priority: 3 },
-  { id: 'mimo-v2.5-pro', provider: 'mimo', tier: 'power', costPer1KInput: 0.004, costPer1KOutput: 0.012, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 4 },
-  { id: 'glm-5.1', provider: 'glm', tier: 'power', costPer1KInput: 0.002, costPer1KOutput: 0.008, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 5 },
+  { id: 'claude-opus-4-8', provider: 'anthropic', tier: 'power', costPer1KInput: 0.015, costPer1KOutput: 0.075, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 200000, priority: 0, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'gpt-5', provider: 'openai', tier: 'power', costPer1KInput: 0.01, costPer1KOutput: 0.04, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 256000, priority: 1, supportsJSONMode: true, supportsStructuredOutput: true },
+  { id: 'claude-sonnet-4-6', provider: 'bedrock', tier: 'power', costPer1KInput: 0.003, costPer1KOutput: 0.015, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 200000, priority: 2, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'deepseek-v4-pro', provider: 'deepseek', tier: 'power', costPer1KInput: 0.002, costPer1KOutput: 0.008, capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'], contextWindow: 128000, priority: 3, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'mimo-v2.5-pro', provider: 'mimo', tier: 'power', costPer1KInput: 0.004, costPer1KOutput: 0.012, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 4, supportsJSONMode: false, supportsStructuredOutput: false },
+  { id: 'glm-5.1', provider: 'glm', tier: 'power', costPer1KInput: 0.002, costPer1KOutput: 0.008, capabilities: ['code', 'reasoning', 'analysis', 'creative'], contextWindow: 128000, priority: 5, supportsJSONMode: false, supportsStructuredOutput: false },
 ];
 
 // ============================================================================
@@ -180,14 +180,14 @@ export class ModelRouter {
    * @param governorPhase - Current budget governor phase ('relaxed'|'moderate'|'tight'|'critical').
    *   Callers should pass their per-run governor state instead of relying on global singleton.
    */
-  route(ctx: AgentExecutionContext, governorPhase?: string): RoutingDecision {
+  route(ctx: AgentExecutionContext, governorPhase?: string, preferredTier?: ModelTier): RoutingDecision {
     const complexity = scoreComplexity(ctx);
     const taskType = detectTaskType(ctx.goal);
     const requiredCaps = TASK_CAPABILITY_MAP[taskType] ?? [];
 
     // Governor-aware tier adjustment: tight/critical budget → prefer cheaper tier
     const governor = governorPhase ?? 'relaxed';
-    let tier = this.selectTier(complexity, ctx, governor);
+    let tier = preferredTier ?? this.selectTier(complexity, ctx, governor);
 
     // Capability-aware tier bump: if selected tier has no model with required caps, go higher
     if (requiredCaps.length > 0) {
@@ -346,24 +346,24 @@ export class ModelRouter {
   routeWithCascade(
     ctx: AgentExecutionContext,
     governorPhase?: string,
+    preferredTier?: ModelTier,
   ): { initial: RoutingDecision; escalationChain: ModelConfig[] } {
     const governor = governorPhase ?? 'relaxed';
     const taskType = detectTaskType(ctx.goal);
 
     // In relaxed/moderate mode, use standard routing (start optimal)
     if (governor === 'relaxed' || governor === 'moderate') {
-      const initial = this.route(ctx, governor);
+      const initial = this.route(ctx, governor, preferredTier);
       const chain = this.getCascadeChain(taskType, 3);
       return { initial, escalationChain: chain };
     }
 
     // In tight/critical mode, start with cheapest capable model (FrugalGPT pattern)
-    const requiredCaps = TASK_CAPABILITY_MAP[taskType] ?? [];
     const chain = this.getCascadeChain(taskType, 3);
 
     if (chain.length === 0) {
       // Fallback to standard routing
-      return { initial: this.route(ctx, governor), escalationChain: [] };
+      return { initial: this.route(ctx, governor, preferredTier), escalationChain: [] };
     }
 
     // Start with the cheapest model in the chain
@@ -419,6 +419,65 @@ export class ModelRouter {
     if (!model) return 0;
     return (inputTokens / 1000) * model.costPer1KInput
       + (outputTokens / 1000) * model.costPer1KOutput;
+  }
+
+  /**
+   * Route a task to batch API processing if eligible.
+   * Batch APIs offer 50% cost savings for non-urgent tasks (OpenAI, Anthropic, Google).
+   * Returns the best batch-capable model for the task, or undefined if no batch model is suitable.
+   *
+   * Eligibility criteria:
+   * - Task is not time-sensitive (no real-time user waiting)
+   * - A batch-capable model exists at the appropriate tier
+   * - Task doesn't require immediate tool interaction
+   */
+  routeBatch(
+    ctx: AgentExecutionContext,
+    tier?: ModelTier,
+  ): ModelConfig | undefined {
+    const taskType = detectTaskType(ctx.goal);
+    const requiredCaps = TASK_CAPABILITY_MAP[taskType] ?? [];
+    const targetTier = tier ?? 'eco';
+
+    const tierOrder: ModelTier[] = [targetTier, 'eco', 'standard'];
+    for (const t of tierOrder) {
+      const candidates = (this.tierIndex.get(t) ?? []).filter(
+        m => m.supportsBatchAPI && this.hasCapabilities(m, requiredCaps),
+      );
+      if (candidates.length > 0) {
+        // Return the cheapest batch-capable model
+        candidates.sort((a, b) => a.costPer1KOutput - b.costPer1KOutput);
+        return candidates[0];
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Check if a task is suitable for batch processing.
+   * Batch is ideal for: evaluation runs, data labeling, document processing,
+   * nightly analysis, embedding backfills — tasks where 24h turnaround is acceptable
+   * for 50% cost savings (OpenAI, Anthropic, Google all offer batch at 50% discount).
+   * Batch is NOT suitable for: interactive chat, real-time code fixes,
+   * sequential multi-turn tool chains requiring immediate feedback.
+   *
+   * @returns true if the task can be deferred to batch processing
+   */
+  static isBatchEligible(ctx: AgentExecutionContext): boolean {
+    // Multi-step interactive tasks (>5 steps) need real-time tool interaction
+    // Single-step or short-chain tasks (≤5 steps) can be batched if token budget fits
+    if (ctx.maxSteps > 5) return false;
+    // Low-budget tasks can tolerate delay (and batch savings matter proportionally more)
+    if (ctx.tokenBudget <= 4000) return true;
+    // High-token tasks benefit most from 50% batch savings (absolute $ savings)
+    if (ctx.tokenBudget > 50000) return true;
+    // Medium-budget tasks with ≤5 steps: batch if not time-sensitive
+    // Check for interactive signal: no parentRunId (not a sub-agent) = likely user-facing
+    // Sub-agents and evaluation runs (with parentRunId) can be batched
+    if (ctx.maxSteps <= 5 && ctx.parentRunId) return true;
+    // Single-step tasks with moderate budget still benefit from batch savings
+    if (ctx.maxSteps <= 1) return true;
+    return false;
   }
 
   /**
@@ -493,6 +552,19 @@ export class ModelRouter {
       for (let i = startIdx + 1; i < tierOrder.length; i++) {
         candidates = [...(this.tierIndex.get(tierOrder[i]) ?? [])];
         if (candidates.length > 0) break;
+      }
+    }
+
+    // Native structured output preference: when outputSchema is set, prefer
+    // providers that can enforce JSON schema natively. Fall back to the full
+    // pool so Anthropic/others can use tool-use fallback.
+    const needsStructured = !!ctx.outputSchema;
+    if (needsStructured) {
+      const structuredCapable = candidates.filter(
+        m => m.supportsStructuredOutput || m.supportsJSONMode,
+      );
+      if (structuredCapable.length > 0) {
+        candidates = structuredCapable;
       }
     }
 

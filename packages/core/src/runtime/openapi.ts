@@ -10,8 +10,8 @@ export const openApiSpec: Record<string, unknown> = {
     contact: { url: 'https://github.com/PStarH/Commander' },
   },
   servers: [
-    { url: 'http://localhost:3001', description: 'Default development server' },
-    { url: 'http://localhost:4000', description: 'Production API server' },
+    { url: `http://localhost:${process.env.COMMANDER_PORT ?? '3001'}`, description: 'Default development server' },
+    { url: `http://localhost:${process.env.PORT ?? '4000'}`, description: 'Production API server' },
   ],
   paths: {
     '/health': {

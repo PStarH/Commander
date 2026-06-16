@@ -15,6 +15,8 @@
 
 import type { ToolCall, ToolResult } from './types';
 import { getMetricsCollector } from './metricsCollector';
+import { createContentScanner } from '../contentScanner';
+import { getGlobalLogger } from '../logging';
 
 // FNV-1a hash — fast, non-cryptographic, sufficient for in-memory cache keys
 function fnv1a(str: string): string {
@@ -75,6 +77,8 @@ export interface ToolCacheConfig {
   toolTtls: Record<string, number>;
   /** Tools that should NEVER be cached (side-effects, state-mutating) */
   neverCache: string[];
+  /** Scan tool outputs for security threats before caching (default: true) */
+  securityScanEnabled?: boolean;
 }
 
 const DEFAULT_CONFIG: ToolCacheConfig = {
@@ -92,6 +96,7 @@ const DEFAULT_CONFIG: ToolCacheConfig = {
     'agent',
     'memory_store',
   ],
+  securityScanEnabled: true,
 };
 
 // ============================================================================
@@ -203,13 +208,31 @@ export class ToolResultCache {
 
   /**
    * Store a tool result in cache.
-   * Only caches if: enabled, tool is cacheable, result has no error.
+   * Only caches if: enabled, tool is cacheable, result has no error, and output passes
+   * the security scan when enabled.
    * When tenantId is provided, cache is scoped to that tenant.
    */
-  set(toolCall: ToolCall, result: ToolResult, tenantId?: string): void {
+  async set(toolCall: ToolCall, result: ToolResult, tenantId?: string): Promise<void> {
     if (!this.config.enabled) return;
     if (this.isNeverCache(toolCall.name)) return;
     if (result.error) return;
+
+    // Security scan before caching: do not cache outputs that contain HIGH/CRITICAL threats.
+    if (this.config.securityScanEnabled !== false && result.output) {
+      try {
+        const scanner = createContentScanner();
+        const scan = await scanner.scan(result.output);
+        const severe = scan.threats.filter(t => t.severity === 'HIGH' || t.severity === 'CRITICAL');
+        if (severe.length > 0) {
+          getGlobalLogger().warn('ToolResultCache', `Skipping cache for ${toolCall.name} due to security threats`, {
+            threats: severe.map(t => t.type),
+          });
+          return;
+        }
+      } catch {
+        // Scan failure should not prevent caching; fail open on scanner errors.
+      }
+    }
 
     const key = ToolResultCache.computeKey(toolCall.name, toolCall.arguments, tenantId);
     const ttlMs = this.config.toolTtls[toolCall.name] ?? this.config.defaultTtlMs;

@@ -18,7 +18,7 @@ export interface CheckpointState {
   agentId: string;
   missionId?: string;
   timestamp: string;
-  phase: 'started' | 'llm_call' | 'tool_execution' | 'verification' | 'completed' | 'completed_early_exit' | 'failed';
+  phase: 'started' | 'llm_call' | 'tool_execution' | 'verification' | 'completed' | 'completed_early_exit' | 'failed' | 'interrupted';
   stepNumber: number;
   attemptNumber: number;
   messages: LLMMessage[];
@@ -76,7 +76,7 @@ export class StateCheckpointer {
   private authorize(state: CheckpointState): boolean {
     if (!this.leaseManager) return true;
     if (!state.leaseToken || typeof state.fencingEpoch !== 'number') {
-      getGlobalLogger().warn('StateCheckpointer', 'Checkpoint missing lease credentials', {
+      getGlobalLogger().debug('StateCheckpointer', 'Checkpoint missing lease credentials', {
         runId: state.runId,
         hasToken: !!state.leaseToken,
         hasEpoch: typeof state.fencingEpoch === 'number',

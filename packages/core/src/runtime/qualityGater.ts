@@ -308,7 +308,8 @@ export class QualityGater {
     switch (current) {
       case 'compound': return 'standard';
       case 'standard': return 'fine';
-      case 'fine': return 'fine'; // Already at max
+      case 'fine': return 'fine';
+      default: return current;
     }
   }
 
@@ -316,7 +317,8 @@ export class QualityGater {
     switch (current) {
       case 'fine': return 'standard';
       case 'standard': return 'compound';
-      case 'compound': return 'compound'; // Already at min
+      case 'compound': return 'compound';
+      default: return current;
     }
   }
 
@@ -342,6 +344,7 @@ export class QualityGater {
       case 'compound': return 0;
       case 'standard': return 1;
       case 'fine': return 2;
+      default: return 0;
     }
   }
 }

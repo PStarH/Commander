@@ -1,4 +1,6 @@
 import type { AgentRuntimeConfig, ToolCall } from './types';
+import { purifyObservation } from './observationPurifier';
+import { createContentScanner } from '../contentScanner';
 
 export const DEFAULT_CONFIG: AgentRuntimeConfig = {
   defaultModelTier: 'standard',
@@ -45,17 +47,46 @@ export function descendingToolOrder(toolCalls: ToolCall[]): ToolCall[] {
   return [...broad, ...narrow];
 }
 
-export function applyObservationMask(
+export async function applyObservationMask(
   toolResults: Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }>,
   windowSize: number,
-): Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }> {
+): Promise<Array<{ toolCallId: string; name: string; output: string; error?: string; durationMs: number }>> {
   if (windowSize <= 0 || toolResults.length <= windowSize) return toolResults;
-  return toolResults.map((r, i) => {
+
+  const scanner = createContentScanner();
+
+  const processed = await Promise.all(toolResults.map(async (r, i) => {
     if (i < toolResults.length - windowSize && !r.error && r.output.length > 100) {
-      return { ...r, output: `[observation masked: ${r.name} result (${r.output.length} chars)]` };
+      const purified = purifyObservation(r.output, r.name);
+
+      // Security scan: replace HIGH/CRITICAL threats with a redaction marker instead
+      // of letting them enter the LLM context.
+      try {
+        const scan = await scanner.scan(purified);
+        const severe = scan.threats.filter(t => t.severity === 'HIGH' || t.severity === 'CRITICAL');
+        if (severe.length > 0) {
+          const threatTypes = [...new Set(severe.map(t => t.type))].join(', ');
+          return {
+            ...r,
+            output: `[security filter: ${r.name} result blocked due to ${threatTypes}]`,
+          };
+        }
+      } catch {
+        // Scan failure should not break execution; fall through to normal masking.
+      }
+
+      const charsBefore = r.output.length;
+      const charsAfter = purified.length;
+      const saved = charsBefore - charsAfter;
+      return {
+        ...r,
+        output: `[observation purified: ${r.name} result, ${charsBefore} → ${charsAfter} chars (${saved} saved)]\n${purified.slice(0, 300)}`,
+      };
     }
     return r;
-  });
+  }));
+
+  return processed;
 }
 
 export function isMutationTool(name: string): boolean {

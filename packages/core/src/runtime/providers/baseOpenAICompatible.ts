@@ -154,6 +154,7 @@ export function parseOpenAIResponse(
   data: { choices?: OpenAIResponseChoice[]; usage?: OpenAIResponseUsage },
   model: string,
   extractTextToolCalls?: (content: string) => Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null,
+  responseFormat?: LLMRequest['responseFormat'],
 ): LLMResponse {
   const choice = data.choices?.[0];
   const message = choice?.message ?? {};
@@ -166,11 +167,19 @@ export function parseOpenAIResponse(
   };
 
   let content = message.content ?? '';
-  let toolCalls = message.tool_calls?.map((tc: { id: string; function: { name: string; arguments: string } }) => ({
-    id: tc.id,
-    name: tc.function.name,
-    arguments: JSON.parse(tc.function.arguments || '{}'),
-  }));
+  let toolCalls = message.tool_calls?.map((tc: { id: string; function: { name: string; arguments: string } }) => {
+    let parsed: Record<string, unknown> = {};
+    try {
+      parsed = JSON.parse(tc.function.arguments || '{}');
+    } catch {
+      try {
+        parsed = JSON.parse(`{${tc.function.arguments}}`);
+      } catch {
+        parsed = { raw: tc.function.arguments };
+      }
+    }
+    return { id: tc.id, name: tc.function.name, arguments: parsed };
+  });
 
   // Some providers return tool calls as text (e.g. MiMo text format)
   if ((!toolCalls || toolCalls.length === 0) && content && extractTextToolCalls) {
@@ -195,8 +204,25 @@ export function parseOpenAIResponse(
       : choice?.finish_reason === 'length' ? 'length'
       : 'stop',
     toolCalls,
+    parsed: tryParseOpenAICompatibleStructured(content, responseFormat),
     reasoning_content: message.reasoning_content,
   };
+}
+
+function tryParseOpenAICompatibleStructured(
+  content: string,
+  responseFormat?: LLMRequest['responseFormat'],
+): Record<string, unknown> | undefined {
+  if (!responseFormat || responseFormat.type === 'text' || !content.trim()) return undefined;
+
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
+
+  try {
+    return JSON.parse(trimmed) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -232,6 +258,22 @@ export function buildOpenAIBody(
     body.parallel_tool_calls = true;
   }
 
+  // Provider-native structured output for OpenAI-compatible endpoints
+  if (request.responseFormat) {
+    if (request.responseFormat.type === 'json_schema' && request.responseFormat.schema) {
+      body.response_format = {
+        type: 'json_schema',
+        json_schema: {
+          name: request.responseFormat.name ?? 'response',
+          schema: request.responseFormat.schema,
+          strict: true,
+        },
+      };
+    } else if (request.responseFormat.type === 'json_object') {
+      body.response_format = { type: 'json_object' };
+    }
+  }
+
   return body;
 }
 
@@ -248,11 +290,7 @@ export async function callOpenAICompatibleAPI(
 ): Promise<LLMResponse> {
   const body = buildOpenAIBody(request, model, config.name, extraBody);
 
-  // Include tool_calls from last assistant message (for multi-turn)
-  const lastAssistant = [...request.messages].reverse().find(m => m.role === 'assistant');
-  if (lastAssistant?.tool_calls) {
-    body.tool_calls = lastAssistant.tool_calls;
-  }
+
 
   const useStreaming = request.cacheConfig?.useCacheControl ?? true;
   const logger = getGlobalLogger();
@@ -289,18 +327,27 @@ export async function callOpenAICompatibleAPI(
       usage: tokenUsage,
       finishReason: 'stop',
       toolCalls: streamed.toolCalls.length > 0
-        ? streamed.toolCalls.map(tc => ({
-            id: tc.id,
-            name: tc.name,
-            arguments: JSON.parse(tc.arguments || '{}'),
-          }))
+        ? streamed.toolCalls.map(tc => {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(tc.arguments || '{}');
+            } catch {
+              try {
+                parsed = JSON.parse(`{${tc.arguments}}`);
+              } catch {
+                parsed = { raw: tc.arguments };
+              }
+            }
+            return { id: tc.id, name: tc.name, arguments: parsed };
+          })
         : undefined,
+      parsed: tryParseOpenAICompatibleStructured(streamed.content, request.responseFormat),
       reasoning_content: streamed.reasoningContent || undefined,
     };
   }
 
   const data = await response.json();
-  return parseOpenAIResponse(data, model, extractTextToolCalls);
+  return parseOpenAIResponse(data, model, extractTextToolCalls, request.responseFormat);
 }
 
 // ============================================================================

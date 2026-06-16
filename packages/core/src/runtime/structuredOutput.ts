@@ -12,9 +12,17 @@
 import { getGlobalLogger } from '../logging';
 
 export function parseStructuredOutput<T = unknown>(
-  content: string,
+  input: string | { content: string; parsed?: Record<string, unknown> },
   fallback?: T,
 ): { success: true; data: T } | { success: false; data: T | undefined; raw: string } {
+  // Strategy 0: Provider-native parsed structured output (OpenAI json_schema,
+  // Google responseSchema, Anthropic tool_use). Use it directly when available.
+  if (typeof input === 'object' && input !== null && input.parsed) {
+    return { success: true, data: input.parsed as T };
+  }
+
+  const content = typeof input === 'string' ? input : input.content;
+
   // Strategy 1: Extract JSON from markdown code block
   const jsonBlock = extractJsonBlock(content);
   if (jsonBlock !== null) {

@@ -45,7 +45,14 @@ export class StepTimeoutManager {
         }
         reject(new StepTimeoutError(options.stepId, options.timeoutMs));
       }, options.timeoutMs);
-      promise.finally(() => clearTimeout(timer));
+      // Use .then() with both handlers instead of .finally() to avoid creating
+      // a floating rejected promise that Node.js reports as unhandled.
+      // .finally() propagates the rejection, but nothing chains on the result.
+      // .then(onFulfilled, onRejected) swallows the error if neither handler throws.
+      promise.then(
+        () => clearTimeout(timer),
+        () => clearTimeout(timer),
+      );
     });
 
     this.active.set(options.stepId, {

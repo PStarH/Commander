@@ -91,7 +91,7 @@ export class CircuitBreakerRegistry {
   getStats(name: string): CircuitStats {
     const breaker = this.breakers.get(name);
     if (!breaker) {
-      return { state: 'CLOSED', failureCount: 0, successCount: 0, lastFailureTime: 0, threshold: 0, recoveryTimeMs: 0, openCount: 0 };
+      return { state: 'CLOSED', failureCount: 0, successCount: 0, lastFailureTime: 0, threshold: 0, recoveryTimeMs: 0, openCount: 0, semanticFailureCount: 0, securityEventCount: 0 };
     }
     return breaker.getStats();
   }
@@ -122,5 +122,9 @@ export class CircuitBreakerRegistry {
 
   listBreakers(): string[] {
     return Array.from(this.breakers.keys());
+  }
+
+  dispose(): void {
+    if (this.pruneTimer) { clearInterval(this.pruneTimer); this.pruneTimer = null; }
   }
 }

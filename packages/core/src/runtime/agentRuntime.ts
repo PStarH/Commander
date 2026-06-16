@@ -30,13 +30,18 @@ import type {
   TokenUsage,
   CacheConfig,
   ModelConfig,
+  ModelTier,
 } from './types';
+import type { AgentRuntimeInterface } from './agentRuntimeInterface';
 import { ModelRouter, getModelRouter } from './modelRouter';
+import { SmartModelRouter, getSmartModelRouter } from './smartModelRouter';
 import { getMessageBus } from './messageBus';
 import { getTraceRecorder } from './executionTrace';
 import { getAnomalyDetector } from '../observability/anomalyDetector';
 import { PersistentTraceStore } from './traceStore';
+import { compactToolDef, compactToolDefs } from './programmaticToolFormatter';
 import { ContextCompactor } from './contextCompactor';
+import { SlidingWindowOrchestrator } from './slidingWindowOrchestrator';
 import { classifyLLMError, computeBackoff } from './llmRetry';
 import { CircuitBreaker } from './circuitBreaker';
 import { createParameterControllerPlugin, applyControllerParams } from './parameterController';
@@ -89,12 +94,20 @@ import { parseStructuredOutput } from './structuredOutput';
 import { isConfidentResponse } from './entropyGater';
 import { InterruptError } from './interruptError';
 import { createContentScanner, type ContentScanner } from '../contentScanner';
+import { scanToolOutputForInjection } from '../contentScanner';
+import { getPrivacyRouter } from './privacyRouter';
 import type { TenantProvider, TenantConfig } from './tenantProvider';
+import { generateRollbackPlan } from '../compensation/rollbackPlanner';
+import type { PlannedToolCall, PlanInput } from '../compensation/rollbackPlanner';
+import type { CompensationPlan } from '../compensation/external/types';
 import { getGlobalTenantProvider, getGlobalMemoryRegistry } from './tenantProvider';
 import { getLaneManager } from '../sandbox/lane';
 import { createMemoryStore } from '../memory';
 import type { MemoryStore } from '../memory';
+import { CompensationEventSubscriber } from './compensationEventSubscriber';
+import { getConversationStore } from '../memory/conversationStore';
 import { OpenTelemetryExporter, getOTelExporter, executionTraceToOtlpSpans } from './openTelemetryExporter';
+import { exportSOPFromTrace, formatSOPAsMarkdown } from './sopExport';
 import type { OTelSpan } from './openTelemetryExporter';
 import { buildSystemPrompt, buildCacheAwareUserPrompt, computePrefixCacheKey } from './promptBuilder';
 import { ReflexionGenerator, type Reflexion, type ReflexionContext } from './reflexionGenerator';
@@ -125,14 +138,16 @@ interface TenantResolutionResult {
   overrides?: TenantOverrides;
 }
 
-export class AgentRuntime {
+export class AgentRuntime implements AgentRuntimeInterface {
   private config: AgentRuntimeConfig;
   private providers: Map<string, LLMProvider> = new Map();
   private tools: Map<string, Tool> = new Map();
   private router: ModelRouter;
+  private smartRouter: SmartModelRouter | null = null;
   private activeRuns: Set<string> = new Set();
   private pausedRuns: Set<string> = new Set();
   private compactor: ContextCompactor;
+  private slidingWindow: SlidingWindowOrchestrator;
   private circuitBreaker: CircuitBreaker;
   private verificationPipeline: UnifiedVerificationPipeline;
   private reflexionInjector: ReflexionInjector;
@@ -159,13 +174,20 @@ export class AgentRuntime {
   private memoryStore: MemoryStore | null = null;
   private otelExporter: OpenTelemetryExporter | null = null;
   private orchestrator: ToolOrchestrator;
+  private queueTimer: ReturnType<typeof setInterval> | null = null;
   private planner: ToolPlanner;
   private cycleDetector: CycleDetector;
   /** Tools promoted to Tier 1 (full schema) in the current turn — for hallucination rejection gate */
   private promotedTools: Set<string> = new Set();
   // Phase 3 — ExecutionScheduler handle for the currently executing run
   private runHandle: RunHandle | null = null;
-  private contentScanner: ContentScanner;
+  /** Tracks successful mutation tool calls per retry attempt for rollback planning */
+  private executedMutations: PlannedToolCall[] = [];
+  /** RunLedger transaction context (runId, leaseToken, fencingEpoch) */
+  private ledgerCtx: { runId: string; leaseToken: string; fencingEpoch: number; tenantId?: string } | null = null;
+  private compensationEventSubscriber: CompensationEventSubscriber;    private contentScanner: ContentScanner;
+  // Conversation store (FTS5-powered session persistence)
+  private conversationStore: import('../memory/conversationStore').ConversationStore | null = null;
   // Concurrency semaphore (GAP-07)
   private runningCount = 0;
   private waitingQueue: Array<() => void> = [];
@@ -185,8 +207,12 @@ export class AgentRuntime {
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.router = router ?? getModelRouter();
+    if (this.config.smartModelRouter?.enabled) {
+      this.smartRouter = SmartModelRouter.fromEnv() ?? new SmartModelRouter(this.config.smartModelRouter as any);
+    }
     this.tenantProvider = tenantProvider ?? getGlobalTenantProvider();
     this.compactor = new ContextCompactor({ maxContextTokens: this.config.budgetHardCapTokens || 128000 });
+    this.slidingWindow = new SlidingWindowOrchestrator();
     this.circuitBreaker = new CircuitBreaker(5, 30000);
     this.circuitBreaker.setProviderName('agentRuntime');
     this.circuitBreaker.setObservability({
@@ -195,6 +221,38 @@ export class AgentRuntime {
         try { this.dlq.enqueue({ category: 'circuit_breaker', operationName: 'circuit.transition', errorMessage: `${from}->${to}`, tags: [`from:${from}`, `to:${to}`, `provider:${provider ?? 'agentRuntime'}`], failureMode: 'circuit_open' }); } catch { /* best-effort */ }
         try { getIntentLog(undefined).write({ schemaVersion: 1, runId: 'circuit-breaker', capturedAt: new Date().toISOString(), stage: 'agentRuntime.circuit', decision: 'transition', reason: `circuit ${from}->${to}`, payload: { from, to, provider: provider ?? 'agentRuntime' } }); } catch { /* best-effort */ }
       },
+    });
+    // Wire semantic trip handler: when consecutive verification failures exceed
+    // threshold, publish an alert and enqueue a dead-letter entry for operator
+    // review. This enables operators to detect systemic quality degradation
+    // (e.g., a model version regression) vs. isolated operational errors.
+    this.circuitBreaker.setSemanticTripHandler((consecutiveFailures, reason) => {
+      const bus = getMessageBus();
+      bus.publish('system.alert', 'runtime', {
+        type: 'semantic_circuit_trip',
+        consecutiveFailures,
+        reason,
+      });
+      try {
+        this.dlq.enqueue({
+          category: 'verification',
+          operationName: 'semantic.circuit_trip',
+          errorMessage: `Semantic circuit tripped after ${consecutiveFailures} consecutive verification failures: ${reason}`,
+          tags: ['semantic_drift', 'verification_failure', `count:${consecutiveFailures}`],
+          failureMode: 'verification',
+        });
+      } catch { /* best-effort */ }
+      try {
+        getIntentLog(undefined).write({
+          schemaVersion: 1,
+          runId: 'semantic-circuit-breaker',
+          capturedAt: new Date().toISOString(),
+          stage: 'agentRuntime.semantic',
+          decision: 'trip',
+          reason: `semantic circuit tripped: ${consecutiveFailures} consecutive failures`,
+          payload: { consecutiveFailures, reason },
+        });
+      } catch { /* best-effort */ }
     });
     this.governor = new TokenGovernor({ totalBudget: this.config.budgetHardCapTokens || 200000 });
     this.verificationPipeline = new UnifiedVerificationPipeline({
@@ -266,23 +324,108 @@ export class AgentRuntime {
       fetchTimeoutMs: this.config.geminiCache?.fetchTimeoutMs ?? 30_000,
     });
     this.outputManager = new ToolOutputManager({ enabled: true, turnBudget: 32000 });
-    // ToolApproval with auto-approve callback (semi_auto/manual policies still gate)
+    // ToolApproval with configurable approval callback
+    // When approval is configured with a custom callback, use it; otherwise auto-approve.
+    const approvalCfg = this.config.approval;
+    const defaultApprovalCallback = async (req: { id: string; toolName: string; arguments: Record<string, unknown>; reason?: string }) =>
+      ({ approved: true, requestId: req.id, approvedAt: new Date().toISOString(), reason: 'Auto-approved' });
+    const approvalCallback = approvalCfg?.approvalCallback ?? defaultApprovalCallback;
     const toolApproval = new ToolApproval(
-      async (req) => ({ approved: true, requestId: req.id, approvedAt: new Date().toISOString(), reason: 'Auto-approved' }),
+      approvalCallback,
     );
     this.orchestrator = new ToolOrchestrator({ enabled: true, maxRetries: 1, circuitBreakerThreshold: 3, useApproval: true }, toolApproval);
     this.planner = new ToolPlanner();
     this.cycleDetector = new CycleDetector();
     this.contentScanner = createContentScanner();
+
+    // Initialize ConversationStore for FTS5-powered conversation persistence
+    try {
+      this.conversationStore = getConversationStore();
+
+      // Wire auto-recording of conversations via bus events
+      // Every agent.started → startSession(), every agent.completed/failed → endSession().
+      // Uses a runId→sessionId map instead of payload mutation because bus event
+      // payloads are separate objects for started/completed/failed.
+      const bus = getMessageBus();
+      const store = this.conversationStore;
+      const sessionMap = new Map<string, string>();
+
+      bus.subscribe('agent.started', (msg) => {
+        const payload = msg.payload as Record<string, unknown>;
+        const runId = (payload.runId ?? payload.taskId) as string | undefined;
+        const goal = payload.goal as string | undefined;
+        if (!runId || !goal) return;
+        store.startSession({
+          projectId: 'default',
+          agentId: msg.source,
+          goal: goal || undefined,
+          metadata: { runId, model: payload.model },
+        }).then(session => {
+          sessionMap.set(runId, session.id);
+          store.addTurn({
+            sessionId: session.id,
+            role: 'user',
+            content: goal,
+          }).catch(() => {});
+        }).catch(() => {});
+      });
+
+      bus.subscribe('agent.completed', (msg) => {
+        const payload = msg.payload as Record<string, unknown>;
+        const runId = (payload.runId ?? payload.taskId) as string | undefined;
+        const summary = payload.summary as string | undefined;
+        if (!runId) return;
+        const sessionId = sessionMap.get(runId);
+        if (sessionId) {
+          sessionMap.delete(runId);
+          store.addTurn({
+            sessionId,
+            role: 'assistant',
+            content: (summary || '').slice(0, 5000),
+          }).catch(() => {});
+          store.endSession(sessionId).catch(() => {});
+        }
+      });
+
+      bus.subscribe('agent.failed', (msg) => {
+        const payload = msg.payload as Record<string, unknown>;
+        const runId = (payload.runId ?? payload.taskId) as string | undefined;
+        const error = payload.error as string | undefined;
+        if (!runId) return;
+        const sessionId = sessionMap.get(runId);
+        if (sessionId) {
+          sessionMap.delete(runId);
+          store.addTurn({
+            sessionId,
+            role: 'assistant',
+            content: `[Failed] ${(error || '').slice(0, 2000)}`,
+          }).catch(() => {});
+          store.endSession(sessionId).catch(() => {});
+        }
+      });
+
+      // Lazy init — the store initializes on first access
+    } catch (e) {
+      getGlobalLogger().warn('AgentRuntime', 'Failed to initialize conversation store', { error: (e as Error)?.message });
+    }
+
+    // Wire compensation event subscriber for observability logging/metrics/traces
+    this.compensationEventSubscriber = new CompensationEventSubscriber();
+    try {
+      this.compensationEventSubscriber.start(getMessageBus(), this.traceStore);
+    } catch (e) {
+      getGlobalLogger().warn('AgentRuntime', 'Failed to start compensation event subscriber', { error: (e as Error)?.message });
+    }
+
     // Auto-register adaptive parameter controller
 // Process any due compensations from the durable queue on startup
     try { this.compensationRegistry.processQueue().then(n => { if (n > 0) getGlobalLogger().info('AgentRuntime', `Processed ${n} queued compensations on startup`); }).catch(() => {}); } catch { /* best-effort */ }
 
     // Schedule periodic compensation queue processing (every 5 minutes)
-    const queueTimer = setInterval(() => {
+    this.queueTimer = setInterval(() => {
       try { this.compensationRegistry.processQueue().catch(() => {}); } catch { /* best-effort */ }
     }, 5 * 60 * 1000);
-    if (typeof queueTimer.unref === 'function') queueTimer.unref();
+    if (typeof this.queueTimer.unref === 'function') this.queueTimer.unref();
 
     getHookManager().register(createParameterControllerPlugin()).catch(e => getGlobalLogger().debug('AgentRuntime', 'Hook registration', { error: (e as Error)?.message }));
 
@@ -304,6 +447,108 @@ export class AgentRuntime {
     });
   }
 
+  /**
+   * Handle a mutation tool failure by generating a rollback plan and triggering compensation.
+   * Publishes a 'tool.compensation_planned' bus event with plan metadata.
+   * For safe plans, auto-executes compensation via SagaCoordinator.
+   */
+  private async handleMutationToolFailure(
+    toolName: string,
+    args: Record<string, unknown>,
+    error: string,
+  ): Promise<void> {
+    const bus = getMessageBus();
+
+    // Build rollback plan from mutations that occurred before this failure
+    const input: PlanInput = {
+      plannedCalls: this.executedMutations,
+      failure: { toolName, args, error },
+    };
+    const plan = generateRollbackPlan(input);
+
+    // Record each compensation step in the registry
+    for (const step of plan.steps) {
+      this.compensationRegistry.recordAction({
+        actionId: step.forwardAction.actionId ?? `comp-${step.forwardAction.toolName}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        toolName: step.forwardAction.toolName,
+        args: step.forwardAction.args,
+        description: step.description,
+        tags: ['tool', 'compensation', step.forwardAction.toolName],
+        runId: this.ledgerCtx?.runId ?? 'unknown',
+        agentId: 'system',
+      });
+    }
+
+    bus.publish('tool.compensation_planned', 'runtime', {
+      runId: this.ledgerCtx?.runId ?? 'unknown',
+      toolName,
+      stepCount: plan.steps.length,
+      risk: plan.risk,
+    });
+
+    // Auto-execute safe plans immediately
+    if (plan.risk === 'safe' && plan.steps.length > 0) {
+      await this.compensateViaSaga(plan);
+    }
+  }
+
+  /**
+   * Execute a compensation plan by iterating through steps and calling
+   * compensationRegistry.compensate() for each recorded action.
+   */
+  private async compensateViaSaga(plan: CompensationPlan): Promise<void> {
+    const bus = getMessageBus();
+    const totalSteps = plan.steps.length;
+
+    // Execute each plan step sequentially using the compensation registry
+    for (let stepIndex = 0; stepIndex < totalSteps; stepIndex++) {
+      const step = plan.steps[stepIndex];
+      const actionId = step.forwardAction.actionId;
+      if (!actionId) continue;
+
+      const stepPayload = {
+        runId: this.ledgerCtx?.runId ?? 'unknown',
+        toolName: step.forwardAction.toolName,
+        actionId,
+        stepIndex,
+        totalSteps,
+      };
+
+      bus.publish('tool.compensation_step', 'runtime', {
+        ...stepPayload,
+        status: 'started' as const,
+      });
+
+      try {
+        const result = await this.compensationRegistry.compensate(actionId);
+        if (!result.success) {
+          bus.publish('tool.compensation_step', 'runtime', {
+            ...stepPayload,
+            status: 'failed' as const,
+            error: result.error,
+          });
+          getGlobalLogger().debug('AgentRuntime', 'Compensation step failed', {
+            actionId,
+            toolName: step.forwardAction.toolName,
+            error: result.error,
+          });
+        } else {
+          bus.publish('tool.compensation_step', 'runtime', {
+            ...stepPayload,
+            status: 'completed' as const,
+          });
+        }
+      } catch (err) {
+        bus.publish('tool.compensation_step', 'runtime', {
+          ...stepPayload,
+          status: 'failed' as const,
+          error: (err as Error).message,
+        });
+        getGlobalLogger().error('AgentRuntime', 'Compensation step threw', err as Error);
+      }
+    }
+  }
+
   /** Invalidate read caches after mutation tools succeed */
   private invalidateMutationCache(toolName: string): void {
     if (toolName.startsWith('file_')) {
@@ -319,6 +564,42 @@ export class AgentRuntime {
     }
   }
 
+  /**
+   * Check if the same tool+args pattern appears ≥3 times in recent calls.
+   * Uses stable (alphabetically-sorted) JSON.stringify for deterministic keys.
+   * On detection, publishes system.alert, increments metrics, and writes intent log.
+   * Returns { retryLoopDetected, count } — caller should break the execution loop.
+   */
+  private checkRetryLoop(
+    toolName: string,
+    args: Record<string, unknown>,
+    patterns: string[],
+    runId: string,
+    tenantId: string | undefined,
+    toolLoopCount: number,
+  ): { detected: boolean; count: number } {
+    // Stable key ordering: sort object keys so {a:1,b:2} and {b:2,a:1} match.
+    const canonicalArgs = JSON.stringify(args, [...Object.keys(args)].sort());
+    const pattern = `${toolName}:${canonicalArgs}`;
+    patterns.push(pattern);
+    if (patterns.length > 20) patterns.shift();
+    const count = patterns.filter(p => p === pattern).length;
+    if (count >= 3) {
+      const bus = getMessageBus();
+      bus.publish('system.alert', 'runtime', {
+        type: 'retry_loop_detected',
+        toolName,
+        pattern: `${toolName}:${canonicalArgs.slice(0, 200)}`,
+        consecutiveCalls: count,
+        toolLoopCount,
+      });
+      try { getMetricsCollector().incrementCounter('retry_loops_detected_total', 'Retry loops detected', 1, [{ name: 'tool', value: toolName }]); } catch { /* best-effort */ }
+      try { getIntentLog(tenantId).write({ schemaVersion: 1, runId, capturedAt: new Date().toISOString(), stage: 'agentRuntime.tool_loop', decision: 'retry_loop_detected', reason: `${toolName} called ${count} times with identical arguments`, payload: { toolName, calls: count, toolLoopCount } }); } catch { /* best-effort */ }
+      return { detected: true, count };
+    }
+    return { detected: false, count: 0 };
+  }
+
   registerProvider(name: string, provider: LLMProvider): void {
     this.providers.set(name, provider);
   }
@@ -329,6 +610,10 @@ export class AgentRuntime {
 
   getProvider(name: string): LLMProvider | undefined {
     return this.providers.get(name);
+  }
+
+  getSmartRouter(): SmartModelRouter | null {
+    return this.smartRouter;
   }
 
   getTool(name: string): Tool | undefined {
@@ -477,7 +762,7 @@ export class AgentRuntime {
     const tracer = getTraceRecorder();
     const startTime = Date.now();
 
-    const tenantId = getGlobalTenantProvider().getCurrentTenantId() ?? undefined;
+    const tenantId = getGlobalTenantProvider().getCurrentTenantId() ?? ctx.tenantId ?? undefined;
     const tenantCfg = tenantId ? this.tenantProvider.getTenantConfig(tenantId) : undefined;
 
     const tenantResolution = this.resolveTenantContext(tenantId, tenantCfg, runId, ctx.agentId, ctx.missionId);
@@ -532,14 +817,21 @@ export class AgentRuntime {
         metadata: { agentId: ctx.agentId, missionId: ctx.missionId },
         holder: 'agent-runtime',
       });
-    } catch (e) {
-      getGlobalLogger().warn('AgentRuntime', 'Scheduler beginRun failed; running without ATR registration', {
-        runId, error: (e as Error).message,
-      });
-    }
+      } catch (e) {
+        getGlobalLogger().warn('AgentRuntime', 'Failed to register run with execution scheduler', {
+          error: e instanceof Error ? e.message : String(e),
+        });
+        return {
+          runId, agentId: ctx.agentId, missionId: ctx.missionId,
+          status: 'failed', summary: 'Failed to register run with execution scheduler',
+          steps: [], totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          totalDurationMs: 0, error: 'SCHEDULER_REGISTRATION_FAILED',
+        };
+      }
 
+    let execResult: AgentExecutionResult | undefined;
     try {
-      return await runWithTenant(getGlobalTenantProvider().getCurrentTenantId() ?? undefined, async () => {
+      execResult = await runWithTenant(getGlobalTenantProvider().getCurrentTenantId() ?? undefined, async () => {
 
     // Record run manifest (provenance, config, params)
     this.samplesStore.recordRunManifest(runId, {
@@ -549,7 +841,7 @@ export class AgentRuntime {
       goal: ctx.goal.slice(0, 500),
       tokenBudget: ctx.tokenBudget,
       availableTools: ctx.availableTools,
-      modelId: this.router.route(ctx).modelId,
+      modelId: this.router.route(ctx, undefined, ctx.preferredModelTier).modelId,
       config: { ...this.config },
       timestamp: new Date().toISOString(),
     });
@@ -576,10 +868,103 @@ export class AgentRuntime {
     // 1. Route to optimal model with FrugalGPT cascade awareness
     //    In tight/critical budget: start with cheapest model, escalate on failure
     //    In relaxed/moderate: start with optimal model (standard routing)
-    const { initial: cascadeInitial, escalationChain } = this.router.routeWithCascade(ctx, this.governor.getState().phase);
-    let routing: RoutingDecision = cascadeInitial;
-    let currentEscalationChain: ModelConfig[] = escalationChain;
-    tracer.recordDecision(runId, `routed to ${routing.modelId} (${routing.tier}) cascade=${currentEscalationChain.length > 0}`, 0);
+    let routing: RoutingDecision;
+    let currentEscalationChain: ModelConfig[];
+
+    if (this.smartRouter) {
+      const smartResult = this.smartRouter.route(ctx, { governorPhase: this.governor.getState().phase, registeredProviders: new Set(this.providers.keys()), preferredTier: ctx.preferredModelTier });
+      routing = smartResult;
+      currentEscalationChain = (smartResult.escalationChain ?? []).map(id => this.router.getModel(id) ?? { id, provider: 'unknown', tier: 'standard' as ModelTier, costPer1KInput: 0, costPer1KOutput: 0, capabilities: [], contextWindow: 128000, priority: 0 });
+    } else {
+      const { initial: cascadeInitial, escalationChain } = this.router.routeWithCascade(ctx, this.governor.getState().phase, ctx.preferredModelTier);
+      routing = cascadeInitial;
+      currentEscalationChain = escalationChain;
+    }
+
+    // P0-4: Batch API routing for non-time-sensitive tasks (50% cost savings).
+    // OpenAI, Anthropic, and Google all offer batch at 50% discount for tasks
+    // that can tolerate 24h turnaround. Eligible tasks: evaluation runs, data
+    // labeling, document processing, nightly analysis, embedding backfills.
+    // Not eligible: interactive chat, real-time code fixes, sequential
+    // multi-turn tool chains requiring immediate feedback.
+    let batchRouting: import('./types').RoutingDecision | undefined;
+    if (ModelRouter.isBatchEligible(ctx) && this.governor.getState().phase !== 'critical') {
+      const batchModel = this.router.routeBatch(ctx, routing.tier);
+      if (batchModel) {
+        const estimatedInputTokens = Math.ceil(ctx.goal.length / 4) + 2048;
+        const estimatedOutputTokens = Math.min(ctx.tokenBudget, batchModel.contextWindow - estimatedInputTokens);
+        batchRouting = {
+          modelId: batchModel.id,
+          tier: batchModel.tier,
+          provider: batchModel.provider,
+          reasoning: [
+            ...routing.reasoning,
+            `batch_api: 50% cost savings via ${batchModel.provider}/${batchModel.id}`,
+            `batch_max_batch_size: ${batchModel.maxBatchSize ?? 'unlimited'}`,
+          ],
+          estimatedCost: (estimatedInputTokens / 1000) * batchModel.costPer1KInput
+            + (estimatedOutputTokens / 1000) * batchModel.costPer1KOutput,
+          maxTokens: Math.min(estimatedOutputTokens, 200000),
+        };
+        tracer.recordDecision(runId, `batch_routing: ${batchModel.id} (${batchModel.tier}) — 50% cost savings via batch API`, 0);
+        bus.publish('system.alert', 'runtime', {
+          type: 'batch_routing_selected',
+          model: batchModel.id,
+          provider: batchModel.provider,
+          tier: batchModel.tier,
+          estimatedSavings: `${Math.round(batchRouting.estimatedCost * 100) / 100}`,
+        });
+        try { getMetricsCollector().incrementCounter('batch_routing_total', 'Batch API routing selections', 1, [{ name: 'provider', value: batchModel.provider }, { name: 'tier', value: batchModel.tier }]); } catch { /* best-effort */ }
+        try { getIntentLog(ctx.tenantId).write({ schemaVersion: 1, runId, capturedAt: new Date().toISOString(), stage: 'agentRuntime.batch', decision: 'batch_routing', reason: `Batch API selected: ${batchModel.id} (${batchModel.tier}) for 50% savings`, payload: { model: batchModel.id, provider: batchModel.provider, tier: batchModel.tier, estimatedCost: batchRouting.estimatedCost } }); } catch { /* best-effort */ }
+      }
+    }
+
+    tracer.recordDecision(runId, `routed to ${routing.modelId} (${routing.tier}) cascade=${currentEscalationChain.length > 0}${batchRouting ? ' [BATCH]' : ''}`, 0);
+
+    // ── Privacy Routing ────────────────────────────────────────────────
+    // Before sending anything to a cloud provider, scan the user's goal for
+    // sensitive content (API keys, internal IPs, PII, secrets). If found,
+    // either block execution or re-route to a local model (Ollama/vLLM).
+    // This is the Local-First Fallback pattern for enterprise compliance.
+    try {
+      const privacy = getPrivacyRouter();
+      const decision = await privacy.checkContent(ctx.goal, {
+        agentId: ctx.agentId,
+        runId,
+      });
+
+      if (decision.blocked) {
+        // Critical secrets detected — abort execution entirely
+        const summary = `PRIVACY_BLOCKED: ${decision.reason}`;
+        tracer.recordDecision(runId, summary, 0);
+        bus.publish('agent.failed', ctx.agentId, { runId, error: summary });
+        try { getMetricsCollector().incrementCounter('privacy_blocks_total', 'Privacy blocks', 1, []); } catch { /* best-effort */ }
+        return {
+          runId, agentId: ctx.agentId, missionId: ctx.missionId,
+          status: 'cancelled', summary, steps: [],
+          totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          totalDurationMs: 0, error: summary,
+        };
+      }
+
+      if (decision.route === 'local') {
+        // Sensitive content detected — override routing to use a local model
+        const origModel = routing.modelId;
+        routing = privacy.applyRouting(routing, decision);
+        tracer.recordDecision(runId, `privacy_routing: ${origModel} → ${routing.modelId} (${routing.provider}) — ${decision.reason}`, 0);
+        bus.publish('system.alert', 'runtime', {
+          type: 'privacy_routing_local',
+          originalModel: origModel,
+          routedModel: routing.modelId,
+          provider: routing.provider,
+          matchCount: decision.matches.length,
+        });
+        try { getMetricsCollector().incrementCounter('privacy_routes_local_total', 'Privacy routes to local model', 1, []); } catch { /* best-effort */ }
+      }
+    } catch (e) {
+      getGlobalLogger().warn('AgentRuntime', 'Privacy check failed', { error: (e as Error)?.message });
+      // Best-effort: proceed with cloud routing on privacy check failure
+    }
 
     // 1a. Pre-run cost estimation: predict cost and log for observability
     const costEstimator = getCostEstimator();
@@ -624,11 +1009,28 @@ export class AgentRuntime {
     this.promotedTools = new Set(twoTier.active.map(t => t.name));
     this.promotedTools.add('request_tool'); // always allow request_tool
 
+    // Compact active tool schemas: strip verbose descriptions/examples.
+    // Parameter-name minification is off for active tools so validation stays simple.
+    const compactConfig = {
+      enabled: true,
+      stripDescriptions: true,
+      stripExamples: true,
+      compactListing: false,
+      compactToolCalls: false,
+      maxToolCallChars: 500,
+      keepFullSchema: [],
+      minifyParameterNames: false,
+    };
+    toolDefs = compactToolDefs(toolDefs, compactConfig);
+
     // Register request_tool for Tier 2 tools (if there are registry tools)
     if (twoTier.registry.length > 0) {
       const registryNames = twoTier.registry.map(t => t.name);
       const requestTool = createRequestToolTool(
-        (name) => allToolDefs.find(t => t.name === name),
+        (name) => {
+          const found = allToolDefs.find(t => t.name === name);
+          return found ? compactToolDef(found, compactConfig) : undefined;
+        },
         registryNames,
       );
       // Add request_tool to active tools
@@ -668,10 +1070,12 @@ export class AgentRuntime {
       useCacheControl: true,
       cacheTtl,
       promptCacheKey: this.config.promptCacheKey ?? derivePromptCacheKey(ctx, tenantId),
+      isBatch: !!batchRouting,
     };
 
     // Strip internal @tier suffix (eco/standard/power/consensus) before sending to provider
     const apiModel = (routing.modelId || '').replace(/@\w+$/, '') || routing.modelId;
+    const selectedModelCfg = this.router.getModel(routing.modelId);
     const baseRequest: LLMRequest = {
       model: apiModel,
       // Order: [system (stable, cacheable), user (variable)]
@@ -682,13 +1086,27 @@ export class AgentRuntime {
         },
         {
           role: 'user',
-          content: buildCacheAwareUserPrompt(ctx, routing, this.governor),
+          content: buildCacheAwareUserPrompt(ctx, routing, this.governor, this.config),
         },
       ],
       maxTokens: routing.maxTokens,
       tools: toolDefs,
       cacheConfig,
     };
+
+    // Wire provider-native structured output when an output schema is supplied.
+    if (ctx.outputSchema && selectedModelCfg) {
+      if (selectedModelCfg.supportsStructuredOutput) {
+        baseRequest.responseFormat = {
+          type: 'json_schema',
+          schema: ctx.outputSchema,
+          name: 'structured_output',
+        };
+      } else if (selectedModelCfg.supportsJSONMode) {
+        baseRequest.responseFormat = { type: 'json_object' };
+      }
+      // Anthropic / unsupported providers fall through to tool-use fallback in their provider.
+    }
 
     // Apply parameter controller (eval profile, reasoning config, adaptive params)
     const request = applyControllerParams(baseRequest, ctx.goal, baseRequest.messages, 0);
@@ -778,6 +1196,38 @@ export class AgentRuntime {
       }
     } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Skills injection failed', { error: (e as Error)?.message }); }
 
+    // Inject auto-extracted skill recall — check SkillExtractor for matching past successes
+    try {
+      const { getSkillExtractor } = await import('../intelligence/skillExtractor');
+      const skillExtractor = getSkillExtractor();
+      const matchingSkill = skillExtractor.findMatchingSkill(ctx.goal);
+      if (matchingSkill && matchingSkill.confidence >= 0.5) {
+        try { getMetricsCollector().recordSkillRecallHit(true, ctx.tenantId); } catch { /* best-effort */ }
+        const skillLines = [
+          '## Auto-Recalled Skill',
+          `You've successfully handled a similar task before. Use this proven pattern:`,
+          ``,
+          `**${matchingSkill.name}** (${(matchingSkill.successRate * 100).toFixed(0)}% success, used ${matchingSkill.usageCount}×)`,
+          `Description: ${matchingSkill.description}`,
+        ];
+        if (matchingSkill.steps.length > 0) {
+          skillLines.push(`Steps: ${matchingSkill.steps.join(' → ')}`);
+        }
+        if (matchingSkill.tools.length > 0) {
+          skillLines.push(`Recommended tools: ${matchingSkill.tools.join(', ')}`);
+        }
+        skillLines.push(``, `Reuse this pattern if applicable. Adapt based on the current context.`);
+        const skillBlock = skillLines.join('\n');
+        const skillTokens = estimateTokens(skillBlock);
+        if (injectedContextTokens + skillTokens < contextTokenCap) {
+          contextParts.push(skillBlock);
+          injectedContextTokens += skillTokens;
+        }
+      } else {
+        try { getMetricsCollector().recordSkillRecallHit(false, ctx.tenantId); } catch { /* best-effort */ }
+      }
+    } catch (e) { getGlobalLogger().debug('AgentRuntime', 'Skill recall injection failed (best-effort)', { error: (e as Error)?.message }); }
+
     // Single splice for cache stability — all dynamic context in one system message
     if (contextParts.length > 0) {
       request.messages.splice(request.messages.length - 1, 0, {
@@ -807,6 +1257,9 @@ export class AgentRuntime {
     let largestFileWritePath = '';
     // Cumulative evidence for SubAgentGuard progress tracking (persists across retries)
     let cumulativeEvidence = 0;
+
+    // Per-run sliding window instance to prevent concurrent run corruption
+    this.slidingWindow = new SlidingWindowOrchestrator();
 
     // Check circuit breaker before first attempt
     if (!this.circuitBreaker.isAvailable()) {
@@ -920,10 +1373,15 @@ export class AgentRuntime {
               { name: 'reason', value: 'confident_no_tools' },
             ]);
           }
-          // Attempt structured output extraction for potential JSON answers
-          const structured = parseStructuredOutput(response.content);
-          if (structured) {
-            step.content = typeof structured === 'string' ? structured : JSON.stringify(structured);
+          // Attempt structured output extraction for potential JSON answers.
+          // Prefer provider-native parsed output, then fall back to content parsing.
+          if (response.parsed) {
+            step.content = JSON.stringify(response.parsed);
+          } else {
+            const structured = parseStructuredOutput(response.content);
+            if (structured) {
+              step.content = typeof structured === 'string' ? structured : JSON.stringify(structured);
+            }
           }
         }
 
@@ -931,10 +1389,17 @@ export class AgentRuntime {
         const maxIterations = Math.max(ctx.maxSteps || 10, 20);
         let toolLoopCount = 0;
         this.cycleDetector.reset();
+        this.executedMutations = [];
+        // Track recent tool call patterns for retry-loop detection.
+        // A retry loop is when the same tool is called with identical
+        // arguments >= 3 times within a short window (last 20 calls).
+        const recentToolPatterns: string[] = [];
+        let retryLoopDetected = false;
+        let retryLoopCount = 0;
         let cycleDetected = false;
         let interruptData: { reason: string; value: unknown } | null = null;
         while (response.toolCalls && response.toolCalls.length > 0 && toolLoopCount < maxIterations && !cycleDetected
-          && this.governor.getState().phase !== 'critical') {
+          && !retryLoopDetected && this.governor.getState().phase !== 'critical') {
           toolLoopCount++;
 
           // Reset output manager turn budget (governor-aware: shrink under pressure)
@@ -1012,6 +1477,13 @@ export class AgentRuntime {
                     if (siblingAbort.signal.aborted) {
                       return { toolCallId: tc.id, name: tc.name, output: '', error: 'Cancelled: sibling tool error', durationMs: 0 };
                     }
+                    // Retry-loop detection: canonicalized args for deterministic matching
+                    const rlCheck = this.checkRetryLoop(tc.name, tc.arguments as Record<string, unknown>, recentToolPatterns, runId, ctx.tenantId, toolLoopCount);
+                    if (rlCheck.detected) {
+                      retryLoopDetected = true;
+                      retryLoopCount = rlCheck.count;
+                      return { toolCallId: tc.id, name: tc.name, output: '', error: `Retry loop detected: ${tc.name}`, durationMs: 0 };
+                    }
                     const cycleCheck = this.cycleDetector.check(tc.name, tc.arguments, toolLoopCount);
                     if (cycleCheck.detected) {
                       bus.publish('system.alert', 'runtime', { type: 'cycle_detected', toolName: tc.name, description: cycleCheck.description });
@@ -1041,8 +1513,11 @@ export class AgentRuntime {
                       siblingAbort.abort();
                     }
                     if (!toolResult.error) {
-                      this.toolCache.set(tc, toolResult, tenantId);
+                      await this.toolCache.set(tc, toolResult, tenantId);
                       this.invalidateMutationCache(tc.name);
+                      if (isMutationTool(tc.name)) {
+                        this.executedMutations.push({ toolName: tc.name, args: tc.arguments as Record<string, unknown> });
+                      }
                     }
                     // Capture file_write content for artifact propagation
                     if (tc.name === 'file_write' && !toolResult.error) {
@@ -1081,6 +1556,14 @@ export class AgentRuntime {
                   rawResults.push({ toolCallId: tc.id, name: tc.name, output: '', error: `Hook blocked: ${hookResult.error || 'denied'}`, durationMs: 0 });
                   continue;
                 }
+                // Retry-loop detection: canonicalised args for deterministic matching
+                const rlCheck = this.checkRetryLoop(tc.name, tc.arguments as Record<string, unknown>, recentToolPatterns, runId, ctx.tenantId, toolLoopCount);
+                if (rlCheck.detected) {
+                  retryLoopDetected = true;
+                  retryLoopCount = rlCheck.count;
+                  rawResults.push({ toolCallId: tc.id, name: tc.name, output: '', error: `Retry loop detected: ${tc.name}`, durationMs: 0 });
+                  break;
+                }
                 const cycleCheck = this.cycleDetector.check(tc.name, tc.arguments, toolLoopCount);
                 if (cycleCheck.detected) {
                   bus.publish('system.alert', 'runtime', { type: 'cycle_detected', toolName: tc.name, description: cycleCheck.description });
@@ -1094,8 +1577,11 @@ export class AgentRuntime {
                   toolName: tc.name, args: tc.arguments, result: toolResult, agentId: ctx.agentId, runId,
                 });
                 if (!toolResult.error) {
-                  this.toolCache.set(tc, toolResult, tenantId);
+                  await this.toolCache.set(tc, toolResult, tenantId);
                   this.invalidateMutationCache(tc.name);
+                  if (isMutationTool(tc.name)) {
+                    this.executedMutations.push({ toolName: tc.name, args: tc.arguments as Record<string, unknown> });
+                  }
                 }
                 // Capture file_write content for artifact propagation
                 if (tc.name === 'file_write' && !toolResult.error) {
@@ -1128,7 +1614,7 @@ export class AgentRuntime {
           const effectiveWindow = maskDecision.apply
             ? Math.max(2, Math.floor(this.config.observationMaskWindow * (1 - maskDecision.intensity * 0.7)))
             : this.config.observationMaskWindow;
-          const maskedResults = applyObservationMask(
+          const maskedResults = await applyObservationMask(
             orderedResults.map((r, i) => ({
               ...r,
               output: managedOutputs[i]?.output ?? r.output,
@@ -1144,6 +1630,20 @@ export class AgentRuntime {
 
           for (const masked of maskedResults) {
             let finalOutput = masked.output;
+            // Defense-in-depth: scan tool outputs for injection patterns before they enter the LLM context.
+            // Lightweight regex check — blocks known injection patterns without LLM cost.
+            try {
+              const injectionScan = scanToolOutputForInjection(finalOutput);
+              if (injectionScan.blocked) {
+                finalOutput = `[Tool output filtered: ${injectionScan.reason}] (Original output length: ${finalOutput.length} chars)`;
+                bus.publish('system.alert', 'runtime', {
+                  type: 'tool_output_injection_blocked',
+                  toolCallId: masked.toolCallId,
+                  reason: injectionScan.reason,
+                });
+                try { getMetricsCollector().incrementCounter('tool_output_injection_blocked_total', 'Tool outputs blocked for injection patterns', 1, [{ name: 'reason', value: injectionScan.reason ?? 'unknown' }]); } catch { /* best-effort */ }
+              }
+            } catch { /* best-effort defense */ }
             // Apply truncation if governor says so and output is verbose
             if (truncLimit > 0 && finalOutput.length > truncLimit) {
               finalOutput = finalOutput.slice(0, truncLimit) + `\n...[truncated: ${masked.output.length - truncLimit} chars]`;
@@ -1180,7 +1680,83 @@ export class AgentRuntime {
             );
           }
 
+          // ── Sliding Window + Memory Solidification ──
+          // Before the follow-up LLM call, increment the turn counter,
+          // solidify completed turns to episodic memory (if due),
+          // enforce the window boundary, and retrieve relevant context.
+          this.slidingWindow.incrementTurn();
+
+          if (this.memory) {
+            // 1. Solidify completed turns to memory (every N turns)
+            try {
+              const solidifyResult = await this.slidingWindow.solidifyCompletedTurns(
+                request.messages,
+                this.memory,
+                ctx.goal,
+                runId,
+              );
+              if (solidifyResult.turnsSolidified > 0) {
+                bus.publish('system.alert', 'runtime', {
+                  type: 'sliding_window_solidify',
+                  turnsSolidified: solidifyResult.turnsSolidified,
+                  tokensFreed: solidifyResult.tokensFreed,
+                });
+              }
+            } catch (e) {
+              getGlobalLogger().debug('AgentRuntime', 'Sliding window solidify failed (best-effort)', {
+                error: (e as Error)?.message,
+              });
+            }
+
+            // 2. Apply sliding window (enforce max turns in context)
+            // request.messages is mutated in-place, so the subsequent
+            // followUpRequest will automatically reference the updated array.
+            try {
+              const windowResult = this.slidingWindow.applyWindow(request.messages);
+              if (windowResult.applied) {
+                bus.publish('system.alert', 'runtime', {
+                  type: 'sliding_window_applied',
+                  turnsDropped: windowResult.turnsDropped,
+                  tokensFreed: windowResult.tokensFreed,
+                });
+              }
+            } catch (e) {
+              getGlobalLogger().debug('AgentRuntime', 'Sliding window apply failed (best-effort)', {
+                error: (e as Error)?.message,
+              });
+            }
+
+            // 3. Retrieve relevant context from memory and inject
+            try {
+              const retrievalResult = this.slidingWindow.retrieveContext(
+                this.memory,
+                ctx.goal,
+                request.messages,
+              );
+              if (retrievalResult.entriesRetrieved > 0 && retrievalResult.injectedContext.length > 0) {
+                // Inject as a system message before the last user message
+                // This keeps prompt-cache stability (injected before variable content)
+                request.messages.splice(request.messages.length - 1, 0, {
+                  role: 'system' as const,
+                  content: retrievalResult.injectedContext,
+                });
+
+                bus.publish('system.alert', 'runtime', {
+                  type: 'sliding_window_retrieval',
+                  entriesRetrieved: retrievalResult.entriesRetrieved,
+                  injectedTokens: retrievalResult.injectedTokens,
+                });
+              }
+            } catch (e) {
+              getGlobalLogger().debug('AgentRuntime', 'Sliding window retrieval failed (best-effort)', {
+                error: (e as Error)?.message,
+              });
+            }
+          }
+
           // Resume the model with tool results
+          // followUpRequest is created fresh from the mutated request object,
+          // so it correctly sees the updated messages array.
           const followUpCtx = { request, agentId: ctx.agentId, runId };
           let followUpRequest = await getHookManager().fireBeforeLLMCall(followUpCtx);
           const followUp = await this.callWithTimeout(followUpRequest, routing);
@@ -1234,17 +1810,18 @@ export class AgentRuntime {
 
         // Interrupt check: if a tool requested human input, pause execution
         if (interruptData) {
+          const id = interruptData as { reason: string; value: unknown };
           const totalDurationMs = Date.now() - startTime;
           const result: AgentExecutionResult = {
             runId,
             agentId: ctx.agentId,
             missionId: ctx.missionId,
             status: 'interrupted',
-            summary: `Interrupted: ${interruptData.reason}`,
+            summary: `Interrupted: ${id.reason}`,
             steps,
             totalTokenUsage: totalTokens,
             totalDurationMs,
-            interrupt: interruptData,
+            interrupt: id,
           };
           this.checkpointer.terminalCheckpoint({
             runId, agentId: ctx.agentId, missionId: ctx.missionId,
@@ -1262,8 +1839,8 @@ export class AgentRuntime {
             },
             totalDurationMs,
           });
-          tracer.recordDecision(runId, `Interrupted: ${interruptData.reason}`, steps.length);
-          bus.publish('agent.interrupted', ctx.agentId, { runId, reason: interruptData.reason });
+          tracer.recordDecision(runId, `Interrupted: ${id.reason}`, steps.length);
+          bus.publish('agent.interrupted', ctx.agentId, { runId, reason: id.reason });
           try { getMetricsCollector().recordSubAgentOutcome(ctx.agentId, 'interrupted', ctx.subAgentDepth ?? 0, ctx.tenantId); } catch { /* best-effort */ }
           return result;
         }
@@ -1385,7 +1962,7 @@ export class AgentRuntime {
           const verifCtx: UVPTaskContext = {
             goal: ctx.goal,
             output: response.content,
-            language: ctx.goal.toLowerCase().includes('python') ? 'python' : undefined,
+            language: typeof ctx.goal === 'string' ? ctx.goal.toLowerCase().includes('python') ? 'python' : undefined : undefined,
             schema: ctx.outputSchema,
             toolsUsed: ctx.availableTools,
             tokenBudgetRemaining: this.governor.getState().remainingTokens,
@@ -1439,13 +2016,29 @@ export class AgentRuntime {
           : { id: `${runId}-${attempt}-fail`, insight: `Attempt ${attempt + 1} failed verification: ${(verifReport.signals[0] && ((verifReport.signals[0] as { type?: string }).type ?? (verifReport.signals[0] as { name?: string }).name)) || 'unknown'} signal.`, type: 'failure', timestamp: Date.now() };
         this.reflexionInjector.addReflection(reflectionInsight);
 
+        // Semantic circuit breaker: track consecutive verification failures.
+        // When verification repeatedly fails, the circuit breaker can trigger
+        // semantic-level intervention (e.g., escalate to stronger model).
+        if (!verifReport.passed) {
+          this.circuitBreaker.recordSemanticFailure(
+            `verification_failed: ${(verifReport.signals[0] && ((verifReport.signals[0] as { type?: string }).type ?? (verifReport.signals[0] as { name?: string }).name)) || 'unknown'}`
+          );
+        } else {
+          this.circuitBreaker.recordSemanticSuccess();
+        }
+
         if (!verifReport.passed && attempt < this.config.maxRetries) {
           const feedback = this.verificationPipeline.toFeedback(verifReport);
           if (feedback) {
             lastError = feedback;
             tracer.recordDecision(runId, `verification (attempt ${attempt + 1}, confidence ${verifReport.confidence.toFixed(2)}): ${feedback.slice(0, 100)}`, 0);
 
-            // Compact context before retry to avoid replaying bloated history
+            // Compact context before retry to avoid replaying bloated history.
+            // First, record which messages correlated with this verification failure
+            // so the compactor can prune failure-prone context first.
+            const failureSignal = (verifReport.signals[0] && ((verifReport.signals[0] as { type?: string }).type ?? (verifReport.signals[0] as { name?: string }).name)) || undefined;
+            this.compactor.recordFailureCorrelation(runId, request.messages, failureSignal);
+
             const tokensBeforeRetry = this.compactor.getUsage(request.messages).total;
             const tt = detectTaskType(ctx.goal);
             const taskType: CompactTaskType = tt === 'creative' ? 'general' : tt;
@@ -1464,9 +2057,15 @@ export class AgentRuntime {
             // Cascade escalation: try a more capable model on verification failure
             // FrugalGPT pattern: escalate to stronger model when quality is insufficient
             // Uses the escalation chain from routeWithCascade if available, otherwise falls back to getFallbackModel
-            const fallbackModel = currentEscalationChain.length > 0
-              ? this.router.getNextEscalation(routing.modelId, currentEscalationChain)
-              : this.router.getFallbackModel(routing.modelId, tt);
+            let fallbackModel: ModelConfig | undefined;
+            if (this.smartRouter && currentEscalationChain.length > 0) {
+              const nextId = this.smartRouter.getNextEscalation(routing.modelId, currentEscalationChain.map(m => m.id));
+              fallbackModel = nextId ? this.router.getModel(nextId.id) ?? undefined : undefined;
+            } else {
+              fallbackModel = currentEscalationChain.length > 0
+                ? this.router.getNextEscalation(routing.modelId, currentEscalationChain)
+                : this.router.getFallbackModel(routing.modelId, tt);
+            }
             if (fallbackModel && fallbackModel.tier !== routing.tier) {
               const newRouting: RoutingDecision = {
                 modelId: fallbackModel.id,
@@ -1512,6 +2111,24 @@ export class AgentRuntime {
             }
           }
         } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Content scan failed (best-effort)', { error: (e as Error)?.message }); }
+
+        // Output format: apply configurable formatting preference to the summary
+        // - 'concise': truncate verbose responses to first paragraph
+        // - 'structured': if response looks like JSON, pass through; otherwise no transformation
+        // - 'freeform' and 'auto': pass through without transformation
+        const outputFormat = this.config.outputFormat ?? 'auto';
+        if (outputFormat === 'concise' && safeContent && safeContent.length > 500) {
+          const firstParagraph = safeContent.split('\n\n')[0];
+          if (firstParagraph && firstParagraph.length > 50) {
+            safeContent = firstParagraph;
+          }
+        } else if (outputFormat === 'structured' && safeContent) {
+          try {
+            JSON.parse(safeContent);
+          } catch {
+            // Not JSON — no transformation applied
+          }
+        }
 
         // If the final response has no text content (tool_call-only response),
         // find the last text response from the step history for the summary.
@@ -1747,17 +2364,23 @@ export class AgentRuntime {
     };
     });
 
-    if (this.runHandle) {
+    // GAP-08: Call scheduler abortRun for failed runs — triggers compensation
+    // for any recorded compensable actions and releases the scheduler-level lease.
+    // On success, commitRun is called inside the runWithTenant callback (line ~2002).
+    if (execResult && execResult.status === 'failed' && this.runHandle) {
       const handle = this.runHandle as RunHandle;
       try {
         await getExecutionScheduler().abortRun({
           runId, leaseToken: handle.leaseToken, fencingEpoch: handle.fencingEpoch,
-          tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined, reason: 'execution failed',
+          tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
+          reason: execResult.error ?? 'execution failed',
         });
       } catch (e) {
         getGlobalLogger().debug('AgentRuntime', 'Scheduler abortRun failed', { runId, error: (e as Error).message });
       }
     }
+
+    return execResult;
 
     } finally {
       // Release circuit breaker if neither onSuccess nor onFailure was called
@@ -1785,6 +2408,37 @@ export class AgentRuntime {
           }
         } catch (e) {
           getGlobalLogger().warn('AgentRuntime', 'Failed to export OTel spans', { runId, error: (e as Error)?.message });
+        }
+      }
+      // Auto-export SOP template on successful execution
+      if (execResult?.status === 'success') {
+        try {
+          const trace = tracer.getTrace(runId);
+          if (trace) {
+            const sop = exportSOPFromTrace(trace);
+            if (sop) {
+              const sopDir = path.join(this.config.sopDir || '.commander/sops', ctx.agentId);
+              fs.mkdirSync(sopDir, { recursive: true });
+              const sopPath = path.join(sopDir, `${runId}.md`);
+              fs.writeFileSync(sopPath, formatSOPAsMarkdown(sop), 'utf-8');
+              // Also write structured JSON for API retrieval
+              const jsonPath = path.join(sopDir, `${runId}.json`);
+              fs.writeFileSync(jsonPath, JSON.stringify(sop, null, 2), 'utf-8');
+              getGlobalLogger().debug('AgentRuntime', 'SOP auto-exported', { runId, path: sopPath });
+              // Publish bus event for SSE streaming and API visibility
+              getMessageBus().publish('sop.generated', ctx.agentId, {
+                runId,
+                agentId: ctx.agentId,
+                goal: sop.goal,
+                path: sopPath,
+                stepCount: sop.totalSteps,
+                status: 'success',
+                tags: sop.tags,
+              });
+            }
+          }
+        } catch (e) {
+          getGlobalLogger().debug('AgentRuntime', 'SOP auto-export failed', { runId, error: (e as Error)?.message });
         }
       }
       try { await this.samplesStore.flush(); } catch (e) { getGlobalLogger().warn('AgentRuntime', 'Failed to flush samples', { runId, error: (e as Error)?.message }); }
@@ -2266,6 +2920,15 @@ export class AgentRuntime {
         bus.publish('tool.timeout', agentId, { runId, toolName: toolCall.name, timeoutMs: effectiveTimeout, durationMs });
       }
 
+      // Fire handleMutationToolFailure for mutation tools (generates rollback plan, publishes event, auto-executes safe plans)
+      if (isMutationTool(toolCall.name)) {
+        try {
+          await this.handleMutationToolFailure(toolCall.name, toolCall.arguments as Record<string, unknown>, errorMsg);
+        } catch (innerErr) {
+          getGlobalLogger().debug('AgentRuntime', 'handleMutationToolFailure threw (best-effort)', { actionId, error: (innerErr as Error).message });
+        }
+      }
+
       // Compensate side-effects from prior mutation tools in this run
       let compensateResult = await this.compensationRegistry.compensate(actionId);
       if (!compensateResult.success) {
@@ -2566,6 +3229,7 @@ export class AgentRuntime {
 
   /** Dispose sub-resources (timers, file handles) when this runtime is discarded */
   dispose(): void {
+    if (this.queueTimer) { clearInterval(this.queueTimer); this.queueTimer = null; }
     this.toolCache.dispose();
     try { getModelPerformanceStore().dispose(); } catch { /* best-effort */ }
     this.agentInbox.dispose();
@@ -2594,7 +3258,7 @@ function resolveSemanticCache(config: AgentRuntimeConfig): SemanticCache {
   const apiKey = cfg.openaiApiKey ?? process.env.OPENAI_API_KEY;
   if (!apiKey) {
     // Fall back to local embeddings (no API key needed)
-    getGlobalLogger().info(
+    getGlobalLogger().debug(
       'AgentRuntime',
       `Semantic cache enabled with local embeddings (threshold=${cfg.similarityThreshold ?? 0.92}). Set OPENAI_API_KEY for higher-quality OpenAI embeddings.`,
     );
@@ -2609,7 +3273,7 @@ function resolveSemanticCache(config: AgentRuntimeConfig): SemanticCache {
       pruneIntervalMs: cfg.pruneIntervalMs ?? 60_000,
     });
   }
-  getGlobalLogger().info(
+  getGlobalLogger().debug(
     'AgentRuntime',
     `Semantic cache enabled with OpenAI embeddings (model=${cfg.embeddingModel ?? 'text-embedding-3-small'}, threshold=${cfg.similarityThreshold ?? 0.92})`,
   );

@@ -22,7 +22,9 @@ export type StructuredSSEEventType =
   | 'output.completed'
   | 'diff.available'
   | 'error.occurred'
-  | 'cost.update';
+  | 'cost.update'
+  | 'compensation.update'
+  | 'sop.update';
 
 export interface StructuredSSEEvent {
   event: StructuredSSEEventType;

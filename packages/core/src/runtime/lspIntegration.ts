@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { getGlobalLogger } from '../logging';
+import { safePath } from '../tools/fileSystemTool';
 import type { Tool } from '../runtime/types';
 
 interface LSPDiagnostic {
@@ -354,6 +355,11 @@ export class LSPDiagnosticsTool implements Tool {
     const filePath = String(args.filePath ?? '');
     if (!filePath) return 'Error: filePath is required';
 
+    // Validate workspace boundary
+    try { safePath(filePath); } catch {
+      return `Error: Access denied: filePath "${filePath}" is outside workspace`;
+    }
+
     const diagnostics = getFileDiagnostics(filePath);
     if (diagnostics.length === 0) {
       return `No LSP diagnostics for "${filePath}"`;
@@ -387,7 +393,13 @@ export class LSPAttachTool implements Tool {
   async execute(args: Record<string, unknown>): Promise<string> {
     const filePath = String(args.filePath ?? '');
     if (!filePath) return 'Error: filePath is required';
-    if (!fs.existsSync(filePath)) return `Error: file not found: ${filePath}`;
+
+    // Validate workspace boundary
+    let resolved: string;
+    try { resolved = safePath(filePath); } catch {
+      return `Error: Access denied: filePath "${filePath}" is outside workspace`;
+    }
+    if (!fs.existsSync(resolved)) return `Error: file not found: ${filePath}`;
 
     const content = fs.readFileSync(filePath, 'utf-8');
     const enriched = attachDiagnostics(content, filePath);

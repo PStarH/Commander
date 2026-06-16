@@ -92,7 +92,37 @@ export class MetricsCollector {
   }
 
   getCounter(name: string, labels: MetricLabel[] = []): number {
-    return this.counters.get(this.key(name, labels))?.total ?? 0;
+    if (labels.length === 0) {
+      // No labels → exact key lookup
+      return this.counters.get(name)?.total ?? 0;
+    }
+    // Partial label matching: sum across all counters with matching name
+    // where all provided labels match (extra stored labels are ignored).
+    let total = 0;
+    for (const [key, metric] of this.counters) {
+      if (this.extractName(key) !== name) continue;
+      const allMatch = labels.every(reqLabel =>
+        metric.labels.some(
+          storedLabel => storedLabel.name === reqLabel.name && storedLabel.value === reqLabel.value,
+        ),
+      );
+      if (allMatch) total += metric.total;
+    }
+    return total;
+  }
+
+  /**
+   * Sum a counter across all label combinations.
+   * Useful when the dashboard needs the total regardless of label variants.
+   */
+  getCounterTotal(name: string): number {
+    let total = 0;
+    for (const [key, metric] of this.counters) {
+      if (this.extractName(key) === name) {
+        total += metric.total;
+      }
+    }
+    return total;
   }
 
   // ── Gauges ──
@@ -148,6 +178,9 @@ export class MetricsCollector {
       this.incrementCounter('tool_success_total', 'Total tool successes', 1, labels);
     }
     this.recordHistogram('tool_duration_ms', 'Tool execution duration in ms', durationMs, LATENCY_BUCKETS_MS, labels);
+    // OTel GenAI semantic convention aliases
+    this.incrementCounter('gen_ai.tool.call.count', 'OTel: tool call count', 1, labels);
+    this.recordHistogram('gen_ai.tool.call.duration', 'OTel: tool call duration in ms', durationMs, LATENCY_BUCKETS_MS, labels);
   }
 
   recordLLMCall(model: string, provider: string, tokens: number, durationMs: number, error?: string, tenantId?: string): void {
@@ -164,6 +197,17 @@ export class MetricsCollector {
     this.incrementCounter('llm_tokens_total', 'Total LLM tokens consumed', tokens, labels);
     this.recordHistogram('llm_duration_ms', 'LLM call duration in ms', durationMs, LATENCY_BUCKETS_MS, labels);
     this.recordHistogram('llm_tokens_per_call', 'Tokens per LLM call', tokens, TOKEN_BUCKETS, labels);
+    // OTel GenAI semantic convention aliases
+    const otelLabels: MetricLabel[] = [
+      { name: 'gen_ai.provider.name', value: provider },
+      { name: 'gen_ai.request.model', value: model },
+      { name: 'gen_ai.system', value: provider },
+      { name: 'error', value: error ? 'true' : 'false' },
+    ];
+    if (tenantId) otelLabels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('gen_ai.client.request.count', 'OTel: LLM request count', 1, otelLabels);
+    this.incrementCounter('gen_ai.client.token.usage', 'OTel: token usage', tokens, otelLabels);
+    this.recordHistogram('gen_ai.client.operation.duration', 'OTel: LLM operation duration in ms', durationMs, LATENCY_BUCKETS_MS, otelLabels);
   }
 
   recordError(errorClass: string, tenantId?: string): void {
@@ -178,6 +222,8 @@ export class MetricsCollector {
     this.incrementCounter('runs_total', 'Total runs by status', 1, labels);
     this.recordHistogram('run_duration_ms', 'Run duration in ms', durationMs, LATENCY_BUCKETS_MS, labels);
     this.recordHistogram('run_tool_count', 'Tools per run', toolCount, [1, 5, 10, 20, 50, 100], labels);
+    // OTel GenAI workflow alias
+    this.recordHistogram('gen_ai.workflow.duration', 'OTel: workflow duration in ms', durationMs, LATENCY_BUCKETS_MS, labels);
   }
 
   /**
@@ -197,9 +243,18 @@ export class MetricsCollector {
 
   /** Export metrics as OpenMetrics (Prometheus-compatible) text format */
   exportOpenMetrics(): string {
+    return this.formatMetrics('# HELP commander_metrics Built-in Commander metrics');
+  }
+
+  /** Export metrics with GenAI OpenTelemetry semantic convention names */
+  exportOpenTelemetry(): string {
+    return this.formatMetrics('# HELP commander_metrics Built-in Commander metrics (OTel GenAI conventions)');
+  }
+
+  /** Shared exporter: formats all counters, gauges, and histograms as OpenMetrics text */
+  private formatMetrics(header: string): string {
     const lines: string[] = [];
-    // Help header
-    lines.push('# HELP commander_metrics Built-in Commander metrics');
+    lines.push(header);
 
     for (const metric of this.counters.values()) {
       lines.push(`# TYPE ${metric.name} counter`);
@@ -214,7 +269,6 @@ export class MetricsCollector {
     for (const metric of this.histograms.values()) {
       lines.push(`# TYPE ${metric.name} histogram`);
       lines.push(`# HELP ${metric.name} ${metric.help}`);
-      // Prometheus buckets are cumulative — each bucket includes all lower buckets
       let cumulativeTotal = 0;
       for (let i = 0; i < metric.buckets.length; i++) {
         cumulativeTotal += metric.counts[i];
@@ -313,7 +367,7 @@ export class MetricsCollector {
     this.incrementCounter('topology_choices_total', 'Orchestration topology selections', 1, labels);
   }
 
-  recordSubAgentOutcome(agentId: string, status: 'success' | 'failed' | 'partial', depth: number, tenantId?: string): void {
+  recordSubAgentOutcome(agentId: string, status: 'success' | 'failed' | 'partial' | 'interrupted', depth: number, tenantId?: string): void {
     const labels: MetricLabel[] = [
       { name: 'agent', value: agentId },
       { name: 'status', value: status },
@@ -404,6 +458,44 @@ export class MetricsCollector {
     this.incrementCounter('tool_cache_events_total', 'Tool result cache events by outcome', 1, labels);
   }
 
+  // ── Experience System Health Metrics ──
+
+  /** Record a skill extraction (successful or not) */
+  recordSkillExtraction(outcome: 'extracted' | 'updated' | 'rejected', category?: string, tenantId?: string): void {
+    const labels: MetricLabel[] = [{ name: 'outcome', value: outcome }];
+    if (category) labels.push({ name: 'category', value: category });
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('skill_extraction_total', 'Skill extraction events by outcome', 1, labels);
+  }
+
+  /** Record whether a skills recall was a hit or miss */
+  recordSkillRecallHit(hit: boolean, tenantId?: string): void {
+    const labels: MetricLabel[] = [{ name: 'outcome', value: hit ? 'hit' : 'miss' }];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('skill_recall_total', 'Skill recall attempts (hit|miss)', 1, labels);
+  }
+
+  /** Track total experience count in MetaLearner */
+  recordMetaLearnerExperienceCount(count: number, tenantId?: string): void {
+    const labels: MetricLabel[] = [];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.setGauge('meta_learner_experience_count', 'Total experiences recorded by MetaLearner', count, labels);
+  }
+
+  /** Track number of active regression alerts */
+  recordRegressionActiveCount(count: number, tenantId?: string): void {
+    const labels: MetricLabel[] = [];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.setGauge('regression_active_count', 'Active strategy regression alerts', count, labels);
+  }
+
+  /** Record prediction verification accuracy */
+  recordPredictionVerdict(netImpact: 'positive' | 'negative', tenantId?: string): void {
+    const labels: MetricLabel[] = [{ name: 'impact', value: netImpact }];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('prediction_verdict_total', 'MetaLearner prediction verdicts by impact', 1, labels);
+  }
+
   private key(name: string, labels: MetricLabel[]): string {
     if (labels.length === 0) return name;
     const labelStr = labels.map(l => `${l.name}=${l.value}`).join(',');
@@ -420,6 +512,49 @@ export class MetricsCollector {
    * `setPromptPrefixCacheKey` so the cumulative cache key is observable
    * and the hit rate is computable.
    */
+  /**
+   * Record provider-reported prompt cache savings. Converts cache reads
+   * into dollar figures using the CostModel.
+   *
+   * @param tokens - TokenUsage with cacheReadTokens set
+   * @param provider - e.g. 'anthropic', 'openai'
+   * @param model - e.g. 'claude-3-5-sonnet'
+   * @param tenantId - optional tenant label
+   */
+  recordPromptCacheSavings(
+    tokens: { promptTokens: number; cacheReadTokens?: number },
+    provider: string,
+    model: string,
+    tenantId?: string,
+  ): void {
+    const cachedTokens = tokens.cacheReadTokens ?? 0;
+    if (cachedTokens <= 0) return;
+    const inputTokens = tokens.promptTokens;
+    const clamped = Math.min(cachedTokens, inputTokens);
+
+    // Look up pricing to compute uncached equivalent and savings
+    const pricing = getCostModel().getPricing(provider, model);
+    const inputPer1k = pricing.inputPer1k;
+    const cachedInputPer1k = pricing.cachedInputPer1k ?? 0;
+
+    const uncachedEquivalent = (clamped / 1000) * inputPer1k;
+    const cachedCost = (clamped / 1000) * cachedInputPer1k;
+    const dollarsSaved = uncachedEquivalent - cachedCost;
+
+    this.incrementCounter('prompt_cache_tokens_read_total', 'Tokens served from provider prompt cache', clamped, [
+      { name: 'provider', value: provider },
+      ...(tenantId ? [{ name: 'tenant', value: tenantId }] : []),
+    ]);
+    this.incrementCounter('prompt_cache_dollars_uncached_equivalent_total', 'What uncached tokens would have cost (USD)', uncachedEquivalent, [
+      { name: 'provider', value: provider },
+      ...(tenantId ? [{ name: 'tenant', value: tenantId }] : []),
+    ]);
+    this.incrementCounter('prompt_cache_cost_saved_usd_total', 'Estimated cost saved by provider prompt cache (USD)', dollarsSaved, [
+      { name: 'provider', value: provider },
+      ...(tenantId ? [{ name: 'tenant', value: tenantId }] : []),
+    ]);
+  }
+
   recordPromptPrefixCache(hit: boolean, tenantId?: string): void {
     const labels: MetricLabel[] = [{ name: 'outcome', value: hit ? 'hit' : 'miss' }];
     if (tenantId) labels.push({ name: 'tenant', value: tenantId });
@@ -442,8 +577,57 @@ export class MetricsCollector {
     const labelStr = labels.map(l => `${l.name}="${l.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`).join(',');
     return `${name}{${labelStr}} ${value}`;
   }
+
+  private eventLoopLagTimer: ReturnType<typeof setInterval> | null = null;
+  private eventLoopLagMs = 0;
+
+  startEventLoopLagMonitor(intervalMs: number = 1000): void {
+    if (this.eventLoopLagTimer) return;
+
+    const measure = () => {
+      const start = process.hrtime.bigint();
+      setImmediate(() => {
+        const lag = Number(process.hrtime.bigint() - start) / 1e6;
+        this.eventLoopLagMs = lag;
+        this.setGauge('event_loop_lag_ms', 'Event loop lag in milliseconds', lag);
+        if (lag > 50) {
+          this.recordHistogram('event_loop_lag_high_ms', 'Event loop lag spikes > 50ms', lag, [50, 100, 200, 500]);
+        }
+      });
+    };
+
+    measure();
+    this.eventLoopLagTimer = setInterval(measure, intervalMs);
+    if (this.eventLoopLagTimer.unref) this.eventLoopLagTimer.unref();
+  }
+
+  stopEventLoopLagMonitor(): void {
+    if (this.eventLoopLagTimer) {
+      clearInterval(this.eventLoopLagTimer);
+      this.eventLoopLagTimer = null;
+    }
+  }
+
+  getEventLoopLagMs(): number {
+    return this.eventLoopLagMs;
+  }
+
+  recordCPUWorkerPoolStats(stats: {
+    poolSize: number;
+    availableWorkers: number;
+    queueDepth: number;
+    totalExecuted: number;
+    totalQueued: number;
+  }): void {
+    this.setGauge('cpu_worker_pool_size', 'Total workers in pool', stats.poolSize);
+    this.setGauge('cpu_worker_pool_available', 'Available idle workers', stats.availableWorkers);
+    this.setGauge('cpu_worker_pool_queue_depth', 'Tasks waiting in queue', stats.queueDepth);
+    this.incrementCounter('cpu_worker_pool_tasks_executed_total', 'Total tasks executed by worker pool', stats.totalExecuted);
+    this.incrementCounter('cpu_worker_pool_tasks_queued_total', 'Total tasks submitted to pool', stats.totalQueued);
+  }
 }
 
+import { getCostModel } from '../observability/costModel';
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
 const metricsSingleton = createTenantAwareSingleton(() => new MetricsCollector());

@@ -17,6 +17,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import type { ToolCall, ToolResult } from './types';
+import { purifyObservation } from './observationPurifier';
 
 // ============================================================================
 // Configuration
@@ -223,7 +224,13 @@ export class ToolOutputManager {
     if (output.length <= maxChars) return output;
     if (maxChars <= 0) return '';
 
-    const lines = output.split('\n');
+    // Content-aware purification before truncation (HTML→Markdown, JSON minify, etc.)
+    const purified = purifyObservation(output, toolName);
+    if (purified.length <= maxChars) {
+      return purified;
+    }
+
+    const lines = purified.split('\n');
 
     if (this.isShellTool(toolName)) {
       // Shell: keep last lines (errors/stack traces at end)
@@ -232,7 +239,7 @@ export class ToolOutputManager {
 
     if (this.isSearchTool(toolName)) {
       // Search: keep complete results, truncate descriptions
-      return this.truncateSearchOutput(output, maxChars);
+      return this.truncateSearchOutput(purified, maxChars);
     }
 
     if (this.isFileTool(toolName)) {
@@ -243,9 +250,9 @@ export class ToolOutputManager {
     // Default: head + tail
     const headSize = Math.floor(maxChars * 0.7);
     const tailSize = Math.max(0, maxChars - headSize - 100); // 100 chars for separator
-    const head = output.slice(0, headSize);
-    const tail = tailSize > 0 ? output.slice(-tailSize) : '';
-    return `${head}\n\n[... ${output.length - maxChars} chars truncated ...]\n\n${tail}`;
+    const head = purified.slice(0, headSize);
+    const tail = tailSize > 0 ? purified.slice(-tailSize) : '';
+    return `${head}\n\n[... ${purified.length - maxChars} chars truncated ...]\n\n${tail}`;
   }
 
   private truncateShellOutput(lines: string[], maxChars: number): string {
