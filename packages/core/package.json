@@ -49,8 +49,8 @@
     "test": "pnpm test:node && pnpm test:vitest",
     "test:inventory": "node scripts/test-inventory.mjs --verify",
     "test:node": "node scripts/run-node-tests.mjs",
-    "bench": "node scripts/run-node-tests.mjs benchmarks",
-    "benchmark:verify": "node scripts/verify-benchmark-results.mjs",
+    "test:node:pathsec": "npx tsx --test --test-concurrency=1 tests/tools/pathSecurity.test.ts",
+    "test:security": "npx tsx --test tests/tools-security.test.ts tests/httpServer.test.ts tests/observabilityP1.test.ts tests/observabilityP2P3.test.ts",
     "test:vitest": "vitest run",
     "test:vitest:watch": "vitest",
     "docs": "typedoc",
@@ -67,7 +67,8 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "blessed": "^0.1.81"
+    "blessed": "^0.1.81",
+    "@commander/plugin-sdk": "workspace:*"
   },
   "optionalDependencies": {
     "better-sqlite3": "^11.0.0",

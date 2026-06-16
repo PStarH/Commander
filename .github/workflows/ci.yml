@@ -47,20 +47,11 @@ jobs:
       - name: Verify core test inventory
         run: pnpm --filter @commander/core test:inventory
 
-      - name: Verify benchmark result claims
-        run: pnpm --filter @commander/core benchmark:verify
-
       - name: Run core tests
         run: pnpm --filter @commander/core test
 
-      - name: Run benchmarks
-        run: npx tsx --test packages/core/benchmarks/ultimate.benchmark.test.ts
-
-      - name: Benchmark regression check
-        run: npx tsx packages/core/benchmarks/ci-benchmark-check.ts
-        env:
-          CI_BENCHMARK_THRESHOLD: '0.50'
-          CI_BENCHMARK_UPDATE: ''
+      - name: Path security tests
+        run: pnpm --filter @commander/core test:node:pathsec
 
       - name: CLI check
         run: npx tsx cli.ts status

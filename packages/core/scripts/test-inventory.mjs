@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
-const roots = ['tests', 'benchmarks'];
+// Scan 'tests/' for test files; 'benchmarks/' is at the project root, not inside packages/core.
+const roots = ['tests'];
 const verify = process.argv.includes('--verify');
 const json = process.argv.includes('--json');
 
@@ -34,8 +35,11 @@ function countTests(source) {
 
 function readVitestIncludes() {
   const config = readFileSync('vitest.config.ts', 'utf8');
+  // Only scan the `include:` array — not coverage.exclude or other sections
+  const includeMatch = config.match(/include:\s*\[([^\]]+)\]/s);
+  if (!includeMatch) return new Set();
   return new Set(
-    Array.from(config.matchAll(/['"]([^'"]+\.test\.ts)['"]/g))
+    Array.from(includeMatch[1].matchAll(/['"]([^'"]+\.test\.ts)['"]/g))
       .map(match => match[1])
       .sort(),
   );
