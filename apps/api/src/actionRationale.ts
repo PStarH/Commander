@@ -14,13 +14,7 @@
 import fs from 'fs';
 import path from 'path';
 
-/**
- * ActionRationaleStore persistence path. Override `COMMANDER_ACTION_RATIONALE_FILE`
- * to relocate the audit trail (e.g. per-launcher in parallel test scaffolding);
- * default keeps the original `__dirname/../data/action-rationales.json` so
- * production runs are untouched. Because the constructor captures this constant
- * at construction time, the env var MUST be set before the module is required.
- */
+/** Override `COMMANDER_ACTION_RATIONALE_FILE` to relocate the rationale audit trail. Default keeps the original `__dirname/../data/action-rationales.json` path so production runs are untouched. Env var MUST be set before this module is required (module-load capture). */
 const ACTION_RATIONALE_FILE =
   process.env['COMMANDER_ACTION_RATIONALE_FILE'] ??
   path.resolve(__dirname, '../data/action-rationales.json');
