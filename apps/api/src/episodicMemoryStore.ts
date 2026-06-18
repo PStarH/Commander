@@ -75,8 +75,23 @@ export interface MemoryStats {
 // SQLite-like Storage (File-based for simplicity)
 // ============================================
 
-const EPISODIC_MEMORY_FILE = path.resolve(__dirname, '../data/episodic-memory.json');
-const VECTOR_INDEX_FILE = path.resolve(__dirname, '../data/episodic-memory-vectors.json');
+/**
+ * EpisodicMemoryStore persistence paths. Override `COMMANDER_EPISODIC_FILE`
+ * to relocate the episodic JSON file, AND `COMMANDER_VECTOR_INDEX_FILE` to
+ * relocate the vector index file (e.g. per-launcher in parallel test
+ * scaffolding). Defaults keep the original `__dirname/../data/...` paths so
+ * production runs are untouched. Both env vars must be set BEFORE this
+ * module is required (module-load capture). The vector index is tightly
+ * paired with its episodic file: setting only one env var will route one
+ * artifact to the override and the other to the default location, which
+ * breaks the "only there" contract for tests.
+ */
+const EPISODIC_MEMORY_FILE =
+  process.env['COMMANDER_EPISODIC_FILE'] ??
+  path.resolve(__dirname, '../data/episodic-memory.json');
+const VECTOR_INDEX_FILE =
+  process.env['COMMANDER_VECTOR_INDEX_FILE'] ??
+  path.resolve(__dirname, '../data/episodic-memory-vectors.json');
 
 /**
  * Simple TF-IDF Vector Index
