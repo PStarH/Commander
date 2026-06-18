@@ -13,20 +13,14 @@ import {
   getProjectWarRoomSnapshot,
 } from '@commander/core';
 
-/**
- * WarRoomStore persistence path. Override `COMMANDER_WARROOM_FILE` to relocate
- * the JSON-backed war-room store (e.g. per-launcher in parallel test
- * scaffolding); default keeps the original `__dirname/../data/war-room.json`
- * so production runs are untouched. The constant is evaluated at module-load
- * time, so the env var MUST be set before the module is required.
- *
- * Note: this only affects the JSON-backed variant invoked by default in
- * `createWarRoomStore()`. The SQLite variant (`WARROOM_STORAGE=sqlite`) uses
- * `path.resolve(__dirname, '../data/war-room.sqlite')` and is not yet
- * env-overridable — add a dedicated env var if you need that path relocated.
- */
+/** Override `COMMANDER_WARROOM_FILE` to relocate the JSON-backed war-room store. Default keeps the original `__dirname/../data/war-room.json` path so production runs are untouched. Env var MUST be set before this module is required (module-load capture). */
 const DATA_FILE =
   process.env['COMMANDER_WARROOM_FILE'] ?? path.resolve(__dirname, '../data/war-room.json');
+
+/** Override `COMMANDER_SQLITE_WARROOM_FILE` to relocate the SQLite-backed war-room store (used when `WARROOM_STORAGE=sqlite`). Default keeps the original `__dirname/../data/war-room.sqlite` path so production runs are untouched. Env var MUST be set before this module is required (module-load capture). */
+const SQLITE_DATA_FILE =
+  process.env['COMMANDER_SQLITE_WARROOM_FILE'] ??
+  path.resolve(__dirname, '../data/war-room.sqlite');
 
 interface CreateMissionInput {
   projectId: string;
@@ -387,7 +381,7 @@ export class SqliteWarRoomStore implements IWarRoomStore {
   private readonly db: BetterSqlite3Database;
 
   constructor(dbPath?: string) {
-    const resolvedPath = dbPath ?? path.resolve(__dirname, '../data/war-room.sqlite');
+    const resolvedPath = dbPath ?? SQLITE_DATA_FILE;
 
     // Dynamically require better-sqlite3 so the dependency is optional for
     // users who only need the JSON store.
