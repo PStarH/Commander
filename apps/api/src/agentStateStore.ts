@@ -4,8 +4,7 @@ import { AgentState } from '@commander/core';
 
 /** Override `COMMANDER_AGENT_STATE_FILE` to relocate the agent-state JSON file. Default keeps the original `__dirname/../data/agent-state.json` path so production runs are untouched. Env var MUST be set before this module is required (module-load capture). */
 const AGENT_STATE_FILE =
-  process.env['COMMANDER_AGENT_STATE_FILE'] ??
-  path.resolve(__dirname, '../data/agent-state.json');
+  process.env['COMMANDER_AGENT_STATE_FILE'] ?? path.resolve(__dirname, '../data/agent-state.json');
 
 export interface UpsertAgentStateInput {
   projectId: string;

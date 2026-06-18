@@ -14,9 +14,13 @@ export function LivePage() {
         if (data.type === 'log' && data.entry) {
           setEntries((prev) => [...prev.slice(-500), data.entry]);
         }
-      } catch { void 0; }
+      } catch {
+        void 0;
+      }
     };
-    ws.onerror = () => { void 0; };
+    ws.onerror = () => {
+      void 0;
+    };
     return () => ws.close();
   }, []);
 
