@@ -121,21 +121,17 @@ export function createSagaRouter(): Router {
     const graph = lookupSagaGraph(sagaName);
     if (!graph) return res.status(400).json({ error: `Unknown saga: ${sagaName}` });
 
-    const coord = await (SagaCoordinator as unknown as {
-      resumeFrom: (
-        graph: SagaGraph,
-        recovered: unknown,
-        checkpoint: unknown,
-        approval: unknown,
-        runtime: unknown,
-      ) => Promise<unknown>;
-    }).resumeFrom(
-      graph,
-      recovered,
-      runtime.checkpoint,
-      runtime.approval,
-      runtime,
-    );
+    const coord = await (
+      SagaCoordinator as unknown as {
+        resumeFrom: (
+          graph: SagaGraph,
+          recovered: unknown,
+          checkpoint: unknown,
+          approval: unknown,
+          runtime: unknown,
+        ) => Promise<unknown>;
+      }
+    ).resumeFrom(graph, recovered, runtime.checkpoint, runtime.approval, runtime);
 
     const coordinator = coord as unknown as {
       resume: () => Promise<{ status: string }>;
@@ -149,7 +145,10 @@ export function createSagaRouter(): Router {
     const bus = getMessageBus();
     resultPromise
       .then((result: { status: string }) => {
-        bus.publish('saga.completed' as MessageBusTopic, 'saga-api', { runId, status: result.status });
+        bus.publish('saga.completed' as MessageBusTopic, 'saga-api', {
+          runId,
+          status: result.status,
+        });
       })
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
@@ -172,16 +171,11 @@ export function createSagaRouter(): Router {
     const graph = lookupSagaGraph(sagaName);
     if (!graph) return res.status(400).json({ error: `Unknown saga: ${sagaName}` });
 
-    const { coordinator: coord, newRunId } = await (SagaCoordinator as unknown as {
-      forkFrom: (...args: unknown[]) => Promise<{ coordinator: unknown; newRunId: string }>;
-    }).forkFrom(
-      graph,
-      runId,
-      nodeId,
-      runtime.checkpoint,
-      runtime.approval,
-      { ...runtime, input },
-    );
+    const { coordinator: coord, newRunId } = await (
+      SagaCoordinator as unknown as {
+        forkFrom: (...args: unknown[]) => Promise<{ coordinator: unknown; newRunId: string }>;
+      }
+    ).forkFrom(graph, runId, nodeId, runtime.checkpoint, runtime.approval, { ...runtime, input });
 
     const forked = coord as unknown as {
       run: () => Promise<{ status: string }>;
@@ -193,11 +187,17 @@ export function createSagaRouter(): Router {
     const bus = getMessageBus();
     resultPromise
       .then((result: { status: string }) => {
-        bus.publish('saga.completed' as MessageBusTopic, 'saga-api', { runId: newRunId, status: result.status });
+        bus.publish('saga.completed' as MessageBusTopic, 'saga-api', {
+          runId: newRunId,
+          status: result.status,
+        });
       })
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
-        bus.publish('saga.failed' as MessageBusTopic, 'saga-api', { runId: newRunId, error: message });
+        bus.publish('saga.failed' as MessageBusTopic, 'saga-api', {
+          runId: newRunId,
+          error: message,
+        });
       });
   });
 

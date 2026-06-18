@@ -129,9 +129,14 @@ function detectFirstAvailableProvider(): string | null {
   for (const type of PROVIDER_ORDER) {
     const env = ENV_MAP[type];
     if (resolveApiKey(type, env.key)) return type;
-    if (type === 'ollama' && (process.env.OLLAMA_HOST || process.env.OLLAMA_BASE_URL || process.env.OLLAMA_MODEL)) return type;
+    if (
+      type === 'ollama' &&
+      (process.env.OLLAMA_HOST || process.env.OLLAMA_BASE_URL || process.env.OLLAMA_MODEL)
+    )
+      return type;
     if (type === 'vllm' && (process.env.VLLM_BASE_URL || process.env.VLLM_MODEL)) return type;
-    if (type === 'bedrock' && (process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE)) return type;
+    if (type === 'bedrock' && (process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE))
+      return type;
   }
   return null;
 }
@@ -148,9 +153,11 @@ function resolveProviderChain(fileConfig: CommanderFileConfig): string[] {
       available.push(type);
       if (available.length >= 5) break;
     }
-    if (type === 'ollama' && (process.env.OLLAMA_HOST || process.env.OLLAMA_BASE_URL)) available.push(type);
+    if (type === 'ollama' && (process.env.OLLAMA_HOST || process.env.OLLAMA_BASE_URL))
+      available.push(type);
     if (type === 'vllm' && process.env.VLLM_BASE_URL) available.push(type);
-    if (type === 'bedrock' && (process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE)) available.push(type);
+    if (type === 'bedrock' && (process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE))
+      available.push(type);
   }
   return available;
 }
@@ -180,20 +187,35 @@ export class ConfigResolver {
 
     const model = overrides.model ?? file.model ?? (env.model || DEFAULT_CONFIG.model);
     const mode = (overrides.mode ?? file.mode ?? DEFAULT_CONFIG.mode) as ExecutionMode;
-    const topology = (overrides.topology ?? file.topology ?? DEFAULT_CONFIG.topology) as TopologyChoice;
+    const topology = (overrides.topology ??
+      file.topology ??
+      DEFAULT_CONFIG.topology) as TopologyChoice;
     const budget = overrides.budget ?? file.budget ?? DEFAULT_CONFIG.budget;
     const providerChain = resolveProviderChain(file);
 
     return {
-      provider: providerName === 'auto' ? (env.model ? providerName : detectFirstAvailableProvider() ?? 'none') : providerName,
+      provider:
+        providerName === 'auto'
+          ? env.model
+            ? providerName
+            : (detectFirstAvailableProvider() ?? 'none')
+          : providerName,
       model: model === 'auto' ? env.model || 'gpt-4o' : model,
-      mode, topology, budget,
-      apiKey: env.apiKey, baseUrl: env.baseUrl, apiType: env.apiType,
+      mode,
+      topology,
+      budget,
+      apiKey: env.apiKey,
+      baseUrl: env.baseUrl,
+      apiType: env.apiType,
       providerChain,
       storage: {
-        checkpoints: overrides.storage?.checkpoints ?? file._storage?.checkpoints ?? DEFAULT_CONFIG.storage.checkpoints,
+        checkpoints:
+          overrides.storage?.checkpoints ??
+          file._storage?.checkpoints ??
+          DEFAULT_CONFIG.storage.checkpoints,
         traces: overrides.storage?.traces ?? file._storage?.traces ?? DEFAULT_CONFIG.storage.traces,
-        samples: overrides.storage?.samples ?? file._storage?.samples ?? DEFAULT_CONFIG.storage.samples,
+        samples:
+          overrides.storage?.samples ?? file._storage?.samples ?? DEFAULT_CONFIG.storage.samples,
       },
       debug: overrides.debug ?? (!!process.env.COMMANDER_DEBUG || DEFAULT_CONFIG.debug),
       verbose: overrides.verbose ?? (!!process.env.COMMANDER_VERBOSE || DEFAULT_CONFIG.verbose),
