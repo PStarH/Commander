@@ -8,6 +8,9 @@
  * 3. Clear task boundaries prevent duplication
  * 4. Scale effort to query complexity
  * 5. Deterministic task allocation prevents agent contention
+ *
+ * Complexity assessment and effort classification delegate to the core
+ * package's deliberation engine rather than reimplementing keyword matching.
  */
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -15,8 +18,10 @@ import {
   getTaskAllocator,
   AllocationResult,
   TaskPriority,
-  ReleaseResult
+  ReleaseResult,
 } from './deterministicTaskAllocator';
+import { deliberate, classifyEffortLevel } from '@commander/core';
+import type { EffortLevel } from '@commander/core';
 
 export type TaskComplexity = 'simple' | 'moderate' | 'complex';
 
@@ -49,52 +54,67 @@ export interface DelegationRequest {
 }
 
 /**
- * Determines task complexity based on query characteristics
- * Following Anthropic's guidelines:
- * - Simple: 1 agent, 3-10 tool calls
- * - Moderate: 2-4 subagents, 10-15 calls each
- * - Complex: 10+ subagents with clear divisions
+ * Maps the core package's EffortLevel to the API's TaskComplexity.
+ * DEEP_RESEARCH maps to 'complex' since both warrant maximum subagent scaling.
  */
-export function assessComplexity(query: string): TaskComplexity {
-  const indicators = {
-    simple: ['what is', 'who is', 'when did', 'define'],
-    moderate: ['compare', 'analyze', 'review', 'difference between'],
-    complex: ['comprehensive', 'all aspects', 'thorough', 'multiple sources', 'deep dive']
-  };
-
-  const lowerQuery = query.toLowerCase();
-
-  // Check for complexity indicators
-  if (indicators.complex.some(i => lowerQuery.includes(i))) {
-    return 'complex';
+function effortToComplexity(effort: EffortLevel): TaskComplexity {
+  switch (effort) {
+    case 'SIMPLE':
+      return 'simple';
+    case 'MODERATE':
+      return 'moderate';
+    case 'COMPLEX':
+    case 'DEEP_RESEARCH':
+      return 'complex';
   }
-  if (indicators.moderate.some(i => lowerQuery.includes(i))) {
-    return 'moderate';
-  }
-  return 'simple';
 }
 
 /**
- * Calculates optimal subagent count based on complexity
+ * Determines task complexity by delegating to the core package's deliberation
+ * engine, which performs richer keyword classification across 6 task types
+ * (FACTUAL, REASONING, RESEARCH, ANALYSIS, CODING, CREATIVE) and maps them
+ * to effort levels using query length, tool count, and risk level heuristics.
+ */
+export function assessComplexity(query: string): TaskComplexity {
+  const plan = deliberate(query);
+  return effortToComplexity(plan.effortLevel ?? classifyEffortLevel(query));
+}
+
+/**
+ * Calculates optimal subagent count based on complexity.
+ * Uses deterministic counts derived from the core's effort scaling rules
+ * rather than random ranges, ensuring reproducible behavior.
  */
 export function calculateSubagentCount(complexity: TaskComplexity): number {
   switch (complexity) {
-    case 'simple': return 1;
-    case 'moderate': return 2 + Math.floor(Math.random() * 2); // 2-4
-    case 'complex': return 8 + Math.floor(Math.random() * 4); // 8-12
+    case 'simple':
+      return 1;
+    case 'moderate':
+      return 3; // midpoint of core's MODERATE range (2-4)
+    case 'complex':
+      return 8; // lower bound of core's COMPLEX/DEEP_RESEARCH range
   }
 }
 
 /**
- * Creates a delegation plan for multi-agent execution
+ * Creates a delegation plan for multi-agent execution.
+ *
+ * Delegates to the core package's deliberation engine for task type
+ * classification, effort level determination, and agent count estimation.
+ * This replaces the previous inline keyword-matching approach with the
+ * core's richer 6-category task classification and effort scaling rules.
  */
 export function createDelegationPlan(request: DelegationRequest): OrchestratorPlan {
-  const complexity = assessComplexity(request.query);
-  const subagentCount = calculateSubagentCount(complexity);
+  const deliberation = deliberate(request.query, {
+    availableTools: ['search', 'fetch', 'analyze'],
+  });
+
+  const effortLevel = deliberation.effortLevel ?? classifyEffortLevel(request.query);
+  const complexity = effortToComplexity(effortLevel);
+  const subagentCount = deliberation.estimatedAgentCount;
 
   const tasks: SubagentTask[] = [];
 
-  // Decompose query into subtasks
   if (complexity === 'simple') {
     tasks.push({
       id: uuidv4(),
@@ -102,24 +122,24 @@ export function createDelegationPlan(request: DelegationRequest): OrchestratorPl
       outputFormat: 'Direct answer with supporting evidence',
       tools: ['search', 'fetch'],
       boundaries: ['Focus on authoritative sources', 'Limit to 3-5 sources'],
-      status: 'pending'
+      status: 'pending',
     });
   } else {
-    // For moderate/complex, create specialized tasks
-    // This is a placeholder - actual decomposition would use LLM
-    const aspects = extractAspects(request.query);
-    aspects.slice(0, subagentCount).forEach(aspect => {
+    // For moderate/complex, decompose using the deliberation's capabilities
+    // and task type to generate more targeted subtasks
+    const aspects = extractAspects(request.query, deliberation.capabilitiesNeeded);
+    aspects.slice(0, Math.min(subagentCount, aspects.length)).forEach((aspect) => {
       tasks.push({
         id: uuidv4(),
-        objective: `Research: ${aspect}`,
+        objective: aspect,
         outputFormat: 'Structured findings with citations',
         tools: ['search', 'fetch', 'analyze'],
         boundaries: [
           'Do not duplicate work of other agents',
           'Focus on primary sources',
-          'Return comprehensive findings'
+          'Return comprehensive findings',
         ],
-        status: 'pending'
+        status: 'pending',
       });
     });
   }
@@ -131,26 +151,35 @@ export function createDelegationPlan(request: DelegationRequest): OrchestratorPl
     subagentCount,
     tasks,
     createdAt: new Date().toISOString(),
-    allocationEnabled: true
+    allocationEnabled: true,
   };
 }
 
 /**
- * Extracts research aspects from a query (simplified)
- * In production, this would use an LLM
+ * Extracts research aspects from a query, enriched with capability hints
+ * from the core deliberation engine. When capabilities are available, each
+ * aspect is tagged with the relevant capability to guide subtask assignment.
  */
-function extractAspects(query: string): string[] {
-  // Simplified aspect extraction
+function extractAspects(query: string, capabilities?: string[]): string[] {
   const aspects: string[] = [];
 
   // Check for common patterns
   if (query.includes(' and ') || query.includes('&')) {
-    aspects.push(...query.split(/\s+(?:and|&)\s+/).map(s => s.trim()));
+    aspects.push(...query.split(/\s+(?:and|&)\s+/).map((s) => s.trim()));
   } else if (query.includes(' vs ') || query.includes('versus')) {
     const parts = query.split(/\s+(?:vs|versus)\s+/);
-    aspects.push(`Aspect 1: ${parts[0]}`, `Aspect 2: ${parts[1]}`);
+    aspects.push(`Compare: ${parts[0]}`, `Compare: ${parts[1]}`);
   } else {
     aspects.push(query);
+  }
+
+  // If the deliberation identified specific capabilities, generate
+  // capability-focused aspects for moderate/complex tasks
+  if (capabilities && capabilities.length > 1) {
+    const capsWithoutReasoning = capabilities.filter((c) => c !== 'reasoning');
+    if (capsWithoutReasoning.length > 0 && aspects.length === 1) {
+      return capsWithoutReasoning.map((cap) => `[${cap}] ${query}`);
+    }
   }
 
   return aspects;
@@ -191,21 +220,21 @@ export class Orchestrator {
       priority?: TaskPriority;
       timeoutMs?: number;
       dependencies?: string[];
-    } = {}
+    } = {},
   ): AllocationResult {
     const plan = this.activePlans.get(planId);
     if (!plan) {
       return {
         success: false,
-        error: 'PLAN_NOT_FOUND'
+        error: 'PLAN_NOT_FOUND',
       };
     }
 
-    const task = plan.tasks.find(t => t.id === taskId);
+    const task = plan.tasks.find((t) => t.id === taskId);
     if (!task) {
       return {
         success: false,
-        error: 'TASK_NOT_FOUND'
+        error: 'TASK_NOT_FOUND',
       };
     }
 
@@ -219,8 +248,8 @@ export class Orchestrator {
       dependencies: options.dependencies,
       metadata: {
         planId,
-        objective: task.objective
-      }
+        objective: task.objective,
+      },
     });
 
     if (result.success && result.allocation) {
@@ -241,20 +270,20 @@ export class Orchestrator {
     taskId: string,
     agentId: string,
     reason: 'completed' | 'failed' | 'timeout' | 'manual',
-    result?: string
+    result?: string,
   ): ReleaseResult {
     const plan = this.activePlans.get(planId);
     if (!plan) {
       return { success: false, error: 'PLAN_NOT_FOUND' };
     }
 
-    const task = plan.tasks.find(t => t.id === taskId);
-    
+    const task = plan.tasks.find((t) => t.id === taskId);
+
     const releaseResult = this.taskAllocator.release({
       taskId,
       ownerId: agentId,
       reason,
-      result
+      result,
     });
 
     if (releaseResult.success && task) {
@@ -290,12 +319,12 @@ export class Orchestrator {
     planId: string,
     taskId: string,
     status: SubagentTask['status'],
-    result?: string
+    result?: string,
   ): void {
     const plan = this.activePlans.get(planId);
     if (!plan) return;
 
-    const task = plan.tasks.find(t => t.id === taskId);
+    const task = plan.tasks.find((t) => t.id === taskId);
     if (task) {
       task.status = status;
       if (result) task.result = result;
@@ -306,14 +335,14 @@ export class Orchestrator {
     const plan = this.activePlans.get(planId);
     if (!plan) return [];
 
-    return plan.tasks.filter(t => t.status === 'completed');
+    return plan.tasks.filter((t) => t.status === 'completed');
   }
 
   isPlanComplete(planId: string): boolean {
     const plan = this.activePlans.get(planId);
     if (!plan) return false;
 
-    return plan.tasks.every(t => t.status === 'completed' || t.status === 'failed');
+    return plan.tasks.every((t) => t.status === 'completed' || t.status === 'failed');
   }
 
   clearPlan(planId: string): void {
@@ -325,7 +354,7 @@ export class Orchestrator {
           this.taskAllocator.release({
             taskId: task.id,
             ownerId: task.assignedAgentId,
-            reason: 'manual'
+            reason: 'manual',
           });
         }
       }
@@ -352,22 +381,28 @@ export interface RunAgentStepInput {
 
 export interface RunAgentStepDeps {
   http: {
-    fetchJson(url: string): Promise<any>;
-    tryFetchJson(url: string): Promise<any>;
-    postJson(url: string, body: any): Promise<void>;
-    patchJson(url: string, body: any): Promise<void>;
+    fetchJson(url: string): Promise<unknown>;
+    tryFetchJson(url: string): Promise<unknown>;
+    postJson(url: string, body: unknown): Promise<void>;
+    patchJson(url: string, body: unknown): Promise<void>;
   };
-  invokeModel(args: { invocationProfile: any; context: string }): Promise<{
+  invokeModel(args: { invocationProfile: Record<string, unknown>; context: string }): Promise<{
     summary: string;
     logs?: string[];
-    missionPatch?: any;
+    missionPatch?: Record<string, unknown>;
     decisions?: { title: string; content: string }[];
-    agentStatePatch?: any;
+    agentStatePatch?: Record<string, unknown>;
   }>;
 }
 
 const WRITE_OPS_MATRIX: Record<string, string[]> = {
-  ALLOW_EXECUTION: ['WRITE_LOG', 'WRITE_MEMORY', 'UPDATE_MISSION_STATUS', 'UPDATE_MISSION_FIELDS', 'UPDATE_AGENT_STATE'],
+  ALLOW_EXECUTION: [
+    'WRITE_LOG',
+    'WRITE_MEMORY',
+    'UPDATE_MISSION_STATUS',
+    'UPDATE_MISSION_FIELDS',
+    'UPDATE_AGENT_STATE',
+  ],
   PROPOSE_ONLY: ['WRITE_LOG', 'WRITE_MEMORY'],
   REQUIRE_APPROVAL: ['WRITE_LOG', 'WRITE_MEMORY'],
   DENY: [],
@@ -390,23 +425,29 @@ export async function runAgentStep(
   deps: RunAgentStepDeps,
 ): Promise<string> {
   // 1. Fetch run context
-  const runContext = await deps.http.fetchJson(`/runs/${input.missionId}/context`);
-  const embeddedGuidance = runContext.guidance ?? null;
+  const runContext = (await deps.http.fetchJson(`/runs/${input.missionId}/context`)) as Record<
+    string,
+    unknown
+  >;
+  const embeddedGuidance = (runContext.guidance as Record<string, unknown>) ?? null;
 
   // 2. Always try guidance endpoint
-  const explicitGuidance = await deps.http.tryFetchJson(`/runs/${input.missionId}/guidance`);
-  const guidance = explicitGuidance ?? embeddedGuidance;
+  const explicitGuidance = (await deps.http.tryFetchJson(
+    `/runs/${input.missionId}/guidance`,
+  )) as Record<string, unknown> | null;
+  const guidance = (explicitGuidance ?? embeddedGuidance) as Record<string, unknown> | null;
 
   // 3. Determine invocation profile — use guidance only when agentId matches
-  let invocationProfile: any;
-  let strategy: any;
+  let invocationProfile: Record<string, unknown>;
+  let strategy: Record<string, unknown>;
 
-  if (guidance?.invocationProfile?.agentId === input.agentId) {
-    invocationProfile = guidance.invocationProfile;
-    strategy = guidance.strategy;
+  const guidanceProfile = guidance?.invocationProfile as Record<string, unknown> | undefined;
+  if (guidanceProfile?.agentId === input.agentId) {
+    invocationProfile = guidanceProfile;
+    strategy = (guidance?.strategy as Record<string, unknown>) ?? { kind: 'MANUAL_APPROVAL_GATE' };
   } else {
     // Fallback: compute locally
-    strategy = guidance?.strategy ?? { kind: 'MANUAL_APPROVAL_GATE' };
+    strategy = (guidance?.strategy as Record<string, unknown>) ?? { kind: 'MANUAL_APPROVAL_GATE' };
     invocationProfile = {
       agentId: input.agentId,
       disposition: 'REQUIRE_APPROVAL',
@@ -418,7 +459,7 @@ export async function runAgentStep(
 
   // 4. Build model context
   const contextParts = [
-    `strategyKind: ${strategy.kind}`,
+    `strategyKind: ${(strategy as Record<string, unknown>).kind ?? 'unknown'}`,
     `effectiveIntent: ${invocationProfile.intent}`,
     `primaryAgentId: ${invocationProfile.agentId}`,
   ];
@@ -426,7 +467,9 @@ export async function runAgentStep(
     contextParts.push(`focusMission: ${input.missionId}`);
   }
   if (invocationProfile.allowedOperations) {
-    contextParts.push(`allowedOperations: ${invocationProfile.allowedOperations.join(', ')}`);
+    contextParts.push(
+      `allowedOperations: ${(invocationProfile.allowedOperations as string[]).join(', ')}`,
+    );
   }
   const context = contextParts.join('\n');
 
@@ -434,8 +477,8 @@ export async function runAgentStep(
   const result = await deps.invokeModel({ invocationProfile, context });
 
   // 6. Enforce write-back matrix
-  const disposition = invocationProfile.disposition ?? 'PROPOSE_ONLY';
-  const projectId = runContext.projectId ?? 'project-war-room';
+  const disposition = (invocationProfile.disposition as string) ?? 'PROPOSE_ONLY';
+  const projectId = (runContext.projectId as string) ?? 'project-war-room';
 
   // Logs — WRITE_LOG
   if (isOpAllowed(disposition, 'WRITE_LOG') && result.logs?.length) {
@@ -461,7 +504,10 @@ export async function runAgentStep(
 
   // Agent state patch — UPDATE_AGENT_STATE
   if (isOpAllowed(disposition, 'UPDATE_AGENT_STATE') && result.agentStatePatch) {
-    await deps.http.patchJson(`/projects/${projectId}/agents/${input.agentId}/state`, result.agentStatePatch);
+    await deps.http.patchJson(
+      `/projects/${projectId}/agents/${input.agentId}/state`,
+      result.agentStatePatch,
+    );
   }
 
   return result.summary;

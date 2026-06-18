@@ -147,12 +147,16 @@ interface OpenAIResponseUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number };
 }
 
 export function parseOpenAIResponse(
   data: { choices?: OpenAIResponseChoice[]; usage?: OpenAIResponseUsage },
   model: string,
-  extractTextToolCalls?: (content: string) => Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null,
+  extractTextToolCalls?: (
+    content: string,
+  ) => Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null,
+  responseFormat?: LLMRequest['responseFormat'],
 ): LLMResponse {
   const choice = data.choices?.[0];
   const message = choice?.message ?? {};
@@ -161,14 +165,25 @@ export function parseOpenAIResponse(
     promptTokens: data.usage?.prompt_tokens ?? 0,
     completionTokens: data.usage?.completion_tokens ?? 0,
     totalTokens: data.usage?.total_tokens ?? 0,
+    cacheReadTokens: data.usage?.prompt_tokens_details?.cached_tokens ?? 0,
   };
 
   let content = message.content ?? '';
-  let toolCalls = message.tool_calls?.map((tc: { id: string; function: { name: string; arguments: string } }) => ({
-    id: tc.id,
-    name: tc.function.name,
-    arguments: JSON.parse(tc.function.arguments || '{}'),
-  }));
+  let toolCalls = message.tool_calls?.map(
+    (tc: { id: string; function: { name: string; arguments: string } }) => {
+      let parsed: Record<string, unknown> = {};
+      try {
+        parsed = JSON.parse(tc.function.arguments || '{}');
+      } catch {
+        try {
+          parsed = JSON.parse(`{${tc.function.arguments}}`);
+        } catch {
+          parsed = { raw: tc.function.arguments };
+        }
+      }
+      return { id: tc.id, name: tc.function.name, arguments: parsed };
+    },
+  );
 
   // Some providers return tool calls as text (e.g. MiMo text format)
   if ((!toolCalls || toolCalls.length === 0) && content && extractTextToolCalls) {
@@ -188,13 +203,34 @@ export function parseOpenAIResponse(
     content,
     model,
     usage: tokenUsage,
-    finishReason: choice?.finish_reason === 'stop' ? 'stop'
-      : choice?.finish_reason === 'tool_calls' ? 'tool_calls'
-      : choice?.finish_reason === 'length' ? 'length'
-      : 'stop',
+    finishReason:
+      choice?.finish_reason === 'stop'
+        ? 'stop'
+        : choice?.finish_reason === 'tool_calls'
+          ? 'tool_calls'
+          : choice?.finish_reason === 'length'
+            ? 'length'
+            : 'stop',
     toolCalls,
+    parsed: tryParseOpenAICompatibleStructured(content, responseFormat),
     reasoning_content: message.reasoning_content,
   };
+}
+
+function tryParseOpenAICompatibleStructured(
+  content: string,
+  responseFormat?: LLMRequest['responseFormat'],
+): Record<string, unknown> | undefined {
+  if (!responseFormat || responseFormat.type === 'text' || !content.trim()) return undefined;
+
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
+
+  try {
+    return JSON.parse(trimmed) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -206,7 +242,7 @@ export function buildOpenAIBody(
   providerName: string,
   extra: Record<string, unknown> = {},
 ): Record<string, unknown> {
-  const messages = request.messages.map(m => {
+  const messages = request.messages.map((m) => {
     const msg: Record<string, unknown> = { role: m.role, content: m.content };
     if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
     if (m.reasoning_content) msg.reasoning_content = m.reasoning_content;
@@ -230,6 +266,22 @@ export function buildOpenAIBody(
     body.parallel_tool_calls = true;
   }
 
+  // Provider-native structured output for OpenAI-compatible endpoints
+  if (request.responseFormat) {
+    if (request.responseFormat.type === 'json_schema' && request.responseFormat.schema) {
+      body.response_format = {
+        type: 'json_schema',
+        json_schema: {
+          name: request.responseFormat.name ?? 'response',
+          schema: request.responseFormat.schema,
+          strict: true,
+        },
+      };
+    } else if (request.responseFormat.type === 'json_object') {
+      body.response_format = { type: 'json_object' };
+    }
+  }
+
   return body;
 }
 
@@ -241,16 +293,12 @@ export async function callOpenAICompatibleAPI(
   config: OpenAICompatibleConfig,
   request: LLMRequest,
   model: string,
-  extractTextToolCalls?: (content: string) => Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null,
+  extractTextToolCalls?: (
+    content: string,
+  ) => Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null,
   extraBody?: Record<string, unknown>,
 ): Promise<LLMResponse> {
   const body = buildOpenAIBody(request, model, config.name, extraBody);
-
-  // Include tool_calls from last assistant message (for multi-turn)
-  const lastAssistant = [...request.messages].reverse().find(m => m.role === 'assistant');
-  if (lastAssistant?.tool_calls) {
-    body.tool_calls = lastAssistant.tool_calls;
-  }
 
   const useStreaming = request.cacheConfig?.useCacheControl ?? true;
   const logger = getGlobalLogger();
@@ -259,7 +307,7 @@ export async function callOpenAICompatibleAPI(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`,
+      Authorization: `Bearer ${config.apiKey}`,
       ...config.extraHeaders,
     },
     body: JSON.stringify({ ...body, stream: useStreaming }),
@@ -277,6 +325,7 @@ export async function callOpenAICompatibleAPI(
           promptTokens: streamed.usage.prompt_tokens,
           completionTokens: streamed.usage.completion_tokens,
           totalTokens: streamed.usage.total_tokens,
+          cacheReadTokens: streamed.usage.prompt_tokens_details?.cached_tokens ?? 0,
         }
       : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
@@ -285,19 +334,29 @@ export async function callOpenAICompatibleAPI(
       model,
       usage: tokenUsage,
       finishReason: 'stop',
-      toolCalls: streamed.toolCalls.length > 0
-        ? streamed.toolCalls.map(tc => ({
-            id: tc.id,
-            name: tc.name,
-            arguments: JSON.parse(tc.arguments || '{}'),
-          }))
-        : undefined,
+      toolCalls:
+        streamed.toolCalls.length > 0
+          ? streamed.toolCalls.map((tc) => {
+              let parsed: Record<string, unknown> = {};
+              try {
+                parsed = JSON.parse(tc.arguments || '{}');
+              } catch {
+                try {
+                  parsed = JSON.parse(`{${tc.arguments}}`);
+                } catch {
+                  parsed = { raw: tc.arguments };
+                }
+              }
+              return { id: tc.id, name: tc.name, arguments: parsed };
+            })
+          : undefined,
+      parsed: tryParseOpenAICompatibleStructured(streamed.content, request.responseFormat),
       reasoning_content: streamed.reasoningContent || undefined,
     };
   }
 
   const data = await response.json();
-  return parseOpenAIResponse(data, model, extractTextToolCalls);
+  return parseOpenAIResponse(data, model, extractTextToolCalls, request.responseFormat);
 }
 
 // ============================================================================
@@ -318,7 +377,9 @@ export abstract class BaseOpenAICompatibleProvider implements LLMProvider {
     };
     // Override config.name with the concrete class's name (avoid abstract in constructor)
     if (!config.name) {
-      this.config.name = (this.constructor as { name: string }).name?.replace('Provider', '').toLowerCase() || this.config.name;
+      this.config.name =
+        (this.constructor as { name: string }).name?.replace('Provider', '').toLowerCase() ||
+        this.config.name;
     }
   }
 
@@ -335,7 +396,9 @@ export abstract class BaseOpenAICompatibleProvider implements LLMProvider {
     return {};
   }
   /** Override for providers that emit text-format tool calls */
-  protected extractTextToolCalls(_content: string): Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null {
+  protected extractTextToolCalls(
+    _content: string,
+  ): Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null {
     return null;
   }
 

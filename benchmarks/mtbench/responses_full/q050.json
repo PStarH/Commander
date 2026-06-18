@@ -1,6 +1,0 @@
-{
-  "cat": "Extraction",
-  "question": "Extract names and emails from: 'John (john@x.com), Alice (alice@y.com)'",
-  "answer": "Here are the names and emails extracted from the text:\n\n*   **Name:** John, **Email:** john@x.com\n*   **Name:** Alice, **Email:** alice@y.com\n\n**In JSON format:**\n```json\n[\n  {\n    \"name\": \"John\",\n    \"email\": \"john@x.com\"\n  },\n  {\n    \"name\": \"Alice\",\n    \"email\": \"alice@y.com\"\n  }\n]\n```",
-  "score": 10.0
-}

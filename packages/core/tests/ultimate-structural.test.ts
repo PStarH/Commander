@@ -7,7 +7,12 @@ import assert from 'node:assert';
 // ============================================================================
 
 // --- Module 1: UltimateOrchestrator (754 lines, barrel-exported) ---
-import { UltimateOrchestrator, SubAgentExecutor, resetArtifactSystem, getArtifactSystem } from '../src/ultimate/index';
+import {
+  UltimateOrchestrator,
+  SubAgentExecutor,
+  resetArtifactSystem,
+  getArtifactSystem,
+} from '../src/ultimate/index';
 import type { UltimateOrchestratorConfig } from '../src/ultimate/index';
 
 // --- Module 3: ReflexionTopologicalOptimizer (744 lines, internal) ---
@@ -15,8 +20,16 @@ import { ReflexionTopologicalOptimizer } from '../src/ultimate/topologyOptimizer
 import type { OptimizationResult } from '../src/ultimate/topologyOptimizer';
 
 // --- Module 4: RuntimeWorkflowAdapter (536 lines, internal) ---
-import { RuntimeWorkflowAdapter, getRuntimeWorkflowAdapter, resetRuntimeWorkflowAdapter } from '../src/ultimate/runtimeWorkflowAdapter';
-import type { TaskState, WorkflowDecision, AdaptiveExecutionResult } from '../src/ultimate/runtimeWorkflowAdapter';
+import {
+  RuntimeWorkflowAdapter,
+  getRuntimeWorkflowAdapter,
+  resetRuntimeWorkflowAdapter,
+} from '../src/ultimate/runtimeWorkflowAdapter';
+import type {
+  TaskState,
+  WorkflowDecision,
+  AdaptiveExecutionResult,
+} from '../src/ultimate/runtimeWorkflowAdapter';
 
 // --- Module 5: deliberateWithLLM (not barrel-exported, used internally) ---
 import { deliberateWithLLM } from '../src/ultimate/deliberation';
@@ -31,7 +44,6 @@ import { ModelRouter, resetModelRouter } from '../src/runtime/modelRouter';
 // ============================================================================
 
 describe('ultimate/ modules — structural integrity', () => {
-
   // --------------------------------------------------------------------------
   // Module 1: UltimateOrchestrator
   // --------------------------------------------------------------------------
@@ -179,5 +191,4 @@ describe('ultimate/ modules — structural integrity', () => {
       resetArtifactSystem();
     });
   });
-
 });

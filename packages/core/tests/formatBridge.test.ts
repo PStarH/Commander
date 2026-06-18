@@ -54,20 +54,22 @@ describe('Format Bridge', () => {
   });
 
   it('Google format maps types correctly', () => {
-    const tools: ToolDefinition[] = [{
-      name: 'test_tool',
-      description: 'Test',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          text: { type: 'string' },
-          count: { type: 'number' },
-          active: { type: 'boolean' },
-          tags: { type: 'array', items: { type: 'string' } },
+    const tools: ToolDefinition[] = [
+      {
+        name: 'test_tool',
+        description: 'Test',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            text: { type: 'string' },
+            count: { type: 'number' },
+            active: { type: 'boolean' },
+            tags: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['text'],
         },
-        required: ['text'],
       },
-    }];
+    ];
     const result = FormatBridge.adaptToolsForProvider(tools, 'google');
     const props = (result[0] as any).function_declarations[0].parameters.properties;
     assert.strictEqual(props.text.type, 'STRING');

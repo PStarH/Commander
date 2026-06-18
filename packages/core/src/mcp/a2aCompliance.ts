@@ -19,10 +19,14 @@ export type A2ATaskState =
   | 'AUTH_REQUIRED';
 
 export const A2A_TERMINAL_STATES: ReadonlySet<A2ATaskState> = new Set([
-  'COMPLETED', 'FAILED', 'CANCELED', 'REJECTED',
+  'COMPLETED',
+  'FAILED',
+  'CANCELED',
+  'REJECTED',
 ]);
 export const A2A_INTERRUPTED_STATES: ReadonlySet<A2ATaskState> = new Set([
-  'INPUT_REQUIRED', 'AUTH_REQUIRED',
+  'INPUT_REQUIRED',
+  'AUTH_REQUIRED',
 ]);
 
 // Valid state transitions

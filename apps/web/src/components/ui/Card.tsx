@@ -7,6 +7,7 @@ interface CardProps {
 }
 
 export function Card({ children, className = '', variant = 'default' }: CardProps) {
-  const variantClass = variant === 'high-risk' ? 'card-hr' : variant === 'critical-risk' ? 'card-cr' : '';
+  const variantClass =
+    variant === 'high-risk' ? 'card-hr' : variant === 'critical-risk' ? 'card-cr' : '';
   return <div className={`card ${variantClass} ${className}`}>{children}</div>;
 }

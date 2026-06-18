@@ -1,5 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { WarRoomSnapshot, ProjectMemoryItem, MemoryOverview, MemoryKindFilter } from '../types';
+import type {
+  WarRoomSnapshot,
+  ProjectMemoryItem,
+  MemoryOverview,
+  MemoryKindFilter,
+} from '../types';
 import {
   fetchWarRoomSnapshot,
   fetchMemoryItems,
@@ -19,7 +24,9 @@ export function useWarRoom() {
   const [memoryOverview, setMemoryOverview] = useState<MemoryOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const [connectionStatus, setConnectionStatus] = useState<
+    'connecting' | 'connected' | 'disconnected'
+  >('connecting');
   const isFirstLoad = useRef(true);
   const loadAllRef = useRef<() => Promise<void>>();
 

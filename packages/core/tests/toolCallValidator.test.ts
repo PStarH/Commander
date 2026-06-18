@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { compileSchema, validateToolCall, formatValidationErrors } from '../src/runtime/toolCallValidator';
+import {
+  compileSchema,
+  validateToolCall,
+  formatValidationErrors,
+} from '../src/runtime/toolCallValidator';
 
 describe('Tool Call Validator', () => {
   const searchSchema = compileSchema({
@@ -23,13 +27,15 @@ describe('Tool Call Validator', () => {
   it('rejects missing required field', () => {
     const result = validateToolCall({ limit: 5 }, searchSchema);
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(e => e.path === 'query' && e.message.includes('required')));
+    assert.ok(result.errors.some((e) => e.path === 'query' && e.message.includes('required')));
   });
 
   it('rejects wrong type without coercion', () => {
     const result = validateToolCall({ query: ['not', 'a', 'string'] }, searchSchema);
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(e => e.path === 'query' && e.message.includes('expected string')));
+    assert.ok(
+      result.errors.some((e) => e.path === 'query' && e.message.includes('expected string')),
+    );
   });
 
   it('coerces string number to number', () => {
@@ -49,7 +55,7 @@ describe('Tool Call Validator', () => {
   it('validates enum values', () => {
     const result = validateToolCall({ query: 'test', format: 'xml' }, searchSchema);
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors.some(e => e.path === 'format' && e.message.includes('enum')));
+    assert.ok(result.errors.some((e) => e.path === 'format' && e.message.includes('enum')));
   });
 
   it('accepts valid enum values', () => {
@@ -83,7 +89,12 @@ describe('Tool Call Validator', () => {
   it('formatValidationErrors produces readable output', () => {
     const errors = [
       { path: 'query', message: 'required but missing' },
-      { path: 'limit', message: 'expected number, got string "five"', expectedType: 'number', actualValue: 'five' },
+      {
+        path: 'limit',
+        message: 'expected number, got string "five"',
+        expectedType: 'number',
+        actualValue: 'five',
+      },
     ];
     const formatted = formatValidationErrors(errors, 'web_search');
     assert.ok(formatted.includes('TOOL_VALIDATION_ERROR'));
@@ -103,7 +114,7 @@ describe('Tool Call Validator', () => {
   it('performance: 10000 validations in <100ms', () => {
     const start = performance.now();
     for (let i = 0; i < 10000; i++) {
-      validateToolCall({ query: `test ${i}`, limit: i % 100 + 1 }, searchSchema);
+      validateToolCall({ query: `test ${i}`, limit: (i % 100) + 1 }, searchSchema);
     }
     const elapsed = performance.now() - start;
     console.log(`  [Perf] 10K validations: ${elapsed.toFixed(1)}ms`);

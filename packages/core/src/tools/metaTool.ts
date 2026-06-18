@@ -19,6 +19,8 @@ import type { Tool, ToolDefinition } from '../runtime/types';
 export interface MetaToolStep {
   toolName: string;
   argumentMap: Record<string, string>;
+  /** Constant values to always include in the sub-tool call (e.g., { action: 'search' }). */
+  constants?: Record<string, unknown>;
 }
 
 export interface MetaToolSpec {
@@ -40,31 +42,42 @@ export interface MetaToolSpec {
  */
 const BUILTIN_META_SPECS: MetaToolSpec[] = [
   {
-    sequence: ['web_search', 'web_fetch'],
+    sequence: ['web.search', 'web.fetch'],
     name: 'research_topic',
-    description: 'Search the web for a topic then fetch the top result. Single call replaces search+fetch.',
+    description:
+      'Search the web for a topic then fetch the top result. Single call replaces search+fetch.',
     steps: [
-      { toolName: 'web_search', argumentMap: { query: 'query' } },
-      { toolName: 'web_fetch', argumentMap: { url: 'url' } },
+      { toolName: 'web', argumentMap: { query: 'query' }, constants: { action: 'search' } },
+      { toolName: 'web', argumentMap: { url: 'url' }, constants: { action: 'fetch' } },
     ],
   },
   {
-    sequence: ['file_search', 'file_read'],
+    sequence: ['file.search', 'file.read'],
     name: 'find_and_read',
-    description: 'Search for a file by pattern then read its contents. Single call replaces search+read.',
+    description:
+      'Search for a file by pattern then read its contents. Single call replaces search+read.',
     steps: [
-      { toolName: 'file_search', argumentMap: { pattern: 'pattern', path: 'path' } },
-      { toolName: 'file_read', argumentMap: { path: 'filePath' } },
+      {
+        toolName: 'file',
+        argumentMap: { pattern: 'pattern', path: 'path' },
+        constants: { action: 'search' },
+      },
+      { toolName: 'file', argumentMap: { filePath: 'path' }, constants: { action: 'read' } },
     ],
   },
   {
-    sequence: ['web_search', 'web_fetch', 'file_write'],
+    sequence: ['web.search', 'web.fetch', 'file.write'],
     name: 'research_and_save',
-    description: 'Search the web, fetch a page, and save to file. Three-step research workflow in one call.',
+    description:
+      'Search the web, fetch a page, and save to file. Three-step research workflow in one call.',
     steps: [
-      { toolName: 'web_search', argumentMap: { query: 'query' } },
-      { toolName: 'web_fetch', argumentMap: { url: 'url' } },
-      { toolName: 'file_write', argumentMap: { path: 'filePath', content: 'content' } },
+      { toolName: 'web', argumentMap: { query: 'query' }, constants: { action: 'search' } },
+      { toolName: 'web', argumentMap: { url: 'url' }, constants: { action: 'fetch' } },
+      {
+        toolName: 'file',
+        argumentMap: { filePath: 'path', content: 'content' },
+        constants: { action: 'write' },
+      },
     ],
   },
 ];
@@ -99,12 +112,18 @@ export class MetaTool implements Tool {
 
     const examples: Array<{ name: string; arguments: Record<string, unknown> }> = [];
     if (spec.name === 'research_topic') {
-      examples.push({ name: 'research_topic', arguments: { query: 'Latest AI research papers 2026' } });
+      examples.push({
+        name: 'research_topic',
+        arguments: { query: 'Latest AI research papers 2026' },
+      });
     } else if (spec.name === 'find_and_read') {
       examples.push({ name: 'find_and_read', arguments: { pattern: 'src/**/*.ts', path: '.' } });
       examples.push({ name: 'find_and_read', arguments: { pattern: 'package.json' } });
     } else if (spec.name === 'research_and_save') {
-      examples.push({ name: 'research_and_save', arguments: { query: 'TypeScript performance tips', filePath: 'research.md' } });
+      examples.push({
+        name: 'research_and_save',
+        arguments: { query: 'TypeScript performance tips', filePath: 'research.md' },
+      });
     }
 
     this.definition = {
@@ -124,7 +143,7 @@ export class MetaTool implements Tool {
     const outputs: string[] = [];
 
     for (const step of this.spec.steps) {
-      const subArgs: Record<string, unknown> = {};
+      const subArgs: Record<string, unknown> = { ...(step.constants ?? {}) };
       for (const [metaKey, subKey] of Object.entries(step.argumentMap)) {
         subArgs[subKey] = args[metaKey] ?? '';
       }
@@ -139,13 +158,13 @@ export class MetaTool implements Tool {
       outputs.push(`[${step.toolName}] ${result.slice(0, 1000)}`);
 
       // If the step returned a URL/filepath, use it as input to the next step
-      if (step.toolName === 'web_search' && !args['url']) {
+      if (step.toolName === 'web' && step.constants?.action === 'search' && !args['url']) {
         const urlMatch = result.match(/https?:\/\/[^\s)]+/);
         if (urlMatch) {
           args['url'] = urlMatch[0];
         }
       }
-      if (step.toolName === 'file_search' && !args['filePath']) {
+      if (step.toolName === 'file' && step.constants?.action === 'search' && !args['filePath']) {
         const pathMatch = result.match(/(\/[^\s)]+\.\w+)/);
         if (pathMatch) {
           args['filePath'] = pathMatch[0];

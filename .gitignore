@@ -1,3 +1,14 @@
+.claude/
+apps/api/.commander/
+packages/core/.commander/intelligence/
+packages/core/.commander/skills/
+packages/core/screenshots/
+*.orig
+*.rej
+*.tsbuildinfo
+/test-output.txt
+/hello.ts
+
 # Dependencies
 node_modules/
 .pnpm-store/
@@ -44,6 +55,13 @@ temp/
 .commander_*
 .commander_state
 .commander_memory
+
+# Commander root-state runtime data (config files inside .commander/ ARE tracked)
+/.commander/*.db
+/.commander/*.db-shm
+/.commander/*.db-wal
+/.commander/scheduler/
+/.commander/webhooks/
 
 # Generated files
 apps/api/data/
@@ -100,14 +118,74 @@ apps/api/dist/
 /project/
 /weather.py
 
-# Benchmark runner intermediate files
-benchmarks/*/responses/
-benchmarks/*/results.json
-benchmarks/*/responses_full/
+# Capability / comparison test runner output dirs (root-level)
+.capability-test-output/
+.capability-test-workspace/
+.combined-test-output/
+.openclaw-comparison-output/
+.compare-capability-output/
+.compare-three-output/
 
+# Root-level test artifacts (PB / harness / sandbox runs)
+/analyze.py
+/apple_stock_2014.csv
+/broken.ts
+/calculation.txt
+/email_draft.txt
+/generate_data.py
+/iris_flowers.csv
+/password_gen.py
+/project_sync.ics
+/sim.py
+/simulate.py
+/test.txt
+/test_output.txt
 
+# Local secrets (DO NOT commit)
+/.secrets/
+
+# Personal design notes / review docs (kept local, not for version control)
+/HARNESS.md
+/notes.md
+/quality-commander.md
+/error-handling-comparison.md
+
+# Runtime state for apps/memory (War Room persistence lives in SQLite, not these JSON files)
+/apps/memory/
+
+# Stray scratch files at repo root
+/src/main.py
+
+# AI agent config directories (DO NOT commit — makes repo look like an AI playground)
+.agents/
+.mimocode/
 .sisyphus/
+.codex/
+
+# Benchmark files — entire directories (intermediate results, responses, configs)
+benchmarks/
+packages/core/benchmarks/
+packages/core/src/benchmark/
+docs/benchmark-results/
+
+# Commander runtime artifacts (auto-generated, not source)
+.commander/burn-in/
+.commander/intelligence/
+.commander/skills/
+.commander/feedback/
+.commander/qa-*.log
+.commander/atr_idempotency.db*
+.commander/atr_leases.db*
+.commander/atr_ledger.db*
+.commander/compensation_queue.db*
+.commander/conversations.db*
+
+# Private / scratch
 private/
 
-# OS artifacts
-.DS_Store
+# Agent compensation snapshots (auto-generated)
+*.atr-snapshot.*
+
+# Root-level build output placeholders
+/fixer
+/verifier

@@ -11,7 +11,16 @@ interface OpenAICompletionUsage {
 
 interface OpenAIStreamChunk {
   choices: Array<{
-    delta: { content?: string; reasoning_content?: string; tool_calls?: Array<{ index: number; id?: string; type: string; function: { name?: string; arguments?: string } }> };
+    delta: {
+      content?: string;
+      reasoning_content?: string;
+      tool_calls?: Array<{
+        index: number;
+        id?: string;
+        type: string;
+        function: { name?: string; arguments?: string };
+      }>;
+    };
     finish_reason: string | null;
   }>;
   usage?: OpenAICompletionUsage;
@@ -23,11 +32,7 @@ export class OpenAIProvider implements LLMProvider {
   private baseUrl: string;
   private defaultModel: string;
 
-  constructor(config: {
-    apiKey: string;
-    baseUrl?: string;
-    defaultModel?: string;
-  }) {
+  constructor(config: { apiKey: string; baseUrl?: string; defaultModel?: string }) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://api.openai.com/v1';
     this.defaultModel = config.defaultModel ?? 'gpt-4o';
@@ -37,7 +42,7 @@ export class OpenAIProvider implements LLMProvider {
     const model = this.defaultModel || request.model;
     const body = this.buildBody(request, model);
     // Include tool_calls if present on the last assistant message (for multi-turn)
-    const lastAssistant = [...request.messages].reverse().find(m => m.role === 'assistant');
+    const lastAssistant = [...request.messages].reverse().find((m) => m.role === 'assistant');
     if (lastAssistant?.tool_calls) {
       body.tool_calls = lastAssistant.tool_calls;
     }
@@ -47,7 +52,7 @@ export class OpenAIProvider implements LLMProvider {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({ ...body, stream: useStreaming }),
     });
@@ -58,15 +63,15 @@ export class OpenAIProvider implements LLMProvider {
     }
 
     if (useStreaming) {
-      return this.handleStreamingResponse(response, model);
+      return this.handleStreamingResponse(response, model, request.responseFormat);
     }
 
     const data = await response.json();
-    return this.parseResponse(data, model);
+    return this.parseResponse(data, model, request.responseFormat);
   }
 
   private buildBody(request: LLMRequest, model: string): Record<string, unknown> {
-    const messages = request.messages.map(m => {
+    const messages = request.messages.map((m) => {
       const msg: Record<string, unknown> = { role: m.role, content: m.content };
       if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
       if (m.reasoning_content) msg.reasoning_content = m.reasoning_content;
@@ -86,16 +91,39 @@ export class OpenAIProvider implements LLMProvider {
       body.parallel_tool_calls = true;
     }
 
+    // Provider-native structured output
+    if (request.responseFormat) {
+      if (request.responseFormat.type === 'json_schema' && request.responseFormat.schema) {
+        body.response_format = {
+          type: 'json_schema',
+          json_schema: {
+            name: request.responseFormat.name ?? 'response',
+            schema: request.responseFormat.schema,
+            strict: true,
+          },
+        };
+      } else if (request.responseFormat.type === 'json_object') {
+        body.response_format = { type: 'json_object' };
+      }
+    }
+
     // OpenAI auto-caches prompts >1024 tokens — no explicit markers needed
     if (request.cacheConfig?.cacheSystemPrompt) {
       // OpenAI's prompt caching is automatic for repeated prefixes
       // System prompt at the start ensures cache hits
     }
+    if (request.cacheConfig?.promptCacheKey) {
+      body.prompt_cache_key = request.cacheConfig.promptCacheKey;
+    }
 
     return body;
   }
 
-  private async handleStreamingResponse(response: Response, model: string): Promise<LLMResponse> {
+  private async handleStreamingResponse(
+    response: Response,
+    model: string,
+    responseFormat?: LLMRequest['responseFormat'],
+  ): Promise<LLMResponse> {
     const reader = response.body?.getReader();
     if (!reader) throw new Error('OpenAI: No response body from streaming endpoint');
 
@@ -142,7 +170,11 @@ export class OpenAIProvider implements LLMProvider {
               }
             }
           }
-        } catch (e) { getGlobalLogger().debug('OpenAIProvider', 'Skipping malformed stream chunk', { error: (e as Error)?.message }); }
+        } catch (e) {
+          getGlobalLogger().debug('OpenAIProvider', 'Skipping malformed stream chunk', {
+            error: (e as Error)?.message,
+          });
+        }
       }
     }
 
@@ -151,26 +183,50 @@ export class OpenAIProvider implements LLMProvider {
           promptTokens: usage.prompt_tokens,
           completionTokens: usage.completion_tokens,
           totalTokens: usage.total_tokens,
+          cacheReadTokens: usage.prompt_tokens_details?.cached_tokens ?? 0,
         }
       : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+    const parsed = tryParseResponseFormat(content, responseFormat);
 
     return {
       content,
       model,
       usage: tokenUsage,
       finishReason: 'stop',
-      toolCalls: toolCalls.length > 0
-        ? toolCalls.map(tc => ({
-            id: tc.id,
-            name: tc.name,
-            arguments: JSON.parse(tc.arguments || '{}'),
-          }))
-        : undefined,
+      toolCalls:
+        toolCalls.length > 0
+          ? toolCalls.map((tc) => ({
+              id: tc.id,
+              name: tc.name,
+              arguments: JSON.parse(tc.arguments || '{}'),
+            }))
+          : undefined,
+      parsed,
       reasoning_content: reasoningContent || undefined,
     };
   }
 
-  private parseResponse(data: { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>; reasoning_content?: string }; finish_reason?: string }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }, model: string): LLMResponse {
+  private parseResponse(
+    data: {
+      choices?: Array<{
+        message?: {
+          content?: string;
+          tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+          reasoning_content?: string;
+        };
+        finish_reason?: string;
+      }>;
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+        prompt_tokens_details?: { cached_tokens?: number };
+      };
+    },
+    model: string,
+    responseFormat?: LLMRequest['responseFormat'],
+  ): LLMResponse {
     const choice = data.choices?.[0];
     const message = choice?.message ?? {};
 
@@ -178,25 +234,56 @@ export class OpenAIProvider implements LLMProvider {
       promptTokens: data.usage?.prompt_tokens ?? 0,
       completionTokens: data.usage?.completion_tokens ?? 0,
       totalTokens: data.usage?.total_tokens ?? 0,
+      cacheReadTokens: data.usage?.prompt_tokens_details?.cached_tokens ?? 0,
     };
 
-    const toolCalls = message.tool_calls?.map((tc: { id: string; function: { name: string; arguments: string } }) => ({
-      id: tc.id,
-      name: tc.function.name,
-      arguments: JSON.parse(tc.function.arguments || '{}'),
-    }));
+    const toolCalls = message.tool_calls?.map(
+      (tc: { id: string; function: { name: string; arguments: string } }) => ({
+        id: tc.id,
+        name: tc.function.name,
+        arguments: JSON.parse(tc.function.arguments || '{}'),
+      }),
+    );
+
+    const parsed = tryParseResponseFormat(message.content ?? '', responseFormat);
 
     return {
       content: message.content ?? '',
       model,
       usage: tokenUsage,
-      finishReason: choice?.finish_reason === 'stop' ? 'stop'
-        : choice?.finish_reason === 'tool_calls' ? 'tool_calls'
-        : choice?.finish_reason === 'length' ? 'length'
-        : 'stop',
+      finishReason:
+        choice?.finish_reason === 'stop'
+          ? 'stop'
+          : choice?.finish_reason === 'tool_calls'
+            ? 'tool_calls'
+            : choice?.finish_reason === 'length'
+              ? 'length'
+              : 'stop',
       toolCalls,
+      parsed,
       // Capture reasoning_content for MiMo reasoning models
       reasoning_content: message.reasoning_content,
     };
+  }
+}
+
+function tryParseResponseFormat(
+  content: string,
+  responseFormat?: LLMRequest['responseFormat'],
+): Record<string, unknown> | undefined {
+  if (!responseFormat || !content.trim()) return undefined;
+  if (responseFormat.type !== 'json_schema' && responseFormat.type !== 'json_object')
+    return undefined;
+
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
+
+  try {
+    return JSON.parse(trimmed) as Record<string, unknown>;
+  } catch (e) {
+    getGlobalLogger().debug('OpenAIProvider', 'Failed to parse structured response content', {
+      error: (e as Error)?.message,
+    });
+    return undefined;
   }
 }

@@ -1,12 +1,17 @@
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell,
-  LineChart, Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  LineChart,
+  Line,
 } from 'recharts';
-import {
-  Activity, CheckCircle, AlertTriangle, Shield,
-  Zap, Users,
-} from 'lucide-react';
+import { Activity, CheckCircle, AlertTriangle, Shield, Zap, Users } from 'lucide-react';
 import { MetricCard } from './ui';
 import type { BattleReport as BattleReportType } from '../types';
 import { formatTimestamp } from '../types';
@@ -33,17 +38,24 @@ export function BattleReport({ report }: BattleReportProps) {
     { name: 'Blocked', value: report.blockedMissionCount, color: COLORS.amber },
   ];
 
-  const remaining = report.totalMissions - report.completedMissionCount - report.runningMissionCount - report.blockedMissionCount;
+  const remaining =
+    report.totalMissions -
+    report.completedMissionCount -
+    report.runningMissionCount -
+    report.blockedMissionCount;
   if (remaining > 0) {
     missionData.push({ name: 'Planned', value: remaining, color: COLORS.text });
   }
 
-  const completionTrend = [
-    { name: 'Completion', rate: report.completionRate },
-  ];
-  const healthColor = report.health === 'GREEN' ? COLORS.green : report.health === 'AMBER' ? COLORS.amber : COLORS.red;
+  const completionTrend = [{ name: 'Completion', rate: report.completionRate }];
+  const healthColor =
+    report.health === 'GREEN'
+      ? COLORS.green
+      : report.health === 'AMBER'
+        ? COLORS.amber
+        : COLORS.red;
 
-  const topAgentData = report.topAgents.map(a => ({
+  const topAgentData = report.topAgents.map((a) => ({
     name: a.agentName,
     completed: a.completedMissionCount,
   }));
@@ -55,9 +67,7 @@ export function BattleReport({ report }: BattleReportProps) {
           <div className="section-label">Battle Report</div>
           <h2>Project pulse</h2>
         </div>
-        <span className="section-tag">
-          Generated {formatTimestamp(report.generatedAt)}
-        </span>
+        <span className="section-tag">Generated {formatTimestamp(report.generatedAt)}</span>
       </div>
 
       <div className="metric-row">
@@ -124,7 +134,7 @@ export function BattleReport({ report }: BattleReportProps) {
             </PieChart>
           </ResponsiveContainer>
           <div className="chart-legend">
-            {missionData.map(item => (
+            {missionData.map((item) => (
               <span key={item.name} className="legend-item">
                 <span className="legend-dot" style={{ background: item.color }} />
                 {item.name}: {item.value}
@@ -138,7 +148,12 @@ export function BattleReport({ report }: BattleReportProps) {
           <ResponsiveContainer width="100%" height={180}>
             <BarChart data={topAgentData} layout="vertical" margin={{ left: 0, right: 10 }}>
               <XAxis type="number" hide />
-              <YAxis type="category" dataKey="name" width={80} tick={{ fill: COLORS.text, fontSize: 11 }} />
+              <YAxis
+                type="category"
+                dataKey="name"
+                width={80}
+                tick={{ fill: COLORS.text, fontSize: 11 }}
+              />
               <Bar dataKey="completed" fill={COLORS.green} radius={[0, 3, 3, 0]} />
               <Tooltip
                 contentStyle={{
@@ -157,7 +172,13 @@ export function BattleReport({ report }: BattleReportProps) {
           <div className="chart-title">Health Score</div>
           <ResponsiveContainer width="100%" height={180}>
             <LineChart data={completionTrend} margin={{ top: 10, bottom: 10 }}>
-              <Line type="monotone" dataKey="rate" stroke={healthColor} strokeWidth={3} dot={{ fill: healthColor, r: 6, strokeWidth: 2, stroke: '#050913' }} />
+              <Line
+                type="monotone"
+                dataKey="rate"
+                stroke={healthColor}
+                strokeWidth={3}
+                dot={{ fill: healthColor, r: 6, strokeWidth: 2, stroke: '#050913' }}
+              />
               <XAxis hide />
               <YAxis domain={[0, 100]} tick={{ fill: COLORS.text, fontSize: 11 }} />
               <Tooltip
@@ -178,9 +199,7 @@ export function BattleReport({ report }: BattleReportProps) {
         </div>
       </div>
 
-      <div className={`narrative narrative-${report.health.toLowerCase()}`}>
-        {report.narrative}
-      </div>
+      <div className={`narrative narrative-${report.health.toLowerCase()}`}>{report.narrative}</div>
     </div>
   );
 }

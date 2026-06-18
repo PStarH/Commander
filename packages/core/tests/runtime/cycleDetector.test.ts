@@ -144,4 +144,48 @@ describe('CycleDetector', () => {
     });
     expect(cd.check('tool', {}, 1).detected).toBe(false);
   });
+
+  describe('checkOutput — semantic stagnation', () => {
+    it('returns not detected on first output', () => {
+      const cd = new CycleDetector();
+      expect(cd.checkOutput('hello world').detected).toBe(false);
+    });
+
+    it('returns not detected for different outputs', () => {
+      const cd = new CycleDetector();
+      cd.checkOutput('the quick brown fox jumps over the lazy dog');
+      const result = cd.checkOutput('a completely different sentence about something else');
+      expect(result.detected).toBe(false);
+    });
+
+    it('detects semantic stagnation on 3 similar outputs', () => {
+      const cd = new CycleDetector();
+      cd.checkOutput('the analysis shows the code needs refactoring for better performance');
+      cd.checkOutput('the analysis shows the code needs refactoring for better performance');
+      const result = cd.checkOutput('the analysis shows the code needs refactoring for better performance');
+      expect(result.detected).toBe(true);
+      expect(result.type).toBe('semantic_stagnation');
+      if (result.detected) {
+        expect(result.similarity).toBeGreaterThan(0.85);
+      }
+    });
+
+    it('resets output history on cycleDetector.reset()', () => {
+      const cd = new CycleDetector();
+      cd.checkOutput('same output text repeated again and again');
+      cd.checkOutput('same output text repeated again and again');
+      cd.reset();
+      const result = cd.checkOutput('same output text repeated again and again');
+      expect(result.detected).toBe(false);
+    });
+
+    it('caps output history at maxOutputHistory', () => {
+      const cd = new CycleDetector();
+      for (let i = 0; i < 10; i++) {
+        cd.checkOutput(`unique output number ${i} with different content`);
+      }
+      const info = cd.getDebugInfo();
+      expect(info.historyLength).toBeLessThanOrEqual(15);
+    });
+  });
 });

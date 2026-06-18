@@ -1,0 +1,17 @@
+export declare const COST_PER_TOKEN = 0.000015;
+export declare const COST_PER_1K_TOKENS = 0.015;
+export declare const THINKING_BUDGET_SIMPLE = 512;
+export declare const THINKING_BUDGET_MODERATE = 2048;
+export declare const THINKING_BUDGET_COMPLEX = 4096;
+export declare const THINKING_BUDGET_DEEP_RESEARCH = 8192;
+export declare const TOKENS_PER_STEP_SIMPLE = 2000;
+export declare const TOKENS_PER_STEP_MODERATE = 4000;
+export declare const TOKENS_PER_STEP_COMPLEX = 8000;
+export declare const TOKENS_PER_STEP_DEEP_RESEARCH = 16000;
+export declare const MIN_TOKENS_PER_AGENT = 20000;
+export declare const MAX_TOKENS_PER_AGENT = 100000;
+export declare const ESTIMATED_DURATION_DEFAULT = 10000;
+export declare const QUALITY_CONFIDENCE_BOOST = 0.1;
+export declare const QUALITY_CONFIDENCE_MAX_LENGTH = 2000;
+export declare const QUALITY_CONFIDENCE_MIN_LENGTH = 50;
+//# sourceMappingURL=constants.d.ts.map

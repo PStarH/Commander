@@ -1,4 +1,11 @@
-import type { MissionStatus, MissionPriority, MissionRiskLevel, MissionGovernanceMode, ProjectMemoryKind, LogLevel } from '@commander/core';
+import type {
+  MissionStatus,
+  MissionPriority,
+  MissionRiskLevel,
+  MissionGovernanceMode,
+  ProjectMemoryKind,
+  LogLevel,
+} from '@commander/core';
 
 export function isMissionStatus(value: string): value is MissionStatus {
   return ['PLANNED', 'RUNNING', 'BLOCKED', 'DONE'].includes(value);
@@ -26,7 +33,11 @@ export function isLogLevel(value: string): value is LogLevel {
 
 export function mapErrorToStatusCode(error: unknown) {
   const message = toErrorMessage(error);
-  if (message === 'Project not found' || message === 'Mission not found' || message === 'Agent not found') {
+  if (
+    message === 'Project not found' ||
+    message === 'Mission not found' ||
+    message === 'Agent not found'
+  ) {
     return 404;
   }
   if (message === 'MISSION_REQUIRES_APPROVAL') {
