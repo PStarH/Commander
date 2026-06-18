@@ -31,7 +31,15 @@ import { getMetaLearner } from '../../selfEvolution/metaLearner';
 interface RoutingFlags {
   model?: string;
   tier?: 'speed' | 'balanced' | 'power';
-  topology?: 'SINGLE' | 'SEQUENTIAL' | 'PARALLEL' | 'HIERARCHICAL' | 'HYBRID' | 'DEBATE' | 'ENSEMBLE' | 'EVALUATOR_OPTIMIZER';
+  topology?:
+    | 'SINGLE'
+    | 'SEQUENTIAL'
+    | 'PARALLEL'
+    | 'HIERARCHICAL'
+    | 'HYBRID'
+    | 'DEBATE'
+    | 'ENSEMBLE'
+    | 'EVALUATOR_OPTIMIZER';
   effort?: 'minimal' | 'low' | 'medium' | 'high' | 'max';
   cascade?: boolean;
   qualityThreshold?: number;
@@ -40,7 +48,16 @@ interface RoutingFlags {
 function parseRoutingFlags(flags: Record<string, string>): RoutingFlags {
   const allowedTiers = ['speed', 'balanced', 'power'] as const;
   const allowedEfforts = ['minimal', 'low', 'medium', 'high', 'max'] as const;
-  const allowedTopologies = ['SINGLE','SEQUENTIAL','PARALLEL','HIERARCHICAL','HYBRID','DEBATE','ENSEMBLE','EVALUATOR_OPTIMIZER'] as const;
+  const allowedTopologies = [
+    'SINGLE',
+    'SEQUENTIAL',
+    'PARALLEL',
+    'HIERARCHICAL',
+    'HYBRID',
+    'DEBATE',
+    'ENSEMBLE',
+    'EVALUATOR_OPTIMIZER',
+  ] as const;
   let tier: RoutingFlags['tier'];
   const tierRaw = flags.tier?.toLowerCase();
   if (tierRaw !== undefined) {
@@ -149,10 +166,7 @@ function levenshtein(a: string, b: string): number {
   return prev[n];
 }
 
-function didYouMean(
-  input: string,
-  allowed: readonly string[],
-): string | undefined {
+function didYouMean(input: string, allowed: readonly string[]): string | undefined {
   const lower = input.toLowerCase();
   let best: { candidate: string; distance: number } | undefined;
   for (const candidate of allowed) {
@@ -163,10 +177,7 @@ function didYouMean(
   // two-gate (`distance ≤ 2 AND distance < length/2`) silently dropped the
   // genuine typo case "spd" → "speed" (distance 2, length 3, 2<1.5=false).
   // Reviewer catch (UX audit P0-1 follow-up).
-  if (
-    best &&
-    best.distance <= Math.min(2, Math.ceil(lower.length * 0.4))
-  ) {
+  if (best && best.distance <= Math.min(2, Math.ceil(lower.length * 0.4))) {
     return best.candidate;
   }
   return undefined;

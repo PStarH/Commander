@@ -225,9 +225,7 @@ export async function cmdInit(flags: Record<string, string> = {}): Promise<void>
         console.log(
           `  ${$.yellow}⚠${$.reset} ${$.dim}Quickstart failed: ${(err as Error).message}${$.reset}`,
         );
-        console.log(
-          `  ${$.dim}Set an API key (e.g., OPENAI_API_KEY) and try again.${$.reset}\n`,
-        );
+        console.log(`  ${$.dim}Set an API key (e.g., OPENAI_API_KEY) and try again.${$.reset}\n`);
       }
       return;
     }

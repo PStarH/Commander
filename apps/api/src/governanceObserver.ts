@@ -75,8 +75,7 @@ export function calculateGovernanceStats(
   // a typed accessor; keeps the calculation logic intact without scattering `any`.
   const riskLevel = (m: Record<string, unknown>): string | undefined =>
     m.riskLevel as string | undefined;
-  const status = (m: Record<string, unknown>): string | undefined =>
-    m.status as string | undefined;
+  const status = (m: Record<string, unknown>): string | undefined => m.status as string | undefined;
   const governanceMode = (m: Record<string, unknown>): string | undefined =>
     m.governanceMode as string | undefined;
   const approvalStatus = (m: Record<string, unknown>): string | undefined =>
