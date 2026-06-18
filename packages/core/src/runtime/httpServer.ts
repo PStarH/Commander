@@ -440,6 +440,21 @@ export class CommanderHttpServer {
       return;
     }
 
+    // Detailed health check with component statuses
+    if (segments[0] === 'health' && segments[1] === 'detailed' && (req.method ?? 'GET') === 'GET') {
+      const { HealthCollector } = await import('./healthCheck');
+      const collector = new HealthCollector();
+      const report = await collector.collect();
+      sendJson(res, report.status === 'healthy' ? 200 : 503, {
+        ...report,
+        uptime: process.uptime(),
+        activeSessions: this.runtimes.size,
+        pid: process.pid,
+        nodeVersion: process.version,
+      });
+      return;
+    }
+
     // GAP-33: Metrics endpoint for monitoring (JSON + OpenMetrics text)
     if (segments[0] === 'metrics' && (req.method ?? 'GET') === 'GET') {
       const accept = req.headers.accept ?? '';

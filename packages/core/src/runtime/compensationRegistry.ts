@@ -61,10 +61,17 @@ export class CompensationRegistry {
 
   assessReversibility(toolName: string): CompensableAction['reversibility'] {
     const READ_ONLY = ['file_read', 'web_search', 'web_fetch', 'memory_recall', 'memory_list'];
-    if (READ_ONLY.some(p => toolName.startsWith(p))) return 'fully_reversible';
+    if (READ_ONLY.some((p) => toolName.startsWith(p))) return 'fully_reversible';
 
-    const MUTATING = ['file_write', 'file_edit', 'shell_execute', 'python_execute', 'git_push', 'git_commit'];
-    if (MUTATING.some(p => toolName.startsWith(p))) return 'non_reversible';
+    const MUTATING = [
+      'file_write',
+      'file_edit',
+      'shell_execute',
+      'python_execute',
+      'git_push',
+      'git_commit',
+    ];
+    if (MUTATING.some((p) => toolName.startsWith(p))) return 'non_reversible';
 
     return 'partially_reversible';
   }
