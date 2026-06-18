@@ -75,23 +75,24 @@ export interface MemoryStats {
 // SQLite-like Storage (File-based for simplicity)
 // ============================================
 
-/**
- * EpisodicMemoryStore persistence paths. Override `COMMANDER_EPISODIC_FILE`
- * to relocate the episodic JSON file, AND `COMMANDER_VECTOR_INDEX_FILE` to
- * relocate the vector index file (e.g. per-launcher in parallel test
- * scaffolding). Defaults keep the original `__dirname/../data/...` paths so
- * production runs are untouched. Both env vars must be set BEFORE this
- * module is required (module-load capture). The vector index is tightly
- * paired with its episodic file: setting only one env var will route one
- * artifact to the override and the other to the default location, which
- * breaks the "only there" contract for tests.
- */
+/** Override `COMMANDER_EPISODIC_FILE` (episodic JSON) AND `COMMANDER_VECTOR_INDEX_FILE` (vector index). Both MUST be set together — a fail-fast guard below throws if only one is set, because asymmetric config would silently route one artifact to the override and the other to the default location, breaking the atomic-write contract for parallel-launched regression tests. Default keeps the original `__dirname/../data/...` paths so production runs are untouched. Env vars MUST be set before this module is required (module-load capture). */
+const EPISODIC_OVERRIDE_ENV = process.env['COMMANDER_EPISODIC_FILE'];
+const VECTOR_OVERRIDE_ENV = process.env['COMMANDER_VECTOR_INDEX_FILE'];
+
+if (Boolean(EPISODIC_OVERRIDE_ENV) !== Boolean(VECTOR_OVERRIDE_ENV)) {
+  throw new Error(
+    'EpisodicMemoryStore: COMMANDER_EPISODIC_FILE and COMMANDER_VECTOR_INDEX_FILE ' +
+      'must be set together. Setting only one routes one artifact to the ' +
+      'override and the other to the default location, breaking the ' +
+      'atomic-write contract for parallel-launched regression tests. ' +
+      'Either set both env vars or omit both.',
+  );
+}
+
 const EPISODIC_MEMORY_FILE =
-  process.env['COMMANDER_EPISODIC_FILE'] ??
-  path.resolve(__dirname, '../data/episodic-memory.json');
+  EPISODIC_OVERRIDE_ENV ?? path.resolve(__dirname, '../data/episodic-memory.json');
 const VECTOR_INDEX_FILE =
-  process.env['COMMANDER_VECTOR_INDEX_FILE'] ??
-  path.resolve(__dirname, '../data/episodic-memory-vectors.json');
+  VECTOR_OVERRIDE_ENV ?? path.resolve(__dirname, '../data/episodic-memory-vectors.json');
 
 /**
  * Simple TF-IDF Vector Index
