@@ -43,7 +43,7 @@ describe('SpeculativeExecutor - PatternTracker', () => {
     tracker.recordSequence(['web_search', 'web_fetch', 'file_write']);
     const patterns = tracker.getTopPatterns(10);
     const webSearchFetchWrite = patterns.find(
-      p => p.sequence.join('→') === 'web_search→web_fetch→file_write'
+      (p) => p.sequence.join('→') === 'web_search→web_fetch→file_write',
     );
     expect(webSearchFetchWrite).toBeDefined();
     expect(webSearchFetchWrite!.frequency).toBe(2);
@@ -70,7 +70,7 @@ describe('SpeculativeExecutor - PatternTracker', () => {
       tracker.recordSequence(['file_read', 'file_edit', 'file_write']);
     }
     const predictions = tracker.predictNext(['file_read']);
-    const fileEdit = predictions.find(p => p.toolName === 'file_edit');
+    const fileEdit = predictions.find((p) => p.toolName === 'file_edit');
     expect(fileEdit).toBeDefined();
     expect(fileEdit!.confidence).toBeGreaterThan(0.5);
   });
@@ -149,7 +149,7 @@ describe('SpeculativeExecutor - planSpeculativeExecution', () => {
       ['file_read', 'shell_execute'],
     );
 
-    const hasUnsafe = plan.some(p => p.name === 'shell_execute');
+    const hasUnsafe = plan.some((p) => p.name === 'shell_execute');
     expect(hasUnsafe).toBe(false);
   });
 

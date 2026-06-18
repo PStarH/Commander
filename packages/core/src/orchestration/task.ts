@@ -63,12 +63,29 @@ export function createTask(spec: TaskSpec): TaskHandle {
   return handle;
 }
 
+const TERMINAL_TASK_TTL_MS = 10 * 60_000; // 10 minutes
+
 export function updateTaskStatus(taskId: string, status: TaskStatus): void {
   const task = activeTasks.get(taskId);
   if (task) {
     task.status = status;
     if (status === 'completed' || status === 'failed' || status === 'killed') {
       task.endTime = Date.now();
+      pruneTerminalTasks();
+    }
+  }
+}
+
+function pruneTerminalTasks(): void {
+  const now = Date.now();
+  for (const [id, task] of activeTasks) {
+    if (task.endTime && now - task.endTime > TERMINAL_TASK_TTL_MS) {
+      try {
+        fs.unlinkSync(task.outputFile);
+      } catch {
+        /* already deleted */
+      }
+      activeTasks.delete(id);
     }
   }
 }
@@ -88,7 +105,9 @@ export function readTaskOutput(taskId: string, maxChars = 5000): string {
     const content = fs.readFileSync(task.outputFile, 'utf-8');
     return content.slice(-maxChars);
   } catch (e) {
-    getGlobalLogger().debug('TaskFramework', 'Failed to read task output', { error: (e as Error)?.message });
+    getGlobalLogger().debug('TaskFramework', 'Failed to read task output', {
+      error: (e as Error)?.message,
+    });
     return '';
   }
 }
@@ -107,17 +126,25 @@ export function getTask(taskId: string): TaskHandle | undefined {
 
 export function listTasks(status?: TaskStatus): TaskHandle[] {
   const all = Array.from(activeTasks.values());
-  return status ? all.filter(t => t.status === status) : all;
+  return status ? all.filter((t) => t.status === status) : all;
 }
 
 export function cleanupTask(taskId: string): void {
   const task = activeTasks.get(taskId);
   if (task) {
-    try { fs.unlinkSync(task.outputFile); } catch (e) { getGlobalLogger().warn('TaskFramework', 'Task cleanup failed', { error: (e as Error)?.message }); }
+    try {
+      fs.unlinkSync(task.outputFile);
+    } catch (e) {
+      getGlobalLogger().warn('TaskFramework', 'Task cleanup failed', {
+        error: (e as Error)?.message,
+      });
+    }
     activeTasks.delete(taskId);
   }
 }
 
 export function getActiveCount(): number {
-  return Array.from(activeTasks.values()).filter(t => t.status === 'running' || t.status === 'pending').length;
+  return Array.from(activeTasks.values()).filter(
+    (t) => t.status === 'running' || t.status === 'pending',
+  ).length;
 }

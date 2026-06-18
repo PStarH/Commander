@@ -90,11 +90,9 @@ function hasLowEntropySignals(content: string): boolean {
     0,
   );
 
-  const sentences = trimmed.split(/[.!?]+/).filter(s => s.trim().length > 0);
+  const sentences = trimmed.split(/[.!?]+/).filter((s) => s.trim().length > 0);
   const avgSentenceLength =
-    sentences.length > 0
-      ? trimmed.length / sentences.length
-      : trimmed.length;
+    sentences.length > 0 ? trimmed.length / sentences.length : trimmed.length;
 
   // Short sentences suggest uncertainty/fragmentation
   if (avgSentenceLength < 30 && lowEntropyScore < 2) {
@@ -117,11 +115,16 @@ export function hasInformationGain(
   for (const tc of toolCalls) {
     const name = tc.name;
 
-    if (name === 'shell_execute' || name === 'python_execute' || name === 'file_write' || name === 'file_edit') {
+    if (
+      name === 'shell_execute' ||
+      name === 'python_execute' ||
+      name === 'file_write' ||
+      name === 'file_edit'
+    ) {
       return true;
     }
 
-    const recent = recentResults.filter(r => r.name === name);
+    const recent = recentResults.filter((r) => r.name === name);
     if (recent.length > 0) {
       const lastResult = recent[recent.length - 1];
       if (lastResult.error) {

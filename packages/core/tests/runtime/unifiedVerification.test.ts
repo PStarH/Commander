@@ -18,7 +18,10 @@ describe('detectTaskType', () => {
 
   it('detects analysis tasks', () => {
     assert.equal(detectTaskType('Analyze the data and summarize findings'), 'analysis');
-    assert.equal(detectTaskType('Compare the two approaches and evaluate which is better'), 'analysis');
+    assert.equal(
+      detectTaskType('Compare the two approaches and evaluate which is better'),
+      'analysis',
+    );
   });
 
   it('detects structured tasks', () => {
@@ -51,10 +54,11 @@ describe('UnifiedVerificationPipeline', () => {
     const pipeline = createPipeline();
     const ctx: UVPTaskContext = {
       goal: 'Explain quantum computing',
-      output: 'According to a recent study by Professor Smith et al., quantum computing will revolutionize cryptography.',
+      output:
+        'According to a recent study by Professor Smith et al., quantum computing will revolutionize cryptography.',
     };
     const report = await pipeline.verify(ctx);
-    assert.ok(report.signals.some(s => s.source === 'hallucination:fabricatedRef'));
+    assert.ok(report.signals.some((s) => s.source === 'hallucination:fabricatedRef'));
     assert.ok(report.confidence < 0.8);
   });
 
@@ -65,29 +69,31 @@ describe('UnifiedVerificationPipeline', () => {
       output: 'Without a doubt, Python is the best language for beginners.',
     };
     const report = await pipeline.verify(ctx);
-    assert.ok(report.signals.some(s => s.source === 'hallucination:overconfidence'));
+    assert.ok(report.signals.some((s) => s.source === 'hallucination:overconfidence'));
   });
 
   it('does not false-positive on normal "cannot" usage', async () => {
     const pipeline = createPipeline();
     const ctx: UVPTaskContext = {
       goal: 'Explain the limitations of the API',
-      output: 'The API cannot handle more than 1000 requests per second. It also cannot process binary data.',
+      output:
+        'The API cannot handle more than 1000 requests per second. It also cannot process binary data.',
     };
     const report = await pipeline.verify(ctx);
     // Should not flag "cannot" as a tool error in normal prose
-    assert.ok(!report.signals.some(s => s.source === 'tool_error'));
+    assert.ok(!report.signals.some((s) => s.source === 'tool_error'));
   });
 
   it('detects real tool errors with proper context', async () => {
     const pipeline = createPipeline();
     const ctx: UVPTaskContext = {
       goal: 'Run the script',
-      output: 'Here are the results:\nError: FileNotFoundError: /tmp/data.csv not found\nThe script failed.',
+      output:
+        'Here are the results:\nError: FileNotFoundError: /tmp/data.csv not found\nThe script failed.',
       toolsUsed: ['shell_execute'],
     };
     const report = await pipeline.verify(ctx);
-    assert.ok(report.signals.some(s => s.source === 'tool_error'));
+    assert.ok(report.signals.some((s) => s.source === 'tool_error'));
   });
 
   it('detects unclosed code blocks in code tasks', async () => {
@@ -97,7 +103,7 @@ describe('UnifiedVerificationPipeline', () => {
       output: 'Here is the code:\n```python\ndef hello():\n    print("hello")',
     };
     const report = await pipeline.verify(ctx);
-    assert.ok(report.signals.some(s => s.source === 'syntax'));
+    assert.ok(report.signals.some((s) => s.source === 'syntax'));
   });
 
   it('skips when disabled', async () => {
@@ -127,7 +133,14 @@ describe('UnifiedVerificationPipeline', () => {
       passed: false,
       confidence: 0.3,
       signals: [
-        { stage: 0, source: 'tool_error', severity: 'high', message: 'Error in output', snippet: 'Error: file not found', suggestion: 'Fix the file path' },
+        {
+          stage: 0,
+          source: 'tool_error',
+          severity: 'high',
+          message: 'Error in output',
+          snippet: 'Error: file not found',
+          suggestion: 'Fix the file path',
+        },
       ],
       tokensUsed: 0,
       stagesRun: [0],
@@ -157,7 +170,10 @@ describe('UnifiedVerificationPipeline', () => {
 
   it('handles schema validation', async () => {
     // Use low confidenceSkipThreshold so Stage 1 always runs
-    const pipeline = new UnifiedVerificationPipeline({ enabled: true, confidenceSkipThreshold: 0.99 });
+    const pipeline = new UnifiedVerificationPipeline({
+      enabled: true,
+      confidenceSkipThreshold: 0.99,
+    });
     const ctx: UVPTaskContext = {
       goal: 'Return user data',
       output: '{"name": "Alice"}',
@@ -169,11 +185,14 @@ describe('UnifiedVerificationPipeline', () => {
       },
     };
     const report = await pipeline.verify(ctx);
-    assert.ok(report.signals.some(s => s.message.includes('age')));
+    assert.ok(report.signals.some((s) => s.message.includes('age')));
   });
 
   it('validates JSON types in schema', async () => {
-    const pipeline = new UnifiedVerificationPipeline({ enabled: true, confidenceSkipThreshold: 0.99 });
+    const pipeline = new UnifiedVerificationPipeline({
+      enabled: true,
+      confidenceSkipThreshold: 0.99,
+    });
     const ctx: UVPTaskContext = {
       goal: 'Return data',
       output: '{"count": "not a number"}',
@@ -184,7 +203,7 @@ describe('UnifiedVerificationPipeline', () => {
       },
     };
     const report = await pipeline.verify(ctx);
-    assert.ok(report.signals.some(s => s.message.includes('count')));
+    assert.ok(report.signals.some((s) => s.message.includes('count')));
   });
 
   it('adjusts relevance threshold by task type', async () => {
@@ -197,7 +216,7 @@ describe('UnifiedVerificationPipeline', () => {
     };
     const report = await pipeline.verify(ctx);
     // Should not penalize as heavily as it would for a search task
-    const relevanceSignal = report.signals.find(s => s.source === 'relevance');
+    const relevanceSignal = report.signals.find((s) => s.source === 'relevance');
     if (relevanceSignal) {
       assert.equal(relevanceSignal.severity, 'low');
     }

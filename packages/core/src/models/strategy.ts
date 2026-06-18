@@ -9,29 +9,29 @@ import type {
 
 function pickSenateAgents(roster: CommanderAgentCard[], limit = 2): string[] {
   return roster
-    .filter(agent => {
+    .filter((agent) => {
       return (
         agent.governanceRole === 'SENATE' &&
         (agent.status === 'READY' || agent.status === 'RUNNING')
       );
     })
     .slice(0, limit)
-    .map(agent => agent.id);
+    .map((agent) => agent.id);
 }
 
 function pickExecutorAgent(
   roster: CommanderAgentCard[],
-  preferredAgentId?: string
+  preferredAgentId?: string,
 ): CommanderAgentCard | undefined {
   const preferred = preferredAgentId
-    ? roster.find(agent => agent.id === preferredAgentId)
+    ? roster.find((agent) => agent.id === preferredAgentId)
     : undefined;
 
   if (preferred && (preferred.status === 'READY' || preferred.status === 'RUNNING')) {
     return preferred;
   }
 
-  return roster.find(agent => {
+  return roster.find((agent) => {
     return (
       agent.governanceRole === 'EXECUTOR' &&
       (agent.status === 'READY' || agent.status === 'RUNNING')
@@ -51,7 +51,7 @@ export function recommendStrategy(context: CommanderRunContextV2): MultiAgentStr
           ...context.slimSnapshot.missionBoard.blocked,
           ...context.slimSnapshot.missionBoard.planned,
           ...context.slimSnapshot.missionBoard.done,
-        ].find(mission => mission.id === missionId)
+        ].find((mission) => mission.id === missionId)
     : undefined;
 
   const intent = context.focus?.intent ?? 'EXECUTE';
@@ -91,7 +91,7 @@ export function recommendStrategy(context: CommanderRunContextV2): MultiAgentStr
     rationale.push(
       focusMission.governanceMode === 'GUARDED'
         ? 'Mission governanceMode=GUARDED => pair executor with senate monitor/review.'
-        : 'Mission riskLevel is HIGH/CRITICAL => guarded execution recommended.'
+        : 'Mission riskLevel is HIGH/CRITICAL => guarded execution recommended.',
     );
     return {
       kind: 'GUARDED_EXECUTION',

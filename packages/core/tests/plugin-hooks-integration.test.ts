@@ -9,10 +9,17 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { resetHookManager, getHookManager, HookManager } from '../src/pluginManager';
 import type {
-  CommanderPlugin, BeforeToolResolveContext, AfterToolResolveContext,
-  ToolTimeoutContext, ToolRetryContext, ContextCompactionContext,
-  SessionForkContext, SessionArchiveContext, StepLifecycleContext,
-  BeforeBackendSelectContext, AfterBackendSelectContext,
+  CommanderPlugin,
+  BeforeToolResolveContext,
+  AfterToolResolveContext,
+  ToolTimeoutContext,
+  ToolRetryContext,
+  ContextCompactionContext,
+  SessionForkContext,
+  SessionArchiveContext,
+  StepLifecycleContext,
+  BeforeBackendSelectContext,
+  AfterBackendSelectContext,
 } from '../src/pluginManager';
 import { ExecutionRouter } from '../src/sandbox/executionRouter';
 
@@ -59,18 +66,44 @@ function emptyRecord(): HookRecord {
 function createRecordingPlugin(name: string, record: HookRecord): CommanderPlugin {
   return {
     name,
-    beforeToolResolve: async (ctx) => { record.beforeToolResolve.push(ctx); return null; },
-    afterToolResolve: async (ctx) => { record.afterToolResolve.push(ctx); },
-    onToolTimeout: async (ctx) => { record.onToolTimeout.push(ctx); },
-    onToolRetry: async (ctx) => { record.onToolRetry.push(ctx); },
-    beforeContextCompaction: async (ctx) => { record.beforeContextCompaction.push(ctx); },
-    afterContextCompaction: async (ctx) => { record.afterContextCompaction.push(ctx); },
-    onSessionFork: async (ctx) => { record.onSessionFork.push(ctx); },
-    onSessionArchive: async (ctx) => { record.onSessionArchive.push(ctx); },
-    onStepStart: async (ctx) => { record.onStepStart.push(ctx); },
-    onStepComplete: async (ctx) => { record.onStepComplete.push(ctx); },
-    beforeBackendSelect: async (ctx) => { record.beforeBackendSelect.push(ctx); return null; },
-    afterBackendSelect: async (ctx) => { record.afterBackendSelect.push(ctx); },
+    beforeToolResolve: async (ctx) => {
+      record.beforeToolResolve.push(ctx);
+      return null;
+    },
+    afterToolResolve: async (ctx) => {
+      record.afterToolResolve.push(ctx);
+    },
+    onToolTimeout: async (ctx) => {
+      record.onToolTimeout.push(ctx);
+    },
+    onToolRetry: async (ctx) => {
+      record.onToolRetry.push(ctx);
+    },
+    beforeContextCompaction: async (ctx) => {
+      record.beforeContextCompaction.push(ctx);
+    },
+    afterContextCompaction: async (ctx) => {
+      record.afterContextCompaction.push(ctx);
+    },
+    onSessionFork: async (ctx) => {
+      record.onSessionFork.push(ctx);
+    },
+    onSessionArchive: async (ctx) => {
+      record.onSessionArchive.push(ctx);
+    },
+    onStepStart: async (ctx) => {
+      record.onStepStart.push(ctx);
+    },
+    onStepComplete: async (ctx) => {
+      record.onStepComplete.push(ctx);
+    },
+    beforeBackendSelect: async (ctx) => {
+      record.beforeBackendSelect.push(ctx);
+      return null;
+    },
+    afterBackendSelect: async (ctx) => {
+      record.afterBackendSelect.push(ctx);
+    },
   };
 }
 
@@ -96,7 +129,10 @@ describe('Sprint 3 Hook Points', () => {
   it('beforeToolResolve fires with correct context', async () => {
     await hm.register(createRecordingPlugin('p1', record));
     const result = await hm.fireBeforeToolResolve({
-      toolName: 'web_search', args: { query: 'test' }, agentId: 'a1', runId: 'r1',
+      toolName: 'web_search',
+      args: { query: 'test' },
+      agentId: 'a1',
+      runId: 'r1',
     });
     assert.strictEqual(result, null); // no plugin blocked
     assert.strictEqual(record.beforeToolResolve.length, 1);
@@ -109,8 +145,12 @@ describe('Sprint 3 Hook Points', () => {
   it('afterToolResolve fires with correct context', async () => {
     await hm.register(createRecordingPlugin('p1', record));
     await hm.fireAfterToolResolve({
-      toolName: 'file_read', args: { path: '/tmp/x' }, agentId: 'a1', runId: 'r1',
-      tool: { name: 'file_read', category: 'filesystem' }, notFound: false,
+      toolName: 'file_read',
+      args: { path: '/tmp/x' },
+      agentId: 'a1',
+      runId: 'r1',
+      tool: { name: 'file_read', category: 'filesystem' },
+      notFound: false,
     });
     assert.strictEqual(record.afterToolResolve.length, 1);
     assert.strictEqual(record.afterToolResolve[0].toolName, 'file_read');
@@ -120,7 +160,10 @@ describe('Sprint 3 Hook Points', () => {
   it('afterToolResolve reports notFound=true', async () => {
     await hm.register(createRecordingPlugin('p1', record));
     await hm.fireAfterToolResolve({
-      toolName: 'nonexistent_tool', args: {}, agentId: 'a1', runId: 'r1',
+      toolName: 'nonexistent_tool',
+      args: {},
+      agentId: 'a1',
+      runId: 'r1',
       notFound: true,
     });
     assert.strictEqual(record.afterToolResolve[0].notFound, true);
@@ -129,8 +172,12 @@ describe('Sprint 3 Hook Points', () => {
   it('onToolTimeout fires with correct context', async () => {
     await hm.register(createRecordingPlugin('p1', record));
     await hm.fireOnToolTimeout({
-      toolName: 'python_execute', args: { code: 'x' }, timeoutMs: 5000,
-      durationMs: 5234, agentId: 'a1', runId: 'r1',
+      toolName: 'python_execute',
+      args: { code: 'x' },
+      timeoutMs: 5000,
+      durationMs: 5234,
+      agentId: 'a1',
+      runId: 'r1',
     });
     assert.strictEqual(record.onToolTimeout.length, 1);
     assert.strictEqual(record.onToolTimeout[0].toolName, 'python_execute');
@@ -141,8 +188,13 @@ describe('Sprint 3 Hook Points', () => {
   it('onToolRetry fires with correct context', async () => {
     await hm.register(createRecordingPlugin('p1', record));
     await hm.fireOnToolRetry({
-      toolName: 'shell_execute', args: { command: 'foo' }, attempt: 2,
-      maxRetries: 3, lastError: 'connection reset', agentId: 'a1', runId: 'r1',
+      toolName: 'shell_execute',
+      args: { command: 'foo' },
+      attempt: 2,
+      maxRetries: 3,
+      lastError: 'connection reset',
+      agentId: 'a1',
+      runId: 'r1',
     });
     assert.strictEqual(record.onToolRetry.length, 1);
     assert.strictEqual(record.onToolRetry[0].attempt, 2);
@@ -153,8 +205,11 @@ describe('Sprint 3 Hook Points', () => {
   it('beforeContextCompaction fires with correct context', async () => {
     await hm.register(createRecordingPlugin('p1', record));
     await hm.fireBeforeContextCompaction({
-      messageCount: 150, totalTokens: 12000, budgetTokens: 8000,
-      agentId: 'a1', runId: 'r1',
+      messageCount: 150,
+      totalTokens: 12000,
+      budgetTokens: 8000,
+      agentId: 'a1',
+      runId: 'r1',
     });
     assert.strictEqual(record.beforeContextCompaction.length, 1);
     assert.strictEqual(record.beforeContextCompaction[0].messageCount, 150);
@@ -165,8 +220,11 @@ describe('Sprint 3 Hook Points', () => {
   it('afterContextCompaction fires with correct context', async () => {
     await hm.register(createRecordingPlugin('p1', record));
     await hm.fireAfterContextCompaction({
-      messageCount: 80, totalTokens: 6000, budgetTokens: 8000,
-      agentId: 'a1', runId: 'r1',
+      messageCount: 80,
+      totalTokens: 6000,
+      budgetTokens: 8000,
+      agentId: 'a1',
+      runId: 'r1',
     });
     assert.strictEqual(record.afterContextCompaction.length, 1);
     assert.strictEqual(record.afterContextCompaction[0].messageCount, 80);
@@ -175,8 +233,10 @@ describe('Sprint 3 Hook Points', () => {
   it('onSessionFork fires with correct context', async () => {
     await hm.register(createRecordingPlugin('p1', record));
     await hm.fireOnSessionFork({
-      parentRunId: 'parent-123', childRunId: 'child-456',
-      agentId: 'a1', goal: 'analyze data',
+      parentRunId: 'parent-123',
+      childRunId: 'child-456',
+      agentId: 'a1',
+      goal: 'analyze data',
     });
     assert.strictEqual(record.onSessionFork.length, 1);
     assert.strictEqual(record.onSessionFork[0].parentRunId, 'parent-123');
@@ -187,7 +247,9 @@ describe('Sprint 3 Hook Points', () => {
   it('onSessionArchive fires with correct context', async () => {
     await hm.register(createRecordingPlugin('p1', record));
     await hm.fireOnSessionArchive({
-      runId: 'run-789', phase: 'execution', stepNumber: 5,
+      runId: 'run-789',
+      phase: 'execution',
+      stepNumber: 5,
       tokenUsage: { totalTokens: 15000 },
     });
     assert.strictEqual(record.onSessionArchive.length, 1);
@@ -200,8 +262,11 @@ describe('Sprint 3 Hook Points', () => {
   it('onStepStart fires with correct context', async () => {
     await hm.register(createRecordingPlugin('p1', record));
     await hm.fireOnStepStart({
-      runId: 'run-1', agentId: 'a1', stepNumber: 3,
-      type: 'tool_call', content: 'file_read',
+      runId: 'run-1',
+      agentId: 'a1',
+      stepNumber: 3,
+      type: 'tool_call',
+      content: 'file_read',
     });
     assert.strictEqual(record.onStepStart.length, 1);
     assert.strictEqual(record.onStepStart[0].stepNumber, 3);
@@ -211,8 +276,11 @@ describe('Sprint 3 Hook Points', () => {
   it('onStepComplete fires with correct context', async () => {
     await hm.register(createRecordingPlugin('p1', record));
     await hm.fireOnStepComplete({
-      runId: 'run-1', agentId: 'a1', stepNumber: 4,
-      type: 'response', content: 'Done.',
+      runId: 'run-1',
+      agentId: 'a1',
+      stepNumber: 4,
+      type: 'response',
+      content: 'Done.',
     });
     assert.strictEqual(record.onStepComplete.length, 1);
     assert.strictEqual(record.onStepComplete[0].stepNumber, 4);
@@ -222,8 +290,10 @@ describe('Sprint 3 Hook Points', () => {
   it('beforeBackendSelect fires with correct context', async () => {
     await hm.register(createRecordingPlugin('p1', record));
     const result = await hm.fireBeforeBackendSelect({
-      toolName: 'shell_execute', args: { backend: 'ssh' },
-      agentId: 'a1', runId: 'r1',
+      toolName: 'shell_execute',
+      args: { backend: 'ssh' },
+      agentId: 'a1',
+      runId: 'r1',
     });
     assert.strictEqual(result, null); // no override
     assert.strictEqual(record.beforeBackendSelect.length, 1);
@@ -234,8 +304,11 @@ describe('Sprint 3 Hook Points', () => {
   it('afterBackendSelect fires with correct context', async () => {
     await hm.register(createRecordingPlugin('p1', record));
     await hm.fireAfterBackendSelect({
-      toolName: 'shell_execute', args: {}, selectedBackend: 'local',
-      agentId: 'a1', runId: 'r1',
+      toolName: 'shell_execute',
+      args: {},
+      selectedBackend: 'local',
+      agentId: 'a1',
+      runId: 'r1',
     });
     assert.strictEqual(record.afterBackendSelect.length, 1);
     assert.strictEqual(record.afterBackendSelect[0].selectedBackend, 'local');
@@ -263,16 +336,25 @@ describe('Hook plugin ordering', () => {
 
     await hm.register({
       name: 'base-plugin',
-      beforeToolResolve: async () => { order.push('base'); return null; },
+      beforeToolResolve: async () => {
+        order.push('base');
+        return null;
+      },
     });
     await hm.register({
       name: 'dependent-plugin',
       dependsOn: ['base-plugin'],
-      beforeToolResolve: async () => { order.push('dependent'); return null; },
+      beforeToolResolve: async () => {
+        order.push('dependent');
+        return null;
+      },
     });
 
     await hm.fireBeforeToolResolve({
-      toolName: 'test', args: {}, agentId: 'a1', runId: 'r1',
+      toolName: 'test',
+      args: {},
+      agentId: 'a1',
+      runId: 'r1',
     });
 
     assert.deepStrictEqual(order, ['base', 'dependent']);
@@ -308,8 +390,10 @@ describe('beforeToolResolve blocking', () => {
     });
 
     const result = await hm.fireBeforeToolResolve({
-      toolName: 'shell_execute', args: { command: 'rm -rf /' },
-      agentId: 'a1', runId: 'r1',
+      toolName: 'shell_execute',
+      args: { command: 'rm -rf /' },
+      agentId: 'a1',
+      runId: 'r1',
     });
 
     assert.ok(result !== null);
@@ -324,7 +408,10 @@ describe('beforeToolResolve blocking', () => {
     });
 
     const result = await hm.fireBeforeToolResolve({
-      toolName: 'web_search', args: {}, agentId: 'a1', runId: 'r1',
+      toolName: 'web_search',
+      args: {},
+      agentId: 'a1',
+      runId: 'r1',
     });
 
     assert.strictEqual(result, null);
@@ -352,15 +439,23 @@ describe('Hook error isolation', () => {
 
     await hm.register({
       name: 'failing',
-      beforeToolResolve: async () => { throw new Error('oops'); },
+      beforeToolResolve: async () => {
+        throw new Error('oops');
+      },
     });
     await hm.register({
       name: 'working',
-      beforeToolResolve: async () => { fired.push('working'); return null; },
+      beforeToolResolve: async () => {
+        fired.push('working');
+        return null;
+      },
     });
 
     const result = await hm.fireBeforeToolResolve({
-      toolName: 'test', args: {}, agentId: 'a1', runId: 'r1',
+      toolName: 'test',
+      args: {},
+      agentId: 'a1',
+      runId: 'r1',
     });
 
     // 'working' should still fire and result should be null (no block)
@@ -371,12 +466,16 @@ describe('Hook error isolation', () => {
   it('hook errors are caught and logged without propagating', async () => {
     await hm.register({
       name: 'throws',
-      onStepStart: async () => { throw new Error('step error'); },
+      onStepStart: async () => {
+        throw new Error('step error');
+      },
     });
 
     // Should not throw
     await hm.fireOnStepStart({
-      runId: 'r1', agentId: 'a1', stepNumber: 1,
+      runId: 'r1',
+      agentId: 'a1',
+      stepNumber: 1,
       type: 'thought',
     });
 
@@ -390,18 +489,23 @@ describe('Hook error isolation', () => {
     await hm.register({
       name: 'slow',
       beforeToolResolve: async () => {
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        await new Promise((resolve) => setTimeout(resolve, 5000));
         return 'should-not-reach' as any;
       },
     });
     await hm.register({
       name: 'fast',
-      beforeToolResolve: async () => { return null; },
+      beforeToolResolve: async () => {
+        return null;
+      },
     });
 
     // Should not throw despite slow plugin timing out
     const result = await hm.fireBeforeToolResolve({
-      toolName: 'test', args: {}, agentId: 'a1', runId: 'r1',
+      toolName: 'test',
+      args: {},
+      agentId: 'a1',
+      runId: 'r1',
     });
 
     // fast plugin still fires and result is null
@@ -430,12 +534,18 @@ describe('Disabled plugin isolation', () => {
 
     await hm.register({
       name: 'disabled-p',
-      beforeToolResolve: async () => { fired.push('disabled-p'); return null; },
+      beforeToolResolve: async () => {
+        fired.push('disabled-p');
+        return null;
+      },
     });
 
     hm.disable('disabled-p');
     await hm.fireBeforeToolResolve({
-      toolName: 'test', args: {}, agentId: 'a1', runId: 'r1',
+      toolName: 'test',
+      args: {},
+      agentId: 'a1',
+      runId: 'r1',
     });
 
     assert.deepStrictEqual(fired, []);
@@ -446,18 +556,27 @@ describe('Disabled plugin isolation', () => {
 
     await hm.register({
       name: 'toggle-p',
-      beforeToolResolve: async () => { fired.push('toggle-p'); return null; },
+      beforeToolResolve: async () => {
+        fired.push('toggle-p');
+        return null;
+      },
     });
 
     hm.disable('toggle-p');
     await hm.fireBeforeToolResolve({
-      toolName: 'test', args: {}, agentId: 'a1', runId: 'r1',
+      toolName: 'test',
+      args: {},
+      agentId: 'a1',
+      runId: 'r1',
     });
     assert.deepStrictEqual(fired, []);
 
     hm.enable('toggle-p');
     await hm.fireBeforeToolResolve({
-      toolName: 'test', args: {}, agentId: 'a1', runId: 'r1',
+      toolName: 'test',
+      args: {},
+      agentId: 'a1',
+      runId: 'r1',
     });
     assert.deepStrictEqual(fired, ['toggle-p']);
   });
@@ -484,15 +603,21 @@ describe('Multi-plugin hook chains', () => {
 
     await hm.register({
       name: 'first',
-      onStepComplete: async () => { fired.push('first'); },
+      onStepComplete: async () => {
+        fired.push('first');
+      },
     });
     await hm.register({
       name: 'second',
-      onStepComplete: async () => { fired.push('second'); },
+      onStepComplete: async () => {
+        fired.push('second');
+      },
     });
 
     await hm.fireOnStepComplete({
-      runId: 'r1', agentId: 'a1', stepNumber: 1,
+      runId: 'r1',
+      agentId: 'a1',
+      stepNumber: 1,
       type: 'tool_result',
     });
 
@@ -504,34 +629,104 @@ describe('Multi-plugin hook chains', () => {
 
     const allHookPlugin: CommanderPlugin = {
       name: 'all-hooks',
-      beforeToolResolve: async () => { calls.push('beforeToolResolve'); return null; },
-      afterToolResolve: async () => { calls.push('afterToolResolve'); },
-      onToolTimeout: async () => { calls.push('onToolTimeout'); },
-      onToolRetry: async () => { calls.push('onToolRetry'); },
-      beforeContextCompaction: async () => { calls.push('beforeContextCompaction'); },
-      afterContextCompaction: async () => { calls.push('afterContextCompaction'); },
-      onSessionFork: async () => { calls.push('onSessionFork'); },
-      onSessionArchive: async () => { calls.push('onSessionArchive'); },
-      onStepStart: async () => { calls.push('onStepStart'); },
-      onStepComplete: async () => { calls.push('onStepComplete'); },
-      beforeBackendSelect: async () => { calls.push('beforeBackendSelect'); return null; },
-      afterBackendSelect: async () => { calls.push('afterBackendSelect'); },
+      beforeToolResolve: async () => {
+        calls.push('beforeToolResolve');
+        return null;
+      },
+      afterToolResolve: async () => {
+        calls.push('afterToolResolve');
+      },
+      onToolTimeout: async () => {
+        calls.push('onToolTimeout');
+      },
+      onToolRetry: async () => {
+        calls.push('onToolRetry');
+      },
+      beforeContextCompaction: async () => {
+        calls.push('beforeContextCompaction');
+      },
+      afterContextCompaction: async () => {
+        calls.push('afterContextCompaction');
+      },
+      onSessionFork: async () => {
+        calls.push('onSessionFork');
+      },
+      onSessionArchive: async () => {
+        calls.push('onSessionArchive');
+      },
+      onStepStart: async () => {
+        calls.push('onStepStart');
+      },
+      onStepComplete: async () => {
+        calls.push('onStepComplete');
+      },
+      beforeBackendSelect: async () => {
+        calls.push('beforeBackendSelect');
+        return null;
+      },
+      afterBackendSelect: async () => {
+        calls.push('afterBackendSelect');
+      },
     };
 
     await hm.register(allHookPlugin);
 
     await hm.fireBeforeToolResolve({ toolName: 't', args: {}, agentId: 'a', runId: 'r' });
-    await hm.fireAfterToolResolve({ toolName: 't', args: {}, agentId: 'a', runId: 'r', notFound: false });
-    await hm.fireOnToolTimeout({ toolName: 't', args: {}, timeoutMs: 1000, durationMs: 1100, agentId: 'a', runId: 'r' });
-    await hm.fireOnToolRetry({ toolName: 't', args: {}, attempt: 1, maxRetries: 3, lastError: 'e', agentId: 'a', runId: 'r' });
-    await hm.fireBeforeContextCompaction({ messageCount: 1, totalTokens: 100, budgetTokens: 200, agentId: 'a', runId: 'r' });
-    await hm.fireAfterContextCompaction({ messageCount: 1, totalTokens: 100, budgetTokens: 200, agentId: 'a', runId: 'r' });
+    await hm.fireAfterToolResolve({
+      toolName: 't',
+      args: {},
+      agentId: 'a',
+      runId: 'r',
+      notFound: false,
+    });
+    await hm.fireOnToolTimeout({
+      toolName: 't',
+      args: {},
+      timeoutMs: 1000,
+      durationMs: 1100,
+      agentId: 'a',
+      runId: 'r',
+    });
+    await hm.fireOnToolRetry({
+      toolName: 't',
+      args: {},
+      attempt: 1,
+      maxRetries: 3,
+      lastError: 'e',
+      agentId: 'a',
+      runId: 'r',
+    });
+    await hm.fireBeforeContextCompaction({
+      messageCount: 1,
+      totalTokens: 100,
+      budgetTokens: 200,
+      agentId: 'a',
+      runId: 'r',
+    });
+    await hm.fireAfterContextCompaction({
+      messageCount: 1,
+      totalTokens: 100,
+      budgetTokens: 200,
+      agentId: 'a',
+      runId: 'r',
+    });
     await hm.fireOnSessionFork({ parentRunId: 'p', childRunId: 'c', agentId: 'a', goal: 'g' });
-    await hm.fireOnSessionArchive({ runId: 'r', phase: 'p', stepNumber: 1, tokenUsage: { totalTokens: 100 } });
+    await hm.fireOnSessionArchive({
+      runId: 'r',
+      phase: 'p',
+      stepNumber: 1,
+      tokenUsage: { totalTokens: 100 },
+    });
     await hm.fireOnStepStart({ runId: 'r', agentId: 'a', stepNumber: 1, type: 'thought' });
     await hm.fireOnStepComplete({ runId: 'r', agentId: 'a', stepNumber: 1, type: 'tool_result' });
     await hm.fireBeforeBackendSelect({ toolName: 't', args: {}, agentId: 'a', runId: 'r' });
-    await hm.fireAfterBackendSelect({ toolName: 't', args: {}, selectedBackend: 'local', agentId: 'a', runId: 'r' });
+    await hm.fireAfterBackendSelect({
+      toolName: 't',
+      args: {},
+      selectedBackend: 'local',
+      agentId: 'a',
+      runId: 'r',
+    });
 
     // 12 distinct hooks, each should fire exactly once
     assert.strictEqual(calls.length, 12);
@@ -572,7 +767,13 @@ describe('beforeBackendSelect + ExecutionRouter', () => {
       readonly type = 'local' as const;
       readonly available = true;
       async execute(cmd: string) {
-        return { stdout: `custom: ${cmd}`, stderr: '', exitCode: 0, durationMs: 0, sandboxMechanism: 'none' as const };
+        return {
+          stdout: `custom: ${cmd}`,
+          stderr: '',
+          exitCode: 0,
+          durationMs: 0,
+          sandboxMechanism: 'none' as const,
+        };
       }
     })();
     router.registerBackend('custom-backend', recording);
@@ -590,7 +791,10 @@ describe('beforeBackendSelect + ExecutionRouter', () => {
     assert.strictEqual(localBackend.type, 'local');
 
     // With redirect flag → custom-backend
-    const customBackend = await router.selectBackend({ _toolName: 'shell_execute', redirect_to_custom: true });
+    const customBackend = await router.selectBackend({
+      _toolName: 'shell_execute',
+      redirect_to_custom: true,
+    });
     assert.strictEqual(customBackend, recording);
   });
 });

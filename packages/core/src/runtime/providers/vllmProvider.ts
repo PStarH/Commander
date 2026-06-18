@@ -93,9 +93,8 @@ export class VLLMProvider extends BaseOpenAICompatibleProvider {
 
     if (!defaultModel && models.length > 0) {
       // Prefer instruct/chat models
-      const chatModels = models.filter(m =>
-        m.toLowerCase().includes('instruct') ||
-        m.toLowerCase().includes('chat')
+      const chatModels = models.filter(
+        (m) => m.toLowerCase().includes('instruct') || m.toLowerCase().includes('chat'),
       );
       defaultModel = chatModels[0] || models[0];
     }
@@ -113,7 +112,10 @@ export class VLLMProvider extends BaseOpenAICompatibleProvider {
   async call(request: LLMRequest): Promise<LLMResponse> {
     // Cache health check to avoid 1s overhead on every call
     const now = Date.now();
-    if (!VLLMProvider.healthCache || (now - VLLMProvider.healthCache.timestamp) > VLLMProvider.HEALTH_TTL_MS) {
+    if (
+      !VLLMProvider.healthCache ||
+      now - VLLMProvider.healthCache.timestamp > VLLMProvider.HEALTH_TTL_MS
+    ) {
       const healthUrl = this.config.baseUrl.replace('/v1', '').replace(/\/+$/, '') + '/health';
       try {
         await fetch(healthUrl, {
@@ -123,7 +125,8 @@ export class VLLMProvider extends BaseOpenAICompatibleProvider {
         VLLMProvider.healthCache = { healthy: true, timestamp: now };
       } catch {
         VLLMProvider.healthCache = { healthy: false, timestamp: now };
-        getGlobalLogger().warn('VLLMProvider',
+        getGlobalLogger().warn(
+          'VLLMProvider',
           'vLLM does not appear to be running at ' + this.config.baseUrl,
         );
       }

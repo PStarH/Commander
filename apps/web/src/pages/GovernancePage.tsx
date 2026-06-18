@@ -16,10 +16,10 @@ export function GovernancePage({
   onApprove,
   onStatusChange,
 }: GovernancePageProps) {
-  const manualMissions = missions.filter(m => m.governanceMode === 'MANUAL');
-  const highRiskMissions = missions.filter(m => isMissionHighRisk(m));
+  const manualMissions = missions.filter((m) => m.governanceMode === 'MANUAL');
+  const highRiskMissions = missions.filter((m) => isMissionHighRisk(m));
   const pendingApproval = missions.filter(
-    m => m.governanceMode === 'MANUAL' && isMissionHighRisk(m) && m.status !== 'DONE'
+    (m) => m.governanceMode === 'MANUAL' && isMissionHighRisk(m) && m.status !== 'DONE',
   );
 
   return (
@@ -66,7 +66,7 @@ export function GovernancePage({
       )}
 
       <div className="gov-queue">
-        {pendingApproval.map(mission => (
+        {pendingApproval.map((mission) => (
           <Card key={mission.id} variant="high-risk" className="gov-card">
             <div className="gov-card-top">
               <div>
@@ -76,7 +76,9 @@ export function GovernancePage({
               <Badge variant="warning">MANUAL</Badge>
             </div>
             <div className="gov-card-meta">
-              <span>Risk: <strong>{mission.riskLevel}</strong></span>
+              <span>
+                Risk: <strong>{mission.riskLevel}</strong>
+              </span>
               <span>Updated: {formatTimestamp(mission.updatedAt)}</span>
             </div>
             <div className="gov-card-acts">
@@ -115,7 +117,10 @@ export function GovernancePage({
           <Badge variant="error">MANUAL</Badge>
           <div>
             <strong>Manual</strong>
-            <p>All state transitions require explicit approval. High-risk missions block until approved.</p>
+            <p>
+              All state transitions require explicit approval. High-risk missions block until
+              approved.
+            </p>
           </div>
         </Card>
       </div>

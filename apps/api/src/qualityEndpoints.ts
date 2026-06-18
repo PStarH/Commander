@@ -50,21 +50,35 @@ export function createQualityRouter(): Router {
     let consensusScore = 1.0;
     const consensusSignals: string[] = [];
 
-    const hasHedging = /\b(might|may|could|likely|possibly|approximately|around|I think|it seems)\b/i.test(outputStr);
+    const hasHedging =
+      /\b(might|may|could|likely|possibly|approximately|around|I think|it seems)\b/i.test(
+        outputStr,
+      );
     if (hasHedging) consensusSignals.push('hedging_language');
 
-    const contradictions = (outputStr.match(/\bhowever\b|\bbut\b|\bon the other hand\b|\bcontrary to\b/gi) ?? []).length;
-    if (contradictions > 3) { consensusScore -= 0.2; consensusSignals.push(`contradiction_markers:${contradictions}`); }
+    const contradictions = (
+      outputStr.match(/\bhowever\b|\bbut\b|\bon the other hand\b|\bcontrary to\b/gi) ?? []
+    ).length;
+    if (contradictions > 3) {
+      consensusScore -= 0.2;
+      consensusSignals.push(`contradiction_markers:${contradictions}`);
+    }
 
     const sentences = outputStr.split(/[.!?]+/).filter((s: string) => s.trim().length > 20);
     const unique = new Set(sentences.map((s: string) => s.trim().toLowerCase()));
-    const repRate = 1 - (unique.size / Math.max(sentences.length, 1));
-    if (repRate > 0.3) { consensusScore -= 0.25; consensusSignals.push(`repetition:${(repRate * 100).toFixed(0)}%`); }
+    const repRate = 1 - unique.size / Math.max(sentences.length, 1);
+    if (repRate > 0.3) {
+      consensusScore -= 0.25;
+      consensusSignals.push(`repetition:${(repRate * 100).toFixed(0)}%`);
+    }
     consensusScore = Math.max(0, Math.min(1, consensusScore));
 
     const handoffSignals: string[] = [];
     let handoffPassed = true;
-    if (!input) { handoffPassed = false; handoffSignals.push('missing_input'); }
+    if (!input) {
+      handoffPassed = false;
+      handoffSignals.push('missing_input');
+    }
 
     const outputValid = output !== null && output !== undefined && outputStr.trim().length > 0;
 
@@ -83,7 +97,11 @@ export function createQualityRouter(): Router {
         passed: outputValid,
       },
       overall: {
-        passed: hallucinationReport.recommendation !== 'reject' && consensusScore >= 0.67 && handoffPassed && outputValid,
+        passed:
+          hallucinationReport.recommendation !== 'reject' &&
+          consensusScore >= 0.67 &&
+          handoffPassed &&
+          outputValid,
       },
     });
   });

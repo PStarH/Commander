@@ -1,0 +1,28 @@
+# =============================================================================
+# Commander — ConfigMap
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "commander.fullname" . }}-config
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+data:
+  commander.json: |
+    {
+      "tier": {{ .Values.tier | quote }},
+      "nodeEnv": {{ .Values.config.nodeEnv | quote }},
+      "logLevel": {{ .Values.config.logLevel | quote }},
+      "rateLimitPerMinute": {{ .Values.config.rateLimitPerMinute }},
+      "tokenBudgetHardCap": {{ .Values.config.tokenBudgetHardCap }},
+      "maxConcurrency": {{ .Values.config.maxConcurrency }},
+      "tenantProvider": {{ .Values.config.tenantProvider | quote }},
+      "redis": {
+        "enabled": {{ .Values.redis.enabled }},
+        "url": {{ if .Values.redis.enabled }}"redis://{{ include "commander.fullname" . }}-redis:{{ .Values.redis.port }}"{{ else }}""{{ end }}
+      },
+      "observability": {
+        "metricsEnabled": {{ .Values.observability.metrics.enabled }},
+        "otelEnabled": {{ .Values.observability.otel.enabled }}
+      }
+    }

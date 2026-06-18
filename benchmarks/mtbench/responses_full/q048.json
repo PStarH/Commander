@@ -1,6 +1,0 @@
-{
-  "cat": "Coding",
-  "question": "Write a function to implement binary search.",
-  "answer": "Here is an implementation of the **Binary Search** algorithm in Python.\n\nI have provided the **Iterative** approach, which is generally preferred in production code because it uses less memory than the recursive approach.\n\n### Python Implementation\n\n```python\ndef binary_search(arr, target):\n    \"\"\"\n    Performs a binary search on a sorted array.\n    \n    Args:\n        arr (list): A sorted list of elements.\n        target: The element to search for.\n        \n    Returns:\n        int: The index of",
-  "score": 8.0
-}

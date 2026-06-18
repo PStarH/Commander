@@ -3,9 +3,16 @@ import { AgentRuntime } from '../../src/runtime/agentRuntime';
 import { MockLLMProvider } from '../../src/runtime/mockLLMProvider';
 import { ModelRouter, resetModelRouter } from '../../src/runtime/modelRouter';
 import { MessageBus, getMessageBus, resetMessageBus } from '../../src/runtime/messageBus';
-import { ExecutionTraceRecorder, getTraceRecorder, resetTraceRecorder } from '../../src/runtime/executionTrace';
+import {
+  ExecutionTraceRecorder,
+  getTraceRecorder,
+  resetTraceRecorder,
+} from '../../src/runtime/executionTrace';
 import { MetaLearner, getMetaLearner, resetMetaLearner } from '../../src/selfEvolution/metaLearner';
-import { HTMLReportRenderer, createWarRoomHTMLReport } from '../../src/reporting/htmlReportRenderer';
+import {
+  HTMLReportRenderer,
+  createWarRoomHTMLReport,
+} from '../../src/reporting/htmlReportRenderer';
 import type { AgentExecutionContext, Tool, ExecutionExperience } from '../../src/runtime/types';
 
 describe('Runtime E2E: Full Pipeline', () => {
@@ -29,7 +36,8 @@ describe('Runtime E2E: Full Pipeline', () => {
     learner = getMetaLearner();
 
     provider = new MockLLMProvider('e2e-openai', {
-      defaultResponse: 'Analysis complete. Found 3 key issues: performance, security, and reliability.',
+      defaultResponse:
+        'Analysis complete. Found 3 key issues: performance, security, and reliability.',
     });
     runtime.registerProvider('openai', provider);
   });
@@ -62,7 +70,9 @@ describe('Runtime E2E: Full Pipeline', () => {
 
   it('Scenario 2: Agent failure publishes failed event on bus', async () => {
     const badProvider = new MockLLMProvider('failing');
-    const mockCall = async () => { throw new Error('API timeout'); };
+    const mockCall = async () => {
+      throw new Error('API timeout');
+    };
     badProvider.call = mockCall;
     runtime.registerProvider('openai', badProvider);
 
@@ -119,12 +129,12 @@ describe('Runtime E2E: Full Pipeline', () => {
     expect(result.status).toBe('success');
   });
 
-it('Scenario 7: Meta-learner records execution as experience', async () => {
-     // Reset meta-learner state to avoid interference from previous tests
-     const { clearMetaLearnerState } = await import('../../src/selfEvolution/metaLearner');
-     clearMetaLearnerState();
+  it('Scenario 7: Meta-learner records execution as experience', async () => {
+    // Reset meta-learner state to avoid interference from previous tests
+    const { clearMetaLearnerState } = await import('../../src/selfEvolution/metaLearner');
+    clearMetaLearnerState();
 
-     const result = await runtime.execute(makeContext());
+    const result = await runtime.execute(makeContext());
 
     learner.recordExperience({
       id: `exp-${result.runId}`,
@@ -164,10 +174,7 @@ it('Scenario 7: Meta-learner records execution as experience', async () => {
     const ctxA = makeContext({ agentId: 'agent-a' });
     const ctxB = makeContext({ agentId: 'agent-b' });
 
-    const [resA, resB] = await Promise.all([
-      runtime.execute(ctxA),
-      runtime.execute(ctxB),
-    ]);
+    const [resA, resB] = await Promise.all([runtime.execute(ctxA), runtime.execute(ctxB)]);
 
     expect(resA.status).toBe('success');
     expect(resB.status).toBe('success');
@@ -200,10 +207,10 @@ it('Scenario 7: Meta-learner records execution as experience', async () => {
       projectName: 'E2E Test',
       operationCodename: 'Op E2E',
       health: 'GREEN',
-      metrics: { 'Tasks': '10', 'Agents': '3' },
+      metrics: { Tasks: '10', Agents: '3' },
       narrative: 'E2E test completed successfully.',
       topAgents: [{ name: 'Agent-1', completed: 5 }],
-      missionSummary: { 'Running': 2, 'Done': 5 },
+      missionSummary: { Running: 2, Done: 5 },
       recentEvents: [
         { timestamp: new Date().toISOString(), level: 'INFO', message: 'E2E test ran' },
       ],
@@ -260,14 +267,16 @@ it('Scenario 7: Meta-learner records execution as experience', async () => {
   });
 
   it('Scenario 14: Runtime handles concurrent execution', async () => {
-    const ctxs = [1, 2, 3].map(i => makeContext({
-      agentId: `agent-${i}`,
-      goal: `Task ${i}: simple analysis`,
-    }));
+    const ctxs = [1, 2, 3].map((i) =>
+      makeContext({
+        agentId: `agent-${i}`,
+        goal: `Task ${i}: simple analysis`,
+      }),
+    );
 
-    const results = await Promise.all(ctxs.map(ctx => runtime.execute(ctx)));
+    const results = await Promise.all(ctxs.map((ctx) => runtime.execute(ctx)));
     expect(results.length).toBe(3);
-    results.forEach(r => {
+    results.forEach((r) => {
       expect(r.status).toBe('success');
     });
   });

@@ -1,6 +1,0 @@
-{
-  "cat": "Reasoning",
-  "question": "You have a 3-gallon and 5-gallon jug. How to measure 4 gallons?",
-  "answer": "Here is the step-by-step solution to measure exactly 4 gallons:\n\n1.  Fill the **5-gallon** jug completely.\n2.  Pour water from the **5-gallon** jug into the **3-gallon** jug until the 3-gallon jug is full.\n    *   *Status:* You have 2 gallons left in the 5-gallon jug.\n3.  Empty the **3-gallon** jug.\n4.  Pour the remaining **2 gallons** from the 5-gallon jug into the empty 3-gallon jug.\n    *   *Status:* The 3-gallon jug now contains 2 gallons.\n5.  Fill the **5-gallon** jug completely again.\n6.  ",
-  "score": 10.0
-}

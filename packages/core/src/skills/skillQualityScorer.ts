@@ -40,10 +40,31 @@ export interface LLMRubricConfig {
 }
 
 const DEFAULT_RUBRIC_CRITERIA: RubricCriterion[] = [
-  { name: 'clarity', description: 'Are the instructions clear, well-structured, and unambiguous?', score: 0, weight: 0.25 },
-  { name: 'actionability', description: 'Can an agent directly act on these instructions without additional context?', score: 0, weight: 0.25 },
-  { name: 'correctness', description: 'Does the approach described appear technically correct and follow best practices?', score: 0, weight: 0.25 },
-  { name: 'completeness', description: 'Are all necessary steps, preconditions, and edge cases covered?', score: 0, weight: 0.25 },
+  {
+    name: 'clarity',
+    description: 'Are the instructions clear, well-structured, and unambiguous?',
+    score: 0,
+    weight: 0.25,
+  },
+  {
+    name: 'actionability',
+    description: 'Can an agent directly act on these instructions without additional context?',
+    score: 0,
+    weight: 0.25,
+  },
+  {
+    name: 'correctness',
+    description:
+      'Does the approach described appear technically correct and follow best practices?',
+    score: 0,
+    weight: 0.25,
+  },
+  {
+    name: 'completeness',
+    description: 'Are all necessary steps, preconditions, and edge cases covered?',
+    score: 0,
+    weight: 0.25,
+  },
 ];
 
 /**
@@ -91,7 +112,7 @@ export async function evaluateWithRubric(
   }
 
   if (!rawScores || rawScores.length !== criteria.length) return null;
-  if (rawScores.some(s => typeof s !== 'number' || s < 0 || s > 1)) return null;
+  if (rawScores.some((s) => typeof s !== 'number' || s < 0 || s > 1)) return null;
 
   return criteria.map((c, i) => ({
     name: `llm_${c.name}`,
@@ -123,12 +144,16 @@ export function computeDeterministicScore(skill: Skill): QualityScoreResult {
   const factors: QualityFactor[] = [
     { name: 'content_length', score: scoreContentLength(skill.content), weight: 0.15 },
     { name: 'has_tools', score: skill.tools.length > 0 ? 1 : 0, weight: 0.15 },
-    { name: 'has_tags', score: skill.metadata.tags.length > 0 ? 1 : 0, weight: 0.10 },
-    { name: 'has_description', score: (skill.description && skill.description !== skill.name) ? 1 : 0, weight: 0.10 },
+    { name: 'has_tags', score: skill.metadata.tags.length > 0 ? 1 : 0, weight: 0.1 },
+    {
+      name: 'has_description',
+      score: skill.description && skill.description !== skill.name ? 1 : 0,
+      weight: 0.1,
+    },
     { name: 'usage_frequency', score: scoreUsage(skill.metadata.usageCount), weight: 0.15 },
     { name: 'success_rate', score: skill.metadata.avgSuccessRate, weight: 0.15 },
-    { name: 'content_structure', score: scoreContentStructure(skill.content), weight: 0.10 },
-    { name: 'has_examples', score: skill.content.includes('```') ? 1 : 0, weight: 0.10 },
+    { name: 'content_structure', score: scoreContentStructure(skill.content), weight: 0.1 },
+    { name: 'has_examples', score: skill.content.includes('```') ? 1 : 0, weight: 0.1 },
   ];
 
   const total = factors.reduce((sum, f) => sum + f.score * f.weight, 0);
@@ -169,7 +194,7 @@ export async function computeQualityScore(
     total: combinedTotal,
     factors: [
       ...deterministic.factors,
-      ...llmFactors.map(f => ({ ...f, weight: f.weight * llmWeight })),
+      ...llmFactors.map((f) => ({ ...f, weight: f.weight * llmWeight })),
     ],
   };
 }

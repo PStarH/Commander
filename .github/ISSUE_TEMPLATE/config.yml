@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Documentation
+    url: https://github.com/PStarH/Commander/blob/main/docs/API.md
+    about: Read the API documentation before reporting issues
+  - name: 💬 Discussions
+    url: https://github.com/PStarH/Commander/discussions
+    about: Ask questions and share ideas in GitHub Discussions
+  - name: 🔒 Security Vulnerability
+    url: https://github.com/PStarH/Commander/blob/main/SECURITY.md
+    about: Report security vulnerabilities privately via email (do NOT open a public issue)

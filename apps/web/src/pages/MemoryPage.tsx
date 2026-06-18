@@ -19,11 +19,7 @@ export function MemoryPage({ items, overview, onSearch }: MemoryPageProps) {
           Search and browse distilled lessons, decisions, issues, and summaries from past missions.
         </p>
       </div>
-      <MemoryBrowser
-        items={items}
-        overview={overview}
-        onSearch={onSearch}
-      />
+      <MemoryBrowser items={items} overview={overview} onSearch={onSearch} />
     </div>
   );
 }

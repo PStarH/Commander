@@ -28,8 +28,18 @@ function v1AgentCard(): A2AAgentCard {
     defaultInputModes: ['text'],
     defaultOutputModes: ['text'],
     skills: [
-      { id: 'orchestrate', name: 'Orchestrate', description: 'Plan and execute multi-agent missions', tags: ['plan', 'execute'] },
-      { id: 'research', name: 'Research', description: 'Deep research with subagents', tags: ['research', 'subagent'] },
+      {
+        id: 'orchestrate',
+        name: 'Orchestrate',
+        description: 'Plan and execute multi-agent missions',
+        tags: ['plan', 'execute'],
+      },
+      {
+        id: 'research',
+        name: 'Research',
+        description: 'Deep research with subagents',
+        tags: ['research', 'subagent'],
+      },
     ],
     provider: { organization: 'TELOS', url: 'https://github.com/sampan/commander' },
   };
@@ -58,7 +68,9 @@ export function createA2AV2Router(): Router {
       const response = await handleMethod(rpcReq);
       res.json(response);
     } catch (err) {
-      res.json(errorResponse(rpcReq.id, -32603, err instanceof Error ? err.message : 'Internal error'));
+      res.json(
+        errorResponse(rpcReq.id, -32603, err instanceof Error ? err.message : 'Internal error'),
+      );
     }
   });
 
@@ -66,13 +78,15 @@ export function createA2AV2Router(): Router {
   router.post('/stream', async (req, res) => {
     const rpcReq = req.body as A2AJsonRpcRequest;
     if (rpcReq.method !== A2A_METHODS.SEND_MESSAGE_STREAM) {
-      return res.status(400).json(errorResponse(rpcReq?.id ?? null, -32600, 'Only message/stream supported'));
+      return res
+        .status(400)
+        .json(errorResponse(rpcReq?.id ?? null, -32600, 'Only message/stream supported'));
     }
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
+      Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
       'A2A-Version': A2A_PROTOCOL_VERSION,
     });
@@ -82,7 +96,9 @@ export function createA2AV2Router(): Router {
 
     setTimeout(() => {
       task.status = { state: 'COMPLETED', timestamp: new Date().toISOString() };
-      task.artifacts = [{ artifactId: 'art-1', parts: [{ type: 'text', text: 'Task completed.' }] }];
+      task.artifacts = [
+        { artifactId: 'art-1', parts: [{ type: 'text', text: 'Task completed.' }] },
+      ];
       res.write(`data: ${JSON.stringify(ssr('task', task))}\n\n`);
       res.write(`data: ${JSON.stringify({ jsonrpc: '2.0', id: rpcReq.id, result: { task } })}\n\n`);
       res.end();
@@ -95,8 +111,8 @@ export function createA2AV2Router(): Router {
 async function handleMethod(req: A2AJsonRpcRequest): Promise<A2AJsonRpcResponse> {
   switch (req.method) {
     case A2A_METHODS.SEND_MESSAGE: {
-const params = req.params as Record<string, unknown>;
-       const task = createTask('WORKING');
+      const params = req.params as Record<string, unknown>;
+      const task = createTask('WORKING');
       tasks.set(task.id, task);
       setTimeout(() => {
         task.status = { state: 'COMPLETED', timestamp: new Date().toISOString() };
@@ -105,24 +121,25 @@ const params = req.params as Record<string, unknown>;
     }
 
     case A2A_METHODS.GET_TASK: {
-const params = req.params as Record<string, unknown>;
-       const task = tasks.get((params as { id: string }).id);
-       if (!task) return errorResponse(req.id, A2A_ERROR.TASK_NOT_FOUND, 'Task not found');
-       return { jsonrpc: '2.0', id: req.id, result: { task } };
-     }
+      const params = req.params as Record<string, unknown>;
+      const task = tasks.get((params as { id: string }).id);
+      if (!task) return errorResponse(req.id, A2A_ERROR.TASK_NOT_FOUND, 'Task not found');
+      return { jsonrpc: '2.0', id: req.id, result: { task } };
+    }
 
-     case A2A_METHODS.LIST_TASKS: {
-       return {
-         jsonrpc: '2.0', id: req.id,
-         result: { tasks: Array.from(tasks.values()), pageSize: 50, totalSize: tasks.size },
-       };
-     }
+    case A2A_METHODS.LIST_TASKS: {
+      return {
+        jsonrpc: '2.0',
+        id: req.id,
+        result: { tasks: Array.from(tasks.values()), pageSize: 50, totalSize: tasks.size },
+      };
+    }
 
-     case A2A_METHODS.CANCEL_TASK: {
-       const params = req.params as Record<string, unknown>;
-const task = tasks.get((params as { id: string }).id);
-       if (!task) return errorResponse(req.id, A2A_ERROR.TASK_NOT_FOUND, 'Task not found');
-       if (!canTransition(task.status.state, 'CANCELED')) {
+    case A2A_METHODS.CANCEL_TASK: {
+      const params = req.params as Record<string, unknown>;
+      const task = tasks.get((params as { id: string }).id);
+      if (!task) return errorResponse(req.id, A2A_ERROR.TASK_NOT_FOUND, 'Task not found');
+      if (!canTransition(task.status.state, 'CANCELED')) {
         return errorResponse(req.id, A2A_ERROR.TASK_NOT_CANCELABLE, 'Task cannot be canceled');
       }
       task.status = { state: 'CANCELED', timestamp: new Date().toISOString() };
@@ -146,10 +163,17 @@ function createTask(initialState: A2ATaskState): A2ATask {
   };
 }
 
-function ssr(type: string, data: unknown): { jsonrpc: string; id: string | number | null; result: Record<string, unknown> } {
+function ssr(
+  type: string,
+  data: unknown,
+): { jsonrpc: string; id: string | number | null; result: Record<string, unknown> } {
   return { jsonrpc: '2.0', id: null, result: { [type]: data } };
 }
 
-function errorResponse(id: string | number | null, code: number, message: string): A2AJsonRpcResponse {
+function errorResponse(
+  id: string | number | null,
+  code: number,
+  message: string,
+): A2AJsonRpcResponse {
   return { jsonrpc: '2.0', id, error: { code, message } };
 }

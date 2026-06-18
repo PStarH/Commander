@@ -1,9 +1,9 @@
 /**
  * Action Rationale Tracking Module
- * 
+ *
  * Records "why" an action was taken, not just "what" was done.
  * Part of the Explainability & Transparency layer for Commander.
- * 
+ *
  * Key concepts:
  * - ActionRationale: The reasoning behind a single action
  * - ConfidenceLevel: How confident the agent was in this decision
@@ -22,30 +22,30 @@ export interface ActionRationale {
   agentId: string;
   actionType: string;
   actionPayload?: Record<string, unknown>;
-  
+
   // Core explainability fields
-  rationale: string;                    // "Why" this action was chosen
-  confidence: ConfidenceLevel;          // How confident the agent was
-  triggerSource: ActionTriggerSource;   // What triggered this action
-  goalContext: string;                  // The goal this action serves
-  
+  rationale: string; // "Why" this action was chosen
+  confidence: ConfidenceLevel; // How confident the agent was
+  triggerSource: ActionTriggerSource; // What triggered this action
+  goalContext: string; // The goal this action serves
+
   // Alternatives considered
   alternatives?: AlternativeOption[];
-  
+
   // Data sources used in this decision
   dataSources?: string[];
-  
+
   // Chain of reasoning (for multi-step decisions)
   reasoningChain?: ReasoningStep[];
-  
+
   // Outcome tracking (filled after execution)
   outcome?: ActionOutcome;
 }
 
 export interface ConfidenceLevel {
-  score: number;          // 0.0 - 1.0
+  score: number; // 0.0 - 1.0
   level: 'low' | 'medium' | 'high' | 'very-high';
-  factors?: string[];     // What influenced this confidence
+  factors?: string[]; // What influenced this confidence
 }
 
 export interface AlternativeOption {
@@ -67,7 +67,7 @@ export interface ActionOutcome {
   followUpActions?: string[];
 }
 
-export type ActionTriggerSource = 
+export type ActionTriggerSource =
   | 'user-request'
   | 'mission-decomposition'
   | 'dependency-resolved'
@@ -79,7 +79,7 @@ export type ActionTriggerSource =
 
 /**
  * Action Rationale Store
- * 
+ *
  * Persists action rationales for audit and explainability.
  * Supports querying by mission, agent, or time range.
  */
@@ -97,7 +97,7 @@ export class ActionRationaleStore {
    */
   record(input: CreateActionRationaleInput): ActionRationale {
     const now = new Date().toISOString();
-    
+
     const rationale: ActionRationale = {
       id: this.generateId(),
       timestamp: now,
@@ -117,7 +117,7 @@ export class ActionRationaleStore {
 
     this.items.push(rationale);
     this.persist();
-    
+
     return rationale;
   }
 
@@ -125,34 +125,38 @@ export class ActionRationaleStore {
    * Get all rationales for a mission
    */
   getByMission(missionId: string): ActionRationale[] {
-    return this.items.filter(item => item.missionId === missionId)
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    // ISO string comparison — no Date parsing needed
+    return this.items
+      .filter((item) => item.missionId === missionId)
+      .sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
   }
 
   /**
    * Get all rationales for an agent
    */
   getByAgent(projectId: string, agentId: string): ActionRationale[] {
-    return this.items.filter(item => 
-      item.projectId === projectId && item.agentId === agentId
-    ).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    // ISO string comparison — no Date parsing needed
+    return this.items
+      .filter((item) => item.projectId === projectId && item.agentId === agentId)
+      .sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
   }
 
   /**
    * Get rationales in a time range
    */
   getByTimeRange(start: Date, end: Date): ActionRationale[] {
-    return this.items.filter(item => {
-      const ts = new Date(item.timestamp);
-      return ts >= start && ts <= end;
-    }).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    const startStr = start.toISOString();
+    const endStr = end.toISOString();
+    return this.items
+      .filter((item) => item.timestamp >= startStr && item.timestamp <= endStr)
+      .sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
   }
 
   /**
    * Get a single rationale by ID
    */
   get(id: string): ActionRationale | undefined {
-    return this.items.find(item => item.id === id);
+    return this.items.find((item) => item.id === id);
   }
 
   /**
@@ -172,7 +176,7 @@ export class ActionRationaleStore {
    */
   generateMissionReport(missionId: string): MissionExplainabilityReport {
     const rationales = this.getByMission(missionId);
-    
+
     if (rationales.length === 0) {
       return {
         missionId,
@@ -186,10 +190,10 @@ export class ActionRationaleStore {
 
     // Calculate confidence distribution
     const confidenceDistribution = {
-      low: rationales.filter(r => r.confidence.level === 'low').length,
-      medium: rationales.filter(r => r.confidence.level === 'medium').length,
-      high: rationales.filter(r => r.confidence.level === 'high').length,
-      'very-high': rationales.filter(r => r.confidence.level === 'very-high').length,
+      low: rationales.filter((r) => r.confidence.level === 'low').length,
+      medium: rationales.filter((r) => r.confidence.level === 'medium').length,
+      high: rationales.filter((r) => r.confidence.level === 'high').length,
+      'very-high': rationales.filter((r) => r.confidence.level === 'very-high').length,
     };
 
     // Action type breakdown
@@ -200,8 +204,8 @@ export class ActionRationaleStore {
 
     // Key decision points (high complexity or alternatives)
     const decisionPoints = rationales
-      .filter(r => r.alternatives && r.alternatives.length > 0)
-      .map(r => ({
+      .filter((r) => r.alternatives && r.alternatives.length > 0)
+      .map((r) => ({
         actionId: r.id,
         actionType: r.actionType,
         rationale: r.rationale,
@@ -216,7 +220,7 @@ export class ActionRationaleStore {
       confidenceDistribution,
       actionBreakdown,
       decisionPoints,
-      timeline: rationales.map(r => ({
+      timeline: rationales.map((r) => ({
         timestamp: r.timestamp,
         agentId: r.agentId,
         actionType: r.actionType,
@@ -232,15 +236,15 @@ export class ActionRationaleStore {
   cleanup(retentionDays: number = 30): number {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - retentionDays);
-    
+
     const before = this.items.length;
-    this.items = this.items.filter(item => new Date(item.timestamp) >= cutoff);
+    this.items = this.items.filter((item) => new Date(item.timestamp) >= cutoff);
     const removed = before - this.items.length;
-    
+
     if (removed > 0) {
       this.persist();
     }
-    
+
     return removed;
   }
 
@@ -251,7 +255,7 @@ export class ActionRationaleStore {
       this.write([]);
       return [];
     }
-    
+
     try {
       const raw = fs.readFileSync(this.filePath, 'utf8');
       const parsed = JSON.parse(raw);
@@ -288,11 +292,13 @@ export class ActionRationaleStore {
   private generateSummary(rationales: ActionRationale[]): string {
     const total = rationales.length;
     const avgConfidence = rationales.reduce((sum, r) => sum + r.confidence.score, 0) / total;
-    const uniqueAgents = new Set(rationales.map(r => r.agentId)).size;
-    
-    return `Mission completed with ${total} actions across ${uniqueAgents} agent(s). ` +
-           `Average decision confidence: ${(avgConfidence * 100).toFixed(1)}%. ` +
-           `${rationales.filter(r => r.alternatives && r.alternatives.length > 0).length} decisions involved alternatives.`;
+    const uniqueAgents = new Set(rationales.map((r) => r.agentId)).size;
+
+    return (
+      `Mission completed with ${total} actions across ${uniqueAgents} agent(s). ` +
+      `Average decision confidence: ${(avgConfidence * 100).toFixed(1)}%. ` +
+      `${rationales.filter((r) => r.alternatives && r.alternatives.length > 0).length} decisions involved alternatives.`
+    );
   }
 }
 
