@@ -1,0 +1,6 @@
+{
+  "cat": "Math",
+  "question": "What's the volume of a sphere with radius 3?",
+  "answer": "The volume of a sphere with a radius of 3 is **36\u03c0**.\n\nHere's the calculation:\n\n1.  **Formula:** The formula for the volume of a sphere is V = (4/3)\u03c0r\u00b3.\n2.  **Substitute the radius:** V = (4/3)\u03c0(3)\u00b3\n3.  **Calculate the cube of the radius:** 3\u00b3 = 27\n4.  **Multiply:** V = (4/3)\u03c0(27)\n5.  **Simplify:** V = 4 * 9 * \u03c0 = **36\u03c0**\n\nAs a decimal approximation, the volume is approximately **113.1**.",
+  "score": 10.0
+}

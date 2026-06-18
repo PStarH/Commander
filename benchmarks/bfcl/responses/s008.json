@@ -1,0 +1,37 @@
+{
+  "id": "b25d876eaebf49f49626f5c9d291e89c",
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": "I'll search for TypeScript tutorials for you.",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_d343e06775604b219b292a65",
+            "function": {
+              "arguments": "{\"query\": \"TypeScript tutorials\"}",
+              "name": "web_search"
+            },
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": 1778999853,
+  "model": "mimo-v2.5-pro",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 31,
+    "prompt_tokens": 988,
+    "total_tokens": 1019,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 960
+    }
+  }
+}

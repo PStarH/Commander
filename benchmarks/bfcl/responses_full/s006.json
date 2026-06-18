@@ -1,0 +1,10 @@
+{
+  "prompt": "send email to alice@x.com",
+  "cat": "simple",
+  "expected": "send_email",
+  "response": {
+    "content": "I'd be happy to help you send an email to alice@x.com! However, I need a bit more information to complete this task.\n\nCould you please provide:\n1. **Subject** - What should the subject line be?\n2. **Body** - What message would you like to include in the email?\n\nOnce you provide these details, I'll send the email right away!",
+    "role": "assistant",
+    "tool_calls": null
+  }
+}

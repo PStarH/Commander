@@ -1,0 +1,5 @@
+{
+  "question": "Help me debug: def add(a,b): return a - b",
+  "answer": "# Debugging Your Function\n\n## The Bug\nYour function is named `add`, but it performs **subtraction** (`-`) instead of **addition** (`+`).\n\n## The Fix\n\n```python\ndef add(a, b):\n    return a + b  # Changed '-' to '+'\n```\n\n## Quick Test\n```python\nprint(add(3, 5))  # Expected: 8, Bug gave: -2\n```\n\nIt's a simple operator typo \u2014 just swap `-` for `+`! \u2705",
+  "score": 10.0
+}

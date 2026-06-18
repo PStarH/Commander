@@ -170,3 +170,15 @@ private/
 
 # Agent compensation snapshots (auto-generated)
 *.atr-snapshot.*
+
+# === Best-practice hygiene added during merge-resolve ===
+# Existing benchmark responses already ignored by `benchmarks/*/responses/`
+# above; this layer addresses gaps:
+# Don't track raw benchmark summary outputs (docs/benchmark-results/*)
+docs/benchmark-results/
+# Don't track empty root-level build-output placeholders
+/fixer
+/verifier
+# Don't track result dumps from benchmark runs
+benchmarks/*/results/
+benchmarks/*/logs/

@@ -1,0 +1,27 @@
+{
+  "prompt": "search for AI news and TypeScript tutorials",
+  "cat": "parallel",
+  "expected": null,
+  "response": {
+    "content": "I'll search for both AI news and TypeScript tutorials for you.",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "call_84244044ae0346c19c7c9c95",
+        "function": {
+          "arguments": "{\"query\": \"latest AI news 2024\", \"num_results\": 5}",
+          "name": "web_search"
+        },
+        "type": "function"
+      },
+      {
+        "id": "call_ecdd7c12f6e042bd86bf0259",
+        "function": {
+          "arguments": "{\"query\": \"TypeScript tutorials for beginners 2024\", \"num_results\": 5}",
+          "name": "web_search"
+        },
+        "type": "function"
+      }
+    ]
+  }
+}

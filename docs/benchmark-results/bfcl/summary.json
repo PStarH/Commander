@@ -1,0 +1,31 @@
+{
+  "benchmark": "BFCL (Function Calling)",
+  "reported_dataset": "35_scenario_subset",
+  "reported_scores": {
+    "tool_selection_accuracy": "60.0%",
+    "parameter_accuracy": "91.4%"
+  },
+  "datasets": {
+    "30_task_subset": {
+      "description": "30 tasks (subset — NOT official BFCL leaderboard)",
+      "tool_selection_accuracy": "80.0%",
+      "parameter_accuracy": "80.0%",
+      "data_file": "docs/benchmark-results/bfcl/results.json"
+    },
+    "35_scenario_subset": {
+      "description": "35 scenarios (subset — NOT official BFCL leaderboard)",
+      "tool_selection_accuracy": "60.0%",
+      "parameter_accuracy": "91.4%",
+      "data_file": "benchmarks/bfcl/results_full.json"
+    },
+    "12_core_subset": {
+      "description": "12 core scenarios (subset — NOT official BFCL leaderboard)",
+      "tool_selection_accuracy": "91.7%",
+      "parameter_accuracy": "91.7%",
+      "data_file": "benchmarks/bfcl/results.json"
+    }
+  },
+  "model": "MiMo-V2.5-Pro via Commander pipeline",
+  "date": "2026-05-16",
+  "caveat": "Small samples (12 core scenarios / 30 tasks / 35 scenarios). Official BFCL has 2000+ tasks. Scores not directly comparable to leaderboard."
+}

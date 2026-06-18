@@ -3366,4 +3366,313 @@
     "retryMax": 3,
     "createdAt": "2026-06-18T02:10:04.735Z"
   }
+][
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779806706619_2d3wp8",
+    "secret": "b7e135ba48d0c4fc2ebaa1c32913cc57e72d3015d0b840331cd66f396e196b4d",
+    "retryMax": 3,
+    "createdAt": "2026-05-26T14:45:06.619Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779806814840_fbzr1m",
+    "secret": "3702a58b68c91b9ec3dd54a0d134e779565434f58a4cb933db91e02e2a9e9fb5",
+    "retryMax": 3,
+    "createdAt": "2026-05-26T14:46:54.840Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779806844029_osiu9v",
+    "secret": "719041b7598a88dfe75333afb9adad21ef8206396d9292c709cf04c49a9d4f52",
+    "retryMax": 3,
+    "createdAt": "2026-05-26T14:47:24.029Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779806938384_o4psjk",
+    "secret": "a02a9d95e449e9e1e40dca1d849a3e1cc92adbfa791b15ffb1017cd4286338c9",
+    "retryMax": 3,
+    "createdAt": "2026-05-26T14:48:58.384Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779807173855_tcpb45",
+    "secret": "027d2c2374a2d08b0bb47424dddcb54652eace9a29ad6bd3e9d01ba75dad7738",
+    "retryMax": 3,
+    "createdAt": "2026-05-26T14:52:53.855Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779842620757_z7pxap",
+    "secret": "4e7aa9d79a7893c8cb201b87c03391da45ec1c884745b869e882de099d58f8b9",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T00:43:40.757Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779842774193_7scsgi",
+    "secret": "9a28bbc0aeaa22403edb6a3d10fd7d41099c2de1a3589b745c40480fe6f6a20b",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T00:46:14.194Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779842885829_7qjnl1",
+    "secret": "cd0d0c25c1f06b821695a852f3043bc9ef218b576b3e5277965acb647cb4965b",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T00:48:05.829Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779842992719_70ucsp",
+    "secret": "0cb4156126d9820e2d35baa4be0d37c32226df883bf17380c1ff08ada0af86a6",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T00:49:52.719Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779843102802_er309m",
+    "secret": "d9b4293360cbc897d575e6fa2929b0256ccc907efafe68c7d63077d6a3639689",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T00:51:42.802Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779843215738_1ri3dv",
+    "secret": "fc6e071e3e17e29f58b5c1f6ded007854d1c2cb7a3f5eca837e67f57bb2dd705",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T00:53:35.738Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779843414723_v5cgij",
+    "secret": "9e5cd5cf65ced96e0c1437d9d38f077f6150be84b72f494957b5952083351678",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T00:56:54.723Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779843523469_6geikd",
+    "secret": "ca223a96812edc1b1e6e4b80dd71079bcbca73c504fb968b2c76982f26cdfd67",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T00:58:43.469Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779843630173_qhp5pg",
+    "secret": "3a79e58450740b1c45e111c19d3e8dd40466d5847314ea864aa17d44b5d4dc10",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T01:00:30.173Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779843736022_6zsxtj",
+    "secret": "e713866495f23e7827ef3ed393a39ac66b9e091a59e6c3e8cfe552cfadc23171",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T01:02:16.022Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779843844206_l6olpk",
+    "secret": "6003a0140f40e684ad368a8771802c76dd1babd1f3aeba4d51b6976131cda320",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T01:04:04.206Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779843983281_85bacm",
+    "secret": "d761dc3f46efe60df24cd51a5ead14c75a0e7f7ccbcddd3a052f14cb04732f90",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T01:06:23.281Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779844176277_rhxxmx",
+    "secret": "ae0c08bb90b6d809153c2d2457514cd0ee88a068dfc71b151a1f7d8cd7cbc3ec",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T01:09:36.277Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779844578907_qzta4d",
+    "secret": "db0aac2e5724ee3b5f527ef9a83a809a90671dd66248fc080eea6f35ad118842",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T01:16:18.907Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779844718359_s99dyg",
+    "secret": "3ca34caf411e402efb8fbb582dfb5bb5f37a28da68d4b0e9224df53fa9ab465a",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T01:18:38.360Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779844939492_e9hq7o",
+    "secret": "8cf75e8c10a8007989d6ae31e84a6bd89afef4b1d2ff19dadc165e7d8feba6af",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T01:22:19.492Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779845045672_zffq56",
+    "secret": "b684463f8ac26c9a33e5ed418af98b6240714d3b6a84973193da48722732dd50",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T01:24:05.672Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779847004151_5j8fs3",
+    "secret": "aaaa63cd703dfdc7b221f152c56c1388cc0c63ddb1b4c2638024bf617dd5bca4",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T01:56:44.151Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779847120431_ytoggh",
+    "secret": "c046ce9a133ea6a813bdca68a9aa8d249145231ee70741e3da95914fe4bc1cfb",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T01:58:40.431Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779847239267_eqjxlm",
+    "secret": "a2364597b9afeeaaef4d1da430b03d52792b62543f54cabd8f76a07b06085d93",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T02:00:39.267Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779847241463_yzoy0t",
+    "secret": "7ff0b717bf9510fff5b34804ef5d8bbfe6cb3ba8ce8f4ae3ec4dbcd0b17e2303",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T02:00:41.463Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779847350425_yodmui",
+    "secret": "b4be251dc231ae295efc14674b842f0fcc6a81c31ce6804f47c6b9ea8ed421eb",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T02:02:30.425Z"
+  },
+  {
+    "url": "https://example.com/hook",
+    "events": [
+      "agent.thinking"
+    ],
+    "enabled": true,
+    "id": "wh_1779850086533_687t6v",
+    "secret": "760df8acacbcec73bf39166d79f3cdfb87704bae63d5ec27d713c3ae1ff4f772",
+    "retryMax": 3,
+    "createdAt": "2026-05-27T02:48:06.533Z"
+  }
 ]

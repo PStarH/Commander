@@ -1,0 +1,27 @@
+{
+  "prompt": "read config.json and package.json",
+  "cat": "parallel",
+  "expected": null,
+  "response": {
+    "content": "",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "call_066a2dae8cb34e3b84d9ff5c",
+        "function": {
+          "arguments": "{\"path\": \"config.json\"}",
+          "name": "file_read"
+        },
+        "type": "function"
+      },
+      {
+        "id": "call_501a3fa71d4b4b409d2911f6",
+        "function": {
+          "arguments": "{\"path\": \"package.json\"}",
+          "name": "file_read"
+        },
+        "type": "function"
+      }
+    ]
+  }
+}

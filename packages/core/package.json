@@ -48,26 +48,28 @@
     "test": "pnpm test:node && pnpm test:vitest",
     "test:inventory": "node scripts/test-inventory.mjs --verify",
     "test:node": "node scripts/run-node-tests.mjs",
-    "test:node:pathsec": "npx tsx --test --test-concurrency=1 tests/tools/pathSecurity.test.ts",
-    "test:security": "npx tsx --test tests/tools-security.test.ts tests/httpServer.test.ts tests/observabilityP1.test.ts tests/observabilityP2P3.test.ts",
+    "bench": "node scripts/run-node-tests.mjs benchmarks",
+    "benchmark:verify": "node scripts/verify-benchmark-results.mjs",
     "test:vitest": "vitest run",
     "test:vitest:watch": "vitest",
-    "docs": "typedoc",
-    "docs:serve": "typedoc --watch",
     "prepublishOnly": "tsc -p tsconfig.json",
-    "prepack": "tsc -p tsconfig.json"
+    "prepack": "tsc -p tsconfig.json",
+    "test:node:pathsec": "npx tsx --test --test-concurrency=1 tests/tools/pathSecurity.test.ts",
+    "test:security": "npx tsx --test tests/tools-security.test.ts tests/httpServer.test.ts tests/observabilityP1.test.ts tests/observabilityP2P3.test.ts",
+    "docs": "typedoc",
+    "docs:serve": "typedoc --watch"
   },
   "devDependencies": {
     "@types/blessed": "^0.1.27",
     "@types/node": "^25.6.0",
     "@vitest/coverage-v8": "^4.1.9",
-    "typedoc": "^0.28.19",
     "typescript": "^5.0.0",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "typedoc": "^0.28.19"
   },
   "dependencies": {
-    "@commander/plugin-sdk": "workspace:*",
-    "blessed": "^0.1.81"
+    "blessed": "^0.1.81",
+    "@commander/plugin-sdk": "workspace:*"
   },
   "optionalDependencies": {
     "better-sqlite3": "^11.0.0",
