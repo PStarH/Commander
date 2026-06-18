@@ -4,6 +4,9 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
+    ignores: ['**/*.js', '**/*.d.ts'],
+  },
+  {
     files: ['packages/core/src/**/*.ts'],
     extends: [tseslint.configs.base],
     rules: {
