@@ -12,6 +12,7 @@ import type {
   TaskDAG,
   TaskDAGNode,
   TaskDAGEdge,
+  QualityGateConfig,
 } from './types';
 import { DEFAULT_ULTIMATE_CONFIG } from './types';
 import type { ModelTier, TokenUsage } from '../runtime/types';
@@ -39,6 +40,7 @@ import { TopologyRouter } from './topologyRouter';
 import { SubAgentExecutor } from './subAgentExecutor';
 import { MultiAgentSynthesizer } from './synthesizer';
 import { ArtifactSystem, getArtifactSystem } from './artifactSystem';
+import { WorkCoordinator, getWorkCoordinator } from './workCoordinator';
 import { CapabilityRegistry, getCapabilityRegistry } from './capabilityRegistry';
 import { AgentTeamManager, getTeamManager } from './agentTeamManager';
 import { getEffortRules, classifyEffortLevel } from './effortScaler';
@@ -106,6 +108,7 @@ export class UltimateOrchestrator {
   private teamManager: AgentTeamManager;
   private topologyOptimizer: ReflexionTopologicalOptimizer;
   private evolutionEngine: ReturnType<typeof getEvolutionEngine> | null = null;
+  private workCoordinator: WorkCoordinator;
   private activeExecutions: Map<string, UltimateExecutionContext> = new Map();
   private executionCounter = { value: 0 };
   /** Session-pinned configs: per-run config snapshot to prevent mid-task changes */
@@ -141,6 +144,7 @@ export class UltimateOrchestrator {
       this.config,
     );
     this.synthesizer = new MultiAgentSynthesizer();
+    this.workCoordinator = getWorkCoordinator();
   }
 
   async execute(params: {
@@ -356,6 +360,65 @@ export class UltimateOrchestrator {
         );
       }
 
+      // ── TELOS Budget Preflight ─────────────────────────────────────────
+      // Create a lightweight plan and check whether the budget is feasible
+      // before committing sub-agents. This is an advisory gate — if preflight
+      // warns, we log it but continue (the token governor enforces hard caps).
+      try {
+        const telosPlan = this.telos.plan({
+          projectId: execId,
+          agentId: 'orchestrator',
+          goal: params.goal,
+          contextData: {
+            mode: 'balanced',
+            availableTokens: budgetManager.getRemainingBudget(execId),
+            constraints: {
+              maxSteps: ctx.taskTree.subtasks.length * 3,
+              maxTokens: totalBudget,
+              timeoutMs: this.config.executionTimeoutMs ?? 300000,
+            },
+          },
+        });
+        const preflight = this.telos.preflight(telosPlan.planId);
+        if (!preflight.allowed) {
+          reasoning.push(`TELOS preflight: ${preflight.reason ?? 'budget advisory'}`);
+        } else {
+          reasoning.push(`TELOS preflight: budget OK (${telosPlan.mode} mode)`);
+        }
+      } catch (e) {
+        reasoning.push(
+          `TELOS preflight skipped: ${e instanceof Error ? e.message : 'unknown'}`,
+        );
+      }
+
+      // ── Work Queue Enqueue ──────────────────────────────────────────────
+      // Enqueue subtasks for visibility and crash recovery. The
+      // subAgentExecutor handles claiming, execution, and completion via
+      // the WorkCoordinator's native lifecycle — we only seed the queue.
+      try {
+        const workItems = this.workCoordinator.enqueue(
+          taskTree.subtasks.map((sub) => ({
+            runId: execId,
+            parentNodeId: sub.id,
+            goal: sub.goal,
+            tools: sub.context.availableTools ?? [],
+            // Intentionally omitted: subAgentExecutor drives dependency
+            // ordering via task-tree DAG, not WorkCoordinator-level
+            // resolution. Passing node IDs would break dependenciesMet()
+            // (expects WorkItem IDs, not node IDs).
+            tokenBudget: sub.context.estimatedTokens ?? 50000,
+            priority: sub.dependencies?.length === 0 ? 80 : 50,
+          })),
+        );
+        reasoning.push(
+          `Work queue: ${workItems.length} items enqueued (${workItems.filter((w) => w.priority >= 80).length} root)`,
+        );
+      } catch (e) {
+        reasoning.push(
+          `Work queue enqueue skipped: ${e instanceof Error ? e.message : 'unknown'}`,
+        );
+      }
+
       // Phase 5: Team Formation (if topology needs it)
       let teamId: string | null = null;
       if (this.config.enableTeams && taskTree.subtasks.length > 2) {
@@ -391,17 +454,52 @@ export class UltimateOrchestrator {
         }
       }
 
+      // ── Capability Gap Analysis ─────────────────────────────────────────
+      // Check whether registered agent capabilities cover the subtask goals.
+      // Advisory only — does not alter team composition.
+      try {
+        const goals = taskTree.subtasks.map((s) => s.goal);
+        const bestMatches = this.capabilityRegistry.findBestMatch(goals);
+        if (bestMatches.length > 0) {
+          const topScore = bestMatches[0].matchScore;
+          reasoning.push(
+            `Capability analysis: best match ${bestMatches[0].agentId} (score: ${(topScore * 100).toFixed(0)}%)${bestMatches.length > 1 ? `, ${bestMatches.length - 1} alternatives` : ''}`,
+          );
+          if (topScore < 0.5) {
+            reasoning.push(
+              `Capability gap: no registered agent matches subtask goals well (best=${(topScore * 100).toFixed(0)}%). Consider registering more capable agents.`,
+            );
+          }
+        }
+      } catch (e) {
+        reasoning.push(
+          `Capability analysis skipped: ${e instanceof Error ? e.message : 'unknown'}`,
+        );
+      }
+
       // Phase 6: Parallel Execution with team inbox collaboration
       emit('EXECUTION', `Executing ${taskTree.subtasks.length} subtasks...`);
       if (teamId) {
         this.subAgentExecutor.setTeam(teamId);
       }
-      await this.subAgentExecutor.executeNode(
-        taskTree,
-        params.projectId,
-        params.contextData ?? {},
-        errors,
-      );
+
+      // EVALUATOR_OPTIMIZER: dedicated generator→evaluator→optimizer loop
+      if (topology === 'EVALUATOR_OPTIMIZER' && taskTree.subtasks.length >= 2) {
+        await this.executeEvaluatorOptimizerLoop(
+          taskTree,
+          execId,
+          params,
+          errors,
+          reasoning,
+        );
+      } else {
+        await this.subAgentExecutor.executeNode(
+          taskTree,
+          params.projectId,
+          params.contextData ?? {},
+          errors,
+        );
+      }
       this.subAgentExecutor.setTeam(null);
 
       const completedCount = countCompleted(taskTree);
@@ -552,7 +650,7 @@ export class UltimateOrchestrator {
             projectId: params.projectId,
             goal: fixGoal,
             contextData: params.contextData ?? {},
-            availableTools: [],
+            availableTools: ['file_read', 'file_edit'],
             maxSteps: QUALITY_FIX_MAX_STEPS,
             tokenBudget: QUALITY_FIX_TOKEN_BUDGET,
           });
@@ -684,6 +782,31 @@ export class UltimateOrchestrator {
             error: (e as Error)?.message,
           }),
         );
+      }
+
+      // ── Workflow Evolution ──────────────────────────────────────────────
+      // Evolve the DAG-based workflow based on execution results to improve
+      // future task decomposition and topology selection.
+      if (this.evolutionEngine) {
+        try {
+          const evolutionResult = await this.evolutionEngine.evolve({
+            taskType: topology,
+            availableTools: (params.contextData?.availableTools as string[]) ?? [],
+            existingTree: taskTree,
+            generations: 1,
+            populationSize: 3,
+            maxDurationSeconds: 30,
+          });
+          if (evolutionResult && evolutionResult.improvements.length > 0) {
+            reasoning.push(
+              `Workflow evolved: ${evolutionResult.generations} gen(s), ${evolutionResult.improvements.length} improvement(s)`,
+            );
+          }
+        } catch (e) {
+          reasoning.push(
+            `Workflow evolution skipped: ${e instanceof Error ? e.message : 'unknown'}`,
+          );
+        }
       }
 
       try {
@@ -1068,6 +1191,47 @@ export class UltimateOrchestrator {
 
   getConfig(): UltimateOrchestratorConfig {
     return { ...this.config };
+  }
+
+  /**
+   * Live update of one (or all) quality gate thresholds. Mutates BOTH the
+   * engine-side `config.qualityGates` (consumed by `runQualityGatesStrict`)
+   * and the synthesis-side `config.defaultSynthesisConfig.qualityGates`
+   * (consumed by `applyOptimizationSuggestions`). Threshold is clamped to
+   * [0, 1]. Name "all" applies to every enabled gate.
+   * Returns true if any gate was updated.
+   */
+  setQualityGateThreshold(name: string, threshold: number): boolean {
+    const clamped = Math.max(0, Math.min(1, threshold));
+    let updated = false;
+    const applyTo = (g: QualityGateConfig): boolean => {
+      if ((name === 'all' || g.name === name) && g.enabled) {
+        if (g.threshold !== clamped) {
+          g.threshold = clamped;
+          return true;
+        }
+      }
+      return false;
+    };
+    for (const g of this.config.qualityGates) {
+      if (applyTo(g)) updated = true;
+    }
+    for (const g of this.config.defaultSynthesisConfig.qualityGates) {
+      if (applyTo(g)) updated = true;
+    }
+    return updated;
+  }
+
+  /**
+   * Live override of effort-level → model-tier mapping. Useful for forcing
+   * all sub-agents onto a single tier mid-session (e.g., cost honeymoon).
+   * Pass `undefined` for `tier` to reset to default tier for a level.
+   */
+  setModelTier(effortLevel: EffortLevel, tier: ModelTier | undefined): void {
+    // Resolve against the truth-source DEFAULT_ULTIMATE_CONFIG so future
+    // changes to types.ts defaults propagate without drift. (Reviewer fix.)
+    this.config.modelTierMapping[effortLevel] =
+      tier ?? DEFAULT_ULTIMATE_CONFIG.modelTierMapping[effortLevel];
   }
 
   // ========================================================================
@@ -1513,6 +1677,110 @@ export class UltimateOrchestrator {
     }
 
     return this.topologyRouter.buildDAG(nodes, edges);
+  }
+
+  private async executeEvaluatorOptimizerLoop(
+    taskTree: TaskTreeNode,
+    execId: string,
+    params: { projectId: string; contextData?: Record<string, unknown> },
+    errors: ExecutionError[],
+    reasoning: string[],
+  ): Promise<void> {
+    const MAX_ITERATIONS = 3;
+    const QUALITY_THRESHOLD = 0.8;
+    const DEFAULT_SCORE = 0.5;
+
+    if (taskTree.subtasks.length < 2) {
+      reasoning.push('E-O loop: insufficient subtasks, falling back to standard execution');
+      await this.subAgentExecutor.executeNode(
+        taskTree,
+        params.projectId,
+        params.contextData ?? {},
+        errors,
+      );
+      return;
+    }
+
+    const generator = taskTree.subtasks[0];
+    const evaluator = taskTree.subtasks[1];
+    const optimizer = taskTree.subtasks.length > 2 ? taskTree.subtasks[2] : null;
+
+    const originalGeneratorGoal = generator.goal;
+    const originalEvaluatorGoal = evaluator.goal;
+    const originalOptimizerGoal = optimizer?.goal;
+
+    let currentOutput = '';
+    let iteration = 0;
+    let qualityScore = 0;
+
+    try {
+      while (iteration < MAX_ITERATIONS) {
+        iteration++;
+        reasoning.push(`E-O loop iteration ${iteration}: generating...`);
+
+        await this.subAgentExecutor.executeNode(
+          generator,
+          params.projectId,
+          params.contextData ?? {},
+          errors,
+        );
+
+        currentOutput = generator.result ?? '';
+        if (!currentOutput) {
+          reasoning.push('E-O loop: generator produced empty output');
+          break;
+        }
+
+        reasoning.push(`E-O loop iteration ${iteration}: evaluating...`);
+        evaluator.goal = `Evaluate this output for quality, correctness, and completeness:\n\n${currentOutput.slice(0, 2000)}`;
+        await this.subAgentExecutor.executeNode(
+          evaluator,
+          params.projectId,
+          params.contextData ?? {},
+          errors,
+        );
+
+        const evalResult = evaluator.result ?? '';
+        const scoreMatch = evalResult.match(/(?:quality|score|rating)[\s:]*(\d+(?:\.\d+)?)/i);
+        const rawScore = scoreMatch ? parseFloat(scoreMatch[1]) : DEFAULT_SCORE * 100;
+        qualityScore = rawScore > 1 ? rawScore / 100 : rawScore;
+
+        reasoning.push(`E-O loop iteration ${iteration}: quality=${(qualityScore * 100).toFixed(0)}%`);
+
+        if (qualityScore >= QUALITY_THRESHOLD) {
+          reasoning.push('E-O loop: quality threshold met');
+          break;
+        }
+
+        if (!optimizer) {
+          reasoning.push('E-O loop: no optimizer agent, using generator feedback');
+          generator.goal = `Improve this output based on feedback:\n\nEvaluation: ${evalResult.slice(0, 1000)}\n\nCurrent output:\n${currentOutput.slice(0, 2000)}`;
+          continue;
+        }
+
+        reasoning.push(`E-O loop iteration ${iteration}: optimizing...`);
+        optimizer.goal = `Optimize this output based on evaluation feedback:\n\nEvaluation: ${evalResult.slice(0, 1000)}\n\nCurrent output:\n${currentOutput.slice(0, 2000)}`;
+        await this.subAgentExecutor.executeNode(
+          optimizer,
+          params.projectId,
+          params.contextData ?? {},
+          errors,
+        );
+
+        const optimizedOutput = optimizer.result ?? currentOutput;
+        generator.goal = `Use this optimized version as your next generation baseline:\n\n${optimizedOutput.slice(0, 2000)}`;
+      }
+    } finally {
+      generator.goal = originalGeneratorGoal;
+      evaluator.goal = originalEvaluatorGoal;
+      if (optimizer && originalOptimizerGoal !== undefined) {
+        optimizer.goal = originalOptimizerGoal;
+      }
+    }
+
+    generator.result = currentOutput;
+    generator.status = 'COMPLETED';
+    reasoning.push(`E-O loop completed: ${iteration} iterations, final quality=${(qualityScore * 100).toFixed(0)}%`);
   }
 
   dispose(): void {

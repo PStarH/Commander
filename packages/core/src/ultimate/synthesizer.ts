@@ -6,6 +6,7 @@ import type {
   QualityGateConfig,
 } from './types';
 import { getArtifactSystem } from './artifactSystem';
+import { getGlobalLogger } from '../logging';
 
 /** Minimum result length to consider for voting */
 const MIN_VOTE_RESULT_LENGTH = 50;
@@ -206,6 +207,20 @@ export class MultiAgentSynthesizer {
         .map((n) => n.result ?? '')
         .filter(Boolean)
         .join('\n\n---\n\n');
+    }
+
+    // Diversity check: detect echo chamber when top results are too similar
+    if (results.length >= 3) {
+      const topResults = results.slice(0, 3);
+      const fingerprints = topResults.map((r) => r.text.slice(0, 100).toLowerCase().replace(/\s+/g, ' '));
+      const uniqueFingerprints = new Set(fingerprints);
+      if (uniqueFingerprints.size === 1) {
+        // All top results start identically — echo chamber detected
+        getGlobalLogger().warn('Synthesizer', 'Echo chamber detected: top 3 results have identical openings', {
+          fingerprint: fingerprints[0].slice(0, 60),
+          resultCount: results.length,
+        });
+      }
     }
 
     // Vote: score each result by quality heuristics and pick the best
