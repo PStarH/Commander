@@ -82,7 +82,7 @@
     "@commander/plugin-sdk": "workspace:*"
   },
   "optionalDependencies": {
-    "better-sqlite3": "^11.0.0",
+    "better-sqlite3": "^12.11.1",
     "playwright": "^1.60.0",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
