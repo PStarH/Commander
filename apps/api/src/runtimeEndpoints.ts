@@ -15,7 +15,8 @@ export function createRuntimeRouter(): Router {
 
   // POST /api/runtime/execute — Execute an agent task
   router.post('/execute', async (req, res) => {
-    const { agentId, projectId, missionId, goal, contextData, availableTools, tokenBudget } = req.body;
+    const { agentId, projectId, missionId, goal, contextData, availableTools, tokenBudget } =
+      req.body;
 
     if (!agentId || !goal) {
       return res.status(400).json({ error: 'agentId and goal are required' });
@@ -118,10 +119,10 @@ export function createRuntimeRouter(): Router {
   router.get('/bus/messages', (req, res) => {
     const { topic, limit } = req.query;
     const bus = getMessageBus();
-const messages = bus.getHistory(
-       topic as MessageBusTopic | undefined,
-       limit ? parseInt(limit as string, 10) : undefined,
-     );
+    const messages = bus.getHistory(
+      topic as MessageBusTopic | undefined,
+      limit ? parseInt(limit as string, 10) : undefined,
+    );
     res.json({ messages, count: messages.length });
   });
 
@@ -144,7 +145,16 @@ const messages = bus.getHistory(
 
   // POST /api/runtime/render-report — Generate HTML report
   router.post('/render-report', (req, res) => {
-    const { projectName, operationCodename, health, metrics, narrative, topAgents, missionSummary, recentEvents } = req.body;
+    const {
+      projectName,
+      operationCodename,
+      health,
+      metrics,
+      narrative,
+      topAgents,
+      missionSummary,
+      recentEvents,
+    } = req.body;
 
     if (!projectName || !operationCodename) {
       return res.status(400).json({ error: 'projectName and operationCodename are required' });

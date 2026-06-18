@@ -16,7 +16,16 @@ import type { ToolDefinition, ToolCall } from './types';
 // Provider Format Names
 // ============================================================================
 
-type ProviderName = 'openai' | 'anthropic' | 'google' | 'mimo' | 'deepseek' | 'glm' | 'xiaomi' | 'openrouter' | string;
+type ProviderName =
+  | 'openai'
+  | 'anthropic'
+  | 'google'
+  | 'mimo'
+  | 'deepseek'
+  | 'glm'
+  | 'xiaomi'
+  | 'openrouter'
+  | string;
 
 // ============================================================================
 // Format Bridge
@@ -48,10 +57,7 @@ export class FormatBridge {
   /**
    * Normalize provider-specific tool call responses to Commander's internal format.
    */
-  static adaptToolCallsFromProvider(
-    toolCalls: unknown[],
-    providerName: ProviderName,
-  ): ToolCall[] {
+  static adaptToolCallsFromProvider(toolCalls: unknown[], providerName: ProviderName): ToolCall[] {
     switch (providerName) {
       case 'google':
         return FormatBridge.fromGoogleToolCalls(toolCalls);
@@ -66,7 +72,7 @@ export class FormatBridge {
   // ==========================================================================
 
   private static toOpenAIFormat(tools: ToolDefinition[]): unknown[] {
-    return tools.map(t => ({
+    return tools.map((t) => ({
       type: 'function',
       function: {
         name: t.name,
@@ -81,7 +87,7 @@ export class FormatBridge {
   // ==========================================================================
 
   private static toAnthropicFormat(tools: ToolDefinition[]): unknown[] {
-    return tools.map(t => ({
+    return tools.map((t) => ({
       name: t.name,
       description: t.description,
       input_schema: FormatBridge.flattenSchema(t.inputSchema),
@@ -94,7 +100,7 @@ export class FormatBridge {
 
   private static toGoogleFormat(tools: ToolDefinition[]): unknown[] {
     // Gemini uses function_declarations at the top level
-    const declarations = tools.map(t => ({
+    const declarations = tools.map((t) => ({
       name: t.name,
       description: t.description,
       parameters: FormatBridge.toGeminiParameters(t.inputSchema),

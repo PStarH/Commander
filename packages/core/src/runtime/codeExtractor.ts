@@ -32,10 +32,7 @@ export function extractCode(responseContent: string): string {
 /**
  * Extract content from a fenced code block with optional language tag.
  */
-function extractFencedBlock(
-  content: string,
-  lang: string | null,
-): string | null {
+function extractFencedBlock(content: string, lang: string | null): string | null {
   const fence = '```';
   // Build closing pattern — same opening tag means same closing tag
   const langTag = lang ? lang : '[a-zA-Z0-9]*';

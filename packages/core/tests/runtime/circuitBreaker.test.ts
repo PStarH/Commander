@@ -103,12 +103,11 @@ describe('CircuitBreaker', () => {
     cb.onFailure();
     vi.advanceTimersByTime(10000);
 
-    // First isAvailable() transitions OPEN -> HALF_OPEN (does not consume in-flight slot)
+    // First isAvailable() transitions OPEN -> HALF_OPEN and consumes 1 in-flight slot
     expect(cb.isAvailable()).toBe(true);
-    // Then 2 more calls use the 2 available in-flight slots
+    // 2nd call uses the remaining slot
     expect(cb.isAvailable()).toBe(true);
-    expect(cb.isAvailable()).toBe(true);
-    // 4th should be blocked (2 in flight)
+    // 3rd should be blocked (2 in flight)
     expect(cb.isAvailable()).toBe(false);
   });
 

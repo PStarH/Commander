@@ -6,8 +6,12 @@
  */
 
 import type {
-  BusMessage, MessageBusTopic, MessageHandler, MessagePriority,
-  BusPayloadMap, TypedBusMessage,
+  BusMessage,
+  MessageBusTopic,
+  MessageHandler,
+  MessagePriority,
+  BusPayloadMap,
+  TypedBusMessage,
 } from './types';
 import { getGlobalLogger } from '../logging';
 
@@ -17,11 +21,19 @@ function generateId(): string {
 
 export class MessageBus {
   private subscribers: Map<MessageBusTopic, Set<MessageHandler>> = new Map();
+  // Ring buffer for history — O(1) push/evict instead of O(n) shift
   private history: BusMessage[] = [];
+  private historyHead = 0; // next write position
+  private historyCount = 0; // current number of entries
   private maxHistory: number;
   private topics: Set<MessageBusTopic> = new Set();
   // GAP-23: Track last publish time per topic for pruning
   private topicLastActive: Map<MessageBusTopic, number> = new Map();
+  // Wildcard subscriber flag — skip wildcard dispatch when no wildcard subscribers exist
+  private hasWildcardSubscribers = false;
+  // Topic-indexed history — ring buffer per topic for O(1) insert/evict
+  private topicHistory: Map<MessageBusTopic, { buf: BusMessage[]; head: number; count: number }> =
+    new Map();
   private readonly MAX_TOPICS = 200;
   private readonly TOPIC_IDLE_TTL_MS = 3600_000; // 1 hour
 
@@ -65,6 +77,7 @@ export class MessageBus {
       ttl?: number;
     },
   ): BusMessage {
+    const now = Date.now();
     const message: BusMessage = {
       id: generateId(),
       topic,
@@ -72,16 +85,40 @@ export class MessageBus {
       target: options?.target,
       payload,
       priority: options?.priority ?? 'normal',
-      timestamp: new Date().toISOString(),
+      timestamp: new Date(now).toISOString(),
       ttl: options?.ttl,
     };
 
     this.topics.add(topic);
-    this.topicLastActive.set(topic, Date.now());
-    this.history.push(message);
-    if (this.history.length > this.maxHistory) {
-      this.history.shift();
+    this.topicLastActive.set(topic, now);
+
+    // Ring buffer: O(1) insert, O(1) evict
+    if (this.historyCount < this.maxHistory) {
+      this.history[this.historyHead] = message;
+      this.historyHead = (this.historyHead + 1) % this.maxHistory;
+      this.historyCount++;
+    } else {
+      // Overwrite oldest entry
+      this.history[this.historyHead] = message;
+      this.historyHead = (this.historyHead + 1) % this.maxHistory;
     }
+
+    // Topic-indexed history — ring buffer for O(1) insert/evict
+    let topicEntry = this.topicHistory.get(topic);
+    if (!topicEntry) {
+      topicEntry = { buf: new Array(Math.min(this.maxHistory, 100)), head: 0, count: 0 };
+      this.topicHistory.set(topic, topicEntry);
+    }
+    const maxTopic = topicEntry.buf.length;
+    if (topicEntry.count < maxTopic) {
+      topicEntry.buf[topicEntry.head] = message;
+      topicEntry.head = (topicEntry.head + 1) % maxTopic;
+      topicEntry.count++;
+    } else {
+      topicEntry.buf[topicEntry.head] = message;
+      topicEntry.head = (topicEntry.head + 1) % maxTopic;
+    }
+
     // GAP-23: Prune idle topics when count exceeds limit
     if (this.topics.size > this.MAX_TOPICS) {
       this.pruneIdleTopics();
@@ -93,7 +130,9 @@ export class MessageBus {
         try {
           const result = handler(message);
           if (result instanceof Promise) {
-            result.catch(err => getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err));
+            result.catch((err) =>
+              getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err),
+            );
           }
         } catch (err) {
           getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err as Error);
@@ -101,16 +140,21 @@ export class MessageBus {
       }
     }
 
-    const wildcardHandlers = this.subscribers.get('*' as MessageBusTopic);
-    if (wildcardHandlers && topic !== '*') {
-      for (const handler of wildcardHandlers) {
-        try {
-          const result = handler(message);
-          if (result instanceof Promise) {
-            result.catch(err => getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err));
+    // Only check wildcard handlers if any exist
+    if (this.hasWildcardSubscribers && topic !== '*') {
+      const wildcardHandlers = this.subscribers.get('*' as MessageBusTopic);
+      if (wildcardHandlers) {
+        for (const handler of wildcardHandlers) {
+          try {
+            const result = handler(message);
+            if (result instanceof Promise) {
+              result.catch((err) =>
+                getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err),
+              );
+            }
+          } catch (err) {
+            getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err as Error);
           }
-        } catch (err) {
-          getGlobalLogger().error('MessageBus', `handler error on ${topic}`, err as Error);
         }
       }
     }
@@ -128,22 +172,31 @@ export class MessageBus {
   /**
    * Subscribe to an arbitrary topic — payload is unknown.
    */
-  subscribe(
-    topic: MessageBusTopic,
-    handler: MessageHandler,
-  ): () => void;
-  subscribe(
-    topic: MessageBusTopic,
-    handler: MessageHandler,
-  ): () => void {
+  subscribe(topic: MessageBusTopic, handler: MessageHandler): () => void;
+  subscribe(topic: MessageBusTopic, handler: MessageHandler): () => void {
     if (!this.subscribers.has(topic)) {
       this.subscribers.set(topic, new Set());
     }
     this.subscribers.get(topic)!.add(handler);
     this.topics.add(topic);
 
+    // Track wildcard subscribers
+    if (topic === '*') this.hasWildcardSubscribers = true;
+
     return () => {
-      this.subscribers.get(topic)?.delete(handler);
+      const subs = this.subscribers.get(topic);
+      if (subs) {
+        subs.delete(handler);
+        if (subs.size === 0) {
+          this.subscribers.delete(topic);
+          this.topics.delete(topic);
+          this.topicHistory.delete(topic);
+          this.topicLastActive.delete(topic);
+        }
+      }
+      if (topic === '*' && (this.subscribers.get('*')?.size ?? 0) === 0) {
+        this.hasWildcardSubscribers = false;
+      }
     };
   }
 
@@ -151,17 +204,36 @@ export class MessageBus {
    * Subscribe to multiple topics at once.
    */
   subscribeMany(topics: MessageBusTopic[], handler: MessageHandler): () => void {
-    const unsubs = topics.map(t => this.subscribe(t, handler));
-    return () => unsubs.forEach(fn => fn());
+    const unsubs = topics.map((t) => this.subscribe(t, handler));
+    return () => unsubs.forEach((fn) => fn());
   }
 
   /**
    * Get message history for a specific topic or all topics.
    */
   getHistory(topic?: MessageBusTopic, limit?: number): BusMessage[] {
-    let filtered = topic
-      ? this.history.filter(m => m.topic === topic)
-      : [...this.history];
+    let filtered: BusMessage[];
+    if (topic) {
+      // O(1) topic lookup via ring buffer index
+      const entry = this.topicHistory.get(topic);
+      if (!entry) return [];
+      filtered = [];
+      for (let i = 0; i < entry.count; i++) {
+        const idx = (entry.head - entry.count + i + entry.buf.length) % entry.buf.length;
+        filtered.push(entry.buf[idx]);
+      }
+      if (limit && limit > 0) {
+        filtered = filtered.slice(-limit);
+      }
+      return filtered;
+    }
+
+    // No topic filter: reconstruct from ring buffer
+    filtered = [];
+    for (let i = 0; i < this.historyCount; i++) {
+      const idx = (this.historyHead - this.historyCount + i + this.maxHistory) % this.maxHistory;
+      filtered.push(this.history[idx]);
+    }
 
     if (limit && limit > 0) {
       filtered = filtered.slice(-limit);
@@ -199,6 +271,9 @@ export class MessageBus {
    */
   clearHistory(): void {
     this.history = [];
+    this.historyHead = 0;
+    this.historyCount = 0;
+    this.topicHistory.clear();
   }
 
   /** GAP-23: Prune topics with no subscribers and no recent activity. */
@@ -210,6 +285,7 @@ export class MessageBus {
       if (!hasSubscribers && now - lastActive > this.TOPIC_IDLE_TTL_MS) {
         this.topics.delete(topic);
         this.topicLastActive.delete(topic);
+        this.topicHistory.delete(topic);
       }
     }
   }

@@ -1,9 +1,9 @@
 /**
  * Deterministic Task Allocator
- * 
+ *
  * 防止多个 Agent 争抢同一任务的关键组件。
  * 使用 Task ID + Owner + Release 协议确保任务分配的唯一性。
- * 
+ *
  * 来源: Galileo AI "10 Multi-Agent Coordination Strategies" (2025)
  * 核心问题: Agent 争抢同一任务 → 解决方案: 明确任务所有权
  */
@@ -15,28 +15,28 @@
  */
 export interface TaskAllocation {
   taskId: string;
-  ownerId: string;           // Agent ID
-  ownerRole: string;         // Agent 角色 (planner, executor, reviewer, etc.)
+  ownerId: string; // Agent ID
+  ownerRole: string; // Agent 角色 (planner, executor, reviewer, etc.)
   allocatedAt: Date;
-  expiresAt: Date;           // 分配超时时间
+  expiresAt: Date; // 分配超时时间
   status: AllocationStatus;
   priority: TaskPriority;
-  dependencies?: string[];   // 依赖的任务 ID
+  dependencies?: string[]; // 依赖的任务 ID
   metadata?: Record<string, unknown>;
-  releasedAt?: Date;         // 释放时间
-  releaseReason?: string;    // 释放原因
-  result?: unknown;          // 任务结果
+  releasedAt?: Date; // 释放时间
+  releaseReason?: string; // 释放原因
+  result?: unknown; // 任务结果
 }
 
 /**
  * 分配状态
  */
-export type AllocationStatus = 
-  | 'pending'     // 等待分配
-  | 'allocated'   // 已分配，进行中
-  | 'completed'   // 已完成
-  | 'failed'      // 失败
-  | 'released';   // 已释放
+export type AllocationStatus =
+  | 'pending' // 等待分配
+  | 'allocated' // 已分配，进行中
+  | 'completed' // 已完成
+  | 'failed' // 失败
+  | 'released'; // 已释放
 
 /**
  * 任务优先级
@@ -51,7 +51,7 @@ export interface AllocationRequest {
   agentId: string;
   agentRole: string;
   priority?: TaskPriority;
-  timeoutMs?: number;        // 分配超时（默认 30 分钟）
+  timeoutMs?: number; // 分配超时（默认 30 分钟）
   dependencies?: string[];
   metadata?: Record<string, unknown>;
 }
@@ -63,7 +63,7 @@ export interface AllocationResult {
   success: boolean;
   allocation?: TaskAllocation;
   error?: string;
-  retryAfter?: number;       // 如果被占用，建议重试时间
+  retryAfter?: number; // 如果被占用，建议重试时间
 }
 
 /**
@@ -99,16 +99,16 @@ export interface TaskQueueStatus {
 // ==================== 配置 ====================
 
 export interface TaskAllocatorConfig {
-  defaultTimeoutMs: number;      // 默认分配超时
+  defaultTimeoutMs: number; // 默认分配超时
   maxAllocationsPerAgent: number; // 单个 Agent 最大任务数
-  cleanupIntervalMs: number;      // 清理过期分配的间隔
-  enablePriorityQueue: boolean;   // 是否启用优先级队列
+  cleanupIntervalMs: number; // 清理过期分配的间隔
+  enablePriorityQueue: boolean; // 是否启用优先级队列
 }
 
 const DEFAULT_CONFIG: TaskAllocatorConfig = {
   defaultTimeoutMs: 30 * 60 * 1000, // 30 分钟
   maxAllocationsPerAgent: 5,
-  cleanupIntervalMs: 60 * 1000,      // 1 分钟
+  cleanupIntervalMs: 60 * 1000, // 1 分钟
   enablePriorityQueue: true,
 };
 
@@ -116,7 +116,7 @@ const DEFAULT_CONFIG: TaskAllocatorConfig = {
 
 /**
  * 确定性任务分配器
- * 
+ *
  * 核心机制:
  * 1. Task ID 唯一性 - 每个任务有全局唯一 ID
  * 2. Owner 声明 - 分配时明确指定 owner
@@ -138,11 +138,19 @@ export class DeterministicTaskAllocator {
 
   /**
    * 尝试分配任务
-   * 
+   *
    * @returns AllocationResult - 分配结果（成功或失败原因）
    */
   allocate(request: AllocationRequest): AllocationResult {
-    const { taskId, agentId, agentRole, priority = 'normal', timeoutMs, dependencies, metadata } = request;
+    const {
+      taskId,
+      agentId,
+      agentRole,
+      priority = 'normal',
+      timeoutMs,
+      dependencies,
+      metadata,
+    } = request;
 
     // 1. 检查任务是否已被分配
     const existing = this.allocations.get(taskId);
@@ -202,7 +210,7 @@ export class DeterministicTaskAllocator {
 
     // 5. 记录分配
     this.allocations.set(taskId, allocation);
-    
+
     // 6. 更新 Agent 任务集合
     if (!this.agentAllocations.has(agentId)) {
       this.agentAllocations.set(agentId, new Set());
@@ -230,13 +238,13 @@ export class DeterministicTaskAllocator {
     }
 
     // 3. 更新状态
-allocation.status = reason === 'completed' ? 'completed' :
-                          reason === 'failed' ? 'failed' : 'released';
-     allocation.releasedAt = new Date();
-     allocation.releaseReason = reason;
-     if (result !== undefined) {
-       allocation.result = result;
-     }
+    allocation.status =
+      reason === 'completed' ? 'completed' : reason === 'failed' ? 'failed' : 'released';
+    allocation.releasedAt = new Date();
+    allocation.releaseReason = reason;
+    if (result !== undefined) {
+      allocation.result = result;
+    }
 
     // 4. 从 Agent 任务集合中移除
     const agentTasks = this.agentAllocations.get(ownerId);
@@ -267,9 +275,9 @@ allocation.status = reason === 'completed' ? 'completed' :
       }
     }
 
-allocation.status = 'released';
-     allocation.releasedAt = new Date();
-     allocation.releaseReason = reason;
+    allocation.status = 'released';
+    allocation.releasedAt = new Date();
+    allocation.releaseReason = reason;
 
     return { success: true };
   }
@@ -298,9 +306,9 @@ allocation.status = 'released';
   getAgentTasks(agentId: string): TaskAllocation[] {
     const taskIds = this.agentAllocations.get(agentId);
     if (!taskIds) return [];
-    
+
     return Array.from(taskIds)
-      .map(id => this.allocations.get(id))
+      .map((id) => this.allocations.get(id))
       .filter((a): a is TaskAllocation => a !== undefined && a.status === 'allocated');
   }
 
@@ -324,13 +332,22 @@ allocation.status = 'released';
 
     for (const allocation of this.allocations.values()) {
       switch (allocation.status) {
-        case 'allocated': activeAllocations++; break;
-        case 'pending': pendingAllocations++; break;
-        case 'completed': completedAllocations++; break;
-        case 'failed': failedAllocations++; break;
+        case 'allocated':
+          activeAllocations++;
+          break;
+        case 'pending':
+          pendingAllocations++;
+          break;
+        case 'completed':
+          completedAllocations++;
+          break;
+        case 'failed':
+          failedAllocations++;
+          break;
       }
-      agentWorkloads.set(allocation.ownerId, 
-        (agentWorkloads.get(allocation.ownerId) || 0) + 1);
+      if (allocation.status === 'allocated') {
+        agentWorkloads.set(allocation.ownerId, (agentWorkloads.get(allocation.ownerId) || 0) + 1);
+      }
     }
 
     return {
@@ -348,8 +365,8 @@ allocation.status = 'released';
    */
   getPendingTasks(): TaskAllocation[] {
     return Array.from(this.allocations.values())
-      .filter(a => a.status === 'pending')
-      .filter(a => {
+      .filter((a) => a.status === 'pending')
+      .filter((a) => {
         if (!a.dependencies || a.dependencies.length === 0) return true;
         return this.checkDependencies(a.dependencies).length === 0;
       });
@@ -362,7 +379,7 @@ allocation.status = 'released';
    * @returns 未满足的依赖列表
    */
   private checkDependencies(dependencies: string[]): string[] {
-    return dependencies.filter(depId => {
+    return dependencies.filter((depId) => {
       const dep = this.allocations.get(depId);
       return !dep || dep.status !== 'completed';
     });
@@ -382,8 +399,8 @@ allocation.status = 'released';
   private getShortestExpiryTime(agentId: string): number {
     const tasks = this.getAgentTasks(agentId);
     if (tasks.length === 0) return 0;
-    
-    const expiryTimes = tasks.map(t => this.getTimeUntilExpiry(t));
+
+    const expiryTimes = tasks.map((t) => this.getTimeUntilExpiry(t));
     return Math.min(...expiryTimes);
   }
 
@@ -405,7 +422,9 @@ allocation.status = 'released';
     }
 
     if (expired.length > 0) {
-      process.stdout.write(`[DeterministicTaskAllocator] Cleaned up ${expired.length} expired allocations\n`);
+      process.stdout.write(
+        `[DeterministicTaskAllocator] Cleaned up ${expired.length} expired allocations\n`,
+      );
     }
   }
 
@@ -445,7 +464,9 @@ let globalAllocator: DeterministicTaskAllocator | null = null;
 /**
  * 获取全局任务分配器实例
  */
-export function getTaskAllocator(config?: Partial<TaskAllocatorConfig>): DeterministicTaskAllocator {
+export function getTaskAllocator(
+  config?: Partial<TaskAllocatorConfig>,
+): DeterministicTaskAllocator {
   if (!globalAllocator) {
     globalAllocator = new DeterministicTaskAllocator(config);
   }

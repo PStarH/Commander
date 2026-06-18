@@ -1,7 +1,7 @@
 /**
  * State Machine Architecture for Commander
  * Inspired by LangGraph's state machine model
- * 
+ *
  * Key features:
  * 1. Explicit state management with transitions
  * 2. Checkpoint mechanism for recovery
@@ -151,10 +151,10 @@ const CHECKPOINTS_DIR = path.resolve(__dirname, '../data/checkpoints');
  */
 function persistState(state: AgentState, config: PersistenceConfig): void {
   if (!config.enabled) return;
-  
+
   const stateDir = path.join(config.path);
   fs.mkdirSync(stateDir, { recursive: true });
-  
+
   const stateFile = path.join(stateDir, `${state.memory.taskId}.json`);
   fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
 }
@@ -164,10 +164,10 @@ function persistState(state: AgentState, config: PersistenceConfig): void {
  */
 function loadState(taskId: string, config: PersistenceConfig): AgentState | null {
   if (!config.enabled) return null;
-  
+
   const stateFile = path.join(config.path, `${taskId}.json`);
   if (!fs.existsSync(stateFile)) return null;
-  
+
   try {
     const raw = fs.readFileSync(stateFile, 'utf8');
     return JSON.parse(raw) as AgentState;
@@ -183,16 +183,23 @@ function loadState(taskId: string, config: PersistenceConfig): AgentState | null
 function saveCheckpoint(state: AgentState): string {
   const checkpointId = uuidv4();
   const checkpointFile = path.join(CHECKPOINTS_DIR, `${checkpointId}.json`);
-  
+
   fs.mkdirSync(CHECKPOINTS_DIR, { recursive: true });
-  fs.writeFileSync(checkpointFile, JSON.stringify({
-    ...state,
-    metadata: {
-      ...state.metadata,
-      checkpointId,
-    }
-  }, null, 2));
-  
+  fs.writeFileSync(
+    checkpointFile,
+    JSON.stringify(
+      {
+        ...state,
+        metadata: {
+          ...state.metadata,
+          checkpointId,
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
   return checkpointId;
 }
 
@@ -202,7 +209,7 @@ function saveCheckpoint(state: AgentState): string {
 function loadCheckpoint(checkpointId: string): AgentState | null {
   const checkpointFile = path.join(CHECKPOINTS_DIR, `${checkpointId}.json`);
   if (!fs.existsSync(checkpointFile)) return null;
-  
+
   try {
     const raw = fs.readFileSync(checkpointFile, 'utf8');
     return JSON.parse(raw) as AgentState;
@@ -246,7 +253,7 @@ export class StateMachine {
    */
   initialize(taskId: string, projectId: string, agentId: string): AgentState {
     const now = new Date().toISOString();
-    
+
     const state: AgentState = {
       currentStep: this.config.initial,
       context: {},
@@ -268,7 +275,7 @@ export class StateMachine {
 
     this.currentState = state;
     persistState(state, this.config.persistence);
-    
+
     return state;
   }
 
@@ -297,9 +304,9 @@ export class StateMachine {
    */
   canTransition(toState: string): boolean {
     if (!this.currentState) return false;
-    
+
     const transitions = this.transitions.get(this.currentState.currentStep) || [];
-    return transitions.some(t => t.to === toState);
+    return transitions.some((t) => t.to === toState);
   }
 
   /**
@@ -316,17 +323,20 @@ export class StateMachine {
   async transition(
     toState: string,
     context?: Record<string, any>,
-    governanceCheck?: (checkpoint: GovernanceCheckpoint) => Promise<boolean>
+    governanceCheck?: (checkpoint: GovernanceCheckpoint) => Promise<boolean>,
   ): Promise<{ success: boolean; state?: AgentState; error?: string }> {
     if (!this.currentState) {
       return { success: false, error: 'No current state' };
     }
 
     const transitions = this.transitions.get(this.currentState.currentStep) || [];
-    const transition = transitions.find(t => t.to === toState);
-    
+    const transition = transitions.find((t) => t.to === toState);
+
     if (!transition) {
-      return { success: false, error: `Invalid transition from ${this.currentState.currentStep} to ${toState}` };
+      return {
+        success: false,
+        error: `Invalid transition from ${this.currentState.currentStep} to ${toState}`,
+      };
     }
 
     // Check condition if defined
@@ -338,7 +348,7 @@ export class StateMachine {
     if (transition.governanceRequired || this.currentState.governanceMode === 'MANUAL') {
       const checkpoint = this.createGovernanceCheckpoint(transition);
       this.pendingCheckpoints.set(checkpoint.id, checkpoint);
-      
+
       if (governanceCheck) {
         const approved = await governanceCheck(checkpoint);
         if (!approved) {
@@ -346,19 +356,19 @@ export class StateMachine {
         }
       } else {
         // Store checkpoint for later resolution
-        return { 
-          success: false, 
+        return {
+          success: false,
           error: 'Governance checkpoint pending approval',
-          state: this.currentState 
+          state: this.currentState,
         };
       }
     }
 
     // Execute transition
     const fromState = this.currentState.currentStep;
-    
+
     // Run onExit for current state
-    const currentStateDef = this.config.states.find(s => s.name === fromState);
+    const currentStateDef = this.config.states.find((s) => s.name === fromState);
     if (currentStateDef?.onExit) {
       currentStateDef.onExit(this.currentState);
     }
@@ -375,7 +385,7 @@ export class StateMachine {
     this.addMemoryEntry('action', `Transitioned from ${fromState} to ${toState}`);
 
     // Run onEnter for new state
-    const newStateDef = this.config.states.find(s => s.name === toState);
+    const newStateDef = this.config.states.find((s) => s.name === toState);
     if (newStateDef?.onEnter) {
       this.currentState = newStateDef.onEnter(this.currentState);
     }
@@ -421,10 +431,10 @@ export class StateMachine {
       timestamp: new Date().toISOString(),
       comment,
     });
-    
+
     checkpoint.status = 'approved';
     checkpoint.resolvedAt = new Date().toISOString();
-    
+
     this.pendingCheckpoints.delete(checkpointId);
     return true;
   }
@@ -442,10 +452,10 @@ export class StateMachine {
       timestamp: new Date().toISOString(),
       comment,
     });
-    
+
     checkpoint.status = 'rejected';
     checkpoint.resolvedAt = new Date().toISOString();
-    
+
     this.pendingCheckpoints.delete(checkpointId);
     return true;
   }
@@ -453,11 +463,7 @@ export class StateMachine {
   /**
    * Add memory entry
    */
-  addMemoryEntry(
-    type: MemoryEntry['type'],
-    content: string,
-    metadata?: Record<string, any>
-  ): void {
+  addMemoryEntry(type: MemoryEntry['type'], content: string, metadata?: Record<string, any>): void {
     if (!this.currentState) return;
 
     this.currentState.memory.history.push({
@@ -466,7 +472,7 @@ export class StateMachine {
       content,
       metadata,
     });
-    
+
     this.currentState.memory.updatedAt = new Date().toISOString();
     persistState(this.currentState, this.config.persistence);
   }
@@ -476,7 +482,7 @@ export class StateMachine {
    */
   getMemoryByType(type: MemoryEntry['type']): MemoryEntry[] {
     if (!this.currentState) return [];
-    return this.currentState.memory.history.filter(e => e.type === type);
+    return this.currentState.memory.history.filter((e) => e.type === type);
   }
 
   /**
@@ -484,16 +490,18 @@ export class StateMachine {
    */
   generateSummary(): string {
     if (!this.currentState) return 'No active state';
-    
+
     const reflections = this.getMemoryByType('reflection');
     const actions = this.getMemoryByType('action');
-    
-    return `Task ${this.currentState.memory.taskId}:\n` +
+
+    return (
+      `Task ${this.currentState.memory.taskId}:\n` +
       `- Current Step: ${this.currentState.currentStep}\n` +
       `- Governance Mode: ${this.currentState.governanceMode}\n` +
       `- Memory Entries: ${this.currentState.memory.history.length}\n` +
       `- Actions Taken: ${actions.length}\n` +
-      `- Reflections: ${reflections.length}`;
+      `- Reflections: ${reflections.length}`
+    );
   }
 
   /**
@@ -501,7 +509,7 @@ export class StateMachine {
    */
   isTerminal(): boolean {
     if (!this.currentState) return true;
-    const stateDef = this.config.states.find(s => s.name === this.currentState!.currentStep);
+    const stateDef = this.config.states.find((s) => s.name === this.currentState!.currentStep);
     return stateDef?.type === 'end';
   }
 

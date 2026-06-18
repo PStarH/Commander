@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { WarRoomStore } from './store';
+import type { IWarRoomStore } from './store';
 import {
   proactiveConflictCheck,
   reactiveConflictMonitor,
@@ -8,7 +8,7 @@ import {
   ProposedAction,
 } from './conflictDetection';
 
-export function createConflictRouter(store: WarRoomStore): Router {
+export function createConflictRouter(store: IWarRoomStore): Router {
   const router = Router();
 
   router.post('/projects/:projectId/conflict-detection/proactive', (req, res) => {
@@ -26,7 +26,7 @@ export function createConflictRouter(store: WarRoomStore): Router {
       return res.status(400).json({ error: 'agentId and proposedAction are required' });
     }
 
-    const agent = snapshot.agents.find(a => a.agentId === agentId);
+    const agent = snapshot.agents.find((a) => a.agentId === agentId);
     if (!agent) {
       return res.status(404).json({ error: 'Agent not found' });
     }
@@ -36,12 +36,12 @@ export function createConflictRouter(store: WarRoomStore): Router {
       name: agent.agentName,
       role: agent.status,
       specialties: agent.specialty ? [agent.specialty] : undefined,
-      currentTaskId: snapshot.missions.find(m => m.assignedAgentId === agentId)?.id,
+      currentTaskId: snapshot.missions.find((m) => m.assignedAgentId === agentId)?.id,
     };
 
     const otherAgents: ConflictAgent[] = snapshot.agents
-      .filter(a => a.agentId !== agentId)
-      .map(a => ({
+      .filter((a) => a.agentId !== agentId)
+      .map((a) => ({
         id: a.agentId,
         name: a.agentName,
         role: a.status,
@@ -50,12 +50,13 @@ export function createConflictRouter(store: WarRoomStore): Router {
 
     const result = proactiveConflictCheck(conflictAgent, proposedAction, {
       otherAgents,
-      activeMissions: snapshot.missions.map(m => ({
+      activeMissions: snapshot.missions.map((m) => ({
         id: m.id,
         assignedAgentId: m.assignedAgentId,
         priority: m.priority,
       })),
-      governanceMode: snapshot.missions.find(m => m.assignedAgentId === agentId)?.governanceMode as 'AUTO' | 'GUARDED' | 'MANUAL' | undefined,
+      governanceMode: snapshot.missions.find((m) => m.assignedAgentId === agentId)
+        ?.governanceMode as 'AUTO' | 'GUARDED' | 'MANUAL' | undefined,
     });
 
     res.json(result);
@@ -75,7 +76,7 @@ export function createConflictRouter(store: WarRoomStore): Router {
       return res.status(400).json({ error: 'recentActions array is required' });
     }
 
-    const agents: ConflictAgent[] = snapshot.agents.map(a => ({
+    const agents: ConflictAgent[] = snapshot.agents.map((a) => ({
       id: a.agentId,
       name: a.agentName,
       role: a.status,
@@ -116,7 +117,9 @@ export function createConflictRouter(store: WarRoomStore): Router {
       }
     }
 
-    const highPriorityMissions = snapshot.missions.filter(m => m.priority === 'HIGH' || m.priority === 'CRITICAL');
+    const highPriorityMissions = snapshot.missions.filter(
+      (m) => m.priority === 'HIGH' || m.priority === 'CRITICAL',
+    );
     if (highPriorityMissions.length > 3) {
       potentialConflicts.push({
         type: 'GOAL',
@@ -125,7 +128,9 @@ export function createConflictRouter(store: WarRoomStore): Router {
       });
     }
 
-    const manualMissions = snapshot.missions.filter(m => m.governanceMode === 'MANUAL' && m.status === 'RUNNING');
+    const manualMissions = snapshot.missions.filter(
+      (m) => m.governanceMode === 'MANUAL' && m.status === 'RUNNING',
+    );
     if (manualMissions.length > 2) {
       potentialConflicts.push({
         type: 'POLICY',
@@ -137,9 +142,14 @@ export function createConflictRouter(store: WarRoomStore): Router {
     res.json({
       agentWorkloads: Object.fromEntries(agentWorkloads),
       potentialConflicts,
-      recommendations: potentialConflicts.length > 0
-        ? ['Consider redistributing workload among agents', 'Review mission priorities', 'Evaluate governance mode settings']
-        : ['No immediate conflict risks detected'],
+      recommendations:
+        potentialConflicts.length > 0
+          ? [
+              'Consider redistributing workload among agents',
+              'Review mission priorities',
+              'Evaluate governance mode settings',
+            ]
+          : ['No immediate conflict risks detected'],
     });
   });
 

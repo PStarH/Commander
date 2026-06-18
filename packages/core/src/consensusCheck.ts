@@ -1,7 +1,7 @@
 /**
  * Consensus Check
  * 基于 ULTIMATE-FRAMEWORK.md 设计
- * 
+ *
  * Core insight: 关键决策需要多模型共识
  * - 收集多个模型的独立判断
  * - 分析一致性程度
@@ -26,7 +26,7 @@ export interface ModelVote {
   modelId: string;
   modelName: string;
   decision: string;
-  confidence: number;      // 0-1
+  confidence: number; // 0-1
   reasoning: string;
   timestamp: string;
 }
@@ -37,7 +37,7 @@ export interface ConsensusCheck {
   context: string;
   votes: ModelVote[];
   consensusLevel: ConsensusLevel;
-  consensusScore: number;  // 0-1, 一致性分数
+  consensusScore: number; // 0-1, 一致性分数
   agreedDecision?: string;
   disagreementSummary?: string;
   createdAt: string;
@@ -48,9 +48,9 @@ export interface ConsensusCheck {
 
 export interface ConsensusConfig {
   minVoters: number;
-  agreementThreshold: number;      // 达到共识的阈值
+  agreementThreshold: number; // 达到共识的阈值
   strongAgreementThreshold: number; // 强共识阈值
-  lowConsensusThreshold: number;   // 低共识阈值
+  lowConsensusThreshold: number; // 低共识阈值
   timeoutMs: number;
   enableDiscussion: boolean;
 }
@@ -74,7 +74,7 @@ const DEFAULT_CONFIG: ConsensusConfig = {
   strongAgreementThreshold: 0.95,
   lowConsensusThreshold: 0.5,
   timeoutMs: 30000,
-  enableDiscussion: true
+  enableDiscussion: true,
 };
 
 // ========================================
@@ -93,6 +93,9 @@ export class ConsensusChecker {
    * 创建共识检查
    */
   createCheck(question: string, context: string = ''): string {
+    // Auto-prune stale checks to prevent unbounded growth in long sessions
+    if (this.checks.size > 50) this.clearOldChecks();
+
     const check: ConsensusCheck = {
       id: generateUUID(),
       question,
@@ -101,7 +104,7 @@ export class ConsensusChecker {
       consensusLevel: 'low',
       consensusScore: 0,
       requiresDiscussion: false,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
     };
 
     this.checks.set(check.id, check);
@@ -117,10 +120,25 @@ export class ConsensusChecker {
     modelName: string,
     decision: string,
     confidence: number,
-    reasoning: string
+    reasoning: string,
   ): boolean {
     const check = this.checks.get(checkId);
     if (!check) return false;
+
+    // Dedup: replace existing vote from same model
+    const existingIdx = check.votes.findIndex((v) => v.modelId === modelId);
+    if (existingIdx >= 0) {
+      check.votes[existingIdx] = {
+        modelId,
+        modelName,
+        decision,
+        confidence,
+        reasoning,
+        timestamp: new Date().toISOString(),
+      };
+      this.updateConsensus(check);
+      return true;
+    }
 
     const vote: ModelVote = {
       modelId,
@@ -128,7 +146,7 @@ export class ConsensusChecker {
       decision,
       confidence,
       reasoning,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
 
     check.votes.push(vote);
@@ -185,7 +203,7 @@ export class ConsensusChecker {
     }
 
     // 简单的文本相似度计算
-    const decisions = votes.map(v => v.decision.toLowerCase().trim());
+    const decisions = votes.map((v) => v.decision.toLowerCase().trim());
     const agreements: number[] = [];
 
     // 两两比较
@@ -195,16 +213,16 @@ export class ConsensusChecker {
       }
     }
 
-    // 加权平均 (考虑 confidence)
+    // 加权平均 (confidence 作为权重)
+    const avgSimilarity =
+      agreements.length > 0 ? agreements.reduce((a, b) => a + b, 0) / agreements.length : 1.0;
     let weightedSum = 0;
     let weightTotal = 0;
     for (const vote of votes) {
-      weightedSum += vote.confidence;
-      weightTotal += 1;
+      weightedSum += vote.confidence * vote.confidence;
+      weightTotal += vote.confidence;
     }
-
-    const avgSimilarity = agreements.reduce((a, b) => a + b, 0) / agreements.length;
-    const avgConfidence = weightedSum / weightTotal;
+    const avgConfidence = weightTotal > 0 ? weightedSum / weightTotal : 0;
 
     // 综合分数: 相似度 * 0.7 + 置信度 * 0.3
     const overall = avgSimilarity * 0.7 + avgConfidence * 0.3;
@@ -228,7 +246,7 @@ export class ConsensusChecker {
     const words1 = new Set(text1.split(/\s+/));
     const words2 = new Set(text2.split(/\s+/));
 
-    const intersection = new Set([...words1].filter(x => words2.has(x)));
+    const intersection = new Set([...words1].filter((x) => words2.has(x)));
     const union = new Set([...words1, ...words2]);
 
     return intersection.size / union.size;
@@ -237,12 +255,28 @@ export class ConsensusChecker {
   /**
    * 选择共同决策
    */
-  private selectAgreedDecision(votes: ModelVote[], scores: { overall: number; byModel: Map<string, number> }): string {
-    // 按置信度排序
-    const sorted = [...votes].sort((a, b) => b.confidence - a.confidence);
-    
-    // 找最高置信度的决策
-    return sorted[0].decision;
+  private selectAgreedDecision(
+    votes: ModelVote[],
+    scores: { overall: number; byModel: Map<string, number> },
+  ): string {
+    // 多数投票：按决策分组，票数相同则比较总置信度
+    const decisionCounts = new Map<string, { count: number; totalConfidence: number }>();
+    for (const vote of votes) {
+      const entry = decisionCounts.get(vote.decision) || { count: 0, totalConfidence: 0 };
+      entry.count++;
+      entry.totalConfidence += vote.confidence;
+      decisionCounts.set(vote.decision, entry);
+    }
+    let best = { decision: votes[0]?.decision ?? 'no consensus', count: 0, totalConfidence: 0 };
+    for (const [decision, entry] of decisionCounts) {
+      if (
+        entry.count > best.count ||
+        (entry.count === best.count && entry.totalConfidence > best.totalConfidence)
+      ) {
+        best = { decision, count: entry.count, totalConfidence: entry.totalConfidence };
+      }
+    }
+    return best.decision;
   }
 
   /**
@@ -250,7 +284,7 @@ export class ConsensusChecker {
    */
   private summarizeDisagreements(votes: ModelVote[]): string {
     const disagreements: string[] = [];
-    
+
     for (const vote of votes) {
       disagreements.push(`[${vote.modelName}] ${vote.decision}: ${vote.reasoning}`);
     }
@@ -284,12 +318,13 @@ export class ConsensusChecker {
     if (!check) return undefined;
 
     const result: ConsensusResult = {
-      decision: check.agreedDecision || check.votes[0].decision,
+      decision:
+        check.agreedDecision || (check.votes.length > 0 ? check.votes[0].decision : 'no consensus'),
       consensusLevel: check.consensusLevel,
       consensusScore: check.consensusScore,
       confidence: this.scoreToConfidence(check.consensusScore),
       requiresAction: true,
-      actionType: this.determineAction(check)
+      actionType: this.determineAction(check),
     };
 
     return result;
@@ -325,13 +360,16 @@ export class ConsensusChecker {
    */
   async waitForVotes(checkId: string): Promise<ConsensusCheck | null> {
     const startTime = Date.now();
-    
+
     while (Date.now() - startTime < this.config.timeoutMs) {
       const check = this.checks.get(checkId);
       if (check && check.votes.length >= this.config.minVoters) {
         return check;
       }
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => {
+        const t = setTimeout(resolve, 100);
+        t.unref();
+      });
     }
 
     return null; // 超时
@@ -347,18 +385,19 @@ export class ConsensusChecker {
     byLevel: Record<ConsensusLevel, number>;
   } {
     const checks = Array.from(this.checks.values());
-    const completed = checks.filter(c => c.completedAt);
+    const completed = checks.filter((c) => c.completedAt);
 
-    const avgScore = completed.length > 0
-      ? completed.reduce((sum, c) => sum + c.consensusScore, 0) / completed.length
-      : 0;
+    const avgScore =
+      completed.length > 0
+        ? completed.reduce((sum, c) => sum + c.consensusScore, 0) / completed.length
+        : 0;
 
     const byLevel: Record<ConsensusLevel, number> = {
       unanimous: 0,
       strong: 0,
       moderate: 0,
       low: 0,
-      diverged: 0
+      diverged: 0,
     };
 
     for (const check of completed) {
@@ -369,7 +408,7 @@ export class ConsensusChecker {
       totalChecks: checks.length,
       completedChecks: completed.length,
       averageConsensusScore: avgScore,
-      byLevel
+      byLevel,
     };
   }
 
@@ -382,7 +421,7 @@ export class ConsensusChecker {
 
     for (const [id, check] of this.checks.entries()) {
       const created = new Date(check.createdAt).getTime();
-      if (created < threshold && check.completedAt) {
+      if (created < threshold) {
         this.checks.delete(id);
         removed++;
       }

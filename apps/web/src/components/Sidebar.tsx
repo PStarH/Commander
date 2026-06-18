@@ -1,5 +1,13 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, Kanban, ScrollText, BookOpen, ShieldCheck, ChevronRight } from 'lucide-react';
+import {
+  LayoutDashboard,
+  Users,
+  Kanban,
+  ScrollText,
+  BookOpen,
+  ShieldCheck,
+  ChevronRight,
+} from 'lucide-react';
 
 const NAV_ITEMS = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -24,7 +32,7 @@ export function Sidebar() {
       </div>
 
       <nav className="sidebar-nav">
-        {NAV_ITEMS.map(item => (
+        {NAV_ITEMS.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

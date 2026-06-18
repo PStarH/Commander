@@ -46,7 +46,6 @@ function makeReport(overrides: Partial<ReviewReport> = {}): ReviewReport {
 // ============================================================================
 
 describe('ReviewAgent', () => {
-
   describe('formatReviewOutput', () => {
     it('shows passed status for clean report', () => {
       const report = makeReport();
@@ -180,7 +179,10 @@ describe('ReviewAgent', () => {
         guidelines: ['No secrets in code', 'Use strict TypeScript'],
       };
       const report = await executeReview(config);
-      assert.deepStrictEqual(report.guidelinesUsed, ['No secrets in code', 'Use strict TypeScript']);
+      assert.deepStrictEqual(report.guidelinesUsed, [
+        'No secrets in code',
+        'Use strict TypeScript',
+      ]);
     });
   });
 
@@ -201,7 +203,9 @@ describe('ReviewAgent', () => {
         makeFinding({ severity: 'P1', title: 'High' }),
       ];
       const severityOrder = ['P0', 'P1', 'P2', 'P3'];
-      findings.sort((a, b) => severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity));
+      findings.sort(
+        (a, b) => severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity),
+      );
       const report = makeReport({ findings });
       const output = formatReviewOutput(report);
       const p0Idx = output.indexOf('[P0]');
@@ -224,7 +228,8 @@ describe('ReviewAgent', () => {
       const report = makeReport({
         passed: false,
         findings: [makeFinding({ severity: 'P0' }), makeFinding({ severity: 'P1' })],
-        summary: 'Found 2 issue(s) (P0: 1, P1: 1, P2: 0, P3: 0). 1 critical issue(s) must be fixed.',
+        summary:
+          'Found 2 issue(s) (P0: 1, P1: 1, P2: 0, P3: 0). 1 critical issue(s) must be fixed.',
       });
       assert.ok(report.summary.includes('critical'));
     });
@@ -234,7 +239,14 @@ describe('ReviewAgent', () => {
     it('parses JSON array format', () => {
       const input = JSON.stringify([
         { severity: 'P0', title: 'Bug', message: 'Critical bug found', confidence: 0.9 },
-        { severity: 'P1', title: 'Warning', message: 'Should fix this', file: 'src/a.ts', line: 10, confidence: 0.8 },
+        {
+          severity: 'P1',
+          title: 'Warning',
+          message: 'Should fix this',
+          file: 'src/a.ts',
+          line: 10,
+          confidence: 0.8,
+        },
       ]);
       const result = parseFindings(input);
       assert.strictEqual(result.length, 2);
@@ -246,7 +258,8 @@ describe('ReviewAgent', () => {
     });
 
     it('parses JSON in code fences', () => {
-      const input = 'Some text\n```json\n[\n  {"severity": "P2", "title": "Nit", "message": "Style issue", "confidence": 0.6}\n]\n```';
+      const input =
+        'Some text\n```json\n[\n  {"severity": "P2", "title": "Nit", "message": "Style issue", "confidence": 0.6}\n]\n```';
       const result = parseFindings(input);
       assert.strictEqual(result.length, 1);
       assert.strictEqual(result[0].severity, 'P2');
@@ -254,7 +267,8 @@ describe('ReviewAgent', () => {
     });
 
     it('parses markdown bullet format', () => {
-      const input = '**P1** Missing validation — The endpoint lacks input validation. `src/api.ts` line:42 suggestion: Add zod schema.';
+      const input =
+        '**P1** Missing validation — The endpoint lacks input validation. `src/api.ts` line:42 suggestion: Add zod schema.';
       const result = parseFindings(input);
       assert.strictEqual(result.length, 1);
       assert.strictEqual(result[0].severity, 'P1');
@@ -272,13 +286,15 @@ describe('ReviewAgent', () => {
     });
 
     it('normalizes severity strings', () => {
-      const result = parseFindings(JSON.stringify([
-        { severity: 'CRITICAL', title: 'T1', message: 'M1', confidence: 0.9 },
-        { severity: 'HIGH', title: 'T2', message: 'M2', confidence: 0.8 },
-        { severity: 'MEDIUM', title: 'T3', message: 'M3', confidence: 0.7 },
-        { severity: 'LOW', title: 'T4', message: 'M4', confidence: 0.6 },
-        { severity: '0', title: 'T5', message: 'M5', confidence: 0.5 },
-      ]));
+      const result = parseFindings(
+        JSON.stringify([
+          { severity: 'CRITICAL', title: 'T1', message: 'M1', confidence: 0.9 },
+          { severity: 'HIGH', title: 'T2', message: 'M2', confidence: 0.8 },
+          { severity: 'MEDIUM', title: 'T3', message: 'M3', confidence: 0.7 },
+          { severity: 'LOW', title: 'T4', message: 'M4', confidence: 0.6 },
+          { severity: '0', title: 'T5', message: 'M5', confidence: 0.5 },
+        ]),
+      );
       assert.strictEqual(result[0].severity, 'P0');
       assert.strictEqual(result[1].severity, 'P1');
       assert.strictEqual(result[2].severity, 'P2');

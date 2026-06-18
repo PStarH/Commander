@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { canTransition, A2A_TERMINAL_STATES, A2A_INTERRUPTED_STATES, A2A_ERROR, A2A_METHODS } from '../src/mcp/a2aCompliance';
+import {
+  canTransition,
+  A2A_TERMINAL_STATES,
+  A2A_INTERRUPTED_STATES,
+  A2A_ERROR,
+  A2A_METHODS,
+} from '../src/mcp/a2aCompliance';
 import type { A2ATaskState } from '../src/mcp/a2aCompliance';
 
 describe('A2A State Machine', () => {
@@ -62,7 +68,15 @@ describe('A2A State Machine', () => {
   });
 
   it('A2A_METHODS covers all required methods', () => {
-    const required = ['message/send', 'message/stream', 'tasks/get', 'tasks/list', 'tasks/cancel', 'tasks/resubscribe', 'agent/getCard'];
+    const required = [
+      'message/send',
+      'message/stream',
+      'tasks/get',
+      'tasks/list',
+      'tasks/cancel',
+      'tasks/resubscribe',
+      'agent/getCard',
+    ];
     for (const method of required) {
       assert.ok(Object.values(A2A_METHODS).includes(method), `Missing: ${method}`);
     }

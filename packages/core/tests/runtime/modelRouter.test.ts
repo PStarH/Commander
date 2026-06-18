@@ -21,9 +21,14 @@ describe('ModelRouter', () => {
   describe('custom model registration', () => {
     it('registers and retrieves a custom model', () => {
       const custom: ModelConfig = {
-        id: 'my-model', provider: 'custom', tier: 'eco',
-        costPer1KInput: 0.001, costPer1KOutput: 0.002,
-        capabilities: ['code'], contextWindow: 8000, priority: 0,
+        id: 'my-model',
+        provider: 'custom',
+        tier: 'eco',
+        costPer1KInput: 0.001,
+        costPer1KOutput: 0.002,
+        capabilities: ['code'],
+        contextWindow: 8000,
+        priority: 0,
       };
       router.registerModel(custom);
       expect(router.getModel('my-model')).toBeDefined();
@@ -51,32 +56,38 @@ describe('ModelRouter', () => {
     });
 
     it('routes high complexity tasks to power tier', () => {
-      const decision = router.route(makeContext({
-        goal: 'A'.repeat(600),
-        tokenBudget: 64000,
-        availableTools: ['tool1', 'tool2', 'tool3', 'tool4', 'tool5', 'tool6'],
-      }));
+      const decision = router.route(
+        makeContext({
+          goal: 'A'.repeat(600),
+          tokenBudget: 64000,
+          availableTools: ['tool1', 'tool2', 'tool3', 'tool4', 'tool5', 'tool6'],
+        }),
+      );
       expect(['power', 'standard']).toContain(decision.tier);
     });
 
     it('routes critical risk to consensus tier', () => {
-      const decision = router.route(makeContext({
-        goal: 'A'.repeat(600),
-        tokenBudget: 64000,
-        availableTools: ['tool1', 'tool2', 'tool3', 'tool4', 'tool5', 'tool6'],
-        contextData: {
-          governanceProfile: { riskLevel: 'CRITICAL' },
-        },
-      }));
+      const decision = router.route(
+        makeContext({
+          goal: 'A'.repeat(600),
+          tokenBudget: 64000,
+          availableTools: ['tool1', 'tool2', 'tool3', 'tool4', 'tool5', 'tool6'],
+          contextData: {
+            governanceProfile: { riskLevel: 'CRITICAL' },
+          },
+        }),
+      );
       expect(['consensus', 'power']).toContain(decision.tier);
     });
 
     it('routes high risk to power tier', () => {
-      const decision = router.route(makeContext({
-        contextData: {
-          governanceProfile: { riskLevel: 'HIGH' },
-        },
-      }));
+      const decision = router.route(
+        makeContext({
+          contextData: {
+            governanceProfile: { riskLevel: 'HIGH' },
+          },
+        }),
+      );
       expect(decision.tier).toBe('power');
     });
 

@@ -8,7 +8,12 @@ export interface ExecResult {
   killed: boolean;
 }
 
-function formatResult(r: { stdout: string; stderr: string; exitCode: number; durationMs: number }): ExecResult {
+function formatResult(r: {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  durationMs: number;
+}): ExecResult {
   return {
     stdout: r.stdout ?? '',
     stderr: r.stderr ?? '',

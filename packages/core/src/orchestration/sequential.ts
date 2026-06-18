@@ -1,11 +1,11 @@
 /**
  * Sequential Orchestration Pattern Implementation
- * 
+ *
  * Based on research findings from Microsoft AI Agent Orchestration Patterns:
  * - Linear pipeline where each agent processes previous output
  * - Deterministic, predefined order
  * - Best for: Progressive refinement with clear step dependencies
- * 
+ *
  * Reference: research-notes.md - Multi-Agent Orchestration Patterns (2026-04-09)
  */
 
@@ -19,31 +19,31 @@ import { measureTaskComplexity, shouldDecompose } from '../index';
 export interface SequentialStep {
   /** Unique step identifier */
   id: string;
-  
+
   /** Human-readable step name */
   name: string;
-  
+
   /** Agent responsible for this step */
   agentId: string;
-  
+
   /** Step description/objective */
   objective: string;
-  
+
   /** Expected input schema (JSON Schema) */
   inputSchema?: Record<string, unknown>;
-  
+
   /** Expected output schema (JSON Schema) */
   outputSchema?: Record<string, unknown>;
-  
+
   /** Maximum time allowed for this step (ms) */
   timeout?: number;
-  
+
   /** Number of retry attempts on failure */
   maxRetries?: number;
-  
+
   /** Whether step can be skipped if previous step failed */
   skippable?: boolean;
-  
+
   /** Step-specific validation function */
   validator?: (output: unknown) => ValidationResult;
 }
@@ -75,22 +75,22 @@ export interface ValidationResult {
 export interface SequentialContext {
   /** Pipeline execution ID */
   executionId: string;
-  
+
   /** Project context */
   projectId: string;
-  
+
   /** Initial input to the pipeline */
   initialInput: unknown;
-  
+
   /** Results from previous steps */
   previousResults: SequentialStepResult[];
-  
+
   /** Current step index */
   currentStepIndex: number;
-  
+
   /** Pipeline metadata */
   metadata: Record<string, unknown>;
-  
+
   /** Abort signal for cancellation */
   abortSignal?: AbortSignal;
 }
@@ -98,7 +98,7 @@ export interface SequentialContext {
 /**
  * Status of a sequential pipeline execution.
  */
-export type SequentialPipelineStatus = 
+export type SequentialPipelineStatus =
   | 'PENDING'
   | 'RUNNING'
   | 'COMPLETED'
@@ -112,27 +112,27 @@ export type SequentialPipelineStatus =
 export interface SequentialPipeline {
   /** Unique pipeline identifier */
   id: string;
-  
+
   /** Human-readable pipeline name */
   name: string;
-  
+
   /** Pipeline description */
   description?: string;
-  
+
   /** Ordered list of steps */
   steps: SequentialStep[];
-  
+
   /** Pipeline-level timeout (ms) */
   timeout?: number;
-  
+
   /** Whether to stop on first failure */
   failFast?: boolean;
   /** Legacy alias for failFast */
   stopOnError?: boolean;
-  
+
   /** Maximum parallel retries across pipeline */
   maxParallelRetries?: number;
-  
+
   /** Checkpoint interval (number of steps between checkpoints) */
   checkpointInterval?: number;
 
@@ -164,34 +164,34 @@ export interface SequentialPipelineRun {
 export interface OrchestrationMetrics {
   /** Total execution time (ms) */
   totalDuration: number;
-  
+
   /** Sum of all step durations */
   stepDurationSum: number;
-  
+
   /** Overhead time (coordination, validation, etc.) */
   overheadDuration: number;
-  
+
   /** Number of successful steps */
   successCount: number;
-  
+
   /** Number of failed steps */
   failureCount: number;
-  
+
   /** Number of skipped steps */
   skippedCount: number;
-  
+
   /** Number of timeout steps */
   timeoutCount: number;
-  
+
   /** Total retry attempts */
   retryCount: number;
-  
+
   /** Token usage across all steps */
   tokenUsage: TokenUsage;
-  
+
   /** Average step duration */
   averageStepDuration: number;
-  
+
   /** Step duration variance */
   stepDurationVariance: number;
 }
@@ -210,9 +210,16 @@ export interface TokenUsage {
  * Event handler for pipeline lifecycle events.
  */
 export interface SequentialEventHandler {
-  onPipelineStart?: (pipeline: SequentialPipeline, context: SequentialContext) => void | Promise<void>;
+  onPipelineStart?: (
+    pipeline: SequentialPipeline,
+    context: SequentialContext,
+  ) => void | Promise<void>;
   onStepStart?: (step: SequentialStep, context: SequentialContext) => void | Promise<void>;
-  onStepComplete?: (step: SequentialStep, result: SequentialStepResult, context: SequentialContext) => void | Promise<void>;
+  onStepComplete?: (
+    step: SequentialStep,
+    result: SequentialStepResult,
+    context: SequentialContext,
+  ) => void | Promise<void>;
   onPipelineComplete?: (run: SequentialPipelineRun) => void | Promise<void>;
   onPipelineError?: (error: Error, context: SequentialContext) => void | Promise<void>;
 }
@@ -223,7 +230,7 @@ export interface SequentialEventHandler {
 export class SequentialPipelineBuilder {
   private pipeline: SequentialPipeline;
   private steps: SequentialStep[] = [];
-  
+
   constructor(id: string, name: string) {
     this.pipeline = {
       id,
@@ -232,7 +239,7 @@ export class SequentialPipelineBuilder {
       failFast: true,
     };
   }
-  
+
   /**
    * Add a step to the pipeline.
    */
@@ -244,7 +251,7 @@ export class SequentialPipelineBuilder {
     });
     return this;
   }
-  
+
   /**
    * Set pipeline description.
    */
@@ -252,7 +259,7 @@ export class SequentialPipelineBuilder {
     this.pipeline.description = description;
     return this;
   }
-  
+
   /**
    * Set pipeline timeout.
    */
@@ -260,7 +267,7 @@ export class SequentialPipelineBuilder {
     this.pipeline.timeout = timeout;
     return this;
   }
-  
+
   /**
    * Set fail-fast behavior.
    */
@@ -268,7 +275,7 @@ export class SequentialPipelineBuilder {
     this.pipeline.failFast = failFast;
     return this;
   }
-  
+
   /**
    * Set checkpoint interval.
    */
@@ -276,7 +283,7 @@ export class SequentialPipelineBuilder {
     this.pipeline.checkpointInterval = interval;
     return this;
   }
-  
+
   /**
    * Build the final pipeline.
    */
@@ -295,26 +302,27 @@ export function calculateOrchestrationMetrics(
   startTime: number,
   endTime: number,
   stepResults: SequentialStepResult[],
-  tokenUsage: TokenUsage
+  tokenUsage: TokenUsage,
 ): OrchestrationMetrics {
   const totalDuration = endTime - startTime;
   const stepDurationSum = stepResults.reduce((sum, r) => sum + r.duration, 0);
   const overheadDuration = totalDuration - stepDurationSum;
-  
-  const successCount = stepResults.filter(r => r.status === 'SUCCESS').length;
-  const failureCount = stepResults.filter(r => r.status === 'FAILURE').length;
-  const skippedCount = stepResults.filter(r => r.status === 'SKIPPED').length;
-  const timeoutCount = stepResults.filter(r => r.status === 'TIMEOUT').length;
-  
-  const durations = stepResults.map(r => r.duration);
-  const averageStepDuration = durations.length > 0
-    ? durations.reduce((a, b) => a + b, 0) / durations.length
-    : 0;
-  
-  const stepDurationVariance = durations.length > 1
-    ? durations.reduce((sum, d) => sum + Math.pow(d - averageStepDuration, 2), 0) / durations.length
-    : 0;
-  
+
+  const successCount = stepResults.filter((r) => r.status === 'SUCCESS').length;
+  const failureCount = stepResults.filter((r) => r.status === 'FAILURE').length;
+  const skippedCount = stepResults.filter((r) => r.status === 'SKIPPED').length;
+  const timeoutCount = stepResults.filter((r) => r.status === 'TIMEOUT').length;
+
+  const durations = stepResults.map((r) => r.duration);
+  const averageStepDuration =
+    durations.length > 0 ? durations.reduce((a, b) => a + b, 0) / durations.length : 0;
+
+  const stepDurationVariance =
+    durations.length > 1
+      ? durations.reduce((sum, d) => sum + Math.pow(d - averageStepDuration, 2), 0) /
+        durations.length
+      : 0;
+
   // Count retries (steps that appear multiple times)
   const seenSteps = new Set<string>();
   let retryCount = 0;
@@ -324,7 +332,7 @@ export function calculateOrchestrationMetrics(
     }
     seenSteps.add(result.stepId);
   }
-  
+
   return {
     totalDuration,
     stepDurationSum,
@@ -346,8 +354,19 @@ export function calculateOrchestrationMetrics(
 export type SequentialEvent =
   | { type: 'PIPELINE_START'; pipelineId: string; executionId: string }
   | { type: 'STEP_START'; pipelineId: string; executionId: string; stepId: string }
-  | { type: 'STEP_COMPLETE'; pipelineId: string; executionId: string; stepId: string; result: SequentialStepResult }
-  | { type: 'PIPELINE_COMPLETE'; pipelineId: string; executionId: string; run: SequentialPipelineRun }
+  | {
+      type: 'STEP_COMPLETE';
+      pipelineId: string;
+      executionId: string;
+      stepId: string;
+      result: SequentialStepResult;
+    }
+  | {
+      type: 'PIPELINE_COMPLETE';
+      pipelineId: string;
+      executionId: string;
+      run: SequentialPipelineRun;
+    }
   | { type: 'PIPELINE_ERROR'; pipelineId: string; executionId: string; error: Error };
 
 /**
@@ -357,20 +376,20 @@ export type SequentialEvent =
 export function createSequentialPipelineFromStrategy(
   strategy: MultiAgentStrategy,
   context: CommanderRunContextV2,
-  taskComplexity?: TaskComplexity
+  taskComplexity?: TaskComplexity,
 ): SequentialPipeline {
   const pipelineId = `seq-${context.projectId}-${Date.now()}`;
   const builder = new SequentialPipelineBuilder(
     pipelineId,
-    `Sequential Pipeline for ${context.projectId}`
+    `Sequential Pipeline for ${context.projectId}`,
   );
-  
+
   // Get agent roster
   const agents = context.agentRoster;
-  
+
   // Primary agent as first step
   if (strategy.primaryAgentId) {
-    const primaryAgent = agents.find(a => a.id === strategy.primaryAgentId);
+    const primaryAgent = agents.find((a) => a.id === strategy.primaryAgentId);
     if (primaryAgent) {
       builder.addStep({
         name: `Primary Execution by ${primaryAgent.name}`,
@@ -382,11 +401,11 @@ export function createSequentialPipelineFromStrategy(
       });
     }
   }
-  
+
   // Reviewer agents as subsequent steps (sequential review)
   if (strategy.reviewerAgentIds && strategy.reviewerAgentIds.length > 0) {
     for (const reviewerId of strategy.reviewerAgentIds) {
-      const reviewer = agents.find(a => a.id === reviewerId);
+      const reviewer = agents.find((a) => a.id === reviewerId);
       if (reviewer) {
         builder.addStep({
           name: `Review by ${reviewer.name}`,
@@ -406,13 +425,13 @@ export function createSequentialPipelineFromStrategy(
       }
     }
   }
-  
+
   // Set pipeline-level configuration
   builder
     .setFailFast(strategy.kind === 'MANUAL_APPROVAL_GATE') // Fail fast for manual approval
     .setCheckpointInterval(2) // Checkpoint every 2 steps
     .setTimeout(taskComplexity && taskComplexity.level === 'CRITICAL' ? 600000 : 300000); // 10min for critical, 5min otherwise
-  
+
   return builder.build();
 }
 
@@ -422,23 +441,23 @@ export function createSequentialPipelineFromStrategy(
  */
 export function shouldUseSequentialOrchestration(
   strategy: MultiAgentStrategy,
-  complexity: TaskComplexity
+  complexity: TaskComplexity,
 ): boolean {
   // Sequential is best when:
   // 1. Strategy involves multiple agents in sequence
   if (strategy.kind === 'GUARDED_EXECUTION' || strategy.kind === 'SENATE_REVIEW') {
     return true;
   }
-  
+
   // 2. Complexity is HIGH (but not CRITICAL, which might need parallel)
   if (complexity.level === 'HIGH' || complexity.level === 'MEDIUM') {
     return true;
   }
-  
+
   // 3. Task has clear step dependencies
   if (complexity.dependencyDepth >= 2) {
     return true;
   }
-  
+
   return false;
 }

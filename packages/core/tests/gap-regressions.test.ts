@@ -36,7 +36,8 @@ describe('GAP-08: CircuitBreaker TOCTOU fix', () => {
 
   it('success in half-open resets to closed', () => {
     const cb = new CircuitBreaker(2, 100, 1);
-    cb.onFailure(); cb.onFailure();
+    cb.onFailure();
+    cb.onFailure();
     cb['state'] = 'HALF_OPEN' as any;
 
     cb.isAvailable(); // consume the one allowed slot
@@ -48,7 +49,8 @@ describe('GAP-08: CircuitBreaker TOCTOU fix', () => {
 
   it('failure in half-open re-opens circuit', () => {
     const cb = new CircuitBreaker(2, 100, 1);
-    cb.onFailure(); cb.onFailure();
+    cb.onFailure();
+    cb.onFailure();
     cb['state'] = 'HALF_OPEN' as any;
 
     cb.isAvailable(); // consume the one allowed slot
@@ -64,7 +66,7 @@ describe('GAP-08: CircuitBreaker TOCTOU fix', () => {
 
     // Simulate 5 concurrent availability checks
     const results = Array.from({ length: 5 }, () => cb.isAvailable());
-    const allowed = results.filter(r => r === true).length;
+    const allowed = results.filter((r) => r === true).length;
 
     assert.ok(allowed <= 2, `At most 2 requests should be allowed in half-open, got ${allowed}`);
   });
@@ -94,7 +96,9 @@ describe('GAP-14: Multi-language prompt injection detection', () => {
 
   it('allows normal multilingual content', async () => {
     const scanner = createContentScanner();
-    const result = await scanner.scan('こんにちは、今日はいい天気ですね。Help me write a Python function.');
+    const result = await scanner.scan(
+      'こんにちは、今日はいい天気ですね。Help me write a Python function.',
+    );
     assert.ok(result.isSafe, 'Normal multilingual content should not be blocked');
   });
 });
@@ -117,7 +121,10 @@ describe('GAP-23: MessageBus topic pruning', () => {
 
     // The pruning is timer-based, so we just verify the mechanism exists
     assert.ok(typeof bus.getActiveTopics === 'function', 'getActiveTopics method exists');
-    assert.ok(typeof bus.getAllSubscriberCounts === 'function', 'getAllSubscriberCounts method exists');
+    assert.ok(
+      typeof bus.getAllSubscriberCounts === 'function',
+      'getAllSubscriberCounts method exists',
+    );
   });
 
   it('tracks subscriber counts per topic', () => {

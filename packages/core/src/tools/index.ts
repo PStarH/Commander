@@ -1,5 +1,13 @@
 export { WebSearchTool, WebFetchTool } from './webSearchTool';
-export { FileReadTool, FileWriteTool, FileEditTool, FileSearchTool, FileListTool } from './fileSystemTool';
+export {
+  FileReadTool,
+  FileWriteTool,
+  FileEditTool,
+  FileSearchTool,
+  FileListTool,
+  GlobTool,
+} from './fileSystemTool';
+export { FileHashEditTool } from './fileHashEditTool';
 export { PythonExecuteTool, ShellExecuteTool } from './codeExecutionTool';
 export { MemoryStoreTool, MemoryRecallTool, MemoryListTool } from './persistenceTool';
 export { GitTool } from './gitTool';
@@ -20,56 +28,90 @@ export { CodeRefinerTool } from './codeRefinerTool';
 export { AnswerFormatTool } from './answerFormatTool';
 export { CodeFixerTool } from './codeFixer';
 export { SkillViewTool } from '../skills/skillViewTool';
+export { SearchConversationsTool } from './conversationSearchTool';
 export { ToolRegistry, TOOL_CATEGORIES } from './toolRegistry';
+export { createRequestHumanInputTool } from './requestHumanInputTool';
+export { createRequestToolTool } from './requestToolTool';
+export {
+  CheckpointSaveTool,
+  CheckpointRewindTool,
+  CheckpointListTool,
+  CheckpointCollapseTool,
+} from './checkpointTool';
+export { HandoffTool, HandoffCheckTool } from './handoffTool';
+
+// STRAP-consolidated resource tools (Single Tool Resource Action Pattern)
+export {
+  FileResourceTool,
+  MemoryResourceTool,
+  WebResourceTool,
+  BrowserResourceTool,
+  CodeResourceTool,
+  CheckpointResourceTool,
+  HandoffResourceTool,
+  ExecResourceTool,
+  MediaResourceTool,
+  SystemResourceTool,
+  createResourceTools,
+  wireResourceToolDependencies,
+} from './resourceTools';
 
 import type { Tool } from '../runtime/types';
-import { WebSearchTool, WebFetchTool } from './webSearchTool';
-import { FileReadTool, FileWriteTool, FileEditTool, FileSearchTool, FileListTool } from './fileSystemTool';
-import { PythonExecuteTool, ShellExecuteTool } from './codeExecutionTool';
-import { MemoryStoreTool, MemoryRecallTool, MemoryListTool } from './persistenceTool';
 import { GitTool } from './gitTool';
-import { BrowserSearchTool, BrowserFetchTool } from './browserTool';
 import { MetaTool, getBuiltinMetaSpecs } from './metaTool';
-import type { MetaToolSpec } from './metaTool';
 import { ExecuteScriptTool } from './scriptTool';
-import { VisionAnalyzeTool } from './multimodal/visionTool';
-import { PdfExtractTool } from './multimodal/pdfTool';
-import { ScreenshotCaptureTool } from './multimodal/screenshotTool';
-import { CodeSearchTool } from './codeSearchTool';
+import { VerificationTool } from './verificationTool';
 import { ApplyPatchTool } from './patchTool';
 import { CodeRefinerTool } from './codeRefinerTool';
 import { AnswerFormatTool } from './answerFormatTool';
 import { CodeFixerTool } from './codeFixer';
 import { SkillViewTool } from '../skills/skillViewTool';
+import { SearchConversationsTool } from './conversationSearchTool';
+import {
+  FileResourceTool,
+  MemoryResourceTool,
+  WebResourceTool,
+  BrowserResourceTool,
+  CodeResourceTool,
+  CheckpointResourceTool,
+  HandoffResourceTool,
+  ExecResourceTool,
+  MediaResourceTool,
+  SystemResourceTool,
+} from './resourceTools';
+import { FileHashEditTool } from './fileHashEditTool';
 
+/**
+ * Create the full set of tools exposed to the LLM.
+ *
+ * STRAP consolidation: only domain-level resource tools are registered for
+ * filesystem, memory, web, browser, code, checkpoint, handoff, execution,
+ * media, and system operations. The legacy granular CRUD tools are still
+ * exported and can be instantiated directly, but they are no longer exposed
+ * to the model to avoid the 10–30 tool degradation cliff.
+ */
 export function createAllTools(options?: { enableMetaTools?: boolean }): Map<string, Tool> {
   const tools = new Map<string, Tool>();
   const instances: [string, Tool][] = [
-    ['web_search', new WebSearchTool()],
-    ['web_fetch', new WebFetchTool()],
-    ['browser_search', new BrowserSearchTool()],
-    ['browser_fetch', new BrowserFetchTool()],
-    ['file_read', new FileReadTool()],
-    ['file_write', new FileWriteTool()],
-    ['file_edit', new FileEditTool()],
-    ['file_search', new FileSearchTool()],
-    ['file_list', new FileListTool()],
-    ['python_execute', new PythonExecuteTool()],
-    ['shell_execute', new ShellExecuteTool()],
-    ['memory_store', new MemoryStoreTool()],
-    ['memory_recall', new MemoryRecallTool()],
-    ['memory_list', new MemoryListTool()],
+    // STRAP-consolidated resource tools
+    ['file', new FileResourceTool()],
+    ['memory', new MemoryResourceTool()],
+    ['web', new WebResourceTool()],
+    ['browser', new BrowserResourceTool()],
+    ['code', new CodeResourceTool()],
+    ['checkpoint', new CheckpointResourceTool()],
+    ['handoff', new HandoffResourceTool()],
+    ['exec', new ExecResourceTool()],
+    ['media', new MediaResourceTool()],
+    ['system', new SystemResourceTool()],
+    // Single-domain tools that are already consolidated
     ['git', new GitTool()],
-    ['execute_script', new ExecuteScriptTool()],
-    ['vision_analyze', new VisionAnalyzeTool()],
-    ['pdf_extract', new PdfExtractTool()],
-    ['screenshot_capture', new ScreenshotCaptureTool()],
-    ['code_search', new CodeSearchTool()],
+    ['verify', new VerificationTool()],
     ['apply_patch', new ApplyPatchTool()],
-    ['refine_code', new CodeRefinerTool()],
+    ['file_hash_edit', new FileHashEditTool()],
     ['verify_answer', new AnswerFormatTool()],
-    ['fix_code', new CodeFixerTool()],
     ['skill_view', new SkillViewTool()],
+    ['search_conversations', new SearchConversationsTool()],
   ];
   for (const [name, tool] of instances) {
     tools.set(name, tool);
@@ -78,7 +120,7 @@ export function createAllTools(options?: { enableMetaTools?: boolean }): Map<str
   if (options?.enableMetaTools) {
     const subToolMap = new Map<string, (args: Record<string, unknown>) => Promise<string>>();
     for (const [name, tool] of tools) {
-      subToolMap.set(name, (args) => tool.execute(args));
+      subToolMap.set(name, (args) => Promise.resolve(tool.execute(args)).then(String));
     }
 
     for (const spec of getBuiltinMetaSpecs()) {
@@ -90,3 +132,22 @@ export function createAllTools(options?: { enableMetaTools?: boolean }): Map<str
 
   return tools;
 }
+
+/**
+ * Build a map of tool executor functions from a tool map.
+ * Useful for wiring programmatic tool callers (e.g., exec.script).
+ */
+export function buildToolExecutorMap(
+  tools: Map<string, Tool>,
+): Map<string, (args: Record<string, unknown>) => Promise<string>> {
+  const map = new Map<string, (args: Record<string, unknown>) => Promise<string>>();
+  for (const [name, tool] of tools) {
+    map.set(name, (args) => Promise.resolve(tool.execute(args)).then(String));
+  }
+  return map;
+}
+
+/** Legacy re-export for backward compatibility. */
+export { ExecuteScriptTool as _ExecuteScriptTool };
+export { CodeRefinerTool as _CodeRefinerTool };
+export { CodeFixerTool as _CodeFixerTool };

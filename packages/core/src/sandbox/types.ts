@@ -6,7 +6,7 @@
  */
 export type SandboxMode = 'read-only' | 'workspace-write' | 'full-access';
 export type NetworkPolicy = 'blocked' | 'allowlisted' | 'proxy' | 'full';
-export type SandboxMechanism = 'seatbelt' | 'bwrap' | 'appcontainer' | 'docker' | 'none';
+export type SandboxMechanism = 'seatbelt' | 'bwrap' | 'appcontainer' | 'docker' | 'gvisor' | 'none';
 
 export interface FileAccessPolicy {
   readablePaths: string[];
@@ -94,40 +94,5 @@ export type BackendConfig = SSHConfig | DockerExecConfig;
 export interface ExecutionBackend {
   readonly type: ExecutionBackendType;
   readonly available: boolean;
-  execute(
-    command: string,
-    workdir?: string,
-    timeout?: number,
-  ): Promise<SandboxExecutionResult>;
-}
-
-export interface SandboxProfile {
-  mode: SandboxMode;
-  network: NetworkPolicy;
-  filesystem: FileAccessPolicy;
-  allowedDomains?: string[];
-  envVarDenyList?: string[];
-  envVarAllowList?: string[];
-  timeout?: number;
-  memoryLimitMB?: number;
-  runAs?: string;
-}
-
-export interface SandboxExecutionResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  durationMs: number;
-  sandboxMechanism: SandboxMechanism;
-  violated?: string[];
-}
-
-export interface PlatformSandbox {
-  readonly name: SandboxMechanism;
-  readonly available: boolean;
-  execute(
-    command: string,
-    profile: SandboxProfile,
-    workdir?: string,
-  ): Promise<SandboxExecutionResult>;
+  execute(command: string, workdir?: string, timeout?: number): Promise<SandboxExecutionResult>;
 }

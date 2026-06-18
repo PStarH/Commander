@@ -15,8 +15,16 @@ import { MockLLMProvider } from '../packages/core/src/runtime/mockLLMProvider';
 import { ModelRouter, resetModelRouter } from '../packages/core/src/runtime/modelRouter';
 import { resetMessageBus } from '../packages/core/src/runtime/messageBus';
 import { resetTraceRecorder } from '../packages/core/src/runtime/executionTrace';
-import { resetPatternTracker, getPatternTracker } from '../packages/core/src/runtime/speculativeExecutor';
-import type { LLMRequest, LLMResponse, Tool, ToolDefinition } from '../packages/core/src/runtime/types';
+import {
+  resetPatternTracker,
+  getPatternTracker,
+} from '../packages/core/src/runtime/speculativeExecutor';
+import type {
+  LLMRequest,
+  LLMResponse,
+  Tool,
+  ToolDefinition,
+} from '../packages/core/src/runtime/types';
 
 // ============================================================================
 // A stateful mock provider that simulates a real LLM's tool-calling behavior.
@@ -30,11 +38,13 @@ class SmartMockProvider extends MockLLMProvider {
   }>;
   private trace: string[] = [];
 
-  constructor(script: Array<{
-    toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
-    response?: string;
-    finishReason?: 'tool_calls' | 'stop';
-  }>) {
+  constructor(
+    script: Array<{
+      toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
+      response?: string;
+      finishReason?: 'tool_calls' | 'stop';
+    }>,
+  ) {
     super('smart-mock');
     this.script = script;
   }
@@ -49,7 +59,9 @@ class SmartMockProvider extends MockLLMProvider {
     const content = step?.response ?? 'Processing...';
     const finishReason = step?.finishReason ?? (toolCalls ? 'tool_calls' : 'stop');
 
-    this.trace.push(`[call ${this.callCount}] ${toolCalls ? toolCalls.map(t => `${t.name}(${JSON.stringify(t.arguments)})`).join(', ') : content.slice(0, 60)}`);
+    this.trace.push(
+      `[call ${this.callCount}] ${toolCalls ? toolCalls.map((t) => `${t.name}(${JSON.stringify(t.arguments)})`).join(', ') : content.slice(0, 60)}`,
+    );
 
     const promptTokens = JSON.stringify(request.messages).length;
     const completionTokens = content.length;
@@ -58,19 +70,33 @@ class SmartMockProvider extends MockLLMProvider {
       model: request.model,
       usage: { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens },
       finishReason,
-      toolCalls: toolCalls as Array<{ id: string; type: string; function: { name: string; arguments: string } }>,
+      toolCalls: toolCalls as Array<{
+        id: string;
+        type: string;
+        function: { name: string; arguments: string };
+      }>,
     };
   }
 
-  getTrace(): string[] { return this.trace; }
+  getTrace(): string[] {
+    return this.trace;
+  }
 }
 
 // ============================================================================
 // Test tools with realistic behavior
 // ============================================================================
-function makeTool(name: string, exec: (args: Record<string, unknown>) => Promise<string>, opts?: { concurrent?: boolean; readOnly?: boolean }): Tool {
+function makeTool(
+  name: string,
+  exec: (args: Record<string, unknown>) => Promise<string>,
+  opts?: { concurrent?: boolean; readOnly?: boolean },
+): Tool {
   return {
-    definition: { name, description: `${name} tool`, inputSchema: { type: 'object', properties: {} } },
+    definition: {
+      name,
+      description: `${name} tool`,
+      inputSchema: { type: 'object', properties: {} },
+    },
     execute: exec,
     isConcurrencySafe: opts?.concurrent ?? true,
     isReadOnly: opts?.readOnly ?? true,
@@ -79,7 +105,10 @@ function makeTool(name: string, exec: (args: Record<string, unknown>) => Promise
   };
 }
 
-function makeMutatingTool(name: string, exec: (args: Record<string, unknown>) => Promise<string>): Tool {
+function makeMutatingTool(
+  name: string,
+  exec: (args: Record<string, unknown>) => Promise<string>,
+): Tool {
   return makeTool(name, exec, { concurrent: false, readOnly: false });
 }
 
@@ -97,81 +126,141 @@ async function testComplexResearchWorkflow() {
   resetPatternTracker();
 
   const router = new ModelRouter();
-  const runtime = new AgentRuntime({
-    maxRetries: 0,
-    timeoutMs: 10000,
-    toolRetrieval: { enabled: true, minTools: 3, maxTools: 10, alwaysInclude: ['file_read', 'shell_execute'] },
-    entropyGating: { enabled: true },
-    speculativeExecution: { enabled: true, maxPredictions: 2, minConfidence: 0.1 },
-    observationMaskWindow: 5,
-  }, router);
+  const runtime = new AgentRuntime(
+    {
+      maxRetries: 0,
+      timeoutMs: 10000,
+      toolRetrieval: {
+        enabled: true,
+        minTools: 3,
+        maxTools: 10,
+        alwaysInclude: ['file_read', 'shell_execute'],
+      },
+      entropyGating: { enabled: true },
+      speculativeExecution: { enabled: true, maxPredictions: 2, minConfidence: 0.1 },
+      observationMaskWindow: 5,
+    },
+    router,
+  );
 
   // Register tools
-  runtime.registerTool('web_search', makeTool('web_search', async (args) => {
-    await new Promise(r => setTimeout(r, 10));
-    return `Search results for "${args.query}":
+  runtime.registerTool(
+    'web_search',
+    makeTool('web_search', async (args) => {
+      await new Promise((r) => setTimeout(r, 10));
+      return `Search results for "${args.query}":
 1. https://example.com/ai-agents - "Multi-agent systems are revolutionizing AI"
 2. https://example.com/orchestration - "Tool use in autonomous agents"`;
-  }));
+    }),
+  );
 
-  runtime.registerTool('web_fetch', makeTool('web_fetch', async (args) => {
-    await new Promise(r => setTimeout(r, 10));
-    return `Content from ${args.url}: [ARTICLE] Multi-agent orchestration enables complex task completion through dynamic tool selection and parallel execution.`;
-  }));
+  runtime.registerTool(
+    'web_fetch',
+    makeTool('web_fetch', async (args) => {
+      await new Promise((r) => setTimeout(r, 10));
+      return `Content from ${args.url}: [ARTICLE] Multi-agent orchestration enables complex task completion through dynamic tool selection and parallel execution.`;
+    }),
+  );
 
-  runtime.registerTool('python_execute', makeTool('python_execute', async (args) => {
-    return `[Python output]\nExecution result: analysis complete\nSummary: found 3 key patterns`;
-  }, { concurrent: false }));
+  runtime.registerTool(
+    'python_execute',
+    makeTool(
+      'python_execute',
+      async (args) => {
+        return `[Python output]\nExecution result: analysis complete\nSummary: found 3 key patterns`;
+      },
+      { concurrent: false },
+    ),
+  );
 
-  runtime.registerTool('file_write', makeMutatingTool('file_write', async (args) => {
-    return `Written ${(args.content as string || '').length} bytes to ${args.path}`;
-  }));
+  runtime.registerTool(
+    'file_write',
+    makeMutatingTool('file_write', async (args) => {
+      return `Written ${((args.content as string) || '').length} bytes to ${args.path}`;
+    }),
+  );
 
-  runtime.registerTool('file_read', makeTool('file_read', async (args) => {
-    return `[File: ${args.path}]\n# Research Report\nMulti-agent systems achieve 40% higher task completion...`;
-  }));
+  runtime.registerTool(
+    'file_read',
+    makeTool('file_read', async (args) => {
+      return `[File: ${args.path}]\n# Research Report\nMulti-agent systems achieve 40% higher task completion...`;
+    }),
+  );
 
-  runtime.registerTool('file_search', makeTool('file_search', async (args) => {
-    return `Found files matching ${args.pattern}:\n- report.md\n- analysis.py\n- data.csv`;
-  }));
+  runtime.registerTool(
+    'file_search',
+    makeTool('file_search', async (args) => {
+      return `Found files matching ${args.pattern}:\n- report.md\n- analysis.py\n- data.csv`;
+    }),
+  );
 
-  runtime.registerTool('shell_execute', makeMutatingTool('shell_execute', async (args) => {
-    return `[Exit: 0 | 45ms]\n${args.command} completed successfully.`;
-  }));
+  runtime.registerTool(
+    'shell_execute',
+    makeMutatingTool('shell_execute', async (args) => {
+      return `[Exit: 0 | 45ms]\n${args.command} completed successfully.`;
+    }),
+  );
 
-  runtime.registerTool('memory_store', makeMutatingTool('memory_store', async (args) => {
-    return `Stored: ${(args.content as string || '').slice(0, 40)}...`;
-  }));
+  runtime.registerTool(
+    'memory_store',
+    makeMutatingTool('memory_store', async (args) => {
+      return `Stored: ${((args.content as string) || '').slice(0, 40)}...`;
+    }),
+  );
 
-  runtime.registerTool('memory_recall', makeTool('memory_recall', async (args) => {
-    return `[Memory] Found "${args.query}": previous analysis showed 40% improvement`;
-  }));
+  runtime.registerTool(
+    'memory_recall',
+    makeTool('memory_recall', async (args) => {
+      return `[Memory] Found "${args.query}": previous analysis showed 40% improvement`;
+    }),
+  );
 
   // Create mock provider with a 6-step tool script
   const provider = new SmartMockProvider([
     // Step 1: Research - search the web
     {
-      toolCalls: [{ id: 'call_1', name: 'web_search', arguments: { query: 'multi-agent orchestration systems 2025' } }],
+      toolCalls: [
+        {
+          id: 'call_1',
+          name: 'web_search',
+          arguments: { query: 'multi-agent orchestration systems 2025' },
+        },
+      ],
       finishReason: 'tool_calls',
     },
     // Step 2: Fetch a result
     {
-      toolCalls: [{ id: 'call_2', name: 'web_fetch', arguments: { url: 'https://example.com/ai-agents' } }],
+      toolCalls: [
+        { id: 'call_2', name: 'web_fetch', arguments: { url: 'https://example.com/ai-agents' } },
+      ],
       finishReason: 'tool_calls',
     },
     // Step 3: Analyze with python
     {
-      toolCalls: [{ id: 'call_3', name: 'python_execute', arguments: { code: 'print("analysis complete")' } }],
+      toolCalls: [
+        { id: 'call_3', name: 'python_execute', arguments: { code: 'print("analysis complete")' } },
+      ],
       finishReason: 'tool_calls',
     },
     // Step 4: Write report
     {
-      toolCalls: [{ id: 'call_4', name: 'file_write', arguments: { path: '/tmp/report.md', content: '# Research Results\nMulti-agent orchestration is effective.' } }],
+      toolCalls: [
+        {
+          id: 'call_4',
+          name: 'file_write',
+          arguments: {
+            path: '/tmp/report.md',
+            content: '# Research Results\nMulti-agent orchestration is effective.',
+          },
+        },
+      ],
       finishReason: 'tool_calls',
     },
     // Step 5: Recall previous memory
     {
-      toolCalls: [{ id: 'call_5', name: 'memory_recall', arguments: { query: 'previous analysis results' } }],
+      toolCalls: [
+        { id: 'call_5', name: 'memory_recall', arguments: { query: 'previous analysis results' } },
+      ],
       finishReason: 'tool_calls',
     },
     // Step 6: Final answer
@@ -201,7 +290,17 @@ Multi-agent orchestration systems show significant promise for complex task auto
     projectId: 'e2e-test',
     goal: 'Research multi-agent orchestration systems, analyze findings, and write a report.',
     contextData: {},
-    availableTools: ['web_search', 'web_fetch', 'python_execute', 'file_write', 'file_read', 'file_search', 'shell_execute', 'memory_store', 'memory_recall'],
+    availableTools: [
+      'web_search',
+      'web_fetch',
+      'python_execute',
+      'file_write',
+      'file_read',
+      'file_search',
+      'shell_execute',
+      'memory_store',
+      'memory_recall',
+    ],
     maxSteps: 10,
     tokenBudget: 50000,
   });
@@ -220,10 +319,19 @@ Multi-agent orchestration systems show significant promise for complex task auto
 
   // Verify everything worked
   let pass = true;
-  if (result.status !== 'success') { console.error(`  FAIL: status = ${result.status}`); pass = false; }
-  if (provider.callCount < 2) { console.error(`  FAIL: only ${provider.callCount} LLM calls`); pass = false; }
-  const hasToolResults = result.steps.some(s => s.type === 'tool_result');
-  if (!hasToolResults) { console.error(`  FAIL: no tool results in steps`); pass = false; }
+  if (result.status !== 'success') {
+    console.error(`  FAIL: status = ${result.status}`);
+    pass = false;
+  }
+  if (provider.callCount < 2) {
+    console.error(`  FAIL: only ${provider.callCount} LLM calls`);
+    pass = false;
+  }
+  const hasToolResults = result.steps.some((s) => s.type === 'tool_result');
+  if (!hasToolResults) {
+    console.error(`  FAIL: no tool results in steps`);
+    pass = false;
+  }
 
   // Check pattern tracking learned the sequences
   const tracker = getPatternTracker();
@@ -232,7 +340,10 @@ Multi-agent orchestration systems show significant promise for complex task auto
   for (const p of patterns.slice(0, 3)) {
     console.log(`    ${p.sequence.join(' → ')} (freq: ${p.frequency})`);
   }
-  if (patterns.length === 0) { console.error(`  FAIL: PatternTracker learned nothing`); pass = false; }
+  if (patterns.length === 0) {
+    console.error(`  FAIL: PatternTracker learned nothing`);
+    pass = false;
+  }
 
   console.log(`\n  ${pass ? '✅ PASS' : '❌ FAIL'}`);
   return pass;
@@ -255,26 +366,38 @@ async function testConcurrentExecution() {
 
   const execOrder: string[] = [];
 
-  runtime.registerTool('search_a', makeTool('search_a', async () => {
-    await new Promise(r => setTimeout(r, 30));
-    execOrder.push('search_a');
-    return 'Results A';
-  }));
-  runtime.registerTool('search_b', makeTool('search_b', async () => {
-    await new Promise(r => setTimeout(r, 30));
-    execOrder.push('search_b');
-    return 'Results B';
-  }));
-  runtime.registerTool('search_c', makeTool('search_c', async () => {
-    await new Promise(r => setTimeout(r, 30));
-    execOrder.push('search_c');
-    return 'Results C';
-  }));
-  runtime.registerTool('search_d', makeTool('search_d', async () => {
-    await new Promise(r => setTimeout(r, 30));
-    execOrder.push('search_d');
-    return 'Results D';
-  }));
+  runtime.registerTool(
+    'search_a',
+    makeTool('search_a', async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      execOrder.push('search_a');
+      return 'Results A';
+    }),
+  );
+  runtime.registerTool(
+    'search_b',
+    makeTool('search_b', async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      execOrder.push('search_b');
+      return 'Results B';
+    }),
+  );
+  runtime.registerTool(
+    'search_c',
+    makeTool('search_c', async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      execOrder.push('search_c');
+      return 'Results C';
+    }),
+  );
+  runtime.registerTool(
+    'search_d',
+    makeTool('search_d', async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      execOrder.push('search_d');
+      return 'Results D';
+    }),
+  );
 
   const provider = new SmartMockProvider([
     {
@@ -308,10 +431,18 @@ async function testConcurrentExecution() {
   console.log(`  All executed: ${execOrder.length === 4}`);
 
   let pass = true;
-  if (result.status !== 'success') { console.error(`  FAIL: status`); pass = false; }
-  if (execOrder.length !== 4) { console.error(`  FAIL: not all tools executed`); pass = false; }
+  if (result.status !== 'success') {
+    console.error(`  FAIL: status`);
+    pass = false;
+  }
+  if (execOrder.length !== 4) {
+    console.error(`  FAIL: not all tools executed`);
+    pass = false;
+  }
   // Parallel should be much faster than sequential (4×30ms = 120ms)
-  if (duration > 100) { console.warn(`  WARN: ${duration}ms > 100ms, may not be fully parallel`); }
+  if (duration > 100) {
+    console.warn(`  WARN: ${duration}ms > 100ms, may not be fully parallel`);
+  }
 
   console.log(`\n  ${pass ? '✅ PASS' : '❌ FAIL'}`);
   return pass;
@@ -333,11 +464,18 @@ async function testErrorRecovery() {
   const runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 10000 }, router);
 
   let failCount = 0;
-  runtime.registerTool('unstable_api', makeTool('unstable_api', async () => {
-    failCount++;
-    if (failCount <= 1) throw new Error('Rate limit exceeded');
-    return 'Success on retry!';
-  }, { concurrent: false }));
+  runtime.registerTool(
+    'unstable_api',
+    makeTool(
+      'unstable_api',
+      async () => {
+        failCount++;
+        if (failCount <= 1) throw new Error('Rate limit exceeded');
+        return 'Success on retry!';
+      },
+      { concurrent: false },
+    ),
+  );
 
   const provider = new SmartMockProvider([
     // First call - tool fails
@@ -367,14 +505,23 @@ async function testErrorRecovery() {
 
   console.log(`\n  Result: ${result.status}`);
   console.log(`  Tool failed: ${failCount - 1} time(s) before success`);
-  console.log(`  Error fed back to model: ${provider.getTrace()[1]?.includes('unstable_api') ? 'yes' : 'checking...'}`);
+  console.log(
+    `  Error fed back to model: ${provider.getTrace()[1]?.includes('unstable_api') ? 'yes' : 'checking...'}`,
+  );
 
   let pass = true;
-  if (result.status !== 'success') { console.error(`  FAIL: status`); pass = false; }
+  if (result.status !== 'success') {
+    console.error(`  FAIL: status`);
+    pass = false;
+  }
   // First tool call should have failed and been fed back
-  const toolMsgs = provider.lastRequest?.messages.filter(m => m.role === 'tool') ?? [];
-  const hasErrorFeedback = toolMsgs.some(m => m.content.includes('error') || m.content.includes('Error'));
-  if (!hasErrorFeedback) { console.warn(`  WARN: error may not have been fed back to model`); }
+  const toolMsgs = provider.lastRequest?.messages.filter((m) => m.role === 'tool') ?? [];
+  const hasErrorFeedback = toolMsgs.some(
+    (m) => m.content.includes('error') || m.content.includes('Error'),
+  );
+  if (!hasErrorFeedback) {
+    console.warn(`  WARN: error may not have been fed back to model`);
+  }
 
   console.log(`\n  ${pass ? '✅ PASS' : '❌ FAIL'}`);
   return pass;
@@ -391,22 +538,35 @@ async function testToolRetrieval() {
   const { selectTools } = await import('../packages/core/src/runtime/toolRetriever');
 
   const ALL_TOOLS = [
-    'web_search', 'web_fetch', 'file_read', 'file_write', 'file_edit',
-    'file_search', 'file_list', 'python_execute', 'shell_execute',
-    'memory_store', 'memory_recall', 'memory_list', 'git',
+    'web_search',
+    'web_fetch',
+    'file_read',
+    'file_write',
+    'file_edit',
+    'file_search',
+    'file_list',
+    'python_execute',
+    'shell_execute',
+    'memory_store',
+    'memory_recall',
+    'memory_list',
+    'git',
   ];
 
   const testCases = [
     { goal: 'Search the web for AI papers', expected: ['web_search'] },
     { goal: 'Write a Python script to analyze data', expected: ['python_execute'] },
     { goal: 'Commit code and push to GitHub', expected: ['git'] },
-    { goal: 'Edit the config file and restart the server', expected: ['file_edit', 'shell_execute'] },
+    {
+      goal: 'Edit the config file and restart the server',
+      expected: ['file_edit', 'shell_execute'],
+    },
   ];
 
   let pass = true;
   for (const tc of testCases) {
     const selected = selectTools(tc.goal, ALL_TOOLS, { minTools: 2, maxTools: 6 });
-    const hasExpected = tc.expected.every(e => selected.includes(e));
+    const hasExpected = tc.expected.every((e) => selected.includes(e));
     const status = hasExpected ? '✅' : '❌';
     if (!hasExpected) pass = false;
     console.log(`  ${status} "${tc.goal.slice(0, 40)}..."`);
@@ -430,11 +590,14 @@ async function testObservationMasking() {
   resetTraceRecorder();
 
   const router = new ModelRouter();
-  const runtime = new AgentRuntime({
-    maxRetries: 0,
-    timeoutMs: 10000,
-    observationMaskWindow: 2, // Only last 2 results shown verbatim
-  }, router);
+  const runtime = new AgentRuntime(
+    {
+      maxRetries: 0,
+      timeoutMs: 10000,
+      observationMaskWindow: 2, // Only last 2 results shown verbatim
+    },
+    router,
+  );
 
   const echoTool = makeTool('echo', async (args) => `Result #${args.n}: ${'x'.repeat(200)}`);
   runtime.registerTool('echo', echoTool);
@@ -466,7 +629,7 @@ async function testObservationMasking() {
   });
 
   // Check that some results were masked (observation_masked)
-  const maskedCount = result.steps.filter(s => s.content.includes('[observation masked')).length;
+  const maskedCount = result.steps.filter((s) => s.content.includes('[observation masked')).length;
   console.log(`\n  Total steps: ${result.steps.length}`);
   console.log(`  Masked results: ${maskedCount}`);
   console.log(`  Unmasked results: ${result.steps.length - maskedCount}`);
@@ -501,12 +664,14 @@ async function main() {
   console.log('\n' + '='.repeat(70));
   console.log(`  RESULTS: ${passed}/${total} tests passed`);
   console.log('='.repeat(70));
-  console.log(`\n  ${passed === total ? '✅ ALL TESTS PASSED — Commander is production-ready' : '❌ SOME TESTS FAILED'}\n`);
+  console.log(
+    `\n  ${passed === total ? '✅ ALL TESTS PASSED — Commander is production-ready' : '❌ SOME TESTS FAILED'}\n`,
+  );
 
   process.exit(passed === total ? 0 : 1);
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('FATAL:', err);
   process.exit(1);
 });

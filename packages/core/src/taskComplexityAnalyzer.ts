@@ -1,7 +1,7 @@
 /**
  * Task Complexity Analyzer
  * Based on ULTIMATE-FRAMEWORK.md design
- * 
+ *
  * Core insight: Task complexity determines optimal orchestration mode
  * - Low complexity → Sequential (single agent)
  * - Medium complexity → Parallel (independent subtasks)
@@ -16,39 +16,39 @@
 
 export type ComplexityLevel = 'trivial' | 'simple' | 'moderate' | 'complex' | 'extreme';
 
-export type OrchestrationMode = 
-  | 'SEQUENTIAL'      // Low complexity, single thread
-  | 'PARALLEL'        // Independent subtasks
-  | 'HANDOFF'         // Needs expert
-  | 'MAGENTIC'        // Open exploration
-  | 'CONSENSUS';      // High-risk decision
+export type OrchestrationMode =
+  | 'SEQUENTIAL' // Low complexity, single thread
+  | 'PARALLEL' // Independent subtasks
+  | 'HANDOFF' // Needs expert
+  | 'MAGENTIC' // Open exploration
+  | 'CONSENSUS'; // High-risk decision
 
 export interface ComplexityScore {
   level: ComplexityLevel;
-  score: number;           // 0-100
+  score: number; // 0-100
   factors: ComplexityFactors;
   recommendedMode: OrchestrationMode;
   tokenBudget: TokenBudget;
-  confidence: number;      // 0-1
+  confidence: number; // 0-1
 }
 
 export interface ComplexityFactors {
-  treewidth: number;           // Dependency complexity
-  dependencyDepth: number;     // How deep the dependencies go
-  inputSize: number;           // Token count of input
-  outputComplexity: number;    // Expected output structure
-  domainKnowledge: number;     // Need for specialized knowledge
-  riskLevel: number;           // Failure impact
-  uncertaintyLevel: number;    // Ambiguity in requirements
-  timeConstraints: number;     // Deadline pressure
+  treewidth: number; // Dependency complexity
+  dependencyDepth: number; // How deep the dependencies go
+  inputSize: number; // Token count of input
+  outputComplexity: number; // Expected output structure
+  domainKnowledge: number; // Need for specialized knowledge
+  riskLevel: number; // Failure impact
+  uncertaintyLevel: number; // Ambiguity in requirements
+  timeConstraints: number; // Deadline pressure
 }
 
 export interface TokenBudget {
-  leadAgent: number;           // Percentage for lead agent
-  specialistAgents: number;    // Percentage for specialists
-  evaluation: number;          // Percentage for evaluation
-  overhead: number;            // Percentage for orchestration
-  total: number;               // Total budget
+  leadAgent: number; // Percentage for lead agent
+  specialistAgents: number; // Percentage for specialists
+  evaluation: number; // Percentage for evaluation
+  overhead: number; // Percentage for orchestration
+  total: number; // Total budget
 }
 
 export interface Task {
@@ -68,14 +68,14 @@ export interface Task {
 export class TaskComplexityAnalyzer {
   // Weights for each factor (based on research)
   private readonly WEIGHTS = {
-    treewidth: 0.20,
+    treewidth: 0.2,
     dependencyDepth: 0.15,
-    inputSize: 0.10,
+    inputSize: 0.1,
     outputComplexity: 0.15,
     domainKnowledge: 0.15,
-    riskLevel: 0.10,
-    uncertaintyLevel: 0.10,
-    timeConstraints: 0.05
+    riskLevel: 0.1,
+    uncertaintyLevel: 0.1,
+    timeConstraints: 0.05,
   };
 
   /**
@@ -95,7 +95,7 @@ export class TaskComplexityAnalyzer {
       factors,
       recommendedMode,
       tokenBudget,
-      confidence
+      confidence,
     };
   }
 
@@ -110,27 +110,27 @@ export class TaskComplexityAnalyzer {
     return {
       // Dependency complexity
       treewidth: this.estimateTreewidth(combined),
-      
+
       // Dependency depth
       dependencyDepth: this.estimateDependencyDepth(combined),
-      
+
       // Input size (estimated tokens)
       inputSize: this.estimateTokenCount(task.input || task.description),
-      
+
       // Output complexity
       outputComplexity: this.estimateOutputComplexity(combined),
-      
+
       // Domain knowledge needed
       domainKnowledge: this.estimateDomainKnowledge(combined),
-      
+
       // Risk level
       riskLevel: this.riskLevelToNumber(task.riskLevel || 'low'),
-      
+
       // Uncertainty level
       uncertaintyLevel: this.estimateUncertainty(combined),
-      
+
       // Time constraints
-      timeConstraints: task.deadline ? this.estimateTimePressure(task.deadline) : 0
+      timeConstraints: task.deadline ? this.estimateTimePressure(task.deadline) : 0,
     };
   }
 
@@ -140,19 +140,29 @@ export class TaskComplexityAnalyzer {
    */
   private estimateTreewidth(text: string): number {
     const dependencyIndicators = [
-      'depends on', 'requires', 'after', 'before', 'then',
-      'and then', 'must', 'sequence', 'order', 'step by step',
-      'dependency', 'prerequisite', 'based on'
+      'depends on',
+      'requires',
+      'after',
+      'before',
+      'then',
+      'and then',
+      'must',
+      'sequence',
+      'order',
+      'step by step',
+      'dependency',
+      'prerequisite',
+      'based on',
     ];
 
     let count = 0;
-    dependencyIndicators.forEach(indicator => {
+    dependencyIndicators.forEach((indicator) => {
       if (text.includes(indicator)) count++;
     });
 
     // Also check for multiple clauses
     const clauses = (text.match(/[,;]/g) || []).length;
-    
+
     return Math.min(100, count * 15 + clauses * 5);
   }
 
@@ -162,18 +172,24 @@ export class TaskComplexityAnalyzer {
    */
   private estimateDependencyDepth(text: string): number {
     const depthIndicators = [
-      'then', 'after that', 'next', 'subsequently',
-      'once', 'when', 'finally', 'last step'
+      'then',
+      'after that',
+      'next',
+      'subsequently',
+      'once',
+      'when',
+      'finally',
+      'last step',
     ];
 
     let depth = 0;
-    depthIndicators.forEach(indicator => {
+    depthIndicators.forEach((indicator) => {
       if (text.includes(indicator)) depth++;
     });
 
     // Check for nested structure indicators
     const nestedPatterns = ['first', 'second', 'third', 'phase 1', 'phase 2', 'stage'];
-    nestedPatterns.forEach(pattern => {
+    nestedPatterns.forEach((pattern) => {
       if (text.includes(pattern)) depth += 2;
     });
 
@@ -193,14 +209,23 @@ export class TaskComplexityAnalyzer {
    */
   private estimateOutputComplexity(text: string): number {
     const complexOutputIndicators = [
-      'report', 'analysis', 'comparison', 'review',
-      'comprehensive', 'detailed', 'multi', 'several',
-      'all aspects', 'thorough', 'complete', 'exhaustive'
+      'report',
+      'analysis',
+      'comparison',
+      'review',
+      'comprehensive',
+      'detailed',
+      'multi',
+      'several',
+      'all aspects',
+      'thorough',
+      'complete',
+      'exhaustive',
     ];
 
     let score = 20; // Base complexity
 
-    complexOutputIndicators.forEach(indicator => {
+    complexOutputIndicators.forEach((indicator) => {
       if (text.includes(indicator)) score += 10;
     });
 
@@ -212,14 +237,24 @@ export class TaskComplexityAnalyzer {
    */
   private estimateDomainKnowledge(text: string): number {
     const domainIndicators = [
-      'technical', 'specialized', 'expert', 'professional',
-      'domain', 'specific', 'industry', 'academic', 'scientific',
-      'legal', 'medical', 'financial', 'engineering'
+      'technical',
+      'specialized',
+      'expert',
+      'professional',
+      'domain',
+      'specific',
+      'industry',
+      'academic',
+      'scientific',
+      'legal',
+      'medical',
+      'financial',
+      'engineering',
     ];
 
     let score = 10; // Base knowledge
 
-    domainIndicators.forEach(indicator => {
+    domainIndicators.forEach((indicator) => {
       if (text.includes(indicator)) score += 15;
     });
 
@@ -231,13 +266,23 @@ export class TaskComplexityAnalyzer {
    */
   private estimateUncertainty(text: string): number {
     const uncertaintyIndicators = [
-      'might', 'could', 'possibly', 'maybe', 'explore',
-      'investigate', 'research', 'find', 'discover', 'unknown',
-      'unclear', 'ambiguous', 'open-ended'
+      'might',
+      'could',
+      'possibly',
+      'maybe',
+      'explore',
+      'investigate',
+      'research',
+      'find',
+      'discover',
+      'unknown',
+      'unclear',
+      'ambiguous',
+      'open-ended',
     ];
 
     let score = 0;
-    uncertaintyIndicators.forEach(indicator => {
+    uncertaintyIndicators.forEach((indicator) => {
       if (text.includes(indicator)) score += 12;
     });
 
@@ -263,10 +308,14 @@ export class TaskComplexityAnalyzer {
    */
   private riskLevelToNumber(level: 'low' | 'medium' | 'high' | 'critical'): number {
     switch (level) {
-      case 'critical': return 100;
-      case 'high': return 75;
-      case 'medium': return 50;
-      case 'low': return 25;
+      case 'critical':
+        return 100;
+      case 'high':
+        return 75;
+      case 'medium':
+        return 50;
+      case 'low':
+        return 25;
     }
   }
 
@@ -275,7 +324,7 @@ export class TaskComplexityAnalyzer {
    */
   private calculateRawScore(factors: ComplexityFactors): number {
     let weightedSum = 0;
-    
+
     weightedSum += factors.treewidth * this.WEIGHTS.treewidth;
     weightedSum += factors.dependencyDepth * this.WEIGHTS.dependencyDepth;
     weightedSum += Math.min(100, factors.inputSize / 10) * this.WEIGHTS.inputSize;
@@ -304,7 +353,7 @@ export class TaskComplexityAnalyzer {
    */
   private selectOrchestrationMode(
     level: ComplexityLevel,
-    factors: ComplexityFactors
+    factors: ComplexityFactors,
   ): OrchestrationMode {
     // High risk → Consensus
     if (factors.riskLevel >= 75) {
@@ -326,13 +375,13 @@ export class TaskComplexityAnalyzer {
       case 'trivial':
       case 'simple':
         return 'SEQUENTIAL';
-      
+
       case 'moderate':
         return factors.treewidth < 30 ? 'PARALLEL' : 'SEQUENTIAL';
-      
+
       case 'complex':
         return factors.dependencyDepth > 50 ? 'HANDOFF' : 'PARALLEL';
-      
+
       case 'extreme':
         return 'MAGENTIC';
     }
@@ -341,17 +390,14 @@ export class TaskComplexityAnalyzer {
   /**
    * Allocate token budget based on complexity and mode
    */
-  private allocateTokenBudget(
-    level: ComplexityLevel,
-    mode: OrchestrationMode
-  ): TokenBudget {
+  private allocateTokenBudget(level: ComplexityLevel, mode: OrchestrationMode): TokenBudget {
     // Base budget allocation
     const baseBudget: TokenBudget = {
       leadAgent: 40,
       specialistAgents: 40,
       evaluation: 15,
       overhead: 5,
-      total: this.getBaseTotalBudget(level)
+      total: this.getBaseTotalBudget(level),
     };
 
     // Adjust based on mode
@@ -363,7 +409,7 @@ export class TaskComplexityAnalyzer {
           specialistAgents: 10,
           evaluation: 15,
           overhead: 5,
-          total: baseBudget.total
+          total: baseBudget.total,
         };
 
       case 'PARALLEL':
@@ -373,7 +419,7 @@ export class TaskComplexityAnalyzer {
           specialistAgents: 50,
           evaluation: 15,
           overhead: 5,
-          total: baseBudget.total * 1.5 // More tokens for coordination
+          total: baseBudget.total * 1.5, // More tokens for coordination
         };
 
       case 'HANDOFF':
@@ -383,7 +429,7 @@ export class TaskComplexityAnalyzer {
           specialistAgents: 45,
           evaluation: 15,
           overhead: 5,
-          total: baseBudget.total * 1.3
+          total: baseBudget.total * 1.3,
         };
 
       case 'MAGENTIC':
@@ -393,7 +439,7 @@ export class TaskComplexityAnalyzer {
           specialistAgents: 35,
           evaluation: 15,
           overhead: 10,
-          total: baseBudget.total * 2
+          total: baseBudget.total * 2,
         };
 
       case 'CONSENSUS':
@@ -403,7 +449,7 @@ export class TaskComplexityAnalyzer {
           specialistAgents: 30,
           evaluation: 35, // More for voting
           overhead: 5,
-          total: baseBudget.total * 1.5
+          total: baseBudget.total * 1.5,
         };
     }
   }
@@ -413,11 +459,16 @@ export class TaskComplexityAnalyzer {
    */
   private getBaseTotalBudget(level: ComplexityLevel): number {
     switch (level) {
-      case 'trivial': return 1000;
-      case 'simple': return 3000;
-      case 'moderate': return 10000;
-      case 'complex': return 30000;
-      case 'extreme': return 100000;
+      case 'trivial':
+        return 1000;
+      case 'simple':
+        return 3000;
+      case 'moderate':
+        return 10000;
+      case 'complex':
+        return 30000;
+      case 'extreme':
+        return 100000;
     }
   }
 
@@ -430,7 +481,7 @@ export class TaskComplexityAnalyzer {
     let confidence = 1.0;
 
     // Reduce confidence for mid-range values (ambiguous)
-    factorValues.forEach(value => {
+    factorValues.forEach((value) => {
       if (value > 30 && value < 70) {
         confidence -= 0.05; // Mid-range reduces confidence
       }
@@ -455,7 +506,7 @@ export class BatchComplexityAnalyzer {
    * Analyze multiple tasks
    */
   analyzeBatch(tasks: Task[]): ComplexityScore[] {
-    return tasks.map(task => this.analyzer.analyze(task));
+    return tasks.map((task) => this.analyzer.analyze(task));
   }
 
   /**
@@ -467,38 +518,34 @@ export class BatchComplexityAnalyzer {
     parallelGroups: number;
   } {
     // Find highest complexity
-    const maxScore = Math.max(...scores.map(s => s.score));
-    const maxLevel = scores.reduce((max, s) => 
-      s.score > max.score ? s : max
-    ).level;
+    const maxScore = Math.max(...scores.map((s) => s.score));
+    const maxLevel = scores.reduce((max, s) => (s.score > max.score ? s : max)).level;
 
     // If any task needs consensus, use consensus for all
-    if (scores.some(s => s.recommendedMode === 'CONSENSUS')) {
+    if (scores.some((s) => s.recommendedMode === 'CONSENSUS')) {
       return {
         mode: 'CONSENSUS',
         totalBudget: scores.reduce((sum, s) => sum + s.tokenBudget.total, 0),
-        parallelGroups: 1
+        parallelGroups: 1,
       };
     }
 
     // If all are simple, can run in parallel
-    if (scores.every(s => s.level === 'trivial' || s.level === 'simple')) {
+    if (scores.every((s) => s.level === 'trivial' || s.level === 'simple')) {
       return {
         mode: 'PARALLEL',
         totalBudget: scores.reduce((sum, s) => sum + s.tokenBudget.total, 0) * 0.8, // Parallel efficiency
-        parallelGroups: scores.length
+        parallelGroups: scores.length,
       };
     }
 
     // Default: use highest complexity mode
-    const maxMode = scores.reduce((max, s) => 
-      s.score > max.score ? s : max
-    ).recommendedMode;
+    const maxMode = scores.reduce((max, s) => (s.score > max.score ? s : max)).recommendedMode;
 
     return {
       mode: maxMode,
       totalBudget: scores.reduce((sum, s) => sum + s.tokenBudget.total, 0),
-      parallelGroups: maxMode === 'PARALLEL' ? scores.length : 1
+      parallelGroups: maxMode === 'PARALLEL' ? scores.length : 1,
     };
   }
 }
