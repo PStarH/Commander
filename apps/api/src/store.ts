@@ -13,7 +13,20 @@ import {
   getProjectWarRoomSnapshot,
 } from '@commander/core';
 
-const DATA_FILE = path.resolve(__dirname, '../data/war-room.json');
+/**
+ * WarRoomStore persistence path. Override `COMMANDER_WARROOM_FILE` to relocate
+ * the JSON-backed war-room store (e.g. per-launcher in parallel test
+ * scaffolding); default keeps the original `__dirname/../data/war-room.json`
+ * so production runs are untouched. The constant is evaluated at module-load
+ * time, so the env var MUST be set before the module is required.
+ *
+ * Note: this only affects the JSON-backed variant invoked by default in
+ * `createWarRoomStore()`. The SQLite variant (`WARROOM_STORAGE=sqlite`) uses
+ * `path.resolve(__dirname, '../data/war-room.sqlite')` and is not yet
+ * env-overridable — add a dedicated env var if you need that path relocated.
+ */
+const DATA_FILE =
+  process.env['COMMANDER_WARROOM_FILE'] ?? path.resolve(__dirname, '../data/war-room.json');
 
 interface CreateMissionInput {
   projectId: string;
