@@ -52,8 +52,7 @@ export interface MemoryEntry {
 }
 
 /** Override `COMMANDER_MEMORY_DIR` to relocate the memory-index directory (index.json + per-domain files). Default keeps the original `__dirname/../../memory/` path so production runs are untouched. Env var MUST be set before this module is required (module-load capture). */
-const MEMORY_DIR =
-  process.env['COMMANDER_MEMORY_DIR'] ?? path.resolve(__dirname, '../../memory');
+const MEMORY_DIR = process.env['COMMANDER_MEMORY_DIR'] ?? path.resolve(__dirname, '../../memory');
 const INDEX_FILE = path.join(MEMORY_DIR, 'index.json');
 
 export class MemoryIndexManager {
