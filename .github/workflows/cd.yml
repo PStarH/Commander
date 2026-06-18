@@ -25,7 +25,7 @@ jobs:
           cp apps/web/nginx.conf deploy/ 2>/dev/null || true
 
       - name: Deploy to staging via SSH
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.STAGING_HOST }}
           username: ${{ secrets.STAGING_USER }}
@@ -83,7 +83,7 @@ jobs:
           cp apps/web/nginx.conf deploy/ 2>/dev/null || true
 
       - name: Deploy via SSH
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
@@ -152,7 +152,7 @@ jobs:
           cp apps/web/nginx.conf deploy/ 2>/dev/null || true
 
       - name: Deploy via SSH
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
