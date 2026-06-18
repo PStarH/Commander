@@ -58,7 +58,7 @@ jobs:
         run: cd packages/core && npx -p tsx tsx src/cli.ts status
 
       - name: Build core package
-        run: pnpm exec tsc -p packages/core/tsconfig.json
+        run: pnpm --filter @commander/core build
 
   docker:
     name: Docker Build
