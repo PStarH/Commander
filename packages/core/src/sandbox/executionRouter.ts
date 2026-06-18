@@ -70,7 +70,10 @@ export class ExecutionRouter {
     // ── Hook: beforeBackendSelect (can override by returning a registered backend name) ──
     try {
       const hookOverride = await getHookManager().fireBeforeBackendSelect({
-        toolName, args, agentId: String(args._agentId ?? ''), runId: String(args._runId ?? ''),
+        toolName,
+        args,
+        agentId: String(args._agentId ?? ''),
+        runId: String(args._runId ?? ''),
       });
       if (hookOverride && this.backends.has(hookOverride)) {
         return this.backends.get(hookOverride)!;

@@ -31,13 +31,25 @@ export interface RepairResult {
  * Applies multiple strategies in order, stopping at first success.
  * Conservative: returns original input unchanged if nothing works.
  */
-export function repairToolCallArguments(
-  rawArgs: unknown,
-  _toolName: string,
-): RepairResult {
+export function repairToolCallArguments(rawArgs: unknown, _toolName: string): RepairResult {
   // Strategy 1: Already an object (Anthropic returns parsed objects)
   if (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)) {
-    return { args: rawArgs as Record<string, unknown>, repairs: [] };
+    // Guard against prototype pollution (use hasOwnProperty to avoid false positives from inherited properties)
+    const args = rawArgs as Record<string, unknown>;
+    if (
+      Object.prototype.hasOwnProperty.call(args, '__proto__') ||
+      Object.prototype.hasOwnProperty.call(args, 'constructor') ||
+      Object.prototype.hasOwnProperty.call(args, 'prototype')
+    ) {
+      const sanitized: Record<string, unknown> = {};
+      for (const key of Object.keys(args)) {
+        if (key !== '__proto__' && key !== 'constructor' && key !== 'prototype') {
+          sanitized[key] = args[key];
+        }
+      }
+      return { args: sanitized, repairs: ['removed dangerous keys'] };
+    }
+    return { args, repairs: [] };
   }
 
   if (typeof rawArgs !== 'string') {
@@ -52,7 +64,11 @@ export function repairToolCallArguments(
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return { args: parsed, repairs: [] };
     }
-  } catch (e) { getGlobalLogger().debug('ToolCallRepair', 'Direct JSON parse failed', { error: (e as Error)?.message }); }
+  } catch (e) {
+    getGlobalLogger().debug('ToolCallRepair', 'Direct JSON parse failed', {
+      error: (e as Error)?.message,
+    });
+  }
 
   // Strategy 3: Common-fix parse
   const fixed = applyCommonFixes(raw);
@@ -62,7 +78,11 @@ export function repairToolCallArguments(
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         return { args: parsed, repairs: describeFixes(raw, fixed) };
       }
-    } catch (e) { getGlobalLogger().debug('ToolCallRepair', 'Common-fix JSON parse failed', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().debug('ToolCallRepair', 'Common-fix JSON parse failed', {
+        error: (e as Error)?.message,
+      });
+    }
   }
 
   // Strategy 4: Regex extraction — find first {...} block
@@ -73,7 +93,11 @@ export function repairToolCallArguments(
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         return { args: parsed, repairs: ['extracted JSON object from surrounding text'] };
       }
-    } catch (e) { getGlobalLogger().debug('ToolCallRepair', 'Extracted JSON parse failed', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().debug('ToolCallRepair', 'Extracted JSON parse failed', {
+        error: (e as Error)?.message,
+      });
+    }
   }
 
   // Strategy 5: XML-like tool call format (generalized MiMo pattern)
@@ -84,6 +108,37 @@ export function repairToolCallArguments(
 
   // All strategies failed — return empty args, let validation handle it
   return { args: {}, repairs: ['all repair strategies failed'] };
+}
+
+/**
+ * Tier 3.1: produce concrete suggestions for repairing validation errors.
+ * Each suggestion is a one-sentence hint the LLM can use to self-correct.
+ */
+export function suggestRepairsForValidationErrors(
+  errors: Array<{ path: string; message: string; expectedType?: string; actualValue?: unknown }>,
+): string[] {
+  return errors.map((e) => {
+    if (e.message.includes('required')) {
+      return `Add the required argument "${e.path}" with an appropriate value.`;
+    }
+    if (e.expectedType === 'string' && typeof e.actualValue !== 'string') {
+      return `Change "${e.path}" to a string. Try: "${String(e.actualValue ?? '')}".`;
+    }
+    if (e.expectedType === 'number' && typeof e.actualValue === 'string') {
+      const n = Number(e.actualValue);
+      return `Change "${e.path}" to a number. Try: ${Number.isFinite(n) ? n : 0}.`;
+    }
+    if (e.expectedType === 'boolean' && typeof e.actualValue !== 'boolean') {
+      return `Change "${e.path}" to a boolean (true or false).`;
+    }
+    if (e.expectedType === 'array' && !Array.isArray(e.actualValue)) {
+      return `Wrap "${e.path}" in an array: [${JSON.stringify(e.actualValue)}].`;
+    }
+    if (e.message.includes('enum')) {
+      return `Choose a valid value for "${e.path}" from the tool's allowed enum values.`;
+    }
+    return `Fix "${e.path}" to match the expected schema.`;
+  });
 }
 
 // ============================================================================
@@ -158,7 +213,12 @@ function extractJsonObject(s: string): string | null {
   return null;
 }
 
-function extractBalancedBlock(s: string, start: number, openChar: string, closeChar: string): string | null {
+function extractBalancedBlock(
+  s: string,
+  start: number,
+  openChar: string,
+  closeChar: string,
+): string | null {
   let depth = 0;
   let inString = false;
   let escape = false;
@@ -166,9 +226,18 @@ function extractBalancedBlock(s: string, start: number, openChar: string, closeC
   for (let i = start; i < s.length; i++) {
     const ch = s[i];
 
-    if (escape) { escape = false; continue; }
-    if (ch === '\\' && inString) { escape = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
     if (inString) continue;
 
     if (ch === openChar) depth++;

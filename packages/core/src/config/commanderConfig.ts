@@ -2,11 +2,53 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
 
-export type ProviderType = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'mimo' | 'deepseek' | 'glm' | 'xiaomi' | 'ollama' | 'vllm' | 'cohere' | 'mistral' | 'groq' | 'together' | 'perplexity' | 'fireworks' | 'replicate' | 'bedrock' | 'xai' | 'anyscale' | 'deepinfra';
+export type ProviderType =
+  | 'openai'
+  | 'anthropic'
+  | 'google'
+  | 'openrouter'
+  | 'mimo'
+  | 'deepseek'
+  | 'glm'
+  | 'xiaomi'
+  | 'ollama'
+  | 'vllm'
+  | 'cohere'
+  | 'mistral'
+  | 'groq'
+  | 'together'
+  | 'perplexity'
+  | 'fireworks'
+  | 'replicate'
+  | 'bedrock'
+  | 'xai'
+  | 'anyscale'
+  | 'deepinfra'
+  | 'agnes';
 
 export const PROVIDER_ORDER: ProviderType[] = [
-  'ollama', 'vllm', 'deepinfra', 'anyscale', 'replicate', 'cohere', 'mistral', 'groq', 'together', 'perplexity', 'fireworks',
-  'xiaomi', 'mimo', 'deepseek', 'glm', 'xai', 'bedrock', 'openrouter', 'anthropic', 'google', 'openai',
+  'ollama',
+  'vllm',
+  'deepinfra',
+  'anyscale',
+  'replicate',
+  'cohere',
+  'mistral',
+  'groq',
+  'together',
+  'perplexity',
+  'fireworks',
+  'xiaomi',
+  'mimo',
+  'deepseek',
+  'glm',
+  'xai',
+  'bedrock',
+  'agnes',
+  'openrouter',
+  'anthropic',
+  'google',
+  'openai',
 ];
 
 export const ENV_MAP: Record<ProviderType, { key: string; url: string; model: string }> = {
@@ -31,6 +73,7 @@ export const ENV_MAP: Record<ProviderType, { key: string; url: string; model: st
   xai: { key: 'XAI_API_KEY', url: 'XAI_BASE_URL', model: 'XAI_MODEL' },
   anyscale: { key: 'ANYSCALE_API_KEY', url: 'ANYSCALE_BASE_URL', model: 'ANYSCALE_MODEL' },
   deepinfra: { key: 'DEEPINFRA_API_KEY', url: 'DEEPINFRA_BASE_URL', model: 'DEEPINFRA_MODEL' },
+  agnes: { key: 'AGNES_API_KEY', url: 'AGNES_BASE_URL', model: 'AGNES_MODEL' },
 };
 
 export const DEFAULT_URLS: Record<ProviderType, string> = {
@@ -55,6 +98,7 @@ export const DEFAULT_URLS: Record<ProviderType, string> = {
   xai: 'https://api.x.ai/v1',
   anyscale: 'https://api.endpoints.anyscale.com/v1',
   deepinfra: 'https://api.deepinfra.com/v1/openai',
+  agnes: 'https://apihub.agnes-ai.com/v1',
 };
 
 export const DEFAULT_MODELS: Record<ProviderType, string> = {
@@ -79,6 +123,7 @@ export const DEFAULT_MODELS: Record<ProviderType, string> = {
   xai: 'grok-2-latest',
   anyscale: 'meta-llama/Llama-3.3-70B-Instruct',
   deepinfra: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+  agnes: 'agnes-2.0-flash',
 };
 
 const DISPLAY_NAMES: Record<ProviderType, string> = {
@@ -103,6 +148,7 @@ const DISPLAY_NAMES: Record<ProviderType, string> = {
   xai: 'xAI (Grok)',
   anyscale: 'Anyscale',
   deepinfra: 'DeepInfra',
+  agnes: 'Agnes AI',
 };
 
 export const API_TYPE: Record<ProviderType, 'openai' | 'anthropic' | 'google'> = {
@@ -127,6 +173,7 @@ export const API_TYPE: Record<ProviderType, 'openai' | 'anthropic' | 'google'> =
   xai: 'openai',
   anyscale: 'openai',
   deepinfra: 'openai',
+  agnes: 'openai',
 };
 
 export interface ProviderInfo {
@@ -141,7 +188,12 @@ export interface ProviderInfo {
  * Auto-detect which provider is configured based on env vars.
  * Returns the first provider with a matching API key, in priority order.
  */
-function checkLocalProvider(type: ProviderType, keyEnv: string, urlEnv: string, modelEnv: string): ProviderInfo | null {
+function checkLocalProvider(
+  type: ProviderType,
+  keyEnv: string,
+  urlEnv: string,
+  modelEnv: string,
+): ProviderInfo | null {
   const baseUrl = process.env[urlEnv] || DEFAULT_URLS[type];
   const defaultModel = process.env[modelEnv] || DEFAULT_MODELS[type];
   if (!process.env[urlEnv] && !process.env[modelEnv]) return null;
@@ -158,11 +210,13 @@ function checkLocalProvider(type: ProviderType, keyEnv: string, urlEnv: string, 
  * Resolve the API key for a provider, checking fallback env var names.
  */
 export function resolveApiKey(type: ProviderType, primaryKey: string): string {
-  return process.env[primaryKey]
-    || (type === 'cohere' ? (process.env.COHERE_API_KEY || '') : '')
-    || (type === 'replicate' ? (process.env.REPLICATE_API_KEY || '') : '')
-    || (type === 'perplexity' ? (process.env.PPLX_API_KEY || '') : '')
-    || '';
+  return (
+    process.env[primaryKey] ||
+    (type === 'cohere' ? process.env.COHERE_API_KEY || '' : '') ||
+    (type === 'replicate' ? process.env.REPLICATE_API_KEY || '' : '') ||
+    (type === 'perplexity' ? process.env.PPLX_API_KEY || '' : '') ||
+    ''
+  );
 }
 
 export function detectProvider(): ProviderInfo | null {
@@ -215,7 +269,7 @@ export function detectProvider(): ProviderInfo | null {
       if (type !== 'openai' && process.env.OPENAI_API_KEY && process.env.OPENAI_BASE_URL) {
         const baseUrl = process.env.OPENAI_BASE_URL.toLowerCase();
         const nonOpenai = type as string;
-        const match = (
+        const match =
           (nonOpenai === 'mimo' && (baseUrl.includes('mimo') || baseUrl.includes('xiaomimi'))) ||
           (nonOpenai === 'deepseek' && baseUrl.includes('deepseek')) ||
           (nonOpenai === 'glm' && (baseUrl.includes('bigmodel') || baseUrl.includes('zhipu'))) ||
@@ -223,8 +277,7 @@ export function detectProvider(): ProviderInfo | null {
           (nonOpenai === 'vllm' && baseUrl.includes('localhost:8000')) ||
           (nonOpenai === 'groq' && baseUrl.includes('groq')) ||
           (nonOpenai === 'mistral' && baseUrl.includes('mistral')) ||
-          (nonOpenai === 'together' && baseUrl.includes('together'))
-        );
+          (nonOpenai === 'together' && baseUrl.includes('together'));
         if (!match) continue;
       } else {
         continue;
@@ -259,13 +312,13 @@ const CONFIG_PATHS = [
 ];
 
 const SETTING_ALIASES: Record<string, keyof CommanderSettings> = {
-  'model': 'model',
+  model: 'model',
   'meta-tools': 'enableMetaTools',
-  'meta_tools': 'enableMetaTools',
-  'enableMetaTools': 'enableMetaTools',
-  'toolRetrieval': 'toolRetrieval',
-  'entropyGating': 'entropyGating',
-  'speculativeExecution': 'speculativeExecution',
+  meta_tools: 'enableMetaTools',
+  enableMetaTools: 'enableMetaTools',
+  toolRetrieval: 'toolRetrieval',
+  entropyGating: 'entropyGating',
+  speculativeExecution: 'speculativeExecution',
 };
 
 /**
@@ -275,7 +328,12 @@ function loadSettings(): CommanderSettings {
   for (const p of CONFIG_PATHS) {
     try {
       if (fs.existsSync(p)) {
-        try { return JSON.parse(fs.readFileSync(p, 'utf-8')); } catch { getGlobalLogger().warn('CommanderConfig', `Failed to parse config file ${p}`); return {}; }
+        try {
+          return JSON.parse(fs.readFileSync(p, 'utf-8'));
+        } catch {
+          getGlobalLogger().warn('CommanderConfig', `Failed to parse config file ${p}`);
+          return {};
+        }
       }
     } catch {
       getGlobalLogger().debug('CommanderConfig', `Skipping config file ${p}`);
@@ -312,13 +370,16 @@ export function setConfig(key: string, value: string): void {
   const settings = getSettings();
   const normalizedKey = SETTING_ALIASES[key];
   if (!normalizedKey) {
-    throw new Error(`Unknown setting: ${key}. Try: model, meta-tools, toolRetrieval, entropyGating, speculativeExecution`);
+    throw new Error(
+      `Unknown setting: ${key}. Try: model, meta-tools, toolRetrieval, entropyGating, speculativeExecution`,
+    );
   }
   if (normalizedKey === 'model') {
     settings.model = value;
-} else {
-     (settings as Record<string, unknown>)[normalizedKey] = value === 'true' || value === '1' || value === 'on';
-   }
+  } else {
+    (settings as Record<string, unknown>)[normalizedKey] =
+      value === 'true' || value === '1' || value === 'on';
+  }
   saveSettings(settings);
   cachedSettings = settings;
 }
@@ -327,7 +388,9 @@ export function showConfig(): void {
   const provider = detectProvider();
   const settings = getSettings();
 
-  console.log(`\n  Provider:  ${provider ? `${DISPLAY_NAMES[provider.type]} (${provider.type})` : 'None'}`);
+  console.log(
+    `\n  Provider:  ${provider ? `${DISPLAY_NAMES[provider.type]} (${provider.type})` : 'None'}`,
+  );
   console.log(`  Model:     ${settings.model || provider?.defaultModel || 'auto'}`);
   console.log(`  API URL:   ${provider?.baseUrl || '-'}`);
   console.log(`  API type:  ${provider?.apiType || '-'}`);
@@ -343,32 +406,77 @@ export function listProviders(): void {
     const env = ENV_MAP[type];
     const key = process.env[env.key] || '';
     const hasKey = !!key;
-    const viaOpenAI = !hasKey && type !== 'openai' && process.env.OPENAI_API_KEY && process.env.OPENAI_BASE_URL;
+    const viaOpenAI =
+      !hasKey && type !== 'openai' && process.env.OPENAI_API_KEY && process.env.OPENAI_BASE_URL;
     const model = process.env[env.model] || DEFAULT_MODELS[type];
-    console.log(`  ${hasKey ? '✓' : viaOpenAI ? '~' : ' '} ${DISPLAY_NAMES[type].padEnd(20)} ${type.padEnd(12)} ${model}`);
+    console.log(
+      `  ${hasKey ? '✓' : viaOpenAI ? '~' : ' '} ${DISPLAY_NAMES[type].padEnd(20)} ${type.padEnd(12)} ${model}`,
+    );
   }
 }
 
 export function listModels(): void {
   const all = [
     { provider: 'openai', name: 'gpt-4o, gpt-4o-mini, gpt-4.1, o3-mini, o4-mini' },
-    { provider: 'anthropic', name: 'claude-3-5-sonnet, claude-3-5-haiku, claude-3-opus, claude-4-sonnet' },
+    {
+      provider: 'anthropic',
+      name: 'claude-3-5-sonnet, claude-3-5-haiku, claude-3-opus, claude-4-sonnet',
+    },
     { provider: 'google', name: 'gemini-2.0-flash, gemini-2.0-pro, gemini-2.5-pro' },
-    { provider: 'openrouter', name: 'openai/gpt-4o, anthropic/claude-3.5-sonnet, google/gemini-2.0-flash, deepseek/deepseek-chat, meta-llama/llama-3.3-70b, mistral/mistral-large' },
-    { provider: 'deepseek', name: 'deepseek-v4-flash, deepseek-v4-pro, deepseek-chat, deepseek-reasoner' },
-    { provider: 'glm', name: 'glm-5.1, glm-5, glm-5-turbo, glm-4.7, glm-4.7-flash, glm-4.6, glm-4.5' },
+    {
+      provider: 'openrouter',
+      name: 'openai/gpt-4o, anthropic/claude-3.5-sonnet, google/gemini-2.0-flash, deepseek/deepseek-chat, meta-llama/llama-3.3-70b, mistral/mistral-large',
+    },
+    {
+      provider: 'deepseek',
+      name: 'deepseek-v4-flash, deepseek-v4-pro, deepseek-chat, deepseek-reasoner',
+    },
+    {
+      provider: 'glm',
+      name: 'glm-5.1, glm-5, glm-5-turbo, glm-4.7, glm-4.7-flash, glm-4.6, glm-4.5',
+    },
     { provider: 'mimo', name: 'mimo-v2.5, mimo-v2.5-pro, mimo-v2-pro, mimo-v2-omni' },
     { provider: 'xiaomi', name: 'mimo-v2-flash, mimo-v2-pro, mimo-v2-omni' },
-    { provider: 'ollama', name: 'llama3.2, llama3.1, llama3, mistral, qwen2.5, codellama, deepseek-coder (local)' },
-    { provider: 'vllm', name: 'Llama-3.2, Mistral, Qwen2.5, DeepSeek-Coder, any HF model (self-hosted)' },
-    { provider: 'cohere', name: 'command-a-plus-05-2026, command-r-08-2024, command-r-plus-08-2024' },
-    { provider: 'mistral', name: 'mistral-large-latest, mistral-small-latest, codestral-latest, open-mistral-nemo' },
-    { provider: 'groq', name: 'llama-3.3-70b-versatile, llama3-70b-8192, mixtral-8x7b-32768, gemma2-9b-it' },
-    { provider: 'together', name: 'Llama-3.3-70B, DeepSeek-V3, Qwen2.5-72B, Mixtral-8x22B, Gemma-2-27b' },
-    { provider: 'perplexity', name: 'sonar-pro, sonar, sonar-reasoning-pro, sonar-reasoning, sonar-deep-research, r1-1776' },
-    { provider: 'fireworks', name: 'llama-v3p3-70b, deepseek-v3, qwen2p5-coder-32b, mixtral-8x22b' },
-    { provider: 'replicate', name: 'meta-llama-3.3-70b, mistral-7b, gemma-2-27b (open-source via cloud)' },
-    { provider: 'bedrock', name: 'Claude 3.5 Sonnet/Haiku/Opus, Llama 3 70B/8B, Mistral Large (AWS)' },
+    {
+      provider: 'ollama',
+      name: 'llama3.2, llama3.1, llama3, mistral, qwen2.5, codellama, deepseek-coder (local)',
+    },
+    {
+      provider: 'vllm',
+      name: 'Llama-3.2, Mistral, Qwen2.5, DeepSeek-Coder, any HF model (self-hosted)',
+    },
+    {
+      provider: 'cohere',
+      name: 'command-a-plus-05-2026, command-r-08-2024, command-r-plus-08-2024',
+    },
+    {
+      provider: 'mistral',
+      name: 'mistral-large-latest, mistral-small-latest, codestral-latest, open-mistral-nemo',
+    },
+    {
+      provider: 'groq',
+      name: 'llama-3.3-70b-versatile, llama3-70b-8192, mixtral-8x7b-32768, gemma2-9b-it',
+    },
+    {
+      provider: 'together',
+      name: 'Llama-3.3-70B, DeepSeek-V3, Qwen2.5-72B, Mixtral-8x22B, Gemma-2-27b',
+    },
+    {
+      provider: 'perplexity',
+      name: 'sonar-pro, sonar, sonar-reasoning-pro, sonar-reasoning, sonar-deep-research, r1-1776',
+    },
+    {
+      provider: 'fireworks',
+      name: 'llama-v3p3-70b, deepseek-v3, qwen2p5-coder-32b, mixtral-8x22b',
+    },
+    {
+      provider: 'replicate',
+      name: 'meta-llama-3.3-70b, mistral-7b, gemma-2-27b (open-source via cloud)',
+    },
+    {
+      provider: 'bedrock',
+      name: 'Claude 3.5 Sonnet/Haiku/Opus, Llama 3 70B/8B, Mistral Large (AWS)',
+    },
   ];
   for (const p of all) {
     console.log(`  ${DISPLAY_NAMES[p.provider as ProviderType]} (${p.provider}):`);

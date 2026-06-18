@@ -23,7 +23,13 @@ class TestBackend implements ExecutionBackend {
   readonly available = true;
   constructor(public readonly name: string) {}
   async execute(cmd: string) {
-    return { stdout: `${this.name}: ${cmd}`, stderr: '', exitCode: 0, durationMs: 0, sandboxMechanism: 'none' as const };
+    return {
+      stdout: `${this.name}: ${cmd}`,
+      stderr: '',
+      exitCode: 0,
+      durationMs: 0,
+      sandboxMechanism: 'none' as const,
+    };
   }
 }
 
@@ -53,7 +59,9 @@ describe('Default lane', () => {
 describe('Lane registration', () => {
   let lm: LaneManager;
 
-  beforeEach(() => { lm = freshLaneManager(); });
+  beforeEach(() => {
+    lm = freshLaneManager();
+  });
 
   it('registers a new lane', () => {
     lm.registerLane({ name: 'high-priority', maxConcurrency: 3, priority: 1 });
@@ -174,7 +182,9 @@ describe('Custom lane selectors', () => {
   });
 
   it('selector errors are caught and do not break routing', () => {
-    lm.addSelector(() => { throw new Error('oops'); });
+    lm.addSelector(() => {
+      throw new Error('oops');
+    });
 
     const lane = lm.selectLane({ agentId: 'a1' });
     assert.strictEqual(lane.config.name, 'default');
@@ -187,7 +197,9 @@ describe('Custom lane selectors', () => {
 describe('Slot acquisition and release', () => {
   let lm: LaneManager;
 
-  beforeEach(() => { lm = freshLaneManager(); });
+  beforeEach(() => {
+    lm = freshLaneManager();
+  });
 
   it('acquires a slot and increments running count', async () => {
     const laneName = await lm.acquireSlot({ agentId: 'a1' });
@@ -216,13 +228,13 @@ describe('Slot acquisition and release', () => {
     // Try to acquire again — should wait
     const waitPromise = lm.acquireSlot({ agentId: 'a2' });
     // Should not have resolved yet
-    await new Promise(resolve => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
     assert.strictEqual(lane.runningCount, 1); // still 1
     assert.strictEqual(lane.waitingQueue.length, 1); // 1 waiting
 
     // Release the slot — waiter should proceed
     lm.releaseSlot('default');
-    await new Promise(resolve => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
     assert.strictEqual(lane.runningCount, 1); // now 1 again (new one took over)
     assert.strictEqual(lane.waitingQueue.length, 0);
   });
@@ -262,12 +274,20 @@ describe('Slot acquisition and release', () => {
 describe('Lane statistics', () => {
   let lm: LaneManager;
 
-  beforeEach(() => { lm = freshLaneManager(); });
+  beforeEach(() => {
+    lm = freshLaneManager();
+  });
 
   it('getStats returns all lanes with correct fields', () => {
-    lm.registerLane({ name: 'worker', maxConcurrency: 4, priority: 2, backendName: 'worker-pool', tenantIds: ['t1'] });
+    lm.registerLane({
+      name: 'worker',
+      maxConcurrency: 4,
+      priority: 2,
+      backendName: 'worker-pool',
+      tenantIds: ['t1'],
+    });
     const stats = lm.getStats();
-    const worker = stats.find(s => s.name === 'worker');
+    const worker = stats.find((s) => s.name === 'worker');
     assert.ok(worker);
     assert.strictEqual(worker.maxConcurrency, 4);
     assert.strictEqual(worker.priority, 2);
@@ -282,7 +302,7 @@ describe('Lane statistics', () => {
     await lm.acquireSlot({ agentId: 'a1', args: { lane: 'busy' } });
 
     const stats = lm.getStats();
-    const busy = stats.find(s => s.name === 'busy')!;
+    const busy = stats.find((s) => s.name === 'busy')!;
     assert.strictEqual(busy.running, 1);
     assert.strictEqual(busy.totalEnqueued, 1);
   });
@@ -294,7 +314,9 @@ describe('Lane statistics', () => {
 describe('getLaneBackend', () => {
   let lm: LaneManager;
 
-  beforeEach(() => { lm = freshLaneManager(); });
+  beforeEach(() => {
+    lm = freshLaneManager();
+  });
 
   it('returns undefined for default lane (no pinned backend)', () => {
     const backend = lm.getLaneBackend({ agentId: 'a1' });
@@ -302,7 +324,12 @@ describe('getLaneBackend', () => {
   });
 
   it('returns backend name when lane has pinned backend', () => {
-    lm.registerLane({ name: 'pinned-lane', maxConcurrency: 2, priority: 1, backendName: 'prod-cluster' });
+    lm.registerLane({
+      name: 'pinned-lane',
+      maxConcurrency: 2,
+      priority: 1,
+      backendName: 'prod-cluster',
+    });
     const backend = lm.getLaneBackend({ agentId: 'a1', args: { lane: 'pinned-lane' } });
     assert.strictEqual(backend, 'prod-cluster');
   });
@@ -330,7 +357,13 @@ describe('Lane + ExecutionRouter integration', () => {
   it('selectBackend uses lane-pinned backend when matched', async () => {
     const backend = new TestBackend('lane-backend');
     router.registerBackend('lane-backend', backend);
-    lm.registerLane({ name: 'ssh-lane', maxConcurrency: 2, priority: 1, backendName: 'lane-backend', tenantIds: ['t1'] });
+    lm.registerLane({
+      name: 'ssh-lane',
+      maxConcurrency: 2,
+      priority: 1,
+      backendName: 'lane-backend',
+      tenantIds: ['t1'],
+    });
 
     const result = await router.selectBackend({
       _toolName: 'shell_execute',
@@ -346,9 +379,18 @@ describe('Lane + ExecutionRouter integration', () => {
   });
 
   it('selectBackend ignores lane pin if no registered backend matches', async () => {
-    lm.registerLane({ name: 'broken-lane', maxConcurrency: 2, priority: 1, backendName: 'nonexistent-backend' });
+    lm.registerLane({
+      name: 'broken-lane',
+      maxConcurrency: 2,
+      priority: 1,
+      backendName: 'nonexistent-backend',
+    });
 
-    const result = await router.selectBackend({ _toolName: 'shell_execute', _agentId: 'a1', args: { lane: 'broken-lane' } });
+    const result = await router.selectBackend({
+      _toolName: 'shell_execute',
+      _agentId: 'a1',
+      args: { lane: 'broken-lane' },
+    });
     assert.strictEqual(result.type, 'local');
   });
 
@@ -360,7 +402,8 @@ describe('Lane + ExecutionRouter integration', () => {
     lm.registerLane({ name: 'pinned', maxConcurrency: 2, priority: 1, backendName: 'lane-pin' });
 
     const result = await router.selectBackend({
-      _toolName: 'shell_execute', _agentId: 'a1',
+      _toolName: 'shell_execute',
+      _agentId: 'a1',
       backend_name: 'explicit',
       args: { lane: 'pinned' },
     });

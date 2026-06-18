@@ -1,1 +1,5 @@
-export { HTMLReportRenderer, getHTMLReportRenderer, createWarRoomHTMLReport } from './htmlReportRenderer';
+export {
+  HTMLReportRenderer,
+  getHTMLReportRenderer,
+  createWarRoomHTMLReport,
+} from './htmlReportRenderer';

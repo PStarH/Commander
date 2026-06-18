@@ -68,14 +68,14 @@ test('WarRoomStore normalizes legacy agents and missions on load', () => {
 
   const store = new WarRoomStore(filePath);
   const agents = store.listAgents('project-war-room');
-  const builder = agents.find(agent => agent.id === 'agent-builder');
-  const scout = agents.find(agent => agent.id === 'agent-scout');
+  const builder = agents.find((agent) => agent.id === 'agent-builder');
+  const scout = agents.find((agent) => agent.id === 'agent-scout');
   assert.equal(builder.governanceRole, 'EXECUTOR');
   assert.equal(scout.governanceRole, 'SENATE');
 
   const snapshot = store.getProjectSnapshot('project-war-room');
   assert.ok(snapshot);
-  const mission = snapshot.missions.find(item => item.id === 'mission-api-spine');
+  const mission = snapshot.missions.find((item) => item.id === 'mission-api-spine');
   assert.equal(mission.riskLevel, 'HIGH');
   assert.equal(mission.governanceMode, 'MANUAL');
 });

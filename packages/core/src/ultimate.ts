@@ -1,8 +1,8 @@
 /**
  * 终极 Multi-Agent 框架 - 核心组件
- * 
+ *
  * 目标：全方位碾压现有所有 agent 框架
- * 
+ *
  * 核心创新：
  * 1. 自适应多范式编排 - 根据任务复杂度自动选择最优模式
  * 2. Token 最优分配 - 大模型决策 + 小模型执行
@@ -26,11 +26,11 @@ import { HallucinationDetector, getHallucinationDetector } from './hallucination
  * 编排模式 - 基于 ACONIC + Microsoft Orchestration Patterns 研究
  */
 export type OrchestrationMode =
-  | 'SEQUENTIAL'    // 低复杂度，单线程执行
-  | 'PARALLEL'      // 独立子任务，并行执行
-  | 'HANDOFF'       // 需要专家，委托模式
-  | 'MAGNETIC'      // 开放探索，动态规划
-  | 'CONSENSUS';    // 高风险，多模型投票
+  | 'SEQUENTIAL' // 低复杂度，单线程执行
+  | 'PARALLEL' // 独立子任务，并行执行
+  | 'HANDOFF' // 需要专家，委托模式
+  | 'MAGNETIC' // 开放探索，动态规划
+  | 'CONSENSUS'; // 高风险，多模型投票
 
 /**
  * 编排决策 - 包含选择理由和执行计划
@@ -47,7 +47,7 @@ export interface OrchestrationDecision {
 
 /**
  * 自适应编排器 - 核心组件
- * 
+ *
  * 根据任务特征自动选择最优编排模式：
  * - LOW complexity → SEQUENTIAL (单 agent 直接执行)
  * - MEDIUM + independent subtasks → PARALLEL (多 agent 并行)
@@ -73,19 +73,19 @@ export class AdaptiveOrchestrator {
   analyze(task: TaskNode, allTasks: TaskNode[]): OrchestrationDecision {
     const complexity = measureTaskComplexity(task, allTasks, this.options);
     const reasoning: string[] = [];
-    
+
     // 根据复杂度选择模式
     const mode = this.selectMode(complexity, task, reasoning);
-    
+
     // 分配 Token 预算
     const tokenBudget = this.allocateTokens(mode, complexity);
-    
+
     // 设置质量门控
     const qualityGates = this.setupQualityGates(mode, complexity);
-    
+
     // 估算执行时间
     const estimatedDuration = this.estimateDuration(mode, complexity);
-    
+
     return {
       mode,
       complexity,
@@ -100,19 +100,23 @@ export class AdaptiveOrchestrator {
   private selectMode(
     complexity: TaskComplexity,
     task: TaskNode,
-    reasoning: string[]
+    reasoning: string[],
   ): OrchestrationMode {
     // CRITICAL 复杂度 → CONSENSUS (最安全)
     if (complexity.level === 'CRITICAL') {
       reasoning.push('CRITICAL complexity → CONSENSUS mode for maximum safety');
-      reasoning.push(`Treewidth: ${complexity.treewidth}, Dependency depth: ${complexity.dependencyDepth}`);
+      reasoning.push(
+        `Treewidth: ${complexity.treewidth}, Dependency depth: ${complexity.dependencyDepth}`,
+      );
       return 'CONSENSUS';
     }
 
     // HIGH 复杂度 → MAGNETIC (动态规划)
     if (complexity.level === 'HIGH') {
       if (complexity.estimatedSubtasks > this.options.maxSubtasks) {
-        reasoning.push(`HIGH complexity but ${complexity.estimatedSubtasks} subtasks exceeds max ${this.options.maxSubtasks}`);
+        reasoning.push(
+          `HIGH complexity but ${complexity.estimatedSubtasks} subtasks exceeds max ${this.options.maxSubtasks}`,
+        );
         reasoning.push('Using MAGNETIC mode for adaptive planning');
       } else {
         reasoning.push('HIGH complexity with clear decomposition path');
@@ -128,19 +132,19 @@ export class AdaptiveOrchestrator {
         reasoning.push('MEDIUM complexity + external resources → HANDOFF mode');
         return 'HANDOFF';
       }
-      
+
       // 多依赖 → PARALLEL (并行执行)
       if (task.dependencies.length > 1) {
         reasoning.push('MEDIUM complexity + multiple dependencies → PARALLEL mode');
         return 'PARALLEL';
       }
-      
+
       // 认知负载高 → HANDOFF
       if (task.cognitiveLoad >= 6) {
         reasoning.push('MEDIUM complexity + high cognitive load → HANDOFF mode');
         return 'HANDOFF';
       }
-      
+
       // 默认 → SEQUENTIAL
       reasoning.push('MEDIUM complexity, default → SEQUENTIAL mode');
       return 'SEQUENTIAL';
@@ -153,13 +157,13 @@ export class AdaptiveOrchestrator {
 
   private allocateTokens(
     mode: OrchestrationMode,
-    complexity: TaskComplexity
+    complexity: TaskComplexity,
   ): TokenBudgetAllocation {
     // 基础预算分配
     const baseBudget: TokenBudgetAllocation = {
-      leadAgent: 0.4,      // 大模型决策
+      leadAgent: 0.4, // 大模型决策
       specialistAgents: 0.5, // 小模型执行
-      overhead: 0.1,       // 协调开销
+      overhead: 0.1, // 协调开销
     };
 
     // 根据模式调整
@@ -171,7 +175,7 @@ export class AdaptiveOrchestrator {
           specialistAgents: 0.6, // 多个 judge 模型
           overhead: 0.1,
         };
-      
+
       case 'MAGNETIC':
         // 动态规划需要更多决策 token
         return {
@@ -179,7 +183,7 @@ export class AdaptiveOrchestrator {
           specialistAgents: 0.4,
           overhead: 0.1,
         };
-      
+
       case 'PARALLEL':
         // 并行执行需要更多执行 token
         return {
@@ -187,16 +191,13 @@ export class AdaptiveOrchestrator {
           specialistAgents: 0.6,
           overhead: 0.1,
         };
-      
+
       default:
         return baseBudget;
     }
   }
 
-  private setupQualityGates(
-    mode: OrchestrationMode,
-    complexity: TaskComplexity
-  ): QualityGate[] {
+  private setupQualityGates(mode: OrchestrationMode, complexity: TaskComplexity): QualityGate[] {
     const gates: QualityGate[] = [];
 
     // 所有模式都需要基础验证
@@ -240,13 +241,10 @@ export class AdaptiveOrchestrator {
     return gates;
   }
 
-  private estimateDuration(
-    mode: OrchestrationMode,
-    complexity: TaskComplexity
-  ): number {
+  private estimateDuration(mode: OrchestrationMode, complexity: TaskComplexity): number {
     // 基础时间估算（毫秒）
     const baseMs = 5000; // 5秒基础
-    
+
     // 复杂度因子
     const complexityFactor = {
       LOW: 1,
@@ -258,10 +256,10 @@ export class AdaptiveOrchestrator {
     // 模式因子
     const modeFactor: Record<OrchestrationMode, number> = {
       SEQUENTIAL: 1,
-      PARALLEL: 0.6,  // 并行更快
-      HANDOFF: 1.5,  // 委托有开销
-      MAGNETIC: 2,    // 动态规划较慢
-      CONSENSUS: 3,   // 投票最慢
+      PARALLEL: 0.6, // 并行更快
+      HANDOFF: 1.5, // 委托有开销
+      MAGNETIC: 2, // 动态规划较慢
+      CONSENSUS: 3, // 投票最慢
     };
 
     return baseMs * complexityFactor[complexity.level] * modeFactor[mode];
@@ -326,12 +324,12 @@ export const DEFAULT_MODEL_CONFIG: ModelTierConfig = {
 
 /**
  * Token 预算分配器
- * 
+ *
  * 核心思想：
  * - 大模型只做决策（40% token）
  * - 小模型做执行（50% token）
  * - 协调开销（10% token）
- * 
+ *
  * 这样可以实现 70-90% 成本节省，同时保持效果
  */
 export class TokenBudgetAllocator {
@@ -340,7 +338,7 @@ export class TokenBudgetAllocator {
 
   constructor(
     totalBudget: number = 100000, // 默认 100k tokens
-    config: ModelTierConfig = DEFAULT_MODEL_CONFIG
+    config: ModelTierConfig = DEFAULT_MODEL_CONFIG,
   ) {
     this.totalBudget = totalBudget;
     this.config = config;
@@ -357,11 +355,11 @@ export class TokenBudgetAllocator {
     // 验证不超过模型限制
     const validatedLead = Math.min(
       Math.max(leadTokens, this.config.leadModel.minTokens),
-      this.config.leadModel.maxTokens
+      this.config.leadModel.maxTokens,
     );
     const validatedSpecialist = Math.min(
       Math.max(specialistTokens, this.config.specialistModel.minTokens),
-      this.config.specialistModel.maxTokens
+      this.config.specialistModel.maxTokens,
     );
 
     // 计算成本
@@ -404,7 +402,7 @@ export class TokenBudgetAllocator {
    */
   getRecommendedBudget(complexity: TaskComplexity): number {
     const baseBudget = 50000; // 50k tokens
-    
+
     const complexityMultiplier = {
       LOW: 1,
       MEDIUM: 2,
@@ -465,7 +463,7 @@ export class QualityGateExecutor {
   async execute(
     gates: QualityGate[],
     input: unknown,
-    output: unknown
+    output: unknown,
   ): Promise<QualityGateResult[]> {
     const results: QualityGateResult[] = [];
 
@@ -485,21 +483,21 @@ export class QualityGateExecutor {
   private async executeGate(
     gate: QualityGate,
     input: unknown,
-    output: unknown
+    output: unknown,
   ): Promise<QualityGateResult> {
     switch (gate.name) {
       case 'output_validation':
         return this.validateOutput(gate, output);
-      
+
       case 'hallucination_check':
         return this.checkHallucination(gate, input, output);
-      
+
       case 'consensus_vote':
         return this.consensusVote(gate, output);
-      
+
       case 'handoff_verification':
         return this.verifyHandoff(gate, input, output);
-      
+
       default:
         return {
           gate: gate.name,
@@ -512,7 +510,7 @@ export class QualityGateExecutor {
   private validateOutput(gate: QualityGate, output: unknown): QualityGateResult {
     // 简单的输出验证
     const isValid = output !== null && output !== undefined;
-    
+
     return {
       gate: gate.name,
       passed: isValid,
@@ -520,13 +518,17 @@ export class QualityGateExecutor {
     };
   }
 
-  private checkHallucination(gate: QualityGate, input: unknown, output: unknown): QualityGateResult {
+  private checkHallucination(
+    gate: QualityGate,
+    input: unknown,
+    output: unknown,
+  ): QualityGateResult {
     const detector = getHallucinationDetector();
     const inputStr = typeof input === 'string' ? input : JSON.stringify(input ?? '');
     const outputStr = typeof output === 'string' ? output : JSON.stringify(output ?? '');
-    
+
     const report = detector.analyze(inputStr, outputStr);
-    
+
     return {
       gate: gate.name,
       passed: report.recommendation !== 'reject',
@@ -542,46 +544,51 @@ export class QualityGateExecutor {
   private consensusVote(gate: QualityGate, output: unknown): QualityGateResult {
     const minJudges = (gate.config?.minJudges as number) ?? 3;
     const threshold = (gate.config?.agreementThreshold as number) ?? 0.67;
-    
+
     const outputStr = typeof output === 'string' ? output : JSON.stringify(output ?? '');
-    
+
     const signals: string[] = [];
     let score = 1.0;
-    
+
     // Check for hedging language (calibrated output)
-    const hasHedging = /\b(might|may|could|likely|possibly|approximately|around|I think|it seems)\b/i.test(outputStr);
+    const hasHedging =
+      /\b(might|may|could|likely|possibly|approximately|around|I think|it seems)\b/i.test(
+        outputStr,
+      );
     if (hasHedging) signals.push('Contains hedging language (calibrated)');
-    
+
     // Check for structured output
     const hasStructure = /\n\s*[-•*]\s|\n\s*\d+[.)]\s|#{1,3}\s/.test(outputStr);
     if (hasStructure) signals.push('Structured output detected');
-    
+
     // Check for self-contradiction indicators
-    const contradictions = (outputStr.match(/\bhowever\b|\bbut\b|\bon the other hand\b|\bcontrary to\b/gi) ?? []).length;
+    const contradictions = (
+      outputStr.match(/\bhowever\b|\bbut\b|\bon the other hand\b|\bcontrary to\b/gi) ?? []
+    ).length;
     if (contradictions > 3) {
       score -= 0.2;
       signals.push(`Multiple contradiction markers (${contradictions})`);
     }
-    
+
     // Very long output may indicate rambling/hallucination
     const wordCount = outputStr.split(/\s+/).length;
     if (wordCount > 2000) {
       score -= 0.15;
       signals.push(`Very long output (${wordCount} words)`);
     }
-    
+
     // Check for repetition
     const sentences = outputStr.split(/[.!?]+/).filter((s: string) => s.trim().length > 20);
     const uniqueSentences = new Set(sentences.map((s: string) => s.trim().toLowerCase()));
-    const repetitionRate = 1 - (uniqueSentences.size / Math.max(sentences.length, 1));
+    const repetitionRate = 1 - uniqueSentences.size / Math.max(sentences.length, 1);
     if (repetitionRate > 0.3) {
       score -= 0.25;
       signals.push(`High repetition rate (${(repetitionRate * 100).toFixed(0)}%)`);
     }
-    
+
     score = Math.max(0, Math.min(1, score));
     const passed = score >= threshold;
-    
+
     return {
       gate: gate.name,
       passed,
@@ -593,7 +600,7 @@ export class QualityGateExecutor {
   private verifyHandoff(gate: QualityGate, input: unknown, output: unknown): QualityGateResult {
     const signals: string[] = [];
     let passed = true;
-    
+
     // Basic context check
     if (input === null || input === undefined) {
       passed = false;
@@ -603,33 +610,43 @@ export class QualityGateExecutor {
       passed = false;
       signals.push('Missing output context');
     }
-    
+
     // Check that output contains actionable content
     if (passed) {
       const outputStr = typeof output === 'string' ? output : JSON.stringify(output);
-      
+
       // Output should reference the input somehow
       const inputStr = typeof input === 'string' ? input : JSON.stringify(input);
-      const inputWords = new Set(inputStr.toLowerCase().split(/\s+/).filter((w: string) => w.length > 4));
-      const outputWords = outputStr.toLowerCase().split(/\s+/).filter((w: string) => w.length > 4);
+      const inputWords = new Set(
+        inputStr
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((w: string) => w.length > 4),
+      );
+      const outputWords = outputStr
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w: string) => w.length > 4);
       const overlap = outputWords.filter((w: string) => inputWords.has(w)).length;
       const relevanceRatio = overlap / Math.max(inputWords.size, 1);
-      
+
       if (relevanceRatio < 0.1) {
         signals.push(`Low input-output relevance (${(relevanceRatio * 100).toFixed(0)}%)`);
       } else {
         signals.push(`Input-output relevance: ${(relevanceRatio * 100).toFixed(0)}%`);
       }
-      
+
       // Check for action items or next steps
-      const hasActionItems = /\b(next|should|will|need to|must|action|step|follow.?up)\b/i.test(outputStr);
+      const hasActionItems = /\b(next|should|will|need to|must|action|step|follow.?up)\b/i.test(
+        outputStr,
+      );
       if (hasActionItems) {
         signals.push('Contains action items');
       } else {
         signals.push('No clear action items in handoff');
       }
     }
-    
+
     return {
       gate: gate.name,
       passed,
@@ -652,9 +669,4 @@ export interface QualityGateResult {
 // 第四部分：统一导出
 // ============================================================================
 
-export {
-  TaskComplexity,
-  TaskNode,
-  measureTaskComplexity,
-  shouldDecompose,
-};
+export { TaskComplexity, TaskNode, measureTaskComplexity, shouldDecompose };

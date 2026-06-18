@@ -2,7 +2,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
-import type { WorkflowDefinition, ScheduleEntry, ExecutionRecord, SchedulerConfig, WorkflowTrigger } from './types';
+import type {
+  WorkflowDefinition,
+  ScheduleEntry,
+  ExecutionRecord,
+  SchedulerConfig,
+  WorkflowTrigger,
+} from './types';
 import type { UltimateOrchestrator } from '../ultimate/orchestrator';
 import type { EffortLevel, OrchestrationTopology } from '../ultimate/types';
 
@@ -46,7 +52,7 @@ function cronFieldMatches(pattern: string, value: number): boolean {
 
   // Handle comma-separated: "1,15,30"
   if (pattern.includes(',')) {
-    return pattern.split(',').some(p => cronFieldMatches(p.trim(), value));
+    return pattern.split(',').some((p) => cronFieldMatches(p.trim(), value));
   }
 
   // Handle step: "*/5" or "1-10/2"
@@ -81,11 +87,16 @@ function parseInterval(interval: string): number {
   if (!match) return 30 * 60 * 1000; // default 30m
   const num = parseInt(match[1], 10);
   switch (match[2]) {
-    case 's': return num * 1000;
-    case 'm': return num * 60 * 1000;
-    case 'h': return num * 60 * 60 * 1000;
-    case 'd': return num * 24 * 60 * 60 * 1000;
-    default: return 30 * 60 * 1000;
+    case 's':
+      return num * 1000;
+    case 'm':
+      return num * 60 * 1000;
+    case 'h':
+      return num * 60 * 60 * 1000;
+    case 'd':
+      return num * 24 * 60 * 60 * 1000;
+    default:
+      return 30 * 60 * 1000;
   }
 }
 
@@ -167,7 +178,7 @@ export class Scheduler {
   }
 
   getHistory(workflowId?: string): ExecutionRecord[] {
-    if (workflowId) return this.executionRecords.filter(r => r.workflowId === workflowId);
+    if (workflowId) return this.executionRecords.filter((r) => r.workflowId === workflowId);
     return [...this.executionRecords];
   }
 
@@ -177,8 +188,12 @@ export class Scheduler {
 
   start(): void {
     if (this.tickTimer) return;
-    getGlobalLogger().info('Scheduler', `Starting scheduler (tick=${this.config.tickIntervalMs}ms)`);
+    getGlobalLogger().info(
+      'Scheduler',
+      `Starting scheduler (tick=${this.config.tickIntervalMs}ms)`,
+    );
     this.tickTimer = setInterval(() => this.tick(), this.config.tickIntervalMs);
+    if (typeof this.tickTimer.unref === 'function') this.tickTimer.unref();
     // Fire an immediate tick
     setImmediate(() => this.tick());
   }
@@ -195,36 +210,44 @@ export class Scheduler {
   // Tick — check and fire due workflows
   // ========================================================================
 
+  private ticking = false;
+
   private async tick(): Promise<void> {
-    const now = new Date();
+    if (this.ticking) return;
+    this.ticking = true;
+    try {
+      const now = new Date();
 
-    for (const [id, entry] of this.schedules) {
-      if (!entry.enabled) continue;
-      if (!entry.nextRunAt) continue;
-      if (this.running >= this.config.maxConcurrency) break;
+      for (const [id, entry] of this.schedules) {
+        if (!entry.enabled) continue;
+        if (!entry.nextRunAt) continue;
+        if (this.running >= this.config.maxConcurrency) break;
 
-      const nextRun = new Date(entry.nextRunAt);
-      if (now < nextRun) continue;
+        const nextRun = new Date(entry.nextRunAt);
+        if (now < nextRun) continue;
 
-      // Due — fire it
-      this.running++;
-      const record = this.createRecord(entry);
-      entry.lastRunAt = now.toISOString();
-      entry.runCount++;
+        // Due — fire it
+        this.running++;
+        const record = this.createRecord(entry);
+        entry.lastRunAt = now.toISOString();
+        entry.runCount++;
 
-      this.fireWorkflow(entry, record)
-        .catch(err => {
-          getGlobalLogger().error('Scheduler', `Workflow "${entry.workflowName}" failed`, err);
-          record.status = 'failed';
-          record.error = err.message;
-          record.completedAt = new Date().toISOString();
-        })
-        .finally(() => {
-          this.running--;
-          entry.nextRunAt = this.computeNextRun(entry.trigger);
-          this.saveState();
-          this.persistRecord(record);
-        });
+        this.fireWorkflow(entry, record)
+          .catch((err) => {
+            getGlobalLogger().error('Scheduler', `Workflow "${entry.workflowName}" failed`, err);
+            record.status = 'failed';
+            record.error = err.message;
+            record.completedAt = new Date().toISOString();
+          })
+          .finally(() => {
+            this.running--;
+            entry.nextRunAt = this.computeNextRun(entry.trigger);
+            this.saveState();
+            this.persistRecord(record);
+          });
+      }
+    } finally {
+      this.ticking = false;
     }
   }
 
@@ -234,7 +257,10 @@ export class Scheduler {
       throw new Error('No orchestrator set — call setOrchestrator() before starting');
     }
 
-    getGlobalLogger().info('Scheduler', `Firing workflow "${entry.workflowName}" (${entry.workflowId})`);
+    getGlobalLogger().info(
+      'Scheduler',
+      `Firing workflow "${entry.workflowName}" (${entry.workflowId})`,
+    );
 
     const result = await orch.execute({
       projectId: 'scheduler',
@@ -249,7 +275,8 @@ export class Scheduler {
     });
 
     record.completedAt = new Date().toISOString();
-    record.status = result.status === 'SUCCESS' ? 'success' : result.status === 'FAILED' ? 'failed' : 'cancelled';
+    record.status =
+      result.status === 'SUCCESS' ? 'success' : result.status === 'FAILED' ? 'failed' : 'cancelled';
     record.summary = result.summary;
     record.durationMs = result.metrics.totalDurationMs;
     record.tokenUsage = {
@@ -311,7 +338,9 @@ export class Scheduler {
         this.executionRecords = JSON.parse(fs.readFileSync(this.recordsPath, 'utf-8'));
       }
     } catch (err) {
-      getGlobalLogger().warn('Scheduler', 'Failed to load state', { error: (err as Error).message });
+      getGlobalLogger().warn('Scheduler', 'Failed to load state', {
+        error: (err as Error).message,
+      });
     }
   }
 
@@ -322,7 +351,9 @@ export class Scheduler {
       fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2));
       fs.renameSync(tmpPath, this.statePath);
     } catch (err) {
-      getGlobalLogger().warn('Scheduler', 'Failed to save state', { error: (err as Error).message });
+      getGlobalLogger().warn('Scheduler', 'Failed to save state', {
+        error: (err as Error).message,
+      });
     }
   }
 
@@ -337,7 +368,9 @@ export class Scheduler {
       fs.writeFileSync(tmpPath, JSON.stringify(this.executionRecords, null, 2));
       fs.renameSync(tmpPath, this.recordsPath);
     } catch (err) {
-      getGlobalLogger().warn('Scheduler', 'Failed to persist execution record', { error: (err as Error).message });
+      getGlobalLogger().warn('Scheduler', 'Failed to persist execution record', {
+        error: (err as Error).message,
+      });
     }
   }
 

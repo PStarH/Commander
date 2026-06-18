@@ -1,6 +1,0 @@
-{
-  "cat": "Extraction",
-  "question": "Extract company names from: 'Apple and Microsoft announced a partnership.'",
-  "answer": "The company names are **Apple** and **Microsoft**.",
-  "score": 8.0
-}

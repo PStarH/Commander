@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-06-01T01:37:47.235Z",
+  "model": "mimo-v2.5-pro",
+  "commanderSuccessRate": "0/1",
+  "results": [
+    {
+      "scenario": "S1",
+      "openclawIssue": "#62505 — Coding Agent退化，只输出status update不给代码",
+      "category": "coding",
+      "commanderSuccess": false,
+      "durationSec": 94.872,
+      "outputPreview": "Good, Bug 1 fixed. Now **Bug 2**: Remove the extra `)` in `formatUser`:",
+      "verificationDetail": "分号bug未修",
+      "openclawExpectedBehavior": "OpenClaw用户报告agent只说\"正在为您处理\"然后超时，不输出实际修改后的代码"
+    }
+  ]
+}

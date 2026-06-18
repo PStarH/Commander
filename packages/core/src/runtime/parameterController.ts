@@ -75,7 +75,9 @@ export function getParamDecisions(): readonly ParamDecision[] {
 
 function recordDecision(d: ParamDecision): void {
   paramDecisions.push(d);
-  if (paramDecisions.length > MAX_PARAM_DECISIONS) paramDecisions.shift();
+  if (paramDecisions.length > MAX_PARAM_DECISIONS) {
+    paramDecisions.splice(0, paramDecisions.length - MAX_PARAM_DECISIONS + 200);
+  }
 }
 
 export interface TaskProfile {
@@ -94,38 +96,143 @@ export interface SamplingParams {
 const TASK_SIGNATURES: Array<{ type: TaskType; keywords: string[]; patterns: RegExp[] }> = [
   {
     type: 'code_generation',
-    keywords: ['implement', 'function', 'class', 'write code', 'generate', 'fix bug', 'refactor', 'sort', 'algorithm', 'def ', '//', 'import ', 'const ', 'let var', 'return'],
-    patterns: [/def \w+\(/, /function\s+\w+\s*\(/, /class\s+\w+/, /fix (this|the|a) (bug|error|issue)/i, /generate.*code/i, /implement.*function/i, /write.*(function|program|script)/i],
+    keywords: [
+      'implement',
+      'function',
+      'class',
+      'write code',
+      'generate',
+      'fix bug',
+      'refactor',
+      'sort',
+      'algorithm',
+      'def ',
+      '//',
+      'import ',
+      'const ',
+      'let var',
+      'return',
+    ],
+    patterns: [
+      /def \w+\(/,
+      /function\s+\w+\s*\(/,
+      /class\s+\w+/,
+      /fix (this|the|a) (bug|error|issue)/i,
+      /generate.*code/i,
+      /implement.*function/i,
+      /write.*(function|program|script)/i,
+    ],
   },
   {
     type: 'code_review',
-    keywords: ['review', 'audit', 'security', 'vulnerability', 'code smell', 'optimize', 'performance'],
-    patterns: [/review (this|the|my) code/i, /find (bugs|issues|problems)/i, /is this code safe/i, /code review/i],
+    keywords: [
+      'review',
+      'audit',
+      'security',
+      'vulnerability',
+      'code smell',
+      'optimize',
+      'performance',
+    ],
+    patterns: [
+      /review (this|the|my) code/i,
+      /find (bugs|issues|problems)/i,
+      /is this code safe/i,
+      /code review/i,
+    ],
   },
   {
     type: 'tool_calling',
     keywords: ['search', 'fetch', 'read', 'write', 'edit', 'execute', 'run', 'list', 'find file'],
-    patterns: [/search (for|the|web)/i, /read (file|this)/i, /execute (this|command)/i, /run (this|the) (test|script|command)/i],
+    patterns: [
+      /search (for|the|web)/i,
+      /read (file|this)/i,
+      /execute (this|command)/i,
+      /run (this|the) (test|script|command)/i,
+    ],
   },
   {
     type: 'reasoning',
-    keywords: ['calculate', 'prove', 'deduce', 'infer', 'logic', 'math', 'equation', 'solve', 'probability', 'statistics'],
-    patterns: [/solve (for|this|the)/i, /prove that/i, /calculate (the|this)/i, /what is the (probability|expected)/i, /\d+\s*[+\-*\/]\s*\d+/],
+    keywords: [
+      'calculate',
+      'prove',
+      'deduce',
+      'infer',
+      'logic',
+      'math',
+      'equation',
+      'solve',
+      'probability',
+      'statistics',
+    ],
+    patterns: [
+      /solve (for|this|the)/i,
+      /prove that/i,
+      /calculate (the|this)/i,
+      /what is the (probability|expected)/i,
+      /\d+\s*[+\-*\/]\s*\d+/,
+    ],
   },
   {
     type: 'creative',
-    keywords: ['brainstorm', 'creative', 'name', 'slogan', 'poem', 'story', 'design', 'imagine', 'invent', 'metaphor'],
-    patterns: [/come up with (a|an|some)/i, /give me (some|a few) (ideas|options|names)/i, /write a (poem|story)/i, /creative/i],
+    keywords: [
+      'brainstorm',
+      'creative',
+      'name',
+      'slogan',
+      'poem',
+      'story',
+      'design',
+      'imagine',
+      'invent',
+      'metaphor',
+    ],
+    patterns: [
+      /come up with (a|an|some)/i,
+      /give me (some|a few) (ideas|options|names)/i,
+      /write a (poem|story)/i,
+      /creative/i,
+    ],
   },
   {
     type: 'conversation',
-    keywords: ['hello', 'hi', 'how are you', 'thanks', 'explain', 'what is', 'tell me about', 'define'],
-    patterns: [/^(hi|hello|hey)/i, /explain (this|that|how|why)/i, /what is (the|a|an)/i, /tell me about/i],
+    keywords: [
+      'hello',
+      'hi',
+      'how are you',
+      'thanks',
+      'explain',
+      'what is',
+      'tell me about',
+      'define',
+    ],
+    patterns: [
+      /^(hi|hello|hey)/i,
+      /explain (this|that|how|why)/i,
+      /what is (the|a|an)/i,
+      /tell me about/i,
+    ],
   },
   {
     type: 'planning',
-    keywords: ['plan', 'strategy', 'approach', 'roadmap', 'milestone', 'step', 'phase', 'organize', 'outline', 'break down'],
-    patterns: [/create a (plan|strategy|roadmap)/i, /break down (this|the) (task|project)/i, /what are the steps/i, /plan (this|the|a)/i],
+    keywords: [
+      'plan',
+      'strategy',
+      'approach',
+      'roadmap',
+      'milestone',
+      'step',
+      'phase',
+      'organize',
+      'outline',
+      'break down',
+    ],
+    patterns: [
+      /create a (plan|strategy|roadmap)/i,
+      /break down (this|the) (task|project)/i,
+      /what are the steps/i,
+      /plan (this|the|a)/i,
+    ],
   },
 ];
 
@@ -147,7 +254,7 @@ export function classifyTask(userMessage: string, history?: LLMMessage[]): TaskP
   for (const sig of TASK_SIGNATURES) {
     let score = 0;
     for (const kw of sig.keywords) {
-      if (text.includes(kw.toLowerCase())) score += 1;
+      if (text.includes(kw)) score += 1;
     }
     for (const pat of sig.patterns) {
       if (pat.test(text)) score += 2;
@@ -177,19 +284,25 @@ export function classifyTask(userMessage: string, history?: LLMMessage[]): TaskP
   return {
     taskType: bestType,
     confidence,
-    reasoning: bestType !== 'default'
-      ? `Matched ${bestType} with score ${bestScore}`
-      : 'No specific task signature matched',
+    reasoning:
+      bestType !== 'default'
+        ? `Matched ${bestType} with score ${bestScore}`
+        : 'No specific task signature matched',
   };
 }
 
-export function getSamplingParams(profile: TaskProfile, userOverride?: Partial<SamplingParams>): SamplingParams {
+export function getSamplingParams(
+  profile: TaskProfile,
+  userOverride?: Partial<SamplingParams>,
+): SamplingParams {
   const base = { ...TASK_PARAMS[profile.taskType] };
   if (userOverride) {
     if (userOverride.temperature !== undefined) base.temperature = userOverride.temperature;
     if (userOverride.topP !== undefined) base.topP = userOverride.topP;
-    if (userOverride.frequencyPenalty !== undefined) base.frequencyPenalty = userOverride.frequencyPenalty;
-    if (userOverride.presencePenalty !== undefined) base.presencePenalty = userOverride.presencePenalty;
+    if (userOverride.frequencyPenalty !== undefined)
+      base.frequencyPenalty = userOverride.frequencyPenalty;
+    if (userOverride.presencePenalty !== undefined)
+      base.presencePenalty = userOverride.presencePenalty;
   }
   // Low confidence = more conservative params
   if (profile.confidence < 0.4 && base.temperature > 0.5) {
@@ -267,8 +380,10 @@ export function applyControllerParams(
   return result;
 }
 
-export function createParameterControllerPlugin(overrides?: Partial<Record<TaskType, Partial<SamplingParams>>>): CommanderPlugin {
-  // Apply user overrides to defaults
+export function createParameterControllerPlugin(
+  overrides?: Partial<Record<TaskType, Partial<SamplingParams>>>,
+): CommanderPlugin {
+  // Apply user overrides to defaults (intentional module-level mutation — called once per process)
   if (overrides) {
     for (const [type, params] of Object.entries(overrides)) {
       if (TASK_PARAMS[type as TaskType]) {
@@ -282,7 +397,7 @@ export function createParameterControllerPlugin(overrides?: Partial<Record<TaskT
     description: 'Adaptive temperature/topP based on task type',
     version: '0.1.0',
     beforeLLMCall: (ctx: BeforeLLMCallContext): LLMRequest => {
-      const lastUserMsg = [...ctx.request.messages].reverse().find(m => m.role === 'user');
+      const lastUserMsg = [...ctx.request.messages].reverse().find((m) => m.role === 'user');
       const userContent = lastUserMsg?.content || '';
       const params = getAdaptiveParams(
         typeof userContent === 'string' ? userContent : '',

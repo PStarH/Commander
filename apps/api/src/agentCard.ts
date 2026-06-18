@@ -1,7 +1,7 @@
 /**
  * Agent Card Implementation
  * Based on Google's A2A Protocol Specification
- * 
+ *
  * Agent Cards are self-descriptions that agents publish
  * to advertise their capabilities, protocols, and request types.
  */
@@ -45,9 +45,9 @@ export interface AgentCapability {
 export type Modality = 'text' | 'audio' | 'video' | 'image' | 'file';
 
 export interface DurationHint {
-  min: number;  // seconds
-  max: number;  // seconds
-  typical: number;  // seconds
+  min: number; // seconds
+  max: number; // seconds
+  typical: number; // seconds
 }
 
 export interface AuthenticationScheme {
@@ -104,19 +104,19 @@ export class AgentCardGenerator {
             properties: {
               title: { type: 'string' },
               description: { type: 'string' },
-              priority: { type: 'string', enum: ['low', 'medium', 'high'] }
+              priority: { type: 'string', enum: ['low', 'medium', 'high'] },
             },
-            required: ['title', 'description']
+            required: ['title', 'description'],
           },
           outputSchema: {
             type: 'object',
             properties: {
               missionId: { type: 'string' },
-              status: { type: 'string' }
-            }
+              status: { type: 'string' },
+            },
           },
           modalities: ['text'],
-          estimatedDuration: { min: 1, max: 5, typical: 2 }
+          estimatedDuration: { min: 1, max: 5, typical: 2 },
         },
         {
           id: 'task-delegate',
@@ -127,19 +127,19 @@ export class AgentCardGenerator {
             properties: {
               missionId: { type: 'string' },
               taskDescription: { type: 'string' },
-              agentId: { type: 'string' }
+              agentId: { type: 'string' },
             },
-            required: ['missionId', 'taskDescription']
+            required: ['missionId', 'taskDescription'],
           },
           outputSchema: {
             type: 'object',
             properties: {
               taskId: { type: 'string' },
-              status: { type: 'string' }
-            }
+              status: { type: 'string' },
+            },
           },
           modalities: ['text'],
-          estimatedDuration: { min: 1, max: 10, typical: 3 }
+          estimatedDuration: { min: 1, max: 10, typical: 3 },
         },
         {
           id: 'memory-query',
@@ -150,9 +150,9 @@ export class AgentCardGenerator {
             properties: {
               projectId: { type: 'string' },
               query: { type: 'string' },
-              type: { type: 'string', enum: ['decision', 'lesson', 'issue', 'all'] }
+              type: { type: 'string', enum: ['decision', 'lesson', 'issue', 'all'] },
             },
-            required: ['projectId']
+            required: ['projectId'],
           },
           outputSchema: {
             type: 'array',
@@ -161,12 +161,12 @@ export class AgentCardGenerator {
               properties: {
                 id: { type: 'string' },
                 content: { type: 'string' },
-                timestamp: { type: 'string' }
-              }
-            }
+                timestamp: { type: 'string' },
+              },
+            },
           },
           modalities: ['text'],
-          estimatedDuration: { min: 1, max: 3, typical: 1 }
+          estimatedDuration: { min: 1, max: 3, typical: 1 },
         },
         {
           id: 'status-check',
@@ -176,56 +176,56 @@ export class AgentCardGenerator {
             type: 'object',
             properties: {
               type: { type: 'string', enum: ['mission', 'agent', 'task', 'all'] },
-              id: { type: 'string' }
-            }
+              id: { type: 'string' },
+            },
           },
           outputSchema: {
             type: 'object',
             properties: {
               status: { type: 'string' },
-              details: { type: 'object' }
-            }
+              details: { type: 'object' },
+            },
           },
           modalities: ['text'],
-          estimatedDuration: { min: 0.5, max: 2, typical: 1 }
-        }
+          estimatedDuration: { min: 0.5, max: 2, typical: 1 },
+        },
       ],
       authentication: [
         {
           type: 'bearer',
-          description: 'JWT Bearer token authentication'
+          description: 'JWT Bearer token authentication',
         },
         {
           type: 'api-key',
           description: 'API key in X-API-Key header',
-          headerName: 'X-API-Key'
-        }
+          headerName: 'X-API-Key',
+        },
       ],
       endpoints: [
         {
           type: 'task',
           url: `${baseUrl}/api/task`,
           method: 'POST',
-          description: 'Submit a new task for execution'
+          description: 'Submit a new task for execution',
         },
         {
           type: 'message',
           url: `${baseUrl}/api/message`,
           method: 'POST',
-          description: 'Send a message to an agent'
+          description: 'Send a message to an agent',
         },
         {
           type: 'status',
           url: `${baseUrl}/api/status`,
           method: 'GET',
-          description: 'Get system status'
+          description: 'Get system status',
         },
         {
           type: 'artifact',
           url: `${baseUrl}/api/artifact/:id`,
           method: 'GET',
-          description: 'Retrieve an artifact by ID'
-        }
+          description: 'Retrieve an artifact by ID',
+        },
       ],
       metadata: {
         vendor: 'OpenClaw',
@@ -233,24 +233,24 @@ export class AgentCardGenerator {
         documentation: 'https://docs.openclaw.ai/commander',
         support: 'https://discord.gg/clawd',
         tags: ['orchestration', 'multi-agent', 'project-management', 'task-coordination'],
-        updatedAt: new Date().toISOString()
-      }
+        updatedAt: new Date().toISOString(),
+      },
     };
   }
-  
+
   /**
    * Validate an Agent Card
    */
   static validate(card: AgentCard): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
-    
+
     if (!card.id) errors.push('Missing id');
     if (!card.name) errors.push('Missing name');
     if (!card.version) errors.push('Missing version');
     if (!card.capabilities || card.capabilities.length === 0) {
       errors.push('Missing capabilities');
     }
-    
+
     card.capabilities.forEach((cap, i) => {
       if (!cap.id) errors.push(`Capability ${i}: missing id`);
       if (!cap.name) errors.push(`Capability ${i}: missing name`);
@@ -258,20 +258,20 @@ export class AgentCardGenerator {
         errors.push(`Capability ${i}: missing modalities`);
       }
     });
-    
+
     return {
       valid: errors.length === 0,
-      errors
+      errors,
     };
   }
-  
+
   /**
    * Export Agent Card as JSON
    */
   static toJSON(card: AgentCard): string {
     return JSON.stringify(card, null, 2);
   }
-  
+
   /**
    * Parse Agent Card from JSON
    */
@@ -286,7 +286,7 @@ export class AgentCardGenerator {
  */
 export class AgentCardRegistry {
   private cards: Map<string, AgentCard> = new Map();
-  
+
   /**
    * Register an agent card
    */
@@ -297,32 +297,32 @@ export class AgentCardRegistry {
     }
     this.cards.set(card.id, card);
   }
-  
+
   /**
    * Get an agent card by ID
    */
   get(id: string): AgentCard | undefined {
     return this.cards.get(id);
   }
-  
+
   /**
    * Find agents by capability
    */
   findByCapability(capabilityId: string): AgentCard[] {
-    return Array.from(this.cards.values()).filter(card =>
-      card.capabilities.some(cap => cap.id === capabilityId)
+    return Array.from(this.cards.values()).filter((card) =>
+      card.capabilities.some((cap) => cap.id === capabilityId),
     );
   }
-  
+
   /**
    * Find agents by tags
    */
   findByTags(tags: string[]): AgentCard[] {
-    return Array.from(this.cards.values()).filter(card =>
-      card.metadata.tags.some(tag => tags.includes(tag))
+    return Array.from(this.cards.values()).filter((card) =>
+      card.metadata.tags.some((tag) => tags.includes(tag)),
     );
   }
-  
+
   /**
    * List all registered agents
    */

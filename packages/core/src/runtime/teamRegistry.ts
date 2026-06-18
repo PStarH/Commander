@@ -38,7 +38,8 @@ export class TeamRegistry {
   private manifestPath: string;
 
   constructor(manifestPath?: string) {
-    this.manifestPath = manifestPath ?? path.join(process.cwd(), '.commander_teams', 'manifest.json');
+    this.manifestPath =
+      manifestPath ?? path.join(process.cwd(), '.commander_teams', 'manifest.json');
     fs.mkdirSync(path.dirname(this.manifestPath), { recursive: true });
     this.load();
   }
@@ -73,8 +74,8 @@ export class TeamRegistry {
 
   /** Find teams an agent belongs to */
   findTeamsForAgent(agentId: string): TeamSpec[] {
-    return Array.from(this.teams.values()).filter(t =>
-      t.members.some(m => m.agentId === agentId),
+    return Array.from(this.teams.values()).filter((t) =>
+      t.members.some((m) => m.agentId === agentId),
     );
   }
 
@@ -82,7 +83,7 @@ export class TeamRegistry {
   addMember(teamId: string, member: TeamMember): boolean {
     const team = this.teams.get(teamId);
     if (!team) return false;
-    if (team.members.some(m => m.agentId === member.agentId)) return false;
+    if (team.members.some((m) => m.agentId === member.agentId)) return false;
     team.members.push({ ...member, joinedAt: new Date().toISOString() });
     this.save();
     return true;
@@ -93,7 +94,7 @@ export class TeamRegistry {
     const team = this.teams.get(teamId);
     if (!team) return false;
     const before = team.members.length;
-    team.members = team.members.filter(m => m.agentId !== agentId);
+    team.members = team.members.filter((m) => m.agentId !== agentId);
     if (team.members.length !== before) {
       this.save();
       return true;
@@ -105,7 +106,7 @@ export class TeamRegistry {
   getMembers(teamId: string, role?: TeamRole): TeamMember[] {
     const team = this.teams.get(teamId);
     if (!team) return [];
-    if (role) return team.members.filter(m => m.role === role);
+    if (role) return team.members.filter((m) => m.role === role);
     return [...team.members];
   }
 
@@ -113,7 +114,7 @@ export class TeamRegistry {
   setRole(teamId: string, agentId: string, role: TeamRole): boolean {
     const team = this.teams.get(teamId);
     if (!team) return false;
-    const member = team.members.find(m => m.agentId === agentId);
+    const member = team.members.find((m) => m.agentId === agentId);
     if (!member) return false;
     member.role = role;
     this.save();
@@ -146,7 +147,12 @@ export class TeamRegistry {
       for (const team of data) {
         this.teams.set(team.teamId, team);
       }
-    } catch (e) { getGlobalLogger().warn('TeamRegistry', 'Failed to load team manifest', { error: (e as Error)?.message, manifestPath: this.manifestPath }); }
+    } catch (e) {
+      getGlobalLogger().warn('TeamRegistry', 'Failed to load team manifest', {
+        error: (e as Error)?.message,
+        manifestPath: this.manifestPath,
+      });
+    }
   }
 
   private save(): void {
@@ -155,6 +161,15 @@ export class TeamRegistry {
       const content = JSON.stringify(Array.from(this.teams.values()), null, 2);
       fs.writeFileSync(tmpPath, content, 'utf-8');
       fs.renameSync(tmpPath, this.manifestPath);
-    } catch (e) { getGlobalLogger().warn('TeamRegistry', 'Failed to save team manifest', { error: (e as Error)?.message, manifestPath: this.manifestPath }); }
+    } catch (e) {
+      getGlobalLogger().warn('TeamRegistry', 'Failed to save team manifest', {
+        error: (e as Error)?.message,
+        manifestPath: this.manifestPath,
+      });
+    }
+  }
+
+  dispose(): void {
+    this.teams.clear();
   }
 }

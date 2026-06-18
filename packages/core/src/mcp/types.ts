@@ -86,10 +86,7 @@ export interface MCPJsonSchema {
 // Tool Content Types (tool call results)
 // ---------------------------------------------------------------------------
 
-export type MCPContentItem =
-  | MCPTextContent
-  | MCPImageContent
-  | MCPResourceContent;
+export type MCPContentItem = MCPTextContent | MCPImageContent | MCPResourceContent;
 
 export interface MCPTextContent {
   type: 'text';
@@ -213,9 +210,9 @@ export type MCPTransportType = 'stdio' | 'streamable-http';
 
 export interface MCPClientConfig {
   transport: MCPTransportType;
-  command?: string;       // for stdio
-  args?: string[];         // for stdio
-  url?: string;            // for streamable-http
+  command?: string; // for stdio
+  args?: string[]; // for stdio
+  url?: string; // for streamable-http
   headers?: Record<string, string>;
   env?: Record<string, string>;
 }

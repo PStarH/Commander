@@ -13,14 +13,30 @@
 import type { LLMProvider } from './types';
 import { HallucinationDetector } from '../hallucinationDetector';
 import { getGlobalLogger } from '../logging';
-import type { TaskType, VerificationSignal, VerificationReport, UVPTaskContext, UVPConfig } from './unifiedVerificationTypes';
+import type {
+  TaskType,
+  VerificationSignal,
+  VerificationReport,
+  UVPTaskContext,
+  UVPConfig,
+} from './unifiedVerificationTypes';
 import { DEFAULT_UVP_CONFIG } from './unifiedVerificationTypes';
 import { detectTaskType } from './taskAnalyzer';
+import { getGoalJudge } from './goalJudge';
 
 // Re-export for backward compatibility
-export type { TaskType, VerificationSignal, VerificationReport, UVPTaskContext, UVPConfig } from './unifiedVerificationTypes';
+export type {
+  TaskType,
+  VerificationSignal,
+  VerificationReport,
+  UVPTaskContext,
+  UVPConfig,
+} from './unifiedVerificationTypes';
 export { DEFAULT_UVP_CONFIG } from './unifiedVerificationTypes';
 export { detectTaskType, classifyProvisionIntent } from './taskAnalyzer';
+
+const TRIPLE_SINGLE_RE = /'''/g;
+const TRIPLE_DOUBLE_RE = /"""/g;
 
 interface SchemaProperty {
   required?: boolean;
@@ -43,7 +59,8 @@ const HALLUCINATION_PATTERNS = {
     /\b(100% (certain|sure|confident|guaranteed))\b/i,
     /\b(without (a |any )?doubt)\b/i,
     /\b(guaranteed? to (be|work|succeed))\b/i,
-    /[我确]定无疑/, /百分之百/,
+    /[我确]定无疑/,
+    /百分之百/,
   ],
   fabricatedRef: [
     /\b(?:a |the )?(?:recent |20\d{2} )?(?:study|research|paper)\s+(?:by|from|conducted by)\b/i,
@@ -53,9 +70,7 @@ const HALLUCINATION_PATTERNS = {
   temporalIssue: [
     /\b(?:as of|since|until|after|in)\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20[3-9]\d\b/i,
   ],
-  numericAnomaly: [
-    /\b\d{10,}\b/,
-  ],
+  numericAnomaly: [/\b\d{10,}\b/],
   // GAIA-specific: unrealistic population, area, or statistical values
   unrealisticFact: [
     /\b(population|area|distance|speed|weight|height)\s+(is|was|equals?|:)\s+\d{1,3}\b(?!\s*(million|billion|thousand|km|mi|kg|lb))/i,
@@ -85,11 +100,12 @@ const TOOL_ERROR_PATTERNS = [
 ];
 
 // Weak error signals — only flag if surrounded by tool-output context
-const WEAK_ERROR_SIGNALS = [
-  'failed', 'cannot', 'unable to', 'not found', 'timeout', 'denied',
-];
+const WEAK_ERROR_SIGNALS = ['failed', 'cannot', 'unable to', 'not found', 'timeout', 'denied'];
 
-function runStage0(ctx: UVPTaskContext, taskType: TaskType): { signals: VerificationSignal[]; confidence: number } {
+function runStage0(
+  ctx: UVPTaskContext,
+  taskType: TaskType,
+): { signals: VerificationSignal[]; confidence: number } {
   const signals: VerificationSignal[] = [];
   let confidence = 1.0;
 
@@ -98,18 +114,25 @@ function runStage0(ctx: UVPTaskContext, taskType: TaskType): { signals: Verifica
     for (const pattern of patterns) {
       const match = ctx.output.match(pattern);
       if (match) {
-        const severity = type === 'fabricatedRef' || type === 'temporalIssue' || type === 'unrealisticFact' ? 'high' : 'medium';
+        const severity =
+          type === 'fabricatedRef' || type === 'temporalIssue' || type === 'unrealisticFact'
+            ? 'high'
+            : 'medium';
         signals.push({
           stage: 0,
           source: `hallucination:${type}`,
           severity,
           message: `${type}: "${match[0]}"`,
-          snippet: ctx.output.slice(Math.max(0, (match.index ?? 0) - 20), (match.index ?? 0) + match[0].length + 20),
-          suggestion: type === 'overconfidence'
-            ? 'Replace with hedged language: "I believe", "likely", "based on available information"'
-            : type === 'fabricatedRef'
-              ? 'Remove unverifiable reference or add actual citation'
-              : 'Verify temporal/numeric claims against known facts',
+          snippet: ctx.output.slice(
+            Math.max(0, (match.index ?? 0) - 20),
+            (match.index ?? 0) + match[0].length + 20,
+          ),
+          suggestion:
+            type === 'overconfidence'
+              ? 'Replace with hedged language: "I believe", "likely", "based on available information"'
+              : type === 'fabricatedRef'
+                ? 'Remove unverifiable reference or add actual citation'
+                : 'Verify temporal/numeric claims against known facts',
         });
         confidence -= severity === 'high' ? 0.3 : 0.15;
         break;
@@ -123,7 +146,12 @@ function runStage0(ctx: UVPTaskContext, taskType: TaskType): { signals: Verifica
     const hReport = detector.analyze(ctx.goal, ctx.output);
     if (hReport.signals.length > 0) {
       for (const hs of hReport.signals) {
-        const sev = hs.severity === 'high' ? 'high' as const : hs.severity === 'medium' ? 'medium' as const : 'low' as const;
+        const sev =
+          hs.severity === 'high'
+            ? ('high' as const)
+            : hs.severity === 'medium'
+              ? ('medium' as const)
+              : ('low' as const);
         signals.push({
           stage: 0,
           source: `hallucination_detector:${hs.type}`,
@@ -151,7 +179,10 @@ function runStage0(ctx: UVPTaskContext, taskType: TaskType): { signals: Verifica
       const match = ctx.output.match(pattern);
       if (match) {
         const idx = match.index ?? 0;
-        const snippet = ctx.output.slice(Math.max(0, idx - 10), idx + 80).replace(/\n/g, ' ').trim();
+        const snippet = ctx.output
+          .slice(Math.max(0, idx - 10), idx + 80)
+          .replace(/\n/g, ' ')
+          .trim();
         signals.push({
           stage: 0,
           source: 'tool_error',
@@ -171,7 +202,11 @@ function runStage0(ctx: UVPTaskContext, taskType: TaskType): { signals: Verifica
       for (const line of lines) {
         const trimmed = line.trim().toLowerCase();
         // Only flag weak signals in lines that look like tool output (short, no prose)
-        if (trimmed.length < 120 && !trimmed.includes('.') && WEAK_ERROR_SIGNALS.some(s => trimmed.startsWith(s) || trimmed.includes(`: ${s}`))) {
+        if (
+          trimmed.length < 120 &&
+          !trimmed.includes('.') &&
+          WEAK_ERROR_SIGNALS.some((s) => trimmed.startsWith(s) || trimmed.includes(`: ${s}`))
+        ) {
           signals.push({
             stage: 0,
             source: 'tool_error_weak',
@@ -201,7 +236,8 @@ function runStage0(ctx: UVPTaskContext, taskType: TaskType): { signals: Verifica
       confidence -= 0.2;
     }
     for (const q of ["'''", '"""']) {
-      const count = (ctx.output.match(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length;
+      const count = (ctx.output.match(q === "'''" ? TRIPLE_SINGLE_RE : TRIPLE_DOUBLE_RE) ?? [])
+        .length;
       if (count % 2 !== 0) {
         signals.push({
           stage: 0,
@@ -216,11 +252,16 @@ function runStage0(ctx: UVPTaskContext, taskType: TaskType): { signals: Verifica
   }
 
   // --- Numeric plausibility check (catch off-by-magnitude errors) ---
-  if ((taskType === 'code' || taskType === 'analysis' || taskType === 'general') &&
-      /\b(calculate|compute|sum|average|total|count|how many|percentage?|what is|find|determine)\b/i.test(ctx.goal) &&
-      /^\s*-?\d+[.,]?\d*\s*$/.test(ctx.output.trim())) {
+  if (
+    (taskType === 'code' || taskType === 'analysis' || taskType === 'general') &&
+    /\b(calculate|compute|sum|average|total|count|how many|percentage?|what is|find|determine)\b/i.test(
+      ctx.goal,
+    ) &&
+    /^\s*-?\d+[.,]?\d*\s*$/.test(ctx.output.trim())
+  ) {
     // Extract numbers from the goal
-    const goalNums = ctx.goal.match(/\b\d+[.,]?\d*\b/g)?.map(n => parseFloat(n.replace(',', ''))) || [];
+    const goalNums =
+      ctx.goal.match(/\b\d+[.,]?\d*\b/g)?.map((n) => parseFloat(n.replace(',', ''))) || [];
     const outputNum = parseFloat(ctx.output.trim().replace(',', ''));
     if (goalNums.length > 0 && !isNaN(outputNum) && outputNum > 0) {
       // Check if output is an order of magnitude different from goal numbers
@@ -249,11 +290,11 @@ function runStage0(ctx: UVPTaskContext, taskType: TaskType): { signals: Verifica
   const outputWords = ctx.output.split(/\s+/).length;
   // Different multipliers per task type
   const maxMultiplier: Record<TaskType, number> = {
-    code: 15,       // Code + explanation can be legitimately long
-    analysis: 10,   // Analysis requires detail
-    search: 6,      // Search results are usually concise
-    creative: 20,   // Creative output can be long
-    structured: 5,  // Structured output is usually compact
+    code: 15, // Code + explanation can be legitimately long
+    analysis: 10, // Analysis requires detail
+    search: 6, // Search results are usually concise
+    creative: 20, // Creative output can be long
+    structured: 5, // Structured output is usually compact
     general: 8,
   };
   const mult = maxMultiplier[taskType] ?? 8;
@@ -292,7 +333,10 @@ function runStage1(ctx: UVPTaskContext): { signals: VerificationSignal[]; confid
       try {
         parsed = JSON.parse(jsonMatch[1].trim());
       } catch {
-        getGlobalLogger().debug('UnifiedVerification', 'JSON parse failed for extracted code block');
+        getGlobalLogger().debug(
+          'UnifiedVerification',
+          'JSON parse failed for extracted code block',
+        );
         // Fall through
       }
     }
@@ -328,8 +372,12 @@ function runStage1(ctx: UVPTaskContext): { signals: VerificationSignal[]; confid
     }
     if (obj[key] !== undefined && defObj.type) {
       const typeMap: Record<string, string> = {
-        string: 'string', number: 'number', integer: 'number',
-        boolean: 'boolean', array: 'object', object: 'object',
+        string: 'string',
+        number: 'number',
+        integer: 'number',
+        boolean: 'boolean',
+        array: 'object',
+        object: 'object',
       };
       const expected = typeMap[defObj.type as string];
       if (expected && typeof obj[key] !== expected) {
@@ -369,21 +417,24 @@ async function runStage2(
 
   // Build context-rich verification prompt
   // Include goal, output snippet, task type, and any existing signals
-  const outputSnippet = ctx.output.length > 600
-    ? ctx.output.slice(0, 300) + '\n...\n' + ctx.output.slice(-300)
-    : ctx.output;
+  const outputSnippet =
+    ctx.output.length > 600
+      ? ctx.output.slice(0, 300) + '\n...\n' + ctx.output.slice(-300)
+      : ctx.output;
 
-  const existingIssues = existingSignals.length > 0
-    ? `\nKnown issues: ${existingSignals.map(s => s.message).join('; ')}`
-    : '';
+  const existingIssues =
+    existingSignals.length > 0
+      ? `\nKnown issues: ${existingSignals.map((s) => s.message).join('; ')}`
+      : '';
 
-  const taskHint = taskType === 'code'
-    ? 'Check: does the code compile? Are there logic errors? Does it solve the goal?'
-    : taskType === 'structured'
-      ? 'Check: is the output valid and complete per the schema?'
-      : taskType === 'analysis'
-        ? 'Check: are claims supported? Is reasoning sound?'
-        : 'Check: does the output satisfy the goal?';
+  const taskHint =
+    taskType === 'code'
+      ? 'Check: does the code compile? Are there logic errors? Does it solve the goal?'
+      : taskType === 'structured'
+        ? 'Check: is the output valid and complete per the schema?'
+        : taskType === 'analysis'
+          ? 'Check: are claims supported? Is reasoning sound?'
+          : 'Check: does the output satisfy the goal?';
 
   const prompt = [
     `Task type: ${taskType}`,
@@ -392,7 +443,9 @@ async function runStage2(
     existingIssues,
     taskHint,
     `Reply JSON: {"pass":bool,"fix":"specific fix instruction or empty"}`,
-  ].filter(Boolean).join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   try {
     const resp = await provider.call({
@@ -447,13 +500,13 @@ class VerificationMemory {
   record(outcome: VerificationOutcome): void {
     this.outcomes.push(outcome);
     if (this.outcomes.length > this.maxSize) {
-      this.outcomes = this.outcomes.slice(-this.maxSize);
+      this.outcomes.splice(0, this.outcomes.length - this.maxSize);
     }
   }
 
   /** Weighted precision: recent outcomes count more. */
   strategyPrecision(strategy: string): number {
-    const relevant = this.outcomes.filter(o => o.strategy === strategy);
+    const relevant = this.outcomes.filter((o) => o.strategy === strategy);
     if (relevant.length < 5) return 0.5;
     const now = Date.now();
     let weightedReal = 0;
@@ -468,11 +521,11 @@ class VerificationMemory {
   }
 
   shouldRunLLMVerification(outputPrefix: string): boolean {
-    const similar = this.outcomes.filter(o =>
-      o.strategy === 'llm_verify' && o.outputPrefix === outputPrefix.slice(0, 40),
+    const similar = this.outcomes.filter(
+      (o) => o.strategy === 'llm_verify' && o.outputPrefix === outputPrefix.slice(0, 40),
     );
     if (similar.length < 3) return true;
-    return similar.some(o => o.wasRealIssue);
+    return similar.some((o) => o.wasRealIssue);
   }
 }
 
@@ -483,6 +536,7 @@ class VerificationMemory {
 export class UnifiedVerificationPipeline {
   private config: UVPConfig;
   private provider?: LLMProvider;
+  private runtime?: { getProvider(name: string): LLMProvider | undefined };
   private memory: VerificationMemory;
   private totalTokensUsed = 0;
 
@@ -492,12 +546,25 @@ export class UnifiedVerificationPipeline {
     this.memory = new VerificationMemory();
   }
 
+  setRuntime(runtime: { getProvider(name: string): LLMProvider | undefined }): void {
+    this.runtime = runtime;
+  }
+
+  setEvaluatorProvider(provider: LLMProvider): void {
+    this.config.evaluatorProvider = provider;
+  }
+
   async verify(ctx: UVPTaskContext): Promise<VerificationReport> {
     if (!this.config.enabled) {
       return {
-        passed: true, confidence: 1.0, signals: [],
-        tokensUsed: 0, stagesRun: [], taskType: 'general',
-        skipped: true, skipReason: 'disabled',
+        passed: true,
+        confidence: 1.0,
+        signals: [],
+        tokensUsed: 0,
+        stagesRun: [],
+        taskType: 'general',
+        skipped: true,
+        skipReason: 'disabled',
       };
     }
 
@@ -514,7 +581,7 @@ export class UnifiedVerificationPipeline {
     stagesRun.push(0);
 
     // Early exit on critical signals
-    if (s0.signals.some(s => s.severity === 'critical')) {
+    if (s0.signals.some((s) => s.severity === 'critical')) {
       return this.buildReport(false, 0.1, allSignals, tokensUsed, stagesRun, taskType);
     }
 
@@ -543,32 +610,59 @@ export class UnifiedVerificationPipeline {
           timestamp: Date.now(),
         });
       }
-      return this.buildReport(true, overallConfidence, allSignals, tokensUsed, stagesRun, taskType, 'high_confidence');
+      return this.buildReport(
+        true,
+        overallConfidence,
+        allSignals,
+        tokensUsed,
+        stagesRun,
+        taskType,
+        'high_confidence',
+      );
     }
 
     // Budget check
     const budgetRemaining = ctx.tokenBudgetRemaining ?? Infinity;
     if (budgetRemaining < this.config.budgetFloorTokens) {
       return this.buildReport(
-        overallConfidence >= 0.5, overallConfidence, allSignals, tokensUsed, stagesRun, taskType, 'budget_exhausted',
+        overallConfidence >= 0.5,
+        overallConfidence,
+        allSignals,
+        tokensUsed,
+        stagesRun,
+        taskType,
+        'budget_exhausted',
       );
     }
 
     // Stage 2: LLM verification (only when ambiguous)
-    const shouldRunLLM = this.provider
-      && overallConfidence < 0.7
-      && overallConfidence >= 0.2
-      && budgetRemaining >= this.config.budgetFloorTokens;
+    const shouldRunLLM =
+      this.provider &&
+      overallConfidence < 0.7 &&
+      overallConfidence >= 0.2 &&
+      budgetRemaining >= this.config.budgetFloorTokens;
 
     if (shouldRunLLM) {
       if (this.config.enableLearning && !this.memory.shouldRunLLMVerification(ctx.output)) {
         stagesRun.push(2);
-        return this.buildReport(overallConfidence >= 0.5, overallConfidence, allSignals, tokensUsed, stagesRun, taskType, 'learning_skip');
+        return this.buildReport(
+          overallConfidence >= 0.5,
+          overallConfidence,
+          allSignals,
+          tokensUsed,
+          stagesRun,
+          taskType,
+          'learning_skip',
+        );
       }
 
       const model = this.config.llmVerificationModel ?? 'gpt-4o-mini';
+      const effectiveEvalProvider = this.config.evaluatorProvider ?? this.provider!;
       const s2 = await runStage2(
-        ctx, taskType, this.provider!, model,
+        ctx,
+        taskType,
+        effectiveEvalProvider,
+        model,
         Math.min(this.config.llmVerificationBudget, budgetRemaining),
         allSignals,
       );
@@ -579,7 +673,69 @@ export class UnifiedVerificationPipeline {
       stagesRun.push(2);
     }
 
-    const passed = overallConfidence >= 0.5 && !allSignals.some(s => s.severity === 'critical');
+    // Stage 3: Goal Judge — independent model verification
+    // Triggered when: judge is enabled, confidence is borderline (below triggerConfidence
+    // but not critically low), output looks like a completion, and budget allows.
+    let judgeVerdict: VerificationReport['judgeVerdict'] | undefined;
+    const judgeConfig = this.config.judgeGate;
+    const shouldRunJudge =
+      judgeConfig?.enabled &&
+      overallConfidence < judgeConfig.triggerConfidence &&
+      overallConfidence >= 0.4 &&
+      !allSignals.some((s) => s.severity === 'critical') &&
+      ctx.output.length > 0 &&
+      budgetRemaining >= judgeConfig.tokenBudget;
+
+    if (shouldRunJudge) {
+      try {
+        const goalJudge = getGoalJudge();
+        const effectiveEvalProvider = this.config.evaluatorProvider ?? this.provider;
+        if (effectiveEvalProvider) {
+          goalJudge.setProvider(effectiveEvalProvider);
+        }
+        if (this.runtime) {
+          goalJudge.setRuntime(this.runtime);
+        }
+        const verdict = await goalJudge.judge({
+          runId: `uvp-${Date.now()}`,
+          goal: ctx.goal,
+          output: ctx.output,
+          evidenceCount: ctx.toolsUsed?.length ?? 0,
+        });
+        tokensUsed += verdict.tokensUsed;
+        this.totalTokensUsed += verdict.tokensUsed;
+        stagesRun.push(3);
+
+        judgeVerdict = {
+          passed: verdict.passed,
+          confidence: verdict.confidence,
+          reasoning: verdict.reasoning,
+          evidence: verdict.evidence,
+          modelUsed: verdict.modelUsed,
+        };
+
+        if (!verdict.passed) {
+          allSignals.push({
+            stage: 3,
+            source: 'goal_judge',
+            severity: verdict.confidence < 0.5 ? 'high' : 'medium',
+            message: `Judge rejected completion: ${verdict.reasoning.slice(0, 200)}`,
+            suggestion: 'Address the issues identified by the judge before declaring done',
+          });
+          overallConfidence = Math.min(overallConfidence, verdict.confidence);
+        } else {
+          // Judge passed — slightly boost confidence
+          overallConfidence = Math.min(1, overallConfidence + 0.05);
+        }
+      } catch (err) {
+        getGlobalLogger().warn('UnifiedVerification', 'Goal judge failed (best-effort)', {
+          error: (err as Error).message,
+        });
+        // Judge failure is non-blocking
+      }
+    }
+
+    const passed = overallConfidence >= 0.5 && !allSignals.some((s) => s.severity === 'critical');
 
     if (this.config.enableLearning) {
       this.memory.record({
@@ -591,7 +747,16 @@ export class UnifiedVerificationPipeline {
       });
     }
 
-    return this.buildReport(passed, overallConfidence, allSignals, tokensUsed, stagesRun, taskType);
+    return this.buildReport(
+      passed,
+      overallConfidence,
+      allSignals,
+      tokensUsed,
+      stagesRun,
+      taskType,
+      undefined,
+      judgeVerdict,
+    );
   }
 
   /**
@@ -609,21 +774,22 @@ export class UnifiedVerificationPipeline {
 
     // When confidence is dangerously low, include ALL non-low signals
     const maxSignals = report.confidence < 0.3 ? 10 : 3;
-    const topIssues = sorted.filter(s => s.severity !== 'low').slice(0, maxSignals);
+    const topIssues = sorted.filter((s) => s.severity !== 'low').slice(0, maxSignals);
     if (topIssues.length === 0) return null;
 
-    const lines = topIssues.map(s => {
+    const lines = topIssues.map((s) => {
       const snippet = s.snippet ? `\n  Problem: "${s.snippet.slice(0, 60)}"` : '';
       const fix = s.suggestion ? `\n  Fix: ${s.suggestion}` : '';
       return `• [${s.source}] ${s.message}${snippet}${fix}`;
     });
 
     // Add task-type-specific instruction
-    const taskHint = report.taskType === 'code'
-      ? 'Fix the issues and return corrected code.'
-      : report.taskType === 'structured'
-        ? 'Fix the issues and return valid structured output.'
-        : 'Fix the issues and return corrected output.';
+    const taskHint =
+      report.taskType === 'code'
+        ? 'Fix the issues and return corrected code.'
+        : report.taskType === 'structured'
+          ? 'Fix the issues and return valid structured output.'
+          : 'Fix the issues and return corrected output.';
 
     return `${taskHint}\n${lines.join('\n')}`;
   }
@@ -640,6 +806,7 @@ export class UnifiedVerificationPipeline {
     stagesRun: number[],
     taskType: TaskType,
     skipReason?: string,
+    judgeVerdict?: VerificationReport['judgeVerdict'],
   ): VerificationReport {
     return {
       passed,
@@ -650,6 +817,7 @@ export class UnifiedVerificationPipeline {
       taskType,
       skipped: !!skipReason,
       skipReason,
+      judgeVerdict,
     };
   }
 }

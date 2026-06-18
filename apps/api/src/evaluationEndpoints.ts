@@ -9,7 +9,7 @@ import { LLMEvaluator, ScoreSmoother, EvaluationCriterion, EvaluationRequest } f
 export function createEvaluationRouter(
   evaluator: LLMEvaluator,
   smoother: ScoreSmoother,
-  llmCall: (prompt: string) => Promise<string>
+  llmCall: (prompt: string) => Promise<string>,
 ): Router {
   const router = express.Router();
   router.use(express.json());
@@ -20,32 +20,32 @@ export function createEvaluationRouter(
    */
   router.post('/evaluate', async (req: Request, res: Response) => {
     const { targetId, targetType, input, output, criteria, context } = req.body;
-    
+
     if (!targetId || !input || !output || !criteria || criteria.length === 0) {
       return res.status(400).json({
-        error: 'Missing required fields: targetId, input, output, criteria'
+        error: 'Missing required fields: targetId, input, output, criteria',
       });
     }
-    
+
     const request: EvaluationRequest = {
       targetId,
       targetType: targetType || 'agent_output',
       input,
       output,
       criteria: criteria as EvaluationCriterion[],
-      context
+      context,
     };
-    
+
     try {
       const results = await evaluator.evaluateMulti(request, llmCall);
-      
+
       // Add scores to smoother
-      results.forEach(r => smoother.addScore(r.criterion, r.score));
-      
+      results.forEach((r) => smoother.addScore(r.criterion, r.score));
+
       res.json({
         targetId,
         results,
-        aggregated: evaluator.getAggregatedScore(targetId)
+        aggregated: evaluator.getAggregatedScore(targetId),
       });
     } catch (error) {
       res.status(500).json({ error: (error as Error).message });
@@ -58,13 +58,13 @@ export function createEvaluationRouter(
    */
   router.post('/evaluate/batch', async (req: Request, res: Response) => {
     const { items } = req.body;
-    
+
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'Missing or invalid items array' });
     }
-    
+
     const allResults: Record<string, any> = {};
-    
+
     for (const item of items) {
       const request: EvaluationRequest = {
         targetId: item.targetId,
@@ -72,23 +72,23 @@ export function createEvaluationRouter(
         input: item.input,
         output: item.output,
         criteria: item.criteria as EvaluationCriterion[],
-        context: item.context
+        context: item.context,
       };
-      
+
       try {
         const results = await evaluator.evaluateMulti(request, llmCall);
-        results.forEach(r => smoother.addScore(r.criterion, r.score));
+        results.forEach((r) => smoother.addScore(r.criterion, r.score));
         allResults[item.targetId] = {
           results,
-          aggregated: evaluator.getAggregatedScore(item.targetId)
+          aggregated: evaluator.getAggregatedScore(item.targetId),
         };
       } catch (error) {
         allResults[item.targetId] = {
-          error: (error as Error).message
+          error: (error as Error).message,
         };
       }
     }
-    
+
     res.json({ results: allResults, count: items.length });
   });
 
@@ -99,7 +99,7 @@ export function createEvaluationRouter(
   router.get('/evaluate/:targetId', (req: Request, res: Response) => {
     const results = evaluator.getResults(req.params.targetId);
     const aggregated = evaluator.getAggregatedScore(req.params.targetId);
-    
+
     res.json({ targetId: req.params.targetId, results, aggregated });
   });
 
@@ -109,14 +109,14 @@ export function createEvaluationRouter(
    */
   router.get('/trends', (req: Request, res: Response) => {
     const trends = smoother.getAllTrends();
-    
+
     res.json({
       trends,
       summary: {
-        improving: trends.filter(t => t.trend === 'improving').length,
-        declining: trends.filter(t => t.trend === 'declining').length,
-        stable: trends.filter(t => t.trend === 'stable').length
-      }
+        improving: trends.filter((t) => t.trend === 'improving').length,
+        declining: trends.filter((t) => t.trend === 'declining').length,
+        stable: trends.filter((t) => t.trend === 'stable').length,
+      },
     });
   });
 
@@ -126,14 +126,14 @@ export function createEvaluationRouter(
    */
   router.get('/trends/:criterion', (req: Request, res: Response) => {
     const criterion = req.params.criterion as EvaluationCriterion;
-    
+
     const smoothedScore = smoother.getSmoothedScore(criterion);
     const trend = smoother.detectTrend(criterion);
-    
+
     res.json({
       criterion,
       smoothedScore,
-      trend
+      trend,
     });
   });
 
@@ -150,40 +150,40 @@ export function createEvaluationRouter(
       {
         id: 'answer_relevance',
         name: 'Answer Relevance',
-        description: 'How well the output addresses the input'
+        description: 'How well the output addresses the input',
       },
       {
         id: 'task_completion',
         name: 'Task Completion',
-        description: 'Whether all requirements are met'
+        description: 'Whether all requirements are met',
       },
       {
         id: 'prompt_adherence',
         name: 'Prompt Adherence',
-        description: 'How well instructions are followed'
+        description: 'How well instructions are followed',
       },
       {
         id: 'helpfulness',
         name: 'Helpfulness',
-        description: 'How useful the output is'
+        description: 'How useful the output is',
       },
       {
         id: 'clarity',
         name: 'Clarity',
-        description: 'How clear and understandable the output is'
+        description: 'How clear and understandable the output is',
       },
       {
         id: 'accuracy',
         name: 'Accuracy',
-        description: 'How factually correct the output is'
+        description: 'How factually correct the output is',
       },
       {
         id: 'safety',
         name: 'Safety',
-        description: 'Whether the output is safe and harmless'
-      }
+        description: 'Whether the output is safe and harmless',
+      },
     ];
-    
+
     res.json({ criteria, count: criteria.length });
   });
 
@@ -193,45 +193,43 @@ export function createEvaluationRouter(
    */
   router.post('/evaluate/quick', async (req: Request, res: Response) => {
     const { targetId, input, output } = req.body;
-    
+
     if (!targetId || !input || !output) {
       return res.status(400).json({
-        error: 'Missing required fields: targetId, input, output'
+        error: 'Missing required fields: targetId, input, output',
       });
     }
-    
+
     // Default criteria: relevance, completion, clarity
     const defaultCriteria: EvaluationCriterion[] = [
       'answer_relevance',
       'task_completion',
-      'clarity'
+      'clarity',
     ];
-    
+
     const request: EvaluationRequest = {
       targetId,
       targetType: 'agent_output',
       input,
       output,
-      criteria: defaultCriteria
+      criteria: defaultCriteria,
     };
-    
+
     try {
       const results = await evaluator.evaluateMulti(request, llmCall);
-      results.forEach(r => smoother.addScore(r.criterion, r.score));
-      
+      results.forEach((r) => smoother.addScore(r.criterion, r.score));
+
       const aggregated = evaluator.getAggregatedScore(targetId);
-      
+
       // Pass/fail based on aggregated average
       const passed = aggregated ? aggregated.average >= 3.5 : false;
-      
+
       res.json({
         targetId,
         results,
         aggregated,
         passed,
-        recommendation: passed 
-          ? 'Output meets quality standards' 
-          : 'Output needs improvement'
+        recommendation: passed ? 'Output meets quality standards' : 'Output needs improvement',
       });
     } catch (error) {
       res.status(500).json({ error: (error as Error).message });
@@ -246,7 +244,7 @@ export function createEvaluationRouter(
     res.json({
       status: 'ok',
       evaluator: 'LLM-as-Judge',
-      version: '1.0.0'
+      version: '1.0.0',
     });
   });
 
@@ -259,19 +257,19 @@ export function createEvaluationRouter(
 export function createMockLLMCall(): (prompt: string) => Promise<string> {
   return async (prompt: string) => {
     // Simulate LLM response
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
     // Extract criterion from prompt
     let score = 4; // Default good score
     const explanation = 'The output demonstrates good quality in the evaluated dimension.';
-    
+
     // Simple heuristic for demo
     if (prompt.includes('perfectly') || prompt.includes('crystal clear')) {
       score = 5;
     } else if (prompt.includes('minor') || prompt.includes('slight')) {
       score = 4;
     }
-    
+
     return JSON.stringify({ score, explanation });
   };
 }
@@ -281,17 +279,17 @@ export function createMockLLMCall(): (prompt: string) => Promise<string> {
  */
 export function startEvaluationServer(port: number) {
   const app = express();
-  
+
   const evaluator = new LLMEvaluator();
   const smoother = new ScoreSmoother();
   const llmCall = createMockLLMCall();
-  
+
   app.use('/evaluation', createEvaluationRouter(evaluator, smoother, llmCall));
-  
+
   app.get('/health', (req, res) => {
     res.json({ status: 'ok', service: 'evaluation' });
   });
-  
+
   return new Promise<void>((resolve) => {
     app.listen(port, () => {
       process.stdout.write(`Evaluation Server running on http://localhost:${port}\n`);

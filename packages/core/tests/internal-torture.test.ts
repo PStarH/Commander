@@ -8,35 +8,63 @@ import type { LLMMessage } from '../src/runtime/types';
 
 describe('Internal Torture Test — WP1: Context Overflow', () => {
   it('compacts after many tool loop iterations', () => {
-    const compactor = new ContextCompactor({ maxContextTokens: 2000, layer1Trigger: 0.3, keepRecentTurns: 2 });
+    const compactor = new ContextCompactor({
+      maxContextTokens: 2000,
+      layer1Trigger: 0.3,
+      keepRecentTurns: 2,
+    });
     const msgs: LLMMessage[] = [{ role: 'system', content: 'You are a helpful assistant.' }];
     for (let i = 0; i < 20; i++) {
       msgs.push({ role: 'user', content: `Step ${i}: do something`.repeat(50) });
       msgs.push({ role: 'assistant', content: `Result of step ${i}`.repeat(50) });
-      msgs.push({ role: 'tool', content: `Tool output for step ${i}: x`.repeat(100), tool_call_id: `call_${i}` });
+      msgs.push({
+        role: 'tool',
+        content: `Tool output for step ${i}: x`.repeat(100),
+        tool_call_id: `call_${i}`,
+      });
     }
     const { action } = compactor.compact(msgs);
-    assert.ok(action.droppedCount > 0, `Compaction should drop messages, dropped: ${action.droppedCount}`);
-    assert.ok(action.tokensSaved > 0, `Compaction should save tokens, saved: ${action.tokensSaved}`);
+    assert.ok(
+      action.droppedCount > 0,
+      `Compaction should drop messages, dropped: ${action.droppedCount}`,
+    );
+    assert.ok(
+      action.tokensSaved > 0,
+      `Compaction should save tokens, saved: ${action.tokensSaved}`,
+    );
   });
 
   it('needs compaction when context is large', () => {
     const compactor = new ContextCompactor({ maxContextTokens: 1000, layer1Trigger: 0.5 });
     const many: LLMMessage[] = [
       { role: 'system', content: 's' },
-      ...Array(20).fill(null).map((_, i) => ({ role: 'user' as const, content: `Message ${i} `.repeat(30) })),
+      ...Array(20)
+        .fill(null)
+        .map((_, i) => ({ role: 'user' as const, content: `Message ${i} `.repeat(30) })),
     ];
     const layer = compactor.needsCompaction(many);
     assert.ok(layer !== null, `Should need compaction, got layer: ${layer}`);
   });
 
   it('torture: 100 rapid tool turns without OOM', () => {
-    const compactor = new ContextCompactor({ maxContextTokens: 64000, layer1Trigger: 0.4, layer2Trigger: 0.6, keepRecentTurns: 3, maxToolOutputChars: 100 });
+    const compactor = new ContextCompactor({
+      maxContextTokens: 64000,
+      layer1Trigger: 0.4,
+      layer2Trigger: 0.6,
+      keepRecentTurns: 3,
+      maxToolOutputChars: 100,
+    });
     let msgs: LLMMessage[] = [{ role: 'system', content: 'You are a tireless assistant.' }];
     let peakLength = 0;
     for (let i = 0; i < 100; i++) {
       msgs.push({ role: 'user', content: `Iteration ${i}` });
-      msgs.push({ role: 'assistant', content: `Response ${i}`, tool_calls: [{ id: `tc_${i}`, type: 'function', function: { name: 'test', arguments: '{}' } }] });
+      msgs.push({
+        role: 'assistant',
+        content: `Response ${i}`,
+        tool_calls: [
+          { id: `tc_${i}`, type: 'function', function: { name: 'test', arguments: '{}' } },
+        ],
+      });
       msgs.push({ role: 'tool', content: `Output ${i}: `.repeat(500), tool_call_id: `tc_${i}` });
       if (i > 5 && i % 10 === 0) {
         const r = compactor.compact(msgs);
@@ -44,7 +72,10 @@ describe('Internal Torture Test — WP1: Context Overflow', () => {
       }
       peakLength = Math.max(peakLength, msgs.length);
     }
-    assert.ok(msgs.length < 200, `Messages should be bounded after compaction, was: ${msgs.length}`);
+    assert.ok(
+      msgs.length < 200,
+      `Messages should be bounded after compaction, was: ${msgs.length}`,
+    );
     console.log(`  [torture] 100 turns: peak ${peakLength} msgs, final ${msgs.length} msgs`);
   });
 });
@@ -57,7 +88,9 @@ describe('Internal Torture Test — WP2+WP4: Error Handling & Retry', () => {
   });
 
   it('classifies 429 as transient with retry', () => {
-    const result = classifyLLMError(Object.assign(new Error('429 Too Many Requests'), { status: 429 }));
+    const result = classifyLLMError(
+      Object.assign(new Error('429 Too Many Requests'), { status: 429 }),
+    );
     assert.strictEqual(result.retryable, true, '429 should be retryable');
     assert.strictEqual(result.errorClass, 'transient');
   });
@@ -68,9 +101,12 @@ describe('Internal Torture Test — WP2+WP4: Error Handling & Retry', () => {
   });
 
   it('exponential backoff produces increasing delays', () => {
-    const delays = [0, 1, 2, 3, 4].map(i => computeBackoff(i, 1000, 30000));
+    const delays = [0, 1, 2, 3, 4].map((i) => computeBackoff(i, 1000, 30000));
     for (let i = 1; i < delays.length; i++) {
-      assert.ok(delays[i] >= delays[i - 1] * 0.5, `Backoff should increase (${delays[i]} >= ${delays[i - 1]})`);
+      assert.ok(
+        delays[i] >= delays[i - 1] * 0.5,
+        `Backoff should increase (${delays[i]} >= ${delays[i - 1]})`,
+      );
     }
     assert.ok(delays[0] >= 500 && delays[0] <= 1500, `First backoff ~1000ms: ${delays[0]}`);
     assert.ok(delays[3] <= 35000, `Fourth backoff capped: ${delays[3]}`);
@@ -120,7 +156,7 @@ describe('Internal Torture Test — WP5: Circuit Breaker', () => {
     cb.onFailure();
     cb.onFailure();
     assert.strictEqual(cb.isAvailable(), false, 'OPEN after 2 failures');
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, 150));
     assert.strictEqual(cb.isAvailable(), true, 'HALF_OPEN after recovery');
     cb.onSuccess();
     assert.strictEqual(cb.isAvailable(), true, 'CLOSED after success in HALF_OPEN');
@@ -128,9 +164,13 @@ describe('Internal Torture Test — WP5: Circuit Breaker', () => {
 
   it('resets on success in half-open state', () => {
     const cb = new CircuitBreaker(3, 5000);
-    cb.onFailure(); cb.onFailure(); cb.onFailure();
+    cb.onFailure();
+    cb.onFailure();
+    cb.onFailure();
     // Force half-open
-    const resetSpy = () => { cb['state'] = 'HALF_OPEN' as any; };
+    const resetSpy = () => {
+      cb['state'] = 'HALF_OPEN' as any;
+    };
     resetSpy();
     cb.onSuccess();
     assert.strictEqual(cb.isAvailable(), true);
@@ -159,7 +199,11 @@ describe('Internal Torture Test — All Weak Points Combined', () => {
   });
 
   it('torture: 10K messages without crash', () => {
-    const compactor = new ContextCompactor({ maxContextTokens: 50000, layer1Trigger: 0.5, keepRecentTurns: 3 });
+    const compactor = new ContextCompactor({
+      maxContextTokens: 50000,
+      layer1Trigger: 0.5,
+      keepRecentTurns: 3,
+    });
     let msgs: LLMMessage[] = [{ role: 'system', content: 'sys' }];
     for (let i = 0; i < 10000; i++) {
       msgs.push({ role: 'user', content: `msg${i}` });

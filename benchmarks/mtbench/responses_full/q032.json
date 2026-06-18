@@ -1,6 +1,0 @@
-{
-  "cat": "Math",
-  "question": "What's the 100th digit of pi?",
-  "answer": "The 100th digit of pi is **9**.\n\nHere is the sequence of pi up to the 100th decimal place (the 100th digit is the last one):\n\n3.1415926535 8979323846 2643383279 5028841971 6939937510 5820974944 5923078164 0628620899 8628034825 342117067**9**",
-  "score": 9.0
-}

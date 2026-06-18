@@ -1,0 +1,33 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts"],
+  "out": "../../docs/api",
+  "name": "Commander Core API",
+  "readme": "../../README.md",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "includeVersion": true,
+  "categorizeByGroup": true,
+  "categoryOrder": [
+    "Runtime",
+    "Memory",
+    "Self-Evolution",
+    "Tools",
+    "CLI",
+    "Security",
+    "Other"
+  ],
+  "groupOrder": [
+    "Classes",
+    "Interfaces",
+    "Functions",
+    "Type Aliases",
+    "Variables"
+  ],
+  "navigation": {
+    "includeCategories": true,
+    "includeGroups": true
+  },
+  "searchInComments": true,
+  "sort": ["source-order"]
+}

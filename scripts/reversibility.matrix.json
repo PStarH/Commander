@@ -1,0 +1,53 @@
+{
+  "modules": [
+    {
+      "name": "processCrashSafety",
+      "importPattern": "installProcessCrashHandlers",
+      "callSitePattern": "installProcessCrashHandlers",
+      "minCallSites": 1,
+      "srcPaths": ["packages/core/src/runtime/agentRuntime.ts"]
+    },
+    {
+      "name": "runRecovery",
+      "importPattern": "RunRecovery",
+      "callSitePattern": "RunRecovery|runRecovery",
+      "minCallSites": 1,
+      "srcPaths": ["packages/core/src/runtime/agentRuntime.ts"]
+    },
+    {
+      "name": "stepTimeoutManager",
+      "importPattern": "StepTimeoutManager",
+      "callSitePattern": "stepTimeout\\.wrap",
+      "minCallSites": 2,
+      "srcPaths": ["packages/core/src/runtime/agentRuntime.ts"]
+    },
+    {
+      "name": "providerFallbackChain",
+      "importPattern": "ProviderFallbackChain",
+      "callSitePattern": "fallbackChain\\.|tryProviders",
+      "minCallSites": 1,
+      "srcPaths": ["packages/core/src/runtime/agentRuntime.ts"]
+    },
+    {
+      "name": "subAgentGuard",
+      "importPattern": "SubAgentGuard",
+      "callSitePattern": "SubAgentGuard|guard\\.",
+      "minCallSites": 1,
+      "srcPaths": ["packages/core/src/ultimate/subAgentExecutor.ts"]
+    },
+    {
+      "name": "reflexionInjector",
+      "importPattern": "ReflexionInjector",
+      "callSitePattern": "reflexionInjector\\.",
+      "minCallSites": 1,
+      "srcPaths": ["packages/core/src/runtime/agentRuntime.ts"]
+    },
+    {
+      "name": "compensationQueue",
+      "importPattern": "CompensationQueue|getCompensationQueue",
+      "callSitePattern": "getCompensationQueue|setCompensationQueue",
+      "minCallSites": 1,
+      "srcPaths": ["packages/core/src/runtime/agentRuntime.ts", "packages/core/src/atr/compensationQueue.ts"]
+    }
+  ]
+}

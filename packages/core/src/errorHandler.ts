@@ -1,7 +1,7 @@
 /**
  * Error Handler
  * Phase 2: 错误处理增强
- * 
+ *
  * 提供统一的错误处理、恢复和重试机制
  */
 
@@ -18,7 +18,7 @@ export class CommanderError extends Error {
     public code: string,
     public component: string,
     public severity: 'low' | 'medium' | 'high' | 'critical',
-    public context?: Record<string, unknown>
+    public context?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'CommanderError';
@@ -82,7 +82,7 @@ const DEFAULT_CONFIG: ErrorHandlerConfig = {
   circuitBreakerThreshold: 5,
   circuitBreakerCooldownMs: 60000,
   maxErrors: 1000,
-  enableLogging: true
+  enableLogging: true,
 };
 
 export class ErrorHandler {
@@ -100,7 +100,7 @@ export class ErrorHandler {
    */
   async handleWithRetry<T>(
     operation: () => T | Promise<T>,
-    context: { component: string; operation: string }
+    context: { component: string; operation: string },
   ): Promise<T> {
     let lastError: Error | undefined;
     const component = context.component;
@@ -116,20 +116,20 @@ export class ErrorHandler {
             'CIRCUIT_OPEN',
             component,
             'high',
-            { failures: stats.failureCount }
+            { failures: stats.failureCount },
           );
         }
 
         const result = await operation();
-        
+
         // Success - reset circuit breaker
         cb.onSuccess();
         return result;
-
       } catch (error) {
         lastError = error as Error;
-        const commanderErr = error instanceof CommanderError ? error : this.wrapError(error as Error, component);
-        
+        const commanderErr =
+          error instanceof CommanderError ? error : this.wrapError(error as Error, component);
+
         // Check if it's a retryable error
         if (!this.isRetryable(lastError)) {
           this.recordError(commanderErr);
@@ -145,11 +145,14 @@ export class ErrorHandler {
           const delay = this.config.exponentialBackoff
             ? this.config.retryDelayMs * Math.pow(2, attempt)
             : this.config.retryDelayMs;
-          
+
           if (this.config.enableLogging) {
-            getGlobalLogger().warn('ErrorHandler', `Retry ${attempt + 1}/${this.config.maxRetries} for ${context.operation} after ${delay}ms`);
+            getGlobalLogger().warn(
+              'ErrorHandler',
+              `Retry ${attempt + 1}/${this.config.maxRetries} for ${context.operation} after ${delay}ms`,
+            );
           }
-          
+
           await this.sleep(delay);
         }
       }
@@ -167,28 +170,21 @@ export class ErrorHandler {
     if (error instanceof CommanderError) {
       return error;
     }
-    return new CommanderError(
-      error.message,
-      'UNKNOWN',
-      component,
-      'medium',
-      { originalError: error.name }
-    );
+    return new CommanderError(error.message, 'UNKNOWN', component, 'medium', {
+      originalError: error.name,
+    });
   }
 
   private isRetryable(error: Error): boolean {
     if (error instanceof CommanderError) {
-      const retryableCodes = new Set([
-        'CIRCUIT_OPEN',
-        'TASK_COMPLEXITY',
-        'BUDGET_EXHAUSTED',
-      ]);
+      const retryableCodes = new Set(['CIRCUIT_OPEN', 'TASK_COMPLEXITY']);
       const nonRetryableCodes = new Set([
         'INVALID_INPUT',
         'VALIDATION_ERROR',
         'PERMISSION_DENIED',
         'NOT_FOUND',
         'UNAUTHORIZED',
+        'BUDGET_EXHAUSTED',
       ]);
       if (retryableCodes.has(error.code)) return true;
       if (nonRetryableCodes.has(error.code)) return false;
@@ -198,12 +194,18 @@ export class ErrorHandler {
     const errCode = (error as NodeJS.ErrnoException).code;
     if (errCode) {
       const retryableNodeCodes = new Set([
-        'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND',
-        'ECONNREFUSED', 'EPIPE', 'EAI_AGAIN',
+        'ECONNRESET',
+        'ETIMEDOUT',
+        'ENOTFOUND',
+        'ECONNREFUSED',
+        'EPIPE',
+        'EAI_AGAIN',
       ]);
       const nonRetryableNodeCodes = new Set([
-        'ERR_INVALID_ARG_TYPE', 'ERR_INVALID_ARG_VALUE',
-        'ERR_ASSERTION', 'MODULE_NOT_FOUND',
+        'ERR_INVALID_ARG_TYPE',
+        'ERR_INVALID_ARG_VALUE',
+        'ERR_ASSERTION',
+        'MODULE_NOT_FOUND',
       ]);
       if (retryableNodeCodes.has(errCode)) return true;
       if (nonRetryableNodeCodes.has(errCode)) return false;
@@ -211,9 +213,9 @@ export class ErrorHandler {
 
     const message = error.message.toLowerCase();
     const retryablePatterns = ['network', 'timeout', 'temporary', 'econnreset', 'etimedout'];
-    const isNetworkError = retryablePatterns.some(p => message.includes(p));
+    const isNetworkError = retryablePatterns.some((p) => message.includes(p));
     const nonRetryablePatterns = ['invalid', 'malformed', 'validation'];
-    const isNonRetryable = nonRetryablePatterns.some(p => message.includes(p));
+    const isNonRetryable = nonRetryablePatterns.some((p) => message.includes(p));
 
     return isNetworkError && !isNonRetryable;
   }
@@ -234,18 +236,27 @@ export class ErrorHandler {
   private recordError(error: CommanderError): void {
     this.errors.push({
       timestamp: new Date().toISOString(),
-      error
+      error,
     });
 
     if (this.errors.length > this.config.maxErrors) {
       this.errors = this.errors.slice(-this.config.maxErrors);
     }
 
-    this.errorListeners.forEach(listener => listener(error));
+    for (const listener of this.errorListeners) {
+      try {
+        listener(error);
+      } catch {
+        /* listener threw — don't propagate */
+      }
+    }
 
     if (this.config.enableLogging) {
       const prefix = error.severity === 'critical' ? '❌' : error.severity === 'high' ? '⚠️' : '📋';
-      getGlobalLogger().error('ErrorHandler', `${prefix} [${error.component}] ${error.code}: ${error.message}`);
+      getGlobalLogger().error(
+        'ErrorHandler',
+        `${prefix} [${error.component}] ${error.code}: ${error.message}`,
+      );
     }
   }
 
@@ -253,7 +264,7 @@ export class ErrorHandler {
    * Sleep utility
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -267,7 +278,7 @@ export class ErrorHandler {
    * Remove error listener
    */
   offError(listener: (error: CommanderError) => void): void {
-    this.errorListeners = this.errorListeners.filter(l => l !== listener);
+    this.errorListeners = this.errorListeners.filter((l) => l !== listener);
   }
 
   /**
@@ -281,7 +292,7 @@ export class ErrorHandler {
    * Get errors by component
    */
   getErrorsByComponent(component: string): Array<{ timestamp: string; error: CommanderError }> {
-    return this.errors.filter(e => e.error.component === component);
+    return this.errors.filter((e) => e.error.component === component);
   }
 
   /**
@@ -306,7 +317,7 @@ export class ErrorHandler {
       const stats = cb.getStats();
       circuitBreakerStatus[component] = {
         failures: stats.failureCount,
-        open: stats.state !== 'CLOSED'
+        open: stats.state !== 'CLOSED',
       };
     });
 
@@ -314,7 +325,7 @@ export class ErrorHandler {
       total: this.errors.length,
       bySeverity,
       byComponent,
-      circuitBreakerStatus
+      circuitBreakerStatus,
     };
   }
 
@@ -323,6 +334,7 @@ export class ErrorHandler {
    */
   clear(): void {
     this.errors = [];
+    this.circuitBreakers.clear();
   }
 }
 
@@ -330,9 +342,7 @@ export class ErrorHandler {
 // Result Type
 // ========================================
 
-export type Result<T> = 
-  | { success: true; data: T }
-  | { success: false; error: CommanderError };
+export type Result<T> = { success: true; data: T } | { success: false; error: CommanderError };
 
 export function success<T>(data: T): Result<T> {
   return { success: true, data };
@@ -350,7 +360,7 @@ export async function safeExecute<T>(
   fn: () => T | Promise<T>,
   errorHandler: ErrorHandler,
   component: string,
-  operation: string
+  operation: string,
 ): Promise<Result<T>> {
   try {
     const result = await errorHandler.handleWithRetry(fn, { component, operation });

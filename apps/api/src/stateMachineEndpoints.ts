@@ -5,11 +5,11 @@
 
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { 
-  StateMachine, 
-  StateMachineFactory, 
+import {
+  StateMachine,
+  StateMachineFactory,
   AgentState,
-  GovernanceCheckpoint 
+  GovernanceCheckpoint,
 } from './stateMachine';
 
 const router: express.Router = express.Router();
@@ -27,13 +27,13 @@ router.post('/create', (req, res) => {
 
     if (!taskId || !projectId || !agentId) {
       return res.status(400).json({
-        error: 'Missing required fields: taskId, projectId, agentId'
+        error: 'Missing required fields: taskId, projectId, agentId',
       });
     }
 
     const sm = StateMachineFactory.create(type as 'standard' | 'research');
     const state = sm.initialize(taskId, projectId, agentId);
-    
+
     stateMachines.set(taskId, sm);
 
     res.json({
@@ -43,10 +43,12 @@ router.post('/create', (req, res) => {
         currentStep: state.currentStep,
         governanceMode: state.governanceMode,
         metadata: state.metadata,
-      }
+      },
     });
   } catch (error) {
-    process.stderr.write(`[StateMachineEndpoints] Error creating state machine: ${(error as Error)?.message ?? String(error)}\n`);
+    process.stderr.write(
+      `[StateMachineEndpoints] Error creating state machine: ${(error as Error)?.message ?? String(error)}\n`,
+    );
     res.status(500).json({ error: 'Failed to create state machine' });
   }
 });
@@ -67,17 +69,19 @@ router.get('/:taskId', (req, res) => {
     const state = sm.getState();
     res.json({
       success: true,
-      state: state ? {
-        currentStep: state.currentStep,
-        governanceMode: state.governanceMode,
-        memory: {
-          taskId: state.memory.taskId,
-          projectId: state.memory.projectId,
-          historyCount: state.memory.history.length,
-        },
-        metadata: state.metadata,
-      } : null,
-      availableTransitions: sm.getAvailableTransitions().map(t => ({
+      state: state
+        ? {
+            currentStep: state.currentStep,
+            governanceMode: state.governanceMode,
+            memory: {
+              taskId: state.memory.taskId,
+              projectId: state.memory.projectId,
+              historyCount: state.memory.history.length,
+            },
+            metadata: state.metadata,
+          }
+        : null,
+      availableTransitions: sm.getAvailableTransitions().map((t) => ({
         id: t.id,
         to: t.to,
         governanceRequired: t.governanceRequired,
@@ -85,7 +89,9 @@ router.get('/:taskId', (req, res) => {
       isTerminal: sm.isTerminal(),
     });
   } catch (error) {
-    process.stderr.write(`[StateMachineEndpoints] Error getting state: ${(error as Error)?.message ?? String(error)}\n`);
+    process.stderr.write(
+      `[StateMachineEndpoints] Error getting state: ${(error as Error)?.message ?? String(error)}\n`,
+    );
     res.status(500).json({ error: 'Failed to get state' });
   }
 });
@@ -117,7 +123,7 @@ router.post('/:taskId/transition', async (req, res) => {
           currentStep: result.state!.currentStep,
           governanceMode: result.state!.governanceMode,
           metadata: result.state!.metadata,
-        }
+        },
       });
     } else {
       // Check if it's a governance pending
@@ -126,22 +132,27 @@ router.post('/:taskId/transition', async (req, res) => {
         res.json({
           success: false,
           pendingApproval: true,
-          checkpoint: pendingCheckpoints.length > 0 ? {
-            id: pendingCheckpoints[0].id,
-            mode: pendingCheckpoints[0].mode,
-            riskScore: pendingCheckpoints[0].riskScore,
-          } : null,
-          error: result.error
+          checkpoint:
+            pendingCheckpoints.length > 0
+              ? {
+                  id: pendingCheckpoints[0].id,
+                  mode: pendingCheckpoints[0].mode,
+                  riskScore: pendingCheckpoints[0].riskScore,
+                }
+              : null,
+          error: result.error,
         });
       } else {
         res.status(400).json({
           success: false,
-          error: result.error
+          error: result.error,
         });
       }
     }
   } catch (error) {
-    process.stderr.write(`[StateMachineEndpoints] Error executing transition: ${(error as Error)?.message ?? String(error)}\n`);
+    process.stderr.write(
+      `[StateMachineEndpoints] Error executing transition: ${(error as Error)?.message ?? String(error)}\n`,
+    );
     res.status(500).json({ error: 'Failed to execute transition' });
   }
 });
@@ -167,10 +178,12 @@ router.post('/:taskId/approve', (req, res) => {
     const approved = sm.approveCheckpoint(checkpointId, userId, comment);
     res.json({
       success: approved,
-      message: approved ? 'Checkpoint approved' : 'Checkpoint not found or already resolved'
+      message: approved ? 'Checkpoint approved' : 'Checkpoint not found or already resolved',
     });
   } catch (error) {
-    process.stderr.write(`[StateMachineEndpoints] Error approving checkpoint: ${(error as Error)?.message ?? String(error)}\n`);
+    process.stderr.write(
+      `[StateMachineEndpoints] Error approving checkpoint: ${(error as Error)?.message ?? String(error)}\n`,
+    );
     res.status(500).json({ error: 'Failed to approve checkpoint' });
   }
 });
@@ -196,10 +209,12 @@ router.post('/:taskId/reject', (req, res) => {
     const rejected = sm.rejectCheckpoint(checkpointId, userId, comment);
     res.json({
       success: rejected,
-      message: rejected ? 'Checkpoint rejected' : 'Checkpoint not found or already resolved'
+      message: rejected ? 'Checkpoint rejected' : 'Checkpoint not found or already resolved',
     });
   } catch (error) {
-    process.stderr.write(`[StateMachineEndpoints] Error rejecting checkpoint: ${(error as Error)?.message ?? String(error)}\n`);
+    process.stderr.write(
+      `[StateMachineEndpoints] Error rejecting checkpoint: ${(error as Error)?.message ?? String(error)}\n`,
+    );
     res.status(500).json({ error: 'Failed to reject checkpoint' });
   }
 });
@@ -225,7 +240,7 @@ router.get('/:taskId/memory', (req, res) => {
 
     let entries = state.memory.history;
     if (type && typeof type === 'string') {
-      entries = entries.filter(e => e.type === type);
+      entries = entries.filter((e) => e.type === type);
     }
 
     res.json({
@@ -235,15 +250,17 @@ router.get('/:taskId/memory', (req, res) => {
         projectId: state.memory.projectId,
         agentId: state.memory.agentId,
         summary: state.memory.summary,
-        entries: entries.map(e => ({
+        entries: entries.map((e) => ({
           timestamp: e.timestamp,
           type: e.type,
           content: e.content,
         })),
-      }
+      },
     });
   } catch (error) {
-    process.stderr.write(`[StateMachineEndpoints] Error getting memory: ${(error as Error)?.message ?? String(error)}\n`);
+    process.stderr.write(
+      `[StateMachineEndpoints] Error getting memory: ${(error as Error)?.message ?? String(error)}\n`,
+    );
     res.status(500).json({ error: 'Failed to get memory' });
   }
 });
@@ -270,10 +287,12 @@ router.post('/:taskId/memory', (req, res) => {
 
     res.json({
       success: true,
-      message: 'Memory entry added'
+      message: 'Memory entry added',
     });
   } catch (error) {
-    process.stderr.write(`[StateMachineEndpoints] Error adding memory: ${(error as Error)?.message ?? String(error)}\n`);
+    process.stderr.write(
+      `[StateMachineEndpoints] Error adding memory: ${(error as Error)?.message ?? String(error)}\n`,
+    );
     res.status(500).json({ error: 'Failed to add memory' });
   }
 });
@@ -308,10 +327,12 @@ router.post('/:taskId/resume', (req, res) => {
         currentStep: state.currentStep,
         governanceMode: state.governanceMode,
         metadata: state.metadata,
-      }
+      },
     });
   } catch (error) {
-    process.stderr.write(`[StateMachineEndpoints] Error resuming from checkpoint: ${(error as Error)?.message ?? String(error)}\n`);
+    process.stderr.write(
+      `[StateMachineEndpoints] Error resuming from checkpoint: ${(error as Error)?.message ?? String(error)}\n`,
+    );
     res.status(500).json({ error: 'Failed to resume from checkpoint' });
   }
 });
@@ -323,7 +344,7 @@ router.post('/:taskId/resume', (req, res) => {
 router.get('/types', (req, res) => {
   res.json({
     success: true,
-    types: StateMachineFactory.getAvailableTypes()
+    types: StateMachineFactory.getAvailableTypes(),
   });
 });
 
@@ -342,10 +363,12 @@ router.get('/:taskId/summary', (req, res) => {
 
     res.json({
       success: true,
-      summary: sm.generateSummary()
+      summary: sm.generateSummary(),
     });
   } catch (error) {
-    process.stderr.write(`[StateMachineEndpoints] Error getting summary: ${(error as Error)?.message ?? String(error)}\n`);
+    process.stderr.write(
+      `[StateMachineEndpoints] Error getting summary: ${(error as Error)?.message ?? String(error)}\n`,
+    );
     res.status(500).json({ error: 'Failed to get summary' });
   }
 });

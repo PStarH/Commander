@@ -1,7 +1,7 @@
 /**
  * Commander Framework End-to-End Demo
  * Phase 2: 端到端演示
- * 
+ *
  * 演示所有组件协同工作处理一个复杂任务的全流程
  */
 
@@ -18,11 +18,11 @@ import {
   createConsensusChecker,
   createInspector,
   OrchestrationMode,
-  
+
   // Types
   Task,
   Agent,
-  MemoryEntry
+  MemoryEntry,
 } from '../packages/core/src/index';
 
 // ========================================
@@ -48,9 +48,24 @@ async function runDemo() {
 
   // Register agents
   const agentIds = [
-    orchestrator.registerAgent({ id: 'orchestrator-lead', name: 'Lead Agent', role: 'lead', capabilities: ['planning', 'coordination'] }),
-    orchestrator.registerAgent({ id: 'orchestrator-worker-1', name: 'Worker Agent 1', role: 'worker', capabilities: ['coding', 'testing'] }),
-    orchestrator.registerAgent({ id: 'orchestrator-worker-2', name: 'Worker Agent 2', role: 'worker', capabilities: ['coding', 'review'] }),
+    orchestrator.registerAgent({
+      id: 'orchestrator-lead',
+      name: 'Lead Agent',
+      role: 'lead',
+      capabilities: ['planning', 'coordination'],
+    }),
+    orchestrator.registerAgent({
+      id: 'orchestrator-worker-1',
+      name: 'Worker Agent 1',
+      role: 'worker',
+      capabilities: ['coding', 'testing'],
+    }),
+    orchestrator.registerAgent({
+      id: 'orchestrator-worker-2',
+      name: 'Worker Agent 2',
+      role: 'worker',
+      capabilities: ['coding', 'review'],
+    }),
   ];
 
   console.log('📋 Step 1: Analyzing Task Complexity');
@@ -73,7 +88,7 @@ async function runDemo() {
     description: taskDescription,
     priority: 'high',
     riskLevel: 'high',
-    complexity: 0 // Will be calculated
+    complexity: 0, // Will be calculated
   };
 
   // Analyze complexity
@@ -87,7 +102,12 @@ async function runDemo() {
 
   // Store in memory
   memory.add(`Analyzing task: ${task.description.substring(0, 50)}...`, 'working', task.id, 0.9);
-  memory.add(`Complexity: ${complexityResult.level} (score: ${complexityResult.score})`, 'working', task.id, 0.85);
+  memory.add(
+    `Complexity: ${complexityResult.level} (score: ${complexityResult.score})`,
+    'working',
+    task.id,
+    0.85,
+  );
 
   console.log('💰 Step 2: Allocating Token Budget');
   console.log('─'.repeat(60));
@@ -96,15 +116,23 @@ async function runDemo() {
   const budget = budgetAllocator.allocate(
     complexityResult.recommendedMode,
     complexityResult.score,
-    agentIds.length
+    agentIds.length,
   );
 
   console.log(`Mode: ${complexityResult.recommendedMode}`);
   console.log(`Total Budget: ${budget.total.toLocaleString()} tokens`);
-  console.log(`├── Lead Agent: ${budget.leadAgent.toLocaleString()} (${(budget.leadAgent / budget.total * 100).toFixed(1)}%)`);
-  console.log(`├── Specialists: ${budget.specialistAgents.toLocaleString()} (${(budget.specialistAgents / budget.total * 100).toFixed(1)}%)`);
-  console.log(`├── Evaluation: ${budget.evaluation.toLocaleString()} (${(budget.evaluation / budget.total * 100).toFixed(1)}%)`);
-  console.log(`└── Overhead: ${budget.overhead.toLocaleString()} (${(budget.overhead / budget.total * 100).toFixed(1)}%)`);
+  console.log(
+    `├── Lead Agent: ${budget.leadAgent.toLocaleString()} (${((budget.leadAgent / budget.total) * 100).toFixed(1)}%)`,
+  );
+  console.log(
+    `├── Specialists: ${budget.specialistAgents.toLocaleString()} (${((budget.specialistAgents / budget.total) * 100).toFixed(1)}%)`,
+  );
+  console.log(
+    `├── Evaluation: ${budget.evaluation.toLocaleString()} (${((budget.evaluation / budget.total) * 100).toFixed(1)}%)`,
+  );
+  console.log(
+    `└── Overhead: ${budget.overhead.toLocaleString()} (${((budget.overhead / budget.total) * 100).toFixed(1)}%)`,
+  );
   console.log('');
 
   // Simulate usage
@@ -116,15 +144,60 @@ async function runDemo() {
 
   // Create tasks for the complex project
   const subTasks: Task[] = [
-    { id: 'sub-1', description: 'Design multi-tenant database schema', priority: 'high', complexity: 65, dependencies: [], status: 'pending', retryCount: 0, maxRetries: 3 },
-    { id: 'sub-2', description: 'Implement WebSocket real-time sync', priority: 'high', complexity: 75, dependencies: ['sub-1'], status: 'pending', retryCount: 0, maxRetries: 3 },
-    { id: 'sub-3', description: 'Set up Redis caching layer', priority: 'medium', complexity: 55, dependencies: ['sub-1'], status: 'pending', retryCount: 0, maxRetries: 3 },
-    { id: 'sub-4', description: 'Create OpenAPI documentation', priority: 'medium', complexity: 40, dependencies: ['sub-2'], status: 'pending', retryCount: 0, maxRetries: 3 },
-    { id: 'sub-5', description: 'Write E2E tests', priority: 'high', complexity: 60, dependencies: ['sub-2', 'sub-3'], status: 'pending', retryCount: 0, maxRetries: 3 },
+    {
+      id: 'sub-1',
+      description: 'Design multi-tenant database schema',
+      priority: 'high',
+      complexity: 65,
+      dependencies: [],
+      status: 'pending',
+      retryCount: 0,
+      maxRetries: 3,
+    },
+    {
+      id: 'sub-2',
+      description: 'Implement WebSocket real-time sync',
+      priority: 'high',
+      complexity: 75,
+      dependencies: ['sub-1'],
+      status: 'pending',
+      retryCount: 0,
+      maxRetries: 3,
+    },
+    {
+      id: 'sub-3',
+      description: 'Set up Redis caching layer',
+      priority: 'medium',
+      complexity: 55,
+      dependencies: ['sub-1'],
+      status: 'pending',
+      retryCount: 0,
+      maxRetries: 3,
+    },
+    {
+      id: 'sub-4',
+      description: 'Create OpenAPI documentation',
+      priority: 'medium',
+      complexity: 40,
+      dependencies: ['sub-2'],
+      status: 'pending',
+      retryCount: 0,
+      maxRetries: 3,
+    },
+    {
+      id: 'sub-5',
+      description: 'Write E2E tests',
+      priority: 'high',
+      complexity: 60,
+      dependencies: ['sub-2', 'sub-3'],
+      status: 'pending',
+      retryCount: 0,
+      maxRetries: 3,
+    },
   ];
 
   const plan = orchestrator.createPlan(subTasks, complexityResult.recommendedMode);
-  
+
   console.log(`Plan ID: ${plan.id}`);
   console.log(`Orchestration Mode: ${plan.mode}`);
   console.log(`Tasks: ${plan.tasks.length}`);
@@ -137,13 +210,15 @@ async function runDemo() {
   console.log('─'.repeat(60));
 
   // Add tasks to memory
-  subTasks.forEach(t => {
+  subTasks.forEach((t) => {
     memory.add(`Task: ${t.description}`, 'working', t.id, t.priority === 'high' ? 0.9 : 0.7);
   });
 
   // Simulate completed work stored in episodic memory
   memory.add('Completed: Database schema design patterns', 'episodic', 'past-project', 0.8);
-  memory.archiveToEpisodic(memory.add('Completed: WebSocket implementation', 'working', 'current', 0.9).id);
+  memory.archiveToEpisodic(
+    memory.add('Completed: WebSocket implementation', 'working', 'current', 0.9).id,
+  );
 
   const stats = memory.getStats();
   console.log(`Total Memories: ${stats.totalEntries}`);
@@ -157,26 +232,26 @@ async function runDemo() {
 
   // Start reflection session
   const reflectionSessionId = reflectionEngine.startSession(task.id);
-  
+
   reflectionEngine.addReflection(
     reflectionSessionId,
     'pre_planning',
     'What is the optimal architecture approach?',
-    'Microservices architecture with API Gateway for better scalability'
+    'Microservices architecture with API Gateway for better scalability',
   );
 
   reflectionEngine.addReflection(
     reflectionSessionId,
     'post_execution',
     'What worked well in the database design?',
-    'Using UUIDs for tenant isolation worked better than expected. Query performance is 40% better than our baseline.'
+    'Using UUIDs for tenant isolation worked better than expected. Query performance is 40% better than our baseline.',
   );
 
   reflectionEngine.addReflection(
     reflectionSessionId,
     'error_analysis',
     'What issues were encountered?',
-    'Redis connection pooling needed tuning. Default settings caused connection exhaustion under load.'
+    'Redis connection pooling needed tuning. Default settings caused connection exhaustion under load.',
   );
 
   reflectionEngine.completeSession(reflectionSessionId, 'success');
@@ -195,7 +270,7 @@ async function runDemo() {
   // Critical decision: Which database to use?
   const consensusId = consensusChecker.createCheck(
     'Should we use PostgreSQL or MongoDB for the multi-tenant data store?',
-    'PostgreSQL offers better consistency, MongoDB offers better horizontal scaling'
+    'PostgreSQL offers better consistency, MongoDB offers better horizontal scaling',
   );
 
   consensusChecker.addVote(
@@ -204,7 +279,7 @@ async function runDemo() {
     'GPT-4',
     'PostgreSQL with row-level security',
     0.92,
-    'Better ACID guarantees and mature ecosystem'
+    'Better ACID guarantees and mature ecosystem',
   );
 
   consensusChecker.addVote(
@@ -213,7 +288,7 @@ async function runDemo() {
     'Claude',
     'PostgreSQL with row-level security',
     0.89,
-    'Consistent performance and strong typing'
+    'Consistent performance and strong typing',
   );
 
   consensusChecker.addVote(
@@ -222,7 +297,7 @@ async function runDemo() {
     'Gemini',
     'PostgreSQL',
     0.85,
-    'Mature tooling and excellent documentation'
+    'Mature tooling and excellent documentation',
   );
 
   consensusChecker.completeCheck(consensusId);
@@ -239,9 +314,14 @@ async function runDemo() {
 
   // Update component health
   inspector.updateComponent('analyzer', 'healthy', 0.95, { tasksAnalyzed: 10 });
-  inspector.updateComponent('orchestrator', 'healthy', 0.88, { plansCreated: 5, tasksCompleted: 12 });
+  inspector.updateComponent('orchestrator', 'healthy', 0.88, {
+    plansCreated: 5,
+    tasksCompleted: 12,
+  });
   inspector.updateComponent('memory', 'healthy', 0.92, { entries: stats.totalEntries });
-  inspector.updateComponent('reflection', 'healthy', 0.85, { sessions: reflectionStats.totalSessions });
+  inspector.updateComponent('reflection', 'healthy', 0.85, {
+    sessions: reflectionStats.totalSessions,
+  });
   inspector.updateComponent('consensus', 'healthy', 0.91, { checks: 3 });
 
   // Auto-detect any issues
@@ -249,10 +329,10 @@ async function runDemo() {
     responseTime: 850,
     errorRate: 0.03,
     queueDepth: 45,
-    successRate: 0.94
+    successRate: 0.94,
   });
 
-  detectedIssues.forEach(issue => {
+  detectedIssues.forEach((issue) => {
     console.log(`⚠️  Detected: [${issue.severity}] ${issue.title}`);
     if (issue.suggestions.length > 0) {
       console.log(`   Suggestion: ${issue.suggestions[0]}`);
@@ -260,7 +340,7 @@ async function runDemo() {
   });
 
   const inspectionReport = inspector.inspect();
-  
+
   console.log('');
   console.log(`Overall Health: ${(inspectionReport.overallHealth * 100).toFixed(1)}%`);
   console.log(`System Status: ${inspectionReport.overallStatus.toUpperCase()}`);
@@ -283,7 +363,7 @@ async function runDemo() {
 ├─────────────────────────────────────────────────────────────┤
 │  Token Budget                                                │
 │  ├── Total: ${budget.total.toLocaleString().padStart(10)} tokens                       │
-│  ├── Used: ${((budgetAllocator.getUsageRate()) * 100).toFixed(1)}%                                     │
+│  ├── Used: ${(budgetAllocator.getUsageRate() * 100).toFixed(1)}%                                     │
 │  └── Remaining: ${budgetAllocator.getRemaining().toLocaleString()}                           │
 ├─────────────────────────────────────────────────────────────┤
 │  Three-Layer Memory                                          │
@@ -309,7 +389,7 @@ async function runDemo() {
 `);
 
   console.log('✅ End-to-End Demo Completed Successfully!\n');
-  
+
   return {
     complexityResult,
     budget,
@@ -317,7 +397,7 @@ async function runDemo() {
     memoryStats: stats,
     reflectionStats,
     consensusResult,
-    inspectionReport
+    inspectionReport,
   };
 }
 

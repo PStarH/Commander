@@ -1,0 +1,21 @@
+# Build outputs
+dist/
+build/
+coverage/
+node_modules/
+
+# Generated files
+*.d.ts
+*.js.map
+pnpm-lock.yaml
+
+# Data files
+*.json
+!package.json
+!tsconfig*.json
+
+# Docs that use markdown formatting tricks
+docs/api/
+
+# Runtime state
+.commander*/

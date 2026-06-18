@@ -1,6 +1,0 @@
-{
-  "cat": "Reasoning",
-  "question": "You have 3,8,8,10. Make 24 using each once.",
-  "answer": "Here is one way to make 24 using those numbers:\n\n**10 / (3 - 8/8) = 24**\n\n**Step-by-step:**\n1.  Divide 8 by 8 to get **1**.\n2.  Subtract that 1 from 3 to get **2**.\n3.  Divide 10 by 2 to get **24**.",
-  "score": 10.0
-}

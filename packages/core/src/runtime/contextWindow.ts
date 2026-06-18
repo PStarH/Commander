@@ -44,29 +44,34 @@ export interface WindowAction {
 }
 
 /**
- * Roughly estimate the token count of a message.
- * Uses character count / 4 as a heuristic (4 chars ≈ 1 token for most models).
+ * Estimate the token count of a message.
+ * Uses CJK-aware estimation: CJK chars tokenize at ~1.5 tokens/char,
+ * Latin chars at ~0.25 tokens/char (4 chars per token).
  */
-function estimateMessageTokens(msg: LLMMessage): number {
-  let total = msg.content.length / 4;
+function estimateMessageTokens(msg: LLMMessage, overheadTokens?: number): number {
+  const estimate = (text: string) => {
+    const cjkCount = (text.match(/[一-鿿㐀-䶿]/g) ?? []).length;
+    return Math.ceil((text.length - cjkCount) / 4 + cjkCount / 1.5);
+  };
+  let total = estimate(msg.content);
   if (msg.tool_calls) {
     for (const tc of msg.tool_calls) {
-      total += tc.function.name.length / 4;
-      total += tc.function.arguments.length / 4;
+      total += estimate(tc.function.name);
+      total += estimate(tc.function.arguments);
     }
   }
   if (msg.reasoning_content) {
-    total += msg.reasoning_content.length / 4;
+    total += estimate(msg.reasoning_content);
   }
   // Round up and add overhead
-  return Math.ceil(total) + DEFAULT_CONFIG.messageOverheadTokens;
+  return Math.ceil(total) + (overheadTokens ?? DEFAULT_CONFIG.messageOverheadTokens);
 }
 
 /**
  * Estimate total tokens for an array of messages.
  */
-export function estimateTotalTokens(messages: LLMMessage[]): number {
-  return messages.reduce((sum, msg) => sum + estimateMessageTokens(msg), 0);
+export function estimateTotalTokens(messages: LLMMessage[], overheadTokens?: number): number {
+  return messages.reduce((sum, msg) => sum + estimateMessageTokens(msg, overheadTokens), 0);
 }
 
 export class ContextWindowManager {
@@ -94,7 +99,7 @@ export class ContextWindowManager {
   ): { messages: LLMMessage[]; action: WindowAction } {
     const estimatedTokens = currentTokens
       ? currentTokens.totalTokens
-      : estimateTotalTokens(messages);
+      : estimateTotalTokens(messages, this.config.messageOverheadTokens);
 
     const maxTokens = this.config.maxContextTokens;
     const thresholdTokens = Math.floor(maxTokens * this.config.triggerThreshold);
@@ -135,7 +140,7 @@ export class ContextWindowManager {
     const kept = nonSystemMessages.slice(dropCount);
 
     // Calculate tokens saved
-    const tokensSaved = estimateTotalTokens(dropped);
+    const tokensSaved = estimateTotalTokens(dropped, this.config.messageOverheadTokens);
 
     // Generate summary if enabled
     let summary: string | undefined;
@@ -217,7 +222,7 @@ export class ContextWindowManager {
    */
   remainingCapacity(messages: LLMMessage[], maxContextOverride?: number): number {
     const max = maxContextOverride ?? this.config.maxContextTokens;
-    const used = estimateTotalTokens(messages);
+    const used = estimateTotalTokens(messages, this.config.messageOverheadTokens);
     return Math.max(0, max - used);
   }
 
@@ -225,7 +230,7 @@ export class ContextWindowManager {
    * Check if the context window needs trimming.
    */
   needsTrimming(messages: LLMMessage[]): boolean {
-    const estimated = estimateTotalTokens(messages);
+    const estimated = estimateTotalTokens(messages, this.config.messageOverheadTokens);
     return estimated >= this.config.maxContextTokens * this.config.triggerThreshold;
   }
 }

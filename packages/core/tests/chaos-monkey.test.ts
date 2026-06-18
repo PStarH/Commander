@@ -16,7 +16,7 @@ import * as path from 'path';
 const CHAOS_CONFIG = {
   randomDelay: { enabled: true, minMs: 0, maxMs: 5000 },
   randomErrorRate: 0.05,
-  randomShuffleRate: 0.10,
+  randomShuffleRate: 0.1,
   randomLanguageSwitch: true,
 };
 
@@ -29,10 +29,12 @@ function rng(): number {
 
 async function injectDelay(): Promise<void> {
   if (!CHAOS_CONFIG.randomDelay.enabled) return;
-  const delay = Math.floor(rng() * (CHAOS_CONFIG.randomDelay.maxMs - CHAOS_CONFIG.randomDelay.minMs));
+  const delay = Math.floor(
+    rng() * (CHAOS_CONFIG.randomDelay.maxMs - CHAOS_CONFIG.randomDelay.minMs),
+  );
   if (delay > 100) {
     chaosStats.delays++;
-    await new Promise(r => setTimeout(r, Math.min(delay, 50))); // cap at 50ms for test speed
+    await new Promise((r) => setTimeout(r, Math.min(delay, 50))); // cap at 50ms for test speed
   }
 }
 
@@ -58,11 +60,11 @@ function maybeSwitchLanguage(msg: string): string {
   if (!CHAOS_CONFIG.randomLanguageSwitch || rng() > 0.03) return msg;
   chaosStats.languages++;
   const translations: Record<string, string> = {
-    'hello': '你好',
-    'test': '测试',
-    'error': '错误',
-    'function': '函数',
-    'result': '结果',
+    hello: '你好',
+    test: '测试',
+    error: '错误',
+    function: '函数',
+    result: '结果',
   };
   let result = msg;
   for (const [en, cn] of Object.entries(translations)) {
@@ -110,7 +112,11 @@ describe('Chaos Monkey — Tool Calling Under Stress', () => {
   });
 
   it('CM-T3: Context compaction with shuffled messages', async () => {
-    const compactor = new ContextCompactor({ maxContextTokens: 5000, layer1Trigger: 0.4, keepRecentTurns: 2 });
+    const compactor = new ContextCompactor({
+      maxContextTokens: 5000,
+      layer1Trigger: 0.4,
+      keepRecentTurns: 2,
+    });
     let msgs: LLMMessage[] = [{ role: 'system', content: 'System: this is a chaos test.' }];
     for (let i = 0; i < CHAOS_ITERATIONS; i++) {
       chaosStats.totalTests++;
@@ -165,9 +171,10 @@ describe('Chaos Monkey — Tool Calling Under Stress', () => {
   });
 
   after(() => {
-    const passRate = chaosStats.totalTests > 0
-      ? ((chaosStats.passed / chaosStats.totalTests) * 100).toFixed(1)
-      : '0.0';
+    const passRate =
+      chaosStats.totalTests > 0
+        ? ((chaosStats.passed / chaosStats.totalTests) * 100).toFixed(1)
+        : '0.0';
     console.log(`\n  ═══════════════════════════════════════`);
     console.log(`   Chaos Monkey Results`);
     console.log(`   Tests: ${chaosStats.totalTests}`);
@@ -207,15 +214,27 @@ describe('Chaos Monkey — Multi-Tenant Isolation', () => {
   // Tenant B should complete within a bounded time regardless of A's load.
   it('CM-T6: Request storm from one tenant does not starve another', async () => {
     const tp = new SimpleTenantProvider([
-      { tenantId: 'storm-a', tokenBudget: 0, maxConcurrency: 10, maxRunsPerMinute: 100, enabled: true },
-      { tenantId: 'storm-b', tokenBudget: 0, maxConcurrency: 10, maxRunsPerMinute: 100, enabled: true },
+      {
+        tenantId: 'storm-a',
+        tokenBudget: 0,
+        maxConcurrency: 10,
+        maxRunsPerMinute: 100,
+        enabled: true,
+      },
+      {
+        tenantId: 'storm-b',
+        tokenBudget: 0,
+        maxConcurrency: 10,
+        maxRunsPerMinute: 100,
+        enabled: true,
+      },
     ]);
     // Use high global concurrency so tenant limits are the bottleneck
     const runtime = new AgentRuntime({ maxConcurrency: 50 }, undefined, tp);
 
     // Fire 20 concurrent requests for tenant A
     const aTasks = Array.from({ length: CONCURRENT_STORM }, (_, i) =>
-      runtime.execute(makeCtx(`a-${i}`, 'storm-a'))
+      runtime.execute(makeCtx(`a-${i}`, 'storm-a')),
     );
 
     // While A is storming, time a single request for tenant B
@@ -228,8 +247,10 @@ describe('Chaos Monkey — Multi-Tenant Isolation', () => {
 
     // Tenant B should not be starved — reasonable bound: 5s given no tools/providers
     assert.ok(bDuration < 5000, `Tenant B was starved: ${bDuration}ms`);
-    assert.ok(bResult.status === 'failed' || bResult.status === 'success',
-      `Tenant B result unexpected: ${bResult.status}`);
+    assert.ok(
+      bResult.status === 'failed' || bResult.status === 'success',
+      `Tenant B result unexpected: ${bResult.status}`,
+    );
   });
 
   // ── CM-T7: Quota enforcement under high concurrency ──
@@ -237,13 +258,19 @@ describe('Chaos Monkey — Multi-Tenant Isolation', () => {
   // At most 2 should pass through; the rest get TENANT_CONCURRENCY_LIMIT.
   it('CM-T7: Concurrent quota is strictly enforced', async () => {
     const tp = new SimpleTenantProvider([
-      { tenantId: 'quota-a', tokenBudget: 0, maxConcurrency: 2, maxRunsPerMinute: 100, enabled: true },
+      {
+        tenantId: 'quota-a',
+        tokenBudget: 0,
+        maxConcurrency: 2,
+        maxRunsPerMinute: 100,
+        enabled: true,
+      },
     ]);
     const runtime = new AgentRuntime({ maxConcurrency: 20 }, undefined, tp);
 
     // Launch 8 concurrent requests
     const results = await Promise.allSettled(
-      Array.from({ length: 8 }, (_, i) => runtime.execute(makeCtx(`q-${i}`, 'quota-a')))
+      Array.from({ length: 8 }, (_, i) => runtime.execute(makeCtx(`q-${i}`, 'quota-a'))),
     );
 
     // Count how many were rejected by concurrency quota vs other failures
@@ -262,15 +289,21 @@ describe('Chaos Monkey — Multi-Tenant Isolation', () => {
     }
 
     // At least 6 should be concurrency-limited (8 - 2 allowed)
-    assert.ok(concurrencyLimited >= 6,
-      `Expected ≥6 concurrency-limited, got ${concurrencyLimited}`);
+    assert.ok(
+      concurrencyLimited >= 6,
+      `Expected ≥6 concurrency-limited, got ${concurrencyLimited}`,
+    );
   });
 
   // ── CM-T8: StateCheckpointer crash recovery ──
   // Write a checkpoint, simulate crash, verify recovery is complete.
   it('CM-T8: Checkpoint survives simulated crash', async () => {
     const stateDir = path.join(process.cwd(), '.test_chaos_checkpoint');
-    try { fs.rmSync(stateDir, { recursive: true }); } catch { /* ok */ }
+    try {
+      fs.rmSync(stateDir, { recursive: true });
+    } catch {
+      /* ok */
+    }
 
     const cp = new StateCheckpointer(stateDir);
     const runId = 'chaos-crash-run';
@@ -306,7 +339,11 @@ describe('Chaos Monkey — Multi-Tenant Isolation', () => {
     assert.strictEqual(recovered!.stepNumber, 3);
 
     // Cleanup
-    try { fs.rmSync(stateDir, { recursive: true }); } catch { /* ok */ }
+    try {
+      fs.rmSync(stateDir, { recursive: true });
+    } catch {
+      /* ok */
+    }
   });
 
   // ── CM-T9: Multi-tenant cache isolation under chaos ──
@@ -319,11 +356,19 @@ describe('Chaos Monkey — Multi-Tenant Isolation', () => {
 
     // Tenant A stores a value
     const tcA = { id: 'a1', name: 'read_file', arguments: args, cached: false };
-    cache.set(tcA, { toolCallId: 'a1', name: 'read_file', output: 'TENANT_A_DATA', durationMs: 5 }, 'tenant-a');
+    await cache.set(
+      tcA,
+      { toolCallId: 'a1', name: 'read_file', output: 'TENANT_A_DATA', durationMs: 5 },
+      'tenant-a',
+    );
 
     // Tenant B writes different data for same args
     const tcB = { id: 'b1', name: 'read_file', arguments: args, cached: false };
-    cache.set(tcB, { toolCallId: 'b1', name: 'read_file', output: 'TENANT_B_DATA', durationMs: 5 }, 'tenant-b');
+    await cache.set(
+      tcB,
+      { toolCallId: 'b1', name: 'read_file', output: 'TENANT_B_DATA', durationMs: 5 },
+      'tenant-b',
+    );
 
     // Read back — should get tenant-specific values
     const gotA = cache.get(tcA, 'tenant-a');
@@ -341,7 +386,13 @@ describe('Chaos Monkey — Multi-Tenant Isolation', () => {
   // Verify that rate limit is per-window, not permanent.
   it('CM-T10: Rate limit resets after time window', async () => {
     const tp = new SimpleTenantProvider([
-      { tenantId: 'rl-test', tokenBudget: 0, maxConcurrency: 10, maxRunsPerMinute: 1, enabled: true },
+      {
+        tenantId: 'rl-test',
+        tokenBudget: 0,
+        maxConcurrency: 10,
+        maxRunsPerMinute: 1,
+        enabled: true,
+      },
     ]);
     const runtime = new AgentRuntime({ maxConcurrency: 10 }, undefined, tp);
     const ctx = makeCtx('rl-1', 'rl-test');
@@ -351,8 +402,10 @@ describe('Chaos Monkey — Multi-Tenant Isolation', () => {
 
     // Second request: rate limited
     const r2 = await runtime.execute(ctx);
-    assert.ok(r2.error?.includes('TENANT_RATE_LIMIT'),
-      `Expected rate limit error, got: ${r2.error}`);
+    assert.ok(
+      r2.error?.includes('TENANT_RATE_LIMIT'),
+      `Expected rate limit error, got: ${r2.error}`,
+    );
 
     // Note: in test we cannot easily advance time, but the rate window logic
     // is verified by the implementation: resetAt = now + 60_000, and a new

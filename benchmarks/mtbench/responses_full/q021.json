@@ -1,6 +1,0 @@
-{
-  "cat": "Reasoning",
-  "question": "Bat and ball cost $1.10. Bat costs $1 more. Ball cost?",
-  "answer": "The ball costs **$0.05** (5 cents).\n\nHere is the breakdown:\n*   **Ball:** $0.05\n*   **Bat:** $1.05\n*   **Total:** $1.10",
-  "score": 10.0
-}
