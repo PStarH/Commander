@@ -31,13 +31,13 @@ jobs:
         run: pnpm audit --audit-level=high
 
       - name: ESLint check (no-console rule)
-        run: npx eslint packages/core/src
+        run: pnpm exec eslint packages/core/src
 
       - name: Prettier format check
-        run: npx prettier --check "packages/core/src/**/*.ts" "apps/api/src/**/*.ts" "apps/web/src/**/*.{ts,tsx}"
+        run: pnpm exec prettier --check "packages/core/src/**/*.ts" "apps/api/src/**/*.ts" "apps/web/src/**/*.{ts,tsx}"
 
       - name: TypeScript check (core)
-        run: npx tsc --noEmit -p packages/core/tsconfig.json
+        run: pnpm exec tsc --noEmit -p packages/core/tsconfig.json
 
       - name: TypeScript check (SDK)
         run: pnpm --filter @commander/sdk typecheck
@@ -55,10 +55,10 @@ jobs:
         run: pnpm --filter @commander/core test:node:pathsec
 
       - name: CLI check
-        run: cd packages/core && npx tsx src/cli.ts status
+        run: cd packages/core && npx -p tsx tsx src/cli.ts status
 
       - name: Build core package
-        run: cd packages/core && npx tsc -p tsconfig.json
+        run: pnpm exec tsc -p packages/core/tsconfig.json
 
   docker:
     name: Docker Build
@@ -89,6 +89,7 @@ jobs:
       - run: pnpm install
 
       - name: Build web GUI
-        run: cd apps/web && npx vite build
+        run: pnpm exec vite build
+        working-directory: apps/web
         env:
           NODE_ENV: production
