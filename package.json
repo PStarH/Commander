@@ -60,7 +60,7 @@
   "pnpm": {
     "overrides": {
       "esbuild@<=0.24.2": ">=0.25.0",
-      "path-to-regexp@<0.1.13": ">=0.1.13",
+      "path-to-regexp@<0.1.13": "0.1.13",
       "brace-expansion@<1.1.13": ">=1.1.13",
       "picomatch@<2.3.2": ">=2.3.2",
       "vite@<=6.4.1": ">=6.4.2",
