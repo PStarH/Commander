@@ -10,7 +10,11 @@ const {
 
 function createContext({ missionId, agentId, intent = 'EXECUTE' } = {}) {
   const data = createSeedWarRoomData(new Date('2026-03-23T15:00:00.000Z'));
-  const snapshot = getProjectWarRoomSnapshot(data, 'project-war-room', new Date('2026-03-23T15:00:00.000Z'));
+  const snapshot = getProjectWarRoomSnapshot(
+    data,
+    'project-war-room',
+    new Date('2026-03-23T15:00:00.000Z'),
+  );
   assert.ok(snapshot, 'seed snapshot should exist');
 
   const slimSnapshot = createSlimSnapshot(snapshot, {
@@ -19,7 +23,7 @@ function createContext({ missionId, agentId, intent = 'EXECUTE' } = {}) {
     maxLogs: 8,
   });
 
-  const agentRoster = data.agents.map(agent => ({
+  const agentRoster = data.agents.map((agent) => ({
     id: agent.id,
     projectId: agent.projectId,
     name: agent.name,
@@ -66,7 +70,7 @@ test('getDefaultInvocationProfile requires approval for manual high-risk executi
     intent: 'EXECUTE',
   });
 
-  const agent = context.agentRoster.find(item => item.id === 'agent-builder');
+  const agent = context.agentRoster.find((item) => item.id === 'agent-builder');
   const mission = context.slimSnapshot.focusMission;
   assert.ok(agent);
   assert.ok(mission);
@@ -127,7 +131,7 @@ test('getDefaultInvocationProfile returns PROPOSE_ONLY when no mission is bound'
     intent: 'PLAN',
   });
 
-  const agent = context.agentRoster.find(item => item.id === 'agent-builder');
+  const agent = context.agentRoster.find((item) => item.id === 'agent-builder');
   assert.ok(agent);
 
   const profile = getDefaultInvocationProfile({

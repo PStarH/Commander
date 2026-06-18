@@ -1,6 +1,0 @@
-{
-  "cat": "Coding",
-  "question": "Write a function to reverse a linked list.",
-  "answer": "Here is the standard iterative approach to reverse a singly linked list in Python.\n\n### The Logic\nTo reverse the list in place ($O(1)$ space), we need to change the direction of the `next` pointers as we traverse the list. We use three pointers:\n1.  **`prev`**: Stores the previous node (initially `None`).\n2.  **`current`**: Stores the node we are currently looking at.\n3.  **`next_node`**: Stores the next node temporarily so we don't lose the rest of the list when we change the pointer.\n\n### The ",
-  "score": 8.0
-}

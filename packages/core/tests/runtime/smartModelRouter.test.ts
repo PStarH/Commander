@@ -30,9 +30,14 @@ describe('SmartModelRouter', () => {
     it('registers and retrieves a custom model', () => {
       const router = new ModelRouter();
       const custom: ModelConfig = {
-        id: 'my-model', provider: 'custom', tier: 'eco',
-        costPer1KInput: 0.001, costPer1KOutput: 0.002,
-        capabilities: ['code'], contextWindow: 8000, priority: 0,
+        id: 'my-model',
+        provider: 'custom',
+        tier: 'eco',
+        costPer1KInput: 0.001,
+        costPer1KOutput: 0.002,
+        capabilities: ['code'],
+        contextWindow: 8000,
+        priority: 0,
       };
       router.registerModel(custom);
       assert.ok(router.getModel('my-model'));
@@ -43,31 +48,42 @@ describe('SmartModelRouter', () => {
   describe('task-type-aware routing', () => {
     it('routes code tasks to code-capable models', () => {
       const router = new ModelRouter();
-      const decision = router.route(makeCtx({
-        goal: 'Fix the bug in the Python function and run the script',
-      }));
+      const decision = router.route(
+        makeCtx({
+          goal: 'Fix the bug in the Python function and run the script',
+        }),
+      );
       // Should prefer a model with 'code' capability
       const model = router.getModel(decision.modelId);
       assert.ok(model);
-      assert.ok(model.capabilities.includes('code'), `Model ${model.id} should have 'code' capability`);
+      assert.ok(
+        model.capabilities.includes('code'),
+        `Model ${model.id} should have 'code' capability`,
+      );
     });
 
     it('routes analysis tasks to reasoning-capable models', () => {
       const router = new ModelRouter();
-      const decision = router.route(makeCtx({
-        goal: 'Analyze the data and compare the two approaches to evaluate which is better',
-      }));
+      const decision = router.route(
+        makeCtx({
+          goal: 'Analyze the data and compare the two approaches to evaluate which is better',
+        }),
+      );
       const model = router.getModel(decision.modelId);
       assert.ok(model);
-      assert.ok(model.capabilities.includes('analysis') || model.capabilities.includes('reasoning'));
+      assert.ok(
+        model.capabilities.includes('analysis') || model.capabilities.includes('reasoning'),
+      );
     });
 
     it('routes creative tasks to creative-capable models', () => {
       const router = new ModelRouter();
-      const decision = router.route(makeCtx({
-        goal: 'Write a creative story about a robot that learns to paint',
-        tokenBudget: 16000,
-      }));
+      const decision = router.route(
+        makeCtx({
+          goal: 'Write a creative story about a robot that learns to paint',
+          tokenBudget: 16000,
+        }),
+      );
       const model = router.getModel(decision.modelId);
       assert.ok(model);
       // Creative tasks should get a model with creative capability (or at least reasoning)
@@ -75,18 +91,22 @@ describe('SmartModelRouter', () => {
 
     it('includes task_type in reasoning', () => {
       const router = new ModelRouter();
-      const decision = router.route(makeCtx({
-        goal: 'Search for the latest news about AI',
-      }));
-      assert.ok(decision.reasoning.some(r => r.includes('task_type')));
+      const decision = router.route(
+        makeCtx({
+          goal: 'Search for the latest news about AI',
+        }),
+      );
+      assert.ok(decision.reasoning.some((r) => r.includes('task_type')));
     });
 
     it('includes required_capabilities in reasoning', () => {
       const router = new ModelRouter();
-      const decision = router.route(makeCtx({
-        goal: 'Implement a sorting algorithm in Python',
-      }));
-      assert.ok(decision.reasoning.some(r => r.includes('required_capabilities')));
+      const decision = router.route(
+        makeCtx({
+          goal: 'Implement a sorting algorithm in Python',
+        }),
+      );
+      assert.ok(decision.reasoning.some((r) => r.includes('required_capabilities')));
     });
   });
 
@@ -99,34 +119,40 @@ describe('SmartModelRouter', () => {
 
     it('routes high complexity tasks to higher tiers', () => {
       const router = new ModelRouter();
-      const decision = router.route(makeCtx({
-        goal: 'A'.repeat(600),
-        tokenBudget: 64000,
-        availableTools: ['tool1', 'tool2', 'tool3', 'tool4', 'tool5', 'tool6'],
-      }));
+      const decision = router.route(
+        makeCtx({
+          goal: 'A'.repeat(600),
+          tokenBudget: 64000,
+          availableTools: ['tool1', 'tool2', 'tool3', 'tool4', 'tool5', 'tool6'],
+        }),
+      );
       assert.ok(['power', 'standard'].includes(decision.tier));
     });
 
     it('routes critical risk to consensus/power tier', () => {
       const router = new ModelRouter();
-      const decision = router.route(makeCtx({
-        goal: 'A'.repeat(600),
-        tokenBudget: 64000,
-        availableTools: ['tool1', 'tool2', 'tool3', 'tool4', 'tool5', 'tool6'],
-        contextData: {
-          governanceProfile: { riskLevel: 'CRITICAL' },
-        },
-      }));
+      const decision = router.route(
+        makeCtx({
+          goal: 'A'.repeat(600),
+          tokenBudget: 64000,
+          availableTools: ['tool1', 'tool2', 'tool3', 'tool4', 'tool5', 'tool6'],
+          contextData: {
+            governanceProfile: { riskLevel: 'CRITICAL' },
+          },
+        }),
+      );
       assert.ok(['consensus', 'power'].includes(decision.tier));
     });
 
     it('routes high risk to power tier', () => {
       const router = new ModelRouter();
-      const decision = router.route(makeCtx({
-        contextData: {
-          governanceProfile: { riskLevel: 'HIGH' },
-        },
-      }));
+      const decision = router.route(
+        makeCtx({
+          contextData: {
+            governanceProfile: { riskLevel: 'HIGH' },
+          },
+        }),
+      );
       assert.equal(decision.tier, 'power');
     });
   });
@@ -135,10 +161,12 @@ describe('SmartModelRouter', () => {
     it('prefers models with matching capabilities', () => {
       const router = new ModelRouter();
       // Code task should prefer a code-capable model over one without
-      const decision = router.route(makeCtx({
-        goal: 'Write a function to calculate fibonacci numbers',
-        tokenBudget: 4000,
-      }));
+      const decision = router.route(
+        makeCtx({
+          goal: 'Write a function to calculate fibonacci numbers',
+          tokenBudget: 4000,
+        }),
+      );
       const model = router.getModel(decision.modelId);
       assert.ok(model);
       assert.ok(model.capabilities.includes('code'));
@@ -146,9 +174,11 @@ describe('SmartModelRouter', () => {
 
     it('still routes to a model when no capability match exists', () => {
       const router = new ModelRouter();
-      const decision = router.route(makeCtx({
-        goal: 'Hello, how are you?',
-      }));
+      const decision = router.route(
+        makeCtx({
+          goal: 'Hello, how are you?',
+        }),
+      );
       assert.ok(decision.modelId !== 'fallback');
     });
   });
@@ -160,13 +190,24 @@ describe('SmartModelRouter', () => {
       router.recordOutcome('gpt-4o-mini', 'code', false, 3000, 5000);
       const stats = router.getLearningStats();
       assert.ok(stats.length >= 1);
-      const gpt = stats.find(s => s.modelId === 'gpt-4o-mini');
+      const gpt = stats.find((s) => s.modelId === 'gpt-4o-mini');
       assert.ok(gpt);
       assert.equal(gpt.count, 2);
     });
 
     it('learning affects model ranking', () => {
       const router = new ModelRouter();
+      // Register a model specifically for this test
+      router.registerModel({
+        id: 'claude-3-5-haiku',
+        provider: 'anthropic',
+        tier: 'eco',
+        costPer1KInput: 0.0008,
+        costPer1KOutput: 0.004,
+        capabilities: ['code', 'analysis'],
+        contextWindow: 200000,
+        priority: 0,
+      });
       // Record many failures for gpt-4o-mini on code tasks
       for (let i = 0; i < 20; i++) {
         router.recordOutcome('gpt-4o-mini', 'code', false, 5000, 3000);
@@ -176,10 +217,12 @@ describe('SmartModelRouter', () => {
         router.recordOutcome('claude-3-5-haiku', 'code', true, 1000, 1000);
       }
       // Now route a code task — should prefer haiku
-      const decision = router.route(makeCtx({
-        goal: 'Fix the Python bug in the code',
-        tokenBudget: 4000,
-      }));
+      const decision = router.route(
+        makeCtx({
+          goal: 'Fix the Python bug in the code',
+          tokenBudget: 4000,
+        }),
+      );
       assert.equal(decision.modelId, 'claude-3-5-haiku');
     });
   });
@@ -187,16 +230,16 @@ describe('SmartModelRouter', () => {
   describe('fallback chain', () => {
     it('returns next model in tier on fallback', () => {
       const router = new ModelRouter();
-      const fallback = router.getFallbackModel('claude-3-5-sonnet', 'code');
+      const fallback = router.getFallbackModel('claude-sonnet-4-6', 'code');
       assert.ok(fallback);
-      assert.notEqual(fallback.id, 'claude-3-5-sonnet');
+      assert.notEqual(fallback.id, 'claude-sonnet-4-6');
     });
 
     it('steps down tier when no same-tier fallback', () => {
       const router = new ModelRouter();
-      const fallback = router.getFallbackModel('claude-3-opus', 'general');
+      const fallback = router.getFallbackModel('claude-opus-4-8', 'general');
       assert.ok(fallback);
-      assert.ok(fallback.tier !== 'power' || fallback.id !== 'claude-3-opus');
+      assert.ok(fallback.tier !== 'power' || fallback.id !== 'claude-opus-4-8');
     });
 
     it('returns undefined for unknown model', () => {
@@ -222,7 +265,7 @@ describe('SmartModelRouter', () => {
     it('includes reasoning with governor_phase', () => {
       const router = new ModelRouter();
       const decision = router.route(makeCtx());
-      assert.ok(decision.reasoning.some(r => r.includes('governor_phase')));
+      assert.ok(decision.reasoning.some((r) => r.includes('governor_phase')));
     });
   });
 });

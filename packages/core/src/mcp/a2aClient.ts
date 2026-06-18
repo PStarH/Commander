@@ -55,7 +55,7 @@ export class A2AClient {
   async getAgentCard(): Promise<A2AAgentCard> {
     const url = `${this.baseUrl}${AGENT_CARD_WELL_KNOWN_PATH}`;
     const headers: Record<string, string> = {
-      'Accept': 'application/json',
+      Accept: 'application/json',
       [A2A_VERSION_HEADER]: A2A_PROTOCOL_VERSION,
     };
     if (this.authToken) {
@@ -67,7 +67,7 @@ export class A2AClient {
       throw new Error(`Failed to fetch Agent Card from ${url}: HTTP ${response.status}`);
     }
 
-    const card = await response.json() as A2AAgentCard;
+    const card = (await response.json()) as A2AAgentCard;
     return card;
   }
 
@@ -105,11 +105,18 @@ export class A2AClient {
         return task;
       }
       if (A2A_INTERRUPTED_STATES.has(task.status.state)) {
-        throw new Error(`Task ${taskId} requires intervention (state: ${task.status.state}): ${task.status.message ?? 'no details'}`);
+        throw new Error(
+          `Task ${taskId} requires intervention (state: ${task.status.state}): ${task.status.message ?? 'no details'}`,
+        );
       }
-      await new Promise(r => setTimeout(r, pollIntervalMs));
+      await new Promise((r) => {
+        const t = setTimeout(r, pollIntervalMs);
+        t.unref();
+      });
     }
-    throw new Error(`Task ${taskId} did not complete within ${maxWaitMs}ms (last state: ${(await this.getTask(taskId)).status.state})`);
+    throw new Error(
+      `Task ${taskId} did not complete within ${maxWaitMs}ms (last state: ${(await this.getTask(taskId)).status.state})`,
+    );
   }
 
   /**
@@ -143,7 +150,7 @@ export class A2AClient {
     const url = `${this.baseUrl}/`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Accept': 'application/json',
+      Accept: 'application/json',
       [A2A_VERSION_HEADER]: A2A_PROTOCOL_VERSION,
     };
 
@@ -159,10 +166,12 @@ export class A2AClient {
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new Error(`A2A RPC call ${method} failed: HTTP ${response.status}${text ? ` — ${text.slice(0, 200)}` : ''}`);
+      throw new Error(
+        `A2A RPC call ${method} failed: HTTP ${response.status}${text ? ` — ${text.slice(0, 200)}` : ''}`,
+      );
     }
 
-    const json = await response.json() as A2AJsonRpcResponse;
+    const json = (await response.json()) as A2AJsonRpcResponse;
 
     if (json.error) {
       throw new A2ARpcError(
@@ -178,6 +187,7 @@ export class A2AClient {
   private async fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    timer.unref();
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
       return response;
@@ -218,7 +228,10 @@ export class A2ADiscoveryManager {
       discoveredAt: new Date().toISOString(),
     };
     this.agents.set(label, agent);
-    this.logger.info('A2ADiscovery', `Discovered A2A agent "${label}" at ${url} — ${card.name} v${card.version}`);
+    this.logger.info(
+      'A2ADiscovery',
+      `Discovered A2A agent "${label}" at ${url} — ${card.name} v${card.version}`,
+    );
     return agent;
   }
 
@@ -242,12 +255,18 @@ export class A2ADiscoveryManager {
    * Discover multiple agents from config.
    * Each entry is { label: string, url: string, authToken?: string }.
    */
-  async discoverFromConfig(configs: Array<{ label: string; url: string; authToken?: string }>): Promise<void> {
+  async discoverFromConfig(
+    configs: Array<{ label: string; url: string; authToken?: string }>,
+  ): Promise<void> {
     const results = await Promise.allSettled(
-      configs.map(cfg => this.discoverAgent(cfg.label, cfg.url, cfg.authToken)),
+      configs.map((cfg) => this.discoverAgent(cfg.label, cfg.url, cfg.authToken)),
     );
-    const succeeded = results.filter(r => r.status === 'fulfilled').length;
-    const failed = results.filter(r => r.status === 'rejected').length;
+    let succeeded = 0,
+      failed = 0;
+    for (const r of results) {
+      if (r.status === 'fulfilled') succeeded++;
+      else failed++;
+    }
     if (failed > 0) {
       this.logger.warn('A2ADiscovery', `${failed}/${configs.length} A2A agents failed to connect`);
     }

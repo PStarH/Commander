@@ -1,4 +1,11 @@
-import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage, CacheConfig, ReasoningConfig } from '../types';
+import type {
+  LLMProvider,
+  LLMRequest,
+  LLMResponse,
+  TokenUsage,
+  CacheConfig,
+  ReasoningConfig,
+} from '../types';
 import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
 
@@ -11,7 +18,16 @@ interface OpenAICompletionUsage {
 
 interface OpenAIStreamChunk {
   choices: Array<{
-    delta: { content?: string; reasoning_content?: string; tool_calls?: Array<{ index: number; id?: string; type: string; function: { name?: string; arguments?: string } }> };
+    delta: {
+      content?: string;
+      reasoning_content?: string;
+      tool_calls?: Array<{
+        index: number;
+        id?: string;
+        type: string;
+        function: { name?: string; arguments?: string };
+      }>;
+    };
     finish_reason: string | null;
   }>;
   usage?: OpenAICompletionUsage;
@@ -33,52 +49,70 @@ export class MiMoProvider implements LLMProvider {
   private baseUrl: string;
   private defaultModel: string;
 
-  constructor(config: {
-    apiKey: string;
-    baseUrl?: string;
-    defaultModel?: string;
-  }) {
+  constructor(config: { apiKey: string; baseUrl?: string; defaultModel?: string }) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://token-plan-sgp.xiaomimimo.com/v1';
     this.defaultModel = config.defaultModel ?? 'mimo-v2.5';
   }
+
+  private static readonly MAX_RETRIES = 4;
+  private static readonly BASE_DELAY_MS = 2000;
 
   async call(request: LLMRequest): Promise<LLMResponse> {
     const model = this.defaultModel || request.model;
     const body = this.buildBody(request, model);
 
     // MiMo: pass back reasoning_content from previous responses
-    const lastAssistant = [...request.messages].reverse().find(m => m.role === 'assistant');
+    const lastAssistant = [...request.messages].reverse().find((m) => m.role === 'assistant');
     if (lastAssistant?.tool_calls) {
       body.tool_calls = lastAssistant.tool_calls;
     }
 
     const useStreaming = request.cacheConfig?.useCacheControl ?? true;
 
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({ ...body, stream: useStreaming }),
-    });
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt <= MiMoProvider.MAX_RETRIES; attempt++) {
+      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({ ...body, stream: useStreaming }),
+      });
 
-    if (!response.ok) {
+      if (response.ok) {
+        if (useStreaming) {
+          return this.handleStreamingResponse(response, model);
+        }
+        const data = await response.json();
+        return this.parseResponse(data, model);
+      }
+
       const err = await response.text();
-      throw new Error(`MiMo API error ${response.status}: ${err}`);
+      lastError = new Error(`MiMo API error ${response.status}: ${err}`);
+
+      // Only retry on 429 (rate limit) and 503 (service unavailable)
+      if (response.status !== 429 && response.status !== 503) {
+        throw lastError;
+      }
+
+      if (attempt < MiMoProvider.MAX_RETRIES) {
+        // Exponential backoff with jitter: 2s, 4s, 8s, 16s + random 0-1s
+        const delay = MiMoProvider.BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 1000;
+        getGlobalLogger().warn(
+          'MiMoProvider',
+          `Rate limited (${response.status}), retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${MiMoProvider.MAX_RETRIES})`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
     }
 
-    if (useStreaming) {
-      return this.handleStreamingResponse(response, model);
-    }
-
-    const data = await response.json();
-    return this.parseResponse(data, model);
+    throw lastError!;
   }
 
   private buildBody(request: LLMRequest, model: string): Record<string, unknown> {
-    const messages = request.messages.map(m => {
+    const messages = request.messages.map((m) => {
       const msg: Record<string, unknown> = { role: m.role, content: m.content };
       if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
       // Critical: pass reasoning_content for MiMo chain-of-thought continuity
@@ -159,7 +193,11 @@ export class MiMoProvider implements LLMProvider {
               }
             }
           }
-        } catch (e) { getGlobalLogger().debug('MiMoProvider', 'Skipping malformed stream chunk', { error: (e as Error)?.message }); }
+        } catch (e) {
+          getGlobalLogger().debug('MiMoProvider', 'Skipping malformed stream chunk', {
+            error: (e as Error)?.message,
+          });
+        }
       }
     }
 
@@ -175,7 +213,11 @@ export class MiMoProvider implements LLMProvider {
     if ((!toolCalls || toolCalls.length === 0) && content.includes('<tool_call>')) {
       const parsed = parseMiMoTextToolCalls(content);
       if (parsed.length > 0) {
-        toolCalls = parsed.map(p => ({ id: p.id, name: p.name, arguments: JSON.stringify(p.arguments) }));
+        toolCalls = parsed.map((p) => ({
+          id: p.id,
+          name: p.name,
+          arguments: JSON.stringify(p.arguments),
+        }));
         content = '';
       }
     }
@@ -191,18 +233,32 @@ export class MiMoProvider implements LLMProvider {
       model,
       usage: tokenUsage,
       finishReason: 'stop',
-      toolCalls: toolCalls.length > 0
-        ? toolCalls.map(tc => ({
-            id: tc.id,
-            name: tc.name,
-            arguments: JSON.parse(tc.arguments || '{}'),
-          }))
-        : undefined,
+      toolCalls:
+        toolCalls.length > 0
+          ? toolCalls.map((tc) => ({
+              id: tc.id,
+              name: tc.name,
+              arguments: JSON.parse(tc.arguments || '{}'),
+            }))
+          : undefined,
       reasoning_content: reasoningContent || undefined,
     };
   }
 
-  private parseResponse(data: { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>; reasoning_content?: string }; finish_reason?: string }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }, model: string): LLMResponse {
+  private parseResponse(
+    data: {
+      choices?: Array<{
+        message?: {
+          content?: string;
+          tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+          reasoning_content?: string;
+        };
+        finish_reason?: string;
+      }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    },
+    model: string,
+  ): LLMResponse {
     const choice = data.choices?.[0];
     const message = choice?.message ?? {};
 
@@ -213,18 +269,20 @@ export class MiMoProvider implements LLMProvider {
     };
 
     let content = message.content ?? '';
-    let toolCalls = message.tool_calls?.map((tc: { id: string; function: { name: string; arguments: string } }) => ({
-      id: tc.id,
-      name: tc.function.name,
-      arguments: JSON.parse(tc.function.arguments || '{}'),
-    }));
+    let toolCalls = message.tool_calls?.map(
+      (tc: { id: string; function: { name: string; arguments: string } }) => ({
+        id: tc.id,
+        name: tc.function.name,
+        arguments: JSON.parse(tc.function.arguments || '{}'),
+      }),
+    );
 
     // MiMo sometimes returns tool calls as text: <tool_call><function=name><parameter=k>v</parameter></function></tool_call>
     if ((!toolCalls || toolCalls.length === 0) && content.includes('<tool_call>')) {
       const parsed = parseMiMoTextToolCalls(content);
       if (parsed.length > 0) {
         toolCalls = parsed;
-        content = '';  // tool calls consumed, no text response
+        content = ''; // tool calls consumed, no text response
       }
     }
 
@@ -238,10 +296,14 @@ export class MiMoProvider implements LLMProvider {
       content,
       model,
       usage: tokenUsage,
-      finishReason: choice?.finish_reason === 'stop' ? 'stop'
-        : choice?.finish_reason === 'tool_calls' ? 'tool_calls'
-        : choice?.finish_reason === 'length' ? 'length'
-        : 'stop',
+      finishReason:
+        choice?.finish_reason === 'stop'
+          ? 'stop'
+          : choice?.finish_reason === 'tool_calls'
+            ? 'tool_calls'
+            : choice?.finish_reason === 'length'
+              ? 'length'
+              : 'stop',
       toolCalls,
       reasoning_content: message.reasoning_content,
     };
@@ -250,23 +312,25 @@ export class MiMoProvider implements LLMProvider {
 
 /**
  * Parse MiMo's text-format tool calls into structured format.
- * 
+ *
  * Input:  "<tool_call>\n<function=web_search>\n<parameter=query>AI news</parameter>\n</function>\n</tool_call>"
  * Output: [{ id: "call_xxx", name: "web_search", arguments: { query: "AI news" } }]
  */
-export function parseMiMoTextToolCalls(content: string): Array<{ id: string; name: string; arguments: Record<string, unknown> }> {
+export function parseMiMoTextToolCalls(
+  content: string,
+): Array<{ id: string; name: string; arguments: Record<string, unknown> }> {
   const results: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
   // Split by <tool_call> blocks
   const blocks = content.split('<tool_call>').slice(1);
   for (const block of blocks) {
     const endTag = '</tool_call>';
     const blockContent = block.includes(endTag) ? block.split(endTag)[0] : block;
-    
+
     // Extract function name: <function=name> or <function_name>
     const funcMatch = blockContent.match(/<function[=_]([^>]+)>/);
     if (!funcMatch) continue;
     const name = funcMatch[1].trim();
-    
+
     // Extract parameters: <parameter=key>value</parameter>
     const args: Record<string, unknown> = {};
     const paramRegex = /<parameter=([^>]+)>([\s\S]*?)<\/parameter>/g;
@@ -274,7 +338,7 @@ export function parseMiMoTextToolCalls(content: string): Array<{ id: string; nam
     while ((paramMatch = paramRegex.exec(blockContent)) !== null) {
       args[paramMatch[1].trim()] = paramMatch[2].trim();
     }
-    
+
     results.push({
       id: `call_mimo_${Date.now()}_${results.length}`,
       name,

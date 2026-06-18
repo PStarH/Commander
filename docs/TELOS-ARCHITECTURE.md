@@ -5,6 +5,7 @@
 ## Overview
 
 TELOS is a production-grade multi-agent framework built on three principles:
+
 1. **Token efficiency first** — every API call is measured, budgeted, and optimized before it fires
 2. **Adaptive orchestration** — the framework adapts its coordination strategy to task complexity, not the other way around
 3. **Protocol-native** — A2A v1.0 for agent↔agent, MCP for agent↔tool, no vendor lock-in
@@ -82,10 +83,10 @@ Routes tasks to optimal models based on complexity, governance constraints, and 
 
 ```
 Tiers:  eco (fast/cheap) → standard (balanced) → power (strong) → consensus (multi-model)
- 
+
 Scoring: goal length + tool count + token budget + governance risk level
          score 0-3 → eco, 4-6 → standard, 7+ → power, CRITICAL risk → consensus
- 
+
 Fallback: consensus→power→standard→eco (automatic cascade)
 ```
 
@@ -96,10 +97,10 @@ Three guards against token waste:
 ```
 Pre-flight Check:  estimate input/output tokens BEFORE API call
                    → deny if exceeds hardCap or monthlyBudget
-                   
+
 Cost Tracking:     record every call's token usage + USD cost
                    → summary per model, per agent, per run
-                   
+
 Budget Enforcement: hardCap → stop execution
                     monthlyLimitUSD → deny new runs
                     softCap → warn
@@ -113,7 +114,7 @@ Multi-provider management with automatic failover:
 Selection: weighted random among healthy endpoints
            3 consecutive failures → mark 'down'
            auto-recover after cooldown
-           
+
 Failover:  primary → fallback 1 → fallback 2 → graceful error
            error-type aware: 429 → different provider
                              413 → larger context model
@@ -197,7 +198,7 @@ Bayesian multi-armed bandit for strategy selection:
 Each task type has Beta distributions over 5 strategies
   selectStrategy(): sample each Beta, pick highest
   updatePrior(): Beta.update(success/failure)
-  
+
 Explores untested strategies, exploits proven ones.
 ```
 
@@ -223,9 +224,9 @@ EvalSuite: regression testing from failure cases
 ```typescript
 new OpenAIProvider({
   apiKey: process.env.OPENAI_API_KEY,
-  baseUrl: 'https://api.openai.com/v1',  // optional
-  defaultModel: 'gpt-4o',                // optional
-})
+  baseUrl: 'https://api.openai.com/v1', // optional
+  defaultModel: 'gpt-4o', // optional
+});
 ```
 
 Features: streaming, auto-caching (>1024 tokens), parallel_tool_calls=true
@@ -235,9 +236,9 @@ Features: streaming, auto-caching (>1024 tokens), parallel_tool_calls=true
 ```typescript
 new AnthropicProvider({
   apiKey: process.env.ANTHROPIC_API_KEY,
-  baseUrl: 'https://api.anthropic.com/v1',  // optional
+  baseUrl: 'https://api.anthropic.com/v1', // optional
   defaultModel: 'claude-3-5-sonnet-20241022',
-})
+});
 ```
 
 Features: streaming, cache_control ephemeral markers, tool use with cache
@@ -312,18 +313,27 @@ docs/
 
 ```typescript
 import {
-  AgentRuntime, OpenAIProvider, AnthropicProvider,
-  TELOSOrchestrator, getTokenSentinel,
+  AgentRuntime,
+  OpenAIProvider,
+  AnthropicProvider,
+  TELOSOrchestrator,
+  getTokenSentinel,
 } from '@commander/core';
 
 // 1. Create runtime with providers
 const runtime = new AgentRuntime();
-runtime.registerProvider('openai', new OpenAIProvider({
-  apiKey: process.env.OPENAI_API_KEY,
-}));
-runtime.registerProvider('anthropic', new AnthropicProvider({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-}));
+runtime.registerProvider(
+  'openai',
+  new OpenAIProvider({
+    apiKey: process.env.OPENAI_API_KEY,
+  }),
+);
+runtime.registerProvider(
+  'anthropic',
+  new AnthropicProvider({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  }),
+);
 
 // 2. Create orchestrator
 const telos = new TELOSOrchestrator(runtime);

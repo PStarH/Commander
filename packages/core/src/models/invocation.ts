@@ -32,7 +32,7 @@ interface MissionGovernanceDisposition {
  * Determines the governance disposition for a mission based on risk and mode.
  */
 function getMissionGovernanceDisposition(
-  input: MissionGovernanceDispositionInput
+  input: MissionGovernanceDispositionInput,
 ): MissionGovernanceDisposition {
   const rationale: string[] = [];
   const mission = input.mission;
@@ -43,7 +43,9 @@ function getMissionGovernanceDisposition(
   }
 
   if (mission.governanceMode === 'MANUAL') {
-    rationale.push('governanceMode=MANUAL => proposals allowed; execution requires COMMANDER approval.');
+    rationale.push(
+      'governanceMode=MANUAL => proposals allowed; execution requires COMMANDER approval.',
+    );
     return {
       disposition: 'REQUIRE_APPROVAL',
       rationale,
@@ -54,7 +56,7 @@ function getMissionGovernanceDisposition(
   const highRisk = mission.riskLevel === 'HIGH' || mission.riskLevel === 'CRITICAL';
   if (highRisk && input.agent.governanceRole === 'EXECUTOR' && input.intent === 'EXECUTE') {
     rationale.push(
-      'HIGH/CRITICAL risk + EXECUTE intent => require approval or downgrade to proposal externally.'
+      'HIGH/CRITICAL risk + EXECUTE intent => require approval or downgrade to proposal externally.',
     );
     return {
       disposition: 'REQUIRE_APPROVAL',
@@ -65,7 +67,7 @@ function getMissionGovernanceDisposition(
 
   if (mission.governanceMode === 'GUARDED' && input.intent === 'EXECUTE') {
     rationale.push(
-      'governanceMode=GUARDED + EXECUTE intent => allow execution but expect senate monitoring.'
+      'governanceMode=GUARDED + EXECUTE intent => allow execution but expect senate monitoring.',
     );
     return { disposition: 'ALLOW_EXECUTION', rationale };
   }
@@ -117,7 +119,9 @@ export function getDefaultInvocationProfile(input: {
   }
 
   if (governance.disposition === 'REQUIRE_APPROVAL') {
-    rationale.push('Restricting to proposal-safe operations until approval is granted by external system.');
+    rationale.push(
+      'Restricting to proposal-safe operations until approval is granted by external system.',
+    );
     return {
       agentId: input.agent.id,
       intent: input.intent === 'EXECUTE' ? 'PROPOSE' : input.intent,
@@ -125,12 +129,11 @@ export function getDefaultInvocationProfile(input: {
       disposition: governance.disposition,
       allowedOperations: ['READ_CONTEXT', 'WRITE_LOG', 'WRITE_MEMORY', 'REQUEST_APPROVAL'],
       forbiddenOperations: ['UPDATE_MISSION_STATUS', 'UPDATE_MISSION_FIELDS', 'UPDATE_AGENT_STATE'],
-      approval:
-        governance.approval ?? {
-          required: true,
-          requiredRoles: ['COMMANDER'],
-          minApprovals: 1,
-        },
+      approval: governance.approval ?? {
+        required: true,
+        requiredRoles: ['COMMANDER'],
+        minApprovals: 1,
+      },
       rationale,
     };
   }

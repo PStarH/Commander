@@ -101,18 +101,22 @@ export const DEFAULT_NAMESPACES: NamespaceConfig[] = [
 export const DEFAULT_ACL_RULES: ACLEntry[] = [
   // Orchestrator has full access to all namespaces
   { role: 'orchestrator', permissions: ['read', 'write', 'delete', 'admin'], namespaces: ['*'] },
-  
+
   // Planner can read all, write to planner and shared
   { role: 'planner', permissions: ['read', 'write'], namespaces: ['planner', 'shared'] },
-  
+
   // Executor can read all, write to executor and shared
   { role: 'executor', permissions: ['read', 'write'], namespaces: ['executor', 'shared'] },
-  
+
   // Reviewer can read all, write to reviewer and shared
   { role: 'reviewer', permissions: ['read', 'write'], namespaces: ['reviewer', 'shared'] },
-  
+
   // Sentinel can read all, write to sentinel and shared (audit trail)
-  { role: 'sentinel', permissions: ['read', 'write', 'delete'], namespaces: ['sentinel', 'shared'] },
+  {
+    role: 'sentinel',
+    permissions: ['read', 'write', 'delete'],
+    namespaces: ['sentinel', 'shared'],
+  },
 ];
 
 // ============================================================================
@@ -153,9 +157,9 @@ export class NamespacedMemoryStore {
 
   constructor(
     namespaces: NamespaceConfig[] = DEFAULT_NAMESPACES,
-    aclRules: ACLEntry[] = DEFAULT_ACL_RULES
+    aclRules: ACLEntry[] = DEFAULT_ACL_RULES,
   ) {
-    this.namespaces = new Map(namespaces.map(n => [n.name, n]));
+    this.namespaces = new Map(namespaces.map((n) => [n.name, n]));
     this.aclRules = aclRules;
   }
 
@@ -169,9 +173,9 @@ export class NamespacedMemoryStore {
   hasPermission(
     context: MemoryAccessContext,
     permission: MemoryPermission,
-    targetNamespace?: string
+    targetNamespace?: string,
   ): boolean {
-    const acl = this.aclRules.find(rule => rule.role === context.role);
+    const acl = this.aclRules.find((rule) => rule.role === context.role);
     if (!acl) return false;
 
     // Check permission
@@ -188,7 +192,7 @@ export class NamespacedMemoryStore {
    * Add or update ACL rule
    */
   setACLRule(entry: ACLEntry): void {
-    const existingIndex = this.aclRules.findIndex(r => r.role === entry.role);
+    const existingIndex = this.aclRules.findIndex((r) => r.role === entry.role);
     if (existingIndex >= 0) {
       this.aclRules[existingIndex] = entry;
     } else {
@@ -237,23 +241,26 @@ export class NamespacedMemoryStore {
     const config = this.namespaces.get(namespace);
     if (!config?.maxItems) return;
 
-    const namespaceItems = Array.from(this.items.values())
-      .filter(item => item.namespace === namespace);
+    const namespaceItems = Array.from(this.items.values()).filter(
+      (item) => item.namespace === namespace,
+    );
 
     if (namespaceItems.length >= config.maxItems) {
       // Evict items based on retention policy
       const itemsToEvict = namespaceItems.length - config.maxItems + 1;
-      
+
       let sortedItems: NamespacedMemoryItem[];
       switch (config.retentionPolicy) {
         case 'fifo':
-          sortedItems = namespaceItems.sort((a, b) => 
-            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          // ISO string comparison — no Date parsing needed
+          sortedItems = namespaceItems.sort((a, b) =>
+            a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
           );
           break;
         case 'lru':
-          sortedItems = namespaceItems.sort((a, b) => 
-            new Date(a.lastAccessedAt).getTime() - new Date(b.lastAccessedAt).getTime()
+          // ISO string comparison — no Date parsing needed
+          sortedItems = namespaceItems.sort((a, b) =>
+            a.lastAccessedAt < b.lastAccessedAt ? -1 : a.lastAccessedAt > b.lastAccessedAt ? 1 : 0,
           );
           break;
         case 'priority':
@@ -289,7 +296,7 @@ export class NamespacedMemoryStore {
    */
   write(
     options: MemoryWriteOptions & { namespace: string },
-    context: MemoryAccessContext
+    context: MemoryAccessContext,
   ): NamespacedMemoryItem | null {
     // Check write permission
     if (!this.hasPermission(context, 'write', options.namespace)) {
@@ -333,7 +340,7 @@ export class NamespacedMemoryStore {
 
     this.items.set(id, item);
     this.enforceLimit(options.namespace);
-    
+
     this.logAudit({
       action: 'write',
       agentId: context.agentId,
@@ -349,10 +356,7 @@ export class NamespacedMemoryStore {
   /**
    * Read a memory item with ACL check
    */
-  read(
-    id: string,
-    context: MemoryAccessContext
-  ): NamespacedMemoryItem | null {
+  read(id: string, context: MemoryAccessContext): NamespacedMemoryItem | null {
     const item = this.items.get(id);
     if (!item) return null;
 
@@ -370,8 +374,8 @@ export class NamespacedMemoryStore {
       return null;
     }
 
-    // Check expiration
-    if (new Date(item.expiresAt) < new Date()) {
+    // Check expiration (use timestamp to avoid extra Date allocation)
+    if (new Date(item.expiresAt).getTime() < Date.now()) {
       this.items.delete(id);
       this.logAudit({
         action: 'delete',
@@ -387,7 +391,7 @@ export class NamespacedMemoryStore {
 
     // Update last accessed time
     item.lastAccessedAt = new Date().toISOString();
-    
+
     this.logAudit({
       action: 'read',
       agentId: context.agentId,
@@ -406,7 +410,7 @@ export class NamespacedMemoryStore {
   update(
     id: string,
     updates: Partial<Pick<NamespacedMemoryItem, 'priority' | 'tags' | 'confidence' | 'content'>>,
-    context: MemoryAccessContext
+    context: MemoryAccessContext,
   ): NamespacedMemoryItem | null {
     const item = this.items.get(id);
     if (!item) return null;
@@ -427,7 +431,7 @@ export class NamespacedMemoryStore {
 
     Object.assign(item, updates);
     item.lastAccessedAt = new Date().toISOString();
-    
+
     this.logAudit({
       action: 'update',
       agentId: context.agentId,
@@ -443,10 +447,7 @@ export class NamespacedMemoryStore {
   /**
    * Delete a memory item with ACL check
    */
-  delete(
-    id: string,
-    context: MemoryAccessContext
-  ): boolean {
+  delete(id: string, context: MemoryAccessContext): boolean {
     const item = this.items.get(id);
     if (!item) return false;
 
@@ -465,7 +466,7 @@ export class NamespacedMemoryStore {
     }
 
     this.items.delete(id);
-    
+
     this.logAudit({
       action: 'delete',
       agentId: context.agentId,
@@ -487,61 +488,62 @@ export class NamespacedMemoryStore {
    */
   search(
     query: MemorySearchQuery & { namespaces?: string[] },
-    context: MemoryAccessContext
+    context: MemoryAccessContext,
   ): MemorySearchResult {
     // Determine accessible namespaces
-    const acl = this.aclRules.find(rule => rule.role === context.role);
+    const acl = this.aclRules.find((rule) => rule.role === context.role);
     const accessibleNamespaces = acl?.namespaces.includes('*')
       ? Array.from(this.namespaces.keys())
       : (acl?.namespaces ?? []);
 
     // Filter by requested namespaces if specified
     const searchNamespaces = query.namespaces
-      ? query.namespaces.filter(n => accessibleNamespaces.includes(n))
+      ? query.namespaces.filter((n) => accessibleNamespaces.includes(n))
       : accessibleNamespaces;
 
-    let results = Array.from(this.items.values())
-      .filter(item => {
-        // Filter by accessible namespaces
-        if (!searchNamespaces.includes(item.namespace)) return false;
-        
-        // Filter by project
-        if (item.projectId !== query.projectId) return false;
-        
-        // Filter by expiration
-        if (new Date(item.expiresAt) < new Date()) return false;
-        
-        // Filter by kind
-        if (query.kind && item.kind !== query.kind) return false;
-        
-        // Filter by mission
-        if (query.missionId && item.missionId !== query.missionId) return false;
-        
-        // Filter by agent
-        if (query.agentId && item.agentId !== query.agentId) return false;
-        
-        // Filter by tags
-        if (query.tags && query.tags.length > 0) {
-          if (!query.tags.some(tag => item.tags.includes(tag))) return false;
-        }
-        
-        // Filter by priority
-        if (query.minPriority !== undefined && item.priority < query.minPriority) return false;
-        
-        // Filter by confidence
-        if (query.minConfidence !== undefined && item.confidence < query.minConfidence) return false;
-        
-        // Text search
-        if (query.query) {
-          const lowerQuery = query.query.toLowerCase();
-          if (
-            !item.title.toLowerCase().includes(lowerQuery) &&
-            !item.content.toLowerCase().includes(lowerQuery)
-          ) return false;
-        }
-        
-        return true;
-      });
+    const now = Date.now();
+    let results = Array.from(this.items.values()).filter((item) => {
+      // Filter by accessible namespaces
+      if (!searchNamespaces.includes(item.namespace)) return false;
+
+      // Filter by project
+      if (item.projectId !== query.projectId) return false;
+
+      // Filter by expiration (use timestamp comparison to avoid Date allocations)
+      if (new Date(item.expiresAt).getTime() < now) return false;
+
+      // Filter by kind
+      if (query.kind && item.kind !== query.kind) return false;
+
+      // Filter by mission
+      if (query.missionId && item.missionId !== query.missionId) return false;
+
+      // Filter by agent
+      if (query.agentId && item.agentId !== query.agentId) return false;
+
+      // Filter by tags
+      if (query.tags && query.tags.length > 0) {
+        if (!query.tags.some((tag) => item.tags.includes(tag))) return false;
+      }
+
+      // Filter by priority
+      if (query.minPriority !== undefined && item.priority < query.minPriority) return false;
+
+      // Filter by confidence
+      if (query.minConfidence !== undefined && item.confidence < query.minConfidence) return false;
+
+      // Text search
+      if (query.query) {
+        const lowerQuery = query.query.toLowerCase();
+        if (
+          !item.title.toLowerCase().includes(lowerQuery) &&
+          !item.content.toLowerCase().includes(lowerQuery)
+        )
+          return false;
+      }
+
+      return true;
+    });
 
     // Sort by priority (descending) then by createdAt (descending)
     results.sort((a, b) => {
@@ -566,12 +568,12 @@ export class NamespacedMemoryStore {
   deleteExpired(): number {
     const now = new Date();
     let count = 0;
-    
+
     for (const [id, item] of this.items) {
       if (new Date(item.expiresAt) < now) {
         this.items.delete(id);
         count++;
-        
+
         this.logAudit({
           action: 'delete',
           agentId: 'system',
@@ -583,7 +585,7 @@ export class NamespacedMemoryStore {
         });
       }
     }
-    
+
     return count;
   }
 
@@ -598,8 +600,9 @@ export class NamespacedMemoryStore {
     newestItem?: string;
     expiringItems: number;
   } {
-    const namespaceItems = Array.from(this.items.values())
-      .filter(item => item.namespace === namespace);
+    const namespaceItems = Array.from(this.items.values()).filter(
+      (item) => item.namespace === namespace,
+    );
 
     if (namespaceItems.length === 0) {
       return {
@@ -612,17 +615,19 @@ export class NamespacedMemoryStore {
 
     const now = new Date();
     const expiringItems = namespaceItems.filter(
-      item => new Date(item.expiresAt) < new Date(now.getTime() + 24 * 60 * 60 * 1000)
+      (item) => new Date(item.expiresAt) < new Date(now.getTime() + 24 * 60 * 60 * 1000),
     ).length;
 
-    const sorted = namespaceItems.sort((a, b) => 
-      new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    const sorted = namespaceItems.sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
 
     return {
       totalItems: namespaceItems.length,
-      avgPriority: namespaceItems.reduce((sum, item) => sum + item.priority, 0) / namespaceItems.length,
-      avgConfidence: namespaceItems.reduce((sum, item) => sum + item.confidence, 0) / namespaceItems.length,
+      avgPriority:
+        namespaceItems.reduce((sum, item) => sum + item.priority, 0) / namespaceItems.length,
+      avgConfidence:
+        namespaceItems.reduce((sum, item) => sum + item.confidence, 0) / namespaceItems.length,
       oldestItem: sorted[0]?.createdAt,
       newestItem: sorted[sorted.length - 1]?.createdAt,
       expiringItems,
@@ -645,13 +650,13 @@ export class NamespacedMemoryStore {
     let entries = [...this.auditLog];
 
     if (options?.namespace) {
-      entries = entries.filter(e => e.namespace === options.namespace);
+      entries = entries.filter((e) => e.namespace === options.namespace);
     }
     if (options?.agentId) {
-      entries = entries.filter(e => e.agentId === options.agentId);
+      entries = entries.filter((e) => e.agentId === options.agentId);
     }
     if (options?.action) {
-      entries = entries.filter(e => e.action === options.action);
+      entries = entries.filter((e) => e.action === options.action);
     }
 
     // Sort by timestamp descending

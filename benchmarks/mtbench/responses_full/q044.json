@@ -1,6 +1,0 @@
-{
-  "cat": "Coding",
-  "question": "Write a function to merge two sorted lists.",
-  "answer": "Here is a standard, efficient solution in Python using the **two-pointer technique**.\n\nThis approach runs in **O(n + m)** time complexity (linear time), meaning it is very fast even for large lists.\n\n```python\ndef merge_sorted_lists(list1, list2):\n    \"\"\"\n    Merges two sorted lists into a single sorted list.\n    \"\"\"\n    # Initialize pointers for both lists\n    i = 0\n    j = 0\n    merged_list = []\n\n    # Traverse both lists\n    while i < len(list1) and j < len(list2):\n        # Compare elements ",
-  "score": 8.0
-}

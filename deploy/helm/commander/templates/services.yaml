@@ -1,0 +1,63 @@
+# =============================================================================
+# Commander — Services
+# =============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "commander.fullname" . }}-api
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.api.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "commander.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+
+---
+{{- if .Values.web.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "commander.fullname" . }}-web
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.web.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "commander.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+{{- end }}
+
+---
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "commander.fullname" . }}-redis
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.redis.port }}
+      targetPort: redis
+      protocol: TCP
+      name: redis
+  selector:
+    {{- include "commander.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+{{- end }}

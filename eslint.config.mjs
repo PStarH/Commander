@@ -8,10 +8,13 @@ export default tseslint.config(
     extends: [tseslint.configs.base],
     rules: {
       'no-console': ['error', { allow: ['warn', 'error'] }],
-      '@typescript-eslint/no-unused-vars': 'off',
-      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+      '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-require-imports': 'off',
-      'prefer-const': 'off',
+      'prefer-const': 'warn',
     },
   },
   // CLI files — terminal UI, console.log is the intended output mechanism
@@ -41,15 +44,22 @@ export default tseslint.config(
   },
   // Tools with inline code templates containing console.log references
   {
-    files: [
-      'packages/core/src/tools/scriptTool.ts',
-      'packages/core/src/tools/codeRefinerTool.ts',
-    ],
+    files: ['packages/core/src/tools/scriptTool.ts', 'packages/core/src/tools/codeRefinerTool.ts'],
     rules: { 'no-console': 'off' },
   },
   // SDK and web app — separate packages with their own conventions
   {
     files: ['packages/sdk/**/*.ts', 'apps/**/*.ts'],
     rules: { 'no-console': 'off' },
+  },
+  // Legacy files with known `any` usage — TODO: refactor to remove `any`
+  {
+    files: [
+      'packages/core/src/benchmark/benchmarkRunner.ts',
+      'packages/core/src/tools/webSearchTool.ts',
+      'packages/core/src/runtime/distributedTracing.ts',
+      'packages/core/src/ultimate/orchestrator.ts',
+    ],
+    rules: { '@typescript-eslint/no-explicit-any': 'warn' },
   },
 );

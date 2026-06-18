@@ -18,6 +18,8 @@ const EFFORT_RULES: Record<EffortLevel, EffortScalingRules> = {
     recommendedTopology: 'SINGLE',
     thinkingTokens: 512,
     maxDepth: 0,
+    leadModelTier: 'standard',
+    specialistModelTier: 'eco',
   },
   MODERATE: {
     level: 'MODERATE',
@@ -28,6 +30,8 @@ const EFFORT_RULES: Record<EffortLevel, EffortScalingRules> = {
     recommendedTopology: 'PARALLEL',
     thinkingTokens: 2048,
     maxDepth: 1,
+    leadModelTier: 'power',
+    specialistModelTier: 'standard',
   },
   COMPLEX: {
     level: 'COMPLEX',
@@ -38,6 +42,8 @@ const EFFORT_RULES: Record<EffortLevel, EffortScalingRules> = {
     recommendedTopology: 'HIERARCHICAL',
     thinkingTokens: 4096,
     maxDepth: 2,
+    leadModelTier: 'power',
+    specialistModelTier: 'standard',
   },
   DEEP_RESEARCH: {
     level: 'DEEP_RESEARCH',
@@ -48,6 +54,8 @@ const EFFORT_RULES: Record<EffortLevel, EffortScalingRules> = {
     recommendedTopology: 'HYBRID',
     thinkingTokens: 8192,
     maxDepth: 3,
+    leadModelTier: 'consensus',
+    specialistModelTier: 'standard',
   },
 };
 
@@ -76,11 +84,14 @@ export function classifyEffortLevel(
   return 'SIMPLE';
 }
 
-export function selectTopologyForEffort(level: EffortLevel, dag?: {
-  parallelismWidth: number;
-  criticalPathDepth: number;
-  interSubtaskCoupling: number;
-}): OrchestrationTopology {
+export function selectTopologyForEffort(
+  level: EffortLevel,
+  dag?: {
+    parallelismWidth: number;
+    criticalPathDepth: number;
+    interSubtaskCoupling: number;
+  },
+): OrchestrationTopology {
   const rules = getEffortRules(level);
 
   if (!dag) return rules.recommendedTopology;

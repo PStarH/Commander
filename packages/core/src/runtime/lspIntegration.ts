@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { getGlobalLogger } from '../logging';
+import { safePath } from '../tools/fileSystemTool';
 import type { Tool } from '../runtime/types';
 
 interface LSPDiagnostic {
@@ -36,7 +37,10 @@ interface LSPMessage {
 
 class LSPClient {
   private process: ChildProcess | null = null;
-  private pendingRequests: Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }> = new Map();
+  private pendingRequests: Map<
+    number,
+    { resolve: (v: unknown) => void; reject: (e: Error) => void }
+  > = new Map();
   private diagnostics: Map<string, LSPDiagnostic[]> = new Map();
   private messageId = 0;
   private isConnected = false;
@@ -44,6 +48,8 @@ class LSPClient {
   private readonly MAX_DIAGNOSTIC_FILES = 500;
   private readonly MAX_DIAGNOSTICS_PER_FILE = 200;
   private diagnosticsInsertOrder: string[] = [];
+  // O(1) membership check alongside the insert-order array
+  private diagnosticsFileSet: Set<string> = new Set();
 
   constructor(
     private serverCommand: string,
@@ -62,14 +68,27 @@ class LSPClient {
       // Guard against multiple resolve/reject calls (timeout + error + sendRequest can race)
       let settled = false;
       const settle = (fn: () => void): void => {
-        if (!settled) { settled = true; fn(); }
+        if (!settled) {
+          settled = true;
+          fn();
+        }
       };
 
-      const timeout = setTimeout(() => settle(() => reject(new Error('LSP connection timeout'))), 10000);
+      const timeout = setTimeout(
+        () =>
+          settle(() => {
+            this.process?.kill();
+            this.process = null;
+            reject(new Error('LSP connection timeout'));
+          }),
+        10000,
+      );
 
       this.process.on('error', (err) => {
         settle(() => {
           clearTimeout(timeout);
+          this.process?.kill();
+          this.process = null;
           reject(new Error(`LSP process error: ${err.message}`));
         });
       });
@@ -119,7 +138,9 @@ class LSPClient {
 
   disconnect(): void {
     if (this.process) {
-      this.sendNotification('shutdown', {}).catch(e => getGlobalLogger().debug('LSP', 'shutdown error', { error: (e as Error)?.message }));
+      this.sendNotification('shutdown', {}).catch((e) =>
+        getGlobalLogger().debug('LSP', 'shutdown error', { error: (e as Error)?.message }),
+      );
       this.process.kill();
       this.process = null;
       this.isConnected = false;
@@ -137,14 +158,14 @@ class LSPClient {
   }
 
   hasErrors(filePath: string): boolean {
-    return this.getFileDiagnostics(filePath).some(d => d.severity === 1);
+    return this.getFileDiagnostics(filePath).some((d) => d.severity === 1);
   }
 
   getErrorCount(filePath: string): { errors: number; warnings: number } {
     const diagnostics = this.getFileDiagnostics(filePath);
     return {
-      errors: diagnostics.filter(d => d.severity === 1).length,
-      warnings: diagnostics.filter(d => d.severity === 2 || d.severity === 3).length,
+      errors: diagnostics.filter((d) => d.severity === 1).length,
+      warnings: diagnostics.filter((d) => d.severity === 2 || d.severity === 3).length,
     };
   }
 
@@ -188,12 +209,13 @@ class LSPClient {
       this.pendingRequests.set(id, { resolve, reject });
       const msg: LSPMessage = { jsonrpc: '2.0', id, method, params };
       this.process.stdin.write(JSON.stringify(msg) + '\n');
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
           reject(new Error(`LSP request ${method} timed out`));
         }
       }, 15000);
+      if (typeof timer.unref === 'function') timer.unref();
     });
   }
 
@@ -221,14 +243,20 @@ class LSPClient {
         // GAP-20: Evict oldest file entries when map grows too large
         if (!this.diagnostics.has(filePath) && this.diagnostics.size >= this.MAX_DIAGNOSTIC_FILES) {
           const oldest = this.diagnosticsInsertOrder.shift();
-          if (oldest) this.diagnostics.delete(oldest);
+          if (oldest) {
+            this.diagnostics.delete(oldest);
+            this.diagnosticsFileSet.delete(oldest);
+          }
         }
         this.diagnostics.set(filePath, diags);
-        if (!this.diagnosticsInsertOrder.includes(filePath)) {
+        if (!this.diagnosticsFileSet.has(filePath)) {
           this.diagnosticsInsertOrder.push(filePath);
+          this.diagnosticsFileSet.add(filePath);
         }
       }
-    } catch (e) { getGlobalLogger().warn('LSP', 'Failed to handle message', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().warn('LSP', 'Failed to handle message', { error: (e as Error)?.message });
+    }
   }
 
   openDocument(filePath: string, content?: string): void {
@@ -240,17 +268,33 @@ class LSPClient {
         version: 1,
         text,
       },
-    }).catch(e => getGlobalLogger().debug('LSP', 'didOpen error', { error: (e as Error)?.message }));
+    }).catch((e) =>
+      getGlobalLogger().debug('LSP', 'didOpen error', { error: (e as Error)?.message }),
+    );
   }
 
   private getLanguageId(filePath: string): string {
     const ext = path.extname(filePath).toLowerCase();
     const map: Record<string, string> = {
-      '.ts': 'typescript', '.tsx': 'typescript', '.js': 'javascript',
-      '.jsx': 'javascript', '.py': 'python', '.rs': 'rust', '.go': 'go',
-      '.java': 'java', '.cpp': 'cpp', '.c': 'c', '.cs': 'csharp',
-      '.rb': 'ruby', '.php': 'php', '.html': 'html', '.css': 'css',
-      '.json': 'json', '.md': 'markdown', '.yaml': 'yaml', '.yml': 'yaml',
+      '.ts': 'typescript',
+      '.tsx': 'typescript',
+      '.js': 'javascript',
+      '.jsx': 'javascript',
+      '.py': 'python',
+      '.rs': 'rust',
+      '.go': 'go',
+      '.java': 'java',
+      '.cpp': 'cpp',
+      '.c': 'c',
+      '.cs': 'csharp',
+      '.rb': 'ruby',
+      '.php': 'php',
+      '.html': 'html',
+      '.css': 'css',
+      '.json': 'json',
+      '.md': 'markdown',
+      '.yaml': 'yaml',
+      '.yml': 'yaml',
     };
     return map[ext] ?? 'plaintext';
   }
@@ -260,25 +304,48 @@ import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
 let _lspConfig: { command: string; args: string[]; workspaceRoot: string } | null = null;
 
-const lspClientSingleton = createTenantAwareSingleton(() => {
-  if (!_lspConfig) throw new Error('LSP not initialized. Call initLSP() first.');
-  return new LSPClient(_lspConfig.command, _lspConfig.args, _lspConfig.workspaceRoot);
-}, {
-  dispose: (client) => client.disconnect(),
-});
+const lspClientSingleton = createTenantAwareSingleton(
+  () => {
+    if (!_lspConfig) throw new Error('LSP not initialized. Call initLSP() first.');
+    return new LSPClient(_lspConfig.command, _lspConfig.args, _lspConfig.workspaceRoot);
+  },
+  {
+    dispose: (client) => client.disconnect(),
+  },
+);
 
 let globalLSPEnabled = false;
 
-export function initLSP(serverCommand: string, serverArgs: string[], workspaceRoot?: string): Promise<void> {
-  _lspConfig = { command: serverCommand, args: serverArgs, workspaceRoot: workspaceRoot ?? process.cwd() };
+export function initLSP(
+  serverCommand: string,
+  serverArgs: string[],
+  workspaceRoot?: string,
+): Promise<void> {
+  _lspConfig = {
+    command: serverCommand,
+    args: serverArgs,
+    workspaceRoot: workspaceRoot ?? process.cwd(),
+  };
   lspClientSingleton.reset();
   const client = lspClientSingleton.get();
-  return client.connect().then(() => { globalLSPEnabled = true; }).catch(e => { getGlobalLogger().debug('LSP', 'connect failed', { error: (e as Error)?.message }); return; });
+  return client
+    .connect()
+    .then(() => {
+      globalLSPEnabled = true;
+    })
+    .catch((e) => {
+      getGlobalLogger().debug('LSP', 'connect failed', { error: (e as Error)?.message });
+      return;
+    });
 }
 
 function getLSPClient(): LSPClient | null {
   if (!_lspConfig) return null;
-  try { return lspClientSingleton.get(); } catch { return null; }
+  try {
+    return lspClientSingleton.get();
+  } catch {
+    return null;
+  }
 }
 
 export function disconnectLSP(): void {
@@ -327,7 +394,8 @@ export function openLSEDocument(filePath: string, content?: string): void {
 export class LSPDiagnosticsTool implements Tool {
   definition = {
     name: 'lsp_diagnostics',
-    description: 'Get LSP diagnostics for a file. Returns type errors, lint warnings, and compiler errors from the language server.',
+    description:
+      'Get LSP diagnostics for a file. Returns type errors, lint warnings, and compiler errors from the language server.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -340,6 +408,13 @@ export class LSPDiagnosticsTool implements Tool {
   async execute(args: Record<string, unknown>): Promise<string> {
     const filePath = String(args.filePath ?? '');
     if (!filePath) return 'Error: filePath is required';
+
+    // Validate workspace boundary
+    try {
+      safePath(filePath);
+    } catch {
+      return `Error: Access denied: filePath "${filePath}" is outside workspace`;
+    }
 
     const diagnostics = getFileDiagnostics(filePath);
     if (diagnostics.length === 0) {
@@ -361,7 +436,8 @@ export class LSPDiagnosticsTool implements Tool {
 export class LSPAttachTool implements Tool {
   definition = {
     name: 'lsp_attach',
-    description: 'Attach LSP diagnostics to file content. Returns file content with inline diagnostics annotations.',
+    description:
+      'Attach LSP diagnostics to file content. Returns file content with inline diagnostics annotations.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -374,7 +450,15 @@ export class LSPAttachTool implements Tool {
   async execute(args: Record<string, unknown>): Promise<string> {
     const filePath = String(args.filePath ?? '');
     if (!filePath) return 'Error: filePath is required';
-    if (!fs.existsSync(filePath)) return `Error: file not found: ${filePath}`;
+
+    // Validate workspace boundary
+    let resolved: string;
+    try {
+      resolved = safePath(filePath);
+    } catch {
+      return `Error: Access denied: filePath "${filePath}" is outside workspace`;
+    }
+    if (!fs.existsSync(resolved)) return `Error: file not found: ${filePath}`;
 
     const content = fs.readFileSync(filePath, 'utf-8');
     const enriched = attachDiagnostics(content, filePath);

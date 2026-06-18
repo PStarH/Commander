@@ -16,12 +16,18 @@ function shellSplit(input: string): string[] {
   let inQuote: string | null = null;
   for (const ch of input) {
     if (inQuote) {
-      if (ch === inQuote) { inQuote = null; continue; }
+      if (ch === inQuote) {
+        inQuote = null;
+        continue;
+      }
       current += ch;
     } else if (ch === '"' || ch === "'") {
       inQuote = ch;
     } else if (/\s/.test(ch)) {
-      if (current) { tokens.push(current); current = ''; }
+      if (current) {
+        tokens.push(current);
+        current = '';
+      }
     } else {
       current += ch;
     }

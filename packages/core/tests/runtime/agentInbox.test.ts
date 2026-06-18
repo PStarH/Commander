@@ -28,8 +28,13 @@ describe('AgentInbox', () => {
 
   it('sends and retrieves messages', () => {
     inbox.send({
-      id: 'msg-1', from: 'agent_a', to: 'agent_b',
-      subject: 'Test', body: 'Hello', priority: 'normal', tags: [],
+      id: 'msg-1',
+      from: 'agent_a',
+      to: 'agent_b',
+      subject: 'Test',
+      body: 'Hello',
+      priority: 'normal',
+      tags: [],
     });
     const msgs = inbox.getMessages('agent_b');
     expect(msgs).toHaveLength(1);
@@ -39,12 +44,22 @@ describe('AgentInbox', () => {
 
   it('getMessages returns all messages for an agent', () => {
     inbox.send({
-      id: 'msg-1', from: 'a', to: 'b',
-      subject: 'First', body: 'one', priority: 'normal', tags: [],
+      id: 'msg-1',
+      from: 'a',
+      to: 'b',
+      subject: 'First',
+      body: 'one',
+      priority: 'normal',
+      tags: [],
     });
     inbox.send({
-      id: 'msg-2', from: 'a', to: 'b',
-      subject: 'Second', body: 'two', priority: 'normal', tags: [],
+      id: 'msg-2',
+      from: 'a',
+      to: 'b',
+      subject: 'Second',
+      body: 'two',
+      priority: 'normal',
+      tags: [],
     });
     const msgs = inbox.getMessages('b');
     expect(msgs).toHaveLength(2);
@@ -52,13 +67,23 @@ describe('AgentInbox', () => {
 
   it('getMessages filters by status', () => {
     inbox.send({
-      id: 'm1', from: 'a', to: 'b',
-      subject: 'Unread', body: '', priority: 'normal', tags: [],
+      id: 'm1',
+      from: 'a',
+      to: 'b',
+      subject: 'Unread',
+      body: '',
+      priority: 'normal',
+      tags: [],
     });
     inbox.pollInbox('b');
     inbox.send({
-      id: 'm2', from: 'a', to: 'b',
-      subject: 'New unread', body: '', priority: 'normal', tags: [],
+      id: 'm2',
+      from: 'a',
+      to: 'b',
+      subject: 'New unread',
+      body: '',
+      priority: 'normal',
+      tags: [],
     });
     const unread = inbox.getMessages('b', 'unread');
     expect(unread).toHaveLength(1);
@@ -67,8 +92,13 @@ describe('AgentInbox', () => {
 
   it('pollInbox returns unread messages and marks them as read', () => {
     inbox.send({
-      id: 'm1', from: 'a', to: 'b',
-      subject: 'Test', body: '', priority: 'normal', tags: [],
+      id: 'm1',
+      from: 'a',
+      to: 'b',
+      subject: 'Test',
+      body: '',
+      priority: 'normal',
+      tags: [],
     });
     const unread = inbox.pollInbox('b');
     expect(unread).toHaveLength(1);
@@ -80,8 +110,13 @@ describe('AgentInbox', () => {
 
   it('acknowledge marks message as acknowledged', () => {
     inbox.send({
-      id: 'm1', from: 'a', to: 'b',
-      subject: 'Test', body: '', priority: 'normal', tags: [],
+      id: 'm1',
+      from: 'a',
+      to: 'b',
+      subject: 'Test',
+      body: '',
+      priority: 'normal',
+      tags: [],
     });
     const ok = inbox.acknowledge('b', 'm1');
     expect(ok).toBe(true);
@@ -96,8 +131,13 @@ describe('AgentInbox', () => {
 
   it('deleteMessage removes a message', () => {
     inbox.send({
-      id: 'm1', from: 'a', to: 'b',
-      subject: 'Test', body: '', priority: 'normal', tags: [],
+      id: 'm1',
+      from: 'a',
+      to: 'b',
+      subject: 'Test',
+      body: '',
+      priority: 'normal',
+      tags: [],
     });
     expect(inbox.getInboxSize('b')).toBe(1);
 
@@ -113,20 +153,35 @@ describe('AgentInbox', () => {
   it('getInboxSize returns correct count', () => {
     expect(inbox.getInboxSize('agent_x')).toBe(0);
     inbox.send({
-      id: 'm1', from: 'a', to: 'agent_x',
-      subject: 'A', body: '', priority: 'low', tags: [],
+      id: 'm1',
+      from: 'a',
+      to: 'agent_x',
+      subject: 'A',
+      body: '',
+      priority: 'low',
+      tags: [],
     });
     inbox.send({
-      id: 'm2', from: 'a', to: 'agent_x',
-      subject: 'B', body: '', priority: 'high', tags: [],
+      id: 'm2',
+      from: 'a',
+      to: 'agent_x',
+      subject: 'B',
+      body: '',
+      priority: 'high',
+      tags: [],
     });
     expect(inbox.getInboxSize('agent_x')).toBe(2);
   });
 
   it('prune removes acknowledged messages', () => {
     inbox.send({
-      id: 'm1', from: 'a', to: 'b',
-      subject: 'T', body: '', priority: 'normal', tags: [],
+      id: 'm1',
+      from: 'a',
+      to: 'b',
+      subject: 'T',
+      body: '',
+      priority: 'normal',
+      tags: [],
     });
     inbox.acknowledge('b', 'm1');
     expect(inbox.prune('b')).toBe(1);
@@ -135,18 +190,28 @@ describe('AgentInbox', () => {
 
   it('prune removes expired messages', () => {
     inbox.send({
-      id: 'm1', from: 'a', to: 'b',
-      subject: 'Expired', body: '', priority: 'normal',
-      ttlMs: -1, tags: [],
+      id: 'm1',
+      from: 'a',
+      to: 'b',
+      subject: 'Expired',
+      body: '',
+      priority: 'normal',
+      ttlMs: -1,
+      tags: [],
     });
     expect(inbox.prune('b')).toBe(1);
   });
 
   it('prune keeps non-acknowledged non-expired messages', () => {
     inbox.send({
-      id: 'm1', from: 'a', to: 'b',
-      subject: 'Keep', body: '', priority: 'normal',
-      ttlMs: 60000, tags: [],
+      id: 'm1',
+      from: 'a',
+      to: 'b',
+      subject: 'Keep',
+      body: '',
+      priority: 'normal',
+      ttlMs: 60000,
+      tags: [],
     });
     expect(inbox.prune('b')).toBe(0);
     expect(inbox.getInboxSize('b')).toBe(1);
@@ -154,12 +219,22 @@ describe('AgentInbox', () => {
 
   it('listAgents returns agents with inboxes', () => {
     inbox.send({
-      id: 'm1', from: 'a', to: 'alpha',
-      subject: 'T', body: '', priority: 'normal', tags: [],
+      id: 'm1',
+      from: 'a',
+      to: 'alpha',
+      subject: 'T',
+      body: '',
+      priority: 'normal',
+      tags: [],
     });
     inbox.send({
-      id: 'm2', from: 'b', to: 'beta',
-      subject: 'T', body: '', priority: 'normal', tags: [],
+      id: 'm2',
+      from: 'b',
+      to: 'beta',
+      subject: 'T',
+      body: '',
+      priority: 'normal',
+      tags: [],
     });
     const agents = inbox.listAgents();
     expect(agents).toContain('alpha');
@@ -168,8 +243,13 @@ describe('AgentInbox', () => {
 
   it('persists messages to disk on flush', () => {
     inbox.send({
-      id: 'persist-1', from: 'a', to: 'persist_agent',
-      subject: 'Persist', body: 'data', priority: 'normal', tags: [],
+      id: 'persist-1',
+      from: 'a',
+      to: 'persist_agent',
+      subject: 'Persist',
+      body: 'data',
+      priority: 'normal',
+      tags: [],
     });
     inbox.dispose();
 
@@ -182,15 +262,25 @@ describe('AgentInbox', () => {
 
   it('handles priority levels correctly', () => {
     inbox.send({
-      id: 'low', from: 'a', to: 'b',
-      subject: 'Low', body: '', priority: 'low', tags: [],
+      id: 'low',
+      from: 'a',
+      to: 'b',
+      subject: 'Low',
+      body: '',
+      priority: 'low',
+      tags: [],
     });
     inbox.send({
-      id: 'crit', from: 'a', to: 'b',
-      subject: 'Crit', body: '', priority: 'critical', tags: [],
+      id: 'crit',
+      from: 'a',
+      to: 'b',
+      subject: 'Crit',
+      body: '',
+      priority: 'critical',
+      tags: [],
     });
     const msgs = inbox.getMessages('b');
-    expect(msgs.find(m => m.id === 'low')!.priority).toBe('low');
-    expect(msgs.find(m => m.id === 'crit')!.priority).toBe('critical');
+    expect(msgs.find((m) => m.id === 'low')!.priority).toBe('low');
+    expect(msgs.find((m) => m.id === 'crit')!.priority).toBe('critical');
   });
 });

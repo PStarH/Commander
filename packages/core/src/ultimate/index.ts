@@ -1,48 +1,45 @@
-export {
-  UltimateOrchestrator,
-} from './orchestrator';
+export { UltimateOrchestrator } from './orchestrator';
+
+export { deliberate } from './deliberation';
+
+export { RecursiveAtomizer } from './atomizer';
+
+export { TopologyRouter } from './topologyRouter';
+
+export { SubAgentExecutor } from './subAgentExecutor';
+
+export { WorkCoordinator, getWorkCoordinator, resetWorkCoordinator } from './workCoordinator';
+export type {
+  WorkItem,
+  WorkStatus,
+  WorkEvent,
+  WorkEventHandler,
+  EnqueueInput,
+  ClaimFilter,
+  TeamStatus,
+  WorkCoordinatorConfig,
+} from './workCoordinator';
+
+export type { WorkQueueStore } from './workQueueStore';
+export { InMemoryWorkQueueStore } from './inMemoryWorkQueueStore';
+export { SqliteWorkQueueStore } from './sqliteWorkQueueStore';
+export type { SqliteWorkQueueStoreConfig } from './sqliteWorkQueueStore';
 
 export {
-  deliberate,
-} from './deliberation';
+  TenantWorkCoordinatorRegistry,
+  getTenantWorkCoordinatorRegistry,
+  resetTenantWorkCoordinatorRegistry,
+} from './tenantWorkCoordinatorRegistry';
 
-export {
-  RecursiveAtomizer,
-} from './atomizer';
+export { MultiAgentSynthesizer } from './synthesizer';
 
-export {
-  TopologyRouter,
-} from './topologyRouter';
+export { ArtifactSystem, getArtifactSystem, resetArtifactSystem } from './artifactSystem';
 
-export {
-  SubAgentExecutor,
-} from './subAgentExecutor';
+export { CapabilityRegistry, getCapabilityRegistry } from './capabilityRegistry';
 
-export {
-  MultiAgentSynthesizer,
-} from './synthesizer';
+export { AgentTeamManager, getTeamManager } from './agentTeamManager';
 
-export {
-  ArtifactSystem,
-  getArtifactSystem,
-  resetArtifactSystem,
-} from './artifactSystem';
-
-export {
-  CapabilityRegistry,
-  getCapabilityRegistry,
-} from './capabilityRegistry';
-
-export {
-  AgentTeamManager,
-  getTeamManager,
-} from './agentTeamManager';
-
-export {
-  getEffortRules,
-  classifyEffortLevel,
-  selectTopologyForEffort,
-} from './effortScaler';
+export { getEffortRules, classifyEffortLevel, selectTopologyForEffort } from './effortScaler';
 
 export type {
   OrchestrationTopology,

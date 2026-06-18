@@ -2,6 +2,13 @@ import { spawn } from 'child_process';
 import { execSync } from 'child_process';
 import type { ExecutionBackend, DockerExecConfig, SandboxExecutionResult } from '../types';
 
+/** Validate Docker container name/ID — must be alphanumeric with limited special chars. */
+function isValidContainerName(name: string): boolean {
+  // Docker container names: alphanumeric, hyphens, underscores, dots, slashes (for namespaced)
+  // Docker container IDs: hex characters (12-64 chars)
+  return /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127}$/.test(name);
+}
+
 /**
  * Docker exec backend — executes commands inside running Docker containers
  * using the `docker exec` CLI. Supports user, workdir, and full environment control.
@@ -34,11 +41,36 @@ export class DockerExecBackend implements ExecutionBackend {
     const start = Date.now();
     const args: string[] = ['exec', '-i'];
 
-    // Attach env from current process (filtered)
+    // Attach env from current process (filtered — exclude secrets)
+    const SECRET_PATTERNS = [
+      'KEY',
+      'SECRET',
+      'TOKEN',
+      'PASSWORD',
+      'CREDENTIAL',
+      'AUTH',
+      'PRIVATE',
+      'SIGNATURE',
+    ];
+    const BLOCKED_PREFIXES = [
+      'DOCKER_',
+      'SSH_',
+      'AWS_',
+      'GCP_',
+      'AZURE_',
+      'GCLOUD_',
+      'KUBE_',
+      'NPM_',
+      'NODE_',
+    ];
     for (const [k, v] of Object.entries(process.env)) {
-      if (v && !k.startsWith('DOCKER_') && !k.startsWith('SSH_')) {
-        args.push('-e', `${k}=${v}`);
-      }
+      if (!v) continue;
+      const upper = k.toUpperCase();
+      // Block known sensitive prefixes
+      if (BLOCKED_PREFIXES.some((p) => upper.startsWith(p))) continue;
+      // Block any key containing secret patterns
+      if (SECRET_PATTERNS.some((p) => upper.includes(p))) continue;
+      args.push('-e', `${k}=${v}`);
     }
 
     if (this.config.user) {
@@ -60,9 +92,20 @@ export class DockerExecBackend implements ExecutionBackend {
 
       let stdout = '';
       let stderr = '';
+      const MAX_OUTPUT = 10 * 1024 * 1024;
 
-      child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
-      child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+      child.stdout?.on('data', (d: Buffer) => {
+        if (stdout.length < MAX_OUTPUT) {
+          stdout += d.toString();
+          if (stdout.length > MAX_OUTPUT) stdout = stdout.slice(0, MAX_OUTPUT);
+        }
+      });
+      child.stderr?.on('data', (d: Buffer) => {
+        if (stderr.length < MAX_OUTPUT) {
+          stderr += d.toString();
+          if (stderr.length > MAX_OUTPUT) stderr = stderr.slice(0, MAX_OUTPUT);
+        }
+      });
 
       child.on('close', (exitCode) => {
         resolve({
@@ -93,12 +136,19 @@ export class DockerExecBackend implements ExecutionBackend {
 
 /**
  * Resolve Docker exec configuration from tool arguments and environment.
- * 
+ *
  * Priority: explicit args > env vars
  */
 export function resolveDockerExecConfig(args: Record<string, unknown>): DockerExecConfig | null {
-  const container = String(args.container ?? args.container_id ?? process.env.COMMANDER_DOCKER_CONTAINER ?? '');
+  const container = String(
+    args.container ?? args.container_id ?? process.env.COMMANDER_DOCKER_CONTAINER ?? '',
+  );
   if (!container) return null;
+
+  // Security: reject container names with shell metacharacters
+  if (!isValidContainerName(container)) {
+    return null;
+  }
 
   return {
     container,

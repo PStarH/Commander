@@ -14,6 +14,9 @@
  *   c             — Clear event log
  *   /             — Filter events
  *   1-4           — Switch tab in event panel
+ *   ?             — Show help
+ *   s             — Toggle session detail
+ *   Enter         — Apply filter (when filter input focused)
  */
 
 import * as blessed from 'blessed';
@@ -22,6 +25,7 @@ import { getMessageBus } from './runtime/messageBus';
 import type { MessageBusTopic, BusMessage } from './runtime/types';
 import { StateCheckpointer } from './runtime/stateCheckpointer';
 import { getGlobalLogger } from './logging';
+import { detectProvider, getEffectiveModel } from './config/commanderConfig';
 import * as path from 'path';
 import * as os from 'os';
 
@@ -52,10 +56,12 @@ export class CommanderTUI {
   private eventList: Widgets.ListElement;
   private sessionBox: Widgets.BoxElement;
   private sessionList: Widgets.ListElement;
+  private metricsBox: Widgets.BoxElement;
   private filterInput: Widgets.TextboxElement;
   private statusBar: Widgets.BoxElement;
   private headerBox: Widgets.BoxElement;
   private tabBar: Widgets.BoxElement;
+  private helpOverlay: Widgets.BoxElement | null = null;
 
   private logs: LogEntry[] = [];
   private filteredLogs: LogEntry[] = [];
@@ -66,6 +72,17 @@ export class CommanderTUI {
   private stateDir: string;
   private checkpointer: StateCheckpointer;
   private unsubBus: (() => void) | null = null;
+  private startTime = Date.now();
+
+  // Live metrics
+  private metrics = {
+    agentsStarted: 0,
+    agentsCompleted: 0,
+    agentsFailed: 0,
+    toolCalls: 0,
+    totalTokens: 0,
+    alerts: 0,
+  };
 
   // Labels for the event tabs
   private readonly TAB_LABELS = ['All', 'Agents', 'Tools', 'System'];
@@ -184,6 +201,24 @@ export class CommanderTUI {
       items: [' Loading sessions...'],
     });
 
+    // ── Metrics Panel (bottom-left) ──────────────────────────────────
+    this.metricsBox = blessed.box({
+      parent: this.screen,
+      bottom: 1,
+      left: 0,
+      width: '65%',
+      height: 3,
+      label: ' Metrics ',
+      border: { type: 'line' },
+      tags: true,
+      style: {
+        border: { fg: 'yellow' },
+        label: { fg: 'yellow', bold: true },
+        fg: 'white',
+        bg: 'black',
+      },
+    });
+
     // ── Filter input ────────────────────────────────────────────────
     this.filterInput = blessed.textbox({
       parent: this.screen,
@@ -224,8 +259,11 @@ export class CommanderTUI {
     this.screen.key(['2'], () => this.switchTab(1));
     this.screen.key(['3'], () => this.switchTab(2));
     this.screen.key(['4'], () => this.switchTab(3));
+    this.screen.key(['?'], () => this.toggleHelp());
     this.screen.key(['escape'], () => {
-      if (this.filterInput.hidden === false) {
+      if (this.helpOverlay) {
+        this.hideHelp();
+      } else if (this.filterInput.hidden === false) {
         this.hideFilter();
       }
     });
@@ -236,6 +274,7 @@ export class CommanderTUI {
       this.renderTabs();
       this.renderEvents();
       this.renderSessions();
+      this.renderMetrics();
       this.renderStatus();
       this.screen.render();
     });
@@ -249,6 +288,7 @@ export class CommanderTUI {
   start(): void {
     this.renderHeader();
     this.renderTabs();
+    this.renderMetrics();
     this.renderStatus();
     this.screen.render();
 
@@ -278,9 +318,11 @@ export class CommanderTUI {
         clearInterval(refreshInterval);
         return;
       }
+      this.renderMetrics();
       this.renderStatus();
       this.screen.render();
     }, 5000);
+    refreshInterval.unref();
 
     // Focus the event list by default
     this.eventList.focus();
@@ -305,9 +347,10 @@ export class CommanderTUI {
   // ======================================================================
 
   private onBusMessage(msg: BusMessage): void {
-    const payloadStr = typeof msg.payload === 'object'
-      ? JSON.stringify(msg.payload).slice(0, 120)
-      : String(msg.payload ?? '').slice(0, 120);
+    const payloadStr =
+      typeof msg.payload === 'object'
+        ? JSON.stringify(msg.payload).slice(0, 120)
+        : String(msg.payload ?? '').slice(0, 120);
 
     const entry: LogEntry = {
       timestamp: new Date(msg.timestamp || Date.now()).toLocaleTimeString(),
@@ -317,12 +360,35 @@ export class CommanderTUI {
       priority: msg.priority ?? 'normal',
     };
 
+    // Track metrics
+    switch (msg.topic) {
+      case 'agent.started':
+        this.metrics.agentsStarted++;
+        break;
+      case 'agent.completed':
+        this.metrics.agentsCompleted++;
+        break;
+      case 'agent.failed':
+        this.metrics.agentsFailed++;
+        break;
+      case 'tool.executed':
+        this.metrics.toolCalls++;
+        break;
+      case 'system.alert':
+        this.metrics.alerts++;
+        break;
+    }
+    if (msg.payload && typeof msg.payload === 'object' && 'totalTokens' in msg.payload) {
+      this.metrics.totalTokens += (msg.payload as { totalTokens?: number }).totalTokens ?? 0;
+    }
+
     this.logs.push(entry);
     if (this.logs.length > 500) {
-      this.logs.shift();
+      this.logs.splice(0, this.logs.length - 300);
     }
 
     this.renderEvents();
+    this.renderMetrics();
     this.renderStatus();
     this.screen.render();
   }
@@ -336,9 +402,7 @@ export class CommanderTUI {
     const title = ' Commander TUI — Agent Dashboard ';
     const stats = ` ${this.logs.length} events  |  ${this.sessions.length} sessions `;
     const padding = Math.max(0, width - title.length - stats.length - 2);
-    this.headerBox.setContent(
-      `{bold}${title}{/bold}${' '.repeat(padding)}${stats}`
-    );
+    this.headerBox.setContent(`{bold}${title}{/bold}${' '.repeat(padding)}${stats}`);
   }
 
   private renderTabs(): void {
@@ -357,10 +421,11 @@ export class CommanderTUI {
   private renderEvents(): void {
     // Apply filter
     this.filteredLogs = this.filterText
-      ? this.logs.filter(e =>
-          e.topic.toLowerCase().includes(this.filterText.toLowerCase()) ||
-          e.source.toLowerCase().includes(this.filterText.toLowerCase()) ||
-          e.payload.toLowerCase().includes(this.filterText.toLowerCase())
+      ? this.logs.filter(
+          (e) =>
+            e.topic.toLowerCase().includes(this.filterText.toLowerCase()) ||
+            e.source.toLowerCase().includes(this.filterText.toLowerCase()) ||
+            e.payload.toLowerCase().includes(this.filterText.toLowerCase()),
         )
       : this.logs;
 
@@ -372,7 +437,7 @@ export class CommanderTUI {
       return;
     }
 
-    const items = tabFiltered.map(e => {
+    const items = tabFiltered.map((e) => {
       const icon = this.iconForTopic(e.topic);
       const priorityColor = e.priority === 'high' ? '{red-fg}' : '';
       return `${priorityColor}{${this.colorForTopic(e.topic)}-fg}${e.timestamp}{/} ${icon} {bold}${e.topic}{/bold} {black-fg}${e.source}{/} ${e.payload.slice(0, 80)}`;
@@ -392,10 +457,13 @@ export class CommanderTUI {
       return;
     }
 
-    const items = this.sessions.slice(0, 30).map(s => {
-      const statusColor = s.status === 'completed' || s.status === 'SUCCESS' ? 'green'
-        : s.status === 'failed' || s.status === 'FAILED' ? 'red'
-        : 'yellow';
+    const items = this.sessions.slice(0, 30).map((s) => {
+      const statusColor =
+        s.status === 'completed' || s.status === 'SUCCESS'
+          ? 'green'
+          : s.status === 'failed' || s.status === 'FAILED'
+            ? 'red'
+            : 'yellow';
       const time = new Date(s.timestamp).toLocaleString();
       return `${time.slice(0, 10)} {${statusColor}-fg}${s.status.padEnd(10)}{/} {bold}${s.task.slice(0, 35)}{/bold}`;
     });
@@ -403,10 +471,75 @@ export class CommanderTUI {
     this.sessionList.setItems(items);
   }
 
+  private renderMetrics(): void {
+    const m = this.metrics;
+    const uptime = ((Date.now() - this.startTime) / 1000).toFixed(0);
+    const agents =
+      `{green-fg}${m.agentsCompleted}{/green-fg}/{cyan-fg}${m.agentsStarted}{/cyan-fg}` +
+      (m.agentsFailed > 0 ? ` {red-fg}${m.agentsFailed}✗{/red-fg}` : '');
+    const line1 = ` Agents: ${agents}  |  Tools: {yellow-fg}${m.toolCalls}{/yellow-fg}  |  Tokens: {yellow-fg}${m.totalTokens.toLocaleString()}{/yellow-fg}`;
+    const line2 = ` Alerts: ${m.alerts > 0 ? `{red-fg}${m.alerts}{/red-fg}` : '0'}  |  Uptime: ${uptime}s`;
+    this.metricsBox.setContent(line1 + '\n' + line2);
+  }
+
   private renderStatus(): void {
     const now = new Date();
-    const content = ` {bold}Keys:{/bold} [q]uit [t]abs [r]efresh [c]lear [/]filter  |  {bold}Events:{/bold} ${this.logs.length} (showing ${this.filteredLogs.length})  |  {bold}Sessions:{/bold} ${this.sessions.length}  |  ${now.toLocaleTimeString()}`;
+    const content = ` {bold}Keys:{/bold} [q]uit [1-4]tabs [r]efresh [c]lear [/]filter [?]help  |  {bold}Events:{/bold} ${this.logs.length}  |  {bold}Sessions:{/bold} ${this.sessions.length}  |  ${now.toLocaleTimeString()}`;
     this.statusBar.setContent(content);
+  }
+
+  private toggleHelp(): void {
+    if (this.helpOverlay) {
+      this.hideHelp();
+      return;
+    }
+    const provider = detectProvider();
+    const model = getEffectiveModel();
+    this.helpOverlay = blessed.box({
+      parent: this.screen,
+      top: 'center',
+      left: 'center',
+      width: 56,
+      height: 18,
+      label: ' Help ',
+      border: { type: 'line' },
+      tags: true,
+      style: {
+        border: { fg: 'cyan' },
+        label: { fg: 'cyan', bold: true },
+        fg: 'white',
+        bg: 'black',
+      },
+      content: [
+        '',
+        '  {bold}Commander TUI — Keyboard Shortcuts{/bold}',
+        '',
+        '  {cyan-fg}q / Ctrl+C{/cyan-fg}    Quit',
+        '  {cyan-fg}Tab{/cyan-fg}           Cycle panel focus',
+        '  {cyan-fg}1-4{/cyan-fg}           Switch event tab',
+        '  {cyan-fg}r{/cyan-fg}             Refresh sessions',
+        '  {cyan-fg}c{/cyan-fg}             Clear event log',
+        '  {cyan-fg}/{/cyan-fg}              Filter events',
+        '  {cyan-fg}?{/cyan-fg}              Toggle this help',
+        '  {cyan-fg}Escape{/cyan-fg}        Close overlay / filter',
+        '',
+        `  {bold}Provider:{/bold} ${provider?.type ?? 'none'} · ${model}`,
+        `  {bold}Events:{/bold} ${this.logs.length}  {bold}Sessions:{/bold} ${this.sessions.length}`,
+        '',
+        '  {dim}Press ? or Escape to close{/dim}',
+      ].join('\n'),
+    });
+    this.helpOverlay.focus();
+    this.screen.render();
+  }
+
+  private hideHelp(): void {
+    if (this.helpOverlay) {
+      this.helpOverlay.destroy();
+      this.helpOverlay = null;
+      this.eventList.focus();
+      this.screen.render();
+    }
   }
 
   // ======================================================================
@@ -419,7 +552,7 @@ export class CommanderTUI {
       if (checkpoints && checkpoints.length > 0) {
         this.sessions = checkpoints
           .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-          .map(c => ({
+          .map((c) => ({
             runId: c.runId,
             task: c.phase ?? 'unknown',
             status: c.phase ?? 'unknown',
@@ -438,7 +571,16 @@ export class CommanderTUI {
   private clearLogs(): void {
     this.logs = [];
     this.filteredLogs = [];
+    this.metrics = {
+      agentsStarted: 0,
+      agentsCompleted: 0,
+      agentsFailed: 0,
+      toolCalls: 0,
+      totalTokens: 0,
+      alerts: 0,
+    };
     this.renderEvents();
+    this.renderMetrics();
     this.renderHeader();
     this.renderStatus();
     this.screen.render();
@@ -475,7 +617,7 @@ export class CommanderTUI {
 
   private cycleFocus(): void {
     const focusable = [this.eventList, this.sessionList, this.filterInput];
-    const currentIdx = focusable.findIndex(el => el === this.screen.focused);
+    const currentIdx = focusable.findIndex((el) => el === this.screen.focused);
     const nextIdx = (currentIdx + 1) % focusable.length;
     focusable[nextIdx].focus();
     this.screen.render();
@@ -488,12 +630,12 @@ export class CommanderTUI {
   private filterByTab(entries: LogEntry[]): LogEntry[] {
     switch (this.activeTab) {
       case 1: // Agents
-        return entries.filter(e => e.topic.startsWith('agent.'));
+        return entries.filter((e) => e.topic.startsWith('agent.'));
       case 2: // Tools
-        return entries.filter(e => e.topic === 'tool.executed');
+        return entries.filter((e) => e.topic === 'tool.executed');
       case 3: // System
-        return entries.filter(e =>
-          e.topic.startsWith('system.') || e.topic.startsWith('mission.')
+        return entries.filter(
+          (e) => e.topic.startsWith('system.') || e.topic.startsWith('mission.'),
         );
       default:
         return entries;
@@ -502,16 +644,26 @@ export class CommanderTUI {
 
   private iconForTopic(topic: string): string {
     switch (topic) {
-      case 'agent.started': return '▶';
-      case 'agent.completed': return '✓';
-      case 'agent.failed': return '✗';
-      case 'agent.message': return '◆';
-      case 'system.alert': return '▲';
-      case 'tool.executed': return '⚙';
-      case 'mission.updated': return '◈';
-      case 'mission.blocked': return '⊘';
-      case 'mission.completed': return '●';
-      default: return '·';
+      case 'agent.started':
+        return '▶';
+      case 'agent.completed':
+        return '✓';
+      case 'agent.failed':
+        return '✗';
+      case 'agent.message':
+        return '◆';
+      case 'system.alert':
+        return '▲';
+      case 'tool.executed':
+        return '⚙';
+      case 'mission.updated':
+        return '◈';
+      case 'mission.blocked':
+        return '⊘';
+      case 'mission.completed':
+        return '●';
+      default:
+        return '·';
     }
   }
 

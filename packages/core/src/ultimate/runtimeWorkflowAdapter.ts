@@ -75,14 +75,14 @@ class TaskStateConstructor {
     elapsedMs: number,
   ): TaskState {
     // 分析已完成步骤的结果
-    const successfulSteps = completedSteps.filter(s => s.success);
-    const failedSteps = completedSteps.filter(s => !s.success);
+    const successfulSteps = completedSteps.filter((s) => s.success);
+    const failedSteps = completedSteps.filter((s) => !s.success);
     const totalTokenCost = completedSteps.reduce((sum, s) => sum + s.tokenCost, 0);
 
     // 收集的关键证据
     const gatheredEvidence: EvidenceItem[] = completedSteps
-      .filter(s => s.success && s.output.length > 10)
-      .map(s => ({
+      .filter((s) => s.success && s.output.length > 10)
+      .map((s) => ({
         source: s.stepId,
         content: s.output.slice(0, 200),
         confidence: s.qualityScore ?? 0.5,
@@ -90,9 +90,8 @@ class TaskStateConstructor {
       }));
 
     // 计算置信度
-    const confidence = completedSteps.length > 0
-      ? successfulSteps.length / completedSteps.length
-      : 0;
+    const confidence =
+      completedSteps.length > 0 ? successfulSteps.length / completedSteps.length : 0;
 
     // 判断当前阶段
     const phase = this.determinePhase(completedSteps, confidence, totalTokenCost, ctx);
@@ -162,10 +161,10 @@ class TaskStateConstructor {
 interface SubWorkflow {
   id: string;
   topology: OrchestrationTopology;
-  steps: string[];          // 目标步骤描述
-  estimatedCost: number;    // 预估token消耗
+  steps: string[]; // 目标步骤描述
+  estimatedCost: number; // 预估token消耗
   estimatedDuration: number; // 预估耗时(ms)
-  successRate: number;       // 历史成功率
+  successRate: number; // 历史成功率
 }
 
 export interface WorkflowDecision {
@@ -204,7 +203,7 @@ class WorkflowAdapter {
     }
 
     // 根据任务状态评分
-    const scored = candidates.map(wf => ({
+    const scored = candidates.map((wf) => ({
       wf,
       score: this.scoreWorkflow(wf, state),
     }));
@@ -217,7 +216,7 @@ class WorkflowAdapter {
       topology: best.wf.topology,
       priority: best.score,
       rationale: this.generateRationale(best.wf, state),
-      alternatives: scored.slice(1, 4).map(s => `${s.wf.id} (score: ${s.score.toFixed(2)})`),
+      alternatives: scored.slice(1, 4).map((s) => `${s.wf.id} (score: ${s.score.toFixed(2)})`),
     };
   }
 
@@ -255,18 +254,18 @@ class WorkflowAdapter {
     score += wf.successRate * 0.3;
 
     // 4. 阶段匹配
-const topologyBonus: Record<OrchestrationTopology, Record<string, number>> = {
-       SEQUENTIAL: { discovery: 0.1, planning: 0.3, verification: 0.2 },
-       PARALLEL: { execution: 0.3, discovery: 0.2 },
-       HIERARCHICAL: { planning: 0.2, execution: 0.1, refinement: 0.2 },
-       HYBRID: { execution: 0.2, refinement: 0.3 },
-       HANDOFF: { verification: 0.3, termination: 0.2 },
-       CONSENSUS: { verification: 0.4 },
-       SINGLE: { discovery: 0.2, planning: 0.2 },
-       DEBATE: { discovery: 0.15, planning: 0.2 },
-       ENSEMBLE: { execution: 0.25, verification: 0.3 },
-       EVALUATOR_OPTIMIZER: { planning: 0.2, verification: 0.35 },
-     };
+    const topologyBonus: Record<OrchestrationTopology, Record<string, number>> = {
+      SEQUENTIAL: { discovery: 0.1, planning: 0.3, verification: 0.2 },
+      PARALLEL: { execution: 0.3, discovery: 0.2 },
+      HIERARCHICAL: { planning: 0.2, execution: 0.1, refinement: 0.2 },
+      HYBRID: { execution: 0.2, refinement: 0.3 },
+      HANDOFF: { verification: 0.3, termination: 0.2 },
+      CONSENSUS: { verification: 0.4 },
+      SINGLE: { discovery: 0.2, planning: 0.2 },
+      DEBATE: { discovery: 0.15, planning: 0.2 },
+      ENSEMBLE: { execution: 0.25, verification: 0.3 },
+      EVALUATOR_OPTIMIZER: { planning: 0.2, verification: 0.35 },
+    };
 
     const bonus = topologyBonus[wf.topology]?.[state.phase];
     if (bonus) score += bonus;
@@ -282,7 +281,9 @@ const topologyBonus: Record<OrchestrationTopology, Record<string, number>> = {
   private generateRationale(wf: SubWorkflow, state: TaskState): string {
     const reasons: string[] = [];
     reasons.push(`Phase: ${state.phase}, selecting ${wf.topology} topology`);
-    reasons.push(`Estimated cost: ${wf.estimatedCost} tokens vs ${state.remainingBudget} remaining`);
+    reasons.push(
+      `Estimated cost: ${wf.estimatedCost} tokens vs ${state.remainingBudget} remaining`,
+    );
     reasons.push(`Historical success rate: ${(wf.successRate * 100).toFixed(0)}%`);
 
     if (state.needsReplanning) {
@@ -339,6 +340,7 @@ export class RuntimeWorkflowAdapter {
   private rePlanningCount = 0;
   private stageDurations = new Map<string, number>();
   private stageResults: StepResult[] = [];
+  private lastRunId: string | null = null;
 
   constructor() {
     this.adapter = new WorkflowAdapter();
@@ -404,6 +406,16 @@ export class RuntimeWorkflowAdapter {
     completedStep: StepResult,
     elapsedMs: number,
   ): Promise<WorkflowDecision> {
+    // Reset stage results when starting a new execution
+    if (ctx.runId && ctx.runId !== this.lastRunId) {
+      this.stageResults = [];
+      this.decisions = [];
+      this.stagesTraversed = [];
+      this.rePlanningCount = 0;
+      this.stageDurations.clear();
+      this.lastRunId = ctx.runId;
+    }
+
     // 更新任务状态
     this.stageResults.push(completedStep);
     this.taskState = TaskStateConstructor.build(ctx, this.stageResults, elapsedMs);
@@ -411,20 +423,20 @@ export class RuntimeWorkflowAdapter {
     // 记录之前的决策结果
     if (completedStep.stepId && this.decisions.length > 0) {
       const prevDecision = this.decisions[this.decisions.length - 1];
-this.adapter.recordWorkflowResult(prevDecision.subWorkflowId, {
-         ...completedStep,
-         id: `exp-${Date.now()}`,
-         runId: ctx.runId ?? 'unknown',
-         agentId: ctx.agentId,
-         taskType: ctx.goal.slice(0, 50),
-         success: completedStep.success,
-         durationMs: completedStep.durationMs,
-         tokenCost: completedStep.tokenCost,
-         modelUsed: 'current',
-         strategyUsed: prevDecision.subWorkflowId,
-         lessons: completedStep.success ? [] : [`Step failed: ${completedStep.output}`],
-         timestamp: new Date().toISOString(),
-       } as ExecutionExperience);
+      this.adapter.recordWorkflowResult(prevDecision.subWorkflowId, {
+        ...completedStep,
+        id: `exp-${Date.now()}`,
+        runId: ctx.runId ?? 'unknown',
+        agentId: ctx.agentId,
+        taskType: ctx.goal.slice(0, 50),
+        success: completedStep.success,
+        durationMs: completedStep.durationMs,
+        tokenCost: completedStep.tokenCost,
+        modelUsed: 'current',
+        strategyUsed: prevDecision.subWorkflowId,
+        lessons: completedStep.success ? [] : [`Step failed: ${completedStep.output}`],
+        timestamp: new Date().toISOString(),
+      } as ExecutionExperience);
     }
 
     // 如果需要重新规划

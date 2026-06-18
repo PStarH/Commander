@@ -8,11 +8,18 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { AgentExecutionContext, AgentExecutionResult, ExecutionExperience } from './types';
-import type { TaskTreeNode } from '../ultimate/types';
+import type { TaskTreeNode } from './types';
 import { getMetaLearner } from '../selfEvolution/metaLearner';
 import { getGlobalReflectionEngine } from '../reflectionEngine';
 import { getGlobalLogger } from '../logging';
-import type { WorkflowNode, WorkflowDAG, EvolutionConfig, EvolutionResult, EvolutionOptions, WorkflowScore } from './evolutionaryWorkflowTypes';
+import type {
+  WorkflowNode,
+  WorkflowDAG,
+  EvolutionConfig,
+  EvolutionResult,
+  EvolutionOptions,
+  WorkflowScore,
+} from './evolutionaryWorkflowTypes';
 import { DEFAULT_EVOLUTION_CONFIG } from './evolutionaryWorkflowTypes';
 import { WorkflowPopulation } from './workflowPopulation';
 import { dagToTaskTree } from './dagConverter';
@@ -27,19 +34,22 @@ export { dagToTaskTree } from './dagConverter';
 // ============================================================================
 
 class WorkflowEvaluator {
-  constructor(public readonly config: import('./evolutionaryWorkflowTypes').WorkflowEvaluatorConfig = {}) {}
+  constructor(
+    public readonly config: import('./evolutionaryWorkflowTypes').WorkflowEvaluatorConfig = {},
+  ) {}
 
   evaluateFromHistory(dag: WorkflowDAG, experiences: ExecutionExperience[]): WorkflowScore {
     const relevant = experiences.filter(
-      e => e.taskType === dag.taskType || dag.taskType === 'general'
+      (e) => e.taskType === dag.taskType || dag.taskType === 'general',
     );
 
     if (relevant.length === 0) {
       const nodeCount = dag.nodes.length;
-      const avgModelCost = dag.nodes.reduce((sum, n) => {
-        const tierCost = n.modelTier === 'eco' ? 1 : n.modelTier === 'standard' ? 3 : 10;
-        return sum + tierCost;
-      }, 0) / nodeCount;
+      const avgModelCost =
+        dag.nodes.reduce((sum, n) => {
+          const tierCost = n.modelTier === 'eco' ? 1 : n.modelTier === 'standard' ? 3 : 10;
+          return sum + tierCost;
+        }, 0) / nodeCount;
 
       return {
         overall: Math.max(0, 1 - avgModelCost / 20 - (nodeCount - 2) * 0.05),
@@ -50,7 +60,8 @@ class WorkflowEvaluator {
       };
     }
 
-    const avgSuccessRate = relevant.reduce((sum, e) => sum + (e.success ? 1 : 0), 0) / relevant.length;
+    const avgSuccessRate =
+      relevant.reduce((sum, e) => sum + (e.success ? 1 : 0), 0) / relevant.length;
     const avgDuration = relevant.reduce((sum, e) => sum + e.durationMs, 0) / relevant.length;
     const avgTokenCost = relevant.reduce((sum, e) => sum + e.tokenCost, 0) / relevant.length;
 
@@ -118,7 +129,9 @@ export class EvolutionaryWorkflowEngine {
       if (data.fitnessHistory) this.population['fitnessHistory'] = data.fitnessHistory;
       return true;
     } catch {
-      getGlobalLogger().warn('EvolutionaryWorkflowEngine', 'Failed to load population state', { filePath });
+      getGlobalLogger().warn('EvolutionaryWorkflowEngine', 'Failed to load population state', {
+        filePath,
+      });
       return false;
     }
   }
@@ -168,7 +181,7 @@ export class EvolutionaryWorkflowEngine {
       if (stats.bestFitness > previousBest + 0.01) {
         improvements.push(
           `Gen ${gen}: New best fitness ${stats.bestFitness.toFixed(3)} ` +
-          `(was ${previousBest.toFixed(3)})`
+            `(was ${previousBest.toFixed(3)})`,
         );
         previousBest = stats.bestFitness;
       }
@@ -196,13 +209,14 @@ export class EvolutionaryWorkflowEngine {
     const metaLearner = getMetaLearner();
     const reflections = getGlobalReflectionEngine();
 
-    const taskExperiences = experiences.filter(e => e.taskType === taskType);
+    const taskExperiences = experiences.filter((e) => e.taskType === taskType);
     if (taskExperiences.length < 3) return null;
 
     const stats = metaLearner.getStrategyPerformance();
 
-    const bestStrategy = Array.from(stats.values())
-      .sort((a, b) => b.successRate - a.successRate)[0];
+    const bestStrategy = Array.from(stats.values()).sort(
+      (a, b) => b.successRate - a.successRate,
+    )[0];
 
     if (!bestStrategy || bestStrategy.totalRuns < 5) return null;
 
@@ -237,19 +251,26 @@ export class EvolutionaryWorkflowEngine {
   ): Promise<number> {
     let score = 0.5;
 
+    // O(n) edge counting: build adjacency counts, check for shared endpoints
+    const endpointCounts = new Map<string, number>();
+    for (const e of dag.edges) {
+      endpointCounts.set(e.from, (endpointCounts.get(e.from) ?? 0) + 1);
+      endpointCounts.set(e.to, (endpointCounts.get(e.to) ?? 0) + 1);
+    }
     const hasParallelism = dag.edges.some(
-      e => dag.edges.filter(e2 => e2.from === e.from || e2.to === e.to).length > 1
+      (e) => (endpointCounts.get(e.from) ?? 0) > 1 || (endpointCounts.get(e.to) ?? 0) > 1,
     );
     if (hasParallelism) score += 0.1;
 
     const nodeCount = dag.nodes.length;
     if (nodeCount >= 2 && nodeCount <= 6) score += 0.15;
 
-    const usedTools = new Set(dag.nodes.flatMap(n => n.tools));
-    const validTools = usedTools.size > 0 && [...usedTools].every(t => availableTools.includes(t));
+    const availableSet = new Set(availableTools);
+    const usedTools = new Set(dag.nodes.flatMap((n) => n.tools));
+    const validTools = usedTools.size > 0 && [...usedTools].every((t) => availableSet.has(t));
     if (validTools) score += 0.1;
 
-    const tiers = new Set(dag.nodes.map(n => n.modelTier));
+    const tiers = new Set(dag.nodes.map((n) => n.modelTier));
     if (tiers.size > 1) score += 0.05;
 
     const metaLearner = getMetaLearner();
@@ -272,15 +293,19 @@ export class EvolutionaryWorkflowEngine {
     const edgeRatio = dag.edges.length / Math.max(1, nodeCount);
     if (edgeRatio >= 0.5 && edgeRatio <= 2) score += 0.1;
 
-    const allToolsValid = dag.nodes.every(n =>
-      n.tools.length === 0 || n.tools.every(t => availableTools.includes(t))
+    const availableSet = new Set(availableTools);
+    const allToolsValid = dag.nodes.every(
+      (n) => n.tools.length === 0 || n.tools.every((t) => availableSet.has(t)),
     );
     if (allToolsValid) score += 0.15;
 
-    const tiers = new Set(dag.nodes.map(n => n.modelTier));
+    const tiers = new Set(dag.nodes.map((n) => n.modelTier));
     if (tiers.size >= 2) score += 0.05;
 
-    const parallelNodes = dag.nodes.filter(n => n.parallelizable).length;
+    let parallelNodes = 0;
+    for (const n of dag.nodes) {
+      if (n.parallelizable) parallelNodes++;
+    }
     if (parallelNodes >= Math.ceil(nodeCount / 2)) score += 0.1;
 
     return Math.min(1, Math.max(0, score));
@@ -293,7 +318,7 @@ export class EvolutionaryWorkflowEngine {
       id: `research-${taskType}`,
       type: 'agent',
       goal: `Research and gather information for the task`,
-      tools: availableTools.filter(t => t.includes('search') || t.includes('fetch')),
+      tools: availableTools.filter((t) => t.includes('search') || t.includes('fetch')),
       modelTier: 'standard',
       parallelizable: true,
       timeoutMs: 30000,
@@ -304,7 +329,7 @@ export class EvolutionaryWorkflowEngine {
       id: `analyze-${taskType}`,
       type: 'agent',
       goal: `Analyze gathered information and synthesize insights`,
-      tools: availableTools.filter(t => t.includes('memory') || t.includes('recall')),
+      tools: availableTools.filter((t) => t.includes('memory') || t.includes('recall')),
       modelTier: 'power',
       parallelizable: false,
       timeoutMs: 60000,
@@ -315,7 +340,7 @@ export class EvolutionaryWorkflowEngine {
       id: `execute-${taskType}`,
       type: 'agent',
       goal: `Execute the concrete actions based on analysis`,
-      tools: availableTools.filter(t => !t.includes('search') && !t.includes('fetch')),
+      tools: availableTools.filter((t) => !t.includes('search') && !t.includes('fetch')),
       modelTier: 'standard',
       parallelizable: true,
       timeoutMs: 45000,
@@ -340,13 +365,17 @@ export class EvolutionaryWorkflowEngine {
     const tools = new Set<string>();
     for (const exp of experiences) {
       if (exp.toolsUsed) {
-        exp.toolsUsed.forEach(t => tools.add(t));
+        exp.toolsUsed.forEach((t) => tools.add(t));
       }
     }
     return [...tools];
   }
 
-  private collectPopulationHistory(): Array<{ generation: number; bestFitness: number; avgFitness: number }> {
+  private collectPopulationHistory(): Array<{
+    generation: number;
+    bestFitness: number;
+    avgFitness: number;
+  }> {
     const stats = this.population.getStats();
     return stats.fitnessHistory.map((fitness, generation) => ({
       generation,
@@ -360,7 +389,9 @@ import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
 let _evolutionConfig: Partial<EvolutionConfig> | undefined;
 
-const evolutionEngineSingleton = createTenantAwareSingleton(() => new EvolutionaryWorkflowEngine(_evolutionConfig));
+const evolutionEngineSingleton = createTenantAwareSingleton(
+  () => new EvolutionaryWorkflowEngine(_evolutionConfig),
+);
 
 export function getEvolutionEngine(config?: Partial<EvolutionConfig>): EvolutionaryWorkflowEngine {
   if (config) _evolutionConfig = config;

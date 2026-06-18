@@ -5,7 +5,13 @@ import { ModelRouter, resetModelRouter } from '../../src/runtime/modelRouter';
 import { resetMessageBus } from '../../src/runtime/messageBus';
 import { resetTraceRecorder } from '../../src/runtime/executionTrace';
 import { resetPatternTracker } from '../../src/runtime/speculativeExecutor';
-import type { AgentExecutionContext, Tool, ToolDefinition, LLMRequest, LLMResponse } from '../../src/runtime/types';
+import type {
+  AgentExecutionContext,
+  Tool,
+  ToolDefinition,
+  LLMRequest,
+  LLMResponse,
+} from '../../src/runtime/types';
 
 /**
  * A mock provider that returns tool calls for the first N invocations,
@@ -56,7 +62,11 @@ class ToolCallMockProvider extends MockLLMProvider {
       model: request.model,
       usage: { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens },
       finishReason,
-      toolCalls: toolCalls as Array<{ id: string; type: string; function: { name: string; arguments: string } }>,
+      toolCalls: toolCalls as Array<{
+        id: string;
+        type: string;
+        function: { name: string; arguments: string };
+      }>,
     };
   }
 
@@ -105,7 +115,10 @@ describe('AgentRuntime - Full Tool Calling Pipeline', () => {
 
     // Register test tools
     const echoTool = makeTool('echo', async (args) => `Echo: ${JSON.stringify(args)}`);
-    const searchTool = makeTool('web_search', async (args) => `Search results for query: ${args.query ?? 'unknown'}`);
+    const searchTool = makeTool(
+      'web_search',
+      async (args) => `Search results for query: ${args.query ?? 'unknown'}`,
+    );
     runtime.registerTool('echo', echoTool);
     runtime.registerTool('web_search', searchTool);
   });
@@ -127,20 +140,20 @@ describe('AgentRuntime - Full Tool Calling Pipeline', () => {
     expect(provider.callCount).toBe(2);
     // Verify tool result was fed back: the second call should include the tool message
     const secondCallMessages = provider.lastRequest?.messages ?? [];
-    const hasToolResult = secondCallMessages.some(m => m.role === 'tool');
+    const hasToolResult = secondCallMessages.some((m) => m.role === 'tool');
     expect(hasToolResult).toBe(true);
   });
 
   it('handles concurrent-safe tools in parallel', async () => {
     const executionLog: string[] = [];
     const slowTool1 = makeTool('slow1', async () => {
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50));
       executionLog.push('slow1');
       return 'slow1 done';
     });
     slowTool1.isConcurrencySafe = true;
     const slowTool2 = makeTool('slow2', async () => {
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50));
       executionLog.push('slow2');
       return 'slow2 done';
     });
@@ -210,10 +223,12 @@ describe('AgentRuntime - Full Tool Calling Pipeline', () => {
 
   it('limits tool loop iterations to maxSteps', async () => {
     const provider = new ToolCallMockProvider(
-      Array(15).fill(null).map((_, i) => ({
-        toolCalls: [{ id: `call_${i}`, name: 'echo', arguments: { iteration: i } }],
-        finishReason: 'tool_calls' as const,
-      }))
+      Array(15)
+        .fill(null)
+        .map((_, i) => ({
+          toolCalls: [{ id: `call_${i}`, name: 'echo', arguments: { iteration: i } }],
+          finishReason: 'tool_calls' as const,
+        })),
     );
     runtime.registerProvider('openai', provider);
 
@@ -224,7 +239,10 @@ describe('AgentRuntime - Full Tool Calling Pipeline', () => {
 
   it('applies observation masking for many tool results', async () => {
     const maskRouter = new ModelRouter();
-    const maskRuntime = new AgentRuntime({ observationMaskWindow: 2, maxRetries: 0, timeoutMs: 5000 }, maskRouter);
+    const maskRuntime = new AgentRuntime(
+      { observationMaskWindow: 2, maxRetries: 0, timeoutMs: 5000 },
+      maskRouter,
+    );
     const maskProvider = new ToolCallMockProvider([
       {
         toolCalls: [
@@ -240,7 +258,10 @@ describe('AgentRuntime - Full Tool Calling Pipeline', () => {
       },
     ]);
     maskRuntime.registerProvider('openai', maskProvider);
-    maskRuntime.registerTool('echo', makeTool('echo', async (args) => `Echo: ${JSON.stringify(args)}`));
+    maskRuntime.registerTool(
+      'echo',
+      makeTool('echo', async (args) => `Echo: ${JSON.stringify(args)}`),
+    );
 
     const result = await maskRuntime.execute(makeContext({ availableTools: ['echo'] }));
     expect(result.status).toBe('success');
@@ -274,25 +295,31 @@ describe('AgentRuntime - New Feature Integration', () => {
     const pythonTool = makeTool('python_execute', async (args) => `Python output`);
     const gitTool = makeTool('git', async (args) => `Git status`);
 
-    runtime = new AgentRuntime({
-      toolRetrieval: { enabled: true, minTools: 2, maxTools: 2, alwaysInclude: [] },
-      maxRetries: 0,
-      timeoutMs: 5000,
-    }, router);
+    runtime = new AgentRuntime(
+      {
+        toolRetrieval: { enabled: true, minTools: 2, maxTools: 2, alwaysInclude: [] },
+        maxRetries: 0,
+        timeoutMs: 5000,
+      },
+      router,
+    );
     runtime.registerProvider('openai', simpleProvider);
     runtime.registerTool('web_search', searchTool);
     runtime.registerTool('python_execute', pythonTool);
     runtime.registerTool('git', gitTool);
 
-    await runtime.execute(makeContext({
-      goal: 'search the web for news',
-      availableTools: ['web_search', 'python_execute', 'git'],
-    }));
+    await runtime.execute(
+      makeContext({
+        goal: 'search the web for news',
+        availableTools: ['web_search', 'python_execute', 'git'],
+      }),
+    );
 
     const lastRequest = simpleProvider.lastRequest!;
     expect(lastRequest.tools).toBeDefined();
-    // With maxTools=2, only 2 tool defs should be sent
-    expect(lastRequest.tools!.length).toBeLessThanOrEqual(2);
+    // With maxTools=2, 2 tools go active + 1 goes to registry → request_tool is added
+    expect(lastRequest.tools!.length).toBe(3); // 2 active tools + 1 request_tool
+    expect(lastRequest.tools!.some((t) => t.name === 'web_search')).toBe(true);
   });
 
   it('toolRetrieval defaults to all tools when disabled', async () => {
@@ -304,9 +331,11 @@ describe('AgentRuntime - New Feature Integration', () => {
     runtime.registerTool('web_search', searchTool);
     runtime.registerTool('python_execute', pythonTool);
 
-    await runtime.execute(makeContext({
-      availableTools: ['web_search', 'python_execute'],
-    }));
+    await runtime.execute(
+      makeContext({
+        availableTools: ['web_search', 'python_execute'],
+      }),
+    );
 
     const lastRequest = simpleProvider.lastRequest!;
     expect(lastRequest.tools).toBeDefined();
@@ -345,14 +374,16 @@ describe('AgentRuntime - New Feature Integration', () => {
     ]);
     localRuntime.registerProvider('openai', provider);
 
-    const result = await localRuntime.execute(makeContext({
-      goal: 'Return output in JSON format matching the schema.',
-      outputSchema: {
-        properties: {
-          answer: { type: 'string', required: true },
+    const result = await localRuntime.execute(
+      makeContext({
+        goal: 'Return output in JSON format matching the schema.',
+        outputSchema: {
+          properties: {
+            answer: { type: 'string', required: true },
+          },
         },
-      },
-    }));
+      }),
+    );
 
     expect(result.status).toBe('success');
     expect(result.summary).toContain('"answer":"ok"');
@@ -386,7 +417,7 @@ describe('AgentRuntime - Tool Not Found Handling', () => {
     expect(provider.callCount).toBe(2);
     // Second call should have the error about missing tool
     const lastMsg = provider.lastRequest?.messages;
-    const toolResultMsg = lastMsg?.find(m => m.role === 'tool');
+    const toolResultMsg = lastMsg?.find((m) => m.role === 'tool');
     expect(toolResultMsg).toBeDefined();
     expect(toolResultMsg?.content).toContain('TOOL_NOT_ALLOWED');
   });
@@ -416,7 +447,7 @@ describe('AgentRuntime - Tool Not Found Handling', () => {
     expect(result.status).toBe('success');
     expect(provider.callCount).toBe(2);
     const lastMsg = provider.lastRequest?.messages;
-    const toolResultMsg = lastMsg?.find(m => m.role === 'tool');
+    const toolResultMsg = lastMsg?.find((m) => m.role === 'tool');
     expect(toolResultMsg).toBeDefined();
     expect(toolResultMsg?.content).toContain('TOOL_NOT_FOUND');
   });
@@ -430,11 +461,14 @@ describe('AgentRuntime - Speculative Cache (PASTE)', () => {
     resetPatternTracker();
 
     const router = new ModelRouter();
-    const runtime = new AgentRuntime({
-      maxRetries: 0,
-      timeoutMs: 5000,
-      speculativeExecution: { enabled: true, maxPredictions: 1, minConfidence: 0 },
-    }, router);
+    const runtime = new AgentRuntime(
+      {
+        maxRetries: 0,
+        timeoutMs: 5000,
+        speculativeExecution: { enabled: true, maxPredictions: 1, minConfidence: 0 },
+      },
+      router,
+    );
 
     const readTool = makeTool('file_read', async () => 'file contents');
     readTool.isReadOnly = true;
@@ -459,10 +493,12 @@ describe('AgentRuntime - Speculative Cache (PASTE)', () => {
     ]);
     runtime.registerProvider('openai', provider);
 
-    const result = await runtime.execute(makeContext({
-      availableTools: ['file_read'],
-      goal: 'read file',
-    }));
+    const result = await runtime.execute(
+      makeContext({
+        availableTools: ['file_read'],
+        goal: 'read file',
+      }),
+    );
     expect(result.status).toBe('success');
   });
 });

@@ -79,7 +79,7 @@ export function MemoryBrowser({ items, overview, onSearch }: MemoryBrowserProps)
 
           {overview.topTags.length > 0 && (
             <div className="tag-cloud">
-              {overview.topTags.map(item => (
+              {overview.topTags.map((item) => (
                 <button
                   key={item.tag}
                   type="button"
@@ -103,12 +103,15 @@ export function MemoryBrowser({ items, overview, onSearch }: MemoryBrowserProps)
           <Search size={14} className="search-icon" />
           <Input
             value={query}
-            onChange={e => setQuery(e.target.value)}
+            onChange={(e) => setQuery(e.target.value)}
             placeholder="Search memory content..."
           />
         </div>
-        <Select value={kindFilter} onChange={e => setKindFilter(e.target.value as MemoryKindFilter)}>
-          {MEMORY_KIND_OPTIONS.map(kind => (
+        <Select
+          value={kindFilter}
+          onChange={(e) => setKindFilter(e.target.value as MemoryKindFilter)}
+        >
+          {MEMORY_KIND_OPTIONS.map((kind) => (
             <option key={kind} value={kind}>
               {kind === 'ALL' ? 'all kinds' : kind}
             </option>
@@ -125,10 +128,8 @@ export function MemoryBrowser({ items, overview, onSearch }: MemoryBrowserProps)
       </form>
 
       <div className="memory-list">
-        {items.length === 0 && (
-          <div className="empty">No distilled memories yet</div>
-        )}
-        {visibleItems.map(item => (
+        {items.length === 0 && <div className="empty">No distilled memories yet</div>}
+        {visibleItems.map((item) => (
           <Card key={item.id} className="memory-item">
             <div className="memory-item-head">
               <span className="memory-item-title">{item.title}</span>
@@ -148,7 +149,7 @@ export function MemoryBrowser({ items, overview, onSearch }: MemoryBrowserProps)
               {item.tags.length > 0 && (
                 <>
                   <span>·</span>
-                  <span>{item.tags.map(t => `#${t}`).join(' ')}</span>
+                  <span>{item.tags.map((t) => `#${t}`).join(' ')}</span>
                 </>
               )}
             </div>
@@ -156,10 +157,7 @@ export function MemoryBrowser({ items, overview, onSearch }: MemoryBrowserProps)
         ))}
         {hasMore && (
           <div className="memory-load-more">
-            <Button
-              variant="ghost"
-              onClick={() => setDisplayLimit(prev => prev + PAGE_SIZE)}
-            >
+            <Button variant="ghost" onClick={() => setDisplayLimit((prev) => prev + PAGE_SIZE)}>
               Load more ({items.length - displayLimit} remaining)
             </Button>
           </div>

@@ -1,7 +1,7 @@
 /**
  * Reflection Engine
  * 基于 ULTIMATE-FRAMEWORK.md 设计
- * 
+ *
  * Core insight: 让 agent 在执行后反思自己的行为
  * - 自我评估: 哪里做得好/不好
  * - 模式识别: 发现反复出现的问题
@@ -20,21 +20,21 @@ function generateUUID(): string {
 // Types
 // ========================================
 
-export type ReflectionType = 
-  | 'post_execution'   // 执行后反思
-  | 'pre_planning'     // 计划前反思
-  | 'error_analysis'   // 错误分析
+export type ReflectionType =
+  | 'post_execution' // 执行后反思
+  | 'pre_planning' // 计划前反思
+  | 'error_analysis' // 错误分析
   | 'pattern_detection'; // 模式检测
 
 export interface Reflection {
   id: string;
   type: ReflectionType;
-  context: string;           // 反思上下文
-  question: string;          // 提出的问题
-  answer?: string;           // 反思答案
-  quality: number;           // 0-1, 反思质量
-  actionable: boolean;       // 是否可执行
-  insights: string[];        // 关键洞察
+  context: string; // 反思上下文
+  question: string; // 提出的问题
+  answer?: string; // 反思答案
+  quality: number; // 0-1, 反思质量
+  actionable: boolean; // 是否可执行
+  insights: string[]; // 关键洞察
   recommendations: string[]; // 建议
   createdAt: string;
   relatedOutcome?: 'success' | 'partial' | 'failure';
@@ -52,12 +52,12 @@ export interface ReflectionSession {
 
 export interface ReflectionPattern {
   id: string;
-  pattern: string;           // 问题模式描述
-  frequency: number;         // 出现频率
-  severity: number;          // 严重程度
+  pattern: string; // 问题模式描述
+  frequency: number; // 出现频率
+  severity: number; // 严重程度
   firstSeen: string;
   lastSeen: string;
-  resolution?: string;       // 解决方案
+  resolution?: string; // 解决方案
 }
 
 export interface ReflectionStats {
@@ -91,8 +91,9 @@ export class ReflectionEngine {
   startSession(taskId: string): string {
     // GAP-19: Evict oldest sessions when over limit
     if (this.sessions.size >= this.MAX_SESSIONS) {
-      const sorted = Array.from(this.sessions.entries())
-        .sort((a, b) => a[1].createdAt.localeCompare(b[1].createdAt));
+      const sorted = Array.from(this.sessions.entries()).sort((a, b) =>
+        a[1].createdAt.localeCompare(b[1].createdAt),
+      );
       const toEvict = Math.max(1, Math.floor(this.MAX_SESSIONS * 0.1));
       for (let i = 0; i < toEvict && i < sorted.length; i++) {
         this.sessions.delete(sorted[i][0]);
@@ -104,7 +105,7 @@ export class ReflectionEngine {
       reflections: [],
       overallQuality: 0,
       keyInsight: '',
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
     };
     this.sessions.set(session.id, session);
     return session.id;
@@ -113,12 +114,7 @@ export class ReflectionEngine {
   /**
    * 添加反思
    */
-  addReflection(
-    sessionId: string,
-    context: string,
-    question: string,
-    answer?: string
-  ): Reflection {
+  addReflection(sessionId: string, context: string, question: string, answer?: string): Reflection {
     const reflection: Reflection = {
       id: generateUUID(),
       type: this.determineType(context),
@@ -129,7 +125,7 @@ export class ReflectionEngine {
       actionable: false,
       insights: [],
       recommendations: [],
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
     };
 
     // 如果有答案，进行分析
@@ -162,7 +158,7 @@ export class ReflectionEngine {
    */
   private determineType(context: string): ReflectionType {
     const lower = context.toLowerCase();
-    
+
     if (lower.includes('error') || lower.includes('fail') || lower.includes('exception')) {
       return 'error_analysis';
     }
@@ -216,7 +212,7 @@ export class ReflectionEngine {
     if (lower.includes('check') || lower.includes('verify')) {
       recommendations.push('Add validation step');
     }
-    if (lower.includes('avoid') || lower.includes('shouldn\'t')) {
+    if (lower.includes('avoid') || lower.includes("shouldn't")) {
       recommendations.push('Create guard rail to prevent recurrence');
     }
     if (lower.includes('retry') || lower.includes('again')) {
@@ -233,15 +229,18 @@ export class ReflectionEngine {
     }
 
     // 检查可执行性
-    const actionable = recommendations.length > 0 && recommendations.some(r => 
-      r.length > 10 && (r.includes('Add') || r.includes('Implement') || r.includes('Create'))
-    );
+    const actionable =
+      recommendations.length > 0 &&
+      recommendations.some(
+        (r) =>
+          r.length > 10 && (r.includes('Add') || r.includes('Implement') || r.includes('Create')),
+      );
 
     return {
       quality: Math.min(1, qualityScore),
       actionable,
       insights,
-      recommendations
+      recommendations,
     };
   }
 
@@ -251,18 +250,19 @@ export class ReflectionEngine {
   private updateSessionQuality(session: ReflectionSession): void {
     if (session.reflections.length === 0) return;
 
-    const avgQuality = session.reflections.reduce((sum, r) => sum + r.quality, 0) / 
-      session.reflections.length;
+    const avgQuality =
+      session.reflections.reduce((sum, r) => sum + r.quality, 0) / session.reflections.length;
     session.overallQuality = avgQuality;
 
     // 更新关键洞察
     const highQualityReflections = session.reflections
-      .filter(r => r.quality >= this.MIN_QUALITY_THRESHOLD)
+      .filter((r) => r.quality >= this.MIN_QUALITY_THRESHOLD)
       .sort((a, b) => b.quality - a.quality);
 
     if (highQualityReflections.length > 0) {
-      session.keyInsight = highQualityReflections[0].insights[0] || 
-        highQualityReflections[0].recommendations[0] || 
+      session.keyInsight =
+        highQualityReflections[0].insights[0] ||
+        highQualityReflections[0].recommendations[0] ||
         'Review completed';
     }
   }
@@ -274,9 +274,9 @@ export class ReflectionEngine {
     const session = this.sessions.get(sessionId);
     if (session) {
       session.completedAt = new Date().toISOString();
-      
+
       // 更新所有反思的结果
-      session.reflections.forEach(r => {
+      session.reflections.forEach((r) => {
         r.relatedOutcome = outcome;
       });
     }
@@ -298,16 +298,16 @@ export class ReflectionEngine {
     ];
 
     for (const p of patterns) {
-      const matchCount = p.keywords.filter(k => content.includes(k)).length;
-      
+      const matchCount = p.keywords.filter((k) => content.includes(k)).length;
+
       // 单关键词匹配时也触发（降低检测门槛）
       if (matchCount >= 1) {
         const existing = this.patterns.get(p.pattern);
-        
+
         if (existing) {
           existing.frequency++;
           existing.lastSeen = new Date().toISOString();
-          
+
           // 如果有解决方案，更新它
           if (reflection.recommendations.length > 0) {
             existing.resolution = reflection.recommendations[0];
@@ -320,9 +320,9 @@ export class ReflectionEngine {
             severity: this.calculateSeverity(p.pattern, reflection),
             firstSeen: new Date().toISOString(),
             lastSeen: new Date().toISOString(),
-            resolution: reflection.recommendations[0]
+            resolution: reflection.recommendations[0],
           };
-          
+
           this.patterns.set(p.pattern, newPattern);
         }
       }
@@ -351,8 +351,7 @@ export class ReflectionEngine {
    * 修剪低频模式
    */
   private prunePatterns(): void {
-    const sorted = Array.from(this.patterns.values())
-      .sort((a, b) => a.frequency - b.frequency);
+    const sorted = Array.from(this.patterns.values()).sort((a, b) => a.frequency - b.frequency);
 
     const toRemove = sorted.slice(0, Math.floor(this.MAX_PATTERNS * 0.2));
     for (const p of toRemove) {
@@ -365,18 +364,18 @@ export class ReflectionEngine {
    */
   getRecommendations(reflectionId?: string): string[] {
     if (reflectionId) {
-      const reflection = this.reflectionHistory.find(r => r.id === reflectionId);
+      const reflection = this.reflectionHistory.find((r) => r.id === reflectionId);
       return reflection?.recommendations || [];
     }
 
     // 返回所有高优先级建议
     const highQualityReflections = this.reflectionHistory
-      .filter(r => r.quality >= this.MIN_QUALITY_THRESHOLD && r.actionable)
+      .filter((r) => r.quality >= this.MIN_QUALITY_THRESHOLD && r.actionable)
       .sort((a, b) => b.quality - a.quality);
 
     const recommendations = new Set<string>();
     for (const r of highQualityReflections.slice(0, 10)) {
-      r.recommendations.forEach(rec => recommendations.add(rec));
+      r.recommendations.forEach((rec) => recommendations.add(rec));
     }
 
     return Array.from(recommendations);
@@ -394,11 +393,12 @@ export class ReflectionEngine {
    */
   getStats(): ReflectionStats {
     const sessions = Array.from(this.sessions.values());
-    const completedSessions = sessions.filter(s => s.completedAt);
-    
-    const avgQuality = completedSessions.length > 0
-      ? completedSessions.reduce((sum, s) => sum + s.overallQuality, 0) / completedSessions.length
-      : 0;
+    const completedSessions = sessions.filter((s) => s.completedAt);
+
+    const avgQuality =
+      completedSessions.length > 0
+        ? completedSessions.reduce((sum, s) => sum + s.overallQuality, 0) / completedSessions.length
+        : 0;
 
     const topPatterns = Array.from(this.patterns.values())
       .sort((a, b) => b.frequency * b.severity - a.frequency * a.severity)
@@ -421,7 +421,7 @@ export class ReflectionEngine {
       averageQuality: avgQuality,
       patternCount: this.patterns.size,
       topPatterns,
-      improvementTrend: trend
+      improvementTrend: trend,
     };
   }
 
@@ -430,11 +430,11 @@ export class ReflectionEngine {
    */
   getRelatedPatterns(context: string): ReflectionPattern[] {
     const lower = context.toLowerCase();
-    
+
     return Array.from(this.patterns.values())
-      .filter(p => {
+      .filter((p) => {
         const patternWords = p.pattern.toLowerCase().split(' ');
-        return patternWords.some(word => lower.includes(word));
+        return patternWords.some((word) => lower.includes(word));
       })
       .sort((a, b) => {
         const scoreA = a.frequency * a.severity;

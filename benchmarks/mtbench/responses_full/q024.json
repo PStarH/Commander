@@ -1,6 +1,0 @@
-{
-  "cat": "Reasoning",
-  "question": "A doctor gives you 3 pills and tells you to take one every half hour. How long will they last?",
-  "answer": "They will last for **one hour**.\n\nHere is the breakdown:\n1.  Take the first pill immediately (0 minutes).\n2.  Take the second pill 30 minutes later.\n3.  Take the third pill 30 minutes after that (1 hour total).",
-  "score": 1.0
-}

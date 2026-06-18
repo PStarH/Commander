@@ -14,6 +14,9 @@
 
 import type { ToolCall, Tool } from './types';
 
+const READ_ONLY_PATTERNS = ['read', 'search', 'list', 'fetch', 'browse', 'recall', 'get'];
+const EXPENSIVE_TOOLS = new Set(['shell_execute', 'python_execute', 'agent']);
+
 // ============================================================================
 // Dependency Edge
 // ============================================================================
@@ -80,10 +83,7 @@ export class ToolPlanner {
   /**
    * Analyze a set of tool calls and produce an optimal execution plan.
    */
-  plan(
-    toolCalls: ToolCall[],
-    tools: Map<string, Tool>,
-  ): ExecutionPlan {
+  plan(toolCalls: ToolCall[], tools: Map<string, Tool>): ExecutionPlan {
     if (toolCalls.length === 0) {
       return {
         stages: [],
@@ -97,11 +97,13 @@ export class ToolPlanner {
 
     if (toolCalls.length === 1) {
       return {
-        stages: [{
-          index: 0,
-          toolCalls,
-          estimatedDurationMs: this.estimateDuration(toolCalls[0], tools),
-        }],
+        stages: [
+          {
+            index: 0,
+            toolCalls,
+            estimatedDurationMs: this.estimateDuration(toolCalls[0], tools),
+          },
+        ],
         dependencies: [],
         conflicts: [],
         estimatedDurationMs: this.estimateDuration(toolCalls[0], tools),
@@ -120,9 +122,7 @@ export class ToolPlanner {
     const stages = this.buildStages(toolCalls, tools, dependencies, conflicts);
 
     // Step 4: Calculate critical path
-    const estimatedDurationMs = stages.reduce(
-      (sum, stage) => sum + stage.estimatedDurationMs, 0,
-    );
+    const estimatedDurationMs = stages.reduce((sum, stage) => sum + stage.estimatedDurationMs, 0);
 
     // Step 5: Identify speculative candidates (read-only, no dependencies)
     const speculativeCandidates = this.findSpeculativeCandidates(toolCalls, tools, dependencies);
@@ -132,7 +132,7 @@ export class ToolPlanner {
       dependencies,
       conflicts,
       estimatedDurationMs,
-      hasParallelism: stages.some(s => s.toolCalls.length > 1),
+      hasParallelism: stages.some((s) => s.toolCalls.length > 1),
       speculativeCandidates,
     };
   }
@@ -144,10 +144,7 @@ export class ToolPlanner {
    * - Write→Write on same resource: serialize
    * - Tool output used as input to another: dependency
    */
-  private detectDependencies(
-    toolCalls: ToolCall[],
-    tools: Map<string, Tool>,
-  ): DependencyEdge[] {
+  private detectDependencies(toolCalls: ToolCall[], tools: Map<string, Tool>): DependencyEdge[] {
     const edges: DependencyEdge[] = [];
 
     for (let i = 0; i < toolCalls.length; i++) {
@@ -188,10 +185,7 @@ export class ToolPlanner {
   /**
    * Detect resource conflicts between tool calls.
    */
-  private detectConflicts(
-    toolCalls: ToolCall[],
-    tools: Map<string, Tool>,
-  ): ResourceConflict[] {
+  private detectConflicts(toolCalls: ToolCall[], tools: Map<string, Tool>): ResourceConflict[] {
     const resourceMap = new Map<string, { ids: string[]; hasWrite: boolean }>();
 
     for (const tc of toolCalls) {
@@ -249,22 +243,18 @@ export class ToolPlanner {
 
     // Topological sort with level grouping
     const stages: ExecutionStage[] = [];
-    const toolCallMap = new Map(toolCalls.map(tc => [tc.id, tc]));
+    const toolCallMap = new Map(toolCalls.map((tc) => [tc.id, tc]));
     const processed = new Set<string>();
 
     // Start with all nodes that have no dependencies
     let currentLayer = toolCalls
-      .filter(tc => (inDegree.get(tc.id) ?? 0) === 0)
-      .map(tc => tc.id);
+      .filter((tc) => (inDegree.get(tc.id) ?? 0) === 0)
+      .map((tc) => tc.id);
 
     while (currentLayer.length > 0) {
-      const stageToolCalls = currentLayer
-        .map(id => toolCallMap.get(id)!)
-        .filter(Boolean);
+      const stageToolCalls = currentLayer.map((id) => toolCallMap.get(id)!).filter(Boolean);
 
-      const maxDuration = Math.max(
-        ...stageToolCalls.map(tc => this.estimateDuration(tc, tools)),
-      );
+      const maxDuration = Math.max(...stageToolCalls.map((tc) => this.estimateDuration(tc, tools)));
 
       stages.push({
         index: stages.length,
@@ -292,16 +282,14 @@ export class ToolPlanner {
       currentLayer = nextLayer;
     }
 
-    // Handle any remaining nodes (circular dependencies — force into last stage)
-    const remaining = toolCalls.filter(tc => !processed.has(tc.id));
+    const remaining = toolCalls.filter((tc) => !processed.has(tc.id));
     if (remaining.length > 0) {
-      stages.push({
-        index: stages.length,
-        toolCalls: remaining,
-        estimatedDurationMs: Math.max(
-          ...remaining.map(tc => this.estimateDuration(tc, tools)),
-        ),
-      });
+      const named = remaining.map((tc) => `${tc.id}(${tc.name})`).join(' → ');
+      throw new Error(
+        `ToolPlanner.buildStages: cyclic tool-call dependency (${named}). ` +
+          `Tool-call graphs must be acyclic — a cycle means the same tool's ` +
+          `output feeds back into its own input. Fix the dependency.`,
+      );
     }
 
     return stages;
@@ -316,15 +304,14 @@ export class ToolPlanner {
     tools: Map<string, Tool>,
     dependencies: DependencyEdge[],
   ): string[] {
-    const hasIncoming = new Set(dependencies.map(e => e.to));
+    const hasIncoming = new Set(dependencies.map((e) => e.to));
 
     return toolCalls
-      .filter(tc =>
-        this.isReadOnly(tc, tools) &&
-        !hasIncoming.has(tc.id) &&
-        this.isSpeculativelySafe(tc),
+      .filter(
+        (tc) =>
+          this.isReadOnly(tc, tools) && !hasIncoming.has(tc.id) && this.isSpeculativelySafe(tc),
       )
-      .map(tc => tc.id);
+      .map((tc) => tc.id);
   }
 
   /**
@@ -335,8 +322,8 @@ export class ToolPlanner {
     if (tool?.isReadOnly) return true;
 
     // Heuristic: common read-only tools
-    const readOnlyPatterns = ['read', 'search', 'list', 'fetch', 'browse', 'recall', 'get'];
-    return readOnlyPatterns.some(p => tc.name.toLowerCase().includes(p));
+    const lower = tc.name.toLowerCase();
+    return READ_ONLY_PATTERNS.some((p) => lower.includes(p));
   }
 
   /**
@@ -344,9 +331,7 @@ export class ToolPlanner {
    * Must be read-only AND not expensive.
    */
   private isSpeculativelySafe(tc: ToolCall): boolean {
-    // Don't speculate on tools that might be slow
-    const expensiveTools = ['shell_execute', 'python_execute', 'agent'];
-    return !expensiveTools.includes(tc.name);
+    return !EXPENSIVE_TOOLS.has(tc.name);
   }
 
   /**
@@ -354,10 +339,10 @@ export class ToolPlanner {
    */
   private findSharedResource(a: ToolCall, b: ToolCall): string | undefined {
     const aResources = this.extractResources(a);
-    const bResources = this.extractResources(b);
+    const bResources = new Set(this.extractResources(b));
 
     for (const r of aResources) {
-      if (bResources.includes(r)) return r;
+      if (bResources.has(r)) return r;
     }
     return undefined;
   }
@@ -367,9 +352,16 @@ export class ToolPlanner {
    */
   private extractResources(tc: ToolCall): string[] {
     const resources: string[] = [];
-    const args = typeof tc.arguments === 'string'
-      ? (() => { try { return JSON.parse(tc.arguments); } catch { return {}; } })()
-      : tc.arguments ?? {};
+    const args =
+      typeof tc.arguments === 'string'
+        ? (() => {
+            try {
+              return JSON.parse(tc.arguments);
+            } catch {
+              return {};
+            }
+          })()
+        : (tc.arguments ?? {});
 
     // Common resource fields
     if (typeof args.path === 'string') resources.push(args.path);

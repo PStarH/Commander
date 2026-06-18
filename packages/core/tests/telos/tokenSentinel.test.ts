@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { TokenSentinel, resetTokenSentinel, estimateTokenCount, estimateMessagesTokens } from '../../src/telos/tokenSentinel';
+import {
+  TokenSentinel,
+  resetTokenSentinel,
+  estimateTokenCount,
+  estimateMessagesTokens,
+} from '../../src/telos/tokenSentinel';
 
 describe('TokenSentinel', () => {
   let sentinel: TokenSentinel;
@@ -50,11 +55,11 @@ describe('TokenSentinel', () => {
 
   describe('pre-flight check', () => {
     it('allows requests within budget', () => {
-      const result = sentinel.check(
-        [{ role: 'user', content: 'Hello' }],
-        'gpt-4o',
-        { hardCapTokens: 64000, softCapTokens: 48000, costCapUsd: 2.0 },
-      );
+      const result = sentinel.check([{ role: 'user', content: 'Hello' }], 'gpt-4o', {
+        hardCapTokens: 64000,
+        softCapTokens: 48000,
+        costCapUsd: 2.0,
+      });
       expect(result.allowed).toBe(true);
       expect(result.totalEstimated).toBeGreaterThan(0);
       expect(result.budgetRemaining).toBeGreaterThan(0);
@@ -62,22 +67,22 @@ describe('TokenSentinel', () => {
 
     it('denies requests exceeding hard cap', () => {
       const longText = 'A'.repeat(500000);
-      const result = sentinel.check(
-        [{ role: 'user', content: longText }],
-        'gpt-4o',
-        { hardCapTokens: 100, softCapTokens: 50, costCapUsd: 1.0 },
-      );
+      const result = sentinel.check([{ role: 'user', content: longText }], 'gpt-4o', {
+        hardCapTokens: 100,
+        softCapTokens: 50,
+        costCapUsd: 1.0,
+      });
       expect(result.allowed).toBe(false);
       expect(result.reason).toContain('hard cap');
     });
 
     it('denies requests exceeding monthly budget', () => {
       const expensive = new TokenSentinel(100, 1000, 1.0);
-      const result1 = expensive.check(
-        [{ role: 'user', content: 'Hello' }],
-        'gpt-4o',
-        { hardCapTokens: 64000, softCapTokens: 48000, costCapUsd: 2.0 },
-      );
+      const result1 = expensive.check([{ role: 'user', content: 'Hello' }], 'gpt-4o', {
+        hardCapTokens: 64000,
+        softCapTokens: 48000,
+        costCapUsd: 2.0,
+      });
       expect(result1.allowed).toBe(true);
 
       expensive.recordCostFromUsage('run-1', 'agent-1', 'gpt-4o', {
@@ -86,11 +91,11 @@ describe('TokenSentinel', () => {
         totalTokens: 250000,
       });
 
-      const result2 = expensive.check(
-        [{ role: 'user', content: 'Hello' }],
-        'gpt-4o',
-        { hardCapTokens: 64000, softCapTokens: 48000, costCapUsd: 2.0 },
-      );
+      const result2 = expensive.check([{ role: 'user', content: 'Hello' }], 'gpt-4o', {
+        hardCapTokens: 64000,
+        softCapTokens: 48000,
+        costCapUsd: 2.0,
+      });
       expect(result2.allowed).toBe(false);
       expect(result2.reason).toContain('monthly');
     });
@@ -110,8 +115,16 @@ describe('TokenSentinel', () => {
     });
 
     it('produces cost summary', () => {
-      sentinel.recordCostFromUsage('run-1', 'agent-1', 'gpt-4o-mini', { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 });
-      sentinel.recordCostFromUsage('run-1', 'agent-2', 'gpt-4o', { promptTokens: 2000, completionTokens: 1000, totalTokens: 3000 });
+      sentinel.recordCostFromUsage('run-1', 'agent-1', 'gpt-4o-mini', {
+        promptTokens: 1000,
+        completionTokens: 500,
+        totalTokens: 1500,
+      });
+      sentinel.recordCostFromUsage('run-1', 'agent-2', 'gpt-4o', {
+        promptTokens: 2000,
+        completionTokens: 1000,
+        totalTokens: 3000,
+      });
 
       const summary = sentinel.getCostSummary();
       expect(summary.totalCalls).toBe(2);
@@ -123,8 +136,16 @@ describe('TokenSentinel', () => {
     });
 
     it('filters costs by run ID', () => {
-      sentinel.recordCostFromUsage('run-a', 'agent-1', 'gpt-4o-mini', { promptTokens: 100, completionTokens: 50, totalTokens: 150 });
-      sentinel.recordCostFromUsage('run-b', 'agent-1', 'gpt-4o-mini', { promptTokens: 200, completionTokens: 100, totalTokens: 300 });
+      sentinel.recordCostFromUsage('run-a', 'agent-1', 'gpt-4o-mini', {
+        promptTokens: 100,
+        completionTokens: 50,
+        totalTokens: 150,
+      });
+      sentinel.recordCostFromUsage('run-b', 'agent-1', 'gpt-4o-mini', {
+        promptTokens: 200,
+        completionTokens: 100,
+        totalTokens: 300,
+      });
 
       const runACosts = sentinel.getCosts('run-a');
       expect(runACosts.length).toBe(1);
@@ -133,13 +154,21 @@ describe('TokenSentinel', () => {
 
   describe('budget enforcement', () => {
     it('detects hard cap reached', () => {
-      const alert = sentinel.checkBudget('run-1', 65000, { hardCapTokens: 64000, softCapTokens: 48000, costCapUsd: 2.0 });
+      const alert = sentinel.checkBudget('run-1', 65000, {
+        hardCapTokens: 64000,
+        softCapTokens: 48000,
+        costCapUsd: 2.0,
+      });
       expect(alert).not.toBeNull();
       expect(alert!.type).toBe('hard_cap_reached');
     });
 
     it('returns null when under cap', () => {
-      const alert = sentinel.checkBudget('run-1', 1000, { hardCapTokens: 64000, softCapTokens: 48000, costCapUsd: 2.0 });
+      const alert = sentinel.checkBudget('run-1', 1000, {
+        hardCapTokens: 64000,
+        softCapTokens: 48000,
+        costCapUsd: 2.0,
+      });
       expect(alert).toBeNull();
     });
   });
@@ -147,12 +176,20 @@ describe('TokenSentinel', () => {
   describe('monthly tracking', () => {
     it('tracks monthly cost', () => {
       expect(sentinel.getMonthlyCostUsd()).toBe(0);
-      sentinel.recordCostFromUsage('run-1', 'agent-1', 'gpt-4o-mini', { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 });
+      sentinel.recordCostFromUsage('run-1', 'agent-1', 'gpt-4o-mini', {
+        promptTokens: 1000,
+        completionTokens: 500,
+        totalTokens: 1500,
+      });
       expect(sentinel.getMonthlyCostUsd()).toBeGreaterThan(0);
     });
 
     it('resets monthly tracking', () => {
-      sentinel.recordCostFromUsage('run-1', 'agent-1', 'gpt-4o-mini', { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 });
+      sentinel.recordCostFromUsage('run-1', 'agent-1', 'gpt-4o-mini', {
+        promptTokens: 1000,
+        completionTokens: 500,
+        totalTokens: 1500,
+      });
       sentinel.resetMonthly();
       expect(sentinel.getMonthlyCostUsd()).toBe(0);
     });

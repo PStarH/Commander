@@ -10,9 +10,14 @@ import type { HandoffRequest, HandoffStatus } from '../../src/runtime/agentHando
 import { AgentInbox } from '../../src/runtime/agentInbox';
 
 import {
-  TenantProvider, NullTenantProvider, SimpleTenantProvider,
-  ThreeLayerMemoryRegistry, getGlobalTenantProvider,
-  resetGlobalTenantProvider, getGlobalMemoryRegistry, resetGlobalMemoryRegistry,
+  TenantProvider,
+  NullTenantProvider,
+  SimpleTenantProvider,
+  ThreeLayerMemoryRegistry,
+  getGlobalTenantProvider,
+  resetGlobalTenantProvider,
+  getGlobalMemoryRegistry,
+  resetGlobalMemoryRegistry,
 } from '../../src/runtime/tenantProvider';
 import type { TenantConfig } from '../../src/runtime/tenantProvider';
 
@@ -30,21 +35,42 @@ import type { TraceStore } from '../../src/runtime/traceStore';
 import type { TraceEvent } from '../../src/runtime/types';
 
 import { buildSystemPrompt, buildCacheAwareUserPrompt } from '../../src/runtime/promptBuilder';
-import type { AgentExecutionContext, RoutingDecision, AgentRuntimeConfig } from '../../src/runtime/types';
+import type {
+  AgentExecutionContext,
+  RoutingDecision,
+  AgentRuntimeConfig,
+} from '../../src/runtime/types';
 import { TokenGovernor } from '../../src/runtime/tokenGovernor';
 
 import {
-  createSchema, mergeWithDefaults, validateConfig,
-  validateRuntimeConfig, validateHttpServerConfig, validateField,
+  createSchema,
+  mergeWithDefaults,
+  validateConfig,
+  validateRuntimeConfig,
+  validateHttpServerConfig,
+  validateField,
 } from '../../src/runtime/configValidator';
-import type { ConfigSchema, ConfigField, ConfigValidationResult, FieldType } from '../../src/runtime/configValidator';
+import type {
+  ConfigSchema,
+  ConfigField,
+  ConfigValidationResult,
+  FieldType,
+} from '../../src/runtime/configValidator';
 
 import { ToolResultCache } from '../../src/runtime/toolResultCache';
 import type { ToolCacheStats, ToolCacheConfig } from '../../src/runtime/toolResultCache';
 import type { ToolCall, ToolResult } from '../../src/runtime/types';
 
-import { WebhookDispatcher, getWebhookDispatcher, resetWebhookDispatcher } from '../../src/runtime/webhookDispatcher';
-import type { WebhookConfig, WebhookEvent, WebhookDelivery } from '../../src/runtime/webhookDispatcher';
+import {
+  WebhookDispatcher,
+  getWebhookDispatcher,
+  resetWebhookDispatcher,
+} from '../../src/runtime/webhookDispatcher';
+import type {
+  WebhookConfig,
+  WebhookEvent,
+  WebhookDelivery,
+} from '../../src/runtime/webhookDispatcher';
 
 import { SamplesStore } from '../../src/runtime/samplesStore';
 
@@ -143,7 +169,13 @@ describe('TenantProvider', () => {
 
   it('SimpleTenantProvider stores and retrieves config', () => {
     const configs: TenantConfig[] = [
-      { tenantId: 'tenant-1', tokenBudget: 10000, maxConcurrency: 5, maxRunsPerMinute: 10, enabled: true },
+      {
+        tenantId: 'tenant-1',
+        tokenBudget: 10000,
+        maxConcurrency: 5,
+        maxRunsPerMinute: 10,
+        enabled: true,
+      },
     ];
     const p = new SimpleTenantProvider(configs);
     const config = p.getTenantConfig('tenant-1');
@@ -291,10 +323,18 @@ describe('SSEStream', () => {
 
   it('StructuredSSEEventType supports all event types', () => {
     const types: StructuredSSEEventType[] = [
-      'agent.status', 'agent.thinking', 'reasoning.delta',
-      'tool_call.delta', 'tool_call.started', 'tool_call.completed',
-      'tool_call.timeout', 'tool_call.retry', 'tool_call.blocked',
-      'output.delta', 'output.completed', 'diff.available',
+      'agent.status',
+      'agent.thinking',
+      'reasoning.delta',
+      'tool_call.delta',
+      'tool_call.started',
+      'tool_call.completed',
+      'tool_call.timeout',
+      'tool_call.retry',
+      'tool_call.blocked',
+      'output.delta',
+      'output.completed',
+      'diff.available',
       'error.occurred',
     ];
     assert.strictEqual(types.length, 13);
@@ -314,7 +354,9 @@ describe('SSEStream', () => {
   it('emitStructured sends events', () => {
     const s = new SSEStream();
     const events: string[] = [];
-    s.onEvent((event) => { events.push(event); });
+    s.onEvent((event) => {
+      events.push(event);
+    });
     s.emitStructured('agent.status', { status: 'running' });
     assert.strictEqual(events.length, 1);
     assert.ok(events[0].includes('agent.status'));
@@ -337,7 +379,11 @@ describe('Provenance', () => {
   });
 
   it('createRunProvenance returns full provenance', () => {
-    const p = createRunProvenance('run-1', { provider: 'openai', modelId: 'gpt-4', tier: 'default' });
+    const p = createRunProvenance('run-1', {
+      provider: 'openai',
+      modelId: 'gpt-4',
+      tier: 'default',
+    });
     assert.strictEqual(p.runId, 'run-1');
     assert.ok(p.timestamp !== undefined);
     assert.ok(p.tags !== undefined);
@@ -463,7 +509,10 @@ describe('ConfigValidator', () => {
   it('mergeWithDefaults fills missing values', () => {
     const result = mergeWithDefaults(
       { name: 'test' },
-      { name: { type: 'string', default: 'default-name', description: '' }, count: { type: 'number', default: 42, description: '' } },
+      {
+        name: { type: 'string', default: 'default-name', description: '' },
+        count: { type: 'number', default: 42, description: '' },
+      },
     );
     assert.strictEqual(result.name, 'test');
     assert.strictEqual(result.count, 42);
@@ -549,7 +598,12 @@ describe('ToolResultCache', () => {
   it('set and get round-trips when enabled', () => {
     const c = new ToolResultCache({ enabled: true, maxEntries: 100 });
     const toolCall: ToolCall = { id: 'tc-1', name: 'read', arguments: { path: 'hello.txt' } };
-    const result: ToolResult = { toolCallId: 'tc-1', name: 'read', output: 'hello', durationMs: 10 };
+    const result: ToolResult = {
+      toolCallId: 'tc-1',
+      name: 'read',
+      output: 'hello',
+      durationMs: 10,
+    };
     c.set(toolCall, result);
     const cached = c.get(toolCall);
     assert.ok(cached !== undefined);
@@ -578,7 +632,13 @@ describe('ToolResultCache', () => {
   });
 
   it('ToolCacheConfig type is structural', () => {
-    const cfg: ToolCacheConfig = { enabled: true, maxEntries: 200, defaultTtlMs: 120000, toolTtls: {}, neverCache: [] };
+    const cfg: ToolCacheConfig = {
+      enabled: true,
+      maxEntries: 200,
+      defaultTtlMs: 120000,
+      toolTtls: {},
+      neverCache: [],
+    };
     assert.strictEqual(cfg.maxEntries, 200);
   });
 });

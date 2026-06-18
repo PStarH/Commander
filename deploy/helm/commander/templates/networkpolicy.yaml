@@ -1,0 +1,53 @@
+# =============================================================================
+# Commander — Network Policy (Enterprise tier)
+# =============================================================================
+{{- if .Values.redis.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "commander.fullname" . }}-redis
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "commander.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "commander.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.port }}
+{{- end }}
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "commander.fullname" . }}-api
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "commander.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- if .Values.web.enabled }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: web
+        {{- end }}
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.api.port }}
