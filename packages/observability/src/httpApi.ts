@@ -711,9 +711,44 @@ export async function handleObservabilityRequest(
   }
 }
 
-async function readFeedbackBody(
-  req: IncomingMessage,
-): Promise<{ rating?: 'positive' | 'negative' | 'neutral'; comment?: string; tags?: string[] }> {
+type RequestWithBody = IncomingMessage & { body?: unknown };
+
+type FeedbackBody = {
+  rating?: 'positive' | 'negative' | 'neutral';
+  comment?: string;
+  tags?: string[];
+};
+
+type ReplaySubstitution = {
+  target: 'tool_output' | 'llm_response' | 'tool_input';
+  spanId: string;
+  field?: string;
+  value: unknown;
+};
+
+type ReplayRequestBody = {
+  runId: string;
+  substitutions: ReplaySubstitution[];
+  reExecuteLlm: boolean;
+  modelOverride?: string;
+  onlySpanIds?: string[];
+};
+
+/**
+ * True when a framework (e.g. Express's `express.json()`) has already parsed
+ * the body and consumed the request stream. In that case attaching `data`/`end`
+ * listeners to the (now-drained) stream would never fire `end`, so the caller
+ * must use the pre-parsed body instead of falling through to manual reads.
+ */
+function hasParsedBody(req: IncomingMessage): req is RequestWithBody & { body: object } {
+  const body = (req as RequestWithBody).body;
+  return body !== undefined && body !== null && typeof body === 'object' && !Array.isArray(body);
+}
+
+async function readFeedbackBody(req: IncomingMessage): Promise<FeedbackBody> {
+  if (hasParsedBody(req)) {
+    return req.body as FeedbackBody;
+  }
   return new Promise((resolve, reject) => {
     let data = '';
     req.on('data', (chunk: Buffer) => {
@@ -721,7 +756,7 @@ async function readFeedbackBody(
     });
     req.on('end', () => {
       try {
-        resolve(data ? JSON.parse(data) : {});
+        resolve(data ? (JSON.parse(data) as FeedbackBody) : {});
       } catch {
         reject(new Error('Invalid JSON'));
       }
@@ -730,18 +765,10 @@ async function readFeedbackBody(
   });
 }
 
-async function readBody(req: IncomingMessage): Promise<{
-  runId: string;
-  substitutions: Array<{
-    target: 'tool_output' | 'llm_response' | 'tool_input';
-    spanId: string;
-    field?: string;
-    value: unknown;
-  }>;
-  reExecuteLlm: boolean;
-  modelOverride?: string;
-  onlySpanIds?: string[];
-}> {
+async function readBody(req: IncomingMessage): Promise<ReplayRequestBody> {
+  if (hasParsedBody(req)) {
+    return req.body as ReplayRequestBody;
+  }
   return new Promise((resolve, reject) => {
     let data = '';
     req.on('data', (chunk: Buffer) => {
@@ -749,7 +776,11 @@ async function readBody(req: IncomingMessage): Promise<{
     });
     req.on('end', () => {
       try {
-        resolve(data ? JSON.parse(data) : { runId: '', substitutions: [], reExecuteLlm: false });
+        resolve(
+          data
+            ? (JSON.parse(data) as ReplayRequestBody)
+            : { runId: '', substitutions: [], reExecuteLlm: false },
+        );
       } catch {
         reject(new Error('Invalid JSON'));
       }
@@ -760,6 +791,12 @@ async function readBody(req: IncomingMessage): Promise<{
 
 /** Generic JSON body parser for non-feedback routes. */
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | undefined> {
+  if (hasParsedBody(req)) {
+    // Treat empty `{}` bodies the same as no body, matching the raw-stream
+    // branch's empty-data → undefined semantics.
+    if (Object.keys(req.body).length === 0) return undefined;
+    return req.body as Record<string, unknown>;
+  }
   return new Promise((resolve, reject) => {
     let data = '';
     req.on('data', (chunk: Buffer) => {
@@ -771,7 +808,7 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
         return;
       }
       try {
-        resolve(JSON.parse(data));
+        resolve(JSON.parse(data) as Record<string, unknown>);
       } catch {
         reject(new Error('Invalid JSON'));
       }

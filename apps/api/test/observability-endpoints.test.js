@@ -27,7 +27,6 @@ test.before(async () => {
     cwd: apiDir,
     env: { ...process.env, PORT: String(port) },
     stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true,
   });
 
   serverProcess.stdout.on('data', () => {});
@@ -36,14 +35,11 @@ test.before(async () => {
   await waitForServer(baseUrl);
 });
 
-test.after(() => {
-  if (serverProcess && !serverProcess.pid) {
-    try {
-      process.kill(-serverProcess.pid, 'SIGTERM');
-    } catch {}
-  }
+test.after(async () => {
   if (serverProcess && !serverProcess.killed) {
-    serverProcess.kill('SIGTERM');
+    // SIGKILL bypasses graceful-shutdown hangs caused by Node fetch keep-alive sockets
+    serverProcess.kill('SIGKILL');
+    await new Promise((resolve) => serverProcess.once('close', resolve));
   }
 });
 

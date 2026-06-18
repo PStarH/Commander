@@ -34,9 +34,11 @@ test.before(async () => {
   await waitForServer(baseUrl);
 });
 
-test.after(() => {
+test.after(async () => {
   if (serverProcess && !serverProcess.killed) {
-    serverProcess.kill('SIGTERM');
+    // SIGKILL bypasses graceful-shutdown hangs caused by Node fetch keep-alive sockets
+    serverProcess.kill('SIGKILL');
+    await new Promise((resolve) => serverProcess.once('close', resolve));
   }
 });
 
