@@ -6,7 +6,7 @@
 </p>
 
 <h1 align="center">Commander</h1>
-<p align="center"><strong>Multi-agent orchestration with total transparency.</strong></p>
+<p align="center"><strong>The most stable agent runtime.</strong></p>
 
 <p align="center">
   <code>npx tsx packages/core/src/cli.ts run "audit this repo" --stream</code><br>
@@ -28,6 +28,46 @@
 AI agents are becoming production infrastructure. But most frameworks were built for demos, not deployments. They hide their reasoning, fail silently, and have no circuit breakers.
 
 **Commander was built for production from day one.** Every agent decision streams to you in real time. Every output passes through quality gates before you see it. The deliberation engine automatically classifies your task and picks the optimal topology — 1 agent for a simple fix, 20 for deep research. No graph building. No YAML. No black boxes.
+
+---
+
+## Reliability SLOs
+
+Commander commits to these service level objectives:
+
+| SLO | Target | Measurement |
+|-----|--------|-------------|
+| **Uptime** | 99.9% | Monthly, excluding planned maintenance |
+| **Checkpoint Recovery** | <5 seconds | From crash to resumed execution |
+| **Failover** | <10 seconds | Provider failure to next provider |
+| **Compensation** | <30 seconds | Failed mutation to rollback complete |
+| **DLQ Processing** | <60 seconds | Error detection to persisted entry |
+| **Memory Consistency** | 100% | Zero data loss on crash |
+
+---
+
+## Health Check API
+
+```bash
+# Basic health check
+curl http://localhost:3000/health
+
+# Detailed health with all component statuses
+curl http://localhost:3000/health/detailed
+
+# Readiness probe (for k8s)
+curl http://localhost:3000/ready
+```
+
+Health check monitors 8 components:
+- Memory usage (heap)
+- Circuit breaker states
+- Dead letter queue size
+- Checkpoint staleness
+- Pending compensations
+- Event bus backlog
+- Provider availability
+- Disk space
 
 ---
 
@@ -133,7 +173,7 @@ Every component that belongs in a production system exists in Commander:
 | **Quality gates**     | 5-stage pipeline              | ❌              | ❌               | ❌            |
 | **Circuit breakers**  | Per-provider 3-state          | ❌              | ❌               | ❌            |
 | **Dead letter queue** | Persistent with replay        | ❌              | ❌               | ❌            |
-| **Cost per task**     | ~$0.10 (verified)             | Unknown         | Unknown          | Unknown       |
+| **Cost per task**     | ~$1.13 typical ($0.75 - $3.00 max) | Unknown        | Unknown          | Unknown       |
 
 ---
 
