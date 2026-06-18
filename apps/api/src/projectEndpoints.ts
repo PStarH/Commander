@@ -403,20 +403,35 @@ export function createProjectRouter(
   router.get('/projects/:projectId/governance/stats', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) return res.status(404).json({ error: 'Project not found' });
-    res.json(calculateGovernanceStats(snapshot.missions, snapshot.agents));
+    // Mission has a richer schema than `Record<string, unknown>` accepts;
+    // widen through an unknown cast at the call site.
+    res.json(
+      calculateGovernanceStats(
+        snapshot.missions as unknown as Record<string, unknown>[],
+        snapshot.agents as unknown as Record<string, unknown>[],
+      ),
+    );
   });
 
   router.get('/projects/:projectId/governance/alerts', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) return res.status(404).json({ error: 'Project not found' });
-    const stats = calculateGovernanceStats(snapshot.missions, snapshot.agents);
+    const stats = calculateGovernanceStats(
+      snapshot.missions as unknown as Record<string, unknown>[],
+      snapshot.agents as unknown as Record<string, unknown>[],
+    );
     res.json(generateGovernanceAlerts(stats));
   });
 
   router.get('/projects/:projectId/governance/weekly-report', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
     if (!snapshot) return res.status(404).json({ error: 'Project not found' });
-    const stats = calculateGovernanceStats(snapshot.missions, snapshot.agents);
+    // Mission has a richer schema than `Record<string, unknown>` accepts;
+    // widen through an unknown cast at the call site.
+    const stats = calculateGovernanceStats(
+      snapshot.missions as unknown as Record<string, unknown>[],
+      snapshot.agents as unknown as Record<string, unknown>[],
+    );
     const alerts = generateGovernanceAlerts(stats);
     res.type('text/markdown').send(generateWeeklyGovernanceReport(stats, alerts));
   });

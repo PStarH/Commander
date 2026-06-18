@@ -1,6 +1,0 @@
-{
-  "cat": "Reasoning",
-  "question": "Train A 60mph, Train B 90mph, 100mi apart. When do they meet?",
-  "answer": "They meet in **40 minutes**.\n\nHere is the step-by-step breakdown:\n\n1.  **Find the combined speed:** Since the trains are moving toward each other, you add their speeds together.\n    $$60\\text{ mph} + 90\\text{ mph} = 150\\text{ mph}$$\n2.  **Divide the distance by the speed:**\n    $$100\\text{ miles} / 150\\text{ mph} = 0.666...\\text{ hours}$$\n3.  **Convert to minutes:**\n    $$0.666...\\text{ hours} \\times 60\\text{ minutes} = \\mathbf{40\\text{ minutes}}$$",
-  "score": 10.0
-}

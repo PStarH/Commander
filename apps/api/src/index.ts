@@ -40,6 +40,7 @@ import {
 } from './securityMiddleware';
 import { createEvaluationRunnerRouter } from './evaluationRunnerEndpoints';
 import { createOrchestratorRouter } from './orchestratorEndpoints';
+import { createObservabilityRouter } from './observabilityEndpoints';
 
 const PROJECT_ID = process.env.COMMANDER_PROJECT_ID ?? 'project-war-room';
 const app = express();
@@ -208,6 +209,7 @@ app.use('/api/v1', createReasoningConfigRouter());
 app.use('/api/v1', createEvaluationRunnerRouter());
 app.use('/api/v1/runtime', createRuntimeRouter());
 app.use('/api/v1', createOrchestratorRouter());
+app.use('/api/v1/observability', createObservabilityRouter());
 
 // ── OpenAPI ─────────────────────────────────────────────────────────────────
 app.get('/api/openapi.json', (_req, res) => {

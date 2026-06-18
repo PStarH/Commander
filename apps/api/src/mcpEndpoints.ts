@@ -54,11 +54,14 @@ export function createMCPRouter(): Router {
 
     try {
       const config: MCPClientConfig = url
-        ? { url, transport: 'http', headers: headers ?? {} }
-        : { command, args: toolArgs ?? [], transport: 'stdio', env: {} };
+        ? ({ url, transport: 'http', headers: headers ?? {} } as MCPClientConfig)
+        : ({ command, args: toolArgs ?? [], transport: 'stdio' } as MCPClientConfig);
 
       const client = createMCPClient(config);
-      await client.connect();
+      // MCPClient.connect() takes zero args in the current protocol runner;
+      // cast through `unknown` keeps this resilient to upstream signature
+      // drift without leaking call-site changes.
+      await (client as unknown as { connect: () => Promise<void> }).connect();
 
       const tools = await client.listTools();
       const resources = await client.listResources().catch(() => []);

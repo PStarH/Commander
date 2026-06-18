@@ -112,7 +112,10 @@ export function createPipelineRouter(): Router {
       updatedAt: now,
     };
     try {
-      const run = await sequentialExecutor.execute(pipeline as SequentialPipeline, { input });
+      const run = await sequentialExecutor.execute(
+        pipeline as unknown as SequentialPipeline,
+        { input },
+      );
       pipelineRuns.set(run.id, run);
       res.json(run);
     } catch (err: unknown) {

@@ -4,8 +4,10 @@
     "rootDir": "src",
     "outDir": "dist",
     "paths": {
-      "@commander/core": ["../../packages/core/src/index.ts"],
-      "@commander/core/*": ["../../packages/core/src/*"]
+      "@commander/core": ["../../packages/core/dist/index.d.ts"],
+      "@commander/core/*": ["../../packages/core/dist/*"],
+      "@commander/observability": ["../../packages/observability/dist/index.d.ts"],
+      "@commander/observability/*": ["../../packages/observability/dist/*"]
     }
   },
   "include": ["src"]

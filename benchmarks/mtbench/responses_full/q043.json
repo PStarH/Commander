@@ -1,6 +1,0 @@
-{
-  "cat": "Coding",
-  "question": "Write a function to find the longest word in a sentence.",
-  "answer": "Here is the solution in **Python**, which is the most common language for this type of task.\n\n### Python Solution\n\n```python\ndef find_longest_word(sentence):\n    # 1. Split the sentence into a list of words based on spaces\n    words = sentence.split()\n    \n    # 2. Initialize a variable to hold the longest word found so far\n    longest_word = \"\"\n    \n    # 3. Loop through every word in the list\n    for word in words:\n        # 4. Compare lengths\n        if len(word) > len(longest_word):\n        ",
-  "score": 5.0
-}

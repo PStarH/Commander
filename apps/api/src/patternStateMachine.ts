@@ -539,9 +539,10 @@ export function createOrchestratorWorkerConfig(): PatternStateMachineConfig {
           condition: (state) => {
             // If all subagents succeeded, go to completed
             const results = state.subagentResults || {};
-            const allSuccess = Object.values(results).every(
-              (r: unknown) => (r as Record<string, unknown>)?.result?.success,
-            );
+            const allSuccess = Object.values(results).every((r: unknown) => {
+              const entry = r as { result?: { success?: unknown } } | undefined;
+              return entry?.result?.success === true;
+            });
             return allSuccess ? 'completed' : 'failed';
           },
           description: 'Check all subagent results',

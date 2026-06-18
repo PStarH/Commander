@@ -24,12 +24,44 @@
  * is not leaked.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
-import type {
-  ExplorationEventLog,
-  ExplorationEventLogFilter,
-  ExplorationSnapshot,
-} from '@commander/core';
-import type { EpsilonStore } from '@commander/core';
+
+// ----------------------------------------------------------------------------
+// Local type definitions for the exploration / live-dashboard subsystem.
+// These were previously imported from `@commander/core`, but the upstream
+// symbols now live here in the observability package; lifting them up
+// creates a cycle and used to collapse `divergenceHistogram`/`events` to
+// `any[]`, triggering TS7006 implicit-any downstream on
+// `snapshot.divergenceHistogram.reduce(...)` and `for (const e of tenant.events)`.
+// Keep them inline and concrete at the call sites they are actually used.
+// ----------------------------------------------------------------------------
+export interface ExplorationEventLogFilter {
+  limit?: number;
+  tenantId?: string;
+  since?: string;
+  divergedOnly?: boolean;
+}
+export interface ExplorationSnapshot {
+  recentEvents: unknown[];
+  truncated: boolean;
+  totals: unknown;
+  globalStats: unknown;
+  tenants: { events: unknown[] }[];
+  divergenceHistogram: { count: number }[];
+}
+export interface ExplorationEventLog {
+  getSnapshot(f: ExplorationEventLogFilter): ExplorationSnapshot;
+}
+export interface EpsilonOverride {
+  tenantId: string;
+  epsilon: number;
+  setAt: string;
+}
+export interface EpsilonStore {
+  get(t: string): EpsilonOverride | null;
+  list(): EpsilonOverride[];
+  set(t: string, e: number): EpsilonOverride;
+  clear(t: string): boolean;
+}
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
@@ -193,7 +225,10 @@ export async function handleRoutingDashboardRequest(
       case 'histogram': {
         const snapshot = deps.eventLog.getSnapshot(filter);
         sendJson(res, 200, {
-          count: snapshot.divergenceHistogram.reduce((s, b) => s + b.count, 0),
+          count: snapshot.divergenceHistogram.reduce(
+            (s: number, b: { count: number }): number => s + b.count,
+            0,
+          ),
           buckets: snapshot.divergenceHistogram,
           totals: snapshot.totals,
           globalStats: snapshot.globalStats,
@@ -231,11 +266,10 @@ export async function handleRoutingDashboardRequest(
           return { handled: true, status: 200 };
         }
         // List all overrides
-        let entries = deps.epsilonStore.list();
-        if (authTenant !== undefined) {
-          // Tenant caller sees only their own override
-          entries = entries.filter((e) => e.tenantId === authTenant);
-        }
+        const listed: EpsilonOverride[] = deps.epsilonStore.list();
+        const entries = authTenant !== undefined
+          ? listed.filter((e: EpsilonOverride): boolean => e.tenantId === authTenant)
+          : listed;
         sendJson(res, 200, { count: entries.length, overrides: entries });
         return { handled: true, status: 200 };
       }

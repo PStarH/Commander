@@ -150,9 +150,14 @@ export class ToolCallVerificationGrader implements Grader {
   async grade(trial: EvaluationTrial): Promise<GraderResult> {
     const toolCalls = trial.transcript
       .filter((e) => e.type === 'tool_call')
-      .map((e) => e.data?.tool || e.data?.name);
+      .map((e) => {
+        // `e.data` is typed `unknown` per the TranscriptEntry schema, so
+        // narrow with a record cast and probe for legacy `tool` / `name` keys.
+        const data = (e.data ?? {}) as { tool?: string; name?: string };
+        return data.tool ?? data.name;
+      });
 
-    const uniqueTools = [...new Set(toolCalls)];
+    const uniqueTools: string[] = [...new Set(toolCalls.filter((t): t is string => !!t))];
 
     // Check required tools
     if (this.options.requiredTools) {

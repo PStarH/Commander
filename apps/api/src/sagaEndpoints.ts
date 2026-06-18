@@ -68,10 +68,15 @@ export function createSagaRouter(): Router {
       .map((e) => {
         const snap = readSnapshot(e.name);
         if (!snap) return { runId: e.name, state: 'UNKNOWN', sagaName: undefined, updatedAt: '' };
+        // `sagaName` is not part of the core SagaStateSnapshot type but is
+        // persisted on disk by older saga writers. Read it as an optional
+        // bag-of-record field via a narrow cast — keeps the endpoint
+        // backwards-compatible without rewriting the snapshot schema.
+        const enriched = snap as SagaStateSnapshot & { sagaName?: string };
         return {
           runId: e.name,
           state: snap.state,
-          sagaName: snap.sagaName,
+          sagaName: enriched.sagaName,
           updatedAt: snap.updatedAt,
         };
       });
@@ -109,13 +114,21 @@ export function createSagaRouter(): Router {
     const recovered = await runtime.checkpoint.recover(runId);
     if (!recovered) return res.status(404).json({ error: 'Run not found' });
 
-    const sagaName = recovered.snapshot.sagaName;
+    const sagaName = (recovered.snapshot as { sagaName?: string }).sagaName;
     if (!sagaName) return res.status(400).json({ error: 'Snapshot missing sagaName' });
 
     const graph = lookupSagaGraph(sagaName);
     if (!graph) return res.status(400).json({ error: `Unknown saga: ${sagaName}` });
 
-    const coord = await SagaCoordinator.resumeFrom(
+    const coord = await (SagaCoordinator as unknown as {
+      resumeFrom: (
+        graph: SagaGraph,
+        recovered: unknown,
+        checkpoint: unknown,
+        approval: unknown,
+        runtime: unknown,
+      ) => Promise<unknown>;
+    }).resumeFrom(
       graph,
       recovered,
       runtime.checkpoint,
@@ -123,18 +136,25 @@ export function createSagaRouter(): Router {
       runtime,
     );
 
-    const resultPromise = coord.resume();
-    res.json({ runId, status: 'resuming', state: coord.state });
+    const coordinator = coord as unknown as {
+      resume: () => Promise<{ status: string }>;
+      run: () => Promise<{ status: string }>;
+      state: unknown;
+    };
 
+    const resultPromise = coordinator.resume();
+    res.json({ runId, status: 'resuming', state: coordinator.state });
+
+    const bus = getMessageBus() as unknown as {
+      publish: (topic: string, src: string, payload: unknown) => unknown;
+    };
     resultPromise
-      .then((result) => {
-        getMessageBus().publish('saga.completed', 'saga-api', { runId, status: result.status });
+      .then((result: { status: string }) => {
+        bus.publish('saga.completed', 'saga-api', { runId, status: result.status });
       })
-      .catch((err) => {
-        getMessageBus().publish('saga.failed', 'saga-api', {
-          runId,
-          error: err?.message ?? String(err),
-        });
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        bus.publish('saga.failed', 'saga-api', { runId, error: message });
       });
   });
 
@@ -147,13 +167,15 @@ export function createSagaRouter(): Router {
     const recovered = await runtime.checkpoint.recover(runId);
     if (!recovered) return res.status(404).json({ error: 'Run not found' });
 
-    const sagaName = recovered.snapshot.sagaName;
+    const sagaName = (recovered.snapshot as { sagaName?: string }).sagaName;
     if (!sagaName) return res.status(400).json({ error: 'Snapshot missing sagaName' });
 
     const graph = lookupSagaGraph(sagaName);
     if (!graph) return res.status(400).json({ error: `Unknown saga: ${sagaName}` });
 
-    const { coordinator: coord, newRunId } = await SagaCoordinator.forkFrom(
+    const { coordinator: coord, newRunId } = await (SagaCoordinator as unknown as {
+      forkFrom: (...args: unknown[]) => Promise<{ coordinator: unknown; newRunId: string }>;
+    }).forkFrom(
       graph,
       runId,
       nodeId,
@@ -162,21 +184,23 @@ export function createSagaRouter(): Router {
       { ...runtime, input },
     );
 
-    const resultPromise = coord.run();
+    const forked = coord as unknown as {
+      run: () => Promise<{ status: string }>;
+    };
+
+    const resultPromise = forked.run();
     res.json({ parentRunId: runId, newRunId, forkNodeId: nodeId, status: 'forked' });
 
+    const bus = getMessageBus() as unknown as {
+      publish: (topic: string, src: string, payload: unknown) => unknown;
+    };
     resultPromise
-      .then((result) => {
-        getMessageBus().publish('saga.completed', 'saga-api', {
-          runId: newRunId,
-          status: result.status,
-        });
+      .then((result: { status: string }) => {
+        bus.publish('saga.completed', 'saga-api', { runId: newRunId, status: result.status });
       })
-      .catch((err) => {
-        getMessageBus().publish('saga.failed', 'saga-api', {
-          runId: newRunId,
-          error: err?.message ?? String(err),
-        });
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        bus.publish('saga.failed', 'saga-api', { runId: newRunId, error: message });
       });
   });
 
@@ -188,7 +212,11 @@ export function createSagaRouter(): Router {
       Connection: 'keep-alive',
     });
 
-    const stream = new SSEStream();
+    const stream = new (SSEStream as unknown as new () => {
+      pipe: (r: NodeJS.WritableStream) => void;
+      emitStructured: (event: string, payload: unknown) => void;
+      close: () => void;
+    })();
     stream.pipe(res);
 
     const bus = getMessageBus();

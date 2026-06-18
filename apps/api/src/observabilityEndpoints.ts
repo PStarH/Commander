@@ -13,7 +13,7 @@ import {
   handleObservabilityRequest,
   type ObservabilityDeps,
   OBSERVABILITY_HTTP_ROUTES,
-} from '@commander/core/observability';
+} from '@commander/observability';
 import { getTraceRecorder, PersistentTraceStore } from '@commander/core/runtime';
 
 const traceStore = new PersistentTraceStore(path.join(process.cwd(), '.commander_traces'));

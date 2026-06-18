@@ -71,24 +71,37 @@ export function calculateGovernanceStats(
   missions: Record<string, unknown>[],
   agents: Record<string, unknown>[],
 ): GovernanceStats {
+  // Mission rows come from a loose snapshot schema, so probe each field via
+  // a typed accessor; keeps the calculation logic intact without scattering `any`.
+  const riskLevel = (m: Record<string, unknown>): string | undefined =>
+    m.riskLevel as string | undefined;
+  const status = (m: Record<string, unknown>): string | undefined =>
+    m.status as string | undefined;
+  const governanceMode = (m: Record<string, unknown>): string | undefined =>
+    m.governanceMode as string | undefined;
+  const approvalStatus = (m: Record<string, unknown>): string | undefined =>
+    m.approvalStatus as string | undefined;
+  const assignedAgentId = (m: Record<string, unknown>): string | undefined =>
+    m.assignedAgentId as string | undefined;
+
   const highRiskMissions = missions.filter(
-    (m) => m.riskLevel === 'HIGH' || m.riskLevel === 'CRITICAL',
+    (m) => riskLevel(m) === 'HIGH' || riskLevel(m) === 'CRITICAL',
   );
 
-  const completed = highRiskMissions.filter((m) => m.status === 'DONE').length;
-  const pending = highRiskMissions.filter((m) => m.status !== 'DONE').length;
+  const completed = highRiskMissions.filter((m) => status(m) === 'DONE').length;
+  const pending = highRiskMissions.filter((m) => status(m) !== 'DONE').length;
 
   // 计算手动审批率
-  const manualMissions = missions.filter((m) => m.governanceMode === 'MANUAL');
-  const approvedManual = manualMissions.filter((m) => m.approvalStatus === 'APPROVED').length;
+  const manualMissions = missions.filter((m) => governanceMode(m) === 'MANUAL');
+  const approvedManual = manualMissions.filter((m) => approvalStatus(m) === 'APPROVED').length;
   const manualApprovalRate = manualMissions.length > 0 ? approvedManual / manualMissions.length : 0;
 
   // Agent 风险分布
   const agentRiskDistribution: Record<string, number> = {};
   highRiskMissions.forEach((m) => {
-    if (m.assignedAgentId) {
-      agentRiskDistribution[m.assignedAgentId] =
-        (agentRiskDistribution[m.assignedAgentId] || 0) + 1;
+    const agentId = assignedAgentId(m);
+    if (agentId) {
+      agentRiskDistribution[agentId] = (agentRiskDistribution[agentId] || 0) + 1;
     }
   });
 

@@ -1,6 +1,0 @@
-{
-  "cat": "Extraction",
-  "question": "Extract all hashtags from: 'Loving #AI and #MachineLearning #Tech2024'",
-  "answer": "Here are the hashtags extracted from the text:\n\n*   #AI\n*   #MachineLearning\n*   #Tech2024",
-  "score": 5.0
-}

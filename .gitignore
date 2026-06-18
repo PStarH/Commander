@@ -156,29 +156,36 @@ apps/api/dist/
 # Stray scratch files at repo root
 /src/main.py
 
-# Benchmark runner intermediate files
-benchmarks/*/responses/
-benchmarks/*/results.json
-benchmarks/*/responses_full/
-
-
+# AI agent config directories (DO NOT commit — makes repo look like an AI playground)
+.agents/
+.mimocode/
 .sisyphus/
-private/
+.codex/
 
-# OS artifacts
-.DS_Store
+# Benchmark files — entire directories (intermediate results, responses, configs)
+benchmarks/
+packages/core/benchmarks/
+packages/core/src/benchmark/
+docs/benchmark-results/
+
+# Commander runtime artifacts (auto-generated, not source)
+.commander/burn-in/
+.commander/intelligence/
+.commander/skills/
+.commander/feedback/
+.commander/qa-*.log
+.commander/atr_idempotency.db*
+.commander/atr_leases.db*
+.commander/atr_ledger.db*
+.commander/compensation_queue.db*
+.commander/conversations.db*
+
+# Private / scratch
+private/
 
 # Agent compensation snapshots (auto-generated)
 *.atr-snapshot.*
 
-# === Best-practice hygiene added during merge-resolve ===
-# Existing benchmark responses already ignored by `benchmarks/*/responses/`
-# above; this layer addresses gaps:
-# Don't track raw benchmark summary outputs (docs/benchmark-results/*)
-docs/benchmark-results/
-# Don't track empty root-level build-output placeholders
+# Root-level build output placeholders
 /fixer
 /verifier
-# Don't track result dumps from benchmark runs
-benchmarks/*/results/
-benchmarks/*/logs/

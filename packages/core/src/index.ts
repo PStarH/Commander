@@ -309,6 +309,32 @@ export { captureProvenance } from './runtime/provenance';
 // Metrics (from metricsCollector, not the logging re-export)
 export { getMetricsCollector, resetMetricsCollector } from './runtime/metricsCollector';
 
+// Tenant Provider — multi-tenant isolation primitives
+export {
+  TenantProvider,
+  NullTenantProvider,
+  SimpleTenantProvider,
+  ThreeLayerMemoryRegistry,
+  getGlobalTenantProvider,
+  setGlobalTenantProvider,
+  resetGlobalTenantProvider,
+  getGlobalMemoryRegistry,
+  resetGlobalMemoryRegistry,
+} from './runtime/tenantProvider';
+
+// Cost Model — token-based price calculation (also re-exported via @commander/observability)
+export {
+  CostModel,
+  getCostModel,
+  resetCostModel,
+  DEFAULT_PRICING,
+} from './observability/costModel';
+export type { CostBreakdown, TokenBreakdown, ModelPricing } from './observability/types';
+
+// Trace Store — durable execution-trace persistence (also re-exported via @commander/observability)
+export { PersistentTraceStore } from './runtime/traceStore';
+export type { TraceStore } from './runtime/traceStore';
+
 // Runtime System — Agent Execution Engine
 export type {
   LLMMessage,

@@ -975,6 +975,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
     return this.memoryStore;
   }
 
+  /** Number of pending run acquisitions waiting on the concurrency semaphore. */
+  getQueueDepth(): number {
+    return this.waitingQueue.length;
+  }
+
   /** Access the state checkpointer for crash recovery and run inspection. */
   getCheckpointer(): StateCheckpointer {
     return this.checkpointer;

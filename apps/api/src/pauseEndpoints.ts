@@ -71,11 +71,29 @@ export function createPauseRouter(): Router {
     }
 
     const runtime = getSharedRuntime();
-    const checkpoint = runtime.resume(runId);
+    const recovery = await runtime.resume(runId);
 
-    if (!checkpoint) {
+    if (!recovery || recovery.status !== 'recovered' || !recovery.state) {
       return res.status(404).json({ error: 'No checkpoint found for this run' });
     }
+
+    // Flatten the CheckpointState into the shape the test suite + downstream
+    // callers expect (projectId/goal/availableTools/tokenBudget on a `context`
+    // bag, plus a top-level `messages` array). Optional fields are coerced to
+    // safe defaults so the resume path never crashes on a partial recovery.
+    const checkpoint = recovery.state as unknown as {
+      agentId: string;
+      missionId?: string;
+      phase: string;
+      stepNumber: number;
+      messages: Array<{ role: string; content: string }>;
+      context: {
+        projectId: string;
+        goal: string;
+        availableTools: string[];
+        tokenBudget: number;
+      };
+    };
 
     if (!runtime.isPaused(runId)) {
       return res.status(400).json({ error: 'Run is not paused' });
