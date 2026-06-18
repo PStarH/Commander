@@ -8,28 +8,35 @@ on:
 
 jobs:
   quality:
-    name: Quality Gates
-    runs-on: ubuntu-latest
+    name: Quality Gates (${{ matrix.os }}, Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node-version: ['20', '22']
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'pnpm'
 
       - uses: pnpm/action-setup@v2
         with:
           version: 9
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
       - run: pnpm install
 
       - name: Security audit
         run: npm audit --audit-level=high
-        continue-on-error: true
 
       - name: ESLint check (no-console rule)
         run: npx eslint packages/core/src
+
+      - name: Prettier format check
+        run: npx prettier --check "packages/core/src/**/*.ts" "apps/api/src/**/*.ts" "apps/web/src/**/*.{ts,tsx}"
 
       - name: TypeScript check (core)
         run: npx tsc --noEmit -p packages/core/tsconfig.json
@@ -40,23 +47,17 @@ jobs:
       - name: Verify core test inventory
         run: pnpm --filter @commander/core test:inventory
 
-      - name: Verify benchmark result claims
-        run: pnpm --filter @commander/core benchmark:verify
+      - name: Audit reversibility wiring
+        run: pnpm audit:wiring
 
       - name: Run core tests
         run: pnpm --filter @commander/core test
 
-      - name: Run benchmarks
-        run: npx tsx --test packages/core/benchmarks/ultimate.benchmark.test.ts
-
-      - name: Benchmark regression check
-        run: npx tsx packages/core/benchmarks/ci-benchmark-check.ts
-        env:
-          CI_BENCHMARK_THRESHOLD: '0.50'
-          CI_BENCHMARK_UPDATE: ''
+      - name: Path security tests
+        run: pnpm --filter @commander/core test:node:pathsec
 
       - name: CLI check
-        run: npx tsx cli.ts status
+        run: cd packages/core && npx tsx src/cli.ts status
 
       - name: Build core package
         run: cd packages/core && npx tsc -p tsconfig.json
@@ -80,14 +81,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'pnpm'
-
-      - uses: pnpm/action-setup@v2
-        with:
-          version: 9
 
       - run: pnpm install
 

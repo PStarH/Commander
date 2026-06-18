@@ -100,7 +100,7 @@ const CONFIG_KEYS = [
 
 /** All known env var keys. */
 const ALL_KEYS = [...SECRET_KEYS, ...CONFIG_KEYS] as const;
-type EnvKey = typeof ALL_KEYS[number];
+type EnvKey = (typeof ALL_KEYS)[number];
 
 export class CredentialManager {
   private store = new Map<string, string>();
@@ -135,7 +135,7 @@ export class CredentialManager {
 
   /** Get all configured secret keys (for auditing). */
   listConfiguredSecrets(): string[] {
-    return SECRET_KEYS.filter(k => this.store.has(k));
+    return SECRET_KEYS.filter((k) => this.store.has(k));
   }
 
   /**
@@ -152,7 +152,7 @@ export class CredentialManager {
 
   /** Check if any of the given env vars have a value. */
   any(...candidates: string[]): boolean {
-    return candidates.some(k => this.store.has(k));
+    return candidates.some((k) => this.store.has(k));
   }
 
   /**
@@ -185,13 +185,16 @@ export class CredentialManager {
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
-const credentialManagerSingleton = createTenantAwareSingleton(() => {
-  const cm = new CredentialManager();
-  cm.init();
-  return cm;
-}, {
-  dispose: (cm) => cm.clear(),
-});
+const credentialManagerSingleton = createTenantAwareSingleton(
+  () => {
+    const cm = new CredentialManager();
+    cm.init();
+    return cm;
+  },
+  {
+    dispose: (cm) => cm.clear(),
+  },
+);
 
 export function getCredentialManager(): CredentialManager {
   return credentialManagerSingleton.get();

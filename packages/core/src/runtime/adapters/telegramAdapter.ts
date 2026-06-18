@@ -1,4 +1,9 @@
-import { BaseChannelAdapter, type ChannelMessage, type SendOptions, type ChannelConfig } from '../channelAdapter';
+import {
+  BaseChannelAdapter,
+  type ChannelMessage,
+  type SendOptions,
+  type ChannelConfig,
+} from '../channelAdapter';
 import type { CommanderAgentLoop } from '../../agentLoop';
 import { getGlobalLogger } from '../../logging';
 
@@ -47,12 +52,16 @@ export class TelegramAdapter extends BaseChannelAdapter {
 
   async initialize(config: unknown, agentLoop: unknown): Promise<void> {
     this.telegramConfig = (config as TelegramConfig) || {};
-    const cfg: ChannelConfig = { ...this.defaultConfig, ...((config || {}) as Record<string, unknown>) };
+    const cfg: ChannelConfig = {
+      ...this.defaultConfig,
+      ...((config || {}) as Record<string, unknown>),
+    };
     await super.initialize(cfg, agentLoop as CommanderAgentLoop);
   }
 
   protected async connectPlatform(): Promise<void> {
-    if (!this.telegramConfig.botToken) throw new Error('Telegram bot token not configured. Set TELEGRAM_BOT_TOKEN env var.');
+    if (!this.telegramConfig.botToken)
+      throw new Error('Telegram bot token not configured. Set TELEGRAM_BOT_TOKEN env var.');
     await this.telegramRequest('getMe');
   }
 
@@ -61,9 +70,14 @@ export class TelegramAdapter extends BaseChannelAdapter {
   }
 
   async sendMessage(msg: ChannelMessage, text: string, opts?: SendOptions): Promise<void> {
-    const parseMode = opts?.parseMode === 'html' ? 'HTML' : opts?.parseMode === 'markdown' ? 'MarkdownV2' : undefined;
+    const parseMode =
+      opts?.parseMode === 'html'
+        ? 'HTML'
+        : opts?.parseMode === 'markdown'
+          ? 'MarkdownV2'
+          : undefined;
     await this.telegramRequest('sendMessage', {
-      chat_id: msg.metadata?.chatId as number ?? 0,
+      chat_id: (msg.metadata?.chatId as number) ?? 0,
       text,
       reply_to_message_id: opts?.replyTo ? Number(opts.replyTo) : undefined,
       parse_mode: parseMode,
@@ -71,17 +85,36 @@ export class TelegramAdapter extends BaseChannelAdapter {
     });
   }
 
-  private async telegramRequest(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+  private async telegramRequest(
+    method: string,
+    params: Record<string, unknown> = {},
+  ): Promise<unknown> {
     const token = this.telegramConfig.botToken;
     if (!token) return null;
     const url = `${this.apiBase}/bot${token}/${method}`;
     try {
-      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params) });
-      const data = await response.json() as { ok: boolean; result?: unknown; description?: string };
-      if (!data.ok) this.bus.publish('channel.error', this.config.channelId, { platform: this.platform, error: data.description });
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      const data = (await response.json()) as {
+        ok: boolean;
+        result?: unknown;
+        description?: string;
+      };
+      if (!data.ok)
+        this.bus.publish('channel.error', this.config.channelId, {
+          platform: this.platform,
+          error: data.description,
+        });
       return data.result;
     } catch (err) {
-      getGlobalLogger().error('Telegram', `${method} failed`, err instanceof Error ? err : new Error(String(err)));
+      getGlobalLogger().error(
+        'Telegram',
+        `${method} failed`,
+        err instanceof Error ? err : new Error(String(err)),
+      );
       return null;
     }
   }
@@ -90,17 +123,34 @@ export class TelegramAdapter extends BaseChannelAdapter {
     try {
       const token = this.telegramConfig.botToken;
       if (!token) return;
-      const response = await fetch(`${this.apiBase}/bot${token}/getUpdates?offset=${this.offset}&timeout=30&allowed_updates=${encodeURIComponent(JSON.stringify(['message', 'edited_message', 'callback_query']))}`, { method: 'GET' });
-      if (!response.ok) { this.longPollTimer = setTimeout(() => this.pollUpdates(), 5000); return; }
-      const data: { ok: boolean; result?: TelegramUpdate[] } = await response.json() as { ok: boolean; result?: TelegramUpdate[] };
+      const response = await fetch(
+        `${this.apiBase}/bot${token}/getUpdates?offset=${this.offset}&timeout=30&allowed_updates=${encodeURIComponent(JSON.stringify(['message', 'edited_message', 'callback_query']))}`,
+        { method: 'GET' },
+      );
+      if (!response.ok) {
+        this.longPollTimer = setTimeout(() => this.pollUpdates(), 5000);
+        this.longPollTimer?.unref();
+        return;
+      }
+      const data: { ok: boolean; result?: TelegramUpdate[] } = (await response.json()) as {
+        ok: boolean;
+        result?: TelegramUpdate[];
+      };
       if (data.result) {
         for (const update of data.result) {
           this.offset = update.update_id + 1;
           this.processUpdate(update);
         }
       }
-    } catch (err) { getGlobalLogger().error('Telegram', 'Poll error', err instanceof Error ? err : new Error(String(err))); }
+    } catch (err) {
+      getGlobalLogger().error(
+        'Telegram',
+        'Poll error',
+        err instanceof Error ? err : new Error(String(err)),
+      );
+    }
     this.longPollTimer = setTimeout(() => this.pollUpdates(), 1000);
+    this.longPollTimer?.unref();
   }
 
   private processUpdate(update: TelegramUpdate): void {
@@ -114,13 +164,27 @@ export class TelegramAdapter extends BaseChannelAdapter {
     if (!text) return;
     const userId = String(msg.from?.id ?? msg.chat.id);
     if (!this.isUserAllowed(userId)) {
-      const denyMsg: ChannelMessage = { id: String(msg.message_id), role: 'user', content: '', channelId: '', userId, timestamp: new Date().toISOString() };
-      this.sendMessage(denyMsg, 'Access denied.').catch(e => getGlobalLogger().warn('Telegram', 'Failed to send access denied message', { error: (e as Error)?.message }));
+      const denyMsg: ChannelMessage = {
+        id: String(msg.message_id),
+        role: 'user',
+        content: '',
+        channelId: '',
+        userId,
+        timestamp: new Date().toISOString(),
+      };
+      this.sendMessage(denyMsg, 'Access denied.').catch((e) =>
+        getGlobalLogger().warn('Telegram', 'Failed to send access denied message', {
+          error: (e as Error)?.message,
+        }),
+      );
       return;
     }
     const channelMsg: ChannelMessage = {
-      id: String(msg.message_id), role: 'user', content: text,
-      channelId: this.config.channelId, userId,
+      id: String(msg.message_id),
+      role: 'user',
+      content: text,
+      channelId: this.config.channelId,
+      userId,
       username: msg.from?.username,
       timestamp: new Date().toISOString(),
       threadId: msg.reply_to_message ? String(msg.reply_to_message.message_id) : undefined,
@@ -132,8 +196,11 @@ export class TelegramAdapter extends BaseChannelAdapter {
   private handleCallbackQuery(query: TelegramUpdate['callback_query']): void {
     if (!query?.message || !query?.data) return;
     this.bus.publish('channel.interaction', this.config.channelId, {
-      queryId: query.id, userId: String(query.from.id), username: query.from.username,
-      data: query.data, messageId: String(query.message.message_id),
+      queryId: query.id,
+      userId: String(query.from.id),
+      username: query.from.username,
+      data: query.data,
+      messageId: String(query.message.message_id),
     });
   }
 

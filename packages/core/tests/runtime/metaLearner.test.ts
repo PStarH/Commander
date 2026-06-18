@@ -53,14 +53,18 @@ describe('MetaLearner', () => {
   });
 
   it('tracks task types per strategy', () => {
-    learner.recordExperience(makeExp({
-      strategyUsed: 'PARALLEL',
-      taskType: 'code_generation',
-    }));
-    learner.recordExperience(makeExp({
-      strategyUsed: 'PARALLEL',
-      taskType: 'data_analysis',
-    }));
+    learner.recordExperience(
+      makeExp({
+        strategyUsed: 'PARALLEL',
+        taskType: 'code_generation',
+      }),
+    );
+    learner.recordExperience(
+      makeExp({
+        strategyUsed: 'PARALLEL',
+        taskType: 'data_analysis',
+      }),
+    );
     const perf = learner.getStrategyPerformance();
     const parallel = perf.get('PARALLEL')!;
     expect(parallel.bestForTaskTypes).toContain('code_generation');
@@ -69,12 +73,14 @@ describe('MetaLearner', () => {
 
   it('returns suggestions after sufficient samples', () => {
     for (let i = 0; i < 5; i++) {
-      learner.recordExperience(makeExp({
-        modelUsed: 'claude-3-5-haiku',
-        strategyUsed: 'SEQUENTIAL',
-        success: false,
-        tokenCost: 20000,
-      }));
+      learner.recordExperience(
+        makeExp({
+          modelUsed: 'claude-3-5-haiku',
+          strategyUsed: 'SEQUENTIAL',
+          success: false,
+          tokenCost: 20000,
+        }),
+      );
     }
     const suggestions = learner.getSuggestions();
     expect(suggestions.length).toBeGreaterThan(0);
@@ -88,9 +94,13 @@ describe('MetaLearner', () => {
 
   it('tracks strategy ranking top performers', () => {
     for (let i = 0; i < 3; i++) {
-      learner.recordExperience(makeExp({ strategyUsed: 'PARALLEL', success: true, tokenCost: 5000 }));
+      learner.recordExperience(
+        makeExp({ strategyUsed: 'PARALLEL', success: true, tokenCost: 5000 }),
+      );
     }
-    learner.recordExperience(makeExp({ strategyUsed: 'SEQUENTIAL', success: false, tokenCost: 5000 }));
+    learner.recordExperience(
+      makeExp({ strategyUsed: 'SEQUENTIAL', success: false, tokenCost: 5000 }),
+    );
     const stats = learner.getStats();
     expect(stats.topStrategies.length).toBeGreaterThan(0);
     expect(stats.topStrategies[0].strategyName).toBe('PARALLEL');
@@ -113,16 +123,20 @@ describe('MetaLearner', () => {
   });
 
   it('updates running averages', () => {
-    learner.recordExperience(makeExp({
-      strategyUsed: 'PARALLEL',
-      durationMs: 2000,
-      tokenCost: 10000,
-    }));
-    learner.recordExperience(makeExp({
-      strategyUsed: 'PARALLEL',
-      durationMs: 4000,
-      tokenCost: 20000,
-    }));
+    learner.recordExperience(
+      makeExp({
+        strategyUsed: 'PARALLEL',
+        durationMs: 2000,
+        tokenCost: 10000,
+      }),
+    );
+    learner.recordExperience(
+      makeExp({
+        strategyUsed: 'PARALLEL',
+        durationMs: 4000,
+        tokenCost: 20000,
+      }),
+    );
     const perf = learner.getStrategyPerformance();
     const parallel = perf.get('PARALLEL')!;
     expect(parallel.avgDurationMs).toBe(3000);

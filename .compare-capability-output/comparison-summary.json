@@ -1,0 +1,130 @@
+{
+  "timestamp": "2026-05-31T10:40:24.882Z",
+  "model": "mimo-v2.5",
+  "tasksPerSystem": 6,
+  "focus": "capability (parallel execution, synthesis, tool orchestration)",
+  "opencode": {
+    "successRate": "3/6",
+    "totalTimeSec": "827.2",
+    "avgTimeSec": "137.9",
+    "totalOutputBytes": 28771
+  },
+  "commander": {
+    "successRate": "6/6",
+    "totalTokens": 1185937,
+    "totalTimeSec": "1201.6",
+    "avgTimeSec": "200.3",
+    "totalOutputBytes": 90246,
+    "parallelSubAgents": 3
+  },
+  "perTask": [
+    {
+      "system": "opencode",
+      "task": "parallel-code-review",
+      "category": "parallel",
+      "success": false,
+      "durationSec": "62.2",
+      "tokens": 0,
+      "outputBytes": 0
+    },
+    {
+      "system": "commander",
+      "task": "parallel-code-review",
+      "category": "parallel",
+      "success": true,
+      "durationSec": "160.1",
+      "tokens": 119491,
+      "outputBytes": 2062
+    },
+    {
+      "system": "opencode",
+      "task": "multi-angle-research",
+      "category": "parallel",
+      "success": false,
+      "durationSec": "83.4",
+      "tokens": 0,
+      "outputBytes": 0
+    },
+    {
+      "system": "commander",
+      "task": "multi-angle-research",
+      "category": "parallel",
+      "success": true,
+      "durationSec": "271.6",
+      "tokens": 206581,
+      "outputBytes": 2391
+    },
+    {
+      "system": "opencode",
+      "task": "comparative-analysis",
+      "category": "parallel",
+      "success": true,
+      "durationSec": "346.0",
+      "tokens": 0,
+      "outputBytes": 14455
+    },
+    {
+      "system": "commander",
+      "task": "comparative-analysis",
+      "category": "parallel",
+      "success": true,
+      "durationSec": "276.9",
+      "tokens": 186865,
+      "outputBytes": 71451
+    },
+    {
+      "system": "opencode",
+      "task": "multi-step-workflow",
+      "category": "sequential",
+      "success": true,
+      "durationSec": "105.9",
+      "tokens": 0,
+      "outputBytes": 3626
+    },
+    {
+      "system": "commander",
+      "task": "multi-step-workflow",
+      "category": "sequential",
+      "success": true,
+      "durationSec": "156.2",
+      "tokens": 281656,
+      "outputBytes": 4577
+    },
+    {
+      "system": "opencode",
+      "task": "tool-orchestration",
+      "category": "tool-heavy",
+      "success": true,
+      "durationSec": "172.4",
+      "tokens": 0,
+      "outputBytes": 10690
+    },
+    {
+      "system": "commander",
+      "task": "tool-orchestration",
+      "category": "tool-heavy",
+      "success": true,
+      "durationSec": "200.5",
+      "tokens": 202923,
+      "outputBytes": 4636
+    },
+    {
+      "system": "opencode",
+      "task": "synthesis-quality",
+      "category": "synthesis",
+      "success": false,
+      "durationSec": "57.4",
+      "tokens": 0,
+      "outputBytes": 0
+    },
+    {
+      "system": "commander",
+      "task": "synthesis-quality",
+      "category": "synthesis",
+      "success": true,
+      "durationSec": "136.3",
+      "tokens": 188421,
+      "outputBytes": 5129
+    }
+  ]
+}

@@ -3,7 +3,7 @@
  * Extracted from evolutionaryWorkflowEngine.ts to keep modules under 500 lines.
  */
 
-import type { TaskTreeNode } from '../ultimate/types';
+import type { TaskTreeNode } from './types';
 import type {
   WorkflowNode,
   WorkflowEdge,
@@ -19,12 +19,24 @@ export class WorkflowPopulation {
   fitnessHistory: number[] = [];
   private config: EvolutionConfig;
 
-  get individualsAccessor(): WorkflowDAG[] { return this.individuals; }
-  set individualsAccessor(val: WorkflowDAG[]) { this.individuals = val; }
-  get generationAccessor(): number { return this.generation; }
-  set generationAccessor(val: number) { this.generation = val; }
-  get bestIndividualAccessor(): WorkflowDAG | null { return this.bestIndividual; }
-  set bestIndividualAccessor(val: WorkflowDAG | null) { this.bestIndividual = val; }
+  get individualsAccessor(): WorkflowDAG[] {
+    return this.individuals;
+  }
+  set individualsAccessor(val: WorkflowDAG[]) {
+    this.individuals = val;
+  }
+  get generationAccessor(): number {
+    return this.generation;
+  }
+  set generationAccessor(val: number) {
+    this.generation = val;
+  }
+  get bestIndividualAccessor(): WorkflowDAG | null {
+    return this.bestIndividual;
+  }
+  set bestIndividualAccessor(val: WorkflowDAG | null) {
+    this.bestIndividual = val;
+  }
 
   constructor(config: EvolutionConfig) {
     this.config = config;
@@ -74,7 +86,10 @@ export class WorkflowPopulation {
         try {
           individual.fitness = await evaluateFn(individual);
         } catch (err) {
-          getGlobalLogger().warn('EvolutionaryWorkflowEngine', 'Individual evaluation failed', { error: (err as Error)?.message, individualId: individual.id });
+          getGlobalLogger().warn('EvolutionaryWorkflowEngine', 'Individual evaluation failed', {
+            error: (err as Error)?.message,
+            individualId: individual.id,
+          });
           individual.fitness = 0;
         }
       }
@@ -89,6 +104,8 @@ export class WorkflowPopulation {
       this.bestIndividual = { ...currentBest };
     }
 
+    if (this.fitnessHistory.length > 1000)
+      this.fitnessHistory.splice(0, this.fitnessHistory.length - 1000);
     this.fitnessHistory.push(currentBest.fitness);
 
     // Check for stagnation
@@ -110,7 +127,10 @@ export class WorkflowPopulation {
     const nextGeneration: WorkflowDAG[] = [];
 
     // Elitism — carry over top individuals
-    const eliteCount = Math.max(1, Math.floor(this.config.elitismRate * this.config.populationSize));
+    const eliteCount = Math.max(
+      1,
+      Math.floor(this.config.elitismRate * this.config.populationSize),
+    );
     for (let i = 0; i < eliteCount; i++) {
       nextGeneration.push({ ...this.individuals[i] });
     }
@@ -147,7 +167,7 @@ export class WorkflowPopulation {
   }
 
   getStats() {
-    const fitnesses = this.individuals.map(i => i.fitness);
+    const fitnesses = this.individuals.map((i) => i.fitness);
     return {
       generation: this.generation,
       populationSize: this.individuals.length,
@@ -244,7 +264,7 @@ export class WorkflowPopulation {
   }
 
   private mutateDAG(dag: WorkflowDAG, index: number): WorkflowDAG {
-    const mutated = JSON.parse(JSON.stringify(dag)) as WorkflowDAG;
+    const mutated = structuredClone(dag);
     mutated.id = `dag-mutated-${index}`;
 
     const mutationType = Math.random();
@@ -284,19 +304,20 @@ export class WorkflowPopulation {
         const removeIdx = Math.floor(Math.random() * (mutated.nodes.length - 2)) + 1;
         const removedId = mutated.nodes[removeIdx].id;
         mutated.nodes.splice(removeIdx, 1);
-        mutated.edges = mutated.edges.filter(
-          e => e.from !== removedId && e.to !== removedId
-        );
+        mutated.edges = mutated.edges.filter((e) => e.from !== removedId && e.to !== removedId);
       }
     } else if (mutationType < 0.7) {
       // Change model tier
       const nodeIdx = Math.floor(Math.random() * mutated.nodes.length);
-      mutated.nodes[nodeIdx].modelTier = ['eco', 'standard', 'power'][Math.floor(Math.random() * 3)];
+      mutated.nodes[nodeIdx].modelTier = ['eco', 'standard', 'power'][
+        Math.floor(Math.random() * 3)
+      ];
     } else {
       // Add parallel edge
       if (mutated.nodes.length > 3) {
         const fromIdx = Math.floor(Math.random() * (mutated.nodes.length - 1));
-        const toIdx = fromIdx + 1 + Math.floor(Math.random() * (mutated.nodes.length - fromIdx - 1));
+        const toIdx =
+          fromIdx + 1 + Math.floor(Math.random() * (mutated.nodes.length - fromIdx - 1));
         mutated.edges.push({
           from: mutated.nodes[fromIdx].id,
           to: mutated.nodes[Math.min(toIdx, mutated.nodes.length - 1)].id,
@@ -312,10 +333,12 @@ export class WorkflowPopulation {
     const childNodes: WorkflowNode[] = [];
     const childEdges: WorkflowEdge[] = [];
 
-    const splitPoint = Math.floor(Math.random() * Math.min(parent1.nodes.length, parent2.nodes.length));
+    const splitPoint = Math.floor(
+      Math.random() * Math.min(parent1.nodes.length, parent2.nodes.length),
+    );
 
-    childNodes.push(...parent1.nodes.slice(0, splitPoint).map(n => ({ ...n })));
-    childNodes.push(...parent2.nodes.slice(splitPoint).map(n => ({ ...n })));
+    childNodes.push(...parent1.nodes.slice(0, splitPoint).map((n) => ({ ...n })));
+    childNodes.push(...parent2.nodes.slice(splitPoint).map((n) => ({ ...n })));
 
     // Re-index
     const nodeIdMap = new Map<string, string>();
@@ -355,7 +378,7 @@ export class WorkflowPopulation {
     const tournamentSize = Math.min(3, this.individuals.length);
     const candidates = Array.from(
       { length: tournamentSize },
-      () => this.individuals[Math.floor(Math.random() * this.individuals.length)]
+      () => this.individuals[Math.floor(Math.random() * this.individuals.length)],
     );
     return candidates.sort((a, b) => b.fitness - a.fitness)[0];
   }

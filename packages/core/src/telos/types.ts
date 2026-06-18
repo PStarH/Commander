@@ -30,7 +30,13 @@ export interface CostRecord {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  /** Tokens served from prompt cache (provider-multiplier priced) */
+  cacheReadTokens: number;
+  /** Tokens written to prompt cache (provider-multiplier priced) */
+  cacheWriteTokens: number;
   costUsd: number;
+  /** Money saved by cache reads vs full-price input tokens */
+  cacheSavingsUsd: number;
   timestamp: string;
   agentId: string;
 }
@@ -164,14 +170,14 @@ export interface TELOSConfig {
 
 export const DEFAULT_TELOS_CONFIG: TELOSConfig = {
   defaultBudget: {
-    hardCapTokens: 64000,
-    softCapTokens: 48000,
-    costCapUsd: 2.00,
+    hardCapTokens: 200000, // Raised from 64K — most tasks need more headroom
+    softCapTokens: 150000, // Warn at 75% of hard cap
+    costCapUsd: 5.0, // Raised from $2 — allow more complex tasks
   },
   maxRetries: 2,
   retryDelayMs: 2000,
   enableStreaming: true,
   enableCostTracking: true,
   enableBudgetEnforcement: true,
-  monthlyCostLimitUsd: 50.00,
+  monthlyCostLimitUsd: 50.0,
 };

@@ -11,7 +11,16 @@ interface OpenAICompletionUsage {
 
 interface OpenAIStreamChunk {
   choices: Array<{
-    delta: { content?: string; reasoning_content?: string; tool_calls?: Array<{ index: number; id?: string; type: string; function: { name?: string; arguments?: string } }> };
+    delta: {
+      content?: string;
+      reasoning_content?: string;
+      tool_calls?: Array<{
+        index: number;
+        id?: string;
+        type: string;
+        function: { name?: string; arguments?: string };
+      }>;
+    };
     finish_reason: string | null;
   }>;
   usage?: OpenAICompletionUsage;
@@ -32,11 +41,7 @@ export class DeepSeekProvider implements LLMProvider {
   private baseUrl: string;
   private defaultModel: string;
 
-  constructor(config: {
-    apiKey: string;
-    baseUrl?: string;
-    defaultModel?: string;
-  }) {
+  constructor(config: { apiKey: string; baseUrl?: string; defaultModel?: string }) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://api.deepseek.com';
     this.defaultModel = config.defaultModel ?? 'deepseek-v4-flash';
@@ -46,7 +51,7 @@ export class DeepSeekProvider implements LLMProvider {
     const model = this.defaultModel || request.model;
     const body = this.buildBody(request, model);
 
-    const lastAssistant = [...request.messages].reverse().find(m => m.role === 'assistant');
+    const lastAssistant = [...request.messages].reverse().find((m) => m.role === 'assistant');
     if (lastAssistant?.tool_calls) {
       body.tool_calls = lastAssistant.tool_calls;
     }
@@ -57,7 +62,7 @@ export class DeepSeekProvider implements LLMProvider {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({ ...body, stream: useStreaming }),
     });
@@ -76,7 +81,7 @@ export class DeepSeekProvider implements LLMProvider {
   }
 
   private buildBody(request: LLMRequest, model: string): Record<string, unknown> {
-    const messages = request.messages.map(m => {
+    const messages = request.messages.map((m) => {
       const msg: Record<string, unknown> = { role: m.role, content: m.content };
       if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
       if (m.reasoning_content) msg.reasoning_content = m.reasoning_content;
@@ -146,7 +151,11 @@ export class DeepSeekProvider implements LLMProvider {
               }
             }
           }
-        } catch (e) { getGlobalLogger().debug('DeepSeekProvider', 'Skipping malformed stream chunk', { error: (e as Error)?.message }); }
+        } catch (e) {
+          getGlobalLogger().debug('DeepSeekProvider', 'Skipping malformed stream chunk', {
+            error: (e as Error)?.message,
+          });
+        }
       }
     }
 
@@ -163,18 +172,32 @@ export class DeepSeekProvider implements LLMProvider {
       model,
       usage: tokenUsage,
       finishReason: 'stop',
-      toolCalls: toolCalls.length > 0
-        ? toolCalls.map(tc => ({
-            id: tc.id,
-            name: tc.name,
-            arguments: JSON.parse(tc.arguments || '{}'),
-          }))
-        : undefined,
+      toolCalls:
+        toolCalls.length > 0
+          ? toolCalls.map((tc) => ({
+              id: tc.id,
+              name: tc.name,
+              arguments: JSON.parse(tc.arguments || '{}'),
+            }))
+          : undefined,
       reasoning_content: reasoningContent || undefined,
     };
   }
 
-  private parseResponse(data: { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>; reasoning_content?: string }; finish_reason?: string }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }, model: string): LLMResponse {
+  private parseResponse(
+    data: {
+      choices?: Array<{
+        message?: {
+          content?: string;
+          tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+          reasoning_content?: string;
+        };
+        finish_reason?: string;
+      }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    },
+    model: string,
+  ): LLMResponse {
     const choice = data.choices?.[0];
     const message = choice?.message ?? {};
 
@@ -184,20 +207,26 @@ export class DeepSeekProvider implements LLMProvider {
       totalTokens: data.usage?.total_tokens ?? 0,
     };
 
-    const toolCalls = message.tool_calls?.map((tc: { id: string; function: { name: string; arguments: string } }) => ({
-      id: tc.id,
-      name: tc.function.name,
-      arguments: JSON.parse(tc.function.arguments || '{}'),
-    }));
+    const toolCalls = message.tool_calls?.map(
+      (tc: { id: string; function: { name: string; arguments: string } }) => ({
+        id: tc.id,
+        name: tc.function.name,
+        arguments: JSON.parse(tc.function.arguments || '{}'),
+      }),
+    );
 
     return {
       content: message.content ?? '',
       model,
       usage: tokenUsage,
-      finishReason: choice?.finish_reason === 'stop' ? 'stop'
-        : choice?.finish_reason === 'tool_calls' ? 'tool_calls'
-        : choice?.finish_reason === 'length' ? 'length'
-        : 'stop',
+      finishReason:
+        choice?.finish_reason === 'stop'
+          ? 'stop'
+          : choice?.finish_reason === 'tool_calls'
+            ? 'tool_calls'
+            : choice?.finish_reason === 'length'
+              ? 'length'
+              : 'stop',
       toolCalls,
       reasoning_content: message.reasoning_content,
     };

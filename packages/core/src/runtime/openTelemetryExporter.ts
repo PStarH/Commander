@@ -21,6 +21,7 @@ import * as https from 'https';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
+import { eventToOtelAttrs, spanNameForEvent } from '../observability/otelSemConv';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -61,9 +62,15 @@ function isoToNanos(iso: string): string {
 }
 
 function toOtlpSpan(span: OTelSpan): Record<string, unknown> {
-  const attrs: Array<{ key: string; value: { stringValue?: string; intValue?: string; boolValue?: boolean } }> = [];
+  const attrs: Array<{
+    key: string;
+    value: { stringValue?: string; intValue?: string; boolValue?: boolean };
+  }> = [];
   for (const [key, value] of Object.entries(span.attributes || {})) {
-    const attr: { key: string; value: { stringValue?: string; intValue?: string; boolValue?: boolean } } = { key, value: {} };
+    const attr: {
+      key: string;
+      value: { stringValue?: string; intValue?: string; boolValue?: boolean };
+    } = { key, value: {} };
     if (typeof value === 'string') attr.value = { stringValue: value };
     else if (typeof value === 'boolean') attr.value = { boolValue: value };
     else attr.value = { intValue: String(value) };
@@ -103,7 +110,7 @@ function toOtlpTraceRequest(spans: OTelSpan[], serviceName: string): Record<stri
         scopeSpans: [
           {
             scope: { name: 'commander.execution' },
-            spans: spans.map(s => toOtlpSpan(s)),
+            spans: spans.map((s) => toOtlpSpan(s)),
           },
         ],
       },
@@ -116,6 +123,7 @@ function toOtlpTraceRequest(spans: OTelSpan[], serviceName: string): Record<stri
 export class OpenTelemetryExporter {
   private config: Required<OTelExporterConfig>;
   private queue: OTelSpan[] = [];
+  private static readonly MAX_QUEUE_SIZE = 10000;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private totalExported = 0;
@@ -131,7 +139,8 @@ export class OpenTelemetryExporter {
       fallbackDir: config.fallbackDir || path.join(process.cwd(), '.commander', 'otel_queue'),
     };
     // Try env var override
-    const envEndpoint = typeof process !== 'undefined' ? process.env?.OTEL_EXPORTER_OTLP_ENDPOINT : undefined;
+    const envEndpoint =
+      typeof process !== 'undefined' ? process.env?.OTEL_EXPORTER_OTLP_ENDPOINT : undefined;
     if (envEndpoint) {
       this.config.endpoint = envEndpoint;
     }
@@ -181,10 +190,13 @@ export class OpenTelemetryExporter {
     if (!this.running) {
       getGlobalLogger().warn('OTelExporter', 'Exporter not started — queuing span');
     }
+    if (this.queue.length >= OpenTelemetryExporter.MAX_QUEUE_SIZE) {
+      this.queue.shift(); // drop oldest to prevent unbounded memory growth
+    }
     this.queue.push(span);
     // Send immediately if batch size reached
     if (this.queue.length >= this.config.batchSize) {
-      this.flush().catch(err => {
+      this.flush().catch((err) => {
         getGlobalLogger().error('OTelExporter', 'Batch flush failed', err as Error);
       });
     }
@@ -236,7 +248,9 @@ export class OpenTelemetryExporter {
 
       const req = client.request(options, (res) => {
         let data = '';
-        res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+        res.on('data', (chunk: Buffer) => {
+          data += chunk.toString();
+        });
         res.on('end', () => {
           if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
             resolve();
@@ -247,7 +261,10 @@ export class OpenTelemetryExporter {
       });
 
       req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('OTLP request timeout')); });
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('OTLP request timeout'));
+      });
       req.write(body);
       req.end();
     });
@@ -259,9 +276,15 @@ export class OpenTelemetryExporter {
     try {
       const dir = this.config.fallbackDir;
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const filename = path.join(dir, `spans_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.json`);
+      const filename = path.join(
+        dir,
+        `spans_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.json`,
+      );
       fs.writeFileSync(filename, JSON.stringify(spans));
-      getGlobalLogger().info('OTelExporter', 'Saved spans to disk', { filename, count: spans.length });
+      getGlobalLogger().info('OTelExporter', 'Saved spans to disk', {
+        filename,
+        count: spans.length,
+      });
     } catch (err) {
       getGlobalLogger().error('OTelExporter', 'Failed to save spans to disk', err as Error);
     }
@@ -271,20 +294,35 @@ export class OpenTelemetryExporter {
     const dir = this.config.fallbackDir;
     try {
       if (!fs.existsSync(dir)) return;
-      const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+      const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
       for (const file of files) {
         try {
           const data = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8'));
           if (Array.isArray(data)) {
-            this.queue.push(...data);
+            for (const span of data) {
+              if (this.queue.length < OpenTelemetryExporter.MAX_QUEUE_SIZE) {
+                this.queue.push(span);
+              }
+            }
           }
           fs.unlinkSync(path.join(dir, file));
         } catch {
-          // Skip corrupted files
+          // Delete corrupted files to prevent retry loop on every restart
+          try {
+            fs.unlinkSync(path.join(dir, file));
+          } catch (e) {
+            getGlobalLogger().debug('OTelExporter', 'Failed to delete corrupted file', {
+              error: (e as Error)?.message,
+              file,
+            });
+          }
         }
       }
       if (files.length > 0) {
-        getGlobalLogger().info('OTelExporter', 'Recovered spans from disk', { files: files.length, spans: this.queue.length });
+        getGlobalLogger().info('OTelExporter', 'Recovered spans from disk', {
+          files: files.length,
+          spans: this.queue.length,
+        });
       }
     } catch {
       // Directory may not exist yet
@@ -296,8 +334,9 @@ export class OpenTelemetryExporter {
 
 /**
  * Convert an ExecutionTrace into an array of OTelSpan objects for export.
- * Each TraceEvent becomes one OTelSpan, with the trace-level metadata
- * (agentId, runId) attached as span attributes.
+ * Each TraceEvent becomes one OTelSpan. OTel GenAI attributes are produced
+ * via the shared `eventToOtelAttrs` mapping so HTTP and OTLP exports stay
+ * in sync (P1: OTel GenAI 1.36+ compliance).
  */
 export function executionTraceToOtlpSpans(trace: import('./types').ExecutionTrace): OTelSpan[] {
   const spans: OTelSpan[] = [];
@@ -308,36 +347,28 @@ export function executionTraceToOtlpSpans(trace: import('./types').ExecutionTrac
   if (trace.missionId) baseAttrs['commander.mission_id'] = trace.missionId;
 
   for (const event of trace.events) {
+    const otelAttrs = eventToOtelAttrs(event, {});
     const attrs: Record<string, string | number | boolean> = { ...baseAttrs };
-    if (event.data.modelInfo) {
-      attrs['gen_ai.request.model'] = event.data.modelInfo.model;
-      attrs['gen_ai.request.provider'] = event.data.modelInfo.provider;
-    }
-    if (event.data.tokenUsage) {
-      attrs['gen_ai.usage.prompt_tokens'] = event.data.tokenUsage.promptTokens;
-      attrs['gen_ai.usage.completion_tokens'] = event.data.tokenUsage.completionTokens;
-      attrs['gen_ai.usage.total_tokens'] = event.data.tokenUsage.totalTokens;
-    }
-    if (event.data.error) {
-      attrs['error.message'] = String(event.data.error);
+    for (const [k, v] of Object.entries(otelAttrs)) {
+      if (v === undefined) continue;
+      attrs[k] = typeof v === 'boolean' ? v : (v as string | number);
     }
     if (event.data.stateTransition) {
       attrs['state.from'] = event.data.stateTransition.from;
       attrs['state.to'] = event.data.stateTransition.to;
     }
 
-    const name = eventDataToSpanName(event.data.input, event.data.output, event.type);
-
     const span: OTelSpan = {
       traceId: event.traceId,
       spanId: event.spanId,
       parentSpanId: event.parentSpanId,
-      name,
+      name: spanNameForEvent(event),
       kind: 0,
       startTime: event.timestamp,
       endTime: new Date(new Date(event.timestamp).getTime() + event.durationMs).toISOString(),
       attributes: attrs,
-      status: event.type === 'error' ? { code: 2, message: String(event.data.error ?? '') } : { code: 1 },
+      status:
+        event.type === 'error' ? { code: 2, message: String(event.data.error ?? '') } : { code: 1 },
     };
     spans.push(span);
   }
@@ -347,9 +378,12 @@ export function executionTraceToOtlpSpans(trace: import('./types').ExecutionTrac
 
 function eventDataToSpanName(input: unknown, output: unknown, type: string): string {
   if (type === 'llm_call') {
-    const model = (typeof input === 'object' && input && 'model' in (input as Record<string, unknown>))
-      ? String((input as Record<string, unknown>).model).split('/').pop() ?? 'llm'
-      : 'llm';
+    const model =
+      typeof input === 'object' && input && 'model' in (input as Record<string, unknown>)
+        ? (String((input as Record<string, unknown>).model)
+            .split('/')
+            .pop() ?? 'llm')
+        : 'llm';
     return `llm.${model}`;
   }
   if (type === 'tool_execution') return `tool.${String(input ?? 'unknown')}`;
@@ -362,7 +396,9 @@ import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
 let _otelConfig: OTelExporterConfig | undefined;
 
-const otelExporterSingleton = createTenantAwareSingleton(() => new OpenTelemetryExporter(_otelConfig));
+const otelExporterSingleton = createTenantAwareSingleton(
+  () => new OpenTelemetryExporter(_otelConfig),
+);
 
 export function getOTelExporter(config?: OTelExporterConfig): OpenTelemetryExporter {
   if (config) _otelConfig = config;

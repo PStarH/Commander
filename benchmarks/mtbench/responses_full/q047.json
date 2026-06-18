@@ -1,6 +1,0 @@
-{
-  "cat": "Coding",
-  "question": "Write a function to flatten a nested list.",
-  "answer": "Here are the most common ways to flatten a nested list in Python, depending on whether you want a simple solution or a high-performance solution.\n\n### 1. The Recursive Approach (Best for general use)\nThis is the most \"Pythonic\" and readable way to handle arbitrarily deep nesting (e.g., `[1, [2, [3, 4]]]`).\n\n```python\ndef flatten_list(nested_list):\n    flat_list = []\n    for item in nested_list:\n        if isinstance(item, list):\n            # If the item is a list, recursively call the function\n",
-  "score": 5.0
-}

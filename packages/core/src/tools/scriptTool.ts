@@ -26,22 +26,21 @@ export class ExecuteScriptTool implements Tool {
   definition: ToolDefinition = {
     name: 'execute_script',
     description:
-      'Execute a JavaScript/TypeScript script that can call other tools programmatically. ' +
-      'The script has access to a `tools` object with all available tool functions. ' +
-      'Only console.log output is returned to context — intermediate tool results never ' +
-      'enter the LLM context window. Use this to collapse multi-step tool chains into ' +
-      'a single efficient call.',
+      'Execute a JavaScript script that calls other tools programmatically via `tools.toolName(args)`. ' +
+      'Only console.log output is returned to context. Use to collapse multi-step tool chains into one call.',
     inputSchema: {
       type: 'object',
       properties: {
         script: {
           type: 'string',
-          description: 'JavaScript/TypeScript code to execute. Uses `tools.toolName(args)` to call tools. Use `console.log()` to output results. Example:\n```\nconst content = await tools.file_read({ path: "test.txt" });\nconst search = await tools.web_search({ query: "hello" });\nconsole.log("File size:", content.length);\nconsole.log("Search results:", search);\n```',
+          description:
+            'JavaScript code to execute. Use `tools.toolName(args)` to call tools, `console.log()` for output.',
         },
         tools: {
           type: 'array',
           items: { type: 'string' },
-          description: 'List of tool names to make available in the script (default: all core tools)',
+          description:
+            'List of tool names to make available in the script (default: all core tools)',
         },
         timeout: {
           type: 'number',
@@ -52,14 +51,27 @@ export class ExecuteScriptTool implements Tool {
       required: ['script'],
     },
     examples: [
-      { name: 'execute_script', arguments: { script: 'const files = await tools.file_search({ pattern: "src/**/*.ts" }); console.log("Found", files.length, "files");' } },
-      { name: 'execute_script', arguments: { script: 'const r = await tools.web_search({ query: "AI news" }); await tools.file_write({ path: "result.txt", content: r }); console.log("Saved");', tools: ['web_search', 'file_write'] } },
+      {
+        name: 'execute_script',
+        arguments: {
+          script:
+            'const files = await tools.file_search({ pattern: "src/**/*.ts" }); console.log("Found", files.length, "files");',
+        },
+      },
+      {
+        name: 'execute_script',
+        arguments: {
+          script:
+            'const r = await tools.web_search({ query: "AI news" }); await tools.file_write({ path: "result.txt", content: r }); console.log("Saved");',
+          tools: ['web_search', 'file_write'],
+        },
+      },
     ],
     category: 'code',
   };
 
-  isConcurrencySafe = true;
-  isReadOnly = true;
+  isConcurrencySafe = false; // scripts can mutate shared state
+  isReadOnly = false; // scripts can call write tools like file_write, git, apply_patch
 
   /** Registered tool map — populated by the runtime */
   private toolMap: Map<string, (args: Record<string, unknown>) => Promise<string>> = new Map();
@@ -98,13 +110,17 @@ export class ExecuteScriptTool implements Tool {
     // Safe console that captures output
     const safeConsole = {
       log: (...msgArgs: unknown[]) => {
-        outputLines.push(msgArgs.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' '));
+        outputLines.push(
+          msgArgs
+            .map((a) => (typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)))
+            .join(' '),
+        );
       },
       warn: (...msgArgs: unknown[]) => {
-        outputLines.push('[warn] ' + msgArgs.map(a => String(a)).join(' '));
+        outputLines.push('[warn] ' + msgArgs.map((a) => String(a)).join(' '));
       },
       error: (...msgArgs: unknown[]) => {
-        outputLines.push('[error] ' + msgArgs.map(a => String(a)).join(' '));
+        outputLines.push('[error] ' + msgArgs.map((a) => String(a)).join(' '));
       },
     };
 
@@ -119,15 +135,14 @@ export class ExecuteScriptTool implements Tool {
       // Use timeout via Promise.race
       const executionPromise = this.runScript(wrappedScript, availableTools, safeConsole);
 
-      let timedOut = false;
-      const result = await Promise.race([
-        executionPromise,
+      let timeoutTimer: ReturnType<typeof setTimeout>;
+      await Promise.race([
+        executionPromise.finally(() => clearTimeout(timeoutTimer)),
         new Promise<string>((_, reject) => {
-          const timer = setTimeout(() => {
-            timedOut = true;
+          timeoutTimer = setTimeout(() => {
             reject(new Error(`Script execution timed out after ${timeout}s`));
           }, timeout * 1000);
-          timer.unref();
+          timeoutTimer.unref();
         }),
       ]);
 
@@ -136,9 +151,14 @@ export class ExecuteScriptTool implements Tool {
 
       // Truncate output if too large (preserve head + tail)
       const MAX_OUTPUT = 10000;
-      const finalOutput = output.length > MAX_OUTPUT
-        ? output.slice(0, MAX_OUTPUT / 2) + '\n... [truncated, ' + (output.length - MAX_OUTPUT) + ' chars omitted] ...\n' + output.slice(-MAX_OUTPUT / 2)
-        : output;
+      const finalOutput =
+        output.length > MAX_OUTPUT
+          ? output.slice(0, MAX_OUTPUT / 2) +
+            '\n... [truncated, ' +
+            (output.length - MAX_OUTPUT) +
+            ' chars omitted] ...\n' +
+            output.slice(-MAX_OUTPUT / 2)
+          : output;
 
       return `[Script completed in ${elapsed}ms]\n${finalOutput || '(no console.log output)'}`;
     } catch (err) {
@@ -153,19 +173,178 @@ export class ExecuteScriptTool implements Tool {
   private async runScript(
     script: string,
     tools: Record<string, (args: Record<string, unknown>) => Promise<string>>,
-    console_: { log: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void },
+    console_: {
+      log: (...args: unknown[]) => void;
+      warn: (...args: unknown[]) => void;
+      error: (...args: unknown[]) => void;
+    },
   ): Promise<void> {
-    const sandbox = {
-      tools,
-      console: console_,
-      setTimeout,
-      clearTimeout,
-    };
-    const context = vm.createContext(sandbox);
-    const result = vm.runInNewContext(script, context, { timeout: 120000 });
+    // SECURITY FIX: wrap all sandbox objects in Proxy to prevent prototype chain escape
+    // Node.js vm module is NOT a security sandbox — this.constructor.constructor('return process')()
+    // can escape. We use Proxy to block access to constructor, __proto__, and other prototype paths.
+    const BLOCKED = new Set([
+      'constructor',
+      '__proto__',
+      'prototype',
+      'apply',
+      'call',
+      'bind',
+      '__defineGetter__',
+      '__defineSetter__',
+      '__lookupGetter__',
+      '__lookupSetter__',
+      'toLocaleString',
+      'valueOf',
+      'hasOwnProperty',
+      'isPrototypeOf',
+      'propertyIsEnumerable',
+      'toString',
+    ]);
 
-    if (result instanceof Promise) {
-      await result;
+    /**
+     * Block dangerous prototype-chain properties on a function by defining own
+     * properties that shadow Function.prototype/Object.prototype accessors.
+     * We use a plain wrapper function (not a Proxy) because Node's vm module
+     * cannot reliably resume `await` on Promises returned by Proxy-wrapped
+     * functions across multiple awaits.
+     */
+    function shadowBlockedProperties(fn: (...args: unknown[]) => unknown): void {
+      for (const key of BLOCKED) {
+        try {
+          Object.defineProperty(fn, key, {
+            value: undefined,
+            writable: false,
+            configurable: false,
+          });
+        } catch {
+          // Some properties (e.g. __proto__ on some objects) may be non-configurable;
+          // ignore silently — the Proxy layer still blocks them at the object level.
+        }
+      }
+    }
+
+    /** Minimal Proxy trap that blocks prototype-chain property access (get only).
+     *  Does NOT define has/set/getPrototypeOf/ownKeys traps — those would interfere
+     *  with function calling in VM contexts (async/await and Promise chains). The get
+     *  trap alone is sufficient to block `.constructor`/`.apply`/`.call`/`.bind` on
+     *  tool functions while keeping them fully callable. */
+    const safeProxyHandler: ProxyHandler<object> = {
+      get(obj, prop) {
+        if (typeof prop === 'symbol') return undefined;
+        if (BLOCKED.has(prop)) return undefined;
+        const val = (obj as Record<string, unknown>)[prop];
+        if (typeof val === 'function') {
+          const wrapper = (...args: unknown[]) => {
+            const result = val.apply(obj, args);
+            if (
+              result &&
+              typeof result === 'object' &&
+              !(result instanceof Promise) &&
+              !(typeof (result as Record<string, unknown>).then === 'function')
+            ) {
+              return new Proxy(result as object, safeProxyHandler);
+            }
+            return result;
+          };
+          // Block dangerous properties with own properties instead of a Proxy.
+          // Proxy-wrapped functions break repeated `await` on returned Promises
+          // inside Node's vm.runInNewContext.
+          shadowBlockedProperties(wrapper);
+          return wrapper;
+        }
+        if (val && typeof val === 'object') return new Proxy(val as object, safeProxyHandler);
+        return val;
+      },
+      getPrototypeOf() {
+        return null;
+      },
+      has(_, prop) {
+        return typeof prop === 'string' && !BLOCKED.has(prop);
+      },
+      ownKeys(target) {
+        return Reflect.ownKeys(target).filter((k) => typeof k !== 'string' || !BLOCKED.has(k));
+      },
+    };
+
+    function makeSafeProxy<T extends object>(target: T): T {
+      return new Proxy(target, safeProxyHandler) as unknown as T;
+    }
+
+    /**
+     * Wrap a host function (e.g. setTimeout) so it remains callable but exposes
+     * no prototype-chain escape hatches.
+     */
+    function makeSafeFunction<T extends (...args: unknown[]) => unknown>(fn: T): T {
+      const wrapped = ((...args: unknown[]) => fn(...args)) as unknown as T;
+      shadowBlockedProperties(wrapped as unknown as (...args: unknown[]) => unknown);
+      return wrapped;
+    }
+
+    /**
+     * Wrap the host Promise constructor so async/await works inside the VM while
+     * blocking prototype-chain escape paths (constructor/apply/call/bind/proto).
+     */
+    const safePromise = new Proxy(Promise, {
+      get(target, prop) {
+        if (
+          prop === 'constructor' ||
+          prop === '__proto__' ||
+          prop === 'prototype' ||
+          prop === 'apply' ||
+          prop === 'call' ||
+          prop === 'bind'
+        ) {
+          return undefined;
+        }
+        if (typeof prop === 'symbol') return undefined;
+        return Reflect.get(target, prop);
+      },
+      apply(target, thisArg, args) {
+        return Reflect.apply(target as unknown as (...args: unknown[]) => unknown, thisArg, args);
+      },
+      construct(target, args) {
+        return Reflect.construct(target as unknown as new (...args: unknown[]) => object, args);
+      },
+    });
+
+    // Create a proxy-wrapped tools object
+    const safeTools = makeSafeProxy(tools);
+
+    // Wrap each sandbox value individually to block constructor/__proto__/
+    // prototype chain access on ALL sandbox values — not just at the top level.
+    // This prevents `setTimeout.constructor('return process')()` and similar escapes.
+    const rawSandbox = {
+      tools: safeTools,
+      console: console_,
+      setTimeout: makeSafeFunction(setTimeout as unknown as (...args: unknown[]) => unknown),
+      clearTimeout: makeSafeFunction(clearTimeout as unknown as (...args: unknown[]) => unknown),
+      Promise: safePromise,
+    };
+    // Top-level sandbox Proxy blocks direct access to dangerous globals
+    const sandbox = new Proxy(rawSandbox, {
+      get(target, prop) {
+        if (prop === 'constructor' || prop === '__proto__' || prop === 'prototype')
+          return undefined;
+        if (typeof prop === 'symbol') return undefined;
+        return Reflect.get(target, prop);
+      },
+      has(target, prop) {
+        if (prop === 'constructor' || prop === '__proto__' || prop === 'prototype') return false;
+        return Reflect.has(target, prop);
+      },
+      ownKeys(target) {
+        return Reflect.ownKeys(target).filter(
+          (k) => typeof k !== 'string' || !['constructor', '__proto__', 'prototype'].includes(k),
+        );
+      },
+    });
+    const context = vm.createContext(sandbox, { name: 'script-sandbox' });
+    const result = vm.runInNewContext(script, context, {
+      timeout: 120000,
+    });
+
+    if (result && typeof (result as { then?: unknown }).then === 'function') {
+      (await result) as Promise<unknown>;
     }
   }
 }

@@ -1,6 +1,0 @@
-{
-  "cat": "STEM",
-  "question": "What is the difference between HTTP and HTTPS?",
-  "answer": "The main difference between HTTP and HTTPS is **security**.\n\n**HTTPS** (HyperText Transfer Protocol **Secure**) is simply HTTP with an added layer of encryption.\n\nHere is a breakdown of the specific differences:\n\n### 1. Encryption (The \"S\")\n*   **HTTP:** Data is sent in **plain text**. If a hacker intercepts the data traveling between your computer and the website, they can read it easily (passwords, credit card numbers, messages).\n*   **HTTPS:** Data is **encrypted** (scrambled) using protocols",
-  "score": 7.0
-}

@@ -1,12 +1,5 @@
-import type {
-  EvolutionInsight,
-  ExecutionExperience,
-  FailureCategory,
-} from '../runtime/types';
-import type {
-  UltimateOrchestratorConfig,
-  QualityGateConfig,
-} from '../ultimate/types';
+import type { EvolutionInsight, ExecutionExperience, FailureCategory } from '../runtime/types';
+import type { UltimateOrchestratorConfig, QualityGateConfig } from '../ultimate/types';
 import { getMetaLearner } from './metaLearner';
 import { getGlobalLogger } from '../logging';
 
@@ -74,7 +67,8 @@ const MUTATION_RULES: Record<FailureCategory, MutationRule[]> = {
       mode: 'delta',
       value: 0.9,
       minConfidence: 0.5,
-      description: 'Tighten hallucination gate threshold from {old} to {new} after detecting hallucination failures',
+      description:
+        'Tighten hallucination gate threshold from {old} to {new} after detecting hallucination failures',
       condition: (v) => typeof v === 'number' && v > 0.5,
     },
   ],
@@ -169,7 +163,8 @@ const MUTATION_RULES: Record<FailureCategory, MutationRule[]> = {
       mode: 'delta',
       value: 0.95,
       minConfidence: 0.5,
-      description: 'Tighten accuracy gate threshold from {old} to {new} after quality gate failures',
+      description:
+        'Tighten accuracy gate threshold from {old} to {new} after quality gate failures',
       condition: (v) => typeof v === 'number' && v > 0.3,
     },
   ],
@@ -180,8 +175,63 @@ const MUTATION_RULES: Record<FailureCategory, MutationRule[]> = {
       mode: 'delta',
       value: 0.8,
       minConfidence: 0.5,
-      description: 'Reduce parallel agents from {old} to {new} after tool misuse to reduce tool contention',
+      description:
+        'Reduce parallel agents from {old} to {new} after tool misuse to reduce tool contention',
       condition: (v) => typeof v === 'number' && v > 2,
+    },
+  ],
+  rate_limit: [
+    {
+      domain: 'runtime',
+      configPath: 'maxParallelSubAgents',
+      mode: 'delta',
+      value: 0.5,
+      minConfidence: 0.5,
+      description: 'Reduce parallel agents from {old} to {new} after rate limiting',
+      condition: (v) => typeof v === 'number' && v > 1,
+    },
+  ],
+  authentication: [
+    {
+      domain: 'model_tier',
+      configPath: 'modelTierMapping.MODERATE',
+      mode: 'absolute',
+      value: 'power',
+      minConfidence: 0.5,
+      description:
+        'Upgrade model tier from {old} to {new} after auth failures (may need stronger model)',
+      condition: (v) => v !== 'power' && v !== 'consensus',
+    },
+  ],
+  resource_exhaustion: [
+    {
+      domain: 'thinking_budget',
+      configPath: 'defaultThinkingBudget.maxThinkingTokens',
+      mode: 'delta',
+      value: 0.6,
+      minConfidence: 0.5,
+      description: 'Reduce thinking budget from {old} to {new} after resource exhaustion',
+      condition: (v) => typeof v === 'number' && v > 512,
+    },
+    {
+      domain: 'runtime',
+      configPath: 'maxParallelSubAgents',
+      mode: 'delta',
+      value: 0.5,
+      minConfidence: 0.5,
+      description: 'Reduce parallel agents from {old} to {new} after resource exhaustion',
+      condition: (v) => typeof v === 'number' && v > 1,
+    },
+  ],
+  data_validation: [
+    {
+      domain: 'quality_gate',
+      configPath: 'qualityGates.accuracy.threshold',
+      mode: 'delta',
+      value: 1.05,
+      minConfidence: 0.5,
+      description: 'Tighten accuracy gate from {old} to {new} after data validation failures',
+      condition: (v) => typeof v === 'number' && v < 0.95,
     },
   ],
   unclassified: [],
@@ -225,7 +275,10 @@ function setConfigValue(config: Record<string, unknown>, path: string, value: un
  * Resolve a path that may reference nested array fields (e.g. "qualityGates.hallucination.threshold").
  * qualityGates is a QualityGateConfig[] array, so we need to find the right entry by name.
  */
-function resolvePath(config: Record<string, unknown>, path: string): { parent: Record<string, unknown>; key: string } | null {
+function resolvePath(
+  config: Record<string, unknown>,
+  path: string,
+): { parent: Record<string, unknown>; key: string } | null {
   const parts = path.split('.');
 
   // Handle qualityGates.{name}.{field} — look up by name in the array
@@ -258,8 +311,44 @@ let evolverCounter = 0;
 /** Minimum interval between evolution cycles (ms) to prevent over-tuning */
 const EVOLVER_COOLDOWN_MS = 60_000;
 
+// ============================================================================
+// Canary Config Deployment
+// ============================================================================
+
+export interface CanaryDeployment {
+  /** Pending mutations waiting for verification */
+  mutations: EvolverMutation[];
+  /** Fraction of runs that use canary config (0.0-1.0) */
+  rolloutFraction: number;
+  /** Run IDs that participated in the canary */
+  runIds: string[];
+  /** When the canary was created */
+  startedAt: number;
+  /** Minimum canary runs before auto-decision */
+  minRuns: number;
+  /** Accumulated verdicts from canary runs */
+  verdicts: Array<{ runId: string; success: boolean; timestamp: string }>;
+  /** Whether the canary has been decided (promoted or rejected) */
+  decided: boolean;
+}
+
+export interface CanaryStatus {
+  active: boolean;
+  mutations: number;
+  runCount: number;
+  rolloutFraction: number;
+  startedAt: number;
+  successRate: number;
+  decided: boolean;
+  pendingRuns: number;
+}
+
 export class EvolverAgent {
   private lastMutationTime = 0;
+
+  // ── Canary Config Deployment ──────────────────────────────────────────
+  private currentCanary: CanaryDeployment | null = null;
+  private defaultRolloutFraction = 0.1; // 10% of runs use canary config
 
   /** Returns ms until the cooldown expires (0 = ready) */
   get cooldownRemaining(): number {
@@ -271,10 +360,7 @@ export class EvolverAgent {
    * Given trajectory analysis insights, produce config mutations tuned to the
    * observed failure patterns. Does NOT mutate config — just returns the plan.
    */
-  evolve(
-    insights: EvolutionInsight[],
-    config: UltimateOrchestratorConfig,
-  ): EvolverMutation[] {
+  evolve(insights: EvolutionInsight[], config: UltimateOrchestratorConfig): EvolverMutation[] {
     const mutations: EvolverMutation[] = [];
 
     for (const insight of insights) {
@@ -298,7 +384,11 @@ export class EvolverAgent {
 
         // Compute new value
         let newVal: unknown;
-        if (rule.mode === 'delta' && typeof currentVal === 'number' && typeof rule.value === 'number') {
+        if (
+          rule.mode === 'delta' &&
+          typeof currentVal === 'number' &&
+          typeof rule.value === 'number'
+        ) {
           newVal = Math.round(currentVal * rule.value * 100) / 100;
         } else {
           newVal = rule.value;
@@ -332,10 +422,7 @@ export class EvolverAgent {
    * Apply mutations to the config object. Mutations are idempotent — applying
    * the same mutation twice is a no-op (oldValue already matches newValue).
    */
-  applyMutations(
-    config: UltimateOrchestratorConfig,
-    mutations: EvolverMutation[],
-  ): number {
+  applyMutations(config: UltimateOrchestratorConfig, mutations: EvolverMutation[]): number {
     let applied = 0;
     for (const mutation of mutations) {
       const resolved = resolvePath(config, mutation.configPath);
@@ -356,10 +443,7 @@ export class EvolverAgent {
   /**
    * Revert mutations, restoring config to old values.
    */
-  revertMutations(
-    config: UltimateOrchestratorConfig,
-    mutations: EvolverMutation[],
-  ): number {
+  revertMutations(config: UltimateOrchestratorConfig, mutations: EvolverMutation[]): number {
     let reverted = 0;
     for (const mutation of mutations) {
       const resolved = resolvePath(config, mutation.configPath);
@@ -429,8 +513,12 @@ export class EvolverAgent {
     getMessageBus().publish('system.alert', 'evolver-agent', {
       type: 'evolution_cycle',
       mutations: mutations.length,
-      applied,
-      details: mutations.map(m => ({
+      applied: 0,
+      canary:
+        mutations.length > 0
+          ? `pending (${this.defaultRolloutFraction * 100}% rollout)`
+          : undefined,
+      details: mutations.map((m) => ({
         id: m.id,
         domain: m.domain,
         description: m.description,
@@ -439,27 +527,199 @@ export class EvolverAgent {
       })),
     });
 
+    // Store as canary deployment instead of applying globally
+    if (mutations.length > 0) {
+      this.startCanary(mutations);
+    }
+
     return {
       mutations,
-      applied,
+      applied: 0, // Not applied globally — deployed as canary
       reverted: 0,
       cycleId: `evolve_${Date.now()}`,
     };
   }
+
+  // ========================================================================
+  // Canary Config Deployment API
+  // ========================================================================
+
+  /**
+   * Check whether this run should use the canary config.
+   * Returns true for a random fraction of runs when a canary is active.
+   */
+  shouldUseCanary(): boolean {
+    if (!this.currentCanary) return false;
+    // Active (undecided): random 10% rollout. Promoted: 100% rollout.
+    // Rejected canaries have currentCanary = null, so they're blocked above.
+    return Math.random() < this.currentCanary.rolloutFraction;
+  }
+
+  /**
+   * Get the pending canary mutations that should be applied.
+   * Returns null if no canary is active or run shouldn't use canary.
+   */
+  getCanaryMutations(): EvolverMutation[] | null {
+    if (!this.currentCanary || this.currentCanary.decided) return null;
+    return [...this.currentCanary.mutations];
+  }
+
+  /**
+   * Record the outcome of a canary run.
+   * Accumulates verdicts and auto-decides when enough data is collected.
+   */
+  recordCanaryVerdict(runId: string, success: boolean): void {
+    if (!this.currentCanary || this.currentCanary.decided) return;
+
+    // Avoid double-counting
+    if (this.currentCanary.runIds.includes(runId)) return;
+
+    this.currentCanary.runIds.push(runId);
+    this.currentCanary.verdicts.push({
+      runId,
+      success,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Auto-decide when we have enough runs
+    if (this.currentCanary.runIds.length >= this.currentCanary.minRuns) {
+      const successRate =
+        this.currentCanary.verdicts.filter((v) => v.success).length /
+        this.currentCanary.verdicts.length;
+
+      const ml = getMetaLearner();
+      const recentVerdicts = ml
+        .getVerdicts()
+        .filter((v) => this.currentCanary!.mutations.some((m) => m.id === v.predictionId));
+
+      // Promote if success rate is good AND predictions are confirmed
+      const predictionsPositive =
+        recentVerdicts.length === 0 ||
+        recentVerdicts.filter((v) => v.netImpact === 'positive').length >=
+          recentVerdicts.length * 0.5;
+
+      if (successRate >= 0.5 && predictionsPositive) {
+        this.promoteCanary();
+      } else {
+        this.rejectCanary();
+      }
+    }
+  }
+
+  /**
+   * Promote the canary — apply to 100% of subsequent runs.
+   */
+  promoteCanary(): void {
+    if (!this.currentCanary) return;
+    this.currentCanary.decided = true;
+    // After promotion, set rollout to 100% so all future runs use it
+    this.currentCanary.rolloutFraction = 1.0;
+
+    getMessageBus().publish('system.alert', 'evolver-agent', {
+      type: 'canary_promoted',
+      mutations: this.currentCanary.mutations.length,
+      runs: this.currentCanary.runIds.length,
+      successRate:
+        this.currentCanary.verdicts.length > 0
+          ? this.currentCanary.verdicts.filter((v) => v.success).length /
+            this.currentCanary.verdicts.length
+          : 0,
+    });
+  }
+
+  /**
+   * Reject the canary — discard pending mutations.
+   */
+  rejectCanary(): void {
+    if (!this.currentCanary) return;
+    const count = this.currentCanary.mutations.length;
+    this.currentCanary = null;
+
+    getMessageBus().publish('system.alert', 'evolver-agent', {
+      type: 'canary_rejected',
+      mutations: count,
+      reason: 'success_rate_below_threshold',
+    });
+  }
+
+  /**
+   * Get current canary deployment status.
+   */
+  getCanaryStatus(): CanaryStatus {
+    if (!this.currentCanary) {
+      return {
+        active: false,
+        mutations: 0,
+        runCount: 0,
+        rolloutFraction: 0,
+        startedAt: 0,
+        successRate: 0,
+        decided: false,
+        pendingRuns: 0,
+      };
+    }
+
+    const successRate =
+      this.currentCanary.verdicts.length > 0
+        ? this.currentCanary.verdicts.filter((v) => v.success).length /
+          this.currentCanary.verdicts.length
+        : 0;
+
+    return {
+      active: true,
+      mutations: this.currentCanary.mutations.length,
+      runCount: this.currentCanary.runIds.length,
+      rolloutFraction: this.currentCanary.rolloutFraction,
+      startedAt: this.currentCanary.startedAt,
+      successRate,
+      decided: this.currentCanary.decided,
+      pendingRuns: Math.max(0, this.currentCanary.minRuns - this.currentCanary.runIds.length),
+    };
+  }
+
+  /**
+   * Force-promote or force-reject a canary (admin action).
+   */
+  forceCanaryDecision(promote: boolean): void {
+    if (!this.currentCanary || this.currentCanary.decided) return;
+    if (promote) {
+      this.promoteCanary();
+    } else {
+      this.rejectCanary();
+    }
+  }
+
+  // ── Internal canary helpers ─────────────────────────────────────────
+
+  private startCanary(mutations: EvolverMutation[]): void {
+    // If there's an existing undecided canary, merge the mutations
+    if (this.currentCanary && !this.currentCanary.decided) {
+      this.currentCanary.mutations.push(...mutations);
+      return;
+    }
+
+    this.currentCanary = {
+      mutations: [...mutations],
+      rolloutFraction: this.defaultRolloutFraction,
+      runIds: [],
+      startedAt: Date.now(),
+      minRuns: 5,
+      verdicts: [],
+      decided: false,
+    };
+  }
 }
 
-// Singleton
-let activeEvolver: EvolverAgent | null = null;
+import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const evolverSingleton = createTenantAwareSingleton(() => new EvolverAgent());
 
 export function getEvolverAgent(): EvolverAgent {
-  if (!activeEvolver) {
-    activeEvolver = new EvolverAgent();
-  }
-  return activeEvolver;
+  return evolverSingleton.get();
 }
 
 export function resetEvolverAgent(): void {
-  activeEvolver = null;
+  evolverSingleton.reset();
 }
 
 // Circular-safe import (messageBus is imported at the bottom to avoid circular deps)

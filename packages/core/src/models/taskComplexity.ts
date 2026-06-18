@@ -106,7 +106,7 @@ function approximateTreewidth(graph: DependencyGraph): number {
 }
 
 function calculateDependencyDepth(taskId: string, allTasks: TaskNode[]): number {
-  const task = allTasks.find(t => t.id === taskId);
+  const task = allTasks.find((t) => t.id === taskId);
   if (!task || task.dependencies.length === 0) {
     return 0;
   }
@@ -131,7 +131,7 @@ function classifyComplexityLevel(
   treewidth: number,
   graphSize: number,
   dependencyDepth: number,
-  opts: Required<TaskComplexityOptions>
+  opts: Required<TaskComplexityOptions>,
 ): TaskComplexity['level'] {
   const treewidthScore = treewidth * 2;
   const graphScore = graphSize > 10 ? 2 : graphSize > 5 ? 1 : 0;
@@ -151,7 +151,7 @@ function classifyComplexityLevel(
 export function measureTaskComplexity(
   task: TaskNode,
   allTasks: TaskNode[],
-  options: TaskComplexityOptions = {}
+  options: TaskComplexityOptions = {},
 ): TaskComplexity {
   const opts = { ...DEFAULT_COMPLEXITY_OPTIONS, ...options };
 
@@ -176,7 +176,7 @@ export function measureTaskComplexity(
  */
 export function shouldDecompose(
   complexity: TaskComplexity,
-  options: TaskComplexityOptions = {}
+  options: TaskComplexityOptions = {},
 ): { decompose: boolean; reason: string } {
   const opts = { ...DEFAULT_COMPLEXITY_OPTIONS, ...options };
 
@@ -209,9 +209,8 @@ export function shouldDecompose(
   }
 
   if (complexity.level === 'MEDIUM') {
-    const benefitRatio = complexity.estimatedSubtasks > 0
-      ? complexity.graphSize / complexity.estimatedSubtasks
-      : 0;
+    const benefitRatio =
+      complexity.estimatedSubtasks > 0 ? complexity.graphSize / complexity.estimatedSubtasks : 0;
 
     if (benefitRatio > 2) {
       return {
@@ -310,12 +309,13 @@ function extractAllTasks(context: CommanderRunContextV2): TaskNode[] {
  */
 export function getMissionDecompositionRecommendation(
   mission: SlimMissionCard,
-  context: CommanderRunContextV2
+  context: CommanderRunContextV2,
 ): { decompose: boolean; complexity: TaskComplexity; reason: string } {
   const taskNode: TaskNode = {
     id: mission.id,
-    inputCount: context.slimSnapshot.missionBoard.running.length +
-                context.slimSnapshot.missionBoard.blocked.length,
+    inputCount:
+      context.slimSnapshot.missionBoard.running.length +
+      context.slimSnapshot.missionBoard.blocked.length,
     outputCount: 1,
     cognitiveLoad: estimateCognitiveLoad(mission),
     requiresExternalResources: mission.governanceMode === 'MANUAL',

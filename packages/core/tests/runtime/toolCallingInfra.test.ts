@@ -7,9 +7,18 @@ import { ToolPlanner } from '../../src/runtime/toolPlanner';
 import {
   ToolAvailabilityManager,
   evaluate,
-  allOf, anyOf, not, always, never,
-  earlySteps, budgetRelaxed, budgetNotCritical, taskType,
-  notYetUsed, requiresTool, createDefaultRules,
+  allOf,
+  anyOf,
+  not,
+  always,
+  never,
+  earlySteps,
+  budgetRelaxed,
+  budgetNotCritical,
+  taskType,
+  notYetUsed,
+  requiresTool,
+  createDefaultRules,
 } from '../../src/runtime/toolAvailability';
 import type { AvailabilityContext } from '../../src/runtime/toolAvailability';
 import type { ToolCall, Tool, ToolResult } from '../../src/runtime/types';
@@ -54,29 +63,29 @@ function makeContext(overrides?: Partial<AvailabilityContext>): AvailabilityCont
 // ============================================================================
 
 describe('ToolResultCache', () => {
-  it('returns undefined when disabled', () => {
+  it('returns undefined when disabled', async () => {
     const cache = new ToolResultCache({ enabled: false });
     const tc = makeToolCall('web_search', { query: 'test' });
-    cache.set(tc, makeToolResult('hello'));
+    await cache.set(tc, makeToolResult('hello'));
     assert.equal(cache.get(tc), undefined);
   });
 
-  it('caches and returns results when enabled', () => {
+  it('caches and returns results when enabled', async () => {
     const cache = new ToolResultCache({ enabled: true });
     const tc = makeToolCall('web_search', { query: 'test' });
     const result = makeToolResult('search results');
-    cache.set(tc, result);
+    await cache.set(tc, result);
     const cached = cache.get(tc);
     assert.ok(cached);
     assert.equal(cached!.output, 'search results');
     assert.equal(cached!.durationMs, 0); // cached = zero cost
   });
 
-  it('misses on different args', () => {
+  it('misses on different args', async () => {
     const cache = new ToolResultCache({ enabled: true });
     const tc1 = makeToolCall('web_search', { query: 'foo' });
     const tc2 = makeToolCall('web_search', { query: 'bar' });
-    cache.set(tc1, makeToolResult('foo results'));
+    await cache.set(tc1, makeToolResult('foo results'));
     assert.equal(cache.get(tc2), undefined);
   });
 
@@ -88,26 +97,26 @@ describe('ToolResultCache', () => {
     assert.equal(key1, key2);
   });
 
-  it('never caches side-effect tools', () => {
+  it('never caches side-effect tools', async () => {
     const cache = new ToolResultCache({ enabled: true });
     const tc = makeToolCall('shell_execute', { cmd: 'ls' });
-    cache.set(tc, makeToolResult('file1\nfile2'));
+    await cache.set(tc, makeToolResult('file1\nfile2'));
     assert.equal(cache.get(tc), undefined);
   });
 
-  it('never caches errors', () => {
+  it('never caches errors', async () => {
     const cache = new ToolResultCache({ enabled: true });
     const tc = makeToolCall('web_fetch', { url: 'http://example.com' });
-    cache.set(tc, makeToolResult('', 'Connection failed'));
+    await cache.set(tc, makeToolResult('', 'Connection failed'));
     assert.equal(cache.get(tc), undefined);
   });
 
   it('respects TTL expiry', async () => {
     const cache = new ToolResultCache({ enabled: true, defaultTtlMs: 50 });
     const tc = makeToolCall('web_search', { query: 'test' });
-    cache.set(tc, makeToolResult('results'));
+    await cache.set(tc, makeToolResult('results'));
     assert.ok(cache.get(tc));
-    await new Promise(r => setTimeout(r, 80));
+    await new Promise((r) => setTimeout(r, 80));
     assert.equal(cache.get(tc), undefined);
   });
 
@@ -116,43 +125,43 @@ describe('ToolResultCache', () => {
     const tc1 = makeToolCall('web_search', { query: 'a' });
     const tc2 = makeToolCall('web_search', { query: 'b' });
     const tc3 = makeToolCall('web_search', { query: 'c' });
-    cache.set(tc1, makeToolResult('a'));
-    await new Promise(r => setTimeout(r, 5));
-    cache.set(tc2, makeToolResult('b'));
-    await new Promise(r => setTimeout(r, 5));
+    await cache.set(tc1, makeToolResult('a'));
+    await new Promise((r) => setTimeout(r, 5));
+    await cache.set(tc2, makeToolResult('b'));
+    await new Promise((r) => setTimeout(r, 5));
     cache.get(tc1); // access tc1 to make it more recent
-    await new Promise(r => setTimeout(r, 5));
-    cache.set(tc3, makeToolResult('c')); // should evict tc2 (oldest access)
+    await new Promise((r) => setTimeout(r, 5));
+    await cache.set(tc3, makeToolResult('c')); // should evict tc2 (oldest access)
     assert.ok(cache.get(tc1));
     assert.equal(cache.get(tc2), undefined);
     assert.ok(cache.get(tc3));
   });
 
-  it('invalidates by tool name', () => {
+  it('invalidates by tool name', async () => {
     const cache = new ToolResultCache({ enabled: true });
-    cache.set(makeToolCall('web_search', { query: 'a' }), makeToolResult('a'));
-    cache.set(makeToolCall('web_search', { query: 'b' }), makeToolResult('b'));
-    cache.set(makeToolCall('web_fetch', { url: 'http://c.com' }), makeToolResult('c'));
+    await cache.set(makeToolCall('web_search', { query: 'a' }), makeToolResult('a'));
+    await cache.set(makeToolCall('web_search', { query: 'b' }), makeToolResult('b'));
+    await cache.set(makeToolCall('web_fetch', { url: 'http://c.com' }), makeToolResult('c'));
     const removed = cache.invalidateTool('web_search');
     assert.equal(removed, 2);
     const stats = cache.getStats();
     assert.equal(stats.totalEntries, 1);
   });
 
-  it('invalidates by pattern', () => {
+  it('invalidates by pattern', async () => {
     const cache = new ToolResultCache({ enabled: true });
-    cache.set(makeToolCall('web_search', { query: 'a' }), makeToolResult('a'));
-    cache.set(makeToolCall('web_fetch', { url: 'http://b.com' }), makeToolResult('b'));
-    cache.set(makeToolCall('memory_recall', { query: 'c' }), makeToolResult('c'));
+    await cache.set(makeToolCall('web_search', { query: 'a' }), makeToolResult('a'));
+    await cache.set(makeToolCall('web_fetch', { url: 'http://b.com' }), makeToolResult('b'));
+    await cache.set(makeToolCall('memory_recall', { query: 'c' }), makeToolResult('c'));
     cache.invalidatePattern('web_*');
     const stats = cache.getStats();
     assert.equal(stats.totalEntries, 1);
   });
 
-  it('tracks stats correctly', () => {
+  it('tracks stats correctly', async () => {
     const cache = new ToolResultCache({ enabled: true });
     const tc = makeToolCall('web_search', { query: 'test' });
-    cache.set(tc, makeToolResult('results'));
+    await cache.set(tc, makeToolResult('results'));
     cache.get(tc); // hit
     cache.get(makeToolCall('web_search', { query: 'miss' })); // miss
     const stats = cache.getStats();
@@ -163,9 +172,9 @@ describe('ToolResultCache', () => {
 
   it('prunes expired entries', async () => {
     const cache = new ToolResultCache({ enabled: true, defaultTtlMs: 30 });
-    cache.set(makeToolCall('web_search', { query: 'a' }), makeToolResult('a'));
-    cache.set(makeToolCall('web_search', { query: 'b' }), makeToolResult('b'));
-    await new Promise(r => setTimeout(r, 60));
+    await cache.set(makeToolCall('web_search', { query: 'a' }), makeToolResult('a'));
+    await cache.set(makeToolCall('web_search', { query: 'b' }), makeToolResult('b'));
+    await new Promise((r) => setTimeout(r, 60));
     const pruned = cache.prune();
     assert.equal(pruned, 2);
     assert.equal(cache.getStats().totalEntries, 0);
@@ -303,7 +312,7 @@ describe('ToolOrchestrator', () => {
     );
     const result = await orch.execute(plan, tools, { runId: 'r1', agentId: 'a1', stepNumber: 0 });
     assert.equal(result.results.length, 2);
-    assert.ok(result.results.every(r => r.output.startsWith('result:')));
+    assert.ok(result.results.every((r) => r.output.startsWith('result:')));
   });
 
   it('handles tool not found gracefully', async () => {
@@ -323,7 +332,9 @@ describe('ToolOrchestrator', () => {
     const tools = new Map<string, Tool>();
     tools.set('fail_tool', {
       definition: { name: 'fail_tool', description: 'fails', inputSchema: {} },
-      execute: async () => { throw new Error('always fails'); },
+      execute: async () => {
+        throw new Error('always fails');
+      },
     });
 
     // First two calls fail and record in circuit breaker
@@ -347,7 +358,10 @@ describe('ToolOrchestrator', () => {
     let fail = true;
     tools.set('flaky', {
       definition: { name: 'flaky', description: 'flaky', inputSchema: {} },
-      execute: async () => { if (fail) throw new Error('fail'); return 'ok'; },
+      execute: async () => {
+        if (fail) throw new Error('fail');
+        return 'ok';
+      },
     });
 
     // Fail once
@@ -416,7 +430,10 @@ describe('ToolAvailability', () => {
 
     it('evaluates taskType', () => {
       assert.equal(evaluate(taskType('code', 'analysis'), makeContext({ taskType: 'code' })), true);
-      assert.equal(evaluate(taskType('code', 'analysis'), makeContext({ taskType: 'search' })), false);
+      assert.equal(
+        evaluate(taskType('code', 'analysis'), makeContext({ taskType: 'search' })),
+        false,
+      );
     });
 
     it('evaluates notYetUsed', () => {
@@ -425,7 +442,10 @@ describe('ToolAvailability', () => {
     });
 
     it('evaluates requiresTool', () => {
-      assert.equal(evaluate(requiresTool('web_search'), makeContext({ toolsUsed: ['web_search'] })), true);
+      assert.equal(
+        evaluate(requiresTool('web_search'), makeContext({ toolsUsed: ['web_search'] })),
+        true,
+      );
       assert.equal(evaluate(requiresTool('web_search'), makeContext({ toolsUsed: [] })), false);
     });
   });

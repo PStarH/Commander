@@ -11,8 +11,13 @@
  * - Result summarization (not full transcript)
  * - Hard depth limit of 1 (sub-agents cannot spawn sub-agents)
  */
-import type { Tool, ToolDefinition, AgentExecutionContext, AgentExecutionResult } from '../runtime/types';
-import type { AgentRuntime } from '../runtime/agentRuntime';
+import type {
+  Tool,
+  ToolDefinition,
+  AgentExecutionContext,
+  AgentExecutionResult,
+} from '../runtime/types';
+import type { AgentRuntimeInterface } from '../runtime';
 import { getHookManager } from '../pluginManager';
 import { getGlobalLogger } from '../logging';
 
@@ -30,22 +35,31 @@ export interface AgentDef {
 
 const DEFINITION: ToolDefinition = {
   name: 'agent',
-  description: 'Spawn a sub-agent to handle a focused subtask independently. The sub-agent gets its own clean context and returns a summary. Use this for research, exploration, or any task that can run in isolation.',
+  description:
+    'Spawn a sub-agent to handle a focused subtask independently. The sub-agent gets its own clean context and returns a summary. Use this for research, exploration, or any task that can run in isolation.',
   inputSchema: {
     type: 'object',
     properties: {
       task: { type: 'string', description: 'The task for the sub-agent to complete' },
       name: { type: 'string', description: 'Optional agent name/type to use' },
       tools: {
-        type: 'array', items: { type: 'string' },
-        description: 'Tools the sub-agent may use. Default: browser_search, python_execute, file_read',
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'Tools the sub-agent may use. Default: browser_search, python_execute, file_read',
       },
     },
     required: ['task'],
   },
   examples: [
     { name: 'agent', arguments: { task: 'Research the latest Python 3.13 features' } },
-    { name: 'agent', arguments: { task: 'Analyze the code in src/ for potential bugs', tools: ['file_read', 'code_search'] } },
+    {
+      name: 'agent',
+      arguments: {
+        task: 'Analyze the code in src/ for potential bugs',
+        tools: ['file_read', 'code_search'],
+      },
+    },
   ],
   category: 'development',
 };
@@ -57,10 +71,10 @@ export class AgentTool implements Tool {
   timeout = 180000;
   maxOutputSize = 50000;
 
-  private runtime: AgentRuntime;
+  private runtime: AgentRuntimeInterface;
   private registeredAgents: Map<string, AgentDef> = new Map();
 
-  constructor(runtime: AgentRuntime) {
+  constructor(runtime: AgentRuntimeInterface) {
     this.runtime = runtime;
   }
 
@@ -79,9 +93,7 @@ export class AgentTool implements Tool {
 
     // Look up agent definition
     const agentDef = this.registeredAgents.get(name);
-    const goal = agentDef
-      ? `${agentDef.prompt}\n\nTask: ${task}`
-      : task;
+    const goal = agentDef ? `${agentDef.prompt}\n\nTask: ${task}` : task;
 
     // Resolve available tools: intersect agent definition's tools, caller's requested tools,
     // and the agent's hard allowedTools whitelist. This ensures sub-agents cannot escalate
@@ -92,7 +104,7 @@ export class AgentTool implements Tool {
 
     // Apply hard whitelist: if allowedTools is set, intersect with it
     if (allowedTools && allowedTools.length > 0) {
-      availableTools = availableTools.filter(t => allowedTools.includes(t));
+      availableTools = availableTools.filter((t) => allowedTools.includes(t));
       // Ensure there's at least one tool, or fall back to a safe default
       if (availableTools.length === 0) {
         availableTools = allowedTools;
@@ -111,12 +123,18 @@ export class AgentTool implements Tool {
 
     try {
       // ── Hook: onSessionFork ──
-      getHookManager().fireOnSessionFork({
-        parentRunId: 'subagent-parent',
-        childRunId: `subagent-${name}-${Date.now()}`,
-        agentId: ctx.agentId,
-        goal,
-      }).catch(e => getGlobalLogger().debug('AgentTool', 'onSessionFork hook error', { error: (e as Error)?.message }));
+      getHookManager()
+        .fireOnSessionFork({
+          parentRunId: 'subagent-parent',
+          childRunId: `subagent-${name}-${Date.now()}`,
+          agentId: ctx.agentId,
+          goal,
+        })
+        .catch((e) =>
+          getGlobalLogger().debug('AgentTool', 'onSessionFork hook error', {
+            error: (e as Error)?.message,
+          }),
+        );
 
       const result = await this.runtime.execute(ctx);
       if (result.status === 'success' && result.summary) {

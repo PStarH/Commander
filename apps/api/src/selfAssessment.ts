@@ -44,7 +44,7 @@ export class AgentSelfAssessment {
     };
 
     // 初始化默认能力
-    capabilities.forEach(skill => {
+    capabilities.forEach((skill) => {
       this.selfModel.capabilities.set(skill, {
         skill,
         confidence: 0.7,
@@ -57,7 +57,11 @@ export class AgentSelfAssessment {
   /**
    * 执行任务前的自我评估
    */
-  assess(task: { type?: string; requiredSkills?: string[]; complexity?: number }): SelfAssessmentResult {
+  assess(task: {
+    type?: string;
+    requiredSkills?: string[];
+    complexity?: number;
+  }): SelfAssessmentResult {
     const { requiredSkills = [], complexity = 1 } = task;
 
     // 1. 检查能力缺口
@@ -114,12 +118,16 @@ export class AgentSelfAssessment {
     // 5. 决定拒绝原因
     let refusalReason: string | undefined;
     if (!canHandle) {
+      const reasons: string[] = [];
       if (confidence < this.selfModel.refuseThreshold) {
-        refusalReason = `Confidence ${confidence.toFixed(2)} below threshold ${this.selfModel.refuseThreshold}`;
+        reasons.push(
+          `Confidence ${confidence.toFixed(2)} below threshold ${this.selfModel.refuseThreshold}`,
+        );
       }
       if (gaps.length > 0) {
-        refusalReason = `Missing capabilities: ${gaps.join(', ')}`;
+        reasons.push(`Missing capabilities: ${gaps.join(', ')}`);
       }
+      refusalReason = reasons.join('; ');
     }
 
     return {
@@ -189,7 +197,10 @@ export class SelfAssessmentManager {
     return assessor;
   }
 
-  assess(agentId: string, task: { type?: string; requiredSkills?: string[]; complexity?: number }): SelfAssessmentResult {
+  assess(
+    agentId: string,
+    task: { type?: string; requiredSkills?: string[]; complexity?: number },
+  ): SelfAssessmentResult {
     const assessor = this.getOrCreate(agentId);
     return assessor.assess(task);
   }

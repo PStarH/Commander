@@ -57,7 +57,7 @@ describe('TokenGovernor', () => {
       const gov = new TokenGovernor({ totalBudget: 10000 });
       const recs = gov.getRecommendations();
       assert.ok(recs.length > 0);
-      assert.ok(recs.some(r => r.strategy === 'observation_mask'));
+      assert.ok(recs.some((r) => r.strategy === 'observation_mask'));
     });
 
     it('returns more strategies in moderate phase', () => {
@@ -65,16 +65,16 @@ describe('TokenGovernor', () => {
       gov.reportUsage(5000);
       const recs = gov.getRecommendations();
       assert.ok(recs.length > 1);
-      assert.ok(recs.some(r => r.strategy === 'tool_output_truncate'));
+      assert.ok(recs.some((r) => r.strategy === 'tool_output_truncate'));
     });
 
     it('returns aggressive strategies in critical phase', () => {
       const gov = new TokenGovernor({ totalBudget: 10000 });
       gov.reportUsage(9000);
       const recs = gov.getRecommendations();
-      assert.ok(recs.some(r => r.strategy === 'verification_skip'));
-      assert.ok(recs.some(r => r.strategy === 'context_compaction'));
-      assert.ok(recs.some(r => r.strategy === 'speculative_skip'));
+      assert.ok(recs.some((r) => r.strategy === 'verification_skip'));
+      assert.ok(recs.some((r) => r.strategy === 'context_compaction'));
+      assert.ok(recs.some((r) => r.strategy === 'speculative_skip'));
     });
 
     it('caches recommendations within same phase', () => {
@@ -114,7 +114,7 @@ describe('TokenGovernor', () => {
       gov.reportUsage(5000); // moderate
       gov.setTaskCategory('structured');
       const recs = gov.getRecommendations();
-      const rf = recs.find(r => r.strategy === 'response_format');
+      const rf = recs.find((r) => r.strategy === 'response_format');
       assert.ok(rf);
       assert.ok(rf.intensity > 0.3);
     });
@@ -124,7 +124,7 @@ describe('TokenGovernor', () => {
       gov.reportUsage(5000); // moderate
       gov.setTaskCategory('creative');
       const recs = gov.getRecommendations();
-      const rf = recs.find(r => r.strategy === 'response_format');
+      const rf = recs.find((r) => r.strategy === 'response_format');
       // Should be reduced or not present for creative tasks
       if (rf) {
         assert.ok(rf.intensity <= 0.3);
@@ -136,7 +136,7 @@ describe('TokenGovernor', () => {
       gov.reportUsage(7000); // tight
       gov.setTaskCategory('code');
       const recs = gov.getRecommendations();
-      const vs = recs.find(r => r.strategy === 'verification_skip');
+      const vs = recs.find((r) => r.strategy === 'verification_skip');
       assert.ok(vs);
       // Code tasks should have lower verification skip intensity
       assert.ok(vs.intensity < 0.5);
@@ -160,7 +160,7 @@ describe('TokenGovernor', () => {
       }
       gov.reportUsage(5000); // moderate phase
       const recs = gov.getRecommendations();
-      const tot = recs.find(r => r.strategy === 'tool_output_truncate');
+      const tot = recs.find((r) => r.strategy === 'tool_output_truncate');
       // Should be demoted
       if (tot) {
         assert.equal(tot.apply, false);

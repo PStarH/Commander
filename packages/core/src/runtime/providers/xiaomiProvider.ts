@@ -12,7 +12,16 @@ interface XiaomiCompletionUsage {
 
 interface XiaomiStreamChunk {
   choices: Array<{
-    delta: { content?: string; reasoning_content?: string; tool_calls?: Array<{ index: number; id?: string; type: string; function: { name?: string; arguments?: string } }> };
+    delta: {
+      content?: string;
+      reasoning_content?: string;
+      tool_calls?: Array<{
+        index: number;
+        id?: string;
+        type: string;
+        function: { name?: string; arguments?: string };
+      }>;
+    };
     finish_reason: string | null;
   }>;
   usage?: XiaomiCompletionUsage;
@@ -36,11 +45,7 @@ export class XiaomiProvider implements LLMProvider {
   private baseUrl: string;
   private defaultModel: string;
 
-  constructor(config: {
-    apiKey: string;
-    baseUrl?: string;
-    defaultModel?: string;
-  }) {
+  constructor(config: { apiKey: string; baseUrl?: string; defaultModel?: string }) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://api.xiaomimimo.com/v1';
     this.defaultModel = config.defaultModel ?? 'mimo-v2-flash';
@@ -50,7 +55,7 @@ export class XiaomiProvider implements LLMProvider {
     const model = this.defaultModel || request.model;
     const body = this.buildBody(request, model);
 
-    const lastAssistant = [...request.messages].reverse().find(m => m.role === 'assistant');
+    const lastAssistant = [...request.messages].reverse().find((m) => m.role === 'assistant');
     if (lastAssistant?.tool_calls) {
       body.tool_calls = lastAssistant.tool_calls;
     }
@@ -61,7 +66,7 @@ export class XiaomiProvider implements LLMProvider {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({ ...body, stream: useStreaming }),
     });
@@ -80,7 +85,7 @@ export class XiaomiProvider implements LLMProvider {
   }
 
   private buildBody(request: LLMRequest, model: string): Record<string, unknown> {
-    const messages = request.messages.map(m => {
+    const messages = request.messages.map((m) => {
       const msg: Record<string, unknown> = { role: m.role, content: m.content };
       if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
       if (m.reasoning_content) msg.reasoning_content = m.reasoning_content;
@@ -150,7 +155,11 @@ export class XiaomiProvider implements LLMProvider {
               }
             }
           }
-        } catch (e) { getGlobalLogger().debug('XiaomiProvider', 'Skipping malformed stream chunk', { error: (e as Error)?.message }); }
+        } catch (e) {
+          getGlobalLogger().debug('XiaomiProvider', 'Skipping malformed stream chunk', {
+            error: (e as Error)?.message,
+          });
+        }
       }
     }
 
@@ -167,18 +176,36 @@ export class XiaomiProvider implements LLMProvider {
       model,
       usage: tokenUsage,
       finishReason: 'stop',
-      toolCalls: toolCalls.length > 0
-        ? toolCalls.map(tc => {
-            let args: Record<string, unknown> = {};
-            try { args = JSON.parse(tc.arguments || '{}'); } catch { args = {}; }
-            return { id: tc.id, name: tc.name, arguments: args };
-          })
-        : undefined,
+      toolCalls:
+        toolCalls.length > 0
+          ? toolCalls.map((tc) => {
+              let args: Record<string, unknown> = {};
+              try {
+                args = JSON.parse(tc.arguments || '{}');
+              } catch {
+                args = {};
+              }
+              return { id: tc.id, name: tc.name, arguments: args };
+            })
+          : undefined,
       reasoning_content: reasoningContent || undefined,
     };
   }
 
-  private parseResponse(data: { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>; reasoning_content?: string }; finish_reason?: string }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }, model: string): LLMResponse {
+  private parseResponse(
+    data: {
+      choices?: Array<{
+        message?: {
+          content?: string;
+          tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+          reasoning_content?: string;
+        };
+        finish_reason?: string;
+      }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    },
+    model: string,
+  ): LLMResponse {
     const choice = data.choices?.[0];
     const message = choice?.message ?? {};
 
@@ -189,25 +216,38 @@ export class XiaomiProvider implements LLMProvider {
     };
 
     // Parse text-format tool calls too
-  let content = message.content ?? '';
-  let toolCalls = message.tool_calls?.map((tc: { id: string; function: { name: string; arguments: string } }) => {
-    let args: Record<string, unknown> = {};
-    try { args = JSON.parse(tc.function.arguments || '{}'); } catch { args = {}; }
-    return { id: tc.id, name: tc.function.name, arguments: args };
-  });
+    let content = message.content ?? '';
+    let toolCalls = message.tool_calls?.map(
+      (tc: { id: string; function: { name: string; arguments: string } }) => {
+        let args: Record<string, unknown> = {};
+        try {
+          args = JSON.parse(tc.function.arguments || '{}');
+        } catch {
+          args = {};
+        }
+        return { id: tc.id, name: tc.function.name, arguments: args };
+      },
+    );
 
-      if ((!toolCalls || toolCalls.length === 0) && content.includes('<tool_call>')) {
-    const parsed = parseMiMoTextToolCalls(content);
-    if (parsed.length > 0) { toolCalls = parsed; content = ''; }
-  }
-  return {
+    if ((!toolCalls || toolCalls.length === 0) && content.includes('<tool_call>')) {
+      const parsed = parseMiMoTextToolCalls(content);
+      if (parsed.length > 0) {
+        toolCalls = parsed;
+        content = '';
+      }
+    }
+    return {
       content,
       model,
       usage: tokenUsage,
-      finishReason: choice?.finish_reason === 'stop' ? 'stop'
-        : choice?.finish_reason === 'tool_calls' ? 'tool_calls'
-        : choice?.finish_reason === 'length' ? 'length'
-        : 'stop',
+      finishReason:
+        choice?.finish_reason === 'stop'
+          ? 'stop'
+          : choice?.finish_reason === 'tool_calls'
+            ? 'tool_calls'
+            : choice?.finish_reason === 'length'
+              ? 'length'
+              : 'stop',
       toolCalls,
       reasoning_content: message.reasoning_content,
     };

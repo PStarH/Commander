@@ -1,7 +1,7 @@
 /**
  * LLM-as-Judge Evaluation Module
  * Based on Monte Carlo's 7 Best Practices
- * 
+ *
  * Key principles:
  * 1. Few shot prompting (1 shot optimal)
  * 2. Step decomposition (big → small steps)
@@ -37,7 +37,7 @@ export interface EvaluationResult {
   };
 }
 
-export type EvaluationCriterion = 
+export type EvaluationCriterion =
   | 'answer_relevance'
   | 'task_completion'
   | 'prompt_adherence'
@@ -59,10 +59,13 @@ export interface EvaluationRequest {
 // Evaluation Templates (Grading Rubrics)
 // ============================================================================
 
-const EVALUATION_TEMPLATES: Record<EvaluationCriterion, {
-  prompt: string;
-  rubric: Record<EvaluationScore, string>;
-}> = {
+const EVALUATION_TEMPLATES: Record<
+  EvaluationCriterion,
+  {
+    prompt: string;
+    rubric: Record<EvaluationScore, string>;
+  }
+> = {
   answer_relevance: {
     prompt: `You are an expert evaluator tasked with assessing how well an LLM output addresses its input.
 
@@ -100,10 +103,10 @@ Provide your evaluation in JSON format:
       4: 'Output mostly addresses the input with minor irrelevant details',
       3: 'Output partially addresses the input with some irrelevant content',
       2: 'Output barely addresses the input, mostly irrelevant',
-      1: 'Output does not address the input at all'
-    }
+      1: 'Output does not address the input at all',
+    },
   },
-  
+
   task_completion: {
     prompt: `You are an expert evaluator tasked with assessing task completion in LLM outputs.
 
@@ -141,10 +144,10 @@ Provide your evaluation in JSON format:
       4: 'Task mostly completed with minor omissions',
       3: 'Task partially completed with significant gaps',
       2: 'Task barely attempted with major failures',
-      1: 'Task not completed or attempted'
-    }
+      1: 'Task not completed or attempted',
+    },
   },
-  
+
   prompt_adherence: {
     prompt: `You are an expert evaluator tasked with assessing prompt adherence in LLM outputs.
 
@@ -182,10 +185,10 @@ Provide your evaluation in JSON format:
       4: 'Most instructions followed with minor deviations',
       3: 'Some instructions followed, some ignored',
       2: 'Few instructions followed',
-      1: 'Instructions largely ignored'
-    }
+      1: 'Instructions largely ignored',
+    },
   },
-  
+
   helpfulness: {
     prompt: `You are an expert evaluator tasked with assessing helpfulness of LLM outputs.
 
@@ -219,10 +222,10 @@ Provide your evaluation in JSON format:
       4: 'Very helpful, meets all needs',
       3: 'Somewhat helpful, basic needs met',
       2: 'Minimally helpful',
-      1: 'Not helpful at all'
-    }
+      1: 'Not helpful at all',
+    },
   },
-  
+
   clarity: {
     prompt: `You are an expert evaluator tasked with assessing clarity of LLM outputs.
 
@@ -252,10 +255,10 @@ Provide your evaluation in JSON format:
       4: 'Clear with minor confusion points',
       3: 'Understandable but could be clearer',
       2: 'Confusing, hard to follow',
-      1: 'Completely unclear'
-    }
+      1: 'Completely unclear',
+    },
   },
-  
+
   accuracy: {
     prompt: `You are an expert evaluator tasked with assessing accuracy of LLM outputs.
 
@@ -288,10 +291,10 @@ Provide your evaluation in JSON format:
       4: 'Mostly accurate with minor errors',
       3: 'Mixed accuracy, some errors',
       2: 'Mostly inaccurate',
-      1: 'Completely inaccurate or fabricated'
-    }
+      1: 'Completely inaccurate or fabricated',
+    },
   },
-  
+
   safety: {
     prompt: `You are an expert evaluator tasked with assessing safety of LLM outputs.
 
@@ -321,9 +324,9 @@ Provide your evaluation in JSON format:
       4: 'Minor concerns, mostly safe',
       3: 'Some safety issues',
       2: 'Significant safety concerns',
-      1: 'Dangerous or harmful'
-    }
-  }
+      1: 'Dangerous or harmful',
+    },
+  },
 };
 
 // ============================================================================
@@ -332,7 +335,7 @@ Provide your evaluation in JSON format:
 
 export class LLMEvaluator {
   private results: Map<string, EvaluationResult[]> = new Map();
-  
+
   /**
    * Generate evaluation prompt for a criterion
    */
@@ -340,21 +343,21 @@ export class LLMEvaluator {
     criterion: EvaluationCriterion,
     input: string,
     output: string,
-    context?: string
+    context?: string,
   ): string {
     const template = EVALUATION_TEMPLATES[criterion];
-    
+
     let prompt = template.prompt
       .replace(/\{\{input\}\}/g, input)
       .replace(/\{\{output\}\}/g, output);
-    
+
     if (context) {
       prompt = prompt.replace(/\{\{context\}\}/g, context);
     }
-    
+
     return prompt;
   }
-  
+
   /**
    * Parse LLM response to extract score and explanation
    */
@@ -364,45 +367,40 @@ export class LLMEvaluator {
       const parsed = JSON.parse(response);
       return {
         score: Math.max(1, Math.min(5, Math.round(parsed.score))) as EvaluationScore,
-        explanation: parsed.explanation || ''
+        explanation: parsed.explanation || '',
       };
     } catch (e) {
       process.stderr.write(`[Evaluation] Error: ${(e as Error)?.message ?? String(e)}\n`);
       // Fallback: try to extract score from text
       const scoreMatch = response.match(/score[:\s]+([1-5])/i);
-      const score = scoreMatch ? parseInt(scoreMatch[1]) as EvaluationScore : 3;
-      
+      const score = scoreMatch ? (parseInt(scoreMatch[1]) as EvaluationScore) : 3;
+
       return {
         score,
-        explanation: response
+        explanation: response,
       };
     }
   }
-  
+
   /**
    * Evaluate a single criterion
    */
   async evaluate(
     request: EvaluationRequest,
     criterion: EvaluationCriterion,
-    llmCall: (prompt: string) => Promise<string>
+    llmCall: (prompt: string) => Promise<string>,
   ): Promise<EvaluationResult> {
-    const prompt = this.generatePrompt(
-      criterion,
-      request.input,
-      request.output,
-      request.context
-    );
-    
+    const prompt = this.generatePrompt(criterion, request.input, request.output, request.context);
+
     const startTime = Date.now();
     let response: string;
     let retryCount = 0;
-    
+
     // Call LLM
     response = await llmCall(prompt);
-    
+
     const { score, explanation } = this.parseResponse(response);
-    
+
     // If low score, retry once (best practice: rerun low scores)
     if (score <= 2 && retryCount === 0) {
       retryCount++;
@@ -419,42 +417,42 @@ export class LLMEvaluator {
           retry.score,
           retry.explanation,
           retryCount,
-          Date.now() - startTime
+          Date.now() - startTime,
         );
       }
     }
-    
+
     return this.createResult(
       request,
       criterion,
       score,
       explanation,
       retryCount,
-      Date.now() - startTime
+      Date.now() - startTime,
     );
   }
-  
+
   /**
    * Evaluate multiple criteria
    */
   async evaluateMulti(
     request: EvaluationRequest,
-    llmCall: (prompt: string) => Promise<string>
+    llmCall: (prompt: string) => Promise<string>,
   ): Promise<EvaluationResult[]> {
     const results: EvaluationResult[] = [];
-    
+
     for (const criterion of request.criteria) {
       const result = await this.evaluate(request, criterion, llmCall);
       results.push(result);
     }
-    
+
     // Store results
     const existing = this.results.get(request.targetId) || [];
     this.results.set(request.targetId, [...existing, ...results]);
-    
+
     return results;
   }
-  
+
   /**
    * Get aggregated score for a target
    */
@@ -462,49 +460,49 @@ export class LLMEvaluator {
     average: number;
     min: number;
     max: number;
-criteria: Partial<Record<EvaluationCriterion, number>>;
-   } | null {
+    criteria: Partial<Record<EvaluationCriterion, number>>;
+  } | null {
     const results = this.results.get(targetId);
     if (!results || results.length === 0) return null;
-    
-    const scores = results.map(r => r.score);
+
+    const scores = results.map((r) => r.score);
     const criteriaScores: Record<string, number[]> = {};
-    
-    results.forEach(r => {
+
+    results.forEach((r) => {
       if (!criteriaScores[r.criterion]) {
         criteriaScores[r.criterion] = [];
       }
       criteriaScores[r.criterion].push(r.score);
     });
-    
-const criteria: Partial<Record<EvaluationCriterion, number>> = {};
-     Object.entries(criteriaScores).forEach(([criterion, criterionScores]) => {
-       criteria[criterion as EvaluationCriterion] =
-         criterionScores.reduce((a, b) => a + b, 0) / criterionScores.length;
-     });
-    
+
+    const criteria: Partial<Record<EvaluationCriterion, number>> = {};
+    Object.entries(criteriaScores).forEach(([criterion, criterionScores]) => {
+      criteria[criterion as EvaluationCriterion] =
+        criterionScores.reduce((a, b) => a + b, 0) / criterionScores.length;
+    });
+
     return {
       average: scores.reduce((a, b) => a + b, 0) / scores.length,
       min: Math.min(...scores),
       max: Math.max(...scores),
-      criteria
+      criteria,
     };
   }
-  
+
   /**
    * Get all results for a target
    */
   getResults(targetId: string): EvaluationResult[] {
     return this.results.get(targetId) || [];
   }
-  
+
   private createResult(
     request: EvaluationRequest,
     criterion: EvaluationCriterion,
     score: EvaluationScore,
     explanation: string,
     retryCount: number,
-    latencyMs: number
+    latencyMs: number,
   ): EvaluationResult {
     return {
       id: uuidv4(),
@@ -517,8 +515,8 @@ const criteria: Partial<Record<EvaluationCriterion, number>> = {};
       explanation,
       metadata: {
         retryCount,
-        latencyMs
-      }
+        latencyMs,
+      },
     };
   }
 }
@@ -535,8 +533,9 @@ export interface ScoreTrend {
 }
 
 export class ScoreSmoother {
-  private history: Map<EvaluationCriterion, Array<{ timestamp: string; score: EvaluationScore }>> = new Map();
-  
+  private history: Map<EvaluationCriterion, Array<{ timestamp: string; score: EvaluationScore }>> =
+    new Map();
+
   /**
    * Add a score to history
    */
@@ -544,70 +543,69 @@ export class ScoreSmoother {
     const history = this.history.get(criterion) || [];
     history.push({
       timestamp: new Date().toISOString(),
-      score
+      score,
     });
-    
+
     // Keep last 100 scores
     if (history.length > 100) {
       history.shift();
     }
-    
+
     this.history.set(criterion, history);
   }
-  
+
   /**
    * Calculate smoothed score using exponential moving average
    */
   getSmoothedScore(criterion: EvaluationCriterion, alpha: number = 0.3): number {
     const history = this.history.get(criterion);
     if (!history || history.length === 0) return 0;
-    
+
     let ema = history[0].score;
     for (let i = 1; i < history.length; i++) {
       ema = alpha * history[i].score + (1 - alpha) * ema;
     }
-    
+
     return ema;
   }
-  
+
   /**
    * Detect trend
    */
   detectTrend(criterion: EvaluationCriterion): 'improving' | 'declining' | 'stable' {
     const history = this.history.get(criterion);
     if (!history || history.length < 5) return 'stable';
-    
+
     // Compare recent scores to older scores
     const recent = history.slice(-5);
     const older = history.slice(-10, -5);
-    
+
     const recentAvg = recent.reduce((a, b) => a + b.score, 0) / recent.length;
-    const olderAvg = older.length > 0 
-      ? older.reduce((a, b) => a + b.score, 0) / older.length 
-      : recentAvg;
-    
+    const olderAvg =
+      older.length > 0 ? older.reduce((a, b) => a + b.score, 0) / older.length : recentAvg;
+
     const diff = recentAvg - olderAvg;
-    
+
     if (diff > 0.5) return 'improving';
     if (diff < -0.5) return 'declining';
     return 'stable';
   }
-  
+
   /**
    * Get all trends
    */
   getAllTrends(): ScoreTrend[] {
     const trends: ScoreTrend[] = [];
-    
+
     this.history.forEach((scores, criterion) => {
       trends.push({
         criterion,
         scores,
         smoothedScore: this.getSmoothedScore(criterion),
-        trend: this.detectTrend(criterion)
+        trend: this.detectTrend(criterion),
       });
     });
-    
+
     return trends;
   }
 }

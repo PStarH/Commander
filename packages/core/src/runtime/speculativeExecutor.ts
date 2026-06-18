@@ -22,10 +22,10 @@ const MAX_TRACKED_PATTERNS = 50;
  * A tracked tool-call sequence pattern.
  */
 interface ToolPattern {
-  sequence: string[];        // Tool names in order
-  frequency: number;         // Times this exact sequence has been observed
-  lastSeen: number;          // Timestamp of last observation
-  confidence: number;        // 0-1, how reliable this pattern is
+  sequence: string[]; // Tool names in order
+  frequency: number; // Times this exact sequence has been observed
+  lastSeen: number; // Timestamp of last observation
+  confidence: number; // 0-1, how reliable this pattern is
 }
 
 /**
@@ -116,9 +116,7 @@ export class PatternTracker {
    * Get the most common patterns for debugging/analysis.
    */
   getTopPatterns(n: number): ToolPattern[] {
-    return [...this.patterns.values()]
-      .sort((a, b) => b.frequency - a.frequency)
-      .slice(0, n);
+    return [...this.patterns.values()].sort((a, b) => b.frequency - a.frequency).slice(0, n);
   }
 
   private prunePatterns(): void {
@@ -126,7 +124,10 @@ export class PatternTracker {
     const staleThreshold = 5 * 60 * 1000; // 5 minutes
 
     for (const [key, pattern] of this.patterns) {
-      if (pattern.frequency < 2 || (now - pattern.lastSeen > staleThreshold && pattern.frequency < 5)) {
+      if (
+        pattern.frequency < 2 ||
+        (now - pattern.lastSeen > staleThreshold && pattern.frequency < 5)
+      ) {
         this.patterns.delete(key);
       }
     }
@@ -176,18 +177,20 @@ export function planSpeculativeExecution(
   recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }>,
   availableTools: string[],
 ): Array<{ name: string; arguments: Record<string, unknown>; confidence: number }> {
-  const toolNames = recentToolCalls.map(tc => tc.name);
+  const toolNames = recentToolCalls.map((tc) => tc.name);
   const predictions = patternTracker.predictNext(toolNames);
+  const availableSet = new Set(availableTools);
 
-  const result: Array<{ name: string; arguments: Record<string, unknown>; confidence: number }> = [];
+  const result: Array<{ name: string; arguments: Record<string, unknown>; confidence: number }> =
+    [];
 
   for (const pred of predictions) {
     if (result.length >= 2) break; // Max 2 speculative calls
     if (!isSpeculativelySafe(pred.toolName)) continue;
-    if (!availableTools.includes(pred.toolName)) continue;
-if (pred.confidence < 0.3) continue; // Minimum confidence threshold
+    if (!availableSet.has(pred.toolName)) continue;
+    if (pred.confidence < 0.3) continue; // Minimum confidence threshold
 
-    const lastCall = recentToolCalls.find(tc => tc.name === pred.toolName);
+    const lastCall = recentToolCalls.find((tc) => tc.name === pred.toolName);
     result.push({
       name: pred.toolName,
       arguments: lastCall?.arguments ?? {},

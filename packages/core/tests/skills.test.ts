@@ -37,7 +37,11 @@ function createTempDir(): string {
 }
 
 function rmdirRecursive(dir: string): void {
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore cleanup errors */ }
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    /* ignore cleanup errors */
+  }
 }
 
 function makeSkillStore(tempDir: string): SkillStore {
@@ -151,7 +155,10 @@ describe('SkillStore', () => {
       });
       assert.fail('Should have thrown for invalid name');
     } catch (e: any) {
-      assert.ok(e.message.includes('Invalid skill name'), `Expected validation error, got: ${e.message}`);
+      assert.ok(
+        e.message.includes('Invalid skill name'),
+        `Expected validation error, got: ${e.message}`,
+      );
     }
   });
 
@@ -241,7 +248,7 @@ describe('SkillManager', () => {
   it('list returns catalog entries', async () => {
     const catalog = await manager.list();
     assert.ok(catalog.length >= 1);
-    const entry = catalog.find(e => e.name === 'my-first-skill');
+    const entry = catalog.find((e) => e.name === 'my-first-skill');
     assert.ok(entry, 'Should find the created skill in catalog');
     assert.strictEqual(entry!.description, 'My First Skill');
     assert.strictEqual(entry!.category, 'coding');
@@ -259,8 +266,12 @@ describe('SkillManager', () => {
   });
 
   it('delete removes skill', async () => {
-    await manager.create('temporary', 'temp content', { category: 'general', tags: [], source: 'user' });
-    assert.ok(await manager.get('temporary') !== null, 'Should exist before delete');
+    await manager.create('temporary', 'temp content', {
+      category: 'general',
+      tags: [],
+      source: 'user',
+    });
+    assert.ok((await manager.get('temporary')) !== null, 'Should exist before delete');
     await manager.delete('temporary');
     assert.strictEqual(await manager.get('temporary'), null, 'Should be null after delete');
   });
@@ -268,19 +279,19 @@ describe('SkillManager', () => {
   it('search filters by text', async () => {
     const results = await manager.search({ text: 'my-first' });
     assert.ok(results.length > 0);
-    assert.ok(results.some(r => r.name === 'my-first-skill'));
+    assert.ok(results.some((r) => r.name === 'my-first-skill'));
   });
 
   it('search filters by category', async () => {
     const results = await manager.search({ category: 'coding' });
     assert.ok(results.length > 0);
-    assert.ok(results.every(r => r.category === 'coding'));
+    assert.ok(results.every((r) => r.category === 'coding'));
   });
 
   it('search filters by tags', async () => {
     const results = await manager.search({ tags: ['typescript'] });
     assert.ok(results.length > 0);
-    assert.ok(results.some(r => r.name === 'my-first-skill'));
+    assert.ok(results.some((r) => r.name === 'my-first-skill'));
   });
 
   it('search respects limit', async () => {
@@ -289,10 +300,17 @@ describe('SkillManager', () => {
   });
 
   it('suggestForTask returns relevant skills', async () => {
-    await manager.create('python-tool', 'For Python scripting', { category: 'coding', tags: ['python'], source: 'user' });
+    await manager.create('python-tool', 'For Python scripting', {
+      category: 'coding',
+      tags: ['python'],
+      source: 'user',
+    });
     const suggestions = await manager.suggestForTask('write a python script', 2);
     assert.ok(suggestions.length > 0);
-    assert.ok(suggestions.some(s => s.name === 'python-tool'), 'Should suggest the python skill');
+    assert.ok(
+      suggestions.some((s) => s.name === 'python-tool'),
+      'Should suggest the python skill',
+    );
   });
 
   it('suggestForTask returns empty for irrelevant goal', async () => {
@@ -351,10 +369,14 @@ describe('SkillInjector', () => {
 
     // Create a few test skills
     await manager.create('web-scraper', '# Web Scraper\n\nScrape websites.', {
-      category: 'coding', tags: ['web', 'python'], source: 'user',
+      category: 'coding',
+      tags: ['web', 'python'],
+      source: 'user',
     });
     await manager.create('data-analyzer', '# Data Analyzer\n\nAnalyze CSV data.', {
-      category: 'analysis', tags: ['data', 'csv'], source: 'user',
+      category: 'analysis',
+      tags: ['data', 'csv'],
+      source: 'user',
     });
   });
 
@@ -445,13 +467,25 @@ describe('SkillCurator', () => {
 
     // Create test skills
     await manager.create('high-quality', 'Excellent skill content', {
-      category: 'coding', tags: ['a'], source: 'user', qualityScore: 0.9, usageCount: 10,
+      category: 'coding',
+      tags: ['a'],
+      source: 'user',
+      qualityScore: 0.9,
+      usageCount: 10,
     });
     await manager.create('medium-quality', 'Decent skill content', {
-      category: 'coding', tags: ['b'], source: 'user', qualityScore: 0.6, usageCount: 5,
+      category: 'coding',
+      tags: ['b'],
+      source: 'user',
+      qualityScore: 0.6,
+      usageCount: 5,
     });
     await manager.create('low-quality', 'Poor skill content', {
-      category: 'general', tags: ['c'], source: 'user', qualityScore: 0.2, usageCount: 1,
+      category: 'general',
+      tags: ['c'],
+      source: 'user',
+      qualityScore: 0.2,
+      usageCount: 1,
     });
   });
 
@@ -463,9 +497,10 @@ describe('SkillCurator', () => {
     const result = await curator.archive('low-quality');
     assert.strictEqual(result, true);
     assert.ok(fs.existsSync(path.join(archiveDir, 'low-quality')), 'Archive dir should exist');
-    assert.ok(!fs.existsSync(
-      path.join(tempDir, '.commander', 'skills', 'low-quality'),
-    ), 'Original should be removed');
+    assert.ok(
+      !fs.existsSync(path.join(tempDir, '.commander', 'skills', 'low-quality')),
+      'Original should be removed',
+    );
   });
 
   it('listArchived returns archived skill names', async () => {
@@ -495,7 +530,11 @@ describe('SkillCurator', () => {
     // Archive then try to restore while original is still there
     await curator.archive('high-quality');
     await manager.create('high-quality', 'Recreated', {
-      category: 'general', tags: [], source: 'user', qualityScore: 0.5, usageCount: 0,
+      category: 'general',
+      tags: [],
+      source: 'user',
+      qualityScore: 0.5,
+      usageCount: 0,
     });
     const result = await curator.restore('high-quality');
     assert.strictEqual(result, false, 'Should not restore if destination exists');
@@ -562,7 +601,7 @@ describe('SkillQualityScorer', () => {
     const result = computeDeterministicScore(skill);
     assert.ok(result.total >= 0 && result.total <= 1, 'Score should be 0-1');
     assert.ok(result.factors.length >= 4, 'Should have multiple factors');
-    const hasTools = result.factors.find(f => f.name === 'has_tools');
+    const hasTools = result.factors.find((f) => f.name === 'has_tools');
     assert.ok(hasTools, 'Should include has_tools factor');
     assert.strictEqual(hasTools!.score, 1, 'Skills with tools should score 1 on has_tools');
   });
@@ -592,9 +631,7 @@ describe('SkillQualityScorer', () => {
   it('evaluateWithRubric returns null when evaluator fails', async () => {
     const skill = makeSkill();
     const config: LLMRubricConfig = {
-      criteria: [
-        { name: 'clarity', description: 'Clear instructions?', score: 0, weight: 1.0 },
-      ],
+      criteria: [{ name: 'clarity', description: 'Clear instructions?', score: 0, weight: 1.0 }],
       evaluator: async () => null,
     };
     const result = await evaluateWithRubric(skill, config);
@@ -672,12 +709,22 @@ describe('Similarity Functions', () => {
 
   it('computeSimilarity combines name, desc, tag scores', () => {
     const a: SkillCatalogEntry = {
-      name: 'python-data', description: 'Python data analysis', category: 'coding',
-      tags: ['python', 'data'], usageCount: 5, qualityScore: 0.8, pinned: false,
+      name: 'python-data',
+      description: 'Python data analysis',
+      category: 'coding',
+      tags: ['python', 'data'],
+      usageCount: 5,
+      qualityScore: 0.8,
+      pinned: false,
     };
     const b: SkillCatalogEntry = {
-      name: 'python-analysis', description: 'Data analysis with Python', category: 'coding',
-      tags: ['python', 'analysis'], usageCount: 3, qualityScore: 0.7, pinned: false,
+      name: 'python-analysis',
+      description: 'Data analysis with Python',
+      category: 'coding',
+      tags: ['python', 'analysis'],
+      usageCount: 3,
+      qualityScore: 0.7,
+      pinned: false,
     };
     const score = computeSimilarity(a, b);
     assert.ok(score > 0, 'Similar entries should have positive similarity');
@@ -686,23 +733,80 @@ describe('Similarity Functions', () => {
 
   it('findSimilarPairs returns pairs above threshold', () => {
     const entries: SkillCatalogEntry[] = [
-      { name: 'data-analysis-py', description: 'data analysis', category: 'coding', tags: ['python', 'data'], usageCount: 1, qualityScore: 0.5, pinned: false },
-      { name: 'python-data-analyzer', description: 'data analysis python', category: 'coding', tags: ['python', 'data', 'analysis'], usageCount: 1, qualityScore: 0.5, pinned: false },
-      { name: 'web-scraper', description: 'scrape websites', category: 'general', tags: ['web'], usageCount: 1, qualityScore: 0.5, pinned: false },
+      {
+        name: 'data-analysis-py',
+        description: 'data analysis',
+        category: 'coding',
+        tags: ['python', 'data'],
+        usageCount: 1,
+        qualityScore: 0.5,
+        pinned: false,
+      },
+      {
+        name: 'python-data-analyzer',
+        description: 'data analysis python',
+        category: 'coding',
+        tags: ['python', 'data', 'analysis'],
+        usageCount: 1,
+        qualityScore: 0.5,
+        pinned: false,
+      },
+      {
+        name: 'web-scraper',
+        description: 'scrape websites',
+        category: 'general',
+        tags: ['web'],
+        usageCount: 1,
+        qualityScore: 0.5,
+        pinned: false,
+      },
     ];
     const pairs = findSimilarPairs(entries);
     const pairNames = pairs.map(([a, b]) => [a.name, b.name].sort().join('-'));
-    assert.ok(pairNames.some(p => p.includes('data')), 'Similar data skills pair should be found');
+    assert.ok(
+      pairNames.some((p) => p.includes('data')),
+      'Similar data skills pair should be found',
+    );
   });
 
   it('buildMergePrompt includes both skill contents', () => {
     const primary: Skill = {
-      id: 'primary', name: 'primary-skill', description: 'Primary', content: '# Primary Content',
-      tools: [], metadata: { category: 'coding', tags: [], source: 'user', qualityScore: 0.8, usageCount: 5, avgSuccessRate: 0.9, autoGenerated: false, pinned: false, createdAt: '', updatedAt: '' },
+      id: 'primary',
+      name: 'primary-skill',
+      description: 'Primary',
+      content: '# Primary Content',
+      tools: [],
+      metadata: {
+        category: 'coding',
+        tags: [],
+        source: 'user',
+        qualityScore: 0.8,
+        usageCount: 5,
+        avgSuccessRate: 0.9,
+        autoGenerated: false,
+        pinned: false,
+        createdAt: '',
+        updatedAt: '',
+      },
     };
     const duplicate: Skill = {
-      id: 'dup', name: 'dup-skill', description: 'Duplicate', content: '# Duplicate Content',
-      tools: [], metadata: { category: 'coding', tags: [], source: 'user', qualityScore: 0.6, usageCount: 2, avgSuccessRate: 0.7, autoGenerated: false, pinned: false, createdAt: '', updatedAt: '' },
+      id: 'dup',
+      name: 'dup-skill',
+      description: 'Duplicate',
+      content: '# Duplicate Content',
+      tools: [],
+      metadata: {
+        category: 'coding',
+        tags: [],
+        source: 'user',
+        qualityScore: 0.6,
+        usageCount: 2,
+        avgSuccessRate: 0.7,
+        autoGenerated: false,
+        pinned: false,
+        createdAt: '',
+        updatedAt: '',
+      },
     };
     const prompt = buildMergePrompt(primary, duplicate);
     assert.ok(prompt.includes('Primary Content'), 'Should include primary content');
@@ -726,7 +830,10 @@ describe('SkillSecurityScanner', () => {
   it('detects shell injection via backtick', () => {
     const result = scanSkillContent('bad', 'Run `rm -rf /` in the command', []);
     assert.ok(!result.passed, 'Should fail security check');
-    assert.ok(result.warnings.some(w => w.category === 'shell_injection'), 'Shell injection warning');
+    assert.ok(
+      result.warnings.some((w) => w.category === 'shell_injection'),
+      'Shell injection warning',
+    );
   });
 
   it('detects shell injection via $()', () => {
@@ -735,26 +842,43 @@ describe('SkillSecurityScanner', () => {
   });
 
   it('detects API keys in content', () => {
-    const result = scanSkillContent('leaky', 'Use api_key = "sk-test-key-placeholder-do-not-use-in-production"', []);
+    const result = scanSkillContent(
+      'leaky',
+      'Use api_key = "sk-test-key-placeholder-do-not-use-in-production"',
+      [],
+    );
     assert.ok(!result.passed, 'Should fail with API key');
-    assert.ok(result.warnings.some(w => w.category === 'sensitive_data'), 'Sensitive data warning');
+    assert.ok(
+      result.warnings.some((w) => w.category === 'sensitive_data'),
+      'Sensitive data warning',
+    );
   });
 
   it('detects path traversal', () => {
     const result = scanSkillContent('traverse', 'Read from ../../../etc/passwd', []);
     assert.ok(!result.passed, 'Should fail with path traversal');
-    assert.ok(result.warnings.some(w => w.category === 'path_traversal'), 'Path traversal warning');
+    assert.ok(
+      result.warnings.some((w) => w.category === 'path_traversal'),
+      'Path traversal warning',
+    );
   });
 
   it('detects private key blocks', () => {
-    const result = scanSkillContent('key-leak', '-----BEGIN TEST PRIVATE KEY-----\nTHIS IS A TEST FIXTURE NOT A REAL KEY\n-----END TEST PRIVATE KEY-----', []);
+    const result = scanSkillContent(
+      'key-leak',
+      '-----BEGIN TEST PRIVATE KEY-----\nTHIS IS A TEST FIXTURE NOT A REAL KEY\n-----END TEST PRIVATE KEY-----',
+      [],
+    );
     assert.ok(!result.passed, 'Should fail with private key');
   });
 
   it('detects child_process require', () => {
     const result = scanSkillContent('dangerous', 'const cp = require("child_process")', []);
     assert.ok(!result.passed, 'Should fail with dangerous API');
-    assert.ok(result.warnings.some(w => w.category === 'dangerous_api'), 'Dangerous API warning');
+    assert.ok(
+      result.warnings.some((w) => w.category === 'dangerous_api'),
+      'Dangerous API warning',
+    );
   });
 
   it('detects eval calls', () => {
@@ -796,11 +920,11 @@ describe('SkillManager Security Integration', () => {
 
   it('rejects creation of skill with shell injection', async () => {
     try {
-      await manager.create(
-        'dangerous-skill',
-        'Run `rm -rf /` to clean up',
-        { category: 'general', tags: [], source: 'user' },
-      );
+      await manager.create('dangerous-skill', 'Run `rm -rf /` to clean up', {
+        category: 'general',
+        tags: [],
+        source: 'user',
+      });
       assert.fail('Should have thrown for dangerous content');
     } catch (e: any) {
       assert.ok(e.message.includes('Skill content rejected'), 'Should reject dangerous content');
@@ -808,11 +932,11 @@ describe('SkillManager Security Integration', () => {
   });
 
   it('accepts creation of clean skill', async () => {
-    const skill = await manager.create(
-      'clean-skill',
-      '# Clean Skill\n\nDo something safe.',
-      { category: 'general', tags: [], source: 'user' },
-    );
+    const skill = await manager.create('clean-skill', '# Clean Skill\n\nDo something safe.', {
+      category: 'general',
+      tags: [],
+      source: 'user',
+    });
     assert.ok(skill !== null, 'Clean skill should be created');
     assert.strictEqual(skill.name, 'clean-skill');
   });
@@ -839,13 +963,25 @@ describe('SkillCurator Enhanced Dedup', () => {
     curator = new SkillCurator(manager, archiveDir, backupDir);
 
     await manager.create('data-analysis-py', 'Python-based data analysis with pandas', {
-      category: 'coding', tags: ['python', 'data', 'analysis'], source: 'user', qualityScore: 0.8, usageCount: 10,
+      category: 'coding',
+      tags: ['python', 'data', 'analysis'],
+      source: 'user',
+      qualityScore: 0.8,
+      usageCount: 10,
     });
     await manager.create('python-data-analyzer', 'Data analysis using Python tools', {
-      category: 'coding', tags: ['python', 'data'], source: 'user', qualityScore: 0.7, usageCount: 5,
+      category: 'coding',
+      tags: ['python', 'data'],
+      source: 'user',
+      qualityScore: 0.7,
+      usageCount: 5,
     });
     await manager.create('unrelated-web', 'Web scraping with cheerio', {
-      category: 'coding', tags: ['web', 'scraping'], source: 'user', qualityScore: 0.6, usageCount: 3,
+      category: 'coding',
+      tags: ['web', 'scraping'],
+      source: 'user',
+      qualityScore: 0.6,
+      usageCount: 3,
     });
   });
 
@@ -862,8 +998,24 @@ describe('SkillCurator Enhanced Dedup', () => {
 
   it('mergeSimilar keeps highest quality skill', async () => {
     const catalog: SkillCatalogEntry[] = [
-      { name: 'low', description: 'low quality', category: 'coding', tags: ['a'], usageCount: 1, qualityScore: 0.3, pinned: false },
-      { name: 'high', description: 'high quality', category: 'coding', tags: ['a'], usageCount: 10, qualityScore: 0.9, pinned: false },
+      {
+        name: 'low',
+        description: 'low quality',
+        category: 'coding',
+        tags: ['a'],
+        usageCount: 1,
+        qualityScore: 0.3,
+        pinned: false,
+      },
+      {
+        name: 'high',
+        description: 'high quality',
+        category: 'coding',
+        tags: ['a'],
+        usageCount: 10,
+        qualityScore: 0.9,
+        pinned: false,
+      },
     ];
     const result = await curator.mergeSimilar(catalog, 'keep_highest_quality');
     assert.strictEqual(result.survivor, 'high', 'Should keep highest quality skill');
