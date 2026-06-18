@@ -81,7 +81,10 @@ export class FreezeDryManager {
         completedToolCalls: runState.completedToolCalls,
       });
 
-      log.info('FreezeDry', `Frozen run ${runId} at step ${runState.stepNumber} (${runState.phase})`);
+      log.info(
+        'FreezeDry',
+        `Frozen run ${runId} at step ${runState.stepNumber} (${runState.phase})`,
+      );
     }
 
     const manifest: FreezeManifest = {
@@ -95,9 +98,15 @@ export class FreezeDryManager {
     const manifestPath = path.join(this.stateDir, MANIFEST_FILE);
     const tmpPath = manifestPath + '.tmp';
     try {
-      fs.writeFileSync(tmpPath, JSON.stringify(manifest, null, 2), { encoding: 'utf-8', mode: 0o600 });
+      fs.writeFileSync(tmpPath, JSON.stringify(manifest, null, 2), {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
       fs.renameSync(tmpPath, manifestPath);
-      log.info('FreezeDry', `Freeze manifest written to ${manifestPath} (${runEntries.length} runs)`);
+      log.info(
+        'FreezeDry',
+        `Freeze manifest written to ${manifestPath} (${runEntries.length} runs)`,
+      );
     } catch (e) {
       log.error('FreezeDry', 'Failed to write freeze manifest', e as Error);
       this.frozen = false;
@@ -151,10 +160,14 @@ export class FreezeDryManager {
               fs.unlinkSync(filePath);
               pruned++;
             }
-          } catch { void 0; }
+          } catch {
+            void 0;
+          }
         }
       }
-    } catch { void 0; }
+    } catch {
+      void 0;
+    }
     return pruned;
   }
 
