@@ -30,14 +30,22 @@ export async function cmdUp(args: string[], flags: Record<string, string>): Prom
     return cmdResumeUp();
   }
 
-  console.log(`\n  ${$.bold}${$.blue}╭──────────────────────────────────────────────────────╮${$.reset}`);
-  console.log(`  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander Up${$.reset} — Unified Execution + Web TUI      ${$.bold}${$.blue}│${$.reset}`);
-  console.log(`  ${$.bold}${$.blue}╰──────────────────────────────────────────────────────╯${$.reset}\n`);
+  console.log(
+    `\n  ${$.bold}${$.blue}╭──────────────────────────────────────────────────────╮${$.reset}`,
+  );
+  console.log(
+    `  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander Up${$.reset} — Unified Execution + Web TUI      ${$.bold}${$.blue}│${$.reset}`,
+  );
+  console.log(
+    `  ${$.bold}${$.blue}╰──────────────────────────────────────────────────────╯${$.reset}\n`,
+  );
 
   const config = getConfigResolver().resolve();
   if (!config.apiKey && config.provider !== 'none') {
     console.log(`  ${$.yellow}⚠ No API key found for ${config.provider}.${$.reset}`);
-    console.log(`  ${$.dim}  Run ${$.cyan}commander init --probe${$.reset}${$.dim} to configure.${$.reset}\n`);
+    console.log(
+      `  ${$.dim}  Run ${$.cyan}commander init --probe${$.reset}${$.dim} to configure.${$.reset}\n`,
+    );
   }
 
   if (task) {
@@ -56,15 +64,21 @@ export async function cmdUp(args: string[], flags: Record<string, string>): Prom
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
+        Connection: 'keep-alive',
         'Access-Control-Allow-Origin': '*',
       });
-      res.write(`data: ${JSON.stringify({ type: 'snapshot', metrics: getMetricsCollector().getMetricsSnapshot() })}\n\n`);
+      res.write(
+        `data: ${JSON.stringify({ type: 'snapshot', metrics: getMetricsCollector().getMetricsSnapshot() })}\n\n`,
+      );
       sseClients.add(res);
       const interval = setInterval(() => {
         try {
-          res.write(`data: ${JSON.stringify({ type: 'snapshot', metrics: getMetricsCollector().getMetricsSnapshot() })}\n\n`);
-        } catch { clearInterval(interval); }
+          res.write(
+            `data: ${JSON.stringify({ type: 'snapshot', metrics: getMetricsCollector().getMetricsSnapshot() })}\n\n`,
+          );
+        } catch {
+          clearInterval(interval);
+        }
       }, 1000);
       req.on('close', () => {
         clearInterval(interval);
@@ -122,20 +136,29 @@ export async function cmdUp(args: string[], flags: Record<string, string>): Prom
   if (hasWebDist) {
     console.log(`  ${$.green}✓${$.reset} Web TUI: ${$.cyan}${tuiUrl}${$.reset}`);
   } else {
-    console.log(`  ${$.dim}○ Web TUI: ${tuiUrl} (API only — build with ${$.cyan}cd apps/web && npx vite build${$.reset}${$.dim})${$.reset}`);
+    console.log(
+      `  ${$.dim}○ Web TUI: ${tuiUrl} (API only — build with ${$.cyan}cd apps/web && npx vite build${$.reset}${$.dim})${$.reset}`,
+    );
   }
   console.log(`  ${$.dim}  Press Ctrl+C to stop and freeze execution${$.reset}\n`);
 
   if (!noOpen && hasWebDist) {
-    const openCmd = process.platform === 'darwin' ? 'open'
-      : process.platform === 'win32' ? 'start'
-      : 'xdg-open';
+    const openCmd =
+      process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
     spawn(openCmd, [tuiUrl], { stdio: 'ignore', detached: true }).unref();
   }
 
-  const cleanup = () => { server.close(); };
-  process.on('SIGINT', () => { cleanup(); process.exit(0); });
-  process.on('SIGTERM', () => { cleanup(); process.exit(0); });
+  const cleanup = () => {
+    server.close();
+  };
+  process.on('SIGINT', () => {
+    cleanup();
+    process.exit(0);
+  });
+  process.on('SIGTERM', () => {
+    cleanup();
+    process.exit(0);
+  });
 
   if (task) {
     await cmdRun(task, { ...flags, 'up-mode': 'true' });
@@ -183,7 +206,9 @@ async function cmdResumeUp(): Promise<void> {
   }
 
   section('FREEZE DETECTED');
-  console.log(`  ${$.cyan}${runCount} run(s)${$.reset} frozen at ${$.dim}${manifest.frozenAt}${$.reset}\n`);
+  console.log(
+    `  ${$.cyan}${runCount} run(s)${$.reset} frozen at ${$.dim}${manifest.frozenAt}${$.reset}\n`,
+  );
 
   for (const runId of manifest.runs) {
     const cpPath = path.join(stateDir, runId, 'checkpoint.json');
@@ -199,7 +224,7 @@ async function cmdResumeUp(): Promise<void> {
       continue;
     }
     const goal = cp.context?.goal ?? '(unknown)';
-    const stepInfo = cp.stepNumber != null ? `step ${cp.stepNumber}` : cp.phase ?? '(unknown)';
+    const stepInfo = cp.stepNumber != null ? `step ${cp.stepNumber}` : (cp.phase ?? '(unknown)');
     console.log(`  ${$.green}►${$.reset} ${$.bold}${runId}${$.reset}`);
     console.log(`    ${$.dim}Goal:${$.reset} ${goal.slice(0, 100)}`);
     console.log(`    ${$.dim}State:${$.reset} ${stepInfo}`);
@@ -209,26 +234,34 @@ async function cmdResumeUp(): Promise<void> {
     const runtime = new AgentRuntime();
     const result = await runtime.resume(runId);
     if (!result) {
-      console.log(`  ${$.red}✗ Resume failed for ${runId} (lease lost or missing checkpoint)${$.reset}\n`);
+      console.log(
+        `  ${$.red}✗ Resume failed for ${runId} (lease lost or missing checkpoint)${$.reset}\n`,
+      );
       continue;
     }
-    console.log(`  ${$.green}✓${$.reset} ${runId} recovered — ${result.completedToolCallIds.size} completed tool calls skipped\n`);
+    console.log(
+      `  ${$.green}✓${$.reset} ${runId} recovered — ${result.completedToolCallIds.size} completed tool calls skipped\n`,
+    );
   }
 
   try {
     const archived = manifestPath + '.archived';
     fs.renameSync(manifestPath, archived);
     console.log(`  ${$.dim}Freeze manifest archived to ${archived}${$.reset}\n`);
-  } catch { void 0; }
+  } catch {
+    void 0;
+  }
 
-  console.log(`  ${$.green}✓${$.reset} All runs recovered. Use ${$.cyan}commander up "task"${$.reset} to continue.\n`);
+  console.log(
+    `  ${$.green}✓${$.reset} All runs recovered. Use ${$.cyan}commander up "task"${$.reset} to continue.\n`,
+  );
 }
 
 function listCheckpointDirs(stateDir: string): string[] {
   try {
-    return fs.readdirSync(stateDir).filter((f) =>
-      f.startsWith('run_') && fs.statSync(path.join(stateDir, f)).isDirectory()
-    );
+    return fs
+      .readdirSync(stateDir)
+      .filter((f) => f.startsWith('run_') && fs.statSync(path.join(stateDir, f)).isDirectory());
   } catch {
     return [];
   }

@@ -386,9 +386,7 @@ export class UltimateOrchestrator {
           reasoning.push(`TELOS preflight: budget OK (${telosPlan.mode} mode)`);
         }
       } catch (e) {
-        reasoning.push(
-          `TELOS preflight skipped: ${e instanceof Error ? e.message : 'unknown'}`,
-        );
+        reasoning.push(`TELOS preflight skipped: ${e instanceof Error ? e.message : 'unknown'}`);
       }
 
       // ── Work Queue Enqueue ──────────────────────────────────────────────
@@ -414,9 +412,7 @@ export class UltimateOrchestrator {
           `Work queue: ${workItems.length} items enqueued (${workItems.filter((w) => w.priority >= 80).length} root)`,
         );
       } catch (e) {
-        reasoning.push(
-          `Work queue enqueue skipped: ${e instanceof Error ? e.message : 'unknown'}`,
-        );
+        reasoning.push(`Work queue enqueue skipped: ${e instanceof Error ? e.message : 'unknown'}`);
       }
 
       // Phase 5: Team Formation (if topology needs it)
@@ -485,13 +481,7 @@ export class UltimateOrchestrator {
 
       // EVALUATOR_OPTIMIZER: dedicated generator→evaluator→optimizer loop
       if (topology === 'EVALUATOR_OPTIMIZER' && taskTree.subtasks.length >= 2) {
-        await this.executeEvaluatorOptimizerLoop(
-          taskTree,
-          execId,
-          params,
-          errors,
-          reasoning,
-        );
+        await this.executeEvaluatorOptimizerLoop(taskTree, execId, params, errors, reasoning);
       } else {
         await this.subAgentExecutor.executeNode(
           taskTree,
@@ -1745,7 +1735,9 @@ export class UltimateOrchestrator {
         const rawScore = scoreMatch ? parseFloat(scoreMatch[1]) : DEFAULT_SCORE * 100;
         qualityScore = rawScore > 1 ? rawScore / 100 : rawScore;
 
-        reasoning.push(`E-O loop iteration ${iteration}: quality=${(qualityScore * 100).toFixed(0)}%`);
+        reasoning.push(
+          `E-O loop iteration ${iteration}: quality=${(qualityScore * 100).toFixed(0)}%`,
+        );
 
         if (qualityScore >= QUALITY_THRESHOLD) {
           reasoning.push('E-O loop: quality threshold met');
@@ -1780,7 +1772,9 @@ export class UltimateOrchestrator {
 
     generator.result = currentOutput;
     generator.status = 'COMPLETED';
-    reasoning.push(`E-O loop completed: ${iteration} iterations, final quality=${(qualityScore * 100).toFixed(0)}%`);
+    reasoning.push(
+      `E-O loop completed: ${iteration} iterations, final quality=${(qualityScore * 100).toFixed(0)}%`,
+    );
   }
 
   dispose(): void {

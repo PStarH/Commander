@@ -43,7 +43,11 @@ import { getMessageBus } from './messageBus';
 import { getTraceRecorder } from './executionTrace';
 import { getAnomalyDetector } from '../observability/anomalyDetector';
 import { PersistentTraceStore } from './traceStore';
-import { compactToolDef, compactToolDefs, getCompactConfigForTier } from './programmaticToolFormatter';
+import {
+  compactToolDef,
+  compactToolDefs,
+  getCompactConfigForTier,
+} from './programmaticToolFormatter';
 import { ContextCompactor } from './contextCompactor';
 import { SlidingWindowOrchestrator } from './slidingWindowOrchestrator';
 import { classifyLLMError, computeBackoff } from './llmRetry';
@@ -835,10 +839,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
               failureMode: 'compensation_exhausted',
               failureModeNumber: 12,
             });
-          } catch { /* best-effort */ }
+          } catch {
+            /* best-effort */
+          }
         }
-      }
-      catch (err) {
+      } catch (err) {
         // Surface as system.alert (visibly visible in dashboards) AND debug-log
         // for forensics. Re-throw so callers can detect partial-failure rather
         // than proceed as if rollback succeeded silently.
@@ -849,7 +854,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
             totalSteps,
             runId: this.ledgerCtx?.runId ?? 'unknown',
           });
-        } catch { /* best-effort */ }
+        } catch {
+          /* best-effort */
+        }
         getGlobalLogger().debug('AgentRuntime', 'Compensation via saga threw unexpectedly', {
           error: err instanceof Error ? err.message : String(err),
           totalSteps,
@@ -1251,18 +1258,13 @@ export class AgentRuntime implements AgentRuntimeInterface {
           //    contextData never reach `ctx.preferredModel` /
           //    `ctx.preferredModelTier` which is what every downstream
           //    consumer reads. (Audit P0-2 follow-up.)
-          const cd = (
-            ctx as unknown as { contextData?: Record<string, unknown> }
-          ).contextData;
+          const cd = (ctx as unknown as { contextData?: Record<string, unknown> }).contextData;
           if (cd?.preferredModel && typeof cd.preferredModel === 'string') {
-            (
-              ctx as unknown as { preferredModel?: string }
-            ).preferredModel = cd.preferredModel;
+            (ctx as unknown as { preferredModel?: string }).preferredModel = cd.preferredModel;
           }
           if (cd?.preferredModelTier && typeof cd.preferredModelTier === 'string') {
-            (
-              ctx as unknown as { preferredModelTier?: ModelTier }
-            ).preferredModelTier = cd.preferredModelTier as ModelTier;
+            (ctx as unknown as { preferredModelTier?: ModelTier }).preferredModelTier =
+              cd.preferredModelTier as ModelTier;
           }
           if (cd?.cascadeEnabled === true) {
             this.smartRouterActive = true;
@@ -4543,7 +4545,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
             durationMs,
           };
         }
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
 
       let latestReflexion: Reflexion | null = null;
       let lastReflexionAttempt = 0;

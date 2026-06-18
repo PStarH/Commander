@@ -27,7 +27,13 @@ export class CircuitBreakerRegistry {
   private breakers = new Map<string, CircuitBreaker>();
   private configs = new Map<string, BreakerConfig>();
   private lastAccess = new Map<string, number>();
-  private readonly MAX_IDLE_MS = 30 * 60 * 1000; // 30 minutes
+  private readonly MAX_IDLE_MS = (() => {
+    // Override `COMMANDER_MAX_IDLE_MS` (ms) to lengthen/shorten the idle-prune interval.
+    // Default is 30 minutes; non-finite, non-positive, or zero values fall back to the default
+    // (a zero/negative interval would create a tight busy loop via setInterval).
+    const parsed = Number(process.env['COMMANDER_MAX_IDLE_MS']);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 30 * 60 * 1000;
+  })();
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
