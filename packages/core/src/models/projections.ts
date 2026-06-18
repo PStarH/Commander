@@ -40,7 +40,7 @@ const missionStatusWeight: Record<MissionStatus, number> = {
  */
 export function createSlimSnapshot(
   snapshot: ProjectWarRoomSnapshot,
-  options: CreateSlimSnapshotOptions
+  options: CreateSlimSnapshotOptions,
 ): SlimSnapshot {
   const maxMissionsPerBucket = options.maxMissionsPerBucket ?? 6;
   const maxLogs = options.maxLogs ?? 8;
@@ -66,13 +66,19 @@ export function createSlimSnapshot(
     agentId: l.agentId,
   });
 
-  const running = snapshot.missions.filter(m => m.status === 'RUNNING').slice(0, maxMissionsPerBucket);
-  const blocked = snapshot.missions.filter(m => m.status === 'BLOCKED').slice(0, maxMissionsPerBucket);
-  const planned = snapshot.missions.filter(m => m.status === 'PLANNED').slice(0, maxMissionsPerBucket);
-  const done = snapshot.missions.filter(m => m.status === 'DONE').slice(0, maxMissionsPerBucket);
+  const running = snapshot.missions
+    .filter((m) => m.status === 'RUNNING')
+    .slice(0, maxMissionsPerBucket);
+  const blocked = snapshot.missions
+    .filter((m) => m.status === 'BLOCKED')
+    .slice(0, maxMissionsPerBucket);
+  const planned = snapshot.missions
+    .filter((m) => m.status === 'PLANNED')
+    .slice(0, maxMissionsPerBucket);
+  const done = snapshot.missions.filter((m) => m.status === 'DONE').slice(0, maxMissionsPerBucket);
 
   const focusMission = options.focusMissionId
-    ? snapshot.missions.find(m => m.id === options.focusMissionId)
+    ? snapshot.missions.find((m) => m.id === options.focusMissionId)
     : undefined;
 
   return {
@@ -178,7 +184,8 @@ export function createSeedWarRoomData(now = new Date()): WarRoomData {
       id: 'mission-api-spine',
       projectId: project.id,
       title: 'Stand up mission persistence and control endpoints',
-      objective: 'Persist one project with agents, missions, and logs so the war room survives refreshes.',
+      objective:
+        'Persist one project with agents, missions, and logs so the war room survives refreshes.',
       status: 'RUNNING',
       priority: 'CRITICAL',
       riskLevel: 'HIGH',
@@ -267,7 +274,7 @@ export function createSeedWarRoomData(now = new Date()): WarRoomData {
 
 function getProjectHealth(
   blockedMissionCount: number,
-  runningMissionCount: number
+  runningMissionCount: number,
 ): ProjectBattleReport['health'] {
   if (blockedMissionCount > 0) {
     return 'AMBER';
@@ -332,30 +339,31 @@ export function generateProjectBattleReport(
   agents: Agent[],
   missions: Mission[],
   logs: ExecutionLog[],
-  now = new Date()
+  now = new Date(),
 ): ProjectBattleReport {
-  const runningMissionCount = missions.filter(mission => mission.status === 'RUNNING').length;
-  const blockedMissionCount = missions.filter(mission => mission.status === 'BLOCKED').length;
-  const completedMissionCount = missions.filter(mission => mission.status === 'DONE').length;
+  const runningMissionCount = missions.filter((mission) => mission.status === 'RUNNING').length;
+  const blockedMissionCount = missions.filter((mission) => mission.status === 'BLOCKED').length;
+  const completedMissionCount = missions.filter((mission) => mission.status === 'DONE').length;
   const totalMissions = missions.length;
-  const highRiskMissionCount = missions.filter(mission => {
+  const highRiskMissionCount = missions.filter((mission) => {
     return mission.riskLevel === 'HIGH' || mission.riskLevel === 'CRITICAL';
   }).length;
-  const manualGovernanceMissionCount = missions.filter(mission => {
+  const manualGovernanceMissionCount = missions.filter((mission) => {
     return mission.governanceMode === 'MANUAL';
   }).length;
   const totalAgents = agents.length;
-  const activeAgents = agents.filter(agent => {
+  const activeAgents = agents.filter((agent) => {
     return agent.status === 'READY' || agent.status === 'RUNNING';
   }).length;
-  const completionRate = totalMissions === 0 ? 0 : Math.round((completedMissionCount / totalMissions) * 100);
+  const completionRate =
+    totalMissions === 0 ? 0 : Math.round((completedMissionCount / totalMissions) * 100);
 
   const dayAgo = now.getTime() - 24 * 60 * 60 * 1000;
-  const logVolume24h = logs.filter(log => new Date(log.createdAt).getTime() >= dayAgo).length;
+  const logVolume24h = logs.filter((log) => new Date(log.createdAt).getTime() >= dayAgo).length;
 
   const topAgents = agents
-    .map(agent => {
-      const completedByAgent = missions.filter(mission => {
+    .map((agent) => {
+      const completedByAgent = missions.filter((mission) => {
         return mission.assignedAgentId === agent.id && mission.status === 'DONE';
       }).length;
 
@@ -365,7 +373,7 @@ export function generateProjectBattleReport(
         completedMissionCount: completedByAgent,
       };
     })
-    .filter(agent => agent.completedMissionCount > 0)
+    .filter((agent) => agent.completedMissionCount > 0)
     .sort((left, right) => {
       return right.completedMissionCount - left.completedMissionCount;
     })
@@ -408,32 +416,32 @@ export function generateProjectBattleReport(
 export function getProjectWarRoomSnapshot(
   data: WarRoomData,
   projectId: string,
-  now = new Date()
+  now = new Date(),
 ): ProjectWarRoomSnapshot | null {
-  const project = data.projects.find(item => item.id === projectId);
+  const project = data.projects.find((item) => item.id === projectId);
   if (!project) {
     return null;
   }
 
-  const projectAgents = data.agents.filter(agent => agent.projectId === projectId);
+  const projectAgents = data.agents.filter((agent) => agent.projectId === projectId);
   const projectMissions = data.missions
-    .filter(mission => mission.projectId === projectId)
+    .filter((mission) => mission.projectId === projectId)
     .sort(sortMissions);
   const projectLogs = data.logs
-    .filter(log => log.projectId === projectId)
+    .filter((log) => log.projectId === projectId)
     .sort((left, right) => {
       return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
     });
 
   const agentWorkloads = projectAgents
-    .map(agent => {
+    .map((agent) => {
       const assignedMissions = projectMissions.filter(
-        mission => mission.assignedAgentId === agent.id
+        (mission) => mission.assignedAgentId === agent.id,
       );
       const completedMissionCount = assignedMissions.filter(
-        mission => mission.status === 'DONE'
+        (mission) => mission.status === 'DONE',
       ).length;
-      const activeMissionCount = assignedMissions.filter(mission => {
+      const activeMissionCount = assignedMissions.filter((mission) => {
         return mission.status === 'RUNNING' || mission.status === 'BLOCKED';
       }).length;
 
@@ -446,7 +454,7 @@ export function getProjectWarRoomSnapshot(
         assignedMissionCount: assignedMissions.length,
         activeMissionCount,
         completedMissionCount,
-        latestLogAt: projectLogs.find(log => log.agentId === agent.id)?.createdAt,
+        latestLogAt: projectLogs.find((log) => log.agentId === agent.id)?.createdAt,
       };
     })
     .sort((left, right) => {
@@ -462,7 +470,13 @@ export function getProjectWarRoomSnapshot(
     agents: agentWorkloads,
     missions: projectMissions,
     latestLogs: projectLogs.slice(0, 12),
-    battleReport: generateProjectBattleReport(project, projectAgents, projectMissions, projectLogs, now),
+    battleReport: generateProjectBattleReport(
+      project,
+      projectAgents,
+      projectMissions,
+      projectLogs,
+      now,
+    ),
   };
 }
 

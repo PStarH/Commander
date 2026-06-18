@@ -2,7 +2,8 @@ import type { Tool, ToolDefinition } from '../../runtime/types';
 
 const DEFINITION: ToolDefinition = {
   name: 'pdf_extract',
-  description: 'Extract text content from a PDF file. Returns the textual content page by page. Useful for reading reports, papers, documentation in PDF format.',
+  description:
+    'Extract text content from a PDF file. Returns the textual content page by page. Useful for reading reports, papers, documentation in PDF format.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -37,43 +38,50 @@ export class PdfExtractTool implements Tool {
 
     try {
       const fs = await import('fs');
-      const path = await import('path');
-      const resolved = path.resolve(filePath);
+      const pathModule = await import('path');
+      const { safePath } = await import('../fileSystemTool');
+      let resolved: string;
+      try {
+        resolved = safePath(filePath);
+      } catch {
+        return `Error: Access denied: path "${filePath}" is outside workspace`;
+      }
       if (!fs.existsSync(resolved)) return `Error: File not found: ${filePath}`;
       const stat = fs.statSync(resolved);
       if (!stat.isFile()) return `Error: Not a file: ${filePath}`;
-      if (stat.size > 100 * 1024 * 1024) return `Error: PDF too large (${(stat.size / 1024 / 1024).toFixed(1)}MB). Max: 100MB.`;
+      if (stat.size > 100 * 1024 * 1024)
+        return `Error: PDF too large (${(stat.size / 1024 / 1024).toFixed(1)}MB). Max: 100MB.`;
 
-       const ext = path.extname(resolved).toLowerCase();
-       if (ext !== '.pdf') return `Error: Not a PDF file: ${filePath}`;
+      const ext = pathModule.extname(resolved).toLowerCase();
+      if (ext !== '.pdf') return `Error: Not a PDF file: ${filePath}`;
 
-        try {
-          const pdfMod = 'pdfjs-dist';
-          const pdflib = await import(pdfMod);
-          const data = new Uint8Array(fs.readFileSync(resolved));
-          const doc = await pdflib.getDocument({ data }).promise;
-          const totalPages = doc.numPages;
-          const endPage = Math.min(pageEnd, totalPages);
-          const pages: string[] = [];
+      try {
+        const pdfMod = 'pdfjs-dist';
+        const pdflib = await import(pdfMod);
+        const data = new Uint8Array(fs.readFileSync(resolved));
+        const doc = await pdflib.getDocument({ data }).promise;
+        const totalPages = doc.numPages;
+        const endPage = Math.min(pageEnd, totalPages);
+        const pages: string[] = [];
 
-          for (let i = pageStart; i <= endPage; i++) {
-            const page = await doc.getPage(i);
-            const content = await page.getTextContent();
-            const text = content.items.map((item: { str: string }) => item.str).join(' ');
-            pages.push(`--- Page ${i}/${totalPages} ---\n${text}`);
-          }
-
-          await doc.destroy();
-          const result = pages.join('\n\n');
-          if (result.length <= maxChars) return result;
-          return `${result.slice(0, maxChars)}\n\n...[Truncated at ${maxChars} chars (${result.length} total)]`;
-        } catch (err: unknown) {
-          const innerMsg = err instanceof Error ? err.message : String(err);
-          if (innerMsg.includes('Cannot find module')) {
-            return `PDF extraction requires pdfjs-dist. Install: npm install pdfjs-dist\n\nError: ${innerMsg}`;
-          }
-          throw err;
+        for (let i = pageStart; i <= endPage; i++) {
+          const page = await doc.getPage(i);
+          const content = await page.getTextContent();
+          const text = content.items.map((item: { str: string }) => item.str).join(' ');
+          pages.push(`--- Page ${i}/${totalPages} ---\n${text}`);
         }
+
+        await doc.destroy();
+        const result = pages.join('\n\n');
+        if (result.length <= maxChars) return result;
+        return `${result.slice(0, maxChars)}\n\n...[Truncated at ${maxChars} chars (${result.length} total)]`;
+      } catch (err: unknown) {
+        const innerMsg = err instanceof Error ? err.message : String(err);
+        if (innerMsg.includes('Cannot find module')) {
+          return `PDF extraction requires pdfjs-dist. Install: npm install pdfjs-dist\n\nError: ${innerMsg}`;
+        }
+        throw err;
+      }
     } catch (err: unknown) {
       return `PDF extraction failed: ${err instanceof Error ? err.message : String(err)}`;
     }

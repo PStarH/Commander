@@ -36,8 +36,8 @@ export class PerplexityProvider extends BaseOpenAICompatibleProvider {
     if (request.tools && request.tools.length > 0) {
       throw new Error(
         `[perplexity] Perplexity Sonar API does NOT support tool/function calling. ` +
-        `Remove tools from the request or use a different provider (e.g. OpenAI, Anthropic) ` +
-        `for agentic workflows that require tools.`
+          `Remove tools from the request or use a different provider (e.g. OpenAI, Anthropic) ` +
+          `for agentic workflows that require tools.`,
       );
     }
     return super.call(request);

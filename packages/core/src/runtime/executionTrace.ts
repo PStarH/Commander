@@ -11,11 +11,31 @@ function generateTraceId(): string {
 
 export class ExecutionTraceRecorder {
   private traces: Map<string, ExecutionTrace> = new Map();
+  private traceInsertOrder: string[] = [];
   private maxTraces: number;
+  /** Maximum events per trace to prevent unbounded memory growth */
+  private readonly maxEventsPerTrace: number;
+
+  /** Evict the oldest completed trace to make room. Skips active traces. */
+  private evictOldestCompleted(): void {
+    // Use shift for O(1) on the common case (oldest is first inserted)
+    while (this.traceInsertOrder.length > 0) {
+      const key = this.traceInsertOrder[0];
+      const trace = this.traces.get(key);
+      if (trace?.completedAt) {
+        this.traceInsertOrder.shift();
+        this.traces.delete(key);
+        return;
+      }
+      // Oldest is still active — try the next one
+      break;
+    }
+  }
   private store: TraceStore | null;
 
-  constructor(maxTraces = 500, store?: TraceStore) {
+  constructor(maxTraces = 500, store?: TraceStore, maxEventsPerTrace = 5000) {
     this.maxTraces = maxTraces;
+    this.maxEventsPerTrace = maxEventsPerTrace;
     this.store = store ?? null;
   }
 
@@ -32,6 +52,12 @@ export class ExecutionTraceRecorder {
     agentId: string,
     missionId?: string,
     traceId?: string,
+    context?: {
+      tenantId?: string;
+      parentRunId?: string;
+      subAgentDepth?: number;
+      subAgentRole?: string;
+    },
   ): void {
     const tid = traceId ?? generateTraceId();
     this.traces.set(runId, {
@@ -39,6 +65,10 @@ export class ExecutionTraceRecorder {
       traceId: tid,
       agentId,
       missionId,
+      tenantId: context?.tenantId,
+      parentRunId: context?.parentRunId,
+      subAgentDepth: context?.subAgentDepth,
+      subAgentRole: context?.subAgentRole,
       startedAt: new Date().toISOString(),
       events: [],
       summary: {
@@ -51,12 +81,10 @@ export class ExecutionTraceRecorder {
         modelUsed: '',
       },
     });
+    this.traceInsertOrder.push(runId);
 
     if (this.traces.size > this.maxTraces) {
-      const oldest = Array.from(this.traces.keys()).sort(
-        (a, b) => new Date(this.traces.get(a)!.startedAt).getTime() - new Date(this.traces.get(b)!.startedAt).getTime(),
-      )[0];
-      this.traces.delete(oldest);
+      this.evictOldestCompleted();
     }
   }
 
@@ -68,8 +96,13 @@ export class ExecutionTraceRecorder {
     if (!trace) {
       const tid = generateTraceId();
       return {
-        id: '', spanId: '', traceId: tid, runId, agentId: 'unknown',
-        timestamp: new Date().toISOString(), durationMs: 0,
+        id: '',
+        spanId: '',
+        traceId: tid,
+        runId,
+        agentId: 'unknown',
+        timestamp: new Date().toISOString(),
+        durationMs: 0,
         type: event.type ?? 'decision',
         data: event.data ?? {},
         parentSpanId: event.parentSpanId,
@@ -86,6 +119,12 @@ export class ExecutionTraceRecorder {
       timestamp: new Date().toISOString(),
     };
 
+    // Limit events per trace to prevent unbounded memory growth
+    if (trace.events.length >= this.maxEventsPerTrace) {
+      // Drop oldest events (keep most recent 80%)
+      const keepCount = Math.floor(this.maxEventsPerTrace * 0.8);
+      trace.events = trace.events.slice(-keepCount);
+    }
     trace.events.push(fullEvent);
 
     trace.summary.totalEvents++;
@@ -105,10 +144,7 @@ export class ExecutionTraceRecorder {
     this.store?.append(fullEvent);
 
     if (this.traces.size > this.maxTraces) {
-      const oldest = Array.from(this.traces.keys()).sort(
-        (a, b) => new Date(this.traces.get(a)!.startedAt).getTime() - new Date(this.traces.get(b)!.startedAt).getTime(),
-      )[0];
-      this.traces.delete(oldest);
+      this.evictOldestCompleted();
     }
 
     return fullEvent;
@@ -124,6 +160,7 @@ export class ExecutionTraceRecorder {
     tokenUsage: TokenUsage,
     durationMs: number,
     parentSpanId?: string,
+    metadata?: { taskCategory?: string },
   ): TraceEvent {
     return this.recordEvent(runId, {
       type: 'llm_call',
@@ -133,6 +170,8 @@ export class ExecutionTraceRecorder {
         output,
         modelInfo: { model, provider, tier },
         tokenUsage,
+        tier,
+        taskCategory: metadata?.taskCategory,
       },
       parentSpanId,
     });
@@ -169,18 +208,68 @@ export class ExecutionTraceRecorder {
     });
   }
 
-  recordError(
-    runId: string,
-    error: string,
-    durationMs: number,
-    parentSpanId?: string,
-  ): TraceEvent {
+  recordError(runId: string, error: string, durationMs: number, parentSpanId?: string): TraceEvent {
     return this.recordEvent(runId, {
       type: 'error',
       durationMs,
       data: { error },
       parentSpanId,
     });
+  }
+
+  recordVerification(
+    runId: string,
+    passed: boolean,
+    confidence: number,
+    signalCount: number,
+    durationMs: number,
+    parentSpanId?: string,
+  ): TraceEvent {
+    return this.recordEvent(runId, {
+      type: 'verification',
+      durationMs,
+      data: {
+        input: { passed, confidence, signalCount },
+        output: { passed, confidence, signalCount },
+        evaluationScore: confidence,
+        evaluationPassed: passed,
+      },
+      parentSpanId,
+    });
+  }
+
+  /**
+   * Record a critical event with fsync durability. Use sparingly: circuit-breaker
+   * transitions, compensation exhaustion, intent-log writes, run manifest commits.
+   * Higher latency than recordEvent() because it fsyncs the file descriptor.
+   */
+  recordCriticalEvent(
+    runId: string,
+    event: Omit<TraceEvent, 'id' | 'spanId' | 'traceId' | 'runId' | 'timestamp' | 'agentId'>,
+  ): TraceEvent | null {
+    const trace = this.traces.get(runId);
+    const fullEvent: TraceEvent = {
+      ...event,
+      id: generateId(),
+      spanId: generateId(),
+      traceId: trace?.traceId ?? generateTraceId(),
+      runId,
+      agentId: trace?.agentId ?? 'unknown',
+      timestamp: new Date().toISOString(),
+    };
+    if (trace) {
+      trace.events.push(fullEvent);
+    }
+    if (
+      this.store &&
+      typeof (this.store as { appendCritical?: (e: TraceEvent) => void }).appendCritical ===
+        'function'
+    ) {
+      (this.store as { appendCritical: (e: TraceEvent) => void }).appendCritical(fullEvent);
+    } else {
+      this.store?.append(fullEvent);
+    }
+    return fullEvent;
   }
 
   completeRun(runId: string): ExecutionTrace {
@@ -200,10 +289,11 @@ export class ExecutionTraceRecorder {
   listTraces(agentId?: string, limit = 50): ExecutionTrace[] {
     let all = Array.from(this.traces.values());
     if (agentId) {
-      all = all.filter(t => t.agentId === agentId);
+      all = all.filter((t) => t.agentId === agentId);
     }
+    // ISO string comparison — no Date parsing needed
     return all
-      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
+      .sort((a, b) => (b.startedAt < a.startedAt ? -1 : b.startedAt > a.startedAt ? 1 : 0))
       .slice(0, limit);
   }
 
@@ -231,11 +321,7 @@ export class ExecutionTraceRecorder {
     };
   }
 
-  startSpan(
-    runId: string,
-    name: string,
-    parentSpanId?: string,
-  ): TraceSpan {
+  startSpan(runId: string, name: string, parentSpanId?: string): TraceSpan {
     const trace = this.traces.get(runId);
     const spanId = generateId();
     const traceId = trace?.traceId ?? generateTraceId();
@@ -244,13 +330,27 @@ export class ExecutionTraceRecorder {
 
     if (!trace) {
       this.traces.set(runId, {
-        runId, traceId, agentId, missionId: undefined,
-        startedAt: new Date().toISOString(), events: [], summary: {
-          totalEvents: 0, totalDurationMs: 0, totalTokens: 0,
-          llmCalls: 0, toolExecutions: 0, errors: 0, modelUsed: '',
+        runId,
+        traceId,
+        agentId,
+        missionId: undefined,
+        startedAt: new Date().toISOString(),
+        events: [],
+        summary: {
+          totalEvents: 0,
+          totalDurationMs: 0,
+          totalTokens: 0,
+          llmCalls: 0,
+          toolExecutions: 0,
+          errors: 0,
+          modelUsed: '',
         },
       });
+      this.traceInsertOrder.push(runId);
     }
+
+    // Re-fetch after potential fallback creation
+    const finalTrace = this.traces.get(runId)!;
 
     return {
       spanId,
@@ -290,7 +390,9 @@ import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
 let _traceStore: TraceStore | undefined;
 
-const traceRecorderSingleton = createTenantAwareSingleton(() => new ExecutionTraceRecorder(500, _traceStore));
+const traceRecorderSingleton = createTenantAwareSingleton(
+  () => new ExecutionTraceRecorder(500, _traceStore),
+);
 
 export function getTraceRecorder(store?: TraceStore): ExecutionTraceRecorder {
   if (store) _traceStore = store;

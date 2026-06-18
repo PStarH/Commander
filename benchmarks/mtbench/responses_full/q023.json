@@ -1,6 +1,0 @@
-{
-  "cat": "Reasoning",
-  "question": "If it takes 5 machines 5 minutes to make 5 widgets, how long for 100 machines to make 100?",
-  "answer": "It takes **5 minutes**.\n\nHere is the breakdown:\n\n1.  **Find the rate of one machine:** If 5 machines make 5 widgets in 5 minutes, that means each individual machine is making 1 widget in 5 minutes.\n2.  **Apply that to 100 machines:** If you have 100 machines, and each one takes 5 minutes to make a widget, they will all finish their single widget at the same time (5 minutes), resulting in 100 widgets.",
-  "score": 10.0
-}

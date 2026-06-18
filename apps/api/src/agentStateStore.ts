@@ -20,7 +20,7 @@ export class AgentStateStore {
   }
 
   get(projectId: string, agentId: string): AgentState | undefined {
-    return this.items.find(item => item.projectId === projectId && item.agentId === agentId);
+    return this.items.find((item) => item.projectId === projectId && item.agentId === agentId);
   }
 
   upsert(input: UpsertAgentStateInput): AgentState {
@@ -29,7 +29,7 @@ export class AgentStateStore {
 
     const safeTags = Array.isArray(input.tags)
       ? input.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 8)
-      : existing?.tags ?? [];
+      : (existing?.tags ?? []);
 
     if (existing) {
       existing.summary = input.summary ?? existing.summary;

@@ -1,9 +1,12 @@
-import type { LLMProvider, LLMRequest, LLMResponse, ModelTier, TokenUsage, ToolCall } from '../runtime/types';
 import type {
-  ProviderEndpoint,
-  ProviderHealth,
-  ProviderSelection,
-} from './types';
+  LLMProvider,
+  LLMRequest,
+  LLMResponse,
+  ModelTier,
+  TokenUsage,
+  ToolCall,
+} from '../runtime/types';
+import type { ProviderEndpoint, ProviderHealth, ProviderSelection } from './types';
 import { getModelRouter } from '../runtime/modelRouter';
 
 // ============================================================================
@@ -12,7 +15,9 @@ import { getModelRouter } from '../runtime/modelRouter';
 
 class NoOpProvider implements LLMProvider {
   readonly name: string;
-  constructor(name: string) { this.name = name; }
+  constructor(name: string) {
+    this.name = name;
+  }
   async call(_request: LLMRequest): Promise<LLMResponse> {
     throw new Error(`${this.name} provider not configured — set API key`);
   }
@@ -26,7 +31,6 @@ export class ProviderPool {
   private endpoints: ProviderEndpoint[] = [];
   private healthCache: Map<string, ProviderHealth> = new Map();
   private providers: Map<string, LLMProvider> = new Map();
-  private rateLimitCounters: Map<string, { count: number; windowStart: number }> = new Map();
   private consecutiveFailures: Map<string, number> = new Map();
   private maxRetries: number;
   private retryDelayMs: number;
@@ -49,7 +53,7 @@ export class ProviderPool {
   registerProvider(provider: LLMProvider): void {
     this.providers.set(provider.name, provider);
     // Auto-create endpoint if not exists
-    if (!this.endpoints.find(e => e.provider === provider.name)) {
+    if (!this.endpoints.find((e) => e.provider === provider.name)) {
       this.endpoints.push({
         provider: provider.name,
         modelId: '*',
@@ -66,7 +70,7 @@ export class ProviderPool {
   configureEndpoints(endpoints: ProviderEndpoint[]): void {
     for (const ep of endpoints) {
       const existing = this.endpoints.findIndex(
-        e => e.provider === ep.provider && e.modelId === ep.modelId,
+        (e) => e.provider === ep.provider && e.modelId === ep.modelId,
       );
       if (existing >= 0) {
         this.endpoints[existing] = { ...this.endpoints[existing], ...ep };
@@ -84,13 +88,11 @@ export class ProviderPool {
     const router = getModelRouter();
     const eligible: Array<{ endpoint: ProviderEndpoint; modelId: string }> = [];
 
-    const models = modelTier
-      ? router.listModels(modelTier)
-      : router.listModels();
+    const models = modelTier ? router.listModels(modelTier) : router.listModels();
 
     for (const model of models) {
       const eps = this.endpoints.filter(
-        e => (e.modelId === '*' || e.modelId === model.id) && e.isEnabled,
+        (e) => (e.modelId === '*' || e.modelId === model.id) && e.isEnabled,
       );
       for (const ep of eps) {
         const health = this.healthCache.get(`${ep.provider}:${model.id}`);
@@ -101,8 +103,11 @@ export class ProviderPool {
 
     if (eligible.length === 0) {
       // Fallback: use any enabled endpoint
-      for (const ep of this.endpoints.filter(e => e.isEnabled)) {
-        eligible.push({ endpoint: ep, modelId: ep.modelId === '*' ? 'claude-3-5-sonnet' : ep.modelId });
+      for (const ep of this.endpoints.filter((e) => e.isEnabled)) {
+        eligible.push({
+          endpoint: ep,
+          modelId: ep.modelId === '*' ? 'claude-3-5-sonnet' : ep.modelId,
+        });
       }
     }
 
@@ -121,36 +126,73 @@ export class ProviderPool {
       }
     }
 
+    if (eligible.length === 0) {
+      throw new Error('No eligible providers available');
+    }
+
     return {
-      provider: eligible[0]?.endpoint.provider ?? 'none',
-      modelId: eligible[0]?.modelId ?? 'none',
-      endpoint: eligible[0]?.endpoint ?? { provider: 'none', modelId: 'none', priority: 0, weight: 1, isEnabled: false },
+      provider: eligible[0].endpoint.provider,
+      modelId: eligible[0].modelId,
+      endpoint: eligible[0].endpoint,
       estimatedCost: 0,
     };
   }
 
   /**
-   * Execute a request with automatic failover across providers.
-   * Returns the response from the first successful provider.
+   * Get all eligible endpoints for a tier, sorted by weight (descending).
    */
-  async executeWithFailover(
-    request: LLMRequest,
+  private getAllEligible(
     modelTier?: ModelTier,
-  ): Promise<LLMResponse> {
-    let lastError: Error | null = null;
-    const tried = new Set<string>();
+  ): Array<{ endpoint: ProviderEndpoint; modelId: string }> {
+    const router = getModelRouter();
+    const eligible: Array<{ endpoint: ProviderEndpoint; modelId: string }> = [];
 
-    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
-      const selection = this.select(modelTier);
-      if (tried.has(`${selection.provider}:${selection.modelId}`)) {
-        // All available tried, break
-        break;
+    const models = modelTier ? router.listModels(modelTier) : router.listModels();
+
+    for (const model of models) {
+      const eps = this.endpoints.filter(
+        (e) => (e.modelId === '*' || e.modelId === model.id) && e.isEnabled,
+      );
+      for (const ep of eps) {
+        const health = this.healthCache.get(`${ep.provider}:${model.id}`);
+        if (health && health.status === 'down') continue;
+        eligible.push({ endpoint: ep, modelId: model.id });
       }
-      tried.add(`${selection.provider}:${selection.modelId}`);
+    }
 
-      const provider = this.providers.get(selection.provider);
+    if (eligible.length === 0) {
+      for (const ep of this.endpoints.filter((e) => e.isEnabled)) {
+        eligible.push({
+          endpoint: ep,
+          modelId: ep.modelId === '*' ? 'claude-3-5-sonnet' : ep.modelId,
+        });
+      }
+    }
+
+    // Sort by weight descending for deterministic order
+    eligible.sort((a, b) => b.endpoint.weight - a.endpoint.weight);
+    return eligible;
+  }
+
+  /**
+   * Execute a request with automatic failover across providers.
+   * Cycles through eligible providers deterministically (by weight).
+   */
+  async executeWithFailover(request: LLMRequest, modelTier?: ModelTier): Promise<LLMResponse> {
+    const allEligible = this.getAllEligible(modelTier);
+    if (allEligible.length === 0) {
+      throw new Error('No eligible providers available');
+    }
+
+    let lastError: Error | null = null;
+    const maxAttempts = Math.min(this.maxRetries + 1, allEligible.length);
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const selection = allEligible[attempt];
+
+      const provider = this.providers.get(selection.endpoint.provider);
       if (!provider) {
-        lastError = new Error(`Provider ${selection.provider} not registered`);
+        lastError = new Error(`Provider ${selection.endpoint.provider} not registered`);
         continue;
       }
 
@@ -159,12 +201,12 @@ export class ProviderPool {
           ...request,
           model: selection.modelId,
         });
-        this.recordSuccess(selection.provider, selection.modelId);
+        this.recordSuccess(selection.endpoint.provider, selection.modelId);
         return response;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        this.recordFailure(selection.provider, selection.modelId);
-        if (attempt < this.maxRetries) {
+        this.recordFailure(selection.endpoint.provider, selection.modelId);
+        if (attempt < maxAttempts - 1) {
           await this.delay(this.retryDelayMs * Math.pow(2, attempt));
         }
       }
@@ -250,10 +292,13 @@ export class ProviderPool {
     }
 
     if (usage.totalTokens === 0) {
+      // Estimate tokens from character count (~4 chars per token)
+      const promptChars = JSON.stringify(request.messages).length;
+      const completionChars = content.length;
       usage = {
-        promptTokens: JSON.stringify(request.messages).length,
-        completionTokens: content.length,
-        totalTokens: JSON.stringify(request.messages).length + content.length,
+        promptTokens: Math.ceil(promptChars / 4),
+        completionTokens: Math.ceil(completionChars / 4),
+        totalTokens: Math.ceil((promptChars + completionChars) / 4),
       };
     }
 
@@ -328,7 +373,7 @@ export class ProviderPool {
   }
 
   private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   // GAP-27: Periodically attempt recovery of 'down' providers
@@ -338,10 +383,12 @@ export class ProviderPool {
       if (health.status === 'down') {
         const lastCheck = new Date(health.lastCheck).getTime();
         if (now - lastCheck > this.RECOVERY_AFTER_FAILURES_MS) {
-          // Reset to 'degraded' so it gets one more chance
+          // Reset to 'degraded' so it gets one more chance, but keep some failure memory
           health.status = 'degraded';
+          health.lastCheck = new Date().toISOString();
           this.healthCache.set(key, health);
-          this.consecutiveFailures.set(key, 0);
+          const prev = this.consecutiveFailures.get(key) ?? 0;
+          this.consecutiveFailures.set(key, Math.max(0, Math.floor(prev / 2)));
         }
       }
     }
@@ -358,7 +405,9 @@ export class ProviderPool {
 
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
-const providerPoolSingleton = createTenantAwareSingleton(() => new ProviderPool());
+const providerPoolSingleton = createTenantAwareSingleton(() => new ProviderPool(), {
+  dispose: (pool) => pool.dispose(),
+});
 
 export function getProviderPool(): ProviderPool {
   return providerPoolSingleton.get();

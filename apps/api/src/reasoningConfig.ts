@@ -22,9 +22,9 @@ export interface ReasoningThresholds {
 
 export const DEFAULT_CONFIDENCE_THRESHOLDS: ReasoningThresholds = {
   high: 0.85,
-  medium: 0.60,
-  low: 0.40,
-  veryLow: 0.20,
+  medium: 0.6,
+  low: 0.4,
+  veryLow: 0.2,
 };
 
 export interface ReasoningConfig {
@@ -54,14 +54,14 @@ export const DEFAULT_REASONING_CONFIGS: Record<ReasoningMode, Partial<ReasoningC
   },
   [ReasoningMode.VERIFY]: {
     maxSteps: 5,
-    confidenceThreshold: 0.60,
+    confidenceThreshold: 0.6,
     allowSelfCorrection: true,
     storeReflection: true,
     allowAlternatives: false,
   },
   [ReasoningMode.EXTENDED]: {
     maxSteps: 15,
-    confidenceThreshold: 0.40,
+    confidenceThreshold: 0.4,
     allowSelfCorrection: true,
     storeReflection: true,
     allowAlternatives: true,
@@ -97,7 +97,7 @@ export interface Critique {
 export function selectReasoningMode(
   estimatedSteps: number,
   hasBranches: boolean = false,
-  dependenciesComplex: boolean = false
+  dependenciesComplex: boolean = false,
 ): ReasoningMode {
   if (estimatedSteps <= 3) {
     return ReasoningMode.FAST;
@@ -111,7 +111,7 @@ export function selectReasoningMode(
 /** 根据置信度决定执行策略 */
 export function confidenceToAction(
   confidence: number,
-  thresholds: ReasoningThresholds = DEFAULT_CONFIDENCE_THRESHOLDS
+  thresholds: ReasoningThresholds = DEFAULT_CONFIDENCE_THRESHOLDS,
 ): 'execute' | 'verify' | 'confirm' | 'refuse' {
   if (confidence >= thresholds.high) return 'execute';
   if (confidence >= thresholds.medium) return 'verify';
@@ -122,7 +122,7 @@ export function confidenceToAction(
 /** 构建完整的推理配置 */
 export function buildReasoningConfig(
   mode: ReasoningMode,
-  overrides: Partial<ReasoningConfig> = {}
+  overrides: Partial<ReasoningConfig> = {},
 ): ReasoningConfig {
   return {
     ...DEFAULT_REASONING_CONFIGS[mode],

@@ -125,8 +125,8 @@ export function validateToolCall(
     if (value === undefined || value === null) continue;
 
     // Case-insensitive string comparison
-    const normalizedAllowed = allowedValues.map(v =>
-      typeof v === 'string' ? v.toLowerCase() : v
+    const normalizedAllowed = allowedValues.map((v) =>
+      typeof v === 'string' ? v.toLowerCase() : v,
     );
     const normalizedValue = typeof value === 'string' ? value.toLowerCase() : value;
 
@@ -135,7 +135,7 @@ export function validateToolCall(
       if (!allowedValues.includes(value)) {
         errors.push({
           path: key,
-          message: `value ${JSON.stringify(value)} not in enum [${allowedValues.map(v => JSON.stringify(v)).join(', ')}]`,
+          message: `value ${JSON.stringify(value)} not in enum [${allowedValues.map((v) => JSON.stringify(v)).join(', ')}]`,
           actualValue: value,
         });
       }
@@ -212,7 +212,11 @@ function tryCoerce(value: unknown, expectedType: string): unknown {
       try {
         const parsed = JSON.parse(value);
         if (Array.isArray(parsed)) return parsed;
-      } catch (e) { getGlobalLogger().debug('ToolCallValidator', 'Failed to parse array coercion JSON', { error: (e as Error)?.message }); }
+      } catch (e) {
+        getGlobalLogger().debug('ToolCallValidator', 'Failed to parse array coercion JSON', {
+          error: (e as Error)?.message,
+        });
+      }
     }
     // Wrap a single value in an array
     if (!Array.isArray(value) && value !== undefined && value !== null) return [value];
@@ -253,4 +257,61 @@ export function formatValidationErrors(
   lines.push('Please correct your arguments and retry.');
 
   return lines.join('\n');
+}
+
+export interface ValidationErrorPayload {
+  tool: string;
+  valid: boolean;
+  errors: Array<{
+    path: string;
+    message: string;
+    expectedType?: string;
+    actualValue?: unknown;
+    suggestion?: string;
+  }>;
+  repairs: string[];
+  repairedArgs?: Record<string, unknown>;
+  retryHint: string;
+}
+
+/**
+ * Format validation errors as a structured JSON payload (Tier 3.1).
+ * LLMs can read JSON more reliably than free-form text and use the
+ * `suggestion` field directly when regenerating the tool call.
+ */
+export function formatValidationErrorsJson(
+  errors: ValidationResult['errors'],
+  toolName: string,
+  repairs?: string[],
+  repairedArgs?: Record<string, unknown>,
+): ValidationErrorPayload {
+  return {
+    tool: toolName,
+    valid: errors.length === 0,
+    errors: errors.map((e) => ({
+      path: e.path,
+      message: e.message,
+      expectedType: e.expectedType,
+      actualValue: e.actualValue,
+      suggestion: e.suggestion ?? defaultSuggestion(e),
+    })),
+    repairs: repairs ?? [],
+    repairedArgs,
+    retryHint: 'Fix the errors above and call the tool again with corrected arguments.',
+  };
+}
+
+function defaultSuggestion(err: {
+  path: string;
+  message: string;
+  expectedType?: string;
+  actualValue?: unknown;
+}): string {
+  if (err.expectedType) {
+    return `Provide '${err.path}' as a ${err.expectedType}.`;
+  }
+  if (err.actualValue === undefined) {
+    return `Include required argument '${err.path}'.`;
+  }
+  return `Adjust '${err.path}' to match the expected schema.`;
 }

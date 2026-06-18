@@ -17,18 +17,13 @@ export interface GoalNode {
   workerOutput?: string;
   critique?: CritiqueResult;
   subGoals: GoalNode[];
-  dependencies: string[];       // IDs of sub-goals that must complete first
+  dependencies: string[]; // IDs of sub-goals that must complete first
   roundAssigned?: number;
   roundCompleted?: number;
   metadata?: Record<string, unknown>;
 }
 
-export type GoalStatus =
-  | 'pending'
-  | 'in_progress'
-  | 'completed'
-  | 'failed'
-  | 're_opened';
+export type GoalStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 're_opened';
 
 // ============================================================================
 // Critique
@@ -68,7 +63,7 @@ export interface RoundLedger {
   findingsTotal: number;
   findingsResolved: number;
   findingsNew: number;
-  improvementRate: number;      // negative = regressing
+  improvementRate: number; // negative = regressing
   tokensUsed: number;
   totalTokensUsed: number;
   decision: RoundDecision;
@@ -125,7 +120,7 @@ export interface GoalResult {
 export interface ManagerDecomposition {
   subGoals: Array<{
     goal: string;
-    dependencies: string[];    // references to sibling sub-goals by index or id
+    dependencies: string[]; // references to sibling sub-goals by index or id
     notes?: string;
   }>;
   reasoning: string;

@@ -15,6 +15,7 @@ export interface TenantAwareSingleton<T> {
   reset(): void;
   getForTenant(tenantId: string): T;
   getGlobal(): T;
+  disposeTenant(tenantId: string): boolean;
 }
 
 /**
@@ -32,16 +33,54 @@ export function createTenantAwareSingleton<T>(
   options?: { dispose?: (instance: T) => void },
 ): TenantAwareSingleton<T> {
   const tenantInstances = new Map<string, T>();
+  const tenantLastAccess = new Map<string, number>();
   let globalInstance: T | null = null;
+  const MAX_TENANTS = 100;
+  const TENANT_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+  function evictStaleTenants(): void {
+    const now = Date.now();
+    for (const [tid, lastAccess] of tenantLastAccess) {
+      if (now - lastAccess > TENANT_TTL_MS) {
+        const inst = tenantInstances.get(tid);
+        if (inst && options?.dispose) options.dispose(inst);
+        tenantInstances.delete(tid);
+        tenantLastAccess.delete(tid);
+      }
+    }
+  }
+
+  function evictLRU(): void {
+    let oldest: string | null = null;
+    let oldestTime = Infinity;
+    for (const [tid, t] of tenantLastAccess) {
+      if (t < oldestTime) {
+        oldestTime = t;
+        oldest = tid;
+      }
+    }
+    if (oldest) {
+      const inst = tenantInstances.get(oldest);
+      if (inst && options?.dispose) options.dispose(inst);
+      tenantInstances.delete(oldest);
+      tenantLastAccess.delete(oldest);
+    }
+  }
 
   function get(): T {
     const tenantId = getCurrentTenantId();
     if (tenantId) {
       let inst = tenantInstances.get(tenantId);
       if (!inst) {
+        if (tenantInstances.size >= MAX_TENANTS) {
+          evictStaleTenants();
+          // If all tenants are still active (within TTL), force-evict LRU
+          if (tenantInstances.size >= MAX_TENANTS) evictLRU();
+        }
         inst = factory();
         tenantInstances.set(tenantId, inst);
       }
+      tenantLastAccess.set(tenantId, Date.now());
       return inst;
     }
     if (!globalInstance) {
@@ -59,14 +98,26 @@ export function createTenantAwareSingleton<T>(
     }
     globalInstance = null;
     tenantInstances.clear();
+    tenantLastAccess.clear();
+  }
+
+  function disposeTenant(tenantId: string): boolean {
+    const inst = tenantInstances.get(tenantId);
+    if (!inst) return false;
+    if (options?.dispose) options.dispose(inst);
+    tenantInstances.delete(tenantId);
+    tenantLastAccess.delete(tenantId);
+    return true;
   }
 
   function getForTenant(tenantId: string): T {
     let inst = tenantInstances.get(tenantId);
     if (!inst) {
+      if (tenantInstances.size >= MAX_TENANTS) evictStaleTenants();
       inst = factory();
       tenantInstances.set(tenantId, inst);
     }
+    tenantLastAccess.set(tenantId, Date.now());
     return inst;
   }
 
@@ -77,5 +128,5 @@ export function createTenantAwareSingleton<T>(
     return globalInstance;
   }
 
-  return { get, reset, getForTenant, getGlobal };
+  return { get, reset, getForTenant, getGlobal, disposeTenant };
 }

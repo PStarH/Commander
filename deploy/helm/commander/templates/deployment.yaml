@@ -1,0 +1,138 @@
+# =============================================================================
+# Commander API — Deployment
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "commander.fullname" . }}-api
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "commander.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "commander.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "commander.serviceAccountName" . }}
+      securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.port }}
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: {{ .Values.config.nodeEnv | quote }}
+            - name: PORT
+              value: {{ .Values.api.port | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: CORS_ORIGINS
+              value: {{ .Values.config.corsOrigins | quote }}
+            - name: API_RATE_LIMIT
+              value: {{ .Values.config.rateLimitPerMinute | quote }}
+            - name: TENANT_PROVIDER
+              value: {{ .Values.config.tenantProvider | quote }}
+            {{- if .Values.llm.openaiApiKeySecret }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.llm.openaiApiKeySecret }}
+                  key: api-key
+            {{- end }}
+            {{- if .Values.llm.anthropicApiKeySecret }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.llm.anthropicApiKeySecret }}
+                  key: api-key
+            {{- end }}
+            {{- if .Values.llm.googleApiKeySecret }}
+            - name: GOOGLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.llm.googleApiKeySecret }}
+                  key: api-key
+            {{- end }}
+            {{- if .Values.llm.provider }}
+            - name: COMMANDER_PROVIDER
+              value: {{ .Values.llm.provider | quote }}
+            {{- end }}
+            {{- if .Values.llm.model }}
+            - name: COMMANDER_MODEL
+              value: {{ .Values.llm.model | quote }}
+            {{- end }}
+            {{- if .Values.redis.enabled }}
+            - name: REDIS_URL
+              value: redis://{{ include "commander.fullname" . }}-redis:{{ .Values.redis.port }}
+            {{- end }}
+            {{- if .Values.observability.otel.enabled }}
+            - name: OTEL_EXPORTER_ENDPOINT
+              value: {{ .Values.observability.otel.endpoint | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.observability.otel.serviceName | quote }}
+            {{- end }}
+          resources: {{ toYaml .Values.api.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.api.health.livenessPath }}
+              port: http
+            initialDelaySeconds: {{ .Values.api.health.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.health.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.api.health.readinessPath }}
+              port: http
+            initialDelaySeconds: {{ .Values.api.health.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.health.periodSeconds }}
+          volumeMounts:
+            - name: commander-state
+              mountPath: /app/.commander_state
+            - name: commander-traces
+              mountPath: /app/.commander_traces
+            - name: commander-memory
+              mountPath: /app/.commander_memory
+            - name: commander-results
+              mountPath: /app/.commander_results
+      volumes:
+        - name: commander-state
+          persistentVolumeClaim:
+            claimName: {{ include "commander.fullname" . }}-state
+        - name: commander-traces
+          persistentVolumeClaim:
+            claimName: {{ include "commander.fullname" . }}-traces
+        - name: commander-memory
+          persistentVolumeClaim:
+            claimName: {{ include "commander.fullname" . }}-memory
+        - name: commander-results
+          persistentVolumeClaim:
+            claimName: {{ include "commander.fullname" . }}-results
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}

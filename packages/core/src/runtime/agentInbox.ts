@@ -51,13 +51,14 @@ export class AgentInbox {
     const inbox = this.getOrCreateInbox(msg.to);
     inbox.push(full);
     this.dirtyAgents.add(msg.to);
+    this.autoPruneIfNeeded(msg.to);
   }
 
   /** Get all messages for an agent, optionally filtered by status */
   getMessages(agentId: string, status?: MessageStatus): InboxMessage[] {
     const inbox = this.getOrCreateInbox(agentId);
     let msgs = [...inbox];
-    if (status) msgs = msgs.filter(m => m.status === status);
+    if (status) msgs = msgs.filter((m) => m.status === status);
     return msgs.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   }
 
@@ -79,7 +80,7 @@ export class AgentInbox {
   /** Mark a message as acknowledged (fully processed) */
   acknowledge(agentId: string, messageId: string): boolean {
     const inbox = this.getOrCreateInbox(agentId);
-    const msg = inbox.find(m => m.id === messageId);
+    const msg = inbox.find((m) => m.id === messageId);
     if (!msg) return false;
     msg.status = 'acknowledged';
     msg.acknowledgedAt = new Date().toISOString();
@@ -90,7 +91,7 @@ export class AgentInbox {
   /** Delete a message from an agent's inbox */
   deleteMessage(agentId: string, messageId: string): boolean {
     const inbox = this.getOrCreateInbox(agentId);
-    const idx = inbox.findIndex(m => m.id === messageId);
+    const idx = inbox.findIndex((m) => m.id === messageId);
     if (idx === -1) return false;
     inbox.splice(idx, 1);
     this.dirtyAgents.add(agentId);
@@ -112,7 +113,7 @@ export class AgentInbox {
       const now = Date.now();
       this.inboxes.set(
         id,
-        inbox.filter(m => {
+        inbox.filter((m) => {
           if (m.status === 'acknowledged') return false;
           if (m.ttlMs) {
             const age = now - new Date(m.timestamp).getTime();
@@ -130,9 +131,10 @@ export class AgentInbox {
 
   /** List all agents that have inboxes */
   listAgents(): string[] {
-    const fromDisk = fs.readdirSync(this.baseDir)
-      .filter(f => f.endsWith('.ndjson'))
-      .map(f => f.replace('.ndjson', ''));
+    const fromDisk = fs
+      .readdirSync(this.baseDir)
+      .filter((f) => f.endsWith('.ndjson'))
+      .map((f) => f.replace('.ndjson', ''));
     const fromMem = Array.from(this.inboxes.keys());
     return Array.from(new Set([...fromDisk, ...fromMem]));
   }
@@ -147,15 +149,45 @@ export class AgentInbox {
     return inbox;
   }
 
+  /** Auto-prune acknowledged/expired messages from an inbox if it exceeds the threshold */
+  private autoPruneIfNeeded(agentId: string): void {
+    const inbox = this.inboxes.get(agentId);
+    if (!inbox || inbox.length < 200) return;
+    const now = Date.now();
+    const before = inbox.length;
+    const pruned = inbox.filter((m) => {
+      if (m.status === 'acknowledged') return false;
+      if (m.ttlMs) {
+        const age = now - new Date(m.timestamp).getTime();
+        if (age > m.ttlMs) return false;
+      }
+      return true;
+    });
+    this.inboxes.set(agentId, pruned);
+    if (pruned.length < before) this.dirtyAgents.add(agentId);
+  }
+
   private loadFromDisk(agentId: string): InboxMessage[] {
     const filePath = path.join(this.baseDir, `${agentId}.ndjson`);
     if (!fs.existsSync(filePath)) return [];
     try {
       const raw = fs.readFileSync(filePath, 'utf-8').trim();
       if (!raw) return [];
-      return raw.split('\n').map(line => JSON.parse(line) as InboxMessage);
+      const messages: InboxMessage[] = [];
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          messages.push(JSON.parse(line) as InboxMessage);
+        } catch {
+          getGlobalLogger().warn('AgentInbox', 'Skipping corrupt inbox line', { agentId });
+        }
+      }
+      return messages;
     } catch (e) {
-      getGlobalLogger().warn('AgentInbox', 'Failed to load inbox from disk', { error: (e as Error)?.message, agentId });
+      getGlobalLogger().warn('AgentInbox', 'Failed to load inbox from disk', {
+        error: (e as Error)?.message,
+        agentId,
+      });
       return [];
     }
   }
@@ -173,9 +205,14 @@ export class AgentInbox {
     const filePath = path.join(this.baseDir, `${agentId}.ndjson`);
     const tmpPath = filePath + '.tmp';
     try {
-      const content = inbox.map(m => JSON.stringify(m)).join('\n') + '\n';
+      const content = inbox.map((m) => JSON.stringify(m)).join('\n') + '\n';
       fs.writeFileSync(tmpPath, content, 'utf-8');
       fs.renameSync(tmpPath, filePath);
-    } catch (e) { getGlobalLogger().warn('AgentInbox', 'Failed to flush inbox', { error: (e as Error)?.message, agentId }); }
+    } catch (e) {
+      getGlobalLogger().warn('AgentInbox', 'Failed to flush inbox', {
+        error: (e as Error)?.message,
+        agentId,
+      });
+    }
   }
 }

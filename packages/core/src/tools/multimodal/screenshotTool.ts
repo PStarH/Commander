@@ -2,17 +2,20 @@ import type { Tool, ToolDefinition } from '../../runtime/types';
 
 const DEFINITION: ToolDefinition = {
   name: 'screenshot_capture',
-  description: 'Capture a screenshot of the current screen, a specific window, or a URL. Returns the screenshot as a file path. Use with vision_analyze to describe the screenshot contents.',
+  description:
+    'Capture a screenshot of the current screen, a specific window, or a URL. Returns the screenshot as a file path. Use with vision_analyze to describe the screenshot contents.',
   inputSchema: {
     type: 'object',
     properties: {
       url: {
         type: 'string',
-        description: 'URL to capture (opens in headless browser). If empty, captures the screen or active window.',
+        description:
+          'URL to capture (opens in headless browser). If empty, captures the screen or active window.',
       },
       outputPath: {
         type: 'string',
-        description: 'Where to save the screenshot file. Default: ./screenshots/screenshot-{timestamp}.png',
+        description:
+          'Where to save the screenshot file. Default: ./screenshots/screenshot-{timestamp}.png',
       },
       selector: {
         type: 'string',
@@ -20,12 +23,18 @@ const DEFINITION: ToolDefinition = {
       },
       width: { type: 'number', description: 'Viewport width in pixels (default: 1280)' },
       height: { type: 'number', description: 'Viewport height in pixels (default: 720)' },
-      fullPage: { type: 'boolean', description: 'Capture full page (scrolling) if true (default: false)' },
+      fullPage: {
+        type: 'boolean',
+        description: 'Capture full page (scrolling) if true (default: false)',
+      },
     },
   },
   examples: [
     { name: 'screenshot_capture', arguments: { url: 'https://example.com' } },
-    { name: 'screenshot_capture', arguments: { url: 'https://github.com', fullPage: true, width: 1920 } },
+    {
+      name: 'screenshot_capture',
+      arguments: { url: 'https://github.com', fullPage: true, width: 1920 },
+    },
   ],
   category: 'multimodal',
 };
@@ -47,15 +56,25 @@ export class ScreenshotCaptureTool implements Tool {
     const path = await import('path');
     const crypto = await import('crypto');
 
-    const screenshotDir = path.resolve(process.cwd(), 'screenshots');
-    if (!fs.existsSync(screenshotDir)) fs.mkdirSync(screenshotDir, { recursive: true });
+    const { safePath } = await import('../fileSystemTool');
     const hash = crypto.randomBytes(4).toString('hex');
-    const outputPath = String(args.outputPath ?? path.join(screenshotDir, `screenshot-${Date.now()}-${hash}.png`));
+    const outputPath = String(args.outputPath ?? '');
     // Validate output path: reject shell metacharacters to prevent injection (P1-15)
-    if (/[;&|`$(){}[\]!#~<>*\n\t'"\\]/.test(outputPath)) {
+    if (outputPath && /[;&|`$(){}[\]!#~<>*\n\t'"\\]/.test(outputPath)) {
       return `Error: outputPath contains shell-unsafe characters`;
     }
-    const resolvedPath = path.resolve(outputPath);
+    let resolvedPath: string;
+    if (outputPath) {
+      try {
+        resolvedPath = safePath(outputPath);
+      } catch {
+        return `Error: Access denied: path "${outputPath}" is outside workspace`;
+      }
+    } else {
+      // Default: save in workspace with unique filename
+      const hash = crypto.randomBytes(4).toString('hex');
+      resolvedPath = safePath(`screenshots/screenshot-${Date.now()}-${hash}.png`);
+    }
     const outDir = path.dirname(resolvedPath);
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
@@ -70,7 +89,9 @@ export class ScreenshotCaptureTool implements Tool {
   }
 
   private async captureUrl(
-    url: string, outputPath: string, opts: { width: number; height: number; fullPage: boolean; selector: string },
+    url: string,
+    outputPath: string,
+    opts: { width: number; height: number; fullPage: boolean; selector: string },
   ): Promise<string> {
     try {
       const { chromium } = await import('playwright');
@@ -79,7 +100,10 @@ export class ScreenshotCaptureTool implements Tool {
       await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
       if (opts.selector) {
         const el = await page.$(opts.selector);
-        if (!el) { await browser.close(); return `Error: Element "${opts.selector}" not found on page.`; }
+        if (!el) {
+          await browser.close();
+          return `Error: Element "${opts.selector}" not found on page.`;
+        }
         await el.screenshot({ path: outputPath });
       } else {
         await page.screenshot({ path: outputPath, fullPage: opts.fullPage });

@@ -7,6 +7,7 @@
  *  - SimpleTenantProvider: static config map for multi-tenant deployments
  */
 import { ThreeLayerMemory, getGlobalThreeLayerMemory } from '../threeLayerMemory';
+import { getCurrentTenantId as readCurrentTenantId } from './tenantContext';
 
 // ============================================================================
 // Types
@@ -39,6 +40,8 @@ export interface TenantProvider {
   getTenantConfig(tenantId: string): TenantConfig | undefined;
   /** List all known tenant IDs. */
   getKnownTenants(): string[];
+  /** Current tenant ID from tenant context (single-tenant returns undefined). */
+  getCurrentTenantId(): string | undefined;
 }
 
 // ============================================================================
@@ -52,6 +55,9 @@ export class NullTenantProvider implements TenantProvider {
   getKnownTenants(): string[] {
     return [];
   }
+  getCurrentTenantId(): string | undefined {
+    return readCurrentTenantId();
+  }
 }
 
 // ============================================================================
@@ -62,7 +68,7 @@ export class SimpleTenantProvider implements TenantProvider {
   private tenants: Map<string, TenantConfig>;
 
   constructor(tenants: TenantConfig[] = []) {
-    this.tenants = new Map(tenants.map(t => [t.tenantId, t]));
+    this.tenants = new Map(tenants.map((t) => [t.tenantId, t]));
   }
 
   getTenantConfig(tenantId: string): TenantConfig | undefined {
@@ -71,6 +77,10 @@ export class SimpleTenantProvider implements TenantProvider {
 
   getKnownTenants(): string[] {
     return Array.from(this.tenants.keys());
+  }
+
+  getCurrentTenantId(): string | undefined {
+    return readCurrentTenantId();
   }
 
   addTenant(config: TenantConfig): void {
@@ -89,6 +99,7 @@ export class SimpleTenantProvider implements TenantProvider {
 export class ThreeLayerMemoryRegistry {
   private instances: Map<string, ThreeLayerMemory> = new Map();
   private defaultInstance: ThreeLayerMemory | null = null;
+  private static readonly MAX_INSTANCES = 50;
 
   /** Get or create a memory instance for a tenant. */
   getOrCreate(tenantId?: string): ThreeLayerMemory {
@@ -100,6 +111,11 @@ export class ThreeLayerMemoryRegistry {
     }
     let mem = this.instances.get(tenantId);
     if (!mem) {
+      if (this.instances.size >= ThreeLayerMemoryRegistry.MAX_INSTANCES) {
+        // Evict the first (oldest) entry
+        const firstKey = this.instances.keys().next().value;
+        if (firstKey) this.instances.delete(firstKey);
+      }
       mem = new ThreeLayerMemory();
       this.instances.set(tenantId, mem);
     }

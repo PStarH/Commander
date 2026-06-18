@@ -1,10 +1,15 @@
 import type { AgentExecutionContext, LLMRequest, TokenUsage, ModelTier } from '../runtime/types';
-import { AgentRuntime } from '../runtime/agentRuntime';
+import type { AgentRuntimeInterface } from '../runtime';
 import { getModelRouter } from '../runtime/modelRouter';
 import { getMessageBus } from '../runtime/messageBus';
 import { getTraceRecorder } from '../runtime/executionTrace';
 import { getMetaLearner } from '../selfEvolution/metaLearner';
-import type { TELOSPlanContext, TELOSAgentAssignment, TELOSOrchestrationMode, TELOSConfig } from './types';
+import type {
+  TELOSPlanContext,
+  TELOSAgentAssignment,
+  TELOSOrchestrationMode,
+  TELOSConfig,
+} from './types';
 import { DEFAULT_TELOS_CONFIG } from './types';
 import { TokenSentinel, getTokenSentinel } from './tokenSentinel';
 import { ProviderPool, getProviderPool } from './providerPool';
@@ -20,33 +25,47 @@ function generateId(): string {
 interface TaskProfile {
   mode: TELOSOrchestrationMode;
   complexity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   estimatedSubtasks: number;
   requiresConsensus: boolean;
   requiresApproval: boolean;
   reasoning: string[];
 }
 
-function analyzeTask(
-  goal: string,
-  contextData: Record<string, unknown>,
-): TaskProfile {
+function analyzeTask(goal: string, contextData: Record<string, unknown>): TaskProfile {
   const reasoning: string[] = [];
   const gov = contextData.governanceProfile as { riskLevel?: string } | undefined;
   const riskLevel = gov?.riskLevel ?? 'LOW';
 
   let complexity = 0;
-  if (goal.length > 500) { complexity += 2; reasoning.push('long goal, +2 complexity'); }
-  else if (goal.length > 200) { complexity += 1; reasoning.push('medium goal, +1 complexity'); }
+  if (goal.length > 500) {
+    complexity += 2;
+    reasoning.push('long goal, +2 complexity');
+  } else if (goal.length > 200) {
+    complexity += 1;
+    reasoning.push('medium goal, +1 complexity');
+  }
 
-  if (riskLevel === 'CRITICAL') { complexity += 4; reasoning.push('critical risk, +4 complexity'); }
-  else if (riskLevel === 'HIGH') { complexity += 3; reasoning.push('high risk, +3 complexity'); }
-  else if (riskLevel === 'MEDIUM') { complexity += 1; reasoning.push('medium risk, +1 complexity'); }
+  if (riskLevel === 'CRITICAL') {
+    complexity += 4;
+    reasoning.push('critical risk, +4 complexity');
+  } else if (riskLevel === 'HIGH') {
+    complexity += 3;
+    reasoning.push('high risk, +3 complexity');
+  } else if (riskLevel === 'MEDIUM') {
+    complexity += 1;
+    reasoning.push('medium risk, +1 complexity');
+  }
 
   const toolHints = (contextData.availableTools as string[] | undefined)?.length ?? 0;
-  if (toolHints > 5) { complexity += 2; reasoning.push(`${toolHints} tools suggested, +2 complexity`); }
+  if (toolHints > 5) {
+    complexity += 2;
+    reasoning.push(`${toolHints} tools suggested, +2 complexity`);
+  }
 
   let mode: TELOSOrchestrationMode;
-  const level = complexity >= 7 ? 'CRITICAL' : complexity >= 4 ? 'HIGH' : complexity >= 2 ? 'MEDIUM' : 'LOW';
+  const level =
+    complexity >= 7 ? 'CRITICAL' : complexity >= 4 ? 'HIGH' : complexity >= 2 ? 'MEDIUM' : 'LOW';
 
   if (riskLevel === 'CRITICAL') {
     mode = 'CONSENSUS';
@@ -68,6 +87,7 @@ function analyzeTask(
   return {
     mode,
     complexity: level as TaskProfile['complexity'],
+    riskLevel: riskLevel as TaskProfile['riskLevel'],
     estimatedSubtasks: Math.max(1, Math.ceil(complexity / 2)),
     requiresConsensus: mode === 'CONSENSUS',
     requiresApproval: riskLevel === 'CRITICAL' || riskLevel === 'HIGH',
@@ -151,14 +171,29 @@ function buildPlanContext(
       availableToolNames: (contextData.availableTools as string[] | undefined) ?? [],
       estimatedContextTokens,
       budget: {
-        hardCapTokens: profile.complexity === 'CRITICAL' ? 128000 : profile.complexity === 'HIGH' ? 64000 : 32000,
-        softCapTokens: profile.complexity === 'CRITICAL' ? 96000 : profile.complexity === 'HIGH' ? 48000 : 24000,
-        costCapUsd: profile.complexity === 'CRITICAL' ? 5.00 : profile.complexity === 'HIGH' ? 2.00 : 0.50,
+        hardCapTokens:
+          profile.complexity === 'CRITICAL'
+            ? 400000
+            : profile.complexity === 'HIGH'
+              ? 200000
+              : 100000,
+        softCapTokens:
+          profile.complexity === 'CRITICAL'
+            ? 300000
+            : profile.complexity === 'HIGH'
+              ? 150000
+              : 75000,
+        costCapUsd:
+          profile.complexity === 'CRITICAL' ? 10.0 : profile.complexity === 'HIGH' ? 5.0 : 2.0,
       },
     },
     governance: {
       riskLevel: profile.complexity,
-      governanceMode: profile.requiresApproval ? 'MANUAL' : profile.mode === 'CONSENSUS' ? 'GUARDED' : 'AUTO',
+      governanceMode: profile.requiresApproval
+        ? 'MANUAL'
+        : profile.mode === 'CONSENSUS'
+          ? 'GUARDED'
+          : 'AUTO',
       requiresApproval: profile.requiresApproval,
     },
     reasoning: profile.reasoning,
@@ -171,14 +206,14 @@ function buildPlanContext(
 // ============================================================================
 
 export class TELOSOrchestrator {
-  private runtime: AgentRuntime;
+  private runtime: AgentRuntimeInterface;
   private sentinel: TokenSentinel;
   private pool: ProviderPool;
   private config: TELOSConfig;
   private activePlans: Map<string, TELOSPlanContext> = new Map();
 
   constructor(
-    runtime: AgentRuntime,
+    runtime: AgentRuntimeInterface,
     config?: Partial<TELOSConfig>,
     sentinel?: TokenSentinel,
     pool?: ProviderPool,
@@ -258,9 +293,7 @@ export class TELOSOrchestrator {
   // Execute — run the plan with token-safe execution
   // ========================================================================
 
-  async execute(
-    planId: string,
-  ): Promise<{
+  async execute(planId: string): Promise<{
     status: 'success' | 'failed' | 'cancelled';
     results: Array<{ agentId: string; summary: string; status: string }>;
     totalCostUsd: number;
@@ -269,7 +302,13 @@ export class TELOSOrchestrator {
   }> {
     const plan = this.activePlans.get(planId);
     if (!plan) {
-      return { status: 'failed', results: [], totalCostUsd: 0, totalTokens: 0, error: 'plan not found' };
+      return {
+        status: 'failed',
+        results: [],
+        totalCostUsd: 0,
+        totalTokens: 0,
+        error: 'plan not found',
+      };
     }
 
     // Preflight check (budget gate)
@@ -329,12 +368,20 @@ export class TELOSOrchestrator {
         plan.slimContext.budget,
       );
       if (!tokenCheck.allowed) {
-        tracer.recordDecision(planId, `TOKEN_BUDGET_EXCEEDED for ${assignment.agentId}: ${tokenCheck.reason}`, 0);
+        tracer.recordDecision(
+          planId,
+          `TOKEN_BUDGET_EXCEEDED for ${assignment.agentId}: ${tokenCheck.reason}`,
+          0,
+        );
         results.push({ agentId: assignment.agentId, summary: '', status: 'cancelled' });
         continue;
       }
 
-      tracer.recordDecision(planId, `Routing ${assignment.agentId} → ${routing.modelId} (${routing.tier})`, 0);
+      tracer.recordDecision(
+        planId,
+        `Routing ${assignment.agentId} → ${routing.modelId} (${routing.tier})`,
+        0,
+      );
 
       // Execute via runtime
       try {
@@ -352,17 +399,17 @@ export class TELOSOrchestrator {
 
         const execResult = await this.runtime.execute(ctx);
 
-        // Track cost
-if (execResult.status === 'success') {
-           this.sentinel.recordCostFromUsage(
-             planId,
-             assignment.agentId,
-             routing.modelId,
-             execResult.totalTokenUsage,
-           );
-         }
+        // Track cost using per-record cost to avoid cross-plan misattribution
+        if (execResult.status === 'success') {
+          const costRecord = this.sentinel.recordCostFromUsage(
+            planId,
+            assignment.agentId,
+            routing.modelId,
+            execResult.totalTokenUsage,
+          );
+          totalCostUsd += costRecord.costUsd;
+        }
 
-        totalCostUsd += 0;
         totalTokens += execResult.totalTokenUsage.totalTokens;
         results.push({
           agentId: assignment.agentId,
@@ -377,9 +424,7 @@ if (execResult.status === 'success') {
       }
     }
 
-    // Get final cost
-    const costSummary = this.sentinel.getCostSummary();
-    totalCostUsd = costSummary.totalCostUsd;
+    // totalCostUsd already accumulated via per-record cost tracking
 
     // Record experience
     getMetaLearner().recordExperience({
@@ -389,7 +434,7 @@ if (execResult.status === 'success') {
       taskType: plan.mode,
       modelUsed: 'multiple',
       strategyUsed: plan.mode,
-      success: results.every(r => r.status === 'success'),
+      success: results.every((r) => r.status === 'success'),
       durationMs: 0,
       tokenCost: totalTokens,
       lessons: [],
@@ -404,7 +449,11 @@ if (execResult.status === 'success') {
       totalTokens,
     });
 
-    const allSuccess = results.every(r => r.status === 'success');
+    const allSuccess = results.every((r) => r.status === 'success');
+
+    // Clean up completed plan to prevent unbounded activePlans growth
+    this.activePlans.delete(planId);
+
     return {
       status: allSuccess ? 'success' : 'failed',
       results,

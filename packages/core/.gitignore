@@ -1,0 +1,6 @@
+.commander/webhooks.json
+.commander/*.db
+.commander/*.db-shm
+.commander/*.db-wal
+.commander/thompson-scorer.json
+.commander/scheduler/

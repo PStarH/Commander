@@ -16,10 +16,10 @@ services:
           memory: 1G
     # Production logging — structured JSON to stdout
     logging:
-      driver: "json-file"
+      driver: 'json-file'
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: '10m'
+        max-file: '3'
     # Restart more aggressively
     restart: always
     # Production env overrides
@@ -41,7 +41,7 @@ services:
       - commander_results:/app/.commander_results
       - ./config:/app/config:ro
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:4000/health']
       interval: 30s
       timeout: 10s
       retries: 5
@@ -57,10 +57,10 @@ services:
           cpus: '0.1'
           memory: 128M
     logging:
-      driver: "json-file"
+      driver: 'json-file'
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: '10m'
+        max-file: '3'
     restart: always
 
 volumes:

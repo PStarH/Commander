@@ -46,7 +46,7 @@ let frameworkInstances: {
 
 export function initializeFramework() {
   if (frameworkInitialized) return;
-  
+
   frameworkInstances = {
     orchestrator: new AdaptiveOrchestrator(),
     budgetAllocator: new TokenBudgetAllocator({ baseBudget: 100000 }),
@@ -57,7 +57,7 @@ export function initializeFramework() {
     logger: getGlobalLogger(),
     metrics: getGlobalMetrics(),
   };
-  
+
   frameworkInitialized = true;
 }
 
@@ -81,12 +81,12 @@ export function createExecutionPlan(
     description: string;
     priority?: 'low' | 'medium' | 'high' | 'critical';
   }>,
-  suggestedMode?: OrchestrationMode
+  suggestedMode?: OrchestrationMode,
 ) {
   const { orchestrator, logger } = getFramework();
-  
+
   logger.info('framework', `Creating plan for ${tasks.length} task(s)`);
-  
+
   const mappedTasks = tasks.map((t) => ({
     id: t.id,
     description: t.description,
@@ -112,9 +112,9 @@ export function createExecutionPlan(
  */
 export function allocateBudget(mode: OrchestrationMode) {
   const { budgetAllocator } = getFramework();
-  
+
   const budget = budgetAllocator.allocate(mode, 50, 1);
-  
+
   return {
     total: budget.total,
     leadAgent: budget.leadAgent,
@@ -130,7 +130,7 @@ export function recordMemory(
   content: string,
   layer: 'working' | 'episodic' | 'longterm',
   context?: string,
-  importance: number = 0.5
+  importance: number = 0.5,
 ) {
   const { memory } = getFramework();
   const entry = memory.add(content, layer, context, importance);
@@ -166,10 +166,7 @@ export function startReflection(taskId: string) {
 /**
  * Complete a reflection session
  */
-export function completeReflection(
-  sessionId: string,
-  outcome: 'success' | 'partial' | 'failure'
-) {
+export function completeReflection(sessionId: string, outcome: 'success' | 'partial' | 'failure') {
   const { reflection } = getFramework();
   reflection.completeSession(sessionId, outcome);
   return { sessionId, outcome };
@@ -186,12 +183,12 @@ export function runConsensusCheck(
     decision: string;
     confidence: number;
     reasoning: string;
-  }>
+  }>,
 ) {
   const { consensus } = getFramework();
-  
+
   const checkId = consensus.createCheck(question);
-  
+
   for (const vote of votes) {
     consensus.addVote(
       checkId,
@@ -199,12 +196,12 @@ export function runConsensusCheck(
       vote.modelName,
       vote.decision,
       vote.confidence,
-      vote.reasoning
+      vote.reasoning,
     );
   }
-  
+
   const result = consensus.getResult(checkId);
-  
+
   return {
     checkId,
     consensusLevel: result?.consensusLevel,
@@ -219,7 +216,7 @@ export function runConsensusCheck(
 export function updateComponentHealth(
   name: string,
   status: 'healthy' | 'degraded' | 'unhealthy',
-  score: number
+  score: number,
 ) {
   const { inspector } = getFramework();
   inspector.updateComponent(name, status, score);

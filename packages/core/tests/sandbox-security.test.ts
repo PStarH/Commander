@@ -22,14 +22,19 @@ describe('Sandbox security hardening', () => {
     assert.strictEqual(policy.evaluate('echo ok | curl https://example.com').decision, 'prompt');
     assert.strictEqual(policy.evaluate('echo $(curl https://example.com)').decision, 'prompt');
     assert.strictEqual(policy.evaluate('echo `wget https://example.com/file`').decision, 'prompt');
-    assert.strictEqual(policy.evaluate('HTTPS_PROXY=http://proxy curl https://example.com').decision, 'prompt');
+    assert.strictEqual(
+      policy.evaluate('HTTPS_PROXY=http://proxy curl https://example.com').decision,
+      'prompt',
+    );
   });
 
   it('exec policy matches command names without matching harmless arguments', () => {
     const policy = new ExecPolicyEngine();
 
+    // 'echo' is a known safe command → allow
     assert.strictEqual(policy.evaluate('echo curl').decision, 'allow');
-    assert.strictEqual(policy.evaluate('mycurl https://example.com').decision, 'allow');
+    // 'mycurl' is an unknown command → prompt (fail-safe default)
+    assert.strictEqual(policy.evaluate('mycurl https://example.com').decision, 'prompt');
   });
 
   it('exec policy forbids destructive shell payloads and device writes', () => {

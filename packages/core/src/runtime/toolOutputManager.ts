@@ -17,6 +17,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import type { ToolCall, ToolResult } from './types';
+import { purifyObservation } from './observationPurifier';
 
 // ============================================================================
 // Configuration
@@ -109,6 +110,25 @@ export class ToolOutputManager {
   }
 
   /**
+   * Adjust turn budget based on governor pressure.
+   * Under tight/critical budget, reduce the output budget to save tokens.
+   * @param pressure - Governor pressure (0-1, where 1 = critical)
+   */
+  adjustBudgetForPressure(pressure: number): void {
+    const base = DEFAULT_CONFIG.turnBudget;
+    if (pressure > 0.85) {
+      // Critical: 40% of base budget
+      this.config.turnBudget = Math.floor(base * 0.4);
+    } else if (pressure > 0.65) {
+      // Tight: 70% of base budget
+      this.config.turnBudget = Math.floor(base * 0.7);
+    } else {
+      // Normal: full budget
+      this.config.turnBudget = base;
+    }
+  }
+
+  /**
    * Get current turn budget state.
    */
   getTurnBudget(): TurnBudgetState {
@@ -125,7 +145,7 @@ export class ToolOutputManager {
    */
   manage(toolCall: ToolCall, result: ToolResult): ManagedOutput {
     if (!this.config.enabled) {
-      this.turnUsed += (result.output?.length ?? 0);
+      this.turnUsed += result.output?.length ?? 0;
       return {
         output: result.output,
         truncated: false,
@@ -171,7 +191,9 @@ export class ToolOutputManager {
       `Output truncated: ${originalSize} → ${truncated.length} chars`,
       persistedPath ? `Full output saved: ${persistedPath}` : '',
       `Tool: ${toolCall.name}`,
-    ].filter(Boolean).join('. ');
+    ]
+      .filter(Boolean)
+      .join('. ');
 
     return {
       output: truncated,
@@ -186,9 +208,7 @@ export class ToolOutputManager {
    * Manage multiple tool results for a turn.
    * Applies turn budget across all results, prioritizing earlier calls.
    */
-  manageBatch(
-    calls: Array<{ toolCall: ToolCall; result: ToolResult }>,
-  ): ManagedOutput[] {
+  manageBatch(calls: Array<{ toolCall: ToolCall; result: ToolResult }>): ManagedOutput[] {
     this.resetTurn();
     return calls.map(({ toolCall, result }) => this.manage(toolCall, result));
   }
@@ -204,7 +224,13 @@ export class ToolOutputManager {
     if (output.length <= maxChars) return output;
     if (maxChars <= 0) return '';
 
-    const lines = output.split('\n');
+    // Content-aware purification before truncation (HTML→Markdown, JSON minify, etc.)
+    const purified = purifyObservation(output, toolName);
+    if (purified.length <= maxChars) {
+      return purified;
+    }
+
+    const lines = purified.split('\n');
 
     if (this.isShellTool(toolName)) {
       // Shell: keep last lines (errors/stack traces at end)
@@ -213,7 +239,7 @@ export class ToolOutputManager {
 
     if (this.isSearchTool(toolName)) {
       // Search: keep complete results, truncate descriptions
-      return this.truncateSearchOutput(output, maxChars);
+      return this.truncateSearchOutput(purified, maxChars);
     }
 
     if (this.isFileTool(toolName)) {
@@ -224,9 +250,9 @@ export class ToolOutputManager {
     // Default: head + tail
     const headSize = Math.floor(maxChars * 0.7);
     const tailSize = Math.max(0, maxChars - headSize - 100); // 100 chars for separator
-    const head = output.slice(0, headSize);
-    const tail = tailSize > 0 ? output.slice(-tailSize) : '';
-    return `${head}\n\n[... ${output.length - maxChars} chars truncated ...]\n\n${tail}`;
+    const head = purified.slice(0, headSize);
+    const tail = tailSize > 0 ? purified.slice(-tailSize) : '';
+    return `${head}\n\n[... ${purified.length - maxChars} chars truncated ...]\n\n${tail}`;
   }
 
   private truncateShellOutput(lines: string[], maxChars: number): string {
@@ -241,7 +267,10 @@ export class ToolOutputManager {
     }
 
     const remaining = maxChars - tail.length - 80;
-    const head = lines.slice(0, lines.length - keepLast).join('\n').slice(0, remaining);
+    const head = lines
+      .slice(0, lines.length - keepLast)
+      .join('\n')
+      .slice(0, remaining);
     return `${head}\n[... ${lines.length - keepLast} lines truncated ...]\n${tail}`;
   }
 
@@ -262,7 +291,11 @@ export class ToolOutputManager {
         }
         return JSON.stringify(kept, null, 2);
       }
-    } catch (e) { getGlobalLogger().debug('ToolOutputManager', 'Output was not JSON', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().debug('ToolOutputManager', 'Output was not JSON', {
+        error: (e as Error)?.message,
+      });
+    }
 
     // Text-based search results: truncate at result boundaries
     // Pattern: numbered results like "[1] Title" or "1. Title" or "Result 1:"
@@ -278,7 +311,9 @@ export class ToolOutputManager {
         used += r.length + 1;
       }
       const truncated = results.length - kept.length;
-      return kept.join('\n') + (truncated > 0 ? `\n[... ${truncated} more results truncated ...]` : '');
+      return (
+        kept.join('\n') + (truncated > 0 ? `\n[... ${truncated} more results truncated ...]` : '')
+      );
     }
 
     // Fallback: truncate at sentence/line boundary
@@ -320,9 +355,10 @@ export class ToolOutputManager {
   /**
    * Persist output to disk and return the file path.
    */
+  private static readonly MAX_PERSISTED_FILES = 200;
+
   private persistOutput(toolCall: ToolCall, output: string): string {
     try {
-
       const dir = path.resolve(this.config.persistDir);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -331,12 +367,36 @@ export class ToolOutputManager {
       const hash = createHash('md5').update(output).digest('hex').slice(0, 8);
       const filename = `${toolCall.name}_${hash}.txt`;
       const filepath = path.join(dir, filename);
+      const tmpPath = `${filepath}.tmp`;
 
-      fs.writeFileSync(filepath, output, 'utf-8');
+      fs.writeFileSync(tmpPath, output, 'utf-8');
+      fs.renameSync(tmpPath, filepath);
+      this.cleanupPersistedDir(dir);
       return filepath;
     } catch (e) {
-      getGlobalLogger().warn('ToolOutputManager', 'Failed to persist tool output', { error: (e as Error)?.message, toolName: toolCall.name });
+      getGlobalLogger().warn('ToolOutputManager', 'Failed to persist tool output', {
+        error: (e as Error)?.message,
+        toolName: toolCall.name,
+      });
       return '';
+    }
+  }
+
+  private cleanupPersistedDir(dir: string): void {
+    try {
+      const files = fs.readdirSync(dir);
+      if (files.length <= ToolOutputManager.MAX_PERSISTED_FILES) return;
+      const sorted = files
+        .map((f) => ({ name: f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+        .sort((a, b) => a.mtime - b.mtime);
+      for (const f of sorted.slice(0, sorted.length - ToolOutputManager.MAX_PERSISTED_FILES)) {
+        fs.unlinkSync(path.join(dir, f.name));
+      }
+    } catch (e) {
+      getGlobalLogger().debug('ToolOutputManager', 'Best-effort cleanup failed', {
+        error: (e as Error)?.message,
+        dir,
+      });
     }
   }
 

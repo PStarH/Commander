@@ -1,7 +1,7 @@
 /**
  * End-to-End Test
  * Phase 4: 端到端测试 - 真实用户场景测试
- * 
+ *
  * 测试所有框架组件的完整协作
  */
 
@@ -40,7 +40,7 @@ describe('Commander Framework - End-to-End Tests', () => {
   // ========================================
   // Scenario 1: Simple Task Execution
   // ========================================
-  
+
   describe('Scenario 1: Simple Task (SEQUENTIAL mode)', () => {
     it('executes a simple task through the complete workflow', () => {
       // Step 1: Register agents
@@ -50,19 +50,21 @@ describe('Commander Framework - End-to-End Tests', () => {
         role: 'architect',
         capabilities: ['design', 'code-review'],
       });
-      
+
       assert.strictEqual(orchestrator.getAgents().length, 1);
 
       // Step 2: Create tasks
-      const tasks = [{
-        id: 'task-1',
-        description: 'Create a simple hello world function',
-        priority: 'low' as const,
-        complexity: 20,
-        dependencies: [],
-        retryCount: 0,
-        maxRetries: 3,
-      }];
+      const tasks = [
+        {
+          id: 'task-1',
+          description: 'Create a simple hello world function',
+          priority: 'low' as const,
+          complexity: 20,
+          dependencies: [],
+          retryCount: 0,
+          maxRetries: 3,
+        },
+      ];
 
       // Step 3: Create plan
       const plan = orchestrator.createPlan(tasks, 'SEQUENTIAL');
@@ -79,7 +81,7 @@ describe('Commander Framework - End-to-End Tests', () => {
         'Starting task: hello world function',
         'working',
         'task-1',
-        0.8
+        0.8,
       );
       assert.ok(memoryEntry.id !== undefined);
 
@@ -89,7 +91,7 @@ describe('Commander Framework - End-to-End Tests', () => {
         sessionId,
         'post_execution',
         'How did the implementation go?',
-        'Completed successfully'
+        'Completed successfully',
       );
       reflection.completeSession(sessionId, 'success');
 
@@ -103,7 +105,7 @@ describe('Commander Framework - End-to-End Tests', () => {
   // ========================================
   // Scenario 2: Complex Task with Multiple Agents
   // ========================================
-  
+
   describe('Scenario 2: Complex Task (PARALLEL mode)', () => {
     it('executes a complex task with multiple agents', () => {
       // Step 1: Register multiple agents
@@ -189,12 +191,12 @@ describe('Commander Framework - End-to-End Tests', () => {
   // ========================================
   // Scenario 3: Consensus for High-Risk Decision
   // ========================================
-  
+
   describe('Scenario 3: Consensus Check', () => {
     it('reaches consensus on a technology decision', () => {
       // Step 1: Create consensus check
       const checkId = consensus.createCheck(
-        'Which technology stack is best for the distributed logging system?'
+        'Which technology stack is best for the distributed logging system?',
       );
 
       // Step 2: Add votes from different models
@@ -204,7 +206,7 @@ describe('Commander Framework - End-to-End Tests', () => {
         'GPT-4',
         'Kafka + Elasticsearch + Grafana',
         0.9,
-        'Industry standard for logging'
+        'Industry standard for logging',
       );
       consensus.addVote(
         checkId,
@@ -212,7 +214,7 @@ describe('Commander Framework - End-to-End Tests', () => {
         'Claude',
         'Kafka + Elasticsearch + Grafana',
         0.85,
-        'Scalable and proven'
+        'Scalable and proven',
       );
       consensus.addVote(
         checkId,
@@ -220,7 +222,7 @@ describe('Commander Framework - End-to-End Tests', () => {
         'Gemini',
         'Redis + Loki + Grafana',
         0.75,
-        'Simpler to operate'
+        'Simpler to operate',
       );
 
       // Step 3: Get result
@@ -236,12 +238,17 @@ describe('Commander Framework - End-to-End Tests', () => {
   // ========================================
   // Scenario 4: Memory Layer Operations
   // ========================================
-  
+
   describe('Scenario 4: Memory Layer Operations', () => {
     it('manages memory across all layers', () => {
       // Add to different layers
       const workingEntry = memory.add('Current task context', 'working', 'task-1', 0.9);
-      const episodicEntry = memory.add('Previous implementation experience', 'episodic', 'task-1', 0.7);
+      const episodicEntry = memory.add(
+        'Previous implementation experience',
+        'episodic',
+        'task-1',
+        0.7,
+      );
       const longtermEntry = memory.add('Architecture best practices', 'longterm', 'project-1', 0.6);
 
       assert.strictEqual(workingEntry.layer, 'working');
@@ -270,7 +277,7 @@ describe('Commander Framework - End-to-End Tests', () => {
   // ========================================
   // Scenario 5: Reflection and Learning
   // ========================================
-  
+
   describe('Scenario 5: Reflection and Learning', () => {
     it('performs reflection and detects patterns', () => {
       // Run multiple sessions
@@ -280,7 +287,7 @@ describe('Commander Framework - End-to-End Tests', () => {
           sessionId,
           'post_execution',
           `How did task ${i} go?`,
-          i % 2 === 0 ? 'Success' : 'Had some issues'
+          i % 2 === 0 ? 'Success' : 'Had some issues',
         );
         reflection.completeSession(sessionId, i % 2 === 0 ? 'success' : 'partial');
       }
@@ -297,7 +304,7 @@ describe('Commander Framework - End-to-End Tests', () => {
   // ========================================
   // Scenario 6: Inspector Monitoring
   // ========================================
-  
+
   describe('Scenario 6: Inspector Monitoring', () => {
     it('detects and reports issues', () => {
       // Update component status
@@ -328,24 +335,41 @@ describe('Commander Framework - End-to-End Tests', () => {
   // ========================================
   // Scenario 7: Full Workflow Integration
   // ========================================
-  
+
   describe('Scenario 7: Full Workflow Integration', () => {
     it('completes a full workflow from planning to execution', () => {
       // 1. Register agents
-      orchestrator.registerAgent({ id: 'lead', name: 'Lead', role: 'architect', capabilities: ['design'] });
-      orchestrator.registerAgent({ id: 'dev1', name: 'Dev1', role: 'developer', capabilities: ['backend'] });
-      orchestrator.registerAgent({ id: 'dev2', name: 'Dev2', role: 'developer', capabilities: ['frontend'] });
+      orchestrator.registerAgent({
+        id: 'lead',
+        name: 'Lead',
+        role: 'architect',
+        capabilities: ['design'],
+      });
+      orchestrator.registerAgent({
+        id: 'dev1',
+        name: 'Dev1',
+        role: 'developer',
+        capabilities: ['backend'],
+      });
+      orchestrator.registerAgent({
+        id: 'dev2',
+        name: 'Dev2',
+        role: 'developer',
+        capabilities: ['frontend'],
+      });
 
       // 2. Create task plan
-      const tasks = [{
-        id: 'sys-design',
-        description: 'Design distributed logging system',
-        priority: 'high' as const,
-        complexity: 60,
-        dependencies: [],
-        retryCount: 0,
-        maxRetries: 3,
-      }];
+      const tasks = [
+        {
+          id: 'sys-design',
+          description: 'Design distributed logging system',
+          priority: 'high' as const,
+          complexity: 60,
+          dependencies: [],
+          retryCount: 0,
+          maxRetries: 3,
+        },
+      ];
       const plan = orchestrator.createPlan(tasks, 'HANDOFF');
 
       // 3. Allocate budget
@@ -364,7 +388,12 @@ describe('Commander Framework - End-to-End Tests', () => {
 
       // 6. Reflection
       const sessionId = reflection.startSession('project-1');
-      reflection.addReflection(sessionId, 'pre_planning', 'What is the best approach?', 'Microservices');
+      reflection.addReflection(
+        sessionId,
+        'pre_planning',
+        'What is the best approach?',
+        'Microservices',
+      );
       reflection.addReflection(sessionId, 'post_execution', 'How did it go?', 'Successful');
       reflection.completeSession(sessionId, 'success');
 
@@ -375,7 +404,7 @@ describe('Commander Framework - End-to-End Tests', () => {
       // Verify all components worked together
       const memoryStats = memory.getStats();
       assert.ok(memoryStats.totalEntries > 0);
-      
+
       const reflectionStats = reflection.getStats();
       assert.strictEqual(reflectionStats.totalSessions, 1);
 

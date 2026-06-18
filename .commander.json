@@ -1,5 +1,5 @@
 {
-  "model": "mimo-v2.5-pro",
+  "model": "agnes/agnes-2.0-flash",
   "mcpServers": [],
   "a2a": {
     "server": {
@@ -8,5 +8,15 @@
       "host": "127.0.0.1"
     },
     "remoteAgents": []
+  },
+  "provider": "agnes",
+  "_initResults": {
+    "timestamp": "2026-06-16T06:38:42.588Z",
+    "reachable": [
+      "agnes"
+    ],
+    "chain": [
+      "agnes"
+    ]
   }
 }

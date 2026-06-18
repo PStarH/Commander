@@ -1,12 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { LLMProvider } from '../runtime/types';
-import type { AgentRuntime } from '../runtime/agentRuntime';
+import type { AgentRuntimeInterface } from '../runtime';
 import type { DriveConfig, DriveStep, DriveState, DriveResult } from './types';
 import { DEFAULT_DRIVE_CONFIG } from './types';
 import { getMessageBus } from '../runtime/messageBus';
 import { getGlobalLogger } from '../logging';
 import { validateShape } from '../runtime/structuredOutput';
+import { callLLMJSON } from '../runtime/llmJsonExtractor';
 
 const PLAN_PROMPT = `You are a Drive Planner. Break the following goal into a sequence of concrete, actionable steps.
 
@@ -55,41 +56,16 @@ function generateStepId(): string {
   return `step_${Date.now()}_${++stepCounter}`;
 }
 
-async function callLLMJSON<T>(
-  provider: LLMProvider,
-  model: string,
-  systemPrompt: string,
-  userMessage: string,
-): Promise<{ data: T; tokens: number } | null> {
-  try {
-    const response = await provider.call({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
-      ],
-      temperature: 0.2,
-      maxTokens: 2048,
-    });
-    const cleaned = response.content.trim().replace(/^```(?:json)?\s*|```\s*$/g, '');
-    const data = JSON.parse(cleaned) as T;
-    return { data, tokens: response.usage?.totalTokens ?? 0 };
-  } catch (err) {
-    getGlobalLogger().error('DriveOrchestrator', 'LLM call failed', err as Error);
-    return null;
-  }
-}
-
 export class DriveOrchestrator {
   private provider: LLMProvider;
-  private runtime: AgentRuntime | null;
+  private runtime: AgentRuntimeInterface | null;
   private config: DriveConfig;
   private model: string;
   private state!: DriveState;
 
   constructor(
     provider: LLMProvider,
-    runtime?: AgentRuntime | null,
+    runtime?: AgentRuntimeInterface | null,
     config?: Partial<DriveConfig>,
   ) {
     this.provider = provider;
@@ -112,7 +88,10 @@ export class DriveOrchestrator {
     if (checkpoint) {
       this.state = checkpoint;
       if (this.config.verbose) {
-        getGlobalLogger().info('DriveOrchestrator', `Resumed from checkpoint: ${this.state.steps.filter(s => s.status === 'completed').length}/${this.state.steps.length} steps done`);
+        getGlobalLogger().info(
+          'DriveOrchestrator',
+          `Resumed from checkpoint: ${this.state.steps.filter((s) => s.status === 'completed').length}/${this.state.steps.length} steps done`,
+        );
       }
     } else {
       // Plan: decompose goal into steps
@@ -122,7 +101,7 @@ export class DriveOrchestrator {
       }
       totalTokensUsed += plan.tokens;
       this.resetState(goal, startTime);
-      this.state.steps = plan.data.steps.map(s => ({
+      this.state.steps = plan.data.steps.map((s) => ({
         id: generateStepId(),
         description: s.description,
         status: 'pending' as const,
@@ -140,10 +119,10 @@ export class DriveOrchestrator {
       iteration++;
       this.state.iteration = iteration;
 
-      const allDone = this.state.steps.every(s => s.status === 'completed');
+      const allDone = this.state.steps.every((s) => s.status === 'completed');
       if (allDone) break;
 
-      const hasBlocked = this.state.steps.some(s => s.status === 'blocked');
+      const hasBlocked = this.state.steps.some((s) => s.status === 'blocked');
       if (hasBlocked && iteration > 1) {
         // Re-plan remaining steps
         const replanResult = await this.replan();
@@ -154,8 +133,8 @@ export class DriveOrchestrator {
       }
 
       // Find next step to execute (pending or failed with retries left)
-      const step = this.state.steps.find(s =>
-        s.status === 'pending' || (s.status === 'failed' && s.retryCount < s.maxRetries)
+      const step = this.state.steps.find(
+        (s) => s.status === 'pending' || (s.status === 'failed' && s.retryCount < s.maxRetries),
       );
       if (!step) {
         // May have all completed, or all blocked
@@ -164,10 +143,13 @@ export class DriveOrchestrator {
 
       // Execute step
       step.status = 'running';
-      bus.publish('drive.step_started', 'drive-orch', { stepId: step.id, description: step.description });
+      bus.publish('drive.step_started', 'drive-orch', {
+        stepId: step.id,
+        description: step.description,
+      });
 
       if (this.runtime) {
-        // Execute with real tool access via AgentRuntime
+        // Execute with real tool access via AgentRuntimeInterface
         const agentResult = await this.executeWithRuntime(step, goal);
         if (agentResult) {
           step.agentResult = agentResult;
@@ -203,27 +185,36 @@ export class DriveOrchestrator {
       if (step.status === 'failed' && step.retryCount >= step.maxRetries) {
         step.status = 'blocked';
         bus.publish('drive.step_failed', 'drive-orch', {
-          stepId: step.id, description: step.description,
+          stepId: step.id,
+          description: step.description,
         });
       }
 
-      this.state.totalTokensUsed += (step.agentResult?.totalTokenUsage.totalTokens ?? 0);
+      this.state.totalTokensUsed += step.agentResult?.totalTokenUsage.totalTokens ?? 0;
       bus.publish('drive.step_completed', 'drive-orch', {
-        stepId: step.id, status: step.status,
+        stepId: step.id,
+        status: step.status,
       });
 
       this.saveCheckpoint();
     }
 
     // Determine final status
-    const completed = this.state.steps.filter(s => s.status === 'completed').length;
+    const completed = this.state.steps.filter((s) => s.status === 'completed').length;
     const total = this.state.steps.length;
-    const status = completed === total ? 'completed' as const
-      : completed > 0 ? 'partial' as const
-      : 'failed' as const;
+    const status =
+      completed === total
+        ? ('completed' as const)
+        : completed > 0
+          ? ('partial' as const)
+          : ('failed' as const);
 
     bus.publish('drive.completed', 'drive-orch', {
-      goal, status, iterations: iteration, stepsCompleted: completed, stepsTotal: total,
+      goal,
+      status,
+      iterations: iteration,
+      stepsCompleted: completed,
+      stepsTotal: total,
     });
 
     return this.buildResult(goal, status, startTime, this.state.totalTokensUsed, this.state.steps);
@@ -231,7 +222,8 @@ export class DriveOrchestrator {
 
   private async planGoal(goal: string): Promise<{ data: PlanOutput; tokens: number } | null> {
     const result = await callLLMJSON<PlanOutput>(
-      this.provider, this.model,
+      this.provider,
+      this.model,
       PLAN_PROMPT,
       `Goal: ${goal}`,
     );
@@ -243,23 +235,21 @@ export class DriveOrchestrator {
   }
 
   private async replan(): Promise<{ data: PlanOutput; tokens: number } | null> {
-    const failedSteps = this.state.steps.filter(s => s.status === 'failed' || s.status === 'blocked');
-    const pendingSteps = this.state.steps.filter(s => s.status === 'pending');
+    const failedSteps = this.state.steps.filter(
+      (s) => s.status === 'failed' || s.status === 'blocked',
+    );
+    const pendingSteps = this.state.steps.filter((s) => s.status === 'pending');
     const context = [
       'Goal: ' + this.state.goal,
       '',
       'Failed/blocked steps:',
-      ...failedSteps.map(s => `  - ${s.description}${s.error ? ': ' + s.error : ''}`),
+      ...failedSteps.map((s) => `  - ${s.description}${s.error ? ': ' + s.error : ''}`),
       '',
       'Pending steps:',
-      ...pendingSteps.map(s => `  - ${s.description}`),
+      ...pendingSteps.map((s) => `  - ${s.description}`),
     ].join('\n');
 
-    const result = await callLLMJSON<PlanOutput>(
-      this.provider, this.model,
-      REPLAN_PROMPT,
-      context,
-    );
+    const result = await callLLMJSON<PlanOutput>(this.provider, this.model, REPLAN_PROMPT, context);
     if (result && !validateShape(result.data, { steps: 'array', reasoning: 'string' })) {
       getGlobalLogger().warn('DriveOrchestrator', 'replan: LLM response failed shape validation');
       return null;
@@ -270,7 +260,7 @@ export class DriveOrchestrator {
   private async executeWithRuntime(
     step: DriveStep,
     goal: string,
-  ): Promise<Awaited<ReturnType<AgentRuntime['execute']>>> {
+  ): Promise<Awaited<ReturnType<AgentRuntimeInterface['execute']>>> {
     if (!this.runtime) throw new Error('DriveRuntime not initialized');
 
     return this.runtime.execute({
@@ -278,8 +268,15 @@ export class DriveOrchestrator {
       projectId: 'drive',
       goal: `[Drive] ${goal}\nStep: ${step.description}`,
       availableTools: [
-        'read', 'write', 'edit', 'glob', 'grep', 'bash',
-        'lsp_diagnostics', 'websearch', 'webfetch',
+        'read',
+        'write',
+        'edit',
+        'glob',
+        'grep',
+        'bash',
+        'lsp_diagnostics',
+        'websearch',
+        'webfetch',
       ],
       maxSteps: 15,
       tokenBudget: 32000,
@@ -296,7 +293,10 @@ export class DriveOrchestrator {
         model: this.model,
         messages: [
           { role: 'system', content: WORKER_PROMPT },
-          { role: 'user', content: `Goal: ${goal}\n\nStep: ${step.description}\n\nExecute this step.` },
+          {
+            role: 'user',
+            content: `Goal: ${goal}\n\nStep: ${step.description}\n\nExecute this step.`,
+          },
         ],
         temperature: 0.3,
         maxTokens: 4096,
@@ -364,9 +364,9 @@ export class DriveOrchestrator {
     steps: DriveStep[],
   ): DriveResult {
     const elapsed = Date.now() - startTime;
-    const completed = steps.filter(s => s.status === 'completed').length;
+    const completed = steps.filter((s) => s.status === 'completed').length;
     const total = steps.length;
-    const failed = steps.filter(s => s.status === 'failed' || s.status === 'blocked');
+    const failed = steps.filter((s) => s.status === 'failed' || s.status === 'blocked');
 
     const lines = [
       `Goal: ${goal.slice(0, 120)}`,
@@ -375,7 +375,7 @@ export class DriveOrchestrator {
       `Total tokens: ${totalTokensUsed.toLocaleString()}`,
     ];
     if (failed.length > 0) {
-      lines.push(`Blocked: ${failed.map(s => s.description).join(', ')}`);
+      lines.push(`Blocked: ${failed.map((s) => s.description).join(', ')}`);
     }
 
     return {

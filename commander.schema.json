@@ -1,0 +1,98 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/PStarH/Commander/commander.schema.json",
+  "title": "Commander Configuration",
+  "description": "Configuration schema for Commander multi-agent orchestration system. API keys are never stored here — they remain in environment variables or system keychain.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Points to this schema file for IDE autocomplete"
+    },
+    "version": {
+      "type": "integer",
+      "description": "Config schema version",
+      "minimum": 1,
+      "default": 2
+    },
+    "provider": {
+      "type": "string",
+      "description": "Primary LLM provider. 'auto' = first available from environment.",
+      "default": "auto",
+      "examples": ["openai", "anthropic", "deepseek", "google", "groq", "ollama"]
+    },
+    "model": {
+      "type": "string",
+      "description": "Model name. 'auto' = default model for the selected provider.",
+      "default": "auto",
+      "examples": ["gpt-4o", "claude-3-5-sonnet", "deepseek-chat"]
+    },
+    "mode": {
+      "type": "string",
+      "description": "Execution mode balancing speed vs thoroughness.",
+      "default": "balanced",
+      "enum": ["fast", "balanced", "thorough"]
+    },
+    "topology": {
+      "type": "string",
+      "description": "Orchestration topology. 'auto' = deliberation engine decides.",
+      "default": "auto",
+      "enum": [
+        "auto", "single", "sequential", "parallel", "hierarchical",
+        "hybrid", "debate", "ensemble", "evaluator-optimizer"
+      ]
+    },
+    "budget": {
+      "oneOf": [
+        { "type": "integer", "minimum": 1000 },
+        { "type": "string", "enum": ["auto"] }
+      ],
+      "description": "Token budget. 'auto' = estimated from task complexity.",
+      "default": "auto"
+    },
+    "_providerChain": {
+      "type": "array",
+      "description": "Provider fallback chain (ordered by priority). Auto-detected if not set.",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "_storage": {
+      "type": "object",
+      "description": "Runtime storage paths.",
+      "properties": {
+        "checkpoints": { "type": "string", "description": "Checkpoint directory" },
+        "traces": { "type": "string", "description": "Execution traces directory" },
+        "samples": { "type": "string", "description": "LLM samples directory" }
+      }
+    },
+    "mcpServers": {
+      "type": "array",
+      "description": "MCP server configurations.",
+      "items": { "type": "object" }
+    },
+    "a2a": {
+      "type": "object",
+      "description": "Agent-to-agent communication settings.",
+      "properties": {
+        "server": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "port": { "type": "integer" },
+            "host": { "type": "string" }
+          }
+        },
+        "remoteAgents": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "_initResults": {
+      "type": "object",
+      "description": "Results from last `commander init` run (auto-generated).",
+      "properties": {
+        "timestamp": { "type": "string", "format": "date-time" },
+        "reachable": { "type": "array", "items": { "type": "string" } },
+        "chain": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

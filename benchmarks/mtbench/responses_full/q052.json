@@ -1,6 +1,0 @@
-{
-  "cat": "Extraction",
-  "question": "Extract the main topic from: 'The report covers Q1 revenue, Q2 projections, and hiring plans.'",
-  "answer": "The main topic is **business performance and planning**.\n\nMore specifically, the text covers **financial results and future projections**.",
-  "score": 8.0
-}

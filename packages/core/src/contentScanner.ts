@@ -1,18 +1,18 @@
 /**
  * ContentScanner - Agent 安全防护层
- * 
+ *
  * 检测内容注入攻击，包括：
  * - 隐藏 HTML 标签 (display:none, visibility:hidden, etc.)
  * - CSS 注入 (恶意样式、数据泄露通道)
  * - Metadata 中的隐藏命令
  * - 多语言混淆攻击
  * - 隐藏 Unicode 字符
- * 
+ *
  * 基于 arXiv:2510.23883v2 "Agentic AI Security" 论文建议
  * 基于 Google DeepMind "AI Agent Traps" (2026-03) 研究成果
  */
 
-export type ContentThreatType = 
+export type ContentThreatType =
   | 'hidden_html'
   | 'css_injection'
   | 'metadata_command'
@@ -71,7 +71,7 @@ export const DEFAULT_SCANNER_CONFIG: ContentScannerConfig = {
 
 /**
  * ContentScanner 接口
- * 
+ *
  * 实现 Agent 内容安全扫描，检测隐藏注入和恶意指令
  */
 export interface ContentScanner {
@@ -79,17 +79,17 @@ export interface ContentScanner {
    * 扫描内容并返回威胁检测结果
    */
   scan(content: string, config?: Partial<ContentScannerConfig>): Promise<ScanResult>;
-  
+
   /**
    * 快速检查内容是否安全（不返回详细威胁列表）
    */
   isSafe(content: string): Promise<boolean>;
-  
+
   /**
    * 获取威胁类型的详细说明
    */
   getThreatDescription(type: ContentThreatType): string;
-  
+
   /**
    * 获取修复建议
    */
@@ -101,7 +101,7 @@ export interface ContentScanner {
  */
 export class DefaultContentScanner implements ContentScanner {
   private config: ContentScannerConfig;
-  
+
   // 隐藏 HTML 模式
   private hiddenHtmlPatterns = [
     /<[^>]+style\s*=\s*["'][^"']*display\s*:\s*none[^"']*["'][^>]*>/gi,
@@ -113,7 +113,7 @@ export class DefaultContentScanner implements ContentScanner {
     /<iframe[^>]*>[\s\S]*?<\/iframe>/gi,
     /<!--[\s\S]*?-->/g, // HTML 注释可能隐藏指令
   ];
-  
+
   // CSS 注入模式
   private cssInjectionPatterns = [
     /@import\s+url\s*\([^)]+\)/gi,
@@ -124,7 +124,7 @@ export class DefaultContentScanner implements ContentScanner {
     /content\s*:\s*["'][^"']*script/gi,
     /background\s*:[^;]*url\s*\([^)]+\)/gi,
   ];
-  
+
   // Prompt 注入模式
   private promptInjectionPatterns = [
     /ignore\s+(all\s+)?previous\s+instructions?/gi,
@@ -142,22 +142,22 @@ export class DefaultContentScanner implements ContentScanner {
     /developer\s+mode/gi,
     /sudo\s+mode/gi,
     // GAP-14: Multi-language prompt injection patterns
-    /忽略(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi,          // Chinese: ignore previous instructions
-    /无视(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi,          // Chinese: disregard instructions
-    /你现在(是|变成|扮演)/gi,                                    // Chinese: you are now
-    /忘记(之前|所有|上面)(的)?(规则|指令|提示)/gi,               // Chinese: forget rules
-    /新(的)?指令\s*[:：]/gi,                                     // Chinese: new instruction
-    /忽略(前|以前)(所有)?(指令|命令|提示)/gi,                    // Chinese variant
-    /игнорируй\s+(все\s+)?предыдущие\s+(инструкции|команды)/gi,  // Russian: ignore previous
-    /забудь\s+(все\s+)?(правила|инструкции)/gi,                  // Russian: forget rules
-    /ты\s+теперь\s+/gi,                                          // Russian: you are now
+    /忽略(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi, // Chinese: ignore previous instructions
+    /无视(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi, // Chinese: disregard instructions
+    /你现在(是|变成|扮演)/gi, // Chinese: you are now
+    /忘记(之前|所有|上面)(的)?(规则|指令|提示)/gi, // Chinese: forget rules
+    /新(的)?指令\s*[:：]/gi, // Chinese: new instruction
+    /忽略(前|以前)(所有)?(指令|命令|提示)/gi, // Chinese variant
+    /игнорируй\s+(все\s+)?предыдущие\s+(инструкции|команды)/gi, // Russian: ignore previous
+    /забудь\s+(все\s+)?(правила|инструкции)/gi, // Russian: forget rules
+    /ты\s+теперь\s+/gi, // Russian: you are now
     /تجاهل\s+(جميع\s+)?(التعليمات|الأوامر)\s+(السابقة|الpreceding)/gi, // Arabic: ignore previous
-    /انسَ\s+(جميع\s+)?(القواعد|التعليمات)/gi,                  // Arabic: forget rules
-    /以前の(指示|命令|ルール)を(無視|忘れて)/gi,                   // Japanese: ignore previous
-    /あなたは今/gi,                                               // Japanese: you are now
-    /이전\s+(지시|명령|규칙)\s+(무시|잊어)/gi,                    // Korean: ignore previous
+    /انسَ\s+(جميع\s+)?(القواعد|التعليمات)/gi, // Arabic: forget rules
+    /以前の(指示|命令|ルール)を(無視|忘れて)/gi, // Japanese: ignore previous
+    /あなたは今/gi, // Japanese: you are now
+    /이전\s+(지시|명령|규칙)\s+(무시|잊어)/gi, // Korean: ignore previous
   ];
-  
+
   // 隐藏 Unicode 字符
   private invisibleUnicodeRanges = [
     '\u0000-\u001F', // 控制字符
@@ -168,16 +168,20 @@ export class DefaultContentScanner implements ContentScanner {
     '\uFEFF', // BOM
     '\uFFF9-\uFFFC', // 特殊字符
   ];
-  
+
+  // Pre-compiled regex for invisible Unicode characters (avoids recompilation on every scan)
+  private invisibleCharPattern: RegExp;
+
   constructor(config: Partial<ContentScannerConfig> = {}) {
     this.config = { ...DEFAULT_SCANNER_CONFIG, ...config };
+    this.invisibleCharPattern = new RegExp(`[${this.invisibleUnicodeRanges.join('')}]`, 'g');
   }
-  
+
   async scan(content: string, config?: Partial<ContentScannerConfig>): Promise<ScanResult> {
     const startTime = Date.now();
     const effectiveConfig = { ...this.config, ...config };
     const threats: ContentThreat[] = [];
-    
+
     // 检查内容长度
     if (content.length > effectiveConfig.maxContentLength) {
       threats.push({
@@ -188,33 +192,34 @@ export class DefaultContentScanner implements ContentScanner {
         remediation: 'Truncate or reject oversized content',
       });
     }
-    
+
     // 扫描各类威胁
     if (effectiveConfig.enableHtmlScan) {
       threats.push(...this.scanHiddenHtml(content));
     }
-    
+
     if (effectiveConfig.enableCssScan) {
       threats.push(...this.scanCssInjection(content));
     }
-    
+
     if (effectiveConfig.enablePromptInjectionScan) {
       threats.push(...this.scanPromptInjection(content));
     }
-    
+
     if (effectiveConfig.enableUnicodeScan) {
       threats.push(...this.scanUnicodeObfuscation(content));
     }
-    
+
     if (effectiveConfig.enableMetadataScan) {
       threats.push(...this.scanMetadataCommands(content));
     }
-    
+
     const scanDurationMs = Date.now() - startTime;
     const riskScore = this.calculateRiskScore(threats);
-    
+
     return {
-      isSafe: threats.filter(t => t.severity === 'HIGH' || t.severity === 'CRITICAL').length === 0,
+      isSafe:
+        threats.filter((t) => t.severity === 'HIGH' || t.severity === 'CRITICAL').length === 0,
       threats,
       riskScore,
       scannedAt: new Date().toISOString(),
@@ -222,22 +227,25 @@ export class DefaultContentScanner implements ContentScanner {
       metadata: {
         originalLength: content.length,
         scanDurationMs,
-        patternsChecked: this.hiddenHtmlPatterns.length + 
-                        this.cssInjectionPatterns.length + 
-                        this.promptInjectionPatterns.length,
+        patternsChecked:
+          this.hiddenHtmlPatterns.length +
+          this.cssInjectionPatterns.length +
+          this.promptInjectionPatterns.length,
       },
     };
   }
-  
+
   async isSafe(content: string): Promise<boolean> {
     const result = await this.scan(content);
     return result.isSafe;
   }
-  
+
   getThreatDescription(type: ContentThreatType): string {
     const descriptions: Record<ContentThreatType, string> = {
-      hidden_html: 'Hidden HTML elements that may contain malicious instructions invisible to users',
-      css_injection: 'CSS injection attacks attempting to exfiltrate data or execute malicious styles',
+      hidden_html:
+        'Hidden HTML elements that may contain malicious instructions invisible to users',
+      css_injection:
+        'CSS injection attacks attempting to exfiltrate data or execute malicious styles',
       metadata_command: 'Commands hidden in metadata fields (alt text, data attributes, etc.)',
       unicode_obfuscation: 'Unicode characters used to obfuscate malicious content',
       prompt_injection: 'Prompt injection attempts to override agent behavior',
@@ -247,7 +255,7 @@ export class DefaultContentScanner implements ContentScanner {
     };
     return descriptions[type];
   }
-  
+
   getRemediation(threat: ContentThreat): string {
     const remediations: Partial<Record<ContentThreatType, string>> = {
       hidden_html: 'Strip all HTML tags and parse only plain text. Use a sanitization library.',
@@ -261,11 +269,12 @@ export class DefaultContentScanner implements ContentScanner {
     };
     return remediations[threat.type] || 'Review and sanitize the content before processing.';
   }
-  
+
   private scanHiddenHtml(content: string): ContentThreat[] {
     const threats: ContentThreat[] = [];
-    
+
     for (const pattern of this.hiddenHtmlPatterns) {
+      pattern.lastIndex = 0;
       let match;
       while ((match = pattern.exec(content)) !== null) {
         threats.push({
@@ -277,14 +286,15 @@ export class DefaultContentScanner implements ContentScanner {
         });
       }
     }
-    
+
     return threats;
   }
-  
+
   private scanCssInjection(content: string): ContentThreat[] {
     const threats: ContentThreat[] = [];
-    
+
     for (const pattern of this.cssInjectionPatterns) {
+      pattern.lastIndex = 0;
       let match;
       while ((match = pattern.exec(content)) !== null) {
         threats.push({
@@ -296,14 +306,15 @@ export class DefaultContentScanner implements ContentScanner {
         });
       }
     }
-    
+
     return threats;
   }
-  
+
   private scanPromptInjection(content: string): ContentThreat[] {
     const threats: ContentThreat[] = [];
-    
+
     for (const pattern of this.promptInjectionPatterns) {
+      pattern.lastIndex = 0;
       let match;
       while ((match = pattern.exec(content)) !== null) {
         threats.push({
@@ -315,33 +326,36 @@ export class DefaultContentScanner implements ContentScanner {
         });
       }
     }
-    
+
     return threats;
   }
-  
+
   private scanUnicodeObfuscation(content: string): ContentThreat[] {
     const threats: ContentThreat[] = [];
-    
-    // 构建正则表达式匹配所有隐藏 Unicode 范围
-    const invisibleCharPattern = new RegExp(`[${this.invisibleUnicodeRanges.join('')}]`, 'g');
-    
+
+    // Use pre-compiled regex (reset lastIndex for reuse)
+    this.invisibleCharPattern.lastIndex = 0;
     let match;
-    while ((match = invisibleCharPattern.exec(content)) !== null) {
+    while ((match = this.invisibleCharPattern.exec(content)) !== null) {
       threats.push({
         type: 'invisible_characters',
         severity: 'MEDIUM',
         description: `Invisible Unicode character detected: U+${match[0].charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`,
-        location: { start: match.index, end: match.index + 1, snippet: `U+${match[0].charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}` },
+        location: {
+          start: match.index,
+          end: match.index + 1,
+          snippet: `U+${match[0].charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`,
+        },
         remediation: this.getRemediation({ type: 'invisible_characters' } as ContentThreat),
       });
     }
-    
+
     return threats;
   }
-  
+
   private scanMetadataCommands(content: string): ContentThreat[] {
     const threats: ContentThreat[] = [];
-    
+
     // 检查 HTML 属性中的潜在指令
     const metadataPatterns = [
       /data-[a-z-]+\s*=\s*["'][^"']{20,}["']/gi, // 长 data 属性
@@ -349,8 +363,9 @@ export class DefaultContentScanner implements ContentScanner {
       /title\s*=\s*["'][^"']{50,}["']/gi, // 异常长的 title
       /aria-label\s*=\s*["'][^"']{50,}["']/gi, // 异常长的 aria-label
     ];
-    
+
     for (const pattern of metadataPatterns) {
+      pattern.lastIndex = 0;
       let match;
       while ((match = pattern.exec(content)) !== null) {
         threats.push({
@@ -362,34 +377,34 @@ export class DefaultContentScanner implements ContentScanner {
         });
       }
     }
-    
+
     return threats;
   }
-  
+
   private calculateRiskScore(threats: ContentThreat[]): number {
     if (threats.length === 0) return 0;
-    
+
     const severityWeights = {
       LOW: 5,
       MEDIUM: 15,
       HIGH: 35,
       CRITICAL: 45,
     };
-    
+
     const totalWeight = threats.reduce((sum, threat) => {
       return sum + severityWeights[threat.severity];
     }, 0);
-    
+
     // 风险分数 = min(totalWeight, 100)
     return Math.min(totalWeight, 100);
   }
-  
+
   private async hashContent(content: string): Promise<string> {
     // 简单的哈希实现（生产环境应使用 crypto）
     let hash = 0;
     for (let i = 0; i < content.length; i++) {
       const char = content.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
+      hash = (hash << 5) - hash + char;
       hash = hash & hash; // Convert to 32bit integer
     }
     return Math.abs(hash).toString(16).padStart(8, '0');
@@ -406,7 +421,47 @@ export function createContentScanner(config?: Partial<ContentScannerConfig>): Co
 /**
  * 便捷函数：快速扫描内容
  */
-export async function scanContent(content: string, config?: Partial<ContentScannerConfig>): Promise<ScanResult> {
+export async function scanContent(
+  content: string,
+  config?: Partial<ContentScannerConfig>,
+): Promise<ScanResult> {
   const scanner = createContentScanner(config);
   return scanner.scan(content);
+}
+
+// Pre-compiled regex for lightweight tool output injection scanning.
+// Only checks for the most critical patterns — full ContentScanner.scan()
+// is used for final output; this is for in-line filtering of tool results.
+const TOOL_OUTPUT_INJECTION_PATTERNS = [
+  /ignore\s+(all\s+)?previous\s+instructions?/gi,
+  /disregard\s+(all\s+)?(previous\s+)?instructions?/gi,
+  /system\s*:\s*you\s+are\s+now/gi,
+  /you\s+are\s+now\s+a\s+/gi,
+  /forget\s+(all\s+)?(previous\s+)?(rules|instructions)/gi,
+  /new\s+instruction\s*:/gi,
+  /override\s+(default\s+)?(rules|behavior)/gi,
+  /忽略(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi,
+  /无视(之前|上面|所有)(的)?(指令|提示|规则|命令)/gi,
+  /你现在(是|变成|扮演)/gi,
+];
+
+/**
+ * Lightweight injection check for tool output.
+ * Scans for known prompt injection patterns before tool results enter the LLM context.
+ * Zero allocation, returns early on first match.
+ * Used as a defense-in-depth layer alongside the full ContentScanner.
+ */
+export function scanToolOutputForInjection(output: string): { blocked: boolean; reason?: string } {
+  if (!output || output.length === 0) return { blocked: false };
+  for (const pattern of TOOL_OUTPUT_INJECTION_PATTERNS) {
+    pattern.lastIndex = 0;
+    const match = pattern.exec(output);
+    if (match) {
+      return {
+        blocked: true,
+        reason: `Injection pattern detected in tool output: "${match[0].slice(0, 60)}"`,
+      };
+    }
+  }
+  return { blocked: false };
 }

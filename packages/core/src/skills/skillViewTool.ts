@@ -3,7 +3,8 @@ import { getGlobalLogger } from '../logging';
 
 const DEFINITION: ToolDefinition = {
   name: 'skill_view',
-  description: 'Load full skill instructions by name. Use this when a skill from the Available Skills catalog matches your current task. Returns the complete skill content with step-by-step instructions.',
+  description:
+    'Load full skill instructions by name. Use this when a skill from the Available Skills catalog matches your current task. Returns the complete skill content with step-by-step instructions.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -39,7 +40,9 @@ export class SkillViewTool implements Tool {
         `Usage: ${skill.metadata.usageCount} times`,
         `Category: ${skill.metadata.category}`,
         skill.metadata.tags.length > 0 ? `Tags: ${skill.metadata.tags.join(', ')}` : '',
-      ].filter(Boolean).join(' · ');
+      ]
+        .filter(Boolean)
+        .join(' · ');
 
       return `${header}${meta}\n\n---\n\n${skill.content}`;
     } catch (e) {

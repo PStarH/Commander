@@ -1,6 +1,0 @@
-{
-  "cat": "Extraction",
-  "question": "Extract the budget numbers from: 'Total budget is $500K for Q1 2024.'",
-  "answer": "The budget number extracted from the text is **$500K**.\n\nIf converted to a full number, this is **$500,000**.",
-  "score": 8.0
-}

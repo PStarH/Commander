@@ -1,6 +1,0 @@
-{
-  "cat": "Extraction",
-  "question": "Extract all URLs from: 'Visit https://site1.com and http://site2.org for more.'",
-  "answer": "Here are the URLs extracted from the text:\n\n*   https://site1.com\n*   http://site2.org",
-  "score": 5.0
-}

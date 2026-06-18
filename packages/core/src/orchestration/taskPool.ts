@@ -8,7 +8,7 @@
  * This is Commander's killer feature vs OpenClaw/Hermes:
  * they execute one task at a time; Commander runs N tasks across M agents.
  */
-import type { AgentRuntime } from '../runtime/agentRuntime';
+import type { AgentRuntimeInterface } from '../runtime';
 import type { AgentExecutionContext, AgentExecutionResult } from '../runtime/types';
 
 export interface PoolTask {
@@ -47,12 +47,12 @@ const DEFAULT_CONFIG: PoolConfig = {
 };
 
 export class TaskPool {
-  private runtime: AgentRuntime;
+  private runtime: AgentRuntimeInterface;
   private config: PoolConfig;
   private activeWorkers: Map<string, Promise<PoolResult>> = new Map();
   private totalTokensUsed = 0;
 
-  constructor(runtime: AgentRuntime, config?: Partial<PoolConfig>) {
+  constructor(runtime: AgentRuntimeInterface, config?: Partial<PoolConfig>) {
     this.runtime = runtime;
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
@@ -74,19 +74,24 @@ export class TaskPool {
     // Process in batches of maxWorkers
     for (let i = 0; i < sorted.length; i += this.config.maxWorkers) {
       const batch = sorted.slice(i, i + this.config.maxWorkers);
-      const batchResults = await Promise.allSettled(
-        batch.map(task => this.executeTask(task, perTaskBudget)),
-      );
+      const batchPromises = batch.map((task) => {
+        const p = this.executeTask(task, perTaskBudget);
+        this.activeWorkers.set(task.id, p);
+        p.finally(() => this.activeWorkers.delete(task.id));
+        return p;
+      });
+      const batchResults = await Promise.allSettled(batchPromises);
       for (const r of batchResults) {
         if (r.status === 'fulfilled') results.push(r.value);
-        else results.push({
-          taskId: 'unknown',
-          status: 'failed',
-          summary: '',
-          tokens: 0,
-          durationMs: 0,
-          error: r.reason?.toString(),
-        });
+        else
+          results.push({
+            taskId: 'unknown',
+            status: 'failed',
+            summary: '',
+            tokens: 0,
+            durationMs: 0,
+            error: r.reason?.toString(),
+          });
       }
     }
 
@@ -94,8 +99,9 @@ export class TaskPool {
   }
 
   private async executeTask(task: PoolTask, budget: number): Promise<PoolResult> {
-    // Check global budget
-    if (this.totalTokensUsed >= this.config.globalTokenBudget) {
+    // Atomically reserve budget to prevent TOCTOU race
+    const reservation = Math.min(budget, this.config.globalTokenBudget - this.totalTokensUsed);
+    if (reservation <= 0) {
       return {
         taskId: task.id,
         status: 'failed',
@@ -105,6 +111,7 @@ export class TaskPool {
         error: 'Budget exceeded',
       };
     }
+    this.totalTokensUsed += reservation;
 
     const startTime = Date.now();
     const workerId = task.agentId || `worker-${task.id}`;
@@ -115,19 +122,28 @@ export class TaskPool {
       projectId: 'taskpool',
       goal: task.goal,
       contextData: {},
-      availableTools: task.availableTools || ['browser_search', 'browser_fetch', 'python_execute', 'shell_execute'],
+      availableTools: task.availableTools || [
+        'browser_search',
+        'browser_fetch',
+        'python_execute',
+        'shell_execute',
+      ],
       maxSteps: task.maxSteps || this.config.defaultMaxSteps,
-      tokenBudget: Math.min(budget, task.tokenBudget || this.config.defaultTokenBudget),
+      tokenBudget: Math.min(reservation, task.tokenBudget || this.config.defaultTokenBudget),
     };
 
     try {
-      // Run with timeout
+      // Run with timeout and abort support
+      const ac = new AbortController();
       const result = await Promise.race([
-        this.runtime.execute(ctx),
+        this.runtime.execute({ ...ctx, abortSignal: ac.signal }),
         this.timeout(this.config.taskTimeoutMs),
       ]);
 
       if (result === 'timeout') {
+        ac.abort();
+        // Refund unused reservation
+        this.totalTokensUsed -= reservation;
         return {
           taskId: task.id,
           status: 'timeout',
@@ -139,7 +155,9 @@ export class TaskPool {
       }
 
       const execResult = result as AgentExecutionResult;
-      this.totalTokensUsed += execResult.totalTokenUsage.totalTokens;
+      // Adjust: refund unused portion of reservation
+      const actualTokens = execResult.totalTokenUsage.totalTokens;
+      this.totalTokensUsed -= reservation - actualTokens;
 
       return {
         taskId: task.id,
@@ -150,6 +168,8 @@ export class TaskPool {
         error: execResult.error,
       };
     } catch (err: unknown) {
+      // Refund unused reservation on failure
+      this.totalTokensUsed -= reservation;
       return {
         taskId: task.id,
         status: 'failed',
@@ -162,7 +182,7 @@ export class TaskPool {
   }
 
   private timeout(ms: number): Promise<'timeout'> {
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       const timer = setTimeout(() => resolve('timeout'), ms);
       timer.unref();
     });

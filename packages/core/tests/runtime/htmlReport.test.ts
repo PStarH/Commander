@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { HTMLReportRenderer, createWarRoomHTMLReport } from '../../src/reporting/htmlReportRenderer';
+import {
+  HTMLReportRenderer,
+  createWarRoomHTMLReport,
+} from '../../src/reporting/htmlReportRenderer';
 import type { HTMLReport } from '../../src/runtime/types';
 
 describe('HTMLReportRenderer', () => {
@@ -66,7 +69,7 @@ describe('HTMLReportRenderer', () => {
 
   describe('renderMetrics', () => {
     it('renders key-value pairs as metric cards', () => {
-      const html = renderer.renderMetrics({ 'Tasks': 10, 'Agents': 3 });
+      const html = renderer.renderMetrics({ Tasks: 10, Agents: 3 });
       expect(html).toContain('Tasks');
       expect(html).toContain('10');
       expect(html).toContain('Agents');
@@ -79,7 +82,10 @@ describe('HTMLReportRenderer', () => {
     it('renders a table with headers and rows', () => {
       const html = renderer.renderTable(
         ['Name', 'Score'],
-        [['Alice', '95'], ['Bob', '87']],
+        [
+          ['Alice', '95'],
+          ['Bob', '87'],
+        ],
       );
       expect(html).toContain('Name');
       expect(html).toContain('Score');
@@ -121,10 +127,10 @@ describe('createWarRoomHTMLReport', () => {
       projectName: 'War Room',
       operationCodename: 'Op Test',
       health: 'GREEN',
-      metrics: { 'Agents': '5/5', 'Tasks': '12/15' },
+      metrics: { Agents: '5/5', Tasks: '12/15' },
       narrative: 'Good progress this week.',
       topAgents: [{ name: 'Builder', completed: 5 }],
-      missionSummary: { 'Running': 3, 'Done': 12 },
+      missionSummary: { Running: 3, Done: 12 },
     });
 
     expect(report.title).toContain('Op Test');
@@ -142,12 +148,10 @@ describe('createWarRoomHTMLReport', () => {
       narrative: 'Test narrative.',
       topAgents: [],
       missionSummary: {},
-      recentEvents: [
-        { timestamp: '2024-01-01', level: 'INFO', message: 'Started task' },
-      ],
+      recentEvents: [{ timestamp: '2024-01-01', level: 'INFO', message: 'Started task' }],
     });
 
-    const eventSection = report.sections.find(s => s.title === 'Recent Execution Events');
+    const eventSection = report.sections.find((s) => s.title === 'Recent Execution Events');
     expect(eventSection).toBeDefined();
     expect(eventSection!.content).toContain('Started task');
   });

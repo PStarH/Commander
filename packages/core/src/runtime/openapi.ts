@@ -5,19 +5,24 @@ export const openApiSpec: Record<string, unknown> = {
   info: {
     title: 'Commander HTTP API',
     version: '0.2.0',
-    description: 'Multi-agent orchestration system — REST API for runtime management, execution, and monitoring.',
+    description:
+      'Multi-agent orchestration system — REST API for runtime management, execution, and monitoring.',
     license: { name: 'MIT', url: 'https://github.com/PStarH/Commander/blob/master/LICENSE' },
     contact: { url: 'https://github.com/PStarH/Commander' },
   },
   servers: [
-    { url: 'http://localhost:3001', description: 'Default development server' },
-    { url: 'http://localhost:4000', description: 'Production API server' },
+    {
+      url: `http://localhost:${process.env.COMMANDER_PORT ?? '3001'}`,
+      description: 'Default development server',
+    },
+    { url: `http://localhost:${process.env.PORT ?? '4000'}`, description: 'Production API server' },
   ],
   paths: {
     '/health': {
       get: {
         summary: 'Liveness probe',
-        description: 'Health check endpoint that bypasses authentication and rate limiting. Returns server status and basic metrics.',
+        description:
+          'Health check endpoint that bypasses authentication and rate limiting. Returns server status and basic metrics.',
         tags: ['Monitoring'],
         responses: {
           '200': {
@@ -43,7 +48,8 @@ export const openApiSpec: Record<string, unknown> = {
     '/ready': {
       get: {
         summary: 'Readiness probe',
-        description: 'Readiness endpoint for Kubernetes-style deployment orchestrators. Checks that the server is accepting requests.',
+        description:
+          'Readiness endpoint for Kubernetes-style deployment orchestrators. Checks that the server is accepting requests.',
         tags: ['Monitoring'],
         responses: {
           '200': { description: 'Server is ready' },
@@ -54,13 +60,15 @@ export const openApiSpec: Record<string, unknown> = {
     '/metrics': {
       get: {
         summary: 'Metrics export',
-        description: 'Exports server metrics in JSON format (default) or OpenMetrics text format (when Accept: text/plain header is set).',
+        description:
+          'Exports server metrics in JSON format (default) or OpenMetrics text format (when Accept: text/plain header is set).',
         tags: ['Monitoring'],
         parameters: [
           {
             name: 'Accept',
             in: 'header',
-            description: 'Set to "text/plain" or "application/openmetrics-text" for Prometheus-compatible text format',
+            description:
+              'Set to "text/plain" or "application/openmetrics-text" for Prometheus-compatible text format',
             schema: { type: 'string', default: 'application/json' },
           },
         ],
@@ -100,9 +108,7 @@ export const openApiSpec: Record<string, unknown> = {
         summary: 'Get runtime session',
         tags: ['Runtime'],
         security: [{ BearerAuth: [] }],
-        parameters: [
-          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
-        ],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'Session details' },
           '404': { description: 'Session not found' },
@@ -112,9 +118,7 @@ export const openApiSpec: Record<string, unknown> = {
         summary: 'Delete runtime session',
         tags: ['Runtime'],
         security: [{ BearerAuth: [] }],
-        parameters: [
-          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
-        ],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'Session deleted' },
           '404': { description: 'Session not found' },
@@ -124,7 +128,8 @@ export const openApiSpec: Record<string, unknown> = {
     '/api/v1/execute': {
       post: {
         summary: 'Execute agent task',
-        description: 'Executes an agent task with the given prompt. Creates a runtime session if one does not exist.',
+        description:
+          'Executes an agent task with the given prompt. Creates a runtime session if one does not exist.',
         tags: ['Execution'],
         security: [{ BearerAuth: [] }],
         requestBody: {
@@ -153,11 +158,17 @@ export const openApiSpec: Record<string, unknown> = {
     '/api/v1/bus': {
       get: {
         summary: 'Message bus status',
-        description: 'Returns active topics and recent message history from the internal message bus.',
+        description:
+          'Returns active topics and recent message history from the internal message bus.',
         tags: ['Monitoring'],
         security: [{ BearerAuth: [] }],
         parameters: [
-          { name: 'topic', in: 'query', schema: { type: 'string' }, description: 'Filter by topic name' },
+          {
+            name: 'topic',
+            in: 'query',
+            schema: { type: 'string' },
+            description: 'Filter by topic name',
+          },
         ],
         responses: {
           '200': { description: 'Bus state' },
@@ -167,7 +178,8 @@ export const openApiSpec: Record<string, unknown> = {
     '/api/v1/status': {
       get: {
         summary: 'System status',
-        description: 'Returns system-wide status including active sessions, bus topics, and subscriber counts.',
+        description:
+          'Returns system-wide status including active sessions, bus topics, and subscriber counts.',
         tags: ['Monitoring'],
         security: [{ BearerAuth: [] }],
         responses: {
@@ -182,10 +194,19 @@ export const openApiSpec: Record<string, unknown> = {
         tags: ['Streaming'],
         security: [{ BearerAuth: [] }],
         parameters: [
-          { name: 'id', in: 'query', required: true, schema: { type: 'string' }, description: 'Runtime session ID' },
+          {
+            name: 'id',
+            in: 'query',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Runtime session ID',
+          },
         ],
         responses: {
-          '200': { description: 'SSE event stream', content: { 'text/event-stream': { schema: { type: 'string' } } } },
+          '200': {
+            description: 'SSE event stream',
+            content: { 'text/event-stream': { schema: { type: 'string' } } },
+          },
         },
       },
     },
@@ -196,7 +217,8 @@ export const openApiSpec: Record<string, unknown> = {
         type: 'http',
         scheme: 'bearer',
         bearerFormat: 'API key',
-        description: 'API key authentication. Provide the API key in the Authorization header as "Bearer <api-key>".',
+        description:
+          'API key authentication. Provide the API key in the Authorization header as "Bearer <api-key>".',
       },
     },
   },

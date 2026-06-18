@@ -1,6 +1,0 @@
-{
-  "cat": "Coding",
-  "question": "Write a function to check if a string is a palindrome.",
-  "answer": "Here are solutions in **Python**, **JavaScript**, **Java**, and **C++**.\n\n### 1. Python\nThe most \"Pythonic\" way is to use string slicing to reverse the string and compare it to the original.\n\n```python\ndef is_palindrome(s):\n    # Compare the string with its reverse\n    return s == s[::-1]\n\n# Example usage:\nprint(is_palindrome(\"racecar\")) # True\nprint(is_palindrome(\"hello\"))   # False\n```\n\n### 2. JavaScript\nIn JavaScript, you split the string into an array, reverse the array, join it back into a ",
-  "score": 10.0
-}

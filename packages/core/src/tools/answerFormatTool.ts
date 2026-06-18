@@ -2,20 +2,36 @@ import type { Tool, ToolDefinition } from '../runtime/types';
 
 const DEFINITION: ToolDefinition = {
   name: 'verify_answer',
-  description: 'Verify that a final answer matches the required format. GAIA and similar benchmarks require exact-format answers. Use this before returning any final answer to ensure compliance.',
+  description:
+    'Verify that a final answer matches the required format. GAIA and similar benchmarks require exact-format answers. Use this before returning any final answer to ensure compliance.',
   inputSchema: {
     type: 'object',
     properties: {
       answer: { type: 'string', description: 'The answer to verify' },
-      format: { type: 'string', enum: ['exact_string', 'number', 'date', 'url', 'email', 'code', 'list', 'file_path'], description: 'Required answer format' },
-      constraints: { type: 'string', description: 'Additional format constraints (e.g., "must be a single line", "no leading zeros")' },
+      format: {
+        type: 'string',
+        enum: ['exact_string', 'number', 'date', 'url', 'email', 'code', 'list', 'file_path'],
+        description: 'Required answer format',
+      },
+      constraints: {
+        type: 'string',
+        description:
+          'Additional format constraints (e.g., "must be a single line", "no leading zeros")',
+      },
     },
     required: ['answer', 'format'],
   },
   examples: [
     { name: 'verify_answer', arguments: { answer: '42', format: 'number' } },
     { name: 'verify_answer', arguments: { answer: 'https://example.com', format: 'url' } },
-    { name: 'verify_answer', arguments: { answer: 'def solve(): pass', format: 'code', constraints: 'must include type hints' } },
+    {
+      name: 'verify_answer',
+      arguments: {
+        answer: 'def solve(): pass',
+        format: 'code',
+        constraints: 'must include type hints',
+      },
+    },
   ],
   category: 'development',
 };
@@ -57,14 +73,43 @@ export class AnswerFormatTool implements Tool {
 
       case 'date':
         const datePatterns = [
-          /^\d{4}-\d{2}-\d{2}$/,           // 2024-01-15
-          /^\d{2}\/\d{2}\/\d{4}$/,          // 01/15/2024
+          /^\d{4}-\d{2}-\d{2}$/, // 2024-01-15
+          /^\d{2}\/\d{2}\/\d{4}$/, // 01/15/2024
           /^[A-Z][a-z]+ \d{1,2},? \d{4}$/, // January 15, 2024
         ];
-        if (!datePatterns.some(p => p.test(answer.trim()))) {
+        if (!datePatterns.some((p) => p.test(answer.trim()))) {
           issues.push(`"${answer}" does not match a standard date format`);
         }
         break;
+
+      case 'code':
+        if (answer.trim().length === 0) issues.push('Code answer is empty');
+        break;
+
+      case 'explanation':
+        if (answer.split(/\s+/).length < 5)
+          issues.push('Explanation is too short (minimum 5 words)');
+        break;
+
+      case 'json':
+        try {
+          JSON.parse(answer);
+        } catch {
+          issues.push('Answer is not valid JSON');
+        }
+        break;
+
+      case 'boolean':
+        if (!['yes', 'no', 'true', 'false', '1', '0'].includes(answer.trim().toLowerCase())) {
+          issues.push(`"${answer}" is not a valid boolean`);
+        }
+        break;
+
+      case 'list': {
+        const items = answer.split('\n').filter((l) => l.trim().length > 0);
+        if (items.length === 0) issues.push('List is empty');
+        break;
+      }
 
       case 'url':
         if (!answer.startsWith('http://') && !answer.startsWith('https://')) {
@@ -78,26 +123,14 @@ export class AnswerFormatTool implements Tool {
         }
         break;
 
-      case 'code':
-        if (answer.length < 5) issues.push('Code snippet too short');
-        if (constraints.includes('python') && !answer.includes('def ') && !answer.includes('import ')) {
-          issues.push('Expected Python code with function definition');
-        }
-        break;
-
-      case 'list':
-        const items = answer.split('\n').filter(l => l.trim().startsWith('-') || l.trim().startsWith('*') || /^\d+[.)]/.test(l.trim()));
-        if (items.length === 0 && answer.includes(',')) {
-          // Comma-separated list is acceptable
-        } else if (items.length < 2 && !answer.includes(',')) {
-          issues.push('List must have at least 2 items');
-        }
-        break;
-
       case 'file_path':
         if (!answer.startsWith('/') && !answer.match(/^[A-Z]:\\/)) {
           issues.push(`"${answer}" is not an absolute path`);
         }
+        break;
+
+      default:
+        issues.push(`Unknown format: ${format}`);
         break;
     }
 
@@ -110,6 +143,6 @@ export class AnswerFormatTool implements Tool {
       return `✅ Answer format verified (${format}): "${answer.slice(0, 200)}"`;
     }
 
-    return `⚠️ Format issues found:\n${issues.map(i => `  - ${i}`).join('\n')}\n\nOriginal answer: "${answer.slice(0, 500)}"`;
+    return `⚠️ Format issues found:\n${issues.map((i) => `  - ${i}`).join('\n')}\n\nOriginal answer: "${answer.slice(0, 500)}"`;
   }
 }

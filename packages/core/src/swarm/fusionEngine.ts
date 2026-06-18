@@ -1,7 +1,8 @@
 import type { FusionConflict, FusionReport } from './types';
 import type { SwarmNode } from './types';
 
-const FILE_PATH_RE = /(?:\/|`)([\w./-]+\.(?:ts|js|tsx|jsx|py|go|rs|java|kt|css|scss|json|yaml|yml|toml|md|txt|html|css))(?::\d+)?(?:`)?/g;
+const FILE_PATH_RE =
+  /(?:\/|`)([\w./-]+\.(?:ts|js|tsx|jsx|py|go|rs|java|kt|css|scss|json|yaml|yml|toml|md|txt|html|css))(?::\d+)?(?:`)?/g;
 
 /**
  * FusionEngine — detects conflicts between parallel workers in the swarm tree.
@@ -32,9 +33,10 @@ export class FusionEngine {
       round,
       conflicts,
       resolvedCount: 0,
-      summary: conflicts.length > 0
-        ? `Found ${conflicts.length} conflict(s): ${conflicts.map(c => c.type).join(', ')}`
-        : 'No conflicts detected',
+      summary:
+        conflicts.length > 0
+          ? `Found ${conflicts.length} conflict(s): ${conflicts.map((c) => c.type).join(', ')}`
+          : 'No conflicts detected',
     };
   }
 
@@ -79,7 +81,7 @@ export class FusionEngine {
    * Detect cycles in the dependency graph between nodes.
    */
   private detectDependencyCycles(nodes: SwarmNode[]): FusionConflict[] {
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    const nodeMap = new Map(nodes.map((n) => [n.id, n]));
     const visited = new Set<string>();
     const inStack = new Set<string>();
     const cycles: string[][] = [];
@@ -114,7 +116,7 @@ export class FusionEngine {
       }
     }
 
-    return cycles.map(cycle => ({
+    return cycles.map((cycle) => ({
       type: 'dependency_cycle' as const,
       description: `Circular dependency detected: ${cycle.join(' -> ')} -> ${cycle[0]}`,
       severity: 'critical' as const,
@@ -140,7 +142,9 @@ export class FusionEngine {
         portMap.get(port)!.push(node.id);
       }
 
-      const endpointMatches = node.workerOutput.matchAll(/["'](\/(?:api|v1|v2|graphql|webhook)\/[\w/-]+)["']/g);
+      const endpointMatches = node.workerOutput.matchAll(
+        /["'](\/(?:api|v1|v2|graphql|webhook)\/[\w/-]+)["']/g,
+      );
       for (const m of endpointMatches) {
         const ep = m[1];
         if (!endpointMap.has(ep)) endpointMap.set(ep, []);

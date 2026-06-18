@@ -12,15 +12,27 @@
 import { getGlobalLogger } from '../logging';
 
 export function parseStructuredOutput<T = unknown>(
-  content: string,
+  input: string | { content: string; parsed?: Record<string, unknown> },
   fallback?: T,
 ): { success: true; data: T } | { success: false; data: T | undefined; raw: string } {
+  // Strategy 0: Provider-native parsed structured output (OpenAI json_schema,
+  // Google responseSchema, Anthropic tool_use). Use it directly when available.
+  if (typeof input === 'object' && input !== null && input.parsed) {
+    return { success: true, data: input.parsed as T };
+  }
+
+  const content = typeof input === 'string' ? input : input.content;
+
   // Strategy 1: Extract JSON from markdown code block
   const jsonBlock = extractJsonBlock(content);
   if (jsonBlock !== null) {
     try {
       return { success: true, data: JSON.parse(jsonBlock) as T };
-    } catch (e) { getGlobalLogger().debug('StructuredOutput', 'Failed to parse JSON code block', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().debug('StructuredOutput', 'Failed to parse JSON code block', {
+        error: (e as Error)?.message,
+      });
+    }
   }
 
   // Strategy 2: Extract JSON from raw response (strip leading/trailing non-JSON)
@@ -28,7 +40,11 @@ export function parseStructuredOutput<T = unknown>(
   if (rawJson !== null) {
     try {
       return { success: true, data: JSON.parse(rawJson) as T };
-    } catch (e) { getGlobalLogger().debug('StructuredOutput', 'Failed to parse raw JSON', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().debug('StructuredOutput', 'Failed to parse raw JSON', {
+        error: (e as Error)?.message,
+      });
+    }
   }
 
   // Strategy 3: Extract JSON from `<output_json>...</output_json>` tags
@@ -36,7 +52,11 @@ export function parseStructuredOutput<T = unknown>(
   if (taggedJson !== null) {
     try {
       return { success: true, data: JSON.parse(taggedJson) as T };
-    } catch (e) { getGlobalLogger().debug('StructuredOutput', 'Failed to parse tagged JSON', { error: (e as Error)?.message }); }
+    } catch (e) {
+      getGlobalLogger().debug('StructuredOutput', 'Failed to parse tagged JSON', {
+        error: (e as Error)?.message,
+      });
+    }
   }
 
   // Strategy 4: Extract XML-like structured content
@@ -67,7 +87,7 @@ export function validateStructuredOutput<T>(
   requiredKeys: (keyof T)[],
 ): result is { success: true; data: T } {
   if (!result.success) return false;
-  return requiredKeys.every(key => key in (result.data as Record<string, unknown>));
+  return requiredKeys.every((key) => key in (result.data as Record<string, unknown>));
 }
 
 /**
@@ -206,8 +226,11 @@ function findBalancedEnd(str: string, open: string, close: string): number {
     const ch = str[i];
 
     if (inString) {
-      if (ch === stringChar && str[i - 1] !== '\\') {
-        inString = false;
+      if (ch === stringChar) {
+        // Count consecutive backslashes before this quote
+        let bs = 0;
+        for (let j = i - 1; j >= 0 && str[j] === '\\'; j--) bs++;
+        if (bs % 2 === 0) inString = false; // Even backslashes = not escaped
       }
       continue;
     }

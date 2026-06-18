@@ -18,7 +18,7 @@ export class MetaLearnerBridge {
     const thompsonPriors = this.getThompsonPriors();
 
     for (const [taskType, priors] of thompsonPriors) {
-      const bestIdx = priors.map(p => p.mean).indexOf(Math.max(...priors.map(p => p.mean)));
+      const bestIdx = priors.map((p) => p.mean).indexOf(Math.max(...priors.map((p) => p.mean)));
       const bestScore = priors[bestIdx].mean;
       const totalTrials = priors[bestIdx].totalTrials;
 
@@ -83,7 +83,10 @@ export class MetaLearnerBridge {
     const taskTypes = this.metaLearner.getTrackedTaskTypes();
     for (const taskType of taskTypes) {
       const scores = this.metaLearner.getStrategyScores(taskType);
-      result.set(taskType, scores.map(s => ({ mean: s.score, totalTrials: s.trials })));
+      result.set(
+        taskType,
+        scores.map((s) => ({ mean: s.score, totalTrials: s.trials })),
+      );
     }
     return result;
   }

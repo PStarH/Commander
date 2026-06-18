@@ -6,15 +6,27 @@
  * same hash and return cached results without re-execution.
  *
  * Key design decisions:
- * - Content-hash based: SHA-256 of (toolName + sortedArgs) → cache key
+ * - Content-hash based: FNV-1a of (toolName + sortedArgs) → cache key
  * - TTL-based expiry: configurable per-tool, default 5 minutes
  * - LRU eviction: bounded memory with configurable max entries
  * - Selective caching: tools opt-in via `isCacheable` flag; side-effect tools excluded
  * - Token savings: cached results skip execution AND reduce context rebuilds
  */
 
-import { createHash } from 'node:crypto';
 import type { ToolCall, ToolResult } from './types';
+import { getMetricsCollector } from './metricsCollector';
+import { createContentScanner } from '../contentScanner';
+import { getGlobalLogger } from '../logging';
+
+// FNV-1a hash — fast, non-cryptographic, sufficient for in-memory cache keys
+function fnv1a(str: string): string {
+  let hash = 0x811c9dc5; // FNV offset basis
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = (hash * 0x01000193) >>> 0; // FNV prime, unsigned
+  }
+  return hash.toString(36);
+}
 
 // ============================================================================
 // Cache Entry
@@ -65,10 +77,12 @@ export interface ToolCacheConfig {
   toolTtls: Record<string, number>;
   /** Tools that should NEVER be cached (side-effects, state-mutating) */
   neverCache: string[];
+  /** Scan tool outputs for security threats before caching (default: true) */
+  securityScanEnabled?: boolean;
 }
 
 const DEFAULT_CONFIG: ToolCacheConfig = {
-  enabled: false,
+  enabled: true,
   maxEntries: 256,
   defaultTtlMs: 300_000,
   toolTtls: {},
@@ -82,6 +96,7 @@ const DEFAULT_CONFIG: ToolCacheConfig = {
     'agent',
     'memory_store',
   ],
+  securityScanEnabled: true,
 };
 
 // ============================================================================
@@ -94,9 +109,15 @@ export class ToolResultCache {
   private stats = { hits: 0, misses: 0, evictions: 0 };
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
   private accessCounter = 0;
+  // Precomputed neverCache lookup for O(1) checks
+  private neverCacheSet: Set<string> = new Set();
+  private neverCachePrefixes: string[] = [];
+  // Running memory estimate (updated on set/delete, not recomputed)
+  private memoryEstimateBytes = 0;
 
   constructor(config?: Partial<ToolCacheConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.buildNeverCacheIndex();
     // GAP-22: Auto-prune expired entries every 60s
     if (this.config.enabled) {
       this.pruneTimer = setInterval(() => this.prune(), 60_000);
@@ -104,26 +125,44 @@ export class ToolResultCache {
     }
   }
 
+  private buildNeverCacheIndex(): void {
+    this.neverCacheSet.clear();
+    this.neverCachePrefixes = [];
+    for (const pattern of this.config.neverCache) {
+      if (pattern.endsWith('*')) {
+        this.neverCachePrefixes.push(pattern.slice(0, -1));
+      } else {
+        this.neverCacheSet.add(pattern);
+      }
+    }
+  }
+
   /**
    * Generate a deterministic cache key from tool name and arguments.
-   * Sorts object keys recursively for canonical form.
+   * Uses FNV-1a hash for speed (non-cryptographic, sufficient for cache keys).
    * When tenantId is provided, it's prepended to isolate caches per tenant.
    */
   static computeKey(toolName: string, args: Record<string, unknown>, tenantId?: string): string {
-    const canonical = JSON.stringify(args, ToolResultCache.sortReplacer);
+    const canonical = ToolResultCache.fastCanonicalize(args);
     const payload = tenantId ? `${tenantId}:${toolName}:${canonical}` : `${toolName}:${canonical}`;
-    return createHash('sha256').update(payload).digest('hex');
+    return fnv1a(payload);
   }
 
-  /** JSON.stringify replacer that sorts object keys recursively */
-  private static sortReplacer(_key: string, value: unknown): unknown {
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-      return Object.fromEntries(
-        Object.entries(value as Record<string, unknown>)
-          .sort(([a], [b]) => a.localeCompare(b)),
-      );
+  /**
+   * Fast canonical JSON: sort top-level keys only (not deeply nested).
+   * Deep sorting was too expensive for a cache hot-path; top-level is sufficient
+   * for deterministic ordering since tool args are typically flat objects.
+   */
+  private static fastCanonicalize(args: Record<string, unknown>): string {
+    const keys = Object.keys(args).sort();
+    let result = '{';
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      const v = args[k];
+      if (i > 0) result += ',';
+      result += JSON.stringify(k) + ':' + JSON.stringify(v);
     }
-    return value;
+    return result + '}';
   }
 
   /**
@@ -139,13 +178,24 @@ export class ToolResultCache {
 
     if (!entry) {
       this.stats.misses++;
+      try {
+        getMetricsCollector().recordToolCacheEvent('miss', tenantId);
+      } catch {
+        /* best-effort */
+      }
       return undefined;
     }
 
     // Check TTL expiry
     if (Date.now() - entry.createdAt > entry.ttlMs) {
+      this.memoryEstimateBytes -= 500 + (entry.result.output?.length ?? 0) * 2;
       this.cache.delete(key);
       this.stats.misses++;
+      try {
+        getMetricsCollector().recordToolCacheEvent('miss', tenantId);
+      } catch {
+        /* best-effort */
+      }
       return undefined;
     }
 
@@ -155,17 +205,27 @@ export class ToolResultCache {
     entry.accessOrder = ++this.accessCounter;
     this.stats.hits++;
 
-    // Return cached result with zero duration
-    return {
-      ...entry.result,
-      durationMs: 0,
-    };
+    // Record metrics
+    try {
+      getMetricsCollector().recordToolCacheEvent('hit', tenantId);
+    } catch {
+      /* best-effort */
+    }
+
+    // Return a copy to prevent callers from corrupting the cached entry
+    return { ...entry.result, durationMs: 0 };
   }
 
   /**
    * Store a tool result in cache.
-   * Only caches if: enabled, tool is cacheable, result has no error.
+   * Only caches if: enabled, tool is cacheable, result has no error, and output passes
+   * the security scan when enabled.
    * When tenantId is provided, cache is scoped to that tenant.
+   *
+   * Note: the cache entry is inserted synchronously so that callers (including tests
+   * and legacy code paths) can rely on an immediate `get` hit. A best-effort async
+   * security scan runs in the background and evicts the entry if HIGH/CRITICAL
+   * threats are found.
    */
   set(toolCall: ToolCall, result: ToolResult, tenantId?: string): void {
     if (!this.config.enabled) return;
@@ -181,7 +241,8 @@ export class ToolResultCache {
     }
 
     // Store with tool name for invalidation matching
-    this.cache.set(key, {
+    const entrySize = 500 + (result.output?.length ?? 0) * 2;
+    const entry: CacheEntry = {
       key,
       result: { ...result, name: toolCall.name },
       createdAt: Date.now(),
@@ -189,7 +250,45 @@ export class ToolResultCache {
       hitCount: 0,
       lastAccessAt: Date.now(),
       accessOrder: ++this.accessCounter,
-    });
+    };
+    this.cache.set(key, entry);
+    this.memoryEstimateBytes += entrySize;
+
+    // Best-effort security scan: evict later if the output is flagged.
+    if (this.config.securityScanEnabled !== false && result.output) {
+      (async () => {
+        try {
+          const scanner = createContentScanner();
+          const scan = await scanner.scan(result.output);
+          const severe = scan.threats.filter(
+            (t) => t.severity === 'HIGH' || t.severity === 'CRITICAL',
+          );
+          if (severe.length > 0) {
+            getGlobalLogger().warn(
+              'ToolResultCache',
+              `Evicting cached ${toolCall.name} due to security threats`,
+              {
+                threats: severe.map((t) => t.type),
+              },
+            );
+            // Only evict if this exact entry is still present.
+            if (this.cache.get(key) === entry) {
+              this.cache.delete(key);
+              this.memoryEstimateBytes -= entrySize;
+            }
+          }
+        } catch {
+          // Scan failure should not prevent caching; fail open on scanner errors.
+        }
+      })();
+    }
+
+    // Record metrics
+    try {
+      getMetricsCollector().recordToolCacheEvent('store', tenantId);
+    } catch {
+      /* best-effort */
+    }
   }
 
   /**
@@ -200,6 +299,7 @@ export class ToolResultCache {
     let count = 0;
     for (const [key, entry] of this.cache) {
       if (entry.result.name === toolName) {
+        this.memoryEstimateBytes -= 500 + (entry.result.output?.length ?? 0) * 2;
         this.cache.delete(key);
         count++;
       }
@@ -215,10 +315,9 @@ export class ToolResultCache {
     const prefix = pattern.endsWith('*') ? pattern.slice(0, -1) : null;
     let count = 0;
     for (const [key, entry] of this.cache) {
-      const match = prefix
-        ? entry.result.name.startsWith(prefix)
-        : entry.result.name === pattern;
+      const match = prefix ? entry.result.name.startsWith(prefix) : entry.result.name === pattern;
       if (match) {
+        this.memoryEstimateBytes -= 500 + (entry.result.output?.length ?? 0) * 2;
         this.cache.delete(key);
         count++;
       }
@@ -231,6 +330,7 @@ export class ToolResultCache {
    */
   clear(): void {
     this.cache.clear();
+    this.memoryEstimateBytes = 0;
   }
 
   /** Stop the auto-prune timer. Call when shutting down. */
@@ -246,18 +346,13 @@ export class ToolResultCache {
    */
   getStats(): ToolCacheStats {
     const total = this.stats.hits + this.stats.misses;
-    // Rough estimate: each entry ~500 bytes overhead + output size
-    let memBytes = 0;
-    for (const entry of this.cache.values()) {
-      memBytes += 500 + (entry.result.output?.length ?? 0) * 2;
-    }
     return {
       totalEntries: this.cache.size,
       totalHits: this.stats.hits,
       totalMisses: this.stats.misses,
       hitRate: total > 0 ? this.stats.hits / total : 0,
       evictions: this.stats.evictions,
-      memoryEstimateBytes: memBytes,
+      memoryEstimateBytes: this.memoryEstimateBytes,
     };
   }
 
@@ -269,6 +364,7 @@ export class ToolResultCache {
     let pruned = 0;
     for (const [key, entry] of this.cache) {
       if (now - entry.createdAt > entry.ttlMs) {
+        this.memoryEstimateBytes -= 500 + (entry.result.output?.length ?? 0) * 2;
         this.cache.delete(key);
         pruned++;
       }
@@ -277,15 +373,14 @@ export class ToolResultCache {
   }
 
   /**
-   * Check if a tool should never be cached.
+   * Check if a tool should never be cached. Uses precomputed Set + prefix array for O(1) lookup.
    */
   private isNeverCache(toolName: string): boolean {
-    return this.config.neverCache.some(pattern => {
-      if (pattern.endsWith('*')) {
-        return toolName.startsWith(pattern.slice(0, -1));
-      }
-      return toolName === pattern;
-    });
+    if (this.neverCacheSet.has(toolName)) return true;
+    for (const prefix of this.neverCachePrefixes) {
+      if (toolName.startsWith(prefix)) return true;
+    }
+    return false;
   }
 
   /**
@@ -293,19 +388,24 @@ export class ToolResultCache {
    */
   private evictLRU(): void {
     let oldestKey: string | undefined;
+    let oldestEntry: CacheEntry | undefined;
     let oldestTime = Infinity;
     let oldestOrder = Infinity;
 
     for (const [key, entry] of this.cache) {
-      if (entry.lastAccessAt < oldestTime ||
-          (entry.lastAccessAt === oldestTime && entry.accessOrder < oldestOrder)) {
+      if (
+        entry.lastAccessAt < oldestTime ||
+        (entry.lastAccessAt === oldestTime && entry.accessOrder < oldestOrder)
+      ) {
         oldestTime = entry.lastAccessAt;
         oldestOrder = entry.accessOrder;
         oldestKey = key;
+        oldestEntry = entry;
       }
     }
 
     if (oldestKey) {
+      this.memoryEstimateBytes -= 500 + (oldestEntry!.result.output?.length ?? 0) * 2;
       this.cache.delete(oldestKey);
       this.stats.evictions++;
     }

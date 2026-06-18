@@ -4,7 +4,11 @@ const { HallucinationDetector } = require('../../../packages/core/dist/index.js'
 const { MemoryPoisoningDetector } = require('../dist/memoryPoisoningDetector.js');
 const { SelfAssessmentManager } = require('../dist/selfAssessment.js');
 const { NamespacedMemoryStore } = require('../dist/namespacedMemoryStore.js');
-const { AgentBenchmarkRunner, createCommanderHealthCheckBenchmark, calculatePassAtK } = require('../dist/agentBenchmarkRunner.js');
+const {
+  AgentBenchmarkRunner,
+  createCommanderHealthCheckBenchmark,
+  calculatePassAtK,
+} = require('../dist/agentBenchmarkRunner.js');
 const { MemoryPoisoningDetector: MPD } = require('../dist/memoryPoisoningDetector.js');
 
 // ============================================================================
@@ -87,10 +91,21 @@ test('SelfAssessmentManager - different agents are independent', () => {
 test('NamespacedMemoryStore - write and read with permissions', () => {
   const store = new NamespacedMemoryStore();
   // Add system role with full access
-  store.setACLRule({ role: 'system', permissions: ['read', 'write', 'delete', 'admin'], namespaces: ['*'] });
+  store.setACLRule({
+    role: 'system',
+    permissions: ['read', 'write', 'delete', 'admin'],
+    namespaces: ['*'],
+  });
   store.setNamespaceConfig({ name: 'test', maxItems: 100, retentionPolicy: 'fifo' });
   const written = store.write(
-    { namespace: 'test', projectId: 'proj', kind: 'DECISION', title: 'Test', content: 'Content', tags: [] },
+    {
+      namespace: 'test',
+      projectId: 'proj',
+      kind: 'DECISION',
+      title: 'Test',
+      content: 'Content',
+      tags: [],
+    },
     { agentId: 'agent-1', role: 'system', namespace: 'test' },
   );
   assert.ok(written);
@@ -103,10 +118,21 @@ test('NamespacedMemoryStore - write and read with permissions', () => {
 
 test('NamespacedMemoryStore - getAuditLog tracks operations', () => {
   const store = new NamespacedMemoryStore();
-  store.setACLRule({ role: 'system', permissions: ['read', 'write', 'delete', 'admin'], namespaces: ['*'] });
+  store.setACLRule({
+    role: 'system',
+    permissions: ['read', 'write', 'delete', 'admin'],
+    namespaces: ['*'],
+  });
   store.setNamespaceConfig({ name: 'audit-test', maxItems: 100, retentionPolicy: 'fifo' });
   store.write(
-    { namespace: 'audit-test', projectId: 'proj', kind: 'DECISION', title: 'T', content: 'C', tags: [] },
+    {
+      namespace: 'audit-test',
+      projectId: 'proj',
+      kind: 'DECISION',
+      title: 'T',
+      content: 'C',
+      tags: [],
+    },
     { agentId: 'agent-1', role: 'system', namespace: 'audit-test' },
   );
   const log = store.getAuditLog({ namespace: 'audit-test', limit: 10 });
