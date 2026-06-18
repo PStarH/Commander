@@ -30,7 +30,7 @@ jobs:
       - run: pnpm install
 
       - name: Security audit
-        run: npm audit --audit-level=high
+        run: pnpm audit --audit-level=high
 
       - name: ESLint check (no-console rule)
         run: npx eslint packages/core/src
