@@ -10,6 +10,7 @@
  */
 import * as blessed from 'blessed';
 import type { Widgets } from 'blessed';
+import * as fs from 'fs';
 import type { MessageBusTopic, BusMessage } from '../runtime/types';
 import { getMessageBus } from '../runtime/messageBus';
 
@@ -118,8 +119,14 @@ export class WatchRenderer {
   private unsubscribers: Array<() => void> = [];
   private isRunning = true;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
+  private logFile: number | null = null;
 
-  constructor() {
+  constructor(logFilePath?: string) {
+    if (logFilePath) {
+      try {
+        this.logFile = fs.openSync(logFilePath, 'a');
+      } catch {}
+    }
     // ── Screen ──────────────────────────────────────────────────────
     this.screen = blessed.screen({
       smartCSR: true,
@@ -262,6 +269,11 @@ export class WatchRenderer {
   cleanup(): void {
     if (this.tickTimer) clearInterval(this.tickTimer);
     for (const unsub of this.unsubscribers) unsub();
+    if (this.logFile !== null) {
+      try {
+        fs.closeSync(this.logFile);
+      } catch {}
+    }
     this.screen.destroy();
   }
 
@@ -583,7 +595,8 @@ export class WatchRenderer {
  * Returns the renderer instance so the caller can clean up after execution.
  */
 export function startWatchRenderer(): WatchRenderer {
-  const renderer = new WatchRenderer();
+  const logFilePath = process.env.COMMANDER_LOG_FILE;
+  const renderer = new WatchRenderer(logFilePath);
   const topics: MessageBusTopic[] = [
     'agent.started',
     'agent.completed',

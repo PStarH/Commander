@@ -12,6 +12,7 @@ import * as path from 'path';
 import { probeEnvironment, testConnectivity, recommendFallbackChain } from '../../commander/probe';
 import type { ConnectivityResult } from '../../commander/probe';
 import { $, startSpinner, section, kv } from '../util';
+import { cmdQuickstart } from './quickstart';
 
 // ============================================================================
 // Color helpers for table rendering
@@ -212,10 +213,22 @@ export async function cmdInit(flags: Record<string, string> = {}): Promise<void>
 
     if (chain.length === 0) {
       console.log(`  ${$.red}No reachable providers found.${$.reset}`);
-      console.log(`  ${$.dim}Set an API key (e.g., OPENAI_API_KEY) and try again.${$.reset}`);
       console.log(
-        `  ${$.dim}Run ${$.cyan}commander quickstart${$.reset}${$.dim} for setup guidance.${$.reset}\n`,
+        `  ${$.dim}Launching ${$.cyan}commander quickstart${$.reset}${$.dim} to set one up...${$.reset}\n`,
       );
+      // UX audit P0-3: turn the dead-end into a recovery path. Hand off to
+      // the interactive setup wizard so users that completed the scan are
+      // served guidance, not a wall of text telling them to "go elsewhere".
+      try {
+        await cmdQuickstart([]);
+      } catch (err) {
+        console.log(
+          `  ${$.yellow}⚠${$.reset} ${$.dim}Quickstart failed: ${(err as Error).message}${$.reset}`,
+        );
+        console.log(
+          `  ${$.dim}Set an API key (e.g., OPENAI_API_KEY) and try again.${$.reset}\n`,
+        );
+      }
       return;
     }
 

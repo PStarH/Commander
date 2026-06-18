@@ -26,6 +26,152 @@ import { runShowcase } from '../../showcase/showcaseRunner';
 import { startTUI } from '../../tui';
 import { getMetaLearner } from '../../selfEvolution/metaLearner';
 
+// Routing-flag plumbing (audit P0-2 / P1-1 surface). Declared at top-of-file so it
+// hoists before the first reference (cmdRun / cmdRunInternal / cmdWatchInternal).
+interface RoutingFlags {
+  model?: string;
+  tier?: 'speed' | 'balanced' | 'power';
+  topology?: 'SINGLE' | 'SEQUENTIAL' | 'PARALLEL' | 'HIERARCHICAL' | 'HYBRID' | 'DEBATE' | 'ENSEMBLE' | 'EVALUATOR_OPTIMIZER';
+  effort?: 'minimal' | 'low' | 'medium' | 'high' | 'max';
+  cascade?: boolean;
+  qualityThreshold?: number;
+}
+
+function parseRoutingFlags(flags: Record<string, string>): RoutingFlags {
+  const allowedTiers = ['speed', 'balanced', 'power'] as const;
+  const allowedEfforts = ['minimal', 'low', 'medium', 'high', 'max'] as const;
+  const allowedTopologies = ['SINGLE','SEQUENTIAL','PARALLEL','HIERARCHICAL','HYBRID','DEBATE','ENSEMBLE','EVALUATOR_OPTIMIZER'] as const;
+  let tier: RoutingFlags['tier'];
+  const tierRaw = flags.tier?.toLowerCase();
+  if (tierRaw !== undefined) {
+    if (!(allowedTiers as readonly string[]).includes(tierRaw)) {
+      const closest = didYouMean(tierRaw, allowedTiers);
+      fatalError(
+        `Invalid --tier="${tierRaw}".`,
+        `Allowed: ${allowedTiers.join(', ')}.${
+          closest ? ` Did you mean --tier=${closest}?` : ''
+        } Run commander run --help`,
+      );
+    }
+    tier = tierRaw as RoutingFlags['tier'];
+  }
+  let effort: RoutingFlags['effort'];
+  const effortRaw = flags.effort?.toLowerCase();
+  if (effortRaw !== undefined) {
+    if (!(allowedEfforts as readonly string[]).includes(effortRaw)) {
+      const closest = didYouMean(effortRaw, allowedEfforts);
+      fatalError(
+        `Invalid --effort="${effortRaw}".`,
+        `Allowed: ${allowedEfforts.join(', ')}.${
+          closest ? ` Did you mean --effort=${closest}?` : ''
+        } Run commander run --help`,
+      );
+    }
+    effort = effortRaw as RoutingFlags['effort'];
+  }
+  let topology: RoutingFlags['topology'];
+  const topologyRaw = flags.topology?.toUpperCase();
+  if (topologyRaw !== undefined) {
+    if (!(allowedTopologies as readonly string[]).includes(topologyRaw)) {
+      const closest = didYouMean(topologyRaw, allowedTopologies);
+      fatalError(
+        `Invalid --topology="${topologyRaw}".`,
+        `Allowed: ${allowedTopologies.join(', ')}.${
+          closest ? ` Did you mean --topology=${closest}?` : ''
+        } Run commander run --help`,
+      );
+    }
+    topology = topologyRaw as RoutingFlags['topology'];
+  }
+  let qualityThreshold: number | undefined;
+  if (flags['quality-threshold'] !== undefined) {
+    const parsed = Number(flags['quality-threshold']);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+      fatalError(
+        `Invalid --quality-threshold="${flags['quality-threshold']}".`,
+        'Must be a number between 0 and 1 (e.g. 0.8). Run commander run --help',
+      );
+    }
+    qualityThreshold = parsed;
+  }
+  return {
+    model: flags.model,
+    tier,
+    topology,
+    effort,
+    // Cascade is `undefined` when --cascade is absent so that the
+    // agentRuntime's late-stage override does NOT clobber the constructor
+    // default (smartRouterActive = true). Only an explicit --cascade flips
+    // it to true. (Audit P0-2 follow-up — fixes the regression where
+    // boolean-default disabled the smart router for every CLI invocation.)
+    cascade: 'cascade' in flags ? true : undefined,
+    qualityThreshold,
+  };
+}
+
+// Single source of truth for --tier → model-tier mapping. Both cmdRunInternal
+// and cmdWatchInternal's contextData lift prefix preferredModelTier with
+// TIER_MAP[flags.tier] so the smart router and effort→tier cascade agree.
+// Exported would be better, but core.ts is CLI-only so inline is fine.
+// (Audit P0-2 follow-up.)
+const TIER_MAP: Record<
+  NonNullable<RoutingFlags['tier']>,
+  'eco' | 'standard' | 'power' | 'consensus'
+> = {
+  speed: 'eco',
+  balanced: 'standard',
+  power: 'power',
+};
+
+// ── Tiny edit-distance helpers (UX audit P0-1 follow-up) ───────────────────
+// Used by parseRoutingFlags to render "Did you mean --tier=balanced?"-style
+// suggestions instead of ejecting the user with a dead-end. Standard
+// Wagner-Fischer dynamic programming, in-place swap, no deps. Returned
+// suggestion is the closest allowed value whose edit-distance is ≤ 2 and
+// less than half the input length — both gates prevent nonsense matches
+// like "Did you mean --tier=power?" for "?".
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const prev = new Array<number>(n + 1);
+  const curr = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j <= n; j++) prev[j] = curr[j];
+  }
+  return prev[n];
+}
+
+function didYouMean(
+  input: string,
+  allowed: readonly string[],
+): string | undefined {
+  const lower = input.toLowerCase();
+  let best: { candidate: string; distance: number } | undefined;
+  for (const candidate of allowed) {
+    const d = levenshtein(lower, candidate.toLowerCase());
+    if (!best || d < best.distance) best = { candidate, distance: d };
+  }
+  // Single-gate threshold: cap at min(2, ceil(length*0.4)). The previous
+  // two-gate (`distance ≤ 2 AND distance < length/2`) silently dropped the
+  // genuine typo case "spd" → "speed" (distance 2, length 3, 2<1.5=false).
+  // Reviewer catch (UX audit P0-1 follow-up).
+  if (
+    best &&
+    best.distance <= Math.min(2, Math.ceil(lower.length * 0.4))
+  ) {
+    return best.candidate;
+  }
+  return undefined;
+}
+
 /**
  * Unified run command — replaces plan, watch, and goal.
  *
@@ -90,11 +236,11 @@ export async function cmdRun(task: string, flags: Record<string, string> = {}) {
 
   // --stream: real-time SSE progress (replaces `watch` command)
   if (stream) {
-    return cmdWatchInternal(task);
+    return cmdWatchInternal(task, parseRoutingFlags(flags));
   }
 
   // Default: full pipeline execution
-  return cmdRunInternal(task);
+  return cmdRunInternal(task, parseRoutingFlags(flags));
 }
 
 // ============================================================================
@@ -284,7 +430,7 @@ async function cmdPlanInternal(task: string) {
   }
 }
 
-async function cmdRunInternal(task: string) {
+async function cmdRunInternal(task: string, routingFlags: RoutingFlags = {}) {
   const provider = detectProvider();
   const runtime = createRuntime();
   if (!runtime || !provider) {
@@ -299,14 +445,49 @@ async function cmdRunInternal(task: string) {
   const telos = new TELOSOrchestrator(rt);
   const orch = new UltimateOrchestrator(telos, rt);
 
+  // ── Live CLI override wiring (no runtime restart required) ───────────────
+  // --cascade toggles SmartModelRouter participation live.
+  // --quality-threshold mutates the orchestrator's quality-gate config in
+  //   place so the very next execute() call sees the updated thresholds.
+  // Both setters mutate the existing instance instead of re-constructing.
+  // --quality-threshold is the only knob that requires orchestrator-side
+  // mutation (orchestrator owns the gate config and re-reads it during
+  // execute()). The remaining CLI flags (--cascade, --model, --tier)
+  // flow through contextData and are lifted by agentRuntime.ts's
+  // late-stage override block onto ctx.preferredModel /
+  // ctx.preferredModelTier / smartRouterActive BEFORE the routing
+  // decision runs. (Audit P0-2 follow-up.)
+  if (routingFlags.qualityThreshold !== undefined) {
+    orch.setQualityGateThreshold('all', routingFlags.qualityThreshold);
+  }
+
   let lastPhase = '';
   const startTime = Date.now();
+
+  // Inject preferredModel / preferredModelTier / cascadeEnabled into
+  // contextData so agentRuntime.ts's late-stage override block lifts them
+  // onto ctx.preferredModel / ctx.preferredModelTier / smartRouterActive
+  // before the routing decision runs.
+  const routingContextData: Record<string, unknown> = {
+    availableTools: loadTools(),
+    governanceProfile: { riskLevel: 'LOW' },
+  };
+  if (routingFlags.model !== undefined) routingContextData.preferredModel = routingFlags.model;
+  if (routingFlags.tier !== undefined) {
+    const tierMap: Record<string, 'eco' | 'standard' | 'power' | 'consensus'> = {
+      speed: 'eco',
+      balanced: 'standard',
+      power: 'power',
+    };
+    routingContextData.preferredModelTier = tierMap[routingFlags.tier];
+  }
+  if (routingFlags.cascade === true) routingContextData.cascadeEnabled = true;
 
   const result = await orch.execute({
     projectId: 'cli',
     agentId: 'commander-cli',
     goal: task,
-    contextData: { availableTools: loadTools(), governanceProfile: { riskLevel: 'LOW' } },
+    contextData: routingContextData,
     onProgress: (phase, detail) => {
       if (phase === 'COMPLETE') return;
       if (phase !== lastPhase) {
@@ -364,7 +545,7 @@ async function cmdRunInternal(task: string) {
   console.log();
 }
 
-async function cmdWatchInternal(task: string) {
+async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
   const runtime = createRuntime();
   if (!runtime) {
     fatalError(
@@ -376,6 +557,13 @@ async function cmdWatchInternal(task: string) {
 
   const telos = new TELOSOrchestrator(rt);
   const orch = new UltimateOrchestrator(telos, rt);
+
+  // Apply --quality-threshold live (orchestrator owns the gate config).
+  // --cascade, --model, --tier flow through contextData below and are
+  // lifted by agentRuntime.ts's late-stage override. (Audit P0-2 follow-up.)
+  if (routingFlags.qualityThreshold !== undefined) {
+    orch.setQualityGateThreshold('all', routingFlags.qualityThreshold);
+  }
 
   cmdHeader(task);
 
@@ -488,14 +676,30 @@ async function cmdWatchInternal(task: string) {
   const startTime = Date.now();
   let result: Awaited<ReturnType<typeof orch.execute>>;
   try {
+    // Build routing context the same way cmdRunInternal does so that
+    // agentRuntime's late-stage override can lift --cascade / --model /
+    // --tier from contextData onto ctx.preferredModel / preferredModelTier
+    // / smartRouterActive before the routing decision runs. The module-
+    // scope TIER_MAP is the single source of truth. (Audit P0-2 follow-up.)
+    const watchContextData: Record<string, unknown> = {
+      availableTools: loadTools(),
+      governanceProfile: { riskLevel: 'LOW' },
+    };
+    if (routingFlags.model !== undefined) {
+      watchContextData.preferredModel = routingFlags.model;
+    }
+    if (routingFlags.tier !== undefined) {
+      watchContextData.preferredModelTier = TIER_MAP[routingFlags.tier];
+    }
+    if (routingFlags.cascade === true) {
+      watchContextData.cascadeEnabled = true;
+    }
+
     result = await orch.execute({
       projectId: 'cli',
       agentId: 'commander-cli',
       goal: task,
-      contextData: {
-        availableTools: loadTools(),
-        governanceProfile: { riskLevel: 'LOW' },
-      },
+      contextData: watchContextData,
     });
   } finally {
     sse.close();

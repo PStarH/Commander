@@ -6,6 +6,10 @@
  * - 监控各组件健康状态
  * - 检测异常和性能问题
  * - 提供改进建议
+ *
+ * @deprecated Use the unified verification pipeline (UnifiedVerificationPipeline)
+ * and metrics collector (MetricsCollector) instead. This module will be removed
+ * in a future major version.
  */
 
 function generateUUID(): string {
