@@ -54,7 +54,7 @@ export function createMCPRouter(): Router {
 
     try {
       const config: MCPClientConfig = url
-        ? ({ url, transport: 'http', headers: headers ?? {} } as MCPClientConfig)
+        ? ({ url, transport: 'streamable-http', headers: headers ?? {} } as MCPClientConfig)
         : ({ command, args: toolArgs ?? [], transport: 'stdio' } as MCPClientConfig);
 
       const client = createMCPClient(config);
@@ -74,18 +74,28 @@ export function createMCPRouter(): Router {
       for (const tool of tools) {
         try {
           const toolName = `mcp:${discoveryLabel}:${tool.name}`;
-          registry.register({
-            id: toolName,
-            type: 'tool',
-            description: tool.description ?? `MCP tool: ${tool.name}`,
-            source: 'mcp_discovery',
-            metadata: {
-              mcpServer: url ?? `stdio:${command}`,
-              discoveredAt: new Date().toISOString(),
-              label: discoveryLabel,
-              inputSchema: tool.inputSchema,
+          registry.register(
+            toolName,
+            {
+              capabilities: [{
+                name: tool.name,
+                domain: 'mcp',
+                strength: 1.0,
+                description: tool.description ?? `MCP tool: ${tool.name}`,
+              }],
+              cost: {
+                perInputToken: 0,
+                perOutputToken: 0,
+                perTask: 0,
+              },
+              limitations: [],
+              reliability: {
+                successRate: 1.0,
+                avgLatencyMs: 0,
+                totalTasksCompleted: 0,
+              },
             },
-          });
+          );
           registeredCount++;
         } catch {
           /* tool already registered — skip */

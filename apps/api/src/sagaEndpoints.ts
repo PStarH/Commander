@@ -13,6 +13,7 @@ import {
   getSagaExample,
 } from '@commander/core/saga';
 import { SSEStream, getMessageBus } from '@commander/core';
+import type { MessageBusTopic } from '@commander/core';
 import type { SagaGraph, SagaStateSnapshot, SagaEvent } from '@commander/core/saga';
 
 const DATA_DIR = process.env.COMMANDER_SAGA_DATA ?? join(process.cwd(), '.commander', 'sagas');
@@ -145,16 +146,14 @@ export function createSagaRouter(): Router {
     const resultPromise = coordinator.resume();
     res.json({ runId, status: 'resuming', state: coordinator.state });
 
-    const bus = getMessageBus() as unknown as {
-      publish: (topic: string, src: string, payload: unknown) => unknown;
-    };
+    const bus = getMessageBus();
     resultPromise
       .then((result: { status: string }) => {
-        bus.publish('saga.completed', 'saga-api', { runId, status: result.status });
+        bus.publish('saga.completed' as MessageBusTopic, 'saga-api', { runId, status: result.status });
       })
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
-        bus.publish('saga.failed', 'saga-api', { runId, error: message });
+        bus.publish('saga.failed' as MessageBusTopic, 'saga-api', { runId, error: message });
       });
   });
 
@@ -191,16 +190,14 @@ export function createSagaRouter(): Router {
     const resultPromise = forked.run();
     res.json({ parentRunId: runId, newRunId, forkNodeId: nodeId, status: 'forked' });
 
-    const bus = getMessageBus() as unknown as {
-      publish: (topic: string, src: string, payload: unknown) => unknown;
-    };
+    const bus = getMessageBus();
     resultPromise
       .then((result: { status: string }) => {
-        bus.publish('saga.completed', 'saga-api', { runId: newRunId, status: result.status });
+        bus.publish('saga.completed' as MessageBusTopic, 'saga-api', { runId: newRunId, status: result.status });
       })
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
-        bus.publish('saga.failed', 'saga-api', { runId: newRunId, error: message });
+        bus.publish('saga.failed' as MessageBusTopic, 'saga-api', { runId: newRunId, error: message });
       });
   });
 
@@ -220,13 +217,13 @@ export function createSagaRouter(): Router {
     stream.pipe(res);
 
     const bus = getMessageBus();
-    const unsubCompleted = bus.subscribe('saga.completed', (msg) => {
+    const unsubCompleted = bus.subscribe('saga.completed' as MessageBusTopic, (msg) => {
       const payload = msg.payload as { runId?: string; status?: string } | undefined;
       if (payload?.runId === runId) {
         stream.emitStructured('saga.completed', payload);
       }
     });
-    const unsubFailed = bus.subscribe('saga.failed', (msg) => {
+    const unsubFailed = bus.subscribe('saga.failed' as MessageBusTopic, (msg) => {
       const payload = msg.payload as { runId?: string; error?: string } | undefined;
       if (payload?.runId === runId) {
         stream.emitStructured('saga.failed', payload);
