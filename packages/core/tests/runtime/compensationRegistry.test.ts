@@ -337,4 +337,31 @@ describe('CompensationRegistry — GAP-M2.1 snapshot-based rollback', () => {
     expect(fs.readFileSync(fp3, 'utf-8')).toBe('C');
     fs.chmodSync(snapshotB, 0o600);
   });
+
+  describe('assessReversibility', () => {
+    it('returns fully_reversible for read-only tools', () => {
+      const registry = new CompensationRegistry();
+      expect(registry.assessReversibility('file_read')).toBe('fully_reversible');
+      expect(registry.assessReversibility('web_search')).toBe('fully_reversible');
+      expect(registry.assessReversibility('web_fetch')).toBe('fully_reversible');
+      expect(registry.assessReversibility('memory_recall')).toBe('fully_reversible');
+      expect(registry.assessReversibility('memory_list')).toBe('fully_reversible');
+    });
+
+    it('returns non_reversible for mutating tools', () => {
+      const registry = new CompensationRegistry();
+      expect(registry.assessReversibility('file_write')).toBe('non_reversible');
+      expect(registry.assessReversibility('file_edit')).toBe('non_reversible');
+      expect(registry.assessReversibility('shell_execute')).toBe('non_reversible');
+      expect(registry.assessReversibility('python_execute')).toBe('non_reversible');
+      expect(registry.assessReversibility('git_push')).toBe('non_reversible');
+      expect(registry.assessReversibility('git_commit')).toBe('non_reversible');
+    });
+
+    it('returns partially_reversible for unknown tools', () => {
+      const registry = new CompensationRegistry();
+      expect(registry.assessReversibility('unknown_tool')).toBe('partially_reversible');
+      expect(registry.assessReversibility('slack_send')).toBe('partially_reversible');
+    });
+  });
 });

@@ -11,6 +11,7 @@ import {
   minifyToolDefs,
   restoreToolDefAliases,
   PARAM_NAME_ALIASES,
+  getCompactConfigForTier,
   type CompactToolConfig,
 } from '../../src/runtime/programmaticToolFormatter.js';
 import type { Tool, ToolDefinition, ToolCall } from '../../src/runtime/types.js';
@@ -574,5 +575,30 @@ describe('ProgrammaticToolFormatter', () => {
 
     const savings = fmt.estimateSavings(defs);
     assert.ok('schemaSavings' in savings);
+  });
+});
+
+describe('getCompactConfigForTier', () => {
+  it('low tier: aggressive stripping + minifyParameterNames', () => {
+    const config = getCompactConfigForTier('low');
+    assert.strictEqual(config.stripDescriptions, true);
+    assert.strictEqual(config.stripExamples, true);
+    assert.strictEqual(config.minifyParameterNames, true);
+    assert.strictEqual(config.maxToolCallChars, 300);
+  });
+
+  it('medium tier: moderate stripping, no minification', () => {
+    const config = getCompactConfigForTier('medium');
+    assert.strictEqual(config.stripDescriptions, true);
+    assert.strictEqual(config.stripExamples, true);
+    assert.strictEqual(config.minifyParameterNames, false);
+    assert.strictEqual(config.maxToolCallChars, 500);
+  });
+
+  it('high tier: returns DEFAULT_CONFIG', () => {
+    const config = getCompactConfigForTier('high');
+    assert.strictEqual(config.stripDescriptions, true);
+    assert.strictEqual(config.minifyParameterNames, false);
+    assert.strictEqual(config.maxToolCallChars, 500);
   });
 });
