@@ -214,6 +214,75 @@ export class DeadLetterQueue {
       .slice(0, limit);
   }
 
+  /**
+   * Replay a previously recorded entry by its id. Marks it recovered
+   * and returns the entry plus its category for an external re-execution
+   * pipeline (saga compensator, retry scheduler, operator CLI). Update
+   * is in-place via tmp-file rename — other entries are preserved.
+   *
+   * Cross-category search: iterates .ndjson files in baseDir looking
+   * for the matching id. Returns null if the entry is not found.
+   */
+  replay(entryId: string): { category: DLQCategory; entry: DeadLetterEntry } | null {
+    const files = fs.readdirSync(this.baseDir).filter((f) => f.endsWith('.ndjson'));
+    for (const file of files) {
+      const category = file.replace('.ndjson', '') as DLQCategory;
+      const filePath = path.join(this.baseDir, file);
+      if (!fs.existsSync(filePath)) continue;
+      const raw = fs.readFileSync(filePath, 'utf-8').trim();
+      if (!raw) continue;
+      const lines = raw.split('\n');
+      const idx = lines.findIndex((line) => {
+        try {
+          const parsed = JSON.parse(line) as DeadLetterEntry;
+          return parsed.id === entryId;
+        } catch {
+          return false;
+        }
+      });
+      if (idx === -1) continue;
+      try {
+        const entry: DeadLetterEntry = JSON.parse(lines[idx]);
+        entry.recovered = true;
+        entry.tags = [...(entry.tags ?? []), 'replayed'];
+        lines[idx] = JSON.stringify(entry);
+        const tmp = path.join(this.baseDir, `${category}.replay.tmp`);
+        fs.writeFileSync(tmp, lines.join('\n') + '\n', 'utf-8');
+        fs.renameSync(tmp, filePath);
+        this.lineCounts.set(category, lines.length);
+        return { category, entry };
+      } catch (e) {
+        getGlobalLogger().warn('DeadLetterQueue', 'Failed to parse entry during replay', {
+          entryId,
+          error: (e as Error)?.message,
+        });
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * List all entries across DLQ categories that are retryable but
+   * haven't been recovered yet. The caller decides what to do with
+   * these (re-execute via saga, alert an operator, etc.).
+   */
+  listUnrecoveredEntries(limit = 50): Array<{ category: DLQCategory; entry: DeadLetterEntry }> {
+    const result: Array<{ category: DLQCategory; entry: DeadLetterEntry }> = [];
+    const files = fs.readdirSync(this.baseDir).filter((f) => f.endsWith('.ndjson'));
+    for (const file of files) {
+      const category = file.replace('.ndjson', '') as DLQCategory;
+      const entries = this.readEntries(category, limit);
+      for (const entry of entries) {
+        if (!entry.recovered && entry.retryable) {
+          result.push({ category, entry });
+          if (result.length >= limit) return result;
+        }
+      }
+    }
+    return result;
+  }
+
   getStats(): { category: string; count: number }[] {
     const results: { category: string; count: number }[] = [];
     try {

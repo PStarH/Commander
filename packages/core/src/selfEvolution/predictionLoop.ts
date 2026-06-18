@@ -106,13 +106,8 @@ export class PredictionLoop {
       if (this.verdicts.length > 500) this.verdicts.shift();
 
       // Record prediction verdict metric (skip neutral)
-      try {
-        if (verdict.netImpact !== 'neutral') {
-          // @ts-ignore — best-effort metric, may not be on collector yet
-          getMetricsCollector().recordPredictionVerdict(verdict.netImpact);
-        }
-      } catch {
-        /* best-effort */
+      if (verdict.netImpact !== 'neutral') {
+        getMetricsCollector().recordPredictionVerdict(verdict.netImpact);
       }
 
       const bus = getMessageBus();

@@ -12,7 +12,13 @@ import {
   getGlobalTenantProvider,
   getCostModel,
 } from '@commander/core';
-import type { AgentExecutionContext, AgentExecutionResult, LLMProvider, LLMRequest, LLMResponse } from '@commander/core';
+import type {
+  AgentExecutionContext,
+  AgentExecutionResult,
+  LLMProvider,
+  LLMRequest,
+  LLMResponse,
+} from '@commander/core';
 
 const MAX_RUNTIME_INSTANCES = 50;
 const RUNTIME_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -117,7 +123,11 @@ function pruneTimestamps(entry: RuntimeRegistryEntry): void {
   }
 }
 
-function estimateRunCost(tokens: { promptTokens: number; completionTokens: number; totalTokens: number }): number {
+function estimateRunCost(tokens: {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}): number {
   try {
     return getCostModel().calculate('unknown', 'unknown', {
       input: tokens.promptTokens,
