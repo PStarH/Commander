@@ -1,45 +1,19 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { startServer, stopServer } = require('./_helpers/spawnServer');
 
-const apiDir = path.resolve(__dirname, '..');
-const port = 4322;
-const baseUrl = `http://127.0.0.1:${port}`;
-const obsBase = `${baseUrl}/api/v1/observability`;
-
-let serverProcess;
-
-async function waitForServer(url, timeoutMs = 60000) {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const response = await fetch(`${url}/health`);
-      if (response.ok) return;
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  }
-  throw new Error('API server did not become healthy in time');
-}
+let serverContext;
+let obsBase;
 
 test.before(async () => {
-  serverProcess = spawn(process.execPath, ['dist/index.js'], {
-    cwd: apiDir,
-    env: { ...process.env, PORT: String(port) },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  serverProcess.stdout.on('data', () => {});
-  serverProcess.stderr.on('data', () => {});
-
-  await waitForServer(baseUrl);
+  serverContext = await startServer(path.resolve(__dirname, '..'));
+  obsBase = `${serverContext.baseUrl}/api/v1/observability`;
 });
 
 test.after(async () => {
-  if (serverProcess && !serverProcess.killed) {
-    // SIGKILL bypasses graceful-shutdown hangs caused by Node fetch keep-alive sockets
-    serverProcess.kill('SIGKILL');
-    await new Promise((resolve) => serverProcess.once('close', resolve));
+  if (serverContext) {
+    await stopServer(serverContext);
   }
 });
 
