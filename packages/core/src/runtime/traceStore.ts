@@ -114,18 +114,10 @@ export class PersistentTraceStore implements TraceStore {
     const filePath = path.join(this.baseDir, `${key}.ndjson`);
     try {
       if (!fs.existsSync(filePath)) {
-        fs.writeFileSync(filePath, buffer.join('\n') + '\n', { encoding: 'utf-8', mode: 0o600 });
-        try {
-          fs.chmodSync(filePath, 0o600);
-        } catch {
-          /* best-effort */
-        }
+        const tmpPath = `${filePath}.tmp`;
+        fs.writeFileSync(tmpPath, buffer.join('\n') + '\n', { encoding: 'utf-8', mode: 0o600 });
+        fs.renameSync(tmpPath, filePath);
       } else {
-        try {
-          fs.chmodSync(filePath, 0o600);
-        } catch {
-          /* best-effort */
-        }
         fs.appendFileSync(filePath, buffer.join('\n') + '\n', 'utf-8');
       }
     } catch (e) {

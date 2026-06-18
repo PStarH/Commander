@@ -536,6 +536,7 @@ class VerificationMemory {
 export class UnifiedVerificationPipeline {
   private config: UVPConfig;
   private provider?: LLMProvider;
+  private runtime?: { getProvider(name: string): LLMProvider | undefined };
   private memory: VerificationMemory;
   private totalTokensUsed = 0;
 
@@ -543,6 +544,14 @@ export class UnifiedVerificationPipeline {
     this.config = { ...DEFAULT_UVP_CONFIG, ...config };
     this.provider = provider;
     this.memory = new VerificationMemory();
+  }
+
+  setRuntime(runtime: { getProvider(name: string): LLMProvider | undefined }): void {
+    this.runtime = runtime;
+  }
+
+  setEvaluatorProvider(provider: LLMProvider): void {
+    this.config.evaluatorProvider = provider;
   }
 
   async verify(ctx: UVPTaskContext): Promise<VerificationReport> {
@@ -648,10 +657,11 @@ export class UnifiedVerificationPipeline {
       }
 
       const model = this.config.llmVerificationModel ?? 'gpt-4o-mini';
+      const effectiveEvalProvider = this.config.evaluatorProvider ?? this.provider!;
       const s2 = await runStage2(
         ctx,
         taskType,
-        this.provider!,
+        effectiveEvalProvider,
         model,
         Math.min(this.config.llmVerificationBudget, budgetRemaining),
         allSignals,
@@ -679,8 +689,12 @@ export class UnifiedVerificationPipeline {
     if (shouldRunJudge) {
       try {
         const goalJudge = getGoalJudge();
-        if (this.provider) {
-          goalJudge.setProvider(this.provider);
+        const effectiveEvalProvider = this.config.evaluatorProvider ?? this.provider;
+        if (effectiveEvalProvider) {
+          goalJudge.setProvider(effectiveEvalProvider);
+        }
+        if (this.runtime) {
+          goalJudge.setRuntime(this.runtime);
         }
         const verdict = await goalJudge.judge({
           runId: `uvp-${Date.now()}`,

@@ -43,7 +43,7 @@ import { getMessageBus } from './messageBus';
 import { getTraceRecorder } from './executionTrace';
 import { getAnomalyDetector } from '../observability/anomalyDetector';
 import { PersistentTraceStore } from './traceStore';
-import { compactToolDef, compactToolDefs } from './programmaticToolFormatter';
+import { compactToolDef, compactToolDefs, getCompactConfigForTier } from './programmaticToolFormatter';
 import { ContextCompactor } from './contextCompactor';
 import { SlidingWindowOrchestrator } from './slidingWindowOrchestrator';
 import { classifyLLMError, computeBackoff } from './llmRetry';
@@ -101,6 +101,7 @@ import {
   buildTwoTierTools,
   buildRegistrySummary,
   calculateTierMetrics,
+  detectContextPromotions,
 } from './toolRetriever';
 import { createRequestToolTool } from '../tools/requestToolTool';
 import { ToolPlanner } from './toolPlanner';
@@ -153,6 +154,8 @@ import { getGlobalLogger } from '../logging';
 import type { CompactTaskType } from './contextCompactor';
 import { getCostEstimator, type CostEstimate } from './costEstimator';
 import { getModelPerformanceStore } from './modelPerformanceStore';
+import { getGuardianAgent } from '../security/guardianAgent';
+import { getSecurityMonitor } from '../security/securityMonitor';
 import {
   DEFAULT_CONFIG,
   generateId,
@@ -187,6 +190,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
   private tools: Map<string, Tool> = new Map();
   private router: ModelRouter;
   private smartRouter: SmartModelRouter | null = null;
+  /** When false, the smart router is bypassed and the legacy routeWithCascade path runs even if a smartRouter instance exists. Default ON. */
+  private smartRouterActive: boolean = true;
   private activeRuns: Set<string> = new Set();
   private pausedRuns: Set<string> = new Set();
   private compactor: ContextCompactor;
@@ -345,6 +350,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       budgetFloorTokens: 1500,
       llmVerificationBudget: 300,
     });
+    this.verificationPipeline.setRuntime(this);
     this.reflexionInjector = new ReflexionInjector({
       maxReflections: 3,
       maxTokensPerReflection: 50,
@@ -673,6 +679,13 @@ export class AgentRuntime implements AgentRuntimeInterface {
       },
       tenantIdFor: () => getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
     });
+
+    // Start security monitoring (best-effort)
+    try {
+      getSecurityMonitor().start();
+    } catch {
+      /* best-effort */
+    }
   }
 
   /**
@@ -750,31 +763,99 @@ export class AgentRuntime implements AgentRuntimeInterface {
       });
 
       try {
-        const result = await this.compensationRegistry.compensate(actionId);
-        if (!result.success) {
+        const STEP_TIMEOUT_MS = 30_000;
+        const MAX_ATTEMPTS = 3;
+        let lastError: string | undefined;
+        let lastResult: { success: boolean; error?: string } | undefined;
+        let successfulAttempt = 0;
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+          const ac = new AbortController();
+          const timeoutId = setTimeout(() => ac.abort(), STEP_TIMEOUT_MS);
+          const compensationPromise = this.compensationRegistry
+            .compensate(actionId)
+            .finally(() => clearTimeout(timeoutId));
+          try {
+            const result = await Promise.race<
+              { success: boolean; error?: string } | { _aborted: true; reason: string }
+            >([
+              compensationPromise,
+              new Promise<{ _aborted: true; reason: string }>((resolve) => {
+                ac.signal.addEventListener('abort', () =>
+                  resolve({ _aborted: true, reason: 'compensation_timeout' }),
+                );
+              }),
+            ]);
+            if ('_aborted' in result) {
+              lastError = `Compensation timed out after ${STEP_TIMEOUT_MS}ms`;
+            } else {
+              lastResult = result;
+              if (result.success) {
+                successfulAttempt = attempt;
+                break;
+              }
+              lastError = result.error;
+            }
+          } catch (err) {
+            lastError = err instanceof Error ? err.message : String(err);
+          }
+          // Drain the dangling compensation promise after the race outcome is captured
+          // so late resolve/reject is consumed without leaking an unhandled rejection.
+          await compensationPromise.catch(() => undefined);
+          if (attempt < MAX_ATTEMPTS) {
+            const backoffMs = 200 * Math.pow(2, attempt - 1); // 200, 400, 800
+            await new Promise<void>((r) => setTimeout(r, backoffMs));
+          }
+        }
+        const finalAttempt = successfulAttempt > 0 ? successfulAttempt : MAX_ATTEMPTS;
+        if (lastResult?.success) {
           bus.publish('tool.compensation_step', 'runtime', {
             ...stepPayload,
-            status: 'failed' as const,
-            error: result.error,
-          });
-          getGlobalLogger().debug('AgentRuntime', 'Compensation step failed', {
-            actionId,
-            toolName: step.forwardAction.toolName,
-            error: result.error,
+            status: 'completed' as const,
+            attempt: finalAttempt,
           });
         } else {
           bus.publish('tool.compensation_step', 'runtime', {
             ...stepPayload,
-            status: 'completed' as const,
+            status: 'failed' as const,
+            error: lastError,
+            attempt: finalAttempt,
           });
+          getGlobalLogger().debug('AgentRuntime', 'Compensation step failed', {
+            actionId,
+            toolName: step.forwardAction.toolName,
+            error: lastError,
+            attempt: finalAttempt,
+          });
+          try {
+            this.dlq.enqueue({
+              category: 'compensation',
+              operationName: 'compensation.exhausted',
+              errorMessage: lastError ?? 'unknown',
+              tags: [step.forwardAction.toolName, `attempt:${finalAttempt}`],
+              failureMode: 'compensation_exhausted',
+              failureModeNumber: 12,
+            });
+          } catch { /* best-effort */ }
         }
-      } catch (err) {
-        bus.publish('tool.compensation_step', 'runtime', {
-          ...stepPayload,
-          status: 'failed' as const,
-          error: (err as Error).message,
+      }
+      catch (err) {
+        // Surface as system.alert (visibly visible in dashboards) AND debug-log
+        // for forensics. Re-throw so callers can detect partial-failure rather
+        // than proceed as if rollback succeeded silently.
+        try {
+          bus.publish('system.alert', 'runtime', {
+            type: 'compensation_saga_threw',
+            error: err instanceof Error ? err.message : String(err),
+            totalSteps,
+            runId: this.ledgerCtx?.runId ?? 'unknown',
+          });
+        } catch { /* best-effort */ }
+        getGlobalLogger().debug('AgentRuntime', 'Compensation via saga threw unexpectedly', {
+          error: err instanceof Error ? err.message : String(err),
+          totalSteps,
+          runId: this.ledgerCtx?.runId ?? 'unknown',
         });
-        getGlobalLogger().error('AgentRuntime', 'Compensation step threw', err as Error);
+        throw err;
       }
     }
   }
@@ -865,6 +946,20 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
   getSmartRouter(): SmartModelRouter | null {
     return this.smartRouter;
+  }
+
+  /**
+   * Live toggle for SmartModelRouter participation. When false, the runtime
+   * falls back to the legacy `routeWithCascade` path even if a smart router
+   * instance exists. Default ON at construction. Idempotent.
+   */
+  setSmartModelRouterEnabled(enabled: boolean): void {
+    this.smartRouterActive = enabled;
+  }
+
+  /** Current state of the SmartModelRouter toggle (for diagnostics). */
+  isSmartModelRouterEnabled(): boolean {
+    return this.smartRouterActive;
   }
 
   getTool(name: string): Tool | undefined {
@@ -1144,6 +1239,35 @@ export class AgentRuntime implements AgentRuntimeInterface {
       execResult = await runWithTenant(
         getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
         async () => {
+          // ── Late-stage override — lift CLI-provided routing hints from
+          //    contextData into top-level ctx fields so the routing block,
+          //    samplesStore manifest, smart router, and tracer all see them.
+          //    Without this lift, --model/--tier flags injected into
+          //    contextData never reach `ctx.preferredModel` /
+          //    `ctx.preferredModelTier` which is what every downstream
+          //    consumer reads. (Audit P0-2 follow-up.)
+          const cd = (
+            ctx as unknown as { contextData?: Record<string, unknown> }
+          ).contextData;
+          if (cd?.preferredModel && typeof cd.preferredModel === 'string') {
+            (
+              ctx as unknown as { preferredModel?: string }
+            ).preferredModel = cd.preferredModel;
+          }
+          if (cd?.preferredModelTier && typeof cd.preferredModelTier === 'string') {
+            (
+              ctx as unknown as { preferredModelTier?: ModelTier }
+            ).preferredModelTier = cd.preferredModelTier as ModelTier;
+          }
+          if (cd?.cascadeEnabled === true) {
+            this.smartRouterActive = true;
+          } else if (cd?.cascadeEnabled === false) {
+            this.smartRouterActive = false;
+          }
+          // qualityThreshold is applied via orchestrator.setQualityGateThreshold()
+          // before execute() — not here, because the orchestrator owns the gate
+          // config and is constructed at the CLI layer.
+
           // Record run manifest (provenance, config, params)
           this.samplesStore.recordRunManifest(runId, {
             ...captureProvenance(),
@@ -1202,7 +1326,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
           let routing: RoutingDecision;
           let currentEscalationChain: ModelConfig[];
 
-          if (this.smartRouter) {
+          if (this.smartRouter && this.smartRouterActive) {
             const smartResult = this.smartRouter.route(ctx, {
               governorPhase: this.governor.getState().phase,
               registeredProviders: new Set(this.providers.keys()),
@@ -1437,6 +1561,19 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
           const maxActiveTools = this.config.toolRetrieval?.maxTools ?? 8;
           const twoTier = buildTwoTierTools(ctx.goal, allToolDefs, maxActiveTools);
+
+          const contextPromotions = detectContextPromotions(ctx.goal, twoTier.registry);
+          if (contextPromotions.length > 0) {
+            const toolMap = new Map(allToolDefs.map((t) => [t.name, t]));
+            for (const toolName of contextPromotions) {
+              const tool = toolMap.get(toolName);
+              if (tool) {
+                twoTier.active.push(tool);
+                twoTier.registry = twoTier.registry.filter((r) => r.name !== toolName);
+              }
+            }
+          }
+
           const tierMetrics = calculateTierMetrics(twoTier, allToolDefs.length);
 
           // Log token savings
@@ -1455,16 +1592,15 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
           // Compact active tool schemas: strip verbose descriptions/examples.
           // Parameter-name minification is off for active tools so validation stays simple.
-          const compactConfig = {
-            enabled: true,
-            stripDescriptions: true,
-            stripExamples: true,
-            compactListing: false,
-            compactToolCalls: false,
-            maxToolCallChars: 500,
-            keepFullSchema: [],
-            minifyParameterNames: false,
+          const TIER_TO_COMPACT: Record<string, 'low' | 'medium' | 'high'> = {
+            eco: 'low',
+            standard: 'medium',
+            power: 'high',
+            consensus: 'high',
           };
+          const compactConfig = getCompactConfigForTier(
+            TIER_TO_COMPACT[this.config.defaultModelTier] ?? 'high',
+          );
           toolDefs = compactToolDefs(toolDefs, compactConfig);
 
           // Register request_tool for Tier 2 tools (if there are registry tools)
@@ -1783,6 +1919,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
           // Per-run sliding window instance to prevent concurrent run corruption
           this.slidingWindow = new SlidingWindowOrchestrator();
 
+          // Resolve evaluator provider for verification pipeline (echo chamber breaker)
+          if (this.config.evaluatorProviderName) {
+            const evalProvider = this.providers.get(this.config.evaluatorProviderName);
+            if (evalProvider) {
+              this.verificationPipeline.setEvaluatorProvider(evalProvider);
+            }
+          }
+
           // Check circuit breaker before first attempt
           if (!this.circuitBreaker.isAvailable()) {
             const msg = 'CIRCUIT_OPEN: Too many recent failures. Cooling down.';
@@ -1940,6 +2084,22 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   type: 'token_usage_anomaly',
                   ...anomaly,
                 });
+              }
+
+              if (response.content) {
+                const stagnation = this.cycleDetector.checkOutput(response.content);
+                if (stagnation.detected) {
+                  bus.publish('system.alert', 'runtime', {
+                    ...stagnation,
+                    runId,
+                    agentId: ctx.agentId,
+                    stepNumber,
+                  });
+                  getGlobalLogger().warn('AgentRuntime', 'Semantic stagnation detected', {
+                    stepNumber,
+                    similarity: stagnation.similarity,
+                  });
+                }
               }
 
               // Entropy gating: if model is confident with no tool calls, skip verification
@@ -4023,6 +4183,16 @@ export class AgentRuntime implements AgentRuntimeInterface {
         };
       }
 
+      const reversibility = this.compensationRegistry.assessReversibility(toolCall.name);
+      if (reversibility === 'non_reversible') {
+        bus.publish('system.alert', 'runtime', {
+          type: 'non_reversible_tool',
+          tool: toolCall.name,
+          runId,
+          agentId,
+        });
+      }
+
       // ── Hook: beforeToolResolve (can block by returning ToolResult) ──
       const resolveBlock = await getHookManager().fireBeforeToolResolve({
         toolName: toolCall.name,
@@ -4340,6 +4510,35 @@ export class AgentRuntime implements AgentRuntimeInterface {
         },
         this.reflexionGenerator,
       );
+
+      // Guardian security check
+      try {
+        const intervention = getGuardianAgent().monitor({
+          agentId,
+          runId,
+          timestamp: Date.now(),
+          type: 'tool_call',
+          content: `${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 200)})`,
+          metadata: { args: toolCall.arguments },
+        });
+        if (intervention) {
+          const errorMsg = `GUARDIAN_BLOCKED: ${intervention} by security guardian for ${toolCall.name}`;
+          const durationMs = Date.now() - startTime;
+          bus.publish('tool.blocked', agentId, {
+            runId,
+            toolName: toolCall.name,
+            reason: 'guardian_blocked',
+            detail: errorMsg,
+          });
+          return {
+            toolCallId: toolCall.id,
+            name: toolCall.name,
+            output: errorMsg,
+            error: errorMsg,
+            durationMs,
+          };
+        }
+      } catch { /* best-effort */ }
 
       let latestReflexion: Reflexion | null = null;
       let lastReflexionAttempt = 0;

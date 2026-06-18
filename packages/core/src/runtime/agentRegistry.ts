@@ -231,7 +231,9 @@ export class AgentRegistry {
       const dir = path.dirname(this.registryPath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       const data: RegistryData = { agents: Array.from(this.agents.values()), version: 1 };
-      fs.writeFileSync(this.registryPath, JSON.stringify(data, null, 2), { mode: 0o600 });
+      const tmpPath = `${this.registryPath}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), { mode: 0o600 });
+      fs.renameSync(tmpPath, this.registryPath);
     } catch (e) {
       getGlobalLogger().warn('AgentRegistry', 'Failed to save registry', {
         error: (e as Error)?.message,

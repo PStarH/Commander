@@ -256,4 +256,7 @@ export interface AgentRuntimeConfig {
   outputFormat?: OutputFormat;
   /** Directory for auto-exported SOP templates (default: .commander/sops/{agentId}). */
   sopDir?: string;
+  /** Name of the LLM provider to use for verification (Stage 2/3). When set, the verification
+   *  pipeline uses a different provider than the agent, breaking the evaluator echo chamber. */
+  evaluatorProviderName?: string;
 }

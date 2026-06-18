@@ -74,6 +74,8 @@ export interface Tool {
   riskLevel?: 'low' | 'medium' | 'high';
   /** If true, tool can have irreversible side effects and requires explicit user approval. Default: false */
   destructive?: boolean;
+  /** Reversibility classification for compensation planning. 'reversible' = undo available, 'semi-reversible' = partial undo possible, 'irreversible' = no undo (e.g., send email, external API call). Default: 'semi-reversible'. */
+  reversibility?: 'reversible' | 'semi-reversible' | 'irreversible';
 }
 
 /**

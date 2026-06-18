@@ -51,6 +51,15 @@ const DEFAULT_CONFIG: CompactToolConfig = {
   minifyParameterNames: false,
 };
 
+export function getCompactConfigForTier(modelTier: 'low' | 'medium' | 'high'): CompactToolConfig {
+  const base: CompactToolConfig = { ...DEFAULT_CONFIG };
+  if (modelTier === 'low') {
+    base.maxToolCallChars = 300;
+    base.minifyParameterNames = true;
+  }
+  return base;
+}
+
 // ============================================================================
 // Schema compaction — recursive stripping of verbose metadata
 // ============================================================================

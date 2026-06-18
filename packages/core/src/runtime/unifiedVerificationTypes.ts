@@ -1,5 +1,7 @@
 export type TaskType = 'code' | 'search' | 'analysis' | 'creative' | 'structured' | 'general';
 
+import type { LLMProvider } from './types';
+
 export interface VerificationSignal {
   stage: 0 | 1 | 2 | 3;
   source: string;
@@ -46,6 +48,7 @@ export interface UVPConfig {
   llmVerificationBudget: number;
   llmVerificationModel?: string;
   enableLearning: boolean;
+  evaluatorProvider?: LLMProvider;
   /** Stage 3: Independent goal judge gate */
   judgeGate?: {
     enabled: boolean;

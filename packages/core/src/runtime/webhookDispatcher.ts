@@ -311,7 +311,9 @@ export class WebhookDispatcher {
     try {
       const dir = path.dirname(WEBHOOKS_FILE);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(WEBHOOKS_FILE, JSON.stringify(Array.from(this.webhooks.values()), null, 2));
+      const tmpPath = `${WEBHOOKS_FILE}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify(Array.from(this.webhooks.values()), null, 2));
+      fs.renameSync(tmpPath, WEBHOOKS_FILE);
     } catch (err) {
       getGlobalLogger().error('WebhookDispatcher', 'Failed to save webhooks', err as Error);
     }

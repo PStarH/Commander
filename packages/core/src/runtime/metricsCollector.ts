@@ -482,6 +482,31 @@ export class MetricsCollector {
     this.incrementCounter('cascade_escalations_total', 'Model cascade escalations', 1, labels);
   }
 
+  recordCascadeAttempt(attempt: number, modelId: string, passed: boolean, tenantId?: string): void {
+    const labels: MetricLabel[] = [
+      { name: 'attempt', value: String(attempt) },
+      { name: 'model', value: modelId },
+      { name: 'passed', value: String(passed) },
+    ];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('cascade_attempts_total', 'Model cascade attempts', 1, labels);
+  }
+
+  recordCascadeCostSaved(costUsd: number, tenantId?: string): void {
+    const labels: MetricLabel[] = [];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('cascade_cost_saved_usd', 'Cost saved via cascade', costUsd, labels);
+  }
+
+  /** Return a JSON-serialisable snapshot of all metrics (counters, gauges, histograms). */
+  getMetricsSnapshot(): { counters: CounterMetric[]; gauges: GaugeMetric[]; histograms: HistogramMetric[] } {
+    return {
+      counters: Array.from(this.counters.values()),
+      gauges: Array.from(this.gauges.values()),
+      histograms: Array.from(this.histograms.values()),
+    };
+  }
+
   recordTopoChoice(topology: string, taskType: string, tenantId?: string): void {
     const labels: MetricLabel[] = [
       { name: 'topology', value: topology },

@@ -404,7 +404,6 @@ export function buildTwoTierTools(
   recentToolCalls?: Array<{ name: string; error?: string }>,
 ): ToolTier {
   if (allTools.length <= maxActive) {
-    // All tools fit — no need for tiering
     return {
       active: sortToolDefinitionsForCache(allTools),
       registry: [],
@@ -415,26 +414,22 @@ export function buildTwoTierTools(
   const scores = scoreToolsByGoal(goal, toolNames);
   const refined = recentToolCalls ? refineScoresWithHistory(scores, recentToolCalls) : scores;
 
-  // Sort by relevance score descending
   const sorted = Array.from(refined.entries()).sort((a, b) => b[1] - a[1]);
 
-  // Always-include tools (core utilities the LLM almost always needs)
-  const alwaysInclude = ['file_read', 'shell_execute'];
+  const isCodingTask = /\b(code|debug|fix|build|compile|test|refactor|implement|deploy|run|execute|install)\b/i.test(goal);
+  const alwaysInclude = isCodingTask ? ['file_read', 'shell_execute'] : ['file_read'];
   const activeNames = new Set<string>();
   const registryEntries: ToolTier['registry'] = [];
 
-  // Phase 1: Add always-include tools
   for (let i = 0; i < alwaysInclude.length; i++) {
     if (toolNames.includes(alwaysInclude[i])) activeNames.add(alwaysInclude[i]);
   }
 
-  // Phase 2: Add highest-scoring tools up to maxActive
   for (let i = 0; i < sorted.length; i++) {
     if (activeNames.size >= maxActive) break;
     activeNames.add(sorted[i][0]);
   }
 
-  // Phase 3: Build active and registry lists
   const toolMap = new Map(allTools.map((t) => [t.name, t]));
   const active: ToolDefinition[] = [];
   const activeNamesArray = Array.from(activeNames);
@@ -462,6 +457,33 @@ export function buildTwoTierTools(
       return a.name.localeCompare(b.name);
     }),
   };
+}
+
+const CONTEXT_PROMOTED_TOOLS: Array<{ pattern: RegExp; tools: string[] }> = [
+  { pattern: /\b(git|commit|push|pull|merge|branch|diff)\b/i, tools: ['git'] },
+  { pattern: /\b(search|find|look|query|grep)\b/i, tools: ['code_search', 'web_search'] },
+  { pattern: /\b(deploy|docker|container|k8s|kubernetes)\b/i, tools: ['shell_execute'] },
+  { pattern: /\b(browse|website|url|http|scrape)\b/i, tools: ['browser'] },
+];
+
+export function detectContextPromotions(
+  goal: string,
+  registryTools: ToolTier['registry'],
+): string[] {
+  const registryNames = new Set(registryTools.map((t) => t.name));
+  const promotions: string[] = [];
+
+  for (const { pattern, tools } of CONTEXT_PROMOTED_TOOLS) {
+    if (pattern.test(goal)) {
+      for (const toolName of tools) {
+        if (registryNames.has(toolName) && !promotions.includes(toolName)) {
+          promotions.push(toolName);
+        }
+      }
+    }
+  }
+
+  return promotions;
 }
 
 /**

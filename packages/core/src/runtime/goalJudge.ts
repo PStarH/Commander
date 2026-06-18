@@ -223,6 +223,7 @@ export class GoalJudge {
   private config: GoalJudgeConfig;
   private router: ModelRouter;
   private provider?: LLMProvider;
+  private runtime?: { getProvider(name: string): LLMProvider | undefined };
   private registry: StopConditionRegistry;
   private verdictCache: Map<string, JudgeVerdict> = new Map();
   private readonly maxCacheSize = 100;
@@ -239,6 +240,13 @@ export class GoalJudge {
    */
   setProvider(provider: LLMProvider): void {
     this.provider = provider;
+  }
+
+  /**
+   * Set the runtime reference to resolve cross-provider verification.
+   */
+  setRuntime(runtime: { getProvider(name: string): LLMProvider | undefined }): void {
+    this.runtime = runtime;
   }
 
   /**
@@ -415,8 +423,17 @@ export class GoalJudge {
       temperature: 0, // Deterministic judging
     };
 
+    // Resolve cross-provider: try to use a different provider from the main agent
+    let judgeProvider = this.provider;
+    if (this.runtime && providerName) {
+      const crossProvider = this.runtime.getProvider(providerName);
+      if (crossProvider && crossProvider !== this.provider) {
+        judgeProvider = crossProvider;
+      }
+    }
+
     const startTime = Date.now();
-    const response = await this.provider!.call(request);
+    const response = await (judgeProvider ?? this.provider!).call(request);
     const elapsed = Date.now() - startTime;
     const tokensUsed = response.usage?.totalTokens ?? 0;
 

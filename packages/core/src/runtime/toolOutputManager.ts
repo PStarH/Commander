@@ -367,8 +367,10 @@ export class ToolOutputManager {
       const hash = createHash('md5').update(output).digest('hex').slice(0, 8);
       const filename = `${toolCall.name}_${hash}.txt`;
       const filepath = path.join(dir, filename);
+      const tmpPath = `${filepath}.tmp`;
 
-      fs.writeFileSync(filepath, output, 'utf-8');
+      fs.writeFileSync(tmpPath, output, 'utf-8');
+      fs.renameSync(tmpPath, filepath);
       this.cleanupPersistedDir(dir);
       return filepath;
     } catch (e) {

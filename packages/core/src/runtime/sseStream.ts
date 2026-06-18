@@ -2,12 +2,6 @@ import type { BusMessage, MessageBusTopic } from './types';
 import { getMessageBus } from './messageBus';
 import { getGlobalLogger } from '../logging';
 
-/**
- * Structured SSE event types for real-time agent execution visibility.
- *
- * Reference: Codex CLI's OutputItemDone, ToolCallInputDelta, ReasoningContentDelta events.
- * Commander adds richer structure with status, thinking, and diff events.
- */
 export type StructuredSSEEventType =
   | 'agent.status'
   | 'agent.thinking'
@@ -24,7 +18,8 @@ export type StructuredSSEEventType =
   | 'error.occurred'
   | 'cost.update'
   | 'compensation.update'
-  | 'sop.update';
+  | 'sop.update'
+  | 'state.sync';
 
 export interface StructuredSSEEvent {
   event: StructuredSSEEventType;
@@ -33,19 +28,34 @@ export interface StructuredSSEEvent {
   seq: number;
 }
 
+export interface EntityState {
+  id: string;
+  type: 'agent' | 'tool' | 'mission' | 'subtask';
+  status: 'idle' | 'running' | 'completed' | 'failed' | 'blocked';
+  parentId?: string;
+  metadata: Record<string, unknown>;
+  updatedAt: string;
+}
+
+export interface EntityStateTree {
+  entities: Map<string, EntityState>;
+  rootIds: string[];
+}
+
 export class SSEStream {
   private subscribers: Array<(event: string) => void> = [];
   private unsubscribers: Array<() => void> = [];
   private closed = false;
   private seqCounter = 0;
-  // GAP-28: Heartbeat to keep SSE connections alive through proxies
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private readonly heartbeatIntervalMs: number;
-  /** Reconnection interval in ms (sent to client via `retry:` field) */
   private readonly retryMs: number;
-  /** Buffer of recent events for Last-Event-ID replay (ring buffer) */
   private eventBuffer: Array<{ id: number; payload: string }> = [];
   private readonly maxBufferSize: number;
+  private entityStateTree: EntityStateTree = {
+    entities: new Map(),
+    rootIds: [],
+  };
 
   constructor(
     topics?: MessageBusTopic[],
@@ -76,6 +86,7 @@ export class SSEStream {
     for (const topic of watchTopics) {
       const unsub = bus.subscribe(topic, (message: BusMessage) => {
         if (this.closed) return;
+        this.updateEntityState(message);
         this.emitRaw({
           topic: message.topic,
           source: message.source,
@@ -87,7 +98,6 @@ export class SSEStream {
       this.unsubscribers.push(unsub);
     }
 
-    // GAP-28: Start heartbeat to prevent proxy/load-balancer timeouts
     if (this.heartbeatIntervalMs > 0) {
       this.heartbeatTimer = setInterval(() => {
         if (!this.closed) {
@@ -97,8 +107,90 @@ export class SSEStream {
       if (this.heartbeatTimer.unref) this.heartbeatTimer.unref();
     }
 
-    // Send retry interval on connection so clients know how long to wait before reconnecting
     this.dispatch(`retry: ${this.retryMs}\n\n`);
+  }
+
+  private updateEntityState(message: BusMessage): void {
+    const { topic, source, payload } = message;
+    const now = new Date().toISOString();
+
+    if (topic.startsWith('agent.')) {
+      const agentId = (payload as { agentId?: string })?.agentId ?? source;
+      const existing = this.entityStateTree.entities.get(agentId);
+      let status: EntityState['status'] = existing?.status ?? 'idle';
+      if (topic === 'agent.started') status = 'running';
+      else if (topic === 'agent.completed') status = 'completed';
+      else if (topic === 'agent.failed') status = 'failed';
+
+      this.entityStateTree.entities.set(agentId, {
+        id: agentId,
+        type: 'agent',
+        status,
+        metadata: { ...(existing?.metadata ?? {}), ...(payload as Record<string, unknown>) },
+        updatedAt: now,
+      });
+
+      if (!existing && !this.entityStateTree.rootIds.includes(agentId)) {
+        this.entityStateTree.rootIds.push(agentId);
+      }
+    }
+
+    if (topic.startsWith('tool.')) {
+      const toolCallId = (payload as { toolCallId?: string })?.toolCallId ?? `${source}-${Date.now()}`;
+      const parentId = (payload as { agentId?: string })?.agentId;
+      let status: EntityState['status'] = 'running';
+      if (topic === 'tool.completed') status = 'completed';
+      else if (topic === 'tool.timeout' || topic === 'tool.blocked') status = 'failed';
+
+      this.entityStateTree.entities.set(toolCallId, {
+        id: toolCallId,
+        type: 'tool',
+        status,
+        parentId,
+        metadata: payload as Record<string, unknown>,
+        updatedAt: now,
+      });
+    }
+
+    if (topic.startsWith('mission.')) {
+      const missionId = (payload as { missionId?: string })?.missionId ?? source;
+      let status: EntityState['status'] = 'running';
+      if (topic === 'mission.completed') status = 'completed';
+      else if (topic === 'mission.blocked') status = 'blocked';
+
+      this.entityStateTree.entities.set(missionId, {
+        id: missionId,
+        type: 'mission',
+        status,
+        metadata: payload as Record<string, unknown>,
+        updatedAt: now,
+      });
+    }
+  }
+
+  getStateTree(): EntityStateTree {
+    const entities = new Map<string, EntityState>();
+    for (const [key, value] of this.entityStateTree.entities) {
+      entities.set(key, { ...value, metadata: { ...value.metadata } });
+    }
+    return {
+      entities,
+      rootIds: [...this.entityStateTree.rootIds],
+    };
+  }
+
+  getEntity(id: string): EntityState | undefined {
+    return this.entityStateTree.entities.get(id);
+  }
+
+  emitStateSync(): void {
+    if (this.closed) return;
+    const tree = this.getStateTree();
+    const serializable = {
+      entities: Array.from(tree.entities.values()),
+      rootIds: tree.rootIds,
+    };
+    this.emitStructured('state.sync', { tree: serializable });
   }
 
   emitStructured(eventType: StructuredSSEEventType, data: Record<string, unknown>): void {

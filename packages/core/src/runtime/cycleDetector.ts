@@ -27,6 +27,21 @@ const DEFAULT_CONFIG: CycleDetectorConfig = {
   maxDriftEntries: 200,
 };
 
+const STOP_WORDS = new Set([
+  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+  'should', 'may', 'might', 'can', 'shall', 'to', 'of', 'in', 'for',
+  'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during',
+  'before', 'after', 'above', 'below', 'between', 'under', 'again',
+  'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why',
+  'how', 'all', 'both', 'each', 'few', 'more', 'most', 'other', 'some',
+  'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than',
+  'too', 'very', 'just', 'because', 'but', 'and', 'or', 'if', 'while',
+  'about', 'against', 'it', 'its', 'this', 'that', 'these', 'those',
+  'i', 'me', 'my', 'we', 'our', 'you', 'your', 'he', 'him', 'his',
+  'she', 'her', 'they', 'them', 'their', 'what', 'which', 'who', 'whom',
+]);
+
 /**
  * Parameter key that distinguishes consecutive calls to the same tool.
  * If the value of this parameter differs between calls, it's not a cycle.
@@ -56,9 +71,10 @@ export type CycleDetectionResult =
   | { detected: false }
   | {
       detected: true;
-      type: 'consecutive' | 'alternating' | 'drift';
+      type: 'consecutive' | 'alternating' | 'drift' | 'semantic_stagnation';
       description: string;
       advice: string;
+      similarity?: number;
     };
 
 export class CycleDetector {
@@ -73,6 +89,8 @@ export class CycleDetector {
   private lastDiffParamValue: string | null = null;
   private lastStepNumber = -1;
   private driftTracker: Map<string, number> = new Map();
+  private outputHistory: string[] = [];
+  private readonly maxOutputHistory = 5;
 
   constructor(config?: Partial<CycleDetectorConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -105,6 +123,65 @@ export class CycleDetector {
     return { detected: false };
   }
 
+  checkOutput(output: string): CycleDetectionResult {
+    const fingerprint = CycleDetector.extractFingerprint(output);
+    this.outputHistory.push(fingerprint);
+    if (this.outputHistory.length > this.maxOutputHistory) {
+      this.outputHistory.shift();
+    }
+
+    if (this.outputHistory.length < 2) return { detected: false };
+
+    const prev = this.outputHistory[this.outputHistory.length - 2];
+    const curr = this.outputHistory[this.outputHistory.length - 1];
+    const similarity = CycleDetector.semanticSimilarity(prev, curr);
+
+    if (similarity > 0.85 && this.outputHistory.length >= 2) {
+      const allSimilar = this.outputHistory.slice(-3).every((h, i, arr) => {
+        if (i === 0) return true;
+        return CycleDetector.semanticSimilarity(arr[i - 1], h) > 0.8;
+      });
+      if (allSimilar && this.outputHistory.length >= 3) {
+        return {
+          detected: true,
+          type: 'semantic_stagnation',
+          description: `LLM output semantic similarity ${(similarity * 100).toFixed(0)}% across last ${this.outputHistory.length} responses`,
+          advice: 'The model is producing semantically near-identical outputs. Inject variety: rephrase the goal, add a temperature constraint, or switch to a different model.',
+          similarity,
+        };
+      }
+    }
+
+    return { detected: false };
+  }
+
+  private static extractFingerprint(text: string): string {
+    const words = text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .split(/\s+/)
+      .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+    const trigrams: string[] = [];
+    for (let i = 0; i <= words.length - 3; i++) {
+      trigrams.push(`${words[i]}_${words[i + 1]}_${words[i + 2]}`);
+    }
+    if (trigrams.length === 0) return words.join('_');
+    return trigrams.join('|');
+  }
+
+  private static semanticSimilarity(a: string, b: string): number {
+    if (a === b) return 1;
+    const setA = new Set(a.split('|'));
+    const setB = new Set(b.split('|'));
+    if (setA.size === 0 || setB.size === 0) return 0;
+    let intersection = 0;
+    for (const token of setA) {
+      if (setB.has(token)) intersection++;
+    }
+    const union = setA.size + setB.size - intersection;
+    return union === 0 ? 0 : intersection / union;
+  }
+
   /**
    * 重置检测器状态（用于新任务）
    */
@@ -116,6 +193,7 @@ export class CycleDetector {
     this.lastDiffParamValue = null;
     this.lastStepNumber = -1;
     this.driftTracker.clear();
+    this.outputHistory = [];
   }
 
   private detectConsecutive(

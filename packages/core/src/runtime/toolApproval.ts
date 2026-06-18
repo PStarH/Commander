@@ -1,13 +1,3 @@
-/**
- * ToolApproval — tool approval system.
- *
- * Inspired by OpenClaw's tool approval flow and Hermes's approval.py
- * dangerous-command interception, but Commander goes further:
- * 1. Multi-level approval (auto / semi-auto / manual)
- * 2. Risk-based dynamic approval policies
- * 3. Approval context is passed to the model so it understands why it must wait
- */
-
 import { getGlobalLogger } from '../logging';
 
 // ============================================================================
@@ -16,6 +6,160 @@ import { getGlobalLogger } from '../logging';
 
 /** Approval level applied to a tool invocation. */
 export type ApprovalLevel = 'auto' | 'semi_auto' | 'manual';
+
+/** Risk level priority for comparison. Higher number = higher risk. */
+const RISK_PRIORITY: Record<string, number> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+  critical: 3,
+};
+
+/** Compare two risk levels. Returns positive if a > b, negative if a < b, 0 if equal. */
+export function riskPriorityCompare(a: string, b: string): number {
+  return (RISK_PRIORITY[a] ?? 0) - (RISK_PRIORITY[b] ?? 0);
+}
+
+// ============================================================================
+// Argument risk rules
+// ============================================================================
+
+export interface ArgRiskRule {
+  /** Parameter name to check. */
+  param: string;
+  /** Regex pattern to match against the parameter value. */
+  pattern: RegExp;
+  /** Risk level if pattern matches. */
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  /** Human-readable description of the risk. */
+  description: string;
+}
+
+/** Global dangerous argument patterns for parameter-level risk assessment. */
+export const DANGEROUS_ARG_PATTERNS: ArgRiskRule[] = [
+  // Destructive shell commands
+  {
+    param: 'command',
+    pattern: /\b(rm\s+-rf|mkfs|dd\s+if=|chmod\s+777|wget.*\|\s*sh|curl.*\|\s*bash)\b/i,
+    riskLevel: 'critical',
+    description: 'Destructive shell command detected',
+  },
+  // Privilege escalation
+  {
+    param: 'command',
+    pattern: /\b(sudo|su\s+-|chown|passwd|shadow)\b/i,
+    riskLevel: 'critical',
+    description: 'Privilege escalation command detected',
+  },
+  // System/sensitive path access
+  {
+    param: 'path',
+    pattern: /^\/(etc|usr|var|system|private|secret|root)/,
+    riskLevel: 'high',
+    description: 'System/sensitive path access detected',
+  },
+  // Dynamic code execution
+  {
+    param: 'code',
+    pattern: /\b(exec|eval|subprocess|os\.system|__import__)\b/i,
+    riskLevel: 'high',
+    description: 'Dynamic code execution detected',
+  },
+  // Network exfiltration patterns
+  {
+    param: 'command',
+    pattern: /\b(curl|wget|nc|netcat|socat)\b.*\b(POST|PUT|PATCH)\b/i,
+    riskLevel: 'high',
+    description: 'Potential data exfiltration command detected',
+  },
+];
+
+/**
+ * Whitelist rules for parameter-level risk assessment.
+ * Patterns matching these rules will have their risk level downgraded.
+ */
+export interface ArgWhitelistRule {
+  /** Parameter name to check. */
+  param: string;
+  /** Regex pattern to match against the parameter value. */
+  pattern: RegExp;
+  /** Risk level to downgrade to (e.g., 'low' to bypass critical). */
+  downgradeTo: 'low' | 'medium';
+  /** Description of the whitelist rule. */
+  description: string;
+}
+
+/** Default whitelist rules (e.g., test directories, CI sandboxes). */
+export const DEFAULT_ARG_WHITELIST: ArgWhitelistRule[] = [
+  {
+    param: 'command',
+    pattern: /\brm\s+-rf\s+.*\/(test|tests|__tests__|spec|\.tmp|node_modules)\//i,
+    downgradeTo: 'low',
+    description: 'Cleaning test/temp directories is safe',
+  },
+  {
+    param: 'path',
+    pattern: /^\/(tmp|temp|\.tmp|\.temp|test_output)\//,
+    downgradeTo: 'low',
+    description: 'Temporary/test path access is safe',
+  },
+  {
+    param: 'command',
+    pattern: /\b(pip\s+install|npm\s+install|yarn\s+add)\s+--save-dev\b/i,
+    downgradeTo: 'medium',
+    description: 'Dev dependency installation is low risk',
+  },
+];
+
+export interface ArgRiskAssessment {
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  reasons: string[];
+  whitelisted: string[];
+}
+
+export function assessArgRisk(
+  args: Record<string, unknown>,
+  toolArgRiskRules?: ArgRiskRule[],
+  toolArgWhitelist?: ArgWhitelistRule[],
+): ArgRiskAssessment {
+  const reasons: string[] = [];
+  const whitelisted: string[] = [];
+  let maxRisk: 'low' | 'medium' | 'high' | 'critical' = 'low';
+
+  const allRules = [...DANGEROUS_ARG_PATTERNS, ...(toolArgRiskRules ?? [])];
+  const allWhitelist = [...DEFAULT_ARG_WHITELIST, ...(toolArgWhitelist ?? [])];
+
+  for (const rule of allRules) {
+    const value = args[rule.param];
+    if (value === undefined || value === null) continue;
+    const strValue = typeof value === 'string' ? value : JSON.stringify(value);
+
+    if (rule.pattern.test(strValue)) {
+      const matchedWhitelist = allWhitelist.find(
+        (w) => w.param === rule.param && w.pattern.test(strValue),
+      );
+
+      if (matchedWhitelist) {
+        whitelisted.push(matchedWhitelist.description);
+        if (riskPriorityCompare(matchedWhitelist.downgradeTo, maxRisk) > 0) {
+          maxRisk = matchedWhitelist.downgradeTo;
+        }
+        reasons.push(`${rule.description} (whitelisted → ${matchedWhitelist.downgradeTo})`);
+      } else {
+        reasons.push(rule.description);
+        if (riskPriorityCompare(rule.riskLevel, maxRisk) > 0) {
+          maxRisk = rule.riskLevel;
+        }
+      }
+    }
+  }
+
+  return { riskLevel: maxRisk, reasons, whitelisted };
+}
+
+// ============================================================================
+// Approval policy
+// ============================================================================
 
 /**
  * Approval policy for matching tool names and deciding whether approval is needed.
@@ -42,6 +186,10 @@ export interface ApprovalPolicy {
   timeoutMs?: number;
   /** Maximum wait count. */
   maxWaitCount?: number;
+  /** Argument-level risk rules for dynamic approval escalation. */
+  argRiskRules?: ArgRiskRule[];
+  /** Argument whitelist rules for risk downgrading. */
+  argWhitelist?: ArgWhitelistRule[];
 }
 
 // ============================================================================
@@ -295,7 +443,6 @@ export class ToolApproval {
   ): Promise<ApprovalResult> {
     const policy = this.findPolicy(toolName);
 
-    // 没有匹配的策略 — 默认自动通过
     if (!policy) {
       return {
         approved: true,
@@ -305,8 +452,15 @@ export class ToolApproval {
       };
     }
 
-    // 自动审批级别
-    if (policy.level === 'auto') {
+    const argRisk = assessArgRisk(args, policy.argRiskRules, policy.argWhitelist);
+    const escalatedByArgRisk = riskPriorityCompare(argRisk.riskLevel, 'high') > 0;
+
+    let effectiveLevel = policy.level;
+    if (escalatedByArgRisk && effectiveLevel !== 'manual') {
+      effectiveLevel = 'manual';
+    }
+
+    if (effectiveLevel === 'auto') {
       this.recordDecision(toolName, true, policy.level);
       return {
         approved: true,
@@ -319,8 +473,7 @@ export class ToolApproval {
     const requestId = `req-${Date.now()}-${toolName}-${Math.random().toString(36).slice(2, 6)}`;
     const now = new Date().toISOString();
 
-    // 半自动审批 — 先检查自动条件
-    if (policy.level === 'semi_auto') {
+    if (effectiveLevel === 'semi_auto') {
       const autoApproved = this.checkAutoApproveConditions(policy, args);
       if (autoApproved) {
         this.recordDecision(toolName, true, policy.level);
@@ -332,7 +485,6 @@ export class ToolApproval {
         };
       }
 
-      // 检查等待次数是否超限
       const existingRequest = this.pendingApprovals.get(
         `${toolName}:${context?.runId ?? 'global'}`,
       );
@@ -348,8 +500,7 @@ export class ToolApproval {
       }
     }
 
-    // 手动审批或半自动审批需要人工确认
-    if (policy.level === 'manual' || policy.level === 'semi_auto') {
+    if (effectiveLevel === 'manual' || effectiveLevel === 'semi_auto') {
       const pendingKey = `${toolName}:${context?.runId ?? 'global'}`;
       const existingRequest = this.pendingApprovals.get(pendingKey);
       const waitCount = existingRequest ? existingRequest.waitCount + 1 : 0;
@@ -363,26 +514,26 @@ export class ToolApproval {
         timeoutAt: policy.timeoutMs
           ? new Date(Date.now() + policy.timeoutMs).toISOString()
           : undefined,
-        reason: context?.reason,
+        reason: escalatedByArgRisk
+          ? `Escalated to manual: argument risk "${argRisk.reasons.join(', ')}"`
+          : context?.reason,
         waitCount,
       };
 
-      // For non-interactive mode with a callback that always approves, call it directly
       try {
         const result = await this.approvalCallback(approvalRequest);
         this.pendingApprovals.set(pendingKey, approvalRequest);
         this.pruneStaleApprovals();
-        this.recordDecision(toolName, result.approved, policy.level);
+        this.recordDecision(toolName, result.approved, effectiveLevel);
         return result;
       } catch (e) {
         getGlobalLogger().warn('ToolApproval', 'Approval callback failed', {
           error: (e as Error)?.message,
           toolName,
         });
-        // If callback fails, store as pending and return approval_failed
         this.pendingApprovals.set(pendingKey, approvalRequest);
         this.pruneStaleApprovals();
-        this.recordDecision(toolName, false, policy.level);
+        this.recordDecision(toolName, false, effectiveLevel);
         return {
           approved: false,
           requestId,
@@ -392,7 +543,6 @@ export class ToolApproval {
       }
     }
 
-    // 默认拒绝（fallback for unrecognized levels）
     this.recordDecision(toolName, false, policy.level);
     return {
       approved: false,
@@ -402,9 +552,6 @@ export class ToolApproval {
     };
   }
 
-  /**
-   * 记录审批决策
-   */
   private recordDecision(toolName: string, approved: boolean, level: ApprovalLevel): void {
     this.decisionHistory.push({
       requestId: `decision-${Date.now()}-${toolName}`,
@@ -414,7 +561,6 @@ export class ToolApproval {
       timestamp: new Date().toISOString(),
     });
 
-    // 限制历史记录大小
     if (this.decisionHistory.length > 1000) {
       this.decisionHistory = this.decisionHistory.slice(-500);
     }
