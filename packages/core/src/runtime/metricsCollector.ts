@@ -499,7 +499,11 @@ export class MetricsCollector {
   }
 
   /** Return a JSON-serialisable snapshot of all metrics (counters, gauges, histograms). */
-  getMetricsSnapshot(): { counters: CounterMetric[]; gauges: GaugeMetric[]; histograms: HistogramMetric[] } {
+  getMetricsSnapshot(): {
+    counters: CounterMetric[];
+    gauges: GaugeMetric[];
+    histograms: HistogramMetric[];
+  } {
     return {
       counters: Array.from(this.counters.values()),
       gauges: Array.from(this.gauges.values()),

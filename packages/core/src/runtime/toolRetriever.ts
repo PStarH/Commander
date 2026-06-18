@@ -416,7 +416,10 @@ export function buildTwoTierTools(
 
   const sorted = Array.from(refined.entries()).sort((a, b) => b[1] - a[1]);
 
-  const isCodingTask = /\b(code|debug|fix|build|compile|test|refactor|implement|deploy|run|execute|install)\b/i.test(goal);
+  const isCodingTask =
+    /\b(code|debug|fix|build|compile|test|refactor|implement|deploy|run|execute|install)\b/i.test(
+      goal,
+    );
   const alwaysInclude = isCodingTask ? ['file_read', 'shell_execute'] : ['file_read'];
   const activeNames = new Set<string>();
   const registryEntries: ToolTier['registry'] = [];

@@ -56,12 +56,7 @@ export class RegressionGate {
         if (this.regressionEvents.length > 200) this.regressionEvents.shift();
 
         // Update regression active count gauge
-        try {
-          // @ts-ignore — best-effort metric, may not be on collector yet
-          getMetricsCollector().recordRegressionActiveCount(this.regressionEvents.length);
-        } catch {
-          /* best-effort */
-        }
+        getMetricsCollector().recordRegressionActiveCount(this.regressionEvents.length);
 
         const bus = getMessageBus();
         bus.publish('system.alert', 'meta-learner', {

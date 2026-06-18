@@ -120,12 +120,7 @@ export class MetaLearner {
     this.persist();
 
     // Update experience count gauge
-    try {
-      // @ts-ignore — best-effort metric, may not be on collector yet
-      getMetricsCollector().recordMetaLearnerExperienceCount(this.experiences.length);
-    } catch {
-      /* best-effort */
-    }
+    getMetricsCollector().recordMetaLearnerExperienceCount(this.experiences.length);
   }
 
   // ========================================================================

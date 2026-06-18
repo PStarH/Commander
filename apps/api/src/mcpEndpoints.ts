@@ -74,28 +74,27 @@ export function createMCPRouter(): Router {
       for (const tool of tools) {
         try {
           const toolName = `mcp:${discoveryLabel}:${tool.name}`;
-          registry.register(
-            toolName,
-            {
-              capabilities: [{
+          registry.register(toolName, {
+            capabilities: [
+              {
                 name: tool.name,
                 domain: 'mcp',
                 strength: 1.0,
                 description: tool.description ?? `MCP tool: ${tool.name}`,
-              }],
-              cost: {
-                perInputToken: 0,
-                perOutputToken: 0,
-                perTask: 0,
               },
-              limitations: [],
-              reliability: {
-                successRate: 1.0,
-                avgLatencyMs: 0,
-                totalTasksCompleted: 0,
-              },
+            ],
+            cost: {
+              perInputToken: 0,
+              perOutputToken: 0,
+              perTask: 0,
             },
-          );
+            limitations: [],
+            reliability: {
+              successRate: 1.0,
+              avgLatencyMs: 0,
+              totalTasksCompleted: 0,
+            },
+          });
           registeredCount++;
         } catch {
           /* tool already registered — skip */
