@@ -136,7 +136,8 @@ export class SSEStream {
     }
 
     if (topic.startsWith('tool.')) {
-      const toolCallId = (payload as { toolCallId?: string })?.toolCallId ?? `${source}-${Date.now()}`;
+      const toolCallId =
+        (payload as { toolCallId?: string })?.toolCallId ?? `${source}-${Date.now()}`;
       const parentId = (payload as { agentId?: string })?.agentId;
       let status: EntityState['status'] = 'running';
       if (topic === 'tool.completed') status = 'completed';

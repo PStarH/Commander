@@ -7,7 +7,17 @@ import { AgentRuntime } from '../../runtime/agentRuntime';
 import type { EffortLevel, OrchestrationTopology } from '../../ultimate/types';
 import { Scheduler, WorkflowRegistry } from '../../scheduler';
 import type { ScheduleEntry, WorkflowTrigger } from '../../scheduler';
-import { createRuntime, loadTools, $, section, kv, bullet, cmdHeader, startSpinner, onboardingMessage } from './_shared';
+import {
+  createRuntime,
+  loadTools,
+  $,
+  section,
+  kv,
+  bullet,
+  cmdHeader,
+  startSpinner,
+  onboardingMessage,
+} from './_shared';
 
 export async function cmdWorkflow(subargs: string[]) {
   const subcmd = subargs[0];
@@ -25,12 +35,14 @@ export async function cmdWorkflow(subargs: string[]) {
       const workflows = registry.scan();
       const schedules = scheduler.list();
       if (workflows.length === 0 && schedules.length === 0) {
-        console.log(`  ${$.dim}No workflows found. Create one in .commander/workflows/*.md${$.reset}`);
+        console.log(
+          `  ${$.dim}No workflows found. Create one in .commander/workflows/*.md${$.reset}`,
+        );
         break;
       }
       console.log(`\n  ${$.bold}Available workflows${$.reset}\n`);
       for (const wf of workflows) {
-        const trig = wf.triggers.map(t => t.label).join(', ') || 'manual only';
+        const trig = wf.triggers.map((t) => t.label).join(', ') || 'manual only';
         console.log(`  ${$.cyan}${wf.id}${$.reset}`);
         console.log(`    ${$.dim}${wf.description}${$.reset}`);
         console.log(`    ${$.dim}triggers: ${trig}${$.reset}`);
@@ -41,8 +53,12 @@ export async function cmdWorkflow(subargs: string[]) {
         for (const s of schedules) {
           const status = s.enabled ? `${$.green}active${$.reset}` : `${$.gray}paused${$.reset}`;
           console.log(`  ${$.cyan}${s.id}${$.reset} ${status}`);
-          console.log(`    ${$.dim}workflow: ${s.workflowName} | trigger: ${s.trigger.label}${$.reset}`);
-          console.log(`    ${$.dim}runs: ${s.runCount} | next: ${s.nextRunAt ? new Date(s.nextRunAt).toLocaleString() : 'never'}${$.reset}\n`);
+          console.log(
+            `    ${$.dim}workflow: ${s.workflowName} | trigger: ${s.trigger.label}${$.reset}`,
+          );
+          console.log(
+            `    ${$.dim}runs: ${s.runCount} | next: ${s.nextRunAt ? new Date(s.nextRunAt).toLocaleString() : 'never'}${$.reset}\n`,
+          );
         }
       }
       break;
@@ -91,14 +107,19 @@ export async function cmdWorkflow(subargs: string[]) {
         onProgress: (phase, detail) => {
           if (phase === 'COMPLETE') return;
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-          console.log(`  ${$.dim}[${elapsed}s]${$.reset} ${$.bold}${phase}${$.reset} ${$.dim}${detail.slice(0, 70)}${$.reset}`);
+          console.log(
+            `  ${$.dim}[${elapsed}s]${$.reset} ${$.bold}${phase}${$.reset} ${$.dim}${detail.slice(0, 70)}${$.reset}`,
+          );
         },
       });
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       const icon = result.status === 'SUCCESS' ? '✅' : result.status === 'PARTIAL' ? '⚠️' : '❌';
-      const statusColor = result.status === 'SUCCESS' ? $.green : result.status === 'PARTIAL' ? $.yellow : $.red;
-      console.log(`\n  ${icon} ${statusColor}${$.bold}${result.status}${$.reset}  ${$.dim}${elapsed}s · ${result.metrics.totalTokens.toLocaleString()} tok · $${result.metrics.totalCostUsd.toFixed(4)}${$.reset}`);
+      const statusColor =
+        result.status === 'SUCCESS' ? $.green : result.status === 'PARTIAL' ? $.yellow : $.red;
+      console.log(
+        `\n  ${icon} ${statusColor}${$.bold}${result.status}${$.reset}  ${$.dim}${elapsed}s · ${result.metrics.totalTokens.toLocaleString()} tok · $${result.metrics.totalCostUsd.toFixed(4)}${$.reset}`,
+      );
 
       if (result.status !== 'SUCCESS' && result.errors.length > 0) {
         for (const err of result.errors) {
@@ -106,7 +127,11 @@ export async function cmdWorkflow(subargs: string[]) {
         }
       }
       if (result.synthesis) {
-        const preview = result.synthesis.split('\n').filter(l => l.trim()).slice(0, 5).join('\n  ');
+        const preview = result.synthesis
+          .split('\n')
+          .filter((l) => l.trim())
+          .slice(0, 5)
+          .join('\n  ');
         console.log(`\n  ${preview}`);
       }
       console.log();
@@ -115,7 +140,9 @@ export async function cmdWorkflow(subargs: string[]) {
 
     case 'schedule': {
       if (rest.length === 0) {
-        console.error(`  ${$.red}Usage: commander workflow schedule <workflow-id> --cron="0 6 * * 1"${$.reset}\n`);
+        console.error(
+          `  ${$.red}Usage: commander workflow schedule <workflow-id> --cron="0 6 * * 1"${$.reset}\n`,
+        );
         break;
       }
       const wfId = rest[0];
@@ -178,7 +205,9 @@ export async function cmdWorkflow(subargs: string[]) {
     case 'pause': {
       const sId = rest[0];
       if (!sId || !scheduler.disable(sId)) {
-        console.error(`  ${$.red}Schedule not found. Usage: commander workflow pause <schedule-id>${$.reset}\n`);
+        console.error(
+          `  ${$.red}Schedule not found. Usage: commander workflow pause <schedule-id>${$.reset}\n`,
+        );
       } else {
         console.log(`  ${$.yellow}○ Paused schedule ${sId}${$.reset}\n`);
       }
@@ -188,7 +217,9 @@ export async function cmdWorkflow(subargs: string[]) {
     case 'resume': {
       const sId = rest[0];
       if (!sId || !scheduler.enable(sId)) {
-        console.error(`  ${$.red}Schedule not found. Usage: commander workflow resume <schedule-id>${$.reset}\n`);
+        console.error(
+          `  ${$.red}Schedule not found. Usage: commander workflow resume <schedule-id>${$.reset}\n`,
+        );
       } else {
         console.log(`  ${$.green}✓ Resumed schedule ${sId}${$.reset}\n`);
       }
@@ -205,10 +236,13 @@ export async function cmdWorkflow(subargs: string[]) {
       }
       console.log(`\n  ${$.bold}Execution history${$.reset}\n`);
       for (const r of records.slice(-10).reverse()) {
-        const statusColor = r.status === 'success' ? $.green : r.status === 'failed' ? $.red : $.yellow;
+        const statusColor =
+          r.status === 'success' ? $.green : r.status === 'failed' ? $.red : $.yellow;
         const started = new Date(r.startedAt).toLocaleString();
         const dur = r.durationMs ? ` | ${(r.durationMs / 1000).toFixed(1)}s` : '';
-        console.log(`  ${statusColor}${r.status.padEnd(8)}${$.reset} ${started}${$.dim}${dur} | ${r.workflowId}${$.reset}`);
+        console.log(
+          `  ${statusColor}${r.status.padEnd(8)}${$.reset} ${started}${$.dim}${dur} | ${r.workflowId}${$.reset}`,
+        );
         if (r.summary) console.log(`  ${$.dim}  ${r.summary.slice(0, 120)}${$.reset}`);
       }
       console.log();
@@ -218,7 +252,9 @@ export async function cmdWorkflow(subargs: string[]) {
     case 'create': {
       const name = rest[0];
       if (!name) {
-        console.error(`  ${$.red}Usage: commander workflow create <name> [--description=...] [--cron="0 6 * * *"]${$.reset}\n`);
+        console.error(
+          `  ${$.red}Usage: commander workflow create <name> [--description=...] [--cron="0 6 * * *"]${$.reset}\n`,
+        );
         break;
       }
       const flags: Record<string, string> = {};
@@ -298,7 +334,9 @@ depends-on: [execution]
             const wfId = filename.replace(/\.md$/, '');
             const reloaded = registry.reload(wfId);
             if (reloaded) {
-              console.log(`  ${$.dim}[${new Date().toLocaleTimeString()}] reloaded: ${wfId}${$.reset}`);
+              console.log(
+                `  ${$.dim}[${new Date().toLocaleTimeString()}] reloaded: ${wfId}${$.reset}`,
+              );
             }
           }
         });
@@ -307,7 +345,9 @@ depends-on: [execution]
       scheduler.start();
       console.log(`  ${$.green}✓ Scheduler daemon running${$.reset}`);
       console.log(`  ${$.dim}  Tick: ${scheduler.getConfig().tickIntervalMs / 1000}s`);
-      console.log(`  ${$.dim}  State: ${path.join(process.cwd(), '.commander', 'scheduler')}${$.reset}`);
+      console.log(
+        `  ${$.dim}  State: ${path.join(process.cwd(), '.commander', 'scheduler')}${$.reset}`,
+      );
       console.log(`  ${$.dim}  Workflows: ${registry.list().length} loaded${$.reset}\n`);
 
       process.on('SIGINT', () => {

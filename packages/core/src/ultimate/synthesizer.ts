@@ -212,14 +212,20 @@ export class MultiAgentSynthesizer {
     // Diversity check: detect echo chamber when top results are too similar
     if (results.length >= 3) {
       const topResults = results.slice(0, 3);
-      const fingerprints = topResults.map((r) => r.text.slice(0, 100).toLowerCase().replace(/\s+/g, ' '));
+      const fingerprints = topResults.map((r) =>
+        r.text.slice(0, 100).toLowerCase().replace(/\s+/g, ' '),
+      );
       const uniqueFingerprints = new Set(fingerprints);
       if (uniqueFingerprints.size === 1) {
         // All top results start identically — echo chamber detected
-        getGlobalLogger().warn('Synthesizer', 'Echo chamber detected: top 3 results have identical openings', {
-          fingerprint: fingerprints[0].slice(0, 60),
-          resultCount: results.length,
-        });
+        getGlobalLogger().warn(
+          'Synthesizer',
+          'Echo chamber detected: top 3 results have identical openings',
+          {
+            fingerprint: fingerprints[0].slice(0, 60),
+            resultCount: results.length,
+          },
+        );
       }
     }
 
