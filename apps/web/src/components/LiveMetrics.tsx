@@ -53,7 +53,9 @@ function MetricCard({ name, value, icon: Icon, color, help }: MetricCardProps) {
         <span className="metric-card-label">{name.replace(/_/g, ' ')}</span>
       </div>
       <div className="metric-card-body">
-        <span className="metric-card-value">{typeof value === 'number' ? value.toLocaleString() : value}</span>
+        <span className="metric-card-value">
+          {typeof value === 'number' ? value.toLocaleString() : value}
+        </span>
       </div>
     </div>
   );
@@ -80,7 +82,9 @@ export function LiveMetrics() {
           if (data.type === 'snapshot' && data.metrics) {
             setSnapshot(data.metrics);
           }
-        } catch { void 0; }
+        } catch {
+          void 0;
+        }
       };
 
       es.onerror = () => {
@@ -104,7 +108,10 @@ export function LiveMetrics() {
   const entries = Object.entries(snapshot);
   if (entries.length === 0) {
     return (
-      <div className="card" style={{ padding: '20px', textAlign: 'center', color: 'var(--text-tertiary)' }}>
+      <div
+        className="card"
+        style={{ padding: '20px', textAlign: 'center', color: 'var(--text-tertiary)' }}
+      >
         <p>{connected ? 'No metrics yet' : 'Connecting to Commander Up...'}</p>
       </div>
     );
@@ -112,18 +119,35 @@ export function LiveMetrics() {
 
   return (
     <div className="section-head" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: '8px',
+        }}
+      >
         <h2>Live Metrics</h2>
-        <span style={{
-          display: 'inline-flex', alignItems: 'center', gap: '5px',
-          fontSize: '0.7rem', color: connected ? 'var(--accent-green)' : 'var(--accent-red)',
-          textTransform: 'uppercase', letterSpacing: '0.08em',
-        }}>
-          <span style={{
-            width: 6, height: 6, borderRadius: '50%',
-            background: connected ? 'var(--accent-green)' : 'var(--accent-red)',
-            boxShadow: connected ? '0 0 6px var(--accent-green)' : 'none',
-          }} />
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '5px',
+            fontSize: '0.7rem',
+            color: connected ? 'var(--accent-green)' : 'var(--accent-red)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+          }}
+        >
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              background: connected ? 'var(--accent-green)' : 'var(--accent-red)',
+              boxShadow: connected ? '0 0 6px var(--accent-green)' : 'none',
+            }}
+          />
           {connected ? 'Connected' : 'Disconnected'}
         </span>
       </div>
