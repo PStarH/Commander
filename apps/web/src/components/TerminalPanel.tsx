@@ -40,14 +40,17 @@ export function TerminalPanel({ entries, title = 'Terminal' }: TerminalPanelProp
         <h2>{title}</h2>
         <span className="section-tag">{entries.length} lines</span>
       </div>
-      <div className="card" style={{
-        maxHeight: 400,
-        overflowY: 'auto',
-        fontFamily: 'var(--font-mono)',
-        fontSize: '0.8rem',
-        lineHeight: 1.5,
-        padding: '8px 0',
-      }}>
+      <div
+        className="card"
+        style={{
+          maxHeight: 400,
+          overflowY: 'auto',
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.8rem',
+          lineHeight: 1.5,
+          padding: '8px 0',
+        }}
+      >
         {entries.length === 0 ? (
           <div style={{ padding: '10px 14px', color: 'var(--text-tertiary)' }}>No output yet</div>
         ) : (
@@ -66,7 +69,15 @@ export function TerminalPanel({ entries, title = 'Terminal' }: TerminalPanelProp
                 <span style={{ color: 'var(--text-muted)', flexShrink: 0, width: 70 }}>
                   {formatTime(entry.timestamp)}
                 </span>
-                <span style={{ color, flexShrink: 0, width: 50, textTransform: 'uppercase', fontWeight: 600 }}>
+                <span
+                  style={{
+                    color,
+                    flexShrink: 0,
+                    width: 50,
+                    textTransform: 'uppercase',
+                    fontWeight: 600,
+                  }}
+                >
                   {entry.level}
                 </span>
                 <span style={{ color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
