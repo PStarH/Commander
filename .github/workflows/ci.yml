@@ -37,7 +37,7 @@ jobs:
         run: pnpm exec prettier --check "packages/core/src/**/*.ts" "apps/api/src/**/*.ts" "apps/web/src/**/*.{ts,tsx}"
 
       - name: TypeScript check (core)
-        run: pnpm exec tsc --noEmit -p packages/core/tsconfig.json
+        run: pnpm --filter @commander/core exec tsc --noEmit
 
       - name: TypeScript check (SDK)
         run: pnpm --filter @commander/sdk typecheck
