@@ -2,13 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { ProjectMemoryItem, ProjectMemoryKind, ProjectMemoryOverview } from '@commander/core';
 
-/**
- * ProjectMemoryStore persistence path. Override `COMMANDER_MEMORY_FILE` to
- * relocate the project-memory JSON file (e.g. per-launcher in parallel test
- * scaffolding); default keeps the original
- * `__dirname/../data/project-memory.json` so production runs are untouched.
- * Env var must be set before this module is required (module-load capture).
- */
+/** Override `COMMANDER_MEMORY_FILE` to relocate the project-memory JSON file. Default keeps the original `__dirname/../data/project-memory.json` path so production runs are untouched. Env var MUST be set before this module is required (module-load capture). */
 const MEMORY_FILE =
   process.env['COMMANDER_MEMORY_FILE'] ?? path.resolve(__dirname, '../data/project-memory.json');
 
