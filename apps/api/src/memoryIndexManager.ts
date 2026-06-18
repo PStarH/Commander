@@ -51,7 +51,17 @@ export interface MemoryEntry {
   lastAccessedAt?: string;
 }
 
-const MEMORY_DIR = path.resolve(__dirname, '../../memory');
+/**
+ * MemoryIndexManager persistence directory. Override `COMMANDER_MEMORY_INDEX`
+ * to relocate the index + per-domain file directory (e.g. per-launcher in
+ * parallel test scaffolding); default keeps the original
+ * `__dirname/../../memory/` so production runs are untouched. The index file
+ * path is derived as `path.join(MEMORY_DIR, 'index.json')`, so relocating
+ * MEMORY_DIR also relocates the index. Env var must be set before this
+ * module is required (module-load capture).
+ */
+const MEMORY_DIR =
+  process.env['COMMANDER_MEMORY_INDEX'] ?? path.resolve(__dirname, '../../memory');
 const INDEX_FILE = path.join(MEMORY_DIR, 'index.json');
 
 export class MemoryIndexManager {

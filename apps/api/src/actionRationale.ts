@@ -14,6 +14,17 @@
 import fs from 'fs';
 import path from 'path';
 
+/**
+ * ActionRationaleStore persistence path. Override `COMMANDER_ACTION_RATIONALE_FILE`
+ * to relocate the audit trail (e.g. per-launcher in parallel test scaffolding);
+ * default keeps the original `__dirname/../data/action-rationales.json` so
+ * production runs are untouched. Because the constructor captures this constant
+ * at construction time, the env var MUST be set before the module is required.
+ */
+const ACTION_RATIONALE_FILE =
+  process.env['COMMANDER_ACTION_RATIONALE_FILE'] ??
+  path.resolve(__dirname, '../data/action-rationales.json');
+
 export interface ActionRationale {
   id: string;
   timestamp: string;
@@ -88,7 +99,8 @@ export class ActionRationaleStore {
   private readonly filePath: string;
 
   constructor(filePath?: string) {
-    this.filePath = filePath || path.resolve(__dirname, '../data/action-rationales.json');
+    // filePath arg wins, otherwise consult the env-overridable default.
+    this.filePath = filePath || ACTION_RATIONALE_FILE;
     this.items = this.load();
   }
 
