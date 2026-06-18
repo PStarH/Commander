@@ -115,17 +115,18 @@ function getGitDiff(scope: ReviewScope, baseRef?: string, commitSha?: string): G
 
   const patch = execFileSync('git', ['diff', diffRef, '--unified=5'], {
     encoding: 'utf-8',
-    maxBuffer: 10 * 1024 * 1024,
+    maxBuffer: 50 * 1024 * 1024,
   });
 
   let files: string[];
   try {
     const filesOutput = execFileSync('git', ['diff', nameRef, '--name-only'], {
       encoding: 'utf-8',
-      maxBuffer: 1024 * 1024,
+      maxBuffer: 50 * 1024 * 1024,
     });
     files = filesOutput.split('\n').filter(Boolean);
-  } catch {
+  } catch (e) {
+    // Git diff may fail if ref doesn't exist — fallback to empty
     files = [];
   }
 
@@ -213,9 +214,10 @@ export function parseFindings(text: string): ReviewFinding[] {
   while ((match = severityPattern.exec(text)) !== null) {
     const severity = normalizeSeverity(match[1]);
     const title = match[2].replace(/[—–\-:].*$/, '').trim();
-    const message = match[2].includes('—') || match[2].includes('–') || match[2].includes(':')
-      ? match[2].replace(/^[^—–\-:]*[—–\-:]\s*/, '').trim()
-      : match[2].trim();
+    const message =
+      match[2].includes('—') || match[2].includes('–') || match[2].includes(':')
+        ? match[2].replace(/^[^—–\-:]*[—–\-:]\s*/, '').trim()
+        : match[2].trim();
 
     // Try to extract file reference
     const fileMatch = message.match(/`([^`]+)`/);
@@ -226,9 +228,9 @@ export function parseFindings(text: string): ReviewFinding[] {
     const line = lineMatch ? parseInt(lineMatch[1], 10) : undefined;
 
     // Try to extract suggestion
-    const suggestionMatch = text.match(new RegExp(
-      `suggestion[:\s]*(.+?)(?=\n\\*{0,2}P[0-3]|\n##|\n$|$)`, 'si'
-    ));
+    const suggestionMatch = text.match(
+      new RegExp(`suggestion[:\s]*(.+?)(?=\n\\*{0,2}P[0-3]|\n##|\n$|$)`, 'si'),
+    );
 
     findings.push({
       severity,
@@ -260,13 +262,11 @@ function normalizeSeverity(s: string): FindingSeverity {
 /**
  * Build a review prompt for the LLM sub-agent.
  */
-function buildReviewPrompt(
-  diff: GitDiff,
-  guidelines: string[],
-): string {
-  const guidelineSection = guidelines.length > 0
-    ? `\n## Review Guidelines\n${guidelines.map(g => `- ${g}`).join('\n')}`
-    : '';
+function buildReviewPrompt(diff: GitDiff, guidelines: string[]): string {
+  const guidelineSection =
+    guidelines.length > 0
+      ? `\n## Review Guidelines\n${guidelines.map((g) => `- ${g}`).join('\n')}`
+      : '';
 
   return `You are a senior code reviewer. Review the following code changes and provide structured feedback.
 
@@ -312,10 +312,10 @@ If no issues found, return an empty array []. Do NOT include any other text outs
  * Returns pass=true when there are no P0 findings.
  */
 function computeReviewResult(findings: ReviewFinding[]): { passed: boolean; summary: string } {
-  const p0Count = findings.filter(f => f.severity === 'P0').length;
-  const p1Count = findings.filter(f => f.severity === 'P1').length;
-  const p2Count = findings.filter(f => f.severity === 'P2').length;
-  const p3Count = findings.filter(f => f.severity === 'P3').length;
+  const p0Count = findings.filter((f) => f.severity === 'P0').length;
+  const p1Count = findings.filter((f) => f.severity === 'P1').length;
+  const p2Count = findings.filter((f) => f.severity === 'P2').length;
+  const p3Count = findings.filter((f) => f.severity === 'P3').length;
 
   const passed = p0Count === 0;
 
@@ -344,7 +344,10 @@ function computeReviewResult(findings: ReviewFinding[]): { passed: boolean; summ
 export async function executeReview(config: ReviewConfig): Promise<ReviewReport> {
   const startTime = Date.now();
 
-  getGlobalLogger().info('ReviewAgent', 'Starting review', { scope: config.scope, baseRef: config.baseRef });
+  getGlobalLogger().info('ReviewAgent', 'Starting review', {
+    scope: config.scope,
+    baseRef: config.baseRef,
+  });
 
   // 1. Get git diff
   const diff = getGitDiff(config.scope, config.baseRef, config.commitSha);
@@ -387,8 +390,8 @@ export async function executeReview(config: ReviewConfig): Promise<ReviewReport>
   const report: ReviewReport = {
     passed,
     summary,
-    findings: findings.sort((a, b) =>
-      SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity)
+    findings: findings.sort(
+      (a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity),
     ),
     filesReviewed: diff.files.length,
     linesAdded: diff.totalAdditions,
@@ -418,7 +421,10 @@ async function callLLMForReview(prompt: string): Promise<string> {
     const { getApprovalSystem } = await import('./sandbox/approval');
     const approvalMode = getApprovalSystem().getMode();
     if (approvalMode === 'plan' || approvalMode === 'read-only') {
-      getGlobalLogger().info('ReviewAgent', `Approval mode ${approvalMode}: using heuristic review`);
+      getGlobalLogger().info(
+        'ReviewAgent',
+        `Approval mode ${approvalMode}: using heuristic review`,
+      );
       return fallbackReview(prompt);
     }
 
@@ -429,7 +435,11 @@ async function callLLMForReview(prompt: string): Promise<string> {
     const llmRequest = {
       model: providerInfo.defaultModel,
       messages: [
-        { role: 'system' as const, content: 'You are a senior code reviewer. Return ONLY a JSON array of findings, no other text.' },
+        {
+          role: 'system' as const,
+          content:
+            'You are a senior code reviewer. Return ONLY a JSON array of findings, no other text.',
+        },
         { role: 'user' as const, content: prompt },
       ],
       temperature: 0.2,
@@ -490,15 +500,17 @@ function fallbackReview(patch: string): string {
       title: `${match[1]} marker found`,
       message: `A ${match[1]} comment was found in the added code.`,
       line: lineNum,
-      suggestion: match[1] === 'FIXME'
-        ? 'Address the issue before merging.'
-        : 'Create a tracking task and link it in the comment.',
+      suggestion:
+        match[1] === 'FIXME'
+          ? 'Address the issue before merging.'
+          : 'Create a tracking task and link it in the comment.',
       confidence: 0.8,
     });
   }
 
   // Check for hardcoded secrets/tokens
-  const secretRegex = /^\+.*['"](?:api_?key|secret|token|password|credential)['"]\s*[:=]\s*['"][^'"]+['"]/gi;
+  const secretRegex =
+    /^\+.*['"](?:api_?key|secret|token|password|credential)['"]\s*[:=]\s*['"][^'"]+['"]/gi;
   while ((match = secretRegex.exec(patch)) !== null) {
     const lineNum = patch.slice(0, match.index).split('\n').length;
     findings.push({
@@ -513,7 +525,7 @@ function fallbackReview(patch: string): string {
 
   // Check for large file changes
   const lines = patch.split('\n');
-  const addedLines = lines.filter(l => l.startsWith('+')).length;
+  const addedLines = lines.filter((l) => l.startsWith('+')).length;
   if (addedLines > 500) {
     findings.push({
       severity: 'P2',
@@ -543,7 +555,9 @@ export function formatReviewOutput(report: ReviewReport): string {
   lines.push(`${statusIcon}  Review ${report.passed ? 'PASSED' : 'FAILED'}`);
   lines.push('');
   lines.push(`  ${report.summary}`);
-  lines.push(`  ${report.filesReviewed} file(s) · +${report.linesAdded}/-${report.linesRemoved} lines · ${report.durationMs}ms`);
+  lines.push(
+    `  ${report.filesReviewed} file(s) · +${report.linesAdded}/-${report.linesRemoved} lines · ${report.durationMs}ms`,
+  );
   lines.push('');
 
   // Findings
@@ -562,9 +576,12 @@ export function formatReviewOutput(report: ReviewReport): string {
       const color = severityColors[f.severity] ?? '\x1b[37m';
       const confPct = Math.round(f.confidence * 100);
 
-      lines.push(`  ${color}${bold}[${f.severity}]${reset} ${f.title} ${color}(${confPct}% confidence)${reset}`);
+      lines.push(
+        `  ${color}${bold}[${f.severity}]${reset} ${f.title} ${color}(${confPct}% confidence)${reset}`,
+      );
       lines.push(`         ${f.message}`);
-      if (f.file) lines.push(`         ${'\x1b[90m'}File: ${f.file}${f.line ? `:${f.line}` : ''}${reset}`);
+      if (f.file)
+        lines.push(`         ${'\x1b[90m'}File: ${f.file}${f.line ? `:${f.line}` : ''}${reset}`);
       if (f.suggestion) lines.push(`         ${'\x1b[2m'}Fix: ${f.suggestion}${reset}`);
       lines.push('');
     }

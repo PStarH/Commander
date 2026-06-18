@@ -1,9 +1,5 @@
 import { Router } from 'express';
-import {
-  selectReasoningMode,
-  confidenceToAction,
-  buildReasoningConfig,
-} from './reasoningConfig';
+import { selectReasoningMode, confidenceToAction, buildReasoningConfig } from './reasoningConfig';
 
 export function createReasoningConfigRouter(): Router {
   const router = Router();

@@ -25,9 +25,7 @@ export default function App() {
   } = useWarRoom();
 
   const agentNameById = useMemo(() => {
-    return new Map(
-      (snapshot?.agents ?? []).map(a => [a.agentId, a.agentName])
-    );
+    return new Map((snapshot?.agents ?? []).map((a) => [a.agentId, a.agentName]));
   }, [snapshot?.agents]);
 
   return (
@@ -37,7 +35,9 @@ export default function App() {
         {error && (
           <div className="banner error">
             <span>{error}</span>
-            <button type="button" className="banner-close" onClick={dismissError}>×</button>
+            <button type="button" className="banner-close" onClick={dismissError}>
+              ×
+            </button>
           </div>
         )}
 
@@ -67,10 +67,7 @@ export default function App() {
                 />
               }
             />
-            <Route
-              path="/agents"
-              element={<AgentsPage agents={snapshot.agents} />}
-            />
+            <Route path="/agents" element={<AgentsPage agents={snapshot.agents} />} />
             <Route
               path="/missions"
               element={
@@ -98,11 +95,7 @@ export default function App() {
             <Route
               path="/memory"
               element={
-                <MemoryPage
-                  items={memoryItems}
-                  overview={memoryOverview}
-                  onSearch={searchMemory}
-                />
+                <MemoryPage items={memoryItems} overview={memoryOverview} onSearch={searchMemory} />
               }
             />
             <Route

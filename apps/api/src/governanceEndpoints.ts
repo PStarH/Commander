@@ -9,7 +9,7 @@ import {
   RiskScoreCalculator,
   GovernanceCheckpoint,
   CheckpointStats,
-  RiskFactor
+  RiskFactor,
 } from './governanceCheckpoint';
 import { MissionGovernanceMode, MissionRiskLevel } from '@commander/core';
 
@@ -36,12 +36,12 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
       riskLevel,
       riskFactors,
       approvers,
-      timeout
+      timeout,
     } = req.body;
 
     if (!missionId || !taskId || !agentId || !taskDescription) {
       return res.status(400).json({
-        error: 'Missing required fields: missionId, taskId, agentId, taskDescription'
+        error: 'Missing required fields: missionId, taskId, agentId, taskDescription',
       });
     }
 
@@ -57,7 +57,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
         riskLevel || 'LOW',
         riskFactors || [],
         approvers || [],
-        timeout
+        timeout,
       );
 
       res.status(201).json(checkpoint);
@@ -91,12 +91,12 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
       checkpoints = checkpointManager.getPendingForApprover(approverId as string);
     } else if (missionId) {
       checkpoints = checkpointManager.getPendingByMission(missionId as string);
-} else {
-       checkpoints = checkpointManager.getAll();
-     }
+    } else {
+      checkpoints = checkpointManager.getAll();
+    }
 
     if (status) {
-      checkpoints = checkpoints.filter(c => c.status === status);
+      checkpoints = checkpoints.filter((c) => c.status === status);
     }
 
     res.json({ checkpoints, count: checkpoints.length });
@@ -114,12 +114,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
     }
 
     try {
-      const checkpoint = checkpointManager.approve(
-        req.params.id,
-        reviewerId,
-        reason,
-        conditions
-      );
+      const checkpoint = checkpointManager.approve(req.params.id, reviewerId, reason, conditions);
       res.json(checkpoint);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
@@ -138,11 +133,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
     }
 
     try {
-      const checkpoint = checkpointManager.reject(
-        req.params.id,
-        reviewerId,
-        reason
-      );
+      const checkpoint = checkpointManager.reject(req.params.id, reviewerId, reason);
       res.json(checkpoint);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
@@ -158,7 +149,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
 
     if (!type || !content || !source) {
       return res.status(400).json({
-        error: 'Missing required fields: type, content, source'
+        error: 'Missing required fields: type, content, source',
       });
     }
 
@@ -167,7 +158,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
         type,
         timestamp: timestamp || new Date().toISOString(),
         content,
-        source
+        source,
       });
       res.json(checkpoint);
     } catch (error) {
@@ -183,7 +174,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
     const expired = checkpointManager.checkExpirations();
     res.json({
       message: `Processed ${expired.length} expired checkpoints`,
-      expired
+      expired,
     });
   });
 
@@ -206,7 +197,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
 
     if (!riskLevel || !operations) {
       return res.status(400).json({
-        error: 'Missing required fields: riskLevel, operations'
+        error: 'Missing required fields: riskLevel, operations',
       });
     }
 
@@ -214,7 +205,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
       governanceMode || 'SINGLE',
       riskLevel,
       operations,
-      dataSensitivity || 'internal'
+      dataSensitivity || 'internal',
     );
 
     const level = RiskScoreCalculator.scoreToLevel(score);
@@ -224,7 +215,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
       riskLevel: level,
       governanceMode: governanceMode || 'SINGLE',
       operations,
-      dataSensitivity: dataSensitivity || 'internal'
+      dataSensitivity: dataSensitivity || 'internal',
     });
   });
 

@@ -128,7 +128,7 @@ describe('DeadLetterQueue', () => {
     const dlq2 = new DeadLetterQueue(TEST_DIR);
     const stats = dlq2.getStats();
     expect(stats.length).toBeGreaterThanOrEqual(2);
-    const execStat = stats.find(s => s.category === 'execution');
+    const execStat = stats.find((s) => s.category === 'execution');
     expect(execStat?.count).toBe(2);
   });
 

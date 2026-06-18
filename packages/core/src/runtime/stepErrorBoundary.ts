@@ -9,6 +9,7 @@
  */
 import { DeadLetterQueue, type DeadLetterEntry, type DLQCategory } from './deadLetterQueue';
 import { classifyLLMError, computeBackoff, type ErrorClass } from './llmRetry';
+import type { Reflexion, ReflexionContext, ReflexionGenerator } from './reflexionGenerator';
 
 export type RecoveryStrategy = 'retry' | 'fallback' | 'skip' | 'abort';
 
@@ -43,6 +44,7 @@ export class StepErrorBoundary {
   private runId: string;
   private agentId: string;
   private missionId?: string;
+  private reflexionGenerator: ReflexionGenerator | undefined;
 
   constructor(
     runId: string,
@@ -50,12 +52,14 @@ export class StepErrorBoundary {
     dlq: DeadLetterQueue,
     missionId?: string,
     config?: Partial<ErrorBoundaryConfig>,
+    reflexionGenerator?: ReflexionGenerator,
   ) {
     this.runId = runId;
     this.agentId = agentId;
     this.missionId = missionId;
     this.dlq = dlq;
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.reflexionGenerator = reflexionGenerator;
   }
 
   async execute<T>(
@@ -70,11 +74,14 @@ export class StepErrorBoundary {
       onRetry?: (attempt: number, error: string) => void;
       /** Called when the operation is skipped */
       onSkip?: (error: string) => void;
+      /** Called when a structured reflexion is generated before a retry. Async-safe. */
+      onReflexion?: (reflexion: Reflexion, ctx: ReflexionContext) => void | Promise<void>;
     },
   ): Promise<ErrorBoundaryResult<T>> {
     let lastError = '';
     let lastErrorClass: ErrorClass = 'unknown';
     let attempts = 0;
+    const reflexionHistory: Reflexion[] = [];
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
       attempts++;
@@ -86,36 +93,103 @@ export class StepErrorBoundary {
         lastError = classified.message;
         lastErrorClass = classified.errorClass;
 
-        this.recordToDLQ(operationName, category, lastError, lastErrorClass, classified.retryable, attempt, options);
+        this.recordToDLQ(
+          operationName,
+          category,
+          lastError,
+          lastErrorClass,
+          classified.retryable,
+          attempt,
+          options,
+        );
 
         if (!classified.retryable) {
           const strategy = this.config.onPermanent;
           if (strategy === 'abort') {
-            return { success: false, error: lastError, errorClass: lastErrorClass, attempts, recovered: false };
+            return {
+              success: false,
+              error: lastError,
+              errorClass: lastErrorClass,
+              attempts,
+              recovered: false,
+            };
           }
           if (strategy === 'skip') {
             options?.onSkip?.(lastError);
-            return { success: false, error: lastError, errorClass: lastErrorClass, attempts, recovered: false };
+            return {
+              success: false,
+              error: lastError,
+              errorClass: lastErrorClass,
+              attempts,
+              recovered: false,
+            };
           }
           if (strategy === 'fallback') {
-            return { success: false, error: lastError, errorClass: lastErrorClass, attempts, recovered: false };
+            return {
+              success: false,
+              error: lastError,
+              errorClass: lastErrorClass,
+              attempts,
+              recovered: false,
+            };
           }
         }
 
         if (attempt < this.config.maxRetries) {
           options?.onRetry?.(attempt, lastError);
-          const delayMs = classified.retryAfter ?? computeBackoff(attempt, this.config.retryDelayMs);
-          await new Promise(r => setTimeout(r, delayMs));
+
+          // Best-effort: generate a structured reflexion before the backoff
+          // so the next attempt can receive a graded failure cause. The
+          // generator may run an LLM call; any failure is swallowed because
+          // reflexion is advisory and must not break the retry path.
+          if (this.reflexionGenerator && options?.onReflexion) {
+            try {
+              const reflexionCtx: ReflexionContext = {
+                goal: '',
+                attemptedAction: operationName,
+                actionResult: '',
+                error: lastError,
+                errorClass: lastErrorClass,
+                attemptNumber: attempts + 1,
+                previousReflexions: [...reflexionHistory],
+              };
+              const reflexion = await this.reflexionGenerator.generate(reflexionCtx);
+              reflexionHistory.push(reflexion);
+              await options.onReflexion(reflexion, reflexionCtx);
+            } catch {
+              // Reflexion is best-effort: never let a generator failure
+              // block the retry path.
+            }
+          }
+
+          const delayMs =
+            classified.retryAfter ?? computeBackoff(attempt, this.config.retryDelayMs);
+          await new Promise((r) => {
+            const t = setTimeout(r, delayMs);
+            t.unref();
+          });
         }
       }
     }
 
     const strategy = this.config.onExhausted;
     if (strategy === 'abort') {
-      return { success: false, error: lastError, errorClass: lastErrorClass, attempts, recovered: false };
+      return {
+        success: false,
+        error: lastError,
+        errorClass: lastErrorClass,
+        attempts,
+        recovered: false,
+      };
     }
     options?.onSkip?.(lastError);
-    return { success: false, error: lastError, errorClass: lastErrorClass, attempts, recovered: false };
+    return {
+      success: false,
+      error: lastError,
+      errorClass: lastErrorClass,
+      attempts,
+      recovered: false,
+    };
   }
 
   private recordToDLQ(

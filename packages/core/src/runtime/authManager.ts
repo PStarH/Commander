@@ -9,6 +9,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
+import { getSecurityAuditLogger } from '../security/securityAuditLogger';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -55,6 +56,11 @@ const KEY_BYTES = 32; // 256-bit API keys
 
 export class AuthManager {
   private users: Map<string, AuthUser> = new Map();
+  private idIndex: Map<string, AuthUser> = new Map();
+  /** Rate limiting: track failed auth attempts per IP/session */
+  private failedAttempts: Map<string, { count: number; lastAttempt: number }> = new Map();
+  private static readonly MAX_FAILED_ATTEMPTS = 10;
+  private static readonly RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 
   constructor() {
     this.load();
@@ -77,6 +83,7 @@ export class AuthManager {
       enabled: true,
     };
     this.users.set(username, user);
+    this.idIndex.set(user.id, user);
     this.save();
     getGlobalLogger().info('AuthManager', 'User created', { username, role });
     return user;
@@ -87,27 +94,34 @@ export class AuthManager {
   }
 
   getUserById(id: string): AuthUser | undefined {
-    return Array.from(this.users.values()).find(u => u.id === id);
+    return this.idIndex.get(id);
   }
 
-  updateUser(username: string, updates: { role?: AuthRole; enabled?: boolean; username?: string }): AuthUser | null {
+  updateUser(
+    username: string,
+    updates: { role?: AuthRole; enabled?: boolean; username?: string },
+  ): AuthUser | null {
     const user = this.users.get(username);
     if (!user) return null;
     if (updates.role) user.role = updates.role;
     if (updates.enabled !== undefined) user.enabled = updates.enabled;
     user.updatedAt = new Date().toISOString();
     this.save();
-    getGlobalLogger().info('AuthManager', 'User updated', { username, updates: Object.keys(updates) });
+    getGlobalLogger().info('AuthManager', 'User updated', {
+      username,
+      updates: Object.keys(updates),
+    });
     return user;
   }
 
   deleteUser(username: string): boolean {
-    const existed = this.users.delete(username);
-    if (existed) {
-      this.save();
-      getGlobalLogger().info('AuthManager', 'User deleted', { username });
-    }
-    return existed;
+    const user = this.users.get(username);
+    if (!user) return false;
+    this.users.delete(username);
+    this.idIndex.delete(user.id);
+    this.save();
+    getGlobalLogger().info('AuthManager', 'User deleted', { username });
+    return true;
   }
 
   listUsers(): AuthUser[] {
@@ -116,7 +130,11 @@ export class AuthManager {
 
   // ── API Key Management ───────────────────────────────────────────
 
-  generateApiKey(username: string, keyName: string = 'default', expiresInDays?: number): { rawKey: string; entry: ApiKeyEntry } {
+  generateApiKey(
+    username: string,
+    keyName: string = 'default',
+    expiresInDays?: number,
+  ): { rawKey: string; entry: ApiKeyEntry } {
     const user = this.users.get(username);
     if (!user) throw new Error(`User not found: ${username}`);
     if (!user.enabled) throw new Error(`User disabled: ${username}`);
@@ -142,10 +160,15 @@ export class AuthManager {
     return { rawKey, entry };
   }
 
-  rotateApiKey(username: string, keyHash: string, keyName?: string, expiresInDays?: number): { rawKey: string; entry: ApiKeyEntry } | null {
+  rotateApiKey(
+    username: string,
+    keyHash: string,
+    keyName?: string,
+    expiresInDays?: number,
+  ): { rawKey: string; entry: ApiKeyEntry } | null {
     const user = this.users.get(username);
     if (!user) return null;
-    const idx = user.apiKeys.findIndex(k => k.keyHash === keyHash);
+    const idx = user.apiKeys.findIndex((k) => k.keyHash === keyHash);
     if (idx === -1) return null;
     user.apiKeys.splice(idx, 1);
     this.save();
@@ -155,7 +178,7 @@ export class AuthManager {
   revokeApiKey(username: string, keyHash: string): boolean {
     const user = this.users.get(username);
     if (!user) return false;
-    const idx = user.apiKeys.findIndex(k => k.keyHash === keyHash);
+    const idx = user.apiKeys.findIndex((k) => k.keyHash === keyHash);
     if (idx === -1) return false;
     user.apiKeys.splice(idx, 1);
     user.updatedAt = new Date().toISOString();
@@ -172,22 +195,72 @@ export class AuthManager {
 
   /**
    * Authenticate a raw API key. Returns the user and role if valid.
-   * The raw key is hashed and compared against stored hashes.
+   * The raw key is hashed and compared against stored hashes using
+   * timing-safe comparison to prevent timing attacks.
    */
   authenticate(rawKey: string): { user: AuthUser; role: AuthRole } | null {
+    const audit = getSecurityAuditLogger();
+
+    // Rate limiting: check failed attempts
+    const rateLimitKey = 'global'; // In a networked context, use IP address
+    const attempts = this.failedAttempts.get(rateLimitKey);
+    if (attempts && attempts.count >= AuthManager.MAX_FAILED_ATTEMPTS) {
+      const elapsed = Date.now() - attempts.lastAttempt;
+      if (elapsed < AuthManager.RATE_LIMIT_WINDOW_MS) {
+        getGlobalLogger().warn('AuthManager', 'Rate limit exceeded for authentication', {
+          attempts: attempts.count,
+        });
+        audit.logAuthRateLimit('AuthManager', `Rate limit exceeded (${attempts.count} attempts)`, {
+          attempts: attempts.count,
+        });
+        return null;
+      }
+      // Reset after window expires
+      this.failedAttempts.delete(rateLimitKey);
+    }
+
     const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+    const keyHashBuf = Buffer.from(keyHash, 'hex');
     for (const user of this.users.values()) {
       if (!user.enabled) continue;
-      const match = user.apiKeys.find(k => {
-        if (k.keyHash !== keyHash) return false;
+      const match = user.apiKeys.find((k) => {
+        // Timing-safe comparison: constant-time regardless of where mismatch occurs
+        if (k.keyHash.length !== keyHash.length) return false;
+        try {
+          if (!crypto.timingSafeEqual(Buffer.from(k.keyHash, 'hex'), keyHashBuf)) return false;
+        } catch {
+          return false;
+        }
         if (k.expiresAt && new Date(k.expiresAt) < new Date()) return false;
         return true;
       });
       if (match) {
+        // Clear failed attempts on success
+        this.failedAttempts.delete(rateLimitKey);
         match.lastUsedAt = new Date().toISOString();
+        this.save();
+        audit.logAuthSuccess('AuthManager', `User authenticated: ${user.username}`, {
+          username: user.username,
+          role: user.role,
+          keyName: match.name,
+        });
         return { user, role: user.role };
       }
     }
+
+    // Track failed attempt
+    const current = this.failedAttempts.get(rateLimitKey);
+    const newCount = (current?.count ?? 0) + 1;
+    this.failedAttempts.set(rateLimitKey, {
+      count: newCount,
+      lastAttempt: Date.now(),
+    });
+
+    audit.logAuthFailure('AuthManager', 'Invalid API key presented', {
+      keyPrefix: rawKey.slice(0, 4) + '...',
+      failedAttempts: newCount,
+    });
+
     return null;
   }
 
@@ -227,6 +300,7 @@ export class AuthManager {
       if (data.users && Array.isArray(data.users)) {
         for (const user of data.users) {
           this.users.set(user.username, user);
+          this.idIndex.set(user.id, user);
         }
       }
     } catch (err) {

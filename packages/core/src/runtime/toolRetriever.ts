@@ -17,31 +17,163 @@
  */
 import type { ToolDefinition } from './types';
 const TOOL_RELEVANCE_KEYWORDS: Record<string, string[]> = {
-  web_search: ['search web', 'search internet', 'look up', 'find online', 'google', 'what is', 'who is', 'web search', 'latest', 'news', 'current'],
+  web_search: [
+    'search web',
+    'search internet',
+    'look up',
+    'find online',
+    'google',
+    'what is',
+    'who is',
+    'web search',
+    'latest',
+    'news',
+    'current',
+  ],
   web_fetch: ['fetch url', 'get webpage', 'read url', 'http get', 'download page', 'scrape'],
   browser_search: ['browse', 'duckduckgo', 'search browser', 'navigate browser'],
   browser_fetch: ['browser fetch', 'render page', 'get page content', 'javascript render'],
   file_read: ['read file', 'open file', 'view file', 'cat file', 'show file content', 'get file'],
   file_write: ['write file', 'create file', 'save file', 'output to file', 'put file'],
-  file_edit: ['edit file', 'modify file', 'update file', 'change file', 'patch file', 'replace in file', 'edit', 'modify', 'update config'],
-  file_search: ['search files', 'find file', 'glob', 'locate file', 'search directory', 'list files'],
+  file_edit: [
+    'edit file',
+    'modify file',
+    'update file',
+    'change file',
+    'patch file',
+    'replace in file',
+    'edit',
+    'modify',
+    'update config',
+  ],
+  file_search: [
+    'search files',
+    'find file',
+    'glob',
+    'locate file',
+    'search directory',
+    'list files',
+  ],
   file_list: ['list directory', 'ls', 'dir', 'show directory', 'enumerate'],
-  python_execute: ['run python', 'execute python', 'python script', 'calculate', 'compute', 'analyze data', 'plot'],
-  shell_execute: ['run command', 'execute shell', 'terminal', 'bash', 'zsh', 'npm', 'npx', 'git', 'install', 'build'],
+  python_execute: [
+    'run python',
+    'execute python',
+    'python script',
+    'calculate',
+    'compute',
+    'analyze data',
+    'plot',
+  ],
+  shell_execute: [
+    'run command',
+    'execute shell',
+    'terminal',
+    'bash',
+    'zsh',
+    'npm',
+    'npx',
+    'git',
+    'install',
+    'build',
+  ],
   memory_store: ['remember', 'save memory', 'store memory', 'record'],
-  memory_recall: ['recall', 'retrieve memory', 'search memory', 'remember', 'what did i', 'previous'],
+  memory_recall: [
+    'recall',
+    'retrieve memory',
+    'search memory',
+    'remember',
+    'what did i',
+    'previous',
+  ],
   memory_list: ['list memories', 'show memories', 'browse memory'],
-  git: ['git', 'commit', 'push', 'pull', 'branch', 'merge', 'version control', 'repository', 'repo'],
+  git: [
+    'git',
+    'commit',
+    'push',
+    'pull',
+    'branch',
+    'merge',
+    'version control',
+    'repository',
+    'repo',
+  ],
   agent: ['delegate', 'sub-agent', 'subagent', 'spawn agent', 'fork', 'parallel task'],
-  execute_script: ['run script', 'execute script', 'script', 'run js', 'run ts', 'javascript', 'typescript', 'node script'],
-  vision_analyze: ['image', 'picture', 'photo', 'screenshot', 'visual', 'analyze image', 'describe image', 'ocr', 'what is in this image'],
+  execute_script: [
+    'run script',
+    'execute script',
+    'script',
+    'run js',
+    'run ts',
+    'javascript',
+    'typescript',
+    'node script',
+  ],
+  vision_analyze: [
+    'image',
+    'picture',
+    'photo',
+    'screenshot',
+    'visual',
+    'analyze image',
+    'describe image',
+    'ocr',
+    'what is in this image',
+  ],
   pdf_extract: ['pdf', 'extract pdf', 'read pdf', 'parse pdf', 'pdf text', 'pdf content'],
-  screenshot_capture: ['screenshot', 'capture screen', 'take screenshot', 'screen capture', 'grab screen'],
-  code_search: ['search code', 'find code', 'grep code', 'code search', 'search repository', 'find function', 'find class', 'ripgrep', 'find', 'search', 'locate', 'todo', 'fixme', 'hack', 'pattern', 'comment', 'count'],
+  screenshot_capture: [
+    'screenshot',
+    'capture screen',
+    'take screenshot',
+    'screen capture',
+    'grab screen',
+  ],
+  code_search: [
+    'search code',
+    'find code',
+    'grep code',
+    'code search',
+    'search repository',
+    'find function',
+    'find class',
+    'ripgrep',
+    'find',
+    'search',
+    'locate',
+    'todo',
+    'fixme',
+    'hack',
+    'pattern',
+    'comment',
+    'count',
+  ],
   apply_patch: ['patch', 'apply patch', 'diff', 'unified diff', 'code patch', 'apply diff'],
-  refine_code: ['refine', 'improve code', 'refactor', 'clean up code', 'code quality', 'code review', 'optimize code'],
-  verify_answer: ['verify', 'check answer', 'validate answer', 'verify answer', 'format answer', 'answer quality'],
-  fix_code: ['fix code', 'debug', 'fix error', 'fix bug', 'code fix', 'repair code', 'syntax error', 'runtime error'],
+  refine_code: [
+    'refine',
+    'improve code',
+    'refactor',
+    'clean up code',
+    'code quality',
+    'code review',
+    'optimize code',
+  ],
+  verify_answer: [
+    'verify',
+    'check answer',
+    'validate answer',
+    'verify answer',
+    'format answer',
+    'answer quality',
+  ],
+  fix_code: [
+    'fix code',
+    'debug',
+    'fix error',
+    'fix bug',
+    'code fix',
+    'repair code',
+    'syntax error',
+    'runtime error',
+  ],
 };
 
 const TOOL_CATEGORIES: Record<string, string> = {
@@ -128,7 +260,9 @@ function refineScoresWithHistory(
     }
   }
 
-  for (const [toolName, score] of scores.entries()) {
+  const scoreEntries = Array.from(scores.entries());
+  for (let i = 0; i < scoreEntries.length; i++) {
+    const [toolName, score] = scoreEntries[i];
     const uses = usageCount.get(toolName) ?? 0;
     const errors = errorCount.get(toolName) ?? 0;
     refined.set(toolName, score + Math.min(uses, 5) * 1.5 - errors * 3);
@@ -164,19 +298,20 @@ export function selectTools(
   let scores = scoreToolsByGoal(goal, availableTools);
   scores = refineScoresWithHistory(scores, recentCalls);
 
+  const availableSet = new Set(availableTools);
   const result = new Set<string>();
 
   for (const tool of alwaysInclude) {
-    if (availableTools.includes(tool)) {
+    if (availableSet.has(tool)) {
       result.add(tool);
     }
   }
 
-  const sorted = [...scores.entries()].sort((a, b) => b[1] - a[1]);
+  const sorted = Array.from(scores.entries()).sort((a, b) => b[1] - a[1]);
 
-  for (const [toolName] of sorted) {
+  for (let i = 0; i < sorted.length; i++) {
     if (result.size >= maxTools) break;
-    result.add(toolName);
+    result.add(sorted[i][0]);
   }
 
   if (result.size < minTools) {
@@ -218,9 +353,7 @@ export function getToolCategory(toolName: string): string {
  *
  * The order is: category priority (ascending) → tool name (alphabetical).
  */
-export function sortToolDefinitionsForCache(
-  defs: ToolDefinition[],
-): ToolDefinition[] {
+export function sortToolDefinitionsForCache(defs: ToolDefinition[]): ToolDefinition[] {
   return [...defs].sort((a, b) => {
     const catA = CATEGORY_SORT_PRIORITY[TOOL_CATEGORIES[a.name] ?? 'other'] ?? 99;
     const catB = CATEGORY_SORT_PRIORITY[TOOL_CATEGORIES[b.name] ?? 'other'] ?? 99;
@@ -234,4 +367,218 @@ export function getToolRelevanceScores(
   availableTools: string[],
 ): Map<string, number> {
   return scoreToolsByGoal(goal, availableTools);
+}
+
+// ============================================================================
+// Two-Tier Tool Loading (Lazy Schema Loading)
+//
+// Research (arXiv:2604.21816): MCP eager schema injection costs 10k-60k tokens
+// per turn. Two-tier loading reduces this by ~80-95%.
+//
+// Tier 1 (Active): Full JSON schema injected as LLM tools (top-N relevant)
+// Tier 2 (Registry): Name + one-line description in system prompt (rest)
+//
+// The LLM can request Tier 2 tools on-demand via the `request_tool` tool.
+// ============================================================================
+
+export interface ToolTier {
+  /** Tools with full schema (injected as LLM tools array) */
+  active: ToolDefinition[];
+  /** Tools with compact summary only (injected as text in system prompt) */
+  registry: Array<{ name: string; description: string; category: string }>;
+}
+
+/**
+ * Build a two-tier tool layout for a given goal.
+ *
+ * @param goal - The current task goal
+ * @param allTools - All available tool definitions
+ * @param maxActive - Maximum tools to include with full schema (default: 8)
+ * @param recentToolCalls - Recent tool calls for history-aware scoring
+ * @returns Two-tier layout with active (full schema) and registry (compact) tools
+ */
+export function buildTwoTierTools(
+  goal: string,
+  allTools: ToolDefinition[],
+  maxActive: number = 8,
+  recentToolCalls?: Array<{ name: string; error?: string }>,
+): ToolTier {
+  if (allTools.length <= maxActive) {
+    return {
+      active: sortToolDefinitionsForCache(allTools),
+      registry: [],
+    };
+  }
+
+  const toolNames = allTools.map((t) => t.name);
+  const scores = scoreToolsByGoal(goal, toolNames);
+  const refined = recentToolCalls ? refineScoresWithHistory(scores, recentToolCalls) : scores;
+
+  const sorted = Array.from(refined.entries()).sort((a, b) => b[1] - a[1]);
+
+  const isCodingTask = /\b(code|debug|fix|build|compile|test|refactor|implement|deploy|run|execute|install)\b/i.test(goal);
+  const alwaysInclude = isCodingTask ? ['file_read', 'shell_execute'] : ['file_read'];
+  const activeNames = new Set<string>();
+  const registryEntries: ToolTier['registry'] = [];
+
+  for (let i = 0; i < alwaysInclude.length; i++) {
+    if (toolNames.includes(alwaysInclude[i])) activeNames.add(alwaysInclude[i]);
+  }
+
+  for (let i = 0; i < sorted.length; i++) {
+    if (activeNames.size >= maxActive) break;
+    activeNames.add(sorted[i][0]);
+  }
+
+  const toolMap = new Map(allTools.map((t) => [t.name, t]));
+  const active: ToolDefinition[] = [];
+  const activeNamesArray = Array.from(activeNames);
+  for (let i = 0; i < activeNamesArray.length; i++) {
+    const tool = toolMap.get(activeNamesArray[i]);
+    if (tool) active.push(tool);
+  }
+
+  for (const tool of allTools) {
+    if (!activeNames.has(tool.name)) {
+      registryEntries.push({
+        name: tool.name,
+        description: truncateDescription(tool.description, 80),
+        category: TOOL_CATEGORIES[tool.name] ?? 'other',
+      });
+    }
+  }
+
+  return {
+    active: sortToolDefinitionsForCache(active),
+    registry: registryEntries.sort((a, b) => {
+      const catA = CATEGORY_SORT_PRIORITY[a.category] ?? 99;
+      const catB = CATEGORY_SORT_PRIORITY[b.category] ?? 99;
+      if (catA !== catB) return catA - catB;
+      return a.name.localeCompare(b.name);
+    }),
+  };
+}
+
+const CONTEXT_PROMOTED_TOOLS: Array<{ pattern: RegExp; tools: string[] }> = [
+  { pattern: /\b(git|commit|push|pull|merge|branch|diff)\b/i, tools: ['git'] },
+  { pattern: /\b(search|find|look|query|grep)\b/i, tools: ['code_search', 'web_search'] },
+  { pattern: /\b(deploy|docker|container|k8s|kubernetes)\b/i, tools: ['shell_execute'] },
+  { pattern: /\b(browse|website|url|http|scrape)\b/i, tools: ['browser'] },
+];
+
+export function detectContextPromotions(
+  goal: string,
+  registryTools: ToolTier['registry'],
+): string[] {
+  const registryNames = new Set(registryTools.map((t) => t.name));
+  const promotions: string[] = [];
+
+  for (const { pattern, tools } of CONTEXT_PROMOTED_TOOLS) {
+    if (pattern.test(goal)) {
+      for (const toolName of tools) {
+        if (registryNames.has(toolName) && !promotions.includes(toolName)) {
+          promotions.push(toolName);
+        }
+      }
+    }
+  }
+
+  return promotions;
+}
+
+/**
+ * Build a compact text summary of the tool registry (Tier 2 tools).
+ * This is injected into the system prompt so the LLM knows what tools exist
+ * without paying the full schema cost.
+ */
+export function buildRegistrySummary(registry: ToolTier['registry']): string {
+  if (registry.length === 0) return '';
+
+  const lines: string[] = [
+    '## Additional Tools (available on request)',
+    'The following tools are available but not loaded. To use one, call `request_tool` with the tool name.',
+    '',
+  ];
+
+  // Group by category
+  const byCategory = new Map<string, typeof registry>();
+  for (const tool of registry) {
+    const cat = tool.category;
+    if (!byCategory.has(cat)) byCategory.set(cat, []);
+    byCategory.get(cat)!.push(tool);
+  }
+
+  const categoryEntries = Array.from(byCategory.entries());
+  for (let i = 0; i < categoryEntries.length; i++) {
+    const [category, tools] = categoryEntries[i];
+    lines.push(`### ${category}`);
+    for (let j = 0; j < tools.length; j++) {
+      lines.push(`- **${tools[j].name}**: ${tools[j].description}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Truncate a tool description to a maximum length, preserving word boundaries.
+ */
+function truncateDescription(desc: string, maxLen: number): string {
+  if (desc.length <= maxLen) return desc;
+  const truncated = desc.substring(0, maxLen);
+  const lastSpace = truncated.lastIndexOf(' ');
+  return (lastSpace > maxLen * 0.6 ? truncated.substring(0, lastSpace) : truncated) + '…';
+}
+
+/**
+ * Estimate the token cost of tool schemas.
+ * Useful for logging and metrics.
+ */
+export function estimateToolTokenCost(tools: ToolDefinition[]): number {
+  let totalChars = 0;
+  for (const tool of tools) {
+    totalChars += tool.name?.length ?? 0;
+    totalChars += tool.description?.length ?? 0;
+    totalChars += JSON.stringify(tool.inputSchema ?? {}).length;
+    // Examples cost
+    if (tool.examples) {
+      for (const ex of tool.examples) {
+        totalChars += JSON.stringify(ex).length;
+      }
+    }
+  }
+  // Rough estimate: ~4 chars per token for JSON content
+  return Math.ceil(totalChars / 4);
+}
+
+export interface TwoTierMetrics {
+  activeCount: number;
+  registryCount: number;
+  activeTokenEstimate: number;
+  registryTokenEstimate: number;
+  savingsPercent: number;
+}
+
+/**
+ * Calculate metrics for a two-tier tool layout.
+ * Useful for logging cost savings.
+ */
+export function calculateTierMetrics(tier: ToolTier, allToolsCount: number): TwoTierMetrics {
+  const activeTokens = estimateToolTokenCost(tier.active);
+  // Registry is text, ~20 tokens per tool entry
+  const registryTokens = tier.registry.length * 20;
+  // What it would cost if we loaded ALL tools with full schema
+  const fullSchemaEstimate = activeTokens * (allToolsCount / Math.max(tier.active.length, 1));
+
+  return {
+    activeCount: tier.active.length,
+    registryCount: tier.registry.length,
+    activeTokenEstimate: activeTokens,
+    registryTokenEstimate: registryTokens,
+    savingsPercent:
+      fullSchemaEstimate > 0
+        ? Math.round((1 - (activeTokens + registryTokens) / fullSchemaEstimate) * 100)
+        : 0,
+  };
 }

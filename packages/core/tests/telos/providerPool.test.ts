@@ -16,7 +16,10 @@ class StreamingProvider implements LLMProvider {
   async *stream(_request: LLMRequest): AsyncIterable<LLMStreamChunk> {
     this.streamCount++;
     yield { contentDelta: 'hello ' };
-    yield { contentDelta: 'world', usage: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } };
+    yield {
+      contentDelta: 'world',
+      usage: { promptTokens: 2, completionTokens: 2, totalTokens: 4 },
+    };
     yield { done: true };
   }
 }
@@ -66,11 +69,17 @@ describe('ProviderPool', () => {
 
   it('tracks health after failures', async () => {
     const failingProvider = new MockLLMProvider('failing');
-    const mockCall = async () => { throw new Error('API error'); };
+    const mockCall = async () => {
+      throw new Error('API error');
+    };
     failingProvider.call = mockCall;
     pool.registerProvider(failingProvider);
 
-    const request = { model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'test' }], maxTokens: 100 };
+    const request = {
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: 'test' }],
+      maxTokens: 100,
+    };
 
     // Force failure of the failing provider 3 times by calling recordFailure directly
     pool.recoverProvider('failing', '*');
@@ -84,7 +93,7 @@ describe('ProviderPool', () => {
     }
 
     const statuses = pool.getHealthStatus();
-    const failingStatus = statuses.find(s => s.provider === 'failing');
+    const failingStatus = statuses.find((s) => s.provider === 'failing');
     // Should be degraded or down after failures
     expect(failingStatus).toBeDefined();
   });
@@ -94,20 +103,22 @@ describe('ProviderPool', () => {
     pool.registerProvider(provider);
     pool.recoverProvider('test', '*');
     const statuses = pool.getHealthStatus();
-    const healthy = statuses.find(s => s.provider === 'test' && s.status === 'healthy');
+    const healthy = statuses.find((s) => s.provider === 'test' && s.status === 'healthy');
     expect(healthy).toBeDefined();
   });
 
   it('executes provider-native streams and forwards chunks', async () => {
     const provider = new StreamingProvider();
     pool.registerProvider(provider);
-    pool.configureEndpoints([{ provider: 'streaming', modelId: '*', priority: 0, weight: 1, isEnabled: true }]);
+    pool.configureEndpoints([
+      { provider: 'streaming', modelId: '*', priority: 0, weight: 1, isEnabled: true },
+    ]);
 
     const chunks: string[] = [];
     const response = await pool.executeStreaming(
       { model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'stream' }], maxTokens: 100 },
       'eco',
-      chunk => chunks.push(chunk),
+      (chunk) => chunks.push(chunk),
     );
 
     expect(response.content).toBe('hello world');

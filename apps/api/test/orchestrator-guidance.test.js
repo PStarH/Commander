@@ -9,7 +9,11 @@ const {
 } = require('../../../packages/core/dist/index.js');
 const { runAgentStep } = require('../dist/orchestrator.js');
 
-function createRunContext({ includeGuidance = true, missionId = 'mission-api-spine', requestedAgentId = 'agent-builder' } = {}) {
+function createRunContext({
+  includeGuidance = true,
+  missionId = 'mission-api-spine',
+  requestedAgentId = 'agent-builder',
+} = {}) {
   const now = new Date('2026-03-24T00:00:00.000Z');
   const data = createSeedWarRoomData(now);
   const snapshot = getProjectWarRoomSnapshot(data, 'project-war-room', now);
@@ -24,7 +28,7 @@ function createRunContext({ includeGuidance = true, missionId = 'mission-api-spi
   const focusMission = slimSnapshot.focusMission;
   assert.ok(focusMission, 'focus mission should exist');
 
-  const agentRoster = data.agents.map(agent => ({
+  const agentRoster = data.agents.map((agent) => ({
     id: agent.id,
     projectId: agent.projectId,
     name: agent.name,
@@ -57,7 +61,7 @@ function createRunContext({ includeGuidance = true, missionId = 'mission-api-spi
     return baseContext;
   }
 
-  const requestedAgent = agentRoster.find(agent => agent.id === requestedAgentId);
+  const requestedAgent = agentRoster.find((agent) => agent.id === requestedAgentId);
   assert.ok(requestedAgent, 'requested agent should exist');
 
   return {
@@ -107,7 +111,7 @@ function createDeps(runContext, invokeModelImpl) {
 
 test('runAgentStep prefers framework guidance when run-context provides it', async () => {
   const runContext = createRunContext({ includeGuidance: true });
-  const { calls, deps } = createDeps(runContext, async args => {
+  const { calls, deps } = createDeps(runContext, async (args) => {
     assert.equal(args.invocationProfile.agentId, 'agent-builder');
     assert.equal(args.invocationProfile.disposition, 'REQUIRE_APPROVAL');
     assert.equal(args.invocationProfile.intent, 'PROPOSE');
@@ -125,7 +129,7 @@ test('runAgentStep prefers framework guidance when run-context provides it', asy
 
   const summary = await runAgentStep(
     { agentId: 'agent-builder', missionId: 'mission-api-spine' },
-    deps
+    deps,
   );
 
   assert.equal(summary, 'used guidance');
@@ -136,12 +140,16 @@ test('runAgentStep prefers framework guidance when run-context provides it', asy
   assert.equal(calls.postJson[0].body.message, 'request approval before execution');
   assert.match(calls.postJson[1].url, /\/projects\/project-war-room\/memory$/);
   assert.equal(calls.postJson[1].body.title, 'should not persist');
-  assert.equal(calls.patchJson.length, 0, 'manual proposal profile should not patch mission or agent state');
+  assert.equal(
+    calls.patchJson.length,
+    0,
+    'manual proposal profile should not patch mission or agent state',
+  );
 });
 
 test('runAgentStep falls back to local strategy/profile calculation when guidance is absent', async () => {
   const runContext = createRunContext({ includeGuidance: false });
-  const { calls, deps } = createDeps(runContext, async args => {
+  const { calls, deps } = createDeps(runContext, async (args) => {
     assert.equal(args.invocationProfile.agentId, 'agent-builder');
     assert.equal(args.invocationProfile.disposition, 'REQUIRE_APPROVAL');
     assert.equal(args.invocationProfile.intent, 'PROPOSE');
@@ -154,7 +162,7 @@ test('runAgentStep falls back to local strategy/profile calculation when guidanc
 
   const summary = await runAgentStep(
     { agentId: 'agent-builder', missionId: 'mission-api-spine' },
-    deps
+    deps,
   );
 
   assert.equal(summary, 'used fallback');
@@ -171,12 +179,17 @@ test('runAgentStep uses guidance invocation profile only when it matches the exe
     agentId: 'agent-scout',
     disposition: 'ALLOW_EXECUTION',
     intent: 'EXECUTE',
-    allowedOperations: ['READ_CONTEXT', 'WRITE_LOG', 'UPDATE_MISSION_STATUS', 'UPDATE_MISSION_FIELDS'],
+    allowedOperations: [
+      'READ_CONTEXT',
+      'WRITE_LOG',
+      'UPDATE_MISSION_STATUS',
+      'UPDATE_MISSION_FIELDS',
+    ],
     forbiddenOperations: [],
     rationale: ['mismatched profile should be ignored'],
   };
 
-  const { deps } = createDeps(runContext, async args => {
+  const { deps } = createDeps(runContext, async (args) => {
     assert.equal(args.invocationProfile.agentId, 'agent-builder');
     assert.equal(args.invocationProfile.disposition, 'REQUIRE_APPROVAL');
     assert.equal(args.invocationProfile.intent, 'PROPOSE');
@@ -186,7 +199,7 @@ test('runAgentStep uses guidance invocation profile only when it matches the exe
 
   const summary = await runAgentStep(
     { agentId: 'agent-builder', missionId: 'mission-api-spine' },
-    deps
+    deps,
   );
 
   assert.equal(summary, 'ignored mismatched profile');
@@ -218,7 +231,7 @@ test('runAgentStep write-back matrix allows all side effects for ALLOW_EXECUTION
     rationale: ['full execution rights for guarded mission'],
   };
 
-  const { calls, deps } = createDeps(runContext, async args => {
+  const { calls, deps } = createDeps(runContext, async (args) => {
     assert.equal(args.invocationProfile.disposition, 'ALLOW_EXECUTION');
     assert.equal(args.invocationProfile.intent, 'EXECUTE');
     assert.match(args.context, /effectiveIntent: EXECUTE/);
@@ -226,14 +239,16 @@ test('runAgentStep write-back matrix allows all side effects for ALLOW_EXECUTION
       summary: 'executed with full write-back rights',
       logs: ['dashboard mission progressing'],
       missionPatch: { status: 'DONE', objective: 'Ship dashboard polishing pass' },
-      decisions: [{ title: 'Dashboard rollout note', content: 'Persist the guarded execution outcome.' }],
+      decisions: [
+        { title: 'Dashboard rollout note', content: 'Persist the guarded execution outcome.' },
+      ],
       agentStatePatch: { summary: 'dashboard shipped', tags: ['dashboard', 'done'] },
     };
   });
 
   const summary = await runAgentStep(
     { agentId: 'agent-scout', missionId: 'mission-dashboard' },
-    deps
+    deps,
   );
 
   assert.equal(summary, 'executed with full write-back rights');
@@ -272,7 +287,7 @@ test('runAgentStep write-back matrix restricts PROPOSE_ONLY profiles to logs and
     rationale: ['proposal mode only'],
   };
 
-  const { calls, deps } = createDeps(runContext, async args => {
+  const { calls, deps } = createDeps(runContext, async (args) => {
     assert.equal(args.invocationProfile.disposition, 'PROPOSE_ONLY');
     assert.equal(args.invocationProfile.intent, 'PROPOSE');
     return {
@@ -286,7 +301,7 @@ test('runAgentStep write-back matrix restricts PROPOSE_ONLY profiles to logs and
 
   const summary = await runAgentStep(
     { agentId: 'agent-builder', missionId: 'mission-api-spine' },
-    deps
+    deps,
   );
 
   assert.equal(summary, 'proposal captured');
@@ -317,7 +332,7 @@ test('runAgentStep write-back matrix denies all write-backs for DENY profiles', 
     rationale: ['deny all write-backs'],
   };
 
-  const { calls, deps } = createDeps(runContext, async args => {
+  const { calls, deps } = createDeps(runContext, async (args) => {
     assert.equal(args.invocationProfile.disposition, 'DENY');
     assert.match(args.context, /allowedOperations: READ_CONTEXT/);
     return {
@@ -331,7 +346,7 @@ test('runAgentStep write-back matrix denies all write-backs for DENY profiles', 
 
   const summary = await runAgentStep(
     { agentId: 'agent-builder', missionId: 'mission-api-spine' },
-    deps
+    deps,
   );
 
   assert.equal(summary, 'denied execution');

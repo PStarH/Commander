@@ -10,13 +10,15 @@ import type { A2ADiscoveryManager } from '../mcp/a2aClient';
 
 const DEFINITION: ToolDefinition = {
   name: 'a2a_delegate',
-  description: 'Delegate a task to a remote A2A-compatible agent. Use this when a task requires specialized capabilities (research, deep analysis, code review) that another agent in the network can handle. Returns the remote agent\'s response.',
+  description:
+    "Delegate a task to a remote A2A-compatible agent. Use this when a task requires specialized capabilities (research, deep analysis, code review) that another agent in the network can handle. Returns the remote agent's response.",
   inputSchema: {
     type: 'object',
     properties: {
       agent: {
         type: 'string',
-        description: 'Label of the target A2A agent (e.g., "research-agent", "code-reviewer"). Use "list" to see available agents.',
+        description:
+          'Label of the target A2A agent (e.g., "research-agent", "code-reviewer"). Use "list" to see available agents.',
       },
       task: {
         type: 'string',
@@ -34,8 +36,21 @@ const DEFINITION: ToolDefinition = {
     required: ['agent', 'task'],
   },
   examples: [
-    { name: 'a2a_delegate', arguments: { agent: 'code-reviewer', task: 'Review the changes in src/runtime/ for potential issues' } },
-    { name: 'a2a_delegate', arguments: { agent: 'research-agent', task: 'Find best practices for implementing RAG', wait: true } },
+    {
+      name: 'a2a_delegate',
+      arguments: {
+        agent: 'code-reviewer',
+        task: 'Review the changes in src/runtime/ for potential issues',
+      },
+    },
+    {
+      name: 'a2a_delegate',
+      arguments: {
+        agent: 'research-agent',
+        task: 'Find best practices for implementing RAG',
+        wait: true,
+      },
+    },
   ],
   category: 'development',
 };
@@ -64,14 +79,18 @@ export class A2ADelegateTool implements Tool {
       if (agents.length === 0) {
         return 'No A2A agents are currently connected. Configure them in .commander.json under a2a.remoteAgents.';
       }
-      return agents.map(a =>
-        `- ${a.label}: ${a.card.name} (${a.url}) — ${a.card.description.slice(0, 100)}`
-      ).join('\n');
+      return agents
+        .map((a) => `- ${a.label}: ${a.card.name} (${a.url}) — ${a.card.description.slice(0, 100)}`)
+        .join('\n');
     }
 
     const agent = this.discoveryManager.getAgent(agentLabel);
     if (!agent) {
-      const available = this.discoveryManager.getAllAgents().map(a => a.label).join(', ') || 'none';
+      const available =
+        this.discoveryManager
+          .getAllAgents()
+          .map((a) => a.label)
+          .join(', ') || 'none';
       return `Unknown A2A agent "${agentLabel}". Available agents: ${available}. Use agent="list" to see details.`;
     }
 
@@ -94,8 +113,10 @@ export class A2ADelegateTool implements Tool {
 
       if (completed.status.state === 'COMPLETED') {
         const artifacts = completed.artifacts ?? [];
-        const texts = artifacts.flatMap(a =>
-          a.parts.filter(p => p.type === 'text').map(p => (p as { type: 'text'; text: string }).text)
+        const texts = artifacts.flatMap((a) =>
+          a.parts
+            .filter((p) => p.type === 'text')
+            .map((p) => (p as { type: 'text'; text: string }).text),
         );
         const resultText = texts.join('\n\n') || `Task completed with no output artifacts.`;
         return `[A2A "${agentLabel}" completed]\n\n${resultText.slice(0, 50000)}`;

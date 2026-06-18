@@ -13,16 +13,16 @@ import { v4 as uuidv4 } from 'uuid';
 // ============================================================================
 // Pattern Types
 // ============================================================================
-export type OrchestrationPattern = 
-  | 'orchestrator-worker'   // 中央控制器分配任务
-  | 'hierarchical'          // 树状层级管理
-  | 'swarm'                 // 去中心化自主选择
-  | 'pipeline';             // 线性管道处理
+export type OrchestrationPattern =
+  | 'orchestrator-worker' // 中央控制器分配任务
+  | 'hierarchical' // 树状层级管理
+  | 'swarm' // 去中心化自主选择
+  | 'pipeline'; // 线性管道处理
 
 export interface PatternConfig {
   type: OrchestrationPattern;
-  maxAgents?: number;       // 最大 agent 数量
-  consensusRequired?: boolean;  // 是否需要共识
+  maxAgents?: number; // 最大 agent 数量
+  consensusRequired?: boolean; // 是否需要共识
   conflictResolution?: '投票' | '仲裁' | '优先级' | '最后写优先';
 }
 
@@ -94,7 +94,12 @@ export interface MemoryMessage {
 
 export interface Decision {
   id: string;
-  type: 'task_delegation' | 'tool_call' | 'governance_approval' | 'pattern_switch' | 'conflict_resolution';
+  type:
+    | 'task_delegation'
+    | 'tool_call'
+    | 'governance_approval'
+    | 'pattern_switch'
+    | 'conflict_resolution';
   agentName: string;
   action: string;
   reasoning: string;
@@ -157,28 +162,28 @@ export class PatternSwitcher {
     complexity: 'simple' | 'moderate' | 'complex';
     uncertainty: 'low' | 'medium' | 'high';
     teamSize: number;
-    deadline: number | null;  // ms
+    deadline: number | null; // ms
   }): OrchestrationPattern {
     // 简单任务 + 低不确定性 → Pipeline / Orchestrator-Worker
     if (task.complexity === 'simple' && task.uncertainty === 'low') {
       return 'pipeline';
     }
-    
+
     // 中等复杂度 → Orchestrator-Worker
     if (task.complexity === 'moderate') {
       return 'orchestrator-worker';
     }
-    
+
     // 复杂 + 高不确定性 + 大团队 → Hierarchical
     if (task.complexity === 'complex' && task.teamSize > 5) {
       return 'hierarchical';
     }
-    
+
     // 探索性任务 → Swarm
     if (task.uncertainty === 'high') {
       return 'swarm';
     }
-    
+
     // 默认
     return 'orchestrator-worker';
   }
@@ -189,9 +194,9 @@ export class PatternSwitcher {
   static getPatternDescription(pattern: OrchestrationPattern): string {
     const descriptions: Record<OrchestrationPattern, string> = {
       'orchestrator-worker': '中央控制器(Orchestrator)分配任务给 Worker，Worker 汇报结果',
-      'hierarchical': '树状层级管理，Manager 管理 Sub-manager，Sub-manager 管理 Worker',
-      'swarm': '去中心化，Agent 间直接通信，自主协调，无单点故障',
-      'pipeline': '线性管道，阶段顺序执行，每阶段输出作为下阶段输入'
+      hierarchical: '树状层级管理，Manager 管理 Sub-manager，Sub-manager 管理 Worker',
+      swarm: '去中心化，Agent 间直接通信，自主协调，无单点故障',
+      pipeline: '线性管道，阶段顺序执行，每阶段输出作为下阶段输入',
     };
     return descriptions[pattern];
   }
@@ -222,7 +227,7 @@ export class PatternStateMachine {
         messages: [],
         decisions: [],
         createdAt: now,
-        lastUpdated: now
+        lastUpdated: now,
       },
       governanceMode: 'SINGLE',
       metadata: {
@@ -230,10 +235,10 @@ export class PatternStateMachine {
         version: 1,
         tags: [],
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
       },
       activePattern: this.config.pattern.type,
-      subagentResults: {}
+      subagentResults: {},
     };
   }
 
@@ -252,14 +257,14 @@ export class PatternStateMachine {
    * Find a transition by from/to
    */
   private findTransition(from: string, to: string): StateTransition | undefined {
-    return this.config.transitions.find(t => t.from === from && t.to === to);
+    return this.config.transitions.find((t) => t.from === from && t.to === to);
   }
 
   /**
    * Find all transitions from a state
    */
   private getTransitionsFrom(state: string): StateTransition[] {
-    return this.config.transitions.filter(t => t.from === state);
+    return this.config.transitions.filter((t) => t.from === state);
   }
 
   /**
@@ -289,26 +294,26 @@ export class PatternStateMachine {
   async transition(targetState: string): Promise<TransitionResult> {
     const transition = this.findTransition(this.currentState.currentStep, targetState);
     if (!transition) {
-      return { 
-        success: false, 
-        error: `No valid transition from ${this.currentState.currentStep} to ${targetState}` 
+      return {
+        success: false,
+        error: `No valid transition from ${this.currentState.currentStep} to ${targetState}`,
       };
     }
 
     // Check condition
     if (transition.condition && !(await transition.condition(this.currentState))) {
-      return { 
-        success: false, 
-        error: `Transition condition not satisfied for ${transition.id}` 
+      return {
+        success: false,
+        error: `Transition condition not satisfied for ${transition.id}`,
       };
     }
 
     // Governance check
     if (transition.metadata?.governanceRequired || this.currentState.governanceMode === 'MANUAL') {
       if (this.currentState.governanceMode === 'MANUAL') {
-        return { 
-          success: false, 
-          error: 'Governance approval required in MANUAL mode' 
+        return {
+          success: false,
+          error: 'Governance approval required in MANUAL mode',
         };
       }
     }
@@ -322,17 +327,17 @@ export class PatternStateMachine {
   async transitionConditional(): Promise<TransitionResult> {
     const targetState = await this.evaluateConditionalEdges();
     if (!targetState) {
-      return { 
-        success: false, 
-        error: `No conditional edge matched from ${this.currentState.currentStep}` 
+      return {
+        success: false,
+        error: `No conditional edge matched from ${this.currentState.currentStep}`,
       };
     }
 
     const transition = this.findTransition(this.currentState.currentStep, targetState);
     if (!transition) {
-      return { 
-        success: false, 
-        error: `Conditional transition defined but no matching transition to ${targetState}` 
+      return {
+        success: false,
+        error: `Conditional transition defined but no matching transition to ${targetState}`,
       };
     }
 
@@ -370,7 +375,7 @@ export class PatternStateMachine {
         action: `Transition: ${fromStep} → ${transition.to}`,
         reasoning: transition.metadata?.description || 'Standard transition',
         timestamp: Date.now(),
-        outcome: 'success'
+        outcome: 'success',
       });
 
       // Save to history
@@ -383,12 +388,12 @@ export class PatternStateMachine {
 
       return {
         success: true,
-        newState
+        newState,
       };
     } catch (error) {
       return {
         success: false,
-        error: `Transition failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        error: `Transition failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
       };
     }
   }
@@ -398,9 +403,9 @@ export class PatternStateMachine {
    */
   async switchPattern(newPattern: OrchestrationPattern): Promise<TransitionResult> {
     if (this.currentState.activePattern === newPattern) {
-      return { 
-        success: true, 
-        newState: this.currentState 
+      return {
+        success: true,
+        newState: this.currentState,
       };
     }
 
@@ -416,25 +421,25 @@ export class PatternStateMachine {
       action: `Pattern switch: ${oldPattern} → ${newPattern}`,
       reasoning: `PatternSwitcher.selectPattern() returned: ${PatternSwitcher.getPatternDescription(newPattern)}`,
       timestamp: Date.now(),
-      outcome: 'pending'
+      outcome: 'pending',
     });
 
     return {
       success: true,
-      newState: this.currentState
+      newState: this.currentState,
     };
   }
 
   /**
    * Add subagent result (for orchestrator-worker pattern)
    */
-  addSubagentResult(agentId: string, result: any): void {
+  addSubagentResult(agentId: string, result: unknown): void {
     if (!this.currentState.subagentResults) {
       this.currentState.subagentResults = {};
     }
     this.currentState.subagentResults[agentId] = {
       result,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
   }
 
@@ -456,7 +461,7 @@ export class PatternStateMachine {
    * Check if in terminal state
    */
   isTerminal(): boolean {
-    const currentDef = this.config.states.find(s => s.name === this.currentState.currentStep);
+    const currentDef = this.config.states.find((s) => s.name === this.currentState.currentStep);
     return currentDef?.type === 'end' || currentDef?.type === 'error';
   }
 
@@ -476,10 +481,10 @@ export class PatternStateMachine {
       currentStep: this.currentState.currentStep,
       activePattern: this.getActivePattern(),
       patternDescription: PatternSwitcher.getPatternDescription(this.getActivePattern()),
-      stateHistory: this.stateHistory.map(s => s.currentStep),
+      stateHistory: this.stateHistory.map((s) => s.currentStep),
       decisionCount: this.currentState.memory.decisions.length,
       subagentCount: Object.keys(this.currentState.subagentResults || {}).length,
-      isComplete: this.isTerminal()
+      isComplete: this.isTerminal(),
     };
   }
 }
@@ -516,7 +521,7 @@ export function createOrchestratorWorkerConfig(): PatternStateMachineConfig {
       { name: 'executing', type: 'intermediate' },
       { name: 'evaluating', type: 'intermediate' },
       { name: 'completed', type: 'end' },
-      { name: 'failed', type: 'error' }
+      { name: 'failed', type: 'error' },
     ],
     transitions: [
       { id: 't1', from: 'initialized', to: 'planning' },
@@ -525,28 +530,31 @@ export function createOrchestratorWorkerConfig(): PatternStateMachineConfig {
       { id: 't4', from: 'executing', to: 'evaluating' },
       { id: 't5', from: 'evaluating', to: 'completed' },
       { id: 't6', from: 'executing', to: 'failed' },
-      { id: 't7', from: 'planning', to: 'failed' }
+      { id: 't7', from: 'planning', to: 'failed' },
     ],
     conditionalEdges: {
-      'evaluating': [
+      evaluating: [
         {
           id: 'ce1',
           condition: (state) => {
             // If all subagents succeeded, go to completed
             const results = state.subagentResults || {};
-            const allSuccess = Object.values(results).every((r: any) => r.result?.success);
+            const allSuccess = Object.values(results).every((r: unknown) => {
+              const entry = r as { result?: { success?: unknown } } | undefined;
+              return entry?.result?.success === true;
+            });
             return allSuccess ? 'completed' : 'failed';
           },
-          description: 'Check all subagent results'
-        }
-      ]
+          description: 'Check all subagent results',
+        },
+      ],
     },
     pattern: {
       type: 'orchestrator-worker',
       maxAgents: 10,
-      conflictResolution: '仲裁'
+      conflictResolution: '仲裁',
     },
-    governanceCheckpoints: []
+    governanceCheckpoints: [],
   };
 }
 
@@ -557,12 +565,12 @@ export function createSwarmConfig(): PatternStateMachineConfig {
     initialState: 'initialized',
     states: [
       { name: 'initialized', type: 'start' },
-      { name: 'discovering', type: 'intermediate' },    // Agent 发现彼此
-      { name: 'coordinating', type: 'intermediate' },   // 自主协调
+      { name: 'discovering', type: 'intermediate' }, // Agent 发现彼此
+      { name: 'coordinating', type: 'intermediate' }, // 自主协调
       { name: 'executing', type: 'intermediate' },
-      { name: 'consensus', type: 'intermediate' },      // 共识达成
+      { name: 'consensus', type: 'intermediate' }, // 共识达成
       { name: 'completed', type: 'end' },
-      { name: 'failed', type: 'error' }
+      { name: 'failed', type: 'error' },
     ],
     transitions: [
       { id: 's1', from: 'initialized', to: 'discovering' },
@@ -570,15 +578,15 @@ export function createSwarmConfig(): PatternStateMachineConfig {
       { id: 's3', from: 'coordinating', to: 'executing' },
       { id: 's4', from: 'executing', to: 'consensus' },
       { id: 's5', from: 'consensus', to: 'completed' },
-      { id: 's6', from: 'executing', to: 'failed' }
+      { id: 's6', from: 'executing', to: 'failed' },
     ],
     pattern: {
       type: 'swarm',
       maxAgents: 20,
       consensusRequired: true,
-      conflictResolution: '投票'
+      conflictResolution: '投票',
     },
-    governanceCheckpoints: []
+    governanceCheckpoints: [],
   };
 }
 
@@ -589,12 +597,12 @@ export function createHierarchicalConfig(): PatternStateMachineConfig {
     initialState: 'initialized',
     states: [
       { name: 'initialized', type: 'start' },
-      { name: 'decomposing', type: 'intermediate' },    // 任务分解
-      { name: 'delegating', type: 'intermediate' },     // 委派给 manager
-      { name: 'managing', type: 'intermediate' },       // Manager 管理
-      { name: 'reporting', type: 'intermediate' },      // 向上汇报
+      { name: 'decomposing', type: 'intermediate' }, // 任务分解
+      { name: 'delegating', type: 'intermediate' }, // 委派给 manager
+      { name: 'managing', type: 'intermediate' }, // Manager 管理
+      { name: 'reporting', type: 'intermediate' }, // 向上汇报
       { name: 'completed', type: 'end' },
-      { name: 'failed', type: 'error' }
+      { name: 'failed', type: 'error' },
     ],
     transitions: [
       { id: 'h1', from: 'initialized', to: 'decomposing' },
@@ -602,14 +610,14 @@ export function createHierarchicalConfig(): PatternStateMachineConfig {
       { id: 'h3', from: 'delegating', to: 'managing' },
       { id: 'h4', from: 'managing', to: 'reporting' },
       { id: 'h5', from: 'reporting', to: 'completed' },
-      { id: 'h6', from: 'managing', to: 'failed' }
+      { id: 'h6', from: 'managing', to: 'failed' },
     ],
     pattern: {
       type: 'hierarchical',
       maxAgents: 50,
-      conflictResolution: '优先级'
+      conflictResolution: '优先级',
     },
-    governanceCheckpoints: []
+    governanceCheckpoints: [],
   };
 }
 
@@ -620,7 +628,7 @@ export class PatternStateMachineFactory {
   private static configs: Map<string, PatternStateMachineConfig> = new Map([
     ['orchestrator-worker', createOrchestratorWorkerConfig()],
     ['swarm', createSwarmConfig()],
-    ['hierarchical', createHierarchicalConfig()]
+    ['hierarchical', createHierarchicalConfig()],
   ]);
 
   static create(type: OrchestrationPattern): PatternStateMachine {

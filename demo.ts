@@ -21,9 +21,21 @@ async function main() {
 
   if (isCompany) {
     const loop = new CommanderAgentLoop({
-      tools: ['web_search', 'web_fetch', 'file_read', 'file_write', 'file_edit',
-              'file_search', 'file_list', 'python_execute', 'shell_execute',
-              'memory_store', 'memory_recall', 'memory_list', 'git'],
+      tools: [
+        'web_search',
+        'web_fetch',
+        'file_read',
+        'file_write',
+        'file_edit',
+        'file_search',
+        'file_list',
+        'python_execute',
+        'shell_execute',
+        'memory_store',
+        'memory_recall',
+        'memory_list',
+        'git',
+      ],
     });
     loop.addTask(task);
     await loop.start();

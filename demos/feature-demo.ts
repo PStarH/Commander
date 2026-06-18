@@ -13,7 +13,10 @@
  */
 import { AgentRuntime } from '../packages/core/src/runtime/agentRuntime';
 import { MockLLMProvider } from '../packages/core/src/runtime/mockLLMProvider';
-import { getPatternTracker, resetPatternTracker } from '../packages/core/src/runtime/speculativeExecutor';
+import {
+  getPatternTracker,
+  resetPatternTracker,
+} from '../packages/core/src/runtime/speculativeExecutor';
 import { selectTools } from '../packages/core/src/runtime/toolRetriever';
 import { createAllTools } from '../packages/core/src/tools/index';
 
@@ -33,29 +36,43 @@ async function main() {
   console.log(SEPARATOR);
 
   const ALL_TOOLS = [
-    'web_search', 'web_fetch', 'browser_search', 'browser_fetch',
-    'file_read', 'file_write', 'file_edit', 'file_search', 'file_list',
-    'python_execute', 'shell_execute',
-    'memory_store', 'memory_recall', 'memory_list',
-    'git', 'agent',
+    'web_search',
+    'web_fetch',
+    'browser_search',
+    'browser_fetch',
+    'file_read',
+    'file_write',
+    'file_edit',
+    'file_search',
+    'file_list',
+    'python_execute',
+    'shell_execute',
+    'memory_store',
+    'memory_recall',
+    'memory_list',
+    'git',
+    'agent',
   ];
 
   const searchTools = selectTools('search the web for latest AI research papers', ALL_TOOLS);
   console.log(`  Task: "search the web for latest AI research papers"`);
   console.log(`  Selected (${searchTools.length}/${ALL_TOOLS.length}): ${searchTools.join(', ')}`);
-  console.log(`  Excluded: ${ALL_TOOLS.filter(t => !searchTools.includes(t)).join(', ')}`);
+  console.log(`  Excluded: ${ALL_TOOLS.filter((t) => !searchTools.includes(t)).join(', ')}`);
   console.log();
 
-  const codeTools = selectTools('write a python script to calculate fibonacci and save to file', ALL_TOOLS);
+  const codeTools = selectTools(
+    'write a python script to calculate fibonacci and save to file',
+    ALL_TOOLS,
+  );
   console.log(`  Task: "write a python script..."`);
   console.log(`  Selected (${codeTools.length}/${ALL_TOOLS.length}): ${codeTools.join(', ')}`);
-  console.log(`  Excluded: ${ALL_TOOLS.filter(t => !codeTools.includes(t)).join(', ')}`);
+  console.log(`  Excluded: ${ALL_TOOLS.filter((t) => !codeTools.includes(t)).join(', ')}`);
   console.log();
 
   const gitTools = selectTools('commit changes and push to remote repository', ALL_TOOLS);
   console.log(`  Task: "commit changes and push to remote repository"`);
   console.log(`  Selected (${gitTools.length}/${ALL_TOOLS.length}): ${gitTools.join(', ')}`);
-  console.log(`  Excluded: ${ALL_TOOLS.filter(t => !gitTools.includes(t)).join(', ')}`);
+  console.log(`  Excluded: ${ALL_TOOLS.filter((t) => !gitTools.includes(t)).join(', ')}`);
 
   // ============================================================
   // 2. Pattern Tracking (PASTE)
@@ -79,7 +96,9 @@ async function main() {
   console.log('  Top patterns learned:');
   const topPatterns = tracker.getTopPatterns(5);
   for (const p of topPatterns) {
-    console.log(`    ${p.sequence.join(' → ')}  (freq: ${p.frequency}, confidence: ${(p.confidence * 100).toFixed(0)}%)`);
+    console.log(
+      `    ${p.sequence.join(' → ')}  (freq: ${p.frequency}, confidence: ${(p.confidence * 100).toFixed(0)}%)`,
+    );
   }
 
   // Predict next tool from partial sequence
@@ -99,7 +118,12 @@ async function main() {
   const runtime = new AgentRuntime({
     maxRetries: 0,
     timeoutMs: 5000,
-    toolRetrieval: { enabled: true, minTools: 3, maxTools: 8, alwaysInclude: ['file_read', 'shell_execute'] },
+    toolRetrieval: {
+      enabled: true,
+      minTools: 3,
+      maxTools: 8,
+      alwaysInclude: ['file_read', 'shell_execute'],
+    },
     entropyGating: { enabled: true },
     speculativeExecution: { enabled: true, maxPredictions: 2, minConfidence: 0.1 },
   });
@@ -126,7 +150,15 @@ async function main() {
     projectId: 'demo',
     goal: 'Search the web for information about multi-agent systems and save the findings.',
     contextData: {},
-    availableTools: ['web_search', 'web_fetch', 'file_write', 'file_read', 'shell_execute', 'python_execute', 'git'],
+    availableTools: [
+      'web_search',
+      'web_fetch',
+      'file_write',
+      'file_read',
+      'shell_execute',
+      'python_execute',
+      'git',
+    ],
     maxSteps: 5,
     tokenBudget: 16000,
   });

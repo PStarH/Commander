@@ -33,7 +33,7 @@ export class ProjectMemoryStore {
   }
 
   overview(projectId: string): ProjectMemoryOverview {
-    const items = this.items.filter(item => item.projectId === projectId);
+    const items = this.items.filter((item) => item.projectId === projectId);
     const kindCounts: Record<ProjectMemoryKind, number> = {
       DECISION: 0,
       ISSUE: 0,
@@ -59,8 +59,8 @@ export class ProjectMemoryStore {
       totalItems: items.length,
       kindCounts,
       topTags,
-      missionLinkedCount: items.filter(item => Boolean(item.missionId)).length,
-      agentLinkedCount: items.filter(item => Boolean(item.agentId)).length,
+      missionLinkedCount: items.filter((item) => Boolean(item.missionId)).length,
+      agentLinkedCount: items.filter((item) => Boolean(item.agentId)).length,
       latestCreatedAt: items[0]?.createdAt,
     };
   }
@@ -68,23 +68,23 @@ export class ProjectMemoryStore {
   search(projectId: string, options: ProjectMemorySearchOptions = {}): ProjectMemoryItem[] {
     const { kind, tags, query, limit } = options;
 
-    let items = this.items.filter(item => item.projectId === projectId);
+    let items = this.items.filter((item) => item.projectId === projectId);
 
     if (kind) {
-      items = items.filter(item => item.kind === kind);
+      items = items.filter((item) => item.kind === kind);
     }
 
     if (tags && tags.length > 0) {
-      items = items.filter(item => item.tags.some(tag => tags.includes(tag)));
+      items = items.filter((item) => item.tags.some((tag) => tags.includes(tag)));
     }
 
     if (query && query.trim()) {
       const needle = query.trim().toLowerCase();
-      items = items.filter(item => {
+      items = items.filter((item) => {
         return (
           item.title.toLowerCase().includes(needle) ||
           item.content.toLowerCase().includes(needle) ||
-          item.tags.some(tag => tag.toLowerCase().includes(needle))
+          item.tags.some((tag) => tag.toLowerCase().includes(needle))
         );
       });
     }

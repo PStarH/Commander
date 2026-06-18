@@ -64,21 +64,29 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
   protected bus = getMessageBus();
   protected status: ChannelStatus = 'disconnected';
   protected eventHandlers: Map<string, Set<(data: unknown) => void>> = new Map();
-  protected sessions: Map<string, { userId: string; lastMessage: number; threadId?: string }> = new Map();
+  protected sessions: Map<string, { userId: string; lastMessage: number; threadId?: string }> =
+    new Map();
+  private busUnsubscribers: Array<() => void> = [];
 
   async initialize(config: ChannelConfig, agentLoop: CommanderAgentLoop): Promise<void> {
     this.config = { ...this.defaultConfig, ...config };
     this.agentLoop = agentLoop;
 
-    this.bus.subscribe('agent.started', () => {
-      this.onAgentEvent('started', { source: this.config.channelId });
-    });
-    this.bus.subscribe('agent.completed', () => {
-      this.onAgentEvent('completed', { source: this.config.channelId });
-    });
-    this.bus.subscribe('agent.failed', () => {
-      this.onAgentEvent('failed', { source: this.config.channelId });
-    });
+    // Clean up any previous subscriptions before re-subscribing
+    for (const unsub of this.busUnsubscribers) unsub();
+    this.busUnsubscribers = [];
+
+    this.busUnsubscribers.push(
+      this.bus.subscribe('agent.started', () => {
+        this.onAgentEvent('started', { source: this.config.channelId });
+      }),
+      this.bus.subscribe('agent.completed', () => {
+        this.onAgentEvent('completed', { source: this.config.channelId });
+      }),
+      this.bus.subscribe('agent.failed', () => {
+        this.onAgentEvent('failed', { source: this.config.channelId });
+      }),
+    );
   }
 
   async start(): Promise<void> {
@@ -90,11 +98,15 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
 
   async stop(): Promise<void> {
     this.status = 'disconnected';
+    for (const unsub of this.busUnsubscribers) unsub();
+    this.busUnsubscribers = [];
     await this.disconnectPlatform();
     this.bus.publish('channel.disconnected', this.config.channelId, { platform: this.platform });
   }
 
-  getStatus(): ChannelStatus { return this.status; }
+  getStatus(): ChannelStatus {
+    return this.status;
+  }
 
   onEvent(event: string, handler: (data: unknown) => void): void {
     if (!this.eventHandlers.has(event)) this.eventHandlers.set(event, new Set());
@@ -102,12 +114,13 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
   }
 
   protected emitEvent(event: string, data: unknown): void {
-    this.eventHandlers.get(event)?.forEach(h => h(data));
+    this.eventHandlers.get(event)?.forEach((h) => h(data));
   }
 
   protected isUserAllowed(userId: string): boolean {
     if (this.config.blockedUsers?.includes(userId)) return false;
-    if (this.config.allowedUsers?.length && !this.config.allowedUsers.includes(userId)) return false;
+    if (this.config.allowedUsers?.length && !this.config.allowedUsers.includes(userId))
+      return false;
     return true;
   }
 
@@ -115,7 +128,10 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
     return this.config.adminUsers?.includes(userId) ?? false;
   }
 
-  protected manageSession(userId: string, threadId?: string): { isNew: boolean; sessionId: string } {
+  protected manageSession(
+    userId: string,
+    threadId?: string,
+  ): { isNew: boolean; sessionId: string } {
     const sessionKey = `${userId}:${threadId ?? 'default'}`;
     const existing = this.sessions.get(sessionKey);
     if (existing) {
@@ -123,8 +139,15 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
       return { isNew: false, sessionId: sessionKey };
     }
     if (this.sessions.size >= this.config.maxConcurrentSessions) {
-      const oldest = Array.from(this.sessions.entries()).sort((a, b) => a[1].lastMessage - b[1].lastMessage)[0];
-      if (oldest) this.sessions.delete(oldest[0]);
+      let oldestKey: string | undefined;
+      let oldestTime = Infinity;
+      for (const [key, session] of this.sessions) {
+        if (session.lastMessage < oldestTime) {
+          oldestTime = session.lastMessage;
+          oldestKey = key;
+        }
+      }
+      if (oldestKey) this.sessions.delete(oldestKey);
     }
     this.sessions.set(sessionKey, { userId, lastMessage: Date.now(), threadId });
     return { isNew: true, sessionId: sessionKey };
@@ -133,9 +156,11 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
   protected cleanupStaleSessions(): void {
     const timeout = this.config.sessionTimeoutMs;
     const now = Date.now();
+    const stale: string[] = [];
     for (const [key, session] of this.sessions.entries()) {
-      if (now - session.lastMessage > timeout) this.sessions.delete(key);
+      if (now - session.lastMessage > timeout) stale.push(key);
     }
+    for (const key of stale) this.sessions.delete(key);
   }
 
   protected async handleIncomingMessage(msg: ChannelMessage): Promise<void> {
@@ -152,7 +177,11 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
   }
 
   protected normalizeMessage(msg: ChannelMessage): ChannelMessage {
-    return { ...msg, channelId: this.config.channelId, timestamp: msg.timestamp || new Date().toISOString() };
+    return {
+      ...msg,
+      channelId: this.config.channelId,
+      timestamp: msg.timestamp || new Date().toISOString(),
+    };
   }
 
   protected onAgentEvent(_type: 'started' | 'completed' | 'failed', _data: unknown): void {
@@ -161,5 +190,9 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
 
   protected abstract connectPlatform(): Promise<void>;
   protected abstract disconnectPlatform(): Promise<void>;
-  abstract sendMessage(channelMessage: ChannelMessage, text: string, options?: SendOptions): Promise<void>;
+  abstract sendMessage(
+    channelMessage: ChannelMessage,
+    text: string,
+    options?: SendOptions,
+  ): Promise<void>;
 }

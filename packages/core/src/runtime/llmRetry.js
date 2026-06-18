@@ -1,0 +1,102 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.classifyLLMError = classifyLLMError;
+exports.computeBackoff = computeBackoff;
+const RE_NETWORK_ERROR = /timeout|timed out|econnrefused|econnreset|enotfound|connection refused|network|fetch failed|abort|econnaborted|esockettimedout/i;
+function classifyLLMError(err) {
+    const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+    const statusCode = extractStatus(err);
+    // Permanent: never retry
+    if (statusCode === 400)
+        return {
+            retryable: false,
+            errorClass: 'permanent',
+            message: `Bad request: ${truncate(msg, 200)}`,
+            statusCode: 400,
+        };
+    if (statusCode === 401)
+        return {
+            retryable: false,
+            errorClass: 'permanent',
+            message: 'Authentication failed: invalid API key',
+            statusCode: 401,
+        };
+    if (statusCode === 403)
+        return {
+            retryable: false,
+            errorClass: 'permanent',
+            message: 'Forbidden: insufficient permissions',
+            statusCode: 403,
+        };
+    if (statusCode === 422)
+        return {
+            retryable: false,
+            errorClass: 'permanent',
+            message: `Invalid request: ${truncate(msg, 200)}`,
+            statusCode: 422,
+        };
+    // Transient: retry with backoff
+    if (statusCode === 429) {
+        const retryAfter = extractRetryAfter(err);
+        return {
+            retryable: true,
+            errorClass: 'transient',
+            message: truncate(msg, 200),
+            statusCode: 429,
+            retryAfter,
+        };
+    }
+    if (statusCode === 529)
+        return { retryable: true, errorClass: 'transient', message: 'API overloaded', statusCode: 529 };
+    if (statusCode && statusCode >= 500)
+        return { retryable: true, errorClass: 'transient', message: truncate(msg, 200), statusCode };
+    // HTTP 408 Request Timeout — always retryable (GAP-26)
+    if (statusCode === 408)
+        return {
+            retryable: true,
+            errorClass: 'transient',
+            message: truncate(msg, 200),
+            statusCode: 408,
+        };
+    // Network/timeout errors: transient (GAP-26: added ECONNABORTED, ESOCKETTIMEDOUT)
+    if (RE_NETWORK_ERROR.test(msg)) {
+        return { retryable: true, errorClass: 'transient', message: truncate(msg, 200) };
+    }
+    return { retryable: false, errorClass: 'unknown', message: truncate(msg, 200) };
+}
+function computeBackoff(attempt, baseMs = 1000, maxMs = 30000) {
+    const exponential = Math.min(baseMs * Math.pow(2, attempt), maxMs);
+    const jitter = exponential * 0.2 * (Math.random() - 0.5);
+    return Math.min(Math.round(exponential + jitter), maxMs);
+}
+function extractStatus(err) {
+    if (err && typeof err === 'object') {
+        const e = err;
+        if (typeof e.status === 'number')
+            return e.status;
+        if (typeof e.statusCode === 'number')
+            return e.statusCode;
+        const msg = typeof e.message === 'string' ? e.message : '';
+        const m = msg.match(/\b(4\d{2}|5\d{2})\b/);
+        if (m)
+            return parseInt(m[1], 10);
+    }
+    return undefined;
+}
+function extractRetryAfter(err) {
+    var _a, _b, _c;
+    if (err && typeof err === 'object') {
+        const e = err;
+        const hdrs = (_a = e.headers) !== null && _a !== void 0 ? _a : (_b = e.response) === null || _b === void 0 ? void 0 : _b.headers;
+        if (hdrs && typeof hdrs === 'object') {
+            const h = hdrs;
+            const val = (_c = h['retry-after']) !== null && _c !== void 0 ? _c : h['Retry-After'];
+            if (val)
+                return parseInt(String(val), 10) * 1000;
+        }
+    }
+    return undefined;
+}
+function truncate(s, max) {
+    return s.length > max ? s.slice(0, max) + '...' : s;
+}

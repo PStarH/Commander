@@ -15,7 +15,10 @@ import * as path from 'path';
 import { ExecutionRouter, getExecutionRouter } from '../src/sandbox/executionRouter';
 import { LocalBackend } from '../src/sandbox/backends/localBackend';
 import { SSHBackend, resolveSSHConfig } from '../src/sandbox/backends/sshBackend';
-import { DockerExecBackend, resolveDockerExecConfig } from '../src/sandbox/backends/dockerExecBackend';
+import {
+  DockerExecBackend,
+  resolveDockerExecConfig,
+} from '../src/sandbox/backends/dockerExecBackend';
 import type { ExecutionBackend } from '../src/sandbox/types';
 import { resetHookManager, getHookManager } from '../src/pluginManager';
 
@@ -73,7 +76,11 @@ describe('ExecutionRouter', () => {
   });
 
   it('returns SSH backend when backend=ssh', async () => {
-    const backend = await router.selectBackend({ backend: 'ssh', ssh_host: 'example.com', ssh_user: 'test' });
+    const backend = await router.selectBackend({
+      backend: 'ssh',
+      ssh_host: 'example.com',
+      ssh_user: 'test',
+    });
     assert.strictEqual(backend.type, 'ssh');
     assert.ok(backend instanceof SSHBackend);
   });
@@ -103,7 +110,11 @@ describe('ExecutionRouter', () => {
     const recording = new RecordingBackend();
     router.registerBackend('my-server', recording);
 
-    const backend = await router.selectBackend({ backend_name: 'my-server', backend: 'ssh', ssh_host: 'x.com' });
+    const backend = await router.selectBackend({
+      backend_name: 'my-server',
+      backend: 'ssh',
+      ssh_host: 'x.com',
+    });
     assert.strictEqual(backend, recording);
   });
 
@@ -127,9 +138,9 @@ describe('ExecutionRouter', () => {
 
     const list = router.listBackends();
     assert.strictEqual(list.length, 2);
-    assert.ok(list.some(b => b.name === 'worker-1'));
-    assert.ok(list.some(b => b.name === 'worker-2'));
-    assert.ok(list.every(b => b.type === 'local' && b.available === true));
+    assert.ok(list.some((b) => b.name === 'worker-1'));
+    assert.ok(list.some((b) => b.name === 'worker-2'));
+    assert.ok(list.every((b) => b.type === 'local' && b.available === true));
   });
 
   it('execute convenience method routes correctly', async () => {
@@ -181,20 +192,24 @@ describe('LocalBackend', () => {
     }
   });
 
-  it('executes through fallback execSync when sandbox unavailable', {
-    // In environments without a restrictive sandbox, verify full flow
-    skip: () => {
-      // We can't easily detect if sandbox is available from here,
-      // so we skip the strict exit code assertions and rely on the generic test above
-      return false; // never skip, just be lenient
+  it(
+    'executes through fallback execSync when sandbox unavailable',
+    {
+      // In environments without a restrictive sandbox, verify full flow
+      skip: () => {
+        // We can't easily detect if sandbox is available from here,
+        // so we skip the strict exit code assertions and rely on the generic test above
+        return false; // never skip, just be lenient
+      },
     },
-  }, async () => {
-    const backend = new LocalBackend();
-    const result = await backend.execute('echo hello-world', undefined, 10);
-    if (result.exitCode === 0) {
-      assert.ok(result.stdout.includes('hello-world'));
-    }
-  });
+    async () => {
+      const backend = new LocalBackend();
+      const result = await backend.execute('echo hello-world', undefined, 10);
+      if (result.exitCode === 0) {
+        assert.ok(result.stdout.includes('hello-world'));
+      }
+    },
+  );
 
   it('returns a result with all expected fields', async () => {
     const backend = new LocalBackend();

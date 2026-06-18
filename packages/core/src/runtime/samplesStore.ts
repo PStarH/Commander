@@ -48,12 +48,24 @@ export class SamplesStore {
       taskId?: string;
       /** Pre-extracted solution code (skips auto-extraction) */
       extractedCode?: string;
+      /** Run ID for sub-agent correlation */
+      runId?: string;
+      /** Agent ID */
+      agentId?: string;
+      /** Tenant ID for multi-tenant isolation */
+      tenantId?: string;
+      /** Parent runId when this is a sub-agent call */
+      parentRunId?: string;
     },
   ): Promise<string> {
     const callId = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const content = response?.content ?? params.error ?? '';
     const record: ApiCallRecord = {
       callId,
+      runId: params.runId,
+      agentId: params.agentId,
+      tenantId: params.tenantId,
+      parentRunId: params.parentRunId,
       model: request.model,
       provider: params.provider,
       temperature: request.temperature,
@@ -66,6 +78,9 @@ export class SamplesStore {
       finishReason: response?.finishReason ?? 'error',
       attemptNumber: params.attemptNumber,
       contentPrefix: content.slice(0, 500),
+      fullMessages: request.messages as unknown[],
+      fullResponse: response,
+      reasoningContent: (response as unknown as { reasoningContent?: string })?.reasoningContent,
       extractedCode: params.extractedCode ?? (params.taskId ? extractCode(content) : undefined),
       error: params.error,
       taskId: params.taskId,
@@ -118,11 +133,16 @@ export class SamplesStore {
   async flush(): Promise<void> {
     if (this.flushing) return;
     this.flushing = true;
-    while (this.writeQueue.length > 0) {
-      const task = this.writeQueue.shift();
-      if (task) await task();
+    try {
+      let idx = 0;
+      while (idx < this.writeQueue.length) {
+        const task = this.writeQueue[idx++];
+        if (task) await task();
+      }
+    } finally {
+      this.writeQueue.length = 0;
+      this.flushing = false;
     }
-    this.flushing = false;
   }
 
   /** Get total record count for llm_calls (approximate). */
@@ -196,7 +216,9 @@ export class SamplesStore {
       try {
         records.push(JSON.parse(line) as ApiCallRecord);
       } catch (e) {
-        getGlobalLogger().debug('SamplesStore', 'Skipped corrupt line', { error: (e as Error)?.message });
+        getGlobalLogger().debug('SamplesStore', 'Skipped corrupt line', {
+          error: (e as Error)?.message,
+        });
       }
     }
     return records;
@@ -219,14 +241,26 @@ export class SamplesStore {
   private enqueueWrite(task: () => Promise<void>): void {
     this.writeQueue.push(task);
     if (!this.flushing) {
+      this.flushing = true;
       this.drainQueue();
     }
   }
 
   private async drainQueue(): Promise<void> {
-    while (this.writeQueue.length > 0) {
-      const task = this.writeQueue.shift();
-      if (task) await task();
+    try {
+      let idx = 0;
+      while (idx < this.writeQueue.length) {
+        const task = this.writeQueue[idx++];
+        if (task) await task();
+      }
+      this.writeQueue.length = 0;
+    } finally {
+      this.flushing = false;
+      // If new items were enqueued while draining, start another drain
+      if (this.writeQueue.length > 0) {
+        this.flushing = true;
+        this.drainQueue();
+      }
     }
   }
 
@@ -241,7 +275,12 @@ export class SamplesStore {
           this.rotateFile(fileName);
         }
       }
-    } catch (e) { getGlobalLogger().warn('SamplesStore', 'Failed to inspect sample file before append', { error: (e as Error)?.message, fileName }); }
+    } catch (e) {
+      getGlobalLogger().warn('SamplesStore', 'Failed to inspect sample file before append', {
+        error: (e as Error)?.message,
+        fileName,
+      });
+    }
     const line = JSON.stringify(data) + '\n';
     fs.appendFileSync(filePath, line, 'utf-8');
   }
@@ -253,19 +292,41 @@ export class SamplesStore {
     // Delete oldest rotation
     const oldest = `${base}.${this.MAX_ROTATED_FILES}`;
     if (fs.existsSync(oldest)) {
-      try { fs.unlinkSync(oldest); } catch (e) { getGlobalLogger().warn('SamplesStore', 'Failed to delete oldest rotated sample file', { error: (e as Error)?.message, oldest }); }
+      try {
+        fs.unlinkSync(oldest);
+      } catch (e) {
+        getGlobalLogger().warn('SamplesStore', 'Failed to delete oldest rotated sample file', {
+          error: (e as Error)?.message,
+          oldest,
+        });
+      }
     }
     // Shift existing rotations: .2 → .3, .1 → .2
     for (let i = this.MAX_ROTATED_FILES - 1; i >= 1; i--) {
       const from = `${base}.${i}`;
       const to = `${base}.${i + 1}`;
       if (fs.existsSync(from)) {
-        try { fs.renameSync(from, to); } catch (e) { getGlobalLogger().warn('SamplesStore', 'Failed to rotate sample file', { error: (e as Error)?.message, from, to }); }
+        try {
+          fs.renameSync(from, to);
+        } catch (e) {
+          getGlobalLogger().warn('SamplesStore', 'Failed to rotate sample file', {
+            error: (e as Error)?.message,
+            from,
+            to,
+          });
+        }
       }
     }
     // Current → .1
     if (fs.existsSync(base)) {
-      try { fs.renameSync(base, `${base}.1`); } catch (e) { getGlobalLogger().warn('SamplesStore', 'Failed to rotate current sample file', { error: (e as Error)?.message, base }); }
+      try {
+        fs.renameSync(base, `${base}.1`);
+      } catch (e) {
+        getGlobalLogger().warn('SamplesStore', 'Failed to rotate current sample file', {
+          error: (e as Error)?.message,
+          base,
+        });
+      }
     }
   }
 
@@ -275,6 +336,6 @@ export class SamplesStore {
     if (!fs.existsSync(p)) return [];
     const content = fs.readFileSync(p, 'utf-8').trim();
     if (!content) return [];
-    return content.split('\n').filter(l => l.length > 0);
+    return content.split('\n').filter((l) => l.length > 0);
   }
 }

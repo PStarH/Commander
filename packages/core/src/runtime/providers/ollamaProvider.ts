@@ -125,13 +125,23 @@ export class OllamaProvider extends BaseOpenAICompatibleProvider {
     if (!running) return null;
 
     const models = await OllamaProvider.listModels(serverUrl);
-    const preferred = ['llama3.2', 'gpt-oss', 'llama3.1', 'llama3', 'mistral', 'qwen2.5', 'qwen2', 'codellama', 'deepseek-coder'];
+    const preferred = [
+      'llama3.2',
+      'gpt-oss',
+      'llama3.1',
+      'llama3',
+      'mistral',
+      'qwen2.5',
+      'qwen2',
+      'codellama',
+      'deepseek-coder',
+    ];
     let defaultModel = process.env.OLLAMA_MODEL || 'llama3.2';
 
     if (models.length > 0) {
       // Pick first preferred model that's available
       for (const p of preferred) {
-        const match = models.find(m => m.startsWith(p));
+        const match = models.find((m) => m.startsWith(p));
         if (match) {
           defaultModel = match;
           break;
@@ -151,7 +161,10 @@ export class OllamaProvider extends BaseOpenAICompatibleProvider {
   async call(request: LLMRequest): Promise<LLMResponse> {
     // Cache health check to avoid 1s overhead on every call
     const now = Date.now();
-    if (!OllamaProvider.healthCache || (now - OllamaProvider.healthCache.timestamp) > OllamaProvider.HEALTH_TTL_MS) {
+    if (
+      !OllamaProvider.healthCache ||
+      now - OllamaProvider.healthCache.timestamp > OllamaProvider.HEALTH_TTL_MS
+    ) {
       try {
         await fetch(`${resolveOllamaServerUrl()}/api/tags`, {
           method: 'GET',
@@ -160,7 +173,8 @@ export class OllamaProvider extends BaseOpenAICompatibleProvider {
         OllamaProvider.healthCache = { healthy: true, timestamp: now };
       } catch {
         OllamaProvider.healthCache = { healthy: false, timestamp: now };
-        getGlobalLogger().warn('OllamaProvider',
+        getGlobalLogger().warn(
+          'OllamaProvider',
           'Ollama does not appear to be running. Start it with: ollama serve',
         );
       }

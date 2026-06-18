@@ -27,8 +27,8 @@ export const options = {
   duration: __ENV.K6_DURATION || '30s',
   thresholds: {
     http_req_duration: ['p(95)<500'], // 95% of requests must complete below 500ms
-    errors: ['rate<0.01'],            // Error rate must be below 1%
-    health_latency: ['p(95)<200'],    // Health endpoint should be fast
+    errors: ['rate<0.01'], // Error rate must be below 1%
+    health_latency: ['p(95)<200'], // Health endpoint should be fast
   },
 };
 

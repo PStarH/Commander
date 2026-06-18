@@ -8,17 +8,14 @@ export class SkillInjector {
     this.manager = manager;
   }
 
-  async buildSkillsBlock(
-    goal: string,
-    maxLevel: DisclosureLevel = 0,
-  ): Promise<string> {
+  async buildSkillsBlock(goal: string, maxLevel: DisclosureLevel = 0): Promise<string> {
     const catalog = await this.manager.list();
     if (catalog.length === 0) return '';
 
     const level0 = [
       '## Available Skills',
-      ...catalog.map(s =>
-        `- ${s.name}: ${s.description} (quality: ${(s.qualityScore * 100).toFixed(0)}%)`,
+      ...catalog.map(
+        (s) => `- ${s.name}: ${s.description} (quality: ${(s.qualityScore * 100).toFixed(0)}%)`,
       ),
     ].join('\n');
 
@@ -39,8 +36,9 @@ export class SkillInjector {
 
     if (maxLevel === 1) return level0 + level1;
 
-    const level2 = '\n\n### Skill References\n' +
-      catalog.map(s => `- \`.commander/skills/${s.name}/SKILL.md\``).join('\n');
+    const level2 =
+      '\n\n### Skill References\n' +
+      catalog.map((s) => `- \`.commander/skills/${s.name}/SKILL.md\``).join('\n');
 
     return level0 + level1 + level2;
   }

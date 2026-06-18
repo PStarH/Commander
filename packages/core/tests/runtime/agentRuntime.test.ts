@@ -5,6 +5,7 @@ import { ModelRouter, resetModelRouter } from '../../src/runtime/modelRouter';
 import { resetMessageBus } from '../../src/runtime/messageBus';
 import { resetTraceRecorder } from '../../src/runtime/executionTrace';
 import { resetGlobalThreeLayerMemory } from '../../src/threeLayerMemory';
+import { SingleFlightRequestCache } from '../../src/runtime/singleFlightRequestCache';
 import type { AgentExecutionContext, Tool, ToolDefinition } from '../../src/runtime/types';
 
 describe('AgentRuntime', () => {
@@ -83,9 +84,11 @@ describe('AgentRuntime', () => {
 
     it('includes system and user messages', async () => {
       await runtime.execute(makeContext());
-      expect(mockProvider.lastRequest!.messages.length).toBeGreaterThanOrEqual(2);
+      expect(mockProvider.lastRequest!.messages.length).toBeGreaterThanOrEqual(3);
+      // buildSystemPrompt split: cache-stable prefix + dynamic suffix = 2 system messages
       expect(mockProvider.lastRequest!.messages[0].role).toBe('system');
-      expect(mockProvider.lastRequest!.messages[1].role).toBe('user');
+      expect(mockProvider.lastRequest!.messages[1].role).toBe('system');
+      expect(mockProvider.lastRequest!.messages[2].role).toBe('user');
     });
   });
 
@@ -162,7 +165,10 @@ describe('AgentRuntime', () => {
 
   describe('configuration', () => {
     it('uses custom configuration', () => {
-      const custom = new AgentRuntime({ maxStepsPerRun: 5, maxRetries: 3, timeoutMs: 30000 }, router);
+      const custom = new AgentRuntime(
+        { maxStepsPerRun: 5, maxRetries: 3, timeoutMs: 30000 },
+        router,
+      );
       const config = custom.getConfig();
       expect(config.maxStepsPerRun).toBe(5);
       expect(config.maxRetries).toBe(3);
@@ -173,6 +179,138 @@ describe('AgentRuntime', () => {
       const config = runtime.getConfig();
       expect(config.maxRetries).toBe(1);
       expect(config.defaultModelTier).toBe('standard');
+    });
+  });
+
+  describe('semantic cache', () => {
+    it('defaults to disabled with zero entries', () => {
+      const stats = runtime.getSemanticCacheStats();
+      expect(stats.totalEntries).toBe(0);
+    });
+
+    it('stays disabled when enabled=true but no OPENAI_API_KEY is available', () => {
+      const r = new AgentRuntime(
+        { maxRetries: 1, timeoutMs: 5000, semanticCache: { enabled: true } },
+        new ModelRouter(),
+      );
+      const stats = r.getSemanticCacheStats();
+      expect(stats.totalEntries).toBe(0);
+    });
+
+    it('enables cache when enabled=true with explicit openaiApiKey', () => {
+      const r = new AgentRuntime(
+        {
+          maxRetries: 1,
+          timeoutMs: 5000,
+          semanticCache: { enabled: true, openaiApiKey: 'sk-test', similarityThreshold: 0.9 },
+        },
+        new ModelRouter(),
+      );
+      const stats = r.getSemanticCacheStats();
+      expect(stats.totalEntries).toBe(0);
+      expect(typeof stats.estimatedCostSavedUsd).toBe('number');
+    });
+  });
+
+  describe('prompt cache config', () => {
+    it('defaults cacheTtl to 5m and derives promptCacheKey per request', async () => {
+      await runtime.execute(makeContext());
+      const req = mockProvider.lastRequest;
+      expect(req).toBeDefined();
+      expect(req!.cacheConfig?.cacheTtl).toBe('5m');
+      expect(req!.cacheConfig?.promptCacheKey).toMatch(/^[^:]+:[^:]+:[a-z0-9]{1,12}$/);
+    });
+
+    it('uses explicit promptCacheKey when configured', async () => {
+      const r = new AgentRuntime(
+        { maxRetries: 1, timeoutMs: 5000, promptCacheKey: 'tenant-a:agent-x:fixed' },
+        new ModelRouter(),
+      );
+      const p = new MockLLMProvider('openai', { defaultResponse: 'ok' });
+      r.registerProvider('openai', p);
+      await r.execute(makeContext());
+      expect(p.lastRequest?.cacheConfig?.promptCacheKey).toBe('tenant-a:agent-x:fixed');
+    });
+
+    it('keeps cacheTtl at 5m by default (does not opt into 1h premium)', async () => {
+      await runtime.execute(makeContext());
+      expect(mockProvider.lastRequest?.cacheConfig?.cacheTtl).toBe('5m');
+    });
+
+    it('honors promptCacheTtl=1h when governor is not in critical phase', async () => {
+      const r = new AgentRuntime(
+        { maxRetries: 1, timeoutMs: 5000, promptCacheTtl: '1h' },
+        new ModelRouter(),
+      );
+      const p = new MockLLMProvider('openai', { defaultResponse: 'ok' });
+      r.registerProvider('openai', p);
+      await r.execute(makeContext());
+      expect(p.lastRequest?.cacheConfig?.cacheTtl).toBe('1h');
+    });
+  });
+
+  describe('single-flight request dedup', () => {
+    it('dedupes concurrent identical requests so provider is called once', async () => {
+      const slowProvider = new MockLLMProvider('openai', { defaultResponse: 'ok' });
+      const origCall = slowProvider.call.bind(slowProvider);
+      let callCount = 0;
+      slowProvider.call = async (req) => {
+        callCount++;
+        await new Promise((r) => setTimeout(r, 30));
+        return origCall(req);
+      };
+      const r = new AgentRuntime({ maxRetries: 1, timeoutMs: 5000 }, new ModelRouter());
+      r.registerProvider('openai', slowProvider);
+      const ctx = makeContext();
+      const [a, b, c] = await Promise.all([r.execute(ctx), r.execute(ctx), r.execute(ctx)]);
+      expect(a.status).toBe('success');
+      expect(b.status).toBe('success');
+      expect(c.status).toBe('success');
+      expect(callCount).toBe(1);
+    });
+
+    it('does NOT dedupe sequential calls (the in-flight is already resolved)', async () => {
+      const r = new AgentRuntime({ maxRetries: 1, timeoutMs: 5000 }, new ModelRouter());
+      const p = new MockLLMProvider('openai', { defaultResponse: 'ok' });
+      r.registerProvider('openai', p);
+      await r.execute(makeContext());
+      p.callCount = 0;
+      await r.execute(makeContext());
+      expect(p.callCount).toBe(1);
+    });
+
+    it('exposes single-flight stats for observability', async () => {
+      await runtime.execute(makeContext());
+      const stats = runtime.getSingleFlightStats();
+      expect(stats.totalRequests).toBeGreaterThan(0);
+      expect(typeof stats.hitRate).toBe('number');
+      expect(stats.inflight).toBe(0);
+    });
+
+    it('disabled singleFlight bypasses dedup (provider is called every time)', async () => {
+      const r = new AgentRuntime(
+        { maxRetries: 1, timeoutMs: 5000, singleFlight: { enabled: false } },
+        new ModelRouter(),
+      );
+      const p = new MockLLMProvider('openai', { defaultResponse: 'ok' });
+      r.registerProvider('openai', p);
+      const [a, b] = await Promise.all([r.execute(makeContext()), r.execute(makeContext())]);
+      expect(a.status).toBe('success');
+      expect(b.status).toBe('success');
+      expect(p.callCount).toBe(2);
+    });
+
+    it('SingleFlightRequestCache.computeKey isolates by tenantId', () => {
+      const request = {
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: 'hi' }],
+      };
+      const keyA = SingleFlightRequestCache.computeKey(request, 'tenant-a');
+      const keyB = SingleFlightRequestCache.computeKey(request, 'tenant-b');
+      const keyNull = SingleFlightRequestCache.computeKey(request);
+      expect(keyA).not.toBe(keyB);
+      expect(keyA).not.toBe(keyNull);
+      expect(keyB).not.toBe(keyNull);
     });
   });
 });

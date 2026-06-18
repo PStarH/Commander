@@ -13,6 +13,7 @@ import { DEFAULT_SWARM_CONFIG } from './types';
 import { FusionEngine } from './fusionEngine';
 import { getMessageBus } from '../runtime/messageBus';
 import { getGlobalLogger } from '../logging';
+import { callLLMJSON } from '../runtime/llmJsonExtractor';
 import { validateShape } from '../runtime/structuredOutput';
 
 // ============================================================================
@@ -139,9 +140,8 @@ interface CriticOutput {
   summary: string;
 }
 
-let nodeCounter = 0;
 function generateNodeId(): string {
-  return `swarm_${Date.now()}_${++nodeCounter}`;
+  return `swarm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
 function findNodeById(nodes: SwarmNode[], id: string): SwarmNode | undefined {
@@ -221,39 +221,8 @@ function computeTopology(nodes: SwarmNode[], depth = 0): SwarmTopology {
     managerCount,
     totalNodes,
     depth: effectiveDepth,
-    levelBreaths: levelBreaths.filter(b => b > 0),
+    levelBreaths: levelBreaths.filter((b) => b > 0),
   };
-}
-
-async function callLLMJSON<T>(
-  provider: LLMProvider,
-  model: string,
-  systemPrompt: string,
-  userMessage: string,
-): Promise<{ data: T; tokens: number } | null> {
-  try {
-    const response = await provider.call({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
-      ],
-      temperature: 0.2,
-      maxTokens: 2048,
-    });
-    const cleaned = response.content.trim().replace(/^```(?:json)?\s*|```\s*$/g, '');
-    let data: T;
-    try {
-      data = JSON.parse(cleaned) as T;
-    } catch {
-      getGlobalLogger().error('SwarmOrchestrator', 'Failed to parse LLM JSON response', undefined, { responseSnippet: cleaned.slice(0, 200) });
-      return null;
-    }
-    return { data, tokens: response.usage?.totalTokens ?? 0 };
-  } catch (err) {
-    getGlobalLogger().error('SwarmOrchestrator', 'LLM call failed', err as Error);
-    return null;
-  }
 }
 
 // ============================================================================
@@ -269,11 +238,7 @@ export class SwarmOrchestrator {
   private depth: number;
   private fusionReports: FusionReport[] = [];
 
-  constructor(
-    provider: LLMProvider,
-    config?: Partial<SwarmConfig>,
-    depth = 0,
-  ) {
+  constructor(provider: LLMProvider, config?: Partial<SwarmConfig>, depth = 0) {
     this.provider = provider;
     this.config = { ...DEFAULT_SWARM_CONFIG, ...config };
     this.model = this.config.model ?? 'gpt-4o-mini';
@@ -343,9 +308,10 @@ export class SwarmOrchestrator {
       for (const node of [...pending]) {
         node.status = 'in_progress';
 
-        const depsBlocked = node.dependencies.some(depId => {
+        const depsBlocked = node.dependencies.some((depId) => {
           const dep = findNodeById(goalTree, depId);
-          return dep && dep.status !== 'completed';
+          if (!dep) return true;
+          return dep.status !== 'completed';
         });
         if (depsBlocked) continue;
 
@@ -365,7 +331,7 @@ export class SwarmOrchestrator {
         if (criticResult) {
           node.critique = {
             passed: criticResult.data.passed,
-            findings: criticResult.data.findings.map(f => ({
+            findings: criticResult.data.findings.map((f) => ({
               severity: f.severity,
               category: f.category as CritiqueResult['findings'][0]['category'],
               description: f.description,
@@ -378,7 +344,14 @@ export class SwarmOrchestrator {
         } else {
           node.critique = {
             passed: false,
-            findings: [{ severity: 'medium' as const, category: 'correctness' as const, description: 'Critic evaluation failed', suggestion: 'Manual review needed' }],
+            findings: [
+              {
+                severity: 'medium' as const,
+                category: 'correctness' as const,
+                description: 'Critic evaluation failed',
+                suggestion: 'Manual review needed',
+              },
+            ],
             summary: 'Critic evaluation failed.',
           };
         }
@@ -386,8 +359,11 @@ export class SwarmOrchestrator {
 
       // === FUSION: detect cross-worker conflicts ===
       const allNodes = collectAllNodes(goalTree);
-      const activeNodes = allNodes.filter(n => n.status === 'completed' || n.status === 'in_progress');
+      const activeNodes = allNodes.filter(
+        (n) => n.status === 'completed' || n.status === 'in_progress',
+      );
       const fusionReport = this.fusionEngine.analyze(activeNodes, round);
+      if (this.fusionReports.length > 200) this.fusionReports.shift();
       this.fusionReports.push(fusionReport);
 
       if (fusionReport.conflicts.length > 0) {
@@ -421,7 +397,10 @@ export class SwarmOrchestrator {
       totalTokensUsed += roundTokens;
 
       // === CONTINUATION DECISION ===
-      const totalFindings = allNodes.reduce((sum, n) => sum + (n.critique?.findings.length ?? 0), 0);
+      const totalFindings = allNodes.reduce(
+        (sum, n) => sum + (n.critique?.findings.length ?? 0),
+        0,
+      );
 
       // Build fingerprint set of current finding descriptions for accurate tracking
       const currentFindingsSet = new Set<string>();
@@ -441,16 +420,21 @@ export class SwarmOrchestrator {
         }
       }
 
-      const improvementRate = prevFindingsSet !== null && prevFindingsSet.size > 0
-        ? resolvedFindings / prevFindingsSet.size
-        : 1;
+      const improvementRate =
+        prevFindingsSet !== null && prevFindingsSet.size > 0
+          ? resolvedFindings / prevFindingsSet.size
+          : 1;
 
       if (improvementRate < 0.02) plateauRounds++;
       else plateauRounds = 0;
       prevFindingsSet = currentFindingsSet;
 
       const decision = this.makeDecision(
-        round, totalTokensUsed, totalFindings, plateauRounds, allNodes,
+        round,
+        totalTokensUsed,
+        totalFindings,
+        plateauRounds,
+        allNodes,
       );
 
       bus.publish('swarm.completed', 'swarm-orch', { round, depth: this.depth, decision });
@@ -460,10 +444,13 @@ export class SwarmOrchestrator {
 
     const elapsed = Date.now() - startTime;
     const finalAll = collectAllNodes(goalTree);
-    const completedCount = finalAll.filter(n => n.status === 'completed').length;
-    const resultStatus: SwarmStatus = completedCount === finalAll.length && finalAll.length > 0
-      ? 'completed'
-      : completedCount > 0 ? 'partial' : 'failed';
+    const completedCount = finalAll.filter((n) => n.status === 'completed').length;
+    const resultStatus: SwarmStatus =
+      completedCount === finalAll.length && finalAll.length > 0
+        ? 'completed'
+        : completedCount > 0
+          ? 'partial'
+          : 'failed';
 
     return {
       goal,
@@ -485,9 +472,9 @@ export class SwarmOrchestrator {
     for (const node of nodes) {
       if (node.children.length > 0 || node.status !== 'pending') continue;
 
-      const complexity = node.metadata?.complexity as number ?? 3;
-      const shouldFission = complexity >= this.config.fissionThreshold
-        && this.depth < this.config.maxDepth;
+      const complexity = (node.metadata?.complexity as number) ?? 3;
+      const shouldFission =
+        complexity >= this.config.fissionThreshold && this.depth < this.config.maxDepth;
 
       if (shouldFission) {
         const childOrch = new SwarmOrchestrator(
@@ -516,11 +503,11 @@ export class SwarmOrchestrator {
         // Propagate findings from child tree
         const childAllNodes = collectAllNodes(childResult.rootNodes);
         const childFindings = childAllNodes
-          .filter(n => n.critique)
-          .flatMap(n => n.critique!.findings);
+          .filter((n) => n.critique)
+          .flatMap((n) => n.critique!.findings);
         if (childFindings.length > 0) {
           node.critique = {
-            passed: !childFindings.some(f => f.severity === 'critical' || f.severity === 'high'),
+            passed: !childFindings.some((f) => f.severity === 'critical' || f.severity === 'high'),
             findings: childFindings.slice(0, 20),
             summary: `${childFindings.length} finding(s) from child manager`,
           };
@@ -553,8 +540,8 @@ export class SwarmOrchestrator {
       return 'stop_max_rounds';
     }
 
-    const activeCount = allNodes.filter(n =>
-      n.status === 'pending' || n.status === 'in_progress' || n.status === 're_opened'
+    const activeCount = allNodes.filter(
+      (n) => n.status === 'pending' || n.status === 'in_progress' || n.status === 're_opened',
     ).length;
 
     if (activeCount === 0 && findingsCount === 0) {
@@ -562,13 +549,11 @@ export class SwarmOrchestrator {
     }
 
     const mode = this.config.goalConfig.mode ?? 'balanced';
-    const plateauThreshold = mode === 'thorough' ? 5
-      : mode === 'balanced' ? 3
-      : 2;
+    const plateauThreshold = mode === 'thorough' ? 5 : mode === 'balanced' ? 3 : 2;
 
     if (plateauRounds >= plateauThreshold && findingsCount <= 2) {
-      const hasCritical = allNodes.some(n =>
-        n.critique?.findings.some(f => f.severity === 'critical' || f.severity === 'high')
+      const hasCritical = allNodes.some((n) =>
+        n.critique?.findings.some((f) => f.severity === 'critical' || f.severity === 'high'),
       );
       if (!hasCritical) {
         return 'stop_plateau';
@@ -582,14 +567,20 @@ export class SwarmOrchestrator {
   // LLM calls
   // ========================================================================
 
-  private async managerDecompose(goal: string): Promise<{ data: DecompositionOutput; tokens: number } | null> {
+  private async managerDecompose(
+    goal: string,
+  ): Promise<{ data: DecompositionOutput; tokens: number } | null> {
     const result = await callLLMJSON<DecompositionOutput>(
-      this.provider, this.model,
+      this.provider,
+      this.model,
       MANAGER_DECOMPOSE_PROMPT,
       `Goal: ${goal}`,
     );
     if (result && !validateShape(result.data, { subGoals: 'array', reasoning: 'string' })) {
-      getGlobalLogger().warn('SwarmOrchestrator', 'managerDecompose: LLM response failed shape validation');
+      getGlobalLogger().warn(
+        'SwarmOrchestrator',
+        'managerDecompose: LLM response failed shape validation',
+      );
       return null;
     }
     return result;
@@ -601,23 +592,26 @@ export class SwarmOrchestrator {
     round: number,
     fusionReport: FusionReport,
   ): Promise<{ data: ReviewOutput; tokens: number } | null> {
-    const completed = collectAllNodes(goalTree).filter(n => n.status === 'completed' || n.status === 'in_progress');
+    const completed = collectAllNodes(goalTree).filter(
+      (n) => n.status === 'completed' || n.status === 'in_progress',
+    );
     if (completed.length === 0) return null;
 
-    const context = completed.map(n => ({
+    const context = completed.map((n) => ({
       id: n.id,
       goal: n.goal,
       status: n.status,
       output: n.workerOutput?.slice(0, 1000) ?? '(no output)',
       critique: n.critique ?? { passed: true, findings: [], summary: 'No critique' },
-      childManagers: n.children.length > 0
-        ? n.children.map(c => ({
-            id: c.id,
-            goal: c.goal,
-            status: c.result?.status ?? 'unknown',
-            summary: c.result?.summary?.slice(0, 500) ?? '',
-          }))
-        : undefined,
+      childManagers:
+        n.children.length > 0
+          ? n.children.map((c) => ({
+              id: c.id,
+              goal: c.goal,
+              status: c.result?.status ?? 'unknown',
+              summary: c.result?.summary?.slice(0, 500) ?? '',
+            }))
+          : undefined,
     }));
 
     const userMessage = [
@@ -632,12 +626,24 @@ export class SwarmOrchestrator {
     ].join('\n');
 
     const result = await callLLMJSON<ReviewOutput>(
-      this.provider, this.model,
+      this.provider,
+      this.model,
       MANAGER_REVIEW_PROMPT,
       userMessage,
     );
-    if (result && !validateShape(result.data, { goalAssessments: 'array', newSubGoals: 'array', overallStatus: 'string', overallSummary: 'string' })) {
-      getGlobalLogger().warn('SwarmOrchestrator', 'managerReview: LLM response failed shape validation');
+    if (
+      result &&
+      !validateShape(result.data, {
+        goalAssessments: 'array',
+        newSubGoals: 'array',
+        overallStatus: 'string',
+        overallSummary: 'string',
+      })
+    ) {
+      getGlobalLogger().warn(
+        'SwarmOrchestrator',
+        'managerReview: LLM response failed shape validation',
+      );
       return null;
     }
     return result;
@@ -648,9 +654,11 @@ export class SwarmOrchestrator {
     parentGoal: string,
   ): Promise<{ output: string; tokens: number } | null> {
     const context = node.dependencies
-      .map(depId => {
+      .map((depId) => {
         const dep = findNodeById(this.rootNodes, depId);
-        return dep ? `Dependency "${dep.goal}" output:\n${dep.workerOutput?.slice(0, 500) ?? '(no output)'}` : '';
+        return dep
+          ? `Dependency "${dep.goal}" output:\n${dep.workerOutput?.slice(0, 500) ?? '(no output)'}`
+          : '';
       })
       .filter(Boolean)
       .join('\n\n');
@@ -660,7 +668,10 @@ export class SwarmOrchestrator {
         model: this.model,
         messages: [
           { role: 'system', content: WORKER_PROMPT },
-          { role: 'user', content: `Parent Goal: ${parentGoal}\n\nSub-Goal: ${node.goal}${context ? `\n\nContext from dependencies:\n${context}` : ''}\n\nProvide your output.` },
+          {
+            role: 'user',
+            content: `Parent Goal: ${parentGoal}\n\nSub-Goal: ${node.goal}${context ? `\n\nContext from dependencies:\n${context}` : ''}\n\nProvide your output.`,
+          },
         ],
         temperature: 0.3,
         maxTokens: 4096,
@@ -680,12 +691,19 @@ export class SwarmOrchestrator {
   ): Promise<{ data: CriticOutput; tokens: number } | null> {
     const context = `Parent Goal: ${parentGoal}\nSub-Goal: ${node.goal}\n\nWorker Output:\n${node.workerOutput?.slice(0, 2000) ?? '(no output)'}`;
     const result = await callLLMJSON<CriticOutput>(
-      this.provider, this.model,
+      this.provider,
+      this.model,
       CRITIC_PROMPT,
       context,
     );
-    if (result && !validateShape(result.data, { passed: 'boolean', findings: 'array', summary: 'string' })) {
-      getGlobalLogger().warn('SwarmOrchestrator', 'criticEvaluate: LLM response failed shape validation');
+    if (
+      result &&
+      !validateShape(result.data, { passed: 'boolean', findings: 'array', summary: 'string' })
+    ) {
+      getGlobalLogger().warn(
+        'SwarmOrchestrator',
+        'criticEvaluate: LLM response failed shape validation',
+      );
       return null;
     }
     return result;
@@ -728,7 +746,7 @@ export class SwarmOrchestrator {
       const node = nodeMap.get(`idx:${i}`);
       if (node && sg.dependencies.length > 0) {
         node.dependencies = sg.dependencies
-          .map(depIdx => nodeMap.get(`idx:${depIdx}`)?.id)
+          .map((depIdx) => nodeMap.get(`idx:${depIdx}`)?.id)
           .filter((id): id is string => !!id);
       }
     }

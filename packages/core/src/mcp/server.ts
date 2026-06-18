@@ -103,7 +103,8 @@ export class MCPServer {
       case 'initialize':
         this.initialized = true;
         return {
-          jsonrpc: '2.0', id,
+          jsonrpc: '2.0',
+          id,
           result: {
             protocolVersion: '0.1.0',
             capabilities: this.getCapabilities(),
@@ -113,17 +114,32 @@ export class MCPServer {
 
       case 'tools/list':
         return {
-          jsonrpc: '2.0', id,
+          jsonrpc: '2.0',
+          id,
           result: {
-            tools: Array.from(this.tools.values()).map(t => t.definition),
+            tools: Array.from(this.tools.values()).map((t) => t.definition),
           } satisfies ListToolsResult,
         };
 
       case 'tools/call': {
         const p = params as { name: string; arguments?: Record<string, unknown> };
+        if (!p || typeof p.name !== 'string' || !p.name) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: MCP_ERROR_CODES.INVALID_PARAMS,
+              message: 'Missing or invalid "name" parameter for tools/call',
+            },
+          };
+        }
         const reg = this.tools.get(p.name);
         if (!reg) {
-          return { jsonrpc: '2.0', id, error: { code: MCP_ERROR_CODES.METHOD_NOT_FOUND, message: `Tool not found: ${p.name}` } };
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: { code: MCP_ERROR_CODES.METHOD_NOT_FOUND, message: `Tool not found: ${p.name}` },
+          };
         }
         const result = await reg.handler(p.arguments ?? {});
         if (Array.isArray(result)) {
@@ -134,17 +150,35 @@ export class MCPServer {
 
       case 'resources/list':
         return {
-          jsonrpc: '2.0', id,
+          jsonrpc: '2.0',
+          id,
           result: {
-            resources: Array.from(this.resources.values()).map(r => r.resource),
+            resources: Array.from(this.resources.values()).map((r) => r.resource),
           } satisfies ListResourcesResult,
         };
 
       case 'resources/read': {
         const rp = params as { uri: string };
+        if (!rp || typeof rp.uri !== 'string' || !rp.uri) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: MCP_ERROR_CODES.INVALID_PARAMS,
+              message: 'Missing or invalid "uri" parameter for resources/read',
+            },
+          };
+        }
         const rreg = this.resources.get(rp.uri);
         if (!rreg) {
-          return { jsonrpc: '2.0', id, error: { code: MCP_ERROR_CODES.METHOD_NOT_FOUND, message: `Resource not found: ${rp.uri}` } };
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: MCP_ERROR_CODES.METHOD_NOT_FOUND,
+              message: `Resource not found: ${rp.uri}`,
+            },
+          };
         }
         const contents = await rreg.handler(rp.uri);
         return { jsonrpc: '2.0', id, result: { contents } satisfies ReadResourceResult };
@@ -152,30 +186,56 @@ export class MCPServer {
 
       case 'prompts/list':
         return {
-          jsonrpc: '2.0', id,
+          jsonrpc: '2.0',
+          id,
           result: {
-            prompts: Array.from(this.prompts.values()).map(p => p.prompt),
+            prompts: Array.from(this.prompts.values()).map((p) => p.prompt),
           } satisfies ListPromptsResult,
         };
 
       case 'prompts/get': {
         const pp = params as { name: string; arguments?: Record<string, string> };
+        if (!pp || typeof pp.name !== 'string' || !pp.name) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: MCP_ERROR_CODES.INVALID_PARAMS,
+              message: 'Missing or invalid "name" parameter for prompts/get',
+            },
+          };
+        }
         const preg = this.prompts.get(pp.name);
         if (!preg) {
-          return { jsonrpc: '2.0', id, error: { code: MCP_ERROR_CODES.METHOD_NOT_FOUND, message: `Prompt not found: ${pp.name}` } };
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: MCP_ERROR_CODES.METHOD_NOT_FOUND,
+              message: `Prompt not found: ${pp.name}`,
+            },
+          };
         }
         return { jsonrpc: '2.0', id, result: await preg.handler(pp.arguments ?? {}) };
       }
 
       default:
-        return { jsonrpc: '2.0', id, error: { code: MCP_ERROR_CODES.METHOD_NOT_FOUND, message: `Unknown method: ${method}` } };
+        return {
+          jsonrpc: '2.0',
+          id,
+          error: { code: MCP_ERROR_CODES.METHOD_NOT_FOUND, message: `Unknown method: ${method}` },
+        };
     }
   }
 
   /**
    * Convert TELOS ToolDefinition to MCP tool schema.
    */
-  static toolFromDefinition(def: { name: string; description: string; inputSchema: Record<string, unknown> }): MCPTool {
+  static toolFromDefinition(def: {
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+  }): MCPTool {
     return {
       name: def.name,
       description: def.description,
@@ -183,45 +243,51 @@ export class MCPServer {
     };
   }
 
-/**
-    * Register the standard "run_agent" distributed execution tool on this server.
-    * This is what MCPRemoteRuntime calls to execute agents remotely.
-    */
-  registerAgentExecutor(handler: (args: {
-     agentId: string;
-     projectId: string;
-     goal: string;
-     availableTools: string[];
-     maxSteps: number;
-     tokenBudget: number;
-     contextData: Record<string, unknown>;
-   }) => Promise<MCPToolResult>): void {
-     this.registerTool(
-       {
-         name: 'run_agent',
-         description: 'Execute an agent task on this remote server and return results',
-         inputSchema: {
-           type: 'object',
-           properties: {
-             agentId: { type: 'string', description: 'Agent identifier' },
-             projectId: { type: 'string', description: 'Project identifier' },
-             goal: { type: 'string', description: 'Task goal/description' },
-             availableTools: { type: 'array', items: { type: 'string' }, description: 'Available tool names' },
-             maxSteps: { type: 'number', description: 'Maximum execution steps' },
-             tokenBudget: { type: 'number', description: 'Token budget' },
-             contextData: { type: 'object', description: 'Additional context' },
-           },
-           required: ['agentId', 'projectId', 'goal'],
-         },
-       },
-       handler as unknown as ToolHandler,
-     );
-   }
+  /**
+   * Register the standard "run_agent" distributed execution tool on this server.
+   * This is what MCPRemoteRuntime calls to execute agents remotely.
+   */
+  registerAgentExecutor(
+    handler: (args: {
+      agentId: string;
+      projectId: string;
+      goal: string;
+      availableTools: string[];
+      maxSteps: number;
+      tokenBudget: number;
+      contextData: Record<string, unknown>;
+    }) => Promise<MCPToolResult>,
+  ): void {
+    this.registerTool(
+      {
+        name: 'run_agent',
+        description: 'Execute an agent task on this remote server and return results',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            agentId: { type: 'string', description: 'Agent identifier' },
+            projectId: { type: 'string', description: 'Project identifier' },
+            goal: { type: 'string', description: 'Task goal/description' },
+            availableTools: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Available tool names',
+            },
+            maxSteps: { type: 'number', description: 'Maximum execution steps' },
+            tokenBudget: { type: 'number', description: 'Token budget' },
+            contextData: { type: 'object', description: 'Additional context' },
+          },
+          required: ['agentId', 'projectId', 'goal'],
+        },
+      },
+      handler as unknown as ToolHandler,
+    );
+  }
 
-   /**
-    * Auto-register all Commander tools as MCP tools.
-    * Enables external MCP clients (Claude Desktop, Cursor, etc.) to use Commander's tool ecosystem.
-    */
+  /**
+   * Auto-register all Commander tools as MCP tools.
+   * Enables external MCP clients (Claude Desktop, Cursor, etc.) to use Commander's tool ecosystem.
+   */
   registerCommanderTools(tools: Map<string, Tool>): void {
     for (const [name, tool] of tools) {
       const def = tool.definition;
@@ -240,10 +306,12 @@ export class MCPServer {
             } satisfies MCPToolResult;
           } catch (err) {
             return {
-              content: [{
-                type: 'text' as const,
-                text: `Error executing ${name}: ${err instanceof Error ? err.message : String(err)}`,
-              }] as MCPTextContent[],
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Error executing ${name}: ${err instanceof Error ? err.message : String(err)}`,
+                },
+              ] as MCPTextContent[],
             };
           }
         },
@@ -252,8 +320,8 @@ export class MCPServer {
   }
 
   /**
-    * Register a resource that exposes tool execution results for monitoring.
-    */
+   * Register a resource that exposes tool execution results for monitoring.
+   */
   registerExecutionResource(): void {
     this.registerResource(
       {
@@ -268,11 +336,13 @@ export class MCPServer {
         const runId = url.searchParams.get('runId');
         const format = url.searchParams.get('format') ?? 'json';
 
-        return [{
-          uri,
-          mimeType: format === 'text' ? 'text/plain' : 'application/json',
-          text: JSON.stringify({ runId, status: 'trace_available', data: [] }),
-        }];
+        return [
+          {
+            uri,
+            mimeType: format === 'text' ? 'text/plain' : 'application/json',
+            text: JSON.stringify({ runId, status: 'trace_available', data: [] }),
+          },
+        ];
       },
     );
   }

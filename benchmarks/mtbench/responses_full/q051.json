@@ -1,6 +1,0 @@
-{
-  "cat": "Extraction",
-  "question": "Extract dates from: 'Meeting on 2024-01-15 and deadline 2024-02-28'",
-  "answer": "The dates in the text are:\n\n*   **2024-01-15**\n*   **2024-02-28**",
-  "score": 5.0
-}

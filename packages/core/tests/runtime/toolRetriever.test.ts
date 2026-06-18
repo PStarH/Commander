@@ -1,12 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { selectTools, getToolRelevanceScores, getToolCategory } from '../../src/runtime/toolRetriever';
+import {
+  selectTools,
+  getToolRelevanceScores,
+  getToolCategory,
+} from '../../src/runtime/toolRetriever';
 
 const ALL_TOOLS = [
-  'web_search', 'web_fetch', 'browser_search', 'browser_fetch',
-  'file_read', 'file_write', 'file_edit', 'file_search', 'file_list',
-  'python_execute', 'shell_execute',
-  'memory_store', 'memory_recall', 'memory_list',
-  'git', 'agent',
+  'web_search',
+  'web_fetch',
+  'browser_search',
+  'browser_fetch',
+  'file_read',
+  'file_write',
+  'file_edit',
+  'file_search',
+  'file_list',
+  'python_execute',
+  'shell_execute',
+  'memory_store',
+  'memory_recall',
+  'memory_list',
+  'git',
+  'agent',
 ];
 
 describe('ToolRetriever - selectTools', () => {
@@ -39,7 +54,9 @@ describe('ToolRetriever - selectTools', () => {
   });
 
   it('respects maxTools limit', () => {
-    const tools = selectTools('do everything possible across the system', ALL_TOOLS, { maxTools: 5 });
+    const tools = selectTools('do everything possible across the system', ALL_TOOLS, {
+      maxTools: 5,
+    });
     expect(tools.length).toBeLessThanOrEqual(5);
   });
 
@@ -49,11 +66,7 @@ describe('ToolRetriever - selectTools', () => {
   });
 
   it('boosts tools from conversation history', () => {
-    const recentCalls = [
-      { name: 'web_search' },
-      { name: 'web_search' },
-      { name: 'web_fetch' },
-    ];
+    const recentCalls = [{ name: 'web_search' }, { name: 'web_search' }, { name: 'web_fetch' }];
     const tools = selectTools('research a topic', ALL_TOOLS, { recentToolCalls: recentCalls });
     expect(tools).toContain('web_search');
     expect(tools).toContain('web_fetch');
@@ -65,7 +78,9 @@ describe('ToolRetriever - selectTools', () => {
       { name: 'web_search', error: 'timeout' },
       { name: 'web_search', error: 'timeout' },
     ];
-    const toolsWithErrors = selectTools('search the web for news', ALL_TOOLS, { recentToolCalls: recentErrors });
+    const toolsWithErrors = selectTools('search the web for news', ALL_TOOLS, {
+      recentToolCalls: recentErrors,
+    });
     const toolsClean = selectTools('search the web for news', ALL_TOOLS);
     const errorScores = getToolRelevanceScores('search the web for news', ALL_TOOLS);
     const webScore = errorScores.get('web_search') ?? 0;

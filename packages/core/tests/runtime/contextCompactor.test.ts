@@ -1,7 +1,16 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { ContextCompactor, type CompactTaskType, type AdaptiveProfile, type CompositionScore } from '../../src/runtime/contextCompactor';
-import { TokenGovernor, getTokenGovernor, resetTokenGovernor } from '../../src/runtime/tokenGovernor';
+import {
+  ContextCompactor,
+  type CompactTaskType,
+  type AdaptiveProfile,
+  type CompositionScore,
+} from '../../src/runtime/contextCompactor';
+import {
+  TokenGovernor,
+  getTokenGovernor,
+  resetTokenGovernor,
+} from '../../src/runtime/tokenGovernor';
 import type { LLMMessage, CacheConfig } from '../../src/runtime/types';
 
 function msgs(...contents: string[]): LLMMessage[] {
@@ -19,7 +28,10 @@ function toolMsg(content: string): LLMMessage {
   return { role: 'tool', content, tool_call_id: 'tc1' };
 }
 
-function assistantWithToolCalls(content: string, calls: Array<{ name: string; args: string }>): LLMMessage {
+function assistantWithToolCalls(
+  content: string,
+  calls: Array<{ name: string; args: string }>,
+): LLMMessage {
   return {
     role: 'assistant',
     content,
@@ -78,7 +90,7 @@ describe('ContextCompactor (upgraded)', () => {
       assert.ok(action.droppedCount > 0);
       assert.ok(result.length < messages.length);
       // System message preserved
-      assert.ok(result.some(m => m.role === 'system'));
+      assert.ok(result.some((m) => m.role === 'system'));
     });
   });
 
@@ -127,7 +139,11 @@ describe('ContextCompactor (upgraded)', () => {
       assert.equal(action.layer, 3);
       assert.ok(action.summary);
       // Should have system + summary + recent
-      assert.ok(result.some(m => typeof m.content === 'string' && m.content.includes('Compacted summary')));
+      assert.ok(
+        result.some(
+          (m) => typeof m.content === 'string' && m.content.includes('Compacted summary'),
+        ),
+      );
     });
 
     it('prevents double-compaction', () => {
@@ -147,10 +163,7 @@ describe('ContextCompactor (upgraded)', () => {
       const { messages: compacted } = compactor.compact(messages1);
 
       // Second compaction on already-compacted messages
-      const moreMessages: LLMMessage[] = [
-        ...compacted,
-        ...msgs('e'.repeat(100), 'f'.repeat(100)),
-      ];
+      const moreMessages: LLMMessage[] = [...compacted, ...msgs('e'.repeat(100), 'f'.repeat(100))];
       const { messages: result2, action: action2 } = compactor.compact(moreMessages);
       // Should still work without degrading
       assert.ok(action2.droppedCount >= 0);
@@ -179,7 +192,11 @@ describe('ContextCompactor (upgraded)', () => {
       assert.equal(action.layer, 4);
       // Should have system + summary + some recent
       assert.ok(result.length < messages.length);
-      assert.ok(result.some(m => typeof m.content === 'string' && m.content.includes('Emergency compact')));
+      assert.ok(
+        result.some(
+          (m) => typeof m.content === 'string' && m.content.includes('Emergency compact'),
+        ),
+      );
     });
   });
 
@@ -201,8 +218,8 @@ describe('ContextCompactor (upgraded)', () => {
       ];
       const { messages: result } = compactor.compact(messages);
       // Error message should be preserved
-      const hasError = result.some(m =>
-        typeof m.content === 'string' && m.content.includes('ERROR'),
+      const hasError = result.some(
+        (m) => typeof m.content === 'string' && m.content.includes('ERROR'),
       );
       assert.ok(hasError, 'Error message should be preserved through compaction');
     });
@@ -218,15 +235,19 @@ describe('ContextCompactor (upgraded)', () => {
       });
       const messages: LLMMessage[] = [
         systemMsg('sys'),
-        { role: 'user', content: 'Please implement a sorting algorithm in Python with these requirements: must handle edge cases' },
+        {
+          role: 'user',
+          content:
+            'Please implement a sorting algorithm in Python with these requirements: must handle edge cases',
+        },
         { role: 'assistant', content: 'I will implement merge sort' },
         ...msgs('do something else', 'ok'),
         ...msgs('final task', 'done'),
       ];
       const { messages: result } = compactor.compact(messages);
       // User instruction should be preserved
-      const hasInstruction = result.some(m =>
-        typeof m.content === 'string' && m.content.includes('sorting algorithm'),
+      const hasInstruction = result.some(
+        (m) => typeof m.content === 'string' && m.content.includes('sorting algorithm'),
       );
       assert.ok(hasInstruction, 'User instruction should be preserved');
     });
@@ -289,10 +310,25 @@ describe('ContextCompactor (upgraded)', () => {
 
   describe('adaptive compaction — backward compatibility', () => {
     it('compact() without task type uses default profile', () => {
-      const compactor = new ContextCompactor({ maxContextTokens: 400, layer1Trigger: 0.99, layer2Trigger: 0.99, layer3Trigger: 0.3, layer4Trigger: 0.99, keepRecentTurns: 1, governorAware: false });
+      const compactor = new ContextCompactor({
+        maxContextTokens: 400,
+        layer1Trigger: 0.99,
+        layer2Trigger: 0.99,
+        layer3Trigger: 0.3,
+        layer4Trigger: 0.99,
+        keepRecentTurns: 1,
+        governorAware: false,
+      });
       const messages: LLMMessage[] = [
         { role: 'system', content: 'You are a helpful assistant that helps with various tasks' },
-        ...msgs('a'.repeat(80), 'b'.repeat(80), 'c'.repeat(80), 'd'.repeat(80), 'e'.repeat(80), 'f'.repeat(80)),
+        ...msgs(
+          'a'.repeat(80),
+          'b'.repeat(80),
+          'c'.repeat(80),
+          'd'.repeat(80),
+          'e'.repeat(80),
+          'f'.repeat(80),
+        ),
       ];
       const { action } = compactor.compact(messages);
       assert.equal(action.layer, 3);
@@ -302,7 +338,14 @@ describe('ContextCompactor (upgraded)', () => {
     it('compact() with explicit config overrides adaptive profile', () => {
       // config.keepRecentTurns = 1 differs from DEFAULT_CONFIG.keepRecentTurns = 3
       // So config should win over profile's keepRecentTurns
-      const compactor = new ContextCompactor({ maxContextTokens: 300, layer1Trigger: 0.99, layer2Trigger: 0.99, layer3Trigger: 0.01, keepRecentTurns: 1, governorAware: false });
+      const compactor = new ContextCompactor({
+        maxContextTokens: 300,
+        layer1Trigger: 0.99,
+        layer2Trigger: 0.99,
+        layer3Trigger: 0.01,
+        keepRecentTurns: 1,
+        governorAware: false,
+      });
       const messages: LLMMessage[] = [
         { role: 'system', content: 'sys' },
         ...msgs('a', 'b', 'c', 'd', 'e', 'f'),
@@ -335,7 +378,10 @@ describe('ContextCompactor (upgraded)', () => {
       // (null < 1 < 2 < 3 < 4)
       const codeVal = codeLayer ?? 0;
       const searchVal = searchLayer ?? 0;
-      assert.ok(searchVal >= codeVal, `Search (${searchVal}) should compact at least as aggressively as code (${codeVal})`);
+      assert.ok(
+        searchVal >= codeVal,
+        `Search (${searchVal}) should compact at least as aggressively as code (${codeVal})`,
+      );
     });
 
     it('detail collapse verbosity includes more items than aggressive', () => {
@@ -367,8 +413,10 @@ describe('ContextCompactor (upgraded)', () => {
       const codeSummary = codeResult.action.summary?.length ?? 0;
       const searchSummary = searchResult.action.summary?.length ?? 0;
 
-      assert.ok(codeSummary >= searchSummary,
-        `Detail summary (${codeSummary} chars) should be >= aggressive (${searchSummary} chars)`);
+      assert.ok(
+        codeSummary >= searchSummary,
+        `Detail summary (${codeSummary} chars) should be >= aggressive (${searchSummary} chars)`,
+      );
     });
   });
 
@@ -377,9 +425,19 @@ describe('ContextCompactor (upgraded)', () => {
       const compactor = new ContextCompactor();
       const messages: LLMMessage[] = [
         { role: 'user', content: 'do something' },
-        { role: 'assistant', content: '', tool_calls: [{ id: '1', type: 'function', function: { name: 'search', arguments: '{}' } }] },
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            { id: '1', type: 'function', function: { name: 'search', arguments: '{}' } },
+          ],
+        },
         { role: 'tool', content: 'result', tool_call_id: '1' },
-        { role: 'assistant', content: '', tool_calls: [{ id: '2', type: 'function', function: { name: 'read', arguments: '{}' } }] },
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{ id: '2', type: 'function', function: { name: 'read', arguments: '{}' } }],
+        },
         { role: 'tool', content: 'data', tool_call_id: '2' },
       ];
       const composition = compactor.analyzeComposition(messages);
@@ -436,7 +494,13 @@ describe('ContextCompactor (upgraded)', () => {
       const compactor = new ContextCompactor();
       const messages: LLMMessage[] = [
         { role: 'user', content: 'do' },
-        { role: 'assistant', content: '', tool_calls: [{ id: '1', type: 'function', function: { name: 'search', arguments: '{}' } }] },
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            { id: '1', type: 'function', function: { name: 'search', arguments: '{}' } },
+          ],
+        },
         { role: 'tool', content: 'result', tool_call_id: '1' },
       ];
       // general + high tool density → keepRecentTurns should be boosted to at least 4
@@ -479,9 +543,7 @@ describe('ContextCompactor (upgraded)', () => {
 
       // Low budget so even moderate content crosses the lowered threshold
       const compactor = new ContextCompactor({ governorAware: true, maxContextTokens: 2000 });
-      const messages: LLMMessage[] = [
-        { role: 'system', content: 'x' },
-      ];
+      const messages: LLMMessage[] = [{ role: 'system', content: 'x' }];
       for (let i = 0; i < 40; i++) {
         messages.push({ role: 'user', content: 'what is the weather today?' });
         messages.push({ role: 'assistant', content: 'sunny and warm' });
@@ -489,7 +551,10 @@ describe('ContextCompactor (upgraded)', () => {
 
       const usage = compactor.getUsage(messages);
       // Under critical pressure, layer1 trigger shifts from 0.60 → 0.45
-      assert.ok(usage.pct >= 0.45, `Usage ${usage.pct} should exceed critical-phase layer1 trigger 0.45`);
+      assert.ok(
+        usage.pct >= 0.45,
+        `Usage ${usage.pct} should exceed critical-phase layer1 trigger 0.45`,
+      );
       const layer = compactor.needsCompaction(messages);
       assert.notEqual(layer, null, 'Should need compaction under critical phase');
     });
@@ -500,9 +565,7 @@ describe('ContextCompactor (upgraded)', () => {
       assert.equal(governor.getState().phase, 'critical');
 
       const compactor = new ContextCompactor({ governorAware: false, maxContextTokens: 100000 });
-      const messages: LLMMessage[] = [
-        { role: 'system', content: 'x' },
-      ];
+      const messages: LLMMessage[] = [{ role: 'system', content: 'x' }];
       for (let i = 0; i < 15; i++) {
         messages.push({ role: 'user', content: 'short message' });
         messages.push({ role: 'assistant', content: 'short reply' });
@@ -511,38 +574,87 @@ describe('ContextCompactor (upgraded)', () => {
       const usage = compactor.getUsage(messages);
       // Should still be below default layer1 trigger (0.60)
       // 30 messages * ~10 tokens each = ~300 + overhead = under 60k
-      assert.ok(usage.pct < 0.60, `Usage ${usage.pct} should be below layer1 trigger 0.60`);
+      assert.ok(usage.pct < 0.6, `Usage ${usage.pct} should be below layer1 trigger 0.60`);
       const layer = compactor.needsCompaction(messages);
       assert.equal(layer, null, 'Should not compact when governor-aware is disabled');
     });
   });
 
-  describe('CacheConfig integration', () => {
-    it('CacheConfig interface supports all required caching modes', () => {
-      // This test validates the CacheConfig shape is available and correct
-      const config: CacheConfig = {
-        cacheSystemPrompt: true,
-        cacheTools: true,
-        cacheHistory: 3,
-        useCacheControl: true,
-      };
-      assert.equal(config.cacheSystemPrompt, true);
-      assert.equal(config.cacheTools, true);
-      assert.equal(config.cacheHistory, 3);
-      assert.equal(config.useCacheControl, true);
+  describe('failure-driven compression', () => {
+    it('records failure correlation for messages', () => {
+      const compactor = new ContextCompactor();
+      const messages: LLMMessage[] = [
+        { role: 'user', content: 'Implement feature X using approach A' },
+        { role: 'assistant', content: 'I will use approach A' },
+      ];
+      compactor.recordFailureCorrelation('run-1', messages, 'verification_failed');
+      const tracker = compactor.getFailureTracker();
+      assert.ok(tracker.getRunRecord('run-1'));
     });
 
-    it('produces expected CacheConfig values matching agentRuntime production code', () => {
-      // Mirrors the production CacheConfig construction in agentRuntime.ts line 389-393
-      const toolDefs = [{ name: 'read', description: 'read a file' }];
-      const cacheConfig: CacheConfig = {
-        cacheSystemPrompt: true,
-        cacheTools: toolDefs.length > 0,
-        useCacheControl: true,
-      };
-      assert.equal(cacheConfig.cacheSystemPrompt, true, 'System prompt should always be cached');
-      assert.equal(cacheConfig.cacheTools, true, 'Tools should be cached when present');
-      assert.equal(cacheConfig.useCacheControl, true, 'cache_control markers should be enabled');
+    it('deprioritizes failure-correlated messages in layer3', () => {
+      const compactor = new ContextCompactor({
+        maxContextTokens: 300,
+        layer1Trigger: 0.99,
+        layer2Trigger: 0.99,
+        layer3Trigger: 0.01,
+        keepRecentTurns: 1,
+        governorAware: false,
+      });
+
+      const padding = 'word '.repeat(40);
+      const failedApproach = 'Use approach A to implement feature X. ' + padding;
+      const messages: LLMMessage[] = [
+        systemMsg('sys'),
+        { role: 'user', content: failedApproach },
+        { role: 'assistant', content: 'I will use approach A. ' + padding },
+        { role: 'user', content: 'Try approach B instead. ' + padding },
+        { role: 'assistant', content: 'I will use approach B. ' + padding },
+        { role: 'user', content: 'Final approach C. ' + padding },
+        { role: 'assistant', content: 'I will use approach C. ' + padding },
+      ];
+
+      compactor.recordFailureCorrelation('run-2', messages.slice(0, 3), 'verification_failed');
+      const { messages: result } = compactor.compact(messages);
+
+      // Full (non-summary) messages should not contain the failed approach A.
+      const fullMessages = result.filter(
+        (m) => typeof m.content === 'string' && !m.content.startsWith('__COMPACTED__'),
+      );
+      const hasFailedApproachFull = fullMessages.some(
+        (m) => typeof m.content === 'string' && m.content.includes('approach A'),
+      );
+      assert.ok(
+        !hasFailedApproachFull,
+        'Failure-correlated approach A full messages should be dropped',
+      );
+    });
+
+    it('deprioritizes failure-correlated messages in layer4', () => {
+      const compactor = new ContextCompactor({
+        maxContextTokens: 400,
+        layer1Trigger: 0.99,
+        layer2Trigger: 0.99,
+        layer3Trigger: 0.99,
+        layer4Trigger: 0.01,
+        governorAware: false,
+      });
+
+      const failedContent = 'a'.repeat(200);
+      const messages: LLMMessage[] = [
+        systemMsg('sys'),
+        { role: 'user', content: failedContent },
+        ...Array.from({ length: 30 }, (_, i) => ({
+          role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: `msg ${i}`,
+        })),
+      ];
+
+      compactor.recordFailureCorrelation('run-3', messages.slice(0, 2), 'verification_failed');
+      const { action } = compactor.compact(messages);
+      assert.equal(action.layer, 4);
+      // Should successfully compact without throwing
+      assert.ok(action.droppedCount >= 0);
     });
   });
 });

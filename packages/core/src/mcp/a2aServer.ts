@@ -5,10 +5,10 @@
  * A2A JSON-RPC methods: message/send, tasks/get, tasks/list, tasks/cancel.
  *
  * Flow:
- *   Remote Agent → HTTP POST / → A2A JSON-RPC → A2AServer → AgentRuntime → Response
+ *   Remote Agent → HTTP POST / → A2A JSON-RPC → A2AServer → AgentRuntimeInterface → Response
  */
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import type { AgentRuntime } from '../runtime/agentRuntime';
+import type { AgentRuntimeInterface } from '../runtime';
 import type {
   A2AAgentCard,
   A2AJsonRpcRequest,
@@ -67,14 +67,15 @@ const DEFAULT_CONFIG: Partial<A2AServerConfig> = {
 
 export class A2AServer {
   private config: A2AServerConfig;
-  private runtime: AgentRuntime;
+  private runtime: AgentRuntimeInterface;
   private server: ReturnType<typeof createServer> | null = null;
   private tasks: Map<string, A2ATask> = new Map();
   private connections: Set<import('net').Socket> = new Set();
   private logger = getGlobalLogger();
   private nextTaskId = 1;
+  private static readonly MAX_TASKS = 500;
 
-  constructor(config: A2AServerConfig, runtime: AgentRuntime) {
+  constructor(config: A2AServerConfig, runtime: AgentRuntimeInterface) {
     this.config = { ...DEFAULT_CONFIG, ...config } as A2AServerConfig;
     this.runtime = runtime;
   }
@@ -84,11 +85,16 @@ export class A2AServer {
       this.server = createServer((req, res) => {
         const socket = req.socket;
         this.connections.add(socket);
-        res.on('finish', () => { this.connections.delete(socket); });
+        res.on('finish', () => {
+          this.connections.delete(socket);
+        });
         this.handleRequest(req, res);
       });
       this.server.listen(this.config.port, this.config.host, () => {
-        this.logger.info('A2AServer', `A2A server listening on ${this.config.host}:${this.config.port}`);
+        this.logger.info(
+          'A2AServer',
+          `A2A server listening on ${this.config.host}:${this.config.port}`,
+        );
         resolve();
       });
     });
@@ -101,7 +107,10 @@ export class A2AServer {
 
   async stop(): Promise<void> {
     return new Promise((resolve) => {
-      if (!this.server) { resolve(); return; }
+      if (!this.server) {
+        resolve();
+        return;
+      }
       this.server.close(() => {
         this.connections.clear();
         resolve();
@@ -142,7 +151,11 @@ export class A2AServer {
 
     const a2aVersion = req.headers[A2A_VERSION_HEADER.toLowerCase()];
     if (a2aVersion && a2aVersion !== A2A_PROTOCOL_VERSION) {
-      this.sendJson(res, 400, this.makeErrorResponse(null, -32004, `Unsupported A2A version: ${a2aVersion}`));
+      this.sendJson(
+        res,
+        400,
+        this.makeErrorResponse(null, -32004, `Unsupported A2A version: ${a2aVersion}`),
+      );
       return;
     }
 
@@ -172,19 +185,33 @@ export class A2AServer {
     try {
       switch (method) {
         case A2A_METHODS.SEND_MESSAGE:
-          return this.makeSuccessResponse(id, await this.handleSendMessage(params as A2ASendMessageParams));
+          return this.makeSuccessResponse(
+            id,
+            await this.handleSendMessage(params as A2ASendMessageParams),
+          );
 
         case A2A_METHODS.SEND_MESSAGE_STREAM:
-          return this.makeSuccessResponse(id, { warning: 'Streaming not supported, use message/send' });
+          return this.makeSuccessResponse(id, {
+            warning: 'Streaming not supported, use message/send',
+          });
 
         case A2A_METHODS.GET_TASK:
-          return this.makeSuccessResponse(id, await this.handleGetTask(params as A2ATaskQueryParams));
+          return this.makeSuccessResponse(
+            id,
+            await this.handleGetTask(params as A2ATaskQueryParams),
+          );
 
         case A2A_METHODS.LIST_TASKS:
-          return this.makeSuccessResponse(id, await this.handleListTasks(params as A2AListTasksParams));
+          return this.makeSuccessResponse(
+            id,
+            await this.handleListTasks(params as A2AListTasksParams),
+          );
 
         case A2A_METHODS.CANCEL_TASK:
-          return this.makeSuccessResponse(id, await this.handleCancelTask(params as A2ATaskIdParams));
+          return this.makeSuccessResponse(
+            id,
+            await this.handleCancelTask(params as A2ATaskIdParams),
+          );
 
         case A2A_METHODS.GET_AGENT_CARD:
           return this.makeSuccessResponse(id, this.config.agentCard);
@@ -220,15 +247,19 @@ export class A2AServer {
       metadata: { receivedAt: new Date().toISOString() },
     };
 
+    this.pruneCompletedTasks();
     this.tasks.set(taskId, task);
     this.updateTaskState(taskId, 'WORKING');
     this.logger.info('A2AServer', `Task ${taskId} submitted`);
 
-    const userMessage = message.parts.map(p => {
-      if (p.type === 'text') return p.text;
-      if (p.type === 'data') return JSON.stringify(p.data);
-      return '';
-    }).filter(Boolean).join('\n');
+    const userMessage = message.parts
+      .map((p) => {
+        if (p.type === 'text') return p.text;
+        if (p.type === 'data') return JSON.stringify(p.data);
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n');
 
     const executeTask = async () => {
       try {
@@ -252,11 +283,18 @@ export class A2AServer {
 
         let result;
         if (timeoutMs > 0) {
+          let timeoutTimer: ReturnType<typeof setTimeout>;
           const timeoutPromise = new Promise<never>((_, reject) => {
-            const timer = setTimeout(() => reject(new Error(`Task execution timed out after ${timeoutMs}ms`)), timeoutMs);
-            timer.unref();
+            timeoutTimer = setTimeout(
+              () => reject(new Error(`Task execution timed out after ${timeoutMs}ms`)),
+              timeoutMs,
+            );
+            timeoutTimer.unref();
           });
-          result = await Promise.race([execPromise, timeoutPromise]);
+          result = await Promise.race([
+            execPromise.finally(() => clearTimeout(timeoutTimer)),
+            timeoutPromise,
+          ]);
         } else {
           result = await execPromise;
         }
@@ -264,35 +302,56 @@ export class A2AServer {
         const responseMessage: A2AMessage = {
           messageId: `msg_${taskId}_resp`,
           role: 'agent',
-          parts: [{ type: 'text', text: result.summary || `Task completed with status: ${result.status}` }],
+          parts: [
+            {
+              type: 'text',
+              text: result.summary || `Task completed with status: ${result.status}`,
+            },
+          ],
           taskId,
           contextId,
         };
 
         task.history?.push(responseMessage);
-        task.artifacts = [{
-          artifactId: `art_${taskId}_1`,
-          parts: [{ type: 'text', text: result.summary || `Status: ${result.status}` }],
-          metadata: {
-            status: result.status,
-            steps: result.steps?.length ?? 0,
-            totalTokens: result.totalTokenUsage,
-            durationMs: result.totalDurationMs,
+        task.artifacts = [
+          {
+            artifactId: `art_${taskId}_1`,
+            parts: [{ type: 'text', text: result.summary || `Status: ${result.status}` }],
+            metadata: {
+              status: result.status,
+              steps: result.steps?.length ?? 0,
+              totalTokens: result.totalTokenUsage,
+              durationMs: result.totalDurationMs,
+            },
           },
-        }];
+        ];
 
         const finalState: A2ATaskState = result.status === 'success' ? 'COMPLETED' : 'FAILED';
-        this.updateTaskState(taskId, finalState, result.status === 'success' ? undefined : result.error);
+        this.updateTaskState(
+          taskId,
+          finalState,
+          result.status === 'success' ? undefined : result.error,
+        );
         this.logger.info('A2AServer', `Task ${taskId} ${finalState}`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.updateTaskState(taskId, 'FAILED', msg);
-        this.logger.error('A2AServer', `Task ${taskId} failed`, err instanceof Error ? err : new Error(String(err)));
+        this.logger.error(
+          'A2AServer',
+          `Task ${taskId} failed`,
+          err instanceof Error ? err : new Error(String(err)),
+        );
       }
     };
 
     if (returnImmediately) {
-      executeTask().catch(err => this.logger.error('A2AServer', `Background task ${taskId} error`, err instanceof Error ? err : new Error(String(err))));
+      executeTask().catch((err) =>
+        this.logger.error(
+          'A2AServer',
+          `Background task ${taskId} error`,
+          err instanceof Error ? err : new Error(String(err)),
+        ),
+      );
       return this.tasks.get(taskId)!;
     }
 
@@ -312,10 +371,10 @@ export class A2AServer {
     let filtered = Array.from(this.tasks.values());
 
     if (params.contextId) {
-      filtered = filtered.filter(t => t.contextId === params.contextId);
+      filtered = filtered.filter((t) => t.contextId === params.contextId);
     }
     if (params.status) {
-      filtered = filtered.filter(t => t.status.state === params.status);
+      filtered = filtered.filter((t) => t.status.state === params.status);
     }
 
     const totalSize = filtered.length;
@@ -337,7 +396,10 @@ export class A2AServer {
       throw new A2AError(A2A_ERROR.TASK_NOT_FOUND, `Task not found: ${params.id}`);
     }
     if (A2A_TERMINAL_STATES.has(task.status.state)) {
-      throw new A2AError(A2A_ERROR.TASK_NOT_CANCELABLE, `Task ${params.id} already in terminal state: ${task.status.state}`);
+      throw new A2AError(
+        A2A_ERROR.TASK_NOT_CANCELABLE,
+        `Task ${params.id} already in terminal state: ${task.status.state}`,
+      );
     }
     this.updateTaskState(params.id, 'CANCELED', 'Canceled by client');
     return { status: 'canceled' };
@@ -353,7 +415,10 @@ export class A2AServer {
 
     const current = task.status.state;
     if (!canTransition(current, newState)) {
-      this.logger.warn('A2AServer', `Invalid state transition: ${current} → ${newState} for task ${taskId}`);
+      this.logger.warn(
+        'A2AServer',
+        `Invalid state transition: ${current} → ${newState} for task ${taskId}`,
+      );
       return;
     }
 
@@ -362,6 +427,22 @@ export class A2AServer {
       timestamp: new Date().toISOString(),
       message,
     };
+  }
+
+  private static readonly TERMINAL_STATES: Set<A2ATaskState> = new Set([
+    'COMPLETED',
+    'FAILED',
+    'CANCELED',
+  ]);
+
+  private pruneCompletedTasks(): void {
+    if (this.tasks.size < A2AServer.MAX_TASKS) return;
+    for (const [id, task] of this.tasks) {
+      if (A2AServer.TERMINAL_STATES.has(task.status.state)) {
+        this.tasks.delete(id);
+        if (this.tasks.size < A2AServer.MAX_TASKS * 0.8) break;
+      }
+    }
   }
 
   private parseBody(req: IncomingMessage): Promise<unknown> {
@@ -417,8 +498,17 @@ export class A2AServer {
     return { jsonrpc: '2.0', id, result };
   }
 
-  private makeErrorResponse(id: string | number | null, code: number, message: string, data?: unknown): A2AJsonRpcResponse {
-    return { jsonrpc: '2.0', id, error: { code, message, ...(data !== undefined ? { data } : {}) } };
+  private makeErrorResponse(
+    id: string | number | null,
+    code: number,
+    message: string,
+    data?: unknown,
+  ): A2AJsonRpcResponse {
+    return {
+      jsonrpc: '2.0',
+      id,
+      error: { code, message, ...(data !== undefined ? { data } : {}) },
+    };
   }
 }
 
@@ -442,6 +532,9 @@ class A2AError extends Error {
 // Factory
 // ============================================================================
 
-export function createA2AServer(config: A2AServerConfig, runtime: AgentRuntime): A2AServer {
+export function createA2AServer(
+  config: A2AServerConfig,
+  runtime: AgentRuntimeInterface,
+): A2AServer {
   return new A2AServer(config, runtime);
 }

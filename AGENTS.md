@@ -1,6 +1,6 @@
 # Commander — Architecture & Operator's Manual
 
-> Full core test suite · TypeScript strict · 100+ modules · 8 topologies · multi-tenant
+> Full core test suite · TypeScript strict · 448 modules · 8 topologies · multi-tenant
 
 ## Quick Start
 
@@ -18,11 +18,11 @@ npx tsx cli.ts watch "your task"  # SSE streaming
 
 ```
 packages/core/src/
-├── runtime/             ← Execution engine (49 files — the heart)
+├── runtime/             ← Execution engine (122 files — the heart)
 │   ├── agentRuntime.ts  ← Main loop: LLM → tools → verification → retry
 │   ├── types.ts         ← All shared types (context, config, steps)
 │   ├── modelRouter.ts   ↑ Provider selection by task complexity
-│   ├── providers/       ↓ 6 providers: OpenAI, Anthropic, Google, DeepSeek, GLM, Xiaomi
+│   ├── providers/       ↓ 22 providers: OpenAI, Anthropic, Google, DeepSeek, GLM, Xiaomi, Groq, Bedrock, etc.
 │   ├── messageBus.ts    ← Pub/sub for inter-agent + system events
 │   ├── metricsCollector.ts ← Prometheus counters/gauges/histograms with tenant labels
 │   ├── tenantProvider.ts   ← Multi-tenant isolation (NullTenantProvider for single-tenant)
@@ -31,51 +31,92 @@ packages/core/src/
 │   ├── samplesStore.ts     ← NDJSON audit trail (LLM calls, verifications)
 │   ├── traceStore.ts       ← Execution trace event storage
 │   ├── circuitBreaker.ts   ← Failure threshold → open circuit
+│   ├── circuitBreakerRegistry.ts ← Multi-provider circuit breaker management
 │   ├── deadLetterQueue.ts  ← Unrecoverable errors for analysis
+│   ├── deadLetterQueueSingleton.ts ← Global DLQ instance
 │   ├── contextCompactor.ts ← Token-aware message compaction
 │   ├── tokenGovernor.ts    ← Token budget enforcement
 │   ├── llmRetry.ts         ← Classify errors as retryable/permanent + backoff
 │   ├── stepErrorBoundary.ts ← Per-step recovery (skip/retry/abort)
+│   ├── stepTimeoutManager.ts ← Per-step timeout enforcement
 │   ├── compensationRegistry.ts ← Undo side-effects of failed mutation tools
 │   ├── httpServer.ts       ← REST API with auth, rate limiting, tenant key mapping
 │   ├── executionTrace.ts   ← Span-based execution tracing
 │   ├── agentHandoff.ts     ← Agent-to-agent handoff with inbox
-│   └── agentInbox.ts       ← Persistent inbox for async agent messages
+│   ├── agentInbox.ts       ← Persistent inbox for async agent messages
+│   ├── providerFallbackChain.ts ← Automatic failover between LLM providers
+│   ├── unifiedVerification.ts ← 5-gate quality verification pipeline
+│   ├── sseStream.ts        ← Server-Sent Events for real-time agent streaming
+│   ├── toolOrchestrator.ts ← Dependency-aware tool execution planning
+│   ├── toolPlanner.ts      ← Execution plan generation with parallel stages
+│   ├── toolOutputManager.ts ← Token-budgeted tool output management
+│   ├── semanticCache.ts    ← Semantic similarity-based result caching
+│   ├── singleFlightRequestCache.ts ← Deduplicate concurrent identical requests
+│   ├── contextWindow.ts    ← Context window management with sliding window
+│   ├── cycleDetector.ts    ← Loop detection to prevent infinite execution
+│   ├── reliabilityEngine.ts ← Unified resilience facade
+│   ├── runRecovery.ts      ← Crash recovery from persisted state
+│   └── ... (80+ more files for auth, proxy, adapters, harnesses, etc.)
 │
-├── ultimate/            ← Orchestration engine (14 files)
+├── ultimate/            ← Orchestration engine (29 files)
 │   ├── deliberation.ts  ← Task analysis: complexity, topology selection
 │   ├── topologyRouter.ts ← DAG-based topology: SINGLE, SEQUENTIAL, PARALLEL,
 │   │                        HIERARCHICAL, HYBRID, DEBATE, ENSEMBLE, EVALUATOR-OPTIMIZER
+│   ├── topologyOptimizer.ts ← Reflexion-based topology performance learning
 │   ├── effortScaler.ts  ← Scale agents (1-20) based on task complexity
 │   ├── atomizer.ts      ← ROMA-style task decomposition
 │   ├── orchestrator.ts  ← Compose pipeline: deliberate → scale → route → execute
 │   ├── subAgentExecutor.ts ← Execute subtasks with sub-agents
 │   ├── synthesizer.ts   ← Multi-agent synthesis (lead, hierarchical, vote, ensemble)
-│   └── agentTeamManager.ts ← Persistent agent teams with inbox messaging
+│   ├── artifactSystem.ts ← Reference-based agent communication (prevents telephone game)
+│   ├── agentTeamManager.ts ← Persistent agent teams with inbox messaging
+│   ├── capabilityRegistry.ts ← FoA-inspired semantic agent capability matching
+│   ├── workCoordinator.ts ← Distributed work queue with claim semantics
+│   ├── stateManager.ts  ← Shared state management across subtasks
+│   ├── coordinationPolicy.ts ← Policy-based coordination decisions
+│   └── pheromoneRouter.ts ← Ant-colony-inspired routing optimization
 │
-├── tools/               ← 15 built-in tools
+├── tools/               ← 24 built-in tools
 │   ├── fileSystemTool.ts, codeFixer.ts, patchTool.ts
 │   ├── metaTool.ts, agentTool.ts, answerFormatTool.ts
 │   ├── persistenceTool.ts, verificationTool.ts
+│   ├── browserTool.ts, webSearchTool.ts, codeSearchTool.ts
+│   ├── gitTool.ts, sandboxedExec.ts, scriptTool.ts
+│   ├── checkpointTool.ts, handoffTool.ts, mcpToolAdapter.ts
+│   ├── codeExecutionTool.ts, codeRefinerTool.ts
+│   ├── a2aDelegateTool.ts, requestHumanInputTool.ts, requestToolTool.ts
+│   ├── resourceTools.ts, conversationSearchTool.ts
 │   └── index.ts         ← Tool registration
 │
 ├── sandbox/             ← Security profiles and execution policy
-│   ├── execPolicy.ts, approval.ts, profiles.ts, platforms.ts, manager.ts
+│   ├── execPolicy.ts, approval.ts, profiles.ts, platforms.ts
+│   ├── manager.ts, executionRouter.ts, networkProxy.ts
+│   ├── seccompBpf.ts, lane.ts, types.ts
+│   └── backends/        ← Seatbelt, Bubblewrap, Docker implementations
 │
 ├── selfEvolution/       ← Meta-learning (Thompson Sampling + Reflexion)
-│   └── metaLearner.ts
+│   ├── metaLearner.ts   ← Thompson Sampling + Beta distribution
+│   ├── trajectoryAnalyzer.ts ← Execution trajectory pattern analysis
+│   └── evolverAgent.ts  ← Cross-run optimization via agent-guided evolution
 │
 ├── telos/               ← Token-efficient LLM orchestration
-│   └── providerPool.ts
+│   └── providerPool.ts, types.ts, orchestrator.ts
 │
 ├── mcp/                 ← Model Context Protocol (client + server)
 │   ├── client.ts, server.ts, types.ts, a2aCompliance.ts
+│
+├── saga/                ← Distributed compensating transactions
+│   ├── sagaBuilder.ts, coordinator.ts, workerPool.ts
+│   ├── checkpointer.ts, approvalManager.ts, retryController.ts
+│   └── stores/          ← In-memory and file-based saga stores
 │
 ├── threeLayerMemory.ts  ← Working/Episodic/Long-term memory with embedding
 ├── pluginManager.ts     ← Hook-based plugin system (before/after LLM, tool, run)
 ├── reflectionEngine.ts  ← Post-execution self-evaluation
 ├── hallucinationDetector.ts ← Signal-based hallucination detection
-└── index.ts             ← Public API exports
+├── privacyRouter.ts     ← Sensitive content detection + local model fallback
+├── contentScanner.ts    ← Agent security layer for injection detection
+└── index.ts             ← Public API exports (~450 lines)
 ```
 
 ## Core Call Chain
@@ -155,26 +196,26 @@ NullTenantProvider = no isolation, backward compatible. SimpleTenantProvider = s
 
 ## Key Data Types
 
-| Type | File | Fields |
-|------|------|--------|
-| `AgentExecutionContext` | `runtime/types.ts` | `agentId, projectId, goal, tenantId?, userId?, tokenBudget, maxSteps, availableTools, contextData` |
-| `AgentExecutionResult` | `runtime/types.ts` | `status, summary, steps[], totalTokenUsage, totalDurationMs, error?` |
-| `AgentRuntimeConfig` | `runtime/types.ts` | `maxStepsPerRun, maxRetries, timeoutMs, maxConcurrency, budgetHardCapTokens, ...` |
-| `TenantConfig` | `runtime/tenantProvider.ts` | `tenantId, tokenBudget, maxConcurrency, maxRunsPerMinute, enabled, workspacePath?` |
-| `CheckpointState` | `runtime/stateCheckpointer.ts` | `runId, phase, stepNumber, messages[], tokenUsage, context, ...` |
+| Type                    | File                           | Fields                                                                                             |
+| ----------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `AgentExecutionContext` | `runtime/types.ts`             | `agentId, projectId, goal, tenantId?, userId?, tokenBudget, maxSteps, availableTools, contextData` |
+| `AgentExecutionResult`  | `runtime/types.ts`             | `status, summary, steps[], totalTokenUsage, totalDurationMs, error?`                               |
+| `AgentRuntimeConfig`    | `runtime/types.ts`             | `maxStepsPerRun, maxRetries, timeoutMs, maxConcurrency, budgetHardCapTokens, ...`                  |
+| `TenantConfig`          | `runtime/tenantProvider.ts`    | `tenantId, tokenBudget, maxConcurrency, maxRunsPerMinute, enabled, workspacePath?`                 |
+| `CheckpointState`       | `runtime/stateCheckpointer.ts` | `runId, phase, stepNumber, messages[], tokenUsage, context, ...`                                   |
 
 ## Extension Points
 
-| Point | Interface | When it fires |
-|-------|-----------|---------------|
-| LLM call | `HookManager.fireBeforeLLMCall / fireAfterLLMCall` | Before/after every LLM request |
-| Tool call | `HookManager.fireBeforeToolCall / fireAfterToolCall` | Before/after every tool execution |
-| Run lifecycle | `HookManager.fireOnAgentComplete / fireOnError` | Run finished or failed |
-| Plugin | `CommanderPlugin` interface | Register via `getHookManager().register(plugin)` |
-| Custom provider | `LLMProvider` interface | `runtime.registerProvider(name, provider)` |
-| Custom tool | `Tool` interface | `runtime.registerTool(name, tool)` |
-| Channel adapter | `ChannelAdapter` interface | Telegram etc. |
-| Topology | Add case in `topologyRouter.ts` | New orchestration pattern |
+| Point           | Interface                                            | When it fires                                    |
+| --------------- | ---------------------------------------------------- | ------------------------------------------------ |
+| LLM call        | `HookManager.fireBeforeLLMCall / fireAfterLLMCall`   | Before/after every LLM request                   |
+| Tool call       | `HookManager.fireBeforeToolCall / fireAfterToolCall` | Before/after every tool execution                |
+| Run lifecycle   | `HookManager.fireOnAgentComplete / fireOnError`      | Run finished or failed                           |
+| Plugin          | `CommanderPlugin` interface                          | Register via `getHookManager().register(plugin)` |
+| Custom provider | `LLMProvider` interface                              | `runtime.registerProvider(name, provider)`       |
+| Custom tool     | `Tool` interface                                     | `runtime.registerTool(name, tool)`               |
+| Channel adapter | `ChannelAdapter` interface                           | Telegram etc.                                    |
+| Topology        | Add case in `topologyRouter.ts`                      | New orchestration pattern                        |
 
 ## Testing Strategy
 
@@ -189,11 +230,13 @@ tests/
 ├── hallucinationDetector.test.ts  ← Signal-based detection
 ├── ultimate-orchestration.test.ts ← Topology routing + decomposition
 ├── commander-tools-integration.test.ts ← Tool chain execution
-├── benchmark.test.ts              ← Performance baselines
-└── e2e.test.ts                    ← Full CLI workflow
+├── performance-profiling.test.ts  ← Performance baselines
+├── e2e.test.ts                    ← Full CLI workflow
+└── ... (50+ more: sandbox, security, plugins, reversibility, etc.)
 ```
 
 Rules:
+
 - **Zero tolerance for failures**: `# fail 0` is non-negotiable
 - **New feature → new tests**: every addition needs isolation + integration coverage
 - **Chaos tests are first-class**: they must pass, not just "informational"

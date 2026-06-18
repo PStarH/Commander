@@ -21,7 +21,7 @@ describe('Tool Call Repair', () => {
     const input = '{"query": "hello", "limit": 5,}';
     const result = repairToolCallArguments(input, 'web_search');
     assert.deepStrictEqual(result.args, { query: 'hello', limit: 5 });
-    assert.ok(result.repairs.some(r => r.includes('trailing comma')));
+    assert.ok(result.repairs.some((r) => r.includes('trailing comma')));
   });
 
   it('repairs trailing comma before closing bracket', () => {
@@ -34,7 +34,7 @@ describe('Tool Call Repair', () => {
     const input = '```json\n{"query": "test"}\n```';
     const result = repairToolCallArguments(input, 'web_search');
     assert.deepStrictEqual(result.args, { query: 'test' });
-    assert.ok(result.repairs.some(r => r.includes('markdown')));
+    assert.ok(result.repairs.some((r) => r.includes('markdown')));
   });
 
   it('strips markdown code fences without language tag', () => {
@@ -47,14 +47,14 @@ describe('Tool Call Repair', () => {
     const input = 'Here is the result: {"query": "test"} hope this helps!';
     const result = repairToolCallArguments(input, 'web_search');
     assert.deepStrictEqual(result.args, { query: 'test' });
-    assert.ok(result.repairs.some(r => r.includes('extracted')));
+    assert.ok(result.repairs.some((r) => r.includes('extracted')));
   });
 
   it('removes single-line comments', () => {
     const input = '{\n  // This is a comment\n  "query": "test"\n}';
     const result = repairToolCallArguments(input, 'web_search');
     assert.deepStrictEqual(result.args, { query: 'test' });
-    assert.ok(result.repairs.some(r => r.includes('comments')));
+    assert.ok(result.repairs.some((r) => r.includes('comments')));
   });
 
   it('removes block comments', () => {

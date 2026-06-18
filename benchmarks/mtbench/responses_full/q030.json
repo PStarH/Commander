@@ -1,6 +1,0 @@
-{
-  "cat": "Math",
-  "question": "Find x: 2x + 5 = 15",
-  "answer": "To find the value of $x$, follow these steps to isolate the variable:\n\n1.  **Subtract 5 from both sides of the equation:**\n    $$2x + 5 - 5 = 15 - 5$$\n    $$2x = 10$$\n\n2.  **Divide both sides by 2:**\n    $$\\frac{2x}{2} = \\frac{10}{2}$$\n    $$x = 5$$\n\n**Answer:**\n**x = 5**",
-  "score": 8.0
-}

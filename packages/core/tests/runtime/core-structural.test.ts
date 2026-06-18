@@ -8,9 +8,17 @@ import assert from 'node:assert';
 import { CircuitBreaker } from '../../src/runtime/circuitBreaker';
 import type { CircuitState, CircuitStats } from '../../src/runtime/circuitBreaker';
 
-import { CredentialManager, getCredentialManager, resetCredentialManager } from '../../src/runtime/credentialManager';
+import {
+  CredentialManager,
+  getCredentialManager,
+  resetCredentialManager,
+} from '../../src/runtime/credentialManager';
 
-import { ThreeLayerMemory, getGlobalThreeLayerMemory, resetGlobalThreeLayerMemory } from '../../src/threeLayerMemory';
+import {
+  ThreeLayerMemory,
+  getGlobalThreeLayerMemory,
+  resetGlobalThreeLayerMemory,
+} from '../../src/threeLayerMemory';
 import type { MemoryLayer, MemoryQuery, MemoryEntry } from '../../src/threeLayerMemory';
 
 import { StateCheckpointer } from '../../src/runtime/stateCheckpointer';
@@ -74,7 +82,7 @@ describe('CircuitBreaker', () => {
     const cb = new CircuitBreaker(1, 50);
     cb.onFailure();
     assert.strictEqual(cb.getState(), 'OPEN');
-    await new Promise(r => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 60));
     assert.ok(cb.isAvailable());
     assert.strictEqual(cb.getState(), 'HALF_OPEN');
     cb.onSuccess();
@@ -85,7 +93,7 @@ describe('CircuitBreaker', () => {
     const cb = new CircuitBreaker(1, 50);
     cb.onFailure();
     assert.strictEqual(cb.getState(), 'OPEN');
-    await new Promise(r => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 60));
     cb.isAvailable();
     assert.strictEqual(cb.getState(), 'HALF_OPEN');
     cb.onFailure();
@@ -117,7 +125,9 @@ describe('CircuitBreaker', () => {
 
   it('onStateChange callback fires', () => {
     let changed: { from: CircuitState; to: CircuitState } | null = null;
-    const cb = new CircuitBreaker(1, 30000, 1, (from, to) => { changed = { from, to }; });
+    const cb = new CircuitBreaker(1, 30000, 1, (from, to) => {
+      changed = { from, to };
+    });
     cb.onFailure();
     assert.ok(changed !== null);
     assert.strictEqual(changed?.from, 'CLOSED');
@@ -276,7 +286,15 @@ describe('ThreeLayerMemory', () => {
   });
 
   it('can be constructed with custom config', () => {
-    const mem = new ThreeLayerMemory({ working: { maxEntries: 10, maxMemoryBytes: 50000, decayRate: 0, baseDecayPerHour: 0, importanceBoost: 0 } });
+    const mem = new ThreeLayerMemory({
+      working: {
+        maxEntries: 10,
+        maxMemoryBytes: 50000,
+        decayRate: 0,
+        baseDecayPerHour: 0,
+        importanceBoost: 0,
+      },
+    });
     assert.ok(mem instanceof ThreeLayerMemory);
   });
 
@@ -305,7 +323,9 @@ describe('ThreeLayerMemory', () => {
 
   it('add and get memory entry', () => {
     const mem = new ThreeLayerMemory();
-    const entry = mem.add('test memory content', 'working', 'test-context', 0.5, ['test'], { source: 'unit-test' });
+    const entry = mem.add('test memory content', 'working', 'test-context', 0.5, ['test'], {
+      source: 'unit-test',
+    });
     assert.ok(entry.id.length > 0);
     assert.strictEqual(entry.content, 'test memory content');
     assert.strictEqual(entry.layer, 'working');
@@ -327,7 +347,7 @@ describe('ThreeLayerMemory', () => {
     mem.add('working entry', 'working');
     mem.add('episodic entry', 'episodic');
     const working = mem.query({ layer: 'working', limit: 10 });
-    assert.ok(working.every(e => e.layer === 'working'));
+    assert.ok(working.every((e) => e.layer === 'working'));
   });
 
   it('query with keywords', () => {
@@ -335,7 +355,7 @@ describe('ThreeLayerMemory', () => {
     mem.add('apple banana cherry', 'working');
     mem.add('dog elephant frog', 'episodic');
     const results = mem.query({ keywords: ['apple'], limit: 10 });
-    assert.ok(results.some(r => r.content.includes('apple')));
+    assert.ok(results.some((r) => r.content.includes('apple')));
   });
 
   it('query with importance threshold', () => {
@@ -343,7 +363,7 @@ describe('ThreeLayerMemory', () => {
     mem.add('low importance', 'working', '', 0.2);
     mem.add('high importance', 'working', '', 0.9);
     const results = mem.query({ layer: 'working', importanceThreshold: 0.5, limit: 10 });
-    assert.ok(results.every(r => r.importance >= 0.5));
+    assert.ok(results.every((r) => r.importance >= 0.5));
   });
 
   it('query with context filter', () => {
@@ -351,7 +371,7 @@ describe('ThreeLayerMemory', () => {
     mem.add('entry one', 'working', 'auth-context');
     mem.add('entry two', 'working', 'db-context');
     const results = mem.query({ context: 'auth', limit: 10 });
-    assert.ok(results.every(r => r.context.includes('auth')));
+    assert.ok(results.every((r) => r.context.includes('auth')));
   });
 
   it('query with since filter', () => {
@@ -431,16 +451,16 @@ describe('ThreeLayerMemory', () => {
 
   it('getAll returns all entries', () => {
     const mem = new ThreeLayerMemory();
-    mem.add('a', 'working');
-    mem.add('b', 'episodic');
+    mem.add('a longer entry for getAll test', 'working');
+    mem.add('b longer entry for getAll test', 'episodic');
     const all = mem.getAll();
     assert.strictEqual(all.length, 2);
   });
 
   it('getStats returns MemoryStats', () => {
     const mem = new ThreeLayerMemory();
-    mem.add('a', 'working');
-    mem.add('b', 'episodic', '', 0.9);
+    mem.add('a longer entry for stats test', 'working');
+    mem.add('b longer entry for stats test', 'episodic', '', 0.9);
     const stats = mem.getStats();
     assert.strictEqual(stats.totalEntries, 2);
     assert.strictEqual(stats.byLayer.working, 1);
@@ -559,7 +579,7 @@ describe('StateCheckpointer', () => {
     cp.terminalCheckpoint(state);
     const list = cp.listCheckpoints();
     assert.ok(list.length >= 1);
-    assert.ok(list.some(e => e.runId === 'test-run-list'));
+    assert.ok(list.some((e) => e.runId === 'test-run-list'));
     cp.deleteCheckpoint('test-run-list');
   });
 
@@ -590,7 +610,7 @@ describe('StateCheckpointer', () => {
     // Prune to keep 0
     cp.prune(0);
     const list = cp.listCheckpoints();
-    assert.ok(!list.some(e => e.runId.startsWith('prune-old-')));
+    assert.ok(!list.some((e) => e.runId.startsWith('prune-old-')));
   });
 
   it('deleteCheckpoint removes all artifacts', () => {
@@ -660,7 +680,7 @@ describe('DeadLetterQueue', () => {
     dlq.flush();
     const entries = dlq.readEntries('execution', 10);
     assert.ok(entries.length >= 1);
-    assert.ok(entries.some(e => e.id === 'dlq-1'));
+    assert.ok(entries.some((e) => e.id === 'dlq-1'));
   });
 
   it('getStats returns category counts', () => {
@@ -684,7 +704,7 @@ describe('DeadLetterQueue', () => {
     dlq.flush('llm');
     const stats = dlq.getStats();
     assert.ok(stats.length >= 1);
-    assert.ok(stats.some(s => s.category === 'llm' && s.count > 0));
+    assert.ok(stats.some((s) => s.category === 'llm' && s.count > 0));
   });
 
   it('DLQCategory type supports all categories', () => {

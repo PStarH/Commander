@@ -47,9 +47,22 @@ export class ToolRegistry {
       const compiled = compileSchema(tool.definition.inputSchema);
       registry.compiledSchemas.set(tool.definition.name, compiled);
       tool.compiledSchema = compiled;
-    } catch (e) { getGlobalLogger().warn('ToolRegistry', 'Schema compilation failed', { error: (e as Error)?.message, tool: tool.definition.name }); }
+    } catch (e) {
+      getGlobalLogger().warn('ToolRegistry', 'Schema compilation failed', {
+        error: (e as Error)?.message,
+        tool: tool.definition.name,
+      });
+    }
 
     if (category) {
+      // Remove from old category if re-registering
+      for (const [cat, names] of registry.categories) {
+        const idx = names.indexOf(tool.definition.name);
+        if (idx !== -1) {
+          names.splice(idx, 1);
+          if (names.length === 0) registry.categories.delete(cat);
+        }
+      }
       const existing = registry.categories.get(category) || [];
       existing.push(tool.definition.name);
       registry.categories.set(category, existing);
@@ -83,7 +96,7 @@ export class ToolRegistry {
    * Get all tool definitions (for LLM function calling).
    */
   static getAllDefinitions(): ToolDefinition[] {
-    return Array.from(ToolRegistry.getInstance().tools.values()).map(t => t.definition);
+    return Array.from(ToolRegistry.getInstance().tools.values()).map((t) => t.definition);
   }
 
   /**
@@ -130,7 +143,17 @@ export class ToolRegistry {
    * Unregister a tool by name.
    */
   static unregister(name: string): boolean {
-    return ToolRegistry.getInstance().tools.delete(name);
+    const registry = ToolRegistry.getInstance();
+    const existed = registry.tools.delete(name);
+    if (existed) {
+      registry.compiledSchemas.delete(name);
+      for (const [cat, names] of registry.categories) {
+        const idx = names.indexOf(name);
+        if (idx !== -1) names.splice(idx, 1);
+        if (names.length === 0) registry.categories.delete(cat);
+      }
+    }
+    return existed;
   }
 }
 
@@ -139,28 +162,25 @@ export class ToolRegistry {
  * Groups tools by domain to help the model select the right tool faster.
  */
 export const TOOL_CATEGORIES: Record<string, string> = {
-  web_search: 'web',
-  web_fetch: 'web',
-  browser_search: 'web',
-  browser_fetch: 'web',
-  file_read: 'filesystem',
-  file_write: 'filesystem',
-  file_edit: 'filesystem',
-  file_search: 'filesystem',
-  file_list: 'filesystem',
-  python_execute: 'code',
-  shell_execute: 'code',
-  execute_script: 'code',
-  memory_store: 'memory',
-  memory_recall: 'memory',
-  memory_list: 'memory',
+  // STRAP-consolidated resource tools
+  file: 'filesystem',
+  memory: 'memory',
+  web: 'web',
+  browser: 'web',
+  code: 'code',
+  checkpoint: 'workflow',
+  handoff: 'development',
+  exec: 'code',
+  media: 'multimodal',
+  system: 'control',
+  // Single-domain tools
   git: 'development',
   agent: 'development',
   meta: 'development',
   lsp_diagnostics: 'development',
   lsp_attach: 'development',
   skill_view: 'skills',
-  vision_analyze: 'multimodal',
-  pdf_extract: 'multimodal',
-  screenshot_capture: 'multimodal',
+  apply_patch: 'code',
+  verify_answer: 'control',
+  search_conversations: 'memory',
 };

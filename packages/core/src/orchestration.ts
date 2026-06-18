@@ -1,6 +1,6 @@
 /**
  * Orchestration Types for Commander Multi-Agent System
- * 
+ *
  * Based on Microsoft AI Agent Orchestration Patterns:
  * https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/ai-agent-design-patterns
  */
@@ -69,12 +69,7 @@ export interface TokenUsage {
 /**
  * Overall status of a sequential pipeline run.
  */
-export type SequentialPipelineStatus = 
-  | 'PENDING'
-  | 'RUNNING'
-  | 'COMPLETED'
-  | 'FAILED'
-  | 'CANCELLED';
+export type SequentialPipelineStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 
 /**
  * Complete definition of a sequential pipeline.
@@ -119,12 +114,23 @@ export interface SequentialPipelineRun {
 /**
  * Event emitted during pipeline execution.
  */
-export type SequentialEvent = 
+export type SequentialEvent =
   | { type: 'PIPELINE_STARTED'; pipelineId: string; runId: string; projectId: string }
   | { type: 'STEP_STARTED'; pipelineId: string; runId: string; stepId: string; stepIndex: number }
-  | { type: 'STEP_COMPLETED'; pipelineId: string; runId: string; stepId: string; result: SequentialStepResult }
+  | {
+      type: 'STEP_COMPLETED';
+      pipelineId: string;
+      runId: string;
+      stepId: string;
+      result: SequentialStepResult;
+    }
   | { type: 'STEP_FAILED'; pipelineId: string; runId: string; stepId: string; error: string }
-  | { type: 'PIPELINE_COMPLETED'; pipelineId: string; runId: string; results: SequentialStepResult[] }
+  | {
+      type: 'PIPELINE_COMPLETED';
+      pipelineId: string;
+      runId: string;
+      results: SequentialStepResult[];
+    }
   | { type: 'PIPELINE_FAILED'; pipelineId: string; runId: string; error: string }
   | { type: 'PIPELINE_CANCELLED'; pipelineId: string; runId: string; reason: string };
 
@@ -143,11 +149,7 @@ export type SequentialEventHandler = (event: SequentialEvent) => void | Promise<
 export class SequentialPipelineBuilder<TInput = unknown, TOutput = unknown> {
   private pipeline: Omit<SequentialPipeline<TInput, TOutput>, 'createdAt' | 'updatedAt'>;
 
-  private constructor(
-    id: string,
-    name: string,
-    projectId: string
-  ) {
+  private constructor(id: string, name: string, projectId: string) {
     this.pipeline = {
       id,
       name,
@@ -160,7 +162,7 @@ export class SequentialPipelineBuilder<TInput = unknown, TOutput = unknown> {
   static create<TInput = unknown, TOutput = unknown>(
     id: string,
     name: string,
-    projectId: string
+    projectId: string,
   ): SequentialPipelineBuilder<TInput, TOutput> {
     return new SequentialPipelineBuilder<TInput, TOutput>(id, name, projectId);
   }
@@ -185,9 +187,7 @@ export class SequentialPipelineBuilder<TInput = unknown, TOutput = unknown> {
     return this;
   }
 
-  addStep(
-    step: Omit<SequentialStep<TInput, TOutput>, 'id'>
-  ): this {
+  addStep(step: Omit<SequentialStep<TInput, TOutput>, 'id'>): this {
     this.pipeline.steps.push({
       ...step,
       id: `${this.pipeline.id}-step-${this.pipeline.steps.length + 1}`,
@@ -231,16 +231,14 @@ export interface OrchestrationMetrics {
 /**
  * Calculate metrics from a completed pipeline run.
  */
-export function calculateOrchestrationMetrics(
-  run: SequentialPipelineRun
-): OrchestrationMetrics {
-  const completedSteps = run.results.filter(r => r.status === 'SUCCESS').length;
-  const failedSteps = run.results.filter(r => r.status === 'FAILED').length;
-  const skippedSteps = run.results.filter(r => r.status === 'SKIPPED').length;
+export function calculateOrchestrationMetrics(run: SequentialPipelineRun): OrchestrationMetrics {
+  const completedSteps = run.results.filter((r) => r.status === 'SUCCESS').length;
+  const failedSteps = run.results.filter((r) => r.status === 'FAILED').length;
+  const skippedSteps = run.results.filter((r) => r.status === 'SKIPPED').length;
 
   const stepDurations = run.results
-    .filter(r => r.startedAt && r.completedAt)
-    .map(r => ({
+    .filter((r) => r.startedAt && r.completedAt)
+    .map((r) => ({
       stepId: r.stepId,
       durationMs: new Date(r.completedAt!).getTime() - new Date(r.startedAt!).getTime(),
     }));
@@ -249,16 +247,17 @@ export function calculateOrchestrationMetrics(
     ? new Date(run.completedAt).getTime() - new Date(run.startedAt).getTime()
     : 0;
 
-  const averageStepDurationMs = stepDurations.length > 0
-    ? stepDurations.reduce((sum, d) => sum + d.durationMs, 0) / stepDurations.length
-    : 0;
+  const averageStepDurationMs =
+    stepDurations.length > 0
+      ? stepDurations.reduce((sum, d) => sum + d.durationMs, 0) / stepDurations.length
+      : 0;
 
   const slowThreshold = averageStepDurationMs * 1.5;
-  const slowSteps = stepDurations.filter(d => d.durationMs > slowThreshold);
+  const slowSteps = stepDurations.filter((d) => d.durationMs > slowThreshold);
 
   const retriedSteps = run.results
-    .filter(r => r.retryCount && r.retryCount > 0)
-    .map(r => ({ stepId: r.stepId, retryCount: r.retryCount! }));
+    .filter((r) => r.retryCount && r.retryCount > 0)
+    .map((r) => ({ stepId: r.stepId, retryCount: r.retryCount! }));
 
   const totalTokenUsage = run.results.reduce<TokenUsage>(
     (acc, r) => {
@@ -269,7 +268,7 @@ export function calculateOrchestrationMetrics(
         totalTokens: acc.totalTokens + r.tokenUsage.totalTokens,
       };
     },
-    { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+    { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
   );
 
   return {

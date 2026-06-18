@@ -1,6 +1,0 @@
-{
-  "cat": "Extraction",
-  "question": "Extract the action items from: 'Alice will send the report. Bob will schedule the meeting.'",
-  "answer": "Here are the action items from the text:\n\n*   **Alice:** Send the report.\n*   **Bob:** Schedule the meeting.",
-  "score": 8.0
-}

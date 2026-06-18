@@ -1,5 +1,13 @@
 import { Router } from 'express';
-import { AgentRuntime, OpenAIProvider, AnthropicProvider, createAllTools, SSEStream, TELOSOrchestrator, UltimateOrchestrator } from '@commander/core';
+import {
+  AgentRuntime,
+  OpenAIProvider,
+  AnthropicProvider,
+  createAllTools,
+  SSEStream,
+  TELOSOrchestrator,
+  UltimateOrchestrator,
+} from '@commander/core';
 
 let orchInstance: UltimateOrchestrator | null = null;
 
@@ -15,7 +23,10 @@ function getOrchestrator(): UltimateOrchestrator | null {
     hasProvider = true;
   }
   if (process.env.ANTHROPIC_API_KEY) {
-    runtime.registerProvider('anthropic', new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY }));
+    runtime.registerProvider(
+      'anthropic',
+      new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY }),
+    );
     hasProvider = true;
   }
   if (!hasProvider) return null;
@@ -33,7 +44,10 @@ export function createOrchestratorRouter(): Router {
     if (!goal) return res.status(400).json({ error: 'goal is required' });
 
     const orch = getOrchestrator();
-    if (!orch) return res.status(503).json({ error: 'No LLM provider configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.' });
+    if (!orch)
+      return res
+        .status(503)
+        .json({ error: 'No LLM provider configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.' });
 
     try {
       const result = await orch.execute({
@@ -41,7 +55,18 @@ export function createOrchestratorRouter(): Router {
         agentId: 'orchestrator-api',
         goal,
         contextData: {
-          availableTools: tools ?? ['web_search', 'web_fetch', 'file_read', 'file_write', 'file_edit', 'file_search', 'file_list', 'python_execute', 'shell_execute', 'git'],
+          availableTools: tools ?? [
+            'web_search',
+            'web_fetch',
+            'file_read',
+            'file_write',
+            'file_edit',
+            'file_search',
+            'file_list',
+            'python_execute',
+            'shell_execute',
+            'git',
+          ],
           governanceProfile: { riskLevel: 'LOW' },
         },
         effortLevel: effortLevel || undefined,
@@ -65,7 +90,7 @@ export function createOrchestratorRouter(): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
+      Connection: 'keep-alive',
       'Access-Control-Allow-Origin': '*',
     });
 

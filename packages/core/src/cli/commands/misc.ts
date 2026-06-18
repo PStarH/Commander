@@ -1,47 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
-import { TaskPool } from '../../orchestration/taskPool';
-import { executeReview, formatReviewOutput, reviewReportToJson, loadReviewGuidelines } from '../../reviewAgent';
-import { createRuntime, loadTools, $, section, kv, bullet, cmdHeader, startSpinner, onboardingMessage } from './_shared';
-
-export async function cmdWorkers(topics: string[]) {
-  if (topics.length === 0) {
-    topics = ['LangGraph', 'CrewAI', 'AutoGen', 'MCP', 'Pydantic', 'LlamaIndex', 'Ollama', 'vLLM'];
-  }
-
-  const runtime = createRuntime();
-  if (!runtime) { console.error(`  ${$.red}No provider configured${$.reset}`); process.exit(1); }
-
-  const pool = new TaskPool(runtime, {
-    maxWorkers: topics.length,
-    defaultTokenBudget: 15000,
-    globalTokenBudget: 300000,
-    taskTimeoutMs: 120000,
-  });
-
-  const tasks = topics.map((topic, i) => ({
-    id: 'worker-' + (i + 1),
-    goal: 'Use browser_search to research: ' + topic + '. What is it? Key features? GitHub stars?',
-    agentId: 'worker-' + (i + 1),
-  }));
-
-  console.log(`\n  ${$.bold}Spawning ${tasks.length} workers...${$.reset}\n`);
-  const t0 = Date.now();
-  const results = await pool.dispatch(tasks);
-  const wallTime = ((Date.now() - t0) / 1000).toFixed(1);
-
-  console.log(`\n  ${$.bold}Results (${wallTime}s):${$.reset}\n`);
-  for (const r of results) {
-    const icon = r.status === 'success' ? '✅' : '❌';
-    const summary = (r.summary || '').replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim().slice(0, 100);
-    console.log(`  ${icon} ${r.taskId}: ${(r.durationMs / 1000).toFixed(1)}s, ${r.tokens} tok`);
-    if (summary) console.log(`     ${summary}`);
-    console.log();
-  }
-  const seqTime = results.reduce((s, r) => s + r.durationMs, 0) / 1000;
-  console.log(`  ${$.dim}Sequential would be: ${seqTime.toFixed(1)}s | Speedup: ${(seqTime / parseFloat(wallTime)).toFixed(1)}x${$.reset}\n`);
-}
+import {
+  executeReview,
+  formatReviewOutput,
+  reviewReportToJson,
+  loadReviewGuidelines,
+} from '../../reviewAgent';
+import { $, section, kv, bullet, startSpinner } from './_shared';
 
 export async function cmdGui() {
   section('GUI DASHBOARD');
@@ -54,8 +20,9 @@ export async function cmdGui() {
   }
 
   console.log(`  ${$.green}Starting API server...${$.reset}`);
+  console.log(`  ${$.green}Starting Web dashboard...${$.reset}`);
   console.log(`  ${$.dim}API:${$.reset}  http://localhost:4000`);
-  console.log(`  ${$.dim}Web:${$.reset}  cd apps/web && npx vite\n`);
+  console.log(`  ${$.dim}Web:${$.reset}  http://localhost:5173\n`);
 
   const api = spawn('npx', ['tsx', 'src/index.ts'], {
     cwd: apiDir,
@@ -63,10 +30,27 @@ export async function cmdGui() {
     env: { ...process.env, PORT: '4000' },
   });
 
-  api.on('exit', (code: number) => {
-    console.log(`\n  ${$.dim}API server exited (code ${code})${$.reset}`);
-    process.exit(code ?? 0);
+  const web = spawn('npx', ['vite', '--port', '5173'], {
+    cwd: webDir,
+    stdio: 'inherit',
   });
+
+  setTimeout(() => {
+    const url = 'http://localhost:5173';
+    const cmd =
+      process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+    spawn(cmd, [url], { stdio: 'ignore', detached: true }).unref();
+  }, 3000);
+
+  const cleanup = () => {
+    api.kill();
+    web.kill();
+    process.exit(0);
+  };
+  api.on('exit', cleanup);
+  web.on('exit', cleanup);
+  process.on('SIGINT', cleanup);
+  process.on('SIGTERM', cleanup);
 
   await new Promise(() => {});
 }
@@ -88,8 +72,12 @@ export async function cmdSkill(subargs: string[]) {
       const pin = entry.pinned ? '📌' : '  ';
       const qual = (entry.qualityScore * 100).toFixed(0);
       const used = entry.usageCount;
-      console.log(`  ${pin} ${$.bold}${entry.name}${$.reset} ${$.dim}${entry.description.slice(0, 50)}${$.reset}`);
-      console.log(`      ${$.gray}quality: ${qual}% · uses: ${used} · ${entry.category} · [${entry.tags.join(', ')}]${$.reset}`);
+      console.log(
+        `  ${pin} ${$.bold}${entry.name}${$.reset} ${$.dim}${entry.description.slice(0, 50)}${$.reset}`,
+      );
+      console.log(
+        `      ${$.gray}quality: ${qual}% · uses: ${used} · ${entry.category} · [${entry.tags.join(', ')}]${$.reset}`,
+      );
     }
     console.log();
     return;
@@ -97,15 +85,24 @@ export async function cmdSkill(subargs: string[]) {
 
   if (sub === 'view') {
     const name = subargs[1];
-    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill view <name>\n`); return; }
+    if (!name) {
+      console.error(`  ${$.red}Usage:${$.reset} commander skill view <name>\n`);
+      return;
+    }
     const skill = await system.manager.get(name);
-    if (!skill) { console.error(`  ${$.red}Skill "${name}" not found.${$.reset}\n`); return; }
+    if (!skill) {
+      console.error(`  ${$.red}Skill "${name}" not found.${$.reset}\n`);
+      return;
+    }
     section(`SKILL: ${skill.name}`);
     kv('Description', skill.description);
     kv('Category', skill.metadata.category);
     kv('Tags', skill.metadata.tags.join(', '));
     kv('Quality', `${(skill.metadata.qualityScore * 100).toFixed(0)}%`);
-    kv('Usage', `${skill.metadata.usageCount} · success rate: ${(skill.metadata.avgSuccessRate * 100).toFixed(0)}%`);
+    kv(
+      'Usage',
+      `${skill.metadata.usageCount} · success rate: ${(skill.metadata.avgSuccessRate * 100).toFixed(0)}%`,
+    );
     kv('Pinned', skill.metadata.pinned ? 'Yes' : 'No', skill.metadata.pinned ? $.green : $.dim);
     kv('Source', skill.metadata.source);
     kv('Created', skill.metadata.createdAt.slice(0, 10));
@@ -118,10 +115,15 @@ export async function cmdSkill(subargs: string[]) {
   if (sub === 'create') {
     const name = subargs[1];
     const desc = subargs[2] || name;
-    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill create <name> [description]\n`); return; }
+    if (!name) {
+      console.error(`  ${$.red}Usage:${$.reset} commander skill create <name> [description]\n`);
+      return;
+    }
     const content = `# ${name}\n\n${desc}\n\n## Steps\n1. TBD`;
     const skill = await system.manager.create(name, content, {
-      category: 'general', tags: [], source: 'user',
+      category: 'general',
+      tags: [],
+      source: 'user',
     });
     console.log(`  ${$.green}✓${$.reset} Created skill "${$.bold}${skill.name}${$.reset}"\n`);
     return;
@@ -129,7 +131,10 @@ export async function cmdSkill(subargs: string[]) {
 
   if (sub === 'pin') {
     const name = subargs[1];
-    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill pin <name>\n`); return; }
+    if (!name) {
+      console.error(`  ${$.red}Usage:${$.reset} commander skill pin <name>\n`);
+      return;
+    }
     await system.manager.setPinned(name, true);
     console.log(`  ${$.green}✓${$.reset} Pinned "${$.bold}${name}${$.reset}"\n`);
     return;
@@ -137,7 +142,10 @@ export async function cmdSkill(subargs: string[]) {
 
   if (sub === 'unpin') {
     const name = subargs[1];
-    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill unpin <name>\n`); return; }
+    if (!name) {
+      console.error(`  ${$.red}Usage:${$.reset} commander skill unpin <name>\n`);
+      return;
+    }
     await system.manager.setPinned(name, false);
     console.log(`  ${$.green}✓${$.reset} Unpinned "${$.bold}${name}${$.reset}"\n`);
     return;
@@ -145,7 +153,10 @@ export async function cmdSkill(subargs: string[]) {
 
   if (sub === 'delete' || sub === 'rm') {
     const name = subargs[1];
-    if (!name) { console.error(`  ${$.red}Usage:${$.reset} commander skill delete <name>\n`); return; }
+    if (!name) {
+      console.error(`  ${$.red}Usage:${$.reset} commander skill delete <name>\n`);
+      return;
+    }
     await system.manager.delete(name);
     console.log(`  ${$.green}✓${$.reset} Deleted "${$.bold}${name}${$.reset}"\n`);
     return;
@@ -183,9 +194,11 @@ export async function cmdSkill(subargs: string[]) {
 }
 
 export async function cmdReview(args: string[]) {
-  const scope = args.includes('--commit') ? 'commit' as const
-    : args.includes('--branch') ? 'branch' as const
-    : 'uncommitted' as const;
+  const scope = args.includes('--commit')
+    ? ('commit' as const)
+    : args.includes('--branch')
+      ? ('branch' as const)
+      : ('uncommitted' as const);
 
   const baseIdx = args.indexOf('--base');
   const baseRef = baseIdx >= 0 && baseIdx + 1 < args.length ? args[baseIdx + 1] : undefined;
@@ -198,12 +211,15 @@ export async function cmdReview(args: string[]) {
   const guidelines = loadReviewGuidelines();
 
   const customGuidelineIdx = args.indexOf('--guidelines');
-  const customGuidelines = customGuidelineIdx >= 0 && customGuidelineIdx + 1 < args.length
-    ? args[customGuidelineIdx + 1].split('|')
-    : [];
+  const customGuidelines =
+    customGuidelineIdx >= 0 && customGuidelineIdx + 1 < args.length
+      ? args[customGuidelineIdx + 1].split('|')
+      : [];
 
   section('CODE REVIEW');
-  bullet(`Scope: ${scope}${baseRef ? ` (base: ${baseRef})` : ''}${commitSha ? ` (commit: ${commitSha})` : ''}`);
+  bullet(
+    `Scope: ${scope}${baseRef ? ` (base: ${baseRef})` : ''}${commitSha ? ` (commit: ${commitSha})` : ''}`,
+  );
   if (guidelines.length > 0 || customGuidelines.length > 0) {
     bullet(`Guidelines: ${[...guidelines, ...customGuidelines].length} rule(s)`);
   }
@@ -229,46 +245,72 @@ export async function cmdReview(args: string[]) {
     process.exit(report.passed ? 0 : 1);
   } catch (err) {
     done();
-    console.error(`\n  ${$.red}Review failed: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`);
+    console.error(
+      `\n  ${$.red}Review failed: ${err instanceof Error ? err.message : String(err)}${$.reset}\n`,
+    );
     process.exit(1);
   }
 }
 
-export function cmdHelp() {
+export function cmdHelp(showAll = false) {
   console.log(`
-  ${$.bold}${$.blue}╭──────────────────────────────────────────────╮${$.reset}
-  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander${$.reset} — multi-agent orchestration      ${$.bold}${$.blue}│${$.reset}
-  ${$.bold}${$.blue}│${$.reset}  ${$.dim}619+ tests · 20 providers · GAIA 69.7%${$.reset}       ${$.bold}${$.blue}│${$.reset}
-  ${$.bold}${$.blue}╰──────────────────────────────────────────────╯${$.reset}
+  ${$.bold}${$.blue}╭──────────────────────────────────────────────────╮${$.reset}
+  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander${$.reset} — multi-agent orchestration          ${$.bold}${$.blue}│${$.reset}
+  ${$.bold}${$.blue}│${$.reset}  ${$.dim}one command · 10 topologies · 22 providers${$.reset}       ${$.bold}${$.blue}│${$.reset}
+  ${$.bold}${$.blue}╰──────────────────────────────────────────────────╯${$.reset}
 
-  ${$.bold}GET STARTED${$.reset}
-    Set an API key and run:
-    ${$.gray}$ export OPENAI_API_KEY=sk-...${$.reset}
-    ${$.gray}$ commander "Hello, world!"${$.reset}
+  ${$.bold}GETTING STARTED${$.reset}
+    ${$.gray}$ commander init${$.reset}                      ${$.dim}Zero-config setup + provider scan${$.reset}
+    ${$.gray}$ commander run "Hello, world!"${$.reset}        ${$.dim}Your first task${$.reset}
+    ${$.gray}$ commander run showcase${$.reset}               ${$.dim}3-agent code audit demo${$.reset}
 
-  ${$.bold}COMMANDS${$.reset}
-    ${$.cyan}commander <task>${$.reset}        Quick task analysis
-    ${$.cyan}commander run <task>${$.reset}     Full multi-agent execution
-    ${$.cyan}commander plan <task>${$.reset}    Show deliberation plan
-    ${$.cyan}commander watch <task>${$.reset}   Real-time execution stream
-    ${$.cyan}commander status${$.reset}         System status
-    ${$.cyan}commander config${$.reset}         View / change settings
-    ${$.cyan}commander doctor${$.reset}         Run diagnostics
-    ${$.cyan}commander gui${$.reset}            Start the Agent War Room dashboard
-    ${$.cyan}commander tui${$.reset}            Terminal dashboard (live events, sessions)
-    ${$.cyan}commander workers <topics>${$.reset}  Parallel research workers
-    ${$.cyan}commander company <task>${$.reset}   Company mode execution
-    ${$.cyan}commander goal <task>${$.reset}      Multi-agent goal loop
-    ${$.cyan}commander swarm <task>${$.reset}     Recursive swarm (fission + fusion)
-    ${$.cyan}commander drive <task>${$.reset}     Autonomous drive
-    ${$.cyan}commander skill${$.reset}             Manage learnable skills
-    ${$.cyan}commander mode${$.reset}              Show/set approval mode
-    ${$.cyan}commander review${$.reset}            Review code changes
-    ${$.cyan}commander workflow${$.reset}            Schedule and run repeatable workflows
-    ${$.cyan}commander history${$.reset}           List past execution sessions
+  ${$.bold}CORE COMMANDS${$.reset}
+    ${$.cyan}run <task> [flags]${$.reset}           Execute with full multi-agent pipeline
+    ${$.cyan}review [--commit|--branch]${$.reset}   AI code review
+    ${$.cyan}fix${$.reset}                           Auto-fix lint, formatting & type errors
+    ${$.cyan}status${$.reset}                        System status & active provider
+    ${$.cyan}config [sub]${$.reset}                  View/change settings
+    ${$.cyan}history${$.reset}                       List past sessions
+
+  ${$.bold}RUN FLAGS${$.reset}
+    ${$.cyan}--dry-run${$.reset}              Show plan without executing
+    ${$.cyan}--stream${$.reset}               Real-time SSE progress
+    ${$.cyan}--tui${$.reset}                  Terminal dashboard with live topology
+    ${$.cyan}--mode=<mode>${$.reset}          balanced (default), fast, thorough, goal
+    ${$.cyan}--provider=<name>${$.reset}      Force provider (openai, anthropic, etc.)
+    ${$.cyan}--budget=<tokens>${$.reset}      Token budget (default: 100000)
+
+  ${$.bold}MANAGEMENT${$.reset}
+    ${$.cyan}init${$.reset}                    Scan env, test providers, save fallback chain
+    ${$.cyan}doctor${$.reset}                  Run diagnostics
+    ${$.cyan}mode [mode]${$.reset}             Approval mode (plan|read-only|suggest|auto-edit|full-auto)
+    ${$.cyan}skill [sub]${$.reset}             Manage learnable skills (list, view, create, curate)
+    ${$.cyan}gui${$.reset}                     Start Agent War Room web dashboard${
+      showAll
+        ? `
+
+  ${$.bold}ADVANCED EXECUTION${$.reset}
+    ${$.cyan}company <task>${$.reset}          Enterprise: quality gating + memory
+    ${$.cyan}swarm <task> [flags]${$.reset}    Recursive decomposition + parallel
+    ${$.cyan}drive <task> [flags]${$.reset}    Autonomous step-by-step loop
+
+  ${$.bold}INFRASTRUCTURE${$.reset}
+    ${$.cyan}saga [sub]${$.reset}              Durable compensating transactions
+    ${$.cyan}resume [runId]${$.reset}          Resume a crashed run from checkpoint
+    ${$.cyan}compensation [sub]${$.reset}      Durable retry queue
+    ${$.cyan}cost [--since]${$.reset}          Token usage & cost reports
+
+  ${$.bold}MISC${$.reset}
+    ${$.cyan}completion [shell]${$.reset}      Shell autocompletion (bash, zsh, fish)
+    ${$.cyan}feedback [--rating|--bug]${$.reset} Submit feedback to improve Commander`
+        : ''
+    }
 
   ${$.bold}OPTIONS${$.reset}
-    ${$.cyan}--version${$.reset}              Show version
-    ${$.cyan}--help${$.reset}                 Show this help
+    ${$.cyan}--version${$.reset}               Show version
+    ${$.cyan}--help${$.reset}                  Show this help
+    ${$.cyan}--help --all${$.reset}            Show all commands
+
+  ${$.dim}Run ${$.cyan}commander <command> --help${$.reset}${$.dim} for command-specific help.${$.reset}
   `);
 }

@@ -7,13 +7,7 @@
 
 export type SkillSource = 'builtin' | 'learned' | 'community' | 'user';
 
-export type SkillCategory =
-  | 'coding'
-  | 'research'
-  | 'analysis'
-  | 'writing'
-  | 'strategy'
-  | 'general';
+export type SkillCategory = 'coding' | 'research' | 'analysis' | 'writing' | 'strategy' | 'general';
 
 export interface SkillMetadata {
   category: SkillCategory;
@@ -70,6 +64,7 @@ export interface SkillCatalogEntry {
   usageCount: number;
   qualityScore: number;
   pinned: boolean;
+  source?: SkillSource;
 }
 
 export interface SkillSearchQuery {

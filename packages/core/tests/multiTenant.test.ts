@@ -18,7 +18,11 @@ import { ToolResultCache } from '../src/runtime/toolResultCache';
 import { SamplesStore } from '../src/runtime/samplesStore';
 import { PersistentTraceStore } from '../src/runtime/traceStore';
 import { StateCheckpointer } from '../src/runtime/stateCheckpointer';
-import { MetricsCollector, resetMetricsCollector, getMetricsCollector } from '../src/runtime/metricsCollector';
+import {
+  MetricsCollector,
+  resetMetricsCollector,
+  getMetricsCollector,
+} from '../src/runtime/metricsCollector';
 import type { AgentExecutionContext } from '../src/runtime/types';
 
 // ============================================================================
@@ -58,7 +62,13 @@ describe('TenantProvider', () => {
 
     it('supports add/remove at runtime', () => {
       const p = new SimpleTenantProvider();
-      p.addTenant({ tenantId: 't1', tokenBudget: 0, maxConcurrency: 0, maxRunsPerMinute: 0, enabled: false });
+      p.addTenant({
+        tenantId: 't1',
+        tokenBudget: 0,
+        maxConcurrency: 0,
+        maxRunsPerMinute: 0,
+        enabled: false,
+      });
       assert.ok(p.getTenantConfig('t1'));
       p.removeTenant('t1');
       assert.strictEqual(p.getTenantConfig('t1'), undefined);
@@ -154,7 +164,17 @@ describe('ToolResultCache tenant isolation', () => {
     const tcA = { id: '1', name: 'read_file', arguments: { path: '/tmp/x' }, cached: false };
     const tcB = { id: '2', name: 'read_file', arguments: { path: '/tmp/x' }, cached: false };
 
-    cache.set(tcA, { toolCallId: '1', name: 'read_file', output: 'tenant-a-data', durationMs: 10, error: undefined }, 'tenant-a');
+    cache.set(
+      tcA,
+      {
+        toolCallId: '1',
+        name: 'read_file',
+        output: 'tenant-a-data',
+        durationMs: 10,
+        error: undefined,
+      },
+      'tenant-a',
+    );
     const gotA = cache.get(tcB, 'tenant-a');
     assert.strictEqual(gotA?.output, 'tenant-a-data');
 
@@ -171,7 +191,11 @@ describe('StateCheckpointer tenant partitioning', () => {
   const tmpDir = path.join(process.cwd(), '.test_tenant_state');
 
   afterEach(() => {
-    try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* ok */ }
+    try {
+      fs.rmSync(tmpDir, { recursive: true });
+    } catch {
+      /* ok */
+    }
   });
 
   it('creates separate directories for tenants', () => {
@@ -179,10 +203,7 @@ describe('StateCheckpointer tenant partitioning', () => {
     const c2 = new StateCheckpointer(tmpDir, 'tenant-b');
     assert.ok(fs.existsSync(path.join(tmpDir, 'tenant_tenant-a', 'completed')));
     assert.ok(fs.existsSync(path.join(tmpDir, 'tenant_tenant-b', 'completed')));
-    assert.notStrictEqual(
-      (c1 as any).baseDir,
-      (c2 as any).baseDir,
-    );
+    assert.notStrictEqual((c1 as any).baseDir, (c2 as any).baseDir);
   });
 
   it('no tenantId uses flat directory', () => {
@@ -195,7 +216,11 @@ describe('SamplesStore tenant partitioning', () => {
   const tmpDir = path.join(process.cwd(), '.test_tenant_samples');
 
   afterEach(() => {
-    try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* ok */ }
+    try {
+      fs.rmSync(tmpDir, { recursive: true });
+    } catch {
+      /* ok */
+    }
   });
 
   it('creates separate directories for tenants', () => {
@@ -216,7 +241,11 @@ describe('PersistentTraceStore tenant partitioning', () => {
   const tmpDir = path.join(process.cwd(), '.test_tenant_traces');
 
   afterEach(() => {
-    try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* ok */ }
+    try {
+      fs.rmSync(tmpDir, { recursive: true });
+    } catch {
+      /* ok */
+    }
   });
 
   it('creates separate directories for tenants', () => {
@@ -272,7 +301,13 @@ describe('MetricsCollector tenant labels', () => {
 describe('AgentRuntime tenant quotas', () => {
   it('rate limit exceeded returns clear error', async () => {
     const tenantProvider = new SimpleTenantProvider([
-      { tenantId: 'rate-limited', tokenBudget: 0, maxConcurrency: 0, maxRunsPerMinute: 1, enabled: true },
+      {
+        tenantId: 'rate-limited',
+        tokenBudget: 0,
+        maxConcurrency: 0,
+        maxRunsPerMinute: 1,
+        enabled: true,
+      },
     ]);
     const runtime = new AgentRuntime({ maxConcurrency: 10 }, undefined, tenantProvider);
 
@@ -302,7 +337,13 @@ describe('AgentRuntime tenant quotas', () => {
 
   it('undefined tenantId bypasses all quotas', async () => {
     const tenantProvider = new SimpleTenantProvider([
-      { tenantId: 'limited', tokenBudget: 0, maxConcurrency: 0, maxRunsPerMinute: 0, enabled: true },
+      {
+        tenantId: 'limited',
+        tokenBudget: 0,
+        maxConcurrency: 0,
+        maxRunsPerMinute: 0,
+        enabled: true,
+      },
     ]);
     const runtime = new AgentRuntime({ maxConcurrency: 10 }, undefined, tenantProvider);
 
@@ -330,20 +371,34 @@ describe('AgentRuntime tenant quotas', () => {
 
   it('tenant with enabled:false has no quotas', async () => {
     const tenantProvider = new SimpleTenantProvider([
-      { tenantId: 'unlimited', tokenBudget: 0, maxConcurrency: 0, maxRunsPerMinute: 1, enabled: false },
+      {
+        tenantId: 'unlimited',
+        tokenBudget: 0,
+        maxConcurrency: 0,
+        maxRunsPerMinute: 1,
+        enabled: false,
+      },
     ]);
     const runtime = new AgentRuntime({ maxConcurrency: 10 }, undefined, tenantProvider);
 
     const execCtx: AgentExecutionContext = {
-      agentId: 'test', projectId: 'test', goal: 'test',
-      availableTools: [], maxSteps: 1, tokenBudget: 1000, contextData: {},
+      agentId: 'test',
+      projectId: 'test',
+      goal: 'test',
+      availableTools: [],
+      maxSteps: 1,
+      tokenBudget: 1000,
+      contextData: {},
       tenantId: 'unlimited',
     };
 
     // Even though maxRunsPerMinute=1, enabled:false means no enforcement
     for (let i = 0; i < 3; i++) {
       const r = await runtime.execute(execCtx);
-      assert.ok(!r.error?.includes('TENANT_RATE_LIMIT'), `Run ${i} with enabled:false should not be rate limited`);
+      assert.ok(
+        !r.error?.includes('TENANT_RATE_LIMIT'),
+        `Run ${i} with enabled:false should not be rate limited`,
+      );
     }
   });
 });

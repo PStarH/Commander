@@ -11,17 +11,17 @@ import { getGlobalLogger } from '../logging';
 // ============================================================================
 
 export interface SimilarityWeights {
-  nameWeight: number;      // how much name similarity counts
-  descWeight: number;      // how much description similarity counts
-  tagWeight: number;       // how much tag overlap counts
-  threshold: number;       // minimum combined score to consider "similar" (0-1)
+  nameWeight: number; // how much name similarity counts
+  descWeight: number; // how much description similarity counts
+  tagWeight: number; // how much tag overlap counts
+  threshold: number; // minimum combined score to consider "similar" (0-1)
 }
 
 const DEFAULT_SIMILARITY_WEIGHTS: SimilarityWeights = {
   nameWeight: 0.35,
   descWeight: 0.25,
-  tagWeight: 0.40,
-  threshold: 0.30,
+  tagWeight: 0.4,
+  threshold: 0.3,
 };
 
 export type MergeStrategy = 'keep_highest_quality' | 'llm_merge';
@@ -55,10 +55,11 @@ export function jaccardSimilarity(a: string[], b: string[]): number {
  * Tokenize a string into lowercase word tokens.
  */
 function tokenize(s: string): string[] {
-  return s.toLowerCase()
+  return s
+    .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
-    .filter(w => w.length > 1);
+    .filter((w) => w.length > 1);
 }
 
 /**
@@ -119,11 +120,7 @@ export function computeSimilarity(
   const descSim = descriptionSimilarity(a.description, b.description);
   const tagSim = tagSimilarity(a.tags, b.tags);
 
-  return (
-    nameSim * weights.nameWeight +
-    descSim * weights.descWeight +
-    tagSim * weights.tagWeight
-  );
+  return nameSim * weights.nameWeight + descSim * weights.descWeight + tagSim * weights.tagWeight;
 }
 
 /**
@@ -190,7 +187,10 @@ export class SkillCurator {
   }
 
   /** Enable LLM-based merge for skill consolidation. */
-  setLLMMerger(merger: (prompt: string) => Promise<string | null>, strategy: MergeStrategy = 'llm_merge'): void {
+  setLLMMerger(
+    merger: (prompt: string) => Promise<string | null>,
+    strategy: MergeStrategy = 'llm_merge',
+  ): void {
     this.llmMerger = merger;
     this.mergeStrategy = strategy;
   }
@@ -222,14 +222,17 @@ export class SkillCurator {
     // Phase 1: Archive low-quality + low-usage skills instead of deleting
     for (const entry of catalog) {
       if (entry.pinned) continue;
-      if (entry.qualityScore < this.QUALITY_THRESHOLD && entry.usageCount < this.MIN_USAGE_THRESHOLD) {
+      if (
+        entry.qualityScore < this.QUALITY_THRESHOLD &&
+        entry.usageCount < this.MIN_USAGE_THRESHOLD
+      ) {
         await this.archive(entry.name);
         report.archived.push(entry.name);
       }
     }
 
     // Phase 2: Consolidate similar skills using weighted similarity scoring
-    const grouped = this.groupSimilar(catalog.filter(e => !e.pinned));
+    const grouped = this.groupSimilar(catalog.filter((e) => !e.pinned));
     for (const group of grouped) {
       const result = await this.mergeSimilar(group, this.mergeStrategy, this.llmMerger);
       report.consolidated.push(...result.archived);
@@ -238,7 +241,7 @@ export class SkillCurator {
     // Phase 3: Enforce max skills limit — archive lowest-usage
     const finalCatalog = await this.manager.list();
     report.totalAfter = finalCatalog.length;
-    const unpinned = finalCatalog.filter(e => !e.pinned);
+    const unpinned = finalCatalog.filter((e) => !e.pinned);
     if (unpinned.length > this.MAX_SKILLS) {
       const toArchive = unpinned
         .sort((a, b) => a.usageCount - b.usageCount)
@@ -271,7 +274,9 @@ export class SkillCurator {
       }
       return true;
     } catch (e) {
-      getGlobalLogger().warn('SkillCurator', `Failed to archive skill "${name}"`, { error: (e as Error)?.message });
+      getGlobalLogger().warn('SkillCurator', `Failed to archive skill "${name}"`, {
+        error: (e as Error)?.message,
+      });
       return false;
     }
   }
@@ -290,7 +295,9 @@ export class SkillCurator {
       fs.renameSync(archivedPath, destDir);
       return true;
     } catch (e) {
-      getGlobalLogger().warn('SkillCurator', `Failed to restore skill "${name}"`, { error: (e as Error)?.message });
+      getGlobalLogger().warn('SkillCurator', `Failed to restore skill "${name}"`, {
+        error: (e as Error)?.message,
+      });
       return false;
     }
   }
@@ -298,12 +305,14 @@ export class SkillCurator {
   async listArchived(): Promise<string[]> {
     try {
       if (!fs.existsSync(this.archiveDir)) return [];
-      return fs.readdirSync(this.archiveDir).filter(f => {
+      return fs.readdirSync(this.archiveDir).filter((f) => {
         const stat = fs.statSync(path.join(this.archiveDir, f));
         return stat.isDirectory();
       });
     } catch (e) {
-      getGlobalLogger().warn('SkillCurator', 'listArchived failed', { error: (e as Error)?.message });
+      getGlobalLogger().warn('SkillCurator', 'listArchived failed', {
+        error: (e as Error)?.message,
+      });
       return [];
     }
   }
@@ -324,10 +333,15 @@ export class SkillCurator {
     const baseName = path.basename(skillsDir);
 
     try {
-      await execFileAsync('tar', ['-czf', snapshotPath, '-C', parentDir, baseName], { timeout: 30000 });
+      await execFileAsync('tar', ['-czf', snapshotPath, '-C', parentDir, baseName], {
+        timeout: 30000,
+      });
     } catch {
       try {
-        await execFileAsync('zip', ['-rq', snapshotPath, baseName], { cwd: parentDir, timeout: 30000 });
+        await execFileAsync('zip', ['-rq', snapshotPath, baseName], {
+          cwd: parentDir,
+          timeout: 30000,
+        });
       } catch {
         getGlobalLogger().warn('SkillCurator', 'Snapshot creation failed with both tar and zip');
         return '';
@@ -341,8 +355,9 @@ export class SkillCurator {
   private rotateBackups(): void {
     try {
       if (!fs.existsSync(this.backupDir)) return;
-      const backups = fs.readdirSync(this.backupDir)
-        .filter(f => f.startsWith('skills-'))
+      const backups = fs
+        .readdirSync(this.backupDir)
+        .filter((f) => f.startsWith('skills-'))
         .sort()
         .reverse();
       if (backups.length > 5) {
@@ -351,7 +366,9 @@ export class SkillCurator {
         }
       }
     } catch (e) {
-      getGlobalLogger().warn('SkillCurator', 'rotateBackups failed', { error: (e as Error)?.message });
+      getGlobalLogger().warn('SkillCurator', 'rotateBackups failed', {
+        error: (e as Error)?.message,
+      });
     }
   }
 
@@ -434,7 +451,7 @@ export class SkillCurator {
       }
       return {
         survivor: survivor.name,
-        archived: toArchive.map(e => e.name),
+        archived: toArchive.map((e) => e.name),
       };
     }
 
@@ -449,7 +466,7 @@ export class SkillCurator {
       }
       return {
         survivor: survivor.name,
-        archived: toArchive.map(e => e.name),
+        archived: toArchive.map((e) => e.name),
       };
     }
 
@@ -469,7 +486,7 @@ export class SkillCurator {
     }
     return {
       survivor: survivor.name,
-      archived: toArchive.map(e => e.name),
+      archived: toArchive.map((e) => e.name),
     };
   }
 }

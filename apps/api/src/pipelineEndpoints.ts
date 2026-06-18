@@ -2,7 +2,6 @@ import { Router } from 'express';
 import { SequentialPipeline } from '@commander/core';
 import { PatternStateMachineFactory, PatternStateMachine } from './patternStateMachine';
 import { SequentialExecutor, createMockAgentExecutor } from './sequentialExecutor';
-import { AgentBenchmarkRunner, createCommanderHealthCheckBenchmark, visualizeBenchmark } from './agentBenchmarkRunner';
 
 export function createPipelineRouter(): Router {
   const router = Router();
@@ -13,7 +12,9 @@ export function createPipelineRouter(): Router {
   router.post('/api/state-machine/create', (req, res) => {
     const { pattern } = req.body ?? {};
     if (!pattern) {
-      return res.status(400).json({ error: 'pattern is required (orchestrator-worker, hierarchical, swarm, pipeline)' });
+      return res.status(400).json({
+        error: 'pattern is required (orchestrator-worker, hierarchical, swarm, pipeline)',
+      });
     }
     try {
       const machine = PatternStateMachineFactory.create(pattern);
@@ -24,8 +25,8 @@ export function createPipelineRouter(): Router {
         pattern,
         currentState: machine.getCurrentState().currentStep,
       });
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
     }
   });
 
@@ -42,8 +43,8 @@ export function createPipelineRouter(): Router {
     try {
       const result = await machine.transition(targetState);
       res.json({ result, currentState: machine.getCurrentState() });
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
     }
   });
 
@@ -60,18 +61,33 @@ export function createPipelineRouter(): Router {
   const pipelineRuns = new Map<string, any>();
   const sequentialExecutor = new SequentialExecutor({
     agentExecutor: createMockAgentExecutor(),
-    runContextProvider: (async (ctx: { projectId?: string }) => ({
+    runContextProvider: async (ctx: { projectId?: string }) => ({
       projectId: ctx?.projectId ?? 'default',
       run: { runId: 'run', issuedAt: new Date().toISOString() },
       slimSnapshot: {
-        project: { id: 'default', codename: 'default', objective: '', status: 'ACTIVE', updatedAt: new Date().toISOString() },
+        project: {
+          id: 'default',
+          codename: 'default',
+          objective: '',
+          status: 'ACTIVE',
+          updatedAt: new Date().toISOString(),
+        },
         missionBoard: { running: [], blocked: [], planned: [], done: [] },
-        battleMetrics: { health: 'GREEN', runningMissionCount: 0, blockedMissionCount: 0, completedMissionCount: 0, highRiskMissionCount: 0, manualGovernanceMissionCount: 0, logVolume24h: 0, completionRate: 0 },
+        battleMetrics: {
+          health: 'GREEN',
+          runningMissionCount: 0,
+          blockedMissionCount: 0,
+          completedMissionCount: 0,
+          highRiskMissionCount: 0,
+          manualGovernanceMissionCount: 0,
+          logVolume24h: 0,
+          completionRate: 0,
+        },
       },
       recentMemory: [],
       recommendedMemory: { items: [] },
       agentRoster: [],
-    })),
+    }),
   });
 
   router.post('/api/pipeline/execute', async (req, res) => {
@@ -84,7 +100,7 @@ export function createPipelineRouter(): Router {
       id,
       name: name ?? id,
       projectId: projectId ?? 'default',
-      steps: steps.map((s: any, i: number) => ({
+      steps: steps.map((s: Record<string, unknown>, i: number) => ({
         id: s.id ?? `step-${i}`,
         agentId: s.agentId ?? 'agent-default',
         name: s.name ?? `Step ${i + 1}`,
@@ -96,11 +112,17 @@ export function createPipelineRouter(): Router {
       updatedAt: now,
     };
     try {
-      const run = await sequentialExecutor.execute(pipeline as SequentialPipeline, { input });
+      const run = await sequentialExecutor.execute(
+        pipeline as unknown as SequentialPipeline,
+        { input },
+      );
       pipelineRuns.set(run.id, run);
       res.json(run);
     } catch (err: unknown) {
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      process.stderr.write(
+        `[Pipeline] Execute error: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      res.status(500).json({ error: 'Pipeline execution failed. Check server logs for details.' });
     }
   });
 
@@ -112,30 +134,6 @@ export function createPipelineRouter(): Router {
 
   router.get('/api/pipeline/runs', (_req, res) => {
     res.json(Array.from(pipelineRuns.values()));
-  });
-
-  // Agent Benchmark Runner
-  router.post('/api/benchmark/run', async (req, res) => {
-    const { tasks, maxConcurrency, name: benchName } = req.body ?? {};
-    const benchmarkTasks = tasks ?? createCommanderHealthCheckBenchmark();
-    const runner = new AgentBenchmarkRunner({
-      name: benchName ?? 'Commander Health Check',
-      tasks: benchmarkTasks,
-      maxConcurrency: maxConcurrency ?? 1,
-      executor: { execute: async (prompt: string) => `Benchmark response for: ${prompt}` },
-    });
-    try {
-      const result = await runner.run();
-      const visualization = visualizeBenchmark(result);
-      res.json({ result, visualization });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  router.get('/api/benchmark/health-check-tasks', (_req, res) => {
-    const tasks = createCommanderHealthCheckBenchmark();
-    res.json({ tasks, count: tasks.length });
   });
 
   return router;

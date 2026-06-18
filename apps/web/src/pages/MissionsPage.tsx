@@ -26,7 +26,8 @@ export function MissionsPage({
           <h1>Mission Control</h1>
         </div>
         <p className="page-desc">
-          Plan, dispatch, and track missions across all agents. Drag cards between lanes to update status.
+          Plan, dispatch, and track missions across all agents. Drag cards between lanes to update
+          status.
         </p>
       </div>
       <MissionBoard

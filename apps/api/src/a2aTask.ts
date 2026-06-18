@@ -1,19 +1,19 @@
 /**
  * A2A Task Lifecycle Implementation
  * Based on Google's A2A Protocol Specification
- * 
+ *
  * Tasks have a defined lifecycle and produce Artifacts
  */
 
 import { v4 as uuidv4 } from 'uuid';
 
-export type TaskStatus = 
-  | 'pending'      // Task created, waiting to start
-  | 'running'      // Task is being processed
-  | 'paused'       // Task paused, can be resumed
-  | 'completed'    // Task completed successfully
-  | 'failed'       // Task failed
-  | 'cancelled';   // Task cancelled by user
+export type TaskStatus =
+  | 'pending' // Task created, waiting to start
+  | 'running' // Task is being processed
+  | 'paused' // Task paused, can be resumed
+  | 'completed' // Task completed successfully
+  | 'failed' // Task failed
+  | 'cancelled'; // Task cancelled by user
 
 export type TaskPriority = 'low' | 'medium' | 'high';
 
@@ -84,11 +84,11 @@ export class TaskStateMachine {
     ['pending', ['running', 'cancelled']],
     ['running', ['paused', 'completed', 'failed', 'cancelled']],
     ['paused', ['running', 'cancelled']],
-    ['completed', []],  // Terminal state
-    ['failed', []],     // Terminal state
-    ['cancelled', []]   // Terminal state
+    ['completed', []], // Terminal state
+    ['failed', []], // Terminal state
+    ['cancelled', []], // Terminal state
   ]);
-  
+
   /**
    * Check if transition is valid
    */
@@ -96,7 +96,7 @@ export class TaskStateMachine {
     const allowed = this.transitions.get(from) || [];
     return allowed.includes(to);
   }
-  
+
   /**
    * Transition task to new status
    */
@@ -104,10 +104,10 @@ export class TaskStateMachine {
     if (!this.canTransition(task.status, newStatus)) {
       throw new Error(`Invalid transition: ${task.status} → ${newStatus}`);
     }
-    
+
     task.status = newStatus;
     task.updatedAt = new Date().toISOString();
-    
+
     // Set timestamps
     if (newStatus === 'running' && !task.startedAt) {
       task.startedAt = task.updatedAt;
@@ -115,10 +115,10 @@ export class TaskStateMachine {
     if (['completed', 'failed', 'cancelled'].includes(newStatus)) {
       task.completedAt = task.updatedAt;
     }
-    
+
     return task;
   }
-  
+
   /**
    * Check if task is in terminal state
    */
@@ -133,7 +133,7 @@ export class TaskStateMachine {
 export class TaskManager {
   private tasks: Map<string, Task> = new Map();
   private stateMachine = new TaskStateMachine();
-  
+
   /**
    * Create a new task
    */
@@ -141,7 +141,7 @@ export class TaskManager {
     clientId: string,
     description: string,
     input: Record<string, unknown>,
-    priority: TaskPriority = 'medium'
+    priority: TaskPriority = 'medium',
   ): Task {
     const task: Task = {
       id: uuidv4(),
@@ -153,97 +153,97 @@ export class TaskManager {
       progress: 0,
       messages: [],
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
-    
+
     this.tasks.set(task.id, task);
     return task;
   }
-  
+
   /**
    * Get task by ID
    */
   get(taskId: string): Task | undefined {
     return this.tasks.get(taskId);
   }
-  
+
   /**
    * Start a task
    */
   start(taskId: string, agentId: string): Task {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
-    
+
     task.agentId = agentId;
     return this.stateMachine.transition(task, 'running');
   }
-  
+
   /**
    * Pause a task
    */
   pause(taskId: string): Task {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
-    
+
     return this.stateMachine.transition(task, 'paused');
   }
-  
+
   /**
    * Resume a paused task
    */
   resume(taskId: string): Task {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
-    
+
     return this.stateMachine.transition(task, 'running');
   }
-  
+
   /**
    * Complete a task
    */
   complete(taskId: string, artifact: Artifact): Task {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
-    
+
     task.artifact = artifact;
     task.progress = 100;
     return this.stateMachine.transition(task, 'completed');
   }
-  
+
   /**
    * Fail a task
    */
   fail(taskId: string, error: string): Task {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
-    
+
     task.error = error;
     return this.stateMachine.transition(task, 'failed');
   }
-  
+
   /**
    * Cancel a task
    */
   cancel(taskId: string): Task {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
-    
+
     return this.stateMachine.transition(task, 'cancelled');
   }
-  
+
   /**
    * Update task progress
    */
   updateProgress(taskId: string, progress: number): Task {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
-    
+
     task.progress = Math.max(0, Math.min(100, progress));
     task.updatedAt = new Date().toISOString();
-    
+
     return task;
   }
-  
+
   /**
    * Add message to task
    */
@@ -252,45 +252,45 @@ export class TaskManager {
     sender: 'client' | 'agent',
     type: TaskMessage['type'],
     content: string,
-    metadata?: Record<string, unknown>
+    metadata?: Record<string, unknown>,
   ): TaskMessage {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
-    
+
     const message: TaskMessage = {
       id: uuidv4(),
       timestamp: new Date().toISOString(),
       sender,
       type,
       content,
-      metadata
+      metadata,
     };
-    
+
     task.messages.push(message);
     task.updatedAt = new Date().toISOString();
-    
+
     return message;
   }
-  
+
   /**
    * List tasks by status
    */
   listByStatus(status: TaskStatus): Task[] {
-    return Array.from(this.tasks.values()).filter(t => t.status === status);
+    return Array.from(this.tasks.values()).filter((t) => t.status === status);
   }
-  
+
   /**
    * List tasks by client
    */
   listByClient(clientId: string): Task[] {
-    return Array.from(this.tasks.values()).filter(t => t.clientId === clientId);
+    return Array.from(this.tasks.values()).filter((t) => t.clientId === clientId);
   }
-  
+
   /**
    * List tasks by agent
    */
   listByAgent(agentId: string): Task[] {
-    return Array.from(this.tasks.values()).filter(t => t.agentId === agentId);
+    return Array.from(this.tasks.values()).filter((t) => t.agentId === agentId);
   }
 
   /**
@@ -306,7 +306,7 @@ export class TaskManager {
  */
 export class ArtifactManager {
   private artifacts: Map<string, Artifact> = new Map();
-  
+
   /**
    * Create an artifact
    */
@@ -314,7 +314,7 @@ export class ArtifactManager {
     taskId: string,
     contentType: string,
     content: string,
-    metadata?: Partial<ArtifactMetadata>
+    metadata?: Partial<ArtifactMetadata>,
   ): Artifact {
     const artifact: Artifact = {
       id: uuidv4(),
@@ -323,25 +323,25 @@ export class ArtifactManager {
       content,
       metadata: {
         createdAt: new Date().toISOString(),
-        ...metadata
-      }
+        ...metadata,
+      },
     };
-    
+
     this.artifacts.set(artifact.id, artifact);
     return artifact;
   }
-  
+
   /**
    * Get artifact by ID
    */
   get(artifactId: string): Artifact | undefined {
     return this.artifacts.get(artifactId);
   }
-  
+
   /**
    * Get artifacts by task
    */
   getByTask(taskId: string): Artifact[] {
-    return Array.from(this.artifacts.values()).filter(a => a.taskId === taskId);
+    return Array.from(this.artifacts.values()).filter((a) => a.taskId === taskId);
   }
 }

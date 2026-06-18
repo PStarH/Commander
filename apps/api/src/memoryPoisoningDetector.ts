@@ -1,9 +1,9 @@
 /**
  * MemoryPoisoningDetector - RAG Source Credibility Assessment
- * 
+ *
  * Detects potential memory poisoning attacks in agent memory systems
  * Based on arXiv:2510.23883v2 research: "Memory poisoning >80% success @ <0.1% data pollution"
- * 
+ *
  * Key detection mechanisms:
  * - Source credibility scoring (domain reputation, provenance tracking)
  * - Embedding distribution anomaly detection
@@ -146,7 +146,7 @@ export class MemoryPoisoningDetector {
    */
   async detectPoisoning(
     newMemories: MemorySource[],
-    existingMemories: MemorySource[]
+    existingMemories: MemorySource[],
   ): Promise<PoisoningIndicator[]> {
     const indicators: PoisoningIndicator[] = [];
 
@@ -189,7 +189,9 @@ export class MemoryPoisoningDetector {
       // Unknown domain - moderate trust
       return 0.5;
     } catch (e) {
-      process.stderr.write(`[MemoryPoisoningDetector] Error: ${(e as Error)?.message ?? String(e)}\n`);
+      process.stderr.write(
+        `[MemoryPoisoningDetector] Error: ${(e as Error)?.message ?? String(e)}\n`,
+      );
       // Invalid URL - lower trust
       return 0.3;
     }
@@ -242,13 +244,13 @@ export class MemoryPoisoningDetector {
     const avgDistance = this.calculateAverageDistance(embedding);
 
     // Detect outliers (> 2 standard deviations)
-    const stdDev = this.calculateStdDev(this.embeddingHistory.map(e => 
-      this.calculateAverageDistance(e)
-    ));
+    const stdDev = this.calculateStdDev(
+      this.embeddingHistory.map((e) => this.calculateAverageDistance(e)),
+    );
 
-    const historicalAvg = this.embeddingHistory.reduce((sum, e) => 
-      sum + this.calculateAverageDistance(e), 0
-    ) / this.embeddingHistory.length;
+    const historicalAvg =
+      this.embeddingHistory.reduce((sum, e) => sum + this.calculateAverageDistance(e), 0) /
+      this.embeddingHistory.length;
 
     if (avgDistance > historicalAvg + 2 * stdDev) {
       // Anomalous embedding
@@ -270,9 +272,11 @@ export class MemoryPoisoningDetector {
     // Fresher content is more trustworthy
     if (ageHours < 24) {
       return 0.9;
-    } else if (ageHours < 168) { // 1 week
+    } else if (ageHours < 168) {
+      // 1 week
       return 0.7;
-    } else if (ageHours < 720) { // 1 month
+    } else if (ageHours < 720) {
+      // 1 month
       return 0.5;
     } else {
       return 0.3;
@@ -313,7 +317,7 @@ export class MemoryPoisoningDetector {
    */
   private detectContradictions(
     newMemory: MemorySource,
-    existingMemories: MemorySource[]
+    existingMemories: MemorySource[],
   ): PoisoningIndicator[] {
     const indicators: PoisoningIndicator[] = [];
 
@@ -347,7 +351,7 @@ export class MemoryPoisoningDetector {
    */
   private detectEmbeddingAnomalies(
     newEmbedding: number[],
-    existingMemories: MemorySource[]
+    existingMemories: MemorySource[],
   ): PoisoningIndicator[] {
     const indicators: PoisoningIndicator[] = [];
 
@@ -357,8 +361,8 @@ export class MemoryPoisoningDetector {
 
     // Calculate distances to all existing embeddings
     const distances = existingMemories
-      .filter(m => m.embedding)
-      .map(m => this.cosineDistance(newEmbedding, m.embedding!));
+      .filter((m) => m.embedding)
+      .map((m) => this.cosineDistance(newEmbedding, m.embedding!));
 
     if (distances.length === 0) {
       return indicators;
@@ -368,7 +372,8 @@ export class MemoryPoisoningDetector {
     const maxDistance = Math.max(...distances);
 
     // Detect outliers
-    if (maxDistance > 0.8) { // Threshold based on research
+    if (maxDistance > 0.8) {
+      // Threshold based on research
       indicators.push({
         type: 'embedding_anomaly',
         severity: 'high',
@@ -385,7 +390,7 @@ export class MemoryPoisoningDetector {
    */
   private detectTemporalInconsistencies(
     newMemories: MemorySource[],
-    existingMemories: MemorySource[]
+    existingMemories: MemorySource[],
   ): PoisoningIndicator[] {
     const indicators: PoisoningIndicator[] = [];
 
@@ -433,9 +438,7 @@ export class MemoryPoisoningDetector {
   private calculateAverageDistance(embedding: number[]): number {
     if (this.embeddingHistory.length === 0) return 0;
 
-    const distances = this.embeddingHistory.map(h => 
-      this.cosineDistance(embedding, h)
-    );
+    const distances = this.embeddingHistory.map((h) => this.cosineDistance(embedding, h));
 
     return distances.reduce((a, b) => a + b, 0) / distances.length;
   }
@@ -445,7 +448,7 @@ export class MemoryPoisoningDetector {
    */
   private calculateStdDev(values: number[]): number {
     const avg = values.reduce((a, b) => a + b, 0) / values.length;
-    const squaredDiffs = values.map(v => Math.pow(v - avg, 2));
+    const squaredDiffs = values.map((v) => Math.pow(v - avg, 2));
     return Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / values.length);
   }
 
