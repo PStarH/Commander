@@ -42,6 +42,8 @@ export default defineConfig({
       'tests/runtime/speculativeExecutor.test.ts',
       'tests/runtime/stepErrorBoundary.test.ts',
       'tests/runtime/stepTimeoutManager.test.ts',
+      'tests/runtime/capacity-baseline.test.ts',
+      'tests/runtime/tenant-runtime-isolation.test.ts',
       'tests/runtime/tokenBenchmark.test.ts',
       'tests/runtime/tokenMeasurement.test.ts',
       'tests/runtime/toolApproval.test.ts',
@@ -60,6 +62,7 @@ export default defineConfig({
       'tests/telos/providerPool.test.ts',
       'tests/telos/telosOrchestrator.test.ts',
       'tests/telos/tokenSentinel.test.ts',
+      'tests/telos/modelCascadeController.test.ts',
       // --- intelligence ---
       'tests/intelligence/costAggregator.test.ts',
       // --- sandbox ---
