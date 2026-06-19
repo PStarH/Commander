@@ -2,8 +2,8 @@
   "name": "@commander/plugin-sdk",
   "version": "1.0.0",
   "description": "Plugin SDK for Commander — build tools, skills, and hooks for the Commander agent platform",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
   "files": [
     "dist",
     "src",
@@ -12,8 +12,8 @@
   ],
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
     }
   },
   "keywords": [
