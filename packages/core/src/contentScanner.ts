@@ -465,3 +465,31 @@ export function scanToolOutputForInjection(output: string): { blocked: boolean; 
   }
   return { blocked: false };
 }
+
+/**
+ * Route tool output security enforcement by trust tier.
+ * 'trusted' tier uses fast-path; 'untrusted' tier uses full ContentScanner deep scan.
+ */
+export async function enforceToolOutputSecurity(
+  output: string,
+  tier: 'trusted' | 'untrusted',
+): Promise<{
+  blocked: boolean;
+  blockedAt?: 'fast-path' | 'full-scan';
+  threats?: ContentThreat[];
+}> {
+  if (!output) return { blocked: false };
+  if (tier === 'trusted') {
+    const fast = scanToolOutputForInjection(output);
+    if (fast.blocked) return { blocked: true, blockedAt: 'fast-path' };
+    return { blocked: false };
+  }
+  const scanner = createContentScanner({});
+  const scanResult = await scanner.scan(output);
+  if (!scanResult.isSafe) {
+    return { blocked: true, blockedAt: 'full-scan', threats: scanResult.threats };
+  }
+  const fast = scanToolOutputForInjection(output);
+  if (fast.blocked) return { blocked: true, blockedAt: 'fast-path' };
+  return { blocked: false };
+}
