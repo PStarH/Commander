@@ -195,7 +195,10 @@ export type TrustTier = 'trusted' | 'untrusted';
  * 2. If the tool name starts with `mcp_` or the category is `mcp`, treat as untrusted.
  * 3. Otherwise, default to `untrusted` (fail-closed).
  */
-export function getToolTrustTier(name: string, tool?: { trustTier?: TrustTier; definition?: { category?: string } }): TrustTier {
+export function getToolTrustTier(
+  name: string,
+  tool?: { trustTier?: TrustTier; definition?: { category?: string } },
+): TrustTier {
   // Explicit trustTier overrides everything
   if (tool?.trustTier) {
     return tool.trustTier;
