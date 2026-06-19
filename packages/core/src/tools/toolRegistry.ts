@@ -188,32 +188,76 @@ export const TOOL_CATEGORIES: Record<string, string> = {
 export type TrustTier = 'trusted' | 'untrusted';
 
 /**
+ * Default trust tiers for every built-in tool, keyed by tool name.
+ *
+ * Tools that ingest external data (web, browser, media, skill_view, etc.)
+ * default to `untrusted` as a security-hardened default. Local/internal tools
+ * default to `trusted`.
+ */
+export const TOOL_TIER_DEFAULTS: Record<string, TrustTier> = {
+  web: 'untrusted',
+  browser: 'untrusted',
+  media: 'untrusted',
+  skill_view: 'untrusted',
+  search_conversations: 'untrusted',
+
+  file: 'trusted',
+  file_read: 'trusted',
+  file_write: 'trusted',
+  file_edit: 'trusted',
+  file_hash_edit: 'trusted',
+  memory: 'trusted',
+  memory_list: 'trusted',
+  code: 'trusted',
+  checkpoint: 'trusted',
+  handoff: 'trusted',
+  system: 'trusted',
+  git: 'trusted',
+  apply_patch: 'trusted',
+  verify_answer: 'trusted',
+  exec: 'trusted',
+  verify: 'trusted',
+  agent: 'trusted',
+  meta: 'trusted',
+};
+
+/**
  * Determine the trust tier for a tool based on its name and optional tool metadata.
  *
- * Rules:
- * 1. If the tool has an explicit `trustTier`, use it.
- * 2. If the tool name starts with `mcp_` or the category is `mcp`, treat as untrusted.
- * 3. Otherwise, default to `untrusted` (fail-closed).
+ * Resolution order:
+ * 1. Explicit `tool.trustTier` field (if provided).
+ * 2. MCP prefix (`mcp_`) or MCP category → untrusted.
+ * 3. TOOL_TIER_DEFAULTS lookup by name.
+ * 4. Fail-closed: untrusted.
  */
 export function getToolTrustTier(
   name: string,
   tool?: { trustTier?: TrustTier; definition?: { category?: string } },
 ): TrustTier {
-  // Explicit trustTier overrides everything
   if (tool?.trustTier) {
     return tool.trustTier;
   }
 
-  // MCP prefix → untrusted
   if (name.startsWith('mcp_')) {
     return 'untrusted';
   }
 
-  // MCP category heuristic → untrusted
   if (tool?.definition?.category === 'mcp') {
     return 'untrusted';
   }
 
-  // Default: fail closed to untrusted
+  const fromDefaults = TOOL_TIER_DEFAULTS[name];
+  if (fromDefaults) {
+    return fromDefaults;
+  }
+
+  // Fallback: if the tool name maps to a known category and that category
+  // has a default tier, inherit the category-level trust.
+  const category = TOOL_CATEGORIES[name];
+  if (category) {
+    const categoryTier = TOOL_TIER_DEFAULTS[category];
+    if (categoryTier) return categoryTier;
+  }
+
   return 'untrusted';
 }
