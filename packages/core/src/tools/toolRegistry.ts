@@ -184,3 +184,33 @@ export const TOOL_CATEGORIES: Record<string, string> = {
   verify_answer: 'control',
   search_conversations: 'memory',
 };
+
+export type TrustTier = 'trusted' | 'untrusted';
+
+/**
+ * Determine the trust tier for a tool based on its name and optional tool metadata.
+ *
+ * Rules:
+ * 1. If the tool has an explicit `trustTier`, use it.
+ * 2. If the tool name starts with `mcp_` or the category is `mcp`, treat as untrusted.
+ * 3. Otherwise, default to `untrusted` (fail-closed).
+ */
+export function getToolTrustTier(name: string, tool?: { trustTier?: TrustTier; definition?: { category?: string } }): TrustTier {
+  // Explicit trustTier overrides everything
+  if (tool?.trustTier) {
+    return tool.trustTier;
+  }
+
+  // MCP prefix → untrusted
+  if (name.startsWith('mcp_')) {
+    return 'untrusted';
+  }
+
+  // MCP category heuristic → untrusted
+  if (tool?.definition?.category === 'mcp') {
+    return 'untrusted';
+  }
+
+  // Default: fail closed to untrusted
+  return 'untrusted';
+}
