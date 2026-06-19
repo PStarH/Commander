@@ -1,0 +1,7 @@
+# Compiled JS output in src/ (generated from .ts sources)
+packages/core/src/**/*.js
+packages/core/src/**/*.d.ts
+
+# Build output
+**/dist/
+**/node_modules/
