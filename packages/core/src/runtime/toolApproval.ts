@@ -1,4 +1,7 @@
 import { getGlobalLogger } from '../logging';
+import type { CapabilityTokenVerifier, CapabilityRejectReason } from '../security/capabilityToken';
+import { getMetricsCollector } from './metricsCollector';
+import { getToolTrustTier } from '../tools/toolRegistry';
 
 // ============================================================================
 // Approval levels
@@ -317,11 +320,54 @@ export type ApprovalCallback = (
   request: ApprovalRequest,
 ) => Promise<ApprovalResult> | ApprovalResult;
 
+/**
+ * Opt-in observability event fired when a capability token was supplied
+ * alongside a configured verifier but the verifier rejected the token.
+ * Distinct from the verifier-level `auditLogger` because ToolApproval has
+ * richer runtime context (agentId, runId) and because emission is opt-in,
+ * so middleware that doesn't want failed-token noise can keep wiring silent.
+ */
+export interface TokenRejectedEvent {
+  type: 'token_rejected';
+  toolName: string;
+  /** Reason from {@link CapabilityTokenVerifier.verify}'s reject taxonomy. */
+  reason: CapabilityRejectReason;
+  agentId?: string;
+  runId?: string;
+  timestamp: string;
+}
+
+export type TokenRejectedLogger = (event: TokenRejectedEvent) => void;
+
+/**
+ * Increment a monotonic failure counter for any audit/observability sink
+ * whose throw was swallowed. Uses the {@link MetricsCollector} so future
+ * operators see a visible dashboard alert on `audit_sink_failures_total`
+ * instead of just one orphaned stderr line per call.
+ *
+ * Wrapped in defensive try/catch because a metrics-collector failure must
+ * NEVER break the underlying approval flow.
+ */
+function recordSinkFailure(sink: string): void {
+  try {
+    getMetricsCollector().incrementCounter(
+      'audit_sink_failures_total',
+      'Audit/observability sink failures (silent swallows)',
+      1,
+      [{ name: 'sink', value: sink }],
+    );
+  } catch {
+    /* metrics collector unavailable — last-resort swallow */
+  }
+}
+
 export class ToolApproval {
   private policies: Map<string, ApprovalPolicy> = new Map();
   private pendingApprovals: Map<string, ApprovalRequest> = new Map();
   private approvalCallback: ApprovalCallback;
   private autoApproveCallback?: ApprovalCallback;
+  private tokenVerifier?: CapabilityTokenVerifier;
+  private tokenRejectedLogger?: TokenRejectedLogger;
   private decisionHistory: Array<{
     requestId: string;
     toolName: string;
@@ -330,10 +376,35 @@ export class ToolApproval {
     timestamp: string;
   }> = [];
 
-  constructor(approvalCallback: ApprovalCallback, autoApproveCallback?: ApprovalCallback) {
+  constructor(
+    approvalCallback: ApprovalCallback,
+    autoApproveCallback?: ApprovalCallback,
+    tokenVerifier?: CapabilityTokenVerifier,
+  ) {
     this.approvalCallback = approvalCallback;
     this.autoApproveCallback = autoApproveCallback;
+    this.tokenVerifier = tokenVerifier;
     this.initializeDefaultPolicies();
+  }
+
+  /**
+   * Late-bound runtime injection of a token verifier (e.g. after tenant
+   * resolution or hot-reload of the capability-token issuer). Removes any
+   * previously-set verifier when called with `undefined`.
+   */
+  setTokenVerifier(verifier: CapabilityTokenVerifier | undefined): void {
+    this.tokenVerifier = verifier;
+  }
+
+  /**
+   * Opt-in observability for failed token verdicts at the ToolApproval
+   * runtime boundary. Default unwired — verify() itself is intentionally
+   * silent so high-volume middleware is not flooded. Soft-wired here so
+   * tenants who want failed-token visibility can capture it without
+   * inheriting every successful token in the audit chain.
+   */
+  setTokenRejectedLogger(logger: TokenRejectedLogger | undefined): void {
+    this.tokenRejectedLogger = logger;
   }
 
   /**
@@ -439,8 +510,52 @@ export class ToolApproval {
       agentId?: string;
       runId?: string;
       reason?: string;
+      /** Short-lived capability token; presence + verifier triggers fast-path. */
+      token?: string;
     },
   ): Promise<ApprovalResult> {
+    // Capability-token fast path: a valid token short-circuits the entire
+    // policy / arg-risk / trust-tier / approval flow. Without this, the
+    // original "auto-approves every subsequent call after one human
+    // approval" gap would persist even after per-call tokens are introduced
+    // (Phase 2.1 design). Invalid tokens fall through to the normal
+    // approval pathway so a stale or expired token cannot block legitimate
+    // approvals; we also fire an opt-in observability event so tenants can
+    // detect supply-with-bad-token hammering without flooding middleware.
+    if (context?.token && this.tokenVerifier) {
+      const v = this.tokenVerifier.verify(context.token, { tool: toolName, args });
+      if (v.ok) {
+        this.recordDecision(toolName, true, 'auto');
+        return {
+          approved: true,
+          requestId: `capability-token-${v.jti}`,
+          approvedAt: new Date().toISOString(),
+          reason: `capability-token: jti=${v.jti.slice(0, 12)}… sub=${v.sub} tools=[${v.scope.tools.join(',')}] risk=${v.risk}`,
+        };
+      }
+      if (this.tokenRejectedLogger) {
+        try {
+          this.tokenRejectedLogger({
+            type: 'token_rejected',
+            toolName,
+            reason: v.reason,
+            agentId: context?.agentId,
+            runId: context?.runId,
+            timestamp: new Date().toISOString(),
+          });
+        } catch (err) {
+          recordSinkFailure('tokenRejectedLogger');
+          try {
+            getGlobalLogger().warn('ToolApproval', 'tokenRejectedLogger threw', {
+              error: (err as Error)?.message,
+              toolName,
+            });
+          } catch {
+            /* logger inaccessible, swallow */
+          }
+        }
+      }
+    }
     const policy = this.findPolicy(toolName);
 
     if (!policy) {
@@ -458,6 +573,14 @@ export class ToolApproval {
     let effectiveLevel = policy.level;
     if (escalatedByArgRisk && effectiveLevel !== 'manual') {
       effectiveLevel = 'manual';
+    }
+
+    // Trust-tier escalation: untrusted tools at 'auto' level are escalated to
+    // semi_auto so the callback is invoked rather than silently approving.
+    const tier = getToolTrustTier(toolName);
+    const escalatedByTier = effectiveLevel === 'auto' && tier === 'untrusted';
+    if (escalatedByTier) {
+      effectiveLevel = 'semi_auto';
     }
 
     if (effectiveLevel === 'auto') {
@@ -516,7 +639,9 @@ export class ToolApproval {
           : undefined,
         reason: escalatedByArgRisk
           ? `Escalated to manual: argument risk "${argRisk.reasons.join(', ')}"`
-          : context?.reason,
+          : escalatedByTier
+            ? `Escalated to semi_auto: tier=untrusted for "${toolName}"`
+            : context?.reason,
         waitCount,
       };
 
@@ -527,17 +652,21 @@ export class ToolApproval {
         this.recordDecision(toolName, result.approved, effectiveLevel);
         return result;
       } catch (e) {
-        getGlobalLogger().warn('ToolApproval', 'Approval callback failed', {
-          error: (e as Error)?.message,
-          toolName,
-        });
+        try {
+          getGlobalLogger().warn('ToolApproval', 'Approval callback failed', {
+            error: (e as Error)?.message,
+            toolName,
+          });
+        } catch {
+          /* logger inaccessible, swallow */
+        }
         this.pendingApprovals.set(pendingKey, approvalRequest);
         this.pruneStaleApprovals();
         this.recordDecision(toolName, false, effectiveLevel);
         return {
           approved: false,
           requestId,
-          approvedAt: new Date().toISOString(),
+          approvedAt: now,
           reason: `Approval callback error for ${toolName}`,
         };
       }
