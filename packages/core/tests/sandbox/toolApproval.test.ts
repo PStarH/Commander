@@ -27,10 +27,10 @@ describe('ToolApproval', () => {
   // ── Auto-approved tools ────────────────────────────────────────────────────
 
   describe('auto-approved tools', () => {
-    it('auto-approves web_search', async () => {
+    it('approves web_search via callback (tier escalation)', async () => {
       const result = await approval.requestApproval('web_search', { query: 'test' });
       assert.strictEqual(result.approved, true);
-      assert.ok(result.reason.includes('Auto-approved'));
+      assert.ok(lastRequest); // Callback was invoked (tier escalation to semi_auto)
     });
 
     it('auto-approves web_fetch', async () => {
@@ -160,9 +160,9 @@ describe('ToolApproval', () => {
       await approval.requestApproval('git_commit', { message: 'fix' }); // semi_auto
 
       const stats = approval.getStats();
-      assert.strictEqual(stats.byLevel.auto.total, 1);
+      assert.strictEqual(stats.byLevel.auto.total, 0); // web_search escalated to semi_auto
       assert.strictEqual(stats.byLevel.manual.total, 1);
-      assert.strictEqual(stats.byLevel.semi_auto.total, 1);
+      assert.strictEqual(stats.byLevel.semi_auto.total, 2); // web_search + git_commit
     });
 
     it('returns empty stats when no decisions', () => {
