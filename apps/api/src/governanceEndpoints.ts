@@ -71,7 +71,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
    * Get checkpoint details
    */
   router.get('/checkpoints/:id', (req: Request, res: Response) => {
-    const checkpoint = checkpointManager.get(req.params.id);
+    const checkpoint = checkpointManager.get(String(req.params.id));
     if (!checkpoint) {
       return res.status(404).json({ error: 'Checkpoint not found' });
     }
@@ -114,7 +114,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
     }
 
     try {
-      const checkpoint = checkpointManager.approve(req.params.id, reviewerId, reason, conditions);
+      const checkpoint = checkpointManager.approve(String(req.params.id), reviewerId, reason, conditions);
       res.json(checkpoint);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
@@ -133,7 +133,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
     }
 
     try {
-      const checkpoint = checkpointManager.reject(req.params.id, reviewerId, reason);
+      const checkpoint = checkpointManager.reject(String(req.params.id), reviewerId, reason);
       res.json(checkpoint);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
@@ -154,7 +154,7 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
     }
 
     try {
-      const checkpoint = checkpointManager.addEvidence(req.params.id, {
+      const checkpoint = checkpointManager.addEvidence(String(req.params.id), {
         type,
         timestamp: timestamp || new Date().toISOString(),
         content,

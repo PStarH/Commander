@@ -41,7 +41,6 @@ import { SubAgentExecutor } from './subAgentExecutor';
 import { MultiAgentSynthesizer } from './synthesizer';
 import { ArtifactSystem, getArtifactSystem } from './artifactSystem';
 import { WorkCoordinator, getWorkCoordinator } from './workCoordinator';
-import { CapabilityRegistry, getCapabilityRegistry } from './capabilityRegistry';
 import { AgentTeamManager, getTeamManager } from './agentTeamManager';
 import { getEffortRules, classifyEffortLevel } from './effortScaler';
 import { ReflexionTopologicalOptimizer } from './topologyOptimizer';
@@ -104,7 +103,6 @@ export class UltimateOrchestrator {
   private subAgentExecutor: SubAgentExecutor;
   private synthesizer: MultiAgentSynthesizer;
   private artifactSystem: ArtifactSystem;
-  private capabilityRegistry: CapabilityRegistry;
   private teamManager: AgentTeamManager;
   private topologyOptimizer: ReflexionTopologicalOptimizer;
   private evolutionEngine: ReturnType<typeof getEvolutionEngine> | null = null;
@@ -120,14 +118,12 @@ export class UltimateOrchestrator {
     runtime: AgentRuntimeInterface,
     config?: Partial<UltimateOrchestratorConfig>,
     artifactSystem?: ArtifactSystem,
-    capabilityRegistry?: CapabilityRegistry,
     teamManager?: AgentTeamManager,
   ) {
     this.config = { ...DEFAULT_ULTIMATE_CONFIG, ...config };
     this.telos = telos;
     this.runtime = runtime;
     this.artifactSystem = artifactSystem ?? getArtifactSystem();
-    this.capabilityRegistry = capabilityRegistry ?? getCapabilityRegistry();
     this.teamManager = teamManager ?? getTeamManager();
 
     this.atomizer = new RecursiveAtomizer(
@@ -448,29 +444,6 @@ export class UltimateOrchestrator {
             this.teamManager.assignTask(team.id, task.id, sub.id);
           }
         }
-      }
-
-      // ── Capability Gap Analysis ─────────────────────────────────────────
-      // Check whether registered agent capabilities cover the subtask goals.
-      // Advisory only — does not alter team composition.
-      try {
-        const goals = taskTree.subtasks.map((s) => s.goal);
-        const bestMatches = this.capabilityRegistry.findBestMatch(goals);
-        if (bestMatches.length > 0) {
-          const topScore = bestMatches[0].matchScore;
-          reasoning.push(
-            `Capability analysis: best match ${bestMatches[0].agentId} (score: ${(topScore * 100).toFixed(0)}%)${bestMatches.length > 1 ? `, ${bestMatches.length - 1} alternatives` : ''}`,
-          );
-          if (topScore < 0.5) {
-            reasoning.push(
-              `Capability gap: no registered agent matches subtask goals well (best=${(topScore * 100).toFixed(0)}%). Consider registering more capable agents.`,
-            );
-          }
-        }
-      } catch (e) {
-        reasoning.push(
-          `Capability analysis skipped: ${e instanceof Error ? e.message : 'unknown'}`,
-        );
       }
 
       // Phase 6: Parallel Execution with team inbox collaboration
