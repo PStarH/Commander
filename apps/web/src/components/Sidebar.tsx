@@ -6,6 +6,7 @@ import {
   ScrollText,
   BookOpen,
   ShieldCheck,
+  Fingerprint,
   ChevronRight,
 } from 'lucide-react';
 
@@ -16,6 +17,7 @@ const NAV_ITEMS = [
   { to: '/execution', icon: ScrollText, label: 'Execution' },
   { to: '/memory', icon: BookOpen, label: 'Memory' },
   { to: '/governance', icon: ShieldCheck, label: 'Governance' },
+  { to: '/security', icon: Fingerprint, label: 'Security' },
 ];
 
 export function Sidebar() {

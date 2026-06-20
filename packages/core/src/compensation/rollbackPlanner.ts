@@ -34,8 +34,7 @@ import {
   type CompensationMetadata,
   DEFAULT_RISK_THRESHOLDS,
   type RiskThresholds,
-} from './external/types';
-import { resolveAffectedPaths } from './external/filesystem';
+} from './types';
 import { randomUUID } from 'node:crypto';
 
 // ============================================================================
@@ -256,7 +255,7 @@ export interface ExecutePlanOptions {
   >;
 }
 
-import type { CompensationResult } from './external/types';
+import type { CompensationResult } from './types';
 
 /**
  * Execute a plan. Returns the per-step results and a flag indicating
@@ -376,6 +375,25 @@ export async function executeRollbackPlan(
 // ============================================================================
 // Helpers
 // ============================================================================
+
+function resolveAffectedPaths(toolName: string, args: Record<string, unknown>): string[] {
+  const candidates: unknown[] = [];
+  for (const key of ['path', 'paths', 'filePath', 'file', 'destination', 'target']) {
+    const value = args[key];
+    if (value !== undefined && value !== null) candidates.push(value);
+  }
+  const paths: string[] = [];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      paths.push(candidate);
+    } else if (Array.isArray(candidate)) {
+      for (const item of candidate) {
+        if (typeof item === 'string') paths.push(item);
+      }
+    }
+  }
+  return paths.length > 0 ? paths : [toolName];
+}
 
 function humanizeInverse(call: PlannedToolCall, _meta: CompensationMetadata): string {
   return `Undo ${call.toolName}`;

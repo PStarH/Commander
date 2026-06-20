@@ -7,7 +7,10 @@ export type GuardianInterventionType =
   | 'anomaly'
   | 'safety_violation'
   | 'cost_overrun'
-  | 'goal_hijack';
+  | 'goal_hijack'
+  | 'behavioral_baseline_deviation'
+  | 'tool_usage_spike'
+  | 'data_exfiltration';
 
 export interface GuardianAction {
   agentId: string;
@@ -30,6 +33,23 @@ export interface GuardianEvidencePack {
   recommendation: string;
 }
 
+export interface BehavioralBaseline {
+  /** Average tokens per LLM call */
+  avgTokensPerCall: number;
+  /** Average token usage per minute */
+  avgTokensPerMinute: number;
+  /** Tool call frequency (calls per minute) */
+  avgToolCallsPerMinute: number;
+  /** Tool type distribution (toolName → frequency) — read-only for consumers */
+  toolDistribution: ReadonlyMap<string, number>;
+  /** Baseline established at */
+  establishedAt: number;
+  /** Number of observations used to build baseline */
+  observationCount: number;
+  /** Exponential moving average alpha (0-1) */
+  alpha: number;
+}
+
 export interface GuardianConfig {
   enabled: boolean;
   semanticDriftThreshold: number;
@@ -38,6 +58,16 @@ export interface GuardianConfig {
   maxConsecutiveAnomalies: number;
   costPerTokenUsd: number;
   maxCostPerRunUsd: number;
+  /** Enable behavioral baseline modeling */
+  enableBehavioralBaselines: boolean;
+  /** Baseline EMA alpha (learning rate, 0.1 = slow adaptation, 0.5 = fast) */
+  baselineAlpha: number;
+  /** Minimum observations before baselines are considered reliable */
+  baselineMinObservations: number;
+  /** Deviation multiplier for baseline alerts (e.g., 3.0 = 3x baseline triggers alert) */
+  baselineDeviationMultiplier: number;
+  /** Enable output data exfiltration detection */
+  enableDataExfiltrationDetection: boolean;
 }
 
 const DEFAULT_CONFIG: GuardianConfig = {
@@ -48,6 +78,11 @@ const DEFAULT_CONFIG: GuardianConfig = {
   maxConsecutiveAnomalies: 3,
   costPerTokenUsd: 0.000002,
   maxCostPerRunUsd: 5.0,
+  enableBehavioralBaselines: true,
+  baselineAlpha: 0.3,
+  baselineMinObservations: 10,
+  baselineDeviationMultiplier: 3.0,
+  enableDataExfiltrationDetection: true,
 };
 
 export class GuardianAgent {
@@ -57,6 +92,10 @@ export class GuardianAgent {
   private pausedAgents = new Set<string>();
   private tokenUsage = new Map<string, number>();
   private consecutiveAnomalies = new Map<string, number>();
+  /** Behavioral baselines per agent */
+  private baselines = new Map<string, BehavioralBaseline>();
+  /** Token usage timestamps for rate calculation */
+  private tokenTimestamps = new Map<string, number[]>();
 
   constructor(config: Partial<GuardianConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -66,6 +105,11 @@ export class GuardianAgent {
     if (!this.config.enabled) return null;
 
     this.appendToHistory(action);
+
+    // Update behavioral baseline with this observation
+    if (this.config.enableBehavioralBaselines) {
+      this.updateBaseline(action);
+    }
 
     const drift = this.detectSemanticDrift(action);
     if (drift) return this.intervene('semantic_drift', action);
@@ -78,6 +122,22 @@ export class GuardianAgent {
 
     const cost = this.detectCostOverrun(action);
     if (cost) return this.intervene('cost_overrun', action);
+
+    // Behavioral baseline deviation check
+    if (this.config.enableBehavioralBaselines) {
+      const deviation = this.detectBaselineDeviation(action.agentId, action);
+      if (deviation) return this.intervene('behavioral_baseline_deviation', action);
+    }
+
+    // Tool usage spike detection
+    const toolSpike = this.detectToolUsageSpike(action);
+    if (toolSpike) return this.intervene('tool_usage_spike', action);
+
+    // Data exfiltration detection on tool results
+    if (this.config.enableDataExfiltrationDetection && action.type === 'tool_result') {
+      const exfil = this.detectDataExfiltration(action.content);
+      if (exfil) return this.intervene('data_exfiltration', action);
+    }
 
     return null;
   }
@@ -122,12 +182,24 @@ export class GuardianAgent {
     };
   }
 
+  /** Get behavioral baseline for an agent. */
+  getBaseline(agentId: string): BehavioralBaseline | undefined {
+    return this.baselines.get(agentId);
+  }
+
+  /** Get all behavioral baselines. */
+  getAllBaselines(): Map<string, BehavioralBaseline> {
+    return new Map(this.baselines);
+  }
+
   reset(): void {
     this.actionHistory.clear();
     this.interventionCount = 0;
     this.pausedAgents.clear();
     this.tokenUsage.clear();
     this.consecutiveAnomalies.clear();
+    this.baselines.clear();
+    this.tokenTimestamps.clear();
   }
 
   private appendToHistory(action: GuardianAction): void {
@@ -252,6 +324,176 @@ export class GuardianAgent {
     }
 
     return threats;
+  }
+
+  // ── Behavioral Baseline Methods ────────────────────────────────────
+
+  /**
+   * Update the behavioral baseline for an agent using exponential moving average.
+   * Baselines track: token usage rate, tool call frequency, tool distribution.
+   */
+  private updateBaseline(action: GuardianAction): void {
+    let baseline = this.baselines.get(action.agentId);
+    if (!baseline) {
+      baseline = {
+        avgTokensPerCall: 0,
+        avgTokensPerMinute: 0,
+        avgToolCallsPerMinute: 0,
+        toolDistribution: new Map(),
+        establishedAt: Date.now(),
+        observationCount: 0,
+        alpha: this.config.baselineAlpha,
+      };
+      this.baselines.set(action.agentId, baseline);
+    }
+
+    baseline.observationCount++;
+    const alpha = baseline.alpha;
+
+    // Token usage tracking
+    const tokenMetadata = action.metadata as { tokens?: number } | undefined;
+    const tokens = tokenMetadata?.tokens ?? 0;
+    if (tokens > 0) {
+      baseline.avgTokensPerCall =
+        baseline.avgTokensPerCall * (1 - alpha) + tokens * alpha;
+
+      // Token rate (per minute)
+      const timestamps = this.tokenTimestamps.get(action.agentId) ?? [];
+      timestamps.push(action.timestamp);
+      const windowMs = 60_000;
+      while (timestamps.length > 0 && timestamps[0]! < action.timestamp - windowMs) {
+        timestamps.shift();
+      }
+      this.tokenTimestamps.set(action.agentId, timestamps);
+      const rate = timestamps.length; // calls per minute window
+      baseline.avgTokensPerMinute =
+        baseline.avgTokensPerMinute * (1 - alpha) + rate * alpha;
+    }
+
+    // Tool call frequency — compute actual calls-per-minute from timestamp window
+    if (action.type === 'tool_call') {
+      const toolTimestamps = this.tokenTimestamps.get(`${action.agentId}::tools`) ?? [];
+      toolTimestamps.push(action.timestamp);
+      const windowMs = 60_000;
+      while (toolTimestamps.length > 0 && toolTimestamps[0]! < action.timestamp - windowMs) {
+        toolTimestamps.shift();
+      }
+      this.tokenTimestamps.set(`${action.agentId}::tools`, toolTimestamps);
+      const currentRate = toolTimestamps.length;
+      baseline.avgToolCallsPerMinute =
+        baseline.avgToolCallsPerMinute * (1 - alpha) + currentRate * alpha;
+
+      // Tool distribution
+      const toolName = (action.metadata as { toolName?: string } | undefined)?.toolName ?? 'unknown';
+      const currentCount = baseline.toolDistribution.get(toolName) ?? 0;
+      (baseline.toolDistribution as Map<string, number>).set(toolName, currentCount + 1);
+    }
+  }
+
+  /**
+   * Detect when current behavior deviates significantly from the baseline.
+   */
+  private detectBaselineDeviation(
+    agentId: string,
+    action: GuardianAction,
+  ): boolean {
+    const baseline = this.baselines.get(agentId);
+    if (!baseline || baseline.observationCount < this.config.baselineMinObservations) {
+      return false;
+    }
+
+    const multiplier = this.config.baselineDeviationMultiplier;
+
+    // Token usage spike check
+    if (action.type === 'llm_call') {
+      const tokenMetadata = action.metadata as { tokens?: number } | undefined;
+      const tokens = tokenMetadata?.tokens ?? 0;
+      if (baseline.avgTokensPerCall > 0 && tokens > baseline.avgTokensPerCall * multiplier) {
+        return true;
+      }
+    }
+
+    // Tool rate spike check
+    if (action.type === 'tool_call' && baseline.avgToolCallsPerMinute > 0) {
+      const history = this.actionHistory.get(agentId) ?? [];
+      const windowMs = 60_000;
+      const recentTools = history.filter(
+        (a) => a.type === 'tool_call' && a.timestamp > action.timestamp - windowMs,
+      );
+      const currentRate = recentTools.length;
+      if (currentRate > baseline.avgToolCallsPerMinute * multiplier) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Detect sudden spikes in tool usage that may indicate an attack.
+   */
+  private detectToolUsageSpike(action: GuardianAction): boolean {
+    if (action.type !== 'tool_call') return false;
+    const agentId = action.agentId;
+    const history = this.actionHistory.get(agentId) ?? [];
+    const window1s = 1000;
+    const recentCalls = history.filter(
+      (a) => a.type === 'tool_call' && a.timestamp > action.timestamp - window1s,
+    );
+    // More than 10 tool calls in 1 second is suspicious
+    return recentCalls.length > 10;
+  }
+
+  /**
+   * Detect potential data exfiltration in tool output.
+   * Checks for: large base64 blobs, credential patterns, URL-encoded sensitive data.
+   */
+  private detectDataExfiltration(content: string): boolean {
+    if (!content || content.length < 50) return false;
+
+    // Large base64-encoded data (potential exfiltration)
+    const base64Pattern = /[A-Za-z0-9+/]{200,}={0,2}/;
+    if (base64Pattern.test(content)) {
+      return true;
+    }
+
+    // Credential patterns in output
+    const credentialPatterns = [
+      /-----BEGIN\s+(?:\w+\s+)?PRIVATE\s+KEY-----/,
+      /(?:sk-|pk-|ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9_]{20,}/,
+      /(?:AKIA|ASIA)[A-Z0-9]{16}/, // AWS access keys
+      /xox[bpras]-[A-Za-z0-9-]{10,}/, // Slack tokens
+      /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, // JWTs
+    ];
+
+    for (const pattern of credentialPatterns) {
+      if (pattern.test(content)) {
+        return true;
+      }
+    }
+
+    // URL-encoded large payload (potential data smuggling)
+    const urlEncodedPattern = /%[0-9A-Fa-f]{2}/g;
+    const urlEncodedMatches = content.match(urlEncodedPattern);
+    if (urlEncodedMatches && urlEncodedMatches.length > 100) {
+      return true;
+    }
+
+    // PII patterns (email, phone, SSN)
+    const piiPatterns = [
+      /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/,
+      /\b\d{3}[-.]?\d{2}[-.]?\d{4}\b/, // SSN-like
+    ];
+    let piiCount = 0;
+    for (const pattern of piiPatterns) {
+      const matches = content.match(new RegExp(pattern.source, 'g'));
+      if (matches) piiCount += matches.length;
+    }
+    if (piiCount > 10) {
+      return true; // Excessive PII in output suggests data dump
+    }
+
+    return false;
   }
 
   private intervene(

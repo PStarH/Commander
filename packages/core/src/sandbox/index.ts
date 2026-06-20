@@ -44,3 +44,4 @@ export type {
 } from './lane';
 export { buildSeccompFilter, writeSeccompFilterToFile, countAllowedSyscalls } from './seccompBpf';
 export type { SeccompFilterOptions } from './seccompBpf';
+export { AppContainerSB } from './appContainer';

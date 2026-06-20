@@ -270,10 +270,19 @@ export class MetricsCollector {
     durationMs: number,
     toolCount: number,
     tenantId?: string,
+    costUsd?: number,
   ): void {
     const labels: MetricLabel[] = [{ name: 'status', value: status }];
     if (tenantId) labels.push({ name: 'tenant', value: tenantId });
     this.incrementCounter('runs_total', 'Total runs by status', 1, labels);
+    if (costUsd !== undefined && costUsd > 0) {
+      this.incrementCounter(
+        'run_cost_usd_total',
+        'Total run cost in USD',
+        costUsd,
+        [{ name: 'status', value: status }, ...(tenantId ? [{ name: 'tenant', value: tenantId }] : [])],
+      );
+    }
     this.recordHistogram(
       'run_duration_ms',
       'Run duration in ms',

@@ -94,4 +94,6 @@ export interface TaskTreeNode {
   estimatedDurationMs?: number;
   isOnCriticalPath?: boolean;
   preferredModelTier?: ModelTier;
+  /** AgentLineage instance ID (Phase 2.2) — set by subAgentExecutor on spawn. */
+  lineageInstanceId?: string;
 }
