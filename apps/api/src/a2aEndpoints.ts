@@ -55,7 +55,7 @@ export function createA2ARouter(
    * Get a specific agent card
    */
   router.get('/agent-cards/:id', (req: Request, res: Response) => {
-    const card = cardRegistry.get(req.params.id);
+    const card = cardRegistry.get(String(req.params.id));
     if (!card) {
       return res.status(404).json({ error: 'Agent not found' });
     }
@@ -85,7 +85,7 @@ export function createA2ARouter(
    * Get task status
    */
   router.get('/tasks/:id', (req: Request, res: Response) => {
-    const task = taskManager.get(req.params.id);
+    const task = taskManager.get(String(req.params.id));
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
     }
@@ -104,7 +104,7 @@ export function createA2ARouter(
     }
 
     try {
-      const task = taskManager.start(req.params.id, agentId);
+      const task = taskManager.start(String(req.params.id), agentId);
       res.json(task);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
@@ -117,7 +117,7 @@ export function createA2ARouter(
    */
   router.post('/tasks/:id/pause', (req: Request, res: Response) => {
     try {
-      const task = taskManager.pause(req.params.id);
+      const task = taskManager.pause(String(req.params.id));
       res.json(task);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
@@ -130,7 +130,7 @@ export function createA2ARouter(
    */
   router.post('/tasks/:id/resume', (req: Request, res: Response) => {
     try {
-      const task = taskManager.resume(req.params.id);
+      const task = taskManager.resume(String(req.params.id));
       res.json(task);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
@@ -143,7 +143,7 @@ export function createA2ARouter(
    */
   router.post('/tasks/:id/cancel', (req: Request, res: Response) => {
     try {
-      const task = taskManager.cancel(req.params.id);
+      const task = taskManager.cancel(String(req.params.id));
       res.json(task);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
@@ -164,9 +164,9 @@ export function createA2ARouter(
     }
 
     try {
-      const artifact = artifactManager.create(req.params.id, contentType, content, metadata);
+      const artifact = artifactManager.create(String(req.params.id), contentType, content, metadata);
 
-      const task = taskManager.complete(req.params.id, artifact);
+      const task = taskManager.complete(String(req.params.id), artifact);
       res.json(task);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
@@ -185,7 +185,7 @@ export function createA2ARouter(
     }
 
     try {
-      const task = taskManager.fail(req.params.id, error);
+      const task = taskManager.fail(String(req.params.id), error);
       res.json(task);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -204,7 +204,7 @@ export function createA2ARouter(
     }
 
     try {
-      const task = taskManager.updateProgress(req.params.id, progress);
+      const task = taskManager.updateProgress(String(req.params.id), progress);
       res.json(task);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
@@ -225,7 +225,7 @@ export function createA2ARouter(
     }
 
     try {
-      const message = taskManager.addMessage(req.params.id, sender, type, content, metadata);
+      const message = taskManager.addMessage(String(req.params.id), sender, type, content, metadata);
       res.status(201).json(message);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
@@ -259,7 +259,7 @@ export function createA2ARouter(
    * Get an artifact by ID
    */
   router.get('/artifacts/:id', (req: Request, res: Response) => {
-    const artifact = artifactManager.get(req.params.id);
+    const artifact = artifactManager.get(String(req.params.id));
 
     if (!artifact) {
       return res.status(404).json({ error: 'Artifact not found' });
@@ -273,7 +273,7 @@ export function createA2ARouter(
    * Get artifacts for a task
    */
   router.get('/artifacts/task/:taskId', (req: Request, res: Response) => {
-    const artifacts = artifactManager.getByTask(req.params.taskId);
+    const artifacts = artifactManager.getByTask(String(req.params.taskId));
     res.json({ artifacts, count: artifacts.length });
   });
 

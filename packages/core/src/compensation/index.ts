@@ -13,5 +13,3 @@ export {
   executeRollbackPlan,
 } from './rollbackPlanner';
 export type { PlannedToolCall, PlanInput, ExecutePlanOptions } from './rollbackPlanner';
-export * as ExternalCompensation from './external';
-export { registerAllExternalCompensation, getToolTags, getToolCost } from './external';

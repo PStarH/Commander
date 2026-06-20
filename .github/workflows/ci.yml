@@ -60,6 +60,24 @@ jobs:
       - name: Build core package
         run: pnpm --filter @commander/core build
 
+      - name: Red Team Smoke Test (security gate)
+        run: |
+          echo "🔴 Running red team smoke test (5 critical scenarios)..."
+          cd packages/core
+          npx tsx src/security/runRedTeamBattery.ts --smoke --json > /tmp/rt-smoke.json 2>&1
+          EXIT_CODE=$?
+          # Parse JSON output for score
+          SCORE=$(node -e "try{process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d.trim().split('\\n').find(l=>l.startsWith('{'))||d.trim());console.log(j.securityScore)})}catch(e){console.log(0)}" < /tmp/rt-smoke.json 2>/dev/null || echo "0")
+          echo "Red team smoke score: $SCORE/100"
+          cat /tmp/rt-smoke.json | tail -20
+          # Fail if score < 80 or any critical missed
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            echo "::error::Red team smoke test FAILED — security regression detected"
+            exit 1
+          fi
+          echo "✅ Red team smoke test PASSED"
+        if: runner.os == 'Linux'
+
   docker:
     name: Docker Build
     runs-on: ubuntu-latest

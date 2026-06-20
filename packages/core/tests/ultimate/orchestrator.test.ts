@@ -9,7 +9,6 @@ import type { TaskTreeNode } from '../../src/ultimate/types';
 import type { AgentRuntimeInterface } from '../../src/runtime';
 import { TELOSOrchestrator } from '../../src/telos/telosOrchestrator';
 import { resetArtifactSystem } from '../../src/ultimate/artifactSystem';
-import { resetCapabilityRegistry } from '../../src/ultimate/capabilityRegistry';
 import { resetTeamManager } from '../../src/ultimate/agentTeamManager';
 import { resetTokenSentinel } from '../../src/telos/tokenSentinel';
 import { resetProviderPool } from '../../src/telos/providerPool';
@@ -88,7 +87,6 @@ describe('UltimateOrchestrator tree helpers', () => {
 describe('UltimateOrchestrator facade', () => {
   beforeEach(() => {
     resetArtifactSystem();
-    resetCapabilityRegistry();
     resetTeamManager();
     resetTokenSentinel();
     resetProviderPool();

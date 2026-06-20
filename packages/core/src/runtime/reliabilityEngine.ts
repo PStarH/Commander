@@ -25,7 +25,8 @@
  * ```
  */
 
-import { CircuitBreaker, type CircuitStats } from './circuitBreaker';
+import { CircuitBreaker } from './circuitBreaker';
+import type { CircuitStats, CircuitState } from './circuitBreaker';
 import {
   DeadLetterQueue,
   type DeadLetterEntry,
@@ -51,6 +52,10 @@ export interface ReliabilityEngineConfig {
   circuitRecoveryMs?: number;
   /** Circuit breaker: max half-open probes before full close. Default 1. */
   circuitHalfOpenMaxTests?: number;
+  /** Circuit breaker: provider name reported in metrics/transitions. Default 'reliabilityEngine'. */
+  circuitProviderName?: string;
+  /** Optional additional transition handler chained after the default observability. */
+  circuitTransitionHandler?: (from: CircuitState, to: CircuitState, provider?: string) => void;
   /** Dead letter queue: base directory for .ndjson files. */
   dlqBaseDir?: string;
   /** State checkpointer: base directory for checkpoint files. */
@@ -92,7 +97,7 @@ export class ReliabilityEngine {
     const halfOpenTests = config.circuitHalfOpenMaxTests ?? 1;
 
     this._circuitBreaker = new CircuitBreaker(threshold, recoveryMs, halfOpenTests);
-    this._circuitBreaker.setProviderName('reliabilityEngine');
+    this._circuitBreaker.setProviderName(config.circuitProviderName ?? 'reliabilityEngine');
 
     this._deadLetterQueue = new DeadLetterQueue(config.dlqBaseDir);
     this._compensationRegistry = new CompensationRegistry();
@@ -101,6 +106,7 @@ export class ReliabilityEngine {
     });
 
     // Wire observability
+    const extraTransitionHandler = config.circuitTransitionHandler;
     this._circuitBreaker.setObservability({
       onTransition: (from, to, provider) => {
         try {
@@ -118,6 +124,13 @@ export class ReliabilityEngine {
           });
         } catch {
           /* best-effort */
+        }
+        if (extraTransitionHandler) {
+          try {
+            extraTransitionHandler(from, to, provider);
+          } catch {
+            /* best-effort */
+          }
         }
       },
     });
@@ -313,6 +326,26 @@ export class ReliabilityEngine {
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
+
+  /** Direct access to the managed circuit breaker. */
+  getCircuitBreaker(): CircuitBreaker {
+    return this._circuitBreaker;
+  }
+
+  /** Direct access to the managed dead letter queue. */
+  getDeadLetterQueue(): DeadLetterQueue {
+    return this._deadLetterQueue;
+  }
+
+  /** Direct access to the managed state checkpointer. */
+  getStateCheckpointer(): StateCheckpointer {
+    return this._stateCheckpointer;
+  }
+
+  /** Direct access to the managed compensation registry. */
+  getCompensationRegistry(): CompensationRegistry {
+    return this._compensationRegistry;
+  }
 
   /** Get a unified stats snapshot. */
   getStats(): ReliabilityStats {

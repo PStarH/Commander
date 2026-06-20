@@ -52,6 +52,9 @@ export interface AgentExecutionContext {
   resumeWith?: unknown;
   /** Optional preferred model tier. When set, the router uses this tier instead of auto-selecting. */
   preferredModelTier?: ModelTier;
+  /** AgentLineage instance ID (Phase 2.2) — set by subAgentExecutor on spawn so
+   *  downstream tool calls and LLM calls can reference their lineage node. */
+  lineageInstanceId?: string;
 }
 
 /**

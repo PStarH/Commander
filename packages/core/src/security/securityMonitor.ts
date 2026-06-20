@@ -188,6 +188,48 @@ export class SecurityMonitor {
     this.alerts = [];
   }
 
+  /**
+   * Public helper for external subsystems (correlator, threat feed, etc.) to
+   * raise a security alert without building a full SecurityEvent.
+   */
+  logAlert(payload: {
+    type: string;
+    severity: string;
+    source: string;
+    message: string;
+    details?: Record<string, unknown>;
+    timestamp?: string;
+    recommendation?: string;
+  }): void {
+    const level: SecurityAlert['level'] =
+      payload.severity === 'critical' ? 'critical' : 'warning';
+    const severity =
+      payload.severity === 'low' ||
+      payload.severity === 'medium' ||
+      payload.severity === 'high' ||
+      payload.severity === 'critical'
+        ? payload.severity
+        : 'medium';
+
+    this.raiseAlert({
+      level,
+      title: payload.type,
+      description: payload.message,
+      events: [
+        {
+          id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          timestamp: payload.timestamp ?? new Date().toISOString(),
+          type: payload.type as import('./securityAuditLogger').SecurityEventType,
+          severity,
+          source: payload.source,
+          message: payload.message,
+          details: payload.details,
+        },
+      ],
+      recommendation: payload.recommendation ?? 'Investigate and respond according to runbook.',
+    });
+  }
+
   // ── Analysis ──────────────────────────────────────────────────────
 
   /** Process a security event for anomaly detection. Called by the audit logger poller. */
@@ -322,6 +364,26 @@ export class SecurityMonitor {
       });
     } catch {
       /* non-critical */
+    }
+
+    // AgentSOC integration: create incidents from security alerts
+    // This wires the monitoring pipeline into the SOC operations center
+    try {
+      const { getAgentSoc } = require('./agentSoc');
+      const soc = getAgentSoc();
+      soc.createIncident({
+        event: {
+          id: fullAlert.id,
+          timestamp: fullAlert.timestamp,
+          type: 'security_scan',
+          severity: alert.level === 'critical' ? 'critical' : 'high',
+          source: 'SecurityMonitor',
+          message: fullAlert.description,
+        },
+        alert: fullAlert,
+      });
+    } catch {
+      /* non-critical — AgentSOC may not be initialized */
     }
   }
 

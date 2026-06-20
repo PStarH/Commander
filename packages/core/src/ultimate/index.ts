@@ -35,8 +35,6 @@ export { MultiAgentSynthesizer } from './synthesizer';
 
 export { ArtifactSystem, getArtifactSystem, resetArtifactSystem } from './artifactSystem';
 
-export { CapabilityRegistry, getCapabilityRegistry } from './capabilityRegistry';
-
 export { AgentTeamManager, getTeamManager } from './agentTeamManager';
 
 export { getEffortRules, classifyEffortLevel, selectTopologyForEffort } from './effortScaler';

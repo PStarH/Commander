@@ -13,14 +13,32 @@ import { DEFAULT_SWARM_CONFIG } from './types';
 import { FusionEngine } from './fusionEngine';
 import { getMessageBus } from '../runtime/messageBus';
 import { getGlobalLogger } from '../logging';
-import { callLLMJSON } from '../runtime/llmJsonExtractor';
-import { validateShape } from '../runtime/structuredOutput';
+import {
+  generateNodeId,
+  findNodeById,
+  collectAllNodes,
+  countActiveNodes,
+  getPendingNodes,
+  sharedManagerDecompose,
+  sharedManagerReview,
+  sharedWorkerExecute,
+  sharedCriticEvaluate,
+  buildTree,
+  applyReview,
+  computeFindingsFingerprint,
+  computeImprovementRate,
+  makeBaseDecision,
+  buildBaseSummary,
+  SHARED_MANAGER_REVIEW_PROMPT,
+  SHARED_CRITIC_PROMPT,
+} from '../orchestration/baseOrchestrator';
+import type { DecompositionSubGoal } from '../orchestration/baseOrchestrator';
 
 // ============================================================================
-// Prompts — modified from goal/GoalOrchestrator with fission/fusion awareness
+// Swarm-specific prompts
 // ============================================================================
 
-const MANAGER_DECOMPOSE_PROMPT = `You are a Manager Agent in a Swarm system. Your job is to break down a complex goal into smaller sub-goals that can be worked on in parallel or recursively decomposed.
+const SWARM_MANAGER_DECOMPOSE_PROMPT = `You are a Manager Agent in a Swarm system. Your job is to break down a complex goal into smaller sub-goals that can be worked on in parallel or recursively decomposed.
 
 For each sub-goal, specify:
 - goal: a concrete, actionable description
@@ -46,135 +64,43 @@ Return:
   "reasoning": "brief explanation of your decomposition and fission decisions"
 }`;
 
-const WORKER_PROMPT = `You are a Worker Agent in a Swarm system. Execute the assigned task thoroughly. Provide complete, production-quality output. Include code, explanations, and any relevant details.`;
-
-const CRITIC_PROMPT = `You are a Critic Agent. Your role is ADVERSARIAL — actively find problems, edge cases, and improvements in the work submitted.
-
-You MUST find issues. Even good work has room for improvement. Be thorough and specific.
-
-For each finding, specify:
-- severity: critical (blocks completion) | high (significant issue) | medium (should fix) | low (nice to have) | info (observation)
-- category: correctness | completeness | edge_case | security | style | performance | maintainability | test_coverage
-- description: specific, actionable description of the issue
-- location: which part of the output has the issue (if applicable)
-- suggestion: how to fix it
-
-A "passed: true" result means NO critical or high findings remain.
-Pass at least 2 findings per review — always find something to improve.
-
-Output ONLY valid JSON with no markdown formatting.
-
-Return:
-{
-  "passed": false,
-  "findings": [
-    { "severity": "medium", "category": "correctness", "description": "...", "location": "...", "suggestion": "..." }
-  ],
-  "summary": "brief assessment"
-}`;
-
-const MANAGER_REVIEW_PROMPT = `You are a Manager Agent in a Swarm system. Review the completed work from this round.
-
-You have:
-1. The original goal and sub-goals
-2. Each sub-goal's worker output (or child manager result)
-3. Each sub-goal's critic evaluation (findings and severity)
-4. The FusionEngine conflict report for any cross-worker issues
-
-For each sub-goal, determine if it's truly:
-- "completed": work is done and passes critique
-- "needs_rework": work has issues that must be fixed
-- "re_open": work was previously completed but new findings suggest it needs revisiting
-
-Rate the overall status:
-- "on_track": everything is progressing well
-- "needs_improvement": some items need rework but progress is happening
-- "stuck": no progress or regressing; may need to change approach
-
-Output ONLY valid JSON with no markdown formatting.
-
-Return:
-{
-  "goalAssessments": [
-    { "goalId": "...", "status": "completed|needs_rework|re_open", "reason": "..." }
-  ],
-  "newSubGoals": [],
-  "overallStatus": "on_track|needs_improvement|stuck",
-  "overallSummary": "brief assessment of overall progress"
-}`;
+const SWARM_WORKER_PROMPT = `You are a Worker Agent in a Swarm system. Execute the assigned task thoroughly. Provide complete, production-quality output. Include code, explanations, and any relevant details.`;
 
 // ============================================================================
-// Helpers
+// Swarm-specific tree helpers (traverse children → child.result?.rootNodes)
 // ============================================================================
 
-interface DecompositionOutput {
-  subGoals: Array<{
-    goal: string;
-    dependencies: string[];
-    notes?: string;
-    complexity?: number;
-  }>;
-  reasoning: string;
-}
-
-interface ReviewOutput {
-  goalAssessments: Array<{
-    goalId: string;
-    status: 'completed' | 'needs_rework' | 're_open';
-    reason: string;
-  }>;
-  newSubGoals: Array<{ goal: string; dependencies: string[] }>;
-  overallStatus: 'on_track' | 'needs_improvement' | 'stuck';
-  overallSummary: string;
-}
-
-interface CriticOutput {
-  passed: boolean;
-  findings: Array<{
-    severity: CritiqueResult['findings'][0]['severity'];
-    category: string;
-    description: string;
-    location?: string;
-    suggestion?: string;
-  }>;
-  summary: string;
-}
-
-function generateNodeId(): string {
-  return `swarm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function findNodeById(nodes: SwarmNode[], id: string): SwarmNode | undefined {
+function swarmFindNodeById(nodes: SwarmNode[], id: string): SwarmNode | undefined {
   for (const n of nodes) {
     if (n.id === id) return n;
     for (const child of n.children) {
-      if (child.id === id) return findNodeById(child.result?.rootNodes ?? [], id);
+      if (child.id === id) return swarmFindNodeById(child.result?.rootNodes ?? [], id);
     }
-    const found = findNodeById(n.subNodes, id);
+    const found = swarmFindNodeById(n.subNodes, id);
     if (found) return found;
   }
   return undefined;
 }
 
-function collectAllNodes(nodes: SwarmNode[]): SwarmNode[] {
+function swarmCollectAllNodes(nodes: SwarmNode[]): SwarmNode[] {
   const result: SwarmNode[] = [];
   for (const n of nodes) {
     result.push(n);
-    result.push(...collectAllNodes(n.subNodes));
+    result.push(...swarmCollectAllNodes(n.subNodes));
     for (const child of n.children) {
-      result.push(...collectAllNodes(child.result?.rootNodes ?? []));
+      result.push(...swarmCollectAllNodes(child.result?.rootNodes ?? []));
     }
   }
   return result;
 }
 
-function countActiveNodes(nodes: SwarmNode[]): number {
+function swarmCountActiveNodes(nodes: SwarmNode[]): number {
   let count = 0;
   for (const n of nodes) {
     if (n.status === 'pending' || n.status === 'in_progress' || n.status === 're_opened') count++;
-    count += countActiveNodes(n.subNodes);
+    count += swarmCountActiveNodes(n.subNodes);
     for (const child of n.children) {
-      count += countActiveNodes(child.result?.rootNodes ?? []);
+      count += swarmCountActiveNodes(child.result?.rootNodes ?? []);
     }
   }
   return count;
@@ -185,7 +111,6 @@ function computeTopology(nodes: SwarmNode[], depth = 0): SwarmTopology {
   let totalNodes = nodes.length;
   const levelBreaths: number[] = [];
 
-  // Record breadth at current depth
   levelBreaths[depth] = (levelBreaths[depth] ?? 0) + nodes.length;
 
   for (const n of nodes) {
@@ -195,14 +120,12 @@ function computeTopology(nodes: SwarmNode[], depth = 0): SwarmTopology {
         const childTopo = child.result.topology;
         totalNodes += childTopo.totalNodes;
         managerCount += childTopo.managerCount - 1;
-        // Merge child level breaths (shifted by current depth + 1)
         for (let i = 0; i < childTopo.levelBreaths.length; i++) {
           const targetDepth = depth + 1 + i;
           levelBreaths[targetDepth] = (levelBreaths[targetDepth] ?? 0) + childTopo.levelBreaths[i];
         }
       }
     }
-    // Sub-nodes are local decomposition at same depth
     const subTopo = computeTopology(n.subNodes, depth);
     if (subTopo.levelBreaths.length > 0) {
       for (let i = 0; i < subTopo.levelBreaths.length; i++) {
@@ -211,7 +134,6 @@ function computeTopology(nodes: SwarmNode[], depth = 0): SwarmTopology {
     }
   }
 
-  // Find the deepest populated level
   let effectiveDepth = 0;
   for (let i = 0; i < levelBreaths.length; i++) {
     if (levelBreaths[i] > 0) effectiveDepth = i;
@@ -260,7 +182,13 @@ export class SwarmOrchestrator {
       mode: this.config.goalConfig.mode ?? 'balanced',
     });
 
-    const decomposition = await this.managerDecompose(goal);
+    const decomposition = await sharedManagerDecompose(
+      this.provider,
+      this.model,
+      SWARM_MANAGER_DECOMPOSE_PROMPT,
+      goal,
+      'SwarmOrchestrator',
+    );
     if (!decomposition) {
       return {
         goal,
@@ -276,7 +204,23 @@ export class SwarmOrchestrator {
     }
     totalTokensUsed += decomposition.tokens;
 
-    const goalTree = this.buildSwarmTree(decomposition.data.subGoals, null);
+    const goalTree = buildTree<SwarmNode>({
+      subGoals: decomposition.data.subGoals as DecompositionSubGoal[],
+      parentId: null,
+      createNode: (id, sg, parentId) => ({
+        id,
+        goal: sg.goal,
+        parentId,
+        status: 'pending',
+        subNodes: [],
+        children: [],
+        dependencies: [],
+        metadata: {
+          notes: sg.notes ?? '',
+          complexity: sg.complexity ?? 3,
+        },
+      }),
+    });
     this.rootNodes = goalTree;
 
     bus.publish('swarm.fission', 'swarm-orch', {
@@ -297,7 +241,7 @@ export class SwarmOrchestrator {
       bus.publish('swarm.fusion_conflict', 'swarm-orch', {
         round,
         depth: this.depth,
-        activeGoals: countActiveNodes(goalTree),
+        activeGoals: swarmCountActiveNodes(goalTree),
       });
 
       // === FISSION: check each sub-goal for recursive decomposition ===
@@ -309,7 +253,7 @@ export class SwarmOrchestrator {
         node.status = 'in_progress';
 
         const depsBlocked = node.dependencies.some((depId) => {
-          const dep = findNodeById(goalTree, depId);
+          const dep = swarmFindNodeById(goalTree, depId);
           if (!dep) return true;
           return dep.status !== 'completed';
         });
@@ -318,16 +262,44 @@ export class SwarmOrchestrator {
         // Skip nodes that were fissioned (they have children)
         if (node.children.length > 0) continue;
 
-        const workerResult = await this.workerExecute(node, goal);
+        const depContext = node.dependencies
+          .map((depId) => {
+            const dep = swarmFindNodeById(this.rootNodes, depId);
+            return dep
+              ? `Dependency "${dep.goal}" output:\n${dep.workerOutput?.slice(0, 500) ?? '(no output)'}`
+              : '';
+          })
+          .filter(Boolean)
+          .join('\n\n');
+
+        const workerResult = await sharedWorkerExecute({
+          provider: this.provider,
+          model: this.model,
+          systemPrompt: SWARM_WORKER_PROMPT,
+          parentGoal: goal,
+          nodeGoal: node.goal,
+          dependencyContext: depContext,
+        });
+
         if (workerResult) {
           node.workerOutput = workerResult.output;
+          node.status = 'completed';
           roundTokens += workerResult.tokens;
         } else {
           node.status = 'failed';
           continue;
         }
 
-        const criticResult = await this.criticEvaluate(node, goal);
+        const criticResult = await sharedCriticEvaluate({
+          provider: this.provider,
+          model: this.model,
+          criticPrompt: SHARED_CRITIC_PROMPT,
+          parentGoal: goal,
+          nodeGoal: node.goal,
+          workerOutput: node.workerOutput,
+          logLabel: 'SwarmOrchestrator',
+        });
+
         if (criticResult) {
           node.critique = {
             passed: criticResult.data.passed,
@@ -358,7 +330,7 @@ export class SwarmOrchestrator {
       }
 
       // === FUSION: detect cross-worker conflicts ===
-      const allNodes = collectAllNodes(goalTree);
+      const allNodes = swarmCollectAllNodes(goalTree);
       const activeNodes = allNodes.filter(
         (n) => n.status === 'completed' || n.status === 'in_progress',
       );
@@ -376,13 +348,41 @@ export class SwarmOrchestrator {
 
       // === MANAGER REVIEW ===
       bus.publish('swarm.round_completed', 'swarm-orch', { round, depth: this.depth });
-      const reviewResult = await this.managerReview(goal, goalTree, round, fusionReport);
+      const completed = allNodes.filter(
+        (n) => n.status === 'completed' || n.status === 'in_progress',
+      );
+      const reviewResult = await sharedManagerReview(
+        this.provider,
+        this.model,
+        SHARED_MANAGER_REVIEW_PROMPT,
+        goal,
+        round,
+        completed.map((n) => ({
+          id: n.id,
+          goal: n.goal,
+          status: n.status,
+          output: n.workerOutput?.slice(0, 1000) ?? '(no output)',
+          critique: n.critique ?? { passed: true, findings: [], summary: 'No critique' },
+          childManagers:
+            n.children.length > 0
+              ? n.children.map((c) => ({
+                  id: c.id,
+                  goal: c.goal,
+                  status: c.result?.status ?? 'unknown',
+                  summary: c.result?.summary?.slice(0, 500) ?? '',
+                }))
+              : undefined,
+        })),
+        fusionReport,
+        'SwarmOrchestrator',
+      );
+
       if (reviewResult) {
         roundTokens += reviewResult.tokens;
-        this.applyReview(goalTree, reviewResult.data);
+        applyReview(goalTree, reviewResult.data);
         for (const newSub of reviewResult.data.newSubGoals) {
           const newNode: SwarmNode = {
-            id: generateNodeId(),
+            id: generateNodeId('swarm'),
             goal: newSub.goal,
             parentId: null,
             status: 'pending',
@@ -402,48 +402,33 @@ export class SwarmOrchestrator {
         0,
       );
 
-      // Build fingerprint set of current finding descriptions for accurate tracking
-      const currentFindingsSet = new Set<string>();
-      for (const n of allNodes) {
-        if (n.critique) {
-          for (const f of n.critique.findings) {
-            currentFindingsSet.add(f.description);
-          }
-        }
-      }
-
-      // Compute resolved via set difference (accurate even when resolution and addition happen together)
-      let resolvedFindings = 0;
-      if (prevFindingsSet !== null) {
-        for (const desc of prevFindingsSet) {
-          if (!currentFindingsSet.has(desc)) resolvedFindings++;
-        }
-      }
-
-      const improvementRate =
-        prevFindingsSet !== null && prevFindingsSet.size > 0
-          ? resolvedFindings / prevFindingsSet.size
-          : 1;
+      const currentFindingsSet = computeFindingsFingerprint(allNodes);
+      const improvementRate = computeImprovementRate(prevFindingsSet, currentFindingsSet);
 
       if (improvementRate < 0.02) plateauRounds++;
       else plateauRounds = 0;
       prevFindingsSet = currentFindingsSet;
 
-      const decision = this.makeDecision(
+      const baseDecision = makeBaseDecision(
         round,
         totalTokensUsed,
         totalFindings,
         plateauRounds,
         allNodes,
+        {
+          budgetTokens: this.config.goalConfig.budgetTokens ?? 500_000,
+          maxRounds: this.config.goalConfig.maxRounds ?? 10,
+          mode: this.config.goalConfig.mode ?? 'balanced',
+        },
       );
 
-      bus.publish('swarm.completed', 'swarm-orch', { round, depth: this.depth, decision });
+      bus.publish('swarm.completed', 'swarm-orch', { round, depth: this.depth, decision: baseDecision.decision });
 
-      if (decision.startsWith('stop_')) break;
+      if (baseDecision.decision.startsWith('stop_')) break;
     }
 
     const elapsed = Date.now() - startTime;
-    const finalAll = collectAllNodes(goalTree);
+    const finalAll = swarmCollectAllNodes(goalTree);
     const completedCount = finalAll.filter((n) => n.status === 'completed').length;
     const resultStatus: SwarmStatus =
       completedCount === finalAll.length && finalAll.length > 0
@@ -489,7 +474,7 @@ export class SwarmOrchestrator {
         const childResult = await childOrch.execute(node.goal);
 
         const childManager: SwarmManager = {
-          id: generateNodeId(),
+          id: generateNodeId('swarm'),
           goal: node.goal,
           depth: this.depth + 1,
           topology: childResult.topology,
@@ -501,7 +486,7 @@ export class SwarmOrchestrator {
         node.workerOutput = childResult.summary;
 
         // Propagate findings from child tree
-        const childAllNodes = collectAllNodes(childResult.rootNodes);
+        const childAllNodes = swarmCollectAllNodes(childResult.rootNodes);
         const childFindings = childAllNodes
           .filter((n) => n.critique)
           .flatMap((n) => n.critique!.findings);
@@ -514,244 +499,8 @@ export class SwarmOrchestrator {
         }
       }
 
-      // Recurse into sub-nodes for multi-level decomposition
       await this.processFission(node.subNodes);
     }
-  }
-
-  /**
-   * Make continuation decision — same logic as GoalOrchestrator.
-   */
-  private makeDecision(
-    round: number,
-    totalTokensUsed: number,
-    findingsCount: number,
-    plateauRounds: number,
-    allNodes: SwarmNode[],
-  ): string {
-    const budgetTokens = this.config.goalConfig.budgetTokens ?? 500_000;
-    const maxRounds = this.config.goalConfig.maxRounds ?? 10;
-
-    if (totalTokensUsed >= budgetTokens) {
-      return 'stop_budget';
-    }
-
-    if (round >= maxRounds) {
-      return 'stop_max_rounds';
-    }
-
-    const activeCount = allNodes.filter(
-      (n) => n.status === 'pending' || n.status === 'in_progress' || n.status === 're_opened',
-    ).length;
-
-    if (activeCount === 0 && findingsCount === 0) {
-      return 'stop_achieved';
-    }
-
-    const mode = this.config.goalConfig.mode ?? 'balanced';
-    const plateauThreshold = mode === 'thorough' ? 5 : mode === 'balanced' ? 3 : 2;
-
-    if (plateauRounds >= plateauThreshold && findingsCount <= 2) {
-      const hasCritical = allNodes.some((n) =>
-        n.critique?.findings.some((f) => f.severity === 'critical' || f.severity === 'high'),
-      );
-      if (!hasCritical) {
-        return 'stop_plateau';
-      }
-    }
-
-    return 'continue';
-  }
-
-  // ========================================================================
-  // LLM calls
-  // ========================================================================
-
-  private async managerDecompose(
-    goal: string,
-  ): Promise<{ data: DecompositionOutput; tokens: number } | null> {
-    const result = await callLLMJSON<DecompositionOutput>(
-      this.provider,
-      this.model,
-      MANAGER_DECOMPOSE_PROMPT,
-      `Goal: ${goal}`,
-    );
-    if (result && !validateShape(result.data, { subGoals: 'array', reasoning: 'string' })) {
-      getGlobalLogger().warn(
-        'SwarmOrchestrator',
-        'managerDecompose: LLM response failed shape validation',
-      );
-      return null;
-    }
-    return result;
-  }
-
-  private async managerReview(
-    goal: string,
-    goalTree: SwarmNode[],
-    round: number,
-    fusionReport: FusionReport,
-  ): Promise<{ data: ReviewOutput; tokens: number } | null> {
-    const completed = collectAllNodes(goalTree).filter(
-      (n) => n.status === 'completed' || n.status === 'in_progress',
-    );
-    if (completed.length === 0) return null;
-
-    const context = completed.map((n) => ({
-      id: n.id,
-      goal: n.goal,
-      status: n.status,
-      output: n.workerOutput?.slice(0, 1000) ?? '(no output)',
-      critique: n.critique ?? { passed: true, findings: [], summary: 'No critique' },
-      childManagers:
-        n.children.length > 0
-          ? n.children.map((c) => ({
-              id: c.id,
-              goal: c.goal,
-              status: c.result?.status ?? 'unknown',
-              summary: c.result?.summary?.slice(0, 500) ?? '',
-            }))
-          : undefined,
-    }));
-
-    const userMessage = [
-      `Original Goal: ${goal}`,
-      `Round: ${round}`,
-      '',
-      'Completed work:',
-      JSON.stringify(context, null, 2),
-      '',
-      'Fusion conflict report:',
-      JSON.stringify(fusionReport, null, 2),
-    ].join('\n');
-
-    const result = await callLLMJSON<ReviewOutput>(
-      this.provider,
-      this.model,
-      MANAGER_REVIEW_PROMPT,
-      userMessage,
-    );
-    if (
-      result &&
-      !validateShape(result.data, {
-        goalAssessments: 'array',
-        newSubGoals: 'array',
-        overallStatus: 'string',
-        overallSummary: 'string',
-      })
-    ) {
-      getGlobalLogger().warn(
-        'SwarmOrchestrator',
-        'managerReview: LLM response failed shape validation',
-      );
-      return null;
-    }
-    return result;
-  }
-
-  private async workerExecute(
-    node: SwarmNode,
-    parentGoal: string,
-  ): Promise<{ output: string; tokens: number } | null> {
-    const context = node.dependencies
-      .map((depId) => {
-        const dep = findNodeById(this.rootNodes, depId);
-        return dep
-          ? `Dependency "${dep.goal}" output:\n${dep.workerOutput?.slice(0, 500) ?? '(no output)'}`
-          : '';
-      })
-      .filter(Boolean)
-      .join('\n\n');
-
-    try {
-      const response = await this.provider.call({
-        model: this.model,
-        messages: [
-          { role: 'system', content: WORKER_PROMPT },
-          {
-            role: 'user',
-            content: `Parent Goal: ${parentGoal}\n\nSub-Goal: ${node.goal}${context ? `\n\nContext from dependencies:\n${context}` : ''}\n\nProvide your output.`,
-          },
-        ],
-        temperature: 0.3,
-        maxTokens: 4096,
-      });
-      const output = response.content;
-      node.status = 'completed';
-      return { output, tokens: response.usage?.totalTokens ?? 0 };
-    } catch (err) {
-      getGlobalLogger().error('SwarmOrchestrator', 'Worker execution failed', err as Error);
-      return null;
-    }
-  }
-
-  private async criticEvaluate(
-    node: SwarmNode,
-    parentGoal: string,
-  ): Promise<{ data: CriticOutput; tokens: number } | null> {
-    const context = `Parent Goal: ${parentGoal}\nSub-Goal: ${node.goal}\n\nWorker Output:\n${node.workerOutput?.slice(0, 2000) ?? '(no output)'}`;
-    const result = await callLLMJSON<CriticOutput>(
-      this.provider,
-      this.model,
-      CRITIC_PROMPT,
-      context,
-    );
-    if (
-      result &&
-      !validateShape(result.data, { passed: 'boolean', findings: 'array', summary: 'string' })
-    ) {
-      getGlobalLogger().warn(
-        'SwarmOrchestrator',
-        'criticEvaluate: LLM response failed shape validation',
-      );
-      return null;
-    }
-    return result;
-  }
-
-  // ========================================================================
-  // Tree management
-  // ========================================================================
-
-  private buildSwarmTree(
-    subGoals: DecompositionOutput['subGoals'],
-    parentId: string | null,
-  ): SwarmNode[] {
-    const nodeMap = new Map<string, SwarmNode>();
-    const nodes: SwarmNode[] = [];
-
-    for (let i = 0; i < subGoals.length; i++) {
-      const sg = subGoals[i];
-      const id = generateNodeId();
-      const node: SwarmNode = {
-        id,
-        goal: sg.goal,
-        parentId,
-        status: 'pending',
-        subNodes: [],
-        children: [],
-        dependencies: [],
-        metadata: {
-          notes: sg.notes ?? '',
-          complexity: sg.complexity ?? 3,
-        },
-      };
-      nodeMap.set(`idx:${i}`, node);
-      nodeMap.set(id, node);
-      nodes.push(node);
-    }
-
-    for (let i = 0; i < subGoals.length; i++) {
-      const sg = subGoals[i];
-      const node = nodeMap.get(`idx:${i}`);
-      if (node && sg.dependencies.length > 0) {
-        node.dependencies = sg.dependencies
-          .map((depIdx) => nodeMap.get(`idx:${depIdx}`)?.id)
-          .filter((id): id is string => !!id);
-      }
-    }
-
-    return nodes;
   }
 
   private getPendingNodes(nodes: SwarmNode[]): SwarmNode[] {
@@ -765,18 +514,6 @@ export class SwarmOrchestrator {
     return result;
   }
 
-  private applyReview(goalTree: SwarmNode[], review: ReviewOutput): void {
-    for (const assessment of review.goalAssessments) {
-      const node = findNodeById(goalTree, assessment.goalId);
-      if (!node) continue;
-      if (assessment.status === 'completed' && node.status !== 'failed') {
-        node.status = 'completed';
-      } else if (assessment.status === 'needs_rework' || assessment.status === 're_open') {
-        node.status = 're_opened';
-      }
-    }
-  }
-
   private buildSummary(
     goal: string,
     status: SwarmStatus,
@@ -784,13 +521,16 @@ export class SwarmOrchestrator {
     completed: number,
     total: number,
   ): string {
-    return [
-      `Goal: ${goal.slice(0, 120)}`,
-      `Status: ${status}`,
-      `Rounds: ${rounds}`,
-      `Completed: ${completed}/${total} sub-goals`,
-      `Fusion conflicts detected: ${this.fusionReports.reduce((s, r) => s + r.conflicts.length, 0)}`,
-      `Tree depth: ${this.depth}`,
-    ].join('\n');
+    return buildBaseSummary({
+      goal,
+      status,
+      rounds,
+      completed,
+      total,
+      extraLines: [
+        `Fusion conflicts detected: ${this.fusionReports.reduce((s, r) => s + r.conflicts.length, 0)}`,
+        `Tree depth: ${this.depth}`,
+      ],
+    });
   }
 }

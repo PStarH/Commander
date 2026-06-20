@@ -9,12 +9,10 @@
  *  - Exploration counter + getExplorationStats() are accurate
  *  - Reasoning line is emitted when exploration diverges
  *  - Tenant isolation: ε-greedy is independent per-tenant
- *  - Integration with pheromone + learned weights
- *  - Edge cases: single candidate, T=0, NaN ε
+ * *  - Edge cases: single candidate, T=0, NaN ε
  */
 import { describe, it, expect } from 'vitest';
 import { TopologyRouter } from '../../src/ultimate/topologyRouter';
-import { PheromoneRouter } from '../../src/ultimate/pheromoneRouter';
 import type { OrchestrationTopology, DeliberationPlan } from '../../src/ultimate/types';
 
 function makePlan(taskType: DeliberationPlan['taskType']): DeliberationPlan {
@@ -52,7 +50,7 @@ function mulberry32(seed: number): () => number {
 describe('P4: ε-greedy exploration in TopologyRouter', () => {
   describe('boundary behavior', () => {
     it('ε=0 always picks the argmax (pure greedy, no exploration)', () => {
-      const tr = new TopologyRouter(undefined, undefined, { epsilon: 0 });
+      const tr = new TopologyRouter(undefined, { epsilon: 0 });
       const choices = new Set<string>();
       for (let i = 0; i < 50; i++) {
         const r = tr.route(makePlan('CODING'));
@@ -64,7 +62,7 @@ describe('P4: ε-greedy exploration in TopologyRouter', () => {
     });
 
     it('ε=1 always explores via the Boltzmann draw', () => {
-      const tr = new TopologyRouter(undefined, undefined, { epsilon: 1 });
+      const tr = new TopologyRouter(undefined, { epsilon: 1 });
       const choices = new Set<OrchestrationTopology>();
       for (let i = 0; i < 200; i++) {
         const r = tr.route(makePlan('CODING'));
@@ -82,13 +80,13 @@ describe('P4: ε-greedy exploration in TopologyRouter', () => {
   describe('Boltzmann distribution favors higher-scored candidates', () => {
     it('low temperature concentrates on argmax; high temperature spreads', () => {
       // Force exploration: ε=1, very low T → nearly always argmax.
-      const trLowT = new TopologyRouter(undefined, undefined, {
+      const trLowT = new TopologyRouter(undefined, {
         epsilon: 1,
         explorationTemperature: 0.01,
         rng: mulberry32(42),
       });
       // Force exploration: ε=1, very high T → nearly uniform.
-      const trHighT = new TopologyRouter(undefined, undefined, {
+      const trHighT = new TopologyRouter(undefined, {
         epsilon: 1,
         explorationTemperature: 100,
         rng: mulberry32(42),
@@ -104,11 +102,11 @@ describe('P4: ε-greedy exploration in TopologyRouter', () => {
 
   describe('determinism with seeded RNG', () => {
     it('same seed → same ε-greedy decisions', () => {
-      const tr1 = new TopologyRouter(undefined, undefined, {
+      const tr1 = new TopologyRouter(undefined, {
         epsilon: 0.2,
         rng: mulberry32(1234),
       });
-      const tr2 = new TopologyRouter(undefined, undefined, {
+      const tr2 = new TopologyRouter(undefined, {
         epsilon: 0.2,
         rng: mulberry32(1234),
       });
@@ -122,11 +120,11 @@ describe('P4: ε-greedy exploration in TopologyRouter', () => {
     });
 
     it('different seeds → different ε-greedy decisions (probabilistically)', () => {
-      const tr1 = new TopologyRouter(undefined, undefined, {
+      const tr1 = new TopologyRouter(undefined, {
         epsilon: 0.5,
         rng: mulberry32(1),
       });
-      const tr2 = new TopologyRouter(undefined, undefined, {
+      const tr2 = new TopologyRouter(undefined, {
         epsilon: 0.5,
         rng: mulberry32(2),
       });
@@ -144,7 +142,7 @@ describe('P4: ε-greedy exploration in TopologyRouter', () => {
 
   describe('exploration counters', () => {
     it('getExplorationStats() tracks total + exploration counts accurately', () => {
-      const tr = new TopologyRouter(undefined, undefined, {
+      const tr = new TopologyRouter(undefined, {
         epsilon: 1,
         rng: mulberry32(99),
       });
@@ -159,32 +157,13 @@ describe('P4: ε-greedy exploration in TopologyRouter', () => {
       expect(stats.explorationRate).toBeGreaterThan(0);
       expect(stats.explorationRate).toBeLessThanOrEqual(1);
     });
-
-    it('resetExplorationCounters() zeros the counters without touching pheromone state', () => {
-      const pr = new PheromoneRouter();
-      const tr = new TopologyRouter(pr, undefined, {
-        epsilon: 1,
-        rng: mulberry32(7),
-      });
-      for (let i = 0; i < 20; i++) tr.route(makePlan('CODING'));
-      // Record a signal on the pheromone so we can verify it's not touched.
-      pr.recordOutcomeFor('default', 'CODING', 'PARALLEL', true, 1.0);
-      const beforeStats = tr.getExplorationStats();
-      expect(beforeStats.routingCount).toBe(20);
-      tr.resetExplorationCounters();
-      const afterStats = tr.getExplorationStats();
-      expect(afterStats.routingCount).toBe(0);
-      expect(afterStats.explorationCount).toBe(0);
-      // Pheromone state was NOT touched.
-      expect(pr.getConfidenceFor('default', 'CODING', 'PARALLEL')).toBeGreaterThan(0.5);
-    });
   });
 
   describe('reasoning + observability', () => {
     it('emits the ε-greedy line when exploration diverges', () => {
       // Force divergence: ε=1, low T → argmax dominates but sometimes
       // a different one wins.
-      const tr = new TopologyRouter(undefined, undefined, {
+      const tr = new TopologyRouter(undefined, {
         epsilon: 1,
         explorationTemperature: 0.5,
         rng: mulberry32(11),
@@ -206,7 +185,7 @@ describe('P4: ε-greedy exploration in TopologyRouter', () => {
     });
 
     it('omits the ε-greedy line when no exploration happened', () => {
-      const tr = new TopologyRouter(undefined, undefined, { epsilon: 0 });
+      const tr = new TopologyRouter(undefined, { epsilon: 0 });
       for (let i = 0; i < 5; i++) {
         const r = tr.route(makePlan('CODING'));
         const line = r.reasoning.find((x) => x.startsWith('ε-greedy exploration'));
@@ -216,7 +195,7 @@ describe('P4: ε-greedy exploration in TopologyRouter', () => {
     });
 
     it('exposes argmaxTopology and epsilonUsed in the return value', () => {
-      const tr = new TopologyRouter(undefined, undefined, { epsilon: 0 });
+      const tr = new TopologyRouter(undefined, { epsilon: 0 });
       const r = tr.route(makePlan('CODING'));
       expect(r.argmaxTopology).toBeDefined();
       expect(r.epsilonUsed).toBe(0);
@@ -227,44 +206,10 @@ describe('P4: ε-greedy exploration in TopologyRouter', () => {
     });
   });
 
-  describe('integration with pheromone + learned weights', () => {
-    it('ε-greedy can diverge from the argmax even when the pheromone strongly favors one topology', () => {
-      const pr = new PheromoneRouter();
-      const tr = new TopologyRouter(pr, undefined, {
-        epsilon: 1,
-        explorationTemperature: 1.0,
-        rng: mulberry32(2024),
-      });
-      // Reinforce PARALLEL very strongly so the argmax is overwhelmingly
-      // likely to be PARALLEL.
-      for (let i = 0; i < 30; i++) pr.recordOutcomeFor('default', 'CODING', 'PARALLEL', true, 1.0);
-      // 100 trials with ε=1; we should see at least one non-PARALLEL pick.
-      const seen = new Set<OrchestrationTopology>();
-      for (let i = 0; i < 100; i++) {
-        seen.add(tr.route(makePlan('CODING')).topology);
-      }
-      expect(seen.size).toBeGreaterThan(1);
-      expect(seen.has('PARALLEL')).toBe(true);
-    });
-
-    it('per-tenant ε-greedy state is shared (routingCount is router-level)', () => {
-      // The exploration counters are router-level (per router instance),
-      // not per-tenant, because the same TopologyRouter object handles
-      // routings for all tenants. The tenantId parameter only scopes
-      // the pheromone + learned-weight state, not the exploration gate.
-      const pr = new PheromoneRouter();
-      const tr = new TopologyRouter(pr, undefined, { epsilon: 0.1, rng: mulberry32(5) });
-      for (let i = 0; i < 10; i++) tr.route(makePlan('CODING'), undefined, undefined, 'tenant-A');
-      for (let i = 0; i < 10; i++) tr.route(makePlan('CODING'), undefined, undefined, 'tenant-B');
-      const stats = tr.getExplorationStats();
-      expect(stats.routingCount).toBe(20);
-    });
-  });
-
   describe('per-call epsilon override', () => {
     it('route(plan, dag, budget, tenantId, { epsilon }) overrides router default', () => {
       // Router default ε=0 (no exploration).
-      const tr = new TopologyRouter(undefined, undefined, { epsilon: 0, rng: mulberry32(1) });
+      const tr = new TopologyRouter(undefined, { epsilon: 0, rng: mulberry32(1) });
       // But this single call uses ε=1.
       let divergence = false;
       for (let i = 0; i < 50; i++) {
@@ -278,21 +223,21 @@ describe('P4: ε-greedy exploration in TopologyRouter', () => {
 
   describe('edge cases', () => {
     it('clamps ε to [0, 1]', () => {
-      const trNeg = new TopologyRouter(undefined, undefined, { epsilon: -0.5 });
-      const trHuge = new TopologyRouter(undefined, undefined, { epsilon: 5 });
+      const trNeg = new TopologyRouter(undefined, { epsilon: -0.5 });
+      const trHuge = new TopologyRouter(undefined, { epsilon: 5 });
       expect(trNeg['epsilon']).toBe(0);
       expect(trHuge['epsilon']).toBe(1);
     });
 
     it('NaN ε falls back to the default 0', () => {
-      const tr = new TopologyRouter(undefined, undefined, { epsilon: NaN });
+      const tr = new TopologyRouter(undefined, { epsilon: NaN });
       expect(tr['epsilon']).toBe(0);
     });
 
     it('does not crash when there is only one candidate (no exploration possible)', () => {
       // The ε-greedy gate is guarded by `biasedScores.length > 1`, so
       // a single-candidate scenario is safe even with ε=1.
-      const tr = new TopologyRouter(undefined, undefined, { epsilon: 1 });
+      const tr = new TopologyRouter(undefined, { epsilon: 1 });
       for (let i = 0; i < 10; i++) {
         const r = tr.route(makePlan('CODING'));
         expect(r.topology).toBeDefined();

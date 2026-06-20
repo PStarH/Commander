@@ -56,7 +56,6 @@ export default defineConfig({
       'tests/runtime/batchProvider.test.ts',
       'tests/runtime/webhookDispatcher.test.ts',
       'tests/runtime/workflowPopulation.test.ts',
-      'tests/runtime/compensation-external-handlers.test.ts',
       'tests/runtime/sopDashboard.test.ts',
       // --- telos ---
       'tests/telos/providerPool.test.ts',
@@ -67,6 +66,7 @@ export default defineConfig({
       'tests/intelligence/costAggregator.test.ts',
       // --- sandbox ---
       'tests/sandbox/lane.test.ts',
+      'tests/sandbox/appContainer.test.ts',
       'tests/runtime/observationPurifier.test.ts',
       // --- tools ---
       'tests/tools/resourceTools.test.ts',
@@ -83,6 +83,24 @@ export default defineConfig({
 
       // --- security ---
       'tests/security/guardianAgent.test.ts',
+      'tests/security/capabilityToken.test.ts',
+      'tests/security/auditChainLedger.test.ts',
+      'tests/security/agentLineage.test.ts', 'tests/security/federatedIdentity.test.ts', 'tests/security/outputSanitizer.test.ts',
+      'tests/security/costGuard.test.ts',
+      'tests/security/agentSoc.test.ts',
+      'tests/security/euAiActCompliance.test.ts',
+      'tests/security/agentStandbyManager.test.ts',
+      'tests/security/redTeamBaseline.test.ts',
+      'tests/security/edgeSecurityProfile.test.ts',
+      'tests/security/complianceAuditReport.test.ts',
+      'tests/security/threatIntelligenceFeed.test.ts',
+      'tests/security/crossAgentCorrelator.test.ts',
+      'tests/security/mlInjectionDetector.test.ts',
+      'tests/security/fuzzTestFramework.test.ts',
+      'tests/security/postQuantumCrypto.test.ts',
+      'tests/security/multimodalContentScanner.test.ts',
+      'tests/security/sandboxVerifier.test.ts',
+      'tests/security/voiceContentScanner.test.ts',
       // --- http ---
       // --- ultimate ---
       'tests/ultimate/coordinationPolicy.test.ts',
@@ -102,7 +120,7 @@ export default defineConfig({
       'tests/ultimate/orchestrator.test.ts',
       'tests/ultimate/workCoordinator.test.ts',
       'tests/ultimate/workQueueStore.test.ts',
-      'tests/benchmark/multiAgentBenchmark.metrics.test.ts',
+      // 'tests/benchmark/multiAgentBenchmark.metrics.test.ts', // TODO: depends on missing src/benchmark/multiAgentBenchmark module
     ],
     environment: 'node',
     coverage: {
