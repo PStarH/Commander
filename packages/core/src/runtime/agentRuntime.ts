@@ -36,7 +36,6 @@ import type { AgentRuntimeInterface } from './agentRuntimeInterface';
 import { ModelRouter, getModelRouter } from './modelRouter';
 import {
   SmartModelRouter,
-  getSmartModelRouter,
   type ModelRouterUserConfig,
 } from './smartModelRouter';
 import { getMessageBus } from './messageBus';
@@ -59,49 +58,35 @@ import {
   detectTaskType,
 } from './unifiedVerification';
 import { provisionTools } from './toolProvisioner';
-import { TokenGovernor, type OptimizationStrategy } from './tokenGovernor';
+import { TokenGovernor } from './tokenGovernor';
 import { SamplesStore } from './samplesStore';
 import { captureProvenance } from './provenance';
 import { getIntentLog } from './intentLog';
 import { getVerificationReportStore } from './verificationReportStore';
-import { getDeadLetterQueue } from './deadLetterQueueSingleton';
-import { StateCheckpointer, type CheckpointState } from './stateCheckpointer';
+import { StateCheckpointer } from './stateCheckpointer';
 import { installProcessCrashHandlers } from './processCrashSafety';
 import { RunRecovery, type RunRecoveryResult } from './runRecovery';
-import { StepTimeoutManager, StepTimeoutError } from './stepTimeoutManager';
+import { StepTimeoutManager } from './stepTimeoutManager';
 import {
   ProviderFallbackChain,
   FallbackChainExhaustedError,
   type ProviderEntry,
 } from './providerFallbackChain';
-import { getCompensationQueue } from '../atr/compensationQueue';
 import { ReflexionInjector, type ReflectionEntry } from '../memory/reflexionInjector';
-import { failureModeTag, type FailureMode } from './deadLetterQueue';
 import { DeadLetterQueue } from './deadLetterQueue';
-import { StepErrorBoundary } from './stepErrorBoundary';
 import { getMetricsCollector } from './metricsCollector';
-import { CompensationRegistry, type CompensableAction } from './compensationRegistry';
+import { CompensationRegistry } from './compensationRegistry';
+import { ReliabilityEngine } from './reliabilityEngine';
 import { AgentInbox } from './agentInbox';
 import { TeamRegistry } from './teamRegistry';
 import { AgentHandoff } from './agentHandoff';
 import { getGlobalThreeLayerMemory } from '../threeLayerMemory';
 import { runWithTenant } from './tenantContext';
 import { getHookManager } from '../pluginManager';
-import { ToolResultCache } from './toolResultCache';
-import { SemanticCache } from './semanticCache';
-import { SingleFlightRequestCache, type SingleFlightStats } from './singleFlightRequestCache';
-import { GeminiCacheManager, type GeminiCacheStats } from './geminiCacheManager';
-import {
-  MockEmbeddingFunction,
-  OpenAIEmbeddingFunction,
-  LocalEmbeddingFunction,
-} from './embedding';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
 import { ToolApproval } from './toolApproval';
 import {
-  selectTools,
-  sortToolDefinitionsForCache,
   buildTwoTierTools,
   buildRegistrySummary,
   calculateTierMetrics,
@@ -110,55 +95,51 @@ import {
 import { createRequestToolTool } from '../tools/requestToolTool';
 import { ToolPlanner } from './toolPlanner';
 import { CycleDetector } from './cycleDetector';
-import { repairToolCallArguments } from './toolCallRepair';
-import {
-  validateToolCall,
-  formatValidationErrors,
-  formatValidationErrorsJson,
-} from './toolCallValidator';
-import { suggestRepairsForValidationErrors } from './toolCallRepair';
-import { ToolRegistry } from '../tools/toolRegistry';
+import { parseStructuredOutput } from './structuredOutput';
 import { getExecutionScheduler, type RunHandle } from '../atr/scheduler';
 import { LeaseManager } from '../atr/leaseManager';
-import { generateIdempotencyKey } from '../atr/canonicalJson';
-import { parseStructuredOutput } from './structuredOutput';
 import { isConfidentResponse } from './entropyGater';
 import { InterruptError } from './interruptError';
 import { createContentScanner, type ContentScanner } from '../contentScanner';
 import { scanToolOutputForInjection } from '../contentScanner';
+import { sanitizeIfNeeded } from '../security/outputSanitizer';
+import { getCostGuard } from '../security/costGuard';
 import { getPrivacyRouter } from './privacyRouter';
 import type { TenantProvider, TenantConfig } from './tenantProvider';
-import { generateRollbackPlan } from '../compensation/rollbackPlanner';
-import type { PlannedToolCall, PlanInput } from '../compensation/rollbackPlanner';
-import type { CompensationPlan } from '../compensation/external/types';
-import { getGlobalTenantProvider, getGlobalMemoryRegistry } from './tenantProvider';
+import type { PlannedToolCall } from '../compensation/rollbackPlanner';
+import { getGlobalTenantProvider } from './tenantProvider';
 import { getLaneManager } from '../sandbox/lane';
 import { createMemoryStore } from '../memory';
 import type { MemoryStore } from '../memory';
-import { CompensationEventSubscriber } from './compensationEventSubscriber';
 import { getConversationStore } from '../memory/conversationStore';
+import { CacheManager } from './cacheManager';
+import { ConcurrencyController } from './concurrencyController';
+import { RunLifecycleManager } from './runLifecycleManager';
+import { TenantManager } from './tenantManager';
+import { CompensationService } from './compensationService';
+import type { CompensationPlan } from '../compensation/types';
+import { SingleFlightRequestCache, type SingleFlightStats } from './singleFlightRequestCache';
+import type { GeminiCacheStats } from './geminiCacheManager';
+import { ToolExecutionService } from './toolExecutionService';
 import {
   OpenTelemetryExporter,
   getOTelExporter,
   executionTraceToOtlpSpans,
 } from './openTelemetryExporter';
 import { exportSOPFromTrace, formatSOPAsMarkdown } from './sopExport';
-import type { OTelSpan } from './openTelemetryExporter';
 import {
   buildSystemPrompt,
   buildCacheAwareUserPrompt,
   computePrefixCacheKey,
 } from './promptBuilder';
 import { loadProjectContext } from './projectContextLoader';
-import { ReflexionGenerator, type Reflexion, type ReflexionContext } from './reflexionGenerator';
+import { ReflexionGenerator, type ReflexionContext } from './reflexionGenerator';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as crypto from 'crypto';
 import { getGlobalLogger } from '../logging';
 import type { CompactTaskType } from './contextCompactor';
 import { getCostEstimator, type CostEstimate } from './costEstimator';
 import { getModelPerformanceStore } from './modelPerformanceStore';
-import { getGuardianAgent } from '../security/guardianAgent';
 import { getSecurityMonitor } from '../security/securityMonitor';
 import {
   DEFAULT_CONFIG,
@@ -196,10 +177,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
   private smartRouter: SmartModelRouter | null = null;
   /** When false, the smart router is bypassed and the legacy routeWithCascade path runs even if a smartRouter instance exists. Default ON. */
   private smartRouterActive: boolean = true;
-  private activeRuns: Set<string> = new Set();
-  private pausedRuns: Set<string> = new Set();
   private compactor: ContextCompactor;
   private slidingWindow: SlidingWindowOrchestrator;
+  private reliabilityEngine!: ReliabilityEngine;
   private circuitBreaker: CircuitBreaker;
   private verificationPipeline: UnifiedVerificationPipeline;
   private reflexionInjector: ReflexionInjector;
@@ -214,19 +194,13 @@ export class AgentRuntime implements AgentRuntimeInterface {
   private stepTimeout: StepTimeoutManager;
   private fallbackChain: ProviderFallbackChain<import('./types').LLMResponse>;
   private lastPrefixCacheKey?: string;
-  private compensationRegistry: CompensationRegistry;
   private agentInbox: AgentInbox;
   private teamRegistry: TeamRegistry;
   private agentHandoff: AgentHandoff;
-  private toolCache: ToolResultCache;
-  private semanticCache: SemanticCache;
-  private singleFlight: SingleFlightRequestCache;
-  private geminiCache: GeminiCacheManager;
   private outputManager: ToolOutputManager;
   private memoryStore: MemoryStore | null = null;
   private otelExporter: OpenTelemetryExporter | null = null;
   private orchestrator: ToolOrchestrator;
-  private queueTimer: ReturnType<typeof setInterval> | null = null;
   private planner: ToolPlanner;
   private cycleDetector: CycleDetector;
   /** Tools promoted to Tier 1 (full schema) in the current turn — for hallucination rejection gate */
@@ -242,21 +216,20 @@ export class AgentRuntime implements AgentRuntimeInterface {
     fencingEpoch: number;
     tenantId?: string;
   } | null = null;
-  private compensationEventSubscriber: CompensationEventSubscriber;
   private contentScanner: ContentScanner;
   // Conversation store (FTS5-powered session persistence)
   private conversationStore: import('../memory/conversationStore').ConversationStore | null = null;
-  // Concurrency semaphore (GAP-07)
-  private runningCount = 0;
-  private waitingQueue: Array<() => void> = [];
 
-  // Tenant isolation
+  // Extracted services (shrink the god object)
+  private cacheManager: CacheManager;
+  private concurrencyController: ConcurrencyController;
+  private runLifecycle: RunLifecycleManager;
+  private tenantManager: TenantManager;
+  private compensationService: CompensationService;
+  private toolExecutionService: ToolExecutionService;
+
+  // Tenant config provider (kept for direct lookups in execute())
   private tenantProvider: TenantProvider;
-  private tenantRateLimits: Map<string, { count: number; resetAt: number }> = new Map();
-  private tenantRunningCounts: Map<string, number> = new Map();
-  private tenantSamplesStores: Map<string, SamplesStore> = new Map();
-  private tenantTraceStores: Map<string, PersistentTraceStore> = new Map();
-  private tenantCheckpointers: Map<string, StateCheckpointer> = new Map();
 
   constructor(
     config?: Partial<AgentRuntimeConfig>,
@@ -275,8 +248,29 @@ export class AgentRuntime implements AgentRuntimeInterface {
       maxContextTokens: this.config.budgetHardCapTokens || 128000,
     });
     this.slidingWindow = new SlidingWindowOrchestrator();
-    this.circuitBreaker = new CircuitBreaker(5, 30000);
-    this.circuitBreaker.setProviderName('agentRuntime');
+    this.reliabilityEngine = new ReliabilityEngine({
+      circuitThreshold: 5,
+      circuitRecoveryMs: 30_000,
+      circuitProviderName: 'agentRuntime',
+      circuitTransitionHandler: (from, to, provider) => {
+        try {
+          getIntentLog(undefined).write({
+            schemaVersion: 1,
+            runId: 'circuit-breaker',
+            capturedAt: new Date().toISOString(),
+            stage: 'agentRuntime.circuit',
+            decision: 'transition',
+            reason: `circuit ${from}->${to}`,
+            payload: { from, to, provider: provider ?? 'agentRuntime' },
+          });
+        } catch {
+          /* best-effort */
+        }
+      },
+    });
+    this.circuitBreaker = this.reliabilityEngine.getCircuitBreaker();
+    this.dlq = this.reliabilityEngine.getDeadLetterQueue();
+    this.checkpointer = this.reliabilityEngine.getStateCheckpointer();
     this.circuitBreaker.setObservability({
       onTransition: (from, to, provider) => {
         try {
@@ -361,89 +355,17 @@ export class AgentRuntime implements AgentRuntimeInterface {
     });
     this.samplesStore = new SamplesStore();
     this.traceStore = new PersistentTraceStore();
-    this.checkpointer = new StateCheckpointer();
-    this.dlq = new DeadLetterQueue();
     this.leaseManager = new LeaseManager();
     this.stepTimeout = new StepTimeoutManager();
     this.fallbackChain = new ProviderFallbackChain<import('./types').LLMResponse>();
-    this.compensationRegistry = new CompensationRegistry();
-
-    // Wire durable compensation queue for crash-safe retry
-    try {
-      this.compensationRegistry.setCompensationQueue(getCompensationQueue());
-    } catch {
-      /* queue requires better-sqlite3; skip durable retry */
-    }
-    this.compensationRegistry.setObservability({
-      onSuccess: (action) => {
-        try {
-          getMetricsCollector().recordCompensation(action.toolName, 'success');
-        } catch {
-          /* best-effort */
-        }
-      },
-      onFailed: (action, err) => {
-        try {
-          getMetricsCollector().recordCompensation(action.toolName, 'failed');
-        } catch {
-          /* best-effort */
-        }
-        try {
-          getIntentLog(undefined).write({
-            schemaVersion: 1,
-            runId: 'compensation',
-            capturedAt: new Date().toISOString(),
-            stage: 'agentRuntime.compensation',
-            decision: 'failed',
-            reason: err.slice(0, 200),
-            payload: {
-              toolName: action.toolName,
-              actionId: action.actionId,
-              args: JSON.stringify(action.args).slice(0, 500),
-            },
-          });
-        } catch {
-          /* best-effort */
-        }
-      },
-      onExhausted: (action, err) => {
-        try {
-          getMetricsCollector().recordCompensation(action.toolName, 'exhausted');
-        } catch {
-          /* best-effort */
-        }
-        try {
-          this.dlq.enqueue({
-            category: 'compensation',
-            operationName: 'compensation.exhausted',
-            errorMessage: err,
-            tags: [action.toolName],
-            failureMode: 'compensation_exhausted',
-            failureModeNumber: 12,
-          });
-        } catch {
-          /* best-effort */
-        }
-        try {
-          getIntentLog(undefined).write({
-            schemaVersion: 1,
-            runId: 'compensation',
-            capturedAt: new Date().toISOString(),
-            stage: 'agentRuntime.compensation',
-            decision: 'exhausted',
-            reason: err.slice(0, 200),
-            payload: { toolName: action.toolName, actionId: action.actionId },
-          });
-        } catch {
-          /* best-effort */
-        }
-      },
+    this.compensationService = new CompensationService({
+      dlq: this.dlq,
+      getRunId: () => this.ledgerCtx?.runId ?? 'unknown',
+      traceStore: this.traceStore,
     });
     this.agentInbox = new AgentInbox();
     this.teamRegistry = new TeamRegistry();
     this.agentHandoff = new AgentHandoff(this.agentInbox, this.checkpointer);
-    // Register default compensation handlers for mutation tools
-    this.registerDefaultCompensation();
     try {
       this.memory = getGlobalThreeLayerMemory();
     } catch (e) {
@@ -491,23 +413,29 @@ export class AgentRuntime implements AgentRuntimeInterface {
         });
       }
     }
+    // Extracted services (shrink the god object)
+    this.cacheManager = new CacheManager({
+      semanticCache: this.config.semanticCache,
+      singleFlight: this.config.singleFlight,
+      geminiCache: this.config.geminiCache,
+    });
+    this.concurrencyController = new ConcurrencyController(this.config.maxConcurrency);
+    this.runLifecycle = new RunLifecycleManager();
+    this.tenantManager = new TenantManager();
+    this.toolExecutionService = new ToolExecutionService({
+      tools: this.tools,
+      compensationService: this.compensationService,
+      cacheManager: this.cacheManager,
+      dlq: this.dlq,
+      getRunHandle: () => this.runHandle,
+      config: this.config,
+      reflexionGenerator: this.reflexionGenerator,
+      stepTimeout: this.stepTimeout,
+      getPromotedTools: () => this.promotedTools,
+      generateActionId: () => this.generateActionId(),
+    });
+
     // Tool calling infrastructure
-    this.toolCache = new ToolResultCache({
-      enabled: true,
-      maxEntries: 512,
-      defaultTtlMs: 1_800_000,
-    });
-    this.semanticCache = resolveSemanticCache(this.config);
-    this.singleFlight = new SingleFlightRequestCache({
-      enabled: this.config.singleFlight?.enabled ?? true,
-      maxInFlight: this.config.singleFlight?.maxInFlight ?? 1000,
-    });
-    this.geminiCache = new GeminiCacheManager({
-      enabled: this.config.geminiCache?.enabled ?? true,
-      maxEntries: this.config.geminiCache?.maxEntries ?? 100,
-      defaultTtlSeconds: this.config.geminiCache?.defaultTtlSeconds ?? 300,
-      fetchTimeoutMs: this.config.geminiCache?.fetchTimeoutMs ?? 30_000,
-    });
     this.outputManager = new ToolOutputManager({ enabled: true, turnBudget: 32000 });
     // ToolApproval with configurable approval callback
     // When approval is configured with a custom callback, use it; otherwise auto-approve.
@@ -615,46 +543,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
       });
     }
 
-    // Wire compensation event subscriber for observability logging/metrics/traces
-    this.compensationEventSubscriber = new CompensationEventSubscriber();
-    try {
-      this.compensationEventSubscriber.start(getMessageBus(), this.traceStore);
-    } catch (e) {
-      getGlobalLogger().warn('AgentRuntime', 'Failed to start compensation event subscriber', {
-        error: (e as Error)?.message,
-      });
-    }
-
-    // Auto-register adaptive parameter controller
-    // Process any due compensations from the durable queue on startup
-    try {
-      this.compensationRegistry
-        .processQueue()
-        .then((n) => {
-          if (n > 0)
-            getGlobalLogger().info(
-              'AgentRuntime',
-              `Processed ${n} queued compensations on startup`,
-            );
-        })
-        .catch(() => {});
-    } catch {
-      /* best-effort */
-    }
-
-    // Schedule periodic compensation queue processing (every 5 minutes)
-    this.queueTimer = setInterval(
-      () => {
-        try {
-          this.compensationRegistry.processQueue().catch(() => {});
-        } catch {
-          /* best-effort */
-        }
-      },
-      5 * 60 * 1000,
-    );
-    if (typeof this.queueTimer.unref === 'function') this.queueTimer.unref();
-
     getHookManager()
       .register(createParameterControllerPlugin())
       .catch((e) =>
@@ -670,7 +558,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
     installProcessCrashHandlers({
       dlq: this.dlq,
       leaseManager: this.leaseManager,
-      activeRunIds: () => this.activeRuns,
+      activeRunIds: () => this.runLifecycle.getActiveRuns(),
       leaseTokenFor: (runId: string) => {
         return this.runHandle?.runId === runId
           ? (this.runHandle as RunHandle)?.leaseToken
@@ -697,188 +585,40 @@ export class AgentRuntime implements AgentRuntimeInterface {
    * Publishes a 'tool.compensation_planned' bus event with plan metadata.
    * For safe plans, auto-executes compensation via SagaCoordinator.
    */
-  private async handleMutationToolFailure(
+  async handleMutationToolFailure(
     toolName: string,
     args: Record<string, unknown>,
     error: string,
   ): Promise<void> {
-    const bus = getMessageBus();
-
-    // Build rollback plan from mutations that occurred before this failure
-    const input: PlanInput = {
-      plannedCalls: this.executedMutations,
-      failure: { toolName, args, error },
-    };
-    const plan = generateRollbackPlan(input);
-
-    // Record each compensation step in the registry
-    for (const step of plan.steps) {
-      this.compensationRegistry.recordAction({
-        actionId:
-          step.forwardAction.actionId ??
-          `comp-${step.forwardAction.toolName}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        toolName: step.forwardAction.toolName,
-        args: step.forwardAction.args,
-        description: step.description,
-        tags: ['tool', 'compensation', step.forwardAction.toolName],
-        runId: this.ledgerCtx?.runId ?? 'unknown',
-        agentId: 'system',
-      });
-    }
-
-    bus.publish('tool.compensation_planned', 'runtime', {
-      runId: this.ledgerCtx?.runId ?? 'unknown',
+    return this.compensationService.handleMutationToolFailure(
       toolName,
-      stepCount: plan.steps.length,
-      risk: plan.risk,
-    });
-
-    // Auto-execute safe plans immediately
-    if (plan.risk === 'safe' && plan.steps.length > 0) {
-      await this.compensateViaSaga(plan);
-    }
+      args,
+      error,
+      this.executedMutations,
+    );
   }
 
   /**
    * Execute a compensation plan by iterating through steps and calling
    * compensationRegistry.compensate() for each recorded action.
    */
-  private async compensateViaSaga(plan: CompensationPlan): Promise<void> {
-    const bus = getMessageBus();
-    const totalSteps = plan.steps.length;
-
-    // Execute each plan step sequentially using the compensation registry
-    for (let stepIndex = 0; stepIndex < totalSteps; stepIndex++) {
-      const step = plan.steps[stepIndex];
-      const actionId = step.forwardAction.actionId;
-      if (!actionId) continue;
-
-      const stepPayload = {
-        runId: this.ledgerCtx?.runId ?? 'unknown',
-        toolName: step.forwardAction.toolName,
-        actionId,
-        stepIndex,
-        totalSteps,
-      };
-
-      bus.publish('tool.compensation_step', 'runtime', {
-        ...stepPayload,
-        status: 'started' as const,
-      });
-
-      try {
-        const STEP_TIMEOUT_MS = 30_000;
-        const MAX_ATTEMPTS = 3;
-        let lastError: string | undefined;
-        let lastResult: { success: boolean; error?: string } | undefined;
-        let successfulAttempt = 0;
-        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-          const ac = new AbortController();
-          const timeoutId = setTimeout(() => ac.abort(), STEP_TIMEOUT_MS);
-          const compensationPromise = this.compensationRegistry
-            .compensate(actionId)
-            .finally(() => clearTimeout(timeoutId));
-          try {
-            const result = await Promise.race<
-              { success: boolean; error?: string } | { _aborted: true; reason: string }
-            >([
-              compensationPromise,
-              new Promise<{ _aborted: true; reason: string }>((resolve) => {
-                ac.signal.addEventListener('abort', () =>
-                  resolve({ _aborted: true, reason: 'compensation_timeout' }),
-                );
-              }),
-            ]);
-            if ('_aborted' in result) {
-              lastError = `Compensation timed out after ${STEP_TIMEOUT_MS}ms`;
-            } else {
-              lastResult = result;
-              if (result.success) {
-                successfulAttempt = attempt;
-                break;
-              }
-              lastError = result.error;
-            }
-          } catch (err) {
-            lastError = err instanceof Error ? err.message : String(err);
-          }
-          // Drain the dangling compensation promise after the race outcome is captured
-          // so late resolve/reject is consumed without leaking an unhandled rejection.
-          await compensationPromise.catch(() => undefined);
-          if (attempt < MAX_ATTEMPTS) {
-            const backoffMs = 200 * Math.pow(2, attempt - 1); // 200, 400, 800
-            await new Promise<void>((r) => setTimeout(r, backoffMs));
-          }
-        }
-        const finalAttempt = successfulAttempt > 0 ? successfulAttempt : MAX_ATTEMPTS;
-        if (lastResult?.success) {
-          bus.publish('tool.compensation_step', 'runtime', {
-            ...stepPayload,
-            status: 'completed' as const,
-            attempt: finalAttempt,
-          });
-        } else {
-          bus.publish('tool.compensation_step', 'runtime', {
-            ...stepPayload,
-            status: 'failed' as const,
-            error: lastError,
-            attempt: finalAttempt,
-          });
-          getGlobalLogger().debug('AgentRuntime', 'Compensation step failed', {
-            actionId,
-            toolName: step.forwardAction.toolName,
-            error: lastError,
-            attempt: finalAttempt,
-          });
-          try {
-            this.dlq.enqueue({
-              category: 'compensation',
-              operationName: 'compensation.exhausted',
-              errorMessage: lastError ?? 'unknown',
-              tags: [step.forwardAction.toolName, `attempt:${finalAttempt}`],
-              failureMode: 'compensation_exhausted',
-              failureModeNumber: 12,
-            });
-          } catch {
-            /* best-effort */
-          }
-        }
-      } catch (err) {
-        // Surface as system.alert (visibly visible in dashboards) AND debug-log
-        // for forensics. Re-throw so callers can detect partial-failure rather
-        // than proceed as if rollback succeeded silently.
-        try {
-          bus.publish('system.alert', 'runtime', {
-            type: 'compensation_saga_threw',
-            error: err instanceof Error ? err.message : String(err),
-            totalSteps,
-            runId: this.ledgerCtx?.runId ?? 'unknown',
-          });
-        } catch {
-          /* best-effort */
-        }
-        getGlobalLogger().debug('AgentRuntime', 'Compensation via saga threw unexpectedly', {
-          error: err instanceof Error ? err.message : String(err),
-          totalSteps,
-          runId: this.ledgerCtx?.runId ?? 'unknown',
-        });
-        throw err;
-      }
-    }
+  async compensateViaSaga(plan: CompensationPlan): Promise<void> {
+    return this.compensationService.compensateViaSaga(plan);
   }
 
   /** Invalidate read caches after mutation tools succeed */
   private invalidateMutationCache(toolName: string): void {
+    const toolCache = this.cacheManager.getToolCache();
     if (toolName.startsWith('file_')) {
-      this.toolCache.invalidatePattern('file_read');
+      toolCache.invalidatePattern('file_read');
     } else if (toolName.startsWith('memory_')) {
-      this.toolCache.invalidatePattern('memory_recall');
-      this.toolCache.invalidatePattern('memory_list');
+      toolCache.invalidatePattern('memory_recall');
+      toolCache.invalidatePattern('memory_list');
     } else if (toolName === 'git_push' || toolName === 'git_commit') {
-      this.toolCache.invalidateTool('git');
+      toolCache.invalidateTool('git');
     } else if (toolName === 'shell_execute' || toolName === 'python_execute') {
       // Shell commands may mutate filesystem; invalidate file_read broadly
-      this.toolCache.invalidatePattern('file_read');
+      toolCache.invalidatePattern('file_read');
     }
   }
 
@@ -984,7 +724,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
   /** Number of pending run acquisitions waiting on the concurrency semaphore. */
   getQueueDepth(): number {
-    return this.waitingQueue.length;
+    return this.concurrencyController.getQueueDepth();
   }
 
   /** Access the state checkpointer for crash recovery and run inspection. */
@@ -1005,7 +745,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
     return getExecutionScheduler();
   }
   getCompensationRegistry(): CompensationRegistry {
-    return this.compensationRegistry;
+    return this.compensationService.getRegistry();
   }
 
   /** Cancel all in-flight steps managed by the StepTimeoutManager.
@@ -1026,86 +766,27 @@ export class AgentRuntime implements AgentRuntimeInterface {
   private resolveTenantContext(
     tenantId: string | undefined,
     tenantCfg: TenantConfig | undefined,
-    runId: string,
-    agentId: string,
-    missionId?: string,
+    _runId: string,
+    _agentId: string,
+    _missionId?: string,
   ): TenantResolutionResult {
-    if (!tenantId || !tenantCfg?.enabled) {
-      return { allowed: true };
+    const result = this.tenantManager.resolveTenantContext(tenantId, tenantCfg, {
+      samplesStore: this.samplesStore,
+      traceStore: this.traceStore,
+      checkpointer: this.checkpointer,
+      memory: this.memory,
+      governor: this.governor,
+    });
+
+    if (result.allowed && tenantId && tenantCfg?.enabled) {
+      const stores = this.tenantManager.getTenantStores(tenantId);
+      this.samplesStore = stores.samplesStore;
+      this.traceStore = stores.traceStore;
+      this.checkpointer = stores.checkpointer;
+      this.memory = stores.memory;
     }
 
-    // Enforce per-tenant rate limit
-    if (tenantCfg.maxRunsPerMinute > 0) {
-      if (this.tenantRateLimits.size > 100) {
-        const now = Date.now();
-        for (const [tid, entry] of this.tenantRateLimits) {
-          if (now > entry.resetAt) this.tenantRateLimits.delete(tid);
-        }
-      }
-      const rateEntry = this.tenantRateLimits.get(tenantId);
-      const now = Date.now();
-      if (rateEntry && now < rateEntry.resetAt && rateEntry.count >= tenantCfg.maxRunsPerMinute) {
-        return {
-          allowed: false,
-          error: 'TENANT_RATE_LIMIT: too many runs per minute',
-        };
-      }
-      if (!rateEntry || now > rateEntry.resetAt) {
-        this.tenantRateLimits.set(tenantId, { count: 1, resetAt: now + 60_000 });
-      } else {
-        rateEntry.count++;
-      }
-    }
-
-    // Enforce per-tenant concurrency limit
-    if (tenantCfg.maxConcurrency > 0) {
-      const current = this.tenantRunningCounts.get(tenantId) ?? 0;
-      if (current >= tenantCfg.maxConcurrency) {
-        return {
-          allowed: false,
-          error: 'TENANT_CONCURRENCY_LIMIT: too many concurrent runs',
-        };
-      }
-      this.tenantRunningCounts.set(tenantId, current + 1);
-    }
-
-    // Save original values for restore
-    const overrides: TenantOverrides = {
-      origSamplesStore: this.samplesStore,
-      origTraceStore: this.traceStore,
-      origCheckpointer: this.checkpointer,
-      origMemory: this.memory,
-      origGovernor: this.governor,
-    };
-
-    // Evict oldest tenant stores if too many accumulate
-    const MAX_TENANT_STORES = 50;
-    if (
-      this.tenantSamplesStores.size >= MAX_TENANT_STORES &&
-      !this.tenantSamplesStores.has(tenantId)
-    ) {
-      const oldestKey = this.tenantSamplesStores.keys().next().value;
-      if (oldestKey) {
-        this.tenantSamplesStores.delete(oldestKey);
-        this.tenantTraceStores.delete(oldestKey);
-        this.tenantCheckpointers.delete(oldestKey);
-      }
-    }
-    if (!this.tenantSamplesStores.has(tenantId)) {
-      this.tenantSamplesStores.set(tenantId, new SamplesStore(undefined, tenantId));
-    }
-    if (!this.tenantTraceStores.has(tenantId)) {
-      this.tenantTraceStores.set(tenantId, new PersistentTraceStore(undefined, tenantId));
-    }
-    if (!this.tenantCheckpointers.has(tenantId)) {
-      this.tenantCheckpointers.set(tenantId, new StateCheckpointer(undefined, tenantId));
-    }
-    this.samplesStore = this.tenantSamplesStores.get(tenantId)!;
-    this.traceStore = this.tenantTraceStores.get(tenantId)!;
-    this.checkpointer = this.tenantCheckpointers.get(tenantId)!;
-    this.memory = getGlobalMemoryRegistry().getOrCreate(tenantId);
-
-    return { allowed: true, overrides };
+    return result;
   }
 
   /**
@@ -1129,7 +810,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
    * Enforces maxConcurrency via semaphore (GAP-07).
    */
   async execute(ctx: AgentExecutionContext): Promise<AgentExecutionResult> {
-    await this.acquireSlot();
+    await this.concurrencyController.acquireSlot();
 
     const runId = generateId();
     const bus = getMessageBus();
@@ -1147,7 +828,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       ctx.missionId,
     );
     if (!tenantResolution.allowed) {
-      this.releaseSlot();
+      this.concurrencyController.releaseSlot();
       return {
         runId,
         agentId: ctx.agentId,
@@ -1173,12 +854,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
       });
     } catch {
       // Decrement tenant running count on lane acquisition failure
-      if (tenantId && tenantCfg?.enabled) {
-        const c = (this.tenantRunningCounts.get(tenantId) ?? 1) - 1;
-        if (c <= 0) this.tenantRunningCounts.delete(tenantId);
-        else this.tenantRunningCounts.set(tenantId, c);
-      }
-      this.releaseSlot();
+      this.tenantManager.releaseTenantConcurrency(tenantId);
+      this.concurrencyController.releaseSlot();
       return {
         runId,
         agentId: ctx.agentId,
@@ -1192,7 +869,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       };
     }
 
-    this.activeRuns.add(runId);
+    this.runLifecycle.addRun(runId);
     tracer.startRun(runId, ctx.agentId, ctx.missionId, undefined, {
       tenantId: ctx.tenantId,
       parentRunId: ctx.parentRunId,
@@ -1217,7 +894,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
     } catch {
       /* best-effort */
     }
-    getMetricsCollector().setGauge('active_runs', 'Active concurrent runs', this.activeRuns.size);
+    getMetricsCollector().setGauge(
+      'active_runs',
+      'Active concurrent runs',
+      this.runLifecycle.getActiveRunCount(),
+    );
     let circuitReleased = false;
 
     // Phase 3: register this run with the centralized ExecutionScheduler
@@ -1342,7 +1023,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
             routing = smartResult;
             currentEscalationChain = (smartResult.escalationChain ?? []).map(
               (id) =>
-                this.router.getModel(id) ?? {
+                (this.smartRouter!.getModel(id) as ModelConfig | undefined) ?? {
                   id,
                   provider: 'unknown',
                   tier: 'standard' as ModelTier,
@@ -1722,7 +1403,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
           // Pre-LLM tool provisioning: detect tool needs and inject results before LLM sees the question
           try {
-            const provisioned = await provisionTools(ctx.goal, request, this.tools, this.toolCache);
+            const provisioned = await provisionTools(ctx.goal, request, this.tools, this.cacheManager.getToolCache());
             if (provisioned) {
               bus.publish('system.alert', 'runtime', { type: 'tool_provisioned' });
             }
@@ -1950,6 +1631,39 @@ export class AgentRuntime implements AgentRuntimeInterface {
               totalDurationMs: 0,
               error: msg,
             };
+          }
+
+          // CostGuard: economic attack detection (once per agent turn, not per retry)
+          try {
+            const estimatedTokens = this.governor.getState().usedTokens + 500;
+            const costDecision = getCostGuard().evaluateRequest({
+              tokens: estimatedTokens,
+              model: routing.modelId,
+              source: ctx.tenantId ?? ctx.agentId,
+            });
+            if (costDecision.action === 'MELT') {
+              const msg = `COSTGUARD_MELT: ${costDecision.reason}`;
+              tracer.recordDecision(runId, msg, 0);
+              bus.publish('agent.failed', ctx.agentId, { runId, error: msg });
+              return {
+                runId,
+                agentId: ctx.agentId,
+                missionId: ctx.missionId,
+                status: 'cancelled',
+                summary: msg,
+                steps: [],
+                totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+                totalDurationMs: 0,
+                error: msg,
+              };
+            }
+            if (costDecision.action === 'THROTTLE') {
+              getGlobalLogger().warn('AgentRuntime', `CostGuard THROTTLE: ${costDecision.reason}`);
+            }
+          } catch (e) {
+            getGlobalLogger().debug('AgentRuntime', 'CostGuard check (best-effort)', {
+              error: (e as Error)?.message,
+            });
           }
 
           for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
@@ -2180,7 +1894,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 }> = [];
 
                 for (const tc of calls) {
-                  const cached = this.toolCache.get(tc, tenantId);
+                  const cached = this.cacheManager.getToolCache().get(tc, tenantId);
                   if (cached) {
                     cachedResults.push({
                       toolCallId: tc.id,
@@ -2385,7 +2099,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                           siblingAbort.abort();
                         }
                         if (!toolResult.error) {
-                          this.toolCache.set(tc, toolResult, tenantId);
+                          this.cacheManager.getToolCache().set(tc, toolResult, tenantId);
                           this.invalidateMutationCache(tc.name);
                           if (isMutationTool(tc.name)) {
                             this.executedMutations.push({
@@ -2516,7 +2230,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                       runId,
                     });
                     if (!toolResult.error) {
-                      this.toolCache.set(tc, toolResult, tenantId);
+                      this.cacheManager.getToolCache().set(tc, toolResult, tenantId);
                       this.invalidateMutationCache(tc.name);
                       if (isMutationTool(tc.name)) {
                         this.executedMutations.push({
@@ -2614,6 +2328,25 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   } catch {
                     /* best-effort defense */
                   }
+                  // Output sanitization: redact credentials, API keys, PII before tool results
+                  // enter the LLM context. This prevents credential leakage via tool outputs.
+                  try {
+                    const sanitizeResult = sanitizeIfNeeded(finalOutput, {
+                      agentId: ctx.agentId,
+                      runId,
+                      source: `tool:${masked.name}`,
+                    });
+                    if (sanitizeResult.wasRedacted) {
+                      finalOutput = sanitizeResult.output;
+                      bus.publish('system.alert', 'runtime', {
+                        type: 'tool_output_sanitized',
+                        toolCallId: masked.toolCallId,
+                        categories: sanitizeResult.categories,
+                      });
+                    }
+                  } catch {
+                    /* best-effort sanitization */
+                  }
                   // Apply truncation if governor says so and output is verbose
                   if (truncLimit > 0 && finalOutput.length > truncLimit) {
                     finalOutput =
@@ -2625,7 +2358,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     stepNumber: tsNum,
                     timestamp: now(),
                     type: 'tool_result',
-                    content: masked.output,
+                    content: finalOutput,
                     durationMs: masked.durationMs,
                   };
 
@@ -2636,7 +2369,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                       agentId: ctx.agentId,
                       stepNumber: tsNum,
                       type: 'tool_result',
-                      content: masked.output,
+                      content: finalOutput,
                     })
                     .catch((e) =>
                       getGlobalLogger().debug('AgentRuntime', 'onStepComplete hook failed', {
@@ -2664,7 +2397,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   };
                   request.messages.push(assistantMsg, {
                     role: 'tool',
-                    content: masked.output,
+                    content: finalOutput,
                     tool_call_id: masked.toolCallId,
                   });
                 }
@@ -2965,6 +2698,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   totalDurationMs,
                   steps.length,
                   tenantId,
+                  getCostEstimator().estimateCostFromUsage(
+                    routing.modelId,
+                    totalTokens.promptTokens,
+                    totalTokens.completionTokens,
+                  ),
                 );
                 bus.publish('agent.completed', ctx.agentId, {
                   runId,
@@ -3359,7 +3097,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                       currentEscalationChain.map((m) => m.id),
                     );
                     fallbackModel = nextId
-                      ? (this.router.getModel(nextId.id) ?? undefined)
+                      ? (this.smartRouter.getModel(nextId.id) as ModelConfig | undefined)
                       : undefined;
                   } else {
                     fallbackModel =
@@ -3635,6 +3373,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 totalDurationMs,
                 steps.length,
                 tenantId,
+                getCostEstimator().estimateCostFromUsage(
+                  routing.modelId,
+                  totalTokens.promptTokens,
+                  totalTokens.completionTokens,
+                ),
               );
               bus.publish('agent.completed', ctx.agentId, {
                 runId,
@@ -3838,15 +3581,17 @@ export class AgentRuntime implements AgentRuntimeInterface {
       // Release circuit breaker if neither onSuccess nor onFailure was called
       if (!circuitReleased) this.circuitBreaker.release();
       // GAP-02 + GAP-05: Guarantee cleanup on ALL exit paths (normal, error, exception)
-      this.activeRuns.delete(runId);
-      getMetricsCollector().setGauge('active_runs', 'Active concurrent runs', this.activeRuns.size);
+      this.runLifecycle.removeRun(runId);
+      getMetricsCollector().setGauge(
+        'active_runs',
+        'Active concurrent runs',
+        this.runLifecycle.getActiveRunCount(),
+      );
       if (tenantCfg?.enabled && tenantCfg.maxConcurrency > 0 && tenantId) {
-        const c = (this.tenantRunningCounts.get(tenantId) ?? 1) - 1;
-        if (c <= 0) this.tenantRunningCounts.delete(tenantId);
-        else this.tenantRunningCounts.set(tenantId, c);
+        this.tenantManager.releaseTenantConcurrency(tenantId);
       }
       getLaneManager().releaseSlot(currentLane);
-      this.releaseSlot();
+      this.concurrencyController.releaseSlot();
       try {
         tracer.completeRun(runId);
       } catch (e) {
@@ -4016,7 +3761,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
   ): Promise<LLMResponse | null> {
     const startMs = Date.now();
     try {
-      const cached = await this.semanticCache.lookup(request);
+      const cached = await this.cacheManager.lookupSemantic(request);
       if (cached) {
         try {
           getMetricsCollector().recordSemanticCacheEvent(
@@ -4046,7 +3791,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
         const systemMsg = request.messages.find((m) => m.role === 'system');
         const tenantForGemini = getGlobalTenantProvider().getCurrentTenantId() ?? undefined;
         try {
-          const lookup = await this.geminiCache.getOrCreate({
+          const lookup = await this.cacheManager.getGeminiCachedContent({
             systemInstruction: systemMsg?.content,
             tools: request.tools,
             model: request.model,
@@ -4076,11 +3821,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
       const tenantIdForFlight = getGlobalTenantProvider().getCurrentTenantId() ?? undefined;
       const flightKey = SingleFlightRequestCache.computeKey(request, tenantIdForFlight);
-      const evictionsBefore = this.singleFlight.getStats().evictions;
-      const inflightBefore = this.singleFlight.inflightCount();
+      const evictionsBefore = this.cacheManager.getSingleFlightStats().evictions;
+      const inflightBefore = this.cacheManager.getSingleFlightInflightCount();
       let result: LLMResponse;
       const llmTimeoutMs = this.config.llmTimeoutMs ?? 120000;
-      result = await this.singleFlight.dedupe(
+      result = await this.cacheManager.dedupeSingleFlight(
         flightKey,
         async () => {
           return this.stepTimeout.wrap(provider.call(request), {
@@ -4090,8 +3835,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
         },
         tenantIdForFlight,
       );
-      const recentEvictionDelta = this.singleFlight.getStats().evictions - evictionsBefore;
-      const wasHit = this.singleFlight.inflightCount() === inflightBefore;
+      const recentEvictionDelta = this.cacheManager.getSingleFlightStats().evictions - evictionsBefore;
+      const wasHit = this.cacheManager.getSingleFlightInflightCount() === inflightBefore;
       try {
         getMetricsCollector().recordSingleFlightEvent(wasHit ? 'hit' : 'miss', tenantIdForFlight);
       } catch {
@@ -4104,7 +3849,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
           /* best-effort */
         }
       }
-      this.semanticCache.store(request, result);
+      this.cacheManager.storeSemantic(request, result);
       try {
         getMetricsCollector().recordSemanticCacheEvent(
           'store',
@@ -4167,684 +3912,18 @@ export class AgentRuntime implements AgentRuntimeInterface {
     allowedTools?: string[],
     agentCtx?: AgentExecutionContext,
   ): Promise<ToolResult> {
-    const tracer = getTraceRecorder();
-    const bus = getMessageBus();
-    const startTime = Date.now();
-    try {
-      // Sub-agent tool whitelist enforcement: if an allowlist is provided,
-      // reject any tool call outside the allowed set.
-      if (allowedTools && !allowedTools.includes(toolCall.name)) {
-        const errorMsg = `TOOL_NOT_ALLOWED: "${toolCall.name}" is not in the allowed tools list for this agent. Allowed: ${allowedTools.join(', ')}`;
-        bus.publish('tool.blocked', agentId, {
-          runId,
-          toolName: toolCall.name,
-          reason: 'not_allowed',
-          detail: errorMsg,
-        });
-        return {
-          toolCallId: toolCall.id,
-          name: toolCall.name,
-          output: errorMsg,
-          error: errorMsg,
-          durationMs: 0,
-        };
-      }
-
-      const reversibility = this.compensationRegistry.assessReversibility(toolCall.name);
-      if (reversibility === 'non_reversible') {
-        bus.publish('system.alert', 'runtime', {
-          type: 'non_reversible_tool',
-          tool: toolCall.name,
-          runId,
-          agentId,
-        });
-      }
-
-      // ── Hook: beforeToolResolve (can block by returning ToolResult) ──
-      const resolveBlock = await getHookManager().fireBeforeToolResolve({
-        toolName: toolCall.name,
-        args: toolCall.arguments,
-        agentId,
-        runId,
-      });
-      if (resolveBlock !== null) {
-        bus.publish('tool.blocked', agentId, {
-          runId,
-          toolName: toolCall.name,
-          reason: 'hook_blocked',
-          detail: resolveBlock.error ?? '',
-        });
-        return resolveBlock;
-      }
-
-      const tool = this.tools.get(toolCall.name);
-      const toolFound = !!tool;
-
-      // ── Hook: afterToolResolve ──
-      getHookManager()
-        .fireAfterToolResolve({
-          toolName: toolCall.name,
-          args: toolCall.arguments,
-          tool: tool
-            ? { name: tool.definition.name, category: tool.definition.category }
-            : undefined,
-          notFound: !toolFound,
-          agentId,
-          runId,
-        })
-        .catch((e) =>
-          getGlobalLogger().debug('AgentRuntime', 'afterToolResolve hook failed', {
-            error: (e as Error)?.message,
-          }),
-        );
-
-      if (!tool) {
-        const error = `TOOL_NOT_FOUND: "${toolCall.name}" is not registered. Available: ${Array.from(this.tools.keys()).join(', ')}`;
-        tracer.recordToolExecution(runId, toolCall.name, toolCall.arguments, '', 0, error);
-        // Record to DLQ for dead-letter analysis
-        this.dlq.record({
-          id: this.generateActionId(),
-          category: 'tool',
-          runId,
-          agentId,
-          timestamp: new Date().toISOString(),
-          errorClass: 'permanent',
-          errorMessage: error,
-          retryable: false,
-          attemptNumber: 0,
-          operationName: toolCall.name,
-          inputSnapshot: JSON.stringify(toolCall.arguments).slice(0, 500),
-          compensated: false,
-          recovered: false,
-          tags: ['tool_not_found', 'mode:1'],
-        });
-        const errorMsg = `error: ${error}\nadvice: Check the tool name and try again with a registered tool.`;
-        return {
-          toolCallId: toolCall.id,
-          name: toolCall.name,
-          output: errorMsg,
-          error: errorMsg,
-          durationMs: 0,
-        };
-      }
-
-      // Hallucination rejection gate (arXiv:2604.21816):
-      // If the tool was not promoted to Tier 1 (full schema), the model shouldn't call it directly.
-      // Reject with guidance to use request_tool first. This prevents hallucinated tool calls.
-      if (this.promotedTools.size > 0 && !this.promotedTools.has(toolCall.name)) {
-        const available = Array.from(this.promotedTools)
-          .filter((n) => n !== 'request_tool')
-          .join(', ');
-        const errorMsg = `TOOL_NOT_PROMOTED: "${toolCall.name}" was not in the active tool set for this turn. Use request_tool to load it first, or use one of: ${available}`;
-        getGlobalLogger().debug(
-          'AgentRuntime',
-          `Hallucination gate: rejected call to non-promoted tool "${toolCall.name}"`,
-        );
-        return {
-          toolCallId: toolCall.id,
-          name: toolCall.name,
-          output: errorMsg,
-          error: errorMsg,
-          durationMs: 0,
-        };
-      }
-
-      // Record compensable action for mutation tools before execution
-      const isMutation = isMutationTool(toolCall.name);
-      const actionId = this.generateActionId();
-      if (isMutation) {
-        this.compensationRegistry.recordAction({
-          actionId,
-          toolName: toolCall.name,
-          args: toolCall.arguments as Record<string, unknown>,
-          description: `${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 200)})`,
-          tags: ['tool', toolCall.name],
-          runId,
-          agentId,
-        });
-        const filePath = toolCall.arguments.filePath ?? toolCall.arguments.path;
-        if (typeof filePath === 'string' && toolCall.name !== 'file_delete') {
-          try {
-            const fs = await import('fs');
-            if (fs.existsSync(filePath)) {
-              fs.copyFileSync(filePath, `${filePath}.atr-snapshot.${actionId}`);
-            }
-          } catch (err) {
-            getGlobalLogger().debug('AgentRuntime', 'Snapshot pre-mutation failed', {
-              filePath,
-              actionId,
-              error: (err as Error).message,
-            });
-          }
-        }
-      }
-
-      const effectiveTimeout = tool.timeout ?? this.config.timeoutMs;
-
-      // Validate and repair tool call arguments before execution
-      const { args: repairedArgs, repairs } = repairToolCallArguments(
-        toolCall.arguments,
-        toolCall.name,
-      );
-      const schema = tool.compiledSchema ?? ToolRegistry.getCompiledSchema(toolCall.name);
-      let validatedArgs = repairedArgs;
-      if (schema) {
-        const validation = validateToolCall(repairedArgs, schema);
-        if (!validation.valid) {
-          const errorFeedback = formatValidationErrors(validation.errors, toolCall.name, repairs);
-          const structuredFeedback = formatValidationErrorsJson(
-            validation.errors,
-            toolCall.name,
-            validation.repairs ?? repairs,
-            validation.repairedArgs,
-          );
-          structuredFeedback.errors = structuredFeedback.errors.map((e, i) => ({
-            ...e,
-            suggestion:
-              e.suggestion ??
-              suggestRepairsForValidationErrors([validation.errors[i]])[0] ??
-              `Adjust '${e.path}' to match the expected schema.`,
-          }));
-          tracer.recordToolExecution(
-            runId,
-            toolCall.name,
-            toolCall.arguments,
-            errorFeedback,
-            0,
-            errorFeedback,
-          );
-          return {
-            toolCallId: toolCall.id,
-            name: toolCall.name,
-            output: JSON.stringify(structuredFeedback),
-            error: errorFeedback,
-            durationMs: Date.now() - startTime,
-          };
-        }
-        validatedArgs = validation.repairedArgs ?? repairedArgs;
-      }
-
-      // C2/Phase 3: Schedule tool call through ExecutionScheduler for idempotency + replay
-      let schedulerActionId: string | null = null;
-      if (this.runHandle) {
-        try {
-          const idempotencyKey = generateIdempotencyKey({
-            externalSystem: tool.externalSystem ?? toolCall.name,
-            toolName: toolCall.name,
-            args: validatedArgs as Record<string, unknown>,
-            intentHash: this.runHandle.intentHash,
-            runId,
-            stepId: toolCall.id ?? actionId,
-          });
-          const scheduleResult = getExecutionScheduler().scheduleAction({
-            runId,
-            leaseToken: this.runHandle.leaseToken,
-            fencingEpoch: this.runHandle.fencingEpoch,
-            toolName: toolCall.name,
-            externalSystem: tool.externalSystem ?? toolCall.name,
-            args: validatedArgs as Record<string, unknown>,
-            idempotencyKey,
-            compensable: isMutation,
-            tags: ['tool_execution', toolCall.name],
-            description: `${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 200)})`,
-            tenantId,
-          });
-          if (scheduleResult) {
-            schedulerActionId = scheduleResult.actionId;
-            if (scheduleResult.replayed) {
-              const durationMs = Date.now() - startTime;
-              const cachedOutput = scheduleResult.cachedResult;
-              if (cachedOutput !== undefined) {
-                tracer.recordToolExecution(
-                  runId,
-                  toolCall.name,
-                  toolCall.arguments,
-                  cachedOutput,
-                  durationMs,
-                );
-                getMetricsCollector().recordToolCall(
-                  toolCall.name,
-                  durationMs,
-                  undefined,
-                  tenantId,
-                );
-                bus.publish('tool.completed', agentId, {
-                  runId,
-                  toolName: toolCall.name,
-                  durationMs,
-                });
-                return {
-                  toolCallId: toolCall.id,
-                  name: toolCall.name,
-                  output: cachedOutput,
-                  durationMs,
-                };
-              }
-              const cachedError = scheduleResult.cachedError;
-              if (cachedError) {
-                tracer.recordToolExecution(
-                  runId,
-                  toolCall.name,
-                  toolCall.arguments,
-                  '',
-                  durationMs,
-                  cachedError,
-                );
-                getMetricsCollector().recordToolCall(
-                  toolCall.name,
-                  durationMs,
-                  cachedError,
-                  tenantId,
-                );
-                return {
-                  toolCallId: toolCall.id,
-                  name: toolCall.name,
-                  output: '',
-                  error: cachedError,
-                  durationMs,
-                };
-              }
-            }
-          }
-        } catch (e) {
-          getGlobalLogger().debug(
-            'AgentRuntime',
-            'Scheduler scheduleAction failed; running without ATR ledger',
-            { runId, toolName: toolCall.name, error: (e as Error).message },
-          );
-        }
-      }
-
-      // ExecPolicy gate: evaluate shell/Python commands before execution
-      // Research backing: Codex CLI command safety classification, Claude Code deny-first evaluation
-      if (toolCall.name === 'shell_execute' || toolCall.name === 'python_execute') {
-        const command = String(validatedArgs.command ?? validatedArgs.code ?? '');
-        if (command) {
-          try {
-            const { ExecPolicyEngine } = await import('../sandbox/execPolicy');
-            const policy = new ExecPolicyEngine();
-            const decision = policy.evaluate(command);
-            if (decision.decision === 'forbidden') {
-              const errorMsg = `EXEC_POLICY_FORBIDDEN: Command blocked by security policy. Rule: ${decision.rule?.id ?? 'unknown'}. Justification: ${decision.rule?.justification ?? 'dangerous command'}`;
-              bus.publish('tool.blocked', agentId, {
-                runId,
-                toolName: toolCall.name,
-                reason: 'exec_policy_forbidden',
-                detail: errorMsg,
-              });
-              return {
-                toolCallId: toolCall.id,
-                name: toolCall.name,
-                output: errorMsg,
-                error: errorMsg,
-                durationMs: 0,
-              };
-            }
-            if (decision.decision === 'prompt') {
-              // Log the policy decision but allow execution (approval system handles prompting)
-              getGlobalLogger().debug(
-                'AgentRuntime',
-                `ExecPolicy: "${command.slice(0, 80)}..." requires approval (rule: ${decision.rule?.id})`,
-              );
-            }
-          } catch (e) {
-            // Policy engine load failure — proceed without gating (fail-open for availability)
-            getGlobalLogger().warn(
-              'AgentRuntime',
-              'ExecPolicy load failed, proceeding without gate',
-              { error: (e as Error)?.message },
-            );
-          }
-        }
-      }
-
-      bus.publish('tool.started', agentId, {
-        runId,
-        toolName: toolCall.name,
-        args: toolCall.arguments,
-      });
-
-      const boundary = new StepErrorBoundary(
-        runId,
-        agentId,
-        this.dlq,
-        undefined,
-        {
-          maxRetries: 1,
-          retryDelayMs: this.config.retryDelayMs,
-          onExhausted: 'skip',
-          onPermanent: 'abort',
-        },
-        this.reflexionGenerator,
-      );
-
-      // Guardian security check
-      try {
-        const intervention = getGuardianAgent().monitor({
-          agentId,
-          runId,
-          timestamp: Date.now(),
-          type: 'tool_call',
-          content: `${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 200)})`,
-          metadata: { args: toolCall.arguments },
-        });
-        if (intervention) {
-          const errorMsg = `GUARDIAN_BLOCKED: ${intervention} by security guardian for ${toolCall.name}`;
-          const durationMs = Date.now() - startTime;
-          bus.publish('tool.blocked', agentId, {
-            runId,
-            toolName: toolCall.name,
-            reason: 'guardian_blocked',
-            detail: errorMsg,
-          });
-          return {
-            toolCallId: toolCall.id,
-            name: toolCall.name,
-            output: errorMsg,
-            error: errorMsg,
-            durationMs,
-          };
-        }
-      } catch {
-        /* best-effort */
-      }
-
-      let latestReflexion: Reflexion | null = null;
-      let lastReflexionAttempt = 0;
-
-      const boundaryResult = await boundary.execute<string>(
-        toolCall.name,
-        'tool',
-        async () => {
-          return this.stepTimeout.wrap(tool.execute(validatedArgs, agentCtx), {
-            timeoutMs: effectiveTimeout,
-            stepId: toolCall.id || toolCall.name,
-          });
-        },
-        {
-          tags: ['tool_execution', toolCall.name],
-          inputSnapshot: JSON.stringify(toolCall.arguments).slice(0, 1000),
-          onReflexion: (reflexion: Reflexion, ctx: ReflexionContext) => {
-            latestReflexion = reflexion;
-            lastReflexionAttempt = ctx.attemptNumber;
-          },
-        },
-      );
-
-      if (boundaryResult.recovered) {
-        bus.publish('tool.retry', agentId, {
-          runId,
-          toolName: toolCall.name,
-          attempts: boundaryResult.attempts,
-        });
-      }
-
-      if (!boundaryResult.success) {
-        const durationMs = Date.now() - startTime;
-        const errorMsg = boundaryResult.error ?? 'Unknown tool error';
-
-        tracer.recordToolExecution(
-          runId,
-          toolCall.name,
-          toolCall.arguments,
-          '',
-          durationMs,
-          errorMsg,
-        );
-        getMetricsCollector().recordToolCall(toolCall.name, durationMs, errorMsg, tenantId);
-        getMetricsCollector().recordError(boundaryResult.errorClass, tenantId);
-
-        // Detect timeout from both legacy format and StepTimeoutManager
-        if (errorMsg.includes('TOOL_TIMEOUT') || errorMsg.includes('exceeded timeout')) {
-          bus.publish('tool.timeout', agentId, {
-            runId,
-            toolName: toolCall.name,
-            timeoutMs: effectiveTimeout,
-            durationMs,
-          });
-        }
-
-        // Fire handleMutationToolFailure for mutation tools (generates rollback plan, publishes event, auto-executes safe plans)
-        if (isMutationTool(toolCall.name)) {
-          try {
-            await this.handleMutationToolFailure(
-              toolCall.name,
-              toolCall.arguments as Record<string, unknown>,
-              errorMsg,
-            );
-          } catch (innerErr) {
-            getGlobalLogger().debug(
-              'AgentRuntime',
-              'handleMutationToolFailure threw (best-effort)',
-              { actionId, error: (innerErr as Error).message },
-            );
-          }
-        }
-
-        // Compensate side-effects from prior mutation tools in this run
-        let compensateResult = await this.compensationRegistry.compensate(actionId);
-        if (!compensateResult.success) {
-          compensateResult = await this.compensationRegistry.compensate(actionId);
-        }
-        if (!compensateResult.success) {
-          getGlobalLogger().debug('AgentRuntime', 'Compensation failed after retry', {
-            actionId,
-            error: compensateResult.error,
-          });
-        }
-
-        if (schedulerActionId && this.runHandle) {
-          try {
-            getExecutionScheduler().recordError({
-              runId,
-              leaseToken: this.runHandle.leaseToken,
-              fencingEpoch: this.runHandle.fencingEpoch,
-              actionId: schedulerActionId,
-              error: errorMsg,
-              tenantId,
-            });
-          } catch (e) {
-            getGlobalLogger().debug('AgentRuntime', 'Scheduler recordError failed', {
-              runId,
-              toolName: toolCall.name,
-              error: (e as Error).message,
-            });
-          }
-        }
-
-        const structuredError = [
-          `tool_error: "${toolCall.name}" failed after ${durationMs}ms`,
-          `  reason: ${errorMsg}`,
-          `  errorClass: ${boundaryResult.errorClass}`,
-          `  args: ${JSON.stringify(toolCall.arguments)}`,
-          ...(latestReflexion
-            ? [
-                ReflexionGenerator.formatForContext(
-                  {
-                    goal: '',
-                    attemptedAction: toolCall.name,
-                    actionResult: '',
-                    error: errorMsg,
-                    errorClass: boundaryResult.errorClass,
-                    attemptNumber: lastReflexionAttempt,
-                  },
-                  latestReflexion,
-                ),
-              ]
-            : []),
-          `advice: `,
-          `  - If this is a transient error, retry the call`,
-          `  - If the arguments are invalid, correct them and retry`,
-          `  - If the tool is unavailable, try a different approach`,
-        ].join('\n');
-
-        return {
-          toolCallId: toolCall.id,
-          name: toolCall.name,
-          output: '',
-          error: structuredError,
-          durationMs,
-        };
-      }
-
-      let output = boundaryResult.value as string;
-      const durationMs = Date.now() - startTime;
-
-      // Result budgeting: persist large outputs to disk, return reference
-      // Token-aware truncation: keep head (first ~60%) + tail (last ~40%) for maximum informational value.
-      // The head preserves context/setup; the tail preserves results/errors.
-      const maxSize = tool.maxOutputSize ?? this.config.observationMaskWindow * 1000;
-      if (typeof output === 'string' && output.length > maxSize && maxSize > 0) {
-        const hash = crypto.createHash('md5').update(output).digest('hex').slice(0, 8);
-        const resultDir = path.join(process.cwd(), '.commander_results');
-        try {
-          await fs.promises.mkdir(resultDir, { recursive: true });
-          const resultFile = path.join(resultDir, `${toolCall.name}-${hash}.txt`);
-          await fs.promises.writeFile(resultFile, output, 'utf-8');
-          const headSize = Math.floor(maxSize * 0.6);
-          const tailSize = maxSize - headSize;
-          const head = output.slice(0, headSize);
-          const tail = output.length > headSize ? output.slice(-tailSize) : '';
-          output = `[Large output: ${output.length} chars. Saved to ${resultFile}.]\n${head}\n... [truncated, omitted ${output.length - maxSize} chars] ...\n${tail}\n[End. Full output at ${resultFile}]`;
-        } catch (e) {
-          getGlobalLogger().warn('AgentRuntime', 'Failed to persist large output', {
-            error: (e as Error)?.message,
-          });
-          // Fall through with truncated output
-          const headSize = Math.floor(maxSize * 0.6);
-          const head = output.slice(0, headSize);
-          const tail = output.length > headSize ? output.slice(-(maxSize - headSize)) : '';
-          output = `${head}\n... [truncated, omitted ${output.length - maxSize} chars] ...\n${tail}`;
-        }
-      }
-
-      tracer.recordToolExecution(runId, toolCall.name, toolCall.arguments, output, durationMs);
-      getMetricsCollector().recordToolCall(toolCall.name, durationMs, undefined, tenantId);
-      bus.publish('tool.executed', agentId, { toolName: toolCall.name, durationMs });
-      bus.publish('tool.completed', agentId, { runId, toolName: toolCall.name, durationMs });
-
-      if (schedulerActionId && this.runHandle) {
-        try {
-          getExecutionScheduler().recordResult({
-            runId,
-            leaseToken: this.runHandle.leaseToken,
-            fencingEpoch: this.runHandle.fencingEpoch,
-            actionId: schedulerActionId,
-            result: output,
-            tenantId,
-          });
-        } catch (e) {
-          getGlobalLogger().debug('AgentRuntime', 'Scheduler recordResult failed', {
-            runId,
-            toolName: toolCall.name,
-            error: (e as Error).message,
-          });
-        }
-      }
-
-      return {
-        toolCallId: toolCall.id,
-        name: toolCall.name,
-        output: typeof output === 'string' ? output : JSON.stringify(output),
-        durationMs,
-      };
-    } finally {
-      const durationMs = Date.now() - startTime;
-      try {
-        getMetricsCollector().recordStepLatency('tool_execution', durationMs, tenantId);
-      } catch {
-        /* best-effort */
-      }
-    }
+    return this.toolExecutionService.execute(
+      runId,
+      toolCall,
+      agentId,
+      tenantId,
+      allowedTools,
+      agentCtx,
+      this.executedMutations,
+    );
   }
-
-  /** Register default compensation handlers for mutation tools */
-  private registerDefaultCompensation(): void {
-    const reg = this.compensationRegistry;
-    const restoreFromSnapshot = async (action: {
-      actionId: string;
-      args: Record<string, unknown>;
-    }) => {
-      const filePath = action.args.filePath ?? action.args.path;
-      if (typeof filePath !== 'string') return { success: true };
-      const snapshotPath = `${filePath}.atr-snapshot.${action.actionId}`;
-      try {
-        const fs = await import('fs');
-        if (!fs.existsSync(snapshotPath)) {
-          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-          return { success: true };
-        }
-        const original = fs.readFileSync(snapshotPath, 'utf-8');
-        fs.writeFileSync(filePath, original, 'utf-8');
-        fs.unlinkSync(snapshotPath);
-        return { success: true };
-      } catch (err) {
-        return { success: false, error: (err as Error).message };
-      }
-    };
-    reg.register('file_write', restoreFromSnapshot);
-    reg.register('file_edit', restoreFromSnapshot);
-    reg.register('apply_patch', restoreFromSnapshot);
-    reg.register('code_fixer', restoreFromSnapshot);
-    reg.register('code_refiner', restoreFromSnapshot);
-    reg.register('file_delete', restoreFromSnapshot);
-    reg.register('mkdir', async (action) => {
-      const dir = action.args.path ?? action.args.dir;
-      if (typeof dir !== 'string') return { success: true };
-      try {
-        const fs = await import('fs');
-        if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) {
-          fs.rmdirSync(dir);
-        }
-        return { success: true };
-      } catch (err) {
-        return { success: false, error: (err as Error).message };
-      }
-    });
-    reg.register('memory_store', async (action) => {
-      const key = action.args.key;
-      if (typeof key !== 'string') return { success: true };
-      try {
-        const fs = await import('fs');
-        const path = await import('path');
-        const memoryPath = path.join(process.cwd(), '.commander', 'memory.json');
-        if (!fs.existsSync(memoryPath)) return { success: true };
-        const data = JSON.parse(fs.readFileSync(memoryPath, 'utf-8')) as Array<{ key: string }>;
-        const filtered = data.filter((e) => e.key !== key);
-        fs.writeFileSync(memoryPath, JSON.stringify(filtered, null, 2), 'utf-8');
-        return { success: true };
-      } catch (err) {
-        return { success: false, error: (err as Error).message };
-      }
-    });
-  }
-
   private generateActionId(): string {
     return `act_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Concurrency semaphore (GAP-07)
-  // ---------------------------------------------------------------------------
-
-  private async acquireSlot(): Promise<void> {
-    if (this.runningCount < this.config.maxConcurrency) {
-      this.runningCount++;
-      return;
-    }
-    // Wait for a slot to free up
-    return new Promise<void>((resolve) => {
-      this.waitingQueue.push(() => {
-        this.runningCount++;
-        resolve();
-      });
-    });
-  }
-
-  private releaseSlot(): void {
-    this.runningCount--;
-    const next = this.waitingQueue.shift();
-    if (next) next();
   }
 
   // ---------------------------------------------------------------------------
@@ -4898,22 +3977,18 @@ export class AgentRuntime implements AgentRuntimeInterface {
    * Returns true if the run was active and pause was signaled, false otherwise.
    */
   pauseRun(runId: string): boolean {
-    if (!this.activeRuns.has(runId)) {
-      return false;
-    }
-    this.pausedRuns.add(runId);
-    return true;
+    return this.runLifecycle.pauseRun(runId);
   }
 
   /**
    * Clear the pause flag for a run (e.g., after resume).
    */
   unpauseRun(runId: string): void {
-    this.pausedRuns.delete(runId);
+    this.runLifecycle.unpauseRun(runId);
   }
 
   isPaused(runId: string): boolean {
-    return this.pausedRuns.has(runId);
+    return this.runLifecycle.isPaused(runId);
   }
 
   /**
@@ -4921,34 +3996,34 @@ export class AgentRuntime implements AgentRuntimeInterface {
    * Returns an array of { runId, paused, checkpointPhase }.
    */
   getActiveRuns(): Array<{ runId: string; paused: boolean; checkpointPhase?: string }> {
-    return Array.from(this.activeRuns).map((runId) => {
+    return this.runLifecycle.getActiveRuns().map((runId) => {
       const checkpoint = this.checkpointer.resume(runId);
       return {
         runId,
-        paused: this.pausedRuns.has(runId),
+        paused: this.runLifecycle.isPaused(runId),
         checkpointPhase: checkpoint?.phase,
       };
     });
   }
 
   getActiveRunCount(): number {
-    return this.activeRuns.size;
+    return this.runLifecycle.getActiveRunCount();
   }
 
   isRunActive(runId: string): boolean {
-    return this.activeRuns.has(runId);
+    return this.runLifecycle.isActive(runId);
   }
 
   getSemanticCacheStats() {
-    return this.semanticCache.getStats();
+    return this.cacheManager.getSemanticCacheStats();
   }
 
   getSingleFlightStats(): SingleFlightStats {
-    return this.singleFlight.getStats();
+    return this.cacheManager.getSingleFlightStats();
   }
 
   getGeminiCacheStats(): GeminiCacheStats {
-    return this.geminiCache.getStats();
+    return this.cacheManager.getGeminiCacheStats();
   }
 
   getCostEstimatorHistory() {
@@ -4992,11 +4067,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
   /** Dispose sub-resources (timers, file handles) when this runtime is discarded */
   dispose(): void {
-    if (this.queueTimer) {
-      clearInterval(this.queueTimer);
-      this.queueTimer = null;
-    }
-    this.toolCache.dispose();
+    this.compensationService.dispose();
+    this.cacheManager.dispose();
+    this.reliabilityEngine.shutdown();
     try {
       getModelPerformanceStore().dispose();
     } catch {
@@ -5014,78 +4087,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
       });
     }
     // Dispose tenant-scoped stores
-    for (const store of this.tenantSamplesStores.values()) {
-      try {
-        store.flush();
-      } catch (e) {
-        getGlobalLogger().warn(
-          'AgentRuntime',
-          'Failed to flush tenant samples store during dispose',
-          { error: (e as Error)?.message },
-        );
-      }
-    }
-    for (const store of this.tenantTraceStores.values()) {
-      try {
-        store.shutdown();
-      } catch (e) {
-        getGlobalLogger().warn(
-          'AgentRuntime',
-          'Failed to shutdown tenant trace store during dispose',
-          { error: (e as Error)?.message },
-        );
-      }
-    }
-    this.tenantSamplesStores.clear();
-    this.tenantTraceStores.clear();
-    this.tenantCheckpointers.clear();
+    this.tenantManager.flushAll();
   }
-}
-
-function resolveSemanticCache(config: AgentRuntimeConfig): SemanticCache {
-  const cfg = config.semanticCache;
-  if (!cfg?.enabled) {
-    return new SemanticCache(new MockEmbeddingFunction(), { enabled: false, pruneIntervalMs: 0 });
-  }
-  const apiKey = cfg.openaiApiKey ?? process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    // Fall back to local embeddings (no API key needed)
-    getGlobalLogger().debug(
-      'AgentRuntime',
-      `Semantic cache enabled with local embeddings (threshold=${cfg.similarityThreshold ?? 0.92}). Set OPENAI_API_KEY for higher-quality OpenAI embeddings.`,
-    );
-    return new SemanticCache(new LocalEmbeddingFunction(), {
-      enabled: true,
-      similarityThreshold: cfg.similarityThreshold ?? 0.92,
-      maxEntries: cfg.maxEntries ?? 10_000,
-      defaultTtlMs: cfg.defaultTtlMs ?? 86_400_000,
-      maxBucketSize: cfg.maxBucketSize ?? 64,
-      cacheStochastic: cfg.cacheStochastic ?? false,
-      cacheToolCalls: cfg.cacheToolCalls ?? false,
-      pruneIntervalMs: cfg.pruneIntervalMs ?? 60_000,
-    });
-  }
-  getGlobalLogger().debug(
-    'AgentRuntime',
-    `Semantic cache enabled with OpenAI embeddings (model=${cfg.embeddingModel ?? 'text-embedding-3-small'}, threshold=${cfg.similarityThreshold ?? 0.92})`,
-  );
-  return new SemanticCache(
-    new OpenAIEmbeddingFunction({
-      apiKey,
-      model: cfg.embeddingModel,
-      baseUrl: cfg.embeddingBaseUrl,
-    }),
-    {
-      enabled: true,
-      similarityThreshold: cfg.similarityThreshold ?? 0.92,
-      maxEntries: cfg.maxEntries ?? 10_000,
-      defaultTtlMs: cfg.defaultTtlMs ?? 86_400_000,
-      maxBucketSize: cfg.maxBucketSize ?? 64,
-      cacheStochastic: cfg.cacheStochastic ?? false,
-      cacheToolCalls: cfg.cacheToolCalls ?? false,
-      pruneIntervalMs: cfg.pruneIntervalMs ?? 60_000,
-    },
-  );
 }
 
 function derivePromptCacheKey(ctx: AgentExecutionContext, tenantId: string | undefined): string {

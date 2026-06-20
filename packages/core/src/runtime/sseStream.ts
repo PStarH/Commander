@@ -1,6 +1,7 @@
 import type { BusMessage, MessageBusTopic } from './types';
 import { getMessageBus } from './messageBus';
 import { getGlobalLogger } from '../logging';
+import { sanitizeIfNeeded } from '../security/outputSanitizer';
 
 export type StructuredSSEEventType =
   | 'agent.status'
@@ -56,6 +57,16 @@ export class SSEStream {
     entities: new Map(),
     rootIds: [],
   };
+  /** Accumulates streaming output deltas so sensitive tokens split across
+   *  chunk boundaries (e.g. "sk-proj-" + "abc123...") can be detected and
+   *  redacted. Reset on close(). */
+  private outputAccumulator = '';
+  /** How many chars of the sanitized accumulator have been emitted as deltas.
+   *  Used to emit only the delta-diff on each subsequent call. */
+  private lastEmittedLength = 0;
+  /** Length of the accumulator at last sanitization. Used to skip re-scanning
+   *  when the accumulator hasn't grown enough to complete a new match. */
+  private lastSanitizedAccLength: number | undefined;
 
   constructor(
     topics?: MessageBusTopic[],
@@ -271,10 +282,62 @@ export class SSEStream {
   }
 
   emitOutput(content: string, done = false): void {
-    if (done) {
-      this.emitStructured('output.completed', { content });
-    } else {
+    if (this.closed) return;
+
+    // Per-stream accumulator buffer catches sensitive tokens split across
+    // chunk boundaries (e.g. API key prefix in delta 1, suffix in delta 2).
+    //
+    // Streaming limitation: if a redaction removes content whose header was
+    // already emitted to the client (e.g., "-----BEGIN RSA PRIVATE KEY-----"
+    // sent in an earlier delta, then the key body arrives and gets redacted),
+    // the header remains visible client-side. The `done=true` completed event
+    // carries the authoritative sanitized output.
+    this.outputAccumulator += content;
+
+    // Only re-sanitize when the accumulator has grown meaningfully (≥20 chars
+    // since last check). This avoids re-scanning the full buffer on every
+    // delta when the caller sends many tiny chunks (1-5 chars each).
+    // No detection pattern matches on <20 chars of new content, so delaying
+    // the scan is safe. On `done=true`, always scan to flush correctly.
+    const MIN_GROWTH = 20;
+    const newChars = this.outputAccumulator.length + content.length - (this.lastSanitizedAccLength ?? 0);
+
+    if (!done && this.lastSanitizedAccLength !== undefined && newChars < MIN_GROWTH) {
+      // Not enough new content — emit the raw delta to preserve streaming feel
       this.emitStructured('output.delta', { content });
+      return;
+    }
+
+    // Sanitize the full accumulated output. We emit only the delta-diff
+    // (what's new since lastEmittedLength) so the client sees the same
+    // streaming experience but with redactions applied retroactively.
+    const result = sanitizeIfNeeded(this.outputAccumulator, {
+      source: 'sse_output',
+    });
+    const sanitized = result.output;
+    this.lastSanitizedAccLength = this.outputAccumulator.length;
+
+    if (result.wasRedacted) {
+      getGlobalLogger().debug('SSEStream', 'Output sanitized before SSE emission', {
+        accumulatorLength: this.outputAccumulator.length,
+        sanitizedLength: sanitized.length,
+        categories: result.categories,
+      });
+    }
+
+    if (done) {
+      // Flush: emit the final sanitized output as completed, then reset
+      this.emitStructured('output.completed', { content: sanitized });
+      this.outputAccumulator = '';
+      this.lastEmittedLength = 0;
+      this.lastSanitizedAccLength = undefined;
+    } else {
+      // Emit only the new portion of the sanitized accumulator
+      if (sanitized.length > this.lastEmittedLength) {
+        const delta = sanitized.slice(this.lastEmittedLength);
+        this.lastEmittedLength = sanitized.length;
+        this.emitStructured('output.delta', { content: delta });
+      }
     }
   }
 
@@ -332,6 +395,9 @@ export class SSEStream {
     }
     this.unsubscribers = [];
     this.subscribers = [];
+    // Reset accumulator state
+    this.outputAccumulator = '';
+    this.lastEmittedLength = 0;
   }
 
   get isClosed(): boolean {

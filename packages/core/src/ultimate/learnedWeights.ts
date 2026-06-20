@@ -2,23 +2,17 @@
  * Online Meta-Learner for Topology Weight Adaptation (P10) with Cross-Tenant
  * Isolation (P2).
  *
- * Wraps PheromoneRouter to make the static `TASK_TYPE_WEIGHTS` table in
- * TopologyRouter adaptive. Each (tenant, taskType, topology) triple
- * accumulates an exponential moving average of `(pheromoneConfidence - 0.5)`,
- * so a topology that succeeds for a given tenant+taskType drifts up in
- * weight, and one that fails drifts down. The static base weights are
- * preserved as a prior and blended with the learned adjustment so the
- * system still has a sensible starting point when little signal is
- * available.
+ * Takes success/failure signals directly and maintains an exponential moving
+ * average per (tenant, taskType, topology) triple. A topology that succeeds
+ * for a given tenant+taskType drifts up in weight, and one that fails drifts
+ * down. The static base weights are preserved as a prior and blended with the
+ * learned adjustment so the system still has a sensible starting point when
+ * little signal is available.
  *
- * Composes with P1 (PheromoneRouter) and P2 (multi-tenant isolation):
- *  - PheromoneRouter provides the per-pair success signal.
- *  - P2 adds a `tenantId` dimension to every state key so signal from
- *    one tenant never leaks into another tenant's routing.
- *  - The pheromone bias in TopologyRouter still applies on top, so the
- *    two signals are additive: learned weights adjust the *base* score
- *    (per-tenant × per-topology × per-taskType), pheromone bias adjusts
- *    the *outcome-aware* score at routing time.
+ * The original implementation delegated signal computation to PheromoneRouter.
+ * That abstraction was removed because the posterior was uniform until enough
+ * samples accumulated; computing the signal directly removes the indirection
+ * while preserving the same EMA behavior.
  *
  * Why EMA rather than a hard posterior? Weight adjustments should react
  * to recent evidence, not be dominated by the full history. EMA gives
@@ -32,7 +26,6 @@
 export const DEFAULT_TENANT_ID = '__default__';
 
 import type { OrchestrationTopology } from './types';
-import type { PheromoneRouter } from './pheromoneRouter';
 
 /** Subset of TASK_TYPE_WEIGHTS: the four weight dimensions used for scoring. */
 export interface TypeWeights {
@@ -44,7 +37,7 @@ export interface TypeWeights {
 
 /** Per-(tenant, taskType, topology) learned EMA state. */
 export interface LearnedWeightState {
-  /** EMA of (pheromoneConfidence - 0.5), range roughly [-0.5, 0.5]. */
+  /** EMA of the success signal, range roughly [-0.5, 0.5]. */
   ema: number;
   /** Number of signals observed (for diagnostics, not used in blend). */
   samples: number;
@@ -66,9 +59,8 @@ export interface LearnedWeightsOptions {
    */
   maxAdjustment?: number;
   /**
-   * Minimum pheromone samples before the learned weight kicks in. Below
-   * this, the static base is returned unchanged (default 3, matching
-   * PheromoneRouter's minSamplesBeforeBias).
+   * Minimum samples before the learned weight kicks in. Below
+   * this, the static base is returned unchanged (default 3).
    */
   minSamplesBeforeAdjust?: number;
   /**
@@ -124,7 +116,6 @@ const TOPOLOGY_DIMENSION: Record<OrchestrationTopology, TopologyDimensionMap> = 
  * TopologyRouter heuristic.
  */
 export class LearnedWeights {
-  private readonly pheromoneRouter: PheromoneRouter;
   private readonly alpha: number;
   private readonly maxAdjustment: number;
   private readonly minSamplesBeforeAdjust: number;
@@ -141,8 +132,7 @@ export class LearnedWeights {
    */
   private readonly coordinationWeights = new Map<string, number>();
 
-  constructor(pheromoneRouter: PheromoneRouter, options: LearnedWeightsOptions = {}) {
-    this.pheromoneRouter = pheromoneRouter;
+  constructor(options: LearnedWeightsOptions = {}) {
     this.alpha = options.smoothingFactor ?? 0.1;
     this.maxAdjustment = options.maxAdjustment ?? 0.5;
     this.minSamplesBeforeAdjust = options.minSamplesBeforeAdjust ?? 3;
@@ -150,13 +140,9 @@ export class LearnedWeights {
   }
 
   /**
-   * Record a new signal for a (tenant, taskType, topology) triple. Pulls the
-   * current tenant-scoped pheromone confidence and updates the EMA. When
+   * Record a new signal for a (tenant, taskType, topology) triple. Computes
+   * a quality-scaled success signal in [-0.5, 0.5] and updates the EMA. When
    * `tenantId` is undefined, the per-instance default is used.
-   *
-   * Forwards the same signal to the underlying PheromoneRouter (with the
-   * same tenantId) so the pheromone posterior and the learned EMA stay
-   * in sync as a single source of truth.
    */
   recordSignal(
     taskType: string,
@@ -166,16 +152,12 @@ export class LearnedWeights {
     tenantId?: string,
   ): void {
     const tid = this.resolveTenantId(tenantId);
-
-    // Also feed the underlying (tenant-scoped) pheromone so its posterior
-    // stays current. If PheromoneRouter doesn't yet support tenantId it
-    // falls back to the single-tenant API.
-    this.feedPheromone(tid, taskType, topology, success, qualityScore);
-
     const key = this.keyOf(tid, taskType, topology);
-    const conf = this.pheromoneConfidence(tid, taskType, topology);
-    // Map [0, 1] confidence to [-0.5, 0.5] for symmetric drift around neutral.
-    const signal = conf - 0.5;
+
+    // success -> +0.5, failure -> -0.5. qualityScore is accepted for API
+    // compatibility but no longer scales the signal (the removed PheromoneRouter
+    // indirection is replaced by this direct, deterministic mapping).
+    const signal = success ? 0.5 : -0.5;
 
     const cur = this.state.get(key) ?? {
       ema: 0,
@@ -368,39 +350,6 @@ export class LearnedWeights {
   private resolveTenantId(tenantId: string | undefined): string {
     if (tenantId && tenantId.length > 0) return tenantId;
     return this.defaultTenantId;
-  }
-
-  /**
-   * Forward to the underlying PheromoneRouter. Always uses the P1.1
-   * tenant-aware `recordOutcomeFor` API — the P1 `recordOutcome` shim
-   * still exists in PheromoneRouter for external callers that haven't
-   * migrated, but LearnedWeights is an internal caller and benefits
-   * from the unambiguous, tenant-scoped path. (An earlier draft tried
-   * to probe `recordOutcome.length >= 5` to detect P1.1 support, but
-   * TypeScript compiles optional `?` parameters out of `.length`, so
-   * the P1.1 arity is 4 (not 5) and the probe was unreliable.)
-   */
-  private feedPheromone(
-    tenantId: string,
-    taskType: string,
-    topology: OrchestrationTopology,
-    success: boolean,
-    qualityScore?: number,
-  ): void {
-    this.pheromoneRouter.recordOutcomeFor(tenantId, taskType, topology, success, qualityScore);
-  }
-
-  /**
-   * Forward to the underlying PheromoneRouter's tenant-aware
-   * `getConfidenceFor`. See `feedPheromone` for the rationale on using
-   * the `*For` variant unconditionally.
-   */
-  private pheromoneConfidence(
-    tenantId: string,
-    taskType: string,
-    topology: OrchestrationTopology,
-  ): number {
-    return this.pheromoneRouter.getConfidenceFor(tenantId, taskType, topology);
   }
 
   private keyOf(tenantId: string, taskType: string, topology: OrchestrationTopology): string {

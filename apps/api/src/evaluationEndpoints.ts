@@ -97,10 +97,10 @@ export function createEvaluationRouter(
    * Get evaluation results for a target
    */
   router.get('/evaluate/:targetId', (req: Request, res: Response) => {
-    const results = evaluator.getResults(req.params.targetId);
-    const aggregated = evaluator.getAggregatedScore(req.params.targetId);
+    const results = evaluator.getResults(String(req.params.targetId));
+    const aggregated = evaluator.getAggregatedScore(String(req.params.targetId));
 
-    res.json({ targetId: req.params.targetId, results, aggregated });
+    res.json({ targetId: String(req.params.targetId), results, aggregated });
   });
 
   /**
