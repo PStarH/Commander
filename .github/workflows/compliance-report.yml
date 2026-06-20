@@ -1,0 +1,183 @@
+name: Compliance Audit Report
+
+# ── Enterprise Compliance Audit Reporting ──────────────────────────
+# Generates ISO 42001:2023 and NIST AI RMF 1.0 compliance audit
+# reports on every push to main. Uploads markdown + JSON artifacts
+# with 90-day retention for auditor review.
+#
+# Cross-run snapshot persistence: posture-snapshots.json is uploaded
+# as an artifact and restored on the next run via download-artifact
+# using a fixed artifact name (posture-snapshots-latest) so trend
+# analysis accumulates across workflow runs.
+#
+# Triggers:
+#   - Push to main/master: Full compliance audit report
+#   - Manual dispatch: On-demand report generation
+#
+# Outputs:
+#   - compliance-audit-report-{run_id}.md  — Auditor-ready markdown
+#   - compliance-audit-report-{run_id}.json — Machine-readable JSON
+#   - posture-snapshots-latest.json         — Persistent snapshot history
+#   - Step summary with key metrics
+# ─────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: 'Minimum compliance score to pass (0-100)'
+        required: false
+        type: number
+        default: 75
+
+jobs:
+  compliance-audit:
+    name: Compliance Audit Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build core package
+        run: pnpm --filter @commander/core build
+
+      - name: Restore previous snapshot history
+        id: restore
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: posture-snapshots-latest
+          path: packages/core/.commander
+
+      - name: Initialize snapshot history
+        run: |
+          SNAPSHOT_FILE="packages/core/.commander/posture-snapshots.json"
+          if [ -f "$SNAPSHOT_FILE" ]; then
+            COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$SNAPSHOT_FILE','utf-8')).length)")
+            echo "📊 Restored $COUNT previous posture snapshots from artifact"
+          else
+            echo "📊 No previous snapshots — this run will establish baseline"
+          fi
+
+      - name: Generate compliance audit report
+        id: audit
+        run: |
+          THRESHOLD="${{ inputs.threshold || 75 }}"
+
+          echo "🔒 Generating compliance audit report..."
+          echo "   Threshold: ${THRESHOLD}/100"
+
+          # Use simple redirect (not tee) to avoid pipefail killing the pipeline
+          # on non-zero exit. GitHub Actions bash runs with set -eo pipefail.
+          npx tsx packages/core/src/security/runComplianceAudit.ts \
+            --all \
+            --threshold=${THRESHOLD} \
+            --output=/tmp/compliance-audit-report \
+            > /tmp/compliance-audit.log 2>&1
+          EXIT_CODE=$?
+
+          # Print captured output
+          cat /tmp/compliance-audit.log
+
+          # Parse key metrics for step summary
+          if [ -f /tmp/compliance-audit-report.json ]; then
+            node -e "
+              const report = JSON.parse(require('fs').readFileSync('/tmp/compliance-audit-report.json', 'utf-8'));
+              const fs = require('fs');
+              fs.writeFileSync('/tmp/audit-score.txt', String(report.posture.overallScore));
+              fs.writeFileSync('/tmp/audit-grade.txt', report.posture.grade);
+              fs.writeFileSync('/tmp/audit-iso.txt', String(report.isoCompliance.compliancePercentage));
+              fs.writeFileSync('/tmp/audit-nist.txt', String(report.nistRmfAlignment.alignmentPercentage));
+              fs.writeFileSync('/tmp/audit-trend.txt', report.trendAnalysis.trend);
+              fs.writeFileSync('/tmp/audit-snapshots.txt', String(report.postureHistory.length));
+            "
+          fi
+
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+
+      - name: Upload compliance report (markdown)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compliance-audit-report-${{ github.run_id }}.md
+          path: /tmp/compliance-audit-report.md
+          retention-days: 90
+
+      - name: Upload compliance report (JSON)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compliance-audit-report-${{ github.run_id }}.json
+          path: /tmp/compliance-audit-report.json
+          retention-days: 365
+
+      - name: Upload snapshot history (cross-run persistence)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: posture-snapshots-latest
+          path: packages/core/.commander/posture-snapshots.json
+          retention-days: 365
+
+      - name: Generate step summary
+        if: always()
+        run: |
+          SCORE=$(cat /tmp/audit-score.txt 2>/dev/null || echo "N/A")
+          GRADE=$(cat /tmp/audit-grade.txt 2>/dev/null || echo "N/A")
+          ISO=$(cat /tmp/audit-iso.txt 2>/dev/null || echo "N/A")
+          NIST=$(cat /tmp/audit-nist.txt 2>/dev/null || echo "N/A")
+          TREND=$(cat /tmp/audit-trend.txt 2>/dev/null || echo "N/A")
+          SNAPSHOTS=$(cat /tmp/audit-snapshots.txt 2>/dev/null || echo "0")
+
+          TREND_ICON="➡️"
+          [ "$TREND" = "improving" ] && TREND_ICON="📈"
+          [ "$TREND" = "declining" ] && TREND_ICON="📉"
+
+          echo "## 🔒 Compliance Audit Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Overall Score** | **${SCORE}/100** (Grade ${GRADE}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| ISO 42001 Compliance | ${ISO}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| NIST AI RMF Alignment | ${NIST}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trend | ${TREND_ICON} ${TREND} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Snapshots | ${SNAPSHOTS} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${GITHUB_SHA:0:7}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.audit.outputs.exit_code }}" != "0" ]; then
+            echo "### ⚠️ Score Below Threshold" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The compliance score fell below the configured threshold. Review the full report artifact for details." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "### 📄 Report Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Download \`compliance-audit-report-${{ github.run_id }}.md\` for auditor-ready markdown" >> $GITHUB_STEP_SUMMARY
+          echo "- Download \`compliance-audit-report-${{ github.run_id }}.json\` for machine-readable JSON" >> $GITHUB_STEP_SUMMARY
+          echo "- Download \`posture-snapshots-latest.json\` for historical trend data (persists across runs)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Report status
+        if: always()
+        run: |
+          if [ "${{ steps.audit.outputs.exit_code }}" = "0" ]; then
+            echo "✅ Compliance audit report PASSED"
+          else
+            echo "::warning::Compliance score below threshold — review report artifact for details"
+          fi
