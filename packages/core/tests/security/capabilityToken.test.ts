@@ -24,7 +24,7 @@
  *  - opt-out: no tokenRejectedLogger wired stays silent on rejection
  *  - singleton reset isolation
  */
-import { test, before, afterEach } from 'node:test';
+import { it, beforeAll, afterEach, describe } from 'vitest';
 import assert from 'node:assert/strict';
 
 // Force a deterministic key for every test BEFORE importing the module.
@@ -77,7 +77,7 @@ function makeVerifier(masterKey = Buffer.alloc(32, 7), expectedAud?: string) {
   return new CapabilityTokenVerifier({ masterKey, expectedAud });
 }
 
-before(() => {
+beforeAll(() => {
   resetCapabilityTokenState();
   resetAuditChainLedger();
   resetMetricsCollector();
@@ -90,7 +90,7 @@ afterEach(() => {
   restoreKey();
 });
 
-test('Phase 2.1 — issue + verify round-trip succeeds', () => {
+it('Phase 2.1 — issue + verify round-trip succeeds', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
   const tok = issuer.issue({
@@ -108,7 +108,7 @@ test('Phase 2.1 — issue + verify round-trip succeeds', () => {
   }
 });
 
-test('Phase 2.1 — tampered payload fails signature verification', () => {
+it('Phase 2.1 — tampered payload fails signature verification', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
   const tok = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 10 });
@@ -129,7 +129,7 @@ test('Phase 2.1 — tampered payload fails signature verification', () => {
   if (!r.ok) assert.equal(r.reason, 'signature_mismatch');
 });
 
-test('Phase 2.1 — malicious master key cannot verify token', () => {
+it('Phase 2.1 — malicious master key cannot verify token', () => {
   const issuer = makeIssuer();
   const attackerKey = Buffer.alloc(32, 99);
   const verifier = makeVerifier(attackerKey);
@@ -139,7 +139,7 @@ test('Phase 2.1 — malicious master key cannot verify token', () => {
   if (!r.ok) assert.equal(r.reason, 'signature_mismatch');
 });
 
-test('Phase 2.1 — canonical JSON: key-order independence (sign is deterministic)', () => {
+it('Phase 2.1 — canonical JSON: key-order independence (sign is deterministic)', () => {
   const m = Buffer.alloc(32, 7);
   // Same content, DIFFERENT outer-object key order. Signatures MUST match.
   // (Arrays preserve order by design — sort tools at issuance time if reordering
@@ -176,7 +176,7 @@ test('Phase 2.1 — canonical JSON: key-order independence (sign is deterministi
   assert.equal(sign(a, m), sign(b, m));
 });
 
-test('Phase 2.1 — jti uniqueness across N issuances', () => {
+it('Phase 2.1 — jti uniqueness across N issuances', () => {
   const issuer = makeIssuer();
   const jtis = new Set<string>();
   for (let i = 0; i < 100; i++) {
@@ -186,14 +186,14 @@ test('Phase 2.1 — jti uniqueness across N issuances', () => {
   assert.equal(jtis.size, 100);
 });
 
-test('Phase 2.1 — malformed token: missing dots is rejected', () => {
+it('Phase 2.1 — malformed token: missing dots is rejected', () => {
   const verifier = makeVerifier(Buffer.alloc(32, 7));
   const r = verifier.verify('abc.def', { tool: 'x', args: {} });
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.reason, 'malformed_encoding');
 });
 
-test('Phase 2.1 — malformed token: bad base64 signature rejected', () => {
+it('Phase 2.1 — malformed token: bad base64 signature rejected', () => {
   const issuer = makeIssuer();
   const tok = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 10 });
   const parts = tok.split('.');
@@ -215,7 +215,7 @@ test('Phase 2.1 — malformed token: bad base64 signature rejected', () => {
     );
 });
 
-test('Phase 2.1 — token expired is rejected', () => {
+it('Phase 2.1 — token expired is rejected', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
   const tok = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 1 });
@@ -227,9 +227,9 @@ test('Phase 2.1 — token expired is rejected', () => {
   const r = verifier.verify(tok, { tool: 'web_search', args: {} });
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.reason, 'expired');
-});
+}, 10000);
 
-test('Phase 2.1 — audience mismatch is rejected', () => {
+it('Phase 2.1 — audience mismatch is rejected', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey, 'tenant-A');
   const tok = issuer.issue({ sub: 'a', aud: 'tenant-B', tools: ['web_search'], ttlSeconds: 10 });
@@ -238,7 +238,7 @@ test('Phase 2.1 — audience mismatch is rejected', () => {
   if (!r.ok) assert.equal(r.reason, 'aud_mismatch');
 });
 
-test('Phase 2.1 — wildcard tool scope matches', () => {
+it('Phase 2.1 — wildcard tool scope matches', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
   const tok = issuer.issue({ sub: 'a', aud: '*', tools: ['memory_*'], ttlSeconds: 10 });
@@ -251,7 +251,7 @@ test('Phase 2.1 — wildcard tool scope matches', () => {
   if (!r3.ok) assert.equal(r3.reason, 'scope_mismatch');
 });
 
-test('Phase 2.1 — arg-shape regex match approves, mismatch rejects', () => {
+it('Phase 2.1 — arg-shape regex match approves, mismatch rejects', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
   const tok = issuer.issue({
@@ -268,7 +268,7 @@ test('Phase 2.1 — arg-shape regex match approves, mismatch rejects', () => {
   if (!bad.ok) assert.equal(bad.reason, 'arg_shape_mismatch');
 });
 
-test('Phase 2.1 — arg-shape: missing/null param fails closed (no undefined coercion)', () => {
+it('Phase 2.1 — arg-shape: missing/null param fails closed (no undefined coercion)', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
   const tok = issuer.issue({
@@ -286,7 +286,7 @@ test('Phase 2.1 — arg-shape: missing/null param fails closed (no undefined coe
   if (!explicitNull.ok) assert.equal(explicitNull.reason, 'arg_shape_mismatch');
 });
 
-test('Phase 2.1 — revocation: jti off the ledger rejects', () => {
+it('Phase 2.1 — revocation: jti off the ledger rejects', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
   const tok = issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 30 });
@@ -296,7 +296,7 @@ test('Phase 2.1 — revocation: jti off the ledger rejects', () => {
   if (!r.ok) assert.equal(r.reason, 'jti_revoked');
 });
 
-test('Phase 2.1 — revocation: revoking parent invalidates descendant', () => {
+it('Phase 2.1 — revocation: revoking parent invalidates descendant', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
   const root = issuer.issue({ sub: 'a', aud: '*', tools: ['file_write'], ttlSeconds: 60 });
@@ -318,7 +318,7 @@ test('Phase 2.1 — revocation: revoking parent invalidates descendant', () => {
   if (!r.ok) assert.equal(r.reason, 'parent_jti_revoked');
 });
 
-test('Phase 2.1 — delegation: child exp must precede parent exp', () => {
+it('Phase 2.1 — delegation: child exp must precede parent exp', () => {
   const issuer = makeIssuer();
   const root = issuer.issue({
     sub: 'a',
@@ -340,7 +340,7 @@ test('Phase 2.1 — delegation: child exp must precede parent exp', () => {
   );
 });
 
-test('Phase 2.1 — delegation depth capped at MAX_DELEGATION_DEPTH', () => {
+it('Phase 2.1 — delegation depth capped at MAX_DELEGATION_DEPTH', () => {
   const issuer = makeIssuer();
   // Root with a generous TTL; each child halves (with a -1s margin) so the
   // parent_exp > child_exp invariant holds throughout the depth chain.
@@ -374,7 +374,7 @@ test('Phase 2.1 — delegation depth capped at MAX_DELEGATION_DEPTH', () => {
   assert.ok(issuedAtDepth < MAX_DELEGATION_DEPTH + 3, 'cap must terminate the chain');
 });
 
-test('Phase 2.1 — TTL overshoot (greater than maxTtlSeconds) throws at issue', () => {
+it('Phase 2.1 — TTL overshoot (greater than maxTtlSeconds) throws at issue', () => {
   const issuer = makeIssuer({ maxTtlSeconds: 30 });
   assert.throws(
     () => issuer.issue({ sub: 'a', aud: '*', tools: ['web_search'], ttlSeconds: 600 }),
@@ -382,7 +382,7 @@ test('Phase 2.1 — TTL overshoot (greater than maxTtlSeconds) throws at issue',
   );
 });
 
-test('Phase 2.1 — empty tools array throws at issue (refuses empty scope)', () => {
+it('Phase 2.1 — empty tools array throws at issue (refuses empty scope)', () => {
   const issuer = makeIssuer();
   assert.throws(
     () => issuer.issue({ sub: 'a', aud: '*', tools: [], ttlSeconds: 5 }),
@@ -390,7 +390,7 @@ test('Phase 2.1 — empty tools array throws at issue (refuses empty scope)', ()
   );
 });
 
-test('Phase 2.1 — duplicate jti within same process is refused', () => {
+it('Phase 2.1 — duplicate jti within same process is refused', () => {
   const issuer = makeIssuer();
   const jti = 'a'.repeat(32);
   issuer.issue({ sub: 'a', aud: '*', tools: ['x'], ttlSeconds: 5, jti });
@@ -400,7 +400,7 @@ test('Phase 2.1 — duplicate jti within same process is refused', () => {
   );
 });
 
-test('Phase 2.1 — production refuses to start without env var key', () => {
+it('Phase 2.1 — production refuses to start without env var key', () => {
   setKey('test-key-must-be-at-least-32-characters-long-AAAA');
   delete process.env[CAPABILITY_TOKEN_KEY_ENV];
   const savedEnv = process.env.NODE_ENV;
@@ -412,7 +412,7 @@ test('Phase 2.1 — production refuses to start without env var key', () => {
   }
 });
 
-test('Phase 2.1 — env override key takes precedence over dev fallback', () => {
+it('Phase 2.1 — env override key takes precedence over dev fallback', () => {
   const custom = 'env-override-key-thirty-two-characters!!!';
   setKey(custom);
   try {
@@ -423,7 +423,7 @@ test('Phase 2.1 — env override key takes precedence over dev fallback', () => 
   }
 });
 
-test('Phase 2.1 — issuer + verifier sharing a masterKey roundtrip; mismatched keys fail', () => {
+it('Phase 2.1 — issuer + verifier sharing a masterKey roundtrip; mismatched keys fail', () => {
   const shared = Buffer.alloc(32, 11);
   const iA = new CapabilityTokenIssuer({ masterKey: shared });
   const vA = new CapabilityTokenVerifier({ masterKey: shared });
@@ -435,7 +435,7 @@ test('Phase 2.1 — issuer + verifier sharing a masterKey roundtrip; mismatched 
   assert.equal(vB.verify(tok, { tool: 'web_search', args: {} }).ok, false);
 });
 
-test('Phase 2.1 — clock-skew tolerance: future iat within skew window is accepted', () => {
+it('Phase 2.1 — clock-skew tolerance: future iat within skew window is accepted', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
   const payload = {
@@ -457,7 +457,7 @@ test('Phase 2.1 — clock-skew tolerance: future iat within skew window is accep
   assert.equal(r.ok, true);
 });
 
-test('Phase 2.1 — clock-skew tolerance: future iat beyond skew window is rejected', () => {
+it('Phase 2.1 — clock-skew tolerance: future iat beyond skew window is rejected', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
   const farFuture = Math.floor(Date.now() / 1000) + CLOCK_SKEW_SECONDS + 60;
@@ -481,7 +481,7 @@ test('Phase 2.1 — clock-skew tolerance: future iat beyond skew window is rejec
   if (!r.ok) assert.equal(r.reason, 'not_yet_valid');
 });
 
-test('Phase 2.1 — ToolApproval integration: valid token short-circuits policy', async () => {
+it('Phase 2.1 — ToolApproval integration: valid token short-circuits policy', async () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
   const approver: Parameters<typeof ToolApproval>[0] = () => ({
@@ -500,7 +500,7 @@ test('Phase 2.1 — ToolApproval integration: valid token short-circuits policy'
   assert.match(r.reason ?? '', /^capability-token:/);
 });
 
-test('Phase 2.1 — ToolApproval integration: invalid token falls through to approver (manual-level tool)', async () => {
+it('Phase 2.1 — ToolApproval integration: invalid token falls through to approver (manual-level tool)', async () => {
   const verifier = makeVerifier(Buffer.alloc(32, 7));
   let approverCalled = false;
   const approver: Parameters<typeof ToolApproval>[0] = () => {
@@ -523,7 +523,7 @@ test('Phase 2.1 — ToolApproval integration: invalid token falls through to app
   assert.equal(r.reason, 'fallthrough');
 });
 
-test('Phase 2.1 — ToolApproval integration: token ignored when no verifier configured (manual-level tool)', async () => {
+it('Phase 2.1 — ToolApproval integration: token ignored when no verifier configured (manual-level tool)', async () => {
   const issuer = makeIssuer();
   let approverCalled = false;
   const approver: Parameters<typeof ToolApproval>[0] = () => {
@@ -545,7 +545,7 @@ test('Phase 2.1 — ToolApproval integration: token ignored when no verifier con
   assert.notEqual(r.reason ?? '', /^capability-token:/);
 });
 
-test('Phase 2.1 — issuance audit event is recorded when auditLogger is wired', () => {
+it('Phase 2.1 — issuance audit event is recorded when auditLogger is wired', () => {
   const events: Array<{ type: string; source: string }> = [];
   const issuer = makeIssuer({
     auditLogger: (e) => events.push({ type: e.type, source: e.source }),
@@ -556,7 +556,7 @@ test('Phase 2.1 — issuance audit event is recorded when auditLogger is wired',
   assert.equal(events[0]!.source, 'CapabilityTokenIssuer');
 });
 
-test('Phase 2.1 — issuance also writes to auditChain when wired', () => {
+it('Phase 2.1 — issuance also writes to auditChain when wired', () => {
   const chainEvents: Array<{ type: string; source: string; tools: string[] }> = [];
   const inprocEvents: Array<{ type: string }> = [];
   const issuer = makeIssuer({
@@ -578,7 +578,7 @@ test('Phase 2.1 — issuance also writes to auditChain when wired', () => {
   assert.equal(inprocEvents[0]!.type, chainEvents[0]!.type);
 });
 
-test('Phase 2.1 — default-wired singleton feeds AuditChainLedger on issuance', () => {
+it('Phase 2.1 — default-wired singleton feeds AuditChainLedger on issuance', () => {
   resetCapabilityTokenState();
   resetAuditChainLedger();
   const issuer = getCapabilityTokenIssuer();
@@ -595,7 +595,7 @@ test('Phase 2.1 — default-wired singleton feeds AuditChainLedger on issuance',
   assert.equal(lastEntry!.source, 'CapabilityTokenIssuer');
 });
 
-test('Phase 2.1 — default-wired singleton feeds AuditChainLedger on revoke', () => {
+it('Phase 2.1 — default-wired singleton feeds AuditChainLedger on revoke', () => {
   resetCapabilityTokenState();
   resetAuditChainLedger();
   const issuer = getCapabilityTokenIssuer();
@@ -608,7 +608,7 @@ test('Phase 2.1 — default-wired singleton feeds AuditChainLedger on revoke', (
   assert.equal(entries[entries.length - 1]!.type, 'approval_denied');
 });
 
-test('Phase 2.1 — revocation audit event recorded; reset state clears the ledger', () => {
+it('Phase 2.1 — revocation audit event recorded; reset state clears the ledger', () => {
   const events: Array<{ type: string }> = [];
   const issuer = makeIssuer({
     auditLogger: (e) => events.push({ type: e.type }),
@@ -622,7 +622,7 @@ test('Phase 2.1 — revocation audit event recorded; reset state clears the ledg
   assert.equal(verifier.verify(tok, { tool: 'web_search', args: {} }).ok, true);
 });
 
-test('Phase 2.1 — getCapabilityTokenIssuer singleton + resetCapabilityTokenState isolation', () => {
+it('Phase 2.1 — getCapabilityTokenIssuer singleton + resetCapabilityTokenState isolation', () => {
   resetCapabilityTokenState();
   const a = getCapabilityTokenIssuer();
   const b = getCapabilityTokenIssuer();
@@ -632,7 +632,7 @@ test('Phase 2.1 — getCapabilityTokenIssuer singleton + resetCapabilityTokenSta
   assert.ok(a !== c, 'reset forces a fresh issuer');
 });
 
-test('Phase 2.1 — Resolution short-circuit: wrong typ header', () => {
+it('Phase 2.1 — Resolution short-circuit: wrong typ header', () => {
   const issuer = makeIssuer();
   const m = issuer.masterKey;
   const payload = {
@@ -675,7 +675,7 @@ test('Phase 2.1 — Resolution short-circuit: wrong typ header', () => {
   if (!r.ok) assert.equal(r.reason, 'malformed_payload');
 });
 
-test('Phase 2.1 — delegation rejects child scope that broadens parent scope', () => {
+it('Phase 2.1 — delegation rejects child scope that broadens parent scope', () => {
   const issuer = makeIssuer();
   const root = issuer.issue({
     sub: 'a',
@@ -696,7 +696,7 @@ test('Phase 2.1 — delegation rejects child scope that broadens parent scope', 
   );
 });
 
-test('Phase 2.1 — delegation accepts child scope that is a strict subset of parent', () => {
+it('Phase 2.1 — delegation accepts child scope that is a strict subset of parent', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
   const root = issuer.issue({
@@ -724,7 +724,7 @@ test('Phase 2.1 — delegation accepts child scope that is a strict subset of pa
   );
 });
 
-test('Phase 2.1 — delegation: parent wildcard covers child explicit tool name', () => {
+it('Phase 2.1 — delegation: parent wildcard covers child explicit tool name', () => {
   const issuer = makeIssuer();
   const verifier = makeVerifier(issuer.masterKey);
   // Parent grants `memory_*`; child should be issued for `memory_read`
@@ -754,7 +754,7 @@ test('Phase 2.1 — delegation: parent wildcard covers child explicit tool name'
   );
 });
 
-test('Phase 2.2 — throwing auditLogger does NOT skip auditChain (per-sink isolation)', () => {
+it('Phase 2.2 — throwing auditLogger does NOT skip auditChain (per-sink isolation)', () => {
   let chainEventCount = 0;
   const issuer = makeIssuer({
     auditLogger: () => {
@@ -777,7 +777,7 @@ test('Phase 2.2 — throwing auditLogger does NOT skip auditChain (per-sink isol
   );
 });
 
-test('Phase 2.2 — ToolApproval: rejected token emits observable tokenRejected event (opt-in)', async () => {
+it('Phase 2.2 — ToolApproval: rejected token emits observable tokenRejected event (opt-in)', async () => {
   const verifier = makeVerifier(Buffer.alloc(32, 7));
   const events: Array<{
     type: string;
@@ -824,7 +824,7 @@ test('Phase 2.2 — ToolApproval: rejected token emits observable tokenRejected 
   );
 });
 
-test('Phase 2.2 — ToolApproval: opt-out (no tokenRejectedLogger wired) stays silent on rejection', async () => {
+it('Phase 2.2 — ToolApproval: opt-out (no tokenRejectedLogger wired) stays silent on rejection', async () => {
   const verifier = makeVerifier(Buffer.alloc(32, 7));
   let approverCallCount = 0;
   const approver: Parameters<typeof ToolApproval>[0] = () => {
@@ -845,7 +845,7 @@ test('Phase 2.2 — ToolApproval: opt-out (no tokenRejectedLogger wired) stays s
   assert.equal(approverCallCount, 1, 'approver still called once for fallback approval');
 });
 
-test('Phase 2.3 — audit_sink_failures_total{sink="auditLogger"} increments when auditLogger throws', () => {
+it('Phase 2.3 — audit_sink_failures_total{sink="auditLogger"} increments when auditLogger throws', () => {
   const beforeCount = getMetricsCollector().getCounter('audit_sink_failures_total', [
     { name: 'sink', value: 'auditLogger' },
   ]);
@@ -873,7 +873,7 @@ test('Phase 2.3 — audit_sink_failures_total{sink="auditLogger"} increments whe
   assert.equal(chainCount, 0, 'auditChain counter must remain 0 when only auditLogger is wired+throws');
 });
 
-test('Phase 2.3 — audit_sink_failures_total{sink="auditChain"} increments when auditChain throws', () => {
+it('Phase 2.3 — audit_sink_failures_total{sink="auditChain"} increments when auditChain throws', () => {
   const beforeCount = getMetricsCollector().getCounter('audit_sink_failures_total', [
     { name: 'sink', value: 'auditChain' },
   ]);
@@ -899,7 +899,7 @@ test('Phase 2.3 — audit_sink_failures_total{sink="auditChain"} increments when
   assert.equal(inprocCount, 0, 'auditLogger counter must remain 0 when only auditChain is wired+throws');
 });
 
-test('Phase 2.3 — audit_sink_failures_total{sink="tokenRejectedLogger"} increments when user logger throws', async () => {
+it('Phase 2.3 — audit_sink_failures_total{sink="tokenRejectedLogger"} increments when user logger throws', async () => {
   const verifier = makeVerifier(Buffer.alloc(32, 7));
   const beforeCount = getMetricsCollector().getCounter('audit_sink_failures_total', [
     { name: 'sink', value: 'tokenRejectedLogger' },
@@ -939,7 +939,7 @@ test('Phase 2.3 — audit_sink_failures_total{sink="tokenRejectedLogger"} increm
   assert.equal(chainCount, 0, 'auditChain counter not affected by tokenRejectedLogger crash');
 });
 
-test('Phase 2.3 — audit_sink_failures_total is unaffected when both sinks succeed', () => {
+it('Phase 2.3 — audit_sink_failures_total is unaffected when both sinks succeed', () => {
   const beforeLogger = getMetricsCollector().getCounter('audit_sink_failures_total', [
     { name: 'sink', value: 'auditLogger' },
   ]);

@@ -7,6 +7,7 @@ import { MissionsPage } from './pages/MissionsPage';
 import { ExecutionPage } from './pages/ExecutionPage';
 import { MemoryPage } from './pages/MemoryPage';
 import { GovernancePage } from './pages/GovernancePage';
+import { SecurityPosturePage } from './pages/SecurityPosturePage';
 import { useWarRoom } from './hooks/useWarRoom';
 
 export default function App() {
@@ -111,6 +112,9 @@ export default function App() {
             />
           </Routes>
         )}
+        <Routes>
+          <Route path="/security" element={<SecurityPosturePage />} />
+        </Routes>
       </main>
     </div>
   );

@@ -294,3 +294,156 @@ export interface ReplayEventsResponse {
   events: ReplayEvent[];
   total: number;
 }
+
+// ============================================================================
+// Security Posture Dashboard Types
+// ============================================================================
+
+export type ScoringDimension =
+  | 'input_security'
+  | 'tool_safety'
+  | 'runtime_defense'
+  | 'supply_chain'
+  | 'economic_defense'
+  | 'operational_readiness'
+  | 'crypto_defense'
+  | 'fuzz_testing';
+
+export type IsoClause =
+  | '6.1' | '6.2'
+  | '7.1' | '7.2' | '7.3' | '7.4' | '7.5'
+  | '8.1' | '8.2' | '8.3'
+  | '9.1' | '9.2' | '9.3'
+  | '10.1' | '10.2';
+
+export type NistAirmfFunction = 'GOVERN' | 'MAP' | 'MEASURE' | 'MANAGE';
+
+export interface ComplianceControl {
+  id: string;
+  name: string;
+  description: string;
+  isoClauses: IsoClause[];
+  nistSubcategories: string[];
+  effectivenessScore: number;
+  automated: boolean;
+}
+
+export interface DimensionScore {
+  dimension: ScoringDimension;
+  label: string;
+  weight: number;
+  score: number;
+  controls: ComplianceControl[];
+  isoClausesCovered: IsoClause[];
+  nistSubcategoriesCovered: string[];
+  status: 'excellent' | 'good' | 'adequate' | 'needs_improvement' | 'critical';
+  recommendations: string[];
+}
+
+export interface SecurityPosture {
+  calculatedAt: string;
+  overallScore: number;
+  grade: string;
+  dimensions: DimensionScore[];
+  status: 'excellent' | 'good' | 'adequate' | 'needs_improvement' | 'critical';
+  topRisks: string[];
+  topStrengths: string[];
+}
+
+export interface IsoCoverageEntry {
+  covered: boolean;
+  controls: string[];
+  score: number;
+}
+
+export interface IsoGap {
+  clause: IsoClause;
+  description: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  recommendation: string;
+}
+
+export interface IsoComplianceSummary {
+  fullyCompliant: boolean;
+  clauseCoverage: Record<IsoClause, IsoCoverageEntry>;
+  gaps: IsoGap[];
+  compliancePercentage: number;
+}
+
+export interface NistFunctionCoverage {
+  coveredSubcategories: number;
+  totalSubcategories: number;
+  coveragePercentage: number;
+  controls: string[];
+}
+
+export interface NistGap {
+  subcategory: string;
+  description: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  recommendation: string;
+}
+
+export interface NistRmfAlignmentSummary {
+  functionCoverage: Record<NistAirmfFunction, NistFunctionCoverage>;
+  gaps: NistGap[];
+  alignmentPercentage: number;
+}
+
+export interface TrendAnalysis {
+  snapshotCount: number;
+  scoreDelta: number;
+  scoreDeltaRecent: number;
+  trend: 'improving' | 'stable' | 'declining' | 'insufficient_data';
+  averageScore: number;
+  minScore: number;
+  maxScore: number;
+  volatility: number;
+  projectedScore: number;
+}
+
+export interface PostureSnapshot {
+  id: string;
+  timestamp: string;
+  posture: SecurityPosture;
+  trigger: 'manual' | 'scheduled' | 'ci_cd' | 'pre_release';
+}
+
+export interface AuditChecklistItem {
+  id: string;
+  category: string;
+  item: string;
+  status: 'passed' | 'failed' | 'not_applicable' | 'pending';
+  evidence?: string;
+  notes?: string;
+}
+
+export interface RedTeamSummary {
+  securityScore: number;
+  totalScenarios: number;
+  blocked: number;
+  detected: number;
+  missed: number;
+  errors: number;
+  mode: 'smoke' | 'full' | 'critical-only';
+  regressions: number;
+  passed: boolean;
+}
+
+export interface ComplianceAuditReport {
+  metadata: {
+    reportId: string;
+    generatedAt: string;
+    version: number;
+    commitHash?: string;
+    branch?: string;
+  };
+  posture: SecurityPosture;
+  postureHistory: PostureSnapshot[];
+  isoCompliance: IsoComplianceSummary;
+  nistRmfAlignment: NistRmfAlignmentSummary;
+  trendAnalysis: TrendAnalysis;
+  auditChecklist: AuditChecklistItem[];
+  redTeam?: RedTeamSummary;
+  signature?: string;
+}
