@@ -30,6 +30,7 @@ import { getMetricsCollector } from '../runtime/metricsCollector';
 import { SubAgentGuard, SubAgentLimitError } from './subAgentGuard';
 import { getEffortRules } from './effortScaler';
 import { DEFAULT_ULTIMATE_CONFIG } from './types';
+import { getAgentLineage } from '../security/agentLineage';
 
 /** Critical path token budget multiplier (LAMaS: give critical tasks more resources) */
 const CRITICAL_PATH_TOKEN_MULTIPLIER = 1.5;
@@ -246,8 +247,15 @@ export class SubAgentExecutor {
           return sub;
         });
 
+        // Pass parent lineage instance ID through baseContext for recursive
+        // decomposition tracking (Phase 2.2). Children link to their actual
+        // parent agent, not the orchestrator run.
+        const childBaseContext = node.lineageInstanceId
+          ? { ...baseContext, __parentLineageId: node.lineageInstanceId }
+          : baseContext;
+
         const promises = adjustedBatch.map((sub) =>
-          this.executeNode(sub, projectId, baseContext, errors),
+          this.executeNode(sub, projectId, childBaseContext, errors),
         );
         const results = await Promise.allSettled(promises);
 
@@ -501,6 +509,36 @@ export class SubAgentExecutor {
 
       const narrowContext = this.buildNarrowContext(baseContext);
       const { specialist } = this.getModelTiers();
+
+      // Record agent lineage (parent→child relationship tracking - Phase 2.2)
+      // Declared BEFORE ctx so it can be included in AgentExecutionContext
+      let lineageInstanceId: string | undefined;
+      try {
+        const lineage = getAgentLineage();
+        const parentLineageId =
+          (baseContext as { __parentLineageId?: string }).__parentLineageId ?? null;
+        const child = lineage.spawnChild(
+          parentLineageId,
+          node.id,
+          {
+            role: node.role,
+            runId: this.currentRunId ?? undefined,
+            scope: { tools },
+            depth: (baseContext as { __depth?: number }).__depth ?? 1,
+            metadata: {
+              goalSnippet: node.goal.slice(0, 200),
+              modelTier: node.preferredModelTier,
+              effortLevel: this.currentEffortLevel,
+            },
+          },
+        );
+        lineageInstanceId = child.instanceId;
+        // Store on the node so parent→child lineage links work for recursive decomposition
+        node.lineageInstanceId = lineageInstanceId;
+      } catch {
+        /* best-effort — lineage tracking must never break execution */
+      }
+
       const ctx: AgentExecutionContext = {
         agentId: node.id,
         projectId,
@@ -517,7 +555,9 @@ export class SubAgentExecutor {
         subAgentRole: node.role ?? 'sub-agent',
         subAgentDepth: (baseContext as { __depth?: number }).__depth ?? 1,
         preferredModelTier: node.preferredModelTier ?? specialist,
+        lineageInstanceId,
       };
+
       try {
         getIntentLog(ctx.tenantId).write({
           schemaVersion: 1,
@@ -531,6 +571,7 @@ export class SubAgentExecutor {
             parentRunId: this.currentRunId,
             subAgentRole: node.role,
             depth: (baseContext as { __depth?: number }).__depth ?? 1,
+            lineageInstanceId,
           },
         });
       } catch {

@@ -14,7 +14,6 @@
  *    reasoning includes the learned-weight line when mature pairs exist
  */
 import { describe, it, expect } from 'vitest';
-import { PheromoneRouter } from '../../src/ultimate/pheromoneRouter';
 import { LearnedWeights, type TypeWeights } from '../../src/ultimate/learnedWeights';
 import { TopologyRouter } from '../../src/ultimate/topologyRouter';
 import type { OrchestrationTopology, DeliberationPlan } from '../../src/ultimate/types';
@@ -44,16 +43,14 @@ function makePlan(taskType: DeliberationPlan['taskType']): DeliberationPlan {
 describe('LearnedWeights', () => {
   describe('EMA updates', () => {
     it('starts at 0 EMA (neutral) for all pairs', () => {
-      const pr = new PheromoneRouter();
-      const lw = new LearnedWeights(pr);
+            const lw = new LearnedWeights();
       expect(lw.getAdjustedWeights('CODING', BASE_WEIGHTS).adjusted).toEqual(BASE_WEIGHTS);
       expect(lw.getAdjustedWeights('CODING', BASE_WEIGHTS).maturePairs).toBe(0);
     });
 
     it('moves the EMA toward +0.5 after a series of perfect successes', () => {
-      const pr = new PheromoneRouter();
-      const lw = new LearnedWeights(pr, { smoothingFactor: 0.3 });
-      // 10 perfect successes → pheromone confidence ≈ 1.0, signal ≈ 0.5
+            const lw = new LearnedWeights({ smoothingFactor: 0.3 });
+      // 10 perfect successes → signal = +0.5
       for (let i = 0; i < 10; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0);
       const stats = lw.getStats().find((s) => s.taskType === 'CODING' && s.topology === 'PARALLEL');
       expect(stats).toBeDefined();
@@ -64,9 +61,8 @@ describe('LearnedWeights', () => {
     });
 
     it('moves the EMA toward -0.5 after a series of failures', () => {
-      const pr = new PheromoneRouter();
-      // α=0.5 + 30 failures: signal saturates near 1/(1+15)−0.5 = −0.437, EMA converges to ≈ −0.43.
-      const lw = new LearnedWeights(pr, { smoothingFactor: 0.5 });
+            // α=0.5 + 30 failures: signal saturates near 1/(1+15)−0.5 = −0.437, EMA converges to ≈ −0.43.
+      const lw = new LearnedWeights({ smoothingFactor: 0.5 });
       for (let i = 0; i < 30; i++) lw.recordSignal('CODING', 'PARALLEL', false, 0.0);
       const stats = lw.getStats().find((s) => s.taskType === 'CODING' && s.topology === 'PARALLEL');
       expect(stats).toBeDefined();
@@ -76,19 +72,18 @@ describe('LearnedWeights', () => {
     });
 
     it('is reactive to recent evidence (EMA window)', () => {
-      const pr = new PheromoneRouter();
-      // α=1.0 means EMA = latest signal (no smoothing). Use 1 success + 5
+            // α=1.0 means EMA = latest signal (no smoothing). Use 1 success + 5
       // failures so the final pheromone confidence drops below 0.5 and the
       // last signal goes negative (a single failure after 5 successes is not
       // enough because the cumulative posterior keeps confidence > 0.8).
-      const lw = new LearnedWeights(pr, { smoothingFactor: 1.0 });
+      const lw = new LearnedWeights({ smoothingFactor: 1.0 });
       lw.recordSignal('CODING', 'PARALLEL', true, 1.0);
       for (let i = 0; i < 5; i++) lw.recordSignal('CODING', 'PARALLEL', false, 0.0);
       const stats = lw.getStats()[0];
       // Last signal is negative (1 success + 5 failures → confidence ≈ 0.42 → signal ≈ −0.08).
       expect(stats.state.ema).toBeLessThan(0);
       // And the EMA must be lower than a pure-success baseline.
-      const pureSuccess = new LearnedWeights(new PheromoneRouter(), { smoothingFactor: 1.0 });
+      const pureSuccess = new LearnedWeights({ smoothingFactor: 1.0 });
       for (let i = 0; i < 6; i++) pureSuccess.recordSignal('CODING', 'PARALLEL', true, 1.0);
       const pureStats = pureSuccess.getStats()[0];
       expect(stats.state.ema).toBeLessThan(pureStats.state.ema);
@@ -97,16 +92,14 @@ describe('LearnedWeights', () => {
 
   describe('getAdjustedWeights blend', () => {
     it('returns base unchanged when no pairs are mature', () => {
-      const pr = new PheromoneRouter();
-      const lw = new LearnedWeights(pr, { minSamplesBeforeAdjust: 3 });
+            const lw = new LearnedWeights({ minSamplesBeforeAdjust: 3 });
       const result = lw.getAdjustedWeights('CODING', BASE_WEIGHTS);
       expect(result.adjusted).toEqual(BASE_WEIGHTS);
       expect(result.maturePairs).toBe(0);
     });
 
     it('boosts the parallel dimension when PARALLEL is reinforced', () => {
-      const pr = new PheromoneRouter();
-      const lw = new LearnedWeights(pr, { smoothingFactor: 0.3, minSamplesBeforeAdjust: 3 });
+            const lw = new LearnedWeights({ smoothingFactor: 0.3, minSamplesBeforeAdjust: 3 });
       for (let i = 0; i < 10; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0);
       const result = lw.getAdjustedWeights('CODING', BASE_WEIGHTS);
       // Base parallel = 2. With positive EMA on PARALLEL, adjusted.parallel > 2.
@@ -116,8 +109,7 @@ describe('LearnedWeights', () => {
     });
 
     it('reduces the parallel dimension when PARALLEL is penalized', () => {
-      const pr = new PheromoneRouter();
-      const lw = new LearnedWeights(pr, { smoothingFactor: 0.3, minSamplesBeforeAdjust: 3 });
+            const lw = new LearnedWeights({ smoothingFactor: 0.3, minSamplesBeforeAdjust: 3 });
       for (let i = 0; i < 10; i++) lw.recordSignal('CODING', 'PARALLEL', false, 0.0);
       const result = lw.getAdjustedWeights('CODING', BASE_WEIGHTS);
       expect(result.adjusted.parallel).toBeLessThan(BASE_WEIGHTS.parallel);
@@ -125,8 +117,7 @@ describe('LearnedWeights', () => {
     });
 
     it('caps the adjustment at maxAdjustment (default 0.5)', () => {
-      const pr = new PheromoneRouter();
-      const lw = new LearnedWeights(pr, { smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
+            const lw = new LearnedWeights({ smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
       // 50 perfect successes → EMA should saturate at +0.5
       for (let i = 0; i < 50; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0);
       const result = lw.getAdjustedWeights('CODING', BASE_WEIGHTS);
@@ -138,8 +129,7 @@ describe('LearnedWeights', () => {
     });
 
     it('honors custom maxAdjustment (smaller cap)', () => {
-      const pr = new PheromoneRouter();
-      const lw = new LearnedWeights(pr, {
+            const lw = new LearnedWeights({
         smoothingFactor: 0.5,
         minSamplesBeforeAdjust: 3,
         maxAdjustment: 0.2,
@@ -150,8 +140,7 @@ describe('LearnedWeights', () => {
     });
 
     it('keeps weights non-negative even with strong negative signal', () => {
-      const pr = new PheromoneRouter();
-      const lw = new LearnedWeights(pr, { smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
+            const lw = new LearnedWeights({ smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
       for (let i = 0; i < 50; i++) lw.recordSignal('CODING', 'PARALLEL', false, 0.0);
       const result = lw.getAdjustedWeights('CODING', BASE_WEIGHTS);
       // adjusted.parallel = 2 * (1 - 0.5) = 1.0, never negative
@@ -175,8 +164,7 @@ describe('LearnedWeights', () => {
 
     for (const [topology, expectedDim] of cases) {
       it(`${topology} → ${expectedDim}`, () => {
-        const pr = new PheromoneRouter();
-        const lw = new LearnedWeights(pr, { smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
+                const lw = new LearnedWeights({ smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
         // Set base so the target dimension is non-zero.
         const base: TypeWeights = {
           research: 0,
@@ -195,8 +183,7 @@ describe('LearnedWeights', () => {
 
   describe('isolation + reset', () => {
     it('isolates state across (taskType, topology) pairs', () => {
-      const pr = new PheromoneRouter();
-      const lw = new LearnedWeights(pr);
+            const lw = new LearnedWeights();
       for (let i = 0; i < 10; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0);
       for (let i = 0; i < 10; i++) lw.recordSignal('RESEARCH', 'HYBRID', false, 0.0);
       const stats = lw.getStats();
@@ -208,22 +195,11 @@ describe('LearnedWeights', () => {
     });
 
     it('reset() clears all state', () => {
-      const pr = new PheromoneRouter();
-      const lw = new LearnedWeights(pr);
+            const lw = new LearnedWeights();
       lw.recordSignal('CODING', 'PARALLEL', true, 1.0);
       expect(lw.getStats().length).toBe(1);
       lw.reset();
       expect(lw.getStats().length).toBe(0);
-    });
-  });
-
-  describe('composition with PheromoneRouter', () => {
-    it('recordSignal also feeds the underlying pheromone (single source of truth)', () => {
-      const pr = new PheromoneRouter();
-      const lw = new LearnedWeights(pr);
-      for (let i = 0; i < 10; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0);
-      // Pheromone confidence should be high after the same observations
-      expect(pr.getConfidence('CODING', 'PARALLEL')).toBeGreaterThan(0.9);
     });
   });
 });
@@ -233,19 +209,16 @@ describe('TopologyRouter × LearnedWeights integration', () => {
     const tr = new TopologyRouter();
     const lw = tr.getLearnedWeights();
     expect(lw).toBeInstanceOf(LearnedWeights);
-    // Default shares the router's PheromoneRouter.
-    expect(tr.getPheromoneRouter()).toBe(tr.getPheromoneRouter());
   });
 
   it('accepts an injected LearnedWeights for testability', () => {
-    const customLw = new LearnedWeights(new PheromoneRouter());
-    const tr = new TopologyRouter(undefined, customLw);
+    const customLw = new LearnedWeights();
+    const tr = new TopologyRouter(customLw);
     expect(tr.getLearnedWeights()).toBe(customLw);
   });
 
   it('route() exposes adjustedWeights and uses them in scoring', () => {
-    const pr = new PheromoneRouter();
-    const tr = new TopologyRouter(pr);
+        const tr = new TopologyRouter();
     const result = tr.route(makePlan('CODING'));
     expect(result.adjustedWeights).toBeDefined();
     // CODING base weights: parallel=2, sequential=2, complex=1
@@ -255,8 +228,7 @@ describe('TopologyRouter × LearnedWeights integration', () => {
   });
 
   it('after enough signals, route() reflects the learned adjustment in the scores', () => {
-    const pr = new PheromoneRouter();
-    const tr = new TopologyRouter(pr);
+        const tr = new TopologyRouter();
     // Reinforce PARALLEL strongly for CODING.
     for (let i = 0; i < 15; i++)
       tr.getLearnedWeights().recordSignal('CODING', 'PARALLEL', true, 1.0);
@@ -278,8 +250,7 @@ describe('TopologyRouter × LearnedWeights integration', () => {
   });
 
   it('reasoning includes the learned-weights line when mature pairs exist', () => {
-    const pr = new PheromoneRouter();
-    const tr = new TopologyRouter(pr);
+        const tr = new TopologyRouter();
     for (let i = 0; i < 5; i++)
       tr.getLearnedWeights().recordSignal('CODING', 'PARALLEL', true, 1.0);
     const result = tr.route(makePlan('CODING'));
@@ -289,8 +260,7 @@ describe('TopologyRouter × LearnedWeights integration', () => {
   });
 
   it('reasoning omits the learned-weights line when no signal exists', () => {
-    const pr = new PheromoneRouter();
-    const tr = new TopologyRouter(pr);
+        const tr = new TopologyRouter();
     const result = tr.route(makePlan('CODING'));
     const learnedLine = result.reasoning.find((r) => r.startsWith('Learned weights for'));
     expect(learnedLine).toBeUndefined();

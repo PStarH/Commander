@@ -502,6 +502,7 @@ export class ModelRouter {
     ctx: AgentExecutionContext,
     governorPhase?: string,
     preferredTier?: ModelTier,
+    registeredProviders?: Set<string>,
   ): RoutingDecision {
     const complexity = scoreComplexity(ctx);
     const taskType = detectTaskType(ctx.goal);
@@ -517,7 +518,7 @@ export class ModelRouter {
     }
 
     // Score and rank candidates by capability fit + cost efficiency + learning
-    const candidates = this.rankCandidates(tier, requiredCaps, taskType, ctx);
+    const candidates = this.rankCandidates(tier, requiredCaps, taskType, ctx, registeredProviders);
     const model = candidates[0];
 
     const reasoning: string[] = [
@@ -641,14 +642,21 @@ export class ModelRouter {
    * @param maxModels - Maximum models in the cascade (default: 3)
    * @returns Ordered array of models: cheapest first, most capable last
    */
-  getCascadeChain(taskType?: string, maxModels: number = 3): ModelConfig[] {
+  getCascadeChain(
+    taskType?: string,
+    maxModels: number = 3,
+    registeredProviders?: Set<string>,
+  ): ModelConfig[] {
     const requiredCaps = TASK_CAPABILITY_MAP[taskType ?? 'general'] ?? [];
     const tierOrder: ModelTier[] = ['eco', 'standard', 'power', 'consensus'];
     const chain: ModelConfig[] = [];
 
     for (const tier of tierOrder) {
       if (chain.length >= maxModels) break;
-      const tierModels = this.tierIndex.get(tier) ?? [];
+      let tierModels = this.tierIndex.get(tier) ?? [];
+      if (registeredProviders && registeredProviders.size > 0) {
+        tierModels = tierModels.filter((m) => registeredProviders.has(m.provider));
+      }
       for (const model of tierModels) {
         if (chain.length >= maxModels) break;
         if (this.hasCapabilities(model, requiredCaps)) {
@@ -679,23 +687,24 @@ export class ModelRouter {
     ctx: AgentExecutionContext,
     governorPhase?: string,
     preferredTier?: ModelTier,
+    registeredProviders?: Set<string>,
   ): { initial: RoutingDecision; escalationChain: ModelConfig[] } {
     const governor = governorPhase ?? 'relaxed';
     const taskType = detectTaskType(ctx.goal);
 
     // In relaxed/moderate mode, use standard routing (start optimal)
     if (governor === 'relaxed' || governor === 'moderate') {
-      const initial = this.route(ctx, governor, preferredTier);
-      const chain = this.getCascadeChain(taskType, 3);
+      const initial = this.route(ctx, governor, preferredTier, registeredProviders);
+      const chain = this.getCascadeChain(taskType, 3, registeredProviders);
       return { initial, escalationChain: chain };
     }
 
     // In tight/critical mode, start with cheapest capable model (FrugalGPT pattern)
-    const chain = this.getCascadeChain(taskType, 3);
+    const chain = this.getCascadeChain(taskType, 3, registeredProviders);
 
     if (chain.length === 0) {
       // Fallback to standard routing
-      return { initial: this.route(ctx, governor, preferredTier), escalationChain: [] };
+      return { initial: this.route(ctx, governor, preferredTier, registeredProviders), escalationChain: [] };
     }
 
     // Start with the cheapest model in the chain
@@ -892,8 +901,13 @@ export class ModelRouter {
     requiredCaps: string[],
     taskType: string,
     ctx: AgentExecutionContext,
+    registeredProviders?: Set<string>,
   ): ModelConfig[] {
     let candidates = [...(this.tierIndex.get(tier) ?? [])];
+
+    if (registeredProviders && registeredProviders.size > 0) {
+      candidates = candidates.filter((m) => registeredProviders.has(m.provider));
+    }
 
     // Fallback chain if tier is empty
     if (candidates.length === 0) {

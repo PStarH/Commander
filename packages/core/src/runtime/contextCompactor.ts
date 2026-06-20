@@ -324,7 +324,7 @@ const DECISION_PATTERNS: RegExp[] = [
 
 const COMPACTED_MARKER = '__COMPACTED__';
 
-function isCompacted(msg: LLMMessage): boolean {
+export function isCompacted(msg: LLMMessage): boolean {
   return typeof msg.content === 'string' && msg.content.startsWith(COMPACTED_MARKER);
 }
 
@@ -427,7 +427,7 @@ export interface CompositionScore {
   codeBlockRatio: number;
 }
 
-function scoreMessageImportance(
+export function scoreMessageImportance(
   msg: LLMMessage,
   index: number,
   total: number,
