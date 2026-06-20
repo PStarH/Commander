@@ -12,7 +12,7 @@
  *   7. Key handling (production hard-fails; non-prod warns)
  */
 
-import { afterEach, beforeEach, describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'vitest';
 import * as assert from 'node:assert/strict';
 import * as fs from 'fs';
 import * as path from 'path';

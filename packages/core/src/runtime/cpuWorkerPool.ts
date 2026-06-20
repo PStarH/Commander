@@ -12,6 +12,7 @@
  */
 import { Worker, type WorkerOptions } from 'worker_threads';
 import * as path from 'path';
+import * as fs from 'fs';
 
 // ============================================================================
 // Types
@@ -21,11 +22,6 @@ export interface CPUWorkerPoolOptions {
   poolSize?: number;
   taskTimeoutMs?: number;
   workerScript?: string;
-}
-
-export interface WorkerTask<TInput, TOutput> {
-  type: string;
-  input: TInput;
 }
 
 export interface PendingTask {
@@ -38,6 +34,19 @@ export interface PendingTask {
 }
 
 // ============================================================================
+// Worker script resolution
+// ============================================================================
+
+function resolveWorkerScript(explicit?: string): string {
+  if (explicit) return explicit;
+  const dir = __dirname;
+  // Prefer TypeScript source when running under tsx; fall back to compiled JS.
+  const tsPath = path.join(dir, 'cpuWorker.ts');
+  if (fs.existsSync(tsPath)) return tsPath;
+  return path.join(dir, 'cpuWorker.js');
+}
+
+// ============================================================================
 // CPU Worker Pool
 // ============================================================================
 
@@ -45,6 +54,8 @@ export class CPUWorkerPool {
   private workers: Worker[] = [];
   private availableWorkers: Set<number> = new Set();
   private taskQueue: PendingTask[] = [];
+  private inFlightTasks = new Map<string, PendingTask>();
+  private taskWorkerIndex = new Map<string, number>();
   private taskIdCounter = 0;
   private readonly poolSize: number;
   private readonly taskTimeoutMs: number;
@@ -57,7 +68,7 @@ export class CPUWorkerPool {
     this.poolSize =
       options?.poolSize ?? Math.min(2, (globalThis.navigator?.hardwareConcurrency ?? 4) - 1);
     this.taskTimeoutMs = options?.taskTimeoutMs ?? 30_000;
-    this.workerScript = options?.workerScript ?? path.join(__dirname, 'cpuWorker.js');
+    this.workerScript = resolveWorkerScript(options?.workerScript);
   }
 
   async start(): Promise<void> {
@@ -74,12 +85,12 @@ export class CPUWorkerPool {
     } as WorkerOptions);
 
     worker.on('message', (msg: { id: string; result?: unknown; error?: string }) => {
-      const taskIdx = this.taskQueue.findIndex((t) => t.id === msg.id);
-      if (taskIdx === -1) return;
-
-      const task = this.taskQueue[taskIdx];
-      this.taskQueue.splice(taskIdx, 1);
       this.availableWorkers.add(index);
+
+      const task = this.inFlightTasks.get(msg.id);
+      if (!task) return;
+      this.inFlightTasks.delete(msg.id);
+      this.taskWorkerIndex.delete(msg.id);
 
       if (msg.error) {
         task.reject(new Error(msg.error));
@@ -111,6 +122,15 @@ export class CPUWorkerPool {
     if (this.closed) return;
 
     this.availableWorkers.delete(index);
+    // Reject any in-flight tasks assigned to this worker so callers don't hang.
+    for (const [id, task] of this.inFlightTasks) {
+      if (this.taskWorkerIndex.get(id) === index) {
+        this.inFlightTasks.delete(id);
+        this.taskWorkerIndex.delete(id);
+        task.reject(new Error(`Worker ${index} crashed during task ${id}`));
+      }
+    }
+
     try {
       this.workers[index]?.terminate();
     } catch {}
@@ -143,10 +163,23 @@ export class CPUWorkerPool {
       this.totalTasksQueued++;
 
       const timer = setTimeout(() => {
+        // Task still queued?
         const idx = this.taskQueue.findIndex((t) => t.id === id);
         if (idx !== -1) {
           this.taskQueue.splice(idx, 1);
           reject(new Error(`Task ${id} timed out after ${this.taskTimeoutMs}ms`));
+          return;
+        }
+        // Task is in-flight — abort it and recycle the worker.
+        const inFlight = this.inFlightTasks.get(id);
+        if (inFlight) {
+          this.inFlightTasks.delete(id);
+          const workerIdx = this.taskWorkerIndex.get(id);
+          this.taskWorkerIndex.delete(id);
+          inFlight.reject(new Error(`Task ${id} timed out after ${this.taskTimeoutMs}ms`));
+          if (workerIdx !== undefined) {
+            this.restartWorker(workerIdx);
+          }
         }
       }, this.taskTimeoutMs);
 
@@ -171,13 +204,16 @@ export class CPUWorkerPool {
       const workerIdx = this.availableWorkers.values().next().value!;
       this.availableWorkers.delete(workerIdx);
 
-      const task = this.taskQueue.find(
-        (t) => t.timestamp === Math.min(...this.taskQueue.map((t) => t.timestamp)),
-      );
-      if (!task) break;
+      const task = this.taskQueue.shift()!;
+      this.inFlightTasks.set(task.id, task);
+      this.taskWorkerIndex.set(task.id, workerIdx);
 
       const worker = this.workers[workerIdx];
       if (!worker) {
+        // Worker missing — put task back and release the slot.
+        this.taskQueue.unshift(task);
+        this.inFlightTasks.delete(task.id);
+        this.taskWorkerIndex.delete(task.id);
         this.availableWorkers.add(workerIdx);
         break;
       }
@@ -210,6 +246,11 @@ export class CPUWorkerPool {
       const task = this.taskQueue.shift()!;
       task.reject(err);
     }
+    for (const task of this.inFlightTasks.values()) {
+      task.reject(err);
+    }
+    this.inFlightTasks.clear();
+    this.taskWorkerIndex.clear();
 
     const shutdownPromises = this.workers.map((w) => w.terminate());
     await Promise.allSettled(shutdownPromises);

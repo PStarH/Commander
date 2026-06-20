@@ -15,7 +15,6 @@ import type {
 } from './types';
 import { COST_PER_TOKEN } from '../config/constants';
 import { evaluateCoordinationPolicy, type CoordinationDecision } from './coordinationPolicy';
-import { PheromoneRouter } from './pheromoneRouter';
 import { LearnedWeights, type TypeWeights } from './learnedWeights';
 
 /**
@@ -90,15 +89,12 @@ export class TopologyRouter {
   private routingCount = 0;
   /** Number of times the ε-greedy draw actually diverged from argmax. */
   private explorationCount = 0;
-  /** Pheromone router for experience-based score biasing. */
-  private readonly pheromoneRouter: PheromoneRouter;
   /** Learned weights for online meta-learning. */
   private readonly learnedWeights: LearnedWeights;
   /** Per-tenant epsilon override store. */
   private readonly epsilonStore?: import('./epsilonStore').EpsilonStore;
 
   constructor(
-    pheromoneRouter?: PheromoneRouter,
     learnedWeights?: LearnedWeights,
     config?: EpsilonGreedyConfig & { epsilonStore?: import('./epsilonStore').EpsilonStore },
   ) {
@@ -107,15 +103,8 @@ export class TopologyRouter {
     this.explorationTemperature = config?.explorationTemperature ?? 1.0;
     this.rng = config?.rng ?? Math.random;
     this.epsilonStore = config?.epsilonStore;
-    // Create or store pheromone router
-    this.pheromoneRouter = pheromoneRouter ?? new PheromoneRouter();
-    // Create or store learned weights (shares the pheromone router by default)
-    this.learnedWeights = learnedWeights ?? new LearnedWeights(this.pheromoneRouter);
-  }
-
-  /** Expose the internal PheromoneRouter for tests and observability. */
-  getPheromoneRouter(): PheromoneRouter {
-    return this.pheromoneRouter;
+    // Create or store learned weights
+    this.learnedWeights = learnedWeights ?? new LearnedWeights();
   }
 
   /** Expose the internal LearnedWeights for tests and observability. */
@@ -293,7 +282,9 @@ export class TopologyRouter {
     }
 
     // Apply pheromone biasing if there's enough data
-    let biasedScores:
+    // (PheromoneRouter removed; bias is now a no-op placeholder so the
+    // routing structure and observability fields remain intact.)
+    const biasedScores:
       | Array<{
           topology: OrchestrationTopology;
           score: number;
@@ -301,31 +292,13 @@ export class TopologyRouter {
           pheromoneSamples: number;
           expectedSuccess: number;
         }>
-      | undefined;
-
-    try {
-      const biased = this.pheromoneRouter.bias(taskType, scores);
-      if (biased && biased.length > 0) {
-        biasedScores = biased.map((b) => ({
-          topology: b.topology as OrchestrationTopology,
-          score: b.score,
-          pheromoneBias: b.pheromoneBias,
-          pheromoneSamples: b.pheromoneSamples,
-          expectedSuccess: b.expectedSuccess,
-        }));
-        // Apply the biased scores in place
-        for (const b of biased) {
-          const existing = scores.find((s) => s.topology === (b.topology as OrchestrationTopology));
-          if (existing) existing.score = b.score;
-        }
-        const positiveCount = biased.filter((b) => b.pheromoneBias > 0).length;
-        if (positiveCount > 0) {
-          reasoning.push(`Pheromone bias applied: ${positiveCount} topologies boosted`);
-        }
-      }
-    } catch {
-      // Pheromone bias is best-effort; if the router isn't ready, continue unscored
-    }
+      | undefined = scores.map((s) => ({
+        topology: s.topology,
+        score: s.score,
+        pheromoneBias: 0,
+        pheromoneSamples: 0,
+        expectedSuccess: 0.5,
+      }));
 
     scores.sort((a, b) => b.score - a.score);
     const argmaxTopology = scores[0].topology;

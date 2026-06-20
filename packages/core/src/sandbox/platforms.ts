@@ -6,6 +6,7 @@ import type { PlatformSandbox, SandboxProfile, SandboxExecutionResult } from './
 import { getGlobalLogger } from '../logging';
 import { buildSeccompFilter, countAllowedSyscalls } from './seccompBpf';
 import { getLLMAPIDomains, writeProxyScript } from './networkProxy';
+import { AppContainerSB } from './appContainer';
 
 // Expanded deny list — covers common secret-bearing env vars beyond the original 5
 const EXTRA_DENY = [
@@ -1036,6 +1037,7 @@ export function discoverSandboxes(): PlatformSandbox[] {
   const candidates: PlatformSandbox[] = [
     new SeatbeltSB(),
     new BwrapSB(),
+    new AppContainerSB(),
     new DockerSB(),
     new GVisorSB(),
   ];

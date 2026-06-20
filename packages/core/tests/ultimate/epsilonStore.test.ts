@@ -103,7 +103,7 @@ describe('TopologyRouter — per-tenant ε resolution (P6)', () => {
   it('uses per-tenant override when set', () => {
     const store = new EpsilonStore();
     store.set('A', 1.0); // always explore
-    const router = new TopologyRouter(undefined, undefined, {
+    const router = new TopologyRouter(undefined, {
       epsilon: 0.0, // never explore at the constructor level
       epsilonStore: store,
     });
@@ -116,7 +116,7 @@ describe('TopologyRouter — per-tenant ε resolution (P6)', () => {
   it('falls back to constructor default when no override', () => {
     const store = new EpsilonStore();
     store.set('OTHER', 0.5);
-    const router = new TopologyRouter(undefined, undefined, {
+    const router = new TopologyRouter(undefined, {
       epsilon: 0.2,
       epsilonStore: store,
     });
@@ -127,7 +127,7 @@ describe('TopologyRouter — per-tenant ε resolution (P6)', () => {
   it('per-call routeOptions.epsilon wins over per-tenant override', () => {
     const store = new EpsilonStore();
     store.set('A', 0.5);
-    const router = new TopologyRouter(undefined, undefined, {
+    const router = new TopologyRouter(undefined, {
       epsilon: 0.1,
       epsilonStore: store,
     });
@@ -138,7 +138,7 @@ describe('TopologyRouter — per-tenant ε resolution (P6)', () => {
   it('per-tenant wins over constructor default', () => {
     const store = new EpsilonStore();
     store.set('A', 0.5);
-    const router = new TopologyRouter(undefined, undefined, {
+    const router = new TopologyRouter(undefined, {
       epsilon: 0.1,
       epsilonStore: store,
     });
@@ -147,7 +147,7 @@ describe('TopologyRouter — per-tenant ε resolution (P6)', () => {
   });
 
   it('no epsilonStore means no per-tenant resolution', () => {
-    const router = new TopologyRouter(undefined, undefined, { epsilon: 0.3 });
+    const router = new TopologyRouter(undefined, { epsilon: 0.3 });
     const r = router.route(makeDeliberation(), undefined, undefined, 'A');
     expect(r.epsilonUsed).toBe(0.3);
   });
@@ -155,7 +155,7 @@ describe('TopologyRouter — per-tenant ε resolution (P6)', () => {
   it('no tenantId means no per-tenant resolution (constructor default used)', () => {
     const store = new EpsilonStore();
     store.set('A', 0.5);
-    const router = new TopologyRouter(undefined, undefined, {
+    const router = new TopologyRouter(undefined, {
       epsilon: 0.1,
       epsilonStore: store,
     });

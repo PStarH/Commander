@@ -6,7 +6,7 @@
  * standard failure categories.
  */
 
-import type { HttpRequest, HttpResponse, HttpSendFn } from './external/httpClient';
+import type { HttpRequest, HttpResponse, HttpSendFn } from './types';
 
 export type FailureCategory =
   | 'compute'

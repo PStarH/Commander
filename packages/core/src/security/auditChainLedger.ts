@@ -54,7 +54,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getCurrentTenantId } from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
-import { SecurityEvent } from './securityAuditLogger';
+import { SecurityEvent, SecurityEventType, SecuritySeverity } from './securityAuditLogger';
 
 // ============================================================================
 // Public types
@@ -154,6 +154,11 @@ export class AuditChainLedger {
   private readonly maxFiles: number;
   private currentChainFileIndex: number = 0;
   private currentChainFileSize: number = 0;
+  /** Serialized write queue so disk order matches seq order. */
+  private writeQueue: Promise<void> = Promise.resolve();
+  /** Entries that have already been durably flushed; these are NOT merged back
+   * into verify() so that a deleted/corrupted persisted entry is detected. */
+  private flushedEntries: WeakSet<AuditChainEntry> = new WeakSet();
   /** Master key for verification. Same instance ⇒ same chain. */
   readonly masterKeyForVerifiers: Buffer;
 
@@ -221,10 +226,28 @@ export class AuditChainLedger {
 
     // Persist directly via our own writer. Keep `SecurityAuditLogger`
     // untouched: it stays a clean audit sink for non-chain events.
-    this.persistChainedLine(entry).catch(() => {
-      // Best-effort: chain persist failures must never break execution.
-    });
+    this.persistChainedLine(entry);
     return entry;
+  }
+
+  /**
+   * Append an arbitrary record to the chain.
+   *
+   * Backwards-compatibility method used by security modules that pass an
+   * `event` field plus free-form metadata. The record is normalized to a
+   * {@link SecurityEvent}, persisted, and the returned entry carries both the
+   * canonical `hmac` field and a legacy `hash` alias.
+   */
+  append(record: Record<string, unknown>): AuditChainEntry & { hash: string } {
+    const { event, timestamp: _ts, ...rest } = record;
+    const entry = this.logEvent({
+      type: (typeof event === 'string' ? event : 'audit_event') as SecurityEventType,
+      severity: 'low' as SecuritySeverity,
+      source: 'audit-chain-append',
+      message: typeof event === 'string' ? event : 'audit event appended',
+      details: rest,
+    });
+    return { ...entry, hash: entry.hmac };
   }
 
   /** Current sequence number; the next `logEvent` will produce this+1. */
@@ -235,6 +258,11 @@ export class AuditChainLedger {
   /** Current chain's prevHash (will be the next entry's `prevHash`). */
   get currentPrevHash(): string {
     return this.prevHash;
+  }
+
+  /** Alias for the public `chainId` field, used by tests and dashboards. */
+  get currentChainId(): string {
+    return this.chainId;
   }
 
   /** Snapshot of in-memory entries (read-only). */
@@ -251,7 +279,19 @@ export class AuditChainLedger {
    */
   verify(opts: VerifyOptions = {}): VerifyResult {
     const persisted = collectPersistedEntries(this.persistDir);
-    const filtered = persisted.filter((e) => {
+    // Merge only in-memory entries that have NOT yet been durably flushed.
+    // Flushed entries that later disappear from disk are treated as tampering
+    // (seq_gap / broken_link), which is the desired tamper-evidence behavior.
+    const inMemory = this.getEntries().filter((e) => !this.flushedEntries.has(e));
+    const seenIds = new Set<string>(persisted.map((e) => e.id));
+    const merged = [...persisted];
+    for (const e of inMemory) {
+      if (!seenIds.has(e.id)) {
+        merged.push(e);
+        seenIds.add(e.id);
+      }
+    }
+    const filtered = merged.filter((e) => {
       if (opts.tenantId !== undefined && e.tenantId !== opts.tenantId) return false;
       if (opts.fromSeq !== undefined && e.seq < opts.fromSeq) return false;
       if (opts.toSeq !== undefined && e.seq > opts.toSeq) return false;
@@ -275,23 +315,27 @@ export class AuditChainLedger {
         if (a.seq !== b.seq) return a.seq - b.seq;
         return a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0;
       });
-      let prevHash = GENESIS_HASH;
-      let prevSeq = 0;
-      for (const e of entries) {
-        if (e.seq === prevSeq) {
+      // Detect duplicate seq before any HMAC work — a tampered duplicate should
+      // be reported as reordering, not as an invalid signature.
+      for (let i = 1; i < entries.length; i++) {
+        if (entries[i]!.seq === entries[i - 1]!.seq) {
           return {
             ok: false,
             totalEntries: filtered.length,
             chainsInspected: chains.size,
             brokenChain: {
-              chainId: e.chainId,
-              tenantId: e.tenantId,
-              seq: e.seq,
+              chainId: entries[i]!.chainId,
+              tenantId: entries[i]!.tenantId,
+              seq: entries[i]!.seq,
               reason: 'reorder_detected',
-              detail: `seq=${e.seq} appears more than once within chain ${e.chainId}`,
+              detail: `seq=${entries[i]!.seq} appears more than once within chain ${entries[i]!.chainId}`,
             },
           };
         }
+      }
+      let prevHash = GENESIS_HASH;
+      let prevSeq = 0;
+      for (const e of entries) {
         if (e.seq !== prevSeq + 1 && prevSeq > 0) {
           return {
             ok: false,
@@ -361,21 +405,28 @@ export class AuditChainLedger {
 
   // ── Persistence (own writer) ───────────────────────────────────────────
 
-  private async persistChainedLine(entry: AuditChainEntry): Promise<void> {
-    try {
-      const filePath = this.getCurrentChainFile();
-      const line = JSON.stringify(entry) + '\n';
-      await fs.promises.appendFile(filePath, line, 'utf-8');
-      this.currentChainFileSize += Buffer.byteLength(line, 'utf-8');
-      if (this.currentChainFileSize > this.maxFileSize) {
-        this.currentChainFileIndex = (this.currentChainFileIndex + 1) % this.maxFiles;
-        this.currentChainFileSize = 0;
+  private persistChainedLine(entry: AuditChainEntry): void {
+    // Serialize writes so disk order matches seq order. Use synchronous I/O
+    // inside the queue so callers see durable entries as soon as the queued
+    // task runs (after any prior writes). Audit volume is low enough that
+    // blocking writes are acceptable.
+    this.writeQueue = this.writeQueue.then(() => {
+      try {
+        const filePath = this.getCurrentChainFile();
+        const line = JSON.stringify(entry) + '\n';
+        fs.appendFileSync(filePath, line, 'utf-8');
+        this.flushedEntries.add(entry);
+        this.currentChainFileSize += Buffer.byteLength(line, 'utf-8');
+        if (this.currentChainFileSize > this.maxFileSize) {
+          this.currentChainFileIndex = (this.currentChainFileIndex + 1) % this.maxFiles;
+          this.currentChainFileSize = 0;
+        }
+      } catch (err) {
+        process.stderr.write(
+          `[auditChainLedger] Chain persist failed: ${(err as Error)?.message ?? String(err)}\n`,
+        );
       }
-    } catch (err) {
-      process.stderr.write(
-        `[auditChainLedger] Chain persist failed: ${(err as Error)?.message ?? String(err)}\n`,
-      );
-    }
+    });
   }
 
   private getCurrentChainFile(): string {

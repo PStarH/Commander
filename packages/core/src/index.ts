@@ -64,8 +64,6 @@ export {
   ArtifactSystem,
   getArtifactSystem,
   resetArtifactSystem,
-  CapabilityRegistry,
-  getCapabilityRegistry,
   AgentTeamManager,
   getTeamManager,
   WorkCoordinator,
@@ -289,6 +287,249 @@ export {
   getSecurityAuditLogger,
   resetSecurityAuditLogger,
 } from './security/securityAuditLogger';
+
+// CapabilityToken — short-lived HMAC-signed authorization tokens
+export {
+  CapabilityTokenIssuer,
+  CapabilityTokenVerifier,
+  CapabilityTokenError,
+  getCapabilityTokenIssuer,
+  resetCapabilityTokenState,
+} from './security/capabilityToken';
+export type {
+  CapabilityScope,
+  CapabilityPayload,
+  VerifyResult,
+  RiskLevel,
+} from './security/capabilityToken';
+
+// AuditChainLedger — tamper-evident hash-chained audit log
+export {
+  AuditChainLedger,
+  getAuditChainLedger,
+  resetAuditChainLedger,
+} from './security/auditChainLedger';
+
+// AgentLineage — immutable parent→child agent relationship tracking
+export { AgentLineage, getAgentLineage, resetAgentLineage } from './security/agentLineage';
+export type { LineageNode, LineageSummary, LineageQuery } from './security/agentLineage';
+
+// SupplyChainScanner — enterprise-grade skill/tool pre-load security scanning
+export { SupplyChainScanner, getSupplyChainScanner } from './security/supplyChainScanner';
+export type { SupplyChainScanRequest, SupplyChainScanResult } from './security/supplyChainScanner';
+
+// RedTeamFramework — automated adversarial security testing
+export {
+  RedTeamFramework,
+  getRedTeamFramework,
+  createContentScannerDefender,
+  createComprehensiveDefender,
+  generateSecurityReport,
+  generateSecurityReportJson,
+  ATTACK_SCENARIOS,
+} from './security/redTeamFramework';
+export type { RedTeamTestScenario, RedTeamTestResult, RedTeamRunReport } from './security/redTeamFramework';
+
+// OutputSanitizer — data exfiltration prevention at the output boundary
+export {
+  OutputSanitizer,
+  getOutputSanitizer,
+  resetOutputSanitizer,
+  sanitizeOutput,
+  sanitizeIfNeeded,
+} from './security/outputSanitizer';
+export type {
+  SensitivityCategory,
+  RedactionStrategy,
+  RedactionRule,
+  RedactionRecord,
+  SanitizeResult,
+  OutputSanitizerConfig,
+} from './security/outputSanitizer';
+
+// CostGuard — enterprise economic attack detection & auto circuit-breaker
+export { CostGuard, getCostGuard, resetCostGuard } from './security/costGuard';
+export type {
+  CostAttackType,
+  CostGuardAction,
+  CostTier,
+  CostGuardConfig,
+  CostGuardDecision,
+  CostGuardReport,
+} from './security/costGuard';
+
+// AgentSOC — P0-P4 incident classification, playbook engine, escalation paths, SOC dashboard
+export { AgentSoc, getAgentSoc, resetAgentSoc } from './security/agentSoc';
+export type {
+  IncidentPriority,
+  IncidentStatus,
+  EscalationLevel,
+  PlaybookTrigger,
+  Incident,
+  Playbook,
+  PostmortemReport,
+  SocHealth,
+  AgentSocConfig,
+} from './security/agentSoc';
+
+// EuAiActCompliance — EU AI Act Article 12/13/14 automated compliance reporting
+export {
+  EuAiActComplianceReporter,
+  getEuAiActComplianceReporter,
+  resetEuAiActComplianceReporter,
+} from './security/euAiActCompliance';
+export type {
+  EuAiActReport,
+  Article12Report,
+  Article13Report,
+  Article14Report,
+  ComplianceSummary,
+  ComplianceReportOptions,
+} from './security/euAiActCompliance';
+
+// AgentStandbyManager — hot standby agent architecture with auto-failover
+export { AgentStandbyManager, getAgentStandbyManager } from './security/agentStandbyManager';
+export type {
+  AgentTier,
+  AgentInstance,
+  SwitchTrigger,
+  SwitchEvent,
+  StandbyConfig,
+  StandbyHealth,
+} from './security/agentStandbyManager';
+
+// RedTeamBaseline — regression detection for continuous red team CI/CD
+export {
+  RedTeamBaselineManager,
+  getRedTeamBaseline,
+} from './security/redTeamBaseline';
+export type {
+  RegressionSeverity,
+  RegressionResult,
+  ImprovementResult,
+  BaselineComparison,
+} from './security/redTeamBaseline';
+
+// EdgeSecurityProfile — unified edge/offline mode
+export { EdgeSecurityProfile, getEdgeSecurityProfile } from './security/edgeSecurityProfile';
+export type {
+  EdgeMode,
+  EdgeDetectionResult,
+  EdgeSecurityConfig,
+  EdgeSecurityStatus,
+} from './security/edgeSecurityProfile';
+
+// ComplianceAuditManager — ISO 42001/NIST AI RMF audit preparation
+export {
+  ComplianceAuditManager,
+  getComplianceAuditManager,
+} from './security/complianceAuditReport';
+export type {
+  ComplianceControl,
+  DimensionScore,
+  SecurityPosture,
+  PostureSnapshot,
+  ComplianceAuditReport,
+  TrendAnalysis,
+} from './security/complianceAuditReport';
+
+// ThreatIntelligenceFeed — dynamic threat feed with TLP and SupplyChainScanner integration
+export {
+  ThreatIntelligenceFeed,
+  getThreatIntelligenceFeed,
+  resetThreatIntelligenceFeed,
+} from './security/threatIntelligenceFeed';
+export type {
+  TlpLevel,
+  ThreatSignature,
+  ThreatFeedSource,
+  ThreatFeedHealth,
+  ThreatFeedConfig,
+} from './security/threatIntelligenceFeed';
+
+// CrossAgentCorrelator — multi-agent attack chain detection
+export {
+  CrossAgentCorrelator,
+  getCrossAgentCorrelator,
+  resetCrossAgentCorrelator,
+} from './security/crossAgentCorrelator';
+export type {
+  CorrelationRuleType,
+  CrossAgentEvent,
+  CorrelationMatch,
+  CorrelationRule,
+  CorrelatorConfig,
+} from './security/crossAgentCorrelator';
+
+// MLInjectionDetector — embedding-based semantic injection detection
+export {
+  MLInjectionDetector,
+  getMLInjectionDetector,
+  resetMLInjectionDetector,
+} from './security/mlInjectionDetector';
+export type {
+  InjectionVector,
+  DetectionResult,
+  MLDetectorConfig,
+} from './security/mlInjectionDetector';
+
+// FuzzTestFramework — mutation-based tool input fuzzer with coverage-guided feedback
+export {
+  FuzzTestFramework,
+  getFuzzTestFramework,
+  resetFuzzTestFramework,
+} from './security/fuzzTestFramework';
+export type { FuzzInput, FuzzResult, FuzzRunReport, FuzzerConfig } from './security/fuzzTestFramework';
+
+// PostQuantumCrypto — PQ-safe hash (SHAKE-256), key generation, MAC creation/verification
+export {
+  PostQuantumCrypto,
+  getPostQuantumCrypto,
+  resetPostQuantumCrypto,
+  pqHash,
+  pqVerifyMac,
+} from './security/postQuantumCrypto';
+export type { PqKeyPair, PqMac, PqHashResult, PqCryptoConfig } from './security/postQuantumCrypto';
+
+// MultimodalContentScanner — voice/video/image threat scanning
+export {
+  MultimodalContentScanner,
+  getMultimodalContentScanner,
+  resetMultimodalContentScanner,
+} from './security/multimodalContentScanner';
+export type {
+  MultimodalThreat,
+  MultimodalScanResult,
+  MultimodalScannerConfig,
+} from './security/multimodalContentScanner';
+
+// SandboxVerifier — formal sandbox verification harness
+export {
+  SandboxVerifier,
+  getSandboxVerifier,
+  resetSandboxVerifier,
+} from './security/sandboxVerifier';
+export type { SandboxVerificationReport } from './security/sandboxVerifier';
+
+// VoiceContentScanner — enhanced audio/voice threat scanning
+export {
+  VoiceContentScanner,
+  getVoiceContentScanner,
+  resetVoiceContentScanner,
+} from './security/voiceContentScanner';
+export type { VoiceThreat, VoiceScanResult } from './security/voiceContentScanner';
+
+// FederatedIdentity — cross-org trust delegation with HMAC+OIDC JWT dual signing (Phase 3)
+export {
+  FederatedIdentity,
+  getFederatedIdentity,
+  resetFederatedIdentity,
+} from './security/federatedIdentity';
+export type {
+  FederationTrust,
+  FederatedExchangeResult,
+  FederatedExchangeOutcome,
+} from './security/federatedIdentity';
 
 // Cost Estimation
 export { CostEstimator, getCostEstimator, resetCostEstimator } from './runtime/costEstimator';
@@ -742,7 +983,7 @@ export type {
   PrivacyDecision,
   PrivacyRoute,
   SensitivityMatch,
-  SensitivityCategory,
+  SensitivityCategory as PrivacySensitivityCategory,
 } from './runtime/privacyRouter';
 
 // Saga Runtime — durable compensating transactions

@@ -12,7 +12,7 @@ export async function createMemoryStore(
     }
     case 'sqlite': {
       try {
-        const { SqliteMemoryStore } = await import('../runtime/sqliteMemoryStore');
+        const { SqliteMemoryStore } = await import('./sqliteMemoryStore');
         const store = new SqliteMemoryStore('.commander/memory.db');
         store.init().catch((err: Error) =>
           getGlobalLogger().warn('createMemoryStore', 'SqliteMemoryStore init failed', {
