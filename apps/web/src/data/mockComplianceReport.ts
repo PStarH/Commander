@@ -112,6 +112,7 @@ function buildPosture(overallScore: number, timestamp: string): SecurityPosture 
         { id: 'CTL-003', name: 'Privacy Router', description: 'Sensitive data detection + local model fallback', isoClauses: ['8.1', '8.3'], nistSubcategories: ['MAP-3.1', 'MEASURE-2.3'], effectivenessScore: 82, automated: true },
         { id: 'CTL-021', name: 'ML Injection Detector', description: 'Embedding-based semantic injection detection (64-dim char n-gram)', isoClauses: ['8.2', '8.3'], nistSubcategories: ['MEASURE-2.1', 'MEASURE-2.2'], effectivenessScore: 75, automated: true },
         { id: 'CTL-022', name: 'Multimodal Scanner', description: 'Image/video/audio threat scanning (15 file types)', isoClauses: ['8.2', '8.3'], nistSubcategories: ['MEASURE-2.1', 'MANAGE-2.1'], effectivenessScore: 72, automated: true },
+        { id: 'CTL-029', name: 'Voice Content Scanner', description: 'Voice command injection + DTMF/spectrogram/LSB stego detection', isoClauses: ['8.2', '8.3'], nistSubcategories: ['MEASURE-2.1', 'MEASURE-2.2'], effectivenessScore: 74, automated: true },
       ],
       isoClausesCovered: ['8.1', '8.2', '8.3'],
       nistSubcategoriesCovered: ['MEASURE-2.1', 'MEASURE-2.2', 'MEASURE-2.3', 'MAP-3.1', 'MANAGE-2.1'],
@@ -128,6 +129,7 @@ function buildPosture(overallScore: number, timestamp: string): SecurityPosture 
         { id: 'CTL-005', name: 'Tool Approval', description: '5-mode approval system', isoClauses: ['8.1', '8.2'], nistSubcategories: ['GOVERN-3.1'], effectivenessScore: 85, automated: true },
         { id: 'CTL-006', name: 'Path Security', description: 'Path traversal prevention', isoClauses: ['8.3'], nistSubcategories: ['MANAGE-2.1'], effectivenessScore: 88, automated: true },
         { id: 'CTL-023', name: 'Seccomp BPF', description: 'Linux syscall filtering via BPF bytecode', isoClauses: ['8.1', '8.3'], nistSubcategories: ['MANAGE-2.1'], effectivenessScore: 88, automated: true },
+        { id: 'CTL-030', name: 'AppContainer Sandbox', description: 'Windows AppContainer isolation (PowerShell profiles, capability SIDs)', isoClauses: ['8.1', '8.3'], nistSubcategories: ['MANAGE-2.1'], effectivenessScore: 82, automated: true },
       ],
       isoClausesCovered: ['8.1', '8.2', '8.3'],
       nistSubcategoriesCovered: ['MANAGE-2.1', 'GOVERN-3.1'],
@@ -192,6 +194,7 @@ function buildPosture(overallScore: number, timestamp: string): SecurityPosture 
         { id: 'CTL-018', name: 'Red Team Framework', description: 'Adversarial testing', isoClauses: ['9.1', '9.2', '10.2'], nistSubcategories: ['MEASURE-2.4', 'MANAGE-4.1'], effectivenessScore: 85, automated: true },
         { id: 'CTL-019', name: 'Red Team Baseline', description: 'Regression detection', isoClauses: ['9.1', '9.2', '10.2'], nistSubcategories: ['MEASURE-3.1', 'MEASURE-3.2'], effectivenessScore: 83, automated: true },
         { id: 'CTL-020', name: 'EU AI Act Reporter', description: 'Automated compliance reports', isoClauses: ['7.5', '9.2', '9.3'], nistSubcategories: ['GOVERN-1.1', 'GOVERN-5.1'], effectivenessScore: 78, automated: true },
+        { id: 'CTL-031', name: 'Sandbox Verifier', description: 'Formal sandbox verification (7 tests: file/network/process isolation)', isoClauses: ['9.1', '9.2', '10.2'], nistSubcategories: ['MEASURE-2.4', 'MEASURE-3.1'], effectivenessScore: 80, automated: true },
       ],
       isoClausesCovered: ['7.5', '8.1', '8.3', '9.1', '9.2', '9.3', '10.1', '10.2'],
       nistSubcategoriesCovered: ['MANAGE-3.1', 'MANAGE-4.1', 'MANAGE-2.2', 'GOVERN-5.1', 'MEASURE-3.1', 'MEASURE-2.4', 'MEASURE-3.2', 'GOVERN-1.1'],
@@ -318,6 +321,9 @@ function buildChecklist(): AuditChecklistItem[] {
     { id: 'ACK-20', category: 'Controls', item: 'Semantic injection detection (ML)', status: 'passed', evidence: 'MLInjectionDetector — 64-dim char n-gram + k-NN' },
     { id: 'ACK-21', category: 'Controls', item: 'Multimodal content scanning', status: 'passed', evidence: 'MultimodalScanner — 15 file types, SVG/GIFAR/PDF detection' },
     { id: 'ACK-22', category: 'Controls', item: 'SIEM/SOC external log forwarding', status: 'passed', evidence: 'SIEMForwarder — Syslog/Splunk/Datadog' },
+    { id: 'ACK-23', category: 'Controls', item: 'Voice command injection detection', status: 'passed', evidence: 'VoiceContentScanner — DTMF/spectrogram/LSB stego' },
+    { id: 'ACK-24', category: 'Controls', item: 'Windows sandbox isolation (AppContainer)', status: 'passed', evidence: 'AppContainerSandbox — PowerShell profiles + capability SIDs' },
+    { id: 'ACK-25', category: 'Testing', item: 'Formal sandbox verification testing', status: 'passed', evidence: 'SandboxVerifier — 7 cross-platform isolation tests' },
   ];
 }
 
