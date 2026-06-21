@@ -6,7 +6,7 @@
  */
 export type SandboxMode = 'read-only' | 'workspace-write' | 'full-access';
 export type NetworkPolicy = 'blocked' | 'allowlisted' | 'proxy' | 'full';
-export type SandboxMechanism = 'seatbelt' | 'bwrap' | 'appcontainer' | 'docker' | 'gvisor' | 'none';
+export type SandboxMechanism = 'seatbelt' | 'bwrap' | 'appcontainer' | 'docker' | 'gvisor' | 'tee' | 'none';
 
 export interface FileAccessPolicy {
   readablePaths: string[];

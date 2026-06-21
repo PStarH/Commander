@@ -82,13 +82,13 @@ describe('OutputSanitizer', () => {
     });
 
     it('redacts Slack tokens', () => {
-      const result = sanitizer.sanitize('slack-bot-token-test1234567890abcdefghijklmnop');
+      const result = sanitizer.sanitize('xoxb-1234567890abcdefghijklmnopqrstuv');
       expect(result.redacted).toBe(true);
       expect(result.sanitized).toContain('[REDACTED:api-key]');
     });
 
     it('redacts Stripe keys', () => {
-      const result = sanitizer.sanitize('stripe-live-key-test1234567890abcdefghijklmnop');
+      const result = sanitizer.sanitize('sk_test_abcdefghijklmnopqrstuvwxyz1234');
       expect(result.redacted).toBe(true);
       expect(result.sanitized).toContain('[REDACTED:api-key]');
     });
