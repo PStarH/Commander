@@ -7,6 +7,7 @@ export default defineConfig({
       'tests/runtime/agentHandoff.test.ts',
       'tests/runtime/agentInbox.test.ts',
       'tests/runtime/agentRuntime.test.ts',
+      'tests/runtime/agentRuntime.integration.test.ts',
       'tests/runtime/circuitBreaker.test.ts',
       'tests/runtime/compensation-integration.test.ts',
       'tests/runtime/compensationRegistry.test.ts',
@@ -37,6 +38,8 @@ export default defineConfig({
       'tests/runtime/providerFallbackChain.test.ts',
       'tests/runtime/reflexionInjector.test.ts',
       'tests/runtime/runRecovery.test.ts',
+      'tests/runtime/securityOrchestrator.test.ts',
+      'tests/runtime/securityOrchestrator.integration.test.ts',
       'tests/runtime/samplesStore.test.ts',
       'tests/runtime/semanticCache.test.ts',
       'tests/runtime/speculativeExecutor.test.ts',
@@ -67,6 +70,7 @@ export default defineConfig({
       // --- sandbox ---
       'tests/sandbox/lane.test.ts',
       'tests/sandbox/appContainer.test.ts',
+      'tests/sandbox/teeEnclave.test.ts',
       'tests/runtime/observationPurifier.test.ts',
       // --- tools ---
       'tests/tools/resourceTools.test.ts',
@@ -101,6 +105,11 @@ export default defineConfig({
       'tests/security/multimodalContentScanner.test.ts',
       'tests/security/sandboxVerifier.test.ts',
       'tests/security/voiceContentScanner.test.ts',
+      'tests/security/mitreAtlasMapper.test.ts',
+      'tests/security/adaptiveHitl.test.ts',
+      'tests/security/securityBenchmarkRunner.test.ts',
+      'tests/security/supplyChainAttestor.test.ts',
+      'tests/security/differentialPrivacyLayer.test.ts',
       // --- http ---
       // --- ultimate ---
       'tests/ultimate/coordinationPolicy.test.ts',
@@ -120,6 +129,13 @@ export default defineConfig({
       'tests/ultimate/orchestrator.test.ts',
       'tests/ultimate/workCoordinator.test.ts',
       'tests/ultimate/workQueueStore.test.ts',
+      // --- benchmark ---
+      'tests/benchmark/benchmarkRunner.ts',
+      'tests/benchmark/performanceBenchmark.test.ts',
+      'tests/benchmark/loadBenchmark.test.ts',
+      'tests/benchmark/costBenchmark.test.ts',
+      'tests/benchmark/reliabilityBenchmark.test.ts',
+      'tests/benchmark/comparisonBenchmark.test.ts',
       // 'tests/benchmark/multiAgentBenchmark.metrics.test.ts', // TODO: depends on missing src/benchmark/multiAgentBenchmark module
     ],
     environment: 'node',
