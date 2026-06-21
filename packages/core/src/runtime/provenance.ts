@@ -8,7 +8,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { getGlobalLogger } from '../logging';
 
 /**
@@ -40,30 +40,54 @@ export interface RunProvenance {
   tags: Record<string, string>;
 }
 
-export function captureProvenance(): Omit<RunProvenance, 'runId' | 'timestamp' | 'model' | 'tags'> {
+/** Cached git state — fetched once per process to avoid repeated blocking calls. */
+let cachedGitState: { commitHash: string; branch: string; dirty: boolean } | null = null;
+
+function fetchGitState(): { commitHash: string; branch: string; dirty: boolean } {
+  if (cachedGitState) return cachedGitState;
+
   let commitHash = 'unknown';
   let branch = 'unknown';
   let dirty = false;
   try {
-    commitHash = execSync('git rev-parse HEAD', { encoding: 'utf-8', timeout: 3000 }).trim();
-    branch = execSync('git rev-parse --abbrev-ref HEAD', {
+    commitHash = execFileSync('git', ['rev-parse', 'HEAD'], {
       encoding: 'utf-8',
       timeout: 3000,
     }).trim();
-    const status = execSync('git status --porcelain', { encoding: 'utf-8', timeout: 3000 }).trim();
+    branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      encoding: 'utf-8',
+      timeout: 3000,
+    }).trim();
+    const status = execFileSync('git', ['status', '--porcelain'], {
+      encoding: 'utf-8',
+      timeout: 3000,
+    }).trim();
     dirty = status.length > 0;
   } catch {
     getGlobalLogger().debug('Provenance', 'Not in a git repo or git not available');
   }
 
+  cachedGitState = { commitHash, branch, dirty };
+  return cachedGitState;
+}
+
+export function captureProvenance(): Omit<RunProvenance, 'runId' | 'timestamp' | 'model' | 'tags'> {
+  const git = fetchGitState();
   return {
-    git: { commitHash, branch, dirty },
+    git,
     system: {
       nodeVersion: process.version,
       platform: process.platform,
       arch: process.arch,
     },
   };
+}
+
+/**
+ * Reset cached git state (for testing or when repo changes).
+ */
+export function resetProvenanceCache(): void {
+  cachedGitState = null;
 }
 
 export function createRunProvenance(
