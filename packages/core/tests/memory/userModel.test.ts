@@ -229,7 +229,7 @@ describe('UserModelManager', () => {
   });
 
   describe('saveProfile / loadProfile', () => {
-    it('round-trips profile through disk', () => {
+    it('round-trips profile through disk', async () => {
       manager.recordInteraction('user-1', {
         message: 'hello world test',
         role: 'user',
@@ -242,26 +242,26 @@ describe('UserModelManager', () => {
         evidenceCount: 3,
         tags: ['lang'],
       });
-      manager.saveProfile('user-1');
+      await manager.saveProfile('user-1');
 
       // Create fresh manager to test loading
       const manager2 = new UserModelManager({ modelPath: tmpDir });
-      const loaded = manager2.loadProfile('user-1');
+      const loaded = await manager2.loadProfile('user-1');
       assert.ok(loaded);
       assert.equal(loaded!.userId, 'user-1');
       assert.equal(loaded!.interactionCount, 1);
     });
 
-    it('returns null for non-existent profile', () => {
-      const loaded = manager.loadProfile('nonexistent');
+    it('returns null for non-existent profile', async () => {
+      const loaded = await manager.loadProfile('nonexistent');
       assert.equal(loaded, null);
     });
 
-    it('handles corrupted profile file gracefully', () => {
+    it('handles corrupted profile file gracefully', async () => {
       const profilePath = path.join(tmpDir, 'user-bad.json');
       fs.writeFileSync(profilePath, 'not valid json');
       const mgr = new UserModelManager({ modelPath: tmpDir });
-      const loaded = mgr.loadProfile('user-bad');
+      const loaded = await mgr.loadProfile('user-bad');
       assert.equal(loaded, null);
     });
   });
