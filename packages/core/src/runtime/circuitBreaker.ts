@@ -253,6 +253,44 @@ export class CircuitBreaker {
     if (was !== 'CLOSED') this.onStateChange?.(was, 'CLOSED');
   }
 
+  configure(options: {
+    threshold?: number;
+    recoveryTimeMs?: number;
+    halfOpenMaxTests?: number;
+    volumeThreshold?: number;
+    errorRateThreshold?: number;
+    semanticThreshold?: number;
+    securityThreshold?: number;
+  }): void {
+    if (options.threshold !== undefined) this.threshold = options.threshold;
+    if (options.recoveryTimeMs !== undefined) this.recoveryTimeMs = options.recoveryTimeMs;
+    if (options.halfOpenMaxTests !== undefined) this.halfOpenMaxTests = options.halfOpenMaxTests;
+    if (options.volumeThreshold !== undefined) this.volumeThreshold = options.volumeThreshold;
+    if (options.errorRateThreshold !== undefined) this.errorRateThreshold = options.errorRateThreshold;
+    if (options.semanticThreshold !== undefined) this.semanticThreshold = options.semanticThreshold;
+    if (options.securityThreshold !== undefined) this.securityThreshold = options.securityThreshold;
+  }
+
+  getConfig(): {
+    threshold: number;
+    recoveryTimeMs: number;
+    halfOpenMaxTests: number;
+    volumeThreshold: number;
+    errorRateThreshold: number;
+    semanticThreshold: number;
+    securityThreshold: number;
+  } {
+    return {
+      threshold: this.threshold,
+      recoveryTimeMs: this.recoveryTimeMs,
+      halfOpenMaxTests: this.halfOpenMaxTests,
+      volumeThreshold: this.volumeThreshold,
+      errorRateThreshold: this.errorRateThreshold,
+      semanticThreshold: this.semanticThreshold,
+      securityThreshold: this.securityThreshold,
+    };
+  }
+
   private transitionTo(newState: CircuitState): void {
     const old = this.state;
     if (old !== newState) {
