@@ -252,7 +252,7 @@ export {
 } from './frameworkIntegration';
 
 // Shell & Runner exports
-export { getSandboxManager, SandboxManager, ExecPolicyEngine } from './sandbox';
+export { getSandboxManager, SandboxManager, ExecPolicyEngine, TEESandbox } from './sandbox';
 export type {
   SandboxMode,
   SandboxProfile,
@@ -261,6 +261,9 @@ export type {
   FileAccessPolicy,
   SandboxExecutionResult,
   PlatformSandbox,
+  TEEBackend,
+  TEEAttestation,
+  TEESandboxResult,
 } from './sandbox';
 
 // Credential Manager
@@ -530,6 +533,89 @@ export type {
   FederatedExchangeResult,
   FederatedExchangeOutcome,
 } from './security/federatedIdentity';
+
+// MitreAtlasMapper — MITRE ATLAS tactics/techniques mapping
+export { MitreAtlasMapper, getMitreAtlasMapper, resetMitreAtlasMapper } from './security/mitreAtlasMapper';
+export type {
+  AtlasTactic,
+  AtlasTechnique,
+  AtlasHeatmapCell,
+  AtlasMapping,
+  MitreAtlasReport,
+} from './security/mitreAtlasMapper';
+
+// AdaptiveHITL — risk-adaptive human-in-the-loop strategy engine
+export { AdaptiveHITL, getAdaptiveHitl, resetAdaptiveHitl, maxStrategy } from './security/adaptiveHitl';
+export type {
+  HITLStrategy,
+  ToolRiskSignal,
+  AgentConfidenceSignal,
+  MissionSignal,
+  HITLSignalBundle,
+  HITLFactor,
+  HITLDecision,
+  AgentBehaviorProfile,
+  AdaptiveHITLConfig,
+} from './security/adaptiveHitl';
+
+// SecurityBenchmarkRunner — automated CI/CD security benchmark scoring
+export {
+  SecurityBenchmarkRunner,
+  getSecurityBenchmarkRunner,
+  ALL_BENCHMARK_CASES,
+  getCasesForBenchmark,
+} from './security/securityBenchmarkRunner';
+export type {
+  BenchmarkId,
+  BenchmarkTestCase,
+  BenchmarkTestResult,
+  BenchmarkRunReport,
+  BenchmarkTrend,
+  BenchmarkRunnerConfig,
+  DefenderFn,
+} from './security/securityBenchmarkRunner';
+
+// SupplyChainAttestor — SPDX 2.3 SBOM + Sigstore keyless attestation
+export {
+  SupplyChainAttestor,
+  getSupplyChainAttestor,
+  resetSupplyChainAttestor,
+  componentToPurl,
+  hashFile,
+  hashString,
+} from './security/supplyChainAttestor';
+export type {
+  SpdxDocument,
+  AttestationBundle,
+  AttestationResult,
+  VerificationResult,
+  ComponentEntry,
+  AttestorConfig,
+} from './security/supplyChainAttestor';
+
+// DifferentialPrivacyLayer — ε-DP Laplace/Gaussian mechanisms for cross-agent memory sharing
+export {
+  DifferentialPrivacyLayer,
+  getDifferentialPrivacyLayer,
+  resetDifferentialPrivacyLayer,
+  sampleLaplace,
+  sampleGaussian,
+  laplaceMechanism,
+  gaussianMechanism,
+  analyzeSensitivity,
+  classifyEpsilon,
+} from './security/differentialPrivacyLayer';
+export type {
+  DPPrivacyLevel,
+  DPQueryType,
+  DPSensitivity,
+  DPDataBounds,
+  PrivacyBudget,
+  DifferentialPrivacyConfig,
+  DPQueryResult,
+  DPQueryRejection,
+  DPQueryOutcome,
+} from './security/differentialPrivacyLayer';
 
 // Cost Estimation
 export { CostEstimator, getCostEstimator, resetCostEstimator } from './runtime/costEstimator';
@@ -966,8 +1052,16 @@ export {
 // Experimental — not yet wired into the main execution flow
 export { PluginLoader, getPluginLoader } from './pluginLoader';
 
-// Reliability Engine — Unified resilience facade (circuit breaker + DLQ + compensation + checkpoints)
-export { ReliabilityEngine } from './runtime/reliabilityEngine';
+// SecurityOrchestrator — unified runtime security coordination facade
+export {
+  SecurityOrchestrator,
+  getSecurityOrchestrator,
+  resetSecurityOrchestrator,
+} from './runtime/securityOrchestrator';
+export type {
+  SecurityOrchestratorDecision,
+  SecurityOrchestratorConfig,
+} from './runtime/securityOrchestrator';
 export type { ReliabilityEngineConfig, ReliabilityStats } from './runtime/reliabilityEngine';
 
 // Commander Core — tiered auto-configuration control center (recommended entry)

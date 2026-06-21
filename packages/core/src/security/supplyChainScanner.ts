@@ -29,6 +29,7 @@ import { scanSkillContent, SecurityScanResult, SecurityWarning } from '../skills
 import { getCurrentTenantId } from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { recordSinkFailure } from '../observability/sinkFailureCounter';
+import { getSupplyChainAttestor } from './supplyChainAttestor';
 
 // ============================================================================
 // Types
@@ -417,6 +418,20 @@ export class SupplyChainScanner {
     // ── Audit chain integration ──
     if (this.auditAllScans) {
       this.auditScan(request.name, scanId, result, Date.now() - startTime);
+    }
+
+    // ── Scanner→Attestor bridge (P1 audit gap) ───────────────────
+    // Auto-generate SPDX SBOM attestation for any scanned component
+    // that passes the scan (not blocked). Closes the gap between
+    // detection (scanner) and provenance proof (attestor).
+    if (result.passed) {
+      try {
+        const attestor = getSupplyChainAttestor();
+        // Generate SPDX SBOM for passed scans (non-blocking, best-effort)
+        void attestor.generateProjectSbom();
+      } catch {
+        recordSinkFailure('scannerAttestorBridge');
+      }
     }
 
     return result;

@@ -45,3 +45,5 @@ export type {
 export { buildSeccompFilter, writeSeccompFilterToFile, countAllowedSyscalls } from './seccompBpf';
 export type { SeccompFilterOptions } from './seccompBpf';
 export { AppContainerSB } from './appContainer';
+export { TEESandbox } from './teeEnclave';
+export type { TEEBackend, TEEAttestation, TEESandboxResult } from './teeEnclave';
