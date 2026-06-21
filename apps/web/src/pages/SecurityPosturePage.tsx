@@ -231,6 +231,69 @@ function NewCapabilitiesSection() {
       color: 'var(--accent-pink)',
       tag: 'input_security',
     },
+    {
+      icon: '⧁',
+      title: 'AppContainer Sandbox',
+      desc: 'Windows sandbox isolation via PowerShell AppContainer profiles with capability SIDs. Auto-detected on Win8+. Complements Seatbelt/bwrap/Docker sandbox chain.',
+      color: 'var(--accent-amber)',
+      tag: 'tool_safety',
+    },
+    {
+      icon: '✓',
+      title: 'Sandbox Verifier',
+      desc: 'Formal sandbox verification with 7 cross-platform isolation tests: file read/write/escape, network access, process fork, env sanitization. Evidence-backed compliance reporting.',
+      color: 'var(--accent-cyan)',
+      tag: 'operational_readiness',
+    },
+    {
+      icon: '♪',
+      title: 'Voice Content Scanner',
+      desc: 'Enhanced audio scanning: voice command injection (Hey Siri/OK Google/Alexa), DTMF frequency pair detection, spectrogram hidden data, LSB steganography analysis.',
+      color: 'var(--accent-pink)',
+      tag: 'input_security',
+    },
+    {
+      icon: '🔒',
+      title: 'TEE Sandbox',
+      desc: 'Hardware-level Trusted Execution Environment: AWS Nitro Enclaves + GCP Confidential VMs (AMD SEV-SNP / Intel TDX). Memory encryption + cryptographic attestation.',
+      color: 'var(--accent-purple)',
+      tag: 'tool_safety',
+    },
+    {
+      icon: '▦',
+      title: 'MITRE ATLAS Mapper',
+      desc: 'Automatic mapping of security events to MITRE ATLAS tactics/techniques (14 tactics, 60+ techniques). Generates ATLAS Navigator heatmaps + compliance reports.',
+      color: 'var(--accent-blue)',
+      tag: 'compliance',
+    },
+    {
+      icon: '⧂',
+      title: 'Adaptive HITL Engine',
+      desc: 'Risk-adaptive human-in-the-loop: 6 dynamic strategies (auto→deny), multi-signal composite scoring from 6 sources, behavior profile learning, time-decay escalation, explainability trail.',
+      color: 'var(--accent-cyan)',
+      tag: 'runtime_defense',
+    },
+    {
+      icon: '▣',
+      title: 'Benchmark Runner',
+      desc: 'CI/CD security benchmark scoring: embedded AgentDojo, Agent-SafetyBench, and AgentHarm test cases with trend tracking, baselines, and gate enforcement.',
+      color: 'var(--accent-green)',
+      tag: 'compliance',
+    },
+    {
+      icon: '◉',
+      title: 'Supply Chain Attestor',
+      desc: 'SPDX 2.3 SBOM generation + Sigstore keyless signing + in-toto DSSE attestation. Cryptographic provenance proof for all Commander components (US EO 14028).',
+      color: 'var(--accent-purple)',
+      tag: 'supply_chain',
+    },
+    {
+      icon: 'ε',
+      title: 'Differential Privacy Layer',
+      desc: 'ε-DP Laplace + Gaussian mechanisms for cross-agent memory sharing. Auto-sensitivity analysis, per-agent budget accounting, and query sanitization (EU AI Act Art. 10 data minimization).',
+      color: 'var(--accent-cyan)',
+      tag: 'data_privacy',
+    },
   ];
 
   return (
@@ -241,7 +304,7 @@ function NewCapabilitiesSection() {
           <h2 style={{ fontSize: '1.1rem' }}>New Capabilities · Gap-Fill Sprint</h2>
         </div>
         <span className="bdg" style={{ borderColor: 'var(--accent-green)', color: 'var(--accent-green)', background: 'var(--accent-green)20' }}>
-          6 modules
+          15 modules
         </span>
       </div>
 
