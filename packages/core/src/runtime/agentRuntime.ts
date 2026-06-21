@@ -32,6 +32,38 @@ import type {
   ModelConfig,
   ModelTier,
 } from './types';
+import {
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_TOKEN_GOVERNOR_BUDGET,
+  TOOL_OUTPUT_TURN_BUDGET,
+  CIRCUIT_BREAKER_THRESHOLD,
+  CIRCUIT_BREAKER_RECOVERY_MS,
+  VERIFICATION_FLOOR_TOKENS,
+  VERIFICATION_BUDGET_TOKENS,
+  MAX_REFLEXION_MEMORIES,
+  MAX_TOKENS_PER_REFLEXION,
+  TOOL_ORCHESTRATOR_MAX_RETRIES,
+  TOOL_ORCHESTRATOR_CIRCUIT_THRESHOLD,
+  GOAL_TELEMETRY_MAX_CHARS,
+  GOAL_RESULT_MAX_CHARS,
+  GOAL_FULL_MAX_CHARS,
+  OUTPUT_PREFIX_MAX_CHARS,
+  SUMMARY_MAX_CHARS,
+  ERROR_MAX_CHARS,
+  MEMORY_SNIPPET_MAX_CHARS,
+  TOOL_PATTERN_MAX_CHARS,
+  VERIFICATION_FEEDBACK_MAX_CHARS,
+  RESULT_CONTENT_MAX_CHARS,
+  CONCISE_OUTPUT_THRESHOLD,
+  RETRY_LOOP_THRESHOLD,
+  RETRY_LOOP_PATTERN_HISTORY,
+  CONTEXT_TOKEN_FRACTION,
+  MIN_CONTEXT_TOKENS,
+  FALLBACK_COST_PER_1K_INPUT,
+  MAX_OUTPUT_TOKENS_ESTIMATE,
+  DEFAULT_LLM_TIMEOUT_MS,
+  INPUT_TOKEN_SAFETY_MARGIN,
+} from './runtimeConstants';
 import type { AgentRuntimeInterface } from './agentRuntimeInterface';
 import { ModelRouter, getModelRouter } from './modelRouter';
 import {
@@ -142,6 +174,12 @@ import { getCostEstimator, type CostEstimate } from './costEstimator';
 import { getModelPerformanceStore } from './modelPerformanceStore';
 import { getSecurityMonitor } from '../security/securityMonitor';
 import {
+  SecurityOrchestrator,
+  getSecurityOrchestrator,
+  type SecurityOrchestratorDecision,
+} from './securityOrchestrator';
+import type { CrossAgentEvent } from '../security/crossAgentCorrelator';
+import {
   DEFAULT_CONFIG,
   generateId,
   now,
@@ -168,6 +206,43 @@ interface TenantResolutionResult {
   error?: string;
   overrides?: TenantOverrides;
 }
+
+/**
+ * Canonical shape for synthetic-error rows pushed into rawResults (serial
+ * path) or returned as Promise.allSettled values (concurrent path) when a
+ * pre-tool-call gate blocks a tool call. Single source of truth — both the
+ * `syntheticErrorRow` factory and the `PreToolCallGateResult.siblingAbort`
+ * discriminator reference this. Module-scope because TS 6.x is stricter
+ * about class-body type alias hoisting than earlier versions.
+ */
+type SyntheticErrorRow = {
+  toolCallId: string;
+  name: string;
+  output: string;
+  error: string;
+  durationMs: number;
+};
+
+/**
+ * Discriminated-union return type for `AgentRuntime.applyPreToolCallGates`.
+ * The helper is a PURE decision function:
+ *   - inspects the four pre-tool-call gates (hook, sibling-abort, retry,
+ *     cycle) and returns ONE OF these tags plus minimal context for the
+ *     caller to format observable side effects (bus publishes, synthetic-
+ *     error rows, outer-loop flag mutations).
+ *   - NEVER calls `getMessageBus().publish(...)` itself — all side effects
+ *     live at the call site so a spy on the bus can prove there is no
+ *     double-fire path.
+ * This shape is exhaustive: each `kind` carries the minimum context the
+ * caller needs; TypeScript exhaustiveness checks will surface any missed
+ * case at compile time.
+ */
+type PreToolCallGateResult =
+  | { kind: 'allowed' }
+  | { kind: 'hooked'; errorMsg: string }
+  | { kind: 'siblingAbort'; row: SyntheticErrorRow }
+  | { kind: 'retry'; count: number }
+  | { kind: 'cycle'; description: string };
 
 export class AgentRuntime implements AgentRuntimeInterface {
   private config: AgentRuntimeConfig;
@@ -217,6 +292,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
     tenantId?: string;
   } | null = null;
   private contentScanner: ContentScanner;
+  // SecurityOrchestrator: unified runtime defense facade
+  private securityOrch: SecurityOrchestrator;
   // Conversation store (FTS5-powered session persistence)
   private conversationStore: import('../memory/conversationStore').ConversationStore | null = null;
 
@@ -460,6 +537,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
     this.planner = new ToolPlanner();
     this.cycleDetector = new CycleDetector();
     this.contentScanner = createContentScanner();
+    this.securityOrch = getSecurityOrchestrator();
 
     // Initialize ConversationStore for FTS5-powered conversation persistence
     try {
@@ -510,7 +588,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
             .addTurn({
               sessionId,
               role: 'assistant',
-              content: (summary || '').slice(0, 5000),
+              content: (summary || '').slice(0, SUMMARY_MAX_CHARS),
             })
             .catch(() => {});
           store.endSession(sessionId).catch(() => {});
@@ -529,7 +607,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
             .addTurn({
               sessionId,
               role: 'assistant',
-              content: `[Failed] ${(error || '').slice(0, 2000)}`,
+              content: `[Failed] ${(error || '').slice(0, ERROR_MAX_CHARS)}`,
             })
             .catch(() => {});
           store.endSession(sessionId).catch(() => {});
@@ -640,14 +718,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
     const canonicalArgs = JSON.stringify(args, [...Object.keys(args)].sort());
     const pattern = `${toolName}:${canonicalArgs}`;
     patterns.push(pattern);
-    if (patterns.length > 20) patterns.shift();
+    if (patterns.length > RETRY_LOOP_PATTERN_HISTORY) patterns.shift();
     const count = patterns.filter((p) => p === pattern).length;
-    if (count >= 3) {
+    if (count >= RETRY_LOOP_THRESHOLD) {
       const bus = getMessageBus();
       bus.publish('system.alert', 'runtime', {
         type: 'retry_loop_detected',
         toolName,
-        pattern: `${toolName}:${canonicalArgs.slice(0, 200)}`,
+        pattern: `${toolName}:${canonicalArgs.slice(0, TOOL_PATTERN_MAX_CHARS)}`,
         consecutiveCalls: count,
         toolLoopCount,
       });
@@ -677,6 +755,221 @@ export class AgentRuntime implements AgentRuntimeInterface {
       return { detected: true, count };
     }
     return { detected: false, count: 0 };
+  }
+
+  /**
+   * Apply SecurityOrchestrator pre-tool-call checks shared by both the
+   * concurrent-safe and the serial execution paths in execute().
+   *
+   * Previously this 30-line block was duplicated in two places (concurrent
+   * Promise.allSettled path and serial for-of path). Extracting into one
+   * helper closes the divergence risk where one path could silently drift
+   * from the other (e.g. one gets a new correlated event type, the other
+   * doesn't), and centralizes the synthetic blocked-result shape so logged
+   * errors, tool_call metadata, and tool_result shapes stay consistent
+   * across both execution modes.
+   *
+   * Behavior — must match the original duplicated code byte-for-byte:
+   *   1. Calls `onBeforeToolCall(name, args, agentId, runId)` and awaits it.
+   *   2. Best-effort emits a `tool_call` CrossAgentEvent into the correlator
+   *      (severity stays `low` if allowed, `high` if blocked).
+   *   3. When denied, publishes a `tool.blocked` bus event with
+   *      reason='security_orchestrator_denied' and blockReason in `detail`.
+   *   4. When denied, returns BOTH synthetic result shapes the two callers
+   *      need: a raw-result row for the concurrent Promise.allSettled
+   *      array, and a ToolResult for the serial for-of path.
+   */
+  private async applyBeforeToolCallSecurity(
+    tc: ToolCall,
+    agentId: string,
+    runId: string,
+  ): Promise<{
+    decision: SecurityOrchestratorDecision;
+    allowed: boolean;
+    /** Synthetic raw-result row for the concurrent parallel-results array. */
+    blockedRawResult?: {
+      toolCallId: string;
+      name: string;
+      output: string;
+      error: string;
+      durationMs: number;
+    };
+    /** Synthetic ToolResult for the serial execution path. */
+    blockedToolResult?: ToolResult;
+  }> {
+    const decision = await this.securityOrch.onBeforeToolCall(
+      tc.name,
+      tc.arguments as Record<string, unknown>,
+      agentId,
+      runId,
+    );
+
+    // Feed tool_call event to correlator (DoS detection, lateral movement,
+    // collusion). Wrapped in try/catch — Guardian/Correlator sink failures
+    // must NEVER block the underlying security decision.
+    try {
+      this.securityOrch.onAgentEvent({
+        id: generateId(),
+        agentId,
+        runId,
+        type: 'tool_call',
+        summary: `Tool ${tc.name} (${decision.allowed ? 'allowed' : 'blocked'})`,
+        metadata: {
+          toolName: tc.name,
+          allowed: decision.allowed,
+          hitlStrategy: decision.hitlStrategy,
+          hitlSources: decision.sources,
+        },
+        timestamp: Date.now(),
+        severity: decision.allowed ? 'low' : 'high',
+      } as CrossAgentEvent);
+    } catch {
+      /* best-effort */
+    }
+
+    if (decision.allowed) {
+      return { decision, allowed: true };
+    }
+
+    // Blocked: publish a tool.blocked bus event FIRST (matching the original
+    // duplicated code byte-for-byte — original left this unprotected so a
+    // throwing subscriber propagates), then synthesize both result shapes
+    // the two callers each need.
+    const blockReason = decision.blockReason ?? 'AdaptiveHITL blocked';
+    getMessageBus().publish('tool.blocked', agentId, {
+      runId,
+      toolName: tc.name,
+      reason: 'security_orchestrator_denied',
+      detail: blockReason,
+    });
+    const reasonStr = `Security blocked: ${blockReason}`;
+    const blockedRawResult = {
+      toolCallId: tc.id,
+      name: tc.name,
+      output: '',
+      error: reasonStr,
+      durationMs: 0,
+    };
+    const blockedToolResult: ToolResult = {
+      toolCallId: tc.id,
+      name: tc.name,
+      output: '',
+      error: reasonStr,
+      durationMs: 0,
+    };
+
+    return {
+      decision,
+      allowed: false,
+      blockedRawResult,
+      blockedToolResult,
+    };
+  }
+
+  /**
+   * Apply the pre-tool-call safety gates that previously ran as ~70 lines
+   * of duplicated logic in both the concurrent-safe `Promise.allSettled`
+   * path and the serial `for-of` path of execute().
+   *
+   * Three sequential gates:
+   *   1. HookManager.fireBeforeToolCall: plugin deny → action='continue'
+   *      (skip just this tc). Original sequence preserves plugin-check before
+   *      sibling-abort and before retry/cycle.
+   *   2. sibling-abort (concurrent-only): if the sibling AbortSignal is
+   *      already fired due to an earlier tool error, action='continue'.
+   *      Only meaningful for concurrent paths; serial passes `undefined`.
+   *   3. retry-loop detection: this.checkRetryLoop() finds a 3× same
+   *      (tool,args) repetition → action='break' (exit all tc iterations).
+   *   4. cycle detection: cycleDetector.check() finds a tool-call cycle →
+   *      action='break'. Also publishes system.alert + tool.blocked bus
+   *      events and increments retry-loop metrics on the way through.
+   *
+   * All side-effects (bus.publish, metrics, intent log, recentToolPatterns
+   * mutation) match the original duplicated code byte-for-byte. Only the
+   * orchestration differs: caller inspects `action` to decide whether to
+   * `return`, `break`, or `continue` based on execution mode.
+   */
+  // Discriminated-union return type for applyPreToolCallGates. The helper is
+  // a pure decision function: it inspects the four pre-tool-call gates and
+  // returns the outcome PLUS minimum context for the caller to format
+  // observable side effects (bus publishes, outer-loop flag mutations,
+  // synthetic-error rows). All bus.publish calls live at the call site —
+  // never inside the helper — so we can spy on the bus to prove that no
+  // double-publish path exists.
+  private async applyPreToolCallGates(
+    tc: ToolCall,
+    agentId: string,
+    runId: string,
+    tenantId: string | undefined,
+    recentToolPatterns: string[],
+    toolLoopCount: number,
+    siblingAbortSignal?: AbortSignal,
+  ): Promise<PreToolCallGateResult> {
+    // Gate 1: HookManager plugin denial.
+    const hookCtx = {
+      toolName: tc.name,
+      args: tc.arguments,
+      agentId,
+      runId,
+    };
+    const hookResult = await getHookManager().fireBeforeToolCall(hookCtx);
+    if (hookResult !== null) {
+      return { kind: 'hooked', errorMsg: hookResult.error ?? '' };
+    }
+
+    // Gate 2: sibling-abort cancellation (concurrent-only).
+    // The serial path passes `undefined` for `siblingAbortSignal`, so this
+    // branch only fires inside the Promise.allSettled closure.
+    if (siblingAbortSignal?.aborted) {
+      return {
+        kind: 'siblingAbort',
+        row: this.syntheticErrorRow(tc, 'Cancelled: sibling tool error'),
+      };
+    }
+
+    // Gate 3: retry-loop detection.
+    const rlCheck = this.checkRetryLoop(
+      tc.name,
+      tc.arguments as Record<string, unknown>,
+      recentToolPatterns,
+      runId,
+      tenantId,
+      toolLoopCount,
+    );
+    if (rlCheck.detected) {
+      // The caller will set retryLoopDetected=true and assign retryLoopCount
+      // from this count; we surface a count that matches the value the
+      // previous helper wired in (which was `toolLoopCount`).
+      return { kind: 'retry', count: toolLoopCount };
+    }
+
+    // Gate 4: cycle detection.
+    const cycleCheck = this.cycleDetector.check(
+      tc.name,
+      tc.arguments,
+      toolLoopCount,
+    );
+    if (cycleCheck.detected) {
+      return { kind: 'cycle', description: cycleCheck.description ?? '' };
+    }
+
+    return { kind: 'allowed' };
+  }
+
+  /** Small factory for the inline synthetic-result row shape that both the
+   *  concurrent parallel-results array and the serial rawResults.push path
+   *  consume. Centralized so that future schema changes touch one place. */
+  private syntheticErrorRow(
+    tc: ToolCall,
+    errorMsg: string,
+  ): SyntheticErrorRow {
+    return {
+      toolCallId: tc.id,
+      name: tc.name,
+      output: '',
+      error: errorMsg,
+      durationMs: 0,
+    };
   }
 
   registerProvider(name: string, provider: LLMProvider): void {
@@ -1030,7 +1323,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   costPer1KInput: 0,
                   costPer1KOutput: 0,
                   capabilities: [],
-                  contextWindow: 128000,
+                  contextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
                   priority: 0,
                 },
             );
@@ -1474,11 +1767,19 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 .filter((w) => w.length > 4)
                 .slice(0, 8);
               if (keywords.length > 0) {
-                const memories = this.memory.query({
+                const rawMemories = this.memory.query({
                   keywords,
                   limit: 5,
                   importanceThreshold: 0.3,
                 });
+                // DP-sanitize memory entries before sharing across agents
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const dpOutcome = this.securityOrch.sanitizeMemoryShare(
+                  rawMemories as any,
+                  ctx.agentId,
+                );
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const memories = dpOutcome.result as any as typeof rawMemories;
                 if (memories.length > 0) {
                   const memoryBlock = memories
                     .map(
@@ -1710,6 +2011,30 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 tenantId,
               );
 
+              // SecurityOrchestrator: feed LLM call into GuardianAgent + CrossAgentCorrelator
+              try {
+                const llmEvent: CrossAgentEvent = {
+                  id: generateId(),
+                  agentId: ctx.agentId,
+                  runId,
+                  type: 'llm_call',
+                  summary: `LLM call to ${routing.modelId}: ${response.content?.slice(0, 80) ?? ''}`,
+                  metadata: {
+                    model: routing.modelId,
+                    provider: routing.provider,
+                    tier: routing.tier,
+                    tokenUsage: response.usage,
+                    stepDuration,
+                    hasToolCalls: !!(response.toolCalls && response.toolCalls.length > 0),
+                  },
+                  timestamp: Date.now(),
+                  severity: 'low' as const,
+                };
+                this.securityOrch.onAgentEvent(llmEvent);
+              } catch {
+                /* best-effort */
+              }
+
               // Record actual cost for estimator learning (per-step)
               try {
                 const modelCfg = this.router.getModel(routing.modelId);
@@ -1723,7 +2048,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                       costPer1KInput: 0.003,
                       costPer1KOutput: 0.01,
                       capabilities: [],
-                      contextWindow: 128000,
+                      contextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
                       priority: 0,
                     },
                   ).costUsd *
@@ -1976,86 +2301,71 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     const siblingAbort = new AbortController();
                     const concurrentResults = await Promise.allSettled(
                       safeCalls.map(async (tc) => {
-                        // Check HookManager beforeToolCall
-                        const hookCtx = {
-                          toolName: tc.name,
-                          args: tc.arguments,
-                          agentId: ctx.agentId,
-                          runId,
-                        };
-                        const hookResult = await getHookManager().fireBeforeToolCall(hookCtx);
-                        if (hookResult !== null) {
-                          bus.publish('tool.blocked', ctx.agentId, {
-                            runId,
-                            toolName: tc.name,
-                            reason: 'hook_denied',
-                            detail: hookResult.error ?? '',
-                          });
-                          return {
-                            toolCallId: tc.id,
-                            name: tc.name,
-                            output: '',
-                            error: `Hook blocked: ${hookResult.error || 'denied'}`,
-                            durationMs: 0,
-                          };
-                        }
-
-                        if (siblingAbort.signal.aborted) {
-                          return {
-                            toolCallId: tc.id,
-                            name: tc.name,
-                            output: '',
-                            error: 'Cancelled: sibling tool error',
-                            durationMs: 0,
-                          };
-                        }
-                        // Retry-loop detection: canonicalized args for deterministic matching
-                        const rlCheck = this.checkRetryLoop(
-                          tc.name,
-                          tc.arguments as Record<string, unknown>,
-                          recentToolPatterns,
+                        // Pre-tool-call safety gates (hook, sibling-abort, retry, cycle)
+                        const gate = await this.applyPreToolCallGates(
+                          tc,
+                          ctx.agentId,
                           runId,
                           ctx.tenantId,
+                          recentToolPatterns,
                           toolLoopCount,
+                          siblingAbort.signal,
                         );
-                        if (rlCheck.detected) {
-                          retryLoopDetected = true;
-                          retryLoopCount = rlCheck.count;
-                          return {
-                            toolCallId: tc.id,
-                            name: tc.name,
-                            output: '',
-                            error: `Retry loop detected: ${tc.name}`,
-                            durationMs: 0,
-                          };
-                        }
-                        const cycleCheck = this.cycleDetector.check(
-                          tc.name,
-                          tc.arguments,
-                          toolLoopCount,
-                        );
-                        if (cycleCheck.detected) {
-                          bus.publish('system.alert', 'runtime', {
-                            type: 'cycle_detected',
-                            toolName: tc.name,
-                            description: cycleCheck.description,
-                          });
-                          bus.publish('tool.blocked', ctx.agentId, {
-                            runId,
-                            toolName: tc.name,
-                            reason: 'cycle_detected',
-                            detail: cycleCheck.description,
-                          });
-                          cycleDetected = true;
-                          return {
-                            toolCallId: tc.id,
-                            name: tc.name,
-                            output: '',
-                            error: `Cycle detected: ${cycleCheck.description}`,
-                            durationMs: 0,
-                          };
+                        if (gate.kind !== 'allowed') {
+                          if (gate.kind === 'retry') {
+                            retryLoopDetected = true;
+                            retryLoopCount = gate.count;
+                            return this.syntheticErrorRow(
+                              tc,
+                              `Retry loop detected: ${tc.name}`,
+                            );
+                          }
+                          if (gate.kind === 'cycle') {
+                            cycleDetected = true;
+                            // Publishes live at the call site so a spy on
+                            // getMessageBus().publish counts exactly one
+                            // publish for each gate kind — no double-fire.
+                            bus.publish('system.alert', 'runtime', {
+                              type: 'cycle_detected',
+                              toolName: tc.name,
+                              description: gate.description,
+                            });
+                            bus.publish('tool.blocked', ctx.agentId, {
+                              runId,
+                              toolName: tc.name,
+                              reason: 'cycle_detected',
+                              detail: gate.description,
+                            });
+                            return this.syntheticErrorRow(
+                              tc,
+                              `Cycle detected: ${gate.description}`,
+                            );
+                          }
+                          if (gate.kind === 'hooked') {
+                            bus.publish('tool.blocked', ctx.agentId, {
+                              runId,
+                              toolName: tc.name,
+                              reason: 'hook_denied',
+                              detail: gate.errorMsg,
+                            });
+                            return this.syntheticErrorRow(
+                              tc,
+                              `Hook blocked: ${gate.errorMsg || 'denied'}`,
+                            );
+                          }
+                          // gate.kind === 'siblingAbort'
+                          return gate.row;
                         }
 
+                        // SecurityOrchestrator: unify ToolApproval + AdaptiveHITL before execution
+                        const sec = await this.applyBeforeToolCallSecurity(
+                          tc,
+                          ctx.agentId,
+                          runId,
+                        );
+                        if (!sec.allowed && sec.blockedRawResult) {
+                          return sec.blockedRawResult;
+                        }
                         // Catch InterruptError before StepErrorBoundary — it's a signal, not an error
                         let toolResult: ToolResult;
                         try {
@@ -2144,84 +2454,90 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
                   // Run serial tools in order
                   for (const tc of serialCalls) {
-                    const hookCtx = {
-                      toolName: tc.name,
-                      args: tc.arguments,
-                      agentId: ctx.agentId,
-                      runId,
-                    };
-                    const hookResult = await getHookManager().fireBeforeToolCall(hookCtx);
-                    if (hookResult !== null) {
-                      bus.publish('tool.blocked', ctx.agentId, {
-                        runId,
-                        toolName: tc.name,
-                        reason: 'hook_denied',
-                        detail: hookResult.error ?? '',
-                      });
-                      rawResults.push({
-                        toolCallId: tc.id,
-                        name: tc.name,
-                        output: '',
-                        error: `Hook blocked: ${hookResult.error || 'denied'}`,
-                        durationMs: 0,
-                      });
-                      continue;
-                    }
-                    // Retry-loop detection: canonicalised args for deterministic matching
-                    const rlCheck = this.checkRetryLoop(
-                      tc.name,
-                      tc.arguments as Record<string, unknown>,
-                      recentToolPatterns,
-                      runId,
-                      ctx.tenantId,
-                      toolLoopCount,
-                    );
-                    if (rlCheck.detected) {
-                      retryLoopDetected = true;
-                      retryLoopCount = rlCheck.count;
-                      rawResults.push({
-                        toolCallId: tc.id,
-                        name: tc.name,
-                        output: '',
-                        error: `Retry loop detected: ${tc.name}`,
-                        durationMs: 0,
-                      });
-                      break;
-                    }
-                    const cycleCheck = this.cycleDetector.check(
-                      tc.name,
-                      tc.arguments,
-                      toolLoopCount,
-                    );
-                    if (cycleCheck.detected) {
-                      bus.publish('system.alert', 'runtime', {
-                        type: 'cycle_detected',
-                        toolName: tc.name,
-                        description: cycleCheck.description,
-                      });
-                      bus.publish('tool.blocked', ctx.agentId, {
-                        runId,
-                        toolName: tc.name,
-                        reason: 'cycle_detected',
-                        detail: cycleCheck.description,
-                      });
-                      rawResults.push({
-                        toolCallId: tc.id,
-                        name: tc.name,
-                        output: '',
-                        error: `Cycle detected: ${cycleCheck.description}`,
-                        durationMs: 0,
-                      });
-                      cycleDetected = true;
-                      break;
-                    }
-                    let toolResult = await this.executeTool(
-                      runId,
+                    // Pre-tool-call safety gates (hook, retry, cycle).
+                    // Concurrent-only sibling-abort is irrelevant on the
+                    // serial path — no Promise.allSettled siblings.
+                    const gate = await this.applyPreToolCallGates(
                       tc,
                       ctx.agentId,
-                      tenantId,
-                      ctx.availableTools,
+                      runId,
+                      ctx.tenantId,
+                      recentToolPatterns,
+                      toolLoopCount,
                     );
+                    if (gate.kind !== 'allowed') {
+                      let blockingRow: SyntheticErrorRow | null = null;
+                      let shouldBreak = false;
+                      switch (gate.kind) {
+                        case 'hooked':
+                          bus.publish('tool.blocked', ctx.agentId, {
+                            runId,
+                            toolName: tc.name,
+                            reason: 'hook_denied',
+                            detail: gate.errorMsg,
+                          });
+                          blockingRow = this.syntheticErrorRow(
+                            tc,
+                            `Hook blocked: ${gate.errorMsg || 'denied'}`,
+                          );
+                          break;
+                        case 'retry':
+                          retryLoopDetected = true;
+                          retryLoopCount = gate.count;
+                          blockingRow = this.syntheticErrorRow(
+                            tc,
+                            `Retry loop detected: ${tc.name}`,
+                          );
+                          shouldBreak = true;
+                          break;
+                        case 'cycle':
+                          bus.publish('system.alert', 'runtime', {
+                            type: 'cycle_detected',
+                            toolName: tc.name,
+                            description: gate.description,
+                          });
+                          bus.publish('tool.blocked', ctx.agentId, {
+                            runId,
+                            toolName: tc.name,
+                            reason: 'cycle_detected',
+                            detail: gate.description,
+                          });
+                          cycleDetected = true;
+                          blockingRow = this.syntheticErrorRow(
+                            tc,
+                            `Cycle detected: ${gate.description}`,
+                          );
+                          shouldBreak = true;
+                          break;
+                        case 'siblingAbort':
+                          // serial path does not consume siblingAbort — kept
+                          // defensive so a future regression that lets it fire
+                          // here still pushes the synthetic row instead of
+                          // silently dropping the cancellation.
+                          blockingRow = gate.row;
+                          break;
+                      }
+                      if (blockingRow) rawResults.push(blockingRow);
+                      if (shouldBreak) break;
+                    }
+                    // SecurityOrchestrator: unify ToolApproval + AdaptiveHITL before execution
+                    const sec = await this.applyBeforeToolCallSecurity(
+                      tc,
+                      ctx.agentId,
+                      runId,
+                    );
+                    let toolResult: ToolResult;
+                    if (!sec.allowed && sec.blockedToolResult) {
+                      toolResult = sec.blockedToolResult;
+                    } else {
+                      toolResult = await this.executeTool(
+                        runId,
+                        tc,
+                        ctx.agentId,
+                        tenantId,
+                        ctx.availableTools,
+                      );
+                    }
                     toolResult = await getHookManager().fireAfterToolCall({
                       toolName: tc.name,
                       args: tc.arguments,
@@ -2378,6 +2694,28 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     );
 
                   steps.push(toolStep);
+
+                  // SecurityOrchestrator: feed tool result into GuardianAgent + CrossAgentCorrelator
+                  try {
+                    const toolEvent: CrossAgentEvent = {
+                      id: generateId(),
+                      agentId: ctx.agentId,
+                      runId,
+                      type: 'tool_result',
+                      summary: `Tool ${masked.name}: ${finalOutput.slice(0, 80)}`,
+                      metadata: {
+                        toolName: masked.name,
+                        toolCallId: masked.toolCallId,
+                        outputLength: finalOutput.length,
+                        hasError: !!masked.error,
+                      },
+                      timestamp: Date.now(),
+                      severity: (masked.error ? 'high' : 'low') as CrossAgentEvent['severity'],
+                    };
+                    this.securityOrch.onAgentEvent(toolEvent);
+                  } catch {
+                    /* best-effort */
+                  }
 
                   const assistantMsg: import('./types').LLMMessage = {
                     role: 'assistant',
@@ -2676,14 +3014,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 if (this.memory) {
                   try {
                     this.memory.add(
-                      `[EARLY_EXIT] ${ctx.goal.slice(0, 200)}`,
+                      `[EARLY_EXIT] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`,
                       'episodic',
                       `run:${runId}|tokens:${totalTokens.totalTokens}|dur:${totalDurationMs}ms|steps:${steps.length}`,
                       0.6,
                       ['execution', 'early_exit', ...ctx.availableTools.slice(0, 3)],
                       {
                         runId,
-                        goal: ctx.goal.slice(0, 500),
+                      goal: ctx.goal.slice(0, GOAL_RESULT_MAX_CHARS),
                         tokenUsage: totalTokens,
                         durationMs: totalDurationMs,
                       },
@@ -2707,7 +3045,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 bus.publish('agent.completed', ctx.agentId, {
                   runId,
                   status: 'success',
-                  summary: safeContent.slice(0, 200),
+                  summary: safeContent.slice(0, RESULT_CONTENT_MAX_CHARS),
                   tokenUsage: totalTokens,
                   durationMs: totalDurationMs,
                 });
@@ -2724,7 +3062,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                       costPer1KInput: 0.003,
                       costPer1KOutput: 0.01,
                       capabilities: [],
-                      contextWindow: 128000,
+                      contextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
                       priority: 0,
                     },
                   ).costUsd;
@@ -2896,8 +3234,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   passed: verifReport.passed,
                   confidence: verifReport.confidence,
                   skipReason: verifReport.skipReason,
-                  outputPrefix: response.content.slice(0, 5000),
-                  goal: ctx.goal.slice(0, 1000),
+                  outputPrefix: response.content.slice(0, OUTPUT_PREFIX_MAX_CHARS),
+                  goal: ctx.goal.slice(0, GOAL_FULL_MAX_CHARS),
                   report: verifReport,
                 });
               } catch {
@@ -3232,7 +3570,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 for (let mi = request.messages.length - 1; mi >= 0; mi--) {
                   const msg = request.messages[mi];
                   if (msg.role === 'system' && msg.content?.startsWith('[Tool:')) {
-                    safeContent = msg.content.slice(0, 2000);
+                    safeContent = msg.content.slice(0, ERROR_MAX_CHARS);
                     break;
                   }
                 }
@@ -3251,7 +3589,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
               // Absolute last resort: reflect the goal
               if (!safeContent || safeContent.length === 0) {
-                safeContent = `[No text response generated by agent] Goal: ${ctx.goal.slice(0, 200)}`;
+                safeContent = `[No text response generated by agent] Goal: ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`;
               }
 
               const totalDurationMs = Date.now() - startTime;
@@ -3279,7 +3617,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     costPer1KInput: 0.003,
                     costPer1KOutput: 0.01,
                     capabilities: [],
-                    contextWindow: 128000,
+                    contextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
                     priority: 0,
                   },
                 ).costUsd;
@@ -3339,7 +3677,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               if (this.memory) {
                 try {
                   this.memory.add(
-                    `[SUCCESS] ${ctx.goal.slice(0, 200)}`,
+                    `[SUCCESS] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`,
                     'episodic',
                     `run:${runId}|tokens:${totalTokens.totalTokens}|dur:${totalDurationMs}ms|steps:${steps.length}`,
                     0.7,
@@ -3442,7 +3780,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 costPer1KInput: 0.003,
                 costPer1KOutput: 0.01,
                 capabilities: [],
-                contextWindow: 128000,
+                contextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
                 priority: 0,
               },
             ).costUsd;
@@ -3515,12 +3853,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
           if (this.memory) {
             try {
               this.memory.add(
-                `[FAIL] ${ctx.goal.slice(0, 200)}`,
+                `[FAIL] ${ctx.goal.slice(0, GOAL_TELEMETRY_MAX_CHARS)}`,
                 'episodic',
                 `run:${runId}|error:${(lastError ?? 'unknown').slice(0, 100)}|dur:${Date.now() - startTime}ms`,
                 0.5 + (lastErrorIsPermanent ? 0.3 : 0),
                 ['execution', 'failure', ...ctx.availableTools.slice(0, 3)],
-                { runId, goal: ctx.goal.slice(0, 500), error: lastError },
+                { runId, goal: ctx.goal.slice(0, GOAL_RESULT_MAX_CHARS), error: lastError },
               );
             } catch (e) {
               getGlobalLogger().warn('AgentRuntime', 'Failed to record failure memory', {
@@ -3824,7 +4162,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       const evictionsBefore = this.cacheManager.getSingleFlightStats().evictions;
       const inflightBefore = this.cacheManager.getSingleFlightInflightCount();
       let result: LLMResponse;
-      const llmTimeoutMs = this.config.llmTimeoutMs ?? 120000;
+      const llmTimeoutMs = this.config.llmTimeoutMs ?? DEFAULT_LLM_TIMEOUT_MS;
       result = await this.cacheManager.dedupeSingleFlight(
         flightKey,
         async () => {
