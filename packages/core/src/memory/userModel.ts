@@ -20,7 +20,7 @@
  */
 
 import { getGlobalLogger } from '../logging';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { mkdir, readFile, writeFile, access } from 'fs/promises';
 import { join } from 'path';
 
 // ============================================================================
@@ -173,13 +173,16 @@ export class UserModelManager {
   /**
    * Load a user profile from disk.
    */
-  loadProfile(userId: string): UserProfile | null {
-    const path = this.getModelPath(userId);
-    if (!existsSync(path)) return null;
+  async loadProfile(userId: string): Promise<UserProfile | null> {
+    const filePath = this.getModelPath(userId);
+    try {
+      await access(filePath);
+    } catch {
+      return null;
+    }
 
     try {
-      const data = JSON.parse(readFileSync(path, 'utf-8'));
-      // Restore Maps and Sets from serialized form
+      const data = JSON.parse(await readFile(filePath, 'utf-8'));
       const profile = this.deserializeProfile(data);
       this.models.set(userId, profile);
       return profile;
@@ -192,16 +195,16 @@ export class UserModelManager {
   /**
    * Save a user profile to disk.
    */
-  saveProfile(userId: string): void {
+  async saveProfile(userId: string): Promise<void> {
     const profile = this.models.get(userId);
     if (!profile) return;
 
     const dir = this.config.modelPath;
-    mkdirSync(dir, { recursive: true });
+    await mkdir(dir, { recursive: true });
 
-    const path = this.getModelPath(userId);
+    const filePath = this.getModelPath(userId);
     const data = this.serializeProfile(profile);
-    writeFileSync(path, JSON.stringify(data, null, 2), 'utf-8');
+    await writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
   }
 
   /**

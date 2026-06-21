@@ -311,7 +311,7 @@ export class CompanyEngine {
 
         // Save user profile
         if (this.config.userId) {
-          this.memory.saveUserProfile(this.config.userId);
+          await this.memory.saveUserProfile(this.config.userId);
         }
       } catch (err) {
         getGlobalLogger().warn('CompanyEngine', 'Failed to store results', { error: String(err) });

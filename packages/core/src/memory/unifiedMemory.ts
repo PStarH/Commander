@@ -322,7 +322,7 @@ export class UnifiedMemory {
     if (sources.includes('user_model') && options.userId && this.config.enableUserModel) {
       // Load from disk if not in memory
       userProfile =
-        this.userModel.loadProfile(options.userId) ?? this.userModel.getProfile(options.userId);
+        (await this.userModel.loadProfile(options.userId)) ?? this.userModel.getProfile(options.userId);
     }
 
     // Build unified context string
@@ -503,9 +503,9 @@ export class UnifiedMemory {
   /**
    * Save user profile to disk.
    */
-  saveUserProfile(userId: string): void {
+  async saveUserProfile(userId: string): Promise<void> {
     if (!this.config.enableUserModel) return;
-    this.userModel.saveProfile(userId);
+    await this.userModel.saveProfile(userId);
   }
 
   // --------------------------------------------------------------------------

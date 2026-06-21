@@ -6,6 +6,7 @@
  *  - NullTenantProvider: single-tenant mode, no isolation (default)
  *  - SimpleTenantProvider: static config map for multi-tenant deployments
  */
+import * as path from 'path';
 import { ThreeLayerMemory, getGlobalThreeLayerMemory } from '../threeLayerMemory';
 import { getCurrentTenantId as readCurrentTenantId } from './tenantContext';
 
@@ -42,6 +43,12 @@ export interface TenantProvider {
   getKnownTenants(): string[];
   /** Current tenant ID from tenant context (single-tenant returns undefined). */
   getCurrentTenantId(): string | undefined;
+  /**
+   * Validate that a file path is within the tenant's allowed workspace.
+   * Returns true if allowed, false if the path escapes the workspace.
+   * NullTenantProvider always returns true (no isolation).
+   */
+  validateWorkspacePath(tenantId: string, filePath: string): boolean;
 }
 
 // ============================================================================
@@ -57,6 +64,9 @@ export class NullTenantProvider implements TenantProvider {
   }
   getCurrentTenantId(): string | undefined {
     return readCurrentTenantId();
+  }
+  validateWorkspacePath(_tenantId: string, _filePath: string): boolean {
+    return true;
   }
 }
 
@@ -81,6 +91,14 @@ export class SimpleTenantProvider implements TenantProvider {
 
   getCurrentTenantId(): string | undefined {
     return readCurrentTenantId();
+  }
+
+  validateWorkspacePath(tenantId: string, filePath: string): boolean {
+    const config = this.tenants.get(tenantId);
+    if (!config?.workspacePath) return true;
+    const resolved = path.resolve(filePath);
+    const workspace = path.resolve(config.workspacePath);
+    return resolved === workspace || resolved.startsWith(workspace + path.sep);
   }
 
   addTenant(config: TenantConfig): void {
