@@ -7,6 +7,7 @@ import { getGlobalLogger } from '../logging';
 import { buildSeccompFilter, countAllowedSyscalls } from './seccompBpf';
 import { getLLMAPIDomains, writeProxyScript } from './networkProxy';
 import { AppContainerSB } from './appContainer';
+import { TEESandbox } from './teeEnclave';
 
 // Expanded deny list — covers common secret-bearing env vars beyond the original 5
 const EXTRA_DENY = [
@@ -1040,6 +1041,7 @@ export function discoverSandboxes(): PlatformSandbox[] {
     new AppContainerSB(),
     new DockerSB(),
     new GVisorSB(),
+    new TEESandbox(),
   ];
   return candidates.filter((s) => s.available);
 }

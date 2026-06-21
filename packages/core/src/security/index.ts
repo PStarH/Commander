@@ -409,3 +409,101 @@ export type {
   FederatedExchangeOutcome,
   FederationRejectReason,
 } from './federatedIdentity';
+
+// TEESandbox — Trusted Execution Environment (AWS Nitro Enclaves / GCP Confidential VMs)
+export { TEESandbox } from '../sandbox/teeEnclave';
+export type { TEEBackend, TEEAttestation, TEESandboxResult } from '../sandbox/teeEnclave';
+
+// MitreAtlasMapper — automatic MITRE ATLAS tactics/techniques mapping
+export { MitreAtlasMapper, getMitreAtlasMapper, resetMitreAtlasMapper } from './mitreAtlasMapper';
+export type {
+  AtlasTactic,
+  AtlasTechnique,
+  AtlasSubTechnique,
+  AtlasHeatmapCell,
+  AtlasMapping,
+  MitreAtlasReport,
+} from './mitreAtlasMapper';
+
+// AdaptiveHITL — risk-adaptive human-in-the-loop strategy engine
+export { AdaptiveHITL, getAdaptiveHitl, resetAdaptiveHitl, maxStrategy } from './adaptiveHitl';
+export type {
+  HITLStrategy,
+  ToolRiskSignal,
+  AgentConfidenceSignal,
+  CorrelationSignal as HITLCorrelationSignal,
+  VerificationSignal as HITLVerificationSignal,
+  MissionSignal,
+  HITLSignalBundle,
+  HITLFactor,
+  HITLDecision,
+  AgentBehaviorProfile,
+  AdaptiveHITLConfig,
+} from './adaptiveHitl';
+
+// SecurityBenchmarkRunner — automated CI/CD security benchmark scoring (AgentDojo, Agent-SafetyBench, AgentHarm)
+export {
+  SecurityBenchmarkRunner,
+  getSecurityBenchmarkRunner,
+  resetSecurityBenchmarkRunner,
+  ALL_BENCHMARK_CASES,
+  getCasesForBenchmark,
+} from './securityBenchmarkRunner';
+export type {
+  BenchmarkId,
+  BenchmarkTestCase,
+  BenchmarkTestResult,
+  BenchmarkRunReport,
+  BenchmarkTrend,
+  BenchmarkRunnerConfig,
+  DefenderFn,
+} from './securityBenchmarkRunner';
+
+// SupplyChainAttestor — SPDX 2.3 SBOM generation + Sigstore keyless attestation + verification
+export {
+  SupplyChainAttestor,
+  getSupplyChainAttestor,
+  resetSupplyChainAttestor,
+  componentToPurl,
+  hashFile,
+  hashString,
+} from './supplyChainAttestor';
+export type {
+  SpdxPackage,
+  SpdxRelationship,
+  SpdxDocument,
+  InTotoStatement,
+  AttestationBundle,
+  AttestationResult,
+  VerificationResult as AttestationVerificationResult,
+  ComponentEntry,
+  AttestorConfig,
+} from './supplyChainAttestor';
+
+// DifferentialPrivacyLayer — ε-DP Laplace/Gaussian noise for cross-agent memory sharing
+export {
+  DifferentialPrivacyLayer,
+  getDifferentialPrivacyLayer,
+  resetDifferentialPrivacyLayer,
+  sampleLaplace,
+  sampleGaussian,
+  laplaceMechanism,
+  gaussianMechanism,
+  analyzeSensitivity,
+  classifyEpsilon,
+} from './differentialPrivacyLayer';
+export type {
+  DPPrivacyLevel,
+  DPQueryType,
+  DPSensitivity,
+  DPDataBounds,
+  PrivacyBudget,
+  DifferentialPrivacyConfig,
+  DPQueryResult,
+  DPQueryRejection,
+  DPQueryOutcome,
+} from './differentialPrivacyLayer';
+
+// Scanner→Attestor bridge — SupplyChainScanner now auto-calls SupplyChainAttestor
+// on passed scans. The attestor singleton is accessible via getSupplyChainAttestor().
+// Re-exported here for convenience.
