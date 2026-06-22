@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# .githooks/pre-push — D3 hardening-sprint format/style gate.
+#
+# Closes the gap that allowed the dual-classifier refactor (commit 765b41430)
+# to ship a Prettier style violation to remote CI. The hook runs on every
+# `git push`, blocking pushes whose working tree has Prettier violations
+# anywhere in the development surface.
+#
+# This hook is INTENTIONALLY DISTINCT from .githooks/pre-commit:
+#   • pre-commit = Security gate (SupplyChainScanner inline-blocklist mirror +
+#     ExecPolicy vitest smoke). Fail mode = block commits with malware-class
+#     content. High false-positive cost (every commit blocked) is justified by
+#     the catastrophic blast radius of a malware check bypass.
+#   • pre-push   = Style gate (`pnpm exec prettier --check` across the dev
+#     surface). Fail mode = block pushes with style violations. Lower false-
+#     positive cost (only on push) is justified by "ship clean" expectation
+#     before remote CI review. Keeps pre-commit focused on its narrow security
+#     role.
+#
+# Behaviour:
+#   1. Delegates to scripts/prepushHook.ts so the EXACT same logic can run
+#      in CI via CORE_PREPUSH_HOOK=1 without invoking git. Git-side, this
+#      hook only ever does argv-agnostic delegation + env setup.
+#   2. Adds the local node_modules/.bin dirs to PATH (mirrors commit
+#      4fd97dea7's fix) so pnpm-resolved binaries (prettier, tsx) resolve
+#      directly without falling back to a network fetch.
+#
+# Install:   bash scripts/install-hooks.sh
+# Uninstall: bash scripts/install-hooks.sh --uninstall
+# Bypass:    COMMANDER_SKIP_PREPUSH=1 git push ...   (logged warning)
+#
+# Mirror of .githooks/pre-commit: same env-setup conventions, same bypass
+# discipline, same audit-log pattern. Used together with the pre-commit hook
+# they form a layered D3 gate: security at commit-time, style at push-time.
+
+set -euo pipefail
+
+# Always run from repo root regardless of git's cwd.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$REPO_ROOT"
+
+# Prepend locally-installed binaries to PATH so `pnpm exec prettier` inside
+# scripts/prepushHook.ts resolves directly without falling back to a
+# network fetch. pnpm hoists some deps to the root node_modules while
+# per-package devDeps land in packages/<name>/node_modules — add both
+# locations so cached / CI-clean / sandboxed environments don't trip the
+# check on a missing binary. Root-precedence mirrors pnpm's own resolution
+# order; PATH prepended so installer-installed PATH doesn't shadow the
+# workspace binary.
+export PATH="$REPO_ROOT/node_modules/.bin:$REPO_ROOT/packages/core/node_modules/.bin:$PATH"
+
+# Emergency bypass — log loudly so the bypass shows in CI audit.
+if [ "${COMMANDER_SKIP_PREPUSH:-0}" = "1" ]; then
+  echo "⚠️  COMMANDER_SKIP_PREPUSH=1 — D3 pre-push format gate skipped (audit log will record this)" >&2
+  exit 0
+fi
+
+# In CI we set CORE_PREPUSH_HOOK=1 externally; for git-side invocation set
+# it here so the tsx script can detect the same intent.
+export CORE_PREPUSH_HOOK="${CORE_PREPUSH_HOOK:-1}"
+
+exec npx tsx scripts/prepushHook.ts
