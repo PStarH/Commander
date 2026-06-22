@@ -67,11 +67,21 @@ import { describe, expect, it } from 'vitest';
 function npxSpawn(args: string[], opts?: { timeout?: number }) {
   const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
   const cliPath = path.join(REPO_ROOT, 'scripts', 'verify-rotation-signoff.ts');
-  return spawnSync(npxCmd, ['tsx', cliPath, ...args], {
-    cwd: REPO_ROOT,
+  // Use the package dir as cwd so npx resolves tsx from packages/core/node_modules/.bin/
+  // (tsx is a direct devDependency, not hoisted to the repo root on pnpm workspaces).
+  const pkgDir = path.join(REPO_ROOT, 'packages/core');
+  const result = spawnSync(npxCmd, ['tsx', cliPath, ...args], {
+    cwd: pkgDir,
     encoding: 'utf-8',
     timeout: opts?.timeout ?? 60_000,
   });
+  // Surface spawn errors explicitly so CI logs show the root cause instead of
+  // a cryptic "expected null to be 1" assertion failure.
+  if (result.status == null) {
+    const reason = result.error ? result.error.message : 'process did not exit (timeout or spawn failure)';
+    throw new Error(`[npxSpawn] tsx subprocess failed to produce exit code: ${reason}\n  command: ${npxCmd} tsx ${cliPath} ${args.join(' ')}`);
+  }
+  return result;
 }
 
 import {
