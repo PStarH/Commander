@@ -1109,8 +1109,8 @@ describe('Benchmark: Cost-Per-Success Model Scoring', () => {
     const cheapConfig = router.getModel(cheapModel);
     const expensiveConfig = router.getModel(expensiveModel);
 
-    const cheapCostPer1K = cheapConfig?.costPer1KOutput ?? 0;
-    const expensiveCostPer1K = expensiveConfig?.costPer1KOutput ?? 0;
+    const cheapCostPer1K = cheapConfig?.costPer1MOutput ?? 0;
+    const expensiveCostPer1K = expensiveConfig?.costPer1MOutput ?? 0;
 
     report('Cost-Per-Success Scoring', {
       'Selected model': decision.modelId,
@@ -1157,8 +1157,8 @@ describe('Benchmark: Cost-Per-Success Model Scoring', () => {
         const inputTokens = Math.ceil(task.goal.length / 4) + 2048;
         const outputTokens = task.tokens - inputTokens;
         const taskCost =
-          (inputTokens / 1000) * model.costPer1KInput +
-          (outputTokens / 1000) * model.costPer1KOutput;
+          (inputTokens / 1_000_000) * model.costPer1MInput +
+          (outputTokens / 1_000_000) * model.costPer1MOutput;
         totalCost += taskCost;
 
         const naiveCostPerK = 0.015;
@@ -1188,14 +1188,14 @@ describe('Benchmark: Cost-Per-Success Model Scoring', () => {
 
     const chainCosts = escalationChain.map((m) => ({
       model: m.id,
-      costPer1KInput: m.costPer1KInput,
-      costPer1KOutput: m.costPer1KOutput,
+      costPer1MInput: m.costPer1MInput,
+      costPer1MOutput: m.costPer1MOutput,
     }));
 
     const initialModel = router.getModel(initial.modelId);
-    const initialCostPerK = initialModel ? initialModel.costPer1KOutput : 0.01;
+    const initialCostPerK = initialModel ? initialModel.costPer1MOutput : 0.01;
     const escalationCostPerK =
-      chainCosts.length > 0 ? chainCosts[0].costPer1KOutput : initialCostPerK;
+      chainCosts.length > 0 ? chainCosts[0].costPer1MOutput : initialCostPerK;
 
     const cascadeSavings =
       Math.max(0, initialCostPerK - escalationCostPerK) / Math.max(initialCostPerK, 0.001);
@@ -1205,7 +1205,7 @@ describe('Benchmark: Cost-Per-Success Model Scoring', () => {
       'Initial tier': initial.tier,
       'Escalation models': chainCosts.length,
       'Initial cost/1K': initialCostPerK,
-      'Cheapest escalation cost/1K': chainCosts[0]?.costPer1KOutput ?? initialCostPerK,
+      'Cheapest escalation cost/1K': chainCosts[0]?.costPer1MOutput ?? initialCostPerK,
       'Potential savings from cascade': cascadeSavings,
       'Governor phase': 'tight',
     });
