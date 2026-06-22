@@ -78,6 +78,7 @@
     "@types/blessed": "^0.1.27",
     "@types/node": "^25.9.3",
     "@vitest/coverage-v8": "^4.1.9",
+    "tsx": "^4.8.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9",
     "typedoc": "^0.28.19"
