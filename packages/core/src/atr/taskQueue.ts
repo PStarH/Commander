@@ -430,12 +430,7 @@ export class TaskQueue {
 
   // ── Webhook Callback ───────────────────────────────────────────
 
-  private fireCallback(
-    url: string,
-    jobId: string,
-    status: string,
-    payload: unknown,
-  ): void {
+  private fireCallback(url: string, jobId: string, status: string, payload: unknown): void {
     try {
       const dispatcher = getWebhookDispatcher();
       const existing = dispatcher.listWebhooks().find((w) => w.url === url);
@@ -475,9 +470,7 @@ export class TaskQueue {
 
   private openDb(): void {
     if (!BetterSqlite3) {
-      throw new Error(
-        'TaskQueue requires better-sqlite3. Install it: pnpm add better-sqlite3',
-      );
+      throw new Error('TaskQueue requires better-sqlite3. Install it: pnpm add better-sqlite3');
     }
     if (this.config.dbPath !== ':memory:') {
       mkdirSync(dirname(this.config.dbPath), { recursive: true });
@@ -518,9 +511,7 @@ export class TaskQueue {
          created_at, started_at, completed_at, metadata_json)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    this.stmtGet = this.db.prepare(
-      `SELECT * FROM tasks WHERE job_id = ? LIMIT 1`,
-    );
+    this.stmtGet = this.db.prepare(`SELECT * FROM tasks WHERE job_id = ? LIMIT 1`);
     this.stmtClaimPending = this.db.prepare(`
       UPDATE tasks
       SET status = 'running', started_at = ?

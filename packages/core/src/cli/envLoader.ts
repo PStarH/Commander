@@ -85,11 +85,10 @@ export function getLastLoadResult(): LoadEnvResult | undefined {
  * Walks up in the same order as `loadEnvUp`, returns the deepest .env path
  * that declares `key`, or undefined. Useful for docs / dry-run output.
  */
-export function findDotenvDefining(
-  key: string,
-  cwd: string = process.cwd(),
-): string | undefined {
-  const order = walkUpDotenvPaths(cwd).filter((p) => fs.existsSync(p)).reverse();
+export function findDotenvDefining(key: string, cwd: string = process.cwd()): string | undefined {
+  const order = walkUpDotenvPaths(cwd)
+    .filter((p) => fs.existsSync(p))
+    .reverse();
   for (const p of order) {
     try {
       const content = fs.readFileSync(p, 'utf8');
