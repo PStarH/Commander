@@ -41,6 +41,7 @@ export default defineConfig({
       'tests/runtime/providerFallbackChain.test.ts',
       'tests/runtime/reflexionInjector.test.ts',
       'tests/runtime/runRecovery.test.ts',
+      'tests/runtime/runtimeAdversarial.test.ts',
       'tests/runtime/securityOrchestrator.test.ts',
       'tests/runtime/securityOrchestrator.integration.test.ts',
       'tests/runtime/samplesStore.test.ts',
