@@ -4,6 +4,10 @@ export default defineConfig({
   test: {
     threads: false,
     include: [
+      'tests/cli/envLoader.test.ts',
+      // --- atr ---
+      'tests/atr/recoveryBootstrapper.test.ts',
+      'tests/atr/taskQueue.test.ts',
       // --- runtime ---
       'tests/runtime/agentHandoff.test.ts',
       'tests/runtime/agentInbox.test.ts',
@@ -44,6 +48,7 @@ export default defineConfig({
       'tests/runtime/runtimeAdversarial.test.ts',
       'tests/runtime/securityOrchestrator.test.ts',
       'tests/runtime/securityOrchestrator.integration.test.ts',
+      'tests/runtime/securityOrchestratorHelper.test.ts',
       'tests/runtime/samplesStore.test.ts',
       'tests/runtime/semanticCache.test.ts',
       'tests/runtime/speculativeExecutor.test.ts',
@@ -58,6 +63,8 @@ export default defineConfig({
       'tests/runtime/toolOrchestrator.test.ts',
       'tests/runtime/toolPlanner.test.ts',
       'tests/runtime/toolResultCache.test.ts',
+      'tests/runtime/toolGateHelper.test.ts',
+      'tests/runtime/toolResultShape.test.ts',
       'tests/runtime/resilience-integration.test.ts',
       'tests/runtime/toolRetriever.test.ts',
       'tests/runtime/vcrProvider.test.ts',
@@ -89,6 +96,7 @@ export default defineConfig({
       'tests/observability/retryRuleOnRealTraces.test.ts',
       'tests/observability/samplingPolicy.test.ts',
       'tests/observability/traceContext.test.ts',
+      'tests/observability/traceContextBridge.test.ts',
 
       // --- storage ---
       'tests/storage/dataRetention.test.ts',
@@ -97,7 +105,9 @@ export default defineConfig({
       'tests/security/guardianAgent.test.ts',
       'tests/security/capabilityToken.test.ts',
       'tests/security/auditChainLedger.test.ts',
-      'tests/security/agentLineage.test.ts', 'tests/security/federatedIdentity.test.ts', 'tests/security/outputSanitizer.test.ts',
+      'tests/security/agentLineage.test.ts',
+      'tests/security/federatedIdentity.test.ts',
+      'tests/security/outputSanitizer.test.ts',
       'tests/security/costGuard.test.ts',
       'tests/security/agentSoc.test.ts',
       'tests/security/euAiActCompliance.test.ts',
@@ -132,7 +142,7 @@ export default defineConfig({
       'tests/ultimate/explorationEventLog.test.ts',
       'tests/ultimate/learnedWeights.test.ts',
       'tests/ultimate/learnedWeightsTenant.test.ts',
-      'tests/ultimate/pheromoneRouter.test.ts',
+      'tests/ultimate/orchestrationLabels.test.ts',
       'tests/ultimate/routingDashboard.test.ts',
       'tests/ultimate/subAgentGuard.test.ts',
       'tests/ultimate/tenantWorkCoordinatorRegistry.test.ts',
