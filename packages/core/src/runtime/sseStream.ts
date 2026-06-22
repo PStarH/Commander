@@ -300,7 +300,8 @@ export class SSEStream {
     // No detection pattern matches on <20 chars of new content, so delaying
     // the scan is safe. On `done=true`, always scan to flush correctly.
     const MIN_GROWTH = 20;
-    const newChars = this.outputAccumulator.length + content.length - (this.lastSanitizedAccLength ?? 0);
+    const newChars =
+      this.outputAccumulator.length + content.length - (this.lastSanitizedAccLength ?? 0);
 
     if (!done && this.lastSanitizedAccLength !== undefined && newChars < MIN_GROWTH) {
       // Not enough new content — emit the raw delta to preserve streaming feel
