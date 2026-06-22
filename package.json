@@ -41,12 +41,13 @@
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
-    "lint": "npx eslint packages/core/src && npx prettier --check \"packages/core/src/**/*.ts\" \"apps/api/src/**/*.ts\" && cd packages/core && npx tsc --noEmit",
+    "lint": "npx eslint packages/core/src && pnpm run format:check && cd packages/core && npx tsc --noEmit",
     "lint:eslint": "npx eslint packages/core/src",
+    "lint:prettier": "pnpm run format:check",
     "prepublish": "cd packages/core && npx tsc -p tsconfig.json",
     "audit:wiring": "npx tsx scripts/audit-wiring.ts",
-    "format": "npx prettier --write \"packages/core/src/**/*.ts\" \"apps/api/src/**/*.ts\" \"apps/web/src/**/*.{ts,tsx}\"",
-    "format:check": "npx prettier --check \"packages/core/src/**/*.ts\" \"apps/api/src/**/*.ts\" \"apps/web/src/**/*.{ts,tsx}\""
+    "format": "npx prettier --write \"packages/core/src/**/*.ts\" \"packages/core/tests/**/*.ts\" \"apps/api/src/**/*.ts\" \"apps/web/src/**/*.{ts,tsx}\" \"scripts/**/*.ts\"",
+    "format:check": "npx prettier --check \"packages/core/src/**/*.ts\" \"packages/core/tests/**/*.ts\" \"apps/api/src/**/*.ts\" \"apps/web/src/**/*.{ts,tsx}\" \"scripts/**/*.ts\""
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
