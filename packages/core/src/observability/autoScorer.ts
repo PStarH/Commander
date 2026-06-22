@@ -275,6 +275,13 @@ function traceToTarget(trace: ExecutionTrace): EvalTarget {
   return {
     input,
     output,
+    // Sentinel: live traces have no dataset-style ground truth. Set a
+    // non-empty placeholder so classifyExpected() does not route the
+    // auto-score through the empty-expected regression-guard (which is
+    // intended for the EvalScore / dataset-case path, not the trace-
+    // quality path). The judge prompt sees a clear sentinel header so
+    // it knows the assessment is quality, not correctness.
+    expected: 'live-trace-quality-evaluation',
     toolsCalled,
     durationMs: trace.summary.totalDurationMs,
     tokens: trace.summary.totalTokens,
