@@ -204,8 +204,9 @@ export interface AgentRuntimeConfig {
       id: string;
       provider: string;
       capabilities: string[];
-      costPer1KInput: number;
-      costPer1KOutput: number;
+      costPer1MInput: number;
+      costPer1MOutput: number;
+      costPer1MCachedInput?: number;
       contextWindow: number;
       tier?: ModelTier;
     }>;

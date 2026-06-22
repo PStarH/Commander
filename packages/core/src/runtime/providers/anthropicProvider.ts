@@ -167,6 +167,7 @@ export class AnthropicProvider implements LLMProvider {
     const toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
     let currentToolBlock: { id: string; name: string; inputBuffer: string } | null = null;
     let usage: AnthropicUsage | null = null;
+    let stopReason: string | null = null;
     let buffer = '';
 
     const decoder = new TextDecoder();
@@ -218,8 +219,9 @@ export class AnthropicProvider implements LLMProvider {
               }
               currentToolBlock = null;
             }
-            if (event.type === 'message_delta' && event.usage) {
-              usage = event.usage;
+            if (event.type === 'message_delta') {
+              if (event.usage) usage = event.usage;
+              if (event.delta?.stop_reason) stopReason = event.delta.stop_reason;
             }
             if (event.type === 'message_start' && event.message?.usage) {
               usage = event.message.usage;
@@ -249,7 +251,14 @@ export class AnthropicProvider implements LLMProvider {
       content,
       model,
       usage: tokenUsage,
-      finishReason: 'stop',
+      finishReason:
+        stopReason === 'end_turn'
+          ? 'stop'
+          : stopReason === 'max_tokens'
+            ? 'length'
+            : stopReason === 'tool_use'
+              ? 'tool_calls'
+              : 'stop',
       toolCalls: normalToolCalls.length > 0 ? normalToolCalls : undefined,
       parsed,
     };
@@ -258,6 +267,7 @@ export class AnthropicProvider implements LLMProvider {
   private parseResponse(
     data: {
       content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
+      stop_reason?: string | null;
       usage?: {
         input_tokens?: number;
         output_tokens?: number;
@@ -294,11 +304,19 @@ export class AnthropicProvider implements LLMProvider {
         arguments: (b.input ?? {}) as Record<string, unknown>,
       }));
 
+    const stopReason = data.stop_reason ?? 'end_turn';
     return {
       content: textBlocks.map((b) => b.text).join(''),
       model,
       usage,
-      finishReason: 'stop',
+      finishReason:
+        stopReason === 'end_turn'
+          ? 'stop'
+          : stopReason === 'max_tokens'
+            ? 'length'
+            : stopReason === 'tool_use'
+              ? 'tool_calls'
+              : 'stop',
       toolCalls: normalToolCalls.length > 0 ? normalToolCalls : undefined,
       parsed,
     };

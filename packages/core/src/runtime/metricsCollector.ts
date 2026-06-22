@@ -276,12 +276,10 @@ export class MetricsCollector {
     if (tenantId) labels.push({ name: 'tenant', value: tenantId });
     this.incrementCounter('runs_total', 'Total runs by status', 1, labels);
     if (costUsd !== undefined && costUsd > 0) {
-      this.incrementCounter(
-        'run_cost_usd_total',
-        'Total run cost in USD',
-        costUsd,
-        [{ name: 'status', value: status }, ...(tenantId ? [{ name: 'tenant', value: tenantId }] : [])],
-      );
+      this.incrementCounter('run_cost_usd_total', 'Total run cost in USD', costUsd, [
+        { name: 'status', value: status },
+        ...(tenantId ? [{ name: 'tenant', value: tenantId }] : []),
+      ]);
     }
     this.recordHistogram(
       'run_duration_ms',
@@ -553,6 +551,15 @@ export class MetricsCollector {
     this.incrementCounter('hook_failures_total', 'Plugin hook failures', 1, labels);
   }
 
+  recordHookSuccess(hook: string, pluginName: string, tenantId?: string): void {
+    const labels: MetricLabel[] = [
+      { name: 'hook', value: hook },
+      { name: 'plugin', value: pluginName },
+    ];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('hook_success_total', 'Plugin hook successes', 1, labels);
+  }
+
   recordDLQEntry(category: string, tenantId?: string): void {
     const labels: MetricLabel[] = [{ name: 'category', value: category }];
     if (tenantId) labels.push({ name: 'tenant', value: tenantId });
@@ -681,6 +688,75 @@ export class MetricsCollector {
       'meta_learner_experience_count',
       'Total experiences recorded by MetaLearner',
       count,
+      labels,
+    );
+  }
+
+  // ── SLO Violation Metrics ──
+
+  /** Record an SLO violation detected by SLOManager */
+  recordSLOViolation(
+    sloId: string,
+    sloName: string,
+    metric: string,
+    severity: 'warning' | 'critical',
+    actualValue: number,
+    threshold: number,
+    tenantId?: string,
+  ): void {
+    const labels: MetricLabel[] = [
+      { name: 'slo_id', value: sloId },
+      { name: 'slo_name', value: sloName },
+      { name: 'metric', value: metric },
+      { name: 'severity', value: severity },
+    ];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter('slo_violations_total', 'SLO violations detected', 1, labels);
+    this.setGauge(
+      'slo_violation_latest_value',
+      `Latest violating value for SLO ${sloName}`,
+      actualValue,
+      [
+        { name: 'slo_id', value: sloId },
+        { name: 'metric', value: metric },
+      ],
+    );
+  }
+
+  // ── Self-Evolution Strategy Metrics ──
+
+  /** Record which topology strategy was selected by MetaLearner */
+  recordMetaLearnerStrategySelection(
+    strategy: string,
+    taskType: string,
+    modelId?: string,
+    tenantId?: string,
+  ): void {
+    const labels: MetricLabel[] = [
+      { name: 'strategy', value: strategy },
+      { name: 'task_type', value: taskType },
+    ];
+    if (modelId) labels.push({ name: 'model', value: modelId });
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter(
+      'meta_learner_strategy_selections_total',
+      'MetaLearner strategy selections by strategy and task type',
+      1,
+      labels,
+    );
+  }
+
+  /** Record a reflection event from MetaLearner */
+  recordMetaLearnerReflection(strategy: string, success: boolean, tenantId?: string): void {
+    const labels: MetricLabel[] = [
+      { name: 'strategy', value: strategy },
+      { name: 'success', value: String(success) },
+    ];
+    if (tenantId) labels.push({ name: 'tenant', value: tenantId });
+    this.incrementCounter(
+      'meta_learner_reflections_total',
+      'MetaLearner reflection events',
+      1,
       labels,
     );
   }

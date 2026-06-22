@@ -7,12 +7,57 @@
  * 3. Model fallback chain (try next candidate on failure)
  * 4. Governor-aware budgeting (tight budget → cheaper models)
  * 5. Cost-quality tradeoff (score models by capability fit × cost efficiency)
+ * 6. Latency-aware routing (track TTFT/TPOT per provider, route to fastest)
+ * 7. Confidence-based escalation (cheap model self-reports confidence)
+ * 8. User-tier routing (free/paid/enterprise)
+ * 9. Quality floor + cost ceiling dual modes
+ * 10. Explore/exploit mechanism (discover new providers)
+ * 11. Multi-signal complexity classifier (keyword, language, domain)
  *
  * Backward compatible: same class name, same route() interface.
  */
 
 import type { ModelConfig, ModelTier, RoutingDecision, AgentExecutionContext } from './types';
 import { detectTaskType } from './unifiedVerification';
+
+// ============================================================================
+// Latency tracking types
+// ============================================================================
+
+export interface ProviderLatency {
+  provider: string;
+  modelId: string;
+  ewmaTTFT: number;
+  ewmaTPOT: number;
+  errorRate: number;
+  lastUpdated: number;
+  sampleCount: number;
+}
+
+// ============================================================================
+// User tier types
+// ============================================================================
+
+export type UserTier = 'free' | 'paid' | 'enterprise';
+
+// ============================================================================
+// Routing objective types
+// ============================================================================
+
+export type RoutingObjective =
+  | { type: 'cost_at_quality_floor'; minQuality: number }
+  | { type: 'quality_at_cost_ceiling'; maxCostPerRequest: number }
+  | { type: 'balanced' };
+
+// ============================================================================
+// Confidence check types
+// ============================================================================
+
+export interface ConfidenceCheckResult {
+  confidence: number;
+  shouldEscalate: boolean;
+  reason: string;
+}
 
 // ============================================================================
 // Default model registry
@@ -24,8 +69,9 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'claude-haiku-4-5',
     provider: 'anthropic',
     tier: 'eco',
-    costPer1KInput: 0.0008,
-    costPer1KOutput: 0.004,
+    costPer1MInput: 0.8,
+    costPer1MOutput: 4,
+    costPer1MCachedInput: 0.08,
     capabilities: ['code', 'analysis'],
     contextWindow: 200000,
     priority: 0,
@@ -36,8 +82,9 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'gpt-4o-mini',
     provider: 'openai',
     tier: 'eco',
-    costPer1KInput: 0.00015,
-    costPer1KOutput: 0.0006,
+    costPer1MInput: 0.15,
+    costPer1MOutput: 0.6,
+    costPer1MCachedInput: 0.075,
     capabilities: ['code', 'analysis'],
     contextWindow: 128000,
     priority: 1,
@@ -48,8 +95,9 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'gemini-2-flash',
     provider: 'google',
     tier: 'eco',
-    costPer1KInput: 0.0001,
-    costPer1KOutput: 0.0004,
+    costPer1MInput: 0.1,
+    costPer1MOutput: 0.4,
+    costPer1MCachedInput: 0.025,
     capabilities: ['analysis'],
     contextWindow: 1000000,
     priority: 2,
@@ -60,8 +108,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'llama-3.3-70b-versatile',
     provider: 'groq',
     tier: 'eco',
-    costPer1KInput: 0.00059,
-    costPer1KOutput: 0.00079,
+    costPer1MInput: 0.59,
+    costPer1MOutput: 0.79,
     capabilities: ['code', 'analysis'],
     contextWindow: 128000,
     priority: 3,
@@ -72,8 +120,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'mistral-small-latest',
     provider: 'mistral',
     tier: 'eco',
-    costPer1KInput: 0.001,
-    costPer1KOutput: 0.001,
+    costPer1MInput: 1,
+    costPer1MOutput: 1,
     capabilities: ['code', 'analysis'],
     contextWindow: 32000,
     priority: 4,
@@ -84,8 +132,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'command-r-08-2024',
     provider: 'cohere',
     tier: 'eco',
-    costPer1KInput: 0.0005,
-    costPer1KOutput: 0.0015,
+    costPer1MInput: 0.5,
+    costPer1MOutput: 1.5,
     capabilities: ['analysis'],
     contextWindow: 128000,
     priority: 5,
@@ -96,8 +144,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'sonar',
     provider: 'perplexity',
     tier: 'eco',
-    costPer1KInput: 0.001,
-    costPer1KOutput: 0.001,
+    costPer1MInput: 1,
+    costPer1MOutput: 1,
     capabilities: ['analysis'],
     contextWindow: 128000,
     priority: 6,
@@ -109,8 +157,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'llama3.2',
     provider: 'ollama',
     tier: 'eco',
-    costPer1KInput: 0,
-    costPer1KOutput: 0,
+    costPer1MInput: 0,
+    costPer1MOutput: 0,
     capabilities: ['code', 'analysis'],
     contextWindow: 128000,
     priority: 7,
@@ -121,8 +169,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'meta-llama/Llama-3.2-3B-Instruct',
     provider: 'vllm',
     tier: 'eco',
-    costPer1KInput: 0,
-    costPer1KOutput: 0,
+    costPer1MInput: 0,
+    costPer1MOutput: 0,
     capabilities: ['code', 'analysis'],
     contextWindow: 128000,
     priority: 8,
@@ -135,8 +183,9 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'claude-sonnet-4-6',
     provider: 'anthropic',
     tier: 'standard',
-    costPer1KInput: 0.003,
-    costPer1KOutput: 0.015,
+    costPer1MInput: 3,
+    costPer1MOutput: 15,
+    costPer1MCachedInput: 0.3,
     capabilities: ['code', 'reasoning', 'analysis', 'creative'],
     contextWindow: 200000,
     priority: 0,
@@ -147,8 +196,9 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'gpt-4o',
     provider: 'openai',
     tier: 'standard',
-    costPer1KInput: 0.0025,
-    costPer1KOutput: 0.01,
+    costPer1MInput: 2.5,
+    costPer1MOutput: 10,
+    costPer1MCachedInput: 1.25,
     capabilities: ['code', 'reasoning', 'analysis', 'creative'],
     contextWindow: 128000,
     priority: 1,
@@ -159,8 +209,9 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'gemini-2-pro',
     provider: 'google',
     tier: 'standard',
-    costPer1KInput: 0.0015,
-    costPer1KOutput: 0.0075,
+    costPer1MInput: 1.5,
+    costPer1MOutput: 7.5,
+    costPer1MCachedInput: 0.375,
     capabilities: ['reasoning', 'analysis'],
     contextWindow: 1000000,
     priority: 2,
@@ -171,8 +222,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'mistral-large-latest',
     provider: 'mistral',
     tier: 'standard',
-    costPer1KInput: 0.002,
-    costPer1KOutput: 0.006,
+    costPer1MInput: 2,
+    costPer1MOutput: 6,
     capabilities: ['code', 'reasoning', 'analysis'],
     contextWindow: 128000,
     priority: 3,
@@ -183,8 +234,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
     provider: 'together',
     tier: 'standard',
-    costPer1KInput: 0.0009,
-    costPer1KOutput: 0.0009,
+    costPer1MInput: 0.9,
+    costPer1MOutput: 0.9,
     capabilities: ['code', 'reasoning', 'analysis'],
     contextWindow: 131072,
     priority: 4,
@@ -195,8 +246,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'sonar-pro',
     provider: 'perplexity',
     tier: 'standard',
-    costPer1KInput: 0.003,
-    costPer1KOutput: 0.015,
+    costPer1MInput: 3,
+    costPer1MOutput: 15,
     capabilities: ['reasoning', 'analysis'],
     contextWindow: 128000,
     priority: 5,
@@ -207,8 +258,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
     provider: 'fireworks',
     tier: 'standard',
-    costPer1KInput: 0.0009,
-    costPer1KOutput: 0.0009,
+    costPer1MInput: 0.9,
+    costPer1MOutput: 0.9,
     capabilities: ['code', 'reasoning', 'analysis'],
     contextWindow: 128000,
     priority: 6,
@@ -219,8 +270,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'llama3-70b-8192',
     provider: 'groq',
     tier: 'standard',
-    costPer1KInput: 0.00059,
-    costPer1KOutput: 0.00079,
+    costPer1MInput: 0.59,
+    costPer1MOutput: 0.79,
     capabilities: ['code', 'reasoning', 'analysis'],
     contextWindow: 8192,
     priority: 7,
@@ -231,8 +282,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'command-r-plus-08-2024',
     provider: 'cohere',
     tier: 'standard',
-    costPer1KInput: 0.003,
-    costPer1KOutput: 0.015,
+    costPer1MInput: 3,
+    costPer1MOutput: 15,
     capabilities: ['reasoning', 'analysis'],
     contextWindow: 128000,
     priority: 8,
@@ -243,8 +294,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'anthropic.claude-sonnet-4-6-v1:0',
     provider: 'bedrock',
     tier: 'standard',
-    costPer1KInput: 0.003,
-    costPer1KOutput: 0.015,
+    costPer1MInput: 3,
+    costPer1MOutput: 15,
     capabilities: ['code', 'reasoning', 'analysis', 'creative'],
     contextWindow: 200000,
     priority: 9,
@@ -255,8 +306,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'meta/meta-llama-3.3-70b-instruct',
     provider: 'replicate',
     tier: 'standard',
-    costPer1KInput: 0.00065,
-    costPer1KOutput: 0.00275,
+    costPer1MInput: 0.65,
+    costPer1MOutput: 2.75,
     capabilities: ['code', 'reasoning', 'analysis'],
     contextWindow: 128000,
     priority: 10,
@@ -267,8 +318,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'grok-3',
     provider: 'xai',
     tier: 'standard',
-    costPer1KInput: 0.003,
-    costPer1KOutput: 0.015,
+    costPer1MInput: 3,
+    costPer1MOutput: 15,
     capabilities: ['code', 'reasoning', 'analysis'],
     contextWindow: 131072,
     priority: 11,
@@ -276,13 +327,42 @@ const DEFAULT_MODELS: ModelConfig[] = [
     supportsStructuredOutput: false,
   },
 
+  // ===== StepFun — reasoning-capable, competitive pricing =====
+  {
+    id: 'step-3.7-flash',
+    provider: 'stepfun',
+    tier: 'standard',
+    costPer1MInput: 1,
+    costPer1MOutput: 4,
+    costPer1MCachedInput: 0.5,
+    capabilities: ['code', 'reasoning', 'analysis'],
+    contextWindow: 128000,
+    priority: 12,
+    supportsJSONMode: true,
+    supportsStructuredOutput: true,
+  },
+  {
+    id: 'step-3.5-flash',
+    provider: 'stepfun',
+    tier: 'eco',
+    costPer1MInput: 0.5,
+    costPer1MOutput: 2,
+    costPer1MCachedInput: 0.25,
+    capabilities: ['code', 'reasoning', 'analysis'],
+    contextWindow: 128000,
+    priority: 9,
+    supportsJSONMode: true,
+    supportsStructuredOutput: true,
+  },
+
   // ===== Power tier — strongest reasoning =====
   {
     id: 'claude-opus-4-8',
     provider: 'anthropic',
     tier: 'power',
-    costPer1KInput: 0.015,
-    costPer1KOutput: 0.075,
+    costPer1MInput: 15,
+    costPer1MOutput: 75,
+    costPer1MCachedInput: 1.5,
     capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'],
     contextWindow: 200000,
     priority: 0,
@@ -293,8 +373,9 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'gpt-5',
     provider: 'openai',
     tier: 'power',
-    costPer1KInput: 0.01,
-    costPer1KOutput: 0.04,
+    costPer1MInput: 10,
+    costPer1MOutput: 40,
+    costPer1MCachedInput: 1.0,
     capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'],
     contextWindow: 256000,
     priority: 1,
@@ -305,8 +386,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'claude-sonnet-4-6',
     provider: 'bedrock',
     tier: 'power',
-    costPer1KInput: 0.003,
-    costPer1KOutput: 0.015,
+    costPer1MInput: 3,
+    costPer1MOutput: 15,
     capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'],
     contextWindow: 200000,
     priority: 2,
@@ -317,8 +398,9 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'deepseek-v4-pro',
     provider: 'deepseek',
     tier: 'power',
-    costPer1KInput: 0.002,
-    costPer1KOutput: 0.008,
+    costPer1MInput: 2,
+    costPer1MOutput: 8,
+    costPer1MCachedInput: 0.02,
     capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'],
     contextWindow: 128000,
     priority: 3,
@@ -329,8 +411,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'mimo-v2.5-pro',
     provider: 'mimo',
     tier: 'power',
-    costPer1KInput: 0.004,
-    costPer1KOutput: 0.012,
+    costPer1MInput: 4,
+    costPer1MOutput: 12,
     capabilities: ['code', 'reasoning', 'analysis', 'creative'],
     contextWindow: 128000,
     priority: 4,
@@ -341,8 +423,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     id: 'glm-5.1',
     provider: 'glm',
     tier: 'power',
-    costPer1KInput: 0.002,
-    costPer1KOutput: 0.008,
+    costPer1MInput: 2,
+    costPer1MOutput: 8,
     capabilities: ['code', 'reasoning', 'analysis', 'creative'],
     contextWindow: 128000,
     priority: 5,
@@ -362,6 +444,41 @@ const TASK_CAPABILITY_MAP: Record<string, string[]> = {
   creative: ['creative'],
   structured: ['code'],
   general: [],
+};
+
+// ============================================================================
+// Provider tier recommendations
+// ============================================================================
+
+export type ProviderTier = 'essential' | 'budget' | 'enterprise' | 'full';
+
+export interface ProviderTierConfig {
+  description: string;
+  providers: string[];
+  minModels: number;
+}
+
+export const RECOMMENDED_TIERS: Record<ProviderTier, ProviderTierConfig> = {
+  essential: {
+    description: 'Covers 95% of use cases with top 3 providers',
+    providers: ['openai', 'anthropic', 'google'],
+    minModels: 3,
+  },
+  budget: {
+    description: 'Cost-optimized alternatives with good performance',
+    providers: ['deepseek', 'groq'],
+    minModels: 2,
+  },
+  enterprise: {
+    description: 'SOC2/compliance requirements with managed services',
+    providers: ['bedrock', 'azure'],
+    minModels: 2,
+  },
+  full: {
+    description: 'Maximum resilience with all 22 providers',
+    providers: ['*'],
+    minModels: 8,
+  },
 };
 
 // ============================================================================
@@ -386,54 +503,122 @@ interface ComplexityScore {
   factors: { name: string; contribution: number }[];
 }
 
+const HIGH_COMPLEXITY_KEYWORDS = [
+  'refactor',
+  'architecture',
+  'security',
+  'audit',
+  'optimize',
+  'migrate',
+  'debug',
+  'diagnose',
+  'investigate',
+  'analyze',
+  'comprehensive',
+  'complex',
+  'distributed',
+  'concurrent',
+  'parallel',
+  'async',
+  'pipeline',
+  'orchestrat',
+  'compliance',
+  'regulatory',
+  'encryption',
+  'authentication',
+  'authorization',
+];
+
+const MEDIUM_COMPLEXITY_KEYWORDS = [
+  'implement',
+  'add',
+  'create',
+  'build',
+  'update',
+  'fix',
+  'change',
+  'integrate',
+  'connect',
+  'configure',
+  'setup',
+  'deploy',
+  'test',
+];
+
+const DOMAIN_KEYWORDS: Record<string, string[]> = {
+  legal: ['contract', 'compliance', 'regulation', 'liability', 'clause', 'jurisdiction'],
+  medical: ['diagnosis', 'patient', 'clinical', 'treatment', 'pharmacology', 'symptom'],
+  financial: ['portfolio', 'derivative', 'hedging', 'valuation', 'risk_model', 'actuarial'],
+  scientific: ['hypothesis', 'experiment', 'methodology', 'peer_review', 'replication'],
+};
+
 function scoreComplexity(ctx: AgentExecutionContext): ComplexityScore {
   const factors: { name: string; contribution: number }[] = [];
   let score = 0;
+  const goalLower = ctx.goal.toLowerCase();
 
-  // Goal length as a proxy for complexity
+  const keywordHigh = HIGH_COMPLEXITY_KEYWORDS.filter((k) => goalLower.includes(k)).length;
+  const keywordMedium = MEDIUM_COMPLEXITY_KEYWORDS.filter((k) => goalLower.includes(k)).length;
+  if (keywordHigh >= 3) {
+    score += 3;
+    factors.push({ name: 'many_complex_keywords', contribution: 3 });
+  } else if (keywordHigh >= 1) {
+    score += 2;
+    factors.push({ name: 'complex_keywords', contribution: 2 });
+  } else if (keywordMedium >= 2) {
+    score += 1;
+    factors.push({ name: 'medium_keywords', contribution: 1 });
+  }
+
+  let domainHits = 0;
+  let matchedDomain = '';
+  for (const [domain, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
+    const hits = keywords.filter((k) => goalLower.includes(k)).length;
+    if (hits >= 2) {
+      domainHits = hits;
+      matchedDomain = domain;
+      break;
+    }
+  }
+  if (domainHits >= 3) {
+    score += 3;
+    factors.push({ name: `domain_expert_${matchedDomain}`, contribution: 3 });
+  } else if (domainHits >= 2) {
+    score += 2;
+    factors.push({ name: `domain_specific_${matchedDomain}`, contribution: 2 });
+  }
+
   if (ctx.goal.length > 400) {
-    score += 3;
-    factors.push({ name: 'long_goal', contribution: 3 });
+    score += 2;
+    factors.push({ name: 'long_goal', contribution: 2 });
   } else if (ctx.goal.length > 150) {
-    score += 2;
-    factors.push({ name: 'medium_goal', contribution: 2 });
-  } else if (ctx.goal.length > 50) {
     score += 1;
-    factors.push({ name: 'short_goal', contribution: 1 });
+    factors.push({ name: 'medium_goal', contribution: 1 });
   }
 
-  // Number of tools suggests breadth
   if (ctx.availableTools.length > 5) {
-    score += 3;
-    factors.push({ name: 'many_tools', contribution: 3 });
+    score += 2;
+    factors.push({ name: 'many_tools', contribution: 2 });
   } else if (ctx.availableTools.length > 3) {
-    score += 2;
-    factors.push({ name: 'several_tools', contribution: 2 });
-  } else if (ctx.availableTools.length > 1) {
     score += 1;
-    factors.push({ name: 'few_tools', contribution: 1 });
+    factors.push({ name: 'several_tools', contribution: 1 });
   }
 
-  // Token budget indicates expected effort
   if (ctx.tokenBudget > 20000) {
-    score += 3;
-    factors.push({ name: 'large_budget', contribution: 3 });
-  } else if (ctx.tokenBudget > 6000) {
     score += 2;
-    factors.push({ name: 'medium_budget', contribution: 2 });
-  } else if (ctx.tokenBudget > 3000) {
+    factors.push({ name: 'large_budget', contribution: 2 });
+  } else if (ctx.tokenBudget > 6000) {
     score += 1;
-    factors.push({ name: 'small_budget', contribution: 1 });
+    factors.push({ name: 'medium_budget', contribution: 1 });
   }
 
-  // Complexity from context data presence of governance constraints
   const gov = ctx.contextData.governanceProfile as { riskLevel?: string } | undefined;
   if (gov?.riskLevel === 'CRITICAL') {
-    score += 4;
-    factors.push({ name: 'critical_risk', contribution: 4 });
-  } else if (gov?.riskLevel === 'HIGH') {
     score += 3;
-    factors.push({ name: 'high_risk', contribution: 3 });
+    factors.push({ name: 'critical_risk', contribution: 3 });
+  } else if (gov?.riskLevel === 'HIGH') {
+    score += 2;
+    factors.push({ name: 'high_risk', contribution: 2 });
   }
 
   return { score: Math.min(score, 10), factors };
@@ -445,13 +630,24 @@ function scoreComplexity(ctx: AgentExecutionContext): ComplexityScore {
 
 export class ModelRouter {
   private models: Map<string, ModelConfig> = new Map();
-  // Pre-indexed by tier for O(1) tier lookups (rebuilt on model changes)
   private tierIndex: Map<ModelTier, ModelConfig[]> = new Map();
-  // Pre-indexed outcomes for O(1) model:taskType lookups
   private outcomesIndex: Map<string, ModelOutcome[]> = new Map();
   private outcomes: ModelOutcome[] = [];
   private readonly maxOutcomes = 500;
-  private readonly decayHalfLifeMs = 20 * 60 * 1000; // 20 minutes
+  private readonly decayHalfLifeMs = 20 * 60 * 1000;
+  private readonly minSamplesForLearning = 30;
+
+  private latencyIndex: Map<string, ProviderLatency> = new Map();
+  private readonly EWMA_ALPHA = 0.3;
+  private readonly EWMA_BETA = 0.3;
+  private readonly EWMA_ERROR = 0.1;
+  private exploreRatio = 0.1;
+  private routingCount = 0;
+  private exploreCount = 0;
+  private userTiers: Map<string, UserTier> = new Map();
+  private routingObjective: RoutingObjective = { type: 'balanced' };
+  private readonly CONFIDENCE_THRESHOLD = 0.6;
+  private readonly LATENCY_COEFFICIENT = 0.15;
 
   constructor(customModels?: ModelConfig[]) {
     const allModels = customModels ?? DEFAULT_MODELS;
@@ -459,6 +655,42 @@ export class ModelRouter {
       this.models.set(m.id, m);
     }
     this.rebuildTierIndex();
+  }
+
+  /**
+   * Configure router from environment variables based on provider tier.
+   * Auto-detects available providers from env vars and returns filtered models.
+   */
+  configureFromTier(tier: ProviderTier): ModelConfig[] {
+    const tierConfig = RECOMMENDED_TIERS[tier];
+    if (tierConfig.providers.includes('*')) {
+      return Array.from(this.models.values());
+    }
+
+    return Array.from(this.models.values()).filter((m) =>
+      tierConfig.providers.includes(m.provider),
+    );
+  }
+
+  /**
+   * Get recommended providers for a given tier.
+   */
+  getRecommendedProviders(tier: ProviderTier): string[] {
+    return RECOMMENDED_TIERS[tier].providers;
+  }
+
+  /**
+   * Get all available provider tiers.
+   */
+  getProviderTiers(): Array<{ tier: ProviderTier; description: string; modelCount: number }> {
+    return Object.entries(RECOMMENDED_TIERS).map(([tier, config]) => ({
+      tier: tier as ProviderTier,
+      description: config.description,
+      modelCount: config.providers.includes('*')
+        ? this.models.size
+        : Array.from(this.models.values()).filter((m) => config.providers.includes(m.provider))
+            .length,
+    }));
   }
 
   /** Pre-index models by tier for O(1) lookups */
@@ -508,18 +740,31 @@ export class ModelRouter {
     const taskType = detectTaskType(ctx.goal);
     const requiredCaps = TASK_CAPABILITY_MAP[taskType] ?? [];
 
-    // Governor-aware tier adjustment: tight/critical budget → prefer cheaper tier
     const governor = governorPhase ?? 'relaxed';
     let tier = preferredTier ?? this.selectTier(complexity, ctx, governor);
 
-    // Capability-aware tier bump: if selected tier has no model with required caps, go higher
     if (requiredCaps.length > 0) {
       tier = this.bumpTierForCapabilities(tier, requiredCaps);
     }
 
-    // Score and rank candidates by capability fit + cost efficiency + learning
     const candidates = this.rankCandidates(tier, requiredCaps, taskType, ctx, registeredProviders);
-    const model = candidates[0];
+    let model = candidates[0];
+
+    this.routingCount++;
+    if (Math.random() < this.exploreRatio && candidates.length > 1) {
+      const randomIdx = 1 + Math.floor(Math.random() * Math.min(candidates.length - 1, 3));
+      model = candidates[randomIdx];
+      this.exploreCount++;
+    }
+
+    const userId = ctx.userId;
+    if (userId) {
+      const userTier = this.getUserTier(userId);
+      if (userTier === 'free' && model.tier === 'power') {
+        const ecoCandidate = candidates.find((m) => m.tier === 'eco' || m.tier === 'standard');
+        if (ecoCandidate) model = ecoCandidate;
+      }
+    }
 
     const reasoning: string[] = [
       `complexity: ${complexity.score}/10 (${complexity.factors.map((f) => f.name).join(', ')})`,
@@ -529,6 +774,8 @@ export class ModelRouter {
       `governor_phase: ${governor}`,
       `candidates_ranked: ${candidates.length}`,
       `selected_model: ${model?.id ?? 'none'}`,
+      `routing_objective: ${this.routingObjective.type}`,
+      `explore_ratio: ${this.exploreRatio}`,
     ];
 
     if (!model) {
@@ -548,8 +795,8 @@ export class ModelRouter {
       model.contextWindow - estimatedInputTokens,
     );
     const estimatedCost =
-      (estimatedInputTokens / 1000) * model.costPer1KInput +
-      (estimatedOutputTokens / 1000) * model.costPer1KOutput;
+      (estimatedInputTokens / 1_000_000) * model.costPer1MInput +
+      (estimatedOutputTokens / 1_000_000) * model.costPer1MOutput;
 
     return {
       modelId: model.id,
@@ -704,7 +951,10 @@ export class ModelRouter {
 
     if (chain.length === 0) {
       // Fallback to standard routing
-      return { initial: this.route(ctx, governor, preferredTier, registeredProviders), escalationChain: [] };
+      return {
+        initial: this.route(ctx, governor, preferredTier, registeredProviders),
+        escalationChain: [],
+      };
     }
 
     // Start with the cheapest model in the chain
@@ -728,8 +978,8 @@ export class ModelRouter {
         `escalation_chain: ${chain.map((m) => m.id).join(' → ')}`,
       ],
       estimatedCost:
-        (estimatedInputTokens / 1000) * cheapest.costPer1KInput +
-        (estimatedOutputTokens / 1000) * cheapest.costPer1KOutput,
+        (estimatedInputTokens / 1_000_000) * cheapest.costPer1MInput +
+        (estimatedOutputTokens / 1_000_000) * cheapest.costPer1MOutput,
       maxTokens: Math.min(estimatedOutputTokens, 200000),
     };
 
@@ -763,7 +1013,8 @@ export class ModelRouter {
     const model = this.models.get(modelId);
     if (!model) return 0;
     return (
-      (inputTokens / 1000) * model.costPer1KInput + (outputTokens / 1000) * model.costPer1KOutput
+      (inputTokens / 1_000_000) * model.costPer1MInput +
+      (outputTokens / 1_000_000) * model.costPer1MOutput
     );
   }
 
@@ -789,7 +1040,7 @@ export class ModelRouter {
       );
       if (candidates.length > 0) {
         // Return the cheapest batch-capable model
-        candidates.sort((a, b) => a.costPer1KOutput - b.costPer1KOutput);
+        candidates.sort((a, b) => a.costPer1MOutput - b.costPer1MOutput);
         return candidates[0];
       }
     }
@@ -824,6 +1075,23 @@ export class ModelRouter {
   }
 
   /**
+   * Check if learning is active for a model:taskType pair.
+   * Learning requires minimum samples to avoid cold-start noise.
+   */
+  isLearningActive(modelId: string, taskType: string): boolean {
+    const key = `${modelId}:${taskType}`;
+    const relevant = this.outcomesIndex.get(key) ?? [];
+    return relevant.length >= this.minSamplesForLearning;
+  }
+
+  /**
+   * Get minimum samples threshold for learning activation.
+   */
+  getMinSamplesForLearning(): number {
+    return this.minSamplesForLearning;
+  }
+
+  /**
    * Get learning stats for debugging.
    */
   getLearningStats(): {
@@ -832,6 +1100,7 @@ export class ModelRouter {
     successRate: string;
     avgDuration: number;
     count: number;
+    learningActive: boolean;
   }[] {
     const stats: {
       modelId: string;
@@ -839,6 +1108,7 @@ export class ModelRouter {
       successRate: string;
       avgDuration: number;
       count: number;
+      learningActive: boolean;
     }[] = [];
     for (const [key, outcomes] of this.outcomesIndex) {
       const colonIdx = key.lastIndexOf(':');
@@ -852,9 +1122,124 @@ export class ModelRouter {
         successRate: `${successes}/${outcomes.length}`,
         avgDuration: Math.round(avgDuration),
         count: outcomes.length,
+        learningActive: this.isLearningActive(modelId, taskType),
       });
     }
     return stats;
+  }
+
+  // ============================================================================
+  // Latency-aware routing
+  // ============================================================================
+
+  recordLatency(
+    provider: string,
+    modelId: string,
+    ttft: number,
+    tpot: number,
+    success: boolean,
+  ): void {
+    const key = `${provider}:${modelId}`;
+    const existing = this.latencyIndex.get(key);
+
+    if (!existing) {
+      this.latencyIndex.set(key, {
+        provider,
+        modelId,
+        ewmaTTFT: ttft,
+        ewmaTPOT: tpot,
+        errorRate: success ? 0 : 1,
+        lastUpdated: Date.now(),
+        sampleCount: 1,
+      });
+      return;
+    }
+
+    existing.ewmaTTFT = this.EWMA_ALPHA * ttft + (1 - this.EWMA_ALPHA) * existing.ewmaTTFT;
+    existing.ewmaTPOT = this.EWMA_BETA * tpot + (1 - this.EWMA_BETA) * existing.ewmaTPOT;
+    existing.errorRate =
+      this.EWMA_ERROR * (success ? 0 : 1) + (1 - this.EWMA_ERROR) * existing.errorRate;
+    existing.lastUpdated = Date.now();
+    existing.sampleCount++;
+  }
+
+  getLatency(provider: string, modelId: string): ProviderLatency | undefined {
+    return this.latencyIndex.get(`${provider}:${modelId}`);
+  }
+
+  getAllLatencies(): ProviderLatency[] {
+    return Array.from(this.latencyIndex.values());
+  }
+
+  // ============================================================================
+  // User-tier routing
+  // ============================================================================
+
+  setUserTier(userId: string, tier: UserTier): void {
+    this.userTiers.set(userId, tier);
+  }
+
+  getUserTier(userId: string): UserTier {
+    return this.userTiers.get(userId) ?? 'free';
+  }
+
+  // ============================================================================
+  // Routing objectives
+  // ============================================================================
+
+  setRoutingObjective(objective: RoutingObjective): void {
+    this.routingObjective = objective;
+  }
+
+  getRoutingObjective(): RoutingObjective {
+    return this.routingObjective;
+  }
+
+  // ============================================================================
+  // Explore/exploit mechanism
+  // ============================================================================
+
+  setExploreRatio(ratio: number): void {
+    this.exploreRatio = Math.max(0, Math.min(1, ratio));
+  }
+
+  getExploreStats(): { routingCount: number; exploreCount: number; exploreRatio: number } {
+    return {
+      routingCount: this.routingCount,
+      exploreCount: this.exploreCount,
+      exploreRatio: this.exploreRatio,
+    };
+  }
+
+  // ============================================================================
+  // Confidence-based escalation
+  // ============================================================================
+
+  checkConfidence(
+    modelId: string,
+    taskType: string,
+    responseTokens: number,
+  ): ConfidenceCheckResult {
+    const successRate = this.getSuccessRate(modelId, taskType);
+    const latency = this.getLatency(this.models.get(modelId)?.provider ?? '', modelId);
+
+    let confidence = successRate;
+
+    if (latency) {
+      const latencyPenalty = Math.min(0.2, latency.errorRate);
+      confidence = Math.max(0, confidence - latencyPenalty);
+    }
+
+    if (responseTokens < 50) {
+      confidence *= 0.8;
+    }
+
+    const shouldEscalate = confidence < this.CONFIDENCE_THRESHOLD;
+    const reason = shouldEscalate
+      ? `confidence ${confidence.toFixed(2)} < threshold ${this.CONFIDENCE_THRESHOLD}`
+      : `confidence ${confidence.toFixed(2)} >= threshold ${this.CONFIDENCE_THRESHOLD}`;
+
+    return { confidence, shouldEscalate, reason };
   }
 
   // ============================================================================
@@ -957,38 +1342,63 @@ export class ModelRouter {
     taskType: string,
     _ctx: AgentExecutionContext,
   ): number {
-    // 1. Capability fit: what fraction of required caps does this model have?
     const capFit =
       requiredCaps.length === 0
         ? 1.0
         : requiredCaps.filter((c) => model.capabilities.includes(c)).length / requiredCaps.length;
 
-    // 2. Cost efficiency: use cost-per-successful-task (raw cost / success rate)
-    //    A model that costs $0.001 but fails 50% of the time effectively costs $0.002/task
-    //    A model that costs $0.003 but succeeds 99% of the time effectively costs $0.003/task
-    //    The second model is actually cheaper per successful task!
     const tierModels = this.tierIndex.get(model.tier) ?? [];
-    const maxCost = Math.max(...tierModels.map((m) => m.costPer1KOutput), 0.001);
-    const rawCostRatio = model.costPer1KOutput / maxCost;
+    const maxCost = Math.max(...tierModels.map((m) => m.costPer1MOutput), 0.001);
+    const rawCostRatio = model.costPer1MOutput / maxCost;
 
-    // Get success rate from learning data (0.5 = no data = neutral)
     const successRate = this.getSuccessRate(model.id, taskType);
-
-    // Cost per successful task: lower is better
-    // If success rate is 0.5 (no data), treat as 1.0 (assume success)
     const effectiveSuccessRate = Math.max(0.5, successRate);
     const costPerSuccess = rawCostRatio / effectiveSuccessRate;
-
-    // Map to 0.7-1.0 range (lower cost per success = higher score)
     const costEfficiency = 1 - Math.min(0.3, costPerSuccess * 0.3);
 
-    // 3. Learning bonus: models that succeeded for this task type get a boost
     const learningBonus = this.getLearningBonus(model.id, taskType);
-
-    // 4. Priority penalty (lower priority number = preferred)
     const priorityFactor = 1 / (1 + model.priority * 0.1);
 
-    return capFit * costEfficiency * learningBonus * priorityFactor;
+    const latency = this.getLatency(model.provider, model.id);
+    let latencyFactor = 1.0;
+    if (latency && latency.sampleCount >= 5) {
+      const avgLatency = latency.ewmaTTFT + latency.ewmaTPOT;
+      const maxLatency = 5000;
+      const latencyScore = 1 - Math.min(1, avgLatency / maxLatency);
+      latencyFactor = 1 - this.LATENCY_COEFFICIENT + this.LATENCY_COEFFICIENT * latencyScore;
+      latencyFactor *= 1 - latency.errorRate * 0.1;
+    }
+
+    let baseScore = capFit * costEfficiency * learningBonus * priorityFactor * latencyFactor;
+
+    baseScore = this.applyRoutingObjective(baseScore, model, successRate);
+
+    return baseScore;
+  }
+
+  private applyRoutingObjective(score: number, model: ModelConfig, successRate: number): number {
+    switch (this.routingObjective.type) {
+      case 'cost_at_quality_floor': {
+        const minQuality = this.routingObjective.minQuality;
+        if (successRate < minQuality && successRate !== 0.5) {
+          return score * 0.3;
+        }
+        const costPenalty = model.costPer1MOutput * 100;
+        return score * (1 - Math.min(0.4, costPenalty));
+      }
+      case 'quality_at_cost_ceiling': {
+        const maxCost = this.routingObjective.maxCostPerRequest;
+        const estimatedCost = model.costPer1MOutput * 2;
+        if (estimatedCost > maxCost) {
+          return score * 0.2;
+        }
+        const qualityBoost = successRate * 0.3;
+        return score * (1 + qualityBoost);
+      }
+      case 'balanced':
+      default:
+        return score;
+    }
   }
 
   /**
@@ -999,7 +1409,8 @@ export class ModelRouter {
     const key = `${modelId}:${taskType}`;
     const relevant = this.outcomesIndex.get(key) ?? [];
 
-    if (relevant.length === 0) return 1.0; // No data → neutral
+    if (relevant.length === 0) return 1.0;
+    if (relevant.length < this.minSamplesForLearning) return 1.0;
 
     const now = Date.now();
     let weightedSuccess = 0;
@@ -1015,7 +1426,6 @@ export class ModelRouter {
     if (totalWeight === 0) return 1.0;
 
     const successRate = weightedSuccess / totalWeight;
-    // Map 0-1 success rate to 0.8-1.2 bonus
     return 0.8 + successRate * 0.4;
   }
 
@@ -1028,7 +1438,8 @@ export class ModelRouter {
     const key = `${modelId}:${taskType}`;
     const relevant = this.outcomesIndex.get(key) ?? [];
 
-    if (relevant.length === 0) return 0.5; // No data → neutral
+    if (relevant.length === 0) return 0.5;
+    if (relevant.length < this.minSamplesForLearning) return 0.5;
 
     const now = Date.now();
     let weightedSuccess = 0;

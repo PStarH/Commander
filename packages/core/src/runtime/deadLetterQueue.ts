@@ -84,7 +84,7 @@ export class DeadLetterQueue {
     buffer.push(JSON.stringify(entry));
     this.buffers.set(key, buffer);
 
-    if (buffer.length >= 10) {
+    if (buffer.length >= 100) {
       this.flush(key);
     }
   }
