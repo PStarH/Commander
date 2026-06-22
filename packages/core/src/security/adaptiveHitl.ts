@@ -36,6 +36,7 @@
 import * as crypto from 'crypto';
 import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getSecurityMonitor } from './securityMonitor';
+import { getMetricsCollector } from '../runtime/metricsCollector';
 import type { GuardianInterventionType } from './guardianAgent';
 import type { CorrelationRuleType } from './crossAgentCorrelator';
 
@@ -80,7 +81,8 @@ const STRATEGY_DESCRIPTIONS: Record<HITLStrategy, string> = {
   auto: 'All signals nominal — proceeding without human involvement.',
   suggest: 'Low signal anomalies detected — executing but flagged for later review.',
   confirm: 'Elevated risk — human confirmation required before executing this tool.',
-  pause_and_review: 'Significant risk — agent paused, human operator must review and explicitly resume.',
+  pause_and_review:
+    'Significant risk — agent paused, human operator must review and explicitly resume.',
   escalate: 'Critical risk — agent frozen, escalation to security operations center.',
   deny: 'Execution blocked — risk exceeds acceptable threshold or tool is unauthorized.',
 };
@@ -167,7 +169,13 @@ export interface MissionSignal {
   /** Environment (production vs staging vs development). */
   environment: 'production' | 'staging' | 'development';
   /** Task type for context-aware adjustments. */
-  taskType: 'code_generation' | 'code_review' | 'data_analysis' | 'deployment' | 'research' | 'unknown';
+  taskType:
+    | 'code_generation'
+    | 'code_review'
+    | 'data_analysis'
+    | 'deployment'
+    | 'research'
+    | 'unknown';
   /** Number of steps already executed in this run. */
   stepsExecuted: number;
 }
@@ -284,11 +292,11 @@ export interface AdaptiveHITLConfig {
 
 const DEFAULT_CONFIG: AdaptiveHITLConfig = {
   enabled: true,
-  toolRiskWeight: 0.30,
+  toolRiskWeight: 0.3,
   agentConfidenceWeight: 0.25,
-  correlationWeight: 0.20,
-  verificationWeight: 0.10,
-  missionWeight: 0.10,
+  correlationWeight: 0.2,
+  verificationWeight: 0.1,
+  missionWeight: 0.1,
   timeDecayWeight: 0.05,
   autoThreshold: 20,
   suggestThreshold: 40,
@@ -353,7 +361,13 @@ export class AdaptiveHITL {
   private profiles: Map<string, AgentBehaviorProfile> = new Map();
   private decisionHistory: HITLDecision[] = [];
   /** Human override decisions — operator changed the strategy. */
-  private overrideHistory: Array<{ decisionId: string; original: HITLStrategy; overridden: HITLStrategy; reason: string; timestamp: string }> = [];
+  private overrideHistory: Array<{
+    decisionId: string;
+    original: HITLStrategy;
+    overridden: HITLStrategy;
+    reason: string;
+    timestamp: string;
+  }> = [];
 
   constructor(config: Partial<AdaptiveHITLConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -447,11 +461,12 @@ export class AdaptiveHITL {
       this.config.autoEscalateOnAnomalies &&
       signals.agentConfidence.consecutiveAnomalies >= this.config.autoEscalateAnomalyThreshold
     ) {
-      const anomalyStrategy = signals.agentConfidence.consecutiveAnomalies >= 10
-        ? 'deny'
-        : signals.agentConfidence.consecutiveAnomalies >= 7
-          ? 'escalate'
-          : 'pause_and_review';
+      const anomalyStrategy =
+        signals.agentConfidence.consecutiveAnomalies >= 10
+          ? 'deny'
+          : signals.agentConfidence.consecutiveAnomalies >= 7
+            ? 'escalate'
+            : 'pause_and_review';
       const anomalyStrat = maxStrategy(baselineStrategy, anomalyStrategy as HITLStrategy);
       if (STRATEGY_SEVERITY[anomalyStrat] > STRATEGY_SEVERITY[baselineStrategy]) {
         escalated = true;
@@ -461,7 +476,10 @@ export class AdaptiveHITL {
     }
 
     // Critical correlation → force escalate
-    if (signals.correlation.criticalCorrelation && STRATEGY_SEVERITY[finalStrategy] < STRATEGY_SEVERITY.escalate) {
+    if (
+      signals.correlation.criticalCorrelation &&
+      STRATEGY_SEVERITY[finalStrategy] < STRATEGY_SEVERITY.escalate
+    ) {
       escalated = true;
       previousStrategy = finalStrategy;
       finalStrategy = 'escalate';
@@ -504,6 +522,26 @@ export class AdaptiveHITL {
       this.decisionHistory = this.decisionHistory.slice(-500);
     }
 
+    try {
+      getMetricsCollector().incrementCounter(
+        'adaptive_hitl_decisions_total',
+        'Adaptive HITL strategy decisions',
+        1,
+        [
+          { name: 'strategy', value: finalStrategy },
+          { name: 'escalated', value: String(escalated) },
+        ],
+      );
+      getMetricsCollector().setGauge(
+        'adaptive_hitl_risk_score',
+        'Latest composite risk score',
+        compositeScore,
+        [{ name: 'agent', value: signals.agentId }],
+      );
+    } catch {
+      /* best-effort */
+    }
+
     // Audit log for confirm+ decisions
     if (STRATEGY_SEVERITY[finalStrategy] >= STRATEGY_SEVERITY.confirm) {
       this.auditDecision(decision, signals);
@@ -522,10 +560,18 @@ export class AdaptiveHITL {
 
     // Argument risk level
     switch (risk.argRiskLevel) {
-      case 'critical': score += 80; break;
-      case 'high': score += 55; break;
-      case 'medium': score += 30; break;
-      case 'low': score += 5; break;
+      case 'critical':
+        score += 80;
+        break;
+      case 'high':
+        score += 55;
+        break;
+      case 'medium':
+        score += 30;
+        break;
+      case 'low':
+        score += 5;
+        break;
     }
 
     // Trust tier
@@ -549,7 +595,13 @@ export class AdaptiveHITL {
     }
 
     // Known dangerous tool names
-    const highRiskTools = ['shell_execute', 'python_execute', 'git_push', 'agent_spawn', 'file_delete'];
+    const highRiskTools = [
+      'shell_execute',
+      'python_execute',
+      'git_push',
+      'agent_spawn',
+      'file_delete',
+    ];
     if (highRiskTools.some((t) => risk.toolName.includes(t))) {
       score += 15;
     }
@@ -788,7 +840,9 @@ export class AdaptiveHITL {
   private reasonAgentConfidence(confidence: AgentConfidenceSignal): string {
     const parts: string[] = [];
     if (confidence.activeInterventions.length > 0) {
-      parts.push(`${confidence.activeInterventions.length} active intervention(s): ${confidence.activeInterventions.join(', ')}`);
+      parts.push(
+        `${confidence.activeInterventions.length} active intervention(s): ${confidence.activeInterventions.join(', ')}`,
+      );
     }
     if (confidence.isPaused) parts.push('agent paused');
     if (confidence.baselineDeviationFactor > 1.5) {
@@ -805,19 +859,27 @@ export class AdaptiveHITL {
     if (correlation.activeCorrelationTypes.length === 0) {
       return 'No cross-agent correlation matches.';
     }
-    const parts = [`${correlation.activeCorrelationTypes.length} correlation type(s): ${correlation.activeCorrelationTypes.join(', ')}`];
+    const parts = [
+      `${correlation.activeCorrelationTypes.length} correlation type(s): ${correlation.activeCorrelationTypes.join(', ')}`,
+    ];
     parts.push(`max risk score=${correlation.maxCorrelationRiskScore}`);
     if (correlation.criticalCorrelation) parts.push('CRITICAL correlation detected');
     return parts.join('; ') + '.';
   }
 
   private reasonVerification(verification: VerificationSignal): string {
-    if (verification.confidence >= 0.85 && verification.gateFailures.length === 0 && !verification.hallucinationDetected) {
+    if (
+      verification.confidence >= 0.85 &&
+      verification.gateFailures.length === 0 &&
+      !verification.hallucinationDetected
+    ) {
       return 'Verification nominal.';
     }
     const parts: string[] = [];
-    if (verification.confidence < 0.85) parts.push(`confidence=${(verification.confidence * 100).toFixed(0)}%`);
-    if (verification.gateFailures.length > 0) parts.push(`${verification.gateFailures.length} gate failure(s)`);
+    if (verification.confidence < 0.85)
+      parts.push(`confidence=${(verification.confidence * 100).toFixed(0)}%`);
+    if (verification.gateFailures.length > 0)
+      parts.push(`${verification.gateFailures.length} gate failure(s)`);
     if (verification.hallucinationDetected) parts.push('hallucination detected');
     return parts.join('; ') + '.';
   }
@@ -825,8 +887,10 @@ export class AdaptiveHITL {
   private reasonMission(mission: MissionSignal): string {
     const parts: string[] = [];
     if (mission.environment === 'production') parts.push('production environment');
-    if (mission.criticality >= 0.8) parts.push(`criticality=${(mission.criticality * 100).toFixed(0)}%`);
-    if (mission.budgetRemaining < 0.5) parts.push(`budget remaining=${(mission.budgetRemaining * 100).toFixed(0)}%`);
+    if (mission.criticality >= 0.8)
+      parts.push(`criticality=${(mission.criticality * 100).toFixed(0)}%`);
+    if (mission.budgetRemaining < 0.5)
+      parts.push(`budget remaining=${(mission.budgetRemaining * 100).toFixed(0)}%`);
     if (mission.userRole === 'guest') parts.push('guest user');
     if (parts.length === 0) return 'Mission context nominal.';
     return parts.join(', ') + '.';
@@ -884,11 +948,7 @@ export class AdaptiveHITL {
    * Update the behavior profile after each decision.
    * Builds a trust bonus over time for agents with consistent good behavior.
    */
-  private updateProfile(
-    agentId: string,
-    decision: HITLDecision,
-    signals: HITLSignalBundle,
-  ): void {
+  private updateProfile(agentId: string, decision: HITLDecision, signals: HITLSignalBundle): void {
     const profile = this.getProfile(agentId);
     profile.totalDecisions++;
     profile.strategyCounts[decision.strategy]++;
@@ -945,11 +1005,7 @@ export class AdaptiveHITL {
    * Record a human override — operator changed the strategy.
    * Used for learning: future decisions weight factors aligned with human judgment.
    */
-  recordOverride(
-    decisionId: string,
-    overriddenStrategy: HITLStrategy,
-    reason: string,
-  ): void {
+  recordOverride(decisionId: string, overriddenStrategy: HITLStrategy, reason: string): void {
     const original = this.decisionHistory.find((d) => d.decisionId === decisionId);
     this.overrideHistory.push({
       decisionId,
@@ -984,7 +1040,8 @@ export class AdaptiveHITL {
     try {
       getSecurityAuditLogger().logEvent({
         type: 'content_threat',
-        severity: STRATEGY_SEVERITY[decision.strategy] >= STRATEGY_SEVERITY.escalate ? 'critical' : 'high',
+        severity:
+          STRATEGY_SEVERITY[decision.strategy] >= STRATEGY_SEVERITY.escalate ? 'critical' : 'high',
         source: 'AdaptiveHITL',
         message: `HITL decision: ${decision.strategy} (composite=${decision.compositeRiskScore}) for ${signals.agentId}`,
         details: {
@@ -1087,13 +1144,9 @@ export class AdaptiveHITL {
       totalDecisions: this.decisionHistory.length,
       strategyDistribution: distribution,
       escalationRate:
-        this.decisionHistory.length > 0
-          ? escalationCount / this.decisionHistory.length
-          : 0,
+        this.decisionHistory.length > 0 ? escalationCount / this.decisionHistory.length : 0,
       avgCompositeScore:
-        this.decisionHistory.length > 0
-          ? totalScore / this.decisionHistory.length
-          : 0,
+        this.decisionHistory.length > 0 ? totalScore / this.decisionHistory.length : 0,
     };
   }
 
@@ -1149,7 +1202,9 @@ export class AdaptiveHITL {
    * Convenience method: build a HITLSignalBundle from partial signals.
    * Fills missing signals with nominal defaults (risk=0).
    */
-  static defaultSignals(overrides: Partial<HITLSignalBundle> & { agentId: string; toolRisk: ToolRiskSignal }): HITLSignalBundle {
+  static defaultSignals(
+    overrides: Partial<HITLSignalBundle> & { agentId: string; toolRisk: ToolRiskSignal },
+  ): HITLSignalBundle {
     return {
       agentId: overrides.agentId,
       runId: overrides.runId,

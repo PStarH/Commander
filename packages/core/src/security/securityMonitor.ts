@@ -201,8 +201,7 @@ export class SecurityMonitor {
     timestamp?: string;
     recommendation?: string;
   }): void {
-    const level: SecurityAlert['level'] =
-      payload.severity === 'critical' ? 'critical' : 'warning';
+    const level: SecurityAlert['level'] = payload.severity === 'critical' ? 'critical' : 'warning';
     const severity =
       payload.severity === 'low' ||
       payload.severity === 'medium' ||

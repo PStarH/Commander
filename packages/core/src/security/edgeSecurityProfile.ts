@@ -43,13 +43,13 @@ import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 export type EdgeMode = 'auto' | 'always-edge' | 'always-cloud' | 'off';
 
 export type EdgeDetectionMethod =
-  | 'no_cloud_keys'       // No cloud API keys found in env
-  | 'no_network'           // Cannot reach external endpoints
-  | 'low_resources'        // CPU/memory below thresholds
-  | 'explicit_offline'     // User explicitly requested edge mode
-  | 'air_gapped'           // Air-gapped environment detected
-  | 'mobile_device'        // Running on mobile/embedded device
-  | 'containerized_edge';  // Running in edge container (e.g., K3s, MicroK8s)
+  | 'no_cloud_keys' // No cloud API keys found in env
+  | 'no_network' // Cannot reach external endpoints
+  | 'low_resources' // CPU/memory below thresholds
+  | 'explicit_offline' // User explicitly requested edge mode
+  | 'air_gapped' // Air-gapped environment detected
+  | 'mobile_device' // Running on mobile/embedded device
+  | 'containerized_edge'; // Running in edge container (e.g., K3s, MicroK8s)
 
 export interface EdgeDetectionResult {
   /** Whether edge mode is active */
@@ -308,8 +308,7 @@ export class EdgeSecurityProfile {
 
     // Decision: edge mode if no cloud keys AND (no network OR low resources OR explicit markers)
     const edgeMode =
-      !hasCloudKeys &&
-      (!networkAvailable || resources.isLowResource || reasons.length > 1);
+      !hasCloudKeys && (!networkAvailable || resources.isLowResource || reasons.length > 1);
 
     // Check local model availability
     const { localModelAvailable, localProviders } = await this.checkLocalModels();
@@ -472,9 +471,7 @@ export class EdgeSecurityProfile {
       maxTokens: isLowResource
         ? Math.min(this.config.edgeMaxTokens, 4000)
         : this.config.edgeMaxTokens,
-      maxConcurrency: isLowResource
-        ? 1
-        : Math.min(this.config.edgeMaxConcurrency, 2),
+      maxConcurrency: isLowResource ? 1 : Math.min(this.config.edgeMaxConcurrency, 2),
       isLowResource: resources.isLowResource,
     };
   }
@@ -577,7 +574,9 @@ export class EdgeSecurityProfile {
           return true; // Empty cred store in Docker config suggests air-gapped
         }
       }
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
 
     // Check for offline package manager configs
     const npmrcPath = path.join(os.homedir(), '.npmrc');
@@ -588,7 +587,9 @@ export class EdgeSecurityProfile {
           return true;
         }
       }
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
 
     return false;
   }
@@ -621,7 +622,9 @@ export class EdgeSecurityProfile {
       if (fs.existsSync('/var/snap/microk8s')) return true;
       // IoT Edge runtime
       if (fs.existsSync('/etc/iotedge')) return true;
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
 
     // Check for /.dockerenv (standard container detection)
     try {
@@ -630,7 +633,9 @@ export class EdgeSecurityProfile {
         // Small container (< 2GB) = likely edge, not cloud
         if (totalMem < 2 * 1024 * 1024 * 1024) return true;
       }
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
 
     return false;
   }
@@ -648,7 +653,9 @@ export class EdgeSecurityProfile {
       if (running) {
         providers.push('ollama');
       }
-    } catch { /* unavailable */ }
+    } catch {
+      /* unavailable */
+    }
 
     // Try vLLM
     try {
@@ -659,7 +666,9 @@ export class EdgeSecurityProfile {
       if (response.ok) {
         providers.push('vllm');
       }
-    } catch { /* unavailable */ }
+    } catch {
+      /* unavailable */
+    }
 
     return {
       localModelAvailable: providers.length > 0,
@@ -681,7 +690,10 @@ export class EdgeSecurityProfile {
 
   private activateStrictSandbox(): void {
     this.strictSandboxActive = true;
-    getGlobalLogger().info('EdgeSecurityProfile', '🛡️ Strict edge sandbox activated (read-only workspace, no network)');
+    getGlobalLogger().info(
+      'EdgeSecurityProfile',
+      '🛡️ Strict edge sandbox activated (read-only workspace, no network)',
+    );
   }
 
   private async activateFreezeDry(): Promise<void> {
@@ -689,9 +701,15 @@ export class EdgeSecurityProfile {
       const { getFreezeDryManager } = await import('../runtime/freezeDry');
       getFreezeDryManager(); // Initialize if not yet created
       this.freezeDryActive = true;
-      getGlobalLogger().info('EdgeSecurityProfile', '❄️ FreezeDry activated for crash-resume cycles');
+      getGlobalLogger().info(
+        'EdgeSecurityProfile',
+        '❄️ FreezeDry activated for crash-resume cycles',
+      );
     } catch {
-      getGlobalLogger().warn('EdgeSecurityProfile', 'FreezeDry unavailable — continuing without crash-resume');
+      getGlobalLogger().warn(
+        'EdgeSecurityProfile',
+        'FreezeDry unavailable — continuing without crash-resume',
+      );
       this.freezeDryActive = false;
     }
   }
@@ -721,15 +739,18 @@ export class EdgeSecurityProfile {
         os.hostname(),
         os.platform(),
         os.arch(),
-        (() => { try { return os.userInfo().username; } catch { return 'edge-agent'; } })(),
+        (() => {
+          try {
+            return os.userInfo().username;
+          } catch {
+            return 'edge-agent';
+          }
+        })(),
         process.cwd(),
         'commander-edge-security-v1',
       ].join(':');
 
-      this.encryptionKey = crypto
-        .createHash('sha256')
-        .update(fingerprint)
-        .digest();
+      this.encryptionKey = crypto.createHash('sha256').update(fingerprint).digest();
     }
   }
 
@@ -776,7 +797,9 @@ export class EdgeSecurityProfile {
           },
         },
       });
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 }
 
@@ -784,14 +807,10 @@ export class EdgeSecurityProfile {
 // Singleton
 // ============================================================================
 
-const edgeSecuritySingleton = createTenantAwareSingleton(
-  () => new EdgeSecurityProfile(),
-);
+const edgeSecuritySingleton = createTenantAwareSingleton(() => new EdgeSecurityProfile());
 
 /** Get the global EdgeSecurityProfile. */
-export function getEdgeSecurityProfile(
-  config?: Partial<EdgeSecurityConfig>,
-): EdgeSecurityProfile {
+export function getEdgeSecurityProfile(config?: Partial<EdgeSecurityConfig>): EdgeSecurityProfile {
   return edgeSecuritySingleton.get();
 }
 

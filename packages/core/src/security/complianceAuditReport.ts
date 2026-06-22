@@ -46,11 +46,21 @@ import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 /** ISO 42001:2023 clause reference */
 export type IsoClause =
-  | '6.1' | '6.2'  // Planning
-  | '7.1' | '7.2' | '7.3' | '7.4' | '7.5'  // Support
-  | '8.1' | '8.2' | '8.3'  // Operation
-  | '9.1' | '9.2' | '9.3'  // Performance evaluation
-  | '10.1' | '10.2';  // Improvement
+  | '6.1'
+  | '6.2' // Planning
+  | '7.1'
+  | '7.2'
+  | '7.3'
+  | '7.4'
+  | '7.5' // Support
+  | '8.1'
+  | '8.2'
+  | '8.3' // Operation
+  | '9.1'
+  | '9.2'
+  | '9.3' // Performance evaluation
+  | '10.1'
+  | '10.2'; // Improvement
 
 /** NIST AI RMF 1.0 function */
 export type NistAirmfFunction = 'GOVERN' | 'MAP' | 'MEASURE' | 'MANAGE';
@@ -148,11 +158,14 @@ export interface IsoComplianceSummary {
   /** Whether all required clauses are addressed */
   fullyCompliant: boolean;
   /** Per-clause coverage */
-  clauseCoverage: Map<IsoClause, {
-    covered: boolean;
-    controls: string[];
-    score: number;
-  }>;
+  clauseCoverage: Map<
+    IsoClause,
+    {
+      covered: boolean;
+      controls: string[];
+      score: number;
+    }
+  >;
   /** Gap analysis */
   gaps: Array<{
     clause: IsoClause;
@@ -167,12 +180,15 @@ export interface IsoComplianceSummary {
 /** NIST AI RMF alignment summary */
 export interface NistRmfAlignmentSummary {
   /** Per-function coverage */
-  functionCoverage: Map<NistAirmfFunction, {
-    coveredSubcategories: number;
-    totalSubcategories: number;
-    coveragePercentage: number;
-    controls: string[];
-  }>;
+  functionCoverage: Map<
+    NistAirmfFunction,
+    {
+      coveredSubcategories: number;
+      totalSubcategories: number;
+      coveragePercentage: number;
+      controls: string[];
+    }
+  >;
   /** Gap analysis */
   gaps: Array<{
     subcategory: NistAirmfSubcategory;
@@ -275,8 +291,21 @@ const DEFAULT_CONFIG: ComplianceConfig = {
 // ============================================================================
 
 const ALL_ISO_CLAUSES: IsoClause[] = [
-  '6.1', '6.2', '7.1', '7.2', '7.3', '7.4', '7.5',
-  '8.1', '8.2', '8.3', '9.1', '9.2', '9.3', '10.1', '10.2',
+  '6.1',
+  '6.2',
+  '7.1',
+  '7.2',
+  '7.3',
+  '7.4',
+  '7.5',
+  '8.1',
+  '8.2',
+  '8.3',
+  '9.1',
+  '9.2',
+  '9.3',
+  '10.1',
+  '10.2',
 ];
 
 const ISO_CLAUSE_DESCRIPTIONS: Record<IsoClause, string> = {
@@ -303,20 +332,35 @@ const ISO_CLAUSE_DESCRIPTIONS: Record<IsoClause, string> = {
 
 const NIST_RMF_SUBCATEGORIES: Record<NistAirmfFunction, string[]> = {
   GOVERN: [
-    'GOVERN-1.1', 'GOVERN-1.2', 'GOVERN-2.1', 'GOVERN-2.2',
-    'GOVERN-3.1', 'GOVERN-4.1', 'GOVERN-5.1', 'GOVERN-6.1',
+    'GOVERN-1.1',
+    'GOVERN-1.2',
+    'GOVERN-2.1',
+    'GOVERN-2.2',
+    'GOVERN-3.1',
+    'GOVERN-4.1',
+    'GOVERN-5.1',
+    'GOVERN-6.1',
   ],
-  MAP: [
-    'MAP-1.1', 'MAP-2.1', 'MAP-2.2', 'MAP-3.1',
-    'MAP-4.1', 'MAP-5.1', 'MAP-5.2',
-  ],
+  MAP: ['MAP-1.1', 'MAP-2.1', 'MAP-2.2', 'MAP-3.1', 'MAP-4.1', 'MAP-5.1', 'MAP-5.2'],
   MEASURE: [
-    'MEASURE-1.1', 'MEASURE-1.2', 'MEASURE-2.1', 'MEASURE-2.2',
-    'MEASURE-2.3', 'MEASURE-2.4', 'MEASURE-3.1', 'MEASURE-3.2',
+    'MEASURE-1.1',
+    'MEASURE-1.2',
+    'MEASURE-2.1',
+    'MEASURE-2.2',
+    'MEASURE-2.3',
+    'MEASURE-2.4',
+    'MEASURE-3.1',
+    'MEASURE-3.2',
   ],
   MANAGE: [
-    'MANAGE-1.1', 'MANAGE-1.2', 'MANAGE-2.1', 'MANAGE-2.2',
-    'MANAGE-3.1', 'MANAGE-4.1', 'MANAGE-4.2', 'MANAGE-4.3',
+    'MANAGE-1.1',
+    'MANAGE-1.2',
+    'MANAGE-2.1',
+    'MANAGE-2.2',
+    'MANAGE-3.1',
+    'MANAGE-4.1',
+    'MANAGE-4.2',
+    'MANAGE-4.3',
   ],
 };
 
@@ -329,7 +373,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-001',
     name: 'Content Scanning — Prompt Injection Detection',
-    description: 'Multi-pattern regex scanning for prompt injection across English, Chinese, Russian, Arabic, Japanese. Unicode obfuscation and base64-encoded injection detection.',
+    description:
+      'Multi-pattern regex scanning for prompt injection across English, Chinese, Russian, Arabic, Japanese. Unicode obfuscation and base64-encoded injection detection.',
     implementedBy: ['ContentScanner'],
     isoClauses: ['8.2', '8.3'],
     nistSubcategories: ['MEASURE-2.1', 'MEASURE-2.2'],
@@ -340,7 +385,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-002',
     name: 'Content Scanning — Tool Output Injection',
-    description: 'Lightweight fast-path injection check for tool results before they enter the LLM context.',
+    description:
+      'Lightweight fast-path injection check for tool results before they enter the LLM context.',
     implementedBy: ['ContentScanner'],
     isoClauses: ['8.2', '8.3'],
     nistSubcategories: ['MEASURE-2.2', 'MANAGE-2.1'],
@@ -351,7 +397,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-003',
     name: 'Privacy Router — Sensitive Data Detection',
-    description: 'Regex-based detection of API keys, private IPs, credentials, PII in agent input/output. Routes to local models when sensitive data detected.',
+    description:
+      'Regex-based detection of API keys, private IPs, credentials, PII in agent input/output. Routes to local models when sensitive data detected.',
     implementedBy: ['PrivacyRouter'],
     isoClauses: ['8.1', '8.3'],
     nistSubcategories: ['MAP-3.1', 'MEASURE-2.3'],
@@ -364,7 +411,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-004',
     name: 'Sandbox Manager — OS-Level Execution Isolation',
-    description: 'Auto-detected platform sandbox: macOS Seatbelt, Linux Bubblewrap, Docker. Read-only, workspace-write, and full-access profiles.',
+    description:
+      'Auto-detected platform sandbox: macOS Seatbelt, Linux Bubblewrap, Docker. Read-only, workspace-write, and full-access profiles.',
     implementedBy: ['SandboxManager'],
     isoClauses: ['8.1', '8.3'],
     nistSubcategories: ['MANAGE-2.1', 'MANAGE-2.2'],
@@ -375,7 +423,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-005',
     name: 'Tool Approval System',
-    description: '5-mode approval: suggest, auto-edit, full-auto, read-only, plan. 6 categories with per-category policies.',
+    description:
+      '5-mode approval: suggest, auto-edit, full-auto, read-only, plan. 6 categories with per-category policies.',
     implementedBy: ['ToolApproval'],
     isoClauses: ['8.1', '8.2'],
     nistSubcategories: ['GOVERN-3.1', 'MANAGE-2.1'],
@@ -386,7 +435,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-006',
     name: 'Path Security Enforcement',
-    description: 'Path traversal prevention for file operations. Blocks access outside workspace and to protected paths.',
+    description:
+      'Path traversal prevention for file operations. Blocks access outside workspace and to protected paths.',
     implementedBy: ['FileSystemTool', 'SandboxManager'],
     isoClauses: ['8.3'],
     nistSubcategories: ['MANAGE-2.1'],
@@ -399,7 +449,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-007',
     name: 'Guardian Agent — Behavioral Anomaly Detection',
-    description: 'Monitors agent behavior for semantic drift, tool usage spikes, data exfiltration, cost overruns. Exponentially weighted baseline modeling per agent.',
+    description:
+      'Monitors agent behavior for semantic drift, tool usage spikes, data exfiltration, cost overruns. Exponentially weighted baseline modeling per agent.',
     implementedBy: ['GuardianAgent'],
     isoClauses: ['9.1', '9.2'],
     nistSubcategories: ['MEASURE-2.1', 'MEASURE-2.2', 'MEASURE-2.3'],
@@ -410,7 +461,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-008',
     name: 'Security Monitor — Continuous Event Monitoring',
-    description: 'Real-time security event monitoring: burst detection, severity escalation, repeated failure detection, zero-day detection.',
+    description:
+      'Real-time security event monitoring: burst detection, severity escalation, repeated failure detection, zero-day detection.',
     implementedBy: ['SecurityMonitor'],
     isoClauses: ['9.1', '9.2'],
     nistSubcategories: ['MEASURE-2.1', 'MEASURE-2.4'],
@@ -421,7 +473,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-009',
     name: 'Circuit Breaker — Provider Failure Protection',
-    description: 'Per-provider circuit breaker with Hystrix-pattern: volume threshold + error rate. Semantic and security event triggering.',
+    description:
+      'Per-provider circuit breaker with Hystrix-pattern: volume threshold + error rate. Semantic and security event triggering.',
     implementedBy: ['CircuitBreaker', 'CircuitBreakerRegistry'],
     isoClauses: ['8.1', '9.1'],
     nistSubcategories: ['MANAGE-2.2', 'MEASURE-2.1'],
@@ -434,7 +487,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-010',
     name: 'Supply Chain Scanner — Malware Signature Detection',
-    description: 'Scans skills, tools, MCP definitions for 8 malicious signatures. Dependency confusion and typosquatting detection.',
+    description:
+      'Scans skills, tools, MCP definitions for 8 malicious signatures. Dependency confusion and typosquatting detection.',
     implementedBy: ['SupplyChainScanner'],
     isoClauses: ['8.2', '8.3'],
     nistSubcategories: ['MAP-3.1', 'MEASURE-2.3'],
@@ -445,7 +499,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-011',
     name: 'Agent Lineage — Immutable Parent-Child Tracking',
-    description: 'Immutable agent relationship tracking. Spawn/terminate/handoff audited via AuditChainLedger. Revocation propagates to descendants.',
+    description:
+      'Immutable agent relationship tracking. Spawn/terminate/handoff audited via AuditChainLedger. Revocation propagates to descendants.',
     implementedBy: ['AgentLineage'],
     isoClauses: ['8.1', '9.1'],
     nistSubcategories: ['GOVERN-3.1', 'MAP-2.2'],
@@ -456,7 +511,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-012',
     name: 'Capability Token — HMAC-Signed Authorization',
-    description: 'Short-lived HMAC-signed authorization tokens with scope, delegation depth limits, and revocation. Clock-skew tolerant verification.',
+    description:
+      'Short-lived HMAC-signed authorization tokens with scope, delegation depth limits, and revocation. Clock-skew tolerant verification.',
     implementedBy: ['CapabilityTokenIssuer', 'CapabilityTokenVerifier'],
     isoClauses: ['8.1', '8.3'],
     nistSubcategories: ['GOVERN-3.1', 'MANAGE-2.1'],
@@ -469,7 +525,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-013',
     name: 'CostGuard — Economic Attack Detection',
-    description: '8 attack types detected: token flood, tool loop, concurrent burst, expensive query, context stuffing, provider exhaustion, model degradation, amplification. 4 response tiers.',
+    description:
+      '8 attack types detected: token flood, tool loop, concurrent burst, expensive query, context stuffing, provider exhaustion, model degradation, amplification. 4 response tiers.',
     implementedBy: ['CostGuard'],
     isoClauses: ['8.1', '9.1'],
     nistSubcategories: ['MEASURE-2.1', 'MANAGE-2.2'],
@@ -480,7 +537,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-014',
     name: 'Token Governor — Budget Enforcement',
-    description: 'Token budget enforcement with relaxed/moderate/tight/critical phases. Compaction triggers under budget pressure.',
+    description:
+      'Token budget enforcement with relaxed/moderate/tight/critical phases. Compaction triggers under budget pressure.',
     implementedBy: ['TokenGovernor'],
     isoClauses: ['8.1', '9.1'],
     nistSubcategories: ['MEASURE-2.1', 'MANAGE-2.2'],
@@ -493,7 +551,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-015',
     name: 'AgentSOC — Incident Response Operations',
-    description: 'P0-P4 event classification. 14 playbooks with escalation paths. SOC health dashboard with MTTD/MTTR/false positive rate.',
+    description:
+      'P0-P4 event classification. 14 playbooks with escalation paths. SOC health dashboard with MTTD/MTTR/false positive rate.',
     implementedBy: ['AgentSOC'],
     isoClauses: ['9.1', '9.2', '10.1'],
     nistSubcategories: ['MANAGE-3.1', 'MANAGE-4.1', 'MANAGE-4.2'],
@@ -504,7 +563,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-016',
     name: 'AgentStandbyManager — Hot Standby Failover',
-    description: 'Active/hot-standby/cold-standby architecture with 5 automatic switch triggers and state synchronization.',
+    description:
+      'Active/hot-standby/cold-standby architecture with 5 automatic switch triggers and state synchronization.',
     implementedBy: ['AgentStandbyManager'],
     isoClauses: ['8.1', '8.3'],
     nistSubcategories: ['MANAGE-2.2', 'MANAGE-4.2'],
@@ -515,7 +575,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-017',
     name: 'AuditChainLedger — Tamper-Evident Audit Trail',
-    description: 'Hash-chained audit log with HMAC per entry. Genesis hash, chain verification, tenant key derivation.',
+    description:
+      'Hash-chained audit log with HMAC per entry. Genesis hash, chain verification, tenant key derivation.',
     implementedBy: ['AuditChainLedger'],
     isoClauses: ['7.5', '9.1', '9.2'],
     nistSubcategories: ['GOVERN-5.1', 'MEASURE-3.1'],
@@ -526,7 +587,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-018',
     name: 'Red Team Framework — Adversarial Testing',
-    description: '44+ attack scenarios across 8 OWASP categories. Automated defense testing with comprehensive defender.',
+    description:
+      '44+ attack scenarios across 8 OWASP categories. Automated defense testing with comprehensive defender.',
     implementedBy: ['RedTeamFramework'],
     isoClauses: ['9.1', '9.2', '10.2'],
     nistSubcategories: ['MEASURE-2.4', 'MANAGE-4.1'],
@@ -537,7 +599,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-019',
     name: 'Red Team Baseline — Regression Detection',
-    description: 'HMAC-signed baseline storage with per-scenario integrity. CI/CD regression gating with score trend analysis.',
+    description:
+      'HMAC-signed baseline storage with per-scenario integrity. CI/CD regression gating with score trend analysis.',
     implementedBy: ['RedTeamBaselineManager'],
     isoClauses: ['9.1', '9.2', '10.2'],
     nistSubcategories: ['MEASURE-3.1', 'MEASURE-3.2'],
@@ -548,7 +611,8 @@ const CONTROL_CATALOG: ComplianceControl[] = [
   {
     id: 'CTL-020',
     name: 'EU AI Act Compliance Reporter',
-    description: 'Automated Article 12/13/14 compliance reports with HMAC signing. 7 high-risk categories with mitigation documentation.',
+    description:
+      'Automated Article 12/13/14 compliance reports with HMAC signing. 7 high-risk categories with mitigation documentation.',
     implementedBy: ['EuAiActComplianceReporter'],
     isoClauses: ['7.5', '9.2', '9.3'],
     nistSubcategories: ['GOVERN-1.1', 'GOVERN-5.1'],
@@ -564,11 +628,11 @@ const CONTROL_CATALOG: ComplianceControl[] = [
 
 const DIMENSION_WEIGHTS: Record<ScoringDimension, { weight: number; label: string }> = {
   input_security: { weight: 0.25, label: 'Input Security' },
-  tool_safety: { weight: 0.20, label: 'Tool Safety' },
-  runtime_defense: { weight: 0.20, label: 'Runtime Defense' },
+  tool_safety: { weight: 0.2, label: 'Tool Safety' },
+  runtime_defense: { weight: 0.2, label: 'Runtime Defense' },
   supply_chain: { weight: 0.15, label: 'Supply Chain Security' },
-  economic_defense: { weight: 0.10, label: 'Economic Defense' },
-  operational_readiness: { weight: 0.10, label: 'Operational Readiness' },
+  economic_defense: { weight: 0.1, label: 'Economic Defense' },
+  operational_readiness: { weight: 0.1, label: 'Operational Readiness' },
 };
 
 function dimensionForControl(control: ComplianceControl): ScoringDimension {
@@ -613,23 +677,18 @@ export class ComplianceAuditManager {
     const allDimensions = Object.keys(DIMENSION_WEIGHTS) as ScoringDimension[];
 
     for (const dim of allDimensions) {
-      const dimControls = this.controls.filter(
-        (c) => dimensionForControl(c) === dim,
-      );
+      const dimControls = this.controls.filter((c) => dimensionForControl(c) === dim);
       const dimWeight = DIMENSION_WEIGHTS[dim];
 
       // Average score for controls in this dimension
       const avgScore =
         dimControls.length > 0
           ? Math.round(
-              dimControls.reduce((sum, c) => sum + c.effectivenessScore, 0) /
-                dimControls.length,
+              dimControls.reduce((sum, c) => sum + c.effectivenessScore, 0) / dimControls.length,
             )
           : 0;
 
-      const isoClauses = [
-        ...new Set(dimControls.flatMap((c) => c.isoClauses)),
-      ] as IsoClause[];
+      const isoClauses = [...new Set(dimControls.flatMap((c) => c.isoClauses))] as IsoClause[];
       const nistCats = [
         ...new Set(dimControls.flatMap((c) => c.nistSubcategories)),
       ] as NistAirmfSubcategory[];
@@ -651,25 +710,17 @@ export class ComplianceAuditManager {
     }
 
     // Weighted overall score
-    const weightedScore = Math.round(
-      dimensions.reduce((sum, d) => sum + d.score * d.weight, 0),
-    );
+    const weightedScore = Math.round(dimensions.reduce((sum, d) => sum + d.score * d.weight, 0));
 
     const overallStatus = this.evaluateStatus(weightedScore);
     const grade = this.scoreToGrade(weightedScore);
 
     // Identify risks and strengths
     const sortedByScore = [...dimensions].sort((a, b) => a.score - b.score);
-    const topRisks = sortedByScore
-      .slice(0, 2)
-      .map((d) => `${d.label}: ${d.score}/100`);
+    const topRisks = sortedByScore.slice(0, 2).map((d) => `${d.label}: ${d.score}/100`);
 
-    const sortedByScoreDesc = [...dimensions].sort(
-      (a, b) => b.score - a.score,
-    );
-    const topStrengths = sortedByScoreDesc
-      .slice(0, 2)
-      .map((d) => `${d.label}: ${d.score}/100`);
+    const sortedByScoreDesc = [...dimensions].sort((a, b) => b.score - a.score);
+    const topStrengths = sortedByScoreDesc.slice(0, 2).map((d) => `${d.label}: ${d.score}/100`);
 
     return {
       calculatedAt: now,
@@ -710,7 +761,10 @@ export class ComplianceAuditManager {
 
     this.persistSnapshots();
 
-    getGlobalLogger().info('ComplianceAudit', `Posture snapshot ${snap.id}: ${posture.overallScore}/100 (${posture.grade})`);
+    getGlobalLogger().info(
+      'ComplianceAudit',
+      `Posture snapshot ${snap.id}: ${posture.overallScore}/100 (${posture.grade})`,
+    );
 
     return snap;
   }
@@ -722,11 +776,14 @@ export class ComplianceAuditManager {
    * Maps all controls to their covered ISO clauses and identifies gaps.
    */
   generateIsoCompliance(): IsoComplianceSummary {
-    const clauseCoverage = new Map<IsoClause, {
-      covered: boolean;
-      controls: string[];
-      score: number;
-    }>();
+    const clauseCoverage = new Map<
+      IsoClause,
+      {
+        covered: boolean;
+        controls: string[];
+        score: number;
+      }
+    >();
 
     // Initialize all clauses as uncovered
     for (const clause of ALL_ISO_CLAUSES) {
@@ -751,9 +808,13 @@ export class ComplianceAuditManager {
       const entry = clauseCoverage.get(clause)!;
       if (!entry.covered) {
         const severity =
-          clause.startsWith('9') || clause.startsWith('10') ? 'critical' :
-          clause.startsWith('8') ? 'high' :
-          clause.startsWith('6') ? 'medium' : 'low';
+          clause.startsWith('9') || clause.startsWith('10')
+            ? 'critical'
+            : clause.startsWith('8')
+              ? 'high'
+              : clause.startsWith('6')
+                ? 'medium'
+                : 'low';
 
         gaps.push({
           clause,
@@ -764,12 +825,8 @@ export class ComplianceAuditManager {
       }
     }
 
-    const coveredCount = ALL_ISO_CLAUSES.filter(
-      (c) => clauseCoverage.get(c)?.covered,
-    ).length;
-    const compliancePercentage = Math.round(
-      (coveredCount / ALL_ISO_CLAUSES.length) * 100,
-    );
+    const coveredCount = ALL_ISO_CLAUSES.filter((c) => clauseCoverage.get(c)?.covered).length;
+    const compliancePercentage = Math.round((coveredCount / ALL_ISO_CLAUSES.length) * 100);
 
     return {
       fullyCompliant: gaps.length === 0,
@@ -785,12 +842,15 @@ export class ComplianceAuditManager {
    * Generate NIST AI RMF alignment summary.
    */
   generateNistRmfAlignment(): NistRmfAlignmentSummary {
-    const functionCoverage = new Map<NistAirmfFunction, {
-      coveredSubcategories: number;
-      totalSubcategories: number;
-      coveragePercentage: number;
-      controls: string[];
-    }>();
+    const functionCoverage = new Map<
+      NistAirmfFunction,
+      {
+        coveredSubcategories: number;
+        totalSubcategories: number;
+        coveragePercentage: number;
+        controls: string[];
+      }
+    >();
 
     for (const [func, subcategories] of Object.entries(NIST_RMF_SUBCATEGORIES)) {
       const coveredSubs = new Set<string>();
@@ -841,11 +901,10 @@ export class ComplianceAuditManager {
 
     // Calculate alignment
     const totalSubs = Object.values(NIST_RMF_SUBCATEGORIES).reduce(
-      (sum, arr) => sum + arr.length, 0,
+      (sum, arr) => sum + arr.length,
+      0,
     );
-    const coveredSubs = gaps.length === 0
-      ? totalSubs
-      : totalSubs - gaps.length;
+    const coveredSubs = gaps.length === 0 ? totalSubs : totalSubs - gaps.length;
 
     return {
       functionCoverage,
@@ -880,16 +939,16 @@ export class ComplianceAuditManager {
 
     // Recent delta (last 5 or fewer)
     const recentScores = scores.slice(-5);
-    const recentDelta = recentScores.length >= 2
-      ? recentScores[recentScores.length - 1] - recentScores[0]
-      : 0;
+    const recentDelta =
+      recentScores.length >= 2 ? recentScores[recentScores.length - 1] - recentScores[0] : 0;
 
     // Trend direction
     let trend: TrendAnalysis['trend'] = 'stable';
     if (recentScores.length >= 3) {
       const mid = Math.floor(recentScores.length / 2);
       const firstHalf = recentScores.slice(0, mid).reduce((a, b) => a + b, 0) / mid;
-      const secondHalf = recentScores.slice(mid).reduce((a, b) => a + b, 0) / (recentScores.length - mid);
+      const secondHalf =
+        recentScores.slice(mid).reduce((a, b) => a + b, 0) / (recentScores.length - mid);
       if (secondHalf - firstHalf > 3) trend = 'improving';
       else if (secondHalf - firstHalf < -3) trend = 'declining';
     }
@@ -938,91 +997,106 @@ export class ComplianceAuditManager {
   generateAuditChecklist(): AuditChecklistItem[] {
     return [
       {
-        id: 'ACK-01', category: 'Documentation',
+        id: 'ACK-01',
+        category: 'Documentation',
         item: 'AI management system policy documented',
         status: 'passed',
         evidence: 'Security module documentation and AGENTS.md architecture guide',
       },
       {
-        id: 'ACK-02', category: 'Documentation',
+        id: 'ACK-02',
+        category: 'Documentation',
         item: 'Risk assessment methodology documented',
         status: 'passed',
         evidence: 'RedTeamFramework 44-scenario battery with CVSS scoring',
       },
       {
-        id: 'ACK-03', category: 'Controls',
+        id: 'ACK-03',
+        category: 'Controls',
         item: 'Input filtering and content scanning implemented',
         status: 'passed',
         evidence: 'ContentScanner with multi-language prompt injection detection',
       },
       {
-        id: 'ACK-04', category: 'Controls',
+        id: 'ACK-04',
+        category: 'Controls',
         item: 'Output sanitization for sensitive data',
         status: 'passed',
         evidence: 'OutputSanitizer with redaction rules',
       },
       {
-        id: 'ACK-05', category: 'Controls',
+        id: 'ACK-05',
+        category: 'Controls',
         item: 'AI system monitoring and anomaly detection',
         status: 'passed',
         evidence: 'GuardianAgent + SecurityMonitor + MetricsCollector',
       },
       {
-        id: 'ACK-06', category: 'Controls',
+        id: 'ACK-06',
+        category: 'Controls',
         item: 'Access control and authorization',
         status: 'passed',
         evidence: 'CapabilityToken HMAC-signed with scope + revocation',
       },
       {
-        id: 'ACK-07', category: 'Controls',
+        id: 'ACK-07',
+        category: 'Controls',
         item: 'Audit trail with tamper evidence',
         status: 'passed',
         evidence: 'AuditChainLedger hash-chained with HMAC per entry',
       },
       {
-        id: 'ACK-08', category: 'Controls',
+        id: 'ACK-08',
+        category: 'Controls',
         item: 'Incident response procedures',
         status: 'passed',
         evidence: 'AgentSOC with 14 playbooks + escalation paths',
       },
       {
-        id: 'ACK-09', category: 'Controls',
+        id: 'ACK-09',
+        category: 'Controls',
         item: 'Disaster recovery and business continuity',
         status: 'passed',
         evidence: 'AgentStandbyManager hot-standby + StateCheckpointer',
       },
       {
-        id: 'ACK-10', category: 'Testing',
+        id: 'ACK-10',
+        category: 'Testing',
         item: 'Regular adversarial testing (red team)',
         status: 'passed',
         evidence: 'RedTeamFramework automated battery + CI/CD integration',
       },
       {
-        id: 'ACK-11', category: 'Testing',
+        id: 'ACK-11',
+        category: 'Testing',
         item: 'Regression testing for security controls',
         status: 'passed',
         evidence: 'RedTeamBaselineManager with CI regression gating',
       },
       {
-        id: 'ACK-12', category: 'Compliance',
+        id: 'ACK-12',
+        category: 'Compliance',
         item: 'EU AI Act compliance reporting',
         status: 'passed',
         evidence: 'EuAiActComplianceReporter auto-generated reports',
       },
       {
-        id: 'ACK-13', category: 'Compliance',
+        id: 'ACK-13',
+        category: 'Compliance',
         item: 'Third-party security audit completed',
         status: 'pending',
         notes: 'This report serves as audit preparation. Schedule external auditor.',
       },
       {
-        id: 'ACK-14', category: 'Documentation',
+        id: 'ACK-14',
+        category: 'Documentation',
         item: 'Model cards for AI systems used',
         status: 'pending',
         notes: 'Document model versions, capabilities, and limitations.',
       },
       {
-        id: 'ACK-15', category: 'Documentation',
+        id: 'ACK-15',
+        category: 'Documentation',
         item: 'Data protection impact assessment (DPIA)',
         status: 'pending',
         notes: 'Required for EU deployment under GDPR Article 35.',
@@ -1064,7 +1138,12 @@ export class ComplianceAuditManager {
         commitHash: options?.commitHash,
         branch: options?.branch,
       },
-      executiveSummary: this.generateExecutiveSummary(posture, isoCompliance, nistRmfAlignment, trendAnalysis),
+      executiveSummary: this.generateExecutiveSummary(
+        posture,
+        isoCompliance,
+        nistRmfAlignment,
+        trendAnalysis,
+      ),
       posture,
       postureHistory: [...this.snapshots],
       isoCompliance,
@@ -1092,7 +1171,9 @@ export class ComplianceAuditManager {
           nistAlignment: nistRmfAlignment.alignmentPercentage,
         },
       });
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
 
     return report;
   }
@@ -1168,7 +1249,9 @@ export class ComplianceAuditManager {
     lines.push('## ISO 42001:2023 Compliance Mapping');
     lines.push('');
     lines.push(`**Compliance:** ${report.isoCompliance.compliancePercentage}%`);
-    lines.push(`**Status:** ${report.isoCompliance.fullyCompliant ? '✅ Fully Compliant' : '⚠️ Gaps Identified'}`);
+    lines.push(
+      `**Status:** ${report.isoCompliance.fullyCompliant ? '✅ Fully Compliant' : '⚠️ Gaps Identified'}`,
+    );
     lines.push('');
 
     lines.push('| Clause | Description | Covered | Score |');
@@ -1224,7 +1307,9 @@ export class ComplianceAuditManager {
     lines.push(`| Snapshots | ${t.snapshotCount} |`);
     lines.push(`| Trend | ${this.trendEmoji(t.trend)} ${t.trend} |`);
     lines.push(`| Score Delta (all-time) | ${t.scoreDelta >= 0 ? '+' : ''}${t.scoreDelta} |`);
-    lines.push(`| Score Delta (recent) | ${t.scoreDeltaRecent >= 0 ? '+' : ''}${t.scoreDeltaRecent} |`);
+    lines.push(
+      `| Score Delta (recent) | ${t.scoreDeltaRecent >= 0 ? '+' : ''}${t.scoreDeltaRecent} |`,
+    );
     lines.push(`| Average Score | ${t.averageScore}/100 |`);
     lines.push(`| Min / Max | ${t.minScore} / ${t.maxScore} |`);
     lines.push(`| Volatility | ${t.volatility} |`);
@@ -1252,9 +1337,14 @@ export class ComplianceAuditManager {
       lines.push(`### ${category}`);
       lines.push('');
       for (const item of items) {
-        const icon = item.status === 'passed' ? '✅' :
-          item.status === 'failed' ? '❌' :
-          item.status === 'pending' ? '⏳' : '—';
+        const icon =
+          item.status === 'passed'
+            ? '✅'
+            : item.status === 'failed'
+              ? '❌'
+              : item.status === 'pending'
+                ? '⏳'
+                : '—';
         lines.push(`- ${icon} ${item.item}`);
         if (item.notes) lines.push(`  - *${item.notes}*`);
       }
@@ -1319,13 +1409,19 @@ export class ComplianceAuditManager {
   ): string {
     const parts: string[] = [];
 
-    parts.push(`Commander security posture: **${posture.overallScore}/100 (Grade ${posture.grade})** — ${posture.status}.`);
-    parts.push(`ISO 42001 compliance: ${iso.compliancePercentage}% (${iso.gaps.length} gaps). NIST AI RMF alignment: ${nist.alignmentPercentage}%.`);
+    parts.push(
+      `Commander security posture: **${posture.overallScore}/100 (Grade ${posture.grade})** — ${posture.status}.`,
+    );
+    parts.push(
+      `ISO 42001 compliance: ${iso.compliancePercentage}% (${iso.gaps.length} gaps). NIST AI RMF alignment: ${nist.alignmentPercentage}%.`,
+    );
 
     if (trend.trend === 'improving') {
       parts.push(`Posture trend is **improving** (+${trend.scoreDeltaRecent} points recently).`);
     } else if (trend.trend === 'declining') {
-      parts.push(`⚠️ Posture trend is **declining** (${trend.scoreDeltaRecent} points recently). Immediate attention recommended.`);
+      parts.push(
+        `⚠️ Posture trend is **declining** (${trend.scoreDeltaRecent} points recently). Immediate attention recommended.`,
+      );
     } else {
       parts.push(`Posture trend is **stable**.`);
     }
@@ -1336,9 +1432,9 @@ export class ComplianceAuditManager {
 
     parts.push(
       `${this.controls.length} security controls documented across ` +
-      `${Object.keys(DIMENSION_WEIGHTS).length} dimensions. ` +
-      `AuditChainLedger provides tamper-evident audit trail. ` +
-      `RedTeamFramework provides automated adversarial testing evidence.`,
+        `${Object.keys(DIMENSION_WEIGHTS).length} dimensions. ` +
+        `AuditChainLedger provides tamper-evident audit trail. ` +
+        `RedTeamFramework provides automated adversarial testing evidence.`,
     );
 
     return parts.join(' ');
@@ -1456,21 +1552,31 @@ export class ComplianceAuditManager {
 
   private statusEmoji(status: string): string {
     switch (status) {
-      case 'excellent': return '🟢';
-      case 'good': return '🟢';
-      case 'adequate': return '🟡';
-      case 'needs_improvement': return '🟠';
-      case 'critical': return '🔴';
-      default: return '⚪';
+      case 'excellent':
+        return '🟢';
+      case 'good':
+        return '🟢';
+      case 'adequate':
+        return '🟡';
+      case 'needs_improvement':
+        return '🟠';
+      case 'critical':
+        return '🔴';
+      default:
+        return '⚪';
     }
   }
 
   private trendEmoji(trend: string): string {
     switch (trend) {
-      case 'improving': return '📈';
-      case 'stable': return '➡️';
-      case 'declining': return '📉';
-      default: return '❓';
+      case 'improving':
+        return '📈';
+      case 'stable':
+        return '➡️';
+      case 'declining':
+        return '📉';
+      default:
+        return '❓';
     }
   }
 
@@ -1502,10 +1608,7 @@ export class ComplianceAuditManager {
       },
     });
 
-    return crypto
-      .createHmac('sha256', this.config.signingKey!)
-      .update(data)
-      .digest('hex');
+    return crypto.createHmac('sha256', this.config.signingKey!).update(data).digest('hex');
   }
 
   private loadSnapshots(): void {
@@ -1548,9 +1651,7 @@ export class ComplianceAuditManager {
 // Singleton
 // ============================================================================
 
-const complianceSingleton = createTenantAwareSingleton(
-  () => new ComplianceAuditManager(),
-);
+const complianceSingleton = createTenantAwareSingleton(() => new ComplianceAuditManager());
 
 /** Get the global ComplianceAuditManager. */
 export function getComplianceAuditManager(
