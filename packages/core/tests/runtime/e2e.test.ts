@@ -152,7 +152,8 @@ describe('Runtime E2E: Full Pipeline', () => {
     });
 
     const stats = learner.getStats();
-    expect(stats.totalExperiences).toBe(1);
+    // runtime.execute() auto-records one experience (M8 fix) + manual record above = 2
+    expect(stats.totalExperiences).toBe(2);
     expect(stats.topStrategies.length).toBe(1);
   });
 

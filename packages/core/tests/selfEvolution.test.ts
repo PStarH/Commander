@@ -170,6 +170,7 @@ describe('MetaLearner — prediction loop', () => {
       enablePredictionLoop: true,
       enableRegressionGate: false,
       enableCrossModelMemory: false,
+      minRunsBeforeLearning: 0,
     });
 
     // Step 1: selectStrategy registers the chosen strategy for this (model, taskType)
@@ -209,6 +210,7 @@ describe('MetaLearner — prediction loop', () => {
       enablePredictionLoop: true,
       enableRegressionGate: false,
       enableCrossModelMemory: false,
+      minRunsBeforeLearning: 0,
     });
 
     ml.selectStrategy('general', 'test-model');
@@ -241,6 +243,7 @@ describe('MetaLearner — regression gate', () => {
       enableCrossModelMemory: false,
       regressionThreshold: 0.2,
       analysisMode: 'light',
+      minRunsBeforeLearning: 1,
     });
 
     // Record 8 successes to establish baseline
@@ -284,6 +287,7 @@ describe('MetaLearner — regression gate', () => {
       enableCrossModelMemory: false,
       regressionThreshold: 0.3,
       analysisMode: 'light',
+      minRunsBeforeLearning: 1,
     });
 
     // Record all successes — no regression possible
@@ -313,6 +317,7 @@ describe('MetaLearner — cross-model memory', () => {
       enableRegressionGate: false,
       enableCrossModelMemory: true,
       analysisMode: 'light',
+      minRunsBeforeLearning: 1,
     });
 
     // Model A: SEQUENTIAL works well
@@ -682,6 +687,7 @@ describe('MetaLearner — Shadow Mode', () => {
       enableRegressionGate: false,
       enableCrossModelMemory: false,
       analysisMode: 'light',
+      minRunsBeforeLearning: 1,
     });
 
     // Feed data: SEQUENTIAL succeeds, PARALLEL also succeeds but less
@@ -843,6 +849,7 @@ describe('MetaLearner — calculateAdjustedScores', () => {
       enableRegressionGate: false,
       enableCrossModelMemory: false,
       analysisMode: 'light',
+      minRunsBeforeLearning: 1,
     });
 
     // Feed: SEQUENTIAL wins, PARALLEL is runner-up
