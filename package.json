@@ -54,7 +54,7 @@
     "@types/node": "^25.9.3",
     "eslint": "^10.4.0",
     "tsx": "^4.8.1",
-    "typescript-eslint": "^8.61.1",
+    "typescript-eslint": "^8.62.0",
     "prettier": "^3.5.0"
   },
   "dependencies": {
