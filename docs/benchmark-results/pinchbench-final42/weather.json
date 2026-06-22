@@ -1,1 +1,0 @@
-{"answer":"Done. `weather.py` saved. The script fetches Tokyo's current weather from `wttr.in` using `urllib.request` (no external dependencies). Note: network calls are blocked in this sandbox, but the script w","passed":true}

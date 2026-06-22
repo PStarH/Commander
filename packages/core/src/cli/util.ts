@@ -1,4 +1,5 @@
 import { detectProvider, getEffectiveModel } from '../config/commanderConfig';
+import { t } from './i18n';
 
 // ============================================================================
 // Theme system — configurable color schemes
@@ -326,39 +327,46 @@ export function parseFlags(args: string[]): ParsedArgs {
   return { positional, flags };
 }
 
+/**
+ * Onboarding banner shown to every new user the first time they run a task
+ * without an API key configured. Lists the 18 supported providers with
+ * locale-aware descriptions via the i18n dictionary.
+ */
 export function onboardingMessage() {
   console.log(`\n  ${$.bold}${$.blue}╭────────────────────────────────────────────╮${$.reset}`);
   console.log(
-    `  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Welcome to Commander${$.reset}                  ${$.bold}${$.blue}│${$.reset}`,
+    `  ${$.bold}${$.blue}│${$.reset}  ${$.bold}${t('onboarding.welcome')}${$.reset}                  ${$.bold}${$.blue}│${$.reset}`,
   );
   console.log(`  ${$.bold}${$.blue}╰────────────────────────────────────────────╯${$.reset}`);
-  console.log(`\n  To get started, set one of these environment variables:\n`);
-  const vars = [
-    ['OPENAI_API_KEY', 'OpenAI / DeepSeek / GLM / MiMo'],
-    ['ANTHROPIC_API_KEY', 'Anthropic Claude'],
-    ['GOOGLE_API_KEY', 'Google Gemini'],
-    ['OPENROUTER_API_KEY', 'OpenRouter (200+ models)'],
-    ['DEEPSEEK_API_KEY', 'DeepSeek (dedicated)'],
-    ['ZHIPU_API_KEY', 'GLM (Zhipu AI)'],
-    ['MIMO_API_KEY', 'MiMo (dedicated)'],
-    ['XIAOMI_API_KEY', 'Xiaomi MiMo'],
-    ['OLLAMA_HOST', 'Ollama (local) — http://localhost:11434/v1'],
-    ['VLLM_BASE_URL', 'vLLM (local) — http://localhost:8000/v1'],
-    ['CO_API_KEY', 'Cohere'],
-    ['MISTRAL_API_KEY', 'Mistral AI'],
-    ['GROQ_API_KEY', 'Groq (fast inference)'],
-    ['TOGETHER_API_KEY', 'Together AI'],
-    ['PERPLEXITY_API_KEY', 'Perplexity'],
-    ['FIREWORKS_API_KEY', 'Fireworks AI'],
-    ['REPLICATE_API_TOKEN', 'Replicate'],
-    ['AWS_ACCESS_KEY_ID', 'AWS Bedrock (+ AWS_SECRET_ACCESS_KEY)'],
+  console.log(`\n  ${t('onboarding.env.vars')}\n`);
+  // Each entry: [env var name (literal, never translated), i18n key suffix for description]
+  const vars: ReadonlyArray<readonly [string, string]> = [
+    ['OPENAI_API_KEY', 'openai'],
+    ['ANTHROPIC_API_KEY', 'anthropic'],
+    ['GOOGLE_API_KEY', 'google'],
+    ['OPENROUTER_API_KEY', 'openrouter'],
+    ['DEEPSEEK_API_KEY', 'deepseek'],
+    ['ZHIPU_API_KEY', 'glm'],
+    ['MIMO_API_KEY', 'mimo'],
+    ['XIAOMI_API_KEY', 'xiaomi'],
+    ['OLLAMA_HOST', 'ollama'],
+    ['VLLM_BASE_URL', 'vllm'],
+    ['CO_API_KEY', 'cohere'],
+    ['MISTRAL_API_KEY', 'mistral'],
+    ['GROQ_API_KEY', 'groq'],
+    ['TOGETHER_API_KEY', 'together'],
+    ['PERPLEXITY_API_KEY', 'perplexity'],
+    ['FIREWORKS_API_KEY', 'fireworks'],
+    ['REPLICATE_API_TOKEN', 'replicate'],
+    ['AWS_ACCESS_KEY_ID', 'aws_bedrock'],
   ];
-  for (const [key, desc] of vars) {
-    console.log(`    ${$.cyan}${key.padEnd(22)}${$.reset} ${$.dim}${desc}${$.reset}`);
+  for (const [envVar, i18nKey] of vars) {
+    const desc = t(`onboarding.env_vars.${i18nKey}`);
+    console.log(`    ${$.cyan}${envVar.padEnd(22)}${$.reset} ${$.dim}${desc}${$.reset}`);
   }
-  console.log(`\n  ${$.dim}Example:${$.reset}`);
-  console.log(`    ${$.gray}$ export OPENAI_API_KEY=sk-...${$.reset}`);
-  console.log(`    ${$.gray}$ commander "Hello, world!"${$.reset}\n`);
+  console.log(`\n  ${$.dim}${t('onboarding.example')}${$.reset}`);
+  console.log(`    ${$.gray}${t('onboarding.example.cmd')}${$.reset}`);
+  console.log(`    ${$.gray}${t('onboarding.example.run')}${$.reset}\n`);
 }
 
 // ============================================================================
@@ -369,14 +377,16 @@ export function onboardingMessage() {
  * Print a fatal error with context and exit.
  * Shows the error message, optional suggestion, and a help pointer.
  */
+/**
+ * Print a fatal error with locale-aware banner, exit.
+ * The "ERROR" prefix and the doctor footprint are translated via t().
+ */
 export function fatalError(message: string, suggestion?: string): never {
-  console.error(`\n  ${$.red}${$.bold}ERROR${$.reset} ${message}`);
+  console.error(`\n  ${$.red}${$.bold}${t('error.fatal')}${$.reset} ${message}`);
   if (suggestion) {
     console.error(`  ${$.dim}→ ${suggestion}${$.reset}`);
   }
-  console.error(
-    `  ${$.dim}Run ${$.cyan}commander doctor${$.reset}${$.dim} to diagnose issues.${$.reset}\n`,
-  );
+  console.error(`  ${$.dim}${t('error.run.doctor')}${$.reset}\n`);
   process.exit(1);
 }
 

@@ -66,7 +66,8 @@ export type MessageBusTopic =
   | 'drive.completed'
   | 'checkpoint.written'
   | 'context.rebuilt'
-  | 'security.event';
+  | 'security.event'
+  | 'recovery.completed';
 
 /**
  * Priority levels for messages.
@@ -193,6 +194,19 @@ export interface BusPayloadMap {
     durationMs: number;
   };
   'security.event': SecurityEvent;
+  'recovery.completed': {
+    scanned: number;
+    recovered: number;
+    aborted: number;
+    skipped: number;
+    details: Array<{
+      runId: string;
+      tenantId?: string;
+      state: string;
+      action: string;
+      reason: string;
+    }>;
+  };
 }
 
 export interface SecurityEvent {
