@@ -200,3 +200,52 @@ __pycache__/
 .venv/
 .ruff_cache/
 .pytest_cache/
+
+# === REPO HYGIENE — NO TRASH ===
+# Stray demo/test/scratch files at root (we keep source clean)
+/broken.ts
+/calculation.txt
+/cli.ts
+/count-loc.sh
+/demo.ts
+/fixer
+/output.ts
+/password_gen.py
+/sim.py
+/simulate.py
+/test_output.txt
+/verifier
+/project_sync.ics
+/integration-test.ts
+/package.json.orig
+/package.json.rej
+/package.json.rej.orig
+
+# .DS_Store everywhere
+.DS_Store
+
+# AI playground / agent runtime directories
+.agents/
+.mimocode/
+.sisyphus/
+.codex/
+
+# Test runner artifacts
+.capability-test-output/
+.capability-test-workspace/
+.combined-test-output/
+.openclaw-comparison-output/
+.compare-capability-output/
+.compare-three-output/
+
+# Local secrets / MCP artifacts
+.secrets/
+.playwright-mcp/
+
+# Unrelated projects
+talktome/
+prometheus/
+
+# Stale demo directory (demos live in packages only)
+demos/
+
