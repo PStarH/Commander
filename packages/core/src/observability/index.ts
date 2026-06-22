@@ -11,3 +11,22 @@ export {
   type ObservabilityDeps,
   type ObservabilityResult,
 } from './httpApi';
+// Shared scoring primitives — single source of truth for "is this dataset
+// expected value ungradable?" across evalScorer.ts and scripts/benchmark-gaia.ts.
+// See normalizeExpected.ts for the cross-file contract that prevents silent
+// drift between the production EvalScorer and the offline benchmark.
+export {
+  classifyExpected,
+  classifyExpectedForSubstringMatch,
+  isNormalizedSubstringMatch,
+  normalizeForMatch,
+  type ExpectedClassification,
+  type GradedClassification,
+  type UngradedClassification,
+  type UngradedReason,
+} from './normalizeExpected';
+// Shared offline-benchmark scoring primitives — the 3-way verdict (CORRECT /
+// INCORRECT / UNGRADED) that scripts/benchmark-gaia.ts and the vitest runtime
+// tests in evalScorer.test.ts both import. See score.ts for the cross-file
+// contract and the asymmetric parameter types invariant.
+export { score, type Verdict, type ScoreResult } from './score';
