@@ -6,11 +6,16 @@ interface Props {
 
 function barColor(status: DimensionScore['status']): string {
   switch (status) {
-    case 'excellent': return 'var(--accent-green)';
-    case 'good': return 'var(--accent-blue)';
-    case 'adequate': return 'var(--accent-amber)';
-    case 'needs_improvement': return 'var(--accent-amber)';
-    default: return 'var(--accent-red)';
+    case 'excellent':
+      return 'var(--accent-green)';
+    case 'good':
+      return 'var(--accent-blue)';
+    case 'adequate':
+      return 'var(--accent-amber)';
+    case 'needs_improvement':
+      return 'var(--accent-amber)';
+    default:
+      return 'var(--accent-red)';
   }
 }
 
@@ -44,13 +49,23 @@ export function DimensionBars({ dimensions }: Props) {
                 <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)' }}>
                   {dim.label}
                 </div>
-                <div style={{ fontSize: '0.65rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                <div
+                  style={{ fontSize: '0.65rem', color: 'var(--text-tertiary)', marginTop: '2px' }}
+                >
                   {(dim.weight * 100).toFixed(0)}% weight
                 </div>
               </div>
 
               {/* Bar */}
-              <div style={{ position: 'relative', height: '8px', borderRadius: '4px', background: 'var(--border-subtle)', overflow: 'hidden' }}>
+              <div
+                style={{
+                  position: 'relative',
+                  height: '8px',
+                  borderRadius: '4px',
+                  background: 'var(--border-subtle)',
+                  overflow: 'hidden',
+                }}
+              >
                 <div
                   style={{
                     position: 'absolute',
@@ -65,25 +80,29 @@ export function DimensionBars({ dimensions }: Props) {
               </div>
 
               {/* Score */}
-              <span style={{
-                fontSize: '0.92rem',
-                fontWeight: 700,
-                color: 'var(--text-primary)',
-                textAlign: 'right',
-                fontFamily: 'var(--font-mono)',
-              }}>
+              <span
+                style={{
+                  fontSize: '0.92rem',
+                  fontWeight: 700,
+                  color: 'var(--text-primary)',
+                  textAlign: 'right',
+                  fontFamily: 'var(--font-mono)',
+                }}
+              >
                 {dim.score}
               </span>
 
               {/* Status dot */}
               <div style={{ display: 'flex', justifyContent: 'center' }}>
-                <div style={{
-                  width: '8px',
-                  height: '8px',
-                  borderRadius: '50%',
-                  background: color,
-                  boxShadow: `0 0 6px ${color}`,
-                }} />
+                <div
+                  style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: color,
+                    boxShadow: `0 0 6px ${color}`,
+                  }}
+                />
               </div>
             </div>
           );
@@ -91,17 +110,19 @@ export function DimensionBars({ dimensions }: Props) {
       </div>
 
       {/* Weights row */}
-      <div style={{
-        marginTop: '10px',
-        paddingTop: '8px',
-        display: 'flex',
-        gap: '16px',
-        fontSize: '0.65rem',
-        color: 'var(--text-muted)',
-        letterSpacing: '0.06em',
-        textTransform: 'uppercase',
-      }}>
-        {dimensions.map(d => (
+      <div
+        style={{
+          marginTop: '10px',
+          paddingTop: '8px',
+          display: 'flex',
+          gap: '16px',
+          fontSize: '0.65rem',
+          color: 'var(--text-muted)',
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+        }}
+      >
+        {dimensions.map((d) => (
           <span key={d.dimension}>
             {d.label.split(' ')[0]} {(d.weight * 100).toFixed(0)}%
           </span>

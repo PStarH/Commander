@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { SequentialPipeline } from '@commander/core';
 import { PatternStateMachineFactory, PatternStateMachine } from './patternStateMachine';
-import { SequentialExecutor, createMockAgentExecutor } from './sequentialExecutor';
+import { SequentialExecutor, createRealAgentExecutor } from './sequentialExecutor';
 
 export function createPipelineRouter(): Router {
   const router = Router();
@@ -60,7 +60,7 @@ export function createPipelineRouter(): Router {
   // Sequential Executor
   const pipelineRuns = new Map<string, any>();
   const sequentialExecutor = new SequentialExecutor({
-    agentExecutor: createMockAgentExecutor(),
+    agentExecutor: createRealAgentExecutor(),
     runContextProvider: async (ctx: { projectId?: string }) => ({
       projectId: ctx?.projectId ?? 'default',
       run: { runId: 'run', issuedAt: new Date().toISOString() },

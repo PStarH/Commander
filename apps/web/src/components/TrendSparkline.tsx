@@ -1,4 +1,12 @@
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+} from 'recharts';
 import type { PostureSnapshot, TrendAnalysis } from '../types';
 
 interface Props {
@@ -24,13 +32,13 @@ export function TrendSparkline({ history, trend }: Props) {
   }
 
   const trendColor =
-    trend.trend === 'improving' ? 'var(--accent-green)' :
-    trend.trend === 'declining' ? 'var(--accent-red)' :
-    'var(--accent-blue)';
+    trend.trend === 'improving'
+      ? 'var(--accent-green)'
+      : trend.trend === 'declining'
+        ? 'var(--accent-red)'
+        : 'var(--accent-blue)';
 
-  const trendIcon =
-    trend.trend === 'improving' ? '↑' :
-    trend.trend === 'declining' ? '↓' : '→';
+  const trendIcon = trend.trend === 'improving' ? '↑' : trend.trend === 'declining' ? '↓' : '→';
 
   return (
     <div className="card" style={{ padding: '16px 18px' }}>
@@ -38,13 +46,23 @@ export function TrendSparkline({ history, trend }: Props) {
         <div>
           <span className="section-label">Posture Trend</span>
           <h2 style={{ fontSize: '1.1rem' }}>
-            <span style={{ color: trendColor }}>{trendIcon}</span>{' '}
-            {trend.trend.replace(/_/g, ' ')} · {trend.snapshotCount} snapshots
+            <span style={{ color: trendColor }}>{trendIcon}</span> {trend.trend.replace(/_/g, ' ')}{' '}
+            · {trend.snapshotCount} snapshots
           </h2>
         </div>
-        <div style={{ display: 'flex', gap: '12px', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
+        <div
+          style={{
+            display: 'flex',
+            gap: '12px',
+            fontSize: '0.72rem',
+            color: 'var(--text-tertiary)',
+          }}
+        >
           <span>Avg {trend.averageScore}</span>
-          <span>Δ {trend.scoreDelta >= 0 ? '+' : ''}{trend.scoreDelta}</span>
+          <span>
+            Δ {trend.scoreDelta >= 0 ? '+' : ''}
+            {trend.scoreDelta}
+          </span>
           <span>Proj {trend.projectedScore}</span>
         </div>
       </div>
@@ -89,20 +107,25 @@ export function TrendSparkline({ history, trend }: Props) {
       </ResponsiveContainer>
 
       {/* Stats row */}
-      <div style={{
-        display: 'flex',
-        gap: '16px',
-        marginTop: '8px',
-        paddingTop: '8px',
-        borderTop: '1px solid var(--border-subtle)',
-        fontSize: '0.68rem',
-        fontFamily: 'var(--font-mono)',
-        color: 'var(--text-tertiary)',
-      }}>
+      <div
+        style={{
+          display: 'flex',
+          gap: '16px',
+          marginTop: '8px',
+          paddingTop: '8px',
+          borderTop: '1px solid var(--border-subtle)',
+          fontSize: '0.68rem',
+          fontFamily: 'var(--font-mono)',
+          color: 'var(--text-tertiary)',
+        }}
+      >
         <span>Min {trend.minScore}</span>
         <span>Max {trend.maxScore}</span>
         <span>Vol ±{trend.volatility}</span>
-        <span>Recent Δ {trend.scoreDeltaRecent >= 0 ? '+' : ''}{trend.scoreDeltaRecent}</span>
+        <span>
+          Recent Δ {trend.scoreDeltaRecent >= 0 ? '+' : ''}
+          {trend.scoreDeltaRecent}
+        </span>
       </div>
     </div>
   );
