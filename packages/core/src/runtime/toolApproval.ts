@@ -381,12 +381,14 @@ export class ToolApproval {
     autoApproveCallback?: ApprovalCallback,
     tokenVerifier?: CapabilityTokenVerifier,
   ) {
-    this.approvalCallback = approvalCallback ?? (async () => ({
-      approved: true,
-      requestId: `auto-${Date.now()}`,
-      approvedAt: new Date().toISOString(),
-      reason: 'Default auto-approve',
-    }));
+    this.approvalCallback =
+      approvalCallback ??
+      (async () => ({
+        approved: true,
+        requestId: `auto-${Date.now()}`,
+        approvedAt: new Date().toISOString(),
+        reason: 'Default auto-approve',
+      }));
     this.autoApproveCallback = autoApproveCallback;
     this.tokenVerifier = tokenVerifier;
     this.initializeDefaultPolicies();
