@@ -42,7 +42,21 @@ function makeEdge(from: string, to: string, dataDependency = true): TaskDAGEdge 
 }
 
 const ALL_TOPOLOGIES = [
+  // Canonical (D3.2 Anthropic-aligned 5) — accepted by the widened
+  // `OrchestrationTopology` union. With Path-B (canonical-after-legacy
+  // ordering in `topologyPerformance` Record), `route()` argmax favors
+  // legacy names in ties; canonical may appear when explicit CLI flags
+  // or programmatic overrides force them. After the 2-minor-version
+  // hard-removal, canonical moves to the front and becomes the new
+  // argmax default.
   'SINGLE',
+  'CHAIN',
+  'DISPATCH',
+  'ORCHESTRATOR',
+  'REVIEW',
+  // Legacy (D3.2 @deprecated aliases) — accepted at input boundaries,
+  // normalized to canonical via `normalizeTopology()` at telemetry
+  // emission. Hard-removal in 2 minor versions.
   'SEQUENTIAL',
   'PARALLEL',
   'HIERARCHICAL',
@@ -202,7 +216,9 @@ describe('TopologyRouter', () => {
           taskNature: 'COMPUTE_BOUND',
         }),
       );
-      expect(['SEQUENTIAL', 'HIERARCHICAL', 'DEBATE']).toContain(result.topology);
+      expect(['CHAIN', 'SEQUENTIAL', 'ORCHESTRATOR', 'HIERARCHICAL', 'REVIEW', 'DEBATE']).toContain(
+        result.topology,
+      );
     });
 
     it('returns latency 30-90s when DEBATE is selected', () => {
@@ -254,11 +270,18 @@ describe('TopologyRouter', () => {
         }),
       );
       // CODING weights balance parallel=2, sequential=2, complex=1
-      // Top 4 should include HYBRID, HANDOFF, PARALLEL, or HIERARCHICAL
+      // Top 4 should include HYBRID/ORCHESTRATOR (complex:0.9/1.0),
+      // HANDOFF/CHAIN (sequential:0.8/1.0), or PARALLEL/DISPATCH (parallel:1.0).
       const scoreLine = result.reasoning[0];
       expect(scoreLine).toContain('Topology scores:');
-      // The selected topology should be one of the strong CODING candidates
-      expect(['HYBRID', 'HANDOFF', 'PARALLEL', 'HIERARCHICAL']).toContain(result.topology);
+      expect([
+        'HYBRID',
+        'ORCHESTRATOR',
+        'HIERARCHICAL',
+        'HANDOFF',
+        'DISPATCH',
+        'PARALLEL',
+      ]).toContain(result.topology);
     });
 
     it('score reflects task type: RESEARCH favors HYBRID or PARALLEL', () => {
@@ -378,7 +401,7 @@ describe('TopologyRouter', () => {
           estimatedAgentCount: 3,
         }),
       );
-      expect(['SEQUENTIAL', 'SINGLE']).toContain(result.topology);
+      expect(['CHAIN', 'SEQUENTIAL', 'SINGLE']).toContain(result.topology);
     });
 
     it('REASONING type favors complex topologies (weight complex=3)', () => {
@@ -388,8 +411,14 @@ describe('TopologyRouter', () => {
           estimatedAgentCount: 8,
         }),
       );
-      // complex weight=3 should boost HIERARCHICAL (complex:1.0) and HYBRID (complex:0.9)
-      expect(['HIERARCHICAL', 'HYBRID', 'DEBATE']).toContain(result.topology);
+      // complex weight=3 should boost HIERARCHICAL/ORCHESTRATOR (complex:1.0),
+      // HYBRID (complex:0.9), and DEBATE/REVIEW (complex:0.8).
+      // Path-B mirrors: legacy-first ordering in topologyPerformance Record
+      // means legacy alias wins ties; canonical `ORCHESTRATOR`/`REVIEW`
+      // included as equivalents for post-migration auto-routing validation.
+      expect(['ORCHESTRATOR', 'HIERARCHICAL', 'HYBRID', 'REVIEW', 'DEBATE']).toContain(
+        result.topology,
+      );
     });
 
     it('RESEARCH type favors research-heavy topologies (weight research=3)', () => {
@@ -399,8 +428,12 @@ describe('TopologyRouter', () => {
           estimatedAgentCount: 6,
         }),
       );
-      // research weight=3 should boost HYBRID (research:1.0) and HIERARCHICAL (research:0.9)
-      expect(['HYBRID', 'HIERARCHICAL', 'PARALLEL']).toContain(result.topology);
+      // research weight=3 boosts HYBRID/ORCHESTRATOR (research:1.0/0.9) and
+      // PARALLEL/DISPATCH (research:0.8); canonical equivalents added for
+      // post-migration validation.
+      expect(['HYBRID', 'ORCHESTRATOR', 'HIERARCHICAL', 'DISPATCH', 'PARALLEL']).toContain(
+        result.topology,
+      );
     });
 
     it('CODING type balances sequential and parallel (weights seq=2, par=2)', () => {
@@ -423,7 +456,7 @@ describe('TopologyRouter', () => {
           taskNature: 'IO_BOUND',
         }),
       );
-      expect(['PARALLEL', 'ENSEMBLE']).toContain(result.topology);
+      expect(['DISPATCH', 'PARALLEL', 'ENSEMBLE']).toContain(result.topology);
     });
 
     it('unknown task type falls back to FACTUAL weights', () => {
@@ -694,7 +727,7 @@ describe('TopologyRouter', () => {
           taskNature: 'IO_BOUND',
         }),
       );
-      expect(['PARALLEL', 'HYBRID']).toContain(ioResult.topology);
+      expect(['DISPATCH', 'PARALLEL', 'HYBRID']).toContain(ioResult.topology);
     });
 
     it('COMPUTE_BOUND boosts SEQUENTIAL and DEBATE', () => {
@@ -705,7 +738,12 @@ describe('TopologyRouter', () => {
           taskNature: 'COMPUTE_BOUND',
         }),
       );
-      expect(['DEBATE', 'HIERARCHICAL', 'SEQUENTIAL']).toContain(computeResult.topology);
+      // COMPUTE_BOUND bonus = {SEQUENTIAL:2, CHAIN:2, DEBATE:1, REVIEW:1}
+      // boosts legacy aliases; canonical equivalents accepted for
+      // post-migration validation.
+      expect(['DEBATE', 'REVIEW', 'HIERARCHICAL', 'ORCHESTRATOR', 'CHAIN', 'SEQUENTIAL']).toContain(
+        computeResult.topology,
+      );
     });
 
     it('MIXED nature does not apply special bonuses', () => {
