@@ -255,6 +255,13 @@ class WorkflowAdapter {
 
     // 4. 阶段匹配
     const topologyBonus: Record<OrchestrationTopology, Record<string, number>> = {
+      // Canonical (D3.2) — mirror each legacy alias's per-phase bonus so
+      // canonical-name scoring is bit-identical to the deprecated name it
+      // replaces during the migration window.
+      CHAIN: { discovery: 0.1, planning: 0.3, verification: 0.2 }, // ← SEQUENTIAL
+      DISPATCH: { execution: 0.3, discovery: 0.2 }, // ← PARALLEL
+      ORCHESTRATOR: { planning: 0.2, execution: 0.1, refinement: 0.2 }, // ← HIERARCHICAL
+      REVIEW: { planning: 0.2, verification: 0.35 }, // ← EVALUATOR_OPTIMIZER
       SEQUENTIAL: { discovery: 0.1, planning: 0.3, verification: 0.2 },
       PARALLEL: { execution: 0.3, discovery: 0.2 },
       HIERARCHICAL: { planning: 0.2, execution: 0.1, refinement: 0.2 },
