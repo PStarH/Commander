@@ -71,7 +71,7 @@ function estimateMessagesTokens(
 // instead of hardcoding rates.
 // ============================================================================
 
-/** Per-provider cache pricing multipliers (applied to costPer1KInput). */
+/** Per-provider cache pricing multipliers (applied to costPer1MInput). */
 const CACHE_MULTIPLIERS: Record<string, { read: number; write: number }> = {
   anthropic: { read: 0.1, write: 1.25 }, // 90% off reads, 1.25x write (5min TTL)
   openai: { read: 0.5, write: 1.0 }, // 50% off reads, automatic (no explicit write cost)
@@ -119,18 +119,18 @@ export function calculateCostBreakdown(
   }
 
   const multipliers = CACHE_MULTIPLIERS[provider] ?? CACHE_MULTIPLIERS.default;
-  const inputRate = model.costPer1KInput;
-  const outputRate = model.costPer1KOutput;
+  const inputRate = model.costPer1MInput;
+  const outputRate = model.costPer1MOutput;
 
-  const inputCostUsd = (inputTokens / 1000) * inputRate;
-  const outputCostUsd = (outputTokens / 1000) * outputRate;
-  const cacheReadCostUsd = (cacheReadTokens / 1000) * inputRate * multipliers.read;
-  const cacheWriteCostUsd = (cacheWriteTokens / 1000) * inputRate * multipliers.write;
+  const inputCostUsd = (inputTokens / 1_000_000) * inputRate;
+  const outputCostUsd = (outputTokens / 1_000_000) * outputRate;
+  const cacheReadCostUsd = (cacheReadTokens / 1_000_000) * inputRate * multipliers.read;
+  const cacheWriteCostUsd = (cacheWriteTokens / 1_000_000) * inputRate * multipliers.write;
 
   const totalUsd = inputCostUsd + outputCostUsd + cacheReadCostUsd + cacheWriteCostUsd;
 
   // What we WOULD have paid for cache reads at full input price
-  const cacheSavingsUsd = (cacheReadTokens / 1000) * inputRate * (1 - multipliers.read);
+  const cacheSavingsUsd = (cacheReadTokens / 1_000_000) * inputRate * (1 - multipliers.read);
 
   return {
     inputCostUsd,

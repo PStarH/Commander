@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'node:fs';
 import { calculateCostBreakdown, CACHE_MULTIPLIERS } from '../../src/telos/tokenSentinel';
 import {
   aggregateCost,
@@ -381,8 +382,15 @@ describe('formatCostCsv', () => {
 });
 
 describe('Single source of truth (cost calculation consistency)', () => {
+  let tmpDir: string;
+
   beforeEach(() => {
     resetModelRouter();
+    tmpDir = fs.realpathSync(fs.mkdtempSync('cost-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('CostPredictor, calculateCostBreakdown, and aggregator all agree for same inputs', async () => {
@@ -411,7 +419,7 @@ describe('Single source of truth (cost calculation consistency)', () => {
 
   it('CostPredictor uses calculateCostBreakdown (no more hardcoded $2/M)', async () => {
     const { CostPredictor } = await import('../../src/intelligence/costPredictor');
-    const predictor = new CostPredictor();
+    const predictor = new CostPredictor(tmpDir);
     // Recompute manually: 70/30 split, gpt-4o-mini rates
     const expected = calculateCostBreakdown('gpt-4o-mini', 70000, 30000).totalUsd;
     const result = predictor.predict({
