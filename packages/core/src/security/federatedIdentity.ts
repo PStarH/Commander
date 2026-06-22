@@ -398,8 +398,13 @@ export class FederatedIdentity {
     let trust: FederationTrust;
     try {
       const parsed = JSON.parse(trustedEncoded) as FederationTrust;
-      if (!parsed.trustId || !parsed.issuerTenant || !parsed.audienceTenant ||
-          !parsed.resourceScopes || !parsed.hmacSignature) {
+      if (
+        !parsed.trustId ||
+        !parsed.issuerTenant ||
+        !parsed.audienceTenant ||
+        !parsed.resourceScopes ||
+        !parsed.hmacSignature
+      ) {
         return { accepted: false, reason: 'malformed_trust', detail: 'missing required fields' };
       }
       trust = parsed;
@@ -629,7 +634,10 @@ export class FederatedIdentity {
    *
    * @returns Number of capability tokens and lineage instances revoked.
    */
-  revokeTrust(trustId: string, reason: string = 'manual_revoke'): {
+  revokeTrust(
+    trustId: string,
+    reason: string = 'manual_revoke',
+  ): {
     revoked: boolean;
     tokensRevoked: number;
     instancesKilled: number;
@@ -856,8 +864,11 @@ export class FederatedIdentity {
   // ── Audit ──────────────────────────────────────────────────────────────
 
   private auditFederationEvent(
-    type: 'federation_trust_issued' | 'federation_trust_exchanged' |
-          'federation_trust_revoked' | 'federation_trust_rejected',
+    type:
+      | 'federation_trust_issued'
+      | 'federation_trust_exchanged'
+      | 'federation_trust_revoked'
+      | 'federation_trust_rejected',
     trust: FederationTrust,
     extra?: Record<string, unknown>,
   ): void {

@@ -15,7 +15,11 @@
  *   "Monitoring produces data. SOC produces action."
  */
 
-import { getSecurityAuditLogger, type SecurityEvent, type SecuritySeverity } from './securityAuditLogger';
+import {
+  getSecurityAuditLogger,
+  type SecurityEvent,
+  type SecuritySeverity,
+} from './securityAuditLogger';
 import { getSecurityMonitor, type SecurityAlert } from './securityMonitor';
 import { AuditChainLedger, getAuditChainLedger } from './auditChainLedger';
 import { getGlobalLogger, getGlobalMetrics } from '../logging';
@@ -178,63 +182,177 @@ const PLAYBOOKS: Record<PlaybookTrigger, Playbook> = {
   prompt_injection: {
     trigger: 'prompt_injection',
     name: 'Prompt Injection Response',
-    description: 'Respond to detected prompt injection attempts including hidden HTML, multi-language, and encoded attacks.',
+    description:
+      'Respond to detected prompt injection attempts including hidden HTML, multi-language, and encoded attacks.',
     priority: 'P1',
     slaTarget: SLA_TARGETS.P1,
     autoContain: true,
     actions: [
-      { step: 1, name: 'Block request', description: 'Immediately block the current request and return a security notice.', automated: true },
-      { step: 2, name: 'Log attack details', description: 'Record attack timestamp, source IP/user, injection type, and full payload.', automated: true },
-      { step: 3, name: 'Flag session', description: 'Mark the current session as high-risk, increase monitoring granularity.', automated: true },
-      { step: 4, name: 'Rate limit source', description: 'Apply temporary rate limiting (15 min) if >3 attempts from same source.', automated: true },
-      { step: 5, name: 'L1 Triage', description: 'L1 analyst confirms whether this is a false positive within 5 minutes.', automated: false },
-      { step: 6, name: 'Update filter rules', description: 'If new pattern detected, update input filtering rules.', automated: false },
+      {
+        step: 1,
+        name: 'Block request',
+        description: 'Immediately block the current request and return a security notice.',
+        automated: true,
+      },
+      {
+        step: 2,
+        name: 'Log attack details',
+        description: 'Record attack timestamp, source IP/user, injection type, and full payload.',
+        automated: true,
+      },
+      {
+        step: 3,
+        name: 'Flag session',
+        description: 'Mark the current session as high-risk, increase monitoring granularity.',
+        automated: true,
+      },
+      {
+        step: 4,
+        name: 'Rate limit source',
+        description: 'Apply temporary rate limiting (15 min) if >3 attempts from same source.',
+        automated: true,
+      },
+      {
+        step: 5,
+        name: 'L1 Triage',
+        description: 'L1 analyst confirms whether this is a false positive within 5 minutes.',
+        automated: false,
+      },
+      {
+        step: 6,
+        name: 'Update filter rules',
+        description: 'If new pattern detected, update input filtering rules.',
+        automated: false,
+      },
     ],
   },
   jailbreak_attempt: {
     trigger: 'jailbreak_attempt',
     name: 'Jailbreak Attempt Response',
-    description: 'Respond to detected jailbreak attempts including token smuggling, prefix attacks, and many-shot contexts.',
+    description:
+      'Respond to detected jailbreak attempts including token smuggling, prefix attacks, and many-shot contexts.',
     priority: 'P1',
     slaTarget: SLA_TARGETS.P1,
     autoContain: true,
     actions: [
-      { step: 1, name: 'Block request', description: 'Block the jailbreak attempt immediately.', automated: true },
-      { step: 2, name: 'Log attempt details', description: 'Record jailbreak type, payload, and model response.', automated: true },
-      { step: 3, name: 'Flag session', description: 'Mark session for enhanced monitoring.', automated: true },
-      { step: 4, name: 'L1 Triage', description: 'Confirm jailbreak classification.', automated: false },
-      { step: 5, name: 'Update defense rules', description: 'Add signature to ContentScanner defense patterns.', automated: false },
+      {
+        step: 1,
+        name: 'Block request',
+        description: 'Block the jailbreak attempt immediately.',
+        automated: true,
+      },
+      {
+        step: 2,
+        name: 'Log attempt details',
+        description: 'Record jailbreak type, payload, and model response.',
+        automated: true,
+      },
+      {
+        step: 3,
+        name: 'Flag session',
+        description: 'Mark session for enhanced monitoring.',
+        automated: true,
+      },
+      {
+        step: 4,
+        name: 'L1 Triage',
+        description: 'Confirm jailbreak classification.',
+        automated: false,
+      },
+      {
+        step: 5,
+        name: 'Update defense rules',
+        description: 'Add signature to ContentScanner defense patterns.',
+        automated: false,
+      },
     ],
   },
   data_exfiltration: {
     trigger: 'data_exfiltration',
     name: 'Data Exfiltration Response',
-    description: 'Respond to detected data exfiltration via tool outputs, SSE streams, or API responses.',
+    description:
+      'Respond to detected data exfiltration via tool outputs, SSE streams, or API responses.',
     priority: 'P0',
     slaTarget: SLA_TARGETS.P0,
     autoContain: true,
     actions: [
-      { step: 1, name: 'Block output', description: 'Immediately redact/block the exfiltrating output boundary.', automated: true },
-      { step: 2, name: 'Terminate session', description: 'End the current agent session to prevent further leakage.', automated: true },
-      { step: 3, name: 'Revoke tokens', description: 'Revoke all active capability tokens for the affected session.', automated: true },
-      { step: 4, name: 'Audit output logs', description: 'Scan recent output logs for additional leakage from same source.', automated: true },
-      { step: 5, name: 'L1 Immediate Response', description: 'L1 analyst responds within 5 minutes to assess scope.', automated: false },
-      { step: 6, name: 'L2 Investigation', description: 'L2 engineer investigates root cause and attack vector.', automated: false },
-      { step: 7, name: 'Notify security lead', description: 'Escalate to L3 security lead for data breach assessment.', automated: false },
+      {
+        step: 1,
+        name: 'Block output',
+        description: 'Immediately redact/block the exfiltrating output boundary.',
+        automated: true,
+      },
+      {
+        step: 2,
+        name: 'Terminate session',
+        description: 'End the current agent session to prevent further leakage.',
+        automated: true,
+      },
+      {
+        step: 3,
+        name: 'Revoke tokens',
+        description: 'Revoke all active capability tokens for the affected session.',
+        automated: true,
+      },
+      {
+        step: 4,
+        name: 'Audit output logs',
+        description: 'Scan recent output logs for additional leakage from same source.',
+        automated: true,
+      },
+      {
+        step: 5,
+        name: 'L1 Immediate Response',
+        description: 'L1 analyst responds within 5 minutes to assess scope.',
+        automated: false,
+      },
+      {
+        step: 6,
+        name: 'L2 Investigation',
+        description: 'L2 engineer investigates root cause and attack vector.',
+        automated: false,
+      },
+      {
+        step: 7,
+        name: 'Notify security lead',
+        description: 'Escalate to L3 security lead for data breach assessment.',
+        automated: false,
+      },
     ],
   },
   cost_anomaly: {
     trigger: 'cost_anomaly',
     name: 'Cost Anomaly Response',
-    description: 'Respond to abnormal cost patterns including token floods, tool loops, and concurrent bursts.',
+    description:
+      'Respond to abnormal cost patterns including token floods, tool loops, and concurrent bursts.',
     priority: 'P2',
     slaTarget: SLA_TARGETS.P2,
     autoContain: true,
     actions: [
-      { step: 1, name: 'Apply rate limit', description: 'Apply immediate rate limiting to the affected source.', automated: true },
-      { step: 2, name: 'Check quotas', description: 'Verify quota consumption against tier limits.', automated: true },
-      { step: 3, name: 'Notify user', description: 'If legitimate usage, notify user of quota approach.', automated: true },
-      { step: 4, name: 'L1 Triage', description: 'L1 analyst determines if this is an attack or legitimate usage.', automated: false },
+      {
+        step: 1,
+        name: 'Apply rate limit',
+        description: 'Apply immediate rate limiting to the affected source.',
+        automated: true,
+      },
+      {
+        step: 2,
+        name: 'Check quotas',
+        description: 'Verify quota consumption against tier limits.',
+        automated: true,
+      },
+      {
+        step: 3,
+        name: 'Notify user',
+        description: 'If legitimate usage, notify user of quota approach.',
+        automated: true,
+      },
+      {
+        step: 4,
+        name: 'L1 Triage',
+        description: 'L1 analyst determines if this is an attack or legitimate usage.',
+        automated: false,
+      },
     ],
   },
   privilege_escalation: {
@@ -245,12 +363,42 @@ const PLAYBOOKS: Record<PlaybookTrigger, Playbook> = {
     slaTarget: SLA_TARGETS.P0,
     autoContain: true,
     actions: [
-      { step: 1, name: 'Revoke permissions', description: 'Immediately revoke all elevated permissions.', automated: true },
-      { step: 2, name: 'Lock account', description: 'Lock the affected user/agent account.', automated: true },
-      { step: 3, name: 'Audit access log', description: 'Review all actions taken with elevated permissions.', automated: true },
-      { step: 4, name: 'L1 Immediate Response', description: 'L1 analyst responds within 5 minutes.', automated: false },
-      { step: 5, name: 'L2 Investigation', description: 'L2 engineer traces escalation path.', automated: false },
-      { step: 6, name: 'Rotate credentials', description: 'Force rotation of all affected credentials.', automated: false },
+      {
+        step: 1,
+        name: 'Revoke permissions',
+        description: 'Immediately revoke all elevated permissions.',
+        automated: true,
+      },
+      {
+        step: 2,
+        name: 'Lock account',
+        description: 'Lock the affected user/agent account.',
+        automated: true,
+      },
+      {
+        step: 3,
+        name: 'Audit access log',
+        description: 'Review all actions taken with elevated permissions.',
+        automated: true,
+      },
+      {
+        step: 4,
+        name: 'L1 Immediate Response',
+        description: 'L1 analyst responds within 5 minutes.',
+        automated: false,
+      },
+      {
+        step: 5,
+        name: 'L2 Investigation',
+        description: 'L2 engineer traces escalation path.',
+        automated: false,
+      },
+      {
+        step: 6,
+        name: 'Rotate credentials',
+        description: 'Force rotation of all affected credentials.',
+        automated: false,
+      },
     ],
   },
   memory_poisoning: {
@@ -261,11 +409,36 @@ const PLAYBOOKS: Record<PlaybookTrigger, Playbook> = {
     slaTarget: SLA_TARGETS.P1,
     autoContain: true,
     actions: [
-      { step: 1, name: 'Isolate memory', description: 'Quarantine the affected memory segment.', automated: true },
-      { step: 2, name: 'Rollback to clean state', description: 'Restore memory from last known clean snapshot.', automated: true },
-      { step: 3, name: 'Audit access log', description: 'Review who/what modified the memory.', automated: true },
-      { step: 4, name: 'L1 Triage', description: 'L1 analyst assesses memory impact scope.', automated: false },
-      { step: 5, name: 'Verify recovery', description: 'Run integrity check on restored memory.', automated: false },
+      {
+        step: 1,
+        name: 'Isolate memory',
+        description: 'Quarantine the affected memory segment.',
+        automated: true,
+      },
+      {
+        step: 2,
+        name: 'Rollback to clean state',
+        description: 'Restore memory from last known clean snapshot.',
+        automated: true,
+      },
+      {
+        step: 3,
+        name: 'Audit access log',
+        description: 'Review who/what modified the memory.',
+        automated: true,
+      },
+      {
+        step: 4,
+        name: 'L1 Triage',
+        description: 'L1 analyst assesses memory impact scope.',
+        automated: false,
+      },
+      {
+        step: 5,
+        name: 'Verify recovery',
+        description: 'Run integrity check on restored memory.',
+        automated: false,
+      },
     ],
   },
   supply_chain_threat: {
@@ -276,10 +449,30 @@ const PLAYBOOKS: Record<PlaybookTrigger, Playbook> = {
     slaTarget: SLA_TARGETS.P1,
     autoContain: true,
     actions: [
-      { step: 1, name: 'Block load', description: 'Prevent loading of the compromised skill/tool/dependency.', automated: true },
-      { step: 2, name: 'Scan dependencies', description: 'Scan all dependencies for related compromise.', automated: true },
-      { step: 3, name: 'Audit provenance', description: 'Trace the compromised artifact origin.', automated: true },
-      { step: 4, name: 'L2 Investigation', description: 'L2 engineer investigates supply chain depth.', automated: false },
+      {
+        step: 1,
+        name: 'Block load',
+        description: 'Prevent loading of the compromised skill/tool/dependency.',
+        automated: true,
+      },
+      {
+        step: 2,
+        name: 'Scan dependencies',
+        description: 'Scan all dependencies for related compromise.',
+        automated: true,
+      },
+      {
+        step: 3,
+        name: 'Audit provenance',
+        description: 'Trace the compromised artifact origin.',
+        automated: true,
+      },
+      {
+        step: 4,
+        name: 'L2 Investigation',
+        description: 'L2 engineer investigates supply chain depth.',
+        automated: false,
+      },
     ],
   },
   dos_attack: {
@@ -290,26 +483,77 @@ const PLAYBOOKS: Record<PlaybookTrigger, Playbook> = {
     slaTarget: SLA_TARGETS.P0,
     autoContain: true,
     actions: [
-      { step: 1, name: 'Enable DDoS mitigation', description: 'Activate aggressive rate limiting and CAPTCHA.', automated: true },
-      { step: 2, name: 'Scale resources', description: 'Auto-scale infrastructure to absorb attack.', automated: true },
-      { step: 3, name: 'Block sources', description: 'Block identified attack source IPs/ranges.', automated: true },
-      { step: 4, name: 'L1 Immediate Response', description: 'L1 analyst responds within 5 minutes.', automated: false },
-      { step: 5, name: 'Contact provider', description: 'If infrastructure attack, contact cloud provider.', automated: false },
+      {
+        step: 1,
+        name: 'Enable DDoS mitigation',
+        description: 'Activate aggressive rate limiting and CAPTCHA.',
+        automated: true,
+      },
+      {
+        step: 2,
+        name: 'Scale resources',
+        description: 'Auto-scale infrastructure to absorb attack.',
+        automated: true,
+      },
+      {
+        step: 3,
+        name: 'Block sources',
+        description: 'Block identified attack source IPs/ranges.',
+        automated: true,
+      },
+      {
+        step: 4,
+        name: 'L1 Immediate Response',
+        description: 'L1 analyst responds within 5 minutes.',
+        automated: false,
+      },
+      {
+        step: 5,
+        name: 'Contact provider',
+        description: 'If infrastructure attack, contact cloud provider.',
+        automated: false,
+      },
     ],
   },
   authentication_breach: {
     trigger: 'authentication_breach',
     name: 'Authentication Breach Response',
-    description: 'Respond to authentication breaches including credential stuffing and token theft.',
+    description:
+      'Respond to authentication breaches including credential stuffing and token theft.',
     priority: 'P0',
     slaTarget: SLA_TARGETS.P0,
     autoContain: true,
     actions: [
-      { step: 1, name: 'Lock all sessions', description: 'Terminate all active sessions for affected user.', automated: true },
-      { step: 2, name: 'Rotate credentials', description: 'Force password and API key rotation.', automated: true },
-      { step: 3, name: 'Audit access log', description: 'Review all actions during compromised period.', automated: true },
-      { step: 4, name: 'L1 Immediate Response', description: 'L1 analyst responds within 5 minutes.', automated: false },
-      { step: 5, name: 'Notify user', description: 'Notify affected user of breach and required actions.', automated: false },
+      {
+        step: 1,
+        name: 'Lock all sessions',
+        description: 'Terminate all active sessions for affected user.',
+        automated: true,
+      },
+      {
+        step: 2,
+        name: 'Rotate credentials',
+        description: 'Force password and API key rotation.',
+        automated: true,
+      },
+      {
+        step: 3,
+        name: 'Audit access log',
+        description: 'Review all actions during compromised period.',
+        automated: true,
+      },
+      {
+        step: 4,
+        name: 'L1 Immediate Response',
+        description: 'L1 analyst responds within 5 minutes.',
+        automated: false,
+      },
+      {
+        step: 5,
+        name: 'Notify user',
+        description: 'Notify affected user of breach and required actions.',
+        automated: false,
+      },
     ],
   },
   sandbox_escape: {
@@ -320,11 +564,36 @@ const PLAYBOOKS: Record<PlaybookTrigger, Playbook> = {
     slaTarget: SLA_TARGETS.P0,
     autoContain: true,
     actions: [
-      { step: 1, name: 'Terminate sandbox', description: 'Immediately terminate the compromised sandbox.', automated: true },
-      { step: 2, name: 'Isolate host', description: 'Isolate the host from network if escape confirmed.', automated: true },
-      { step: 3, name: 'Audit sandbox logs', description: 'Review all sandbox actions for lateral movement.', automated: true },
-      { step: 4, name: 'L1 Immediate Response', description: 'L1 analyst responds within 5 minutes.', automated: false },
-      { step: 5, name: 'Host forensics', description: 'L2 conducts host-level forensic analysis.', automated: false },
+      {
+        step: 1,
+        name: 'Terminate sandbox',
+        description: 'Immediately terminate the compromised sandbox.',
+        automated: true,
+      },
+      {
+        step: 2,
+        name: 'Isolate host',
+        description: 'Isolate the host from network if escape confirmed.',
+        automated: true,
+      },
+      {
+        step: 3,
+        name: 'Audit sandbox logs',
+        description: 'Review all sandbox actions for lateral movement.',
+        automated: true,
+      },
+      {
+        step: 4,
+        name: 'L1 Immediate Response',
+        description: 'L1 analyst responds within 5 minutes.',
+        automated: false,
+      },
+      {
+        step: 5,
+        name: 'Host forensics',
+        description: 'L2 conducts host-level forensic analysis.',
+        automated: false,
+      },
     ],
   },
   model_degradation: {
@@ -335,9 +604,24 @@ const PLAYBOOKS: Record<PlaybookTrigger, Playbook> = {
     slaTarget: SLA_TARGETS.P2,
     autoContain: false,
     actions: [
-      { step: 1, name: 'Switch to fallback model', description: 'Route traffic to healthy fallback model.', automated: true },
-      { step: 2, name: 'Run diagnostics', description: 'Run model health diagnostics.', automated: true },
-      { step: 3, name: 'L1 Triage', description: 'L1 analyst assesses impact and root cause.', automated: false },
+      {
+        step: 1,
+        name: 'Switch to fallback model',
+        description: 'Route traffic to healthy fallback model.',
+        automated: true,
+      },
+      {
+        step: 2,
+        name: 'Run diagnostics',
+        description: 'Run model health diagnostics.',
+        automated: true,
+      },
+      {
+        step: 3,
+        name: 'L1 Triage',
+        description: 'L1 analyst assesses impact and root cause.',
+        automated: false,
+      },
     ],
   },
   config_drift: {
@@ -348,9 +632,24 @@ const PLAYBOOKS: Record<PlaybookTrigger, Playbook> = {
     slaTarget: SLA_TARGETS.P3,
     autoContain: false,
     actions: [
-      { step: 1, name: 'Log change details', description: 'Record full diff of configuration change.', automated: true },
-      { step: 2, name: 'Compare against baseline', description: 'Compare against approved configuration baseline.', automated: true },
-      { step: 3, name: 'L1 Review', description: 'L1 analyst determines if change is authorized.', automated: false },
+      {
+        step: 1,
+        name: 'Log change details',
+        description: 'Record full diff of configuration change.',
+        automated: true,
+      },
+      {
+        step: 2,
+        name: 'Compare against baseline',
+        description: 'Compare against approved configuration baseline.',
+        automated: true,
+      },
+      {
+        step: 3,
+        name: 'L1 Review',
+        description: 'L1 analyst determines if change is authorized.',
+        automated: false,
+      },
     ],
   },
   insider_threat: {
@@ -361,10 +660,30 @@ const PLAYBOOKS: Record<PlaybookTrigger, Playbook> = {
     slaTarget: SLA_TARGETS.P1,
     autoContain: true,
     actions: [
-      { step: 1, name: 'Restrict access', description: 'Silently restrict access (no alert to subject).', automated: true },
-      { step: 2, name: 'Increase audit', description: 'Enable maximum audit granularity for subject.', automated: true },
-      { step: 3, name: 'L2 Investigation', description: 'L2 engineer leads confidential investigation.', automated: false },
-      { step: 4, name: 'HR/Legal notification', description: 'Escalate to management, HR, and legal if confirmed.', automated: false },
+      {
+        step: 1,
+        name: 'Restrict access',
+        description: 'Silently restrict access (no alert to subject).',
+        automated: true,
+      },
+      {
+        step: 2,
+        name: 'Increase audit',
+        description: 'Enable maximum audit granularity for subject.',
+        automated: true,
+      },
+      {
+        step: 3,
+        name: 'L2 Investigation',
+        description: 'L2 engineer leads confidential investigation.',
+        automated: false,
+      },
+      {
+        step: 4,
+        name: 'HR/Legal notification',
+        description: 'Escalate to management, HR, and legal if confirmed.',
+        automated: false,
+      },
     ],
   },
   unknown_threat: {
@@ -375,10 +694,30 @@ const PLAYBOOKS: Record<PlaybookTrigger, Playbook> = {
     slaTarget: SLA_TARGETS.P3,
     autoContain: false,
     actions: [
-      { step: 1, name: 'Log and flag', description: 'Log full details, flag for review.', automated: true },
-      { step: 2, name: 'L1 Triage', description: 'L1 analyst classifies the threat.', automated: false },
-      { step: 3, name: 'Update playbooks', description: 'If new threat type, create dedicated playbook.', automated: false },
-      { step: 4, name: 'Red team', description: 'Submit to red team for adversarial analysis.', automated: false },
+      {
+        step: 1,
+        name: 'Log and flag',
+        description: 'Log full details, flag for review.',
+        automated: true,
+      },
+      {
+        step: 2,
+        name: 'L1 Triage',
+        description: 'L1 analyst classifies the threat.',
+        automated: false,
+      },
+      {
+        step: 3,
+        name: 'Update playbooks',
+        description: 'If new threat type, create dedicated playbook.',
+        automated: false,
+      },
+      {
+        step: 4,
+        name: 'Red team',
+        description: 'Submit to red team for adversarial analysis.',
+        automated: false,
+      },
     ],
   },
 };
@@ -421,7 +760,7 @@ function classifyIncident(params: {
     return {
       priority: 'P0',
       playbookTrigger: mapAlertToPlaybook(alert),
-      confidence: 0.90,
+      confidence: 0.9,
       reasoning: `Critical alert: ${alert.title}`,
       automaticContainment: true,
     };
@@ -433,9 +772,10 @@ function classifyIncident(params: {
       priority: 'P1',
       playbookTrigger: mapEventToPlaybook(event),
       confidence: 0.85,
-      reasoning: recentSimilarCount >= 5
-        ? `${recentSimilarCount} similar events detected — escalation to P1`
-        : `High-severity ${event.type} event`,
+      reasoning:
+        recentSimilarCount >= 5
+          ? `${recentSimilarCount} similar events detected — escalation to P1`
+          : `High-severity ${event.type} event`,
       automaticContainment: true,
     };
   }
@@ -445,7 +785,7 @@ function classifyIncident(params: {
     return {
       priority: 'P2',
       playbookTrigger: mapEventToPlaybook(event),
-      confidence: 0.80,
+      confidence: 0.8,
       reasoning: `Medium-severity ${event.type} event`,
       automaticContainment: event.type === 'config_change',
     };
@@ -559,7 +899,8 @@ export class AgentSoc {
       recentSimilarCount: params.recentSimilarCount ?? 0,
     });
 
-    const playbook = this.playbooks[classification.playbookTrigger] ?? this.playbooks.unknown_threat;
+    const playbook =
+      this.playbooks[classification.playbookTrigger] ?? this.playbooks.unknown_threat;
     const incident: Incident = {
       id: `INC-${Date.now()}-${++this.incidentCount}`,
       priority: classification.priority,
@@ -612,7 +953,10 @@ export class AgentSoc {
       /* non-critical */
     }
 
-    getGlobalLogger().warn('AgentSOC', `🛡️ Incident ${incident.id} created: ${incident.title} [${incident.priority}]`);
+    getGlobalLogger().warn(
+      'AgentSOC',
+      `🛡️ Incident ${incident.id} created: ${incident.title} [${incident.priority}]`,
+    );
 
     try {
       const metrics = getGlobalMetrics();
@@ -664,7 +1008,8 @@ export class AgentSoc {
 
     // Check SLA
     if (incident.respondedAt && !incident.slaBreached) {
-      const responseMs = new Date(incident.respondedAt).getTime() - new Date(incident.detectedAt).getTime();
+      const responseMs =
+        new Date(incident.respondedAt).getTime() - new Date(incident.detectedAt).getTime();
       if (responseMs > incident.slaTarget.responseMinutes * 60_000) {
         incident.slaBreached = true;
       }
@@ -699,8 +1044,10 @@ export class AgentSoc {
       this.totalEscalated++;
 
       const contact = this.config.escalationContacts[incident.assignedTo];
-      getGlobalLogger().critical('AgentSOC',
-        `🚨 Incident ${incident.id} escalated to ${incident.assignedTo} (contact: ${contact})`);
+      getGlobalLogger().critical(
+        'AgentSOC',
+        `🚨 Incident ${incident.id} escalated to ${incident.assignedTo} (contact: ${contact})`,
+      );
 
       return true;
     }
@@ -727,7 +1074,10 @@ export class AgentSoc {
 
     // Only require postmortem for threshold priorities
     const priorityOrder: IncidentPriority[] = ['P0', 'P1', 'P2', 'P3', 'P4'];
-    if (priorityOrder.indexOf(incident.priority) > priorityOrder.indexOf(this.config.postmortemThreshold)) {
+    if (
+      priorityOrder.indexOf(incident.priority) >
+      priorityOrder.indexOf(this.config.postmortemThreshold)
+    ) {
       return false;
     }
 
@@ -749,41 +1099,52 @@ export class AgentSoc {
 
     // MTTD: Mean time to detect (from event to incident creation — we use detection to response as proxy)
     const responded = recent7d.filter((i) => i.respondedAt);
-    const mttd = responded.length > 0
-      ? responded.reduce((sum, i) =>
-          sum + (new Date(i.respondedAt!).getTime() - new Date(i.detectedAt).getTime()) / 60_000, 0
-        ) / responded.length
-      : 0;
+    const mttd =
+      responded.length > 0
+        ? responded.reduce(
+            (sum, i) =>
+              sum +
+              (new Date(i.respondedAt!).getTime() - new Date(i.detectedAt).getTime()) / 60_000,
+            0,
+          ) / responded.length
+        : 0;
 
     // MTTR: Mean time to resolve
     const resolved = recent7d.filter((i) => i.resolvedAt);
-    const mttr = resolved.length > 0
-      ? resolved.reduce((sum, i) =>
-          sum + (new Date(i.resolvedAt!).getTime() - new Date(i.detectedAt).getTime()) / 60_000, 0
-        ) / resolved.length
-      : 0;
+    const mttr =
+      resolved.length > 0
+        ? resolved.reduce(
+            (sum, i) =>
+              sum + (new Date(i.resolvedAt!).getTime() - new Date(i.detectedAt).getTime()) / 60_000,
+            0,
+          ) / resolved.length
+        : 0;
 
     // P0 MTTR
     const p0Resolved = resolved.filter((i) => i.priority === 'P0');
-    const mttrP0 = p0Resolved.length > 0
-      ? p0Resolved.reduce((sum, i) =>
-          sum + (new Date(i.resolvedAt!).getTime() - new Date(i.detectedAt).getTime()) / 60_000, 0
-        ) / p0Resolved.length
-      : 0;
+    const mttrP0 =
+      p0Resolved.length > 0
+        ? p0Resolved.reduce(
+            (sum, i) =>
+              sum + (new Date(i.resolvedAt!).getTime() - new Date(i.detectedAt).getTime()) / 60_000,
+            0,
+          ) / p0Resolved.length
+        : 0;
 
     // False positive rate
     const totalClassified = recent7d.length;
-    const falsePositiveRate = totalClassified > 0 ? this.falsePositives / (totalClassified + this.falsePositives) : 0;
+    const falsePositiveRate =
+      totalClassified > 0 ? this.falsePositives / (totalClassified + this.falsePositives) : 0;
 
     // Miss rate — reflects missed threats even when no incidents are classified yet
     const denominator = totalClassified + this.missedThreats + this.falsePositives;
-    const missRate = denominator > 0
-      ? this.missedThreats / denominator
-      : (this.missedThreats > 0 ? 1 : 0);
+    const missRate =
+      denominator > 0 ? this.missedThreats / denominator : this.missedThreats > 0 ? 1 : 0;
 
     // Automation rate
-    const autoActions = recent7d.reduce((sum, i) =>
-      sum + i.playbookActions.filter((a) => a.automated && a.completed).length, 0
+    const autoActions = recent7d.reduce(
+      (sum, i) => sum + i.playbookActions.filter((a) => a.automated && a.completed).length,
+      0,
     );
     const totalActions = recent7d.reduce((sum, i) => sum + i.playbookActions.length, 0);
     const automationRate = totalActions > 0 ? autoActions / totalActions : 0;
@@ -794,15 +1155,17 @@ export class AgentSoc {
     // Postmortem completion rate
     const requiringPostmortem = recent7d.filter((i) => {
       const priorityOrder: IncidentPriority[] = ['P0', 'P1', 'P2', 'P3', 'P4'];
-      return priorityOrder.indexOf(i.priority) <= priorityOrder.indexOf(this.config.postmortemThreshold)
-        && i.status === 'closed';
+      return (
+        priorityOrder.indexOf(i.priority) <=
+          priorityOrder.indexOf(this.config.postmortemThreshold) && i.status === 'closed'
+      );
     });
-    const postmortemCompletionRate = requiringPostmortem.length > 0
-      ? this.postmortemsCompleted / requiringPostmortem.length : 1;
+    const postmortemCompletionRate =
+      requiringPostmortem.length > 0 ? this.postmortemsCompleted / requiringPostmortem.length : 1;
 
     // SLA breach rate
-    const slaBreachRate = totalClassified > 0
-      ? recent7d.filter((i) => i.slaBreached).length / totalClassified : 0;
+    const slaBreachRate =
+      totalClassified > 0 ? recent7d.filter((i) => i.slaBreached).length / totalClassified : 0;
 
     // Top triggers
     const triggerCounts: Record<string, number> = {};
@@ -928,8 +1291,10 @@ export class AgentSoc {
         action.completedAt = new Date().toISOString();
         action.result = 'Auto-contained';
 
-        getGlobalLogger().info('AgentSOC',
-          `🤖 Auto-contain: ${action.name} for incident ${incident.id}`);
+        getGlobalLogger().info(
+          'AgentSOC',
+          `🤖 Auto-contain: ${action.name} for incident ${incident.id}`,
+        );
       }
     }
 

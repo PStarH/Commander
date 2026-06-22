@@ -119,16 +119,19 @@ export interface ToolHarness {
   /** Execute tool (returns result or throws) */
   execute: (input: unknown) => Promise<unknown>;
   /** Parameter schema (param name → type + constraints) */
-  params: Record<string, {
-    type: 'string' | 'number' | 'boolean' | 'object' | 'array';
-    required?: boolean;
-    minLength?: number;
-    maxLength?: number;
-    min?: number;
-    max?: number;
-    pattern?: RegExp;
-    enum?: unknown[];
-  }>;
+  params: Record<
+    string,
+    {
+      type: 'string' | 'number' | 'boolean' | 'object' | 'array';
+      required?: boolean;
+      minLength?: number;
+      maxLength?: number;
+      min?: number;
+      max?: number;
+      pattern?: RegExp;
+      enum?: unknown[];
+    }
+  >;
 }
 
 // ============================================================================
@@ -174,11 +177,12 @@ const UNICODE_MANGLE_PATTERNS: Array<{ name: string; transform: (s: string) => s
   },
   {
     name: 'overlong_utf8',
-    transform: (s) => s.replace(/[a-zA-Z]/g, (c) => {
-      const cp = c.codePointAt(0)!;
-      // Overlong 2-byte encoding of ASCII (invalid UTF-8, but many parsers accept)
-      return String.fromCodePoint(0xC0 | (cp >> 6), 0x80 | (cp & 0x3F));
-    }),
+    transform: (s) =>
+      s.replace(/[a-zA-Z]/g, (c) => {
+        const cp = c.codePointAt(0)!;
+        // Overlong 2-byte encoding of ASCII (invalid UTF-8, but many parsers accept)
+        return String.fromCodePoint(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));
+      }),
   },
   {
     name: 'bidi_override',
@@ -335,7 +339,9 @@ export class FuzzTestFramework {
           coveragePaths: this.coverageMap.size,
         },
       });
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
 
     return {
       runId: `fuzz-${startMs}`,
@@ -514,8 +520,14 @@ export class FuzzTestFramework {
   /** Perform type coercion (string→number, number→object, etc.). */
   private mutateTypeConfuse(value: unknown, paramDef: HarnessParam): unknown {
     const targetTypes: Array<'string' | 'number' | 'boolean' | 'object' | 'array'> = [
-      'string', 'number', 'boolean', 'object', 'array',
-    ].filter((t) => t !== paramDef.type) as Array<'string' | 'number' | 'boolean' | 'object' | 'array'>;
+      'string',
+      'number',
+      'boolean',
+      'object',
+      'array',
+    ].filter((t) => t !== paramDef.type) as Array<
+      'string' | 'number' | 'boolean' | 'object' | 'array'
+    >;
 
     const target = targetTypes[Math.floor(Math.random() * targetTypes.length)];
 
@@ -538,9 +550,8 @@ export class FuzzTestFramework {
   /** Apply Unicode mangling (homoglyphs, RTL override, ZWSP, etc.). */
   private mutateUnicodeMangle(value: unknown): unknown {
     if (typeof value !== 'string' || value.length === 0) return value;
-    const pattern = UNICODE_MANGLE_PATTERNS[
-      Math.floor(Math.random() * UNICODE_MANGLE_PATTERNS.length)
-    ];
+    const pattern =
+      UNICODE_MANGLE_PATTERNS[Math.floor(Math.random() * UNICODE_MANGLE_PATTERNS.length)];
     return pattern.transform(value);
   }
 
@@ -585,10 +596,7 @@ export class FuzzTestFramework {
     }
   }
 
-  private async executeHarness(
-    harness: ToolHarness,
-    input: FuzzInput,
-  ): Promise<FuzzResult> {
+  private async executeHarness(harness: ToolHarness, input: FuzzInput): Promise<FuzzResult> {
     const startMs = Date.now();
     const coveragePaths: string[] = [];
     let crashed = false;
@@ -633,7 +641,14 @@ export class FuzzTestFramework {
       }
     }
 
-    return this.buildResult(input, severity, crashed, coveragePaths, Date.now() - startMs, errorMessage);
+    return this.buildResult(
+      input,
+      severity,
+      crashed,
+      coveragePaths,
+      Date.now() - startMs,
+      errorMessage,
+    );
   }
 
   private buildResult(
@@ -666,10 +681,7 @@ export class FuzzTestFramework {
   }
 
   /** Check if error represents a security vulnerability. */
-  private isSecurityVulnerability(
-    errorMsg: string,
-    input: FuzzInput,
-  ): boolean {
+  private isSecurityVulnerability(errorMsg: string, input: FuzzInput): boolean {
     const vulnIndicators = [
       /bypass|escape|sandbox/i,
       /permission\s*denied.*elevated/i,
