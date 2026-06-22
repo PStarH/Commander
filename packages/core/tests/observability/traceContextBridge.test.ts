@@ -85,7 +85,7 @@ describe('traceContextBridge', () => {
       expect(injectTraceContext(undefined, undefined)).toBeUndefined();
     });
 
-    it('writes trace context into a shallow copy without mutating the caller's dict', () => {
+    it("writes trace context into a shallow copy without mutating the caller's dict", () => {
       const payload = { foo: 'bar' };
       const result = injectTraceContext(payload, { traceparent: 'invalid' });
       // Malformed: helper still writes it (validation happens on extract),
@@ -95,7 +95,7 @@ describe('traceContextBridge', () => {
       expect(result?.[RESERVED_TRACE_CONTEXT_KEY]).toEqual({ traceparent: 'invalid' });
     });
 
-    it('does not overwrite an existing same-key entry silently — keeps the caller's value', () => {
+    it("does not overwrite an existing same-key entry silently — keeps the caller's value", () => {
       // FLAW-fix guard: a user payload that already carries a value under
       // the reserved key wins over our injected context. This avoids
       // destroying user data when a downstream consumer happened to
@@ -157,8 +157,8 @@ describe('traceContextBridge', () => {
   });
 
   describe('reserved key contract', () => {
-    it('RESERVED_TRACE_CONTEXT_KEY is exactly '__traceContext'', () => {
-      expect(RESERVED_TRACE_CONTEXT_KEY).toBe('__traceContext');
+    it("RESERVED_TRACE_CONTEXT_KEY is exactly 'cmdr_trace_context'", () => {
+      expect(RESERVED_TRACE_CONTEXT_KEY).toBe('cmdr_trace_context');
     });
   });
 });
