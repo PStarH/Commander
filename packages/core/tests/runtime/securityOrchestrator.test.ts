@@ -26,14 +26,11 @@ describe('SecurityOrchestrator', () => {
 
   describe('onBeforeToolCall', () => {
     it('should allow tool when all modules are nominal', async () => {
-      const result = await orch.onBeforeToolCall(
-        'web_search',
-        {},
-        'agent-1',
-        'run-1',
-        undefined,
-        { approved: true, requestId: 'r1', approvedAt: new Date().toISOString() },
-      );
+      const result = await orch.onBeforeToolCall('web_search', {}, 'agent-1', 'run-1', undefined, {
+        approved: true,
+        requestId: 'r1',
+        approvedAt: new Date().toISOString(),
+      });
       expect(result.allowed).toBe(true);
       expect(result.sources).toContain('ToolApproval');
     });
@@ -103,14 +100,11 @@ describe('SecurityOrchestrator', () => {
     });
 
     it('should handle missing signal bundle gracefully', async () => {
-      const result = await orch.onBeforeToolCall(
-        'web_fetch',
-        {},
-        'agent-1',
-        'run-1',
-        undefined,
-        { approved: true, requestId: 'r1', approvedAt: new Date().toISOString() },
-      );
+      const result = await orch.onBeforeToolCall('web_fetch', {}, 'agent-1', 'run-1', undefined, {
+        approved: true,
+        requestId: 'r1',
+        approvedAt: new Date().toISOString(),
+      });
       expect(result.allowed).toBe(true);
     });
   });
@@ -151,8 +145,24 @@ describe('SecurityOrchestrator', () => {
 
     it('should handle batch ingestion', () => {
       const events = [
-        { id: 'e1', agentId: 'a1', type: 'tool_call' as const, summary: 't1', metadata: {}, timestamp: Date.now(), severity: 'low' as const },
-        { id: 'e2', agentId: 'a2', type: 'tool_result' as const, summary: 't2', metadata: {}, timestamp: Date.now(), severity: 'low' as const },
+        {
+          id: 'e1',
+          agentId: 'a1',
+          type: 'tool_call' as const,
+          summary: 't1',
+          metadata: {},
+          timestamp: Date.now(),
+          severity: 'low' as const,
+        },
+        {
+          id: 'e2',
+          agentId: 'a2',
+          type: 'tool_result' as const,
+          summary: 't2',
+          metadata: {},
+          timestamp: Date.now(),
+          severity: 'low' as const,
+        },
       ];
       expect(() => orch.ingestBatch(events)).not.toThrow();
     });
@@ -252,15 +262,25 @@ describe('SecurityOrchestrator', () => {
   describe('reset', () => {
     it('should clear pending events', () => {
       orch.onAgentEvent({
-        id: 'e1', agentId: 'a1', type: 'tool_call',
-        summary: 't1', metadata: {}, timestamp: Date.now(), severity: 'low',
+        id: 'e1',
+        agentId: 'a1',
+        type: 'tool_call',
+        summary: 't1',
+        metadata: {},
+        timestamp: Date.now(),
+        severity: 'low',
       });
       orch.reset();
       // Should not throw on subsequent operations
       expect(() =>
         orch.onAgentEvent({
-          id: 'e2', agentId: 'a2', type: 'tool_call',
-          summary: 't2', metadata: {}, timestamp: Date.now(), severity: 'low',
+          id: 'e2',
+          agentId: 'a2',
+          type: 'tool_call',
+          summary: 't2',
+          metadata: {},
+          timestamp: Date.now(),
+          severity: 'low',
         }),
       ).not.toThrow();
     });

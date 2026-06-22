@@ -27,18 +27,18 @@ function plan(overrides: Partial<DeliberationPlan> = {}): DeliberationPlan {
 describe('CoordinationPolicy learned weights', () => {
   describe('LearnedWeights coordination weight storage', () => {
     it('returns default when no weight recorded', () => {
-            const lw = new LearnedWeights();
+      const lw = new LearnedWeights();
       expect(lw.getCoordinationWeight('coupling', 'RESEARCH', 0.25)).toBe(0.25);
     });
 
     it('stores and retrieves a coordination weight', () => {
-            const lw = new LearnedWeights();
+      const lw = new LearnedWeights();
       lw.recordCoordinationWeight('coupling', 'RESEARCH', 0.4);
       expect(lw.getCoordinationWeight('coupling', 'RESEARCH', 0.25)).toBeCloseTo(0.4, 5);
     });
 
     it('EMA-smooths successive recordings', () => {
-            const lw = new LearnedWeights({ smoothingFactor: 0.5 });
+      const lw = new LearnedWeights({ smoothingFactor: 0.5 });
       lw.recordCoordinationWeight('coupling', 'RESEARCH', 0.8);
       lw.recordCoordinationWeight('coupling', 'RESEARCH', 0.2);
       const val = lw.getCoordinationWeight('coupling', 'RESEARCH', 0.25);
@@ -47,7 +47,7 @@ describe('CoordinationPolicy learned weights', () => {
     });
 
     it('isolates by tenant', () => {
-            const lw = new LearnedWeights({ smoothingFactor: 1.0 });
+      const lw = new LearnedWeights({ smoothingFactor: 1.0 });
       lw.recordCoordinationWeight('coupling', 'RESEARCH', 0.9, 'tenantA');
       lw.recordCoordinationWeight('coupling', 'RESEARCH', 0.1, 'tenantB');
       expect(lw.getCoordinationWeight('coupling', 'RESEARCH', 0.5, 'tenantA')).toBeCloseTo(0.9, 5);
@@ -55,14 +55,14 @@ describe('CoordinationPolicy learned weights', () => {
     });
 
     it('reset clears all coordination weights', () => {
-            const lw = new LearnedWeights({ smoothingFactor: 1.0 });
+      const lw = new LearnedWeights({ smoothingFactor: 1.0 });
       lw.recordCoordinationWeight('coupling', 'RESEARCH', 0.9);
       lw.resetCoordinationWeights();
       expect(lw.getCoordinationWeight('coupling', 'RESEARCH', 0.5)).toBe(0.5);
     });
 
     it('reset by tenant only clears that tenant', () => {
-            const lw = new LearnedWeights({ smoothingFactor: 1.0 });
+      const lw = new LearnedWeights({ smoothingFactor: 1.0 });
       lw.recordCoordinationWeight('coupling', 'RESEARCH', 0.9, 'tenantA');
       lw.recordCoordinationWeight('coupling', 'RESEARCH', 0.1, 'tenantB');
       lw.resetCoordinationWeights('tenantA');
@@ -78,14 +78,14 @@ describe('CoordinationPolicy learned weights', () => {
     });
 
     it('uses learned coupling when learned weights provided', () => {
-            const lw = new LearnedWeights({ smoothingFactor: 1.0 });
+      const lw = new LearnedWeights({ smoothingFactor: 1.0 });
       lw.recordCoordinationWeight('coupling', 'RESEARCH', 0.8);
       const decision = evaluateCoordinationPolicy(plan(), 'PARALLEL', undefined, lw);
       expect(decision.overhead.coupling).toBeCloseTo(0.8, 5);
     });
 
     it('uses learned breadth_gain in gain estimation', () => {
-            const lw = new LearnedWeights({ smoothingFactor: 1.0 });
+      const lw = new LearnedWeights({ smoothingFactor: 1.0 });
       lw.recordCoordinationWeight('breadth_gain', 'RESEARCH', 0.25);
       const decisionNoLearned = evaluateCoordinationPolicy(plan(), 'PARALLEL');
       const decisionLearned = evaluateCoordinationPolicy(plan(), 'PARALLEL', undefined, lw);
@@ -96,7 +96,7 @@ describe('CoordinationPolicy learned weights', () => {
     });
 
     it('falls back to hardcoded when no learned weight recorded', () => {
-            const lw = new LearnedWeights();
+      const lw = new LearnedWeights();
       const decisionDefault = evaluateCoordinationPolicy(plan(), 'PARALLEL');
       const decisionWithLW = evaluateCoordinationPolicy(plan(), 'PARALLEL', undefined, lw);
       expect(decisionWithLW.overhead.coupling).toBe(decisionDefault.overhead.coupling);

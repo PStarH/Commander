@@ -123,29 +123,26 @@ describe('OWASP Agentic AI Top 10 HTTP route', () => {
   });
 
   it('POST ingests a SecurityEvent and bumps the relevant ASI', async () => {
-    const before = (await jsonReq(port, 'GET', '/api/v1/security/owasp-agentic-ai-top10'))
-      .body as { totalsByAsi: Array<{ asiId: string; total: number }> };
+    const before = (await jsonReq(port, 'GET', '/api/v1/security/owasp-agentic-ai-top10')).body as {
+      totalsByAsi: Array<{ asiId: string; total: number }>;
+    };
     const beforeTotal = before.totalsByAsi.find((x) => x.asiId === 'ASI01')?.total ?? 0;
 
-    const ingest = await jsonReq(
-      port,
-      'POST',
-      '/api/v1/security/owasp-agentic-ai-top10',
-      {
-        id: 'evt-test-1',
-        timestamp: new Date().toISOString(),
-        type: 'content_threat',
-        severity: 'high',
-        source: 'contentScanner',
-        message: 'unit-test prompt-injection attempt',
-        details: { detector: 'contentScanner' },
-      },
-    );
+    const ingest = await jsonReq(port, 'POST', '/api/v1/security/owasp-agentic-ai-top10', {
+      id: 'evt-test-1',
+      timestamp: new Date().toISOString(),
+      type: 'content_threat',
+      severity: 'high',
+      source: 'contentScanner',
+      message: 'unit-test prompt-injection attempt',
+      details: { detector: 'contentScanner' },
+    });
     expect(ingest.status).toBe(202);
     expect(ingest.body).toMatchObject({ accepted: true });
 
-    const after = (await jsonReq(port, 'GET', '/api/v1/security/owasp-agentic-ai-top10'))
-      .body as { totalsByAsi: Array<{ asiId: string; total: number }> };
+    const after = (await jsonReq(port, 'GET', '/api/v1/security/owasp-agentic-ai-top10')).body as {
+      totalsByAsi: Array<{ asiId: string; total: number }>;
+    };
     const afterTotal = after.totalsByAsi.find((x) => x.asiId === 'ASI01')?.total ?? 0;
     expect(afterTotal).toBeGreaterThan(beforeTotal);
   });
@@ -170,7 +167,10 @@ describe('OWASP Agentic AI Top 10 HTTP route', () => {
           port,
           path: '/api/v1/security/owasp-agentic-ai-top10',
           method: 'POST',
-          headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(big)) },
+          headers: {
+            'content-type': 'application/json',
+            'content-length': String(Buffer.byteLength(big)),
+          },
         },
         (response) => {
           const chunks: Buffer[] = [];
@@ -273,13 +273,9 @@ describe('/api/v1 multi-tenant gate (apiKey present, tenant map not matching)', 
 
   for (const [method, path, body] of cases) {
     it(`${method} ${path} → 401 with req.url embedded`, async () => {
-      const res = await jsonReq(
-        port,
-        method as 'GET' | 'POST',
-        path,
-        body,
-        { authorization: auth },
-      );
+      const res = await jsonReq(port, method as 'GET' | 'POST', path, body, {
+        authorization: auth,
+      });
       expect(res.status).toBe(401);
       const errMsg = (res.body as { error?: string }).error ?? '';
       expect(errMsg).toMatch(/Tenant required for/);
@@ -314,13 +310,9 @@ describe('/api/v1 multi-tenant isolation (apiKey === tenant key)', () => {
   });
 
   it('GET /api/v1/security/owasp-agentic-ai-top10 → 200 per-tenant report', async () => {
-    const res = await jsonReq(
-      port,
-      'GET',
-      '/api/v1/security/owasp-agentic-ai-top10',
-      undefined,
-      { authorization: 'Bearer unit-test-key' },
-    );
+    const res = await jsonReq(port, 'GET', '/api/v1/security/owasp-agentic-ai-top10', undefined, {
+      authorization: 'Bearer unit-test-key',
+    });
     expect(res.status).toBe(200);
     const body = res.body as {
       totalsByAsi: Array<{ asiId: string; total: number }>;
@@ -356,9 +348,11 @@ describe('/api/v1 multi-tenant isolation (apiKey === tenant key)', () => {
       { authorization: 'Bearer unit-test-key' },
     );
     expect(report.status).toBe(200);
-    const totalsByAsi = (report.body as {
-      totalsByAsi: Array<{ asiId: string; total: number }>;
-    }).totalsByAsi;
+    const totalsByAsi = (
+      report.body as {
+        totalsByAsi: Array<{ asiId: string; total: number }>;
+      }
+    ).totalsByAsi;
     const asi01Total = totalsByAsi.find((x) => x.asiId === 'ASI01')?.total ?? 0;
     expect(asi01Total).toBeGreaterThan(0);
   });

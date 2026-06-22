@@ -49,7 +49,11 @@ function tmpSnapshotPath(): string {
 }
 
 function cleanupTmp(p: string): void {
-  try { fs.unlinkSync(p); } catch { /* ok */ }
+  try {
+    fs.unlinkSync(p);
+  } catch {
+    /* ok */
+  }
 }
 
 // ============================================================================
@@ -105,9 +109,7 @@ describe('ComplianceAuditManager', () => {
 
     it('dimensions have correct weights summing to 1', () => {
       const posture = manager.calculatePosture();
-      const totalWeight = posture.dimensions.reduce(
-        (sum, d) => sum + d.weight, 0,
-      );
+      const totalWeight = posture.dimensions.reduce((sum, d) => sum + d.weight, 0);
       expect(totalWeight).toBeCloseTo(1.0, 1);
     });
 
@@ -132,9 +134,7 @@ describe('ComplianceAuditManager', () => {
       const posture = mgr.calculatePosture();
 
       // Only one dimension (operational_readiness) has the control
-      const opDim = posture.dimensions.find(
-        (d) => d.dimension === 'operational_readiness',
-      );
+      const opDim = posture.dimensions.find((d) => d.dimension === 'operational_readiness');
       expect(opDim!.score).toBe(95);
     });
   });
@@ -280,9 +280,7 @@ describe('ComplianceAuditManager', () => {
     });
 
     it('calculates score delta', () => {
-      const ctrls = [
-        makeControl({ id: 'CTL-A', effectivenessScore: 70, isoClauses: ['8.1'] }),
-      ];
+      const ctrls = [makeControl({ id: 'CTL-A', effectivenessScore: 70, isoClauses: ['8.1'] })];
       const mgr = new ComplianceAuditManager(config, ctrls);
 
       mgr.snapshot(); // Score based on CTL-A at 70
