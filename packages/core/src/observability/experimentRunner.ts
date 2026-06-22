@@ -49,6 +49,16 @@ export interface ExperimentCaseResult {
   judgeReasoning?: string;
   judgeTokens?: { input: number; output: number; total: number };
   judgeError?: string;
+  /**
+   * Whether the judge actually ran on this case. Mirror of
+   * EvalScore.graded — `false` means the judge was intentionally
+   * skipped (regression-safety guard fired, typically because the
+   * dataset case had missing/empty `expected`). Aggregations in
+   * `finalizeRun()` filter on `r.graded === true` before computing
+   * `passed`, `failed`, `passRate`, and `avgScore` so ungraded cases
+   * don't bleed into the headline numbers. Always set; never undefined.
+   */
+  graded: boolean;
 }
 
 export interface ExperimentRun {
@@ -68,6 +78,16 @@ export interface ExperimentSummary {
   passed: number;
   failed: number;
   errored: number;
+  /**
+   * Number of cases where `graded === false` — judge was intentionally
+   * skipped due to missing/empty `expected`. These cases are ALSO
+   * present in `errored` (status was set to 'errored' because
+   * `judgeResult.error` was populated), but they are EXCLUDED from
+   * `passed`, `failed`, `passRate`, and `avgScore` so a dataset with
+   * blank labels cannot inflate or deflate the headline number.
+   * Future dataset audits MUST report this counter alongside passRate.
+   */
+  ungraded: number;
   passRate: number;
   avgScore: number;
   avgDurationMs: number;
@@ -373,16 +393,25 @@ export class ExperimentRunner {
       judgeReasoning: judgeResult.reasoning,
       judgeTokens: judgeResult.judgeTokens,
       judgeError: judgeResult.error,
+      // Back-compat with legacy EvalScore (no graded field): undefined
+      // implies a real judge call and thus graded=true.
+      graded: judgeResult.graded !== false,
     });
   }
 
   private finalizeRun(run: ExperimentRun): void {
     run.completedAt = new Date().toISOString();
     const results = run.results;
-    const passed = results.filter((r) => r.status === 'passed').length;
-    const failed = results.filter((r) => r.status === 'failed').length;
+    // Ungraded cases (judge skipped due to missing/empty expected)
+    // MUST be excluded from pass/fail and avgScore so they don't drag
+    // the headline downward. They are still counted in errored
+    // (judgeError is set), and surface in the dedicated ungraded counter.
+    const graded = results.filter((r) => r.graded);
+    const ungraded = results.length - graded.length;
+    const passed = graded.filter((r) => r.status === 'passed').length;
+    const failed = graded.filter((r) => r.status === 'failed').length;
     const errored = results.filter((r) => r.status === 'errored').length;
-    const scores = results.map((r) => r.score);
+    const scores = graded.map((r) => r.score);
     const durations = results.map((r) => r.durationMs).sort((a, b) => a - b);
     const totalCost = results.reduce((s, r) => s + r.costUsd, 0);
     const totalTokens = results.reduce((s, r) => s + r.tokenUsage.totalTokens, 0);
@@ -393,7 +422,8 @@ export class ExperimentRunner {
       passed,
       failed,
       errored,
-      passRate: results.length > 0 ? passed / results.length : 0,
+      ungraded,
+      passRate: graded.length > 0 ? passed / graded.length : 0,
       avgScore: scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0,
       avgDurationMs:
         durations.length > 0 ? durations.reduce((a, b) => a + b, 0) / durations.length : 0,
@@ -427,6 +457,7 @@ function emptySummary(): ExperimentSummary {
     passed: 0,
     failed: 0,
     errored: 0,
+    ungraded: 0,
     passRate: 0,
     avgScore: 0,
     avgDurationMs: 0,
@@ -450,6 +481,12 @@ function erroredResult(caseId: string, message: string): ExperimentCaseResult {
     costUsd: 0,
     durationMs: 0,
     error: message,
+    // Execution failures never reach the judge, so they are NOT the
+    // empty-expected ungraded case — the absence of a ground truth
+    // is the judge's specific failure mode. Set graded=true here so
+    // these cases don't get double-counted in the ungraded counter
+    // (which is intended to surface judge-side regressions).
+    graded: true,
   };
 }
 
