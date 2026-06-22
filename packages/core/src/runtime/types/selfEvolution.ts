@@ -192,4 +192,10 @@ export interface MetaLearnerConfig {
   enableCrossModelMemory: boolean;
   /** Success rate drop ratio that triggers regression alert (default 0.15 = 15%) */
   regressionThreshold: number;
+  /** Master switch to enable/disable self-evolution learning */
+  enabled: boolean;
+  /** Minimum runs before learning effects activate (default 50) */
+  minRunsBeforeLearning: number;
+  /** Generate reflection every N runs (default 10) */
+  reflectionFrequency: number;
 }

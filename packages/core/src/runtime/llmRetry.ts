@@ -58,6 +58,22 @@ export function classifyLLMError(err: unknown): ClassifiedError {
   }
   if (statusCode === 529)
     return { retryable: true, errorClass: 'transient', message: 'API overloaded', statusCode: 529 };
+  // 501 Not Implemented — server does not support the functionality (permanent)
+  if (statusCode === 501)
+    return {
+      retryable: false,
+      errorClass: 'permanent',
+      message: `Not implemented: ${truncate(msg, 200)}`,
+      statusCode: 501,
+    };
+  // 505 HTTP Version Not Supported — protocol mismatch (permanent)
+  if (statusCode === 505)
+    return {
+      retryable: false,
+      errorClass: 'permanent',
+      message: `HTTP version not supported: ${truncate(msg, 200)}`,
+      statusCode: 505,
+    };
   if (statusCode && statusCode >= 500)
     return { retryable: true, errorClass: 'transient', message: truncate(msg, 200), statusCode };
 

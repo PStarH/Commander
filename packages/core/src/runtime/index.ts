@@ -67,6 +67,7 @@ export { XAIProvider } from './providers/xaiProvider';
 export { AnyscaleProvider } from './providers/anyscaleProvider';
 export { DeepInfraProvider } from './providers/deepinfraProvider';
 export { AgnesProvider } from './providers/agnesProvider';
+export { StepFunProvider } from './providers/stepfunProvider';
 export {
   BaseOpenAICompatibleProvider,
   callOpenAICompatibleAPI,
@@ -156,6 +157,12 @@ export type {
   ToolExecutionPlan,
   ToolExecutionContext,
 } from './toolOrchestrator';
+// Canonical synthetic-error row shape + factory + discriminated-union
+// return type shared by AgentRuntime pre-tool-call gates and ToolOrchestrator
+// boundary. Exported here so downstream consumers can type their own
+// gate-aware / shape-aware code against the same definitions.
+export { toolErrorRow } from './toolResultShape';
+export type { SyntheticErrorRow, PreToolCallGateResult } from './toolResultShape';
 export {
   ToolAvailabilityManager,
   evaluate,

@@ -632,71 +632,91 @@ export class ContextCompactor {
       }
     }
 
-    const layer = this.needsCompaction(messages, taskType);
-    if (!layer) {
-      return {
-        messages,
-        action: {
-          layer: 1,
-          droppedCount: 0,
-          tokensSaved: 0,
-          description: 'No compaction needed',
-          taskTypeApplied: taskType ?? null,
-        },
-      };
-    }
-
     const profile = this.getEffectiveProfile(taskType, messages);
 
-    this.compactionCount++;
-    let result: { messages: LLMMessage[]; action: CompactAction };
+    // Loop through layers until no further compaction is needed.
+    // Each pass applies one layer (snip → microcompact → collapse → autocompact),
+    // then re-checks whether the reduced message set still exceeds the threshold.
+    // Guard against infinite loops with a hard cap.
+    const MAX_COMPACT_PASSES = 4;
+    let current = messages;
+    let totalDropped = 0;
+    let totalTokensSaved = 0;
+    let lastAction: CompactAction | null = null;
+    let lastEmergency = false;
 
-    switch (layer) {
-      case 1:
-        result = this.layer1Snip(messages, profile);
-        break;
-      case 2:
-        result = this.layer2Microcompact(messages, profile);
-        break;
-      case 3:
-        result = this.layer3Collapse(messages, provider, profile);
-        break;
-      case 4:
-        result = this.layer4Autocompact(messages, provider, profile);
-        break;
-      case 5: {
-        // Layer 5 is a marker — actual rebuild happens externally via rebuild()
-        getGlobalLogger().info('ContextCompactor', 'Layer 5 rebuild recommended', {
-          compactionCount: this.compactionCount,
-        });
-        return {
-          messages,
-          action: {
-            layer: 5,
-            droppedCount: messages.length,
-            tokensSaved: 0,
-            description: 'Layer 5 rebuild recommended — call rebuild() to reconstruct context',
-            taskTypeApplied: taskType ?? null,
-          },
-        };
+    for (let pass = 0; pass < MAX_COMPACT_PASSES; pass++) {
+      const layer = this.needsCompaction(current, taskType);
+      if (!layer) break;
+
+      this.compactionCount++;
+      let result: { messages: LLMMessage[]; action: CompactAction };
+
+      switch (layer) {
+        case 1:
+          result = this.layer1Snip(current, profile);
+          break;
+        case 2:
+          result = this.layer2Microcompact(current, profile);
+          break;
+        case 3:
+          result = this.layer3Collapse(current, provider, profile);
+          break;
+        case 4:
+          result = this.layer4Autocompact(current, provider, profile);
+          lastEmergency = true;
+          break;
+        case 5: {
+          // Layer 5 is a marker — actual rebuild happens externally via rebuild()
+          getGlobalLogger().info('ContextCompactor', 'Layer 5 rebuild recommended', {
+            compactionCount: this.compactionCount,
+          });
+          return {
+            messages: current,
+            action: {
+              layer: 5,
+              droppedCount: totalDropped,
+              tokensSaved: totalTokensSaved,
+              description: 'Layer 5 rebuild recommended — call rebuild() to reconstruct context',
+              taskTypeApplied: taskType ?? null,
+            },
+          };
+        }
+        default:
+          return {
+            messages: current,
+            action: {
+              layer: 1,
+              droppedCount: 0,
+              tokensSaved: 0,
+              description: 'No compaction needed',
+              taskTypeApplied: null,
+            },
+          };
       }
-      default:
-        return {
-          messages,
-          action: {
-            layer: 1,
-            droppedCount: 0,
-            tokensSaved: 0,
-            description: 'No compaction needed',
-            taskTypeApplied: null,
-          },
-        };
+
+      totalDropped += result.action.droppedCount;
+      totalTokensSaved += result.action.tokensSaved;
+      current = result.messages;
+      lastAction = result.action;
+
+      if (result.action.tokensSaved === 0 && result.action.droppedCount === 0) break;
     }
 
-    // Track emergency state for rebuild triggering
-    if (layer >= 4) this.lastWasEmergency = true;
+    if (lastEmergency) this.lastWasEmergency = true;
 
-    return result;
+    return {
+      messages: current,
+      action: {
+        layer: lastAction?.layer ?? 1,
+        droppedCount: totalDropped,
+        tokensSaved: totalTokensSaved,
+        summary: lastAction?.summary,
+        description: lastAction?.description ?? 'No compaction needed',
+        taskTypeApplied: taskType ?? null,
+        compositionApplied: lastAction?.compositionApplied,
+      },
+    };
   }
 
   /**

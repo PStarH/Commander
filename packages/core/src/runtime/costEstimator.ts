@@ -159,14 +159,15 @@ export class CostEstimator {
     );
     const predictedTotalTokens = predictedInputTokens + predictedOutputTokens;
 
-    // Cost prediction using model pricing
-    const costPerKInput =
-      modelConfig?.costPer1KInput ?? this.estimateCostPerK(routing.tier, 'input');
-    const costPerKOutput =
-      modelConfig?.costPer1KOutput ?? this.estimateCostPerK(routing.tier, 'output');
+    // Cost prediction using model pricing (per 1M tokens)
+    // Pre-run estimate uses uncached input rate (worst case — we don't know actual cache hits yet)
+    const costPerMInput =
+      modelConfig?.costPer1MInput ?? this.estimateCostPerM(routing.tier, 'input');
+    const costPerMOutput =
+      modelConfig?.costPer1MOutput ?? this.estimateCostPerM(routing.tier, 'output');
     const predictedCostUsd =
-      (predictedInputTokens / 1000) * costPerKInput +
-      (predictedOutputTokens / 1000) * costPerKOutput;
+      (predictedInputTokens / 1_000_000) * costPerMInput +
+      (predictedOutputTokens / 1_000_000) * costPerMOutput;
 
     // Recommended budget with safety margin
     const recommendedBudget = Math.round(predictedTotalTokens * this.config.safetyMargin);
@@ -214,7 +215,8 @@ export class CostEstimator {
       inputTokens,
       outputTokens,
       costUsd:
-        (inputTokens / 1000) * model.costPer1KInput + (outputTokens / 1000) * model.costPer1KOutput,
+        (inputTokens / 1_000_000) * model.costPer1MInput +
+        (outputTokens / 1_000_000) * model.costPer1MOutput,
     };
   }
 
@@ -262,16 +264,38 @@ export class CostEstimator {
 
   /**
    * Record actual cost after a run completes. Feeds back into future estimates.
+   *
+   * Unlike the pre-run estimate (which assumes worst-case uncached pricing),
+   * this uses actual token breakdown to compute the real cost:
+   *
+   *   cost = cacheCost + uncachedInputCost + outputCost
+   *
+   * where:
+   *   cacheCost       = cacheReadTokens × costPer1MCachedInput (or costPer1MInput if no cached rate)
+   *   uncachedInput   = (inputTokens - cacheReadTokens) × costPer1MInput
+   *   outputCost      = outputTokens × costPer1MOutput
    */
   recordActualCost(
     taskCategory: TaskCategory,
     modelTier: string,
     inputTokens: number,
     outputTokens: number,
-    costUsd: number,
+    cacheReadTokens: number,
+    costPer1MInput: number,
+    costPer1MOutput: number,
+    costPer1MCachedInput: number | undefined,
     durationMs: number,
     success: boolean,
   ): void {
+    const actualOutputCost = (outputTokens / 1_000_000) * costPer1MOutput;
+    const cacheTokens = Math.min(cacheReadTokens, inputTokens);
+    const uncachedInputTokens = inputTokens - cacheTokens;
+    const cacheInputRate = costPer1MCachedInput ?? costPer1MInput;
+    const actualCost =
+      (uncachedInputTokens / 1_000_000) * costPer1MInput +
+      (cacheTokens / 1_000_000) * cacheInputRate +
+      actualOutputCost;
+
     const key = `${taskCategory}:${modelTier}`;
     let samples = this.history.get(key);
     if (!samples) {
@@ -284,7 +308,7 @@ export class CostEstimator {
       modelTier,
       inputTokens,
       outputTokens,
-      costUsd,
+      costUsd: actualCost,
       durationMs,
       success,
       timestamp: Date.now(),
@@ -325,7 +349,10 @@ export class CostEstimator {
         tier,
         r.promptTokens,
         r.completionTokens,
-        costUsd,
+        0, // no cache info in historical records
+        this.estimateCostPerM(tier, 'input'),
+        this.estimateCostPerM(tier, 'output'),
+        undefined, // no cached rate — use uncached input rate
         0,
         !r.error,
       );
@@ -444,13 +471,13 @@ export class CostEstimator {
     return 0.3;
   }
 
-  private estimateCostPerK(tier: string, type: 'input' | 'output'): number {
-    // Blended rates by tier (USD per 1K tokens)
+  private estimateCostPerM(tier: string, type: 'input' | 'output'): number {
+    // Blended rates by tier (USD per 1M tokens)
     const rates: Record<string, { input: number; output: number }> = {
-      eco: { input: 0.0005, output: 0.0015 },
-      standard: { input: 0.003, output: 0.01 },
-      power: { input: 0.01, output: 0.04 },
-      consensus: { input: 0.015, output: 0.06 },
+      eco: { input: 0.5, output: 1.5 },
+      standard: { input: 3.0, output: 10.0 },
+      power: { input: 10.0, output: 40.0 },
+      consensus: { input: 15.0, output: 60.0 },
     };
     return rates[tier]?.[type] ?? rates.standard[type];
   }
@@ -458,9 +485,9 @@ export class CostEstimator {
   private estimateCostFromTokens(model: string, inputTokens: number, outputTokens: number): number {
     const tier = this.inferModelTier(model);
     if (!tier) return 0;
-    const inputRate = this.estimateCostPerK(tier, 'input');
-    const outputRate = this.estimateCostPerK(tier, 'output');
-    return (inputTokens / 1000) * inputRate + (outputTokens / 1000) * outputRate;
+    const inputRate = this.estimateCostPerM(tier, 'input');
+    const outputRate = this.estimateCostPerM(tier, 'output');
+    return (inputTokens / 1_000_000) * inputRate + (outputTokens / 1_000_000) * outputRate;
   }
 
   private inferModelTier(model: string): string | null {
