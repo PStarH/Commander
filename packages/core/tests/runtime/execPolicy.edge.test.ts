@@ -113,6 +113,10 @@ describe('D3 hardening — ExecPolicyEngine edge cases', () => {
 
   describe('symlink-following via commandNameAliases.resolveRealPath', () => {
     it('a tmp symlink to /bin/cat resolves to command name `cat` and is allow-classified', () => {
+      // Windows symlinks require admin/developer mode, and `which cat` returns
+      // `cat.exe` — the policy pattern `cat` won't match `cat.exe`. Skip cleanly.
+      if (process.platform === 'win32') return;
+
       // Resolve the platform's real `cat` binary path. macOS hides /bin behind
       // a redirector in some configs; Linux is straightforward. We surface the
       // environment failure as a test error rather than a silent skip so CI
