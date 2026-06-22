@@ -42,7 +42,9 @@ export function SecurityPosturePage() {
             value={report.isoCompliance.compliancePercentage}
             suffix={`% · ${report.isoCompliance.gaps.length} gaps`}
             icon="I"
-            color={report.isoCompliance.fullyCompliant ? 'var(--accent-green)' : 'var(--accent-amber)'}
+            color={
+              report.isoCompliance.fullyCompliant ? 'var(--accent-green)' : 'var(--accent-amber)'
+            }
           />
           <MetricCard
             label="NIST AI RMF"
@@ -60,10 +62,7 @@ export function SecurityPosturePage() {
         </div>
 
         {/* ── Compliance Heatmap ──────────────────────────────────── */}
-        <ComplianceHeatmap
-          iso={report.isoCompliance}
-          nist={report.nistRmfAlignment}
-        />
+        <ComplianceHeatmap iso={report.isoCompliance} nist={report.nistRmfAlignment} />
 
         {/* ── Trend + Red Team Row ────────────────────────────────── */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
@@ -77,17 +76,27 @@ export function SecurityPosturePage() {
         {/* ── Strengths & Risks ───────────────────────────────────── */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
           <div className="card narrative" style={{ padding: '14px 16px' }}>
-            <div className="section-label" style={{ marginBottom: '6px' }}>Top Strengths</div>
+            <div className="section-label" style={{ marginBottom: '6px' }}>
+              Top Strengths
+            </div>
             {report.posture.topStrengths.map((s) => (
-              <div key={s} style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+              <div
+                key={s}
+                style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '4px' }}
+              >
                 + {s}
               </div>
             ))}
           </div>
           <div className="card narrative narrative-amber" style={{ padding: '14px 16px' }}>
-            <div className="section-label" style={{ marginBottom: '6px' }}>Top Risks</div>
+            <div className="section-label" style={{ marginBottom: '6px' }}>
+              Top Risks
+            </div>
             {report.posture.topRisks.map((r) => (
-              <div key={r} style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+              <div
+                key={r}
+                style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '4px' }}
+              >
                 - {r}
               </div>
             ))}
@@ -98,8 +107,16 @@ export function SecurityPosturePage() {
         <NewCapabilitiesSection />
 
         {/* ── Report Meta ─────────────────────────────────────────── */}
-        <div style={{ fontSize: '0.64rem', color: 'var(--text-muted)', textAlign: 'center', padding: '12px 0' }}>
-          Report {report.metadata.reportId} · Generated {new Date(report.metadata.generatedAt).toLocaleString('en')}
+        <div
+          style={{
+            fontSize: '0.64rem',
+            color: 'var(--text-muted)',
+            textAlign: 'center',
+            padding: '12px 0',
+          }}
+        >
+          Report {report.metadata.reportId} · Generated{' '}
+          {new Date(report.metadata.generatedAt).toLocaleString('en')}
           {report.metadata.commitHash && ` · commit ${report.metadata.commitHash}`}
           {report.signature && ` · signed ${report.signature.slice(0, 12)}...`}
         </div>
@@ -110,7 +127,13 @@ export function SecurityPosturePage() {
 
 // ── Sub-components ────────────────────────────────────────────────────
 
-function MetricCard({ label, value, suffix, icon, color }: {
+function MetricCard({
+  label,
+  value,
+  suffix,
+  icon,
+  color,
+}: {
   label: string;
   value: number;
   suffix: string;
@@ -120,11 +143,22 @@ function MetricCard({ label, value, suffix, icon, color }: {
   return (
     <div className="card metric" style={{ borderLeft: `2px solid ${color}` }}>
       <div className="metric-head">
-        <span className="metric-icon" style={{ color }}>{icon}</span>
+        <span className="metric-icon" style={{ color }}>
+          {icon}
+        </span>
         <span className="metric-label">{label}</span>
       </div>
-      <span className="metric-value" style={{ fontSize: '1.8rem' }}>{value}</span>
-      <span style={{ display: 'block', fontSize: '0.65rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+      <span className="metric-value" style={{ fontSize: '1.8rem' }}>
+        {value}
+      </span>
+      <span
+        style={{
+          display: 'block',
+          fontSize: '0.65rem',
+          color: 'var(--text-tertiary)',
+          marginTop: '2px',
+        }}
+      >
         {suffix}
       </span>
     </div>
@@ -147,16 +181,26 @@ function RedTeamCard({ report }: { report: ComplianceAuditReport }) {
             {passed ? 'PASSED' : 'FAILED'} · Score {rt.securityScore}/100
           </h2>
         </div>
-        <span className="bdg" style={{
-          borderColor: statusColor,
-          color: statusColor,
-          background: `${statusColor}20`,
-        }}>
+        <span
+          className="bdg"
+          style={{
+            borderColor: statusColor,
+            color: statusColor,
+            background: `${statusColor}20`,
+          }}
+        >
           {rt.mode}
         </span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr 1fr',
+          gap: '10px',
+          marginBottom: '10px',
+        }}
+      >
         <StatBlock label="Blocked" value={rt.blocked.toString()} color="var(--accent-green)" />
         <StatBlock label="Detected" value={rt.detected.toString()} color="var(--accent-amber)" />
         <StatBlock label="Missed" value={rt.missed.toString()} color="var(--accent-red)" />
@@ -180,7 +224,15 @@ function StatBlock({ label, value, color }: { label: string; value: string; colo
       <div style={{ fontSize: '1.3rem', fontWeight: 700, color, fontFamily: 'var(--font-mono)' }}>
         {value}
       </div>
-      <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: '2px' }}>
+      <div
+        style={{
+          fontSize: '0.6rem',
+          color: 'var(--text-muted)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.1em',
+          marginTop: '2px',
+        }}
+      >
         {label}
       </div>
     </div>
@@ -303,7 +355,14 @@ function NewCapabilitiesSection() {
           <span className="section-label">Latest Additions</span>
           <h2 style={{ fontSize: '1.1rem' }}>New Capabilities · Gap-Fill Sprint</h2>
         </div>
-        <span className="bdg" style={{ borderColor: 'var(--accent-green)', color: 'var(--accent-green)', background: 'var(--accent-green)20' }}>
+        <span
+          className="bdg"
+          style={{
+            borderColor: 'var(--accent-green)',
+            color: 'var(--accent-green)',
+            background: 'var(--accent-green)20',
+          }}
+        >
           15 modules
         </span>
       </div>
@@ -319,22 +378,32 @@ function NewCapabilitiesSection() {
               borderRadius: '0 4px 4px 0',
               transition: 'background 0.15s',
             }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-elevated)'; }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.background = 'var(--bg-elevated)';
+            }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-              <span style={{ color: cap.color, fontSize: '0.85rem', lineHeight: 1 }}>{cap.icon}</span>
-              <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-primary)' }}>{cap.title}</span>
-              <span style={{
-                marginLeft: 'auto',
-                fontSize: '0.5rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-                color: 'var(--text-muted)',
-                background: 'var(--bg-surface)',
-                padding: '1px 5px',
-                borderRadius: '3px',
-              }}>
+              <span style={{ color: cap.color, fontSize: '0.85rem', lineHeight: 1 }}>
+                {cap.icon}
+              </span>
+              <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                {cap.title}
+              </span>
+              <span
+                style={{
+                  marginLeft: 'auto',
+                  fontSize: '0.5rem',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  color: 'var(--text-muted)',
+                  background: 'var(--bg-surface)',
+                  padding: '1px 5px',
+                  borderRadius: '3px',
+                }}
+              >
                 {cap.tag.replace(/_/g, ' ')}
               </span>
             </div>
@@ -356,7 +425,7 @@ function AuditChecklistSection({ checklist }: { checklist: AuditChecklistItem[] 
     byCategory.set(item.category, arr);
   }
 
-  const passed = checklist.filter(c => c.status === 'passed').length;
+  const passed = checklist.filter((c) => c.status === 'passed').length;
   const total = checklist.length;
 
   return (
@@ -364,30 +433,65 @@ function AuditChecklistSection({ checklist }: { checklist: AuditChecklistItem[] 
       <div className="section-head" style={{ marginBottom: '10px' }}>
         <div>
           <span className="section-label">Audit Readiness</span>
-          <h2 style={{ fontSize: '1.1rem' }}>Checklist · {passed}/{total} passed</h2>
+          <h2 style={{ fontSize: '1.1rem' }}>
+            Checklist · {passed}/{total} passed
+          </h2>
         </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
         {[...byCategory.entries()].map(([category, items]) => (
           <div key={category}>
-            <h3 style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-tertiary)', marginBottom: '6px' }}>
+            <h3
+              style={{
+                fontSize: '0.72rem',
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                color: 'var(--text-tertiary)',
+                marginBottom: '6px',
+              }}
+            >
               {category}
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               {items.map((item) => {
-                const icon = item.status === 'passed' ? '✓' :
-                  item.status === 'failed' ? '✗' :
-                  item.status === 'pending' ? '○' : '─';
-                const color = item.status === 'passed' ? 'var(--accent-green)' :
-                  item.status === 'failed' ? 'var(--accent-red)' :
-                  item.status === 'pending' ? 'var(--accent-amber)' : 'var(--text-muted)';
+                const icon =
+                  item.status === 'passed'
+                    ? '✓'
+                    : item.status === 'failed'
+                      ? '✗'
+                      : item.status === 'pending'
+                        ? '○'
+                        : '─';
+                const color =
+                  item.status === 'passed'
+                    ? 'var(--accent-green)'
+                    : item.status === 'failed'
+                      ? 'var(--accent-red)'
+                      : item.status === 'pending'
+                        ? 'var(--accent-amber)'
+                        : 'var(--text-muted)';
                 return (
-                  <div key={item.id} style={{ display: 'flex', gap: '8px', alignItems: 'baseline' }}>
-                    <span style={{ color, fontWeight: 600, fontSize: '0.72rem', flexShrink: 0 }}>{icon}</span>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{item.item}</span>
+                  <div
+                    key={item.id}
+                    style={{ display: 'flex', gap: '8px', alignItems: 'baseline' }}
+                  >
+                    <span style={{ color, fontWeight: 600, fontSize: '0.72rem', flexShrink: 0 }}>
+                      {icon}
+                    </span>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                      {item.item}
+                    </span>
                     {item.notes && (
-                      <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>{item.notes}</span>
+                      <span
+                        style={{
+                          fontSize: '0.6rem',
+                          color: 'var(--text-muted)',
+                          fontStyle: 'italic',
+                        }}
+                      >
+                        {item.notes}
+                      </span>
                     )}
                   </div>
                 );
