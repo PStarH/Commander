@@ -155,6 +155,7 @@ export class MiMoProvider implements LLMProvider {
     let toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
     let currentTool: { id: string; name: string; arguments: string } | null = null;
     let usage: OpenAICompletionUsage | null = null;
+    let finishReason: string | null = null;
     let buffer = '';
 
     const decoder = new TextDecoder();
@@ -181,6 +182,7 @@ export class MiMoProvider implements LLMProvider {
             const delta = choice.delta;
             if (delta.content) content += delta.content;
             if (delta.reasoning_content) reasoningContent += delta.reasoning_content;
+            if (choice.finish_reason) finishReason = choice.finish_reason;
             if (delta.tool_calls) {
               for (const tc of delta.tool_calls) {
                 if (tc.id) {
@@ -232,7 +234,14 @@ export class MiMoProvider implements LLMProvider {
       content,
       model,
       usage: tokenUsage,
-      finishReason: 'stop',
+      finishReason:
+        finishReason === 'stop'
+          ? 'stop'
+          : finishReason === 'tool_calls'
+            ? 'tool_calls'
+            : finishReason === 'length'
+              ? 'length'
+              : 'stop',
       toolCalls:
         toolCalls.length > 0
           ? toolCalls.map((tc) => ({
