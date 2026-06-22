@@ -26,6 +26,7 @@
  */
 
 import type { LLMRequest, LLMResponse } from '../runtime/types';
+import { classifyExpected } from './normalizeExpected';
 
 /** A rubric describes HOW to score something. */
 export interface EvalRubric {
@@ -85,6 +86,23 @@ export interface EvalScore {
   judgeDurationMs: number;
   /** Optional error string if the judge call or parse failed. */
   error?: string;
+  /**
+   * Whether the judge call actually ran.
+   *
+   * `graded: false` means the scorer skipped the judge call entirely —
+   * typically because `target.expected` was missing, blank, or reduced
+   * to an empty string after normalization. In that case `score` is
+   * the rubric's lower bound and `error` carries the ungrade reason
+   * (`empty_expected_ungraded` or `empty_expected_after_normalize`).
+   *
+   * `graded: undefined` / omitted is implicitly `true` for back-compat
+   * with callers written before the field existed. Aggregations MUST
+   * filter on `r.graded !== false` before averaging, otherwise a single
+   * missing-expected case drags the headline score downward — exactly
+   * the historical regression documented in CHANGELOG.md line 87
+   * (Previous 69.7% GAIA result invalidated by a scoring bug).
+   */
+  graded?: boolean;
 }
 
 export interface EvalScorerConfig {
@@ -186,6 +204,41 @@ export class EvalScorer {
     const rubric = this.getRubric(rubricId);
     const judgeModel = rubric.judgeModel ?? this.defaultJudgeModel;
     const range = rubric.scoreRange ?? { min: 0, max: 1 };
+
+    // ── Regression-safety guard ─────────────────────────────────────────
+    // Skip the judge call when `target.expected` is missing, blank, or
+    // reduces to empty after normalization. Without this guard,
+    // `safeJson(undefined)` renders `null` into the judge prompt and the
+    // LLM interprets `EXPECTED: null` as "no ground truth, anything
+    // goes" and marks every response correct. This is exactly the
+    // historical 69.7% GAIA invalidation documented in CHANGELOG.md
+    // line 87.
+    //
+    // The classification logic for STRING inputs lives in
+    // `packages/core/src/observability/normalizeExpected.ts` and is shared
+    // byte-identically with `scripts/benchmark-gaia.ts` — both consumers
+    // import the SAME helper, so they cannot drift silently on string
+    // inputs.
+    //
+    // NON-STRING inputs are an INTENTIONAL capability difference: this
+    // scorer (general-purpose / LLM-judge) forwards structured
+    // expectations to the judge; the offline benchmark (substring matcher)
+    // refuses them with reason `'non_string_expected_not_substring_matchable'`.
+    // Auditors should consult `normalizeExpected.ts`'s top-of-file
+    // contract doc for the dual-classifier design rationale.
+    const classification = classifyExpected(target.expected);
+    if (classification.ungraded) {
+      return {
+        score: clamp(0, range.min, range.max),
+        graded: false,
+        reasoning: '',
+        judgeModel,
+        judgeTokens: { input: 0, output: 0, total: 0 },
+        judgeDurationMs: 0,
+        error: classification.reason,
+      };
+    }
+    // ───────────────────────────────────────────────────────────────────
 
     if (!this.provider) {
       return {
