@@ -1,1 +1,0 @@
-{"answer":"Saved `workflow.txt` — a 3-stage CI pipeline: **Lint → Test → Deploy**, with triggers, environment notes, and failure conditions.","passed":true}
