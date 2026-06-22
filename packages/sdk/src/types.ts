@@ -275,3 +275,29 @@ export interface SDKReliabilityStats {
   checkpointCount: number;
 }
 
+// ============================================================================
+// Tool Error Rows
+// ============================================================================
+
+/**
+ * `SentryRow` mirrors `@commander/core`'s canonical `SyntheticErrorRow`
+ * so downstream SDK users can type their hook responses, gate results,
+ * and recovery recorders against the runtime's exact contract — without
+ * taking on a direct runtime dependency on `@commander/core`.
+ *
+ * The alias is type-only (`import('@commander/core').SyntheticErrorRow`);
+ * the import is erased at compile time and ships zero runtime code from
+ * `core` through the SDK.
+ *
+ * Field contract (closed schema — do not add optional fields):
+ *   - `toolCallId`  — verbatim from originating ToolCall.id
+ *   - `name`        — verbatim from originating ToolCall.name
+ *   - `output`      — always `''` for error rows
+ *   - `error`       — canonical error message
+ *   - `durationMs`  — always `0` for synthetic rows; real measured rows
+ *                     use the actual elapsed ms
+ *
+ * @see packages/core/src/runtime/toolResultShape.ts
+ */
+export type SentryRow = import('@commander/core').SyntheticErrorRow;
+

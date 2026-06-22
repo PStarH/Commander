@@ -27,7 +27,12 @@
       "types": "./dist/saga/index.d.ts",
       "default": "./dist/saga/index.js"
     },
-    "./saga/*": "./dist/saga/*"
+    "./saga/*": "./dist/saga/*",
+    "./security": {
+      "types": "./dist/security/index.d.ts",
+      "default": "./dist/security/index.js"
+    },
+    "./security/*": "./dist/security/*"
   },
   "keywords": [
     "multi-agent",
