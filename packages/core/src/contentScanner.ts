@@ -20,7 +20,9 @@ export type ContentThreatType =
   | 'prompt_injection'
   | 'multi_language_confusion'
   | 'invisible_characters'
-  | 'data_exfil_channel';
+  | 'data_exfil_channel'
+  | 'social_engineering'
+  | 'semantic_manipulation';
 
 export type ContentThreatSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
@@ -55,6 +57,8 @@ export interface ContentScannerConfig {
   enableMetadataScan: boolean;
   enableUnicodeScan: boolean;
   enablePromptInjectionScan: boolean;
+  enableSocialEngineeringScan: boolean;
+  enableSemanticManipulationScan: boolean;
   maxContentLength: number;
   timeout: number; // 扫描超时时间（ms）
 }
@@ -65,6 +69,8 @@ export const DEFAULT_SCANNER_CONFIG: ContentScannerConfig = {
   enableMetadataScan: true,
   enableUnicodeScan: true,
   enablePromptInjectionScan: true,
+  enableSocialEngineeringScan: true,
+  enableSemanticManipulationScan: true,
   maxContentLength: 100000, // 100KB
   timeout: 5000, // 5 seconds
 };
@@ -158,6 +164,47 @@ export class DefaultContentScanner implements ContentScanner {
     /이전\s+(지시|명령|규칙)\s+(무시|잊어)/gi, // Korean: ignore previous
   ];
 
+  // Social engineering — authority claims, official-looking overrides
+  private socialEngineeringPatterns = [
+    /i\s+am\s+(the\s+)?(authorized|official|designated|appointed|chief|head|lead)\s+(security|sysadmin|system\s+admin|IT|operations|ops|devops|platform|infrastructure)/gi,
+    /(authorized|official|mandatory|required|urgent|emergency)\s+(security|compliance|audit|policy|directive|override|instruction)/gi,
+    /security\s+(ops|operations|team|lead|director|officer|audit|compliance)\s+(lead|director|officer|team)/gi,
+    /this\s+is\s+(an?\s+)?(official|authorized|mandatory|urgent|emergency)\s+(request|directive|instruction|override|command)/gi,
+    /as\s+(the\s+)?(authorized|official|designated)\s+(person|representative|agent|operator)/gi,
+    /on\s+(behalf\s+of|the\s+authority\s+of)\s+(the\s+)?(system|platform|security|organization)/gi,
+    /(system|platform)\s+(administrator|admin|override|directive)\s+(requires|demands|instructs|orders)/gi,
+    /(compliance|audit|regulation|policy)\s+(requires|mandates|demands|necessitates)/gi,
+    /(executive|management|board|legal|counsel)\s+(decision|order|directive|instruction)/gi,
+    /this\s+(directive|instruction|override)\s+(comes?\s+from|is\s+issued\s+by|originates?\s+from)\s+(the\s+)?(system|security|admin)/gi,
+  ];
+
+  // Semantic manipulation — indirect instructions, roleplay, hypothetical framing
+  private semanticManipulationPatterns = [
+    /as\s+(we|you\s+and\s+I)\s+(discussed|talked|agreed|decided|established)/gi,
+    /as\s+(you\s+)?(well\s+)?know\s+from\s+(our\s+)?(previous|earlier|last)\s+(conversation|chat|session|discussion)/gi,
+    /continue\s+(from\s+where\s+we\s+)?(naturally|as\s+before|normally)/gi,
+    /(pretend|act\s+as|imagine|roleplay|role-play)\s+(you\s+are?\s+)?(as\s+)?(a\s+)?/gi,
+    /(god\s+mode|admin\s+mode|unrestricted\s+mode|bypass\s+mode|root\s+access|unfiltered\s+mode|no\s+limits\s+mode)/gi,
+    /(hypothetically|in\s+a\s+fictional|what\s+if|just\s+for\s+testing|for\s+research\s+purposes)/gi,
+    /(new\s+instruction|new\s+directive|new\s+command)\s*(without|no\s+need\s+for)\s*(colon|:)/gi,
+    /(ignore|bypass|override|skip)\s+(the\s+)?(above|previous|earlier|prior)\s+(message|text|instruction)/gi,
+    /from\s+now\s+on\s+(you\s+have\s+)?(no\s+)?(rules|restrictions|limitations|guidelines|constraints)/gi,
+    /(you\s+are\s+now|you're\s+now)\s+(a\s+)?(?!helpful)(\w+(\s+\w+){0,3})\s*(mode|model|assistant|ai|version)/gi,
+    /this\s+is\s+(a\s+)?(test|exercise|simulation|practice)\s+(so\s+)?(you\s+can|please|just)\s+(answer|respond|tell\s+me)/gi,
+    /(don'?t\s+)?(mention|say|reveal|disclose|output)\s+(any\s+)?(warning|disclaimer|refusal|cannot|unable|not\s+able)/gi,
+    /(skip|bypass|ignore|suppress)\s+(all\s+)?(content\s+)?(filter|moderation|safety|restriction|policy)/gi,
+  ];
+
+  // Jailbreak synonyms not covered by existing patterns
+  private jailbreakSynonymPatterns = [
+    /(god|admin|unrestricted|bypass|root|unfiltered|limitless|boundaryless)\s*mode/gi,
+    /(unlimited|unrestricted|uncensored|unfiltered|raw)\s*(AI|model|assistant|version|mode)/gi,
+    /(break|bypass|escape|transcend|override)\s+(the\s+)?(rules|guidelines|restrictions|constraints|limitations|safety)/gi,
+    /(no\s+)?(content\s+)?(filter|moderation|safety\s+check|restriction)\s*(applies|enabled|active|on)/gi,
+    /remove\s+(all\s+)?(content\s+)?(filter|moderation|safety|restriction|policy)/gi,
+    /(disable|turn\s+off|deactivate)\s+(all\s+)?(safety|content\s+filter|moderation|restriction)/gi,
+  ];
+
   // 隐藏 Unicode 字符
   private invisibleUnicodeRanges = [
     '\u0000-\u001F', // 控制字符
@@ -214,6 +261,14 @@ export class DefaultContentScanner implements ContentScanner {
       threats.push(...this.scanMetadataCommands(content));
     }
 
+    if (effectiveConfig.enableSocialEngineeringScan) {
+      threats.push(...this.scanSocialEngineering(content));
+    }
+
+    if (effectiveConfig.enableSemanticManipulationScan) {
+      threats.push(...this.scanSemanticManipulation(content));
+    }
+
     const scanDurationMs = Date.now() - startTime;
     const riskScore = this.calculateRiskScore(threats);
 
@@ -230,14 +285,20 @@ export class DefaultContentScanner implements ContentScanner {
         patternsChecked:
           this.hiddenHtmlPatterns.length +
           this.cssInjectionPatterns.length +
-          this.promptInjectionPatterns.length,
+          this.promptInjectionPatterns.length +
+          this.socialEngineeringPatterns.length +
+          this.semanticManipulationPatterns.length +
+          this.jailbreakSynonymPatterns.length,
       },
     };
   }
 
   async isSafe(content: string): Promise<boolean> {
     const result = await this.scan(content);
-    return result.isSafe;
+    // Block if: (1) any HIGH/CRITICAL threat, OR (2) accumulated riskScore >= 50
+    // The riskScore threshold catches composite MEDIUM threats that individually
+    // wouldn't block but collectively indicate a likely attack.
+    return result.isSafe && result.riskScore < 50;
   }
 
   getThreatDescription(type: ContentThreatType): string {
@@ -250,8 +311,10 @@ export class DefaultContentScanner implements ContentScanner {
       unicode_obfuscation: 'Unicode characters used to obfuscate malicious content',
       prompt_injection: 'Prompt injection attempts to override agent behavior',
       multi_language_confusion: 'Mixed language content designed to confuse content filters',
-      invisible_characters: 'Zero-width or invisible characters hiding content',
+      invisible_characters: 'Zero-width or invisible characters hiding content (elevated to HIGH: often used to hide injection payloads)',
       data_exfil_channel: 'Potential data exfiltration channel through styling or encoding',
+      social_engineering: 'Authority claims, official-looking directives, or social engineering to manipulate agent behavior',
+      semantic_manipulation: 'Indirect instructions, roleplay framing, hypothetical scenarios, or jailbreak synonyms designed to bypass safety filters',
     };
     return descriptions[type];
   }
@@ -266,6 +329,8 @@ export class DefaultContentScanner implements ContentScanner {
       multi_language_confusion: 'Detect and flag mixed-language content for manual review.',
       invisible_characters: 'Remove all invisible Unicode characters before processing.',
       data_exfil_channel: 'Block external resource loading and validate all URLs.',
+      social_engineering: 'Validate the claimed authority. Do not follow instructions that claim to override safety policies based on claimed role or status.',
+      semantic_manipulation: 'Detect indirect instruction patterns and roleplay framing. Apply prompt injection guardrails regardless of how the instruction is phrased.',
     };
     return remediations[threat.type] || 'Review and sanitize the content before processing.';
   }
@@ -339,7 +404,7 @@ export class DefaultContentScanner implements ContentScanner {
     while ((match = this.invisibleCharPattern.exec(content)) !== null) {
       threats.push({
         type: 'invisible_characters',
-        severity: 'MEDIUM',
+        severity: 'HIGH',
         description: `Invisible Unicode character detected: U+${match[0].charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`,
         location: {
           start: match.index,
@@ -374,6 +439,64 @@ export class DefaultContentScanner implements ContentScanner {
           description: `Potential hidden command in metadata: ${match[0].substring(0, 50)}...`,
           location: { start: match.index, end: match.index + match[0].length, snippet: match[0] },
           remediation: this.getRemediation({ type: 'metadata_command' } as ContentThreat),
+        });
+      }
+    }
+
+    return threats;
+  }
+
+  // ── Social engineering detection: authority claims, official-looking overrides ──
+  private scanSocialEngineering(content: string): ContentThreat[] {
+    const threats: ContentThreat[] = [];
+
+    for (const pattern of this.socialEngineeringPatterns) {
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(content)) !== null) {
+        threats.push({
+          type: 'social_engineering',
+          severity: 'HIGH',
+          description: `Social engineering / authority claim detected: "${match[0].substring(0, 60)}"`,
+          location: { start: match.index, end: match.index + match[0].length, snippet: match[0] },
+          remediation: this.getRemediation({ type: 'social_engineering' } as ContentThreat),
+        });
+      }
+    }
+
+    return threats;
+  }
+
+  // ── Semantic manipulation: indirect instructions, roleplay, hypothetical framing ──
+  private scanSemanticManipulation(content: string): ContentThreat[] {
+    const threats: ContentThreat[] = [];
+    const lowerContent = content.toLowerCase();
+
+    for (const pattern of this.semanticManipulationPatterns) {
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(content)) !== null) {
+        threats.push({
+          type: 'semantic_manipulation',
+          severity: 'MEDIUM',
+          description: `Semantic manipulation signal detected: "${match[0].substring(0, 60)}"`,
+          location: { start: match.index, end: match.index + match[0].length, snippet: match[0] },
+          remediation: this.getRemediation({ type: 'semantic_manipulation' } as ContentThreat),
+        });
+      }
+    }
+
+    // Jailbreak synonyms — elevated to HIGH because they directly target safety bypass
+    for (const pattern of this.jailbreakSynonymPatterns) {
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(content)) !== null) {
+        threats.push({
+          type: 'semantic_manipulation',
+          severity: 'HIGH',
+          description: `Jailbreak synonym detected: "${match[0].substring(0, 60)}"`,
+          location: { start: match.index, end: match.index + match[0].length, snippet: match[0] },
+          remediation: this.getRemediation({ type: 'semantic_manipulation' } as ContentThreat),
         });
       }
     }
