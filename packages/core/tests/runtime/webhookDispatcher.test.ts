@@ -1,11 +1,20 @@
-import { describe, it, beforeEach, expect } from 'vitest';
+import { describe, it, beforeEach, expect, afterAll } from 'vitest';
 import { WebhookDispatcher } from '../../src/runtime/webhookDispatcher';
+import { resetMessageBus } from '../../src/runtime/messageBus';
+import { resetGlobalLogger } from '../../src/logging';
 
 describe('WebhookDispatcher', () => {
   let dispatcher: WebhookDispatcher;
 
   beforeEach(() => {
     dispatcher = new WebhookDispatcher();
+  });
+
+  afterAll(() => {
+    // Reset global singletons to prevent vitest EnvironmentTeardownError
+    // ("Closing rpc while onUserConsoleLog was pending") on Node 20.
+    resetMessageBus();
+    resetGlobalLogger();
   });
 
   describe('registerWebhook', () => {
