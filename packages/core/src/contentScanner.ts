@@ -313,10 +313,13 @@ export class DefaultContentScanner implements ContentScanner {
       unicode_obfuscation: 'Unicode characters used to obfuscate malicious content',
       prompt_injection: 'Prompt injection attempts to override agent behavior',
       multi_language_confusion: 'Mixed language content designed to confuse content filters',
-      invisible_characters: 'Zero-width or invisible characters hiding content (elevated to HIGH: often used to hide injection payloads)',
+      invisible_characters:
+        'Zero-width or invisible characters hiding content (elevated to HIGH: often used to hide injection payloads)',
       data_exfil_channel: 'Potential data exfiltration channel through styling or encoding',
-      social_engineering: 'Authority claims, official-looking directives, or social engineering to manipulate agent behavior',
-      semantic_manipulation: 'Indirect instructions, roleplay framing, hypothetical scenarios, or jailbreak synonyms designed to bypass safety filters',
+      social_engineering:
+        'Authority claims, official-looking directives, or social engineering to manipulate agent behavior',
+      semantic_manipulation:
+        'Indirect instructions, roleplay framing, hypothetical scenarios, or jailbreak synonyms designed to bypass safety filters',
     };
     return descriptions[type];
   }
@@ -331,8 +334,10 @@ export class DefaultContentScanner implements ContentScanner {
       multi_language_confusion: 'Detect and flag mixed-language content for manual review.',
       invisible_characters: 'Remove all invisible Unicode characters before processing.',
       data_exfil_channel: 'Block external resource loading and validate all URLs.',
-      social_engineering: 'Validate the claimed authority. Do not follow instructions that claim to override safety policies based on claimed role or status.',
-      semantic_manipulation: 'Detect indirect instruction patterns and roleplay framing. Apply prompt injection guardrails regardless of how the instruction is phrased.',
+      social_engineering:
+        'Validate the claimed authority. Do not follow instructions that claim to override safety policies based on claimed role or status.',
+      semantic_manipulation:
+        'Detect indirect instruction patterns and roleplay framing. Apply prompt injection guardrails regardless of how the instruction is phrased.',
     };
     return remediations[threat.type] || 'Review and sanitize the content before processing.';
   }
