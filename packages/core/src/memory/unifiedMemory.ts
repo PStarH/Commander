@@ -158,6 +158,7 @@ export class UnifiedMemory {
   private memoryStore: MemoryStore | null = null;
   private writeCount = 0;
   private initialized = false;
+  private initPromise: Promise<void> | null = null;
 
   constructor(config?: Partial<UnifiedMemoryConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -177,19 +178,25 @@ export class UnifiedMemory {
    */
   async init(store: MemoryStore): Promise<void> {
     if (this.initialized) return;
-    this.memoryStore = store;
+    if (this.initPromise) return this.initPromise;
 
-    if (this.config.enableConversationStore) {
-      await this.conversationStore.init();
-    }
+    this.initPromise = (async () => {
+      this.memoryStore = store;
 
-    this.initialized = true;
-    getGlobalLogger().info('UnifiedMemory', 'Initialized', {
-      storeType: this.config.storeType,
-      curation: this.config.enableCuration,
-      conversations: this.config.enableConversationStore,
-      userModel: this.config.enableUserModel,
-    });
+      if (this.config.enableConversationStore) {
+        await this.conversationStore.init();
+      }
+
+      this.initialized = true;
+      getGlobalLogger().info('UnifiedMemory', 'Initialized', {
+        storeType: this.config.storeType,
+        curation: this.config.enableCuration,
+        conversations: this.config.enableConversationStore,
+        userModel: this.config.enableUserModel,
+      });
+    })();
+
+    return this.initPromise;
   }
 
   // --------------------------------------------------------------------------
@@ -322,7 +329,8 @@ export class UnifiedMemory {
     if (sources.includes('user_model') && options.userId && this.config.enableUserModel) {
       // Load from disk if not in memory
       userProfile =
-        (await this.userModel.loadProfile(options.userId)) ?? this.userModel.getProfile(options.userId);
+        (await this.userModel.loadProfile(options.userId)) ??
+        this.userModel.getProfile(options.userId);
     }
 
     // Build unified context string

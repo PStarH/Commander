@@ -150,6 +150,49 @@ export class TopologyRouter {
     },
     HANDOFF: { sequential: 0.8, parallel: 0.6, complex: 0.7, research: 0.6, costMultiplier: 2.0 },
     CONSENSUS: { sequential: 0.5, parallel: 0.7, complex: 0.8, research: 0.7, costMultiplier: 3.5 },
+    // Canonical (D3.2 migration window) — mirror each legacy alias so
+    // canonical-name lookups return identical scores in any code path
+    // that passes the new name explicitly (CLI `--topology=<canonical>`
+    // flag, programmatic orchestrator override, or
+    // `normalizeTopology()`-normalized input). Entries placed AFTER the
+    // legacy 10 so `Object.keys(this.topologyPerformance)` iteration
+    // resolves tied scores to legacy names — this preserves the existing
+    // auto-routing behavior for callers who don't yet migrate (the user's
+    // "全程不删任何 routing 行为，只改字符串" directive). After the
+    // 2-minor-version hard-removal, these entries move to the front and
+    // become the new argmax defaults.
+    CHAIN: {
+      // ← SEQUENTIAL
+      sequential: 1.0,
+      parallel: 0.3,
+      complex: 0.3,
+      research: 0.2,
+      costMultiplier: 1.1,
+    },
+    DISPATCH: {
+      // ← PARALLEL
+      sequential: 0.3,
+      parallel: 1.0,
+      complex: 0.6,
+      research: 0.8,
+      costMultiplier: 2.0,
+    },
+    ORCHESTRATOR: {
+      // ← HIERARCHICAL
+      sequential: 0.4,
+      parallel: 0.7,
+      complex: 1.0,
+      research: 0.9,
+      costMultiplier: 3.0,
+    },
+    REVIEW: {
+      // ← EVALUATOR_OPTIMIZER
+      sequential: 0.6,
+      parallel: 0.3,
+      complex: 0.7,
+      research: 0.3,
+      costMultiplier: 2.5,
+    },
   };
 
   route(
@@ -293,12 +336,12 @@ export class TopologyRouter {
           expectedSuccess: number;
         }>
       | undefined = scores.map((s) => ({
-        topology: s.topology,
-        score: s.score,
-        pheromoneBias: 0,
-        pheromoneSamples: 0,
-        expectedSuccess: 0.5,
-      }));
+      topology: s.topology,
+      score: s.score,
+      pheromoneBias: 0,
+      pheromoneSamples: 0,
+      expectedSuccess: 0.5,
+    }));
 
     scores.sort((a, b) => b.score - a.score);
     const argmaxTopology = scores[0].topology;
@@ -344,6 +387,12 @@ export class TopologyRouter {
 
     const latencyMap: Record<OrchestrationTopology, string> = {
       SINGLE: '< 5s',
+      // Canonical (D3.2) — mirror the legacy alias latency bands so
+      // canonical-name routing returns the same expected-latency text.
+      CHAIN: '10-30s', // ← SEQUENTIAL
+      DISPATCH: '15-45s', // ← PARALLEL
+      ORCHESTRATOR: '30-120s', // ← HIERARCHICAL
+      REVIEW: '30-120s', // ← EVALUATOR_OPTIMIZER
       SEQUENTIAL: '10-30s',
       PARALLEL: '15-45s',
       HIERARCHICAL: '30-120s',
@@ -574,7 +623,7 @@ export class TopologyRouter {
 
   /**
    * Resolve the effective epsilon for a given tenant.
-   * Priority: per-tenant override > constructor default.
+   * Priority: per-tenant override (via `epsilonStore`) > constructor default.
    */
   private resolveEpsilon(tenantId?: string): number {
     if (this.epsilonStore && tenantId) {

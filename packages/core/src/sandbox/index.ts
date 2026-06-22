@@ -20,7 +20,7 @@ export {
   wrapCommandWithProxy,
 } from './networkProxy';
 export type { ProxySandboxConfig } from './networkProxy';
-export { SandboxManager, getSandboxManager } from './manager';
+export { SandboxManager, getSandboxManager, resetSandboxManager } from './manager';
 export { ExecPolicyEngine } from './execPolicy';
 export { ApprovalSystem, getApprovalSystem } from './approval';
 export type {

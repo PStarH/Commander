@@ -1,6 +1,7 @@
 import { AgentRuntime } from './runtime/agentRuntime';
 import { getMessageBus } from './runtime/messageBus';
 import { createAllTools, wireResourceToolDependencies } from './tools/index';
+import { AgentTool } from './tools/agentTool';
 import { UltimateOrchestrator } from './ultimate/orchestrator';
 import { TELOSOrchestrator } from './telos/telosOrchestrator';
 import { deliberate } from './ultimate/deliberation';
@@ -62,6 +63,22 @@ export class CommanderAgentLoop {
       toolResolver: (name) => this.runtime.getTool(name)?.definition,
       registryTools: [],
     });
+
+    // Register AgentTool (sub-agent spawning) with the runtime
+    const agentTool = new AgentTool(this.runtime);
+    agentTool.registerAgent({
+      name: 'general',
+      description: 'General-purpose sub-agent',
+      prompt: 'You are a capable sub-agent. Complete the assigned task thoroughly.',
+      tools: ['browser_search', 'web_fetch', 'python_execute', 'file_read', 'code'],
+    });
+    agentTool.registerAgent({
+      name: 'researcher',
+      description: 'Web research specialist',
+      prompt: 'You are a research specialist. Find and synthesize information from the web.',
+      tools: ['browser_search', 'web_fetch', 'file_read'],
+    });
+    this.runtime.registerTool('agent', agentTool);
 
     this.telos = new TELOSOrchestrator(this.runtime);
     this.orchestrator = new UltimateOrchestrator(this.telos, this.runtime);

@@ -53,37 +53,38 @@ export class StdioClientTransport implements MCPTransport {
       env: { ...safeEnv, ...this.config.env },
     });
 
-    const stdout = this.process!.stdout;
-    if (!stdout) return;
-    stdout.on('data', (data: Buffer) => {
-      this.buf += data.toString();
-      const lines = this.buf.split('\n');
-      this.buf = lines.pop() ?? '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const parsed = JSON.parse(line) as JSONRPCResponse;
-          const id = parsed.id;
-          if (id !== null && this.pending.has(id)) {
-            const p = this.pending.get(id)!;
-            p.resolve(parsed);
-            this.pending.delete(id);
+    const stdout = this.process.stdout;
+    const stderr = this.process.stderr;
+
+    if (stdout) {
+      stdout.on('data', (data: Buffer) => {
+        this.buf += data.toString();
+        const lines = this.buf.split('\n');
+        this.buf = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const parsed = JSON.parse(line) as JSONRPCResponse;
+            const id = parsed.id;
+            if (id !== null && this.pending.has(id)) {
+              const p = this.pending.get(id)!;
+              p.resolve(parsed);
+              this.pending.delete(id);
+            }
+          } catch {
+            getGlobalLogger().debug('MCPClient', 'Ignoring parse error in stdio response');
           }
-        } catch {
-          getGlobalLogger().debug('MCPClient', 'Ignoring parse error in stdio response');
         }
-      }
-    });
+      });
+    }
 
-    const stderr = this.process!.stderr;
-    if (!stderr) return;
-    stderr.on('data', (_data: Buffer) => {
-      // MCP servers log to stderr — ignore in production, log in debug
-    });
+    if (stderr) {
+      stderr.on('data', () => {
+        // MCP servers log to stderr — ignore in production, log in debug
+      });
+    }
 
-    const process = this.process!;
-    if (!process) return;
-    process.on('exit', () => {
+    this.process.on('exit', () => {
       for (const [, p] of this.pending) {
         p.reject(new Error('MCP process exited'));
       }
@@ -220,6 +221,16 @@ export class MCPClient {
   async connect(): Promise<void> {
     await this.transport.start();
     await this.initialize();
+    // Auto-fetch tools after connection so the cache is populated.
+    // Without this, listTools() returns null on first call until explicitly
+    // invoked, causing tools to appear to "vanish" after reconnection.
+    if (this.capabilities.tools) {
+      try {
+        await this.listTools();
+      } catch {
+        // Non-critical: tools will be fetched on first explicit listTools() call
+      }
+    }
   }
 
   private async initialize(): Promise<void> {

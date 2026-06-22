@@ -250,6 +250,23 @@ export class ExecPolicyEngine {
     const candidates = this.extractCommandCandidates(strippedCommand);
     const sorted = [...this.rules].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 
+    // SECURITY: Check for command substitution ($(...) or backticks) BEFORE rule matching.
+    // Commands like `npm run build $(rm -rf /)` contain `npm` and would otherwise match
+    // the `allow-dev` rule and bypass the substitution check entirely.
+    if (this.hasCommandSubstitution(normalized)) {
+      return {
+        decision: 'prompt',
+        rule: {
+          id: 'implicit-command-substitution',
+          pattern: ['$('],
+          decision: 'prompt',
+          justification: 'Shell command substitution requires review — may execute hidden commands',
+          priority: 20,
+        },
+        matchedPattern: '$(',
+      };
+    }
+
     // Evaluate each rule against the (possibly wrapper-stripped) command
     const effectiveCandidates =
       strippedCommand !== command ? this.extractCommandCandidates(strippedCommand) : candidates;
@@ -264,19 +281,7 @@ export class ExecPolicyEngine {
         }
       }
     }
-    if (this.hasCommandSubstitution(normalized)) {
-      return {
-        decision: 'prompt',
-        rule: {
-          id: 'implicit-command-substitution',
-          pattern: ['$('],
-          decision: 'prompt',
-          justification: 'Shell command substitution requires approval',
-          priority: 20,
-        },
-        matchedPattern: '$(',
-      };
-    }
+
     // Security: default to 'prompt' for unmatched commands (fail-safe)
     return {
       decision: 'prompt',

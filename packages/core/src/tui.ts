@@ -433,7 +433,11 @@ export class CommanderTUI {
     const tabFiltered = this.filterByTab(this.filteredLogs);
 
     if (tabFiltered.length === 0) {
-      this.eventList.setItems([' (no events)']);
+      const welcomeLine =
+        this.logs.length === 0
+          ? ' {bold}Welcome to Commander TUI{/bold}  —  waiting for agent events...'
+          : ' (no events)';
+      this.eventList.setItems([welcomeLine]);
       return;
     }
 

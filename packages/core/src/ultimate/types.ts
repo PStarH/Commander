@@ -49,24 +49,141 @@ export interface HumanApprovalGate {
 }
 
 // ============================================================================
-// Orchestration Topologies (AdaptOrch-inspired)
+// Orchestration Topologies (Anthropic-aligned canonical 5; 9 legacy names
+// retained as @deprecated aliases for the 2-minor-version migration window)
 // ============================================================================
+//
+// D3.2 consolidation: 10 legacy enumeration values have been merged into 5
+// canonical patterns that follow the Anthropic "Building effective agents"
+// (Oct 2024) ontology (Prompt Chaining / Routing / Parallelization /
+// Orchestrator-Workers / Evaluator-Optimizer). See the audit memo in
+// docs/audits/ultimate-orchestration-debloat.md for the rationale.
+//
+// Migrating callers should switch to `OrchestrationTopologyCanonical`
+// (the 5-value narrow). The wider `OrchestrationTopology` union still
+// accepts all 9 legacy names — each alias is marked `@deprecated` with the
+// JSDoc canonical replacement, and `normalizeTopology()` emits a one-line
+// `console.warn` per process per deprecated name on first use.
 
 /**
- * Canonical orchestration topologies.
+ * Canonical orchestration topology names — Anthropic-aligned set of 5
+ * patterns. Use this narrow type for all NEW code.
+ *
+ *   SINGLE         — single agent, no orchestration (Routing: trivial)
+ *   CHAIN          — sequential agent chain (Prompt Chaining)
+ *   DISPATCH       — parallel agents aggregated (Parallelization: Section/Vote)
+ *   ORCHESTRATOR   — orchestrator + worker hierarchy (Orchestrator-Workers)
+ *   REVIEW         — generator + evaluator iterative loop (Evaluator-Optimizer)
+ *
  * AdaptOrch research shows topology selection alone yields 12-23% improvement.
  */
-export type OrchestrationTopology =
+export type OrchestrationTopologyCanonical =
   | 'SINGLE' // Single agent handles everything
-  | 'SEQUENTIAL' // Chain of agents, one after another
-  | 'PARALLEL' // Multiple agents in parallel, then synthesize
-  | 'HIERARCHICAL' // Orchestrator delegates to workers with recursive decomposition
-  | 'HYBRID' // Mixed topology based on subtask dependencies
-  | 'DEBATE' // Multiple agents debate to reach consensus
-  | 'ENSEMBLE' // Multiple agents independently solve, then vote
-  | 'EVALUATOR_OPTIMIZER' // Generator + Evaluator iterative loop
-  | 'HANDOFF' // Agent handoff pattern
-  | 'CONSENSUS'; // Multi-agent consensus pattern
+  | 'CHAIN' // Sequential chain of agents (formerly SEQUENTIAL / HANDOFF)
+  | 'DISPATCH' // Parallel agents aggregated (formerly PARALLEL / ENSEMBLE / CONSENSUS)
+  | 'ORCHESTRATOR' // Orchestrator delegates to workers (formerly HIERARCHICAL / HYBRID)
+  | 'REVIEW'; // Generator + Evaluator iterative loop (formerly EVALUATOR_OPTIMIZER / DEBATE)
+
+/**
+ * Public orchestration topology enumeration. Includes the 5 canonical
+ * names plus the 9 legacy names marked `@deprecated`. Legacy strings are
+ * accepted as input at CLIs, APIs, and configuration parsers, and are
+ * internally normalizeable to canonical via `normalizeTopology()`.
+ *
+ * Internal switch/case and string-equality branches still type-check
+ * because the union permits both legacy and canonical names — this preserves
+ * every existing call site during the migration window without forcing a
+ * bulk rename.
+ */
+export type OrchestrationTopology =
+  | OrchestrationTopologyCanonical
+  // ── Legacy aliases (soft-deprecated; emitted as `console.warn` once per
+  // process on first normalize(); hard removal in 2 minor versions). ──
+  /** @deprecated Use `CHAIN` — equivalent semantics for sequential agent chains. */
+  | 'SEQUENTIAL'
+  /** @deprecated Use `CHAIN` — agent handoff is an implementation detail within CHAIN. */
+  | 'HANDOFF'
+  /** @deprecated Use `DISPATCH` — parallel fan-out with aggregate synthesis. */
+  | 'PARALLEL'
+  /** @deprecated Use `DISPATCH` — ensemble is parallel + vote reduction. */
+  | 'ENSEMBLE'
+  /** @deprecated Use `DISPATCH` — consensus is parallel + agreement reduction. */
+  | 'CONSENSUS'
+  /** @deprecated Use `ORCHESTRATOR` — recursive worker decomposition. */
+  | 'HIERARCHICAL'
+  /** @deprecated Use `ORCHESTRATOR` — hybrid is ORCHESTRATOR with width>1. */
+  | 'HYBRID'
+  /** @deprecated Use `REVIEW` — generator + evaluator + optimizer loop. */
+  | 'EVALUATOR_OPTIMIZER'
+  /** @deprecated Use `REVIEW` — debate iterates generation with critique. */
+  | 'DEBATE';
+
+/**
+ * Maps each legacy OrchestrationTopology name to its canonical replacement.
+ * Used by `normalizeTopology()` and by `/docs/api/legacy-topology-shim.md`.
+ */
+export const TOPOLOGY_ALIAS_MAP: Readonly<Record<string, OrchestrationTopologyCanonical>> =
+  Object.freeze({
+    SEQUENTIAL: 'CHAIN',
+    HANDOFF: 'CHAIN',
+    PARALLEL: 'DISPATCH',
+    ENSEMBLE: 'DISPATCH',
+    CONSENSUS: 'DISPATCH',
+    HIERARCHICAL: 'ORCHESTRATOR',
+    HYBRID: 'ORCHESTRATOR',
+    EVALUATOR_OPTIMIZER: 'REVIEW',
+    DEBATE: 'REVIEW',
+  });
+
+/** Module-level tracker that ensures each deprecated name warns only once per process. */
+const warnedTopologyAliases = new Set<string>();
+
+/**
+ * Emits a one-line `console.warn` the first time a given deprecated
+ * topology name is normalized — per process. Subsequent calls for the same
+ * alias are silent (no repeated log spam). The warning is a Node
+ * `DeprecationWarning`-style advisory, not an exception, so no behavior
+ * changes; it just signals to operators and consumers that migration
+ * should happen before the 2-minor-version hard-removal cutoff.
+ */
+export function warnDeprecatedTopologyOnce(name: string): void {
+  if (warnedTopologyAliases.has(name)) return;
+  warnedTopologyAliases.add(name);
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[DeprecationWarning] OrchestrationTopology "${name}" is deprecated. ` +
+      `Use "${TOPOLOGY_ALIAS_MAP[name]}" instead. ` +
+      `The legacy name will be hard-removed in 2 minor versions.`,
+  );
+}
+
+/**
+ * Normalizes a topology name to its canonical 5-value form. Returns the
+ * input unchanged when it is already canonical. When `name` is one of the
+ * 9 `@deprecated` legacy aliases, emits a one-line `console.warn` (per
+ * process, per name) and returns the mapped canonical.
+ *
+ * This helper is intended for input-boundary call sites (CLI ingest,
+ * telemetry emission, intent-log writes, public API ingest). Internal
+ * switch/case and string-equality branches do NOT need to be rewritten —
+ * the wider `OrchestrationTopology` union type accepts both legacy and
+ * canonical names, so the migration is type-system-transparent.
+ */
+export function normalizeTopology(name: OrchestrationTopology): OrchestrationTopologyCanonical {
+  if (Object.prototype.hasOwnProperty.call(TOPOLOGY_ALIAS_MAP, name)) {
+    warnDeprecatedTopologyOnce(name);
+    return TOPOLOGY_ALIAS_MAP[name] as OrchestrationTopologyCanonical;
+  }
+  // Named lookups proved `name` is NOT a deprecated alias; since the
+  // canonical 5 names exist in the wider union as `OrchestrationTopology`,
+  // TS can't narrow it without help. Cast is safe by construction.
+  return name as OrchestrationTopologyCanonical;
+}
+
+/** Test helper — clears the once-per-process warn cache (for unit tests). */
+export function _resetDeprecatedTopologyWarnCacheForTests(): void {
+  warnedTopologyAliases.clear();
+}
 
 /**
  * Task dependency graph for topology routing.
