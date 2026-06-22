@@ -209,10 +209,11 @@ importers:
         version: 5.9.3
 
   packages/security:
-    devDependencies:
+    dependencies:
       '@commander/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
