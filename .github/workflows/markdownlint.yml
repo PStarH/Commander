@@ -1,0 +1,115 @@
+name: Documentation Policy Lint
+
+# ── Commander Documentation Policy Enforcement ─────────────────────
+# Runs scripts/lint-docs.js against every README*.md in the repo. The script
+# imports scripts/markdownlint-rules/cc-no-competitor-bash.js and
+# scripts/markdownlint-rules/cc-readme-superlative-quote.js and applies each
+# rule's regex to the file contents. The rule files encode AGENTS.md §
+# "Documentation Policy — competitor citations" -- the executable form of that
+# prose contract, so a recurrence of the same customer-angering tone drift that
+# triggered this whole cleanup pass will be caught at PR time instead.
+#
+# Why not markdownlint-cli2: v0.18.1 fails to load user rules via the documented
+# customRules JSON config field. The Node wrapper bypasses the loader while
+# keeping the rule files themselves canonical -- a future migration back to
+# markdownlint-cli2 (when the loader is fixed) will require zero changes to the
+# regex content.
+#
+# Triggers: pull_request/push to master/main, plus manual workflow_dispatch.
+# Outputs: PR comment on failure (with reproducer) + step summary table.
+# ─────────────────────────────────────────────────────────────────────
+
+on:
+  pull_request:
+    branches: [master, main]
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  commander-doc-policy:
+    name: Commander Documentation Policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Lint README*.md per AGENTS.md Documentation Policy
+        id: lint
+        run: |
+          echo "📋 Running Commander doc-policy checker (scripts/lint-docs.js)…"
+          OUTPUT=$(node scripts/lint-docs.js 2>&1)
+          EXIT=$?
+          echo "$OUTPUT"
+          echo "$OUTPUT" > /tmp/mdlint.txt
+          # Aggregate both-rule hit count for the step summary table.
+          echo "hits_total=$(echo "$OUTPUT" | grep -cE 'cc-(no-competitor-bash|readme-superlative-quote)' || echo 0)" >> $GITHUB_OUTPUT
+          exit $EXIT
+        shell: bash
+
+      - name: Step summary
+        if: always()
+        run: |
+          {
+            echo "## 📋 Commander Documentation Policy"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Total violations | ${{ steps.lint.outputs.hits_total }} |"
+            echo ""
+            if [ "${{ steps.lint.outputs.hits_total }}" != "0" ]; then
+              echo "❌ FAILED — see PR comment for reproducer command."
+            else
+              echo "✅ PASSED — every README*.md conforms to AGENTS.md § Documentation Policy."
+            fi
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Comment on PR with reproducer
+        if: github.event_name == 'pull_request' && failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const lines = require('fs').readFileSync('/tmp/mdlint.txt', 'utf-8').split('
+');
+            const findings = lines.filter(l => /cc-no-competitor-bash|cc-readme-superlative-quote/.test(l)).slice(0, 20);
+            const body = [
+              '## 📋 Commander Documentation Policy — lint failed',
+              '',
+              'This PR introduces Markdown that violates the `Documentation Policy — competitor citations` contract in `AGENTS.md`. The custom rules in `scripts/markdownlint-rules/` caught the violation.',
+              '',
+              '### Findings (first 20)',
+              '',
+              findings.length ? findings.map(l => '- `' + l + '`').join('
+') : '- (see workflow log)',
+              '',
+              '### Reproduce locally',
+              '',
+              '```bash',
+              'node scripts/lint-docs.js',
+              '```',
+              '',
+              '### The contract',
+              '',
+              'Engineering citation of non-Commander frameworks **in design docs** is **KEEP** (cite patterns like LangGraph `thread_id`, AutoGen `AssistantAgent` isolation, Temporal workflow determinism freely).',
+              '',
+              'Customer-facing positioning copy **must not** include: ❌ marks in "Commander vs X" tables; "the only multi-agent framework with X" superlatives; brand-bashing words like `碾压` / `crush` / `唯一` / `业界最强` / `World-class`; or named-brand "X fails / breaks" verbal degradations.',
+            ].join('
+');
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
