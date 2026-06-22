@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit — D3 hardening-sprint hook.
+#
+# Delegates to scripts/precommitHook.ts so the EXACT same logic can run
+# in CI via CORE_PRECOMMIT_HOOK=1 without invoking git. Git-side, this
+# hook only ever does argv-agnostic delegation + env setup.
+#
+# Install:   bash scripts/install-hooks.sh
+# Uninstall: rm .git/hooks/pre-commit
+# Bypass:    COMMANDER_SKIP_PRECOMMIT=1 git commit ...   (logged warning)
+
+set -euo pipefail
+
+# Always run from repo root regardless of git's cwd.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$REPO_ROOT"
+
+# Emergency bypass — log loudly so the bypass shows in CI audit.
+if [ "${COMMANDER_SKIP_PRECOMMIT:-0}" = "1" ]; then
+  echo "⚠️  COMMANDER_SKIP_PRECOMMIT=1 — D3 hook skipped (audit log will record this)" >&2
+  exit 0
+fi
+
+# In CI we set CORE_PRECOMMIT_HOOK=1 externally; for git-side invocation
+# set it here so the tsx script can detect the same intent.
+export CORE_PRECOMMIT_HOOK="${CORE_PRECOMMIT_HOOK:-1}"
+
+exec npx tsx scripts/precommitHook.ts
