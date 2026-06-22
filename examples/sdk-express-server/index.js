@@ -39,6 +39,27 @@ app.post('/run', async (req, res) => {
   }
 });
 
+// SSE streaming endpoint — real-time agent events via Server-Sent Events.
+app.get('/stream', async (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+  res.write('retry: 5000\n\n');
+  const sendEvent = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+  sendEvent('connected', { status: 'Streaming agent events...' });
+  const keepalive = setInterval(() => {
+    res.write(': heartbeat\n\n');
+  }, 25000);
+  req.on('close', () => {
+    clearInterval(keepalive);
+    res.end();
+  });
+});
+
 // Cost report endpoint backed by Commander's local usage ledger.
 app.get('/cost', (_req, res) => {
   try {
