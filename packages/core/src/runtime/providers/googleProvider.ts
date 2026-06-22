@@ -1,4 +1,5 @@
-import type { LLMProvider, LLMRequest, LLMResponse } from '../types';
+import type { LLMProvider, LLMRequest, LLMResponse, ToolCall } from '../types';
+import { FormatBridge } from '../formatBridge';
 
 /**
  * Optional Google Gemini cachedContent wiring.
@@ -14,7 +15,12 @@ export interface GeminiCacheConfig {
 
 interface GeminiContent {
   role: string;
-  parts: Array<{ text?: string; inlineData?: unknown }>;
+  parts: Array<{
+    text?: string;
+    inlineData?: unknown;
+    functionCall?: { name: string; args: Record<string, unknown> };
+    functionResponse?: { name: string; response: unknown };
+  }>;
 }
 
 interface GeminiCandidate {
@@ -79,6 +85,13 @@ export class GoogleProvider implements LLMProvider {
       body.cachedContent = cachedContentName;
     }
 
+    // Tools: Gemini uses function_declarations wrapped in an outer tools array
+    if (request.tools && request.tools.length > 0) {
+      body.tools = FormatBridge.adaptToolsForProvider(request.tools, 'google');
+      // Gemini requires tool_config for parallel function calling
+      body.tool_config = { function_calling_config: { mode: 'auto' } };
+    }
+
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -99,11 +112,46 @@ export class GoogleProvider implements LLMProvider {
 
     for (const msg of request.messages) {
       if (msg.role === 'system') continue;
-      const role = msg.role === 'assistant' ? 'model' : msg.role;
-      contents.push({
-        role,
-        parts: [{ text: msg.content }],
-      });
+
+      const role = msg.role === 'assistant' ? 'model' : msg.role === 'tool' ? 'user' : msg.role;
+      const parts: GeminiContent['parts'] = [];
+
+      if (msg.role === 'tool') {
+        // Tool results: Gemini expects functionResponse parts with role 'user'
+        const toolName = msg.name ?? 'unknown_tool';
+        let responsePayload: unknown;
+        try {
+          responsePayload = JSON.parse(msg.content);
+        } catch {
+          responsePayload = { result: msg.content };
+        }
+        parts.push({
+          functionResponse: {
+            name: toolName,
+            response: responsePayload,
+          },
+        });
+      } else if (msg.tool_calls && msg.tool_calls.length > 0) {
+        // Assistant tool calls: convert to functionCall parts
+        for (const tc of msg.tool_calls) {
+          let args: Record<string, unknown>;
+          try {
+            args = JSON.parse(tc.function.arguments);
+          } catch {
+            args = {};
+          }
+          parts.push({
+            functionCall: {
+              name: tc.function.name,
+              args,
+            },
+          });
+        }
+      } else {
+        parts.push({ text: msg.content });
+      }
+
+      contents.push({ role, parts });
     }
 
     return contents;
@@ -119,8 +167,21 @@ export class GoogleProvider implements LLMProvider {
     model: string,
     responseFormat?: LLMRequest['responseFormat'],
   ): LLMResponse {
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-    const finishReason = data.candidates?.[0]?.finishReason ?? 'stop';
+    const candidate = data.candidates?.[0];
+    const parts = candidate?.content?.parts ?? [];
+    const text = parts.find((p) => p.text)?.text ?? '';
+    const finishReason = candidate?.finishReason ?? 'STOP';
+
+    const toolCalls: ToolCall[] = [];
+    for (const part of parts) {
+      if (part.functionCall) {
+        toolCalls.push({
+          id: `call_google_${Date.now()}_${toolCalls.length}`,
+          name: part.functionCall.name,
+          arguments: part.functionCall.args ?? {},
+        });
+      }
+    }
 
     const usage = data.usageMetadata ?? {
       promptTokenCount: 0,
@@ -139,7 +200,20 @@ export class GoogleProvider implements LLMProvider {
         totalTokens: usage.totalTokenCount,
       },
       finishReason:
-        finishReason === 'STOP' ? 'stop' : finishReason === 'MAX_TOKENS' ? 'length' : 'stop',
+        finishReason === 'STOP'
+          ? toolCalls.length > 0
+            ? 'tool_calls'
+            : 'stop'
+          : finishReason === 'MAX_TOKENS'
+            ? 'length'
+            : finishReason === 'TOOL_CALLS'
+              ? 'tool_calls'
+              : finishReason === 'SAFETY' ||
+                  finishReason === 'RECITATION' ||
+                  finishReason === 'OTHER'
+                ? 'error'
+                : 'stop',
+      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       parsed,
     };
   }

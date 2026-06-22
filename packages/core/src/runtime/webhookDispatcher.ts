@@ -305,6 +305,21 @@ export class WebhookDispatcher {
     }
   }
 
+  // ── Test fixture management ──────────────────────────────────────
+
+  filterTestFixtures(): number {
+    const fixturePatterns = [/^test-/, /^fixture-/, /localhost.*test/, /127\.0\.0\.1.*test/];
+    let removed = 0;
+    for (const [id, wh] of this.webhooks) {
+      if (fixturePatterns.some((p) => p.test(id) || p.test(wh.url))) {
+        this.webhooks.delete(id);
+        removed++;
+      }
+    }
+    if (removed > 0) this.save();
+    return removed;
+  }
+
   // ── Persistence ──────────────────────────────────────────────────
 
   private save(): void {

@@ -42,8 +42,8 @@ export interface UserModelConfig {
   id: string;
   provider: string;
   capabilities: ModelCapability[];
-  costPer1KInput: number;
-  costPer1KOutput: number;
+  costPer1MInput: number;
+  costPer1MOutput: number;
   contextWindow: number;
   maxOutputTokens?: number;
   displayName?: string;
@@ -83,8 +83,8 @@ function toModelConfig(user: UserModelConfig): ModelConfig {
     id: user.id,
     provider: user.provider,
     tier: user.tier ?? 'standard',
-    costPer1KInput: user.costPer1KInput,
-    costPer1KOutput: user.costPer1KOutput,
+    costPer1MInput: user.costPer1MInput,
+    costPer1MOutput: user.costPer1MOutput,
     capabilities: user.capabilities,
     contextWindow: user.contextWindow,
     priority: 0,
@@ -98,8 +98,8 @@ function toUserModelConfig(model: ModelConfig): UserModelConfig {
     id: model.id,
     provider: model.provider,
     capabilities: model.capabilities as ModelCapability[],
-    costPer1KInput: model.costPer1KInput,
-    costPer1KOutput: model.costPer1KOutput,
+    costPer1MInput: model.costPer1MInput,
+    costPer1MOutput: model.costPer1MOutput,
     contextWindow: model.contextWindow,
     tier: model.tier,
   };
@@ -167,7 +167,10 @@ export class SmartModelRouter {
     if (this.config.mode === 'manual') {
       const first = this.config.modelPool[0];
       if (first) {
-        return { ...this.buildDecision(toModelConfig(first), 'manual_mode_default', ctx), escalationChain: undefined };
+        return {
+          ...this.buildDecision(toModelConfig(first), 'manual_mode_default', ctx),
+          escalationChain: undefined,
+        };
       }
       return { ...this.inner.route(ctx), escalationChain: undefined };
     }
@@ -194,10 +197,7 @@ export class SmartModelRouter {
   /**
    * Get the next escalation model after a failure.
    */
-  getNextEscalation(
-    currentModelId: string,
-    escalationChain: string[],
-  ): UserModelConfig | null {
+  getNextEscalation(currentModelId: string, escalationChain: string[]): UserModelConfig | null {
     const idx = escalationChain.indexOf(currentModelId);
     if (idx === -1 || idx >= escalationChain.length - 1) return null;
     const model = this.inner.getModel(escalationChain[idx + 1]);
@@ -284,8 +284,8 @@ export class SmartModelRouter {
       model.contextWindow - estimatedInputTokens,
     );
     const estimatedCost =
-      (estimatedInputTokens / 1000) * model.costPer1KInput +
-      (estimatedOutputTokens / 1000) * model.costPer1KOutput;
+      (estimatedInputTokens / 1_000_000) * model.costPer1MInput +
+      (estimatedOutputTokens / 1_000_000) * model.costPer1MOutput;
 
     return {
       modelId: model.id,
@@ -308,9 +308,17 @@ export class SmartModelRouter {
         id: 'gpt-4o-mini',
         provider: 'openai',
         tier: 'eco',
-        capabilities: ['code', 'analysis', 'fast', 'low_cost', 'function_calling', 'json_mode', 'streaming'],
-        costPer1KInput: 0.00015,
-        costPer1KOutput: 0.0006,
+        capabilities: [
+          'code',
+          'analysis',
+          'fast',
+          'low_cost',
+          'function_calling',
+          'json_mode',
+          'streaming',
+        ],
+        costPer1MInput: 0.15,
+        costPer1MOutput: 0.6,
         contextWindow: 128000,
         displayName: 'GPT-4o Mini',
       },
@@ -318,9 +326,19 @@ export class SmartModelRouter {
         id: 'gpt-4o',
         provider: 'openai',
         tier: 'standard',
-        capabilities: ['code', 'reasoning', 'analysis', 'creative', 'multimodal', 'vision', 'function_calling', 'json_mode', 'streaming'],
-        costPer1KInput: 0.0025,
-        costPer1KOutput: 0.01,
+        capabilities: [
+          'code',
+          'reasoning',
+          'analysis',
+          'creative',
+          'multimodal',
+          'vision',
+          'function_calling',
+          'json_mode',
+          'streaming',
+        ],
+        costPer1MInput: 2.5,
+        costPer1MOutput: 10,
         contextWindow: 128000,
         displayName: 'GPT-4o',
       },
@@ -329,8 +347,8 @@ export class SmartModelRouter {
         provider: 'anthropic',
         tier: 'eco',
         capabilities: ['code', 'analysis', 'fast', 'low_cost', 'streaming'],
-        costPer1KInput: 0.0008,
-        costPer1KOutput: 0.004,
+        costPer1MInput: 0.8,
+        costPer1MOutput: 4,
         contextWindow: 200000,
         displayName: 'Claude Haiku 4.5',
       },
@@ -338,9 +356,19 @@ export class SmartModelRouter {
         id: 'claude-sonnet-4-6',
         provider: 'anthropic',
         tier: 'standard',
-        capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math', 'multimodal', 'vision', 'long_context', 'streaming'],
-        costPer1KInput: 0.003,
-        costPer1KOutput: 0.015,
+        capabilities: [
+          'code',
+          'reasoning',
+          'analysis',
+          'creative',
+          'math',
+          'multimodal',
+          'vision',
+          'long_context',
+          'streaming',
+        ],
+        costPer1MInput: 3,
+        costPer1MOutput: 15,
         contextWindow: 200000,
         displayName: 'Claude Sonnet 4.6',
       },
@@ -348,9 +376,20 @@ export class SmartModelRouter {
         id: 'claude-opus-4-8',
         provider: 'anthropic',
         tier: 'power',
-        capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math', 'multimodal', 'vision', 'long_context', 'high_quality', 'streaming'],
-        costPer1KInput: 0.015,
-        costPer1KOutput: 0.075,
+        capabilities: [
+          'code',
+          'reasoning',
+          'analysis',
+          'creative',
+          'math',
+          'multimodal',
+          'vision',
+          'long_context',
+          'high_quality',
+          'streaming',
+        ],
+        costPer1MInput: 15,
+        costPer1MOutput: 75,
         contextWindow: 200000,
         displayName: 'Claude Opus 4.8',
       },
@@ -359,8 +398,8 @@ export class SmartModelRouter {
         provider: 'google',
         tier: 'eco',
         capabilities: ['analysis', 'fast', 'low_cost', 'long_context', 'multimodal', 'vision'],
-        costPer1KInput: 0.0001,
-        costPer1KOutput: 0.0004,
+        costPer1MInput: 0.1,
+        costPer1MOutput: 0.4,
         contextWindow: 1000000,
         displayName: 'Gemini 2.0 Flash',
       },
@@ -369,8 +408,8 @@ export class SmartModelRouter {
         provider: 'google',
         tier: 'standard',
         capabilities: ['reasoning', 'analysis', 'math', 'long_context', 'multimodal', 'vision'],
-        costPer1KInput: 0.0015,
-        costPer1KOutput: 0.0075,
+        costPer1MInput: 1.5,
+        costPer1MOutput: 7.5,
         contextWindow: 1000000,
         displayName: 'Gemini 2.0 Pro',
       },
@@ -379,8 +418,8 @@ export class SmartModelRouter {
         provider: 'deepseek',
         tier: 'eco',
         capabilities: ['code', 'reasoning', 'math', 'fast', 'low_cost'],
-        costPer1KInput: 0.00014,
-        costPer1KOutput: 0.00028,
+        costPer1MInput: 0.14,
+        costPer1MOutput: 0.28,
         contextWindow: 128000,
         displayName: 'DeepSeek V4 Flash',
       },
@@ -389,8 +428,8 @@ export class SmartModelRouter {
         provider: 'deepseek',
         tier: 'power',
         capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math', 'long_context'],
-        costPer1KInput: 0.002,
-        costPer1KOutput: 0.008,
+        costPer1MInput: 2,
+        costPer1MOutput: 8,
         contextWindow: 128000,
         displayName: 'DeepSeek V4 Pro',
       },
@@ -399,8 +438,8 @@ export class SmartModelRouter {
         provider: 'mimo',
         tier: 'power',
         capabilities: ['code', 'reasoning', 'analysis', 'creative', 'math'],
-        costPer1KInput: 0.004,
-        costPer1KOutput: 0.012,
+        costPer1MInput: 4,
+        costPer1MOutput: 12,
         contextWindow: 128000,
         displayName: 'MiMo V2.5 Pro',
       },
@@ -409,8 +448,8 @@ export class SmartModelRouter {
         provider: 'agnes',
         tier: 'eco',
         capabilities: ['code', 'reasoning', 'analysis', 'fast', 'low_cost', 'streaming'],
-        costPer1KInput: 0,
-        costPer1KOutput: 0,
+        costPer1MInput: 0,
+        costPer1MOutput: 0,
         contextWindow: 128000,
         maxOutputTokens: 65536,
         displayName: 'Agnes 2.0 Flash',
@@ -421,10 +460,18 @@ export class SmartModelRouter {
   private getDefaultRoutingRules(): RoutingRule[] {
     return [
       { taskType: 'code', requiredCapabilities: ['code'], preferredTier: 'standard' },
-      { taskType: 'multimodal', requiredCapabilities: ['multimodal', 'vision'], preferredTier: 'standard' },
+      {
+        taskType: 'multimodal',
+        requiredCapabilities: ['multimodal', 'vision'],
+        preferredTier: 'standard',
+      },
       { taskType: 'math', requiredCapabilities: ['math', 'reasoning'], preferredTier: 'power' },
       { taskType: 'creative', requiredCapabilities: ['creative'], preferredTier: 'standard' },
-      { taskType: 'long_context', requiredCapabilities: ['long_context'], preferredTier: 'standard' },
+      {
+        taskType: 'long_context',
+        requiredCapabilities: ['long_context'],
+        preferredTier: 'standard',
+      },
     ];
   }
 }
