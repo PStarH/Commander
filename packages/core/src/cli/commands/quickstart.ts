@@ -240,7 +240,9 @@ export async function cmdQuickstart(args: string[]) {
   if (checkOnly) {
     console.log();
     if (failures.length === 0) {
-      console.log(`  ${$.green}${$.bold}${t('quickstart.all.passed')}${$.reset} ${t('quickstart.ready')}`);
+      console.log(
+        `  ${$.green}${$.bold}${t('quickstart.all.passed')}${$.reset} ${t('quickstart.ready')}`,
+      );
       console.log(`  ${$.dim}${t('quickstart.all_passed_try')}${$.reset}\n`);
     } else {
       console.log(
@@ -264,7 +266,9 @@ export async function cmdQuickstart(args: string[]) {
     console.log(`  ${$.green}${$.bold}${t('quickstart.all_good')}${$.reset}`);
     console.log(`  ${$.dim}${t('quickstart.run_first_task_hint')}${$.reset}\n`);
   } else {
-    console.log(`  ${$.yellow}⚠ ${t('quickstart.need_attention', { n: failures.length })}${$.reset}`);
+    console.log(
+      `  ${$.yellow}⚠ ${t('quickstart.need_attention', { n: failures.length })}${$.reset}`,
+    );
     console.log(`  ${$.dim}${t('quickstart.fix_and_verify')}${$.reset}\n`);
   }
 }
