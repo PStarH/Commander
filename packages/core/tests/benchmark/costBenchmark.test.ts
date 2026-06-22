@@ -63,15 +63,19 @@ describe('Cost Benchmarks', () => {
   it('tool result cache hit rate', async () => {
     const { ToolResultCache } = await import('../../src/runtime/toolResultCache');
     const cache = new ToolResultCache();
-    const tools = ['fileSystem', 'webSearch', 'codeSearch', 'git'];
+    const tools = [
+      { name: 'file_read', args: { path: 'src/middleware/auth.ts' } },
+      { name: 'file_read', args: { path: 'src/routes/api.ts' } },
+      { name: 'shell_execute', args: { command: 'npx vitest run tests/auth.test.ts' } },
+      { name: 'git_diff', args: { path: 'src/middleware/auth.ts' } },
+    ];
     const iterations = 1000;
     let hits = 0;
 
     const start = performance.now();
     for (let i = 0; i < iterations; i++) {
       const tool = tools[i % tools.length];
-      const query = `test-${i % 100}`;
-      const toolCall = { id: `call-${i}`, name: tool, arguments: { query } };
+      const toolCall = { id: `call-${i}`, name: tool.name, arguments: tool.args };
 
       const cached = cache.get(toolCall);
       if (cached) {
@@ -79,9 +83,9 @@ describe('Cost Benchmarks', () => {
       } else {
         cache.set(toolCall, {
           toolCallId: `call-${i}`,
-          name: tool,
-          output: `result-${i}`,
-          durationMs: 10,
+          name: tool.name,
+          output: `File contents: ${JSON.stringify({ line: i, content: 'export function authenticate() {}' })}`,
+          durationMs: 15,
         });
       }
     }
