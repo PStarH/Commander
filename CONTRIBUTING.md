@@ -38,11 +38,7 @@ pnpm build:core        # Build the core package
 
 ## Contributor License Agreement
 
-By submitting a pull request, you agree to the terms in [CLA.md](CLA.md). In short:
-
-- You grant the project license to use your contribution under the MIT license
-- You represent that you own the rights to your contribution
-- You acknowledge there is no obligation to accept your contribution
+By submitting a pull request, you grant the project license to use your contribution under the MIT license. You represent that you own the rights to your contribution.
 
 ## Pull Request Process
 
