@@ -113,8 +113,16 @@ describe('MitreAtlasMapper', () => {
   });
 
   it('mapAttackCategory() maps all categories', () => {
-    const categories = ['prompt_injection', 'jailbreak', 'data_exfiltration', 'agent_jacking',
-      'tool_abuse', 'memory_poisoning', 'denial_of_wallet', 'supply_chain'] as const;
+    const categories = [
+      'prompt_injection',
+      'jailbreak',
+      'data_exfiltration',
+      'agent_jacking',
+      'tool_abuse',
+      'memory_poisoning',
+      'denial_of_wallet',
+      'supply_chain',
+    ] as const;
     for (const cat of categories) {
       const mappings = mapper.mapAttackCategory(cat);
       expect(mappings.length).toBeGreaterThan(0);
@@ -137,9 +145,30 @@ describe('MitreAtlasMapper', () => {
 
   it('generateHeatmap() produces cells for all techniques', () => {
     const events: SecurityEvent[] = [
-      { id: 'e1', timestamp: new Date().toISOString(), type: 'content_threat', severity: 'high', source: 'CS', message: 'M1' },
-      { id: 'e2', timestamp: new Date().toISOString(), type: 'sandbox_violation', severity: 'critical', source: 'SB', message: 'M2' },
-      { id: 'e3', timestamp: new Date().toISOString(), type: 'memory_poisoning_detected', severity: 'high', source: 'MP', message: 'M3' },
+      {
+        id: 'e1',
+        timestamp: new Date().toISOString(),
+        type: 'content_threat',
+        severity: 'high',
+        source: 'CS',
+        message: 'M1',
+      },
+      {
+        id: 'e2',
+        timestamp: new Date().toISOString(),
+        type: 'sandbox_violation',
+        severity: 'critical',
+        source: 'SB',
+        message: 'M2',
+      },
+      {
+        id: 'e3',
+        timestamp: new Date().toISOString(),
+        type: 'memory_poisoning_detected',
+        severity: 'high',
+        source: 'MP',
+        message: 'M3',
+      },
     ];
     const heatmap = mapper.generateHeatmap(events);
     expect(heatmap.length).toBeGreaterThan(35);
@@ -149,7 +178,14 @@ describe('MitreAtlasMapper', () => {
 
   it('generateHeatmap() assigns correct severity colors', () => {
     const events: SecurityEvent[] = [
-      { id: 'ec', timestamp: new Date().toISOString(), type: 'sandbox_violation', severity: 'critical', source: 'SB', message: 'M' },
+      {
+        id: 'ec',
+        timestamp: new Date().toISOString(),
+        type: 'sandbox_violation',
+        severity: 'critical',
+        source: 'SB',
+        message: 'M',
+      },
     ];
     const heatmap = mapper.generateHeatmap(events);
     const sandboxCell = heatmap.find((c) => c.techniqueId === 'AML.T0017');
@@ -160,7 +196,14 @@ describe('MitreAtlasMapper', () => {
 
   it('exportAtlasNavigatorJson() produces valid JSON', () => {
     const events: SecurityEvent[] = [
-      { id: 'e1', timestamp: new Date().toISOString(), type: 'content_threat', severity: 'high', source: 'CS', message: 'M' },
+      {
+        id: 'e1',
+        timestamp: new Date().toISOString(),
+        type: 'content_threat',
+        severity: 'high',
+        source: 'CS',
+        message: 'M',
+      },
     ];
     const heatmap = mapper.generateHeatmap(events);
     const json = mapper.exportAtlasNavigatorJson(heatmap);
@@ -174,10 +217,38 @@ describe('MitreAtlasMapper', () => {
 
   it('generateReport() produces complete report', () => {
     const events: SecurityEvent[] = [
-      { id: 'e1', timestamp: new Date().toISOString(), type: 'content_threat', severity: 'high', source: 'CS', message: 'M1' },
-      { id: 'e2', timestamp: new Date().toISOString(), type: 'command_injection_attempt', severity: 'critical', source: 'SB', message: 'M2' },
-      { id: 'e3', timestamp: new Date().toISOString(), type: 'approval_granted', severity: 'low', source: 'App', message: 'M3' },
-      { id: 'e4', timestamp: new Date().toISOString(), type: 'security_scan', severity: 'low', source: 'SC', message: 'M4' },
+      {
+        id: 'e1',
+        timestamp: new Date().toISOString(),
+        type: 'content_threat',
+        severity: 'high',
+        source: 'CS',
+        message: 'M1',
+      },
+      {
+        id: 'e2',
+        timestamp: new Date().toISOString(),
+        type: 'command_injection_attempt',
+        severity: 'critical',
+        source: 'SB',
+        message: 'M2',
+      },
+      {
+        id: 'e3',
+        timestamp: new Date().toISOString(),
+        type: 'approval_granted',
+        severity: 'low',
+        source: 'App',
+        message: 'M3',
+      },
+      {
+        id: 'e4',
+        timestamp: new Date().toISOString(),
+        type: 'security_scan',
+        severity: 'low',
+        source: 'SC',
+        message: 'M4',
+      },
     ];
     const report = mapper.generateReport(events);
 

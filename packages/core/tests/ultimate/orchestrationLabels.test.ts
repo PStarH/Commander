@@ -42,12 +42,9 @@ describe('orchestrationLabels', () => {
       expect(actualKeys).toEqual(expectedKeys);
     });
 
-    it.each(Object.entries(CANONICAL_LABELS))(
-      'snapshot — %s maps to %s',
-      (key, expected) => {
-        expect(STRATEGY_LABELS[key]).toBe(expected);
-      },
-    );
+    it.each(Object.entries(CANONICAL_LABELS))('snapshot — %s maps to %s', (key, expected) => {
+      expect(STRATEGY_LABELS[key]).toBe(expected);
+    });
 
     it('exhaustiveness — every OrchestrationTopology union member has an entry', () => {
       // Iterates Object.keys(CANONICAL_LABELS) (NOT a hand-maintained
@@ -63,9 +60,7 @@ describe('orchestrationLabels', () => {
       }
       // Belt-and-suspenders: STRATEGY_LABELS map size must equal the
       // typed CANONICAL_LABELS so neither side can silently grow alone.
-      expect(Object.keys(STRATEGY_LABELS).sort()).toEqual(
-        Object.keys(CANONICAL_LABELS).sort(),
-      );
+      expect(Object.keys(STRATEGY_LABELS).sort()).toEqual(Object.keys(CANONICAL_LABELS).sort());
     });
   });
 

@@ -23,11 +23,14 @@ export interface BenchmarkReport {
     failed: number;
     skipped: number;
   };
-  categories: Record<string, {
-    total: number;
-    passed: number;
-    failed: number;
-  }>;
+  categories: Record<
+    string,
+    {
+      total: number;
+      passed: number;
+      failed: number;
+    }
+  >;
 }
 
 export class BenchmarkRunner {
@@ -54,9 +57,9 @@ export class BenchmarkRunner {
 
   finish(): BenchmarkReport {
     const totalDurationMs = performance.now() - this.startTime;
-    const passed = this.results.filter(r => r.passed).length;
-    const failed = this.results.filter(r => !r.passed).length;
-    const skipped = this.results.filter(r => r.metrics['skipped'] === true).length;
+    const passed = this.results.filter((r) => r.passed).length;
+    const failed = this.results.filter((r) => !r.passed).length;
+    const skipped = this.results.filter((r) => r.metrics['skipped'] === true).length;
 
     const categories: Record<string, { total: number; passed: number; failed: number }> = {};
     for (const result of this.results) {
@@ -140,7 +143,7 @@ export class BenchmarkRunner {
     ];
 
     for (const [category, stats] of Object.entries(report.categories)) {
-      const rate = stats.total > 0 ? (stats.passed / stats.total * 100).toFixed(1) : '0.0';
+      const rate = stats.total > 0 ? ((stats.passed / stats.total) * 100).toFixed(1) : '0.0';
       lines.push(`| ${category} | ${stats.passed} | ${stats.total} | ${rate}% |`);
     }
 

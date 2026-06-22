@@ -117,7 +117,6 @@ describe('TaskQueue', () => {
     assert.ok(stillThere !== null);
   });
 
-
   it('getStats returns correct counts', () => {
     queue = new TaskQueue({ dbPath: ':memory:', maxWorkers: 0 });
     queue.submit({ goal: 'pending 1' });
