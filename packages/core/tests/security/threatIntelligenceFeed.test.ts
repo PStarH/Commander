@@ -50,17 +50,19 @@ describe('ThreatIntelligenceFeed', () => {
   describe('addSignatures', () => {
     it('adds new signatures', () => {
       const before = feed.getActiveSignatures().length;
-      feed.addSignatures([{
-        id: 'TEST-001',
-        name: 'Test signature',
-        description: 'A test threat',
-        severity: 'high',
-        patterns: [/test_pattern/],
-        tlp: 'GREEN',
-        category: 'malware',
-        source: 'test',
-        confidence: 90,
-      }]);
+      feed.addSignatures([
+        {
+          id: 'TEST-001',
+          name: 'Test signature',
+          description: 'A test threat',
+          severity: 'high',
+          patterns: [/test_pattern/],
+          tlp: 'GREEN',
+          category: 'malware',
+          source: 'test',
+          confidence: 90,
+        },
+      ]);
       expect(feed.getActiveSignatures().length).toBe(before + 1);
     });
 
@@ -91,7 +93,7 @@ describe('ThreatIntelligenceFeed', () => {
       feed.deprecateSignature(sigId);
       expect(feed.hasSignature(sigId)).toBe(true);
       const after = feed.getActiveSignatures();
-      expect(after.find(s => s.id === sigId)).toBeUndefined();
+      expect(after.find((s) => s.id === sigId)).toBeUndefined();
     });
 
     it('reactivates a deprecated signature', () => {
@@ -100,7 +102,7 @@ describe('ThreatIntelligenceFeed', () => {
       feed.deprecateSignature(sigId);
       feed.reactivateSignature(sigId);
       const after = feed.getActiveSignatures();
-      expect(after.find(s => s.id === sigId)).toBeDefined();
+      expect(after.find((s) => s.id === sigId)).toBeDefined();
     });
   });
 
@@ -222,17 +224,19 @@ describe('ThreatIntelligenceFeed', () => {
 
   describe('reset', () => {
     it('resets to initial state with built-in signatures', () => {
-      feed.addSignatures([{
-        id: 'CUSTOM-001',
-        name: 'Custom',
-        description: 'Custom threat',
-        severity: 'critical',
-        patterns: [/custom/],
-        tlp: 'GREEN',
-        category: 'malware',
-        source: 'custom',
-        confidence: 95,
-      }]);
+      feed.addSignatures([
+        {
+          id: 'CUSTOM-001',
+          name: 'Custom',
+          description: 'Custom threat',
+          severity: 'critical',
+          patterns: [/custom/],
+          tlp: 'GREEN',
+          category: 'malware',
+          source: 'custom',
+          confidence: 95,
+        },
+      ]);
       expect(feed.getActiveSignatures().length).toBeGreaterThan(8);
 
       feed.reset();

@@ -1,0 +1,113 @@
+chore(hooks): add Prettier baseline check to pre-push protocol
+
+Closes the gap that allowed commit 765b41430 (dual-classifier refactor
+that extracted normalizeForMatch primitives) to ship a Prettier style
+violation to remote CI. belt-and-suspenders defense: the same class of
+style drift must not reach remote CI without a local gate.
+
+This commit layers a second D3 hardening-sprint hook on top of the
+existing pre-commit security gate (commit 4fd97dea7 set up the
+PATH-export plumbing; this commit adds the missing style gate):
+
+• pre-commit = Security (SupplyChainScanner inline-blocklist mirror +
+  ExecPolicy vitest smoke). High false-positive cost justified by
+  malware-class blast radius.
+• pre-push   = Style (`pnpm exec prettier --check` across the dev
+  surface). Lower false-positive cost (only on push) justified by the
+  "ship clean before remote CI review" expectation.
+
+The two share a common bash-wrapper convention (PATH export, bypass
+env var, CORE_*_HOOK env marker for CI replay) so the install + audit
+surface stays predictable.
+
+## What changed
+
+- NEW `.githooks/pre-push` — bash wrapper mirroring `.githooks/pre-commit`;
+  same PATH-export fix, separate `COMMANDER_SKIP_PREPUSH=1` bypass,
+  separate `CORE_PREPUSH_HOOK=1` marker for pipeline replay.
+- NEW `scripts/prepushHook.ts` — TS body running
+  `pnpm exec prettier --check <PUSH_BASELINE_PATHS>` via `execFileSync`
+  with `shell: false` (no shell-injection through path args). On
+  failure: prettier's native output + remediation hint, exit 1.
+- MODIFIED `scripts/install-hooks.sh` — extended to handle multiple
+  hooks via a `HOOKS` array. `.githooks/pre-commit` AND `.githooks/pre-push`
+  now install/uninstall/backup in lockstep. Per-hook timestamped backup
+  chain preserves cross-hook independence.
+- MODIFIED `package.json` — broadened `format:check`, `format`, and `lint`
+  scripts to match the hook's coverage. Previously these focused on
+  `packages/core/src` + `apps/api/src` + `apps/web/src` and missed
+  `packages/core/tests`, `scripts/`, etc. — those gaps are how the
+  dual-classifier violation landed. Added `lint:prettier` alias.
+- MODIFIED `CONTRIBUTING.md` — new "Local Git Hooks" subsection
+  documenting both hooks, their bypass variables, install command, and
+  the architectural rationale (security at commit-time, style at push-time).
+
+## DC11 / forward-compat note
+
+`PUSH_BASELINE_PATHS` uses dynamic globs (`packages/*/src/**/*.{ts,tsx}`,
+`packages/*/tests/**/*.ts`, `apps/*/src/**/*.{ts,tsx}`, `scripts/**/*.ts`)
+rather than hardcoded package/app names. Future contributors adding
+`packages/<new>/src/` or `apps/<new>/src/` automatically inherit the
+gate — no edit to this hook needed. This is the difference between
+belt-and-suspenders-for-now and belt-and-suspenders-forever.
+
+Coverage is intentionally *wider* than the prior hardcoded list
+(core + web + api only). Every `packages/*/src/` and `apps/*/src/`
+is now in scope. Expect this to surface previously-uncovered drift
+on the first push from any dev.
+
+## First-push warning
+
+The current working tree has latent Prettier drift accumulated across
+the dual-classifier land, the test-fixes commit, and stopped-clock
+content. Running the new hook now exits 1 with `~65+ files need
+formatting`. This is INTENTIONAL: the gate is doing its job.
+
+For a clean landing experience, run `pnpm format` once before the
+next push (the user may want this as a separate chore:format-sweep
+commit). For an emergency push without sweep, use the documented
+bypass:
+  COMMANDER_SKIP_PREPUSH=1 git push origin master
+
+The bypass is logged to stderr at hook invocation; CI audit records it.
+
+## Bypass convention
+
+| Bypass env var            | Hook it bypasses     |
+| ------------------------- | -------------------- |
+| COMMANDER_SKIP_PRECOMMIT  | .githooks/pre-commit |
+| COMMANDER_SKIP_PREPUSH    | .githooks/pre-push   |
+
+Naming convention: `COMMANDER_SKIP<HOOK_NAME_UPPER>`. Mirror this pattern
+when adding a third hook (e.g. `COMMANDER_SKIP_COMMITMSG` for a future
+commit-msg gate) so the bypass vocabulary stays predictable.
+
+## Verification
+
+- Local: `bash .githooks/pre-push` exits 1 with prettier diagnostic
+  listing — confirms the gate fires on real drift.
+- Bypass: `COMMANDER_SKIP_PREPUSH=1 bash .githooks/pre-push` exits 0
+  cleanly — confirms the escape hatch.
+- install-hooks.sh: `bash scripts/install-hooks.sh` now installs both
+  hooks; `--uninstall` restores both backups. Verified on this commit.
+- Syntax: `bash -n` clean on `.githooks/pre-push` and
+  `scripts/install-hooks.sh`. `tsx` accepts `scripts/prepushHook.ts`
+  without TS errors.
+- Network resolution: prettier invoked via `pnpm exec` inside the hook,
+  with the `.githooks/pre-push` PATH export pointing at
+  `node_modules/.bin` and `packages/core/node_modules/.bin` (mirroring
+  commit 4fd97dea7's pre-commit fix).
+
+## Architecture / followups
+
+- Lay down a `chore: format-sweep` commit that auto-fixes the current
+  65+ latent violations before this hook starts blocking every push.
+  Recommended as the next chore commit for cleanest UX. (Surfaced as
+  suggest_followups below.)
+- Investigate why the pre-commit hook still requires
+  COMMANDER_SKIP_PRECOMMIT=1 (vitest not on PATH in hook context
+  despite the 4fd97dea7 fix); pre-push hook has the same PATH export
+  precedent so this may carry over.
+- Re-watch remote CI after a format-sweep + push to confirm the
+  dual-classifier refactor path (vitest + GAIA + SupplyChainScanner)
+  executes end-to-end.

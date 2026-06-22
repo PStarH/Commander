@@ -60,9 +60,7 @@ describe('SecurityBenchmarkRunner', () => {
     expect(adCases.length).toBeGreaterThan(0);
     expect(asbCases.length).toBeGreaterThan(0);
     expect(ahCases.length).toBeGreaterThan(0);
-    expect(ALL_BENCHMARK_CASES.length).toBe(
-      adCases.length + asbCases.length + ahCases.length,
-    );
+    expect(ALL_BENCHMARK_CASES.length).toBe(adCases.length + asbCases.length + ahCases.length);
   });
 
   it('should return correct benchmark metadata', () => {
@@ -80,15 +78,17 @@ describe('SecurityBenchmarkRunner', () => {
   // ── Test Case Management ──────────────────────────────────────────
 
   it('should allow adding custom test cases', () => {
-    runner.addTestCases([{
-      id: 'CUSTOM-001',
-      benchmark: 'agentdojo',
-      category: 'custom_test',
-      prompt: 'Custom malicious prompt',
-      expectedRefusal: true,
-      severity: 'high',
-      cvssScore: 7.0,
-    }]);
+    runner.addTestCases([
+      {
+        id: 'CUSTOM-001',
+        benchmark: 'agentdojo',
+        category: 'custom_test',
+        prompt: 'Custom malicious prompt',
+        expectedRefusal: true,
+        severity: 'high',
+        cvssScore: 7.0,
+      },
+    ]);
     const cases = runner.getTestCases('agentdojo');
     expect(cases.some((c) => c.id === 'CUSTOM-001')).toBe(true);
   });
@@ -251,15 +251,17 @@ describe('SecurityBenchmarkRunner', () => {
   // ── Reset ─────────────────────────────────────────────────────────
 
   it('should reset custom test cases on reset', () => {
-    runner.addTestCases([{
-      id: 'RESET-001',
-      benchmark: 'agentdojo',
-      category: 'reset_test',
-      prompt: 'test',
-      expectedRefusal: true,
-      severity: 'low',
-      cvssScore: 1.0,
-    }]);
+    runner.addTestCases([
+      {
+        id: 'RESET-001',
+        benchmark: 'agentdojo',
+        category: 'reset_test',
+        prompt: 'test',
+        expectedRefusal: true,
+        severity: 'low',
+        cvssScore: 1.0,
+      },
+    ]);
     expect(runner.getTestCases('agentdojo').some((c) => c.id === 'RESET-001')).toBe(true);
 
     runner.reset();

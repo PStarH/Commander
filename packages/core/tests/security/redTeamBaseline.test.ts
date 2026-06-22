@@ -18,10 +18,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import {
-  RedTeamBaselineManager,
-  resetRedTeamBaseline,
-} from '../../src/security/redTeamBaseline';
+import { RedTeamBaselineManager, resetRedTeamBaseline } from '../../src/security/redTeamBaseline';
 import type {
   RedTeamRunReport,
   RedTeamTestScenario,
@@ -72,8 +69,7 @@ function makeReport(
   const error = results.filter((r) => r.result === 'error').length;
   const total = results.length;
 
-  const securityScore =
-    total > 0 ? Math.round(((blocked * 100 + detected * 50) / total)) : 0;
+  const securityScore = total > 0 ? Math.round((blocked * 100 + detected * 50) / total) : 0;
 
   return {
     runId: overrides.runId ?? `test-run-${Date.now()}`,
@@ -92,8 +88,16 @@ function tmpBaselinePath(): string {
 }
 
 function cleanupTmp(p: string): void {
-  try { fs.unlinkSync(p); } catch { /* ok */ }
-  try { fs.unlinkSync(`${p}.tmp`); } catch { /* ok */ }
+  try {
+    fs.unlinkSync(p);
+  } catch {
+    /* ok */
+  }
+  try {
+    fs.unlinkSync(`${p}.tmp`);
+  } catch {
+    /* ok */
+  }
 }
 
 // ============================================================================
@@ -243,9 +247,12 @@ describe('RedTeamBaselineManager', () => {
       const baselineReport = makeReport(scenarios.map((s) => makeResult(s, 'blocked')));
       manager.saveBaseline(baselineReport);
 
-      const currentReport = makeReport(scenarios.map((s) => makeResult(s, 'blocked')), {
-        runId: 'test-run-2',
-      });
+      const currentReport = makeReport(
+        scenarios.map((s) => makeResult(s, 'blocked')),
+        {
+          runId: 'test-run-2',
+        },
+      );
 
       const comparison = manager.compareToBaseline(currentReport);
       expect(comparison.performed).toBe(true);
@@ -259,10 +266,7 @@ describe('RedTeamBaselineManager', () => {
       const baselineReport = makeReport([makeResult(scenario, 'blocked')]);
       manager.saveBaseline(baselineReport);
 
-      const currentReport = makeReport(
-        [makeResult(scenario, 'missed')],
-        { runId: 'test-run-2' },
-      );
+      const currentReport = makeReport([makeResult(scenario, 'missed')], { runId: 'test-run-2' });
 
       const comparison = manager.compareToBaseline(currentReport);
       expect(comparison.regressions).toHaveLength(1);
@@ -279,10 +283,7 @@ describe('RedTeamBaselineManager', () => {
       const baselineReport = makeReport([makeResult(scenario, 'blocked')]);
       manager.saveBaseline(baselineReport);
 
-      const currentReport = makeReport(
-        [makeResult(scenario, 'error')],
-        { runId: 'test-run-3' },
-      );
+      const currentReport = makeReport([makeResult(scenario, 'error')], { runId: 'test-run-3' });
 
       const comparison = manager.compareToBaseline(currentReport);
       expect(comparison.regressions).toHaveLength(1);
@@ -296,10 +297,7 @@ describe('RedTeamBaselineManager', () => {
       const baselineReport = makeReport([makeResult(scenario, 'missed')]);
       manager.saveBaseline(baselineReport);
 
-      const currentReport = makeReport(
-        [makeResult(scenario, 'blocked')],
-        { runId: 'test-run-2' },
-      );
+      const currentReport = makeReport([makeResult(scenario, 'blocked')], { runId: 'test-run-2' });
 
       const comparison = manager.compareToBaseline(currentReport);
       expect(comparison.improvements).toHaveLength(1);
@@ -324,7 +322,7 @@ describe('RedTeamBaselineManager', () => {
         [
           makeResult(regressed, 'missed'), // Regression
           makeResult(improved, 'blocked'), // Improvement
-          makeResult(stable, 'blocked'),   // Stable
+          makeResult(stable, 'blocked'), // Stable
         ],
         { runId: 'test-run-2' },
       );
@@ -357,10 +355,7 @@ describe('RedTeamBaselineManager', () => {
 
     it('no baseline case: passes and reports no baseline', () => {
       const scenario = makeScenario({ id: 'PI-001', severity: 'critical', cvssScore: 9.0 });
-      const report = makeReport(
-        [makeResult(scenario, 'blocked')],
-        { runId: 'first-run' },
-      );
+      const report = makeReport([makeResult(scenario, 'blocked')], { runId: 'first-run' });
 
       const comparison = manager.compareToBaseline(report);
       expect(comparison.performed).toBe(false);
@@ -439,10 +434,7 @@ describe('RedTeamBaselineManager', () => {
       const baselineReport = makeReport([makeResult(scenario, 'blocked')]);
       mgr.saveBaseline(baselineReport);
 
-      const currentReport = makeReport(
-        [makeResult(scenario, 'missed')],
-        { runId: 'test-run-2' },
-      );
+      const currentReport = makeReport([makeResult(scenario, 'missed')], { runId: 'test-run-2' });
 
       const comparison = mgr.compareToBaseline(currentReport);
       expect(comparison.regressions).toHaveLength(1);
@@ -460,17 +452,13 @@ describe('RedTeamBaselineManager', () => {
 
       const s1 = makeScenario({ id: 'PI-001', severity: 'high', cvssScore: 7.0 });
       const s2 = makeScenario({ id: 'JB-001', severity: 'high', cvssScore: 8.0 });
-      const baselineReport = makeReport([
-        makeResult(s1, 'blocked'),
-        makeResult(s2, 'blocked'),
-      ]);
+      const baselineReport = makeReport([makeResult(s1, 'blocked'), makeResult(s2, 'blocked')]);
       mgr.saveBaseline(baselineReport);
 
       // 2 regressions > maxAllowed (1) → fails
-      const currentReport = makeReport(
-        [makeResult(s1, 'missed'), makeResult(s2, 'missed')],
-        { runId: 'test-run-3' },
-      );
+      const currentReport = makeReport([makeResult(s1, 'missed'), makeResult(s2, 'missed')], {
+        runId: 'test-run-3',
+      });
 
       const comparison = mgr.compareToBaseline(currentReport);
       expect(comparison.regressions).toHaveLength(2);
@@ -511,10 +499,7 @@ describe('RedTeamBaselineManager', () => {
       const baselineReport = makeReport([makeResult(scenario, 'blocked')]);
       manager.saveBaseline(baselineReport);
 
-      const currentReport = makeReport(
-        [makeResult(scenario, 'blocked')],
-        { runId: 'test-run-2' },
-      );
+      const currentReport = makeReport([makeResult(scenario, 'blocked')], { runId: 'test-run-2' });
       const comparison = manager.compareToBaseline(currentReport);
 
       const summary = manager.generateCiSummary(comparison);
@@ -529,10 +514,7 @@ describe('RedTeamBaselineManager', () => {
       const baselineReport = makeReport([makeResult(scenario, 'blocked')]);
       manager.saveBaseline(baselineReport);
 
-      const currentReport = makeReport(
-        [makeResult(scenario, 'missed')],
-        { runId: 'test-run-2' },
-      );
+      const currentReport = makeReport([makeResult(scenario, 'missed')], { runId: 'test-run-2' });
       const comparison = manager.compareToBaseline(currentReport);
 
       const summary = manager.generateCiSummary(comparison);
@@ -558,10 +540,7 @@ describe('RedTeamBaselineManager', () => {
       const baselineReport = makeReport([makeResult(scenario, 'blocked')]);
       manager.saveBaseline(baselineReport);
 
-      const currentReport = makeReport(
-        [makeResult(scenario, 'missed')],
-        { runId: 'test-run-2' },
-      );
+      const currentReport = makeReport([makeResult(scenario, 'missed')], { runId: 'test-run-2' });
       const comparison = manager.compareToBaseline(currentReport);
 
       const annotations = manager.generateCiAnnotations(comparison);
@@ -576,10 +555,7 @@ describe('RedTeamBaselineManager', () => {
       const baselineReport = makeReport([makeResult(scenario, 'blocked')]);
       manager.saveBaseline(baselineReport);
 
-      const currentReport = makeReport(
-        [makeResult(scenario, 'missed')],
-        { runId: 'test-run-2' },
-      );
+      const currentReport = makeReport([makeResult(scenario, 'missed')], { runId: 'test-run-2' });
       const comparison = manager.compareToBaseline(currentReport);
 
       const annotations = manager.generateCiAnnotations(comparison);
@@ -627,9 +603,24 @@ describe('RedTeamBaselineManager', () => {
 
   describe('edge cases', () => {
     it('multiple regressions across categories', () => {
-      const s1 = makeScenario({ id: 'PI-001', severity: 'critical', cvssScore: 9.0, category: 'prompt_injection' });
-      const s2 = makeScenario({ id: 'JB-001', severity: 'critical', cvssScore: 9.5, category: 'jailbreak' });
-      const s3 = makeScenario({ id: 'TA-001', severity: 'high', cvssScore: 8.5, category: 'tool_abuse' });
+      const s1 = makeScenario({
+        id: 'PI-001',
+        severity: 'critical',
+        cvssScore: 9.0,
+        category: 'prompt_injection',
+      });
+      const s2 = makeScenario({
+        id: 'JB-001',
+        severity: 'critical',
+        cvssScore: 9.5,
+        category: 'jailbreak',
+      });
+      const s3 = makeScenario({
+        id: 'TA-001',
+        severity: 'high',
+        cvssScore: 8.5,
+        category: 'tool_abuse',
+      });
 
       const baselineReport = makeReport([
         makeResult(s1, 'blocked'),
@@ -639,11 +630,7 @@ describe('RedTeamBaselineManager', () => {
       manager.saveBaseline(baselineReport);
 
       const currentReport = makeReport(
-        [
-          makeResult(s1, 'missed'),
-          makeResult(s2, 'missed'),
-          makeResult(s3, 'missed'),
-        ],
+        [makeResult(s1, 'missed'), makeResult(s2, 'missed'), makeResult(s3, 'missed')],
         { runId: 'test-run-2' },
       );
 
@@ -656,16 +643,12 @@ describe('RedTeamBaselineManager', () => {
     it('score improvement (all missed→blocked) shows positive delta', () => {
       const s1 = makeScenario({ id: 'PI-001', severity: 'critical', cvssScore: 9.0 });
       const s2 = makeScenario({ id: 'JB-001', severity: 'critical', cvssScore: 9.5 });
-      const baselineReport = makeReport([
-        makeResult(s1, 'missed'),
-        makeResult(s2, 'missed'),
-      ]);
+      const baselineReport = makeReport([makeResult(s1, 'missed'), makeResult(s2, 'missed')]);
       manager.saveBaseline(baselineReport);
 
-      const currentReport = makeReport(
-        [makeResult(s1, 'blocked'), makeResult(s2, 'blocked')],
-        { runId: 'test-run-2' },
-      );
+      const currentReport = makeReport([makeResult(s1, 'blocked'), makeResult(s2, 'blocked')], {
+        runId: 'test-run-2',
+      });
 
       const comparison = manager.compareToBaseline(currentReport);
       expect(comparison.scoreDelta).toBe(100);
@@ -680,10 +663,7 @@ describe('RedTeamBaselineManager', () => {
       manager.saveBaseline(baselineReport);
 
       // Current: detected (not blocked, not missed)
-      const currentReport = makeReport(
-        [makeResult(scenario, 'detected')],
-        { runId: 'test-run-2' },
-      );
+      const currentReport = makeReport([makeResult(scenario, 'detected')], { runId: 'test-run-2' });
 
       const comparison = manager.compareToBaseline(currentReport);
       expect(comparison.regressions).toHaveLength(0);

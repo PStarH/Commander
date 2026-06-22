@@ -122,7 +122,7 @@ function runScoringSelfTest(): void {
     {
       label: '"..." (all-punctuation) expected → UNGRADED [regression-safety]',
       expectedVerdict: 'UNGRADED',
-      run: () => score('...', 'this would have been CORRECT via String.includes(\'\')'),
+      run: () => score('...', "this would have been CORRECT via String.includes('')"),
     },
     {
       label: 'matching substring → CORRECT',
@@ -359,8 +359,7 @@ const SYNTHETIC_TASKS: readonly SyntheticTask[] = [
     id: 'gaia_synth_04',
     agentId: 'agent_complex_mars',
     projectId: 'project_complex_mars',
-    input:
-      '[SYNTHETIC] Analyze the geopolitical impact of Mars colonies on Earth.',
+    input: '[SYNTHETIC] Analyze the geopolitical impact of Mars colonies on Earth.',
     mockOutput: 'The impact would be a significant paradigm shift in human history.',
     expected: 'significant paradigm shift',
   },
@@ -533,10 +532,7 @@ async function main(): Promise<number> {
       const verdict = score(task.expected, task.mockOutput);
 
       // Hard regression check: empty `expected` MUST grade UNGRADED.
-      if (
-        (task.expected === '' || task.expected === undefined) &&
-        verdict.verdict !== 'UNGRADED'
-      ) {
+      if ((task.expected === '' || task.expected === undefined) && verdict.verdict !== 'UNGRADED') {
         summary.scoringRegressions++;
         console.error(
           `  [REGRESSION] ${task.id}: empty expected graded ${verdict.verdict} — historical bug has resurfaced`,
@@ -560,9 +556,7 @@ async function main(): Promise<number> {
       );
     } catch (err) {
       summary.spineErrors++;
-      console.error(
-        `  [SPINE ERR] ${task.id}: ${(err as Error).message.split('\n')[0]}`,
-      );
+      console.error(`  [SPINE ERR] ${task.id}: ${(err as Error).message.split('\n')[0]}`);
     }
   }
 
@@ -581,7 +575,9 @@ async function main(): Promise<number> {
   console.log(`Correct:            ${summary.correct}`);
   console.log(`Incorrect:          ${summary.incorrect}`);
   console.log(`Ungraded:           ${summary.ungraded} (${ungradedRate.toFixed(1)}%)`);
-  console.log(`Effective GAIA:    ${effectiveScore.toFixed(1)}% (correct/graded, ungraded excluded)`);
+  console.log(
+    `Effective GAIA:    ${effectiveScore.toFixed(1)}% (correct/graded, ungraded excluded)`,
+  );
   console.log(`Spine errors:       ${summary.spineErrors}`);
   console.log(
     `Scoring regressions: ${summary.scoringRegressions} (empty expected must grade UNGRADED)`,

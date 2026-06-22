@@ -317,10 +317,7 @@ describe('EvalScorer ungraded regression-safety guard', () => {
       promptTemplate: 'p',
       scoreRange: { min: -10, max: 10 },
     });
-    const r = await scorer.score(
-      { input: 'x', output: 'y', expected: '' },
-      'wide',
-    );
+    const r = await scorer.score({ input: 'x', output: 'y', expected: '' }, 'wide');
     expect(r.graded).toBe(false);
     expect(r.score).toBe(0); // clamp(0, -10, 10) = 0 (the natural mid-scale baseline)
   });

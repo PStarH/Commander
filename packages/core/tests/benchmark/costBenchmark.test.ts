@@ -33,7 +33,7 @@ describe('Cost Benchmarks', () => {
       const pressure = state.pressure;
       const recommendations = governor.getRecommendations();
       const _optimizationsCount = recommendations.length;
-      const savingsPercent = (pressure * 100);
+      const savingsPercent = pressure * 100;
       savings.push(savingsPercent);
     }
 
@@ -119,10 +119,10 @@ describe('Cost Benchmarks', () => {
     const scenarios = [
       { name: 'simple', tokens: 5000, expectedCost: 0.01 },
       { name: 'medium', tokens: 25000, expectedCost: 0.05 },
-      { name: 'complex', tokens: 100000, expectedCost: 0.20 },
+      { name: 'complex', tokens: 100000, expectedCost: 0.2 },
     ];
 
-    const costs = scenarios.map(s => ({
+    const costs = scenarios.map((s) => ({
       name: s.name,
       tokens: s.tokens,
       cost: (s.tokens / 1000) * costPer1kTokens,
