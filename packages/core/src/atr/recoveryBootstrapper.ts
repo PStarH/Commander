@@ -152,7 +152,7 @@ export class RecoveryBootstrapper {
           // Step 3: Decide recovery action
           const forceAbort = options?.forceAbort ?? false;
 
-          if (forceAbort || (state !== 'PAUSED')) {
+          if (forceAbort || state !== 'PAUSED') {
             // EXECUTING or VERIFYING — safest to abort+compensate.
             // We cannot trust partial execution state across a crash.
             // Also handles forceAbort for PAUSED runs.
@@ -247,5 +247,3 @@ export class RecoveryBootstrapper {
     return result;
   }
 }
-
-
