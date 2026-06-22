@@ -167,8 +167,10 @@ export class DefaultContentScanner implements ContentScanner {
   // Social engineering — authority claims, official-looking overrides
   private socialEngineeringPatterns = [
     /i\s+am\s+(the\s+)?(authorized|official|designated|appointed|chief|head|lead)\s+(security|sysadmin|system\s+admin|IT|operations|ops|devops|platform|infrastructure)/gi,
+    /as\s+(the\s+)?(authorized|official|designated|appointed|chief|head|lead)\s+(security|sysadmin|system\s+admin|IT|operations|ops|devops|platform|infrastructure)/gi,
+    /as\s+an?\s+(authorized|official|designated)\s+(security|system|IT|operations|platform|infrastructure)/gi,
     /(authorized|official|mandatory|required|urgent|emergency)\s+(security|compliance|audit|policy|directive|override|instruction)/gi,
-    /security\s+(ops|operations|team|lead|director|officer|audit|compliance)\s+(lead|director|officer|team)/gi,
+    /security\s+(ops|operations|team|lead|director|officer|audit|compliance)\s*(lead|director|officer|team)?/gi,
     /this\s+is\s+(an?\s+)?(official|authorized|mandatory|urgent|emergency)\s+(request|directive|instruction|override|command)/gi,
     /as\s+(the\s+)?(authorized|official|designated)\s+(person|representative|agent|operator)/gi,
     /on\s+(behalf\s+of|the\s+authority\s+of)\s+(the\s+)?(system|platform|security|organization)/gi,
