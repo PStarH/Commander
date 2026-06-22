@@ -22,7 +22,11 @@ import type {
   ResourceScope,
 } from '../../src/security/federatedIdentity';
 import { runWithTenant } from '../../src/runtime/tenantContext';
-import { setGlobalTenantProvider, SimpleTenantProvider, resetGlobalTenantProvider } from '../../src/runtime/tenantProvider';
+import {
+  setGlobalTenantProvider,
+  SimpleTenantProvider,
+  resetGlobalTenantProvider,
+} from '../../src/runtime/tenantProvider';
 import { resetCapabilityTokenState } from '../../src/security/capabilityToken';
 import { resetAuditChainLedger } from '../../src/security/auditChainLedger';
 import { resetAgentLineage } from '../../src/security/agentLineage';
@@ -39,8 +43,20 @@ const TEST_HMAC_KEY = crypto.createHash('sha256').update('test-key-32-chars-mini
 function setupTenants() {
   setGlobalTenantProvider(
     new SimpleTenantProvider([
-      { tenantId: ISSUER_TENANT, tokenBudget: 100000, maxConcurrency: 5, maxRunsPerMinute: 30, enabled: true },
-      { tenantId: AUDIENCE_TENANT, tokenBudget: 100000, maxConcurrency: 5, maxRunsPerMinute: 30, enabled: true },
+      {
+        tenantId: ISSUER_TENANT,
+        tokenBudget: 100000,
+        maxConcurrency: 5,
+        maxRunsPerMinute: 30,
+        enabled: true,
+      },
+      {
+        tenantId: AUDIENCE_TENANT,
+        tokenBudget: 100000,
+        maxConcurrency: 5,
+        maxRunsPerMinute: 30,
+        enabled: true,
+      },
     ]),
   );
 }
@@ -94,10 +110,7 @@ function issueTrust(
   );
 }
 
-function exchangeTrust(
-  f: FederatedIdentity,
-  trust: FederationTrust,
-): FederatedExchangeResult {
+function exchangeTrust(f: FederatedIdentity, trust: FederationTrust): FederatedExchangeResult {
   return runWithTenant(AUDIENCE_TENANT, () => {
     const result = f.exchange(JSON.stringify(trust));
     if (!result.accepted) {
@@ -148,9 +161,9 @@ describe('FederatedIdentity - Trust Issuance', () => {
 
   it('should throw without active tenant context', () => {
     const f = fi();
-    expect(() =>
-      f.issueTrust({ audienceTenant: 'x', resourceScopes: ['call:web_fetch'] }),
-    ).toThrow('active tenant context');
+    expect(() => f.issueTrust({ audienceTenant: 'x', resourceScopes: ['call:web_fetch'] })).toThrow(
+      'active tenant context',
+    );
   });
 
   it('should throw with empty resourceScopes', () => {
@@ -282,35 +295,47 @@ describe('FederatedIdentity - Scope Enforcement', () => {
     const f = fi();
     const trust = issueTrust(f, { resourceScopes: ['call:web_fetch'] });
     exchangeTrust(f, trust);
-    expect(runWithTenant(AUDIENCE_TENANT, () => f.verifyFederationScope(trust.trustId, 'web_fetch'))).toBe(true);
+    expect(
+      runWithTenant(AUDIENCE_TENANT, () => f.verifyFederationScope(trust.trustId, 'web_fetch')),
+    ).toBe(true);
   });
 
   it('should deny tool outside call:* scope', () => {
     const f = fi();
     const trust = issueTrust(f, { resourceScopes: ['call:web_fetch'] });
     exchangeTrust(f, trust);
-    expect(runWithTenant(AUDIENCE_TENANT, () => f.verifyFederationScope(trust.trustId, 'shell_execute'))).toBe(false);
+    expect(
+      runWithTenant(AUDIENCE_TENANT, () => f.verifyFederationScope(trust.trustId, 'shell_execute')),
+    ).toBe(false);
   });
 
   it('should allow read:* scope mapped to {resource}_read', () => {
     const f = fi();
     const trust = issueTrust(f, { resourceScopes: ['read:reports'] });
     exchangeTrust(f, trust);
-    expect(runWithTenant(AUDIENCE_TENANT, () => f.verifyFederationScope(trust.trustId, 'reports_read'))).toBe(true);
+    expect(
+      runWithTenant(AUDIENCE_TENANT, () => f.verifyFederationScope(trust.trustId, 'reports_read')),
+    ).toBe(true);
   });
 
   it('should allow manage:* scope mapped to {resource}_manage', () => {
     const f = fi();
     const trust = issueTrust(f, { resourceScopes: ['manage:configs'] });
     exchangeTrust(f, trust);
-    expect(runWithTenant(AUDIENCE_TENANT, () => f.verifyFederationScope(trust.trustId, 'configs_manage'))).toBe(true);
+    expect(
+      runWithTenant(AUDIENCE_TENANT, () =>
+        f.verifyFederationScope(trust.trustId, 'configs_manage'),
+      ),
+    ).toBe(true);
   });
 
   it('should allow admin:* wildcard for any tool', () => {
     const f = fi();
     const trust = issueTrust(f, { resourceScopes: ['admin:*'] });
     exchangeTrust(f, trust);
-    expect(runWithTenant(AUDIENCE_TENANT, () => f.verifyFederationScope(trust.trustId, 'shell_execute'))).toBe(true);
+    expect(
+      runWithTenant(AUDIENCE_TENANT, () => f.verifyFederationScope(trust.trustId, 'shell_execute')),
+    ).toBe(true);
   });
 
   it('should deny unknown trust ID', () => {
@@ -323,7 +348,9 @@ describe('FederatedIdentity - Scope Enforcement', () => {
     const trust = issueTrust(f);
     exchangeTrust(f, trust);
     runWithTenant(ISSUER_TENANT, () => f.revokeTrust(trust.trustId, 'test'));
-    expect(runWithTenant(AUDIENCE_TENANT, () => f.verifyFederationScope(trust.trustId, 'web_fetch'))).toBe(false);
+    expect(
+      runWithTenant(AUDIENCE_TENANT, () => f.verifyFederationScope(trust.trustId, 'web_fetch')),
+    ).toBe(false);
   });
 });
 
@@ -336,7 +363,9 @@ describe('FederatedIdentity - Revocation Cascade', () => {
     const f = fi();
     const trust = issueTrust(f);
     exchangeTrust(f, trust);
-    const result = runWithTenant(ISSUER_TENANT, () => f.revokeTrust(trust.trustId, 'security-incident'));
+    const result = runWithTenant(ISSUER_TENANT, () =>
+      f.revokeTrust(trust.trustId, 'security-incident'),
+    );
     expect(result.revoked).toBe(true);
     expect(result.tokensRevoked).toBeGreaterThanOrEqual(0);
     expect(result.instancesKilled).toBeGreaterThanOrEqual(0);
@@ -367,7 +396,11 @@ describe('FederatedIdentity - Query API', () => {
     const f = fi();
     const t1 = issueTrust(f, { trustId: 'trust-001' });
     const t2 = runWithTenant(ISSUER_TENANT, () =>
-      f.issueTrust({ audienceTenant: AUDIENCE_TENANT, resourceScopes: ['call:file_read'], trustId: 'trust-002' }),
+      f.issueTrust({
+        audienceTenant: AUDIENCE_TENANT,
+        resourceScopes: ['call:file_read'],
+        trustId: 'trust-002',
+      }),
     );
     const active = runWithTenant(ISSUER_TENANT, () => f.listActiveTrusts());
     expect(active.some((t) => t.trustId === 'trust-001')).toBe(true);
@@ -446,7 +479,9 @@ describe('FederatedIdentity - Cross-Tenant Isolation', () => {
 
     // A separate instance (different tenant) should NOT see the trust
     const other = new FederatedIdentity({ hmacKey: TEST_HMAC_KEY });
-    expect(runWithTenant('tenant-third', () => other.getTrustEntry('isolated-trust'))).toBeUndefined();
+    expect(
+      runWithTenant('tenant-third', () => other.getTrustEntry('isolated-trust')),
+    ).toBeUndefined();
   });
 });
 

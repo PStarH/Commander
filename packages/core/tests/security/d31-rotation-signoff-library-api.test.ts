@@ -154,9 +154,7 @@ describe('D3.1 hardening — typed consumer sample (VerifyResult reasons[] contr
     return result.reasons.map((reason) => ({
       source: 'rotation-verifier' as const,
       reason,
-      severity: reason.includes('NOT bound') || reason.includes('unverified')
-        ? 'critical'
-        : 'low',
+      severity: reason.includes('NOT bound') || reason.includes('unverified') ? 'critical' : 'low',
     }));
   }
 

@@ -147,11 +147,13 @@ describe('CrossAgentCorrelator', () => {
       // 3 agents making 60 tool calls each
       for (const agentId of ['agent-a', 'agent-b', 'agent-c']) {
         for (let i = 0; i < 60; i++) {
-          correlator.ingest(makeEvent({
-            agentId,
-            type: 'tool_call',
-            timestamp: Date.now() - i * 10,
-          }));
+          correlator.ingest(
+            makeEvent({
+              agentId,
+              type: 'tool_call',
+              timestamp: Date.now() - i * 10,
+            }),
+          );
         }
       }
 
@@ -281,16 +283,20 @@ describe('CrossAgentCorrelator', () => {
 
       // Trigger multiple correlations by different agent pairs
       for (let i = 0; i < 10; i++) {
-        smallCorr.ingest(makeEvent({
-          agentId: `reader-${i}`,
-          type: 'data_read',
-          dataLabels: ['sensitive'],
-        }));
-        smallCorr.ingest(makeEvent({
-          agentId: `sender-${i}`,
-          type: 'network_request',
-          timestamp: Date.now() + 100,
-        }));
+        smallCorr.ingest(
+          makeEvent({
+            agentId: `reader-${i}`,
+            type: 'data_read',
+            dataLabels: ['sensitive'],
+          }),
+        );
+        smallCorr.ingest(
+          makeEvent({
+            agentId: `sender-${i}`,
+            type: 'network_request',
+            timestamp: Date.now() + 100,
+          }),
+        );
       }
 
       const matches = smallCorr.getMatches();

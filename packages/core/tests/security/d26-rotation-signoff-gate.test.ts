@@ -78,8 +78,12 @@ function npxSpawn(args: string[], opts?: { timeout?: number }) {
   // Surface spawn errors explicitly so CI logs show the root cause instead of
   // a cryptic "expected null to be 1" assertion failure.
   if (result.status == null) {
-    const reason = result.error ? result.error.message : 'process did not exit (timeout or spawn failure)';
-    throw new Error(`[npxSpawn] tsx subprocess failed to produce exit code: ${reason}\n  command: ${npxCmd} tsx ${cliPath} ${args.join(' ')}`);
+    const reason = result.error
+      ? result.error.message
+      : 'process did not exit (timeout or spawn failure)';
+    throw new Error(
+      `[npxSpawn] tsx subprocess failed to produce exit code: ${reason}\n  command: ${npxCmd} tsx ${cliPath} ${args.join(' ')}`,
+    );
   }
   return result;
 }
@@ -220,9 +224,9 @@ describe('D2.6 hardening — SHA injection defense-in-depth', () => {
   });
 
   it('accepts canonical 64-char SHA-256', () => {
-    expect(
-      SHA_RE.test('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),
-    ).toBe(true);
+    expect(SHA_RE.test('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef')).toBe(
+      true,
+    );
   });
 });
 
@@ -320,7 +324,12 @@ describe('D2.9 hardening — policy evaluator (pure function, POLICY_MIN_VERIFIE
     const rows = [
       mkRow({ role: 'CISO', sha: 'abc1234def567890', verified: true, error: null }),
       mkRow({ role: 'Head of Security', sha: 'deadbeef012345678', verified: true, error: null }),
-      mkRow({ role: 'Engineering Lead', sha: 'aabbccddee0011223344', verified: false, error: 'unverified' }),
+      mkRow({
+        role: 'Engineering Lead',
+        sha: 'aabbccddee0011223344',
+        verified: false,
+        error: 'unverified',
+      }),
       mkRow({ role: 'Compliance Lead', error: null }),
     ];
     const r = evaluateSignoff(rows);
@@ -354,10 +363,34 @@ describe('D2.9 hardening — policy evaluator (pure function, POLICY_MIN_VERIFIE
 
   it('GREEN when ALL rows are verified (4/4 — bound at exact min)', () => {
     const rows = [
-      mkRow({ role: 'CISO', sha: 'abc1234def567890', verified: true, signedAt: '2026-06-21T00:00:00+00:00', error: null }),
-      mkRow({ role: 'Head of Security', sha: 'deadbeef012345678', verified: true, signedAt: '2026-06-21T00:00:00+00:00', error: null }),
-      mkRow({ role: 'Engineering Lead', sha: 'facefeedfacefeedf', verified: true, signedAt: '2026-06-21T00:00:00+00:00', error: null }),
-      mkRow({ role: 'Compliance Lead', sha: 'cafebabecafebabe00', verified: true, signedAt: '2026-06-21T00:00:00+00:00', error: null }),
+      mkRow({
+        role: 'CISO',
+        sha: 'abc1234def567890',
+        verified: true,
+        signedAt: '2026-06-21T00:00:00+00:00',
+        error: null,
+      }),
+      mkRow({
+        role: 'Head of Security',
+        sha: 'deadbeef012345678',
+        verified: true,
+        signedAt: '2026-06-21T00:00:00+00:00',
+        error: null,
+      }),
+      mkRow({
+        role: 'Engineering Lead',
+        sha: 'facefeedfacefeedf',
+        verified: true,
+        signedAt: '2026-06-21T00:00:00+00:00',
+        error: null,
+      }),
+      mkRow({
+        role: 'Compliance Lead',
+        sha: 'cafebabecafebabe00',
+        verified: true,
+        signedAt: '2026-06-21T00:00:00+00:00',
+        error: null,
+      }),
     ];
     const r = evaluateSignoff(rows);
     expect(r.ok).toBe(true);
@@ -420,7 +453,9 @@ describe('D3.0 hardening — public reason-codes API (reasons: readonly string[]
     expect(r.reasons[0]).toMatch(/policy NOT bound/);
     expect(r.reasons[1]).toMatch(/1 unverified SHA\(s\) need to be fixed/);
     // Critically: the two clauses must be SEPARATE elements (not joined into one).
-    expect(r.reasons.join(' AND ')).toEqual(r.report.match(/RED: (.*?)\./)![1]!.replace(/ AND /, ' AND '));
+    expect(r.reasons.join(' AND ')).toEqual(
+      r.report.match(/RED: (.*?)\./)![1]!.replace(/ AND /, ' AND '),
+    );
     expect(r.reasons[0]).not.toContain(' unverified SHA');
     expect(r.reasons[1]).not.toContain('policy NOT bound');
   });
@@ -444,7 +479,11 @@ describe('D3.0 hardening — public reason-codes API (reasons: readonly string[]
       expect(r.reasons.length).toBe(1);
       expect(r.reasons[0]).toMatch(/ERROR: §6 Sign-off section not found in /);
     } finally {
-      try { fs.unlinkSync(tmp); } catch { /* best-effort cleanup */ }
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* best-effort cleanup */
+      }
     }
   });
 
@@ -460,7 +499,11 @@ describe('D3.0 hardening — public reason-codes API (reasons: readonly string[]
       expect(r.reasons[0]).toMatch(/policy NOT bound/);
       expect(r.reasons[0]).toMatch(/at least 4 role\(s\)/);
     } finally {
-      try { fs.unlinkSync(tmp); } catch { /* best-effort cleanup */ }
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* best-effort cleanup */
+      }
     }
   });
 
@@ -497,10 +540,14 @@ describe('D3.0 hardening — public reason-codes API (reasons: readonly string[]
     ];
     // RED path
     const redR = evaluateSignoff(redRows);
-    expect(() => { (redR.reasons as string[]).push('injected'); }).toThrow(TypeError);
+    expect(() => {
+      (redR.reasons as string[]).push('injected');
+    }).toThrow(TypeError);
     // OK path — the previously-unfrozen [] case is the critical regression.
     const greenR = evaluateSignoff(greenRows);
-    expect(() => { (greenR.reasons as string[]).push('injected'); }).toThrow(TypeError);
+    expect(() => {
+      (greenR.reasons as string[]).push('injected');
+    }).toThrow(TypeError);
   });
 });
 
@@ -542,7 +589,11 @@ describe('D2.9 hardening — verifier policy contracts (integration)', () => {
       expect(cisoRow!.verified).toBe(false);
       expect(cisoRow!.error).not.toBeNull();
     } finally {
-      try { fs.unlinkSync(tmp); } catch { /* best-effort cleanup */ }
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* best-effort cleanup */
+      }
     }
   });
 
@@ -561,7 +612,11 @@ describe('D2.9 hardening — verifier policy contracts (integration)', () => {
       expect(result.exitCode).toBe(2);
       expect(result.ok).toBe(false);
     } finally {
-      try { fs.unlinkSync(tmp); } catch { /* best-effort cleanup */ }
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* best-effort cleanup */
+      }
     }
   });
 
@@ -644,7 +699,11 @@ describe('D2.9 hardening — verifier policy contracts (integration)', () => {
  * some roles and empty SHAs for the rest. Used by integration tests that
  * need a real git-verify path on the resulting doc.
  */
-function makeSyntheticDocWithShas(shas: Partial<Record<'CISO' | 'Head of Security' | 'Engineering Lead' | 'Compliance Lead', string>>): string {
+function makeSyntheticDocWithShas(
+  shas: Partial<
+    Record<'CISO' | 'Head of Security' | 'Engineering Lead' | 'Compliance Lead', string>
+  >,
+): string {
   const rows: string[] = [
     '| Role                | Name | GitHub handle | GPG fingerprint (16-char short) | Signed-Commit SHA        |',
     '|---------------------|------|---------------|---------------------------------|--------------------------|',
@@ -652,7 +711,9 @@ function makeSyntheticDocWithShas(shas: Partial<Record<'CISO' | 'Head of Securit
   const ROLES = ['CISO', 'Head of Security', 'Engineering Lead', 'Compliance Lead'] as const;
   for (const role of ROLES) {
     const sha = shas[role] ?? '';
-    rows.push(`| **${role}**|      |               |                                 | ${sha.padEnd(24, ' ')} |`);
+    rows.push(
+      `| **${role}**|      |               |                                 | ${sha.padEnd(24, ' ')} |`,
+    );
   }
   return [
     '# synthetic (test only)',

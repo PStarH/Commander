@@ -56,14 +56,16 @@ function nominalSignals(overrides?: Partial<HITLSignalBundle>): HITLSignalBundle
     msSinceLastReview: 0,
     ...overrides,
     agentId: overrides?.agentId ?? 'agent-1',
-    toolRisk: { ...(overrides?.toolRisk ?? {
-      argRiskLevel: 'low',
-      trustTier: 'trusted',
-      isReadOnly: true,
-      hasNetworkAccess: false,
-      mutatesState: false,
-      toolName: 'file_read',
-    }) },
+    toolRisk: {
+      ...(overrides?.toolRisk ?? {
+        argRiskLevel: 'low',
+        trustTier: 'trusted',
+        isReadOnly: true,
+        hasNetworkAccess: false,
+        mutatesState: false,
+        toolName: 'file_read',
+      }),
+    },
   };
 }
 
@@ -94,7 +96,12 @@ describe('AdaptiveHITL', () => {
 
   it('should have 6 distinct strategies in increasing severity', () => {
     const strategies: HITLStrategy[] = [
-      'auto', 'suggest', 'confirm', 'pause_and_review', 'escalate', 'deny',
+      'auto',
+      'suggest',
+      'confirm',
+      'pause_and_review',
+      'escalate',
+      'deny',
     ];
     const severityCheck = strategies.every((s, i) => {
       if (i === 0) return true;
@@ -114,82 +121,92 @@ describe('AdaptiveHITL', () => {
 
   it('should return auto when disabled', () => {
     hitl.updateConfig({ enabled: false });
-    const decision = hitl.evaluate(nominalSignals({
-      toolRisk: {
-        argRiskLevel: 'critical',
-        trustTier: 'untrusted',
-        isReadOnly: false,
-        hasNetworkAccess: true,
-        mutatesState: true,
-        toolName: 'shell_execute',
-      },
-    }));
+    const decision = hitl.evaluate(
+      nominalSignals({
+        toolRisk: {
+          argRiskLevel: 'critical',
+          trustTier: 'untrusted',
+          isReadOnly: false,
+          hasNetworkAccess: true,
+          mutatesState: true,
+          toolName: 'shell_execute',
+        },
+      }),
+    );
     expect(decision.strategy).toBe('auto');
   });
 
   // ── Tool Risk Scoring ────────────────────────────────────────
 
   it('should escalate on high-risk tool (shell_execute + critical args)', () => {
-    const decision = hitl.evaluate(nominalSignals({
-      toolRisk: {
-        argRiskLevel: 'critical',
-        trustTier: 'untrusted',
-        isReadOnly: false,
-        hasNetworkAccess: true,
-        mutatesState: true,
-        toolName: 'shell_execute',
-      },
-    }));
-    expect(STRATEGY_SEVERITY[decision.strategy]).toBeGreaterThanOrEqual(
-      STRATEGY_SEVERITY.confirm,
+    const decision = hitl.evaluate(
+      nominalSignals({
+        toolRisk: {
+          argRiskLevel: 'critical',
+          trustTier: 'untrusted',
+          isReadOnly: false,
+          hasNetworkAccess: true,
+          mutatesState: true,
+          toolName: 'shell_execute',
+        },
+      }),
     );
+    expect(STRATEGY_SEVERITY[decision.strategy]).toBeGreaterThanOrEqual(STRATEGY_SEVERITY.confirm);
   });
 
   it('should treat untrusted tools as riskier', () => {
-    const trusted = hitl.evaluate(nominalSignals({
-      toolRisk: {
-        argRiskLevel: 'medium',
-        trustTier: 'trusted',
-        isReadOnly: false,
-        hasNetworkAccess: false,
-        mutatesState: true,
-        toolName: 'file_write',
-      },
-    }));
-    const untrusted = hitl.evaluate(nominalSignals({
-      toolRisk: {
-        argRiskLevel: 'medium',
-        trustTier: 'untrusted',
-        isReadOnly: false,
-        hasNetworkAccess: false,
-        mutatesState: true,
-        toolName: 'file_write',
-      },
-    }));
+    const trusted = hitl.evaluate(
+      nominalSignals({
+        toolRisk: {
+          argRiskLevel: 'medium',
+          trustTier: 'trusted',
+          isReadOnly: false,
+          hasNetworkAccess: false,
+          mutatesState: true,
+          toolName: 'file_write',
+        },
+      }),
+    );
+    const untrusted = hitl.evaluate(
+      nominalSignals({
+        toolRisk: {
+          argRiskLevel: 'medium',
+          trustTier: 'untrusted',
+          isReadOnly: false,
+          hasNetworkAccess: false,
+          mutatesState: true,
+          toolName: 'file_write',
+        },
+      }),
+    );
     expect(untrusted.compositeRiskScore).toBeGreaterThan(trusted.compositeRiskScore);
   });
 
   it('should reduce risk for read-only tools', () => {
-    const readWrite = hitl.evaluate(nominalSignals({
-      toolRisk: {
-        argRiskLevel: 'low',
-        trustTier: 'trusted',
-        isReadOnly: false,
-        hasNetworkAccess: false,
-        mutatesState: true,
-        toolName: 'file_write',
-      },
-    }));
-    const readOnly = hitl.evaluate(nominalSignals({
-      toolRisk: {
-        argRiskLevel: 'low',
-        trustTier: 'trusted',
-        isReadOnly: true,
-        hasNetworkAccess: false,
-        mutatesState: false,
-        toolName: 'file_read',
-      },
-    }));
+    const readWrite = hitl.evaluate(
+      nominalSignals({
+        toolRisk: {
+          argRiskLevel: 'low',
+          trustTier: 'trusted',
+          isReadOnly: false,
+          hasNetworkAccess: false,
+          mutatesState: true,
+          toolName: 'file_write',
+        },
+      }),
+    );
+    const readOnly = hitl.evaluate(
+      nominalSignals({
+        toolRisk: {
+          argRiskLevel: 'low',
+          trustTier: 'trusted',
+          isReadOnly: true,
+          hasNetworkAccess: false,
+          mutatesState: false,
+          toolName: 'file_read',
+        },
+      }),
+    );
     expect(readOnly.compositeRiskScore).toBeLessThan(readWrite.compositeRiskScore);
   });
 
@@ -197,29 +214,33 @@ describe('AdaptiveHITL', () => {
 
   it('should increase risk on active safety violations', () => {
     const nominal = hitl.evaluate(nominalSignals());
-    const withViolations = hitl.evaluate(nominalSignals({
-      agentConfidence: {
-        activeInterventions: ['safety_violation', 'goal_hijack'],
-        isPaused: false,
-        baselineDeviationFactor: 1.0,
-        consecutiveAnomalies: 0,
-        toolRateDeviation: 1.0,
-      },
-    }));
+    const withViolations = hitl.evaluate(
+      nominalSignals({
+        agentConfidence: {
+          activeInterventions: ['safety_violation', 'goal_hijack'],
+          isPaused: false,
+          baselineDeviationFactor: 1.0,
+          consecutiveAnomalies: 0,
+          toolRateDeviation: 1.0,
+        },
+      }),
+    );
     // Should contribute measurable risk compared to nominal
     expect(withViolations.compositeRiskScore).toBeGreaterThan(nominal.compositeRiskScore);
   });
 
   it('should escalate on high consecutive anomalies', () => {
-    const decision = hitl.evaluate(nominalSignals({
-      agentConfidence: {
-        activeInterventions: [],
-        isPaused: false,
-        baselineDeviationFactor: 2.5,
-        consecutiveAnomalies: 8,
-        toolRateDeviation: 1.0,
-      },
-    }));
+    const decision = hitl.evaluate(
+      nominalSignals({
+        agentConfidence: {
+          activeInterventions: [],
+          isPaused: false,
+          baselineDeviationFactor: 2.5,
+          consecutiveAnomalies: 8,
+          toolRateDeviation: 1.0,
+        },
+      }),
+    );
     // 8 consecutive anomalies should trigger pause_and_review
     expect(STRATEGY_SEVERITY[decision.strategy]).toBeGreaterThanOrEqual(
       STRATEGY_SEVERITY.pause_and_review,
@@ -228,15 +249,17 @@ describe('AdaptiveHITL', () => {
 
   it('should increase risk on paused agent', () => {
     const nominal = hitl.evaluate(nominalSignals());
-    const paused = hitl.evaluate(nominalSignals({
-      agentConfidence: {
-        activeInterventions: [],
-        isPaused: true,
-        baselineDeviationFactor: 1.0,
-        consecutiveAnomalies: 0,
-        toolRateDeviation: 1.0,
-      },
-    }));
+    const paused = hitl.evaluate(
+      nominalSignals({
+        agentConfidence: {
+          activeInterventions: [],
+          isPaused: true,
+          baselineDeviationFactor: 1.0,
+          consecutiveAnomalies: 0,
+          toolRateDeviation: 1.0,
+        },
+      }),
+    );
     // Paused agent should have higher risk than nominal
     expect(paused.compositeRiskScore).toBeGreaterThan(nominal.compositeRiskScore);
   });
@@ -244,27 +267,29 @@ describe('AdaptiveHITL', () => {
   // ── Correlation Scoring ──────────────────────────────────────
 
   it('should escalate on critical correlation', () => {
-    const decision = hitl.evaluate(nominalSignals({
-      correlation: {
-        activeCorrelationTypes: ['collusion', 'command_and_control'],
-        maxCorrelationRiskScore: 85,
-        criticalCorrelation: true,
-      },
-    }));
-    // Critical correlation forces escalate minimum
-    expect(STRATEGY_SEVERITY[decision.strategy]).toBeGreaterThanOrEqual(
-      STRATEGY_SEVERITY.escalate,
+    const decision = hitl.evaluate(
+      nominalSignals({
+        correlation: {
+          activeCorrelationTypes: ['collusion', 'command_and_control'],
+          maxCorrelationRiskScore: 85,
+          criticalCorrelation: true,
+        },
+      }),
     );
+    // Critical correlation forces escalate minimum
+    expect(STRATEGY_SEVERITY[decision.strategy]).toBeGreaterThanOrEqual(STRATEGY_SEVERITY.escalate);
   });
 
   it('should return 0 correlation score when no matches', () => {
-    const decision = hitl.evaluate(nominalSignals({
-      correlation: {
-        activeCorrelationTypes: [],
-        maxCorrelationRiskScore: 0,
-        criticalCorrelation: false,
-      },
-    }));
+    const decision = hitl.evaluate(
+      nominalSignals({
+        correlation: {
+          activeCorrelationTypes: [],
+          maxCorrelationRiskScore: 0,
+          criticalCorrelation: false,
+        },
+      }),
+    );
     expect(decision.compositeRiskScore).toBeLessThanOrEqual(5);
   });
 
@@ -272,13 +297,15 @@ describe('AdaptiveHITL', () => {
 
   it('should increase risk on low verification confidence', () => {
     const nominal = hitl.evaluate(nominalSignals());
-    const lowConf = hitl.evaluate(nominalSignals({
-      verification: {
-        confidence: 0.2,
-        gateFailures: ['hallucination', 'completeness'],
-        hallucinationDetected: true,
-      },
-    }));
+    const lowConf = hitl.evaluate(
+      nominalSignals({
+        verification: {
+          confidence: 0.2,
+          gateFailures: ['hallucination', 'completeness'],
+          hallucinationDetected: true,
+        },
+      }),
+    );
     // Low verification confidence should contribute measurable risk
     expect(lowConf.compositeRiskScore).toBeGreaterThan(nominal.compositeRiskScore);
   });
@@ -286,50 +313,58 @@ describe('AdaptiveHITL', () => {
   // ── Mission Scoring ──────────────────────────────────────────
 
   it('should escalate in production environment', () => {
-    const devDecision = hitl.evaluate(nominalSignals({
-      mission: {
-        criticality: 0.3,
-        budgetRemaining: 0.8,
-        userRole: 'admin',
-        environment: 'development',
-        taskType: 'unknown',
-        stepsExecuted: 5,
-      },
-    }));
-    const prodDecision = hitl.evaluate(nominalSignals({
-      mission: {
-        criticality: 0.3,
-        budgetRemaining: 0.8,
-        userRole: 'admin',
-        environment: 'production',
-        taskType: 'unknown',
-        stepsExecuted: 5,
-      },
-    }));
+    const devDecision = hitl.evaluate(
+      nominalSignals({
+        mission: {
+          criticality: 0.3,
+          budgetRemaining: 0.8,
+          userRole: 'admin',
+          environment: 'development',
+          taskType: 'unknown',
+          stepsExecuted: 5,
+        },
+      }),
+    );
+    const prodDecision = hitl.evaluate(
+      nominalSignals({
+        mission: {
+          criticality: 0.3,
+          budgetRemaining: 0.8,
+          userRole: 'admin',
+          environment: 'production',
+          taskType: 'unknown',
+          stepsExecuted: 5,
+        },
+      }),
+    );
     expect(prodDecision.compositeRiskScore).toBeGreaterThan(devDecision.compositeRiskScore);
   });
 
   it('should escalate for guest users', () => {
-    const adminDecision = hitl.evaluate(nominalSignals({
-      mission: {
-        criticality: 0.3,
-        budgetRemaining: 0.8,
-        userRole: 'admin',
-        environment: 'development',
-        taskType: 'unknown',
-        stepsExecuted: 5,
-      },
-    }));
-    const guestDecision = hitl.evaluate(nominalSignals({
-      mission: {
-        criticality: 0.3,
-        budgetRemaining: 0.8,
-        userRole: 'guest',
-        environment: 'development',
-        taskType: 'unknown',
-        stepsExecuted: 5,
-      },
-    }));
+    const adminDecision = hitl.evaluate(
+      nominalSignals({
+        mission: {
+          criticality: 0.3,
+          budgetRemaining: 0.8,
+          userRole: 'admin',
+          environment: 'development',
+          taskType: 'unknown',
+          stepsExecuted: 5,
+        },
+      }),
+    );
+    const guestDecision = hitl.evaluate(
+      nominalSignals({
+        mission: {
+          criticality: 0.3,
+          budgetRemaining: 0.8,
+          userRole: 'guest',
+          environment: 'development',
+          taskType: 'unknown',
+          stepsExecuted: 5,
+        },
+      }),
+    );
     expect(guestDecision.compositeRiskScore).toBeGreaterThan(adminDecision.compositeRiskScore);
   });
 
@@ -337,9 +372,11 @@ describe('AdaptiveHITL', () => {
 
   it('should increase risk with time since last review', () => {
     const freshDecision = hitl.evaluate(nominalSignals({ msSinceLastReview: 0 }));
-    const staleDecision = hitl.evaluate(nominalSignals({
-      msSinceLastReview: 30 * 60 * 1000,
-    }));
+    const staleDecision = hitl.evaluate(
+      nominalSignals({
+        msSinceLastReview: 30 * 60 * 1000,
+      }),
+    );
     expect(staleDecision.compositeRiskScore).toBeGreaterThan(freshDecision.compositeRiskScore);
   });
 
@@ -440,17 +477,19 @@ describe('AdaptiveHITL', () => {
     expect(profile1.strategyCounts.auto).toBe(1);
 
     // Second decision: high risk
-    hitl.evaluate(nominalSignals({
-      agentId,
-      toolRisk: {
-        argRiskLevel: 'critical',
-        trustTier: 'untrusted',
-        isReadOnly: false,
-        hasNetworkAccess: true,
-        mutatesState: true,
-        toolName: 'shell_execute',
-      },
-    }));
+    hitl.evaluate(
+      nominalSignals({
+        agentId,
+        toolRisk: {
+          argRiskLevel: 'critical',
+          trustTier: 'untrusted',
+          isReadOnly: false,
+          hasNetworkAccess: true,
+          mutatesState: true,
+          toolName: 'shell_execute',
+        },
+      }),
+    );
     const profile2 = hitl.getProfile(agentId);
     expect(profile2.totalDecisions).toBe(2);
     expect(profile2.avgRiskScore).toBeGreaterThan(0);
@@ -477,17 +516,19 @@ describe('AdaptiveHITL', () => {
     expect(trustBonusBefore).toBeGreaterThan(0);
 
     // High risk decision
-    hitl.evaluate(nominalSignals({
-      agentId,
-      toolRisk: {
-        argRiskLevel: 'critical',
-        trustTier: 'untrusted',
-        isReadOnly: false,
-        hasNetworkAccess: true,
-        mutatesState: true,
-        toolName: 'shell_execute',
-      },
-    }));
+    hitl.evaluate(
+      nominalSignals({
+        agentId,
+        toolRisk: {
+          argRiskLevel: 'critical',
+          trustTier: 'untrusted',
+          isReadOnly: false,
+          hasNetworkAccess: true,
+          mutatesState: true,
+          toolName: 'shell_execute',
+        },
+      }),
+    );
     const trustBonusAfter = hitl.getProfile(agentId).trustBonus;
     // Trust bonus should decrease by 3
     expect(trustBonusAfter).toBeLessThan(trustBonusBefore);
@@ -496,16 +537,18 @@ describe('AdaptiveHITL', () => {
   // ── Explainability ───────────────────────────────────────────
 
   it('should include all 6 factors with reasoning', () => {
-    const decision = hitl.evaluate(nominalSignals({
-      toolRisk: {
-        argRiskLevel: 'high',
-        trustTier: 'untrusted',
-        isReadOnly: false,
-        hasNetworkAccess: true,
-        mutatesState: true,
-        toolName: 'shell_execute',
-      },
-    }));
+    const decision = hitl.evaluate(
+      nominalSignals({
+        toolRisk: {
+          argRiskLevel: 'high',
+          trustTier: 'untrusted',
+          isReadOnly: false,
+          hasNetworkAccess: true,
+          mutatesState: true,
+          toolName: 'shell_execute',
+        },
+      }),
+    );
     expect(decision.factors).toHaveLength(6);
     for (const factor of decision.factors) {
       expect(factor.source).toBeDefined();

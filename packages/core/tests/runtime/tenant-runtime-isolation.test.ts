@@ -50,9 +50,17 @@ describe('Tenant runtime isolation', () => {
     const historyB = busB.getHistory('agent.completed');
     expect(historyA.length).toBeGreaterThanOrEqual(1);
     expect(historyB.length).toBeGreaterThanOrEqual(1);
-    expect(historyA.some((m) => (m.payload as { runId?: string }).runId === resultA.runId)).toBe(true);
-    expect(historyA.some((m) => (m.payload as { runId?: string }).runId === resultB.runId)).toBe(false);
-    expect(historyB.some((m) => (m.payload as { runId?: string }).runId === resultB.runId)).toBe(true);
-    expect(historyB.some((m) => (m.payload as { runId?: string }).runId === resultA.runId)).toBe(false);
+    expect(historyA.some((m) => (m.payload as { runId?: string }).runId === resultA.runId)).toBe(
+      true,
+    );
+    expect(historyA.some((m) => (m.payload as { runId?: string }).runId === resultB.runId)).toBe(
+      false,
+    );
+    expect(historyB.some((m) => (m.payload as { runId?: string }).runId === resultB.runId)).toBe(
+      true,
+    );
+    expect(historyB.some((m) => (m.payload as { runId?: string }).runId === resultA.runId)).toBe(
+      false,
+    );
   });
 });
