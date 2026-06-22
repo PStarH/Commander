@@ -1235,7 +1235,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
             goal: ctx.goal.slice(0, 500),
             tokenBudget: ctx.tokenBudget,
             availableTools: ctx.availableTools,
-            modelId: this.router.route(ctx, undefined, ctx.preferredModelTier, new Set(this.providers.keys())).modelId,
+            modelId: this.router.route(
+              ctx,
+              undefined,
+              ctx.preferredModelTier,
+              new Set(this.providers.keys()),
+            ).modelId,
             config: { ...this.config },
             timestamp: new Date().toISOString(),
           });
