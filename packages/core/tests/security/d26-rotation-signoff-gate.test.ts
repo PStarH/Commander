@@ -59,8 +59,20 @@
 
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
+
+/** On Windows, npx is a .cmd batch file — Node.js spawnSync won't find it without .cmd suffix. */
+function npxSpawn(args: string[], opts?: { timeout?: number }) {
+  const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+  const cliPath = path.join(REPO_ROOT, 'scripts', 'verify-rotation-signoff.ts');
+  return spawnSync(npxCmd, ['tsx', cliPath, ...args], {
+    cwd: REPO_ROOT,
+    encoding: 'utf-8',
+    timeout: opts?.timeout ?? 60_000,
+  });
+}
 
 import {
   countColumns,
@@ -544,12 +556,7 @@ describe('D2.9 hardening — verifier policy contracts (integration)', () => {
   });
 
   it('CLI subprocess exit policy matches the library contract (D2.9 = RED on empty table)', async () => {
-    const cliPath = path.join(REPO_ROOT, 'scripts', 'verify-rotation-signoff.ts');
-    const r = spawnSync('npx', ['tsx', cliPath], {
-      cwd: REPO_ROOT,
-      encoding: 'utf-8',
-      timeout: 60_000,
-    });
+    const r = npxSpawn([], { timeout: 60_000 });
     expect(r.status).toBe(1);
     expect(r.stderr ?? '').toMatch(/at least 4 role\(s\) must hold a GPG-verified SHA/);
     expect(r.stderr ?? '').toMatch(/Result: RED/);
@@ -558,12 +565,7 @@ describe('D2.9 hardening — verifier policy contracts (integration)', () => {
   // ----- D3.0: CLI flag surface tests -----
 
   it('CLI --json emits parsable JSON on stdout with reasons[] populated; human report still on stderr', () => {
-    const cliPath = path.join(REPO_ROOT, 'scripts', 'verify-rotation-signoff.ts');
-    const r = spawnSync('npx', ['tsx', cliPath, '--json'], {
-      cwd: REPO_ROOT,
-      encoding: 'utf-8',
-      timeout: 30_000,
-    });
+    const r = npxSpawn(['--json'], { timeout: 30_000 });
     expect(r.status).toBe(1);
     // stdout contains the JSON payload (one or more lines).
     const stdoutLines = (r.stdout ?? '').split('\n').filter(Boolean);
@@ -581,12 +583,7 @@ describe('D2.9 hardening — verifier policy contracts (integration)', () => {
   }, 60_000);
 
   it('CLI --quiet suppresses multi-line human report on stderr; stdout empty', () => {
-    const cliPath = path.join(REPO_ROOT, 'scripts', 'verify-rotation-signoff.ts');
-    const r = spawnSync('npx', ['tsx', cliPath, '--quiet'], {
-      cwd: REPO_ROOT,
-      encoding: 'utf-8',
-      timeout: 30_000,
-    });
+    const r = npxSpawn(['--quiet'], { timeout: 30_000 });
     expect(r.status).toBe(1);
     // stdout is empty (no --json to put a payload there).
     expect(r.stdout ?? '').toBe('');
@@ -598,12 +595,7 @@ describe('D2.9 hardening — verifier policy contracts (integration)', () => {
   }, 60_000);
 
   it('CLI --json --quiet: JSON on stdout + summary line ONLY on stderr (orthogonal)', () => {
-    const cliPath = path.join(REPO_ROOT, 'scripts', 'verify-rotation-signoff.ts');
-    const r = spawnSync('npx', ['tsx', cliPath, '--json', '--quiet'], {
-      cwd: REPO_ROOT,
-      encoding: 'utf-8',
-      timeout: 30_000,
-    });
+    const r = npxSpawn(['--json', '--quiet'], { timeout: 30_000 });
     expect(r.status).toBe(1);
     // stdout = JSON payload (one line).
     const stdoutLines = (r.stdout ?? '').split('\n').filter(Boolean);
@@ -620,12 +612,8 @@ describe('D2.9 hardening — verifier policy contracts (integration)', () => {
   }, 60_000);
 
   it('CLI --doc=<bad-path> --json emits parse-failure JSON with reasons[0] = "ERROR: doc not found"', () => {
-    const cliPath = path.join(REPO_ROOT, 'scripts', 'verify-rotation-signoff.ts');
-    const r = spawnSync('npx', ['tsx', cliPath, '--doc=/tmp/d30-no-such-file.md', '--json'], {
-      cwd: REPO_ROOT,
-      encoding: 'utf-8',
-      timeout: 30_000,
-    });
+    const badDocPath = path.join(os.tmpdir(), 'd30-no-such-file.md');
+    const r = npxSpawn([`--doc=${badDocPath}`, '--json'], { timeout: 60_000 });
     expect(r.status).toBe(2);
     const stdoutLines = (r.stdout ?? '').split('\n').filter(Boolean);
     const jsonLine = stdoutLines.find((l) => l.trim().startsWith('{'));
@@ -633,7 +621,7 @@ describe('D2.9 hardening — verifier policy contracts (integration)', () => {
     const parsed = JSON.parse(jsonLine!) as { status: string; exitCode: number; reasons: string[] };
     expect(parsed.status).toBe('RED');
     expect(parsed.exitCode).toBe(2);
-    expect(parsed.reasons[0]).toMatch(/^ERROR: doc not found at \/tmp\/d30-no-such-file\.md/);
+    expect(parsed.reasons[0]).toMatch(/^ERROR: doc not found at /);
   }, 60_000);
 });
 
