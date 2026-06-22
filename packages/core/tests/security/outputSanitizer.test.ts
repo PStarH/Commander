@@ -45,7 +45,9 @@ describe('OutputSanitizer', () => {
 
   describe('API key redaction', () => {
     it('redacts OpenAI API keys', () => {
-      const result = sanitizer.sanitize('My API key is sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx');
+      const result = sanitizer.sanitize(
+        'My API key is sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx',
+      );
       expect(result.redacted).toBe(true);
       expect(result.sanitized).not.toContain('sk-proj-abc');
       expect(result.sanitized).toContain('[REDACTED:api-key]');
@@ -131,9 +133,7 @@ describe('OutputSanitizer', () => {
     });
 
     it('redacts PostgreSQL connection strings', () => {
-      const result = sanitizer.sanitize(
-        'postgresql://user:pass@localhost:5432/mydb',
-      );
+      const result = sanitizer.sanitize('postgresql://user:pass@localhost:5432/mydb');
       expect(result.redacted).toBe(true);
     });
 
@@ -185,14 +185,16 @@ MHcCAQEEII...
 
   describe('JWT redaction', () => {
     it('partially redacts JWT tokens', () => {
-      const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+      const jwt =
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
       const result = sanitizer.sanitize(jwt);
       expect(result.redacted).toBe(true);
       expect(result.sanitized).not.toContain(jwt);
     });
 
     it('redacts Bearer JWT in auth headers', () => {
-      const output = 'Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dummySignature1234567890abcdefghijklmnopqrstuvwxyz';
+      const output =
+        'Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dummySignature1234567890abcdefghijklmnopqrstuvwxyz';
       const result = sanitizer.sanitize(output);
       expect(result.redacted).toBe(true);
       expect(result.sanitized).toContain('[REDACTED:jwt-token]');
@@ -318,7 +320,8 @@ Configuration:
     });
 
     it('returns correct total redaction count', () => {
-      const output = 'Key1: sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx\nKey2: sk-proj-zyx987wvu654tsr321qpo098nml765kji432hgf';
+      const output =
+        'Key1: sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx\nKey2: sk-proj-zyx987wvu654tsr321qpo098nml765kji432hgf';
       const result = sanitizer.sanitize(output);
       expect(result.redactionCount).toBe(2);
     });
@@ -326,7 +329,9 @@ Configuration:
 
   describe('containsSensitiveData', () => {
     it('returns true when sensitive data is present', () => {
-      expect(sanitizer.containsSensitiveData('sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx')).toBe(true);
+      expect(
+        sanitizer.containsSensitiveData('sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx'),
+      ).toBe(true);
     });
 
     it('returns false for clean content', () => {
@@ -336,7 +341,8 @@ Configuration:
 
   describe('categorizeSensitiveData', () => {
     it('returns correct categories', () => {
-      const output = 'Key: sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx\nDB: mongodb://localhost\nEmail: test@example.com';
+      const output =
+        'Key: sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx\nDB: mongodb://localhost\nEmail: test@example.com';
       const categories = sanitizer.categorizeSensitiveData(output);
       expect(categories).toContain('api_key');
       expect(categories).toContain('connection_string');
@@ -347,9 +353,19 @@ Configuration:
   describe('sanitizeToolResults', () => {
     it('sanitizes a batch of tool results', () => {
       const results = [
-        { toolCallId: '1', name: 'file_read', output: 'Found key: sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx', durationMs: 10 },
+        {
+          toolCallId: '1',
+          name: 'file_read',
+          output: 'Found key: sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx',
+          durationMs: 10,
+        },
         { toolCallId: '2', name: 'web_fetch', output: 'Page loaded ok', durationMs: 20 },
-        { toolCallId: '3', name: 'shell_execute', output: 'DB at mongodb://admin:pass@10.0.1.1/db', durationMs: 30 },
+        {
+          toolCallId: '3',
+          name: 'shell_execute',
+          output: 'DB at mongodb://admin:pass@10.0.1.1/db',
+          durationMs: 30,
+        },
       ];
       const batch = sanitizer.sanitizeToolResults(results);
       expect(batch.totalRedacted).toBeGreaterThanOrEqual(2);
@@ -360,7 +376,13 @@ Configuration:
 
     it('preserves error fields without sanitization', () => {
       const results = [
-        { toolCallId: '1', name: 'shell', output: '', error: 'Command failed with exit code 1', durationMs: 10 },
+        {
+          toolCallId: '1',
+          name: 'shell',
+          output: '',
+          error: 'Command failed with exit code 1',
+          durationMs: 10,
+        },
       ];
       const batch = sanitizer.sanitizeToolResults(results);
       expect(batch.results[0].error).toBe('Command failed with exit code 1');
@@ -369,7 +391,9 @@ Configuration:
 
   describe('convenience functions', () => {
     it('sanitizeOutput returns sanitized string', () => {
-      const output = sanitizeOutput('My key is sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx');
+      const output = sanitizeOutput(
+        'My key is sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx',
+      );
       expect(output).not.toContain('sk-proj-abc');
       expect(output).toContain('[REDACTED:api-key]');
     });
@@ -407,7 +431,9 @@ Configuration:
       const config = new OutputSanitizer({
         strategyOverrides: { api_key: 'remove' },
       });
-      const result = config.sanitize('Prefix sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx suffix');
+      const result = config.sanitize(
+        'Prefix sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx suffix',
+      );
       expect(result.sanitized).toBe('Prefix  suffix');
     });
 
@@ -436,7 +462,8 @@ Configuration:
     });
 
     it('generates same hash for same sanitized output', () => {
-      const output = 'sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx anotherKey sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx';
+      const output =
+        'sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx anotherKey sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx';
       const r1 = sanitizer.sanitize(output);
       resetOutputSanitizer();
       const s2 = new OutputSanitizer();
@@ -473,7 +500,8 @@ Configuration:
     });
 
     it('handles very long output efficiently', () => {
-      const long = 'Normal text. '.repeat(1000) + 'sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx';
+      const long =
+        'Normal text. '.repeat(1000) + 'sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx';
       const result = sanitizer.sanitize(long);
       expect(result.redacted).toBe(true);
       expect(result.durationMs).toBeLessThan(5000); // Should be fast

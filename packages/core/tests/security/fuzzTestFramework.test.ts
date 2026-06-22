@@ -115,7 +115,14 @@ describe('FuzzTestFramework', () => {
     it('fuzzes all mutation strategies', async () => {
       const allFuzzer = new FuzzTestFramework({
         maxMutations: 300,
-        strategies: ['byte_flip', 'boundary_inject', 'structure_mutate', 'injection_insert', 'type_confuse', 'unicode_mangle'],
+        strategies: [
+          'byte_flip',
+          'boundary_inject',
+          'structure_mutate',
+          'injection_insert',
+          'type_confuse',
+          'unicode_mangle',
+        ],
       });
       allFuzzer.registerHarness(makeEchoHarness());
       await allFuzzer.run();
@@ -148,7 +155,11 @@ describe('FuzzTestFramework', () => {
     });
 
     it('crashOnly mode discards non-crash inputs', async () => {
-      const crashOnly = new FuzzTestFramework({ maxMutations: 100, coverageGuided: true, crashOnly: true });
+      const crashOnly = new FuzzTestFramework({
+        maxMutations: 100,
+        coverageGuided: true,
+        crashOnly: true,
+      });
       crashOnly.registerHarness(makeCrashingHarness());
       await crashOnly.run();
       // Corpus only contains crash-triggering inputs

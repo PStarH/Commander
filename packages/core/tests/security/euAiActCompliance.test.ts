@@ -85,7 +85,9 @@ describe('EuAiActComplianceReporter', () => {
       const report = reporter.generateReport();
 
       expect(report.article12.limitations.length).toBeGreaterThan(3);
-      expect(report.article12.limitations.some((l) => l.toLowerCase().includes('hallucinat'))).toBe(true);
+      expect(report.article12.limitations.some((l) => l.toLowerCase().includes('hallucinat'))).toBe(
+        true,
+      );
     });
 
     it('includes data sources', () => {
@@ -99,7 +101,9 @@ describe('EuAiActComplianceReporter', () => {
       const reporter = new EuAiActComplianceReporter();
       const report = reporter.generateReport();
 
-      expect(Object.keys(report.article12.performanceMetrics.benchmarkResults).length).toBeGreaterThanOrEqual(3);
+      expect(
+        Object.keys(report.article12.performanceMetrics.benchmarkResults).length,
+      ).toBeGreaterThanOrEqual(3);
     });
 
     it('includes transparency measures and user disclosures', () => {
@@ -116,7 +120,9 @@ describe('EuAiActComplianceReporter', () => {
         systemDescription: 'Custom AI system for internal document processing.',
       });
 
-      expect(report.article12.systemDescription).toBe('Custom AI system for internal document processing.');
+      expect(report.article12.systemDescription).toBe(
+        'Custom AI system for internal document processing.',
+      );
     });
   });
 
@@ -254,8 +260,7 @@ describe('EuAiActComplianceReporter', () => {
       const report = reporter.generateReport();
 
       expect(report.complianceSummary.nextAuditDue).toBeDefined();
-      expect(new Date(report.complianceSummary.nextAuditDue).getTime())
-        .toBeGreaterThan(Date.now());
+      expect(new Date(report.complianceSummary.nextAuditDue).getTime()).toBeGreaterThan(Date.now());
     });
   });
 
@@ -347,8 +352,9 @@ describe('EuAiActComplianceReporter', () => {
       const reporter = new EuAiActComplianceReporter();
       const report = reporter.generateReport();
 
-      expect(Object.keys(report.article12.performanceMetrics.benchmarkResults).length)
-        .toBeGreaterThanOrEqual(3);
+      expect(
+        Object.keys(report.article12.performanceMetrics.benchmarkResults).length,
+      ).toBeGreaterThanOrEqual(3);
     });
 
     it('can exclude benchmarks', () => {

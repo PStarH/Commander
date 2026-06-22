@@ -335,7 +335,11 @@ describe('CompensationRegistry — GAP-M2.1 snapshot-based rollback', () => {
     expect(result.succeeded + result.failed).toBe(3);
     expect(fs.readFileSync(fp1, 'utf-8')).toBe('A');
     expect(fs.readFileSync(fp3, 'utf-8')).toBe('C');
-    try { fs.chmodSync(snapshotB, 0o600); } catch { /* best-effort cleanup — Windows may not support chmod 000 the same way */ }
+    try {
+      fs.chmodSync(snapshotB, 0o600);
+    } catch {
+      /* best-effort cleanup — Windows may not support chmod 000 the same way */
+    }
   });
 
   describe('assessReversibility', () => {
