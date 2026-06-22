@@ -1,0 +1,53 @@
+// ============================================================================
+// STRICT GATE OVERLAY (TS 5.0+ JSONC comments are supported by tsc)
+// ----------------------------------------------------------------------------
+// Purpose: this file is an opt-in EXTENSION overlay for packages that have
+//   completed their dead-code cleanup. It is NOT a wholesale flag flip on
+//   tsconfig.base.json — flipping wholesale would surface 728 pre-existing
+//   violations across packages/core (423) and packages/sdk (286) and break
+//   CI on day-1.
+//
+// Flags added on top of tsconfig.base.json:
+//   noUnusedLocals           — gate for unused locals (e.g. the prior
+//                              `getAdaptiveEpsilon()` orphan in
+//                              topologyRouter.ts that survived unnoticed
+//                              because the gate was off)
+//   noUnusedParameters       — gate for unused function parameters
+//   noImplicitReturns        — gate for functions that may fall off
+//                              without returning a value
+//   noFallthroughCasesInSwitch
+//                            — gate for switch cases that fall through
+//                              without explicit break/return
+//
+// DO NOT OVERRIDE the following inherited keys here — they are
+// base-contractual invariants and must come exclusively from
+// tsconfig.base.json: target, module, moduleResolution, strict,
+// esModuleInterop, skipLibCheck, resolveJsonModule, declaration,
+// declarationMap, noEmit. (Per code-reviewer-minimax-m3 round, `strict`,
+// `esModuleInterop`, and `noEmit` were added because future contributors
+// might naively copy-paste these here, which would no-op today but
+// silently shadow the base if the base ever changed.)
+//
+// How to opt a package in (3-step recipe):
+//   1. Bulk-fix all pre-existing TS6133/TS6196/etc. violations in the
+//      package so that `npx tsc --noEmit -p packages/<pkg>/tsconfig.json`
+//      returns 0 errors WHILE this overlay is also extended.
+//   2. Switch the package's extends from `"../../tsconfig.base.json"`
+//      to `["../../tsconfig.base.json", "../../tsconfig.strict.json"]`.
+//   3. Verify CI green and any new commits must keep the gate clean
+//      (no new TS6133/TS6196 errors from new code).
+//
+// Pilot: packages/plugin-sdk/tsconfig.json — was the first leaf package
+//   with a clean baseline that already inlined the same 4 flags; it now
+//   simply extends this overlay (inversion of the per-package duplication
+//   pattern).
+// ============================================================================
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true
+  }
+}
