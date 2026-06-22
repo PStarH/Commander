@@ -41,10 +41,11 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "tsc -p tsconfig.json"
   },
-  "dependencies": {
+  "devDependencies": {
+    "typescript": "^5.0.0",
     "@commander/core": "workspace:*"
   },
-  "devDependencies": {
-    "typescript": "^5.0.0"
+  "peerDependencies": {
+    "@commander/core": "^0.2.0"
   }
 }

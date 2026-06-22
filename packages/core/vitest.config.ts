@@ -22,10 +22,12 @@ export default defineConfig({
       'tests/runtime/e2e.test.ts',
       'tests/runtime/entropyGater.test.ts',
       'tests/runtime/evolutionaryWorkflowEngine.test.ts',
+      'tests/runtime/execPolicy.edge.test.ts',
       'tests/runtime/geminiCacheManager.test.ts',
       'tests/runtime/htmlReport.test.ts',
       'tests/runtime/llmRetry.test.ts',
       'tests/runtime/oidcAuthPlugin.test.ts',
+      'tests/runtime/owaspAsiHttpRoute.test.ts',
       'tests/runtime/siemForwarder.test.ts',
       'tests/runtime/localEmbedding.test.ts',
       'tests/runtime/metaLearner.test.ts',
@@ -54,6 +56,7 @@ export default defineConfig({
       'tests/runtime/toolOrchestrator.test.ts',
       'tests/runtime/toolPlanner.test.ts',
       'tests/runtime/toolResultCache.test.ts',
+      'tests/runtime/resilience-integration.test.ts',
       'tests/runtime/toolRetriever.test.ts',
       'tests/runtime/vcrProvider.test.ts',
       'tests/runtime/batchProvider.test.ts',
@@ -85,6 +88,9 @@ export default defineConfig({
       'tests/observability/samplingPolicy.test.ts',
       'tests/observability/traceContext.test.ts',
 
+      // --- storage ---
+      'tests/storage/dataRetention.test.ts',
+
       // --- security ---
       'tests/security/guardianAgent.test.ts',
       'tests/security/capabilityToken.test.ts',
@@ -97,6 +103,11 @@ export default defineConfig({
       'tests/security/redTeamBaseline.test.ts',
       'tests/security/edgeSecurityProfile.test.ts',
       'tests/security/complianceAuditReport.test.ts',
+      'tests/security/d25-api-key-grep.test.ts',
+      'tests/security/d26-rotation-signoff-gate.test.ts',
+      'tests/security/d31-rotation-signoff-library-api.test.ts',
+      'tests/security/d32-rotation-signoff-async-api.test.ts',
+      'tests/security/hardeningSprint.d1.test.ts',
       'tests/security/threatIntelligenceFeed.test.ts',
       'tests/security/crossAgentCorrelator.test.ts',
       'tests/security/mlInjectionDetector.test.ts',
@@ -130,12 +141,13 @@ export default defineConfig({
       'tests/ultimate/workCoordinator.test.ts',
       'tests/ultimate/workQueueStore.test.ts',
       // --- benchmark ---
-      'tests/benchmark/benchmarkRunner.ts',
       'tests/benchmark/performanceBenchmark.test.ts',
       'tests/benchmark/loadBenchmark.test.ts',
       'tests/benchmark/costBenchmark.test.ts',
       'tests/benchmark/reliabilityBenchmark.test.ts',
       'tests/benchmark/comparisonBenchmark.test.ts',
+      'tests/benchmark/advancedPerformanceBenchmark.test.ts',
+      'tests/benchmark/realWorldBenchmark.test.ts',
       // 'tests/benchmark/multiAgentBenchmark.metrics.test.ts', // TODO: depends on missing src/benchmark/multiAgentBenchmark module
     ],
     environment: 'node',

@@ -13,10 +13,11 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "tsc -p tsconfig.json"
   },
-  "dependencies": {
-    "@commander/core": "workspace:*"
+  "peerDependencies": {
+    "@commander/core": "^0.2.0"
   },
   "devDependencies": {
+    "@commander/core": "workspace:*",
     "@types/node": "^25.9.3",
     "typescript": "^5.0.0"
   },

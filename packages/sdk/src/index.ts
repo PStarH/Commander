@@ -81,5 +81,7 @@ export type {
   SystemStatus,
   // Reliability
   SDKReliabilityStats,
+  // Tool Error Rows
+  SentryRow,
 } from './types';
 
