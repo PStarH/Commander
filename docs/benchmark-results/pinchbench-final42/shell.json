@@ -1,1 +1,0 @@
-{"answer":"Done. Saved `command.sh` with `find / -size +100M -mtime -7 -type f 2>/dev/null`.","passed":true}

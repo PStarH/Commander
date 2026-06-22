@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { detectProvider, getEffectiveModel, listProviders } from '../../config/commanderConfig';
 import { $, section, kv, bullet, startSpinner } from './_shared';
+import { t } from '../i18n';
 
 // ============================================================================
 // Checks
@@ -24,10 +25,10 @@ interface CheckResult {
 function checkNode(): CheckResult {
   const major = parseInt(process.version.slice(1), 10);
   return {
-    label: 'Node.js',
+    label: t('quickcheck.label.node'),
     pass: major >= 20,
     detail: process.version,
-    fix: major < 20 ? 'Install Node.js v20+ from https://nodejs.org' : undefined,
+    fix: major < 20 ? t('quickcheck.fix.node') : undefined,
   };
 }
 
@@ -35,16 +36,19 @@ function checkProvider(): CheckResult {
   const provider = detectProvider();
   if (provider) {
     return {
-      label: 'API Provider',
+      label: t('quickcheck.label.provider'),
       pass: true,
-      detail: `${provider.type} · ${getEffectiveModel()}`,
+      detail: t('quickcheck.provider_run_hint', {
+        type: provider.type,
+        model: getEffectiveModel(),
+      }),
     };
   }
   return {
-    label: 'API Provider',
+    label: t('quickcheck.label.provider'),
     pass: false,
-    detail: 'No API key found',
-    fix: 'export OPENAI_API_KEY=sk-... (or ANTHROPIC_API_KEY, GOOGLE_API_KEY, etc.)',
+    detail: t('quickcheck.provider_missing'),
+    fix: t('quickcheck.fix.provider'),
   };
 }
 
@@ -52,13 +56,13 @@ function checkGit(): CheckResult {
   try {
     const { execSync } = require('child_process');
     execSync('git --version', { stdio: 'pipe' });
-    return { label: 'Git', pass: true, detail: 'available' };
+    return { label: t('quickcheck.label.git'), pass: true, detail: 'available' };
   } catch {
     return {
-      label: 'Git',
+      label: t('quickcheck.label.git'),
       pass: false,
       detail: 'not found',
-      fix: 'Install git: https://git-scm.com',
+      fix: t('quickcheck.fix.git'),
     };
   }
 }
@@ -68,19 +72,23 @@ function checkWorkspace(): CheckResult {
   const hasCommanderDir = fs.existsSync(path.join(cwd, '.commander'));
   const hasPackageJson = fs.existsSync(path.join(cwd, 'package.json'));
   if (hasCommanderDir) {
-    return { label: 'Workspace', pass: true, detail: '.commander/ found' };
+    return {
+      label: t('quickcheck.label.workspace'),
+      pass: true,
+      detail: t('quickcheck.workspace.found'),
+    };
   }
   if (hasPackageJson) {
     return {
-      label: 'Workspace',
+      label: t('quickcheck.label.workspace'),
       pass: true,
-      detail: 'package.json found (run any command to initialize .commander/)',
+      detail: t('quickcheck.workspace.package_json'),
     };
   }
   return {
-    label: 'Workspace',
+    label: t('quickcheck.label.workspace'),
     pass: true,
-    detail: `${cwd} (standalone mode)`,
+    detail: `${cwd} ${t('quickcheck.workspace.standalone')}`,
   };
 }
 
@@ -90,9 +98,9 @@ function checkTools(): CheckResult {
     'web_search,web_fetch,file_read,file_write,file_edit,file_search,file_list,python_execute,shell_execute,git'
   ).split(',');
   return {
-    label: 'Tools',
+    label: t('quickcheck.label.tools'),
     pass: true,
-    detail: `${tools.length} tools configured`,
+    detail: t('quickcheck.tools_configured', { n: tools.length }),
   };
 }
 
@@ -101,45 +109,46 @@ function checkTools(): CheckResult {
 // ============================================================================
 
 async function showProviderSetup() {
-  section('SET UP API PROVIDER');
-  console.log(`  Commander supports 20+ providers. Pick one:\n`);
+  section(t('quickstart.want_setup'));
+  console.log(`  ${t('quickstart.provider_supports')}\n`);
 
+  // Each provider has a fixed product name (kept literal) + i18n description key.
   const providers = [
     {
       name: 'OpenAI',
       env: 'OPENAI_API_KEY',
       url: 'https://platform.openai.com/api-keys',
-      models: 'GPT-4o, GPT-4.1, o3',
+      descKey: 'quickstart.openai.desc',
     },
     {
       name: 'Anthropic',
       env: 'ANTHROPIC_API_KEY',
       url: 'https://console.anthropic.com',
-      models: 'Claude Sonnet 4.6, Opus 4.8',
+      descKey: 'quickstart.anthropic.desc',
     },
     {
       name: 'Google',
       env: 'GOOGLE_API_KEY',
       url: 'https://aistudio.google.com/apikey',
-      models: 'Gemini 2.5 Pro/Flash',
+      descKey: 'quickstart.google.desc',
     },
     {
       name: 'OpenRouter',
       env: 'OPENROUTER_API_KEY',
       url: 'https://openrouter.ai/keys',
-      models: '200+ models',
+      descKey: 'quickstart.openrouter.desc',
     },
     {
       name: 'DeepSeek',
       env: 'DEEPSEEK_API_KEY',
       url: 'https://platform.deepseek.com',
-      models: 'DeepSeek R1, V3',
+      descKey: 'quickstart.deepseek.desc',
     },
     {
       name: 'Ollama (local)',
       env: 'OLLAMA_HOST',
       url: 'https://ollama.com',
-      models: 'Llama 3, Mistral, etc.',
+      descKey: 'quickstart.ollama.desc',
     },
   ];
 
@@ -148,13 +157,13 @@ async function showProviderSetup() {
     const hasKey = !!process.env[p.env];
     const status = hasKey ? `${$.green}✓${$.reset}` : `${$.dim}○${$.reset}`;
     console.log(
-      `  ${status} ${$.bold}${i + 1}.${$.reset} ${$.cyan}${p.name.padEnd(14)}${$.reset} ${$.dim}${p.models}${$.reset}`,
+      `  ${status} ${$.bold}${i + 1}.${$.reset} ${$.cyan}${p.name.padEnd(14)}${$.reset} ${$.dim}${t(p.descKey)}${$.reset}`,
     );
   }
 
-  console.log(`\n  ${$.dim}To configure:${$.reset}`);
+  console.log(`\n  ${$.dim}${t('quickstart.to_configure')}${$.reset}`);
   console.log(`  ${$.gray}$ export OPENAI_API_KEY=sk-...${$.reset}`);
-  console.log(`  ${$.dim}or${$.reset}`);
+  console.log(`  ${$.dim}${t('quickstart.config_alt_step')}${$.reset}`);
   console.log(`  ${$.gray}$ commander config set model <model-id>${$.reset}`);
   console.log(
     `  ${$.gray}$ commander config list-providers${$.reset}  ${$.dim}See all options${$.reset}`,
@@ -162,33 +171,33 @@ async function showProviderSetup() {
 }
 
 function showFirstSteps() {
-  section('YOUR FIRST TASKS');
-  console.log(`  Try these to get familiar with Commander:\n`);
+  section(t('quickstart.first_steps'));
+  console.log(`  ${t('quickstart.try.these')}\n`);
 
   const examples = [
-    { cmd: 'commander "Explain this codebase"', desc: 'Quick analysis — no setup needed' },
-    { cmd: 'commander plan "Build a REST API"', desc: 'See the multi-agent plan before running' },
-    { cmd: 'commander run "Fix all TypeScript errors"', desc: 'Full pipeline with execution' },
-    { cmd: 'commander watch "Refactor auth module"', desc: 'Real-time progress as agents work' },
-    { cmd: 'commander status', desc: 'Check your system & provider status' },
-    { cmd: 'commander doctor', desc: 'Run diagnostics if something is wrong' },
+    { cmdKey: 'quickstart.example.1', descKey: 'quickstart.example.1.desc' },
+    { cmdKey: 'quickstart.example.2', descKey: 'quickstart.example.2.desc' },
+    { cmdKey: 'quickstart.example.3', descKey: 'quickstart.example.3.desc' },
+    { cmdKey: 'quickstart.example.4', descKey: 'quickstart.example.4.desc' },
+    { cmdKey: 'quickstart.example.5', descKey: 'quickstart.example.5.desc' },
+    { cmdKey: 'quickstart.example.6', descKey: 'quickstart.example.6.desc' },
   ];
 
   for (const ex of examples) {
-    console.log(`  ${$.cyan}${ex.cmd.padEnd(44)}${$.reset} ${$.dim}${ex.desc}${$.reset}`);
+    console.log(
+      `  ${$.cyan}${t(ex.cmdKey).padEnd(44)}${$.reset} ${$.dim}${t(ex.descKey)}${$.reset}`,
+    );
   }
 
-  console.log(`\n  ${$.bold}Pro tips:${$.reset}`);
-  bullet(
-    `Any unrecognized command is treated as a task: ${$.cyan}commander fix the login bug${$.reset}`,
-  );
-  bullet(`Use ${$.cyan}--help${$.reset} with any command for options`);
-  bullet(`Use ${$.cyan}commander config test${$.reset} to verify your API connection`);
-  bullet(`Use ${$.cyan}commander mode auto-edit${$.reset} to skip approval prompts`);
+  console.log(`\n  ${$.bold}${t('quickstart.pro_tips')}${$.reset}`);
+  bullet(t('quickstart.tip.treat_as_task'));
+  bullet(t('quickstart.tip.help'));
+  bullet(t('quickstart.tip.config_test'));
+  bullet(t('quickstart.tip.mode_auto_edit'));
 }
 
 function showProjectStructure() {
-  section('PROJECT STRUCTURE');
+  section(t('quickstart.structure'));
   console.log(`  Commander creates these directories:\n`);
   kv('.commander/', '', $.cyan);
   bullet(`${$.dim}workflows/     Custom workflow definitions (.md)${$.reset}`);
@@ -209,15 +218,15 @@ export async function cmdQuickstart(args: string[]) {
 
   console.log(`
   ${$.bold}${$.blue}╭──────────────────────────────────────────────────╮${$.reset}
-  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander Quickstart${$.reset}                           ${$.bold}${$.blue}│${$.reset}
-  ${$.bold}${$.blue}│${$.reset}  ${$.dim}Let's get you set up${$.reset}                            ${$.bold}${$.blue}│${$.reset}
+  ${$.bold}${$.blue}│${$.reset}  ${$.bold}${t('quickstart.title.banner')}${$.reset}                           ${$.bold}${$.blue}│${$.reset}
+  ${$.bold}${$.blue}│${$.reset}  ${$.dim}${t('quickstart.subtitle.banner')}${$.reset}                            ${$.bold}${$.blue}│${$.reset}
   ${$.bold}${$.blue}╰──────────────────────────────────────────────────╯${$.reset}`);
 
   // Run all checks
   const checks = [checkNode(), checkProvider(), checkGit(), checkWorkspace(), checkTools()];
   const failures = checks.filter((c) => !c.pass);
 
-  section('PREREQUISITES');
+  section(t('quickstart.prereqs'));
   for (const c of checks) {
     const icon = c.pass ? `${$.green}✓${$.reset}` : `${$.red}✗${$.reset}`;
     console.log(
@@ -231,10 +240,12 @@ export async function cmdQuickstart(args: string[]) {
   if (checkOnly) {
     console.log();
     if (failures.length === 0) {
-      console.log(`  ${$.green}${$.bold}All checks passed!${$.reset} You're ready to go.`);
-      console.log(`  ${$.dim}Try: ${$.cyan}commander "Hello, world!"${$.reset}\n`);
+      console.log(`  ${$.green}${$.bold}${t('quickstart.all.passed')}${$.reset} ${t('quickstart.ready')}`);
+      console.log(`  ${$.dim}${t('quickstart.all_passed_try')}${$.reset}\n`);
     } else {
-      console.log(`  ${$.yellow}${failures.length} check(s) need attention${$.reset}\n`);
+      console.log(
+        `  ${$.yellow}${t('quickstart.need_attention', { n: failures.length })}${$.reset}\n`,
+      );
     }
     return;
   }
@@ -248,16 +259,12 @@ export async function cmdQuickstart(args: string[]) {
   showProjectStructure();
 
   // Final summary
-  section('SUMMARY');
+  section(t('quickstart.summary.section'));
   if (failures.length === 0) {
-    console.log(`  ${$.green}${$.bold}✓ Everything looks good!${$.reset}`);
-    console.log(
-      `  ${$.dim}Run ${$.cyan}commander "your first task"${$.reset}${$.dim} to get started.${$.reset}\n`,
-    );
+    console.log(`  ${$.green}${$.bold}${t('quickstart.all_good')}${$.reset}`);
+    console.log(`  ${$.dim}${t('quickstart.run_first_task_hint')}${$.reset}\n`);
   } else {
-    console.log(`  ${$.yellow}⚠ ${failures.length} item(s) to fix above.${$.reset}`);
-    console.log(
-      `  ${$.dim}Fix them, then run ${$.cyan}commander quickstart --check${$.reset}${$.dim} to verify.${$.reset}\n`,
-    );
+    console.log(`  ${$.yellow}⚠ ${t('quickstart.need_attention', { n: failures.length })}${$.reset}`);
+    console.log(`  ${$.dim}${t('quickstart.fix_and_verify')}${$.reset}\n`);
   }
 }
