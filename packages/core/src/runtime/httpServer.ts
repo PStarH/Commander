@@ -28,6 +28,8 @@ import { BedrockProvider } from './providers/bedrockProvider';
 import { XAIProvider } from './providers/xaiProvider';
 import { AnyscaleProvider } from './providers/anyscaleProvider';
 import { DeepInfraProvider } from './providers/deepinfraProvider';
+import { AgnesProvider } from './providers/agnesProvider';
+import { StepFunProvider } from './providers/stepfunProvider';
 import { MCPServer } from '../mcp/server';
 import { getGlobalLogger } from '../logging';
 import { getMetricsCollector } from './metricsCollector';
@@ -38,6 +40,13 @@ import { handleAtrHttpRequest, type AtrHttpDeps } from '../atr/atrHttp';
 import { getExecutionScheduler } from '../atr/scheduler';
 import { handleObservabilityRequest, type ObservabilityDeps } from '../observability/httpApi';
 import { getCompensationData, renderDashboardHtml } from './compensationDashboard';
+import {
+  type MemoryLayer,
+  type MemoryQuery,
+  getGlobalThreeLayerMemory,
+} from '../threeLayerMemory.js';
+import { runWithTenant } from './tenantContext';
+import { TokenGovernor } from './tokenGovernor';
 import {
   getSOPDashboardData,
   listSOPs,
@@ -52,6 +61,12 @@ import { LeaseManager } from '../atr/leaseManager';
 import type { AuthPlugin } from './oidcAuthPlugin';
 import type { SIEMEvent, SIEMForwarder } from './siemForwarder';
 import { type SecurityEvent, getSecurityAuditLogger } from '../security/securityAuditLogger';
+import { type DataRetentionJanitor, getDataRetentionJanitor } from '../storage/dataRetention';
+import {
+  DETECTOR_TO_ASI_OVERRIDE,
+  SECURITY_EVENT_TYPE_TO_ASI,
+  getOwaspAsiTop10,
+} from '../security/owaspAgenticAiTop10';
 
 export interface HttpServerConfig {
   port: number;
@@ -78,6 +93,26 @@ export interface HttpServerConfig {
   oidcEnabled?: boolean;
   /** SIEM forwarder instance for log forwarding (loaded from env if available) */
   siemForwarder?: SIEMForwarder;
+}
+
+function pickTopology(
+  taskText: string,
+  wordCount: number,
+): {
+  topology: 'SINGLE' | 'SEQUENTIAL' | 'PARALLEL' | 'HIERARCHICAL';
+  estimatedCostBand: 'low' | 'medium' | 'high';
+  estimatedSteps: number;
+} {
+  if (wordCount > 200 || /\b(delegate|orchestrate|coordinat)\b/i.test(taskText)) {
+    return { topology: 'HIERARCHICAL', estimatedCostBand: 'high', estimatedSteps: 7 };
+  }
+  if (wordCount > 80 || /\b(in parallel|concurrently|simultaneously)\b/i.test(taskText)) {
+    return { topology: 'PARALLEL', estimatedCostBand: 'high', estimatedSteps: 5 };
+  }
+  if (wordCount > 30 || /\b(and|then|also|plus|after|before)\b/i.test(taskText)) {
+    return { topology: 'SEQUENTIAL', estimatedCostBand: 'medium', estimatedSteps: 3 };
+  }
+  return { topology: 'SINGLE', estimatedCostBand: 'low', estimatedSteps: 1 };
 }
 
 const DEFAULT_CONFIG: HttpServerConfig = {
@@ -199,6 +234,9 @@ export class CommanderHttpServer {
   private mcpServer: MCPServer | null = null;
   // Rate limiting: IP → { count, resetAt }
   private rateLimitMap: Map<string, { count: number; resetAt: number }> = new Map();
+  // SSE connection tracking per IP (prevent connection-exhaustion DoS)
+  private sseConnections: Map<string, Set<ServerResponse>> = new Map();
+  private static readonly MAX_SSE_PER_IP = 10;
   private static readonly SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
   private static readonly MAX_SESSIONS = 200;
   private sessionCleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -211,6 +249,7 @@ export class CommanderHttpServer {
   private authPlugins: AuthPlugin[] = [];
   private siemForwarder: SIEMForwarder | null = null;
   private securityEventUnsub: (() => void) | null = null;
+  private retentionJanitor: DataRetentionJanitor | null = null;
 
   constructor(config?: Partial<HttpServerConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -339,6 +378,40 @@ export class CommanderHttpServer {
           });
         }
 
+        // SOC 2 C1.2 / GDPR Art 17 disposal — schedule the retention
+        // janitor at boot. Hourly cadence matches the typical mtime
+        // windows in DEFAULT_RETENTION_TABLE (sop-artifacts 1y, traces
+        // 90d, inbox 30d, tmp-cbor 24h). auditOnDelete is intentionally
+        // off on the security.event bus so housekeeping doesn't inflate
+        // OWASP ASI10 signals (see DataRetentionJanitor docstring).
+        // NOTE: AgentRuntime.constructor() also calls schedule(); the
+        // module-level `scheduledRootDirs: Set<string>` dedup in
+        // storage/dataRetention.ts ensures only one setInterval runs
+        // across the process regardless of which surface claims first.
+        try {
+          this.retentionJanitor = getDataRetentionJanitor({
+            rootDir: process.cwd(),
+            dryRun: false,
+          });
+          // `claimed` lets the log disambiguate: true means THIS
+          // httpServer owns the recurring tick; false means another
+          // surface (e.g. AgentRuntime.constructor) claimed first and
+          // the module-level `scheduledRootDirs` Set deduped us. See
+          // DataRetentionJanitor.schedule() JSDoc for the full
+          // claimed-vs-dedup-catch glossary.
+          const claimed = this.retentionJanitor.schedule(60 * 60 * 1000, false);
+          getGlobalLogger().info(
+            'HttpServer',
+            claimed
+              ? `DataRetentionJanitor scheduled (1h interval) [rootDir=${this.retentionJanitor.rootDir}, claimed]`
+              : `DataRetentionJanitor dedup-catch — tick already owned (rootDir=${this.retentionJanitor.rootDir})`,
+          );
+        } catch (e) {
+          getGlobalLogger().warn('HttpServer', 'Failed to schedule retention janitor', {
+            error: (e as Error)?.message,
+          });
+        }
+
         resolve();
       });
       // Periodic cleanup of stale sessions and rate limit entries
@@ -372,6 +445,12 @@ export class CommanderHttpServer {
     if (this.sessionCleanupTimer) {
       clearInterval(this.sessionCleanupTimer);
       this.sessionCleanupTimer = null;
+    }
+    if (this.retentionJanitor) {
+      // Stop the recurring tick before draining the HTTP server so the
+      // janitor can't race with shutdown on a half-deleted NDJSON file.
+      this.retentionJanitor.stopSchedule();
+      this.retentionJanitor = null;
     }
     return new Promise((resolve) => {
       if (!this.server) {
@@ -589,6 +668,25 @@ export class CommanderHttpServer {
       }
     }
     try {
+      // Stream alias: GET /api/v1/stream/{sessId}
+      // Mirrors /stream/runtime/{sessId} under the /api/v1 surface so SDK
+      // callers using the documented /api/v1/* path family don't have to
+      // fall back to the legacy /stream/{resource}/{id} layout. The legacy
+      // route continues to work for backward compatibility.
+      if (
+        segments[0] === 'api' &&
+        segments[1] === 'v1' &&
+        segments[2] === 'stream' &&
+        (req.method ?? 'GET') === 'GET' &&
+        segments[3]
+      ) {
+        // /api/v1/stream/{sessId} → handleStreamRequest expects segments
+        // = [resource, id, ...] where resource is 'runtime'.
+        const sessionId = segments[3];
+        const streamSegments = ['runtime', sessionId];
+        await this.handleStreamRequest(req, res, streamSegments);
+        return;
+      }
       // MCP endpoint: POST /api/v1/mcp — JSON-RPC 2.0 for tool discovery and execution
       if (segments[0] === 'api' && segments[1] === 'v1' && segments[2] === 'mcp') {
         await this.handleMCPRequest(req, res);
@@ -763,6 +861,169 @@ export class CommanderHttpServer {
           return;
         }
       }
+      // /api/v1/memory — POST { action: 'write' | 'query' | 'stats', ... }
+      // Single endpoint keeps auth + rate-limit + tenant resolution in one place
+      // and matches the SDK's `client.writeMemory / queryMemory / getMemoryStats`
+      // trio behind one URL surface. Memory backend is the tenant-aware
+      // singleton; we wrap the body in runWithTenant so per-tenant
+      // isolation is preserved (no global fallback used).
+      if (resource === 'memory' && method === 'POST') {
+        let body: {
+          action?: string;
+          content?: string;
+          importance?: number;
+          tags?: string[];
+          layer?: MemoryLayer;
+          id?: string;
+          keywords?: string[];
+          context?: string;
+          importanceThreshold?: number;
+          limit?: number;
+          since?: string;
+        };
+        try {
+          body = (await parseBody(req, this.config.maxBodyBytes)) as typeof body;
+        } catch (err) {
+          // parseBody can throw HttpRequestError(413); let the outer
+          // handleRequest catch apply the correct status code.
+          if (err instanceof HttpRequestError) throw err;
+          throw err;
+        }
+        const action = body.action;
+        const tenantId = this.requireTenant(req, res);
+        if (res.writableEnded) return;
+        try {
+          await runWithTenant(tenantId, async () => {
+            const memory = getGlobalThreeLayerMemory();
+            if (action === 'write') {
+              if (typeof body.content !== 'string' || body.content.length === 0) {
+                sendJson(res, 400, { error: 'memory.write requires non-empty content.' });
+                return;
+              }
+              const entry = memory.add(
+                body.content!,
+                body.layer ?? 'episodic',
+                `http-api:${body.id ?? id ?? 'anon'}`,
+                body.importance ?? 0.5,
+                body.tags ?? [],
+              );
+              sendJson(res, 201, {
+                id: entry.id === 'rejected' ? null : entry.id,
+                layer: entry.layer,
+                importance: entry.importance,
+                rejected: entry.id === 'rejected',
+                rejectionReason: entry.id === 'rejected' ? 'quality_gate' : undefined,
+              });
+              return;
+            }
+            if (action === 'query') {
+              const query: MemoryQuery = {
+                ...(body.layer ? { layer: body.layer } : {}),
+                ...(body.keywords ? { keywords: body.keywords } : {}),
+                ...(body.context ? { context: body.context } : {}),
+                ...(body.importanceThreshold !== undefined
+                  ? { importanceThreshold: body.importanceThreshold }
+                  : {}),
+                ...(body.limit !== undefined ? { limit: body.limit } : {}),
+                ...(body.since ? { since: body.since } : {}),
+              };
+              const entries = memory.query(query);
+              sendJson(res, 200, {
+                items: entries.map((e) => ({
+                  id: e.id,
+                  layer: e.layer,
+                  content: e.content,
+                  context: e.context,
+                  importance: e.importance,
+                  tags: e.tags,
+                  metadata: e.metadata,
+                  createdAt: e.createdAt,
+                  lastAccessedAt: e.lastAccessedAt,
+                  accessCount: e.accessCount,
+                })),
+                total: entries.length,
+              });
+              return;
+            }
+            if (action === 'stats') {
+              const stats = memory.getStats();
+              sendJson(res, 200, {
+                totalEntries: stats.totalEntries,
+                byLayer: stats.byLayer,
+                averageImportance: stats.averageImportance,
+                averageAccessCount: stats.averageAccessCount,
+                totalMemoryUsed: stats.totalMemoryUsed,
+              });
+              return;
+            }
+            sendJson(res, 400, {
+              error: `Unknown memory action '${action}'. Use 'write'|'query'|'stats'.`,
+            });
+          });
+          return;
+        } catch (err) {
+          if (err instanceof HttpRequestError) throw err;
+          sendJson(res, 500, {
+            error: `Memory backend error: ${err instanceof Error ? err.message : String(err)}`,
+          });
+          return;
+        }
+      }
+      // /api/v1/plan — POST { task, signal? } → deliberation-only stub.
+      // Lives alongside /execute (which both plans and runs). No provider
+      // call is made — the endpoint returns complexity/topology/cost band
+      // estimates so callers can pre-budget WITHOUT committing tokens.
+      // Tenant-scoped via runWithTenant so the plan estimate can
+      // reflect the tenant's applied policies (rate limits, tool tier) in
+      // a follow-up. Today's stub uses tenant only for isolation, not for
+      // any state mutation.
+      if (resource === 'plan' && method === 'POST') {
+        const body = (await parseBody(req, this.config.maxBodyBytes)) as {
+          task?: string;
+          provider?: string;
+          model?: string;
+        };
+        const taskText = typeof body.task === 'string' && body.task.length > 0 ? body.task : '';
+        if (!taskText) {
+          sendJson(res, 400, { error: 'plan requires a non-empty task string.' });
+          return;
+        }
+        const tenantId = this.requireTenant(req, res);
+        if (res.writableEnded) return;
+        // Heuristic ladder uses ELSE-IF so each trigger is mutually
+        // exclusive (highest priority rung wins). wordCount is the
+        // word count, distinct from estimatedTokens (LLM-style estimate
+        // via the same TokenGovernor that execute uses downstream).
+        const wordCount = taskText.split(/\s+/).filter(Boolean).length;
+        const estimatedTokens = TokenGovernor.estimateTokens(taskText) + 800; // +800 system-prompt overhead
+        const complexityScore = Math.min(1, Math.log2(Math.max(4, wordCount)) / 10);
+        const { topology, estimatedCostBand, estimatedSteps } = pickTopology(taskText, wordCount);
+        sendJson(res, 200, {
+          task: taskText.slice(0, 240),
+          provider: body.provider ?? null,
+          model: body.model ?? null,
+          tenantId,
+          planOnly: true,
+          topology,
+          complexityScore,
+          estimatedSteps,
+          estimatedCostBand,
+          estimatedTokens,
+          estimate: {
+            timeBudgetMs: estimatedSteps * 4_000 + 2_000,
+            costBudgetUsd:
+              topology === 'HIERARCHICAL'
+                ? 0.85
+                : topology === 'PARALLEL'
+                  ? 0.55
+                  : topology === 'SEQUENTIAL'
+                    ? 0.35
+                    : 0.15,
+          },
+          note: 'deliberation-only response — no provider call was made; use POST /api/v1/execute to run.',
+        });
+        return;
+      }
       if (resource === 'bus') {
         if (method === 'GET') {
           const topic = queryStr
@@ -840,6 +1101,77 @@ export class CommanderHttpServer {
           return;
         }
       }
+      // /api/v1/security/owasp-agentic-ai-top10
+      // GET  → OwaspAsiTop10.report() JSON (windowMs/renderedAt/overallScore/totalsByAsi[])
+      // POST → ingest a SecurityEvent through the classifier. Mirrors the
+      //        security.event bus subscription so SIEM forwarders and manual
+      //        replays can hit the aggregator without coupling to the bus.
+      //        Tenant-scoped via runWithTenant when multi-tenant mode
+      //        is configured (matches /api/v1/memory gating); otherwise the
+      //        singleton's global fallback is used so single-tenant mode is
+      //        preserved.
+      if (resource === 'security' && segments[2] === 'owasp-agentic-ai-top10') {
+        if (method === 'GET') {
+          // Tenant scope MUST be set before getOwaspAsiTop10() resolves;
+          // otherwise the createTenantAwareSingleton lambda falls back to
+          // the singleton's globalInstance and we leak other tenants'
+          // security posture to the caller. Same 401-on-multi-tenant-mode
+          // logic as the /api/v1/memory and /api/v1/plan handlers — if
+          // a tenant map is configured, an unmapped key is rejected.
+          const tenantId = this.requireTenant(req, res);
+          if (res.writableEnded) return;
+          const report = await runWithTenant(tenantId, async () => getOwaspAsiTop10().report());
+          sendJson(res, 200, report);
+          return;
+        }
+        if (method === 'POST') {
+          const body = (await parseBody(req, this.config.maxBodyBytes)) as SecurityEvent;
+          if (!body || typeof body !== 'object' || !body.type) {
+            sendJson(res, 400, {
+              error:
+                'POST /api/v1/security/owasp-agentic-ai-top10 requires a SecurityEvent-shaped body { type, severity, ... }.',
+            });
+            return;
+          }
+          const tenantId = this.requireTenant(req, res);
+          if (res.writableEnded) return;
+          // Derive routing the same way classifyFromSecurityEvent does so the
+          // 202 response can tell SIEM tracers which ASI(s) the ingest landed
+          // on, without recomputing on the client.
+          const detector =
+            (body.details?.detector as string | undefined) ?? body.source ?? undefined;
+          const routingAsis = SECURITY_EVENT_TYPE_TO_ASI[body.type as SecurityEvent['type']] ?? [];
+          const overrideAsi = detector ? (DETECTOR_TO_ASI_OVERRIDE[detector] ?? null) : null;
+          const categories = Array.isArray(body.details?.category)
+            ? (body.details!.category as string[])
+            : body.details?.category
+              ? [body.details.category as string]
+              : [];
+          const isOutputTamper =
+            detector === 'outputSanitizer' &&
+            categories.some((c) =>
+              ['jwt_token', 'connection_string', 'base64_blob', 'password_secret'].includes(c),
+            );
+          const routedAsis: string[] = Array.from(
+            new Set<string>([
+              ...routingAsis,
+              ...(overrideAsi ? [overrideAsi] : []),
+              ...(isOutputTamper ? ['ASI09'] : []),
+            ]),
+          );
+          await runWithTenant(tenantId, async () => {
+            getOwaspAsiTop10().classifyFromSecurityEvent(body);
+          });
+          sendJson(res, 202, {
+            accepted: true,
+            routedAsis,
+            detector: detector ?? null,
+            eventType: body.type,
+            windowMs: getOwaspAsiTop10().report().windowMs,
+          });
+          return;
+        }
+      }
       if (resource === 'observability') {
         const traceStore = new PersistentTraceStore();
         const obsDeps: ObservabilityDeps = {
@@ -870,6 +1202,20 @@ export class CommanderHttpServer {
       sendJson(res, 404, { error: 'Session not found' });
       return;
     }
+
+    // SSE per-IP connection limit
+    const ip = req.socket.remoteAddress ?? 'unknown';
+    let ipConns = this.sseConnections.get(ip);
+    if (!ipConns) {
+      ipConns = new Set();
+      this.sseConnections.set(ip, ipConns);
+    }
+    if (ipConns.size >= CommanderHttpServer.MAX_SSE_PER_IP) {
+      sendJson(res, 429, { error: 'Too many SSE connections from this IP.' });
+      return;
+    }
+    ipConns.add(res);
+
     entry.lastAccessedAt = Date.now();
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -893,6 +1239,11 @@ export class CommanderHttpServer {
       unsubComplete();
       unsubError();
       stream.close();
+      const conns = this.sseConnections.get(ip);
+      if (conns) {
+        conns.delete(res);
+        if (conns.size === 0) this.sseConnections.delete(ip);
+      }
     });
   }
 
@@ -1116,6 +1467,35 @@ export class CommanderHttpServer {
     return this.tenantApiKeyHashes.get(hashSecret(key));
   }
 
+  /**
+   * Tenant gate shared by all multi-tenant-aware handlers
+   * (/api/v1/memory, /api/v1/plan, /api/v1/security/owasp-agentic-ai-top10).
+   *
+   * Behavior:
+   *  - Single-tenant mode (no `tenantApiKeyHashes` configured): pass-through.
+   *    Returns whatever the auth header maps to (typically `undefined`), letting
+   *    the downstream `runWithTenant(undefined, …)` fall back to the singleton
+   *    globalInstance. No 401 — preserves legacy single-tenant deployments.
+   *  - Multi-tenant mode (map configured, auth header unmapped or absent):
+   *    sends a 401 JSON response via `sendJson` and returns `undefined`.
+   *    Caller MUST check `res.writableEnded` after the call to short-circuit
+   *    the rest of the handler.
+   *  - Multi-tenant mode with a mapped key: returns the resolved tenantId,
+   *    caller proceeds into `runWithTenant(tenantId, …)`.
+   */
+  private requireTenant(req: IncomingMessage, res: ServerResponse): string | undefined {
+    if (this.tenantApiKeyHashes.size === 0) {
+      return this.resolveTenantFromAuth(req);
+    }
+    const tenantId = this.resolveTenantFromAuth(req);
+    if (!tenantId) {
+      sendJson(res, 401, {
+        error: `Tenant required for ${req.url}. Configure tenantApiKeyHashes and send a mapped API key.`,
+      });
+    }
+    return tenantId;
+  }
+
   private checkRateLimit(ip: string): boolean {
     const now = Date.now();
     const entry = this.rateLimitMap.get(ip);
@@ -1178,6 +1558,10 @@ export class CommanderHttpServer {
         return new AnyscaleProvider({ apiKey: process.env.ANYSCALE_API_KEY ?? '' });
       case 'deepinfra':
         return new DeepInfraProvider({ apiKey: process.env.DEEPINFRA_API_KEY ?? '' });
+      case 'agnes':
+        return new AgnesProvider({ apiKey: process.env.AGNES_API_KEY ?? '' });
+      case 'stepfun':
+        return new StepFunProvider({ apiKey: process.env.STEPFUN_API_KEY ?? '' });
       default:
         return new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY ?? '' });
     }
