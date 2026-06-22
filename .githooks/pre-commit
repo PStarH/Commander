@@ -15,6 +15,16 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO_ROOT"
 
+# Prepend locally-installed binaries to PATH so `npx vitest ...` inside
+# scripts/precommitHook.ts resolves directly without falling back to a
+# network fetch. pnpm hoists some deps to the root node_modules while
+# per-package devDeps land in packages/<name>/node_modules — add both
+# locations so cached / CI-clean / sandboxed environments don't trip the
+# smoke test on a missing binary. Root-precedence mirrors pnpm's own
+# resolution order; PATH prepended so installer-installed PATH doesn't
+# shadow the workspace binary.
+export PATH="$REPO_ROOT/node_modules/.bin:$REPO_ROOT/packages/core/node_modules/.bin:$PATH"
+
 # Emergency bypass — log loudly so the bypass shows in CI audit.
 if [ "${COMMANDER_SKIP_PRECOMMIT:-0}" = "1" ]; then
   echo "⚠️  COMMANDER_SKIP_PRECOMMIT=1 — D3 hook skipped (audit log will record this)" >&2
