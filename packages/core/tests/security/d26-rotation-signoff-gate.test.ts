@@ -404,11 +404,12 @@ describe('D3.0 hardening — public reason-codes API (reasons: readonly string[]
   });
 
   it('exit 2 (file-missing): reasons[] is single-element error caption', () => {
-    const r = runVerifier(path.join(REPO_ROOT, 'this/path/does/not/exist.md'));
+    const missingPath = path.join(REPO_ROOT, 'this/path/does/not/exist.md');
+    const r = runVerifier(missingPath);
     expect(r.exitCode).toBe(2);
     expect(r.reasons.length).toBe(1);
     expect(r.reasons[0]).toMatch(/^ERROR: doc not found at /);
-    expect(r.reasons[0]).toContain('this/path/does/not/exist.md');
+    expect(r.reasons[0]).toContain(path.join('this', 'path', 'does', 'not', 'exist.md'));
   });
 
   it('exit 2 (§6 missing): reasons[] is single-element error caption', () => {
