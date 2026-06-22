@@ -33,9 +33,12 @@ if (!parentPort) {
 }
 
 const COMPACTED_MARKER = '__COMPACTED__';
-const RE_QUESTION_INSTRUCTION = /\b(how|what|why|when|where|who|which|can you|please|explain|implement|fix|create|write|refactor|test|verify)\b/i;
-const RE_DECISION_PATTERN = /\b(decided|decision|conclusion|agreed|opted|chosen|selected|will use|going with)\b/i;
-const RE_ERROR_CONTENT = /\b(error|exception|fail|failed|timeout|crash|invalid|cannot|unable|ERR_|Traceback)\b/i;
+const RE_QUESTION_INSTRUCTION =
+  /\b(how|what|why|when|where|who|which|can you|please|explain|implement|fix|create|write|refactor|test|verify)\b/i;
+const RE_DECISION_PATTERN =
+  /\b(decided|decision|conclusion|agreed|opted|chosen|selected|will use|going with)\b/i;
+const RE_ERROR_CONTENT =
+  /\b(error|exception|fail|failed|timeout|crash|invalid|cannot|unable|ERR_|Traceback)\b/i;
 
 function isCompacted(msg: LLMMessage): boolean {
   return typeof msg.content === 'string' && msg.content.startsWith(COMPACTED_MARKER);
@@ -101,7 +104,8 @@ function buildHeuristicSummary(turns: LLMMessage[][][], verbosity: string): stri
     }
   }
 
-  const detailLevel = verbosity === 'high' ? 'detailed' : verbosity === 'low' ? 'brief' : 'moderate';
+  const detailLevel =
+    verbosity === 'high' ? 'detailed' : verbosity === 'low' ? 'brief' : 'moderate';
   return [
     `[${detailLevel} summary] Compacted ${totalTurns} turn(s) / ${totalMessages} message(s)`,
     `Speakers: ${userCount} user, ${assistantCount} assistant, ${toolCount} tool.`,

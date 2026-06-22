@@ -307,7 +307,8 @@ export function initializeServices(
   const runLifecycle = new RunLifecycleManager();
   const tenantManager = new TenantManager();
 
-  const { ReflexionGenerator } = require('./reflexionGenerator') as typeof import('./reflexionGenerator');
+  const { ReflexionGenerator } =
+    require('./reflexionGenerator') as typeof import('./reflexionGenerator');
   const reflexionGenerator = new ReflexionGenerator();
 
   const toolExecutionService = new ToolExecutionService({
@@ -323,7 +324,10 @@ export function initializeServices(
     generateActionId: () => `action_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
   });
 
-  const outputManager = new ToolOutputManager({ enabled: true, turnBudget: TOOL_OUTPUT_TURN_BUDGET });
+  const outputManager = new ToolOutputManager({
+    enabled: true,
+    turnBudget: TOOL_OUTPUT_TURN_BUDGET,
+  });
 
   const defaultApprovalCallback = async (req: {
     id: string;

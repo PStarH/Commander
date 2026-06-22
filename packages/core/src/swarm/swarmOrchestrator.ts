@@ -422,7 +422,11 @@ export class SwarmOrchestrator {
         },
       );
 
-      bus.publish('swarm.completed', 'swarm-orch', { round, depth: this.depth, decision: baseDecision.decision });
+      bus.publish('swarm.completed', 'swarm-orch', {
+        round,
+        depth: this.depth,
+        decision: baseDecision.decision,
+      });
 
       if (baseDecision.decision.startsWith('stop_')) break;
     }
