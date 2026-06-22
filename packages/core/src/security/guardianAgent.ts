@@ -1,5 +1,6 @@
 import { getSecurityMonitor, type SecurityAlert } from './securityMonitor';
 import { getSecurityAuditLogger } from './securityAuditLogger';
+import { getMetricsCollector } from '../runtime/metricsCollector';
 import type { ContentThreat } from '../contentScanner';
 
 export type GuardianInterventionType =
@@ -354,8 +355,7 @@ export class GuardianAgent {
     const tokenMetadata = action.metadata as { tokens?: number } | undefined;
     const tokens = tokenMetadata?.tokens ?? 0;
     if (tokens > 0) {
-      baseline.avgTokensPerCall =
-        baseline.avgTokensPerCall * (1 - alpha) + tokens * alpha;
+      baseline.avgTokensPerCall = baseline.avgTokensPerCall * (1 - alpha) + tokens * alpha;
 
       // Token rate (per minute)
       const timestamps = this.tokenTimestamps.get(action.agentId) ?? [];
@@ -366,8 +366,7 @@ export class GuardianAgent {
       }
       this.tokenTimestamps.set(action.agentId, timestamps);
       const rate = timestamps.length; // calls per minute window
-      baseline.avgTokensPerMinute =
-        baseline.avgTokensPerMinute * (1 - alpha) + rate * alpha;
+      baseline.avgTokensPerMinute = baseline.avgTokensPerMinute * (1 - alpha) + rate * alpha;
     }
 
     // Tool call frequency — compute actual calls-per-minute from timestamp window
@@ -384,7 +383,8 @@ export class GuardianAgent {
         baseline.avgToolCallsPerMinute * (1 - alpha) + currentRate * alpha;
 
       // Tool distribution
-      const toolName = (action.metadata as { toolName?: string } | undefined)?.toolName ?? 'unknown';
+      const toolName =
+        (action.metadata as { toolName?: string } | undefined)?.toolName ?? 'unknown';
       const currentCount = baseline.toolDistribution.get(toolName) ?? 0;
       (baseline.toolDistribution as Map<string, number>).set(toolName, currentCount + 1);
     }
@@ -393,10 +393,7 @@ export class GuardianAgent {
   /**
    * Detect when current behavior deviates significantly from the baseline.
    */
-  private detectBaselineDeviation(
-    agentId: string,
-    action: GuardianAction,
-  ): boolean {
+  private detectBaselineDeviation(agentId: string, action: GuardianAction): boolean {
     const baseline = this.baselines.get(agentId);
     if (!baseline || baseline.observationCount < this.config.baselineMinObservations) {
       return false;
@@ -505,6 +502,17 @@ export class GuardianAgent {
 
     const consecutive = (this.consecutiveAnomalies.get(action.agentId) ?? 0) + 1;
     this.consecutiveAnomalies.set(action.agentId, consecutive);
+
+    try {
+      getMetricsCollector().incrementCounter(
+        'guardian_interventions_total',
+        'Guardian agent interventions by type',
+        1,
+        [{ name: 'type', value: type }],
+      );
+    } catch {
+      /* best-effort */
+    }
 
     const audit = getSecurityAuditLogger();
     audit.logEvent({

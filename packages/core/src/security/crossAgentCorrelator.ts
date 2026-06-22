@@ -26,6 +26,7 @@
 import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import { getSecurityMonitor } from './securityMonitor';
+import { getMetricsCollector } from '../runtime/metricsCollector';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 // ============================================================================
@@ -251,6 +252,17 @@ export class CrossAgentCorrelator {
           this.matches.splice(0, this.matches.length - this.config.maxMatches);
         }
         this.alertOnMatch(match);
+
+        try {
+          getMetricsCollector().incrementCounter(
+            'cross_agent_correlations_total',
+            'Cross-agent correlation matches detected',
+            1,
+            [{ name: 'rule_type', value: match.ruleType }],
+          );
+        } catch {
+          /* best-effort */
+        }
       }
     }
 
@@ -296,7 +308,9 @@ export class CrossAgentCorrelator {
     rule: CorrelationRule,
   ): CorrelationMatch | null {
     const dataReaders = events.filter(
-      (e) => e.type === 'data_read' && (e.dataLabels?.some((l) => l.includes('sensitive') || l.includes('internal')) ?? false),
+      (e) =>
+        e.type === 'data_read' &&
+        (e.dataLabels?.some((l) => l.includes('sensitive') || l.includes('internal')) ?? false),
     );
     const dataSenders = events.filter(
       (e) => e.type === 'network_request' || e.type === 'data_write',
@@ -309,10 +323,7 @@ export class CrossAgentCorrelator {
       // If readers and senders are different agents, that's suspicious
       const allShared = [...readerAgents].every((a) => senderAgents.has(a));
       if (!allShared && readerAgents.size >= 1 && senderAgents.size >= 1) {
-        const riskScore = Math.min(
-          100,
-          40 + dataReaders.length * 10 + dataSenders.length * 10,
-        );
+        const riskScore = Math.min(100, 40 + dataReaders.length * 10 + dataSenders.length * 10);
         if (riskScore < rule.minRiskScore) return null;
 
         return this.buildMatch(
@@ -370,11 +381,10 @@ export class CrossAgentCorrelator {
     events: CrossAgentEvent[],
     rule: CorrelationRule,
   ): CorrelationMatch | null {
-    const toolOutputs = events.filter(
-      (e) => e.type === 'tool_result' || e.type === 'data_read',
-    );
+    const toolOutputs = events.filter((e) => e.type === 'tool_result' || e.type === 'data_read');
     const consumers = events.filter(
-      (e) => e.type === 'llm_call' &&
+      (e) =>
+        e.type === 'llm_call' &&
         (e.metadata as { consumedAgentOutput?: string })?.consumedAgentOutput,
     );
 
@@ -614,9 +624,7 @@ export class CrossAgentCorrelator {
 
 const correlatorSingleton = createTenantAwareSingleton(() => new CrossAgentCorrelator());
 
-export function getCrossAgentCorrelator(
-  config?: Partial<CorrelatorConfig>,
-): CrossAgentCorrelator {
+export function getCrossAgentCorrelator(config?: Partial<CorrelatorConfig>): CrossAgentCorrelator {
   return correlatorSingleton.get();
 }
 

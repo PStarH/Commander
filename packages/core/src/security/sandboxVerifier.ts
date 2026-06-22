@@ -156,8 +156,13 @@ function buildTestSuite(osPlatform: string): VerificationTest[] {
       expectedBehavior: 'Access should be denied',
       check: (stdout, stderr, exitCode) => {
         const output = (stdout + stderr).toLowerCase();
-        return exitCode !== 0 || output.includes('denied') || output.includes('permission')
-          || output.includes('access') || output.includes('error');
+        return (
+          exitCode !== 0 ||
+          output.includes('denied') ||
+          output.includes('permission') ||
+          output.includes('access') ||
+          output.includes('error')
+        );
       },
     },
     {
@@ -169,8 +174,14 @@ function buildTestSuite(osPlatform: string): VerificationTest[] {
       expectedBehavior: 'Write should fail with permission error',
       check: (stdout, stderr, exitCode) => {
         const output = (stdout + stderr).toLowerCase();
-        return exitCode !== 0 || output.includes('denied') || output.includes('permission')
-          || output.includes('access') || output.includes('error') || output.includes('read-only');
+        return (
+          exitCode !== 0 ||
+          output.includes('denied') ||
+          output.includes('permission') ||
+          output.includes('access') ||
+          output.includes('error') ||
+          output.includes('read-only')
+        );
       },
       requiresWritable: true,
     },
@@ -194,9 +205,14 @@ function buildTestSuite(osPlatform: string): VerificationTest[] {
       expectedBehavior: 'Should be BLOCKED or timeout',
       check: (stdout, stderr) => {
         const output = (stdout + stderr).toUpperCase();
-        return output.includes('BLOCKED') || output.includes('REFUSED')
-          || output.includes('TIMEOUT') || output.includes('UNREACHABLE')
-          || output.includes('COULD NOT') || output.includes('ERROR');
+        return (
+          output.includes('BLOCKED') ||
+          output.includes('REFUSED') ||
+          output.includes('TIMEOUT') ||
+          output.includes('UNREACHABLE') ||
+          output.includes('COULD NOT') ||
+          output.includes('ERROR')
+        );
       },
       requiresBlockedNetwork: true,
     },
@@ -205,16 +221,21 @@ function buildTestSuite(osPlatform: string): VerificationTest[] {
       area: 'process_isolation',
       name: 'Child process inherits sandbox file restrictions',
       description: 'Verify child processes spawned inside sandbox cannot access protected paths',
-      command: forkTest + (isWindows
-        ? ` && type "${protectedPaths[0]}" 2>&1`
-        : ` && cat ${protectedPaths[0]} 2>&1`),
+      command:
+        forkTest +
+        (isWindows ? ` && type "${protectedPaths[0]}" 2>&1` : ` && cat ${protectedPaths[0]} 2>&1`),
       expectedBehavior: 'Forked process should also be denied access to protected files',
       check: (stdout, stderr, exitCode) => {
         const output = (stdout + stderr).toLowerCase();
         // Either the fork itself failed (sandbox blocks forking — stronger isolation)
         // or the read was denied (fork inherited restrictions — correct behavior)
-        return exitCode !== 0 || output.includes('denied') || output.includes('permission')
-          || output.includes('error') || output.includes('not found');
+        return (
+          exitCode !== 0 ||
+          output.includes('denied') ||
+          output.includes('permission') ||
+          output.includes('error') ||
+          output.includes('not found')
+        );
       },
     },
     {
@@ -372,16 +393,24 @@ export class SandboxVerifier {
 
     const recommendations: string[] = [];
     if (sandboxMechanism === 'none') {
-      recommendations.push('CRITICAL: No OS-level sandbox active. Enable Seatbelt (macOS), bwrap (Linux), or AppContainer (Windows).');
+      recommendations.push(
+        'CRITICAL: No OS-level sandbox active. Enable Seatbelt (macOS), bwrap (Linux), or AppContainer (Windows).',
+      );
     }
     if (results.network_isolation.fail > 0) {
-      recommendations.push('Network isolation failed — verify firewall rules or container network config.');
+      recommendations.push(
+        'Network isolation failed — verify firewall rules or container network config.',
+      );
     }
     if (results.file_isolation.fail > 0) {
-      recommendations.push('File isolation failed — check sandbox profile filesystem rules and protected paths.');
+      recommendations.push(
+        'File isolation failed — check sandbox profile filesystem rules and protected paths.',
+      );
     }
     if (results.env_sanitization.fail > 0) {
-      recommendations.push('Environment sanitization failed — secrets may be leaking into sandboxed processes.');
+      recommendations.push(
+        'Environment sanitization failed — secrets may be leaking into sandboxed processes.',
+      );
     }
 
     // Log report to audit chain
@@ -399,7 +428,9 @@ export class SandboxVerifier {
           results,
         },
       });
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
 
     return {
       reportId,

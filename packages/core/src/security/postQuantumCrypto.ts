@@ -205,10 +205,7 @@ export class PostQuantumCrypto {
   }
 
   /** Synchronous PQ-safe hash (uses SHA-512 fallback path always). */
-  hashSync(
-    input: string | Buffer,
-    options?: { outputLength?: number },
-  ): PqHashResult {
+  hashSync(input: string | Buffer, options?: { outputLength?: number }): PqHashResult {
     const outputLength = options?.outputLength ?? this.config.defaultHashLength;
     const data = typeof input === 'string' ? Buffer.from(input, 'utf-8') : input;
     const hashHex = this.hashSha512PQ(data, outputLength);
@@ -241,7 +238,10 @@ export class PostQuantumCrypto {
    */
   private hashSha512PQ(data: Buffer, outputLength: number): string {
     const inner = crypto.createHash('sha512').update(data).digest();
-    const outer = crypto.createHash('sha512').update(Buffer.concat([inner, data])).digest();
+    const outer = crypto
+      .createHash('sha512')
+      .update(Buffer.concat([inner, data]))
+      .digest();
     return outer.subarray(0, outputLength).toString('hex');
   }
 
@@ -269,7 +269,8 @@ export class PostQuantumCrypto {
 
   /** Derive a public key from a private key using hash. */
   private derivePublicKey(privateKey: Buffer): Buffer {
-    return crypto.createHash('sha512')
+    return crypto
+      .createHash('sha512')
       .update(Buffer.concat([privateKey, Buffer.from('commander:pq:pubkey')]))
       .digest()
       .subarray(0, 32);
@@ -287,15 +288,13 @@ export class PostQuantumCrypto {
    * needs access to the private key. For asymmetric signatures, use
    * ML-DSA-65 (Dilithium) when Node.js supports it.
    */
-  createMac(
-    message: string | Buffer,
-    keyPair: PqKeyPair,
-  ): PqMac {
+  createMac(message: string | Buffer, keyPair: PqKeyPair): PqMac {
     const privateKey = Buffer.from(keyPair.privateKey, 'hex');
     const data = typeof message === 'string' ? Buffer.from(message, 'utf-8') : message;
 
     // Domain-separated signing key
-    const signKey = crypto.createHmac('sha512', privateKey)
+    const signKey = crypto
+      .createHmac('sha512', privateKey)
       .update(Buffer.from('commander:pq:sign'))
       .digest();
 
@@ -317,16 +316,13 @@ export class PostQuantumCrypto {
    * side-channels. Requires the private key — this is MAC verification,
    * not signature verification.
    */
-  verifyMac(
-    message: string | Buffer,
-    expectedMac: PqMac,
-    keyPair: PqKeyPair,
-  ): boolean {
+  verifyMac(message: string | Buffer, expectedMac: PqMac, keyPair: PqKeyPair): boolean {
     const privateKey = Buffer.from(keyPair.privateKey, 'hex');
     const data = typeof message === 'string' ? Buffer.from(message, 'utf-8') : message;
 
     // Re-derive the signing key
-    const signKey = crypto.createHmac('sha512', privateKey)
+    const signKey = crypto
+      .createHmac('sha512', privateKey)
       .update(Buffer.from('commander:pq:sign'))
       .digest();
 
@@ -362,7 +358,8 @@ export class PostQuantumCrypto {
     const combined = Buffer.concat([peerKey, privateKey]);
     const salt = crypto.randomBytes(32);
 
-    return crypto.createHmac('sha512', salt)
+    return crypto
+      .createHmac('sha512', salt)
       .update(Buffer.concat([combined, Buffer.from('commander:pq:kex')]))
       .digest();
   }
@@ -439,10 +436,7 @@ export function resetPostQuantumCrypto(): void {
 /**
  * Compute a PQ-safe hash of a string and return hex.
  */
-export async function pqHash(
-  input: string,
-  outputLength?: number,
-): Promise<string> {
+export async function pqHash(input: string, outputLength?: number): Promise<string> {
   const result = await getPostQuantumCrypto().hash(input, { outputLength });
   return result.hash;
 }
@@ -450,10 +444,6 @@ export async function pqHash(
 /**
  * Verify a PQ-safe MAC (convenience).
  */
-export function pqVerifyMac(
-  message: string,
-  mac: PqMac,
-  keyPair: PqKeyPair,
-): boolean {
+export function pqVerifyMac(message: string, mac: PqMac, keyPair: PqKeyPair): boolean {
   return getPostQuantumCrypto().verifyMac(message, mac, keyPair);
 }
