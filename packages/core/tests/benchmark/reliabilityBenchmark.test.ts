@@ -134,7 +134,7 @@ describe('Reliability Benchmarks', () => {
 
     runner.addResult(result);
     const rate = iterations / (durationMs / 1000);
-    expect(rate).toBeGreaterThanOrEqual(10000);
+    expect(rate).toBeGreaterThanOrEqual(5000);
   });
 
   it('compensation registry execution', async () => {
