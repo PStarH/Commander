@@ -267,9 +267,10 @@ export async function handleRoutingDashboardRequest(
         }
         // List all overrides
         const listed: EpsilonOverride[] = deps.epsilonStore.list();
-        const entries = authTenant !== undefined
-          ? listed.filter((e: EpsilonOverride): boolean => e.tenantId === authTenant)
-          : listed;
+        const entries =
+          authTenant !== undefined
+            ? listed.filter((e: EpsilonOverride): boolean => e.tenantId === authTenant)
+            : listed;
         sendJson(res, 200, { count: entries.length, overrides: entries });
         return { handled: true, status: 200 };
       }
