@@ -249,3 +249,22 @@ prometheus/
 # Stale demo directory (demos live in packages only)
 demos/
 
+
+# .commander runtime data (DB files and queue artifacts are NOT tracked)
+packages/core/.commander/queues/
+.commander/atr_idempotency.db*
+.commander/atr_leases.db*
+.commander/atr_ledger.db*
+.commander/compensation_queue.db*
+.commander/conversations.db*
+.commander/posture-snapshots.json
+.commander/qa-*.log
+.commander/burn-in/
+.commander/intelligence/
+.commander/skills/
+.commander/scheduler/
+.commander/memory/
+
+# Vite/React generated type declarations and bundles (apps/web)
+apps/web/src/*.d.ts
+apps/web/src/*.js
