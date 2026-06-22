@@ -27,6 +27,29 @@ jobs:
 
       - run: pnpm install
 
+      - name: Rebuild better-sqlite3 native binding
+        # better-sqlite3 ships prebuilt binaries for most OS × ABI combos
+        # but pnpm 9.x's prebuild extraction occasionally fails on warm
+        # CI caches, producing 'Could not locate the bindings file
+        # ... node-v{N}-... better_sqlite3.node' on Node 20 / 22 runners.
+        # `pnpm rebuild better-sqlite3` re-runs prebuild-install and
+        # transparently falls back to a node-gyp source build for any
+        # ABI the prebuilds don't cover. `continue-on-error: true`
+        # surfaces an absent toolchain as a downstream test failure
+        # (clear), not as a workflow-config error (confusing).
+        continue-on-error: true
+        run: |
+          pnpm rebuild better-sqlite3 || (
+            echo "::warning::better-sqlite3 rebuild failed; tests requiring" \
+                 "the binding (e.g. tests/ultimate/workQueueStore.test.ts)" \
+                 "will fail in the next step"
+            exit 0
+          )
+          # Belt-and-suspenders probe: confirm the binding actually loads
+          # so a silent rebuild failure surfaces here (~5s) rather than
+          # collapsing into a 5-min test-runner error.
+          node -e "require('better-sqlite3')" || echo "::warning::binding did not load post-rebuild"
+
       - name: Security audit
         run: pnpm audit --audit-level=high
 
