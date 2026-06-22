@@ -1,8 +1,0 @@
-{
-  "benchmark": "MT-Bench",
-  "dataset": "5 questions (NOT standard 80-question MT-Bench)",
-  "model": "MiMo-V2.5-Pro",
-  "date": "2026-05-16",
-  "average_score": 7.8,
-  "caveat": "Only 5 questions. Standard MT-Bench has 80 questions across 8 categories. Score not directly comparable."
-}
