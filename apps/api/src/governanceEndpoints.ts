@@ -114,7 +114,12 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
     }
 
     try {
-      const checkpoint = checkpointManager.approve(String(req.params.id), reviewerId, reason, conditions);
+      const checkpoint = checkpointManager.approve(
+        String(req.params.id),
+        reviewerId,
+        reason,
+        conditions,
+      );
       res.json(checkpoint);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });

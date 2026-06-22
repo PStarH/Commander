@@ -41,6 +41,7 @@ import {
 import { createEvaluationRunnerRouter } from './evaluationRunnerEndpoints';
 import { createOrchestratorRouter } from './orchestratorEndpoints';
 import { createObservabilityRouter } from './observabilityEndpoints';
+import { createStreamRouter } from './streamEndpoints';
 
 const PROJECT_ID = process.env.COMMANDER_PROJECT_ID ?? 'project-war-room';
 const app = express();
@@ -190,6 +191,7 @@ app.use('/a2a', a2aRouter);
 app.use('/a2a/v2', createA2AV2Router());
 app.use('/mcp', createMCPRouter());
 app.use('/mcp/client', createMCPClientRouter());
+app.use(createStreamRouter());
 app.use('/api/runtime', createRuntimeRouter());
 app.use('/', createCostRouter());
 app.use('/', createPauseRouter());
