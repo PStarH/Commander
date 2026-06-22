@@ -50,6 +50,15 @@ export default tseslint.config(
     files: ['packages/core/src/tools/scriptTool.ts', 'packages/core/src/tools/codeRefinerTool.ts'],
     rules: { 'no-console': 'off' },
   },
+  // Security test/reporting scripts — console.* for adversarial test output and compliance reports
+  {
+    files: [
+      'packages/core/src/security/runAdversarialLLMTest.ts',
+      'packages/core/src/security/runComplianceAudit.ts',
+      'packages/core/src/security/runRedTeamBattery.ts',
+    ],
+    rules: { 'no-console': 'off', '@typescript-eslint/no-explicit-any': 'warn' },
+  },
   // SDK and web app — separate packages with their own conventions
   {
     files: ['packages/sdk/**/*.ts', 'apps/**/*.ts'],
@@ -62,6 +71,7 @@ export default tseslint.config(
       'packages/core/src/tools/webSearchTool.ts',
       'packages/core/src/runtime/distributedTracing.ts',
       'packages/core/src/ultimate/orchestrator.ts',
+      'packages/core/src/security/runAdversarialLLMTest.ts',
     ],
     rules: { '@typescript-eslint/no-explicit-any': 'warn' },
   },

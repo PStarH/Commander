@@ -91,31 +91,41 @@ interface FileTypeSignature {
   extension: string;
   mime: string;
   magic: number[]; // Leading bytes
-  offset?: number;  // Offset where magic bytes start (for containers)
+  offset?: number; // Offset where magic bytes start (for containers)
 }
 
 const KNOWN_SIGNATURES: FileTypeSignature[] = [
   // Images
-  { extension: '.png',  mime: 'image/png',        magic: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] },
-  { extension: '.jpg',  mime: 'image/jpeg',       magic: [0xFF, 0xD8, 0xFF] },
-  { extension: '.gif',  mime: 'image/gif',        magic: [0x47, 0x49, 0x46, 0x38] },
-  { extension: '.webp', mime: 'image/webp',       magic: [0x52, 0x49, 0x46, 0x46] }, // RIFF
-  { extension: '.bmp',  mime: 'image/bmp',        magic: [0x42, 0x4D] },
-  { extension: '.svg',  mime: 'image/svg+xml',    magic: [0x3C] }, // Starts with '<'
+  { extension: '.png', mime: 'image/png', magic: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
+  { extension: '.jpg', mime: 'image/jpeg', magic: [0xff, 0xd8, 0xff] },
+  { extension: '.gif', mime: 'image/gif', magic: [0x47, 0x49, 0x46, 0x38] },
+  { extension: '.webp', mime: 'image/webp', magic: [0x52, 0x49, 0x46, 0x46] }, // RIFF
+  { extension: '.bmp', mime: 'image/bmp', magic: [0x42, 0x4d] },
+  { extension: '.svg', mime: 'image/svg+xml', magic: [0x3c] }, // Starts with '<'
   // Video
-  { extension: '.mp4',  mime: 'video/mp4',        magic: [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70], offset: 4 },
-  { extension: '.avi',  mime: 'video/x-msvideo',  magic: [0x52, 0x49, 0x46, 0x46] },
-  { extension: '.mov',  mime: 'video/quicktime',  magic: [0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70], offset: 4 },
-  { extension: '.webm', mime: 'video/webm',       magic: [0x1A, 0x45, 0xDF, 0xA3] },
+  {
+    extension: '.mp4',
+    mime: 'video/mp4',
+    magic: [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70],
+    offset: 4,
+  },
+  { extension: '.avi', mime: 'video/x-msvideo', magic: [0x52, 0x49, 0x46, 0x46] },
+  {
+    extension: '.mov',
+    mime: 'video/quicktime',
+    magic: [0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70],
+    offset: 4,
+  },
+  { extension: '.webm', mime: 'video/webm', magic: [0x1a, 0x45, 0xdf, 0xa3] },
   // Audio
-  { extension: '.mp3',  mime: 'audio/mpeg',       magic: [0xFF, 0xFB] },
-  { extension: '.wav',  mime: 'audio/wav',        magic: [0x52, 0x49, 0x46, 0x46] },
-  { extension: '.ogg',  mime: 'audio/ogg',        magic: [0x4F, 0x67, 0x67, 0x53] },
-  { extension: '.flac', mime: 'audio/flac',       magic: [0x66, 0x4C, 0x61, 0x43] },
+  { extension: '.mp3', mime: 'audio/mpeg', magic: [0xff, 0xfb] },
+  { extension: '.wav', mime: 'audio/wav', magic: [0x52, 0x49, 0x46, 0x46] },
+  { extension: '.ogg', mime: 'audio/ogg', magic: [0x4f, 0x67, 0x67, 0x53] },
+  { extension: '.flac', mime: 'audio/flac', magic: [0x66, 0x4c, 0x61, 0x43] },
   // Documents
-  { extension: '.pdf',  mime: 'application/pdf',  magic: [0x25, 0x50, 0x44, 0x46] },
-  { extension: '.zip',  mime: 'application/zip',  magic: [0x50, 0x4B, 0x03, 0x04] },
-  { extension: '.gz',   mime: 'application/gzip', magic: [0x1F, 0x8B, 0x08] },
+  { extension: '.pdf', mime: 'application/pdf', magic: [0x25, 0x50, 0x44, 0x46] },
+  { extension: '.zip', mime: 'application/zip', magic: [0x50, 0x4b, 0x03, 0x04] },
+  { extension: '.gz', mime: 'application/gzip', magic: [0x1f, 0x8b, 0x08] },
 ];
 
 // Malicious file signatures (known polyglots, exploit shells)
@@ -130,14 +140,21 @@ const MALICIOUS_SIGNATURES: Array<{
     name: 'GIFAR (GIF+JAR polyglot)',
     check: (buffer: Buffer) => {
       // Only flag if both GIF header AND ZIP/JAR signature found in same file
-      const hasGifHeader = buffer.length >= 4
-        && buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38;
+      const hasGifHeader =
+        buffer.length >= 4 &&
+        buffer[0] === 0x47 &&
+        buffer[1] === 0x49 &&
+        buffer[2] === 0x46 &&
+        buffer[3] === 0x38;
       if (!hasGifHeader) return false;
       const content = buffer.toString('latin1', 0, Math.min(buffer.length, 100_000));
       return content.includes('PK\u0003\u0004') || content.includes('Rar!');
     },
   },
-  { name: 'ImageTragick delegate', pattern: /@(delegate|mvg|msl|eps|svg|pdf|http|https|ftp)[\s\n\r(]/i },
+  {
+    name: 'ImageTragick delegate',
+    pattern: /@(delegate|mvg|msl|eps|svg|pdf|http|https|ftp)[\s\n\r(]/i,
+  },
   { name: 'GhostScript CVE-2023-36664', pattern: /%.*?pipe/i },
 ];
 
@@ -151,7 +168,7 @@ const DEFAULT_CONFIG: MultimodalScannerConfig = {
   enableAudioScan: true,
   enablePdfScan: true,
   maxFileSize: 100 * 1024 * 1024, // 100 MB
-  maxImagePixels: 100_000_000,    // 100 megapixels
+  maxImagePixels: 100_000_000, // 100 megapixels
 };
 
 // ============================================================================
@@ -183,22 +200,30 @@ export class MultimodalContentScanner {
     const startMs = Date.now();
     const threats: MultimodalThreat[] = [];
 
-    const extension = options?.fileExtension
-      ?? (options?.filePath ? this.extractExtension(options.filePath) : '.bin');
-    const normalizedExt = extension.toLowerCase().startsWith('.') ? extension.toLowerCase() : `.${extension.toLowerCase()}`;
+    const extension =
+      options?.fileExtension ??
+      (options?.filePath ? this.extractExtension(options.filePath) : '.bin');
+    const normalizedExt = extension.toLowerCase().startsWith('.')
+      ? extension.toLowerCase()
+      : `.${extension.toLowerCase()}`;
 
     // Early size check
     if (buffer.length > this.config.maxFileSize) {
       return this.buildResult(
-        'image', buffer, normalizedExt, 'application/octet-stream',
-        [{
-          type: 'excessive_resolution',
-          severity: 'MEDIUM',
-          description: `File size ${buffer.length} exceeds max ${this.config.maxFileSize}`,
-          modality: 'image',
-          evidence: `size=${buffer.length}`,
-          remediation: 'Reject file. Reduce size before uploading.',
-        }],
+        'image',
+        buffer,
+        normalizedExt,
+        'application/octet-stream',
+        [
+          {
+            type: 'excessive_resolution',
+            severity: 'MEDIUM',
+            description: `File size ${buffer.length} exceeds max ${this.config.maxFileSize}`,
+            modality: 'image',
+            evidence: `size=${buffer.length}`,
+            remediation: 'Reject file. Reduce size before uploading.',
+          },
+        ],
         startMs,
       );
     }
@@ -249,10 +274,7 @@ export class MultimodalContentScanner {
   // ── Modality-Specific Scanners ────────────────────────────────────
 
   /** Scan image files for threats. */
-  private scanImage(
-    buffer: Buffer,
-    extension: string,
-  ): MultimodalThreat[] {
+  private scanImage(buffer: Buffer, extension: string): MultimodalThreat[] {
     const threats: MultimodalThreat[] = [];
 
     // SVG XSS detection
@@ -335,10 +357,7 @@ export class MultimodalContentScanner {
   }
 
   /** Scan video files for threats. */
-  private scanVideo(
-    buffer: Buffer,
-    extension: string,
-  ): MultimodalThreat[] {
+  private scanVideo(buffer: Buffer, extension: string): MultimodalThreat[] {
     const threats: MultimodalThreat[] = [];
 
     // Check for embedded subtitles with command injection
@@ -369,10 +388,7 @@ export class MultimodalContentScanner {
   }
 
   /** Scan audio files for threats. */
-  private scanAudio(
-    buffer: Buffer,
-    extension: string,
-  ): MultimodalThreat[] {
+  private scanAudio(buffer: Buffer, extension: string): MultimodalThreat[] {
     const threats: MultimodalThreat[] = [];
 
     // ID3 tag injection (MP3)
@@ -413,10 +429,7 @@ export class MultimodalContentScanner {
   }
 
   /** Scan PDF files for threats. */
-  private scanPdf(
-    buffer: Buffer,
-    extension: string,
-  ): MultimodalThreat[] {
+  private scanPdf(buffer: Buffer, extension: string): MultimodalThreat[] {
     const threats: MultimodalThreat[] = [];
 
     const content = buffer.toString('latin1', 0, Math.min(buffer.length, 100_000));
@@ -475,10 +488,7 @@ export class MultimodalContentScanner {
   // ── Cross-Modality Scanners ───────────────────────────────────────
 
   /** Detect polyglot files (files valid in multiple formats). */
-  private scanPolyglot(
-    buffer: Buffer,
-    declaredModality: ModalityType,
-  ): MultimodalThreat[] {
+  private scanPolyglot(buffer: Buffer, declaredModality: ModalityType): MultimodalThreat[] {
     const threats: MultimodalThreat[] = [];
 
     // Check for nested magic bytes from other formats
@@ -557,10 +567,7 @@ export class MultimodalContentScanner {
   }
 
   /** Check for corrupt file structures. */
-  private scanCorruptStructure(
-    buffer: Buffer,
-    extension: string,
-  ): MultimodalThreat[] {
+  private scanCorruptStructure(buffer: Buffer, extension: string): MultimodalThreat[] {
     const threats: MultimodalThreat[] = [];
 
     // Truncated PNG
@@ -580,7 +587,11 @@ export class MultimodalContentScanner {
       const trailer = buffer.toString('latin1', buffer.length - 5, buffer.length);
       if (!trailer.includes('F')) {
         // PDF must end with %%EOF
-        const endContent = buffer.toString('latin1', Math.max(0, buffer.length - 1024), buffer.length);
+        const endContent = buffer.toString(
+          'latin1',
+          Math.max(0, buffer.length - 1024),
+          buffer.length,
+        );
         if (!endContent.includes('%%EOF')) {
           threats.push({
             type: 'corrupt_structure',
@@ -654,11 +665,7 @@ export class MultimodalContentScanner {
     return null;
   }
 
-  private matchesMagic(
-    buffer: Buffer,
-    sig: FileTypeSignature,
-    searchOffset: number,
-  ): boolean {
+  private matchesMagic(buffer: Buffer, sig: FileTypeSignature, searchOffset: number): boolean {
     const offset = sig.offset ?? 0;
     const startPos = searchOffset + offset;
     if (startPos + sig.magic.length > buffer.length) return false;
@@ -680,7 +687,8 @@ export class MultimodalContentScanner {
     if (mimeType.startsWith('audio/')) return 'audio';
     if (mimeType === 'application/pdf') return 'pdf';
     // Fallback: detect by extension when magic bytes don't match
-    if (['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.wma'].includes(extension)) return 'audio';
+    if (['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.wma'].includes(extension))
+      return 'audio';
     if (['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv'].includes(extension)) return 'video';
     if (['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'].includes(extension)) return 'document';
     if (['.zip', '.tar', '.gz', '.7z', '.rar'].includes(extension)) return 'archive';
@@ -706,7 +714,8 @@ export class MultimodalContentScanner {
     const fileHash = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 16);
 
     return {
-      isSafe: threats.filter((t) => t.severity === 'CRITICAL' || t.severity === 'HIGH').length === 0,
+      isSafe:
+        threats.filter((t) => t.severity === 'CRITICAL' || t.severity === 'HIGH').length === 0,
       modality,
       threats,
       riskScore,
@@ -724,7 +733,10 @@ export class MultimodalContentScanner {
   private calculateRiskScore(threats: MultimodalThreat[]): number {
     if (threats.length === 0) return 0;
     const weights = { LOW: 5, MEDIUM: 15, HIGH: 35, CRITICAL: 45 };
-    return Math.min(100, threats.reduce((sum, t) => sum + weights[t.severity], 0));
+    return Math.min(
+      100,
+      threats.reduce((sum, t) => sum + weights[t.severity], 0),
+    );
   }
 }
 

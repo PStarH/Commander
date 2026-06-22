@@ -199,7 +199,10 @@ export class AgentStandbyManager {
     this.startTime = Date.now();
 
     // Start health checks
-    this.healthCheckTimer = setInterval(() => this.healthCheck(), this.config.healthCheckIntervalMs);
+    this.healthCheckTimer = setInterval(
+      () => this.healthCheck(),
+      this.config.healthCheckIntervalMs,
+    );
     if (this.healthCheckTimer.unref) this.healthCheckTimer.unref();
 
     // Start hot standby sync (only if we have both active and hot standby)
@@ -207,7 +210,10 @@ export class AgentStandbyManager {
     if (this.hotSyncTimer.unref) this.hotSyncTimer.unref();
 
     // Start cold standby archival (daily)
-    this.coldArchiveTimer = setInterval(() => this.archiveColdStandby(), this.config.coldArchiveIntervalMs);
+    this.coldArchiveTimer = setInterval(
+      () => this.archiveColdStandby(),
+      this.config.coldArchiveIntervalMs,
+    );
     if (this.coldArchiveTimer.unref) this.coldArchiveTimer.unref();
 
     getGlobalLogger().info('AgentStandbyManager', '🔄 Standby manager started', {
@@ -219,9 +225,18 @@ export class AgentStandbyManager {
   /** Stop the standby manager. */
   stop(): void {
     this.running = false;
-    if (this.healthCheckTimer) { clearInterval(this.healthCheckTimer); this.healthCheckTimer = null; }
-    if (this.hotSyncTimer) { clearInterval(this.hotSyncTimer); this.hotSyncTimer = null; }
-    if (this.coldArchiveTimer) { clearInterval(this.coldArchiveTimer); this.coldArchiveTimer = null; }
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer);
+      this.healthCheckTimer = null;
+    }
+    if (this.hotSyncTimer) {
+      clearInterval(this.hotSyncTimer);
+      this.hotSyncTimer = null;
+    }
+    if (this.coldArchiveTimer) {
+      clearInterval(this.coldArchiveTimer);
+      this.coldArchiveTimer = null;
+    }
     getGlobalLogger().info('AgentStandbyManager', 'Standby manager stopped');
   }
 
@@ -370,7 +385,10 @@ export class AgentStandbyManager {
       this.coldStandbyInstance.lastSyncAt = new Date().toISOString();
       this.coldStandbyInstance.status = 'healthy';
 
-      getGlobalLogger().info('AgentStandbyManager', `Cold standby archived: ${checkpoints.length} checkpoints`);
+      getGlobalLogger().info(
+        'AgentStandbyManager',
+        `Cold standby archived: ${checkpoints.length} checkpoints`,
+      );
       return true;
     } catch (e) {
       getGlobalLogger().warn('AgentStandbyManager', 'Cold standby archive failed', {
@@ -396,14 +414,20 @@ export class AgentStandbyManager {
     const isHealthy = await this.isActiveHealthy();
     if (!isHealthy) {
       this.activeInstance.consecutiveHealthFailures++;
-      this.activeInstance.status = this.activeInstance.consecutiveHealthFailures >= this.config.healthFailureThreshold
-        ? 'unhealthy' : 'degraded';
+      this.activeInstance.status =
+        this.activeInstance.consecutiveHealthFailures >= this.config.healthFailureThreshold
+          ? 'unhealthy'
+          : 'degraded';
 
       if (this.activeInstance.status === 'unhealthy' && this.config.enableAutoSwitch) {
-        getGlobalLogger().critical('AgentStandbyManager',
-          `Active agent unhealthy after ${this.activeInstance.consecutiveHealthFailures} failures — auto-switching`);
-        await this.switchToHotStandby('HEALTH_FAILURE',
-          `Active agent unhealthy: ${this.activeInstance.consecutiveHealthFailures} consecutive health failures`);
+        getGlobalLogger().critical(
+          'AgentStandbyManager',
+          `Active agent unhealthy after ${this.activeInstance.consecutiveHealthFailures} failures — auto-switching`,
+        );
+        await this.switchToHotStandby(
+          'HEALTH_FAILURE',
+          `Active agent unhealthy: ${this.activeInstance.consecutiveHealthFailures} consecutive health failures`,
+        );
         return;
       }
     } else {
@@ -437,18 +461,24 @@ export class AgentStandbyManager {
         // Cooldown check: prevent switch loops
         const sinceLastSwitch = Date.now() - this.lastSwitchAt;
         if (sinceLastSwitch < this.config.switchCooldownMs) {
-          getGlobalLogger().warn('AgentStandbyManager',
-            `Confidence drop detected but switch cooldown active (${sinceLastSwitch}ms < ${this.config.switchCooldownMs}ms)`);
+          getGlobalLogger().warn(
+            'AgentStandbyManager',
+            `Confidence drop detected but switch cooldown active (${sinceLastSwitch}ms < ${this.config.switchCooldownMs}ms)`,
+          );
           return;
         }
 
-        getGlobalLogger().critical('AgentStandbyManager',
-          `Security confidence dropped below ${this.config.minConfidenceScore} for ${this.config.confidenceDropThreshold} consecutive readings — switching`);
+        getGlobalLogger().critical(
+          'AgentStandbyManager',
+          `Security confidence dropped below ${this.config.minConfidenceScore} for ${this.config.confidenceDropThreshold} consecutive readings — switching`,
+        );
         // Reset confidence readings to prevent post-switch loop
         this.lastConfidenceReadings = [];
         // Await the switch so tests can verify it completed
-        await this.switchToHotStandby('CONFIDENCE_DROP',
-          `Security confidence: ${score} (threshold: ${this.config.minConfidenceScore})`);
+        await this.switchToHotStandby(
+          'CONFIDENCE_DROP',
+          `Security confidence: ${score} (threshold: ${this.config.minConfidenceScore})`,
+        );
       }
     }
   }
@@ -479,8 +509,10 @@ export class AgentStandbyManager {
       rto: 0,
     };
 
-    getGlobalLogger().critical('AgentStandbyManager',
-      `🔄 SWITCH: ${this.activeInstance.instanceId} → ${this.hotStandbyInstance.instanceId} (${trigger}: ${reason})`);
+    getGlobalLogger().critical(
+      'AgentStandbyManager',
+      `🔄 SWITCH: ${this.activeInstance.instanceId} → ${this.hotStandbyInstance.instanceId} (${trigger}: ${reason})`,
+    );
 
     // Record to audit chain
     try {
@@ -493,7 +525,9 @@ export class AgentStandbyManager {
         to: event.toInstanceId,
         timestamp: event.startedAt,
       });
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
 
     try {
       // Save references BEFORE mutation for RPO calculation
@@ -504,7 +538,10 @@ export class AgentStandbyManager {
       // Step 1: Sync final state from active to hot standby
       const syncOk = await this.syncHotStandby();
       if (!syncOk) {
-        getGlobalLogger().warn('AgentStandbyManager', 'Final state sync before switch failed — proceeding anyway');
+        getGlobalLogger().warn(
+          'AgentStandbyManager',
+          'Final state sync before switch failed — proceeding anyway',
+        );
       }
 
       // Step 2: Promote hot standby to active
@@ -528,17 +565,23 @@ export class AgentStandbyManager {
         try {
           // No-op lease stub — recovered checkpoints rarely have active leases.
           // If lease validation is needed, inject a real LeaseManager via the config.
-          const noopLease = { validate: () => null as unknown as ReturnType<LeaseManager['validate']> };
+          const noopLease = {
+            validate: () => null as unknown as ReturnType<LeaseManager['validate']>,
+          };
           const recovery = new RunRecovery(this.checkpointer, noopLease as unknown as LeaseManager);
           const recoveryResult = await recovery.attempt(oldActive.lastRunId);
           if (recoveryResult.status === 'recovered') {
             event.recoveredRunId = oldActive.lastRunId;
-            getGlobalLogger().info('AgentStandbyManager',
-              `Run ${oldActive.lastRunId} recovered on new active from step ${recoveryResult.resumeFromStep}`);
+            getGlobalLogger().info(
+              'AgentStandbyManager',
+              `Run ${oldActive.lastRunId} recovered on new active from step ${recoveryResult.resumeFromStep}`,
+            );
           }
         } catch (recoveryErr) {
-          getGlobalLogger().warn('AgentStandbyManager',
-            `Run recovery failed (best-effort): ${(recoveryErr as Error)?.message}`);
+          getGlobalLogger().warn(
+            'AgentStandbyManager',
+            `Run recovery failed (best-effort): ${(recoveryErr as Error)?.message}`,
+          );
         }
       }
 
@@ -577,7 +620,9 @@ export class AgentStandbyManager {
         metrics.setGauge('standby.rpo', Number(event.rpo), {
           description: 'Recovery Point Objective (seconds)',
         });
-      } catch { /* non-critical */ }
+      } catch {
+        /* non-critical */
+      }
 
       // Create SOC incident for the switch
       try {
@@ -594,15 +639,22 @@ export class AgentStandbyManager {
             details: { trigger, reason, rto: event.rto, rpo: event.rpo },
           },
         });
-      } catch { /* non-critical */ }
+      } catch {
+        /* non-critical */
+      }
 
-      getGlobalLogger().critical('AgentStandbyManager',
-        `✅ Switch complete: active=${this.activeInstance.instanceId}, hot-standby=${this.hotStandbyInstance?.instanceId ?? 'none'}, RTO=${event.rto}s, RPO=${event.rpo}s`);
+      getGlobalLogger().critical(
+        'AgentStandbyManager',
+        `✅ Switch complete: active=${this.activeInstance.instanceId}, hot-standby=${this.hotStandbyInstance?.instanceId ?? 'none'}, RTO=${event.rto}s, RPO=${event.rpo}s`,
+      );
 
       return event;
     } catch (e) {
       event.success = false;
-      getGlobalLogger().critical('AgentStandbyManager', `❌ Switch failed: ${(e as Error)?.message}`);
+      getGlobalLogger().critical(
+        'AgentStandbyManager',
+        `❌ Switch failed: ${(e as Error)?.message}`,
+      );
       return event;
     } finally {
       this.switching = false;
@@ -621,9 +673,8 @@ export class AgentStandbyManager {
   /** Get current standby health. */
   getHealth(): StandbyHealth {
     const recentSwitches = [...this.switchHistory].reverse().slice(0, 10);
-    const lastSwitch = this.switchHistory.length > 0
-      ? this.switchHistory[this.switchHistory.length - 1]
-      : null;
+    const lastSwitch =
+      this.switchHistory.length > 0 ? this.switchHistory[this.switchHistory.length - 1] : null;
 
     // Determine overall status
     let status: StandbyHealth['status'] = 'healthy';
@@ -692,7 +743,7 @@ export class AgentStandbyManager {
       const latest = checkpoints[0]; // Sorted by timestamp desc
       const latestTime = new Date(latest.timestamp).getTime();
       const maxAge = this.config.healthCheckIntervalMs * 2;
-      return (Date.now() - latestTime) < maxAge;
+      return Date.now() - latestTime < maxAge;
     } catch {
       return false;
     }

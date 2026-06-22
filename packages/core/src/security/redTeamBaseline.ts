@@ -22,10 +22,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
-import type {
-  RedTeamRunReport,
-  RedTeamTestResult,
-} from './redTeamFramework';
+import type { RedTeamRunReport, RedTeamTestResult } from './redTeamFramework';
 
 // ============================================================================
 // Types
@@ -145,8 +142,8 @@ export interface RedTeamBaseline {
 const DEFAULT_CONFIG: BaselineConfig = {
   baselinePath: path.join(process.cwd(), '.commander', 'red-team-baseline.json'),
   scoreRegressionThreshold: 10, // 10 point drop = medium regression
-  failOnAnyRegression: true,    // Fail CI if any scenario regresses
-  maxAllowedRegressions: 0,     // Zero tolerance for regressions
+  failOnAnyRegression: true, // Fail CI if any scenario regresses
+  maxAllowedRegressions: 0, // Zero tolerance for regressions
 };
 
 // ============================================================================
@@ -311,10 +308,7 @@ export class RedTeamBaselineManager {
       }
 
       // Regression: was BLOCKED, now MISSED
-      if (
-        baselineResult.result === 'blocked' &&
-        current.result === 'missed'
-      ) {
+      if (baselineResult.result === 'blocked' && current.result === 'missed') {
         regressions.push({
           scenarioId: current.scenario.id,
           scenarioName: current.scenario.name,
@@ -327,10 +321,7 @@ export class RedTeamBaselineManager {
       }
 
       // Degradation: was DETECTED, now MISSED (partial defense lost)
-      if (
-        baselineResult.result === 'detected' &&
-        current.result === 'missed'
-      ) {
+      if (baselineResult.result === 'detected' && current.result === 'missed') {
         regressions.push({
           scenarioId: current.scenario.id,
           scenarioName: current.scenario.name,
@@ -343,10 +334,7 @@ export class RedTeamBaselineManager {
       }
 
       // Improvement: was MISSED, now BLOCKED
-      if (
-        baselineResult.result === 'missed' &&
-        current.result === 'blocked'
-      ) {
+      if (baselineResult.result === 'missed' && current.result === 'blocked') {
         improvements.push({
           scenarioId: current.scenario.id,
           scenarioName: current.scenario.name,
@@ -358,10 +346,7 @@ export class RedTeamBaselineManager {
       }
 
       // Also detect: was BLOCKED, now ERROR (defense broken)
-      if (
-        baselineResult.result === 'blocked' &&
-        current.result === 'error'
-      ) {
+      if (baselineResult.result === 'blocked' && current.result === 'error') {
         regressions.push({
           scenarioId: current.scenario.id,
           scenarioName: current.scenario.name,
@@ -378,12 +363,8 @@ export class RedTeamBaselineManager {
     const scoreDelta = report.securityScore - baseline.report.securityScore;
 
     // Determine overall severity
-    const criticalRegressions = regressions.filter(
-      (r) => r.severity === 'critical',
-    );
-    const highRegressions = regressions.filter(
-      (r) => r.severity === 'high',
-    );
+    const criticalRegressions = regressions.filter((r) => r.severity === 'critical');
+    const highRegressions = regressions.filter((r) => r.severity === 'high');
 
     let overallSeverity: RegressionSeverity = 'none';
     if (criticalRegressions.length > 0) {
@@ -410,7 +391,9 @@ export class RedTeamBaselineManager {
 
     // Build summary
     const parts: string[] = [];
-    parts.push(`Score: ${report.securityScore}/100 (${scoreDelta >= 0 ? '+' : ''}${scoreDelta} vs baseline ${baseline.report.securityScore}/100)`);
+    parts.push(
+      `Score: ${report.securityScore}/100 (${scoreDelta >= 0 ? '+' : ''}${scoreDelta} vs baseline ${baseline.report.securityScore}/100)`,
+    );
     if (regressions.length > 0) {
       parts.push(`${regressions.length} regression(s) detected`);
       if (criticalRegressions.length > 0) {
@@ -500,7 +483,9 @@ export class RedTeamBaselineManager {
     lines.push(`| Metric | Current | Baseline | Delta |`);
     lines.push(`|--------|---------|----------|-------|`);
     lines.push(`| ${statusIcon} **Status** | ${comparison.passed ? 'PASSED' : 'FAILED'} | — | — |`);
-    lines.push(`| ${scoreIcon} **Score** | ${comparison.currentScore}/100 | ${comparison.baselineScore}/100 | ${comparison.scoreDelta >= 0 ? '+' : ''}${comparison.scoreDelta} |`);
+    lines.push(
+      `| ${scoreIcon} **Score** | ${comparison.currentScore}/100 | ${comparison.baselineScore}/100 | ${comparison.scoreDelta >= 0 ? '+' : ''}${comparison.scoreDelta} |`,
+    );
     lines.push(`| 🔴 **Regressions** | ${comparison.regressions.length} | — | — |`);
     lines.push(`| 🟢 **Improvements** | ${comparison.improvements.length} | — | — |`);
     lines.push('');
@@ -513,9 +498,13 @@ export class RedTeamBaselineManager {
       lines.push('|----------|----|----------|------|----------|');
       for (const r of comparison.regressions) {
         const sevIcon =
-          r.severity === 'critical' ? '🔴' :
-          r.severity === 'high' ? '🟠' :
-          r.severity === 'medium' ? '🟡' : '🔵';
+          r.severity === 'critical'
+            ? '🔴'
+            : r.severity === 'high'
+              ? '🟠'
+              : r.severity === 'medium'
+                ? '🟡'
+                : '🔵';
         lines.push(
           `| ${r.scenarioName} | ${r.scenarioId} | ${r.category} | ${r.cvssScore.toFixed(1)} | ${sevIcon} ${r.severity} |`,
         );
@@ -545,8 +534,7 @@ export class RedTeamBaselineManager {
   generateCiAnnotations(comparison: BaselineComparison): string[] {
     const annotations: string[] = [];
     for (const r of comparison.regressions) {
-      const level = r.severity === 'critical' || r.severity === 'high'
-        ? 'error' : 'warning';
+      const level = r.severity === 'critical' || r.severity === 'high' ? 'error' : 'warning';
       annotations.push(
         `::${level} title=Red Team Regression::[${r.scenarioId}] ${r.scenarioName} regressed: was BLOCKED, now MISSED (CVSS ${r.cvssScore})`,
       );
@@ -570,15 +558,18 @@ export class RedTeamBaselineManager {
     return this.config.baselinePath;
   }
 
-  private mapRegressionSeverity(
-    scenarioSeverity: string,
-  ): RegressionSeverity {
+  private mapRegressionSeverity(scenarioSeverity: string): RegressionSeverity {
     switch (scenarioSeverity) {
-      case 'critical': return 'critical';
-      case 'high': return 'high';
-      case 'medium': return 'medium';
-      case 'low': return 'low';
-      default: return 'medium';
+      case 'critical':
+        return 'critical';
+      case 'high':
+        return 'high';
+      case 'medium':
+        return 'medium';
+      case 'low':
+        return 'low';
+      default:
+        return 'medium';
     }
   }
 
@@ -598,10 +589,7 @@ export class RedTeamBaselineManager {
         })),
       },
     });
-    return crypto
-      .createHmac('sha256', 'commander-red-team-baseline-v1')
-      .update(data)
-      .digest('hex');
+    return crypto.createHmac('sha256', 'commander-red-team-baseline-v1').update(data).digest('hex');
   }
 
   private verifySignature(baseline: RedTeamBaseline): boolean {
@@ -622,14 +610,10 @@ export class RedTeamBaselineManager {
 // Singleton
 // ============================================================================
 
-const baselineSingleton = createTenantAwareSingleton(
-  () => new RedTeamBaselineManager(),
-);
+const baselineSingleton = createTenantAwareSingleton(() => new RedTeamBaselineManager());
 
 /** Get the global RedTeamBaselineManager. */
-export function getRedTeamBaseline(
-  config?: Partial<BaselineConfig>,
-): RedTeamBaselineManager {
+export function getRedTeamBaseline(config?: Partial<BaselineConfig>): RedTeamBaselineManager {
   return baselineSingleton.get();
 }
 

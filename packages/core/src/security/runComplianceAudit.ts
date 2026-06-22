@@ -18,6 +18,7 @@
 
 import * as fs from 'fs';
 import { ComplianceAuditManager } from './complianceAuditReport';
+import { getAuditChainLedger } from './auditChainLedger';
 
 function parseArgs(args: string[]): {
   json: boolean;
@@ -39,24 +40,26 @@ function parseArgs(args: string[]): {
   const thresholdArg = args.find((a) => a.startsWith('--threshold='));
   const threshold = thresholdArg ? parseInt(thresholdArg.split('=')[1], 10) : 75;
 
-  const commitHash =
-    process.env.GITHUB_SHA ??
-    process.env.COMMANDER_COMMIT_HASH ??
-    undefined;
+  const commitHash = process.env.GITHUB_SHA ?? process.env.COMMANDER_COMMIT_HASH ?? undefined;
 
   return { json, markdown, all, output, noSign, threshold, commitHash };
 }
 
 function writeToFile(basePath: string, ext: string, content: string): void {
-  const filePath = basePath.endsWith(`.${ext}`)
-    ? basePath
-    : `${basePath}.${ext}`;
+  const filePath = basePath.endsWith(`.${ext}`) ? basePath : `${basePath}.${ext}`;
   fs.writeFileSync(filePath, content, 'utf-8');
   console.error(`📄 Written: ${filePath}`);
 }
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+
+  // D1 hardening-sprint §3 Verify command: surface missing prod keys via
+  // process exit code (caught by the .catch below → exit 2), not a silent
+  // stderr warning. AuditChainLedger resolves its master key at singleton
+  // construction; in production without COMMANDER_AUDIT_CHAIN_KEY set
+  // this throws immediately and the CLI fails loudly before any output.
+  getAuditChainLedger();
 
   // Default: markdown if neither --json nor --all specified
   const showMarkdown = args.all || args.markdown || (!args.json && !args.all);
@@ -76,9 +79,7 @@ async function main(): Promise<void> {
     branch: process.env.GITHUB_REF_NAME,
   });
 
-  console.error(
-    `   Score: ${report.posture.overallScore}/100 (Grade ${report.posture.grade})`,
-  );
+  console.error(`   Score: ${report.posture.overallScore}/100 (Grade ${report.posture.grade})`);
   console.error(
     `   ISO 42001: ${report.isoCompliance.compliancePercentage}% | NIST AI RMF: ${report.nistRmfAlignment.alignmentPercentage}%`,
   );
@@ -122,13 +123,9 @@ async function main(): Promise<void> {
   }
 
   // Check for critical ISO gaps
-  const criticalGaps = report.isoCompliance.gaps.filter(
-    (g) => g.severity === 'critical',
-  );
+  const criticalGaps = report.isoCompliance.gaps.filter((g) => g.severity === 'critical');
   if (criticalGaps.length > 0) {
-    console.error(
-      `\n❌ FAILED: ${criticalGaps.length} critical ISO 42001 gap(s) detected:`,
-    );
+    console.error(`\n❌ FAILED: ${criticalGaps.length} critical ISO 42001 gap(s) detected:`);
     for (const gap of criticalGaps) {
       console.error(`   - ${gap.clause}: ${gap.description}`);
     }

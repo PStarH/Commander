@@ -47,6 +47,7 @@
 
 import * as crypto from 'crypto';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+import { getMetricsCollector } from '../runtime/metricsCollector';
 import { getAuditChainLedger } from './auditChainLedger';
 
 // ============================================================================
@@ -207,8 +208,8 @@ const DEFAULT_CONFIG: DifferentialPrivacyConfig = {
 export function sampleLaplace(scale: number): number {
   // Difference of two Exponential(1/scale) = Laplace(0, scale)
   // Generate two independent uniform(0,1) values
-  const u1 = crypto.randomInt(1, 2 ** 31) / (2 ** 31); // (0, 1)
-  const u2 = crypto.randomInt(1, 2 ** 31) / (2 ** 31);
+  const u1 = crypto.randomInt(1, 2 ** 31) / 2 ** 31; // (0, 1)
+  const u2 = crypto.randomInt(1, 2 ** 31) / 2 ** 31;
   // Avoid log(0) by using 1 - u for one of them
   const e1 = -Math.log(u1) * scale;
   const e2 = -Math.log(u2) * scale;
@@ -225,11 +226,7 @@ export function sampleLaplace(scale: number): number {
  * @param epsilon - Privacy budget ε
  * @returns Noisy value ≈ value + Lap(0, Δf/ε)
  */
-export function laplaceMechanism(
-  value: number,
-  sensitivity: number,
-  epsilon: number,
-): number {
+export function laplaceMechanism(value: number, sensitivity: number, epsilon: number): number {
   if (epsilon <= 0) throw new Error(`epsilon must be > 0, got ${epsilon}`);
   if (sensitivity < 0) throw new Error(`sensitivity must be >= 0, got ${sensitivity}`);
   if (sensitivity === 0) return value; // No noise needed for constant queries
@@ -245,8 +242,8 @@ export function laplaceMechanism(
  */
 export function sampleGaussian(sigma: number): number {
   // Box-Muller transform: generate two independent N(0,1) values
-  const u1 = (crypto.randomInt(1, 2 ** 31) / (2 ** 31));
-  const u2 = (crypto.randomInt(1, 2 ** 31) / (2 ** 31));
+  const u1 = crypto.randomInt(1, 2 ** 31) / 2 ** 31;
+  const u2 = crypto.randomInt(1, 2 ** 31) / 2 ** 31;
   // Avoid log(0) — crypto random is in (0,1) but we're paranoid
   const safeU1 = u1 === 0 ? 1e-10 : u1;
   const z1 = Math.sqrt(-2 * Math.log(safeU1)) * Math.cos(2 * Math.PI * u2);
@@ -276,7 +273,7 @@ export function gaussianMechanism(
   if (sensitivity < 0) throw new Error(`sensitivity must be >= 0, got ${sensitivity}`);
   if (sensitivity === 0) return value;
   // σ = Δf · √(2·ln(1.25/δ)) / ε
-  const sigma = sensitivity * Math.sqrt(2 * Math.log(1.25 / delta)) / epsilon;
+  const sigma = (sensitivity * Math.sqrt(2 * Math.log(1.25 / delta))) / epsilon;
   return value + sampleGaussian(sigma);
 }
 
@@ -295,10 +292,7 @@ export function gaussianMechanism(
  * | histogram  | 1         | √2        | One row moves between bins         |
  * | custom     | (provided)| (provided)| Caller must specify                |
  */
-export function analyzeSensitivity(
-  queryType: DPQueryType,
-  bounds?: DPDataBounds,
-): DPSensitivity {
+export function analyzeSensitivity(queryType: DPQueryType, bounds?: DPDataBounds): DPSensitivity {
   switch (queryType) {
     case 'count':
       return {
@@ -452,6 +446,22 @@ export class DifferentialPrivacyLayer {
 
     this.budgets.set(principalId, budget);
 
+    try {
+      getMetricsCollector().incrementCounter(
+        'dp_budget_spend_total',
+        'Differential privacy budget spend events',
+        1,
+      );
+      getMetricsCollector().recordHistogram(
+        'dp_budget_remaining_epsilon',
+        'Remaining DP epsilon budget',
+        budget.remainingBudget,
+        [0.001, 0.01, 0.1, 0.5, 1, 5, 10],
+      );
+    } catch {
+      /* best-effort */
+    }
+
     // Audit trail: DP budget consumption is now tamper-evident.
     // Closes P0 audit gap — previously budget exhaustion was invisible.
     try {
@@ -513,11 +523,7 @@ export class DifferentialPrivacyLayer {
    * @param epsilon - ε to spend (default: config.defaultEpsilon)
    * @returns DPQueryOutcome with noisy count and budget info
    */
-  sanitizeCount(
-    count: number,
-    principalId: string,
-    epsilon?: number,
-  ): DPQueryOutcome<number> {
+  sanitizeCount(count: number, principalId: string, epsilon?: number): DPQueryOutcome<number> {
     const eps = epsilon ?? this.config.defaultEpsilon;
 
     if (!this.spendBudget(principalId, eps)) {
@@ -788,11 +794,9 @@ export class DifferentialPrivacyLayer {
    * @param epsilon - ε to spend per entry (default: config.defaultEpsilon/entries.length)
    * @returns Sanitized entries with noise added to numeric fields
    */
-  sanitizeMemoryEntries<T extends { importance?: number; accessCount?: number; decayScore?: number }>(
-    entries: T[],
-    principalId: string,
-    epsilon?: number,
-  ): DPQueryOutcome<T[]> {
+  sanitizeMemoryEntries<
+    T extends { importance?: number; accessCount?: number; decayScore?: number },
+  >(entries: T[], principalId: string, epsilon?: number): DPQueryOutcome<T[]> {
     if (entries.length === 0) {
       const budget = this.getBudget(principalId);
       return {

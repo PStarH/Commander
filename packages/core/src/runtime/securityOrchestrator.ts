@@ -191,10 +191,7 @@ export class SecurityOrchestrator {
         }
 
         // Audit confirm+ decisions
-        if (
-          !allowed &&
-          this.config.minAuditStrategySeverity >= 2
-        ) {
+        if (!allowed && this.config.minAuditStrategySeverity >= 2) {
           this.auditSecurityDecision(decision, toolName, agentId, runId);
         }
       } catch (e) {
@@ -293,11 +290,16 @@ export class SecurityOrchestrator {
         // Map CrossAgentEvent to GuardianAgent action types.
         // Only 4 event types are handled by GuardianAgent; unrecognized
         // types are skipped to avoid polluting the behavioral baseline.
-        const guardianActionTypes = new Set(['tool_call', 'tool_result', 'llm_call', 'agent_spawn']);
+        const guardianActionTypes = new Set([
+          'tool_call',
+          'tool_result',
+          'llm_call',
+          'agent_spawn',
+        ]);
         if (guardianActionTypes.has(event.type)) {
           // 'agent_spawn' maps to 'state_change' in GuardianAction.type
           const gaType: GuardianAction['type'] =
-            event.type === 'agent_spawn' ? 'state_change' : event.type as GuardianAction['type'];
+            event.type === 'agent_spawn' ? 'state_change' : (event.type as GuardianAction['type']);
           const ga: GuardianAction = {
             agentId: event.agentId,
             runId: event.runId,
@@ -410,7 +412,9 @@ export class SecurityOrchestrator {
 
 let defaultInstance: SecurityOrchestrator | undefined;
 
-export function getSecurityOrchestrator(config?: Partial<SecurityOrchestratorConfig>): SecurityOrchestrator {
+export function getSecurityOrchestrator(
+  config?: Partial<SecurityOrchestratorConfig>,
+): SecurityOrchestrator {
   if (!defaultInstance) {
     defaultInstance = new SecurityOrchestrator(config);
   }

@@ -93,15 +93,14 @@ export type {
 // AgentLineage — immutable parent→child agent relationship tracking (Phase 2.2)
 export { AgentLineage, getAgentLineage, resetAgentLineage } from './agentLineage';
 
-export type {
-  LineageNode,
-  LineageEventType,
-  LineageSummary,
-  LineageQuery,
-} from './agentLineage';
+export type { LineageNode, LineageEventType, LineageSummary, LineageQuery } from './agentLineage';
 
 // SupplyChainScanner — enterprise-grade skill/tool pre-load security scanning
-export { SupplyChainScanner, getSupplyChainScanner, resetSupplyChainScanner } from './supplyChainScanner';
+export {
+  SupplyChainScanner,
+  getSupplyChainScanner,
+  resetSupplyChainScanner,
+} from './supplyChainScanner';
 
 export type {
   SupplyChainScanSeverity,
@@ -153,6 +152,9 @@ export type {
   OutputSanitizerConfig,
 } from './outputSanitizer';
 
+// LiteLLMPricing — real-time model pricing from LiteLLM GitHub registry
+export { LiteLLMPricing, getLiteLLMPricing, resetLiteLLMPricing } from './litellmPricing';
+
 // CostGuard — enterprise economic attack detection & auto circuit-breaker
 export { CostGuard, getCostGuard, resetCostGuard } from './costGuard';
 
@@ -201,7 +203,11 @@ export type {
 } from './euAiActCompliance';
 
 // AgentStandbyManager — hot standby agent architecture with auto-failover
-export { AgentStandbyManager, getAgentStandbyManager, resetAgentStandbyManager } from './agentStandbyManager';
+export {
+  AgentStandbyManager,
+  getAgentStandbyManager,
+  resetAgentStandbyManager,
+} from './agentStandbyManager';
 
 export type {
   AgentTier,
@@ -229,7 +235,11 @@ export type {
 } from './redTeamBaseline';
 
 // EdgeSecurityProfile — unified edge/offline mode: auto-detect, local-only, encrypted state, strict sandbox
-export { EdgeSecurityProfile, getEdgeSecurityProfile, resetEdgeSecurityProfile } from './edgeSecurityProfile';
+export {
+  EdgeSecurityProfile,
+  getEdgeSecurityProfile,
+  resetEdgeSecurityProfile,
+} from './edgeSecurityProfile';
 
 export type {
   EdgeMode,
@@ -300,11 +310,7 @@ export {
   resetMLInjectionDetector,
 } from './mlInjectionDetector';
 
-export type {
-  InjectionVector,
-  DetectionResult,
-  MLDetectorConfig,
-} from './mlInjectionDetector';
+export type { InjectionVector, DetectionResult, MLDetectorConfig } from './mlInjectionDetector';
 
 // FuzzTestFramework — mutation-based tool input fuzzer with coverage-guided feedback
 export {
@@ -359,11 +365,7 @@ export type {
 } from './multimodalContentScanner';
 
 // SandboxVerifier — formal sandbox verification harness
-export {
-  SandboxVerifier,
-  getSandboxVerifier,
-  resetSandboxVerifier,
-} from './sandboxVerifier';
+export { SandboxVerifier, getSandboxVerifier, resetSandboxVerifier } from './sandboxVerifier';
 
 export type {
   VerificationArea,
@@ -507,3 +509,79 @@ export type {
 // Scanner→Attestor bridge — SupplyChainScanner now auto-calls SupplyChainAttestor
 // on passed scans. The attestor singleton is accessible via getSupplyChainAttestor().
 // Re-exported here for convenience.
+
+// OwaspAgenticAiTop10 — unified ASI01–ASI10 per-ASI risk scoring with
+// rolling-window aggregation so SIEM/dashboards see a single OS-aligned
+// view of agentic risk per rolling window. Avoids OOM via per-minute
+// bucketing; bridges Guardian / SupplyChain / CrossAgent signals.
+export {
+  OwaspAgenticAiTop10,
+  getOwaspAsiTop10,
+  resetOwaspAsiTop10,
+  recordGuardianIntervention,
+  recordSupplyChainFinding,
+  recordCrossAgentFinding,
+  ALL_ASIS,
+} from './owaspAgenticAiTop10';
+export type {
+  OwaspAsiId,
+  OwaspAsiConfig,
+  OwaspAsiReport,
+  AsDetection,
+  AsSeverity,
+  AsBlockState,
+  AsiScore,
+} from './owaspAgenticAiTop10';
+
+// RotationSignoffVerifier — D2.6 + D2.7 + D2.8 + D2.9 + D3.0 + D3.1 + D3.2 hardening policy gate.
+// §6 sign-off binding via GPG-verified commit SHAs. Library-grade pure functions
+// (`runVerifier`, `runVerifierAsync`, `evaluateSignoff`, `evaluateSignoffAsync`,
+// `verifySha`, `verifyShaAsync`, `verifyShasConcurrent`, `parseArgs`, …) plus
+// public types (`SignoffRow`, `VerifyResult`, `CliArgs`, `VerifyShaResult`,
+// `RunVerifierOptions`, `RunVerifierAsyncOptions`) and policy constants
+// (`POLICY_MIN_VERIFIED_ROWS`, `POLICY_VERSION`, `VERIFY_CONCURRENCY_DEFAULT`).
+// Stable library surface — both the CLI wrapper and any `Commander`-internal
+// programmatic consumer can drive the policy gate without re-implementing
+// parsing or evaluation.
+//
+// D3.2 async surface: `verifyShaAsync`, `evaluateSignoffAsync`, `runVerifierAsync`,
+// `verifyShasConcurrent` mirror the sync surface with bounded concurrency +
+// AbortSignal cancellation. The sync surface (`verifySha`, `evaluateSignoff`,
+// `runVerifier`) is soft-deprecated via JSDoc — it remains exported and
+// functional for backward compatibility, but new programmatic consumers should
+// prefer the async variants to avoid blocking the event loop on N×git calls.
+export {
+  SHA_RE,
+  DEFAULT_DOC_PATH,
+  POLICY_MIN_VERIFIED_ROWS,
+  POLICY_VERSION,
+  VERIFY_CONCURRENCY_DEFAULT,
+  extractSection,
+  parseSignoffTable,
+  countColumns,
+  verifySha,
+  verifyShaAsync,
+  evaluateSignoff,
+  evaluateSignoffAsync,
+  runVerifier,
+  runVerifierAsync,
+  verifyShasConcurrent,
+  formatReport,
+  parseArgs,
+} from './rotationSignoffVerifier';
+export type {
+  SignoffRow,
+  CliArgs,
+  VerifyShaResult,
+  RunVerifierOptions,
+  RunVerifierAsyncOptions,
+  // VerifyResult is intentionally NOT re-exported from the security barrel:
+  // `@commander/core/security` already exports an unrelated `VerifyResult`
+  // from `./capabilityToken` (used by AuthManager), and TypeScript forbids
+  // duplicate identifiers at the barrel surface. Consumers should reach this
+  // module's `VerifyResult` via one of three alternatives:
+  //   • Value-inference:  const r = evaluateSignoff(rows);  // r: VerifyResult
+  //   • Direct path:      import type { VerifyResult } from
+  //                        '@commander/core/security/rotationSignoffVerifier'
+  //   • Main-barrel alias: import type { RotationSignoffResult } from '@commander/core'
+} from './rotationSignoffVerifier';
