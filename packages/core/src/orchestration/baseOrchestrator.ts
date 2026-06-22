@@ -45,7 +45,8 @@ export function generateNodeId(prefix: string): string {
 }
 
 function getChildNodes<T extends BaseNode>(node: T): T[] {
-  const children = (node as unknown as Record<string, unknown>).subNodes ??
+  const children =
+    (node as unknown as Record<string, unknown>).subNodes ??
     (node as unknown as Record<string, unknown>).subGoals ??
     [];
   return children as T[];
@@ -81,9 +82,7 @@ export function countActiveNodes<T extends BaseNode>(nodes: T[]): number {
 export function cloneTree<T extends BaseNode>(nodes: T[]): T[] {
   return nodes.map((n) => ({
     ...n,
-    critique: n.critique
-      ? { ...n.critique, findings: [...n.critique.findings] }
-      : undefined,
+    critique: n.critique ? { ...n.critique, findings: [...n.critique.findings] } : undefined,
     subNodes: cloneTree(getChildNodes(n)) as unknown as T['subNodes'],
   })) as T[];
 }
@@ -116,7 +115,13 @@ export async function callLLMWithValidation<T>(
   logMethod: string,
 ): Promise<LLMJSONResult<T> | null> {
   const result = await callLLMJSON<T>(provider, model, prompt, userMessage);
-  if (result && !validateShape(result.data, shape as Record<string, 'string' | 'number' | 'boolean' | 'object' | 'array'>)) {
+  if (
+    result &&
+    !validateShape(
+      result.data,
+      shape as Record<string, 'string' | 'number' | 'boolean' | 'object' | 'array'>,
+    )
+  ) {
     getGlobalLogger().warn(logLabel, `${logMethod}: LLM response failed shape validation`);
     return null;
   }
@@ -149,7 +154,9 @@ export async function sharedWorkerExecute(
         {
           role: 'user',
           content: `Parent Goal: ${opts.parentGoal}\n\nSub-Goal: ${opts.nodeGoal}${
-            opts.dependencyContext ? `\n\nContext from dependencies:\n${opts.dependencyContext}` : ''
+            opts.dependencyContext
+              ? `\n\nContext from dependencies:\n${opts.dependencyContext}`
+              : ''
           }\n\nProvide your output.`,
         },
       ],
@@ -201,7 +208,10 @@ export async function sharedCriticEvaluate(
     opts.criticPrompt,
     context,
   );
-  if (result && !validateShape(result.data, { passed: 'boolean', findings: 'array', summary: 'string' })) {
+  if (
+    result &&
+    !validateShape(result.data, { passed: 'boolean', findings: 'array', summary: 'string' })
+  ) {
     getGlobalLogger().warn(opts.logLabel, 'criticEvaluate: LLM response failed shape validation');
     return null;
   }
@@ -351,10 +361,7 @@ export function buildTree<T extends BaseNode>(opts: BuildTreeOptions<T>): T[] {
 // Shared apply-review logic
 // ============================================================================
 
-export function applyReview<T extends BaseNode>(
-  nodes: T[],
-  review: ReviewOutput,
-): T[] {
+export function applyReview<T extends BaseNode>(nodes: T[], review: ReviewOutput): T[] {
   for (const assessment of review.goalAssessments) {
     const node = findNodeById(nodes, assessment.goalId);
     if (!node) continue;
@@ -444,11 +451,17 @@ export function makeBaseDecision(
 
   if (plateauRounds >= plateauThreshold && findingsCount <= 2) {
     if (!hasCriticalFindings(allNodes)) {
-      return { decision: 'stop_plateau', reason: `Improvement plateaued after ${plateauRounds} rounds.` };
+      return {
+        decision: 'stop_plateau',
+        reason: `Improvement plateaued after ${plateauRounds} rounds.`,
+      };
     }
   }
 
-  return { decision: 'continue', reason: `Active goals: ${activeCount}, findings: ${findingsCount}` };
+  return {
+    decision: 'continue',
+    reason: `Active goals: ${activeCount}, findings: ${findingsCount}`,
+  };
 }
 
 // ============================================================================
