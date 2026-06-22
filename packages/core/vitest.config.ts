@@ -92,6 +92,7 @@ export default defineConfig({
       'tests/observability/evalHttpEndpoints.test.ts',
       'tests/observability/evalScorer.test.ts',
       'tests/observability/experimentRunner.test.ts',
+      'tests/observability/normalizeExpected.test.ts',
       'tests/observability/otelExporter.test.ts',
       'tests/observability/retryRuleOnRealTraces.test.ts',
       'tests/observability/samplingPolicy.test.ts',
