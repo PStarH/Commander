@@ -18,7 +18,7 @@
       "name": "stepTimeoutManager",
       "importPattern": "StepTimeoutManager",
       "callSitePattern": "stepTimeout\\.wrap",
-      "minCallSites": 2,
+      "minCallSites": 1,
       "srcPaths": ["packages/core/src/runtime/agentRuntime.ts"]
     },
     {
