@@ -78,6 +78,15 @@ export interface AutoScoreResult {
   error?: string;
   /** When the score was recorded. */
   scoredAt: string;
+  /**
+   * Whether the judge actually scored this trace. Mirror of
+   * EvalScore.graded — `graded: false` means the scorer skipped the
+   * judge call (typically because the dataset case had missing
+   * `expected`). Aggregations MUST filter on `r.graded !== false`
+   * before averaging so missing-expected cases don't drag the
+   * baseline down over time. Always set; never undefined.
+   */
+  graded: boolean;
   /** Trace summary metadata for filtering / display. */
   traceSummary: {
     agentId: string;
@@ -164,6 +173,8 @@ export class AutoScorer {
           judgeDurationMs: es.judgeDurationMs,
           error: es.error,
           scoredAt: new Date().toISOString(),
+          // Back-compat: legacy EvalScore had graded undefined → true.
+          graded: es.graded !== false,
           traceSummary: summary,
         };
         this.remember(result);
