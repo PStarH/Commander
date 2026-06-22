@@ -5,10 +5,10 @@ export default defineConfig({
     chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-          charts: ['recharts'],
-          flow: ['@xyflow/react', 'dagre'],
+        manualChunks(id: string) {
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/react-router-dom')) return 'vendor';
+          if (id.includes('node_modules/recharts')) return 'charts';
+          if (id.includes('node_modules/@xyflow') || id.includes('node_modules/dagre')) return 'flow';
         },
       },
     },

@@ -482,7 +482,10 @@ export class ExecPolicyEngine {
     aliases.add(basename);
     if (basename.startsWith('mkfs.')) aliases.add('mkfs');
 
-    const resolved = this.resolveRealPath(cleaned);
+    // Pass the ORIGINAL token (not lowercased) to resolveRealPath so that
+    // fs.existsSync/realpathSync work correctly on case-sensitive filesystems
+    // (Linux CI). macOS APFS is case-insensitive, so the bug was hidden locally.
+    const resolved = this.resolveRealPath(token);
     if (resolved) {
       const realBasename = path.basename(resolved).toLowerCase();
       aliases.add(realBasename);
