@@ -78,11 +78,19 @@ export class ReplicateProvider implements LLMProvider {
       );
     }
     const data = await response.json();
+    const choice = data.choices?.[0];
     return {
-      content: data.choices?.[0]?.message?.content ?? '',
+      content: choice?.message?.content ?? '',
       model,
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-      finishReason: 'stop',
+      finishReason:
+        choice?.finish_reason === 'stop'
+          ? 'stop'
+          : choice?.finish_reason === 'length'
+            ? 'length'
+            : choice?.finish_reason === 'tool_calls'
+              ? 'tool_calls'
+              : 'stop',
     };
   }
 

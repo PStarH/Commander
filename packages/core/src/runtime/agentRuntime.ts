@@ -66,10 +66,7 @@ import {
 } from './runtimeConstants';
 import type { AgentRuntimeInterface } from './agentRuntimeInterface';
 import { ModelRouter, getModelRouter } from './modelRouter';
-import {
-  SmartModelRouter,
-  type ModelRouterUserConfig,
-} from './smartModelRouter';
+import { SmartModelRouter, type ModelRouterUserConfig } from './smartModelRouter';
 import { getMessageBus } from './messageBus';
 import { getTraceRecorder } from './executionTrace';
 import { getAnomalyDetector } from '../observability/anomalyDetector';
@@ -113,10 +110,14 @@ import { AgentInbox } from './agentInbox';
 import { TeamRegistry } from './teamRegistry';
 import { AgentHandoff } from './agentHandoff';
 import { getGlobalThreeLayerMemory } from '../threeLayerMemory';
+import { getAgentIntelligence } from '../intelligence/agentIntegration';
+import { getMetaLearner } from '../selfEvolution/metaLearner';
+import { getFailurePatternLearner } from '../intelligence/failurePatterns';
 import { runWithTenant } from './tenantContext';
 import { getHookManager } from '../pluginManager';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolOrchestrator } from './toolOrchestrator';
+import { SyntheticErrorRow, toolErrorRow, type PreToolCallGateResult } from './toolResultShape';
 import { ToolApproval } from './toolApproval';
 import {
   buildTwoTierTools,
@@ -136,6 +137,7 @@ import { createContentScanner, type ContentScanner } from '../contentScanner';
 import { scanToolOutputForInjection } from '../contentScanner';
 import { sanitizeIfNeeded } from '../security/outputSanitizer';
 import { getCostGuard } from '../security/costGuard';
+import { getSLOManager } from '../observability/sloManager';
 import { getPrivacyRouter } from './privacyRouter';
 import type { TenantProvider, TenantConfig } from './tenantProvider';
 import type { PlannedToolCall } from '../compensation/rollbackPlanner';
@@ -169,6 +171,7 @@ import { ReflexionGenerator, type ReflexionContext } from './reflexionGenerator'
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
+import { getDataRetentionJanitor } from '../storage/dataRetention';
 import type { CompactTaskType } from './contextCompactor';
 import { getCostEstimator, type CostEstimate } from './costEstimator';
 import { getModelPerformanceStore } from './modelPerformanceStore';
@@ -206,43 +209,6 @@ interface TenantResolutionResult {
   error?: string;
   overrides?: TenantOverrides;
 }
-
-/**
- * Canonical shape for synthetic-error rows pushed into rawResults (serial
- * path) or returned as Promise.allSettled values (concurrent path) when a
- * pre-tool-call gate blocks a tool call. Single source of truth — both the
- * `syntheticErrorRow` factory and the `PreToolCallGateResult.siblingAbort`
- * discriminator reference this. Module-scope because TS 6.x is stricter
- * about class-body type alias hoisting than earlier versions.
- */
-type SyntheticErrorRow = {
-  toolCallId: string;
-  name: string;
-  output: string;
-  error: string;
-  durationMs: number;
-};
-
-/**
- * Discriminated-union return type for `AgentRuntime.applyPreToolCallGates`.
- * The helper is a PURE decision function:
- *   - inspects the four pre-tool-call gates (hook, sibling-abort, retry,
- *     cycle) and returns ONE OF these tags plus minimal context for the
- *     caller to format observable side effects (bus publishes, synthetic-
- *     error rows, outer-loop flag mutations).
- *   - NEVER calls `getMessageBus().publish(...)` itself — all side effects
- *     live at the call site so a spy on the bus can prove there is no
- *     double-fire path.
- * This shape is exhaustive: each `kind` carries the minimum context the
- * caller needs; TypeScript exhaustiveness checks will surface any missed
- * case at compile time.
- */
-type PreToolCallGateResult =
-  | { kind: 'allowed' }
-  | { kind: 'hooked'; errorMsg: string }
-  | { kind: 'siblingAbort'; row: SyntheticErrorRow }
-  | { kind: 'retry'; count: number }
-  | { kind: 'cycle'; description: string };
 
 export class AgentRuntime implements AgentRuntimeInterface {
   private config: AgentRuntimeConfig;
@@ -571,9 +537,17 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 role: 'user',
                 content: goal,
               })
-              .catch(() => {});
+              .catch((e) => {
+                getGlobalLogger().debug('AgentRuntime', 'Failed to record conversation turn', {
+                  error: (e as Error)?.message,
+                });
+              });
           })
-          .catch(() => {});
+          .catch((e) => {
+            getGlobalLogger().warn('AgentRuntime', 'Failed to create conversation session', {
+              error: (e as Error)?.message,
+            });
+          });
       });
 
       bus.subscribe('agent.completed', (msg) => {
@@ -590,8 +564,16 @@ export class AgentRuntime implements AgentRuntimeInterface {
               role: 'assistant',
               content: (summary || '').slice(0, SUMMARY_MAX_CHARS),
             })
-            .catch(() => {});
-          store.endSession(sessionId).catch(() => {});
+            .catch((e) => {
+              getGlobalLogger().debug('AgentRuntime', 'Failed to record completion turn', {
+                error: (e as Error)?.message,
+              });
+            });
+          store.endSession(sessionId).catch((e) => {
+            getGlobalLogger().debug('AgentRuntime', 'Failed to end conversation session', {
+              error: (e as Error)?.message,
+            });
+          });
         }
       });
 
@@ -609,8 +591,16 @@ export class AgentRuntime implements AgentRuntimeInterface {
               role: 'assistant',
               content: `[Failed] ${(error || '').slice(0, ERROR_MAX_CHARS)}`,
             })
-            .catch(() => {});
-          store.endSession(sessionId).catch(() => {});
+            .catch((e) => {
+              getGlobalLogger().debug('AgentRuntime', 'Failed to record failure turn', {
+                error: (e as Error)?.message,
+              });
+            });
+          store.endSession(sessionId).catch((e) => {
+            getGlobalLogger().debug('AgentRuntime', 'Failed to end session after failure', {
+              error: (e as Error)?.message,
+            });
+          });
         }
       });
 
@@ -648,7 +638,33 @@ export class AgentRuntime implements AgentRuntimeInterface {
           : undefined;
       },
       tenantIdFor: () => getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-    });
+    }); // SOC 2 C1.2 / GDPR Art 17 disposal — schedule the retention
+    // janitor from the runtime constructor so CLI-only paths
+    // (which don't go through httpServer.start()) still get the
+    // housekeeping tick. The module-level `scheduledRootDirs`
+    // dedup set in storage/dataRetention.ts ensures only one
+    // setInterval runs across the process regardless of how many
+    // AgentRuntime instances exist or in what order surfaces boot.
+    try {
+      const janitor = getDataRetentionJanitor();
+      // `claimed` lets the log disambiguate: true means THIS
+      // AgentRuntime instance owns the recurring tick; false means
+      // another surface (e.g. httpServer.start) claimed first and
+      // the module-level `scheduledRootDirs` Set deduped us. See
+      // DataRetentionJanitor.schedule() JSDoc for the full
+      // claimed-vs-dedup-catch glossary.
+      const claimed = janitor.schedule(60 * 60 * 1000, false);
+      getGlobalLogger().info(
+        'AgentRuntime',
+        claimed
+          ? `DataRetentionJanitor scheduled (1h interval) [rootDir=${janitor.rootDir}, claimed]`
+          : `DataRetentionJanitor dedup-catch -- tick already owned (rootDir=${janitor.rootDir})`,
+      );
+    } catch (e) {
+      getGlobalLogger().warn('AgentRuntime', 'Failed to schedule retention janitor', {
+        error: (e as Error)?.message,
+      });
+    }
 
     // Start security monitoring (best-effort)
     try {
@@ -787,13 +803,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
     decision: SecurityOrchestratorDecision;
     allowed: boolean;
     /** Synthetic raw-result row for the concurrent parallel-results array. */
-    blockedRawResult?: {
-      toolCallId: string;
-      name: string;
-      output: string;
-      error: string;
-      durationMs: number;
-    };
+    blockedRawResult?: SyntheticErrorRow;
     /** Synthetic ToolResult for the serial execution path. */
     blockedToolResult?: ToolResult;
   }> {
@@ -843,20 +853,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
       detail: blockReason,
     });
     const reasonStr = `Security blocked: ${blockReason}`;
-    const blockedRawResult = {
-      toolCallId: tc.id,
-      name: tc.name,
-      output: '',
-      error: reasonStr,
-      durationMs: 0,
-    };
-    const blockedToolResult: ToolResult = {
-      toolCallId: tc.id,
-      name: tc.name,
-      output: '',
-      error: reasonStr,
-      durationMs: 0,
-    };
+    const blockedRawResult = toolErrorRow(tc, reasonStr);
+    const blockedToolResult: ToolResult = toolErrorRow(tc, reasonStr);
 
     return {
       decision,
@@ -923,7 +921,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
     if (siblingAbortSignal?.aborted) {
       return {
         kind: 'siblingAbort',
-        row: this.syntheticErrorRow(tc, 'Cancelled: sibling tool error'),
+        row: toolErrorRow(tc, 'Cancelled: sibling tool error'),
       };
     }
 
@@ -944,32 +942,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
     }
 
     // Gate 4: cycle detection.
-    const cycleCheck = this.cycleDetector.check(
-      tc.name,
-      tc.arguments,
-      toolLoopCount,
-    );
+    const cycleCheck = this.cycleDetector.check(tc.name, tc.arguments, toolLoopCount);
     if (cycleCheck.detected) {
       return { kind: 'cycle', description: cycleCheck.description ?? '' };
     }
 
     return { kind: 'allowed' };
-  }
-
-  /** Small factory for the inline synthetic-result row shape that both the
-   *  concurrent parallel-results array and the serial rawResults.push path
-   *  consume. Centralized so that future schema changes touch one place. */
-  private syntheticErrorRow(
-    tc: ToolCall,
-    errorMsg: string,
-  ): SyntheticErrorRow {
-    return {
-      toolCallId: tc.id,
-      name: tc.name,
-      output: '',
-      error: errorMsg,
-      durationMs: 0,
-    };
   }
 
   registerProvider(name: string, provider: LLMProvider): void {
@@ -1320,8 +1298,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   id,
                   provider: 'unknown',
                   tier: 'standard' as ModelTier,
-                  costPer1KInput: 0,
-                  costPer1KOutput: 0,
+                  costPer1MInput: 0,
+                  costPer1MOutput: 0,
                   capabilities: [],
                   contextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
                   priority: 0,
@@ -1363,8 +1341,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   `batch_max_batch_size: ${batchModel.maxBatchSize ?? 'unlimited'}`,
                 ],
                 estimatedCost:
-                  (estimatedInputTokens / 1000) * batchModel.costPer1KInput +
-                  (estimatedOutputTokens / 1000) * batchModel.costPer1KOutput,
+                  (estimatedInputTokens / 1_000_000) * batchModel.costPer1MInput +
+                  (estimatedOutputTokens / 1_000_000) * batchModel.costPer1MOutput,
                 maxTokens: Math.min(estimatedOutputTokens, 200000),
               };
               tracer.recordDecision(
@@ -1514,6 +1492,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 { name: 'task_category', value: costEstimate.taskCategory },
                 { name: 'model_tier', value: costEstimate.modelTier },
                 { name: 'model', value: routing.modelId },
+                ...(tenantId ? [{ name: 'tenant', value: tenantId }] : []),
               ],
             );
             getMetricsCollector().setGauge(
@@ -1523,6 +1502,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               [
                 { name: 'task_category', value: costEstimate.taskCategory },
                 { name: 'model_tier', value: costEstimate.modelTier },
+                ...(tenantId ? [{ name: 'tenant', value: tenantId }] : []),
               ],
             );
           } catch {
@@ -1697,7 +1677,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
           // Pre-LLM tool provisioning: detect tool needs and inject results before LLM sees the question
           try {
-            const provisioned = await provisionTools(ctx.goal, request, this.tools, this.cacheManager.getToolCache());
+            const provisioned = await provisionTools(
+              ctx.goal,
+              request,
+              this.tools,
+              this.cacheManager.getToolCache(),
+            );
             if (provisioned) {
               bus.publish('system.alert', 'runtime', { type: 'tool_provisioned' });
             }
@@ -1774,14 +1759,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   importanceThreshold: 0.3,
                 });
                 // DP-sanitize memory entries before sharing across agents
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const dpOutcome = this.securityOrch.sanitizeMemoryShare(
-                  rawMemories as any,
-                  ctx.agentId,
-                );
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const memories = dpOutcome.result as any as typeof rawMemories;
-                if (memories.length > 0) {
+                const dpOutcome = this.securityOrch.sanitizeMemoryShare(rawMemories, ctx.agentId);
+                const memories = dpOutcome.result;
+                if (memories && memories.length > 0) {
                   const memoryBlock = memories
                     .map(
                       (m) =>
@@ -1899,7 +1879,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
           let lastError: string | undefined;
           let lastErrorIsPermanent = false;
           const steps: AgentExecutionStep[] = [];
-          let totalTokens: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+          let totalTokens: TokenUsage = {
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            cacheReadTokens: 0,
+          };
           // Track content written by file_write tool calls for artifact propagation
           let largestFileWriteContent = '';
           let largestFileWritePath = '';
@@ -1963,9 +1948,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
               getGlobalLogger().warn('AgentRuntime', `CostGuard THROTTLE: ${costDecision.reason}`);
             }
           } catch (e) {
-            getGlobalLogger().debug('AgentRuntime', 'CostGuard check (best-effort)', {
-              error: (e as Error)?.message,
-            });
+            // Fail-closed: CostGuard errors are treated as THROTTLE.
+            // The guard may fail due to misconfiguration, memory pressure, or
+            // state corruption — in all cases the safe default is to reduce
+            // request priority rather than allow unrestricted spending.
+            getGlobalLogger().warn(
+              'AgentRuntime',
+              `CostGuard check failed (fail-closed, throttling): ${(e as Error)?.message}`,
+            );
           }
 
           for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
@@ -1988,6 +1978,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
               totalTokens.promptTokens += response.usage.promptTokens;
               totalTokens.completionTokens += response.usage.completionTokens;
               totalTokens.totalTokens += response.usage.totalTokens;
+              totalTokens.cacheReadTokens =
+                (totalTokens.cacheReadTokens ?? 0) + (response.usage.cacheReadTokens ?? 0);
               this.governor.reportUsage(response.usage.totalTokens);
               ctx.guard?.recordTokens(response.usage.totalTokens);
 
@@ -2039,27 +2031,15 @@ export class AgentRuntime implements AgentRuntimeInterface {
               // Record actual cost for estimator learning (per-step)
               try {
                 const modelCfg = this.router.getModel(routing.modelId);
-                const stepCostUsd =
-                  costEstimator.estimateForModel(
-                    ctx,
-                    modelCfg ?? {
-                      id: routing.modelId,
-                      provider: routing.provider,
-                      tier: routing.tier,
-                      costPer1KInput: 0.003,
-                      costPer1KOutput: 0.01,
-                      capabilities: [],
-                      contextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
-                      priority: 0,
-                    },
-                  ).costUsd *
-                  (response.usage.totalTokens / (costEstimate.predictedTotalTokens || 1));
                 costEstimator.recordActualCost(
                   costEstimate.taskCategory,
                   routing.tier,
                   response.usage.promptTokens,
                   response.usage.completionTokens,
-                  stepCostUsd,
+                  response.usage.cacheReadTokens ?? 0,
+                  modelCfg?.costPer1MInput ?? 3,
+                  modelCfg?.costPer1MOutput ?? 10,
+                  modelCfg?.costPer1MCachedInput,
                   stepDuration,
                   true,
                 );
@@ -2316,10 +2296,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                           if (gate.kind === 'retry') {
                             retryLoopDetected = true;
                             retryLoopCount = gate.count;
-                            return this.syntheticErrorRow(
-                              tc,
-                              `Retry loop detected: ${tc.name}`,
-                            );
+                            return toolErrorRow(tc, `Retry loop detected: ${tc.name}`);
                           }
                           if (gate.kind === 'cycle') {
                             cycleDetected = true;
@@ -2337,10 +2314,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                               reason: 'cycle_detected',
                               detail: gate.description,
                             });
-                            return this.syntheticErrorRow(
-                              tc,
-                              `Cycle detected: ${gate.description}`,
-                            );
+                            return toolErrorRow(tc, `Cycle detected: ${gate.description}`);
                           }
                           if (gate.kind === 'hooked') {
                             bus.publish('tool.blocked', ctx.agentId, {
@@ -2349,21 +2323,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
                               reason: 'hook_denied',
                               detail: gate.errorMsg,
                             });
-                            return this.syntheticErrorRow(
-                              tc,
-                              `Hook blocked: ${gate.errorMsg || 'denied'}`,
-                            );
+                            return toolErrorRow(tc, `Hook blocked: ${gate.errorMsg || 'denied'}`);
                           }
                           // gate.kind === 'siblingAbort'
                           return gate.row;
                         }
 
                         // SecurityOrchestrator: unify ToolApproval + AdaptiveHITL before execution
-                        const sec = await this.applyBeforeToolCallSecurity(
-                          tc,
-                          ctx.agentId,
-                          runId,
-                        );
+                        const sec = await this.applyBeforeToolCallSecurity(tc, ctx.agentId, runId);
                         if (!sec.allowed && sec.blockedRawResult) {
                           return sec.blockedRawResult;
                         }
@@ -2477,7 +2444,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                             reason: 'hook_denied',
                             detail: gate.errorMsg,
                           });
-                          blockingRow = this.syntheticErrorRow(
+                          blockingRow = toolErrorRow(
                             tc,
                             `Hook blocked: ${gate.errorMsg || 'denied'}`,
                           );
@@ -2485,10 +2452,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                         case 'retry':
                           retryLoopDetected = true;
                           retryLoopCount = gate.count;
-                          blockingRow = this.syntheticErrorRow(
-                            tc,
-                            `Retry loop detected: ${tc.name}`,
-                          );
+                          blockingRow = toolErrorRow(tc, `Retry loop detected: ${tc.name}`);
                           shouldBreak = true;
                           break;
                         case 'cycle':
@@ -2504,10 +2468,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                             detail: gate.description,
                           });
                           cycleDetected = true;
-                          blockingRow = this.syntheticErrorRow(
-                            tc,
-                            `Cycle detected: ${gate.description}`,
-                          );
+                          blockingRow = toolErrorRow(tc, `Cycle detected: ${gate.description}`);
                           shouldBreak = true;
                           break;
                         case 'siblingAbort':
@@ -2522,11 +2483,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                       if (shouldBreak) break;
                     }
                     // SecurityOrchestrator: unify ToolApproval + AdaptiveHITL before execution
-                    const sec = await this.applyBeforeToolCallSecurity(
-                      tc,
-                      ctx.agentId,
-                      runId,
-                    );
+                    const sec = await this.applyBeforeToolCallSecurity(tc, ctx.agentId, runId);
                     let toolResult: ToolResult;
                     if (!sec.allowed && sec.blockedToolResult) {
                       toolResult = sec.blockedToolResult;
@@ -2846,6 +2803,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 totalTokens.promptTokens += followUp.usage.promptTokens;
                 totalTokens.completionTokens += followUp.usage.completionTokens;
                 totalTokens.totalTokens += followUp.usage.totalTokens;
+                totalTokens.cacheReadTokens =
+                  (totalTokens.cacheReadTokens ?? 0) + (followUp.usage.cacheReadTokens ?? 0);
                 this.governor.reportUsage(followUp.usage.totalTokens);
                 ctx.guard?.recordTokens(followUp.usage.totalTokens);
                 response = followUp;
@@ -3022,7 +2981,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                       ['execution', 'early_exit', ...ctx.availableTools.slice(0, 3)],
                       {
                         runId,
-                      goal: ctx.goal.slice(0, GOAL_RESULT_MAX_CHARS),
+                        goal: ctx.goal.slice(0, GOAL_RESULT_MAX_CHARS),
                         tokenUsage: totalTokens,
                         durationMs: totalDurationMs,
                       },
@@ -3054,25 +3013,15 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 // Record final cost for estimator learning
                 try {
                   const modelCfg = this.router.getModel(routing.modelId);
-                  const totalCostUsd = costEstimator.estimateForModel(
-                    ctx,
-                    modelCfg ?? {
-                      id: routing.modelId,
-                      provider: routing.provider,
-                      tier: routing.tier,
-                      costPer1KInput: 0.003,
-                      costPer1KOutput: 0.01,
-                      capabilities: [],
-                      contextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
-                      priority: 0,
-                    },
-                  ).costUsd;
                   costEstimator.recordActualCost(
                     costEstimate.taskCategory,
                     routing.tier,
                     totalTokens.promptTokens,
                     totalTokens.completionTokens,
-                    totalCostUsd,
+                    totalTokens.cacheReadTokens ?? 0,
+                    modelCfg?.costPer1MInput ?? 3,
+                    modelCfg?.costPer1MOutput ?? 10,
+                    modelCfg?.costPer1MCachedInput,
                     totalDurationMs,
                     true,
                   );
@@ -3349,6 +3298,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     totalTokens.promptTokens += reflexionResponse.usage.promptTokens;
                     totalTokens.completionTokens += reflexionResponse.usage.completionTokens;
                     totalTokens.totalTokens += reflexionResponse.usage.totalTokens;
+                    totalTokens.cacheReadTokens =
+                      (totalTokens.cacheReadTokens ?? 0) +
+                      (reflexionResponse.usage.cacheReadTokens ?? 0);
                     this.governor.reportUsage(reflexionResponse.usage.totalTokens);
 
                     verifReport = await this.verificationPipeline.verify({
@@ -3609,25 +3561,15 @@ export class AgentRuntime implements AgentRuntimeInterface {
               // Record final actual cost for estimator learning
               try {
                 const modelCfg = this.router.getModel(routing.modelId);
-                const totalCostUsd = costEstimator.estimateForModel(
-                  ctx,
-                  modelCfg ?? {
-                    id: routing.modelId,
-                    provider: routing.provider,
-                    tier: routing.tier,
-                    costPer1KInput: 0.003,
-                    costPer1KOutput: 0.01,
-                    capabilities: [],
-                    contextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
-                    priority: 0,
-                  },
-                ).costUsd;
                 costEstimator.recordActualCost(
                   costEstimate.taskCategory,
                   routing.tier,
                   totalTokens.promptTokens,
                   totalTokens.completionTokens,
-                  totalCostUsd,
+                  totalTokens.cacheReadTokens ?? 0,
+                  modelCfg?.costPer1MInput ?? 3,
+                  modelCfg?.costPer1MOutput ?? 10,
+                  modelCfg?.costPer1MCachedInput,
                   totalDurationMs,
                   true,
                 );
@@ -3728,6 +3670,47 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
               this.circuitBreaker.onSuccess();
               circuitReleased = true;
+
+              // Record intelligence: postTask, metaLearner, failure patterns
+              try {
+                getAgentIntelligence().postTask({
+                  task: ctx.goal,
+                  taskType: taskType || 'general',
+                  effortLevel: routing.tier,
+                  topology: ctx.subAgentRole || 'SINGLE',
+                  tokens: totalTokens.totalTokens,
+                  durationMs: totalDurationMs,
+                  success: true,
+                  steps: steps.map((s) => ({
+                    action: s.content?.slice(0, 200) || '',
+                    tool: s.toolCall?.name || 'llm',
+                    result: s.toolResult?.output?.slice(0, 200) || '',
+                  })),
+                  runId,
+                });
+              } catch {
+                /* best-effort */
+              }
+
+              try {
+                getMetaLearner().recordExperience({
+                  id: `exp-${runId}-success`,
+                  runId,
+                  agentId: ctx.agentId,
+                  missionId: ctx.missionId,
+                  taskType: taskType || 'general',
+                  strategyUsed: ctx.subAgentRole || 'SEQUENTIAL',
+                  success: true,
+                  durationMs: totalDurationMs,
+                  tokenCost: totalTokens.totalTokens,
+                  modelUsed: routing.modelId,
+                  timestamp: new Date().toISOString(),
+                  topology: ctx.subAgentRole || 'SEQUENTIAL',
+                  lessons: result.summary ? [result.summary.slice(0, 200)] : [],
+                });
+              } catch {
+                /* best-effort */
+              }
               if (this.runHandle) {
                 try {
                   getExecutionScheduler().commitRun({
@@ -3772,25 +3755,15 @@ export class AgentRuntime implements AgentRuntimeInterface {
           // Record final actual cost for failed run (for estimator learning)
           try {
             const modelCfg = this.router.getModel(routing.modelId);
-            const totalCostUsd = costEstimator.estimateForModel(
-              ctx,
-              modelCfg ?? {
-                id: routing.modelId,
-                provider: routing.provider,
-                tier: routing.tier,
-                costPer1KInput: 0.003,
-                costPer1KOutput: 0.01,
-                capabilities: [],
-                contextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
-                priority: 0,
-              },
-            ).costUsd;
             costEstimator.recordActualCost(
               costEstimate.taskCategory,
               routing.tier,
               totalTokens.promptTokens,
               totalTokens.completionTokens,
-              totalCostUsd,
+              totalTokens.cacheReadTokens ?? 0,
+              modelCfg?.costPer1MInput ?? 3,
+              modelCfg?.costPer1MOutput ?? 10,
+              modelCfg?.costPer1MCachedInput,
               Date.now() - startTime,
               false,
             );
@@ -3873,12 +3846,71 @@ export class AgentRuntime implements AgentRuntimeInterface {
             Date.now() - startTime,
             steps.length,
             tenantId,
+            getCostEstimator().estimateCostFromUsage(
+              routing.modelId,
+              totalTokens.promptTokens,
+              totalTokens.completionTokens,
+            ),
           );
           bus.publish('agent.failed', ctx.agentId, {
             runId,
             missionId: ctx.missionId,
             error: lastError,
           });
+
+          // Record intelligence: postTask (failure), metaLearner, failure patterns
+          try {
+            getAgentIntelligence().postTask({
+              task: ctx.goal,
+              taskType: taskType || 'general',
+              effortLevel: routing.tier,
+              topology: ctx.subAgentRole || 'SINGLE',
+              tokens: totalTokens.totalTokens,
+              durationMs: Date.now() - startTime,
+              success: false,
+              steps: steps.map((s) => ({
+                action: s.content?.slice(0, 200) || '',
+                tool: s.toolCall?.name || 'llm',
+                result: s.toolResult?.output?.slice(0, 200) || '',
+              })),
+              error: lastError,
+              runId,
+            });
+          } catch {
+            /* best-effort */
+          }
+
+          try {
+            getMetaLearner().recordExperience({
+              id: `exp-${runId}-failure`,
+              runId,
+              agentId: ctx.agentId,
+              missionId: ctx.missionId,
+              taskType: taskType || 'general',
+              strategyUsed: ctx.subAgentRole || 'SEQUENTIAL',
+              success: false,
+              durationMs: Date.now() - startTime,
+              tokenCost: totalTokens.totalTokens,
+              modelUsed: routing.modelId,
+              timestamp: new Date().toISOString(),
+              topology: ctx.subAgentRole || 'SEQUENTIAL',
+              errorPattern: lastError,
+              lessons: lastError ? [lastError.slice(0, 200)] : [],
+            });
+          } catch {
+            /* best-effort */
+          }
+
+          try {
+            getFailurePatternLearner().recordFailure({
+              task: ctx.goal,
+              error: lastError || 'Unknown error',
+              context: `runId:${runId}|topology:${ctx.subAgentRole || 'SINGLE'}|tokens:${totalTokens.totalTokens}`,
+              category: 'other',
+            });
+          } catch {
+            /* best-effort */
+          }
 
           return {
             runId,
@@ -3935,6 +3967,31 @@ export class AgentRuntime implements AgentRuntimeInterface {
         tracer.completeRun(runId);
       } catch (e) {
         getGlobalLogger().warn('AgentRuntime', 'Failed to complete trace', {
+          runId,
+          error: (e as Error)?.message,
+        });
+      }
+      // SLO check: evaluate trace against all active SLOs and record violations
+      try {
+        const trace = tracer.getTrace(runId);
+        if (trace) {
+          const sloManager = getSLOManager();
+          const violations = sloManager.checkTrace(trace);
+          for (const v of violations) {
+            const sloDef = sloManager.getSLO(v.sloId);
+            getMetricsCollector().recordSLOViolation(
+              v.sloId,
+              sloDef?.name ?? v.sloId,
+              v.metric,
+              v.severity,
+              v.actualValue,
+              v.threshold,
+              tenantId,
+            );
+          }
+        }
+      } catch (e) {
+        getGlobalLogger().warn('AgentRuntime', 'SLO check failed', {
           runId,
           error: (e as Error)?.message,
         });
@@ -4021,16 +4078,27 @@ export class AgentRuntime implements AgentRuntimeInterface {
   ): Promise<LLMResponse | null> {
     // Build fallback chain: primary provider first, then all others as backups.
     // ProviderFallbackChain handles circuit-breaker-aware sequential failover.
-    const primaryProvider = this.providers.get(routing.provider);
+    // Plugin hook: beforeBackendSelect — can override the selected provider
+    const hookSelected = await getHookManager()
+      .fireBeforeBackendSelect({
+        toolName: routing.provider,
+        args: request as unknown as Record<string, unknown>,
+        agentId: taskId ?? 'unknown',
+        runId: taskId ?? 'unknown',
+      })
+      .catch(() => null);
+    const resolvedProvider = hookSelected ?? routing.provider;
+
+    const primaryProvider = this.providers.get(resolvedProvider);
     const entries: ProviderEntry<import('./types').LLMResponse>[] = [];
 
     if (primaryProvider) {
       entries.push({
-        name: routing.provider,
+        name: resolvedProvider,
         attempt: () =>
           this.callProviderOrThrow(
             primaryProvider,
-            routing.provider,
+            resolvedProvider,
             request,
             attemptNumber,
             taskId,
@@ -4058,6 +4126,15 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
     try {
       const { result } = await this.fallbackChain.tryProviders(entries);
+      getHookManager()
+        .fireAfterBackendSelect({
+          toolName: routing.provider,
+          args: request as unknown as Record<string, unknown>,
+          selectedBackend: resolvedProvider,
+          agentId: taskId ?? 'unknown',
+          runId: taskId ?? 'unknown',
+        })
+        .catch(() => {});
       return result;
     } catch (err) {
       if (err instanceof FallbackChainExhaustedError) {
@@ -4174,7 +4251,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
         },
         tenantIdForFlight,
       );
-      const recentEvictionDelta = this.cacheManager.getSingleFlightStats().evictions - evictionsBefore;
+      const recentEvictionDelta =
+        this.cacheManager.getSingleFlightStats().evictions - evictionsBefore;
       const wasHit = this.cacheManager.getSingleFlightInflightCount() === inflightBefore;
       try {
         getMetricsCollector().recordSingleFlightEvent(wasHit ? 'hit' : 'miss', tenantIdForFlight);

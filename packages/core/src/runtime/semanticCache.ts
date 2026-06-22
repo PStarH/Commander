@@ -186,12 +186,26 @@ export class SemanticCache {
       return null;
     }
 
+    const queryHash = createHash('sha256').update(target).digest('hex').slice(0, 16);
+    const now = Date.now();
+
+    for (const entry of bucket) {
+      if (now - entry.createdAt > entry.ttlMs) continue;
+      if (entry.queryHash === queryHash) {
+        entry.hitCount++;
+        entry.lastAccessAt = now;
+        entry.accessOrder = ++this.accessCounter;
+        this.stats.hits++;
+        this.stats.costSavedUsd += entry.costPerHit;
+        return cloneResponse(entry.response);
+      }
+    }
+
     this.stats.embeddingCalls++;
     const queryEmbedding = await Promise.resolve(this.embeddingFn.generate(target));
 
     let bestEntry: CacheEntry | null = null;
     let bestSim = 0;
-    const now = Date.now();
 
     for (const entry of bucket) {
       if (now - entry.createdAt > entry.ttlMs) continue;
@@ -221,11 +235,12 @@ export class SemanticCache {
   // --------------------------------------------------------------------------
 
   /**
-   * Store a response in the cache. Embeds the query in the background; never
-   * blocks the call site. Embedding failures are silently dropped — the caller
-   * has already received the response.
+   * Store a response in the cache. Generates the embedding synchronously if
+   * possible (LocalEmbeddingFunction, MockEmbeddingFunction), or awaits async
+   * providers (OpenAI) before returning. Callers can `await cache.store(...)` to
+   * guarantee the entry is available for subsequent lookups.
    */
-  store(request: LLMRequest, response: LLMResponse, tenantId?: string): void {
+  async store(request: LLMRequest, response: LLMResponse, tenantId?: string): Promise<void> {
     if (!this.config.enabled) return;
     if (this.shouldSkip(request)) return;
     if (response.finishReason === 'error') return;
@@ -242,43 +257,40 @@ export class SemanticCache {
     const queryHash = createHash('sha256').update(target).digest('hex').slice(0, 16);
 
     this.stats.embeddingCalls++;
-    Promise.resolve(this.embeddingFn.generate(target)).then(
-      (embedding) => {
-        let bucket = this.buckets.get(bucketKey);
-        if (!bucket) {
-          bucket = [];
-          this.buckets.set(bucketKey, bucket);
-        }
+    const embedding = await Promise.resolve(this.embeddingFn.generate(target));
 
-        if (bucket.length >= this.config.maxBucketSize) {
-          const evicted = bucket.shift();
-          if (evicted) {
-            this.memoryEstimateBytes -= estimateEntryBytes(evicted);
-            this.stats.evictions++;
-          }
-        }
+    let bucket = this.buckets.get(bucketKey);
+    if (!bucket) {
+      bucket = [];
+      this.buckets.set(bucketKey, bucket);
+    }
 
-        if (this.totalEntries() >= this.config.maxEntries) {
-          this.evictGlobalLRU(1);
-        }
+    if (bucket.length >= this.config.maxBucketSize) {
+      const evicted = bucket.shift();
+      if (evicted) {
+        this.memoryEstimateBytes -= estimateEntryBytes(evicted);
+        this.stats.evictions++;
+      }
+    }
 
-        const entry: CacheEntry = {
-          queryHash,
-          embedding,
-          response: cloneResponse(response),
-          createdAt,
-          ttlMs,
-          hitCount: 0,
-          lastAccessAt: createdAt,
-          accessOrder: ++this.accessCounter,
-          costPerHit,
-        };
-        bucket.push(entry);
-        this.memoryEstimateBytes += estimateEntryBytes(entry);
-        this.stats.stores++;
-      },
-      () => undefined,
-    );
+    if (this.totalEntries() >= this.config.maxEntries) {
+      this.evictGlobalLRU(1);
+    }
+
+    const entry: CacheEntry = {
+      queryHash,
+      embedding,
+      response: cloneResponse(response),
+      createdAt,
+      ttlMs,
+      hitCount: 0,
+      lastAccessAt: createdAt,
+      accessOrder: ++this.accessCounter,
+      costPerHit,
+    };
+    bucket.push(entry);
+    this.memoryEstimateBytes += estimateEntryBytes(entry);
+    this.stats.stores++;
   }
 
   // --------------------------------------------------------------------------
