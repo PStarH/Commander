@@ -238,30 +238,36 @@ describe('SupplyChainAttestor', () => {
   // ── PURL Generation ───────────────────────────────────────────────
 
   it('should generate correct PURLs for npm packages', () => {
-    expect(componentToPurl({
-      type: 'npm_package',
-      name: 'lodash',
-      version: '4.17.21',
-      source: 'npm',
-    })).toBe('pkg:npm/lodash@4.17.21');
+    expect(
+      componentToPurl({
+        type: 'npm_package',
+        name: 'lodash',
+        version: '4.17.21',
+        source: 'npm',
+      }),
+    ).toBe('pkg:npm/lodash@4.17.21');
   });
 
   it('should generate correct PURLs for models', () => {
-    expect(componentToPurl({
-      type: 'model',
-      name: 'gpt-4o',
-      version: '2024-05-13',
-      source: 'openai',
-    })).toBe('pkg:generic/gpt-4o@2024-05-13');
+    expect(
+      componentToPurl({
+        type: 'model',
+        name: 'gpt-4o',
+        version: '2024-05-13',
+        source: 'openai',
+      }),
+    ).toBe('pkg:generic/gpt-4o@2024-05-13');
   });
 
   it('should generate correct PURLs for skills with type qualifier', () => {
-    expect(componentToPurl({
-      type: 'skill',
-      name: 'code-reviewer',
-      version: '2.0.0',
-      source: 'local',
-    })).toBe('pkg:generic/code-reviewer@2.0.0?type=skill');
+    expect(
+      componentToPurl({
+        type: 'skill',
+        name: 'code-reviewer',
+        version: '2.0.0',
+        source: 'local',
+      }),
+    ).toBe('pkg:generic/code-reviewer@2.0.0?type=skill');
   });
 
   // ── Config ───────────────────────────────────────────────────────
@@ -284,11 +290,13 @@ describe('SupplyChainAttestor', () => {
   });
 
   it('should handle components without checksums (empty checksums array)', () => {
-    const components: ComponentEntry[] = [{
-      type: 'tool',
-      name: 'no-checksum-tool',
-      source: 'inline',
-    }];
+    const components: ComponentEntry[] = [
+      {
+        type: 'tool',
+        name: 'no-checksum-tool',
+        source: 'inline',
+      },
+    ];
     const sbom = attestor.generateSbom('test', components);
     // Components without explicit checksums have empty checksums arrays
     // rather than auto-generated metadata hashes (per SPDX 2.3 convention)
@@ -296,11 +304,13 @@ describe('SupplyChainAttestor', () => {
   });
 
   it('should handle components without PURL or version', () => {
-    const components: ComponentEntry[] = [{
-      type: 'skill',
-      name: 'minimal-skill',
-      source: 'local',
-    }];
+    const components: ComponentEntry[] = [
+      {
+        type: 'skill',
+        name: 'minimal-skill',
+        source: 'local',
+      },
+    ];
     const sbom = attestor.generateSbom('test', components);
     expect(sbom.packages[0]!.versionInfo).toBe('NOASSERTION');
     expect(sbom.packages[0]!.downloadLocation).toBe('local');

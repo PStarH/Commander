@@ -59,10 +59,7 @@ import {
   CLOCK_SKEW_SECONDS,
 } from '../../src/security/capabilityToken';
 import { getAuditChainLedger, resetAuditChainLedger } from '../../src/security/auditChainLedger';
-import {
-  getMetricsCollector,
-  resetMetricsCollector,
-} from '../../src/runtime/metricsCollector';
+import { getMetricsCollector, resetMetricsCollector } from '../../src/runtime/metricsCollector';
 import { TokenRejectedLogger } from '../../src/runtime/toolApproval';
 import { ToolApproval } from '../../src/runtime/toolApproval';
 
@@ -492,10 +489,14 @@ it('Phase 2.1 — ToolApproval integration: valid token short-circuits policy', 
   });
   const ta = new ToolApproval(approver, undefined, verifier);
   const tok = issuer.issue({ sub: 'agent-X', aud: '*', tools: ['file_write'], ttlSeconds: 30 });
-  const r = await ta.requestApproval('file_write', { path: '/workspace/x.ts' }, {
-    agentId: 'agent-X',
-    token: tok,
-  });
+  const r = await ta.requestApproval(
+    'file_write',
+    { path: '/workspace/x.ts' },
+    {
+      agentId: 'agent-X',
+      token: tok,
+    },
+  );
   assert.equal(r.approved, true);
   assert.match(r.reason ?? '', /^capability-token:/);
 });
@@ -515,9 +516,13 @@ it('Phase 2.1 — ToolApproval integration: invalid token falls through to appro
   const ta = new ToolApproval(approver, undefined, verifier);
   // Use `git_push` (manual-level policy) so the approver callback is the only
   // path to approval — ensures we observe fallback behavior, not autoApproveIf.
-  const r = await ta.requestApproval('git_push', { remote: 'origin' }, {
-    token: 'malformed.token.value',
-  });
+  const r = await ta.requestApproval(
+    'git_push',
+    { remote: 'origin' },
+    {
+      token: 'malformed.token.value',
+    },
+  );
   assert.equal(r.approved, true);
   assert.equal(approverCalled, true);
   assert.equal(r.reason, 'fallthrough');
@@ -660,10 +665,7 @@ it('Phase 2.1 — Resolution short-circuit: wrong typ header', () => {
     .replace(/\+/g, '-')
     .replace(/\//g, '_');
   const nodeCrypto = require('node:crypto');
-  const sigB64 = nodeCrypto
-    .createHmac('sha256', m)
-    .update(`${header}.${payloadB64}`)
-    .digest('hex');
+  const sigB64 = nodeCrypto.createHmac('sha256', m).update(`${header}.${payloadB64}`).digest('hex');
   const sig = Buffer.from(sigB64, 'utf-8')
     .toString('base64')
     .replace(/=+$/g, '')
@@ -870,7 +872,11 @@ it('Phase 2.3 — audit_sink_failures_total{sink="auditLogger"} increments when 
   const chainCount = getMetricsCollector().getCounter('audit_sink_failures_total', [
     { name: 'sink', value: 'auditChain' },
   ]);
-  assert.equal(chainCount, 0, 'auditChain counter must remain 0 when only auditLogger is wired+throws');
+  assert.equal(
+    chainCount,
+    0,
+    'auditChain counter must remain 0 when only auditLogger is wired+throws',
+  );
 });
 
 it('Phase 2.3 — audit_sink_failures_total{sink="auditChain"} increments when auditChain throws', () => {
@@ -896,7 +902,11 @@ it('Phase 2.3 — audit_sink_failures_total{sink="auditChain"} increments when a
   const inprocCount = getMetricsCollector().getCounter('audit_sink_failures_total', [
     { name: 'sink', value: 'auditLogger' },
   ]);
-  assert.equal(inprocCount, 0, 'auditLogger counter must remain 0 when only auditChain is wired+throws');
+  assert.equal(
+    inprocCount,
+    0,
+    'auditLogger counter must remain 0 when only auditChain is wired+throws',
+  );
 });
 
 it('Phase 2.3 — audit_sink_failures_total{sink="tokenRejectedLogger"} increments when user logger throws', async () => {
@@ -917,9 +927,13 @@ it('Phase 2.3 — audit_sink_failures_total{sink="tokenRejectedLogger"} incremen
   });
   // Verify rejects the malformed token → tokenRejectedLogger fires → throws
   // → recordSinkFailure('tokenRejectedLogger') increments the counter.
-  await ta.requestApproval('git_push', { remote: 'origin' }, {
-    token: 'definitely.not.a.token',
-  });
+  await ta.requestApproval(
+    'git_push',
+    { remote: 'origin' },
+    {
+      token: 'definitely.not.a.token',
+    },
+  );
   const afterCount = getMetricsCollector().getCounter('audit_sink_failures_total', [
     { name: 'sink', value: 'tokenRejectedLogger' },
   ]);

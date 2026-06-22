@@ -89,7 +89,6 @@ function mkRow(opts: {
   };
 }
 
-
 // ===========================================================================
 // 1. Module-shape: every new async export resolves at the surface.
 // ===========================================================================
@@ -140,11 +139,10 @@ describe('D3.2 hardening — typed consumer sample (async surface resolves shape
   ): Promise<{ verified: number; failed: number; aborted: boolean }> {
     const controller = new AbortControllerImpl();
     try {
-      const results: VerifyShaResult[] = await verifyShasConcurrent(
-        shas,
-        repoRoot,
-        { concurrency: options.concurrency ?? VERIFY_CONCURRENCY_DEFAULT, signal: controller.signal },
-      );
+      const results: VerifyShaResult[] = await verifyShasConcurrent(shas, repoRoot, {
+        concurrency: options.concurrency ?? VERIFY_CONCURRENCY_DEFAULT,
+        signal: controller.signal,
+      });
       const verified = results.filter((r) => r.verified).length;
       const failed = results.filter((r) => !r.verified).length;
       return { verified, failed, aborted: false };
@@ -306,8 +304,9 @@ describe('D3.2 hardening — runtime: verifyShasConcurrent concurrency model', (
   });
 
   it('concurrency > 256 rejects with RangeError (anti-forkbomb guard)', async () => {
-    await expect(verifyShasConcurrent([], process.cwd(), { concurrency: 999_999 }))
-      .rejects.toThrow(/concurrency=999999 exceeds the 256 safe bound/);
+    await expect(verifyShasConcurrent([], process.cwd(), { concurrency: 999_999 })).rejects.toThrow(
+      /concurrency=999999 exceeds the 256 safe bound/,
+    );
   });
 
   it('already-aborted signal rejects with abort reason', async () => {

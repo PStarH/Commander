@@ -28,7 +28,13 @@ import { StateCheckpointer } from '../../src/runtime/stateCheckpointer';
 import { DeadLetterQueue } from '../../src/runtime/deadLetterQueue';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { AgentExecutionContext, Tool, LLMProvider, LLMRequest, LLMResponse } from '../../src/runtime/types';
+import type {
+  AgentExecutionContext,
+  Tool,
+  LLMProvider,
+  LLMRequest,
+  LLMResponse,
+} from '../../src/runtime/types';
 
 function makeContext(overrides?: Partial<AgentExecutionContext>): AgentExecutionContext {
   return {
@@ -47,7 +53,9 @@ function makeContext(overrides?: Partial<AgentExecutionContext>): AgentExecution
 const CHECKPOINT_BASE = path.join(__dirname, '..', '..', '.test-checkpoints');
 
 function cleanCheckpoints() {
-  try { fs.rmSync(CHECKPOINT_BASE, { recursive: true, force: true }); } catch {}
+  try {
+    fs.rmSync(CHECKPOINT_BASE, { recursive: true, force: true });
+  } catch {}
 }
 
 describe('Provider failover chain', () => {
@@ -62,8 +70,20 @@ describe('Provider failover chain', () => {
   it('uses the primary provider when it succeeds', async () => {
     const chain = new ProviderFallbackChain<string>({ maxProviders: 2 });
     const result = await chain.tryProviders([
-      { name: 'primary', attempt: () => primary.call({ messages: [{ role: 'user', content: 'hi' }], model: 'test' }).then(r => r.content) },
-      { name: 'fallback', attempt: () => fallback.call({ messages: [{ role: 'user', content: 'hi' }], model: 'test' }).then(r => r.content) },
+      {
+        name: 'primary',
+        attempt: () =>
+          primary
+            .call({ messages: [{ role: 'user', content: 'hi' }], model: 'test' })
+            .then((r) => r.content),
+      },
+      {
+        name: 'fallback',
+        attempt: () =>
+          fallback
+            .call({ messages: [{ role: 'user', content: 'hi' }], model: 'test' })
+            .then((r) => r.content),
+      },
     ]);
     expect(result.providerUsed).toBe('primary');
     expect(result.result).toBe('primary response');
@@ -73,7 +93,13 @@ describe('Provider failover chain', () => {
     const chain = new ProviderFallbackChain<string>({ maxProviders: 2 });
     const result = await chain.tryProviders([
       { name: 'primary', attempt: () => Promise.reject(new Error('502 Bad Gateway')) },
-      { name: 'fallback', attempt: () => fallback.call({ messages: [{ role: 'user', content: 'hi' }], model: 'test' }).then(r => r.content) },
+      {
+        name: 'fallback',
+        attempt: () =>
+          fallback
+            .call({ messages: [{ role: 'user', content: 'hi' }], model: 'test' })
+            .then((r) => r.content),
+      },
     ]);
     expect(result.providerUsed).toBe('fallback');
     expect(result.result).toBe('fallback response');
@@ -98,7 +124,13 @@ describe('Provider failover chain', () => {
     const chain = new ProviderFallbackChain<string>({ maxProviders: 2 });
     const result = await chain.tryProviders([
       { name: 'primary', attempt: () => Promise.resolve('should not be called'), breaker },
-      { name: 'fallback', attempt: () => fallback.call({ messages: [{ role: 'user', content: 'hi' }], model: 'test' }).then(r => r.content) },
+      {
+        name: 'fallback',
+        attempt: () =>
+          fallback
+            .call({ messages: [{ role: 'user', content: 'hi' }], model: 'test' })
+            .then((r) => r.content),
+      },
     ]);
     expect(result.providerUsed).toBe('fallback');
   });
@@ -171,7 +203,11 @@ describe('Tool orchestration with dependencies', () => {
 
   it('registers tools and runs successfully', async () => {
     const toolA: Tool = {
-      definition: { name: 'tool_a', description: 'Tool A', inputSchema: { type: 'object', properties: {} } },
+      definition: {
+        name: 'tool_a',
+        description: 'Tool A',
+        inputSchema: { type: 'object', properties: {} },
+      },
       execute: async () => 'A-result',
     };
     runtime.registerTool('tool_a', toolA);
@@ -186,8 +222,14 @@ describe('Tool orchestration with dependencies', () => {
 
   it('handles tool execution errors gracefully', async () => {
     const failingTool: Tool = {
-      definition: { name: 'fail_tool', description: 'Always fails', inputSchema: { type: 'object', properties: {} } },
-      execute: async () => { throw new Error('tool exploded'); },
+      definition: {
+        name: 'fail_tool',
+        description: 'Always fails',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      execute: async () => {
+        throw new Error('tool exploded');
+      },
     };
     runtime.registerTool('fail_tool', failingTool);
 
@@ -290,12 +332,16 @@ describe('DeadLetterQueue integration', () => {
   const dlqPath = path.join(__dirname, '..', '..', '.test-dlq');
 
   beforeEach(() => {
-    try { fs.mkdirSync(path.dirname(dlqPath), { recursive: true }); } catch {}
+    try {
+      fs.mkdirSync(path.dirname(dlqPath), { recursive: true });
+    } catch {}
     dlq = new DeadLetterQueue(dlqPath);
   });
 
   afterEach(() => {
-    try { fs.rmSync(dlqPath, { recursive: true, force: true }); } catch {}
+    try {
+      fs.rmSync(dlqPath, { recursive: true, force: true });
+    } catch {}
   });
 
   it('enqueues and retrieves a dead letter entry', () => {
@@ -397,7 +443,8 @@ describe('Verification pipeline integration', () => {
     const pipeline = new UnifiedVerificationPipeline();
     const result = await pipeline.verify({
       goal: 'cite a study',
-      output: 'According to a recent study by Dr. Johnson et al. published in 2024, the findings showed conclusively that...',
+      output:
+        'According to a recent study by Dr. Johnson et al. published in 2024, the findings showed conclusively that...',
     });
     for (const signal of result.signals) {
       expect(signal.stage).toBeGreaterThanOrEqual(0);

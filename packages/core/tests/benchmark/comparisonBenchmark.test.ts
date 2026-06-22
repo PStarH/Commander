@@ -186,28 +186,10 @@ describe('Comparison Benchmarks', () => {
     ];
 
     const competitorFeatures: Record<string, string[]> = {
-      langgraph: [
-        'State graph execution',
-        'Checkpointing',
-        'Human-in-the-loop',
-        'Streaming',
-      ],
-      crewai: [
-        'Role-based agents',
-        'Sequential processes',
-        'Memory',
-        'Tool delegation',
-      ],
-      autogen: [
-        'Multi-agent conversation',
-        'Code execution',
-        'Human feedback',
-      ],
-      'openai-agents': [
-        'Agent handoff',
-        'Guardrails',
-        'Tracing',
-      ],
+      langgraph: ['State graph execution', 'Checkpointing', 'Human-in-the-loop', 'Streaming'],
+      crewai: ['Role-based agents', 'Sequential processes', 'Memory', 'Tool delegation'],
+      autogen: ['Multi-agent conversation', 'Code execution', 'Human feedback'],
+      'openai-agents': ['Agent handoff', 'Guardrails', 'Tracing'],
     };
 
     const coverage: Record<string, number> = {};
@@ -224,10 +206,11 @@ describe('Comparison Benchmarks', () => {
         crewai_features: coverage.crewai,
         autogen_features: coverage.autogen,
         openai_agents_features: coverage['openai-agents'],
-        unique_to_commander: commanderFeatures.filter(f =>
-          !Object.values(competitorFeatures).flat().some(cf =>
-            f.toLowerCase().includes(cf.toLowerCase().split(' ')[0])
-          )
+        unique_to_commander: commanderFeatures.filter(
+          (f) =>
+            !Object.values(competitorFeatures)
+              .flat()
+              .some((cf) => f.toLowerCase().includes(cf.toLowerCase().split(' ')[0])),
         ).length,
       },
       timestamp: new Date().toISOString(),
@@ -267,7 +250,7 @@ describe('Comparison Benchmarks', () => {
         max_score: 10,
         percentage: Number((overallScore * 10).toFixed(1)),
         criteria_count: criteria.length,
-        criteria: criteria.map(c => `${c.name}: ${c.score}/10`).join(', '),
+        criteria: criteria.map((c) => `${c.name}: ${c.score}/10`).join(', '),
       },
       timestamp: new Date().toISOString(),
       durationMs: 0,
