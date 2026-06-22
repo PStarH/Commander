@@ -300,4 +300,3 @@ export interface SDKReliabilityStats {
  * @see packages/core/src/runtime/toolResultShape.ts
  */
 export type SentryRow = import('@commander/core').SyntheticErrorRow;
-
