@@ -154,6 +154,7 @@ export class MCPIntegrationManager {
           'MCPIntegration',
           `Connected to MCP server "${cfg.label}" — discovered ${tools.length} tools`,
         );
+        this.connected = true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.error(
@@ -164,8 +165,6 @@ export class MCPIntegrationManager {
         // Don't crash — other servers may still connect
       }
     }
-
-    this.connected = true;
   }
 
   /**

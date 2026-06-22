@@ -11,6 +11,8 @@ import type {
   StrategyPerformance,
 } from '../runtime/types';
 
+export const PERSISTENCE_ENABLED = true;
+
 export interface MetaLearnerState {
   experiences: ExecutionExperience[];
   reflections: string[];

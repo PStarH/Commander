@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { probeEnvironment, testConnectivity, recommendFallbackChain } from '../../commander/probe';
 import type { ConnectivityResult } from '../../commander/probe';
+import { createSeedWarRoomData } from '../../models/projections';
 import { $, startSpinner, section, kv } from '../util';
 import { cmdQuickstart } from './quickstart';
 
@@ -273,6 +274,13 @@ export async function cmdInit(flags: Record<string, string> = {}): Promise<void>
 
     // Remove undefined fields for clean JSON
     const cleanConfig = JSON.parse(JSON.stringify(newConfig));
+
+    // Seed War Room data so the dashboard has content on first visit
+    const seedData = createSeedWarRoomData();
+    cleanConfig.warRoom = {
+      seed: seedData,
+      seededAt: new Date().toISOString(),
+    };
 
     try {
       fs.writeFileSync(configPath, JSON.stringify(cleanConfig, null, 2), 'utf-8');

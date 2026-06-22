@@ -16,6 +16,7 @@
 
 import { $, parseFlags } from '../util';
 import { deliberate } from '../../ultimate/deliberation';
+import { createRuntime } from './_shared';
 import {
   readLLMCallRecords,
   aggregateCost,
@@ -33,21 +34,30 @@ export async function cmdAsk(question: string, flags: Record<string, string>): P
   console.log(`\n  ${$.cyan}${$.bold}Commander Ask${$.reset} — Quick Q&A Mode\n`);
   console.log(`  ${$.dim}Question:${$.reset} ${question}\n`);
 
-  // Use deliberation to classify the question
-  const plan = deliberate(question);
-
-  console.log(`  ${$.dim}Type:${$.reset} ${plan.taskType}`);
-  console.log(`  ${$.dim}Effort:${$.reset} ${plan.effortLevel}`);
-  console.log(`  ${$.dim}Confidence:${$.reset} ${(plan.confidence * 100).toFixed(0)}%`);
-
-  if (plan.requiresExternalInfo) {
-    console.log(`  ${$.yellow}⚠${$.reset} ${$.dim}This question may require web search.${$.reset}`);
+  const runtime = createRuntime();
+  if (!runtime) {
+    console.log(
+      `  ${$.yellow}⚠${$.reset} ${$.dim}No LLM provider configured. Run ${$.cyan}commander init${$.reset}${$.dim} first.\n`,
+    );
+    return;
   }
 
-  console.log(`\n  ${$.dim}For full execution, use:${$.reset} commander run "${question}"`);
-  console.log(
-    `  ${$.dim}For quick answer, use:${$.reset} commander run "${question}" --mode=fast\n`,
-  );
+  const result = await runtime.execute({
+    agentId: 'cli-ask',
+    projectId: 'cli',
+    goal: question,
+    maxSteps: 3,
+    contextData: {},
+    availableTools: [],
+    tokenBudget: 4096,
+  });
+
+  console.log(`\n  ${$.bold}Answer:${$.reset} ${result.summary ?? '(no output)'}\n`);
+  console.log(`  ${$.dim}Status:${$.reset} ${result.status}`);
+  if (result.totalTokenUsage) {
+    console.log(`  ${$.dim}Tokens:${$.reset} ${result.totalTokenUsage.totalTokens ?? 'N/A'}`);
+  }
+  console.log();
 }
 
 // ============================================================================

@@ -214,8 +214,10 @@ async function cmdSagaRun(args: string[]) {
   }
 }
 
-async function cmdSagaList(_args: string[]) {
-  const runs = listRuns();
+async function cmdSagaList(args: string[]) {
+  const { flags } = parseFlags(args);
+  const inMemoryOnly = flags['in-memory'] === 'true';
+  const runs = inMemoryOnly ? [] : listRuns();
   header(`${runs.length} run${runs.length === 1 ? '' : 's'}`);
   if (runs.length === 0) {
     console.log(
@@ -296,23 +298,77 @@ async function cmdSagaResume(args: string[]) {
   }
 
   console.log(
-    `  ${dim('Resuming run')} ${cyan(runId)} ${dim('— this rebuilds the saga from the snapshot.')}`,
+    `  ${dim('Resuming run')} ${cyan(runId)} ${dim('— rebuilding saga from snapshot...')}`,
   );
-  console.log(
-    `  ${dim('For a full implementation, load the snapshot, replay eventsAfterSnapshot,')}`,
-  );
-  console.log(`  ${dim('and dispatch to a new coordinator.')}`);
 
-  const ctx = buildContext(runId, {}, parseInt(flags.timeout ?? '60000', 10));
+  const ctx = buildContext(runId, snapshot.input ?? {}, parseInt(flags.timeout ?? '60000', 10));
   const runtime = buildRuntime(true);
   const recovered = await runtime.checkpoint.recover(runId);
   if (!recovered) {
     console.error(`  ${red('error:')} could not recover ${runId}`);
     process.exit(1);
   }
-  console.log(`\n  ${dim('snapshot:')}      ${recovered.snapshot.state}`);
+  console.log(`  ${dim('snapshot:')}      ${recovered.snapshot.state}`);
   console.log(`  ${dim('events total:')}  ${recovered.allEvents.length}`);
   console.log(`  ${dim('events since:')}  ${recovered.eventsAfterSnapshot.length}\n`);
+
+  // Rebuild execution graph from snapshot metadata
+  // The graph definition is stored in the example registry — re-resolve it.
+  // For orphaned sagas (no matching example), replay events is still possible.
+  const nodes = Object.keys(recovered.snapshot.nodeStates ?? {});
+  if (nodes.length === 0) {
+    console.log(`  ${yellow('warning:')} no node states found in snapshot; nothing to resume\n`);
+    return;
+  }
+
+  // Determine which nodes already completed and which still need to run
+  const completedNodes = nodes.filter((n) => recovered.snapshot.nodeStates[n] === 'completed');
+  const pendingNodes = nodes.filter((n) => recovered.snapshot.nodeStates[n] !== 'completed');
+
+  if (pendingNodes.length === 0) {
+    console.log(`  ${green('✓')} All nodes already completed — run was successful\n`);
+    return;
+  }
+
+  console.log(`  ${dim('completed:')}  ${green(`${completedNodes.length}/${nodes.length}`)}`);
+  console.log(`  ${dim('pending:')}     ${yellow(`${pendingNodes.length}/${nodes.length}`)}`);
+  console.log(`  ${dim('nodes:')}       ${pendingNodes.join(', ')}\n`);
+
+  // Load the saga example for this run type
+  // The runId may contain the saga name as prefix (e.g., "order-fulfillment-1717523456")
+  const sagaName = runId.includes('-') ? runId.split('-').slice(0, -1).join('-') : runId;
+  let sagaDefinition: ReturnType<typeof getSagaExample> | undefined;
+
+  try {
+    const { getSagaExample: getEx } = await import('../../saga/index.js');
+    sagaDefinition = getEx(sagaName);
+    // Try shorter name: first segment only
+    if (!sagaDefinition && runId.includes('-')) {
+      sagaDefinition = getEx(runId.split('-')[0]!);
+    }
+  } catch {
+    /* saga definition not found — will run without graph */
+  }
+
+  if (sagaDefinition) {
+    // Full resume: rebuild graph and re-run, skipping completed nodes
+    const graph = sagaDefinition.build();
+    const { ExecutionGraph: ExGraph, runSaga: runEx } = await import('../../saga/index.js');
+    const eg = new ExGraph(graph);
+    const order = eg.nodes.map((n) => ('name' in n && n.name ? n.name : n.id));
+    console.log(`  ${dim('graph:')}       ${order.join(' → ')}`);
+    console.log();
+
+    // Re-run saga — the coordinator skips already completed nodes
+    const t0 = Date.now();
+    const result = await runEx(graph, ctx, runtime.checkpoint, runtime.approval, runtime);
+    console.log(`\n  ${bold('Resume result:')}`);
+    formatResult(result);
+  } else {
+    console.log(`  ${yellow('warning:')} saga definition "${sagaName}" not found.`);
+    console.log(`  ${dim('The snapshot is available for manual inspection at:')}`);
+    console.log(`  ${dim(snapshotPath)}\n`);
+  }
 }
 
 async function cmdSagaApprove(args: string[]) {

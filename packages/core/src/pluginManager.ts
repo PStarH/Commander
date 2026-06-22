@@ -21,7 +21,6 @@ export type HookPoint =
   | 'onAgentStart'
   | 'onAgentComplete'
   | 'onError'
-  // Sprint 3: Interceptor pipeline
   | 'beforeToolResolve'
   | 'afterToolResolve'
   | 'onToolTimeout'
@@ -34,6 +33,13 @@ export type HookPoint =
   | 'onStepComplete'
   | 'beforeBackendSelect'
   | 'afterBackendSelect';
+
+export type PluginCategory =
+  | 'monitoring'
+  | 'security'
+  | 'optimization'
+  | 'integration'
+  | 'analytics';
 
 /** Context passed to beforeToolCall hooks */
 export interface BeforeToolCallContext {
@@ -232,6 +238,8 @@ export interface CommanderPlugin {
   version?: string;
   /** Plugin description */
   description?: string;
+  /** Plugin category for discovery and grouping */
+  category?: PluginCategory;
   /** Plugins this plugin depends on (resolved before this plugin's hooks fire) */
   dependsOn?: string[];
   /** Config schema for validation */
@@ -391,6 +399,28 @@ export class HookManager {
     return { plugin: entry.plugin, enabled: entry.enabled, config: { ...entry.config } };
   }
 
+  /** Get all plugins in a specific category */
+  getPluginsByCategory(category: PluginCategory): CommanderPlugin[] {
+    const result: CommanderPlugin[] = [];
+    for (const entry of this.plugins.values()) {
+      if (entry.plugin.category === category) {
+        result.push(entry.plugin);
+      }
+    }
+    return result;
+  }
+
+  /** Get all registered categories */
+  getCategories(): PluginCategory[] {
+    const categories = new Set<PluginCategory>();
+    for (const entry of this.plugins.values()) {
+      if (entry.plugin.category) {
+        categories.add(entry.plugin.category);
+      }
+    }
+    return Array.from(categories);
+  }
+
   /** Check if a plugin is registered */
   hasPlugin(name: string): boolean {
     return this.plugins.has(name);
@@ -493,6 +523,7 @@ export class HookManager {
             'beforeToolCall',
           );
           if (result !== null) return result;
+          getMetricsCollector().recordHookSuccess('beforeToolCall', name);
         } catch (err) {
           if (plugin.required) throw err;
           getMetricsCollector().recordHookFailure('beforeToolCall', name);
@@ -514,6 +545,7 @@ export class HookManager {
             plugin.name,
             'afterToolCall',
           );
+          getMetricsCollector().recordHookSuccess('afterToolCall', name);
         } catch (err) {
           if (plugin.required) throw err;
           getMetricsCollector().recordHookFailure('afterToolCall', name);
@@ -535,6 +567,7 @@ export class HookManager {
             plugin.name,
             'beforeLLMCall',
           );
+          getMetricsCollector().recordHookSuccess('beforeLLMCall', name);
         } catch (err) {
           if (plugin.required) throw err;
           getMetricsCollector().recordHookFailure('beforeLLMCall', name);
@@ -551,6 +584,7 @@ export class HookManager {
       if (plugin.afterLLMCall) {
         try {
           await this.withTimeout(plugin.afterLLMCall(ctx), plugin.name, 'afterLLMCall');
+          getMetricsCollector().recordHookSuccess('afterLLMCall', name);
         } catch (err) {
           if (plugin.required) throw err;
           getMetricsCollector().recordHookFailure('afterLLMCall', name);
@@ -566,6 +600,7 @@ export class HookManager {
       if (plugin.onAgentStart) {
         try {
           await this.withTimeout(plugin.onAgentStart(ctx), plugin.name, 'onAgentStart');
+          getMetricsCollector().recordHookSuccess('onAgentStart', name);
         } catch (err) {
           if (plugin.required) throw err;
           getMetricsCollector().recordHookFailure('onAgentStart', name);
@@ -581,6 +616,7 @@ export class HookManager {
       if (plugin.onAgentComplete) {
         try {
           await this.withTimeout(plugin.onAgentComplete(ctx), plugin.name, 'onAgentComplete');
+          getMetricsCollector().recordHookSuccess('onAgentComplete', name);
         } catch (err) {
           if (plugin.required) throw err;
           getMetricsCollector().recordHookFailure('onAgentComplete', name);
@@ -596,6 +632,7 @@ export class HookManager {
       if (plugin.onError) {
         try {
           await this.withTimeout(plugin.onError(ctx), plugin.name, 'onError');
+          getMetricsCollector().recordHookSuccess('onError', name);
         } catch (err) {
           if (plugin.required) throw err;
           getMetricsCollector().recordHookFailure('onError', name);
@@ -618,6 +655,7 @@ export class HookManager {
             'beforeToolResolve',
           );
           if (result !== null) return result;
+          getMetricsCollector().recordHookSuccess('beforeToolResolve', name);
         } catch (err) {
           if (plugin.required) throw err;
           getMetricsCollector().recordHookFailure('beforeToolResolve', name);
@@ -634,6 +672,7 @@ export class HookManager {
       if (plugin.afterToolResolve) {
         try {
           await this.withTimeout(plugin.afterToolResolve(ctx), plugin.name, 'afterToolResolve');
+          getMetricsCollector().recordHookSuccess('afterToolResolve', name);
         } catch (err) {
           if (plugin.required) throw err;
           getMetricsCollector().recordHookFailure('afterToolResolve', name);
@@ -649,6 +688,7 @@ export class HookManager {
       if (plugin.onToolTimeout) {
         try {
           await this.withTimeout(plugin.onToolTimeout(ctx), plugin.name, 'onToolTimeout');
+          getMetricsCollector().recordHookSuccess('onToolTimeout', name);
         } catch (err) {
           if (plugin.required) throw err;
           getMetricsCollector().recordHookFailure('onToolTimeout', name);

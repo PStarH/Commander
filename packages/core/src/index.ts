@@ -50,6 +50,14 @@ export {
   QualityGateExecutor,
   QualityGateResult,
 } from './ultimate';
+export {
+  CompensationQueue,
+  CompensationQueueItem,
+  CompensationQueueConfig,
+  getCompensationQueue,
+  resetCompensationQueueForTesting,
+  defaultCompensationQueuePath,
+} from './atr/compensationQueue';
 export { AdaptiveOrchestrator } from './adaptiveOrchestrator';
 export { TokenBudgetAllocator } from './tokenBudgetAllocator';
 
@@ -252,7 +260,13 @@ export {
 } from './frameworkIntegration';
 
 // Shell & Runner exports
-export { getSandboxManager, SandboxManager, ExecPolicyEngine, TEESandbox } from './sandbox';
+export {
+  resetSandboxManager,
+  getSandboxManager,
+  SandboxManager,
+  ExecPolicyEngine,
+  TEESandbox,
+} from './sandbox';
 export type {
   SandboxMode,
   SandboxProfile,
@@ -331,7 +345,11 @@ export {
   generateSecurityReportJson,
   ATTACK_SCENARIOS,
 } from './security/redTeamFramework';
-export type { RedTeamTestScenario, RedTeamTestResult, RedTeamRunReport } from './security/redTeamFramework';
+export type {
+  RedTeamTestScenario,
+  RedTeamTestResult,
+  RedTeamRunReport,
+} from './security/redTeamFramework';
 
 // OutputSanitizer — data exfiltration prevention at the output boundary
 export {
@@ -402,10 +420,7 @@ export type {
 } from './security/agentStandbyManager';
 
 // RedTeamBaseline — regression detection for continuous red team CI/CD
-export {
-  RedTeamBaselineManager,
-  getRedTeamBaseline,
-} from './security/redTeamBaseline';
+export { RedTeamBaselineManager, getRedTeamBaseline } from './security/redTeamBaseline';
 export type {
   RegressionSeverity,
   RegressionResult,
@@ -482,7 +497,12 @@ export {
   getFuzzTestFramework,
   resetFuzzTestFramework,
 } from './security/fuzzTestFramework';
-export type { FuzzInput, FuzzResult, FuzzRunReport, FuzzerConfig } from './security/fuzzTestFramework';
+export type {
+  FuzzInput,
+  FuzzResult,
+  FuzzRunReport,
+  FuzzerConfig,
+} from './security/fuzzTestFramework';
 
 // PostQuantumCrypto — PQ-safe hash (SHAKE-256), key generation, MAC creation/verification
 export {
@@ -535,7 +555,11 @@ export type {
 } from './security/federatedIdentity';
 
 // MitreAtlasMapper — MITRE ATLAS tactics/techniques mapping
-export { MitreAtlasMapper, getMitreAtlasMapper, resetMitreAtlasMapper } from './security/mitreAtlasMapper';
+export {
+  MitreAtlasMapper,
+  getMitreAtlasMapper,
+  resetMitreAtlasMapper,
+} from './security/mitreAtlasMapper';
 export type {
   AtlasTactic,
   AtlasTechnique,
@@ -545,7 +569,12 @@ export type {
 } from './security/mitreAtlasMapper';
 
 // AdaptiveHITL — risk-adaptive human-in-the-loop strategy engine
-export { AdaptiveHITL, getAdaptiveHitl, resetAdaptiveHitl, maxStrategy } from './security/adaptiveHitl';
+export {
+  AdaptiveHITL,
+  getAdaptiveHitl,
+  resetAdaptiveHitl,
+  maxStrategy,
+} from './security/adaptiveHitl';
 export type {
   HITLStrategy,
   ToolRiskSignal,
@@ -880,6 +909,13 @@ export type { ToolCacheConfig, ToolCacheStats } from './runtime/toolResultCache'
 export { ToolOutputManager } from './runtime/toolOutputManager';
 export type { ToolOutputConfig, ManagedOutput, TurnBudgetState } from './runtime/toolOutputManager';
 export { ToolOrchestrator } from './runtime/toolOrchestrator';
+
+// Canonical synthetic-error row shape shared by AgentRuntime pre-tool-call
+// gates and ToolOrchestrator boundary — exported as part of the public API
+// so SDK consumers can construct symbol-compatible error rows when implementing
+// custom tools, gates, or boundary callbacks.
+export { toolErrorRow } from './runtime/toolResultShape';
+export type { SyntheticErrorRow, PreToolCallGateResult } from './runtime/toolResultShape';
 export type {
   OrchestratorConfig,
   OrchestratedResult,
@@ -1080,6 +1116,21 @@ export type {
   SensitivityCategory as PrivacySensitivityCategory,
 } from './runtime/privacyRouter';
 
+// Compensation Primitives — in-memory mutation rollback registry
+// ---------------------------------------------------------
+// CompensationRegistry (class) + CompensableAction + CompensationHandler
+// are the in-memory predecessor. A saga-based durable scheduling primitive
+// (CompensationScheduler, CompensationFn, etc.) is re-exported further below
+// under `// Saga Runtime`. The registry is in-memory by default but becomes
+// durable when wired to a CompensationQueue via setCompensationQueue() —
+// durable enqueue happens automatically inside compensateAll() once retries
+// exhaust; processQueue() is for recovery-on-restart (drains persisted queue
+// items back into in-memory handlers via claimNext()). Use the saga scheduler
+// for DAG-ordered retry semantics; per-step policy lives in `CompensationFn`
+// + `defaultCompensationRetryPolicy`.
+export { CompensationRegistry } from './runtime';
+export type { CompensableAction, CompensationHandler } from './runtime';
+
 // Saga Runtime — durable compensating transactions
 export {
   createSaga,
@@ -1164,3 +1215,44 @@ export {
   DEFAULT_LEASE_TTL_SECONDS,
   DEFAULT_IDEMPOTENCY_TTL_SECONDS,
 } from './saga';
+
+// RotationSignoffVerifier — D2.6 + D2.7 + D2.8 + D2.9 + D3.0 + D3.1 + D3.2 hardening policy gate.
+// §6 sign-off binding via GPG-verified commit SHAs. Library-grade surface: pure
+// functions (`runVerifier`, `runVerifierAsync`, `evaluateSignoff`, `evaluateSignoffAsync`,
+// `verifySha`, `verifyShaAsync`, `verifyShasConcurrent`, `parseArgs`, …) plus
+// public types (`SignoffRow`, `VerifyResult`, `CliArgs`, `VerifyShaResult`,
+// `RunVerifierOptions`, `RunVerifierAsyncOptions`) and policy constants
+// (`POLICY_MIN_VERIFIED_ROWS`, `POLICY_VERSION`, `VERIFY_CONCURRENCY_DEFAULT`).
+// Stable programmatic API; the CLI wrapper at `scripts/verify-rotation-signoff.ts`
+// drives the same surface (D3.2 — wrapper now uses the async surface).
+//
+// D3.2 async surface: async mirrors + bounded-concurrency batcher +
+// AbortSignal cancellation. Sync variants carry `@deprecated` JSDoc but
+// remain exported + functional for backward compatibility.
+export {
+  SHA_RE,
+  DEFAULT_DOC_PATH,
+  POLICY_MIN_VERIFIED_ROWS,
+  POLICY_VERSION,
+  VERIFY_CONCURRENCY_DEFAULT,
+  extractSection,
+  parseSignoffTable,
+  countColumns,
+  verifySha,
+  verifyShaAsync,
+  evaluateSignoff,
+  evaluateSignoffAsync,
+  runVerifier,
+  runVerifierAsync,
+  verifyShasConcurrent,
+  formatReport,
+  parseArgs,
+} from './security/rotationSignoffVerifier';
+export type {
+  SignoffRow as RotationSignoffRow,
+  VerifyResult as RotationSignoffResult,
+  CliArgs as RotationSignoffCliArgs,
+  VerifyShaResult as RotationVerifyShaResult,
+  RunVerifierOptions,
+  RunVerifierAsyncOptions as RotationRunVerifierAsyncOptions,
+} from './security/rotationSignoffVerifier';
