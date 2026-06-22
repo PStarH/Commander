@@ -79,10 +79,14 @@ export interface ExecutionPlan {
 // Tool Planner
 // ============================================================================
 
+interface CachedToolCall {
+  tc: ToolCall;
+  parsedArgs: Record<string, unknown>;
+  argsStr: string;
+  nameLower: string;
+}
+
 export class ToolPlanner {
-  /**
-   * Analyze a set of tool calls and produce an optimal execution plan.
-   */
   plan(toolCalls: ToolCall[], tools: Map<string, Tool>): ExecutionPlan {
     if (toolCalls.length === 0) {
       return {
@@ -96,35 +100,47 @@ export class ToolPlanner {
     }
 
     if (toolCalls.length === 1) {
+      const tc = toolCalls[0];
       return {
         stages: [
           {
             index: 0,
             toolCalls,
-            estimatedDurationMs: this.estimateDuration(toolCalls[0], tools),
+            estimatedDurationMs: this.estimateDuration(tc, tools),
           },
         ],
         dependencies: [],
         conflicts: [],
-        estimatedDurationMs: this.estimateDuration(toolCalls[0], tools),
+        estimatedDurationMs: this.estimateDuration(tc, tools),
         hasParallelism: false,
-        speculativeCandidates: this.isReadOnly(toolCalls[0], tools) ? [toolCalls[0].id] : [],
+        speculativeCandidates: this.isReadOnly(tc, tools) ? [tc.id] : [],
       };
     }
 
-    // Step 1: Detect dependencies
-    const dependencies = this.detectDependencies(toolCalls, tools);
+    // Pre-compute cached representations to avoid repeated JSON.parse/stringify
+    const cached = toolCalls.map((tc): CachedToolCall => {
+      const parsedArgs =
+        typeof tc.arguments === 'string'
+          ? (() => {
+              try {
+                return JSON.parse(tc.arguments);
+              } catch {
+                return {};
+              }
+            })()
+          : (tc.arguments ?? {});
+      return {
+        tc,
+        parsedArgs,
+        argsStr: JSON.stringify(parsedArgs),
+        nameLower: tc.name.toLowerCase(),
+      };
+    });
 
-    // Step 2: Detect resource conflicts
-    const conflicts = this.detectConflicts(toolCalls, tools);
-
-    // Step 3: Build dependency graph and topological sort into stages
+    const dependencies = this.detectDependencies(cached, tools);
+    const conflicts = this.detectConflicts(cached, tools);
     const stages = this.buildStages(toolCalls, tools, dependencies, conflicts);
-
-    // Step 4: Calculate critical path
     const estimatedDurationMs = stages.reduce((sum, stage) => sum + stage.estimatedDurationMs, 0);
-
-    // Step 5: Identify speculative candidates (read-only, no dependencies)
     const speculativeCandidates = this.findSpeculativeCandidates(toolCalls, tools, dependencies);
 
     return {
@@ -144,36 +160,33 @@ export class ToolPlanner {
    * - Write→Write on same resource: serialize
    * - Tool output used as input to another: dependency
    */
-  private detectDependencies(toolCalls: ToolCall[], tools: Map<string, Tool>): DependencyEdge[] {
+  private detectDependencies(cached: CachedToolCall[], tools: Map<string, Tool>): DependencyEdge[] {
     const edges: DependencyEdge[] = [];
 
-    for (let i = 0; i < toolCalls.length; i++) {
-      for (let j = i + 1; j < toolCalls.length; j++) {
-        const a = toolCalls[i];
-        const b = toolCalls[j];
+    for (let i = 0; i < cached.length; i++) {
+      for (let j = i + 1; j < cached.length; j++) {
+        const a = cached[i];
+        const b = cached[j];
 
-        // Same tool on same resource → serialize
-        const sharedResource = this.findSharedResource(a, b);
+        const sharedResource = this.findSharedResourceCached(a, b);
         if (sharedResource) {
-          const aReadOnly = this.isReadOnly(a, tools);
-          const bReadOnly = this.isReadOnly(b, tools);
+          const aReadOnly = this.isReadOnly(a.tc, tools);
+          const bReadOnly = this.isReadOnly(b.tc, tools);
 
           if (!aReadOnly || !bReadOnly) {
-            // At least one is a write → must serialize
             edges.push({
-              from: a.id,
-              to: b.id,
+              from: a.tc.id,
+              to: b.tc.id,
               reason: `Resource conflict on "${sharedResource}"`,
             });
           }
         }
 
-        // Data dependency: if b's args reference a's tool name
-        if (this.hasDataDependency(a, b)) {
+        if (this.hasDataDependencyCached(a, b)) {
           edges.push({
-            from: a.id,
-            to: b.id,
-            reason: `Data dependency: ${b.name} uses output of ${a.name}`,
+            from: a.tc.id,
+            to: b.tc.id,
+            reason: `Data dependency: ${b.tc.name} uses output of ${a.tc.name}`,
           });
         }
       }
@@ -185,12 +198,12 @@ export class ToolPlanner {
   /**
    * Detect resource conflicts between tool calls.
    */
-  private detectConflicts(toolCalls: ToolCall[], tools: Map<string, Tool>): ResourceConflict[] {
+  private detectConflicts(cached: CachedToolCall[], tools: Map<string, Tool>): ResourceConflict[] {
     const resourceMap = new Map<string, { ids: string[]; hasWrite: boolean }>();
 
-    for (const tc of toolCalls) {
-      const resources = this.extractResources(tc);
-      const isReadOnly = this.isReadOnly(tc, tools);
+    for (const c of cached) {
+      const resources = this.extractResourcesCached(c);
+      const readOnly = this.isReadOnly(c.tc, tools);
 
       for (const resource of resources) {
         let entry = resourceMap.get(resource);
@@ -198,8 +211,8 @@ export class ToolPlanner {
           entry = { ids: [], hasWrite: false };
           resourceMap.set(resource, entry);
         }
-        entry.ids.push(tc.id);
-        if (!isReadOnly) entry.hasWrite = true;
+        entry.ids.push(c.tc.id);
+        if (!readOnly) entry.hasWrite = true;
       }
     }
 
@@ -334,9 +347,44 @@ export class ToolPlanner {
     return !EXPENSIVE_TOOLS.has(tc.name);
   }
 
-  /**
-   * Find a shared resource between two tool calls.
-   */
+  private findSharedResourceCached(a: CachedToolCall, b: CachedToolCall): string | undefined {
+    const aResources = this.extractResourcesCached(a);
+    const bResources = new Set(this.extractResourcesCached(b));
+    for (const r of aResources) {
+      if (bResources.has(r)) return r;
+    }
+    return undefined;
+  }
+
+  private extractResourcesCached(c: CachedToolCall): string[] {
+    const resources: string[] = [];
+    const args = c.parsedArgs;
+    if (typeof args.path === 'string') resources.push(args.path);
+    if (typeof args.file === 'string') resources.push(args.file);
+    if (typeof args.filename === 'string') resources.push(args.filename);
+    if (typeof args.url === 'string') resources.push(args.url);
+    if (typeof args.uri === 'string') resources.push(args.uri);
+    if (typeof args.key === 'string') resources.push(args.key);
+    return resources;
+  }
+
+  private hasDataDependencyCached(a: CachedToolCall, b: CachedToolCall): boolean {
+    if (b.argsStr.includes(a.tc.name)) return true;
+    const outputInputPairs: [string, string][] = [
+      ['search', 'fetch'],
+      ['read', 'write'],
+      ['read', 'edit'],
+      ['list', 'read'],
+      ['fetch', 'write'],
+    ];
+    for (const [out, inp] of outputInputPairs) {
+      if (a.nameLower.includes(out) && b.nameLower.includes(inp)) {
+        if (this.findSharedResourceCached(a, b)) return true;
+      }
+    }
+    return false;
+  }
+
   private findSharedResource(a: ToolCall, b: ToolCall): string | undefined {
     const aResources = this.extractResources(a);
     const bResources = new Set(this.extractResources(b));
