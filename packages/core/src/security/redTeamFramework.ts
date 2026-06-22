@@ -747,6 +747,7 @@ export class RedTeamFramework {
   async runAll(
     defender: (scenario: RedTeamTestScenario) => Promise<{
       blocked: boolean;
+      detected?: boolean;
       defense?: string;
       details?: string;
     }>,
@@ -764,10 +765,18 @@ export class RedTeamFramework {
 
       try {
         const defenseResult = await defender(scenario);
+        // 3-state wire-up: if the defender flagged it but didn't block
+        // (the SupplyChainScanner warnings branch), classify as 'detected'
+        // instead of falling through to 'missed'. 'blocked' still wins
+        // priority over 'detected' when both are set (top-priority state).
         if (defenseResult.blocked) {
           result = 'blocked';
           triggeredDefense = defenseResult.defense;
           details = defenseResult.details ?? 'Blocked by defense layer';
+        } else if (defenseResult.detected) {
+          result = 'detected';
+          triggeredDefense = defenseResult.defense;
+          details = defenseResult.details ?? 'Detected by defense layer';
         } else {
           result = 'missed';
           details = defenseResult.details ?? 'Attack was not blocked';
@@ -829,6 +838,7 @@ export class RedTeamFramework {
   async runCriticalOnly(
     defender: (scenario: RedTeamTestScenario) => Promise<{
       blocked: boolean;
+      detected?: boolean;
       defense?: string;
       details?: string;
     }>,
@@ -848,6 +858,7 @@ export class RedTeamFramework {
     category: AttackCategory,
     defender: (scenario: RedTeamTestScenario) => Promise<{
       blocked: boolean;
+      detected?: boolean;
       defense?: string;
       details?: string;
     }>,
@@ -866,6 +877,7 @@ export class RedTeamFramework {
   async smokeTest(
     defender: (scenario: RedTeamTestScenario) => Promise<{
       blocked: boolean;
+      detected?: boolean;
       defense?: string;
       details?: string;
     }>,
@@ -924,7 +936,7 @@ export class RedTeamFramework {
  */
 export function createContentScannerDefender(): (
   scenario: RedTeamTestScenario,
-) => Promise<{ blocked: boolean; defense?: string; details?: string }> {
+) => Promise<{ blocked: boolean; detected?: boolean; defense?: string; details?: string }> {
   return async (scenario: RedTeamTestScenario) => {
     try {
       const { scanContent } = await import('../contentScanner');
@@ -981,7 +993,7 @@ export function createComprehensiveDefender(options?: {
   enableToolOutputScanner?: boolean;
 }): (
   scenario: RedTeamTestScenario,
-) => Promise<{ blocked: boolean; defense?: string; details?: string }> {
+) => Promise<{ blocked: boolean; detected?: boolean; defense?: string; details?: string }> {
   const opts = {
     enableContentScanner: options?.enableContentScanner ?? true,
     enableGuardianAgent: options?.enableGuardianAgent ?? true,
@@ -993,6 +1005,13 @@ export function createComprehensiveDefender(options?: {
     const triggeredDefenses: string[] = [];
     const allDetails: string[] = [];
     let blocked = false;
+    // 3-state taxonomy: `detected` distinguishes 'warned but not blocked'
+    // (the SupplyChainScanner warnings branch) from 'missed' (no scanner
+    // fired). Only the SupplyChainScanner warnings branch sets this true;
+    // other warning-adjacent branches (ContentScanner clean, ToolOutputScanner
+    // passed, GuardianAgent no-intervention) correctly stay at false because
+    // they already mean 'all clear'.
+    let detected = false;
 
     // ── Layer 1: ContentScanner (Deep scan) ────────────────────────
     if (opts.enableContentScanner) {
@@ -1102,6 +1121,7 @@ export function createComprehensiveDefender(options?: {
             `SupplyChainScanner: BLOCKED — ${scsResult.malwareSignatures.length} malware signatures (${sigNames}), severity=${scsResult.severity}, risk=${scsResult.riskScore}/100`,
           );
         } else if (scsResult.severity !== 'clean') {
+          detected = true;
           allDetails.push(
             `SupplyChainScanner: warnings — severity=${scsResult.severity}, risk=${scsResult.riskScore}/100 (${scsResult.warnings.length} warnings)`,
           );
@@ -1115,6 +1135,7 @@ export function createComprehensiveDefender(options?: {
 
     return {
       blocked,
+      detected,
       defense: triggeredDefenses.length > 0 ? triggeredDefenses.join(' | ') : undefined,
       details: allDetails.join('\n'),
     };
