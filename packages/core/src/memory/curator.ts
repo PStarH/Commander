@@ -309,10 +309,8 @@ export class MemoryCurator {
           },
         });
         promoted++;
-      }
-
-      // High-confidence lessons and decisions are always worth promoting
-      if ((item.kind === 'LESSON' || item.kind === 'DECISION') && item.confidence >= 0.9) {
+      } else if ((item.kind === 'LESSON' || item.kind === 'DECISION') && item.confidence >= 0.9) {
+        // High-confidence lessons and decisions are always worth promoting
         await store.update({
           id: item.id,
           projectId,

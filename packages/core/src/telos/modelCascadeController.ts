@@ -191,8 +191,8 @@ export class ModelCascadeController {
       provider: model.provider,
       reasoning: [...base.reasoning, `cascade_escalation: ${model.id} (${model.tier})`],
       estimatedCost:
-        (estimatedInputTokens / 1000) * model.costPer1KInput +
-        (estimatedOutputTokens / 1000) * model.costPer1KOutput,
+        (estimatedInputTokens / 1_000_000) * model.costPer1MInput +
+        (estimatedOutputTokens / 1_000_000) * model.costPer1MOutput,
       maxTokens: base.maxTokens,
     };
   }

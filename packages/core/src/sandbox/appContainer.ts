@@ -147,10 +147,7 @@ export class AppContainerSB implements PlatformSandbox {
 
   // ── Container Lifecycle ───────────────────────────────────────────
 
-  private async createContainer(
-    name: string,
-    profile: SandboxProfile,
-  ): Promise<void> {
+  private async createContainer(name: string, profile: SandboxProfile): Promise<void> {
     const caps: string[] = [];
 
     // Network capabilities
@@ -234,9 +231,10 @@ export class AppContainerSB implements PlatformSandbox {
     const escapedCmd = cmd.replace(/"/g, '""');
 
     // Build environment block
-    const envBlock = Object.entries(env)
-      .map(([k, v]) => `${k}=${v}`)
-      .join('\x00') + '\x00\x00';
+    const envBlock =
+      Object.entries(env)
+        .map(([k, v]) => `${k}=${v}`)
+        .join('\x00') + '\x00\x00';
 
     const psScript = [
       `$container = Get-AppContainerProfile -Name "${containerName}" -ErrorAction SilentlyContinue`,
@@ -264,17 +262,16 @@ export class AppContainerSB implements PlatformSandbox {
     fs.writeFileSync(scriptPath, psScript, 'utf-8');
 
     return new Promise((resolve) => {
-      const child = spawn('powershell.exe', [
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy', 'Bypass',
-        '-File', scriptPath,
-      ], {
-        cwd,
-        env,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-      });
+      const child = spawn(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+        {
+          cwd,
+          env,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
+        },
+      );
 
       let stdout = '',
         stderr = '';
@@ -310,7 +307,11 @@ export class AppContainerSB implements PlatformSandbox {
 
       const finalize = () => {
         clearTimeout(killTimer);
-        try { fs.unlinkSync(scriptPath); } catch { /* ignore */ }
+        try {
+          fs.unlinkSync(scriptPath);
+        } catch {
+          /* ignore */
+        }
       };
 
       child.on('close', (ec) => {
@@ -351,24 +352,32 @@ export class AppContainerSB implements PlatformSandbox {
 
   private async runPowerShell(script: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const child = spawn('powershell.exe', [
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy', 'Bypass',
-        '-Command', script,
-      ], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-      });
+      const child = spawn(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+        {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
+        },
+      );
 
       let output = '';
       let errorOutput = '';
 
-      child.stdout?.on('data', (d: Buffer) => { output += d.toString(); });
-      child.stderr?.on('data', (d: Buffer) => { errorOutput += d.toString(); });
+      child.stdout?.on('data', (d: Buffer) => {
+        output += d.toString();
+      });
+      child.stderr?.on('data', (d: Buffer) => {
+        errorOutput += d.toString();
+      });
 
       child.on('close', (code) => {
-        if (code === 0 || output.includes('CONTAINER_CREATED') || output.includes('ACCESS_GRANTED') || output.includes('CONTAINER_DELETED')) {
+        if (
+          code === 0 ||
+          output.includes('CONTAINER_CREATED') ||
+          output.includes('ACCESS_GRANTED') ||
+          output.includes('CONTAINER_DELETED')
+        ) {
           resolve(output);
         } else {
           reject(new Error(errorOutput || `PowerShell exited with code ${code}`));
@@ -380,7 +389,10 @@ export class AppContainerSB implements PlatformSandbox {
   }
 
   private sanitizeName(cwd: string): string {
-    return path.basename(cwd).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30);
+    return path
+      .basename(cwd)
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .slice(0, 30);
   }
 
   private getTempDir(): string {
@@ -393,9 +405,17 @@ export class AppContainerSB implements PlatformSandbox {
     const allowList = profile.envVarAllowList ?? [];
 
     const SECRETS = [
-      'API_KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL',
-      'PRIVATE_KEY', 'SIGNING_KEY', 'ENCRYPTION_KEY',
-      'DATABASE_URL', 'REDIS_URL', 'CONNECTION_STRING',
+      'API_KEY',
+      'TOKEN',
+      'SECRET',
+      'PASSWORD',
+      'CREDENTIAL',
+      'PRIVATE_KEY',
+      'SIGNING_KEY',
+      'ENCRYPTION_KEY',
+      'DATABASE_URL',
+      'REDIS_URL',
+      'CONNECTION_STRING',
     ];
 
     for (const [k, v] of Object.entries(process.env)) {
