@@ -261,8 +261,8 @@ describe('P-obs-3 HTTP routes — experiments', () => {
       name: 'demo',
       rubricId: 'default-quality',
       cases: [
-        { id: 'c1', input: { goal: 'g1' } },
-        { id: 'c2', input: { goal: 'g2' } },
+        { id: 'c1', input: { goal: 'g1' }, expected: 'ok' },
+        { id: 'c2', input: { goal: 'g2' }, expected: 'ok' },
       ],
     });
     const id = (created.body as { id: string }).id;
