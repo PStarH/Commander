@@ -106,6 +106,7 @@ export class CircuitBreaker {
     ) {
       if (this.state !== 'OPEN') {
         this.transitionTo('OPEN');
+        this.lastFailureTime = Date.now();
         this.openCount++;
       }
       return false;
@@ -134,12 +135,22 @@ export class CircuitBreaker {
     this.requestTimestamps.push(Date.now());
     if (this.state === 'HALF_OPEN') {
       this.halfOpenTests++;
-      // Only close circuit after enough consecutive successes (multi-probe recovery)
       if (this.halfOpenTests >= this.halfOpenMaxTests) {
         this.transitionTo('CLOSED');
         this.halfOpenTests = 0;
         this.halfOpenInFlight = 0;
+        // Decay semantic/security counters on recovery so the circuit
+        // can eventually recover from semantic/security trips instead
+        // of being permanently open until a manual reset().
+        this.semanticFailureCount = Math.max(0, this.semanticFailureCount - 1);
+        this.securityEventCount = Math.max(0, this.securityEventCount - 1);
       }
+    }
+    // Also decay counters when circuit is already CLOSED and seeing
+    // consistent success — prevents permanent lock-out from old events.
+    if (this.state === 'CLOSED' && this.successCount % 10 === 0) {
+      this.semanticFailureCount = Math.max(0, this.semanticFailureCount - 1);
+      this.securityEventCount = Math.max(0, this.securityEventCount - 1);
     }
   }
 
@@ -266,7 +277,8 @@ export class CircuitBreaker {
     if (options.recoveryTimeMs !== undefined) this.recoveryTimeMs = options.recoveryTimeMs;
     if (options.halfOpenMaxTests !== undefined) this.halfOpenMaxTests = options.halfOpenMaxTests;
     if (options.volumeThreshold !== undefined) this.volumeThreshold = options.volumeThreshold;
-    if (options.errorRateThreshold !== undefined) this.errorRateThreshold = options.errorRateThreshold;
+    if (options.errorRateThreshold !== undefined)
+      this.errorRateThreshold = options.errorRateThreshold;
     if (options.semanticThreshold !== undefined) this.semanticThreshold = options.semanticThreshold;
     if (options.securityThreshold !== undefined) this.securityThreshold = options.securityThreshold;
   }

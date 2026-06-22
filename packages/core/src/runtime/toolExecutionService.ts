@@ -23,10 +23,7 @@ import { getExecutionScheduler, type RunHandle } from '../atr/scheduler';
 import { generateIdempotencyKey } from '../atr/canonicalJson';
 import { StepErrorBoundary } from './stepErrorBoundary';
 import { ToolRegistry } from '../tools/toolRegistry';
-import {
-  repairToolCallArguments,
-  suggestRepairsForValidationErrors,
-} from './toolCallRepair';
+import { repairToolCallArguments, suggestRepairsForValidationErrors } from './toolCallRepair';
 import {
   validateToolCall,
   formatValidationErrors,
@@ -174,7 +171,10 @@ export class ToolExecutionService {
       // Hallucination rejection gate (arXiv:2604.21816):
       // If the tool was not promoted to Tier 1 (full schema), the model shouldn't call it directly.
       // Reject with guidance to use request_tool first. This prevents hallucinated tool calls.
-      if (this.runtime.getPromotedTools().size > 0 && !this.runtime.getPromotedTools().has(toolCall.name)) {
+      if (
+        this.runtime.getPromotedTools().size > 0 &&
+        !this.runtime.getPromotedTools().has(toolCall.name)
+      ) {
         const available = Array.from(this.runtime.getPromotedTools())
           .filter((n) => n !== 'request_tool')
           .join(', ');
@@ -481,6 +481,21 @@ export class ToolExecutionService {
           toolName: toolCall.name,
           attempts: boundaryResult.attempts,
         });
+        getHookManager()
+          .fireOnToolRetry({
+            toolName: toolCall.name,
+            args: toolCall.arguments,
+            attempt: boundaryResult.attempts,
+            maxRetries: 1,
+            lastError: boundaryResult.error ?? 'Unknown error',
+            agentId,
+            runId,
+          })
+          .catch((e) =>
+            getGlobalLogger().debug('ToolExecutionService', 'onToolRetry hook failed', {
+              error: (e as Error)?.message,
+            }),
+          );
       }
 
       if (!boundaryResult.success) {
@@ -506,6 +521,20 @@ export class ToolExecutionService {
             timeoutMs: effectiveTimeout,
             durationMs,
           });
+          getHookManager()
+            .fireOnToolTimeout({
+              toolName: toolCall.name,
+              args: toolCall.arguments,
+              timeoutMs: effectiveTimeout,
+              durationMs,
+              agentId,
+              runId,
+            })
+            .catch((e) =>
+              getGlobalLogger().debug('ToolExecutionService', 'onToolTimeout hook failed', {
+                error: (e as Error)?.message,
+              }),
+            );
         }
 
         // Fire handleMutationToolFailure for mutation tools (generates rollback plan, publishes event, auto-executes safe plans)
@@ -652,9 +681,9 @@ export class ToolExecutionService {
               runId,
               toolName: toolCall.name,
               error: (e as Error).message,
-          });
+            });
+          }
         }
-      }
       }
 
       return {
