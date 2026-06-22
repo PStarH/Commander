@@ -1,0 +1,54 @@
+[project]
+name = "commander-ai"
+version = "0.2.0"
+description = "Commander Agent SDK — multi-agent orchestration via HTTP"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "PStarH", email = "sampan090611@gmail.com" },
+]
+keywords = [
+    "ai", "agent", "llm", "multi-agent", "orchestration",
+    "commander", "workflow",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "httpx>=0.27.0",
+    "pydantic>=2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/PStarH/Commander"
+Repository = "https://github.com/PStarH/Commander"
+Documentation = "https://github.com/PStarH/commander-docs"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "respx>=0.21",
+    "ruff>=0.5.0",
+    "pyright>=1.1.370",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
