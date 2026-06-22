@@ -1,4 +1,5 @@
 import type { TraceEvent } from '../runtime/types';
+import { getMetricsCollector } from '../runtime/metricsCollector';
 
 interface TokenUsageHistory {
   mean: number;
@@ -89,6 +90,18 @@ export class TokenUsageAnomalyDetector {
 
     this.alerts.push(alert);
     if (this.alerts.length > 1000) this.alerts.shift();
+
+    try {
+      getMetricsCollector().incrementCounter(
+        'anomaly_detection_total',
+        'Token usage anomaly detections',
+        1,
+        [{ name: 'severity', value: severity }],
+      );
+    } catch {
+      /* best-effort */
+    }
+
     return alert;
   }
 

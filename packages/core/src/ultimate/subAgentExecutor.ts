@@ -517,21 +517,17 @@ export class SubAgentExecutor {
         const lineage = getAgentLineage();
         const parentLineageId =
           (baseContext as { __parentLineageId?: string }).__parentLineageId ?? null;
-        const child = lineage.spawnChild(
-          parentLineageId,
-          node.id,
-          {
-            role: node.role,
-            runId: this.currentRunId ?? undefined,
-            scope: { tools },
-            depth: (baseContext as { __depth?: number }).__depth ?? 1,
-            metadata: {
-              goalSnippet: node.goal.slice(0, 200),
-              modelTier: node.preferredModelTier,
-              effortLevel: this.currentEffortLevel,
-            },
+        const child = lineage.spawnChild(parentLineageId, node.id, {
+          role: node.role,
+          runId: this.currentRunId ?? undefined,
+          scope: { tools },
+          depth: (baseContext as { __depth?: number }).__depth ?? 1,
+          metadata: {
+            goalSnippet: node.goal.slice(0, 200),
+            modelTier: node.preferredModelTier,
+            effortLevel: this.currentEffortLevel,
           },
-        );
+        });
         lineageInstanceId = child.instanceId;
         // Store on the node so parent→child lineage links work for recursive decomposition
         node.lineageInstanceId = lineageInstanceId;

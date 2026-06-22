@@ -82,44 +82,55 @@ export class MetaLearner {
       this.experiences.shift();
     }
 
-    this.perfTracker.recordExperience(exp);
-    this.selector.recordExperience(exp);
-
-    // Cross-model: update per-model priors
-    if (this.config.enableCrossModelMemory) {
-      this.crossModel.recordExperience(exp);
+    if (!this.config.enabled) {
+      this.persist();
+      getMetricsCollector().recordMetaLearnerExperienceCount(this.experiences.length);
+      return;
     }
 
-    // Prediction loop: verify outstanding predictions for this model+taskType
-    if (this.config.enablePredictionLoop) {
-      this.predictionLoop.recordExperience(exp);
+    const hasEnoughRuns = this.experiences.length >= this.config.minRunsBeforeLearning;
+
+    if (hasEnoughRuns) {
+      this.perfTracker.recordExperience(exp);
+      this.selector.recordExperience(exp);
+
+      if (this.config.enableCrossModelMemory) {
+        this.crossModel.recordExperience(exp);
+      }
+
+      if (this.config.enablePredictionLoop) {
+        this.predictionLoop.recordExperience(exp);
+      }
+
+      if (this.config.enableRegressionGate) {
+        this.regressionGate.recordExperience(exp);
+      }
     }
 
-    // Regression gate: check for significant success rate drops
-    if (this.config.enableRegressionGate) {
-      this.regressionGate.recordExperience(exp);
+    if (this.experiences.length % this.config.reflectionFrequency === 0) {
+      const reflection = generateReflection(exp);
+      this.reflections.push(reflection);
+      if (this.reflections.length > 200) {
+        this.reflections.shift();
+      }
+
+      try {
+        getMetricsCollector().recordMetaLearnerReflection(exp.strategyUsed, exp.success);
+      } catch {
+        /* best-effort */
+      }
+
+      const bus = getMessageBus();
+      bus.publish('memory.written', 'meta-learner', {
+        type: 'execution_experience',
+        runId: exp.runId,
+        success: exp.success,
+        strategy: exp.strategyUsed,
+        reflection: reflection.slice(0, 200),
+      });
     }
 
-    // Generate verbal reflection
-    const reflection = generateReflection(exp);
-    this.reflections.push(reflection);
-    if (this.reflections.length > 200) {
-      this.reflections.shift();
-    }
-
-    const bus = getMessageBus();
-    bus.publish('memory.written', 'meta-learner', {
-      type: 'execution_experience',
-      runId: exp.runId,
-      success: exp.success,
-      strategy: exp.strategyUsed,
-      reflection: reflection.slice(0, 200),
-    });
-
-    // Persist for cross-session learning
     this.persist();
-
-    // Update experience count gauge
     getMetricsCollector().recordMetaLearnerExperienceCount(this.experiences.length);
   }
 
@@ -128,11 +139,26 @@ export class MetaLearner {
   // ========================================================================
 
   selectStrategy(taskType: string, modelId?: string): string {
+    if (!this.config.enabled) {
+      return 'SEQUENTIAL';
+    }
+
+    const hasEnoughRuns = this.experiences.length >= this.config.minRunsBeforeLearning;
+    if (!hasEnoughRuns) {
+      return 'SEQUENTIAL';
+    }
+
     const chosen = this.selector.selectStrategy(
       taskType,
       this.perfTracker.getStrategyPerformance(),
       modelId,
     );
+
+    try {
+      getMetricsCollector().recordMetaLearnerStrategySelection(chosen, taskType, modelId);
+    } catch {
+      /* best-effort */
+    }
 
     if (this.config.enablePredictionLoop && modelId) {
       const key = `${modelId}::${taskType}`;
@@ -342,6 +368,8 @@ export class MetaLearner {
     avgSuccessRate: number;
     topStrategies: StrategyPerformance[];
     totalReflections: number;
+    learningActive: boolean;
+    runsUntilLearning: number;
   } {
     const strategies = Array.from(this.perfTracker.getStrategyPerformance().values());
     const avgSuccessRate =
@@ -349,12 +377,68 @@ export class MetaLearner {
         ? strategies.reduce((s, sp) => s + sp.successRate, 0) / strategies.length
         : 0;
 
+    const learningActive =
+      this.config.enabled && this.experiences.length >= this.config.minRunsBeforeLearning;
+    const runsUntilLearning = Math.max(
+      0,
+      this.config.minRunsBeforeLearning - this.experiences.length,
+    );
+
     return {
       totalExperiences: this.experiences.length,
       trackedStrategies: strategies.length,
       avgSuccessRate,
       topStrategies: strategies.sort((a, b) => b.successRate - a.successRate).slice(0, 5),
       totalReflections: this.reflections.length,
+      learningActive,
+      runsUntilLearning,
+    };
+  }
+
+  getConvergenceMetrics(): {
+    taskTypes: number;
+    strategiesPerType: number;
+    avgSamplesPerStrategy: number;
+    converged: boolean;
+    learningCurve: Array<{ taskType: string; improvementRate: number }>;
+  } {
+    const strategyPerformance = this.perfTracker.getStrategyPerformance();
+    const taskTypes = new Set<string>();
+    let totalStrategies = 0;
+    let totalSamples = 0;
+
+    for (const [key, perf] of strategyPerformance) {
+      const taskType = key.split('::')[1] ?? 'unknown';
+      taskTypes.add(taskType);
+      totalStrategies++;
+      totalSamples += perf.totalRuns;
+    }
+
+    const avgSamplesPerStrategy = totalStrategies > 0 ? totalSamples / totalStrategies : 0;
+
+    const learningCurve: Array<{ taskType: string; improvementRate: number }> = [];
+    for (const taskType of taskTypes) {
+      const taskExperiences = this.experiences.filter((e) => e.taskType === taskType);
+      if (taskExperiences.length >= 10) {
+        const firstHalf = taskExperiences.slice(0, Math.floor(taskExperiences.length / 2));
+        const secondHalf = taskExperiences.slice(Math.floor(taskExperiences.length / 2));
+        const firstSuccessRate = firstHalf.filter((e) => e.success).length / firstHalf.length;
+        const secondSuccessRate = secondHalf.filter((e) => e.success).length / secondHalf.length;
+        const improvementRate = secondSuccessRate - firstSuccessRate;
+        learningCurve.push({ taskType, improvementRate });
+      }
+    }
+
+    const converged =
+      avgSamplesPerStrategy >= 50 &&
+      learningCurve.every((lc) => Math.abs(lc.improvementRate) < 0.1);
+
+    return {
+      taskTypes: taskTypes.size,
+      strategiesPerType: totalStrategies > 0 ? Math.round(totalStrategies / taskTypes.size) : 0,
+      avgSamplesPerStrategy: Math.round(avgSamplesPerStrategy),
+      converged,
+      learningCurve,
     };
   }
 
@@ -472,11 +556,12 @@ export function clearMetaLearnerState(): void {
   learner['experiences'] = [];
   learner['reflections'] = [];
   learner['shadowComparisons'] = [];
+  learner['config'] = { ...DEFAULT_META_LEARNER_CONFIG, minRunsBeforeLearning: 0, enabled: true };
   learner['perfTracker'] = new StrategyPerformanceTracker();
   learner['selector'] = new StrategySelector();
   learner['crossModel'] = new CrossModelMemory();
-  learner['predictionLoop'] = new PredictionLoop(learner['config']?.enablePredictionLoop ?? true);
-  learner['regressionGate'] = new RegressionGate(learner['config']?.regressionThreshold ?? 0.15);
+  learner['predictionLoop'] = new PredictionLoop(learner['config'].enablePredictionLoop);
+  learner['regressionGate'] = new RegressionGate(learner['config'].regressionThreshold);
 }
 
 export { DEFAULT_META_LEARNER_CONFIG } from './strategyConstants';

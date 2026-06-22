@@ -241,8 +241,12 @@ function selectTopology(
     return effortLevel === 'COMPLEX' ? 'HIERARCHICAL' : 'PARALLEL';
   }
   if (taskType === 'CODING') return 'PARALLEL';
-  if (taskType === 'REASONING') return 'DEBATE';
-  if (taskType === 'CREATIVE') return 'ENSEMBLE';
+  if (taskType === 'REASONING') {
+    return effortLevel === 'COMPLEX' ? 'DEBATE' : 'SEQUENTIAL';
+  }
+  if (taskType === 'CREATIVE') {
+    return effortLevel === 'COMPLEX' ? 'ENSEMBLE' : 'PARALLEL';
+  }
   return 'SEQUENTIAL';
 }
 

@@ -175,14 +175,14 @@ export async function cmdSwarm(task: string, flags: Record<string, string>) {
       maxRounds: parseInt(flags['max-rounds'], 10),
     };
   if (flags['max-depth']) swarmConfig.maxDepth = parseInt(flags['max-depth'], 10);
-  if (flags['--max-workers']) swarmConfig.maxWorkers = parseInt(flags['--max-workers'], 10);
+  if (flags['max-workers']) swarmConfig.maxWorkers = parseInt(flags['max-workers'], 10);
 
   const orch = new SwarmOrchestrator(llmProvider, swarmConfig);
 
-  const modeLabel = flags['--mode'] ?? 'balanced';
-  const depthLabel = flags['--max-depth'] ?? '3';
+  const modeLabel = flags['mode'] ?? 'balanced';
+  const depthLabel = flags['max-depth'] ?? '3';
   console.log(
-    `  ${$.dim}Mode:${$.reset} ${$.cyan}${modeLabel}${$.reset}  ${$.dim}Max depth:${$.reset} ${$.cyan}${depthLabel}${$.reset}  ${$.dim}Max workers:${$.reset} ${$.cyan}${flags['--max-workers'] ?? 10}${$.reset}\n`,
+    `  ${$.dim}Mode:${$.reset} ${$.cyan}${modeLabel}${$.reset}  ${$.dim}Max depth:${$.reset} ${$.cyan}${depthLabel}${$.reset}  ${$.dim}Max workers:${$.reset} ${$.cyan}${flags['max-workers'] ?? 10}${$.reset}\n`,
   );
 
   const done = startSpinner('Swarm loop running...');
