@@ -47,7 +47,8 @@ By submitting a pull request, you grant the project license to use your contribu
 3. Run `cd packages/core && npx tsx --test tests/*.test.ts` - all passing
 4. Run `npx tsc --noEmit` - clean
 5. Run `pnpm --filter @commander/sdk typecheck` - clean
-6. Submit PR with description of changes
+6. Run `pnpm format:check` - clean (broader scope: `packages/**`, `apps/**`, `scripts/**`)
+7. Submit PR with description of changes
 
 ## Code Style
 
@@ -68,10 +69,35 @@ By submitting a pull request, you grant the project license to use your contribu
 ### Quality Gates (all must pass before merge)
 
 - `pnpm typecheck` — TypeScript strict mode, zero errors
-- `pnpm lint` — ESLint with no-console enforcement
+- `pnpm lint` — ESLint with no-console enforcement + `pnpm format:check`
 - `pnpm test` — All tests passing (node:test + vitest)
 - `pnpm build:core` — Core package builds successfully
+- `pnpm format:check` — Prettier clean across `packages/**`, `apps/**`, `scripts/**`
+- **Local git hooks** — pre-commit (security gating) and pre-push (Prettier
+  baseline) automatically enforce security + style on each `git commit` / `git push`.
+  Install via `bash scripts/install-hooks.sh`.
 - CI cross-platform matrix: Ubuntu, macOS, Windows × Node 20, 22
+
+### Local Git Hooks (D3 hardening-sprint)
+
+The repository ships two layered git hooks installed via `bash scripts/install-hooks.sh`:
+
+- **`.githooks/pre-commit`** → `scripts/precommitHook.ts` — Security gate:
+  SupplyChainScanner inline-blocklist mirror + ExecPolicy vitest smoke. Bypass
+  with `COMMANDER_SKIP_PRECOMMIT=1` (logged). Purpose: block malware-class
+  content from local commits with high certainty, low noise.
+- **`.githooks/pre-push`** → `scripts/prepushHook.ts` — Style gate:
+  `pnpm exec prettier --check` across the development surface
+  (`packages/core/src`, `packages/core/tests`, `apps/api/src`, `apps/web/src`,
+  `scripts`). Bypass with `COMMANDER_SKIP_PREPUSH=1` (logged). Purpose: catch
+  Prettier drift before remote CI rejects it.
+
+Both hooks exit non-zero on failure, blocking their respective git phases.
+They share a common bash wrapper pattern (PATH-export per commit 4fd97dea7
+so pnpm-resolved binaries don't fall back to network fetch). The push-side
+check is intentionally broader than the source-only `format:check` script
+to close the cross-file reflow gap that allowed commit 765b41430's style
+bypass to ship.
 
 ### Adding New Tests
 
