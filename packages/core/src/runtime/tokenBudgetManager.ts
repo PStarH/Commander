@@ -10,8 +10,4 @@ export {
   getTokenBudgetManager,
   resetTokenBudgetManager,
 } from './tokenGovernor';
-export type {
-  SubAgentAllocation,
-  RunBudgetStatus,
-  TokenBudgetConfig,
-} from './tokenGovernor';
+export type { SubAgentAllocation, RunBudgetStatus, TokenBudgetConfig } from './tokenGovernor';
