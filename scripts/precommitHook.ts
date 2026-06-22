@@ -30,7 +30,9 @@ import * as path from 'node:path';
 
 // ── Configuration ────────────────────────────────────────────────────────
 
-const REPO_ROOT = process.env.GIT_DIR ? path.dirname(path.dirname(process.env.GIT_DIR)) : process.cwd();
+const REPO_ROOT = process.env.GIT_DIR
+  ? path.dirname(path.dirname(process.env.GIT_DIR))
+  : process.cwd();
 const SCANNABLE_EXT = /\.(ts|tsx|js|mjs|cjs|json|sh)$/i;
 const MAX_FILE_BYTES = 500 * 1024;
 const EXECPOLICY_TEST_FILE = 'tests/runtime/execPolicy.edge.test.ts';
@@ -48,12 +50,17 @@ function getStagedFiles(): { source: 'git' | 'argv'; files: string[] } {
   }
   // Git-side invocation: read staged + added files (added vs modified = same
   // security posture for our purposes).
-  const out = execFileSync(
-    'git',
-    ['diff', '--cached', '--name-only', '--diff-filter=AM'],
-    { cwd: REPO_ROOT, encoding: 'utf-8' },
-  );
-  return { source: 'git', files: out.split('\n').map((s) => s.trim()).filter(Boolean) };
+  const out = execFileSync('git', ['diff', '--cached', '--name-only', '--diff-filter=AM'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf-8',
+  });
+  return {
+    source: 'git',
+    files: out
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  };
 }
 
 interface ScanLike {
@@ -94,18 +101,25 @@ function inlineBlocklistScan(name: string, content: string): ScanLike {
   // packages/core/src/security/supplyChainScanner.ts MALWARE_SIGNATURES.
   const PATTERNS: Array<{ id: string; regex: RegExp }> = [
     { id: 'MAL-001-reverse-shell', regex: /\/dev\/tcp\/.*\/.*|bash -i >& \/dev\/tcp/ },
-    { id: 'MAL-005-data-destruction', regex: /rm\s+-rf\s+\/(?:\s|$)|;\s*:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/ },
-    { id: 'MAL-007-ssh-backdoor', regex: />>\s*~\/\.ssh\/authorized_keys|>>\s*\/root\/\.ssh\/authorized_keys/ },
-    { id: 'MAL-008-persistence', regex: /@reboot|crontab\s+-\s+-[el]|\/etc\/cron\.(daily|hourly|weekly|monthly)/i },
+    {
+      id: 'MAL-005-data-destruction',
+      regex: /rm\s+-rf\s+\/(?:\s|$)|;\s*:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,
+    },
+    {
+      id: 'MAL-007-ssh-backdoor',
+      regex: />>\s*~\/\.ssh\/authorized_keys|>>\s*\/root\/\.ssh\/authorized_keys/,
+    },
+    {
+      id: 'MAL-008-persistence',
+      regex: /@reboot|crontab\s+-\s+-[el]|\/etc\/cron\.(daily|hourly|weekly|monthly)/i,
+    },
   ];
-  const warnings = PATTERNS
-    .filter((p) => p.regex.test(content))
-    .map((p) => ({
-      severity: 'critical' as const,
-      category: p.id,
-      message: `blocklist hit: ${p.id}`,
-      evidence: name,
-    }));
+  const warnings = PATTERNS.filter((p) => p.regex.test(content)).map((p) => ({
+    severity: 'critical' as const,
+    category: p.id,
+    message: `blocklist hit: ${p.id}`,
+    evidence: name,
+  }));
   return {
     passed: warnings.length === 0,
     severity: warnings.length > 0 ? 'malicious' : 'clean',
@@ -118,10 +132,14 @@ function inlineBlocklistScan(name: string, content: string): ScanLike {
 
 async function runScannerGate(): Promise<void> {
   const staged = getStagedFiles();
-  const scannable = staged.files.filter((f) => SCANNABLE_EXT.test(f) && !f.includes('/.commander/'));
+  const scannable = staged.files.filter(
+    (f) => SCANNABLE_EXT.test(f) && !f.includes('/.commander/'),
+  );
 
   if (scannable.length === 0) {
-    console.log(`[D3 hook] No scannable staged files (out of ${staged.files.length} via ${staged.source}).`);
+    console.log(
+      `[D3 hook] No scannable staged files (out of ${staged.files.length} via ${staged.source}).`,
+    );
     return;
   }
 
@@ -146,8 +164,16 @@ async function runScannerGate(): Promise<void> {
     if (!result.passed || result.recommendation === 'block') {
       for (const w of result.warnings) {
         // Only show critical/high hits so the output is actionable.
-        if (w.severity === 'critical' || w.severity === 'high' || w.category.startsWith('malware.')) {
-          violations.push({ file: rel, reason: `${w.category}: ${w.message}`, severity: w.severity });
+        if (
+          w.severity === 'critical' ||
+          w.severity === 'high' ||
+          w.category.startsWith('malware.')
+        ) {
+          violations.push({
+            file: rel,
+            reason: `${w.category}: ${w.message}`,
+            severity: w.severity,
+          });
         }
       }
     }
@@ -171,15 +197,11 @@ function runExecPolicySmoke(): void {
   // execFileSync propagates a real exit code so a non-zero from vitest lands
   // in our catch block.
   try {
-    execFileSync(
-      'npx',
-      ['vitest', 'run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=basic'],
-      {
-        cwd: REPO_ROOT,
-        stdio: 'inherit',
-        env: { ...process.env, NODE_ENV: 'test' },
-      },
-    );
+    execFileSync('npx', ['vitest', 'run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=basic'], {
+      cwd: REPO_ROOT,
+      stdio: 'inherit',
+      env: { ...process.env, NODE_ENV: 'test' },
+    });
     console.log('[D3 hook] ExecPolicy smoke green ✅');
   } catch {
     throw new Error('precommit ExecPolicy smoke failed — see vitest output above');

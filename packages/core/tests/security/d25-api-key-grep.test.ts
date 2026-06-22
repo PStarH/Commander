@@ -168,7 +168,7 @@ function scanFileForPatterns(file: string): Violation[] {
         trimmed.includes('// fake') ||
         trimmed.includes('// example') ||
         trimmed.includes('// mock') ||
-        trimmed.startsWith('// ') === false && trimmed.includes('fixture:')
+        (trimmed.startsWith('// ') === false && trimmed.includes('fixture:'))
       ) {
         continue;
       }
@@ -219,7 +219,7 @@ describe('D2.5 hardening — plaintext API key grep gate', () => {
   });
 
   it('apps/api/src + apps/web/src contain zero plaintext API keys (sk-/gh*_/AKIA/xox*)', () => {
-    expect(violations, violations.map(v => vToString(v)).join('\n')).toEqual([]);
+    expect(violations, violations.map((v) => vToString(v)).join('\n')).toEqual([]);
   });
 
   it('regression: scan roots still resolve after re-walk', () => {

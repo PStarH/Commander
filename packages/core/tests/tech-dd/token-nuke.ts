@@ -86,7 +86,9 @@ async function main() {
     throw new Error('Expected context-length warning log not found');
   }
   if (result.status !== 'success') {
-    throw new Error(`Expected run to succeed after compaction, got ${result.status}: ${result.error}`);
+    throw new Error(
+      `Expected run to succeed after compaction, got ${result.status}: ${result.error}`,
+    );
   }
 
   console.log('✅ Token nuke test passed');

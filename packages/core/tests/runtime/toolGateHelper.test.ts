@@ -57,7 +57,10 @@ import {
   getSecurityOrchestrator,
   resetSecurityOrchestrator,
 } from '../../src/runtime/securityOrchestrator';
-import { getCrossAgentCorrelator, resetCrossAgentCorrelator } from '../../src/security/crossAgentCorrelator';
+import {
+  getCrossAgentCorrelator,
+  resetCrossAgentCorrelator,
+} from '../../src/security/crossAgentCorrelator';
 import { getHookManager } from '../../src/pluginManager';
 import type {
   AgentExecutionContext,
@@ -86,7 +89,9 @@ function makeContext(overrides?: Partial<AgentExecutionContext>): AgentExecution
 }
 
 class ToolCallMockProvider extends MockLLMProvider {
-  private queuedToolCalls: Array<Array<{ id: string; name: string; arguments: Record<string, unknown> }>> = [];
+  private queuedToolCalls: Array<
+    Array<{ id: string; name: string; arguments: Record<string, unknown> }>
+  > = [];
   private index = 0;
   public lastRequest: LLMRequest | undefined;
 
@@ -169,9 +174,7 @@ describe('applyPreToolCallGates — execution-loop wiring (discriminated union)'
   // ── A: helper invoked once per tool call in both modes
   it('concurrent-safe path: helper is invoked exactly once per tool call (no double-fire)', async () => {
     const provider = new ToolCallMockProvider('openai', { defaultResponse: 'ok' });
-    provider.pushToolCalls([
-      { id: 'c-1', name: 'echo', arguments: { msg: 'first' } },
-    ]);
+    provider.pushToolCalls([{ id: 'c-1', name: 'echo', arguments: { msg: 'first' } }]);
 
     runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000, maxStepsPerRun: 3 }, router);
     runtime.registerProvider('openai', provider);
@@ -183,17 +186,13 @@ describe('applyPreToolCallGates — execution-loop wiring (discriminated union)'
       makeContext({ availableTools: ['echo'], goal: 'Echo a single safe message' }),
     );
 
-    const toolCallEvents = correlator.getEvents().filter(
-      (e) => e.type === 'tool_call',
-    );
+    const toolCallEvents = correlator.getEvents().filter((e) => e.type === 'tool_call');
     expect(toolCallEvents).toHaveLength(1);
   });
 
   it('serial path: helper is invoked exactly once per tool call', async () => {
     const provider = new ToolCallMockProvider('openai', { defaultResponse: 'ok' });
-    provider.pushToolCalls([
-      { id: 's-1', name: 'shell_execute', arguments: { cmd: 'ls' } },
-    ]);
+    provider.pushToolCalls([{ id: 's-1', name: 'shell_execute', arguments: { cmd: 'ls' } }]);
 
     runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000, maxStepsPerRun: 3 }, router);
     runtime.registerProvider('openai', provider);
@@ -205,18 +204,16 @@ describe('applyPreToolCallGates — execution-loop wiring (discriminated union)'
       makeContext({ availableTools: ['shell_execute'], goal: 'Execute a single shell command' }),
     );
 
-    const toolCallEvents = correlator.getEvents().filter(
-      (e) => e.type === 'tool_call' && e.metadata.toolName === 'shell_execute',
-    );
+    const toolCallEvents = correlator
+      .getEvents()
+      .filter((e) => e.type === 'tool_call' && e.metadata.toolName === 'shell_execute');
     expect(toolCallEvents).toHaveLength(1);
   });
 
   // ── C: happy path — kind='allowed' AND helper publishes ZERO denial events
   it('happy path: tool_call event has allowed=true; execution completes; helper does NOT publish any tool.blocked denial', async () => {
     const provider = new ToolCallMockProvider('openai', { defaultResponse: 'ok' });
-    provider.pushToolCalls([
-      { id: 'h-1', name: 'echo', arguments: { msg: 'happy' } },
-    ]);
+    provider.pushToolCalls([{ id: 'h-1', name: 'echo', arguments: { msg: 'happy' } }]);
 
     runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000, maxStepsPerRun: 3 }, router);
     runtime.registerProvider('openai', provider);
@@ -230,9 +227,9 @@ describe('applyPreToolCallGates — execution-loop wiring (discriminated union)'
     expect(result.status).toBe('success');
 
     const correlator = getCrossAgentCorrelator();
-    const toolCallEvents = correlator.getEvents().filter(
-      (e) => e.type === 'tool_call' && e.metadata.toolName === 'echo',
-    );
+    const toolCallEvents = correlator
+      .getEvents()
+      .filter((e) => e.type === 'tool_call' && e.metadata.toolName === 'echo');
     expect(toolCallEvents[0].metadata.allowed).toBe(true);
     expect(toolCallEvents[0].severity).toBe('low');
 
@@ -287,7 +284,10 @@ describe('applyPreToolCallGates — execution-loop wiring (discriminated union)'
 
     try {
       await runtime.execute(
-        makeContext({ availableTools: ['echo'], goal: 'Repeat echo many times (retry kind must NOT publish)' }),
+        makeContext({
+          availableTools: ['echo'],
+          goal: 'Repeat echo many times (retry kind must NOT publish)',
+        }),
       );
     } finally {
       unsubscribe();
@@ -297,9 +297,9 @@ describe('applyPreToolCallGates — execution-loop wiring (discriminated union)'
     // caller sets retryLoopDetected=true and breaks. The 4th push is
     // therefore never processed.
     const correlator = getCrossAgentCorrelator();
-    const toolCallEvents = correlator.getEvents().filter(
-      (e) => e.type === 'tool_call' && e.metadata.toolName === 'echo',
-    );
+    const toolCallEvents = correlator
+      .getEvents()
+      .filter((e) => e.type === 'tool_call' && e.metadata.toolName === 'echo');
     expect(toolCallEvents.length).toBeLessThanOrEqual(3);
 
     // Discriminated-union regression: retry kind does NOT publish. Helper
@@ -310,9 +310,7 @@ describe('applyPreToolCallGates — execution-loop wiring (discriminated union)'
         topic === 'tool.blocked' &&
         (payload as { reason?: string } | undefined)?.reason === 'retry_loop',
     );
-    const retryBlockedCapture = eventCapture.filter(
-      (e) => e.payload?.reason === 'retry_loop',
-    );
+    const retryBlockedCapture = eventCapture.filter((e) => e.payload?.reason === 'retry_loop');
     expect(retryBlockedViaSpy).toHaveLength(0);
     expect(retryBlockedCapture).toHaveLength(0);
   });
@@ -320,9 +318,7 @@ describe('applyPreToolCallGates — execution-loop wiring (discriminated union)'
   // ── D: HookManager denial path — caller publishes EXACTLY ONCE
   it('hook-denied gate: kind=hooked → caller publishes tool.blocked reason=hook_denied EXACTLY ONCE (helper does not double-fire)', async () => {
     const provider = new ToolCallMockProvider('openai', { defaultResponse: 'ok' });
-    provider.pushToolCalls([
-      { id: 'd-1', name: 'echo', arguments: { msg: 'one' } },
-    ]);
+    provider.pushToolCalls([{ id: 'd-1', name: 'echo', arguments: { msg: 'one' } }]);
 
     runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000, maxStepsPerRun: 3 }, router);
     runtime.registerProvider('openai', provider);
@@ -358,9 +354,9 @@ describe('applyPreToolCallGates — execution-loop wiring (discriminated union)'
     }
 
     const correlator = getCrossAgentCorrelator();
-    const toolCallEvents = correlator.getEvents().filter(
-      (e) => e.type === 'tool_call' && e.metadata.toolName === 'echo',
-    );
+    const toolCallEvents = correlator
+      .getEvents()
+      .filter((e) => e.type === 'tool_call' && e.metadata.toolName === 'echo');
     expect(toolCallEvents).toHaveLength(1);
   });
 
@@ -380,8 +376,13 @@ describe('applyPreToolCallGates — execution-loop wiring (discriminated union)'
     // Force CycleDetector to report a cycle on the 2nd call. The first
     // call passes; the helper's cycle-gate fires on the 2nd and returns
     // { kind: 'cycle', description }.
-    const cycleReal = (runtime as unknown as { cycleDetector: { check: (n: string, a: unknown, c: number) => { detected: boolean; description?: string } } })
-      .cycleDetector;
+    const cycleReal = (
+      runtime as unknown as {
+        cycleDetector: {
+          check: (n: string, a: unknown, c: number) => { detected: boolean; description?: string };
+        };
+      }
+    ).cycleDetector;
     const realCheck = cycleReal.check.bind(cycleReal);
     let callIndex = 0;
     vi.spyOn(cycleReal, 'check').mockImplementation((n, a, c) => {

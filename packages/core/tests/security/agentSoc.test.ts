@@ -297,8 +297,13 @@ describe('AgentSOC', () => {
       const incident = soc.createIncident({ event });
 
       const result = soc.submitPostmortem(incident.id, {
-        rootCause: 'x', timeline: [], impact: { usersAffected: 0, durationMinutes: 0, dataExposed: false, financialCost: 0 },
-        lessonsLearned: [], actionItems: [], reviewedBy: 'x', reviewedAt: 'x',
+        rootCause: 'x',
+        timeline: [],
+        impact: { usersAffected: 0, durationMinutes: 0, dataExposed: false, financialCost: 0 },
+        lessonsLearned: [],
+        actionItems: [],
+        reviewedBy: 'x',
+        reviewedAt: 'x',
       });
       expect(result).toBe(false);
     });
@@ -415,7 +420,9 @@ describe('AgentSOC', () => {
     it('assigns correct SLA targets per priority', () => {
       const soc = new AgentSoc();
 
-      const p0Incident = soc.createIncident({ event: createEvent('sandbox_violation', 'critical', 'S') });
+      const p0Incident = soc.createIncident({
+        event: createEvent('sandbox_violation', 'critical', 'S'),
+      });
       expect(p0Incident.slaTarget.responseMinutes).toBe(5);
       expect(p0Incident.slaTarget.resolutionMinutes).toBe(60);
 

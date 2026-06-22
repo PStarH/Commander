@@ -99,9 +99,7 @@ describe('DataRetentionJanitor schedule() boolean-return dedup contract', () => 
 
     expect(aClaimed).toBe(true);
     expect(cClaimed).toBe(true);
-    expect(DataRetentionJanitor.getScheduledRootDirs().sort()).toEqual(
-      [tmpRoot, otherRoot].sort(),
-    );
+    expect(DataRetentionJanitor.getScheduledRootDirs().sort()).toEqual([tmpRoot, otherRoot].sort());
 
     // Releasing one doesn't affect the other
     janitorC.stopSchedule();
@@ -133,8 +131,9 @@ describe('DataRetentionJanitor schedule() boolean-return dedup contract', () => 
     // Cross-check via the public isScheduled() test hook: the claimer
     // has a live setInterval on its intervalRef; the dedup-catcher
     // never created one. Exactly one isScheduled === true.
-    const liveCount = [janitorA.isScheduled(), janitorB.isScheduled()]
-      .filter((b) => b === true).length;
+    const liveCount = [janitorA.isScheduled(), janitorB.isScheduled()].filter(
+      (b) => b === true,
+    ).length;
     expect(liveCount).toBe(1);
   });
 

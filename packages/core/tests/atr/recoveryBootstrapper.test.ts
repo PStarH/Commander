@@ -79,8 +79,11 @@ describe('RecoveryBootstrapper', () => {
     assert.strictEqual(result.details[0].action, 'skipped');
 
     const bundle = getRunLedgerBundle();
-    assert.ok(bundle.ledger.listByState('EXECUTING')
-      .some((r: { runId: string }) => r.runId === 'alive-run'));
+    assert.ok(
+      bundle.ledger
+        .listByState('EXECUTING')
+        .some((r: { runId: string }) => r.runId === 'alive-run'),
+    );
   });
 
   it('handles multiple zombie runs', () => {

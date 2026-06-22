@@ -19,7 +19,7 @@ describe('Reliability Benchmarks', () => {
     expect(breaker.isAvailable()).toBe(false);
 
     const start = performance.now();
-    await new Promise(resolve => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, 150));
     const recoveryTimeMs = performance.now() - start;
 
     breaker.isAvailable();
@@ -197,9 +197,9 @@ describe('Reliability Benchmarks', () => {
     const promises = Array.from({ length: concurrency }, (_, i) =>
       Promise.resolve(
         Array.from({ length: operationsPerBreaker }, () =>
-          registry.get(`provider-${i % 10}`)!.isAvailable()
-        )
-      )
+          registry.get(`provider-${i % 10}`)!.isAvailable(),
+        ),
+      ),
     );
     await Promise.all(promises);
     const durationMs = performance.now() - start;

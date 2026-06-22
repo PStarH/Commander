@@ -239,17 +239,32 @@ describe('TEESandbox', () => {
       sandbox.execute('echo ONE', {
         mode: 'read-only',
         network: 'blocked',
-        filesystem: { readablePaths: ['/tmp'], writablePaths: [], protectedPaths: [], useStagingDir: false },
+        filesystem: {
+          readablePaths: ['/tmp'],
+          writablePaths: [],
+          protectedPaths: [],
+          useStagingDir: false,
+        },
       }),
       sandbox.execute('echo TWO', {
         mode: 'read-only',
         network: 'blocked',
-        filesystem: { readablePaths: ['/tmp'], writablePaths: [], protectedPaths: [], useStagingDir: false },
+        filesystem: {
+          readablePaths: ['/tmp'],
+          writablePaths: [],
+          protectedPaths: [],
+          useStagingDir: false,
+        },
       }),
       sandbox.execute('echo THREE', {
         mode: 'read-only',
         network: 'blocked',
-        filesystem: { readablePaths: ['/tmp'], writablePaths: [], protectedPaths: [], useStagingDir: false },
+        filesystem: {
+          readablePaths: ['/tmp'],
+          writablePaths: [],
+          protectedPaths: [],
+          useStagingDir: false,
+        },
       }),
     ]);
 

@@ -72,7 +72,7 @@ describe('Load Benchmarks', () => {
     const start = performance.now();
 
     const promises = Array.from({ length: concurrency }, () =>
-      Promise.resolve(governor.getState())
+      Promise.resolve(governor.getState()),
     );
     await Promise.all(promises);
     const durationMs = performance.now() - start;
@@ -108,7 +108,7 @@ describe('Load Benchmarks', () => {
     const start = performance.now();
 
     const promises = Array.from({ length: concurrency }, (_, i) =>
-      Promise.resolve(registry.get(`provider-${i % 10}`)!.isAvailable())
+      Promise.resolve(registry.get(`provider-${i % 10}`)!.isAvailable()),
     );
     await Promise.all(promises);
     const durationMs = performance.now() - start;

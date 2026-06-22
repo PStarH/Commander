@@ -34,7 +34,10 @@ import {
   getSecurityOrchestrator,
   resetSecurityOrchestrator,
 } from '../../src/runtime/securityOrchestrator';
-import { getCrossAgentCorrelator, resetCrossAgentCorrelator } from '../../src/security/crossAgentCorrelator';
+import {
+  getCrossAgentCorrelator,
+  resetCrossAgentCorrelator,
+} from '../../src/security/crossAgentCorrelator';
 import type {
   AgentExecutionContext,
   Tool,
@@ -63,7 +66,9 @@ function makeContext(overrides?: Partial<AgentExecutionContext>): AgentExecution
 }
 
 class ToolCallMockProvider extends MockLLMProvider {
-  private queuedToolCalls: Array<Array<{ id: string; name: string; arguments: Record<string, unknown> }>> = [];
+  private queuedToolCalls: Array<
+    Array<{ id: string; name: string; arguments: Record<string, unknown> }>
+  > = [];
   private index = 0;
 
   pushToolCalls(calls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>) {
@@ -121,7 +126,10 @@ function makeWriteTool(): Tool {
   const def: ToolDefinition = {
     name: 'write',
     description: 'Writes content to a file (not concurrency-safe)',
-    inputSchema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } } },
+    inputSchema: {
+      type: 'object',
+      properties: { path: { type: 'string' }, content: { type: 'string' } },
+    },
   };
   return {
     definition: def,
@@ -161,9 +169,7 @@ describe('SecurityOrchestrator helper — execute() seam contract', () => {
 
   it('concurrent-safe path: onBeforeToolCall invoked exactly once per tool call; tool_call correlator event emitted once', async () => {
     const provider = new ToolCallMockProvider('openai', { defaultResponse: 'echoing' });
-    provider.pushToolCalls([
-      { id: 'echo-1', name: 'echo', arguments: { msg: 'first' } },
-    ]);
+    provider.pushToolCalls([{ id: 'echo-1', name: 'echo', arguments: { msg: 'first' } }]);
 
     runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000, maxStepsPerRun: 3 }, router);
     runtime.registerProvider('openai', provider);
@@ -172,9 +178,7 @@ describe('SecurityOrchestrator helper — execute() seam contract', () => {
     const orch = getSecurityOrchestrator();
     const spy = vi.spyOn(orch, 'onBeforeToolCall');
 
-    await runtime.execute(
-      makeContext({ availableTools: ['echo'], goal: 'Echo a single message' }),
-    );
+    await runtime.execute(makeContext({ availableTools: ['echo'], goal: 'Echo a single message' }));
 
     // A — exactly one invocation, not two
     expect(spy).toHaveBeenCalledTimes(1);
@@ -202,9 +206,7 @@ describe('SecurityOrchestrator helper — execute() seam contract', () => {
     const orch = getSecurityOrchestrator();
     const spy = vi.spyOn(orch, 'onBeforeToolCall');
 
-    await runtime.execute(
-      makeContext({ availableTools: ['write'], goal: 'Write a file' }),
-    );
+    await runtime.execute(makeContext({ availableTools: ['write'], goal: 'Write a file' }));
 
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy.mock.calls[0][0]).toBe('write');
@@ -221,9 +223,7 @@ describe('SecurityOrchestrator helper — execute() seam contract', () => {
     // First: one concurrent-safe tool (echo). Then: one serial (write).
     // Both end up in the same execution. They share the helper, not their
     // own duplicated inline copy.
-    provider.pushToolCalls([
-      { id: 'echo-mix', name: 'echo', arguments: { msg: 'mix' } },
-    ]);
+    provider.pushToolCalls([{ id: 'echo-mix', name: 'echo', arguments: { msg: 'mix' } }]);
     provider.pushToolCalls([
       { id: 'write-mix', name: 'write', arguments: { path: '/tmp/mix.txt', content: 'x' } },
     ]);
@@ -257,9 +257,7 @@ describe('SecurityOrchestrator helper — execute() seam contract', () => {
   // ── C. Concurrent-mode blocked path uses blockedRawResult shape
   it('concurrent-mode blocked: returns blockedRawResult; underlying tool execute is NOT called', async () => {
     const provider = new ToolCallMockProvider('openai', { defaultResponse: 'echoing' });
-    provider.pushToolCalls([
-      { id: 'echo-block', name: 'echo', arguments: { msg: 'one' } },
-    ]);
+    provider.pushToolCalls([{ id: 'echo-block', name: 'echo', arguments: { msg: 'one' } }]);
 
     runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000, maxStepsPerRun: 3 }, router);
     runtime.registerProvider('openai', provider);
@@ -287,9 +285,9 @@ describe('SecurityOrchestrator helper — execute() seam contract', () => {
 
     // Correlator must carry the blocked tool_call event with severity: 'high'.
     const correlator = getCrossAgentCorrelator();
-    const toolCallEvents = correlator.getEvents().filter(
-      (e) => e.type === 'tool_call' && e.metadata.toolName === 'echo',
-    );
+    const toolCallEvents = correlator
+      .getEvents()
+      .filter((e) => e.type === 'tool_call' && e.metadata.toolName === 'echo');
     expect(toolCallEvents.length).toBeGreaterThan(0);
     expect(toolCallEvents[0].metadata.allowed).toBe(false);
     expect(toolCallEvents[0].severity).toBe('high');
@@ -308,7 +306,10 @@ describe('SecurityOrchestrator helper — execute() seam contract', () => {
     const writeDef: ToolDefinition = {
       name: 'write',
       description: 'Writes content to a file (not concurrency-safe)',
-      inputSchema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } } },
+      inputSchema: {
+        type: 'object',
+        properties: { path: { type: 'string' }, content: { type: 'string' } },
+      },
     };
     runtime.registerTool('write', {
       definition: writeDef,
@@ -335,9 +336,9 @@ describe('SecurityOrchestrator helper — execute() seam contract', () => {
 
     // Serial-mode blocked: tool_call correlator event carries allowed=false
     const correlator = getCrossAgentCorrelator();
-    const toolCallEvents = correlator.getEvents().filter(
-      (e) => e.type === 'tool_call' && e.metadata.toolName === 'write',
-    );
+    const toolCallEvents = correlator
+      .getEvents()
+      .filter((e) => e.type === 'tool_call' && e.metadata.toolName === 'write');
     expect(toolCallEvents.length).toBeGreaterThan(0);
     expect(toolCallEvents[0].metadata.allowed).toBe(false);
     expect(toolCallEvents[0].severity).toBe('high');
@@ -346,9 +347,7 @@ describe('SecurityOrchestrator helper — execute() seam contract', () => {
   // ── E. Allowed path: no synthetic results emitted
   it('allowed path: no synthetic blocked result or toolResult; tool_call event has severity:low', async () => {
     const provider = new ToolCallMockProvider('openai', { defaultResponse: 'ok' });
-    provider.pushToolCalls([
-      { id: 'echo-ok', name: 'echo', arguments: { msg: 'fine' } },
-    ]);
+    provider.pushToolCalls([{ id: 'echo-ok', name: 'echo', arguments: { msg: 'fine' } }]);
 
     runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000, maxStepsPerRun: 3 }, router);
     runtime.registerProvider('openai', provider);
@@ -362,14 +361,12 @@ describe('SecurityOrchestrator helper — execute() seam contract', () => {
       sources: ['ToolApproval'],
     });
 
-    await runtime.execute(
-      makeContext({ availableTools: ['echo'], goal: 'Echo safely' }),
-    );
+    await runtime.execute(makeContext({ availableTools: ['echo'], goal: 'Echo safely' }));
 
     const correlator = getCrossAgentCorrelator();
-    const toolCallEvents = correlator.getEvents().filter(
-      (e) => e.type === 'tool_call' && e.metadata.toolName === 'echo',
-    );
+    const toolCallEvents = correlator
+      .getEvents()
+      .filter((e) => e.type === 'tool_call' && e.metadata.toolName === 'echo');
     expect(toolCallEvents.length).toBeGreaterThan(0);
     expect(toolCallEvents[0].metadata.allowed).toBe(true);
     expect(toolCallEvents[0].severity).toBe('low');
@@ -378,9 +375,7 @@ describe('SecurityOrchestrator helper — execute() seam contract', () => {
   // ── End-to-end seam contract: ALL three seams must participate
   it('exercises all three SecurityOrchestrator seams in one execution', async () => {
     const provider = new ToolCallMockProvider('openai', { defaultResponse: 'analysis' });
-    provider.pushToolCalls([
-      { id: 'echo-all', name: 'echo', arguments: { msg: 'all-seams' } },
-    ]);
+    provider.pushToolCalls([{ id: 'echo-all', name: 'echo', arguments: { msg: 'all-seams' } }]);
 
     runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000, maxStepsPerRun: 3 }, router);
     runtime.registerProvider('openai', provider);

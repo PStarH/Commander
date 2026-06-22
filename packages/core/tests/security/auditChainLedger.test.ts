@@ -45,10 +45,7 @@ const PREV_NODE_ENV = process.env.NODE_ENV;
 let tmpDirCounter = 0;
 
 function makeTmpDir(): string {
-  const dir = path.join(
-    os.tmpdir(),
-    `audit-chain-${process.pid}-${Date.now()}-${++tmpDirCounter}`,
-  );
+  const dir = path.join(os.tmpdir(), `audit-chain-${process.pid}-${Date.now()}-${++tmpDirCounter}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -90,7 +87,7 @@ describe('AuditChainLedger', () => {
   beforeEach(() => {
     process.env[AUDIT_CHAIN_KEY_ENV] = TEST_KEY;
     process.env.NODE_ENV = 'test';
-    process.env.COMMANDER_AUDIT_PERSIST_DIR = (tmpDir = makeTmpDir());
+    process.env.COMMANDER_AUDIT_PERSIST_DIR = tmpDir = makeTmpDir();
     resetAuditChainLedger();
     resetSecurityAuditLogger();
   });
@@ -257,16 +254,32 @@ describe('AuditChainLedger', () => {
       const masterKey = Buffer.from(TEST_KEY, 'utf-8');
       const tenantKey = deriveTenantKey(masterKey, undefined);
       const h1 = computeEntryHmac(tenantKey, {
-        chainId: e1.chainId, seq: e1.seq, prevHash: e1.prevHash,
-        id: e1.id, timestamp: e1.timestamp, type: e1.type,
-        severity: e1.severity, source: e1.source, message: e1.message,
-        details: { tags: ['a', 'b', 'c'] }, context: e1.context, tenantId: e1.tenantId,
+        chainId: e1.chainId,
+        seq: e1.seq,
+        prevHash: e1.prevHash,
+        id: e1.id,
+        timestamp: e1.timestamp,
+        type: e1.type,
+        severity: e1.severity,
+        source: e1.source,
+        message: e1.message,
+        details: { tags: ['a', 'b', 'c'] },
+        context: e1.context,
+        tenantId: e1.tenantId,
       });
       const h2 = computeEntryHmac(tenantKey, {
-        chainId: e1.chainId, seq: e1.seq, prevHash: e1.prevHash,
-        id: e1.id, timestamp: e1.timestamp, type: e1.type,
-        severity: e1.severity, source: e1.source, message: e1.message,
-        details: { tags: ['c', 'b', 'a'] }, context: e1.context, tenantId: e1.tenantId,
+        chainId: e1.chainId,
+        seq: e1.seq,
+        prevHash: e1.prevHash,
+        id: e1.id,
+        timestamp: e1.timestamp,
+        type: e1.type,
+        severity: e1.severity,
+        source: e1.source,
+        message: e1.message,
+        details: { tags: ['c', 'b', 'a'] },
+        context: e1.context,
+        tenantId: e1.tenantId,
       });
       assert.notEqual(h1, h2);
     });
@@ -368,12 +381,18 @@ describe('AuditChainLedger', () => {
       const ledgerA = freshLedger(path.join(tmpDir, 'a'));
       const ledgerB = freshLedger(path.join(tmpDir, 'b'));
       ledgerA.logEvent({
-        type: 'auth_success', severity: 'low', source: 's',
-        message: 'A1', context: { tenantId: 'tenant-A' },
+        type: 'auth_success',
+        severity: 'low',
+        source: 's',
+        message: 'A1',
+        context: { tenantId: 'tenant-A' },
       });
       ledgerB.logEvent({
-        type: 'auth_success', severity: 'low', source: 's',
-        message: 'B1', context: { tenantId: 'tenant-B' },
+        type: 'auth_success',
+        severity: 'low',
+        source: 's',
+        message: 'B1',
+        context: { tenantId: 'tenant-B' },
       });
       // Both ledgers in same dir ⇒ verify sees both chains.
       const r = ledgerA.verify({ tenantId: 'tenant-A' });
@@ -389,17 +408,21 @@ describe('AuditChainLedger', () => {
     it('writes entries to audit-chain-*.ndjson', async () => {
       const ledger = freshLedger(tmpDir);
       ledger.logEvent({
-        type: 'auth_failure', severity: 'high', source: 'auth',
+        type: 'auth_failure',
+        severity: 'high',
+        source: 'auth',
         message: 'one',
       });
       ledger.logEvent({
-        type: 'auth_failure', severity: 'high', source: 'auth',
+        type: 'auth_failure',
+        severity: 'high',
+        source: 'auth',
         message: 'two',
       });
       await drainMicrotasks();
-      const files = fs.readdirSync(tmpDir).filter(
-        (f) => f.startsWith('audit-chain-') && f.endsWith('.ndjson'),
-      );
+      const files = fs
+        .readdirSync(tmpDir)
+        .filter((f) => f.startsWith('audit-chain-') && f.endsWith('.ndjson'));
       assert.ok(files.length >= 1);
       const content = fs.readFileSync(path.join(tmpDir, files[0]!), 'utf-8');
       const lines = content.split('\n').filter(Boolean);
@@ -420,7 +443,9 @@ describe('AuditChainLedger', () => {
       // ledger-facing collectPersistedEntries returns ALL entries.
       for (let i = 0; i < 30; i++) {
         ledger.logEvent({
-          type: 'security_scan', severity: 'low', source: 's',
+          type: 'security_scan',
+          severity: 'low',
+          source: 's',
           message: `entry-${i}`,
         });
       }
@@ -440,10 +465,16 @@ describe('AuditChainLedger', () => {
     it('clean chain verifies ok=true', async () => {
       const ledger = freshLedger(tmpDir);
       ledger.logEvent({
-        type: 'auth_failure', severity: 'high', source: 's', message: 'a',
+        type: 'auth_failure',
+        severity: 'high',
+        source: 's',
+        message: 'a',
       });
       ledger.logEvent({
-        type: 'auth_failure', severity: 'high', source: 's', message: 'b',
+        type: 'auth_failure',
+        severity: 'high',
+        source: 's',
+        message: 'b',
       });
       await drainMicrotasks();
       const r = ledger.verify();
@@ -457,7 +488,10 @@ describe('AuditChainLedger', () => {
       const ledger = freshLedger(tmpDir);
       for (let i = 1; i <= 5; i++) {
         ledger.logEvent({
-          type: 'config_change', severity: 'low', source: 's', message: `${i}`,
+          type: 'config_change',
+          severity: 'low',
+          source: 's',
+          message: `${i}`,
         });
       }
       await drainMicrotasks();
@@ -478,7 +512,10 @@ describe('AuditChainLedger', () => {
     it('detect modification of payload field', async () => {
       const ledger = freshLedger(tmpDir);
       ledger.logEvent({
-        type: 'content_threat', severity: 'high', source: 's', message: 'original',
+        type: 'content_threat',
+        severity: 'high',
+        source: 's',
+        message: 'original',
       });
       await drainMicrotasks();
       const file = path.join(tmpDir, 'audit-chain-0.ndjson');
@@ -498,10 +535,16 @@ describe('AuditChainLedger', () => {
     it('detect modification of prevHash field on a non-genesis entry', async () => {
       const ledger = freshLedger(tmpDir);
       ledger.logEvent({
-        type: 'auth_failure', severity: 'high', source: 's', message: 'a',
+        type: 'auth_failure',
+        severity: 'high',
+        source: 's',
+        message: 'a',
       });
       ledger.logEvent({
-        type: 'auth_failure', severity: 'high', source: 's', message: 'b',
+        type: 'auth_failure',
+        severity: 'high',
+        source: 's',
+        message: 'b',
       });
       await drainMicrotasks();
       const file = path.join(tmpDir, 'audit-chain-0.ndjson');
@@ -523,7 +566,10 @@ describe('AuditChainLedger', () => {
     it('detect foreign insertion with mismatched prevHash', async () => {
       const ledger = freshLedger(tmpDir);
       ledger.logEvent({
-        type: 'auth_failure', severity: 'high', source: 's', message: 'a',
+        type: 'auth_failure',
+        severity: 'high',
+        source: 's',
+        message: 'a',
       });
       await drainMicrotasks();
       // Append a forged entry that has seq=2 but an unrelated prevHash.
@@ -550,10 +596,16 @@ describe('AuditChainLedger', () => {
     it('detect a duplicate seq (reorder attempt)', async () => {
       const ledger = freshLedger(tmpDir);
       ledger.logEvent({
-        type: 'sandbox_violation', severity: 'critical', source: 's', message: 'a',
+        type: 'sandbox_violation',
+        severity: 'critical',
+        source: 's',
+        message: 'a',
       });
       ledger.logEvent({
-        type: 'sandbox_violation', severity: 'critical', source: 's', message: 'b',
+        type: 'sandbox_violation',
+        severity: 'critical',
+        source: 's',
+        message: 'b',
       });
       await drainMicrotasks();
       const file = path.join(tmpDir, 'audit-chain-0.ndjson');
@@ -576,7 +628,10 @@ describe('AuditChainLedger', () => {
     it('detect seq=1 with non-GENESIS prevHash', async () => {
       const ledger = freshLedger(tmpDir);
       ledger.logEvent({
-        type: 'config_change', severity: 'low', source: 's', message: '1',
+        type: 'config_change',
+        severity: 'low',
+        source: 's',
+        message: '1',
       });
       await drainMicrotasks();
       const file = path.join(tmpDir, 'audit-chain-0.ndjson');

@@ -190,7 +190,9 @@ describe('Performance Benchmarks', () => {
         p50_ms: Number(p50.toFixed(2)),
         p95_ms: Number(p95.toFixed(2)),
         p99_ms: Number(p99.toFixed(2)),
-        ops_per_sec: Number((1000 / (latencies.reduce((a, b) => a + b, 0) / iterations)).toFixed(1)),
+        ops_per_sec: Number(
+          (1000 / (latencies.reduce((a, b) => a + b, 0) / iterations)).toFixed(1),
+        ),
       },
       timestamp: new Date().toISOString(),
       durationMs: latencies.reduce((a, b) => a + b, 0),

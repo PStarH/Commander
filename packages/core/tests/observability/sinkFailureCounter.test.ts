@@ -35,7 +35,11 @@ test('Phase 2.3.5 — recordSinkFailure increments audit_sink_failures_total{sin
   const after = getMetricsCollector().getCounter(AUDIT_SINK_FAILURES_METRIC, [
     { name: 'sink', value: 'auditChain' },
   ]);
-  assert.equal(after - before, 3, 'counter must increment by exactly the number of recordSinkFailure calls');
+  assert.equal(
+    after - before,
+    3,
+    'counter must increment by exactly the number of recordSinkFailure calls',
+  );
 });
 
 test('Phase 2.3.5 — recordSinkFailure labels are isolated across sink names.', () => {
@@ -102,7 +106,11 @@ test('Phase 2.3.5 — getCounter name-only lookup returns 0 when no unlabeled co
   recordSinkFailure('auditChain');
   recordSinkFailure('tokenRejectedLogger');
   const unlabeledTotal = getMetricsCollector().getCounter(AUDIT_SINK_FAILURES_METRIC, []);
-  assert.equal(unlabeledTotal, 0, 'name-only getCounter lookup must return 0 when only labelled entries exist');
+  assert.equal(
+    unlabeledTotal,
+    0,
+    'name-only getCounter lookup must return 0 when only labelled entries exist',
+  );
 });
 
 test('Phase 2.3.5 — recordSinkFailure never throws, even if MetricsCollector does.', () => {

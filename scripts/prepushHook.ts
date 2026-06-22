@@ -126,9 +126,7 @@ function runPrettierCheck(targetPaths: readonly string[]): PrettierResult {
 // ── Main ─────────────────────────────────────────────────────────────────
 
 (function main(): void {
-  console.log(
-    `[D3 pre-push] Prettier baseline check on ${PUSH_BASELINE_PATHS.length} path(s):`,
-  );
+  console.log(`[D3 pre-push] Prettier baseline check on ${PUSH_BASELINE_PATHS.length} path(s):`);
   for (const p of PUSH_BASELINE_PATHS) console.log(`  • ${p}`);
 
   const result = runPrettierCheck(PUSH_BASELINE_PATHS);
@@ -144,9 +142,7 @@ function runPrettierCheck(targetPaths: readonly string[]): PrettierResult {
   if (result.stdout) console.error(result.stdout);
   if (result.stderr) console.error(result.stderr);
   console.error('To fix:');
-  console.error(
-    `  1. Auto-fix:  pnpm exec prettier --write ${PUSH_BASELINE_PATHS.join(' ')}`,
-  );
+  console.error(`  1. Auto-fix:  pnpm exec prettier --write ${PUSH_BASELINE_PATHS.join(' ')}`);
   console.error('  2. Manual:   open the listed files and adjust formatting, then re-push.');
   console.error('  3. Bypass:   COMMANDER_SKIP_PREPUSH=1 git push ...   (logged warning)');
   console.error('');

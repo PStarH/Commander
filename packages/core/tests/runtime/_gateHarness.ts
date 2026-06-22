@@ -37,9 +37,7 @@ import type {
  * Build an `AgentExecutionContext` with sensible defaults for gate tests.
  * Tests override `availableTools` and `goal`; everything else stays constant.
  */
-export function makeContext(
-  overrides?: Partial<AgentExecutionContext>,
-): AgentExecutionContext {
+export function makeContext(overrides?: Partial<AgentExecutionContext>): AgentExecutionContext {
   return {
     agentId: 'gate-test-agent',
     projectId: 'gate-test',
@@ -67,9 +65,7 @@ export class ToolCallMockProvider extends MockLLMProvider {
   private index = 0;
   public lastRequest: LLMRequest | undefined;
 
-  pushToolCalls(
-    calls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>,
-  ) {
+  pushToolCalls(calls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>) {
     this.queuedToolCalls.push(calls);
   }
 
