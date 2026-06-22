@@ -82,10 +82,7 @@ const TAB_COMPLETIONS_COMMON_FLAGS = [
   '--version',
 ];
 
-const ALL_CMD_COMPLETIONS = [
-  ...TAB_COMPLETIONS_BUILTINS,
-  ...TAB_COMPLETIONS_COMMANDS,
-];
+const ALL_CMD_COMPLETIONS = [...TAB_COMPLETIONS_BUILTINS, ...TAB_COMPLETIONS_COMMANDS];
 
 /**
  * Token-aware TAB completer.
@@ -122,7 +119,10 @@ interface InterfaceWithHistory {
 function loadHistory(rl: readline.Interface): void {
   try {
     const data = fs.readFileSync(HISTORY_FILE, 'utf8');
-    const lines = data.split('\n').filter((l) => l.length > 0).slice(-MAX_HISTORY);
+    const lines = data
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .slice(-MAX_HISTORY);
     const history = (rl as unknown as InterfaceWithHistory).history;
     for (const line of lines) history.push(line);
   } catch {
@@ -156,10 +156,7 @@ const PROFILE_AUTO_PATTERN = 'commander-repl-{datetime}.log';
 
 function resolveProfilePath(profile: string | true): string {
   if (profile === true) {
-    const now = new Date()
-      .toISOString()
-      .replace(/[:.]/g, '-')
-      .slice(0, 19); // 2026-06-22T12-34-56
+    const now = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); // 2026-06-22T12-34-56
     return path.join(process.cwd(), `commander-repl-${now}.log`);
   }
   return path.resolve(profile);
@@ -187,12 +184,16 @@ const REPL_BUILTINS: Record<string, string> = {
 
 function printBanner(envLoadResult?: LoadEnvResult): void {
   console.log('');
-  console.log(`  ${$.bold}${$.blue}Commander REPL${$.reset} ${$.dim}type a task — same as the CLI${$.reset}`);
+  console.log(
+    `  ${$.bold}${$.blue}Commander REPL${$.reset} ${$.dim}type a task — same as the CLI${$.reset}`,
+  );
 
   // Show .env loaded paths (if any).
   if (envLoadResult && envLoadResult.loaded.length > 0) {
     if (envLoadResult.loaded.length === 1) {
-      console.log(`  ${$.dim}📄 .env loaded:${$.reset} ${$.cyan}${envLoadResult.loaded[0]}${$.reset}`);
+      console.log(
+        `  ${$.dim}📄 .env loaded:${$.reset} ${$.cyan}${envLoadResult.loaded[0]}${$.reset}`,
+      );
     } else {
       console.log(`  ${$.dim}📄 .env loaded from:${$.reset}`);
       for (const p of envLoadResult.loaded) {
@@ -202,13 +203,27 @@ function printBanner(envLoadResult?: LoadEnvResult): void {
   }
 
   console.log(`  ${$.dim}Examples:${$.reset}`);
-  console.log(`    ${$.cyan}run${$.reset} "fix the type errors in src/"      ${$.dim}# execute a task${$.reset}`);
-  console.log(`    ${$.cyan}run --dry-run${$.reset} "summarize this repo"   ${$.dim}# deliberate only, no API call${$.reset}`);
-  console.log(`    ${$.cyan}review --commit${$.reset}                    ${$.dim}# review code changes${$.reset}`);
-  console.log(`    ${$.cyan}status${$.reset}                              ${$.dim}# see providers / API keys${$.reset}`);
-  console.log(`    ${$.cyan}doctor${$.reset}                              ${$.dim}# diagnose issues${$.reset}`);
-  console.log(`    ${$.cyan}:help${$.reset}                              ${$.dim}# built-ins${$.reset}`);
-  console.log(`    ${$.cyan}:exit${$.reset}  /  ${$.cyan}Ctrl-D${$.reset}                   ${$.dim}# leave the REPL${$.reset}`);
+  console.log(
+    `    ${$.cyan}run${$.reset} "fix the type errors in src/"      ${$.dim}# execute a task${$.reset}`,
+  );
+  console.log(
+    `    ${$.cyan}run --dry-run${$.reset} "summarize this repo"   ${$.dim}# deliberate only, no API call${$.reset}`,
+  );
+  console.log(
+    `    ${$.cyan}review --commit${$.reset}                    ${$.dim}# review code changes${$.reset}`,
+  );
+  console.log(
+    `    ${$.cyan}status${$.reset}                              ${$.dim}# see providers / API keys${$.reset}`,
+  );
+  console.log(
+    `    ${$.cyan}doctor${$.reset}                              ${$.dim}# diagnose issues${$.reset}`,
+  );
+  console.log(
+    `    ${$.cyan}:help${$.reset}                              ${$.dim}# built-ins${$.reset}`,
+  );
+  console.log(
+    `    ${$.cyan}:exit${$.reset}  /  ${$.cyan}Ctrl-D${$.reset}                   ${$.dim}# leave the REPL${$.reset}`,
+  );
   console.log(`  ${$.dim}Multi-line input: end a line with \\\` \\\` to continue.${$.reset}`);
   console.log(`  ${$.dim}TAB completion: commands + built-ins + flags.${$.reset}`);
   console.log('');
@@ -241,10 +256,7 @@ function tokenize(input: string): string[] {
 
 // ── Entry point ─────────────────────────────────────────────────────────
 
-export async function startRepl(
-  dispatch: Dispatcher,
-  options?: StartReplOptions,
-): Promise<void> {
+export async function startRepl(dispatch: Dispatcher, options?: StartReplOptions): Promise<void> {
   const profilePath = options?.profilePath ? resolveProfilePath(options.profilePath) : undefined;
 
   if (profilePath) {
@@ -312,7 +324,9 @@ export async function startRepl(
         console.log(`    ${$.cyan}${name.padEnd(10)}${$.reset}  ${$.dim}${desc}${$.reset}`);
       }
       console.log(`  ${$.dim}TAB completions:${$.reset} commands, flags, built-ins`);
-      console.log(`  ${$.dim}Transcript:${$.reset} ${profilePath ? $.cyan + profilePath + $.reset : $.dim + 'off (use --profile)' + $.reset}`);
+      console.log(
+        `  ${$.dim}Transcript:${$.reset} ${profilePath ? $.cyan + profilePath + $.reset : $.dim + 'off (use --profile)' + $.reset}`,
+      );
       console.log('');
       ask();
       return;
