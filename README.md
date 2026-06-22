@@ -222,7 +222,7 @@ The system is built with the same discipline as any production distributed syste
 
 ---
 
-MIT — use it, ship it, build on it. [Star on GitHub](https://github.com/PStarH/Commander) · [Documentation](https://github.com/PStarH/commander-docs) · [Architecture](ARCHITECTURE.md) · [Operator's Manual](AGENTS.md)
+MIT — use it, ship it, build on it. [Star on GitHub](https://github.com/PStarH/Commander) · [Documentation](https://github.com/PStarH/commander-docs) · [Architecture](ARCHITECTURE.md)
 
 <p align="center">
   <sub>448 modules · 8 topologies · 22 providers · 24 built-in tools · Built for engineers who want to see what their AI is actually doing.</sub>
