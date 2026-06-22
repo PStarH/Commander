@@ -1,1 +1,0 @@
-{"answer":"Saved to `git_recovery.txt`. Quick summary:\n\n| Scenario | Command |\n|---|---|\n| **Keep changes staged** | `git reset --soft HEAD~1` |\n| **Keep changes unstaged** | `git reset HEAD~1` |\n| **Discard cha","passed":true}

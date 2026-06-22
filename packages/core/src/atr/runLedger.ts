@@ -150,6 +150,7 @@ export class RunLedger {
   private stmtMarkCompensated: BetterSqlite3Stmt | null = null;
   private stmtListUncompensated: BetterSqlite3Stmt | null = null;
   private stmtListByState: BetterSqlite3Stmt | null = null;
+  private stmtSyncLeaseCredentials: BetterSqlite3Stmt | null = null;
 
   constructor(config?: Partial<RunLedgerConfig>);
   constructor(
@@ -289,6 +290,10 @@ export class RunLedger {
       SELECT run_id, tenant_id, state, intent_hash, lease_token, fencing_epoch,
              created_at, committed_at, aborted_at, error, metadata_json
       FROM run_transactions WHERE state = ? AND (tenant_id IS ? OR ? IS NULL)
+    `);
+    this.stmtSyncLeaseCredentials = this.db.prepare(`
+      UPDATE run_transactions SET lease_token = ?, fencing_epoch = ?
+      WHERE run_id = ? AND tenant_id IS ?
     `);
   }
 
@@ -705,6 +710,22 @@ export class RunLedger {
       tags: row.tags_json ? JSON.parse(row.tags_json) : [],
       description: row.description,
     };
+  }
+
+  /**
+   * Sync the lease token and fencing epoch into the ledger row.
+   * Called after RecoveryBootstrapper acquires a new lease on a zombie run
+   * so that subsequent scheduler operations can validate against the new credentials.
+   */
+  syncLeaseCredentials(
+    runId: string,
+    leaseToken: string,
+    fencingEpoch: number,
+    options?: { tenantId?: string },
+  ): void {
+    if (!this.db || !this.stmtSyncLeaseCredentials) return;
+    const tenantId = options?.tenantId ?? null;
+    this.stmtSyncLeaseCredentials.run(leaseToken, fencingEpoch, runId, tenantId);
   }
 
   close(): void {

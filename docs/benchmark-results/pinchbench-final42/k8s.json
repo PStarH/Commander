@@ -1,1 +1,0 @@
-{"answer":"`kubectl` is not available in this sandboxed environment. I'll create `k8s_debug.txt` with the commands and instructions to find crashing pods on your machine.","passed":true}
