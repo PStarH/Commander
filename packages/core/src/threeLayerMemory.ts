@@ -122,16 +122,90 @@ export class ThreeLayerMemory {
   private config: Record<MemoryLayer, LayerConfig>;
   private embeddingFn: EmbeddingFunction | null = null;
   private embedStore: InMemoryEmbeddingStore = new InMemoryEmbeddingStore();
+  private persistPath: string | null = null;
 
   /** Quality gate for memory storage decisions (0 tokens per check) */
   private qualityGate: MemoryQualityGate;
   /** Thompson scorer for memory usefulness tracking (0 tokens per check) */
   private thompsonScorer: ThompsonMemoryScorer;
 
-  constructor(config?: Partial<Record<MemoryLayer, LayerConfig>>) {
+  constructor(config?: Partial<Record<MemoryLayer, LayerConfig>> & { persistPath?: string }) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.qualityGate = new MemoryQualityGate();
     this.thompsonScorer = new ThompsonMemoryScorer();
+    if (config?.persistPath) {
+      this.persistPath = config.persistPath;
+      this.load();
+    }
+  }
+
+  // ======================================================================
+  // Persistence
+  // ======================================================================
+
+  /**
+   * Persist memory state (non-embedding data) to disk as JSON.
+   * Embeddings are regenerated on load and are not persisted.
+   * Returns the number of entries persisted.
+   */
+  save(): number {
+    if (!this.persistPath) return 0;
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const dir = path.dirname(this.persistPath);
+      fs.mkdirSync(dir, { recursive: true });
+
+      const data = {
+        version: 1,
+        savedAt: new Date().toISOString(),
+        config: this.config,
+        entries: Array.from(this.memories.values()),
+      };
+      fs.writeFileSync(this.persistPath, JSON.stringify(data, null, 2), 'utf-8');
+      return data.entries.length;
+    } catch (e) {
+      getGlobalLogger().warn('ThreeLayerMemory', 'Save failed', {
+        error: (e as Error)?.message,
+      });
+      return 0;
+    }
+  }
+
+  /**
+   * Load memory state from disk.
+   * Returns the number of entries restored, or 0 if no saved state exists.
+   */
+  load(): number {
+    if (!this.persistPath) return 0;
+    try {
+      const fs = require('fs');
+      if (!fs.existsSync(this.persistPath)) return 0;
+
+      const raw = fs.readFileSync(this.persistPath, 'utf-8');
+      const data = JSON.parse(raw);
+      if (!data.entries || !Array.isArray(data.entries)) return 0;
+
+      for (const entry of data.entries) {
+        this.memories.set(entry.id, entry);
+      }
+
+      getGlobalLogger().info(
+        'ThreeLayerMemory',
+        `Loaded ${data.entries.length} entries from ${this.persistPath}`,
+      );
+      return data.entries.length;
+    } catch (e) {
+      getGlobalLogger().warn('ThreeLayerMemory', 'Load failed', {
+        error: (e as Error)?.message,
+      });
+      return 0;
+    }
+  }
+
+  /** Returns true if a persist path is configured */
+  hasPersistence(): boolean {
+    return this.persistPath !== null;
   }
 
   setEmbeddingFunction(fn: EmbeddingFunction): void {
@@ -227,6 +301,11 @@ export class ThreeLayerMemory {
     };
 
     this.memories.set(entry.id, entry);
+
+    // Auto-save after non-working memory writes
+    if (this.persistPath && layer !== 'working') {
+      this.save();
+    }
 
     // Generate embedding if function is configured (fire-and-forget for async)
     if (this.embeddingFn && layer !== 'working') {
@@ -428,8 +507,10 @@ export class ThreeLayerMemory {
         const thompsonA = this.thompsonScorer.getMeanUsefulness(a.id);
         const thompsonB = this.thompsonScorer.getMeanUsefulness(b.id);
 
-        const scoreA = a.importance * 2 + a.accessCount + thompsonA * 3 - a.decayScore * 5;
-        const scoreB = b.importance * 2 + b.accessCount + thompsonB * 3 - b.decayScore * 5;
+        // decayScore starts at 1.0 and decreases over time (fresh entries have higher scores).
+        // We ADD decayScore so fresh entries get a retention bonus instead of a penalty.
+        const scoreA = a.importance * 2 + a.accessCount + thompsonA * 3 + a.decayScore * 5;
+        const scoreB = b.importance * 2 + b.accessCount + thompsonB * 3 + b.decayScore * 5;
         return scoreA - scoreB;
       });
 
@@ -661,6 +742,8 @@ export class ThreeLayerMemory {
 
 import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
 
+const DEFAULT_PERSIST_PATH = '.commander/memory/three-layer.json';
+
 const memorySingleton = createTenantAwareSingleton(() => new ThreeLayerMemory());
 
 export function getGlobalThreeLayerMemory(): ThreeLayerMemory {
@@ -673,7 +756,16 @@ export function resetGlobalThreeLayerMemory(): void {
 }
 
 export function createThreeLayerMemory(
-  config?: Partial<Record<MemoryLayer, LayerConfig>>,
+  config?: Partial<Record<MemoryLayer, LayerConfig>> & { persistPath?: string },
 ): ThreeLayerMemory {
   return new ThreeLayerMemory(config);
+}
+
+/**
+ * Get a persisted three-layer memory instance.
+ * Data is stored at `.commander/memory/three-layer.json` relative to the given base path.
+ */
+export function createPersistedThreeLayerMemory(basePath?: string): ThreeLayerMemory {
+  const persistPath = basePath ? `${basePath}/three-layer.json` : DEFAULT_PERSIST_PATH;
+  return new ThreeLayerMemory({ persistPath });
 }

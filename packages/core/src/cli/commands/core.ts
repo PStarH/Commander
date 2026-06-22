@@ -4,6 +4,7 @@ import { SSEStream } from '../../runtime/sseStream';
 import { AgentRuntime } from '../../runtime/agentRuntime';
 import { deliberate } from '../../ultimate/deliberation';
 import { classifyEffortLevel } from '../../ultimate/effortScaler';
+import { normalizeTopology, type OrchestrationTopology } from '../../ultimate/types';
 import { getGlobalLogger } from '../../logging';
 import { CompanyEngine as LegacyCompanyEngine } from '../../company';
 import { CompanyEngine, createCompanyEngine } from '../../ultimate/companyEngine';
@@ -31,15 +32,25 @@ import { getMetaLearner } from '../../selfEvolution/metaLearner';
 interface RoutingFlags {
   model?: string;
   tier?: 'speed' | 'balanced' | 'power';
-  topology?:
+  topology?: // Canonical (Anthropic-aligned 5) — preferred.
     | 'SINGLE'
+    | 'CHAIN'
+    | 'DISPATCH'
+    | 'ORCHESTRATOR'
+    | 'REVIEW'
+    // Legacy aliases accepted during the deprecation window. CLI ingest
+    // will `console.warn` once per process per legacy name and the
+    // internal routing will normalize to canonical on emit.
+    // (D3.2 enum consolidation.)
     | 'SEQUENTIAL'
     | 'PARALLEL'
     | 'HIERARCHICAL'
     | 'HYBRID'
     | 'DEBATE'
     | 'ENSEMBLE'
-    | 'EVALUATOR_OPTIMIZER';
+    | 'EVALUATOR_OPTIMIZER'
+    | 'HANDOFF'
+    | 'CONSENSUS';
   effort?: 'minimal' | 'low' | 'medium' | 'high' | 'max';
   cascade?: boolean;
   qualityThreshold?: number;
@@ -48,8 +59,16 @@ interface RoutingFlags {
 function parseRoutingFlags(flags: Record<string, string>): RoutingFlags {
   const allowedTiers = ['speed', 'balanced', 'power'] as const;
   const allowedEfforts = ['minimal', 'low', 'medium', 'high', 'max'] as const;
+  // acceptance list — canonical 5 + legacy 9 (full backwards-compat for 2
+  // minor versions). Canonical names do NOT emit a deprecation warning.
   const allowedTopologies = [
+    // Canonical (Anthropic-aligned 5).
     'SINGLE',
+    'CHAIN',
+    'DISPATCH',
+    'ORCHESTRATOR',
+    'REVIEW',
+    // Legacy aliases (warn-once on emit; hard-removed in 2 minor versions).
     'SEQUENTIAL',
     'PARALLEL',
     'HIERARCHICAL',
@@ -57,6 +76,8 @@ function parseRoutingFlags(flags: Record<string, string>): RoutingFlags {
     'DEBATE',
     'ENSEMBLE',
     'EVALUATOR_OPTIMIZER',
+    'HANDOFF',
+    'CONSENSUS',
   ] as const;
   let tier: RoutingFlags['tier'];
   const tierRaw = flags.tier?.toLowerCase();
@@ -99,6 +120,16 @@ function parseRoutingFlags(flags: Record<string, string>): RoutingFlags {
       );
     }
     topology = topologyRaw as RoutingFlags['topology'];
+    // D3.2 migration window: invoke the once-per-process deprecation
+    // warning for legacy-name CLI ingest so users see the migration
+    // signal in their actual run output (not just docs). `normalizeTopology`
+    // returns canonical unchanged; for legacy names it emits
+    // `console.warn` exactly once per process per deprecated name and
+    // returns the canonical replacement. Per the user's "only change
+    // strings" directive, the typed `topology` field on RoutingFlags is
+    // retained unchanged so callers can still inspect both forms;
+    // telemetry emission at the next boundary will normalize.
+    normalizeTopology(topology as OrchestrationTopology);
   }
   let qualityThreshold: number | undefined;
   if (flags['quality-threshold'] !== undefined) {
@@ -214,13 +245,25 @@ export async function cmdRun(task: string, flags: Record<string, string> = {}) {
 
   // ── --tui: terminal dashboard (runs alongside execution) ──────────
   if ('tui' in flags) {
-    // Start TUI in background — it subscribes to the message bus
-    // so any concurrent execution will appear in the dashboard
-    startTUI();
-    // startTUI() blocks indefinitely with the blessed event loop,
-    // so this effectively makes --tui a monitoring-only mode.
-    // For task execution with TUI, open a second terminal.
-    return;
+    // Fork TUI into a child process so the main execution continues.
+    // The child subscribes to the message bus via IPC or shared state.
+    const { fork } = require('child_process');
+    const tuiPath = require('path').join(__dirname, '..', '..', 'tui', 'tuiProcess.js');
+    // Try to spawn the TUI process — fall back to a warning if the module isn't built
+    try {
+      const child = fork(tuiPath, [], {
+        stdio: 'inherit',
+        env: { ...process.env, COMMANDER_TUI_PARENT_PID: String(process.pid) },
+      });
+      child.unref(); // Don't let the child prevent process exit
+      console.log(
+        `  ${$.dim}Terminal dashboard started in child process (PID: ${child.pid})${$.reset}`,
+      );
+    } catch {
+      console.log(
+        `  ${$.yellow}⚠ Could not start TUI dashboard — run in a separate terminal: ${$.cyan}commander tui${$.reset}`,
+      );
+    }
   }
 
   const dryRun = 'dry-run' in flags;

@@ -49,6 +49,7 @@ import {
   cmdGoalJudge,
 } from './cli/commands';
 import { cmdFix } from './cli/commands/convenience';
+import { cmdSandbox } from './cli/commands/sandbox';
 
 // ============================================================================
 // Per-command help text
@@ -100,6 +101,15 @@ async function main() {
   if (args.length === 0 || args[0] === '--help' || args[0] === 'help') {
     cmdHelp(args.includes('--all'));
     process.exit(0);
+  }
+
+  // Cross-process rate limiting for costly CLI commands
+  const { checkCliRateLimit } = await import('./cli/cliRateLimiter');
+  if (!checkCliRateLimit(args[0])) {
+    console.error(
+      'Rate limit exceeded. Maximum 10 LLM-costly CLI invocations per minute. Please wait before retrying.',
+    );
+    process.exit(1);
   }
 
   if (args[0] === '--version' || args[0] === 'version') {
@@ -273,6 +283,25 @@ async function main() {
       break;
     }
 
+    // ── Sandbox ──
+    case 'sandbox':
+      await cmdSandbox(rest);
+      break;
+
+    // ── Viz (execution topology visualizer) ──
+    case 'viz': {
+      const { execSync } = require('child_process');
+      const vizPath = require('path').join(__dirname, '../../../viz/dist/index.js');
+      try {
+        execSync(`node ${vizPath} ${rest.join(' ')}`, { stdio: 'inherit' });
+      } catch {
+        console.error(
+          `\n  ${$.yellow}⚠${$.reset} ${$.dim}Viz package not built. Run: cd packages/viz && pnpm build${$.reset}\n`,
+        );
+      }
+      break;
+    }
+
     default: {
       const validCmds = [
         'run',
@@ -302,6 +331,8 @@ async function main() {
         'cost',
         'completion',
         'feedback',
+        'sandbox',
+        'viz',
       ];
       const didYouMean = validCmds.filter((c) => c.startsWith(cmd.toLowerCase()));
       const hint =
