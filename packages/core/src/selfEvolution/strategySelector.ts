@@ -1,6 +1,6 @@
 import type { ExecutionExperience } from '../runtime/types';
 import { BetaDistribution } from './betaDistribution';
-import { STRATEGY_NAMES } from './strategyConstants';
+import { STRATEGY_NAMES, type StrategyName } from './strategyConstants';
 
 export class StrategySelector {
   private thompsonPriors: Map<string, BetaDistribution[]> = new Map();
@@ -143,7 +143,7 @@ export class StrategySelector {
 
     const runnerUp = ranked.find((r, i) => {
       if (i === 0) return false; // skip the winner
-      return priors[STRATEGY_NAMES.indexOf(r.strategy)].totalTrials > 0;
+      return priors[STRATEGY_NAMES.indexOf(r.strategy as StrategyName)].totalTrials > 0;
     });
 
     return runnerUp?.strategy ?? null;
@@ -158,7 +158,7 @@ export class StrategySelector {
     shadowSuccess: boolean;
   }): void {
     const priors = this.getOrCreatePriors(params.taskType);
-    const shadowIdx = STRATEGY_NAMES.indexOf(params.shadowStrategy);
+    const shadowIdx = STRATEGY_NAMES.indexOf(params.shadowStrategy as StrategyName);
     if (shadowIdx < 0) return;
 
     const weight = 0.5;
@@ -175,7 +175,7 @@ export class StrategySelector {
 
   recordExperience(exp: ExecutionExperience): void {
     const priors = this.getOrCreatePriors(exp.taskType);
-    const idx = STRATEGY_NAMES.indexOf(exp.strategyUsed);
+    const idx = STRATEGY_NAMES.indexOf(exp.strategyUsed as StrategyName);
     if (idx >= 0) {
       const difficulty = this.estimateTaskDifficulty(exp);
       priors[idx].update(exp.success, difficulty);

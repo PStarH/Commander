@@ -64,12 +64,26 @@ export interface TEESandboxResult extends SandboxExecutionResult {
 // ============================================================================
 
 const EXTRA_DENY = [
-  'DATABASE_URL', 'REDIS_URL', 'MONGO_URL', 'CONNECTION_STRING',
-  'API_KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL',
-  'PGPASSWORD', 'MYSQL_PASSWORD',
-  'PRIVATE_KEY', 'SIGNING_KEY', 'ENCRYPTION_KEY',
-  'GITHUB_PAT', 'NPM_TOKEN',
-  'COOKIE', 'AUTH', 'BEARER', 'DSN',
+  'DATABASE_URL',
+  'REDIS_URL',
+  'MONGO_URL',
+  'CONNECTION_STRING',
+  'API_KEY',
+  'TOKEN',
+  'SECRET',
+  'PASSWORD',
+  'CREDENTIAL',
+  'PGPASSWORD',
+  'MYSQL_PASSWORD',
+  'PRIVATE_KEY',
+  'SIGNING_KEY',
+  'ENCRYPTION_KEY',
+  'GITHUB_PAT',
+  'NPM_TOKEN',
+  'COOKIE',
+  'AUTH',
+  'BEARER',
+  'DSN',
 ];
 
 function filterEnv(p: SandboxProfile): Record<string, string> {
@@ -120,7 +134,10 @@ export class TEESandbox implements PlatformSandbox {
       return { backend: 'gcp_cvm', technology: tech };
     }
 
-    getGlobalLogger().debug('TEESandbox', 'No TEE environment detected — hardware isolation unavailable');
+    getGlobalLogger().debug(
+      'TEESandbox',
+      'No TEE environment detected — hardware isolation unavailable',
+    );
     return { backend: 'none', technology: 'none' };
   }
 
@@ -137,18 +154,21 @@ export class TEESandbox implements PlatformSandbox {
 
       // Verify nitro-cli is installed (check output, not just exit code)
       const which = execSync('which nitro-cli 2>/dev/null || echo NOT_FOUND', {
-        timeout: 3000, encoding: 'utf-8',
+        timeout: 3000,
+        encoding: 'utf-8',
       }).toString();
       if (which.includes('NOT_FOUND')) return false;
 
       const ver = execSync('nitro-cli --version 2>/dev/null || echo NO_VERSION', {
-        timeout: 5000, encoding: 'utf-8',
+        timeout: 5000,
+        encoding: 'utf-8',
       }).toString();
       if (ver.includes('NO_VERSION')) return false;
 
       // Check Docker availability (required for Nitro enclave image builds)
       const dockerCheck = execSync('which docker 2>/dev/null || echo NO_DOCKER', {
-        timeout: 3000, encoding: 'utf-8',
+        timeout: 3000,
+        encoding: 'utf-8',
       }).toString();
       if (dockerCheck.includes('NO_DOCKER')) return false;
 
@@ -174,7 +194,8 @@ export class TEESandbox implements PlatformSandbox {
     // TDX: check CPU flags
     try {
       const cpuInfo = execSync('grep -o tdx /proc/cpuinfo 2>/dev/null || echo NOT_FOUND', {
-        timeout: 3000, encoding: 'utf-8',
+        timeout: 3000,
+        encoding: 'utf-8',
       });
       if (cpuInfo.includes('tdx')) return true;
     } catch {
@@ -198,17 +219,22 @@ export class TEESandbox implements PlatformSandbox {
       const tdxGuest = this.readSysFs('/sys/firmware/acpi/tables/data/CCEL');
       if (tdxGuest) {
         const cpuInfo = execSync('grep -o tdx /proc/cpuinfo 2>/dev/null || true', {
-          timeout: 3000, encoding: 'utf-8',
+          timeout: 3000,
+          encoding: 'utf-8',
         });
         if (cpuInfo.includes('tdx')) return 'Intel TDX';
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     // Check SEV-SNP
     try {
       const snp = this.readSysFs('/sys/module/kvm_amd/parameters/sev_snp');
       if (snp === '1' || snp === 'Y') return 'AMD SEV-SNP';
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     // Check SEV
     if (fs.existsSync('/dev/sev')) return 'AMD SEV';
@@ -233,7 +259,8 @@ export class TEESandbox implements PlatformSandbox {
       default:
         return {
           stdout: '',
-          stderr: 'TEESandbox: No TEE environment available. Run on AWS Nitro or GCP Confidential VM for hardware-level isolation.',
+          stderr:
+            'TEESandbox: No TEE environment available. Run on AWS Nitro or GCP Confidential VM for hardware-level isolation.',
           exitCode: -1,
           durationMs: 0,
           sandboxMechanism: 'tee',
@@ -291,10 +318,7 @@ export class TEESandbox implements PlatformSandbox {
 
       // Step 5: Terminate enclave
       try {
-        this.execSyncSafe(
-          `nitro-cli terminate-enclave --enclave-cid ${vsockCid}`,
-          10000,
-        );
+        this.execSyncSafe(`nitro-cli terminate-enclave --enclave-cid ${vsockCid}`, 10000);
       } catch {
         // Best-effort termination
       }
@@ -339,13 +363,17 @@ export class TEESandbox implements PlatformSandbox {
 
     return new Promise((resolve) => {
       // Use socat or ncat to send/receive over vsock
-      const child = spawn('bash', [
-        '-c',
-        `echo '${message.replace(/'/g, "'\\''")}' | socat - VSOCK-CONNECT:${cid}:${port} 2>&1`,
-      ], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env,
-      });
+      const child = spawn(
+        'bash',
+        [
+          '-c',
+          `echo '${message.replace(/'/g, "'\\''")}' | socat - VSOCK-CONNECT:${cid}:${port} 2>&1`,
+        ],
+        {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env,
+        },
+      );
 
       let stdout = '';
       let stderr = '';
@@ -482,7 +510,9 @@ export class TEESandbox implements PlatformSandbox {
         );
         measurements.push(`SEV-Report:${sevReport.slice(0, 200)}`);
       }
-    } catch { /* measurement collection is best-effort */ }
+    } catch {
+      /* measurement collection is best-effort */
+    }
 
     try {
       // TPM PCR values (available on Shielded VM + CVM)
@@ -491,13 +521,17 @@ export class TEESandbox implements PlatformSandbox {
         5000,
       );
       measurements.push(`TPM-PCRs:${tpmPcrs.slice(0, 500)}`);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     try {
       // TDX: read CCEL event log
       const ccel = this.readSysFs('/sys/firmware/acpi/tables/data/CCEL');
       if (ccel) measurements.push(`CCEL:present`);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     return measurements;
   }
@@ -512,16 +546,21 @@ export class TEESandbox implements PlatformSandbox {
     // TDX: check CCEL and CPU flags
     try {
       const tdx = execSync('grep -c tdx /proc/cpuinfo 2>/dev/null || echo 0', {
-        timeout: 3000, encoding: 'utf-8',
+        timeout: 3000,
+        encoding: 'utf-8',
       });
       if (parseInt(tdx.trim(), 10) > 0) indicators.push(true);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     // CVM indicator: CCEL ACPI table
     try {
       const ccel = this.readSysFs('/sys/firmware/acpi/tables/data/CCEL');
       if (ccel) indicators.push(true);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     // For a production attestation, you'd send a quote to GCP Attestation Verifier.
     // This self-check is a defense-in-depth indicator.
@@ -625,10 +664,14 @@ done
   private cleanupBuildDir(buildDir: string, imageName: string): void {
     try {
       fs.rmSync(buildDir, { recursive: true, force: true });
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     try {
       execSync(`docker rmi ${imageName} 2>/dev/null || true`, { timeout: 10000 });
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   // ── Public helpers ─────────────────────────────────────────────────

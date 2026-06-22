@@ -62,6 +62,7 @@ export class SqliteMemoryStore implements MemoryStore {
   private db: BetterSqlite3DB | null = null;
   private filePath: string;
   private initialized = false;
+  private initPromise: Promise<void> | null = null;
 
   // Prepared statements
   private stmtInsert!: BetterSqlite3Stmt;
@@ -80,26 +81,31 @@ export class SqliteMemoryStore implements MemoryStore {
 
   async init(): Promise<void> {
     if (this.initialized) return;
+    if (this.initPromise) return this.initPromise;
     if (!BetterSqlite3) {
       throw new Error('better-sqlite3 is required. Install with: pnpm add better-sqlite3');
     }
 
-    const dir = this.filePath.substring(0, this.filePath.lastIndexOf('/'));
-    if (dir) {
-      const fs = require('fs');
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    this.initPromise = (async () => {
+      const dir = this.filePath.substring(0, this.filePath.lastIndexOf('/'));
+      if (dir) {
+        const fs = require('fs');
+        fs.mkdirSync(dir, { recursive: true });
+      }
 
-    this.db = new BetterSqlite3(this.filePath);
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('synchronous = NORMAL');
-    this.db.pragma('foreign_keys = ON');
+      this.db = new BetterSqlite3(this.filePath);
+      this.db.pragma('journal_mode = WAL');
+      this.db.pragma('synchronous = NORMAL');
+      this.db.pragma('foreign_keys = ON');
 
-    this.createSchema();
-    this.prepareStatements();
-    this.initialized = true;
+      this.createSchema();
+      this.prepareStatements();
+      this.initialized = true;
 
-    getGlobalLogger().info('SqliteMemoryStore', 'Initialized', { path: this.filePath });
+      getGlobalLogger().info('SqliteMemoryStore', 'Initialized', { path: this.filePath });
+    })();
+
+    return this.initPromise;
   }
 
   private createSchema(): void {

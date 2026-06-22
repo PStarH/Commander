@@ -108,6 +108,20 @@ const TOPOLOGY_DIMENSION: Record<OrchestrationTopology, TopologyDimensionMap> = 
   EVALUATOR_OPTIMIZER: { primary: 'complex' },
   HANDOFF: { primary: 'sequential' },
   CONSENSUS: { primary: 'parallel' },
+  // Canonical (D3.2 migration window) — mirror legacy alias dimensions
+  // so canonical-name lookups apply identical learned-weight
+  // adjustments during the migration window. Placed AFTER the legacy
+  // entries so `Object.keys(TOPOLOGY_DIMENSION)` iteration in
+  // `getAdjustedWeights` is legacy-first; addition is commutative under
+  // `Math.max(0, …)`, so final adjusted weights are numerically
+  // identical regardless of order. (Cosmetic alignment with
+  // topologyRouter's legacy-first placement under the user's "only
+  // change strings" directive — keeps diagnostic ordering consistent
+  // across callsites.)
+  CHAIN: { primary: 'sequential' }, // ← SEQUENTIAL
+  DISPATCH: { primary: 'parallel', secondary: 'research' }, // ← PARALLEL
+  ORCHESTRATOR: { primary: 'complex', secondary: 'research' }, // ← HIERARCHICAL
+  REVIEW: { primary: 'complex' }, // ← EVALUATOR_OPTIMIZER
 };
 
 /**
