@@ -2,27 +2,23 @@ import { describe, it, expect } from 'vitest';
 import { TopologyRouter } from '../../src/ultimate/topologyRouter';
 import { TokenGovernor } from '../../src/runtime/tokenGovernor';
 import { CircuitBreakerRegistry } from '../../src/runtime/circuitBreakerRegistry';
-import { DeliberationPlan } from '../../src/ultimate/types';
+import { deliberate } from '../../src/ultimate/deliberation';
 import { getBenchmarkRunner, BenchmarkResult } from './benchmarkRunner';
 
-function createDeliberationPlan(taskType: 'CODING' | 'RESEARCH'): DeliberationPlan {
-  return {
-    requiresExternalInfo: false,
-    taskType,
-    recommendedTopology: 'SINGLE',
-    estimatedAgentCount: 1,
-    estimatedSteps: 5,
-    estimatedTokens: 10000,
-    estimatedDurationMs: 30000,
-    tokenBudget: { thinking: 2000, execution: 7000, synthesis: 1000 },
-    decompositionStrategy: 'NONE',
-    capabilitiesNeeded: [],
-    confidence: 0.8,
-    reasoning: ['test task'],
-    suitableForSpeculation: false,
-    taskNature: 'COMPUTE_BOUND',
-    timeBudgetPerAgentMs: 30000,
-  };
+function realisticGoal(i: number): string {
+  const goals = [
+    'Fix the null pointer exception in the auth middleware when token is missing',
+    'Add input validation to the user registration endpoint',
+    'Refactor the database connection pool to handle connection timeouts',
+    'Write unit tests for the payment processing module',
+    'Implement rate limiting on the API gateway',
+    'Debug the memory leak in the WebSocket connection handler',
+    'Add CORS headers for the mobile app frontend domain',
+    'Optimize the SQL query in the dashboard analytics endpoint',
+    'Set up health check endpoints for load balancer integration',
+    'Add structured logging for all API error responses',
+  ];
+  return goals[i % goals.length];
 }
 
 describe('Load Benchmarks', () => {
@@ -33,11 +29,10 @@ describe('Load Benchmarks', () => {
     const concurrency = 1000;
 
     const start = performance.now();
-    const promises = Array.from({ length: concurrency }, (_, i) =>
-      Promise.resolve(
-        router.route(createDeliberationPlan(i % 2 === 0 ? 'CODING' : 'RESEARCH'))
-      )
-    );
+    const promises = Array.from({ length: concurrency }, (_, i) => {
+      const plan = deliberate(realisticGoal(i));
+      return Promise.resolve(router.route(plan));
+    });
     await Promise.all(promises);
     const durationMs = performance.now() - start;
 
@@ -145,8 +140,9 @@ describe('Load Benchmarks', () => {
 
     const start = performance.now();
     for (let i = 0; i < requests; i++) {
+      const plan = deliberate(realisticGoal(i));
       const reqStart = performance.now();
-      router.route(createDeliberationPlan(i % 2 === 0 ? 'CODING' : 'RESEARCH'));
+      router.route(plan);
       latencies.push(performance.now() - reqStart);
     }
     const totalDurationMs = performance.now() - start;

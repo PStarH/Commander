@@ -7,7 +7,7 @@ describe('MetaLearner', () => {
 
   beforeEach(() => {
     resetMetaLearner();
-    learner = new MetaLearner(100, 2);
+    learner = new MetaLearner(100, 2, undefined, { minRunsBeforeLearning: 0 });
   });
 
   function makeExp(overrides?: Partial<ExecutionExperience>): ExecutionExperience {

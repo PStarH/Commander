@@ -54,17 +54,16 @@ describe('DeadLetterQueue', () => {
     expect(content).toContain('run-1');
   });
 
-  it('auto-flushes after 10 entries', () => {
-    for (let i = 0; i < 10; i++) {
+  it('auto-flushes after 100 entries', () => {
+    for (let i = 0; i < 100; i++) {
       dlq.record(makeEntry({ id: `test-${i}` }));
     }
-    // Should have flushed the 'execution' buffer
     const filePath = path.join(TEST_DIR, 'execution.ndjson');
     expect(fs.existsSync(filePath)).toBe(true);
   });
 
-  it('does not auto-flush before 10 entries', () => {
-    for (let i = 0; i < 9; i++) {
+  it('does not auto-flush before 100 entries', () => {
+    for (let i = 0; i < 99; i++) {
       dlq.record(makeEntry({ id: `test-${i}` }));
     }
     const filePath = path.join(TEST_DIR, 'execution.ndjson');
