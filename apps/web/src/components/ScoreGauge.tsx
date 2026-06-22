@@ -19,11 +19,16 @@ function scoreColor(score: number): string {
 
 function statusColor(status: SecurityPosture['status']): string {
   switch (status) {
-    case 'excellent': return 'var(--accent-green)';
-    case 'good': return 'var(--accent-blue)';
-    case 'adequate': return 'var(--accent-amber)';
-    case 'needs_improvement': return 'var(--accent-amber)';
-    default: return 'var(--accent-red)';
+    case 'excellent':
+      return 'var(--accent-green)';
+    case 'good':
+      return 'var(--accent-blue)';
+    case 'adequate':
+      return 'var(--accent-amber)';
+    case 'needs_improvement':
+      return 'var(--accent-amber)';
+    default:
+      return 'var(--accent-red)';
   }
 }
 
@@ -34,7 +39,16 @@ export function ScoreGauge({ posture }: Props) {
   const bgLen = CIRCUMFERENCE - fillLen;
 
   return (
-    <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+    <div
+      className="card"
+      style={{
+        padding: '20px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '12px',
+      }}
+    >
       <svg width={SIZE} height={SIZE / 2 + STROKE} viewBox={`0 0 ${SIZE} ${SIZE / 2 + STROKE}`}>
         {/* Background arc */}
         <path

@@ -164,7 +164,12 @@ export function createA2ARouter(
     }
 
     try {
-      const artifact = artifactManager.create(String(req.params.id), contentType, content, metadata);
+      const artifact = artifactManager.create(
+        String(req.params.id),
+        contentType,
+        content,
+        metadata,
+      );
 
       const task = taskManager.complete(String(req.params.id), artifact);
       res.json(task);
@@ -225,7 +230,13 @@ export function createA2ARouter(
     }
 
     try {
-      const message = taskManager.addMessage(String(req.params.id), sender, type, content, metadata);
+      const message = taskManager.addMessage(
+        String(req.params.id),
+        sender,
+        type,
+        content,
+        metadata,
+      );
       res.status(201).json(message);
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });

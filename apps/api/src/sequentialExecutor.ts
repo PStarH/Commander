@@ -436,6 +436,34 @@ export class SequentialExecutor {
 }
 
 /**
+ * Create a real agent executor by delegating to the shared Commander AgentRuntime.
+ */
+import { getSharedRuntime } from './sharedRuntime';
+
+export function createRealAgentExecutor(): AgentExecutor {
+  return async ({ agentId, input, context, timeoutMs }) => {
+    const runtime = getSharedRuntime();
+    const result = await runtime.execute({
+      agentId,
+      goal: typeof input === 'string' ? input : JSON.stringify(input),
+      contextData: { projectId: context.projectId },
+      maxSteps: 5,
+      timeoutMs,
+    });
+    return {
+      output: result.summary,
+      tokenUsage: result.totalTokenUsage
+        ? {
+            promptTokens: result.totalTokenUsage.prompt ?? 0,
+            completionTokens: result.totalTokenUsage.completion ?? 0,
+            totalTokens: result.totalTokenUsage.total ?? 0,
+          }
+        : undefined,
+    };
+  };
+}
+
+/**
  * Create a default agent executor that logs and returns mock output.
  * Real implementations should integrate with actual agent systems.
  */
