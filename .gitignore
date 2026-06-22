@@ -179,6 +179,9 @@ docs/benchmark-results/
 .commander/atr_ledger.db*
 .commander/compensation_queue.db*
 .commander/conversations.db*
+.commander/posture-snapshots.json
+.commander/webhooks.json
+*.tmp.cbor
 
 # Private / scratch
 private/
@@ -189,3 +192,11 @@ private/
 # Root-level build output placeholders
 /fixer
 /verifier
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.ruff_cache/
+.pytest_cache/
