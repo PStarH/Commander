@@ -12,6 +12,7 @@
  */
 
 import type { ToolCall, ToolResult, Tool } from './types';
+import { toolErrorRow } from './toolResultShape';
 import type { ToolApproval, ApprovalResult } from './toolApproval';
 import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
 import { getApprovalSystem } from '../sandbox/approval';
@@ -189,13 +190,9 @@ export class ToolOrchestrator {
     for (const tc of plan.serial) {
       // Check turn timeout
       if (Date.now() - startTime > this.config.turnTimeoutMs) {
-        results.push({
-          toolCallId: tc.id,
-          name: tc.name,
-          output: '',
-          error: `TURN_TIMEOUT: Turn exceeded ${this.config.turnTimeoutMs}ms`,
-          durationMs: 0,
-        });
+        results.push(
+          toolErrorRow(tc, `TURN_TIMEOUT: Turn exceeded ${this.config.turnTimeoutMs}ms`),
+        );
         continue;
       }
 
@@ -206,22 +203,15 @@ export class ToolOrchestrator {
 
     // Add results for skipped/circuit-broken tools
     for (const s of plan.skipped) {
-      results.push({
-        toolCallId: s.toolCall.id,
-        name: s.toolCall.name,
-        output: '',
-        error: `APPROVAL_REJECTED: ${s.reason}`,
-        durationMs: 0,
-      });
+      results.push(toolErrorRow(s.toolCall, `APPROVAL_REJECTED: ${s.reason}`));
     }
     for (const cb of plan.circuitBroken) {
-      results.push({
-        toolCallId: cb.toolCall.id,
-        name: cb.toolCall.name,
-        output: '',
-        error: `CIRCUIT_OPEN: "${cb.toolName}" is temporarily disabled due to repeated failures`,
-        durationMs: 0,
-      });
+      results.push(
+        toolErrorRow(
+          cb.toolCall,
+          `CIRCUIT_OPEN: "${cb.toolName}" is temporarily disabled due to repeated failures`,
+        ),
+      );
     }
 
     return {
@@ -244,13 +234,7 @@ export class ToolOrchestrator {
     const tool = tools.get(toolCall.name);
     if (!tool) {
       return {
-        result: {
-          toolCallId: toolCall.id,
-          name: toolCall.name,
-          output: '',
-          error: `TOOL_NOT_FOUND: "${toolCall.name}" is not registered`,
-          durationMs: 0,
-        },
+        result: toolErrorRow(toolCall, `TOOL_NOT_FOUND: "${toolCall.name}" is not registered`),
         retries: 0,
       };
     }
@@ -276,11 +260,7 @@ export class ToolOrchestrator {
       if (cached?.state === 'failed') {
         return {
           result: {
-            toolCallId: toolCall.id,
-            name: toolCall.name,
-            output: '',
-            error: cached.error ?? 'Prior attempt failed (cached)',
-            durationMs: 0,
+            ...toolErrorRow(toolCall, cached.error ?? 'Prior attempt failed (cached)'),
             fromCache: true,
           },
           retries: 0,
@@ -393,10 +373,10 @@ export class ToolOrchestrator {
           }
           return {
             result: {
-              toolCallId: toolCall.id,
-              name: toolCall.name,
-              output: '',
-              error: this.formatError(toolCall, lastError, durationMs, attempt + 1),
+              ...toolErrorRow(
+                toolCall,
+                this.formatError(toolCall, lastError, durationMs, attempt + 1),
+              ),
               durationMs,
             },
             retries,
@@ -407,13 +387,7 @@ export class ToolOrchestrator {
 
     // Should not reach here, but just in case
     return {
-      result: {
-        toolCallId: toolCall.id,
-        name: toolCall.name,
-        output: '',
-        error: lastError ?? 'Unknown error',
-        durationMs: 0,
-      },
+      result: toolErrorRow(toolCall, lastError ?? 'Unknown error'),
       retries,
     };
   }

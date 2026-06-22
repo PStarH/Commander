@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
+import { injectTraceContext, type InboxTraceContext } from '../observability/traceContextBridge';
 
 export type MessageStatus = 'unread' | 'read' | 'acknowledged';
 
@@ -15,7 +16,12 @@ export interface InboxMessage {
   timestamp: string;
   readAt?: string;
   acknowledgedAt?: string;
-  /** Optional payload for structured data (handoff, tool result, etc.) */
+  /**
+   * Optional payload for structured data (handoff, tool result, etc.).
+   * Reserved key `__traceContext` (string → InboxTraceContext) carries
+   * W3C Trace Context forward across in-process boundaries. See
+   * `observability/traceContextBridge.ts` for the contract.
+   */
   payload?: Record<string, unknown>;
   /** Time-to-live in ms from timestamp. After expiry, message is auto-purged. */
   ttlMs?: number;
@@ -41,10 +47,27 @@ export class AgentInbox {
     this.flushDirty();
   }
 
-  /** Send a message to an agent's inbox */
-  send(msg: Omit<InboxMessage, 'status' | 'timestamp'>): void {
+  /**
+   * Send a message to an agent's inbox. Optional `traceContext` carries
+   * the W3C `traceparent` / `tracestate` of the upstream call so a single
+   * distributed trace survives the cross-agent hop. If `traceContext`
+   * is omitted, the message is sent with no trace context — callers
+   * MUST explicitly opt in to trace propagation.
+   */
+  send(
+    msg: Omit<InboxMessage, 'status' | 'timestamp'>,
+    options?: { traceContext?: InboxTraceContext },
+  ): void {
+    // Inject the trace context into the payload via the bridge helper so
+    // user-supplied fields aren't mutated. The caller may pass a typed
+    // `payload` already; the helper writes a shallow copy with the
+    // reserved `__traceContext` key added (never overwritten if present).
+    const payloadWithTrace = options?.traceContext
+      ? injectTraceContext(msg.payload, options.traceContext)
+      : msg.payload;
     const full: InboxMessage = {
       ...msg,
+      payload: payloadWithTrace,
       status: 'unread',
       timestamp: new Date().toISOString(),
     };

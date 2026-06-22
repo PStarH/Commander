@@ -11,8 +11,10 @@ export interface ModelConfig {
   id: string;
   provider: string; // e.g. 'openai', 'anthropic', 'google'
   tier: ModelTier;
-  costPer1KInput: number; // USD per 1K input tokens
-  costPer1KOutput: number; // USD per 1K output tokens
+  costPer1MInput: number; // USD per 1M input tokens
+  costPer1MOutput: number; // USD per 1M output tokens
+  /** Cost per 1M cached input tokens (prompt caching discount). Undefined = no caching. */
+  costPer1MCachedInput?: number;
   capabilities: string[]; // e.g. 'code', 'reasoning', 'creative'
   contextWindow: number; // max context tokens
   /** Priority within tier (lower = preferred first) */

@@ -1,6 +1,7 @@
 import type { AgentInbox } from './agentInbox';
 import type { StateCheckpointer } from './stateCheckpointer';
 import { TokenGovernor } from './tokenGovernor';
+import { injectTraceContext, type InboxTraceContext } from '../observability/traceContextBridge';
 
 export type HandoffStatus = 'requested' | 'accepted' | 'rejected' | 'completed' | 'failed';
 
@@ -100,8 +101,17 @@ export class AgentHandoff {
     this.pruneResolved();
   }
 
-  /** Agent A initiates a handoff to Agent B */
-  async request(handoff: Omit<HandoffRequest, 'status' | 'createdAt'>): Promise<HandoffRequest> {
+  /**
+   * Agent A initiates a handoff to Agent B. Optional `traceContext`
+   * carries W3C trace context across the cross-agent hop so the
+   * receiving agent's OTel spans stitch onto the same trace as the
+   * caller. If omitted, the inbox message is sent without trace
+   * context — agents MUST opt in to trace propagation.
+   */
+  async request(
+    handoff: Omit<HandoffRequest, 'status' | 'createdAt'>,
+    options?: { traceContext?: InboxTraceContext },
+  ): Promise<HandoffRequest> {
     const full: HandoffRequest = {
       ...handoff,
       status: 'requested',
@@ -109,16 +119,19 @@ export class AgentHandoff {
     };
     this.handoffs.set(full.handoffId, full);
 
-    this.inbox.send({
-      id: `ho_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-      from: handoff.fromAgent,
-      to: handoff.toAgent,
-      subject: `handoff: ${handoff.goal.slice(0, 100)}`,
-      body: `Handoff request from ${handoff.fromAgent}: ${handoff.goal}`,
-      priority: 'high',
-      tags: ['handoff', 'request'],
-      payload: { handoffId: full.handoffId },
-    });
+    this.inbox.send(
+      {
+        id: `ho_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        from: handoff.fromAgent,
+        to: handoff.toAgent,
+        subject: `handoff: ${handoff.goal.slice(0, 100)}`,
+        body: `Handoff request from ${handoff.fromAgent}: ${handoff.goal}`,
+        priority: 'high',
+        tags: ['handoff', 'request'],
+        payload: { handoffId: full.handoffId },
+      },
+      { traceContext: options?.traceContext },
+    );
 
     return full;
   }
