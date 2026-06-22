@@ -48,6 +48,13 @@ export interface CoordinationDecision {
 
 const TOPOLOGY_TOKEN_MULTIPLIER: Record<OrchestrationTopology, number> = {
   SINGLE: 1.0,
+  // Canonical (D3.2) — mirror the legacy alias values so canonical-name
+  // lookups yield the same token multiplier as the deprecated-equivalent
+  // legacy name (e.g., `CHAIN` behaves exactly like `SEQUENTIAL`).
+  CHAIN: 1.1, // ← SEQUENTIAL
+  DISPATCH: 2.0, // ← PARALLEL
+  ORCHESTRATOR: 3.0, // ← HIERARCHICAL
+  REVIEW: 2.5, // ← EVALUATOR_OPTIMIZER
   SEQUENTIAL: 1.1,
   PARALLEL: 2.0,
   HIERARCHICAL: 3.0,

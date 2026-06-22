@@ -125,6 +125,7 @@ export class ConversationStore {
   private db: BetterSqlite3DB | null = null;
   private config: ConversationStoreConfig;
   private initialized = false;
+  private initPromise: Promise<void> | null = null;
 
   // Prepared statements
   private stmtInsertSession!: BetterSqlite3Stmt;
@@ -143,36 +144,41 @@ export class ConversationStore {
 
   async init(): Promise<void> {
     if (this.initialized) return;
+    if (this.initPromise) return this.initPromise;
     if (!BetterSqlite3) {
       throw new Error('better-sqlite3 is required. Install with: pnpm add better-sqlite3');
     }
 
-    const dir = this.config.dbPath!.includes('/')
-      ? this.config.dbPath!.substring(0, this.config.dbPath!.lastIndexOf('/'))
-      : '.';
-    if (dir) {
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
+    this.initPromise = (async () => {
+      const dir = this.config.dbPath!.includes('/')
+        ? this.config.dbPath!.substring(0, this.config.dbPath!.lastIndexOf('/'))
+        : '.';
+      if (dir) {
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        try {
+          chmodSync(dir, 0o700);
+        } catch {
+          /* best-effort */
+        }
+      }
+
+      this.db = new BetterSqlite3(this.config.dbPath!);
       try {
-        chmodSync(dir, 0o700);
+        chmodSync(this.config.dbPath!, 0o600);
       } catch {
         /* best-effort */
       }
-    }
+      this.db.pragma('journal_mode = WAL');
+      this.db.pragma('synchronous = NORMAL');
 
-    this.db = new BetterSqlite3(this.config.dbPath!);
-    try {
-      chmodSync(this.config.dbPath!, 0o600);
-    } catch {
-      /* best-effort */
-    }
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('synchronous = NORMAL');
+      this.createSchema();
+      this.prepareStatements();
+      this.initialized = true;
 
-    this.createSchema();
-    this.prepareStatements();
-    this.initialized = true;
+      getGlobalLogger().info('ConversationStore', 'Initialized', { path: this.config.dbPath });
+    })();
 
-    getGlobalLogger().info('ConversationStore', 'Initialized', { path: this.config.dbPath });
+    return this.initPromise;
   }
 
   private createSchema(): void {
