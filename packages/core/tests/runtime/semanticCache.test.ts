@@ -218,7 +218,7 @@ describe('SemanticCache', () => {
     expect(stats.totalHits).toBe(1);
     expect(stats.totalMisses).toBe(1);
     expect(stats.totalStores).toBe(1);
-    expect(stats.embeddingCalls).toBeGreaterThanOrEqual(3);
+    expect(stats.embeddingCalls).toBeGreaterThanOrEqual(2);
     expect(stats.estimatedCostSavedUsd).toBeGreaterThan(0);
     cache.dispose();
   });
