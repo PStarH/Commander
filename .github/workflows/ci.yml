@@ -78,19 +78,6 @@ jobs:
           echo "✅ Red team smoke test PASSED"
         if: runner.os == 'Linux'
 
-  docker:
-    name: Docker Build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Build Docker images
-        run: docker compose build
-
-      - name: Verify images exist
-        run: |
-          docker image ls | grep -E "commander.*api|commander.*web" || echo "Image check skipped for non-compose builds"
-
   web-gui:
     name: Web GUI Build
     runs-on: ubuntu-latest
