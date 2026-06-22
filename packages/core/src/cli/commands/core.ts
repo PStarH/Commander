@@ -271,13 +271,9 @@ export async function cmdRun(task: string, flags: Record<string, string> = {}) {
         env: { ...process.env, COMMANDER_TUI_PARENT_PID: String(process.pid) },
       });
       child.unref(); // Don't let the child prevent process exit
-      console.log(
-        `  ${$.dim}${t('run.tui.dashboard_started', { pid: child.pid })}${$.reset}`,
-      );
+      console.log(`  ${$.dim}${t('run.tui.dashboard_started', { pid: child.pid })}${$.reset}`);
     } catch {
-      console.log(
-        `  ${$.yellow}⚠ ${t('run.tui.could_not_start')}${$.reset}`,
-      );
+      console.log(`  ${$.yellow}⚠ ${t('run.tui.could_not_start')}${$.reset}`);
     }
   }
 
@@ -335,9 +331,15 @@ async function cmdShowcase() {
   );
 
   section(t('showcase.topology_header'));
-  console.log(`  ${$.cyan}🔴 ${t('showcase.team.red')}${$.reset} ${$.dim}${t('showcase.team.red_role')}${$.reset}`);
-  console.log(`  ${$.cyan}🔵 ${t('showcase.team.blue')}${$.reset} ${$.dim}${t('showcase.team.blue_role')}${$.reset}`);
-  console.log(`  ${$.cyan}🟡 ${t('showcase.team.judge')}${$.reset} ${$.dim}${t('showcase.team.judge_role')}${$.reset}`);
+  console.log(
+    `  ${$.cyan}🔴 ${t('showcase.team.red')}${$.reset} ${$.dim}${t('showcase.team.red_role')}${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}🔵 ${t('showcase.team.blue')}${$.reset} ${$.dim}${t('showcase.team.blue_role')}${$.reset}`,
+  );
+  console.log(
+    `  ${$.cyan}🟡 ${t('showcase.team.judge')}${$.reset} ${$.dim}${t('showcase.team.judge_role')}${$.reset}`,
+  );
 
   kv(t('showcase.field.provider'), `${provider.type} · ${provider.defaultModel}`, $.cyan);
   console.log();
@@ -346,8 +348,12 @@ async function cmdShowcase() {
   let result;
   try {
     console.log(`  ${$.dim}🔴 ${t('showcase.team.red')} ${t('showcase.team.red_role')}${$.reset}`);
-    console.log(`  ${$.dim}🔵 ${t('showcase.team.blue')} ${t('showcase.team.blue_role')}${$.reset}`);
-    console.log(`  ${$.dim}🟡 ${t('showcase.team.judge')} ${t('showcase.team.judge_role')}${$.reset}\n`);
+    console.log(
+      `  ${$.dim}🔵 ${t('showcase.team.blue')} ${t('showcase.team.blue_role')}${$.reset}`,
+    );
+    console.log(
+      `  ${$.dim}🟡 ${t('showcase.team.judge')} ${t('showcase.team.judge_role')}${$.reset}\n`,
+    );
     const agentDone = startSpinner(t('showcase.subtitle'));
     result = await runShowcase(runtime);
     agentDone();
@@ -356,9 +362,7 @@ async function cmdShowcase() {
       `\n  ${$.red}${$.bold}${t('error.fatal')}${$.reset} ${t('showcase.error.showcase_failed', { message: (err as Error).message })}`,
     );
     console.error(`  ${$.dim}${t('showcase.error.check_api_key')}${$.reset}`);
-    console.error(
-      `  ${$.dim}${t('showcase.error.run_init')}${$.reset}\n`,
-    );
+    console.error(`  ${$.dim}${t('showcase.error.run_init')}${$.reset}\n`);
     return;
   }
 
@@ -399,7 +403,15 @@ async function cmdShowcase() {
   section(t('showcase.scores_header'));
   const scoreColor = (s: number) => (s >= 90 ? $.green : s >= 70 ? $.yellow : $.red);
   const grade = (s: number): string =>
-    s >= 90 ? t('showcase.grade.S') : s >= 80 ? t('showcase.grade.A') : s >= 70 ? t('showcase.grade.B') : s >= 60 ? t('showcase.grade.C') : t('showcase.grade.D');
+    s >= 90
+      ? t('showcase.grade.S')
+      : s >= 80
+        ? t('showcase.grade.A')
+        : s >= 70
+          ? t('showcase.grade.B')
+          : s >= 60
+            ? t('showcase.grade.C')
+            : t('showcase.grade.D');
 
   console.log(
     `  🔒 ${$.bold}${t('showcase.score.security')}${$.reset}      ${scoreColor(result.metrics.securityScore)}${result.metrics.securityScore}/100${$.reset} ${$.dim}(${grade(result.metrics.securityScore)})${$.reset}`,
@@ -430,7 +442,8 @@ async function cmdShowcase() {
     for (const f of high.slice(0, 3)) {
       console.log(`  ${$.yellow}•${$.reset} ${f.slice(0, 120)}`);
     }
-    if (high.length > 3) console.log(`  ${$.dim}  ${t('showcase.more', { count: high.length - 3 })}${$.reset}`);
+    if (high.length > 3)
+      console.log(`  ${$.dim}  ${t('showcase.more', { count: high.length - 3 })}${$.reset}`);
   }
 
   // ── Full report ───────────────────────────────────────────────────
@@ -451,7 +464,10 @@ async function cmdPlanInternal(task: string) {
   done();
 
   section(t('plan.section'));
-  bullet(t('plan.task_label', { type: plan.taskType, effort, topology: plan.recommendedTopology }), $.cyan);
+  bullet(
+    t('plan.task_label', { type: plan.taskType, effort, topology: plan.recommendedTopology }),
+    $.cyan,
+  );
   console.log();
   kv(t('plan.agents'), `${plan.estimatedAgentCount}`, $.yellow);
   kv(t('plan.steps'), `${plan.estimatedSteps}`, $.yellow);
@@ -686,9 +702,10 @@ async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
           if (agent) agent.status = 'done';
           const tokens = payload.tokens || 0;
           if (tokens > 0) totalTokens += tokens;
-          const completedLabel = tokens > 0
-            ? t('run.sse.agent_completed_tokens', { tokens: tokens.toLocaleString() })
-            : t('run.sse.agent_completed');
+          const completedLabel =
+            tokens > 0
+              ? t('run.sse.agent_completed_tokens', { tokens: tokens.toLocaleString() })
+              : t('run.sse.agent_completed');
           console.log(
             `  ${$.dim}${ts}${$.reset} ${$.green}✓${$.reset} ${$.bold}${agentId}${$.reset} ${$.dim}${completedLabel}${$.reset}`,
           );
@@ -708,9 +725,10 @@ async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
           toolCalls++;
           const toolName = payload.tool || 'tool';
           const duration = payload.durationMs ? `${(payload.durationMs / 1000).toFixed(1)}s` : '';
-          const status = payload.success === false
-            ? `${$.red}${t('run.sse.tool_failed')}${$.reset}`
-            : `${$.cyan}→${$.reset}`;
+          const status =
+            payload.success === false
+              ? `${$.red}${t('run.sse.tool_failed')}${$.reset}`
+              : `${$.cyan}→${$.reset}`;
           console.log(
             `  ${$.dim}${ts}${$.reset} ${status} ${$.dim}${toolName}${$.reset} ${$.gray}${duration}${$.reset}`,
           );
@@ -729,9 +747,10 @@ async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
         case 'system.alert': {
           const level = payload.level || 'warn';
           const msg = payload.message || JSON.stringify(payload).slice(0, 80);
-          const icon = level === 'error'
-            ? `${$.red}${t('run.sse.alert_error')}${$.reset}`
-            : `${$.yellow}${t('run.sse.alert_warn')}${$.reset}`;
+          const icon =
+            level === 'error'
+              ? `${$.red}${t('run.sse.alert_error')}${$.reset}`
+              : `${$.yellow}${t('run.sse.alert_warn')}${$.reset}`;
           console.log(`  ${$.dim}${ts}${$.reset} ${icon} ${msg}`);
           break;
         }
@@ -808,7 +827,11 @@ async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
   kv(t('watch.field.agents'), `${agentCount}`, $.cyan);
   kv(t('watch.field.tool_calls'), `${toolCalls}`, $.cyan);
   kv(t('watch.field.events'), `${eventCount}`, $.dim);
-  kv(t('watch.field.tokens'), `${(totalTokens || result.metrics.totalTokens).toLocaleString()}`, $.yellow);
+  kv(
+    t('watch.field.tokens'),
+    `${(totalTokens || result.metrics.totalTokens).toLocaleString()}`,
+    $.yellow,
+  );
   kv(t('watch.field.cost'), `$${(result.metrics.totalCostUsd || 0).toFixed(4)}`, $.dim);
 
   if (result.status !== 'SUCCESS' && result.errors.length > 0) {

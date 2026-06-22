@@ -73,10 +73,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'quickstart.need_attention': '{n} check(s) need attention',
     'quickstart.summary.section': 'SUMMARY',
     'quickstart.all_good': '✓ Everything looks good!',
-    'quickstart.run_first_task_hint':
-      'Run commander "your first task" to get started.',
-    'quickstart.fix_and_verify':
-      'Fix them, then run commander quickstart --check to verify.',
+    'quickstart.run_first_task_hint': 'Run commander "your first task" to get started.',
+    'quickstart.fix_and_verify': 'Fix them, then run commander quickstart --check to verify.',
     'quickstart.first_steps': 'YOUR FIRST TASKS',
     'quickstart.try.these': 'Try these to get familiar with Commander:',
     'quickstart.example.1': 'commander "Explain this codebase"',
@@ -95,10 +93,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'quickstart.tip.treat_as_task':
       'Any unrecognized command is treated as a task: commander fix the login bug',
     'quickstart.tip.help': 'Use --help with any command for options',
-    'quickstart.tip.config_test':
-      "Use commander config test to verify your API connection",
-    'quickstart.tip.mode_auto_edit':
-      'Use commander mode auto-edit to skip approval prompts',
+    'quickstart.tip.config_test': 'Use commander config test to verify your API connection',
+    'quickstart.tip.mode_auto_edit': 'Use commander mode auto-edit to skip approval prompts',
     'quickstart.structure': 'PROJECT STRUCTURE',
 
     // ── Pre-check labels & fixes ─────────────────────────────────────
@@ -128,8 +124,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'doctor.all.passed': 'All checks passed ✓',
     'doctor.needs.attention': 'Some checks need attention',
     'doctor.check.node': 'Node.js v20+',
-    'doctor.check.node_current':
-      'Current: {version}. Install from https://nodejs.org',
+    'doctor.check.node_current': 'Current: {version}. Install from https://nodejs.org',
     'doctor.check.git': 'Git',
     'doctor.check.git_version': '{version}',
     'doctor.check.git_missing': 'Not found. Install: https://git-scm.com',
@@ -137,15 +132,13 @@ const translations: Record<Locale, Record<string, string>> = {
     'doctor.check.pm_unknown': 'Unknown',
     'doctor.check.pm_no_lockfile': 'No lockfile found',
     'doctor.check.api_key': 'API key',
-    'doctor.check.api_key_missing':
-      'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.',
+    'doctor.check.api_key_missing': 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.',
     'doctor.check.api_key_value': '{type} · {model}',
     'doctor.check.packages': 'Packages installed',
     'doctor.check.packages_missing': 'Run: pnpm install',
     'doctor.check.commander_dir': '.commander/ dir',
     'doctor.check.commander_dir.found': 'Found',
-    'doctor.check.commander_dir.missing':
-      'Not found (will be created on first run)',
+    'doctor.check.commander_dir.missing': 'Not found (will be created on first run)',
     'doctor.check.tools_configured': 'Tools configured',
     'doctor.check.tools_count': '{n} tools',
     'doctor.check.disk_space': 'Disk space',
@@ -153,16 +146,12 @@ const translations: Record<Locale, Record<string, string>> = {
     'doctor.connectivity.testing': 'Testing {provider} at {url}...',
     'doctor.connectivity.reachable': 'API reachable (HTTP {status})',
     'doctor.connectivity.http_error': 'API returned HTTP {status}',
-    'doctor.connectivity.invalid_key':
-      '→ Invalid API key. Check your credentials.',
+    'doctor.connectivity.invalid_key': '→ Invalid API key. Check your credentials.',
     'doctor.connectivity.rate_limited': '→ Rate limited. Try again later.',
     'doctor.connectivity.unreachable': 'API unreachable',
-    'doctor.connectivity.dns_failed':
-      '→ DNS resolution failed. Check your internet connection.',
-    'doctor.connectivity.refused':
-      '→ Connection refused. Is the server running?',
-    'doctor.connectivity.timeout':
-      '→ Connection timed out. Check network/firewall.',
+    'doctor.connectivity.dns_failed': '→ DNS resolution failed. Check your internet connection.',
+    'doctor.connectivity.refused': '→ Connection refused. Is the server running?',
+    'doctor.connectivity.timeout': '→ Connection timed out. Check network/firewall.',
 
     // ── Status (cmdStatus banner + extras) ──────────────────────────
     'status.title': 'SYSTEM STATUS',
@@ -188,20 +177,17 @@ const translations: Record<Locale, Record<string, string>> = {
     'status.shadow.main_result_no': '✗',
     'status.shadow.shadow_result_yes': '✓',
     'status.shadow.shadow_result_no': '✗',
-    'status.shadow.better_hint':
-      '{strategy} would have performed better in the last run',
+    'status.shadow.better_hint': '{strategy} would have performed better in the last run',
     'status.shadow.total': 'Total shadows',
     'status.cached_results': 'Cached results',
-    'status.meta_debug_load_failed':
-      'Failed to load MetaLearner stats: {message}',
+    'status.meta_debug_load_failed': 'Failed to load MetaLearner stats: {message}',
 
     // ── Config (cmdConfig banner + extras) ─────────────────────────
     'config.title': 'CONFIGURATION',
     'config.set': 'Set:',
     'config.test': 'Test API connection',
     'config.show': '{content}',
-    'config.set.theme_usage':
-      'commander config set theme <dark|light|minimal>',
+    'config.set.theme_usage': 'commander config set theme <dark|light|minimal>',
     'config.set.model_usage': 'commander config set model <model-id>',
     'config.set.meta_tools': 'commander config set meta-tools on',
     'config.list_models': 'commander config list-models',
@@ -210,15 +196,12 @@ const translations: Record<Locale, Record<string, string>> = {
     'config.set.usage': 'commander config set <key> <value>',
     'config.set.theme_unknown': 'Unknown theme: "{theme}"',
     'config.set.theme_available': 'Available: {themes}',
-    'config.set.theme_no_color':
-      'NO_COLOR=1 disables all colors (https://no-color.org)',
+    'config.set.theme_no_color': 'NO_COLOR=1 disables all colors (https://no-color.org)',
     'config.set.theme_done': 'theme = {theme}',
     'config.set.theme_persist_hint':
       'Colors updated for this session. Persist with: export COMMANDER_THEME={theme}',
-    'config.list_providers.subtitle':
-      'Set any API key env var to activate a provider:',
-    'config.list_providers.legend':
-      '  ✓ = configured  ~ = via OPENAI_API_KEY  (space) = not set',
+    'config.list_providers.subtitle': 'Set any API key env var to activate a provider:',
+    'config.list_providers.legend': '  ✓ = configured  ~ = via OPENAI_API_KEY  (space) = not set',
     'config.test.no_key': 'No API key found. Set one of the env vars.',
     'config.test.section': 'TESTING',
     'config.test.provider': 'Provider',
@@ -231,10 +214,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'config.canary_status.none_active': 'No active canary deployment.',
     'config.canary_status.intro':
       'Canary deployments are created automatically when the EvolverAgent',
-    'config.canary_status.intro2':
-      'detects failure patterns and proposes config mutations.',
-    'config.canary_status.intro3':
-      'A 10% canary rollout is used to safely verify config changes.',
+    'config.canary_status.intro2': 'detects failure patterns and proposes config mutations.',
+    'config.canary_status.intro3': 'A 10% canary rollout is used to safely verify config changes.',
     'config.canary_status.status': 'Status',
     'config.canary_status.promoted': 'Promoted',
     'config.canary_status.rejected': 'Rejected',
@@ -243,8 +224,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'config.canary_status.runs': 'Runs',
     'config.canary_status.rollout': 'Rollout',
     'config.canary_status.success_rate': 'Success rate',
-    'config.canary_status.pending_runs':
-      '{n} more needed for auto-decision',
+    'config.canary_status.pending_runs': '{n} more needed for auto-decision',
     'config.canary_status.running_for': '{s}s',
     'config.usage.main':
       'commander config [show|set <key> <val>|list-providers|list-models|test|canary-status]',
@@ -268,8 +248,7 @@ const translations: Record<Locale, Record<string, string>> = {
       'Invalid --effort="{value}". Allowed: {allowed}.{hint} Run commander run --help',
     'error_messages.invalid_topology':
       'Invalid --topology="{value}". Allowed: {allowed}.{hint} Run commander run --help',
-    'error_messages.invalid_quality_threshold':
-      'Invalid --quality-threshold="{value}".',
+    'error_messages.invalid_quality_threshold': 'Invalid --quality-threshold="{value}".',
     'error_messages.quality_threshold_hint':
       'Must be a number between 0 and 1 (e.g. 0.8). Run commander run --help',
     'error_messages.did_you_mean': ' Did you mean --{flag}={value}?',
@@ -285,13 +264,11 @@ const translations: Record<Locale, Record<string, string>> = {
     'mode.fullauto': 'No approval gates',
     'mode.title.curr': 'Mode',
     'mode.label.suggest': 'Suggest mode — prompts before risky operations',
-    'mode.label.autoedit':
-      'Auto-edit mode — allows most operations, flags sandbox escapes',
+    'mode.label.autoedit': 'Auto-edit mode — allows most operations, flags sandbox escapes',
     'mode.label.fullauto': 'Full-auto mode — no approval gates',
     'mode.label.readonly': 'Read-only mode — no writes, no destructive ops',
     'mode.label.plan': 'Plan mode — analysis only, no modifications',
-    'mode.set_cmd':
-      'commander mode <plan|read-only|auto-edit|full-auto|suggest>',
+    'mode.set_cmd': 'commander mode <plan|read-only|auto-edit|full-auto|suggest>',
     'mode.invalid': 'Invalid mode: "{mode}"',
     'mode.valid_list': 'Valid modes:',
     'mode.set_done': 'Mode set to {mode}',
@@ -304,8 +281,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'history.prune': 'Prune:',
     'history.del': 'Del:',
     'history.view.deleted_session': 'Deleted session {runId}',
-    'history.view.prune.usage':
-      'Usage: commander history prune <keep-count>',
+    'history.view.prune.usage': 'Usage: commander history prune <keep-count>',
     'history.view.pruned': 'Pruned to {keep} sessions (removed {removed})',
     'history.list.total': 'Total',
     'history.detail.title': 'SESSION DETAIL',
@@ -319,17 +295,12 @@ const translations: Record<Locale, Record<string, string>> = {
     'history.detail.timestamp': 'Timestamp',
     'history.detail.error': 'Error',
     'history.detail.tools': 'Tools',
-    'history.error.failed_to_read':
-      'Failed to read session history: {message}',
-    'history.error.check_dir':
-      'Check that .commander/ directory exists and is readable.',
+    'history.error.failed_to_read': 'Failed to read session history: {message}',
+    'history.error.check_dir': 'Check that .commander/ directory exists and is readable.',
     'history.error.session_not_found': 'Session not found: {runId}',
-    'history.error.session_not_found_hint':
-      'Run commander history to list available sessions.',
-    'history.error.failed_to_load':
-      'Failed to load session: {message}',
-    'history.error.session_corrupt':
-      'The session file may be corrupted or missing.',
+    'history.error.session_not_found_hint': 'Run commander history to list available sessions.',
+    'history.error.failed_to_load': 'Failed to load session: {message}',
+    'history.error.session_corrupt': 'The session file may be corrupted or missing.',
     'history.view_hint_view': 'View:  commander history view <runId>',
     'history.view_hint_prune': 'Prune: commander history prune <keep-count>',
     'history.view_hint_del': 'Del:   commander history delete <runId>',
@@ -369,15 +340,12 @@ const translations: Record<Locale, Record<string, string>> = {
     'workflow.schedule.confirmed': 'Scheduled "{name}"',
     'workflow.schedule.trigger_label': 'trigger: {label}',
     'workflow.schedule.id_label': 'id: {id}',
-    'workflow.unschedule.usage':
-      'Usage: commander workflow unschedule <schedule-id>',
+    'workflow.unschedule.usage': 'Usage: commander workflow unschedule <schedule-id>',
     'workflow.unschedule.removed': 'Removed schedule {id}',
     'workflow.unschedule.not_found': 'Schedule "{id}" not found',
-    'workflow.pause.usage':
-      'Schedule not found. Usage: commander workflow pause <schedule-id>',
+    'workflow.pause.usage': 'Schedule not found. Usage: commander workflow pause <schedule-id>',
     'workflow.pause.paused': 'Paused schedule {id}',
-    'workflow.resume.usage':
-      'Schedule not found. Usage: commander workflow resume <schedule-id>',
+    'workflow.resume.usage': 'Schedule not found. Usage: commander workflow resume <schedule-id>',
     'workflow.resume.resumed': 'Resumed schedule {id}',
     'workflow.history.empty': 'No execution records found',
     'workflow.history.header': 'Execution history',
@@ -402,8 +370,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'skill.misc.list_empty': 'No skills found.',
     'skill.misc.list_header': 'SKILLS ({count})',
     'skill.misc.pin_indicator': '📌',
-    'skill.misc.list_meta':
-      'quality: {pct}% · uses: {n} · {category} · [{tags}]',
+    'skill.misc.list_meta': 'quality: {pct}% · uses: {n} · {category} · [{tags}]',
     'skill.misc.view_usage': 'Usage: commander skill view <name>',
     'skill.misc.view_not_found': 'Skill "{name}" not found',
     'skill.misc.view_header': 'SKILL: {name}',
@@ -412,15 +379,13 @@ const translations: Record<Locale, Record<string, string>> = {
     'skill.misc.view_tags': 'Tags',
     'skill.misc.view_quality': 'Quality',
     'skill.misc.view_usage_field': 'Usage',
-    'skill.misc.view_usage_value':
-      '{n} · success rate: {pct}%',
+    'skill.misc.view_usage_value': '{n} · success rate: {pct}%',
     'skill.misc.view_pinned': 'Pinned',
     'skill.misc.view_pinned_yes': 'Yes',
     'skill.misc.view_pinned_no': 'No',
     'skill.misc.view_source': 'Source',
     'skill.misc.view_created': 'Created',
-    'skill.misc.create_usage':
-      'Usage: commander skill create <name> [description]',
+    'skill.misc.create_usage': 'Usage: commander skill create <name> [description]',
     'skill.misc.created': 'Created skill "{name}"',
     'skill.misc.pin_usage': 'Usage: commander skill pin <name>',
     'skill.misc.pinned': 'Pinned "{name}"',
@@ -442,18 +407,15 @@ const translations: Record<Locale, Record<string, string>> = {
     'completion.script': 'Script',
     'completion.add.to': 'Add this to your',
     'completion.unknown_shell': 'Unknown shell: "{name}"',
-    'completion.usage':
-      'Usage: commander completion [bash|zsh|fish|install]',
+    'completion.usage': 'Usage: commander completion [bash|zsh|fish|install]',
     'completion.already_configured': 'Already configured in {path}',
-    'completion.restart_hint':
-      'Restart your shell or run: source {rc}',
+    'completion.restart_hint': 'Restart your shell or run: source {rc}',
     'completion.add_to_rc': 'Add this to your {rc}:',
     'completion.or_run': 'Or run:',
 
     // ── Onboarding (original 3 + extended env vars + examples) ──────
     'onboarding.welcome': 'Welcome to Commander',
-    'onboarding.env.vars':
-      'To get started, set one of these environment variables:',
+    'onboarding.env.vars': 'To get started, set one of these environment variables:',
     'onboarding.example': 'Example:',
     'onboarding.example.cmd': '$ export OPENAI_API_KEY=sk-...',
     'onboarding.example.run': '$ commander "Hello, world!"',
@@ -465,8 +427,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'onboarding.env_vars.glm': 'GLM (Zhipu AI)',
     'onboarding.env_vars.mimo': 'MiMo (dedicated)',
     'onboarding.env_vars.xiaomi': 'Xiaomi MiMo',
-    'onboarding.env_vars.ollama':
-      'Ollama (local) — http://localhost:11434/v1',
+    'onboarding.env_vars.ollama': 'Ollama (local) — http://localhost:11434/v1',
     'onboarding.env_vars.vllm': 'vLLM (local) — http://localhost:8000/v1',
     'onboarding.env_vars.cohere': 'Cohere',
     'onboarding.env_vars.mistral': 'Mistral AI',
@@ -475,8 +436,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'onboarding.env_vars.perplexity': 'Perplexity',
     'onboarding.env_vars.fireworks': 'Fireworks AI',
     'onboarding.env_vars.replicate': 'Replicate',
-    'onboarding.env_vars.aws_bedrock':
-      'AWS Bedrock (+ AWS_SECRET_ACCESS_KEY)',
+    'onboarding.env_vars.aws_bedrock': 'AWS Bedrock (+ AWS_SECRET_ACCESS_KEY)',
 
     // ── Run (cmdRun, cmdRunInternal, cmdWatchInternal, cmdShowcase) ─
     'run.no_task': 'No task provided.',
@@ -484,8 +444,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'run.example_usage': 'Example:',
     'run.usage.template': 'commander run "{task}"',
     'run.example.analyze': 'commander run "analyze this codebase"',
-    'run.tui.dashboard_started':
-      'Terminal dashboard started in child process (PID: {pid})',
+    'run.tui.dashboard_started': 'Terminal dashboard started in child process (PID: {pid})',
     'run.tui.could_not_start':
       'Could not start TUI dashboard — run in a separate terminal: commander tui',
     'run.sse.agent_started': 'started',
@@ -516,18 +475,14 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // ── Showcase ────────────────────────────────────────────────────
     'showcase.title': 'Commander Showcase — 3-Agent DEBATE Code Audit',
-    'showcase.subtitle':
-      'Scanning codebase + running 3-agent debate...',
+    'showcase.subtitle': 'Scanning codebase + running 3-agent debate...',
     'showcase.topology_header': 'TOPOLOGY',
     'showcase.team.red': 'Red team',
-    'showcase.team.red_role':
-      '(attacker) → find bugs, vulnerabilities, anti-patterns',
+    'showcase.team.red_role': '(attacker) → find bugs, vulnerabilities, anti-patterns',
     'showcase.team.blue': 'Blue team',
-    'showcase.team.blue_role':
-      '(defender) → architecture strengths, design rationale',
+    'showcase.team.blue_role': '(defender) → architecture strengths, design rationale',
     'showcase.team.judge': 'Judge',
-    'showcase.team.judge_role':
-      '(arbitrator) → consolidate scoring, output health report',
+    'showcase.team.judge_role': '(arbitrator) → consolidate scoring, output health report',
     'showcase.files_scanned_zero':
       'No scannable code files found in current directory. Run `commander run showcase` in a directory with code.',
     'showcase.execution_complete': 'EXECUTION COMPLETE',
@@ -553,10 +508,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'showcase.more': '... and {count} more',
     'showcase.full_report': 'FULL REPORT',
     'showcase.error.showcase_failed': 'Showcase failed: {message}',
-    'showcase.error.check_api_key':
-      'Check your API key and network connection.',
-    'showcase.error.run_init':
-      'Run commander init to verify provider connectivity.',
+    'showcase.error.check_api_key': 'Check your API key and network connection.',
+    'showcase.error.run_init': 'Run commander init to verify provider connectivity.',
 
     // ── Plan ─────────────────────────────────────────────────────────
     'plan.section': 'PLAN',
@@ -567,9 +520,11 @@ const translations: Record<Locale, Record<string, string>> = {
     'plan.confidence': 'Confidence',
     'plan.external_info_yes': 'Yes',
     'plan.external_info_no': 'No',
+    'plan.duration.label': 'Duration',
+    'plan.task_nature.label': 'Task nature',
+    'plan.speculation.label': 'Speculation',
     'plan.tokens': 'Tokens',
-    'plan.tokens_breakdown':
-      '{total} (think: {thinking}, exec: {execution})',
+    'plan.tokens_breakdown': '{total} (think: {thinking}, exec: {execution})',
     'plan.duration': '{seconds}s (per agent: {perAgent}s)',
     'plan.task_nature.IO': 'IO_BOUND',
     'plan.task_nature.COMPUTE': 'COMPUTE_BOUND',
@@ -611,6 +566,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'company.quality.confidence': 'Confidence',
     'company.summary.section': 'SUMMARY',
     'company.engine_stats': 'ENGINE STATS',
+    'company.spinner': 'Executing with Company Engine...',
     'company.stats.total_executions': 'Total Executions',
     'company.stats.avg_quality': 'Avg Quality',
     'company.stats.avg_tokens': 'Avg Tokens',
@@ -629,10 +585,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'saga.run.nodes_with_arrow': '{count} ({order})',
     'saga.error.missing_saga_name': 'missing saga name',
     'saga.error.unknown_saga': 'unknown saga "{name}"',
-    'saga.suggest.run_examples':
-      'Run commander saga examples to see available sagas',
-    'saga.list.empty':
-      'No runs found. Run one with: commander saga run order-fulfillment',
+    'saga.suggest.run_examples': 'Run commander saga examples to see available sagas',
+    'saga.list.empty': 'No runs found. Run one with: commander saga run order-fulfillment',
     'saga.list.cols': 'RUN ID | STATE | UPDATED',
     'saga.run.header.count': '{count} run{plural}',
     'saga.status.header': 'Status: {runId}',
@@ -644,33 +598,26 @@ const translations: Record<Locale, Record<string, string>> = {
     'saga.status.nodes_header': 'Nodes:',
     'saga.error.missing_run_id': 'missing runId',
     'saga.error.run_not_found': 'run "{runId}" not found',
-    'saga.resume.note_finalized':
-      'run "{runId}" is already {state}; nothing to resume',
-    'saga.resume.rebuilding':
-      'Resuming run — rebuilding saga from snapshot...',
+    'saga.resume.note_finalized': 'run "{runId}" is already {state}; nothing to resume',
+    'saga.resume.rebuilding': 'Resuming run — rebuilding saga from snapshot...',
     'saga.resume.snapshot_state': 'snapshot:      {state}',
     'saga.resume.events_total': 'events total:  {count}',
     'saga.resume.events_since': 'events since:  {count}',
-    'saga.resume.warning.no_nodes':
-      'no node states found in snapshot; nothing to resume',
-    'saga.resume.all_completed':
-      '✓ All nodes already completed — run was successful',
+    'saga.resume.warning.no_nodes': 'no node states found in snapshot; nothing to resume',
+    'saga.resume.all_completed': '✓ All nodes already completed — run was successful',
     'saga.resume.field.completed': 'completed:  {done}/{total}',
     'saga.resume.field.pending': 'pending:     {pending}/{total}',
     'saga.resume.field.nodes': 'nodes:       {names}',
     'saga.resume.field.graph': 'graph:       {order}',
     'saga.resume.result': 'Resume result:',
     'saga.resume.no_definition': 'saga definition "{name}" not found.',
-    'saga.resume.manual_inspect':
-      'The snapshot is available for manual inspection at:',
-    'saga.approve.error.usage':
-      'usage: commander saga {decision} <runId> <nodeId> [--by=<user>]',
+    'saga.resume.manual_inspect': 'The snapshot is available for manual inspection at:',
+    'saga.approve.error.usage': 'usage: commander saga {decision} <runId> <nodeId> [--by=<user>]',
     'saga.approve.recorded_label': 'by',
     'saga.examples.header': '{count} built-in examples',
     'saga.examples.nodes_label': 'nodes:',
     'saga.subcommand.run': 'Run a built-in example saga',
-    'saga.subcommand.list':
-      'List all runs (committed, aborted, in-progress)',
+    'saga.subcommand.list': 'List all runs (committed, aborted, in-progress)',
     'saga.subcommand.status': "Show a run's snapshot",
     'saga.subcommand.resume': 'Inspect a resumable run',
     'saga.subcommand.approve': 'Approve a pending approval',
@@ -678,19 +625,15 @@ const translations: Record<Locale, Record<string, string>> = {
     'saga.subcommand.examples': 'List built-in example sagas',
     'saga.help.intro': 'commander saga — manage saga runs',
     'saga.flag.input': '--input=<json>        Saga input (JSON)',
-    'saga.flag.run_id':
-      '--run-id=<id>         Custom run ID (default: <name>-<timestamp>)',
-    'saga.flag.timeout':
-      '--timeout=<ms>        Total timeout (default: 60000)',
-    'saga.flag.in_memory':
-      '--in-memory           Use in-memory stores (no disk persistence)',
+    'saga.flag.run_id': '--run-id=<id>         Custom run ID (default: <name>-<timestamp>)',
+    'saga.flag.timeout': '--timeout=<ms>        Total timeout (default: 60000)',
+    'saga.flag.in_memory': '--in-memory           Use in-memory stores (no disk persistence)',
     'saga.error.could_not_recover': 'could not recover {runId}',
     'saga.result.label.error': 'error:',
     'saga.result.label.results': 'results:',
     'saga.result.label.summary': 'summary:',
     'saga.result.label.duration_ms': '({ms}ms)',
-    'saga.recover_hint':
-      'Recover the run with: commander saga resume {runId}',
+    'saga.recover_hint': 'Recover the run with: commander saga resume {runId}',
 
     // ── Goal (cmdGoal, cmdGoalInternal) ──────────────────────────────
     'goal.field.provider': 'Provider',
@@ -710,8 +653,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'goal.improvement.improving': 'improving',
     'goal.improvement.plateaued': 'plateaued',
     'goal.history.section': 'ROUND HISTORY',
-    'goal.history.row':
-      'Round {n}: {findings} findings · {pct}% improvement · {decision}',
+    'goal.history.row': 'Round {n}: {findings} findings · {pct}% improvement · {decision}',
 
     // ── Swarm (cmdSwarm) ─────────────────────────────────────────────
     'swarm.field.mode': 'Mode',
@@ -755,10 +697,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'drive.status.failed': 'FAILED',
 
     // ── Checkpoint ───────────────────────────────────────────────────
-    'checkpoint.prune.no_op':
-      'Only {total} checkpoints — nothing to prune (keep={keep})',
-    'checkpoint.prune.done':
-      'Pruned {removed} old checkpoints (kept {kept} newest)',
+    'checkpoint.prune.no_op': 'Only {total} checkpoints — nothing to prune (keep={keep})',
+    'checkpoint.prune.done': 'Pruned {removed} old checkpoints (kept {kept} newest)',
     'checkpoint.view.header': 'Checkpoint — {runId}',
     'checkpoint.view.not_found': 'No checkpoint found for run {runId}',
     'checkpoint.view.version': 'Version:',
@@ -785,13 +725,12 @@ const translations: Record<Locale, Record<string, string>> = {
     'checkpoint.list.empty':
       'No checkpoints yet. Checkpoints are written automatically during execution at 20%, 45%, and 70% token budget.',
     'checkpoint.list.header': 'Checkpoints ({count})',
-    'checkpoint.list.cols_trigger':
-      'Trigger: {label} | {bar} | v{version}{budget}',
+    'checkpoint.list.cols_trigger': 'Trigger: {label} | {bar} | v{version}{budget}',
     'checkpoint.list.bar.empty': 'no tasks',
     'checkpoint.list.written': 'Written: {time} | {kb}KB',
 
     // ── Intelligence (cmdIntelligence) ───────────────────────────────
-    'intelligence.title': 'Commander Intelligence — What I\'ve Learned',
+    'intelligence.title': "Commander Intelligence — What I've Learned",
     'intelligence.section.meta_learner': 'META-LEARNER',
     'intelligence.empty.experiences':
       'No experiences yet. Run some tasks to build up learning data.',
@@ -802,42 +741,31 @@ const translations: Record<Locale, Record<string, string>> = {
     'intelligence.section.top_strategies': 'Top Strategies',
     'intelligence.strategy.bar': '{runs} runs · p95 {p95}',
     'intelligence.section.regression_alerts': 'Regression Alerts',
-    'intelligence.regression.row':
-      '{strategy} on {model}: dropped {pct}% ({from}% → {to}%)',
+    'intelligence.regression.row': '{strategy} on {model}: dropped {pct}% ({from}% → {to}%)',
     'intelligence.section.suggestions': 'Suggestions',
     'intelligence.section.skills': 'SKILLS',
     'intelligence.empty.skills':
       'No skills extracted yet. Skills are auto-extracted from successful runs.',
     'intelligence.skills.summary': '{count} skills ({cats})',
     'intelligence.skills.row': '{usage}× · {pct}%',
-    'intelligence.skills.more':
-      '... and {count} more (use --skills for full list)',
+    'intelligence.skills.more': '... and {count} more (use --skills for full list)',
     'intelligence.section.failure_patterns': 'FAILURE PATTERNS',
-    'intelligence.empty.patterns':
-      'No patterns yet. Patterns emerge from repeated failures.',
-    'intelligence.patterns.summary':
-      '{count} patterns ({active} active with ≥2 occurrences)',
-    'intelligence.patterns.row':
-      '{desc}  {n}× · {confidence} confidence',
-    'intelligence.patterns.more':
-      '... and {count} more (use --patterns for full list)',
+    'intelligence.empty.patterns': 'No patterns yet. Patterns emerge from repeated failures.',
+    'intelligence.patterns.summary': '{count} patterns ({active} active with ≥2 occurrences)',
+    'intelligence.patterns.row': '{desc}  {n}× · {confidence} confidence',
+    'intelligence.patterns.more': '... and {count} more (use --patterns for full list)',
     'intelligence.section.overview': 'Overview',
     'intelligence.overview.experiences': 'Experiences:',
     'intelligence.overview.strategies': 'Strategies:',
     'intelligence.overview.success': 'Avg success:',
     'intelligence.overview.reflections': 'Reflections:',
-    'intelligence.section.strategy_perf':
-      'Strategy Performance (Thompson Sampling)',
+    'intelligence.section.strategy_perf': 'Strategy Performance (Thompson Sampling)',
     'intelligence.empty.strategies': 'No strategy data yet.',
-    'intelligence.strategy.bar.full':
-      '{runs} runs · p95 {p95} · avg {avg}',
-    'intelligence.section.task_type_scores':
-      'Per Task-Type Strategy Scores',
-    'intelligence.task_type_strategy.row':
-      '{strategy}: {pct}%  ({trials} trials{p95})',
+    'intelligence.strategy.bar.full': '{runs} runs · p95 {p95} · avg {avg}',
+    'intelligence.section.task_type_scores': 'Per Task-Type Strategy Scores',
+    'intelligence.task_type_strategy.row': '{strategy}: {pct}%  ({trials} trials{p95})',
     'intelligence.task_type.p95_suffix': ' · p95 {p95}',
-    'intelligence.section.optimization_suggestions':
-      'Optimization Suggestions',
+    'intelligence.section.optimization_suggestions': 'Optimization Suggestions',
     'intelligence.section.prediction_loop': 'Prediction Loop',
     'intelligence.prediction.total': 'Total verdicts:',
     'intelligence.prediction.confirmed': 'Confirmed (✓):',
@@ -883,19 +811,16 @@ const translations: Record<Locale, Record<string, string>> = {
     'experience.patterns.count': 'Patterns',
     'experience.patterns.active_warnings': 'Active warnings',
     'experience.reset.banner': 'Commander Experience Reset',
-    'experience.reset.warning.all':
-      'This will reset ALL learned experience:',
+    'experience.reset.warning.all': 'This will reset ALL learned experience:',
     'experience.reset.warning.skills': 'Extracted skills',
     'experience.reset.warning.patterns': 'Failure patterns',
-    'experience.reset.warning.meta':
-      'MetaLearner (Thompson priors, reflections, strategy scores)',
+    'experience.reset.warning.meta': 'MetaLearner (Thompson priors, reflections, strategy scores)',
     'experience.reset.warning.meta_short': 'MetaLearner state',
     'experience.reset.confirm_prompt': 'Continue? [y/N]',
     'experience.reset.cancelled': 'Cancelled.',
     'experience.reset.done': 'Experience reset complete.',
     'experience.reset.backups_at': 'Backups saved to:',
-    'experience.reset.hint':
-      'Run commander experience status to verify.',
+    'experience.reset.hint': 'Run commander experience status to verify.',
     'experience.status.hint':
       'Reset: commander experience reset [--skills|--patterns|--meta] [--force]',
     'experience.not_initialized': 'Not initialized',
@@ -913,22 +838,17 @@ const translations: Record<Locale, Record<string, string>> = {
     'feedback.field.general': 'General',
     'feedback.section.recent': 'Recent feedback:',
     'feedback.bug.saved': 'Bug report saved',
-    'feedback.bug.thanks':
-      'Thank you! This helps us improve Commander.',
+    'feedback.bug.thanks': 'Thank you! This helps us improve Commander.',
     'feedback.feature.saved': 'Feature request saved',
-    'feedback.feature.thanks':
-      "Thank you! We'll consider this for a future release.",
+    'feedback.feature.thanks': "Thank you! We'll consider this for a future release.",
     'feedback.rating.saved': 'Rating saved',
     'feedback.message.saved': 'Feedback saved',
     'feedback.message.thanks': 'Thank you for your feedback!',
     'feedback.section.quick': 'QUICK FEEDBACK',
     'feedback.section.examples': 'EXAMPLES',
-    'feedback.example.rating':
-      'commander feedback --rating=4 --message="Love the watch command!"',
-    'feedback.example.bug':
-      'commander feedback --bug="crash when running with no network"',
-    'feedback.example.feature':
-      'commander feedback --feature="add dark mode to TUI"',
+    'feedback.example.rating': 'commander feedback --rating=4 --message="Love the watch command!"',
+    'feedback.example.bug': 'commander feedback --bug="crash when running with no network"',
+    'feedback.example.feature': 'commander feedback --feature="add dark mode to TUI"',
     'feedback.type.icon.bug': '🐛',
     'feedback.type.icon.feature': '💡',
     'feedback.type.icon.rating': '⭐',
@@ -946,8 +866,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'plugin.install.success': 'Plugin installed successfully',
     'plugin.install.failed': 'Installation failed: {message}',
     'plugin.list.empty': 'No plugins loaded.',
-    'plugin.list.install_hint':
-      'Install a plugin with: commander plugin install <name>',
+    'plugin.list.install_hint': 'Install a plugin with: commander plugin install <name>',
     'plugin.section': 'PLUGINS ({count})',
     'plugin.uninstall.usage': 'Usage: commander plugin uninstall <name>',
     'plugin.uninstall.success': 'Plugin "{name}" uninstalled',
@@ -972,8 +891,7 @@ const translations: Record<Locale, Record<string, string>> = {
     // ── Budget ───────────────────────────────────────────────────────
     'budget.not_found': 'No budget found for run: {runId}',
     'budget.list.empty': 'No active token budgets.',
-    'budget.list.empty_hint':
-      "Run a task with 'commander run \"<goal>\"' to see budget tracking.",
+    'budget.list.empty_hint': 'Run a task with \'commander run "<goal>"\' to see budget tracking.',
     'budget.list.header': 'Token Budgets ({count} active)',
     'budget.detail.title': 'Token Budget: {runId}',
     'budget.detail.field.status': 'Status',
@@ -990,10 +908,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'budget.phase.critical': '🔴 Critical',
     'budget.phase.exceeded': '⛔ Exceeded',
     'budget.subagents.header': 'Sub-Agents ({count})',
-    'budget.subagents.over_budget':
-      '⚠️  OVER BUDGET by {n} tokens',
-    'budget.summary.agents':
-      '{n} sub-agents, {over} over budget',
+    'budget.subagents.over_budget': '⚠️  OVER BUDGET by {n} tokens',
+    'budget.summary.agents': '{n} sub-agents, {over} over budget',
 
     // ── Review (cmdReview) ───────────────────────────────────────────
     'review.section.title': 'CODE REVIEW',
@@ -1006,8 +922,7 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // ── Help banner (cmdHelp) ────────────────────────────────────────
     'help.banner.title': 'Commander',
-    'help.banner.tagline':
-      'one command · 10 topologies · 22 providers',
+    'help.banner.tagline': 'one command · 10 topologies · 22 providers',
     'help.section.getting_started': 'GETTING STARTED',
     'help.cmd.init': 'commander init',
     'help.cmd.init_desc': 'Zero-config setup + provider scan',
@@ -1016,11 +931,9 @@ const translations: Record<Locale, Record<string, string>> = {
     'help.cmd.showcase': 'commander run showcase',
     'help.cmd.showcase_desc': '3-agent code audit demo',
     'help.section.core': 'CORE COMMANDS',
-    'help.core.run_desc':
-      'Execute with full multi-agent pipeline',
+    'help.core.run_desc': 'Execute with full multi-agent pipeline',
     'help.core.review_desc': 'AI code review',
-    'help.core.fix_desc':
-      'Auto-fix lint, formatting & type errors',
+    'help.core.fix_desc': 'Auto-fix lint, formatting & type errors',
     'help.core.status_desc': 'System status & active provider',
     'help.core.config_desc': 'View/change settings',
     'help.core.history_desc': 'List past sessions',
@@ -1028,19 +941,14 @@ const translations: Record<Locale, Record<string, string>> = {
     'help.flag.dry_run': 'Show plan without executing',
     'help.flag.stream': 'Real-time SSE progress',
     'help.flag.tui': 'Terminal dashboard with live topology',
-    'help.flag.mode_balanced':
-      'balanced (default), fast, thorough, goal',
-    'help.flag.provider':
-      'Force provider (openai, anthropic, etc.)',
+    'help.flag.mode_balanced': 'balanced (default), fast, thorough, goal',
+    'help.flag.provider': 'Force provider (openai, anthropic, etc.)',
     'help.flag.budget': 'Token budget (default: 100000)',
     'help.section.management': 'MANAGEMENT',
-    'help.mgmt.init':
-      'Scan env, test providers, save fallback chain',
+    'help.mgmt.init': 'Scan env, test providers, save fallback chain',
     'help.mgmt.doctor': 'Run diagnostics',
-    'help.mgmt.mode':
-      'Approval mode (plan|read-only|suggest|auto-edit|full-auto)',
-    'help.mgmt.skill':
-      'Manage learnable skills (list, view, create, curate)',
+    'help.mgmt.mode': 'Approval mode (plan|read-only|suggest|auto-edit|full-auto)',
+    'help.mgmt.skill': 'Manage learnable skills (list, view, create, curate)',
     'help.mgmt.gui': 'Start Agent War Room web dashboard',
     'help.section.advanced': 'ADVANCED EXECUTION',
     'help.adv.company': 'Enterprise: quality gating + memory',
@@ -1052,10 +960,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'help.infra.compensation': 'Durable retry queue',
     'help.infra.cost': 'Token usage & cost reports',
     'help.section.misc': 'MISC',
-    'help.misc.completion':
-      'Shell autocompletion (bash, zsh, fish)',
-    'help.misc.feedback':
-      'Submit feedback to improve Commander',
+    'help.misc.completion': 'Shell autocompletion (bash, zsh, fish)',
+    'help.misc.feedback': 'Submit feedback to improve Commander',
     'help.section.options': 'OPTIONS',
     'help.option.version': 'Show version',
     'help.option.help': 'Show this help',
@@ -1092,150 +998,108 @@ const translations: Record<Locale, Record<string, string>> = {
     // ── Small features ──────────────────────────────────────────────
     'small_features.ask.title': 'Commander Ask — Quick Q&A Mode',
     'small_features.ask.question': 'Question:',
-    'small_features.ask.no_provider':
-      'No LLM provider configured. Run commander init first.',
+    'small_features.ask.no_provider': 'No LLM provider configured. Run commander init first.',
     'small_features.ask.answer': 'Answer:',
     'small_features.ask.no_output': '(no output)',
     'small_features.ask.status': 'Status:',
     'small_features.ask.tokens': 'Tokens:',
     'small_features.ask.tokens_na': 'N/A',
-    'small_features.diff.title':
-      'Commander Diff — Recent Changes',
+    'small_features.diff.title': 'Commander Diff — Recent Changes',
     'small_features.diff.modified_files': 'Modified files:',
     'small_features.diff.no_changes': 'No changes detected.',
     'small_features.diff.recent_commits': 'Recent commits:',
     'small_features.diff.more': '... and {n} more',
-    'small_features.diff.git_error':
-      'Error reading git status: {message}',
+    'small_features.diff.git_error': 'Error reading git status: {message}',
     'small_features.cost.title': 'Commander Cost — Token Usage',
     'small_features.cost.no_records':
       'No LLM call records found at .commander_samples/llm_calls.ndjson.',
-    'small_features.cost.run_first':
-      'Run a task first: commander run "<task>"',
+    'small_features.cost.run_first': 'Run a task first: commander run "<task>"',
     'small_features.cost.parse_errors':
       'Note: {n} malformed line(s) in llm_calls.ndjson were skipped.',
-    'small_features.cost.filters_applied':
-      'Filters applied: {filters}',
-    'small_features.cost.error':
-      'Error computing cost: {message}',
+    'small_features.cost.filters_applied': 'Filters applied: {filters}',
+    'small_features.cost.error': 'Error computing cost: {message}',
     'small_features.undo.title': 'Commander Undo',
-    'small_features.undo.uncommitted':
-      'You have uncommitted changes:',
-    'small_features.undo.hint':
-      'To undo Commander changes, use:',
-    'small_features.undo.checkout':
-      'git checkout -- <file>     Restore specific file',
-    'small_features.undo.stash':
-      'git stash                  Stash all changes',
-    'small_features.undo.reset':
-      'git reset --hard HEAD      Discard all changes (destructive)',
+    'small_features.undo.uncommitted': 'You have uncommitted changes:',
+    'small_features.undo.hint': 'To undo Commander changes, use:',
+    'small_features.undo.checkout': 'git checkout -- <file>     Restore specific file',
+    'small_features.undo.stash': 'git stash                  Stash all changes',
+    'small_features.undo.reset': 'git reset --hard HEAD      Discard all changes (destructive)',
     'small_features.undo.no_changes': 'No changes to undo.',
     'small_features.approval_history.title': 'Approval History',
-    'small_features.approval_history.empty':
-      'No approval history found.',
+    'small_features.approval_history.empty': 'No approval history found.',
     'small_features.approval_history.recent': 'Recent approvals:',
-    'small_features.approval_history.total':
-      'Total entries: {n}',
-    'small_features.approval_history.error':
-      'Error reading approval history: {message}',
-    'small_features.resume.title':
-      'Commander Resume — Crash Recovery',
-    'small_features.resume.empty':
-      'No resumable runs found.',
+    'small_features.approval_history.total': 'Total entries: {n}',
+    'small_features.approval_history.error': 'Error reading approval history: {message}',
+    'small_features.resume.title': 'Commander Resume — Crash Recovery',
+    'small_features.resume.empty': 'No resumable runs found.',
     'small_features.resume.header': 'Resumable runs:',
-    'small_features.resume.run_hint':
-      'To resume: commander resume <runId>',
-    'small_features.resume.attempting':
-      'Attempting to resume run {runId}...',
+    'small_features.resume.run_hint': 'To resume: commander resume <runId>',
+    'small_features.resume.attempting': 'Attempting to resume run {runId}...',
     'small_features.resume.failed':
       'Recovery failed. The checkpoint may not exist or the lease was lost.',
-    'small_features.resume.list_hint':
-      'Run commander resume --list to see available checkpoints.',
-    'small_features.resume.recovered':
-      'Run recovered from checkpoint',
+    'small_features.resume.list_hint': 'Run commander resume --list to see available checkpoints.',
+    'small_features.resume.recovered': 'Run recovered from checkpoint',
     'small_features.resume.status': 'Status:',
     'small_features.resume.resume_from_step': 'Resume from step:',
-    'small_features.resume.completed_tool_calls':
-      'Completed tool calls:',
+    'small_features.resume.completed_tool_calls': 'Completed tool calls:',
     'small_features.resume.phase': 'Phase:',
     'small_features.resume.goal': 'Goal:',
-    'small_features.resume.continue_hint':
-      'Use commander run "<continue>" to continue execution.',
+    'small_features.resume.continue_hint': 'Use commander run "<continue>" to continue execution.',
     'small_features.resume.error': 'Error: {message}',
-    'small_features.compensation.title':
-      'Commander Compensation — Durable Retry Queue',
+    'small_features.compensation.title': 'Commander Compensation — Durable Retry Queue',
     'small_features.compensation.queue_summary': 'Queue Summary:',
     'small_features.compensation.pending': 'Pending:',
     'small_features.compensation.in_progress': 'In Progress:',
     'small_features.compensation.escalated': 'Escalated:',
     'small_features.compensation.commands_section': 'Commands:',
-    'small_features.compensation.cmd.list':
-      'commander compensation list',
-    'small_features.compensation.cmd.list_desc':
-      'View all queue items',
-    'small_features.compensation.cmd.retry':
-      'commander compensation retry <id>',
-    'small_features.compensation.cmd.retry_desc':
-      'Retry an escalated item',
-    'small_features.compensation.list.header':
-      'Compensation Queue Items ({count}):',
+    'small_features.compensation.cmd.list': 'commander compensation list',
+    'small_features.compensation.cmd.list_desc': 'View all queue items',
+    'small_features.compensation.cmd.retry': 'commander compensation retry <id>',
+    'small_features.compensation.cmd.retry_desc': 'Retry an escalated item',
+    'small_features.compensation.list.header': 'Compensation Queue Items ({count}):',
     'small_features.compensation.list.tool': 'Tool:',
     'small_features.compensation.list.run': 'Run:',
     'small_features.compensation.list.attempts': 'Attempts:',
     'small_features.compensation.list.age': 'Age:',
     'small_features.compensation.list.status': 'Status:',
     'small_features.compensation.list.error': 'Error:',
-    'small_features.compensation.list.next_attempt':
-      'Next attempt:',
-    'small_features.compensation.list.empty':
-      'No items in the compensation queue.',
+    'small_features.compensation.list.next_attempt': 'Next attempt:',
+    'small_features.compensation.list.empty': 'No items in the compensation queue.',
     'small_features.compensation.retry.missing_id':
       'Missing item ID. Usage: commander compensation retry <id>',
-    'small_features.compensation.retry.success':
-      'Item {id} reset to pending for immediate retry.',
-    'small_features.compensation.retry.failed':
-      'Item {id} not found or not in escalated status.',
-    'small_features.compensation.unknown_sub':
-      'Unknown subcommand: {name}',
+    'small_features.compensation.retry.success': 'Item {id} reset to pending for immediate retry.',
+    'small_features.compensation.retry.failed': 'Item {id} not found or not in escalated status.',
+    'small_features.compensation.unknown_sub': 'Unknown subcommand: {name}',
     'small_features.compensation.unknown_usage':
       'Usage: commander compensation [list|retry <id>|status]',
     'small_features.compensation.error': 'Error: {message}',
-    'small_features.compensation.sqlite_hint':
-      'Compensation queue requires better-sqlite3.',
+    'small_features.compensation.sqlite_hint': 'Compensation queue requires better-sqlite3.',
     'small_features.trace.title': 'Commander Traces',
-    'small_features.trace.no_traces':
-      'No traces found. Run a task first.',
+    'small_features.trace.no_traces': 'No traces found. Run a task first.',
     'small_features.trace.no_traces_short': 'No traces found.',
     'small_features.trace.recent': 'Recent traces:',
     'small_features.trace.total': 'Total: {n} traces',
-    'small_features.trace.otel_hint':
-      'View OpenTelemetry: http://localhost:16686 (Jaeger)',
+    'small_features.trace.otel_hint': 'View OpenTelemetry: http://localhost:16686 (Jaeger)',
     'small_features.trace.success_status': 'success',
     'small_features.trace.failed_status': 'failed',
     'small_features.trace.error': 'Error: {message}',
     'small_features.trace.sqlite_hint':
       'Compensation queue requires better-sqlite3. Install: pnpm add better-sqlite3',
-    'small_features.trace.run_doctor_hint':
-      'Run commander doctor to diagnose.',
+    'small_features.trace.run_doctor_hint': 'Run commander doctor to diagnose.',
 
     // ── Convenience (cmdPr, cmdCommit, cmdFix, etc.) ────────────────
     'convenience.pr.title': 'Commander PR — Create Pull Request',
     'convenience.pr.branch': 'Branch:',
-    'convenience.pr.no_changes':
-      'No changes detected against main.',
+    'convenience.pr.no_changes': 'No changes detected against main.',
     'convenience.pr.commits': 'Commits:',
     'convenience.pr.generating': 'Generating PR description...',
     'convenience.pr.description': 'Description:',
     'convenience.pr.create': 'Create PR:',
-    'convenience.pr.create_cmd':
-      'gh pr create --title "{desc}" --body "..."',
-    'convenience.pr.dry_run_hint':
-      'Run with --dry-run to preview without creating.',
+    'convenience.pr.create_cmd': 'gh pr create --title "{desc}" --body "..."',
+    'convenience.pr.dry_run_hint': 'Run with --dry-run to preview without creating.',
     'convenience.pr.error': 'Error: {message}',
-    'convenience.commit.title':
-      'Commander Commit — Smart Commit',
-    'convenience.commit.no_staged':
-      'No staged changes. Use git add first.',
+    'convenience.commit.title': 'Commander Commit — Smart Commit',
+    'convenience.commit.no_staged': 'No staged changes. Use git add first.',
     'convenience.commit.staged': 'Staged changes:',
     'convenience.commit.suggested': 'Suggested commit:',
     'convenience.commit.run_hint': 'Run: git commit -m "{type}: {file}"',
@@ -1243,8 +1107,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'convenience.fix.title': 'Commander Fix — Auto-Fix Errors',
     'convenience.fix.running_eslint': 'Running ESLint fix...',
     'convenience.fix.eslint_ok': 'ESLint fixes applied',
-    'convenience.fix.eslint_warn':
-      'ESLint found issues (some may need manual fix)',
+    'convenience.fix.eslint_warn': 'ESLint found issues (some may need manual fix)',
     'convenience.fix.running_prettier': 'Running Prettier fix...',
     'convenience.fix.prettier_ok': 'Prettier formatting applied',
     'convenience.fix.prettier_warn': 'Prettier had issues',
@@ -1279,12 +1142,9 @@ const translations: Record<Locale, Record<string, string>> = {
     'convenience.test.error': 'Error: {message}',
     'convenience.refactor.title': 'Commander Refactor',
     'convenience.refactor.description': 'Description:',
-    'convenience.refactor.full_hint':
-      'For full refactoring, use: commander run "refactor: {desc}"',
-    'convenience.refactor.preview_hint':
-      'For preview: commander run "refactor: {desc}" --dry-run',
-    'convenience.learn.title':
-      'Commander Learn — Codebase Analysis',
+    'convenience.refactor.full_hint': 'For full refactoring, use: commander run "refactor: {desc}"',
+    'convenience.refactor.preview_hint': 'For preview: commander run "refactor: {desc}" --dry-run',
+    'convenience.learn.title': 'Commander Learn — Codebase Analysis',
     'convenience.learn.project': 'Project:',
     'convenience.learn.project_unknown': 'unknown',
     'convenience.learn.version': 'Version:',
@@ -1319,8 +1179,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'init.field.redis.missing': 'not configured',
     'init.field.kubernetes.in_cluster': 'in-cluster ({ns})',
     'init.field.kubernetes.missing': 'not detected',
-    'init.test_progress':
-      'Testing connectivity to {n} providers ({ms}ms timeout)...',
+    'init.test_progress': 'Testing connectivity to {n} providers ({ms}ms timeout)...',
     'init.provider_status.reachable': 'OK',
     'init.provider_status.auth': 'AUTH',
     'init.provider_status.timeout': 'T/O',
@@ -1333,19 +1192,14 @@ const translations: Record<Locale, Record<string, string>> = {
     'init.tests_summary.auth_errors': ', {n} auth errors',
     'init.section.no_reachable': 'No reachable providers found.',
     'init.section.fallback_chain': 'RECOMMENDED FALLBACK CHAIN',
-    'init.fallback_chain.delegate_quickstart':
-      'Launching commander quickstart to set one up...',
-    'init.fallback_chain.quickstart_failed':
-      'Quickstart failed: {message}',
-    'init.fallback_chain.set_api_key_hint':
-      'Set an API key (e.g., OPENAI_API_KEY) and try again.',
-    'init.config_saved':
-      'Configuration saved to .commander.json',
+    'init.fallback_chain.delegate_quickstart': 'Launching commander quickstart to set one up...',
+    'init.fallback_chain.quickstart_failed': 'Quickstart failed: {message}',
+    'init.fallback_chain.set_api_key_hint': 'Set an API key (e.g., OPENAI_API_KEY) and try again.',
+    'init.config_saved': 'Configuration saved to .commander.json',
     'init.config_provider_line': 'Provider: {p}  Model: {m}',
     'init.config_fallback_line': 'Fallback: {chain}',
     'init.save_failed': 'Failed to save config: {message}',
-    'init.tests_skipped':
-      'Connectivity tests skipped (--skip-tests).',
+    'init.tests_skipped': 'Connectivity tests skipped (--skip-tests).',
     'init.section.get_started': 'GET STARTED',
     'init.first_task': 'Run your first task:',
     'init.first_task_cmd': 'commander run "Hello, world!"',
@@ -1358,8 +1212,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'init.cmd.doctor_desc': 'Run diagnostics',
     'init.cmd.tui_desc': 'Interactive dashboard',
     'init.error.no_api_key': 'No API key found for {provider}.',
-    'init.error.run_probe':
-      'Run commander init --probe to configure.',
+    'init.error.run_probe': 'Run commander init --probe to configure.',
 
     // ── Goal Judge (cmdGoalJudge) ────────────────────────────────────
     'goal_judge.verdict_passed': '✅ PASS',
@@ -1371,32 +1224,23 @@ const translations: Record<Locale, Record<string, string>> = {
     'goal_judge.reasoning': 'Reasoning:',
     'goal_judge.section.stop_conditions': 'Stop Conditions:',
     'goal_judge.section.evidence': 'Evidence:',
-    'goal_judge.conditions.empty':
-      'No global stop conditions set.',
+    'goal_judge.conditions.empty': 'No global stop conditions set.',
     'goal_judge.conditions.list_hint':
-      "Use 'commander goal conditions set --id=<id> --desc=\"...\" --type=MUST_HAVE' to add one.",
+      'Use \'commander goal conditions set --id=<id> --desc="..." --type=MUST_HAVE\' to add one.',
     'goal_judge.conditions.header': 'Global Stop Conditions',
     'goal_judge.conditions.added': 'Stop condition {id} added.',
     'goal_judge.conditions.deleted': 'Condition {id} deleted.',
-    'goal_judge.conditions.deleted_none':
-      'Condition {id} not found.',
-    'goal_judge.conditions.cleared':
-      'All stop conditions cleared.',
+    'goal_judge.conditions.deleted_none': 'Condition {id} not found.',
+    'goal_judge.conditions.cleared': 'All stop conditions cleared.',
     'goal_judge.conditions.type.label': 'Type:',
     'goal_judge.conditions.list_subcommands': 'Subcommands:',
-    'goal_judge.conditions.list_sub.list':
-      'List global stop conditions',
-    'goal_judge.conditions.list_sub.set':
-      'Add/update a stop condition',
-    'goal_judge.conditions.list_sub.delete':
-      'Remove a stop condition',
-    'goal_judge.conditions.list_sub.clear':
-      'Clear all stop conditions',
+    'goal_judge.conditions.list_sub.list': 'List global stop conditions',
+    'goal_judge.conditions.list_sub.set': 'Add/update a stop condition',
+    'goal_judge.conditions.list_sub.delete': 'Remove a stop condition',
+    'goal_judge.conditions.list_sub.clear': 'Clear all stop conditions',
     'goal_judge.conditions.list_set_flags': 'Set flags:',
-    'goal_judge.conditions.flag.add':
-      '--add=<id>              Condition ID (e.g., "no-ts-errors")',
-    'goal_judge.conditions.flag.desc':
-      '--desc=<text>           Human-readable description',
+    'goal_judge.conditions.flag.add': '--add=<id>              Condition ID (e.g., "no-ts-errors")',
+    'goal_judge.conditions.flag.desc': '--desc=<text>           Human-readable description',
     'goal_judge.conditions.flag.type':
       '--type=<type>           MUST_HAVE | MUST_NOT_HAVE | MUST_MATCH | MUST_BE_ABOVE | CUSTOM',
     'goal_judge.conditions.flag.pattern':
@@ -1405,19 +1249,14 @@ const translations: Record<Locale, Record<string, string>> = {
       '--threshold=<N>         Numeric threshold (for MUST_BE_ABOVE)',
     'goal_judge.conditions.flag.custom':
       '--custom=<prompt>       Custom evaluation prompt (for CUSTOM)',
-    'goal_judge.judge.empty':
-      'Usage: commander goal judge <task description>',
-    'goal_judge.judge.example':
-      'Example: commander goal judge "Fix all TypeScript errors in src/"',
-    'goal_judge.judge.running':
-      'Running independent goal judge...',
+    'goal_judge.judge.empty': 'Usage: commander goal judge <task description>',
+    'goal_judge.judge.example': 'Example: commander goal judge "Fix all TypeScript errors in src/"',
+    'goal_judge.judge.running': 'Running independent goal judge...',
     'goal_judge.help.run_intro':
       'Run an independent goal verification against defined stop conditions.',
     'goal_judge.help.usage_section': 'Usage:',
-    'goal_judge.help.usage.run':
-      'commander goal judge <task>',
-    'goal_judge.help.usage.conditions':
-      'commander goal conditions [cmd]',
+    'goal_judge.help.usage.run': 'commander goal judge <task>',
+    'goal_judge.help.usage.conditions': 'commander goal conditions [cmd]',
 
     // ── Debug intent (cmdDebugIntent) ────────────────────────────────
     'debug.title': 'Debug: Captured Intent Runs',
@@ -1428,13 +1267,10 @@ const translations: Record<Locale, Record<string, string>> = {
     'debug.intent.no_runs_hint_2':
       'Run a task first, then use commander debug intent <runId> to inspect.',
     'debug.intent.no_record': 'No intent record found for run:',
-    'debug.intent.no_record_hint':
-      'Intent may not have been captured for this run.',
-    'debug.intent.inspect_hint':
-      'Use commander debug intent to list captured runs.',
+    'debug.intent.no_record_hint': 'Intent may not have been captured for this run.',
+    'debug.intent.inspect_hint': 'Use commander debug intent to list captured runs.',
     'debug.intent.column': 'RunId',
-    'debug.intent.inspect_label':
-      'Inspect: commander debug intent <runId>',
+    'debug.intent.inspect_label': 'Inspect: commander debug intent <runId>',
     'debug.section.goal': 'GOAL',
     'debug.section.model_selection': 'MODEL SELECTION',
     'debug.section.strategy': 'STRATEGY SELECTION',
@@ -1446,10 +1282,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'debug.field.tier': 'Tier',
     'debug.field.model_not_recorded': 'Not recorded',
     'debug.field.topology': 'Topology',
-    'debug.no_trace':
-      'No execution trace found for this run.',
-    'debug.no_trace_hint':
-      'Traces are held in-memory and may have been evicted.',
+    'debug.no_trace': 'No execution trace found for this run.',
+    'debug.no_trace_hint': 'Traces are held in-memory and may have been evicted.',
     'debug.escalation.row': '{from} → {to}',
     'debug.escalation.reason': '{reason} ({timestamp})',
     'debug.verdict.status.success': 'SUCCESS',
@@ -1462,8 +1296,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'debug.verdict.errors': 'Errors',
     'debug.verdict.started': 'Started',
     'debug.verdict.completed': 'Completed',
-    'debug.verdict.confidence':
-      'PASSED · confidence: {pct}%',
+    'debug.verdict.confidence': 'PASSED · confidence: {pct}%',
     'debug.llm.label': 'LLM Calls ({n})',
     'debug.tool.label': 'Tool Calls ({n})',
     'debug.decision.label': 'Decisions ({n})',
@@ -1472,8 +1305,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'debug.llm.row': '{model} {tokens} tok {duration}',
     'debug.tool.row': '{name} {duration}{error}',
     'debug.routing_reason': 'Routing reason:',
-    'debug.estimated':
-      'Estimated: {agents} agents · {steps} steps · {tokens} tok · {duration}',
+    'debug.estimated': 'Estimated: {agents} agents · {steps} steps · {tokens} tok · {duration}',
     'debug.task_meta': '{task} · {effort}',
     'debug.confidence_suffix': 'Confidence: {pct}%',
 
@@ -1483,97 +1315,73 @@ const translations: Record<Locale, Record<string, string>> = {
     'up.no_api_key': 'No API key found for {provider}.',
     'up.run_init_probe': 'Run commander init --probe to configure.',
     'up.tui.url': 'Web TUI:',
-    'up.tui.api_only':
-      'Web TUI: {url} (API only — build with cd apps/web && npx vite build)',
-    'up.press_ctrl_c_to_stop':
-      'Press Ctrl+C to stop and freeze execution',
+    'up.tui.api_only': 'Web TUI: {url} (API only — build with cd apps/web && npx vite build)',
+    'up.press_ctrl_c_to_stop': 'Press Ctrl+C to stop and freeze execution',
     'up.task_complete': 'Task complete. Web TUI at {url}',
     'up.press_ctrl_c_to_exit': 'Press Ctrl+C to exit.',
     'up.freeze.section': 'NO FREEZE FOUND',
-    'up.freeze.no_manifest':
-      'No freeze manifest, but checkpoint dirs exist:',
-    'up.freeze.resume_hint':
-      'Resume with: commander resume <runId>',
-    'up.freeze.no_runs':
-      'No frozen runs or checkpoints found. Starting fresh.',
+    'up.freeze.no_manifest': 'No freeze manifest, but checkpoint dirs exist:',
+    'up.freeze.resume_hint': 'Resume with: commander resume <runId>',
+    'up.freeze.no_runs': 'No frozen runs or checkpoints found. Starting fresh.',
     'up.freeze.manifest_missing': 'Freeze manifest is empty.',
     'up.freeze.read_failed': 'Failed to read freeze manifest.',
-    'up.freeze.frozen_runs':
-      '{n} run(s) frozen at {timestamp}',
+    'up.freeze.frozen_runs': '{n} run(s) frozen at {timestamp}',
     'up.freeze.run_line': '► {runId}',
     'up.freeze.run_goal': 'Goal:',
     'up.freeze.run_state': 'State:',
     'up.freeze.run_resuming': 'Resuming...',
-    'up.freeze.missing_checkpoint':
-      '⚠ Checkpoint missing for {runId}, skipping.',
-    'up.freeze.corrupt_checkpoint':
-      '⚠ Corrupt checkpoint for {runId}, skipping.',
-    'up.freeze.resume_failed':
-      '✗ Resume failed for {runId} (lease lost or missing checkpoint)',
-    'up.freeze.recovered':
-      '{runId} recovered — {n} completed tool calls skipped',
-    'up.freeze.manifest_archived':
-      'Freeze manifest archived to {path}',
-    'up.freeze.all_recovered':
-      'All runs recovered. Use commander up "task" to continue.',
+    'up.freeze.missing_checkpoint': '⚠ Checkpoint missing for {runId}, skipping.',
+    'up.freeze.corrupt_checkpoint': '⚠ Corrupt checkpoint for {runId}, skipping.',
+    'up.freeze.resume_failed': '✗ Resume failed for {runId} (lease lost or missing checkpoint)',
+    'up.freeze.recovered': '{runId} recovered — {n} completed tool calls skipped',
+    'up.freeze.manifest_archived': 'Freeze manifest archived to {path}',
+    'up.freeze.all_recovered': 'All runs recovered. Use commander up "task" to continue.',
 
     // ── Sandbox (cmdSandbox) ─────────────────────────────────────────
     'sandbox.title': 'Sandbox Status',
     'sandbox.available': 'yes',
     'sandbox.unavailable': 'no (UNSANDBOXED)',
     'sandbox.mechanisms': 'Mechanisms:',
-    'sandbox.profiles':
-      'read-only, workspace-write, full-access, hardened',
-    'sandbox.unknown_sub':
-      'Unknown sandbox subcommand: {name}',
+    'sandbox.profiles': 'read-only, workspace-write, full-access, hardened',
+    'sandbox.unknown_sub': 'Unknown sandbox subcommand: {name}',
     'sandbox.usage': 'Usage: commander sandbox status',
 
     // ── REPL (startRepl) ────────────────────────────────────────────
     'repl.banner.title': 'Commander REPL',
-    'repl.banner.subtitle':
-      'type a task — same as the CLI',
+    'repl.banner.subtitle': 'type a task — same as the CLI',
     'repl.banner.examples.header': 'Examples:',
     'repl.banner.examples.run_desc': '# execute a task',
-    'repl.banner.examples.dry_run_desc':
-      '# deliberate only, no API call',
+    'repl.banner.examples.dry_run_desc': '# deliberate only, no API call',
     'repl.banner.examples.review_desc': '# review code changes',
     'repl.banner.examples.status_desc': '# see providers / API keys',
     'repl.banner.examples.doctor_desc': '# diagnose issues',
     'repl.banner.examples.help_desc': '# built-ins',
     'repl.banner.examples.exit_desc': '/ Ctrl-D # leave the REPL',
-    'repl.banner.multiline':
-      'Multi-line input: end a line with \\ \\ to continue.',
-    'repl.banner.tab':
-      'TAB completion: commands + built-ins + flags.',
+    'repl.banner.multiline': 'Multi-line input: end a line with \\ \\ to continue.',
+    'repl.banner.tab': 'TAB completion: commands + built-ins + flags.',
     'repl.env_loaded_one': '📄 .env loaded: {path}',
     'repl.env_loaded_header': '📄 .env loaded from:',
     'repl.builtins.help': 'Show this help',
-    'repl.builtins.exit':
-      'Leave the REPL (also works: Ctrl-D)',
+    'repl.builtins.exit': 'Leave the REPL (also works: Ctrl-D)',
     'repl.builtins.clear': 'Clear the screen',
     'repl.builtins.header': 'Built-ins',
     'repl.prompt': 'commander> ',
     'repl.cont_hint': '      …',
     'repl.transcript.off': 'off (use --profile)',
     'repl.transcript.saved': 'Transcript saved: {path}',
-    'repl.transcript.start':
-      'commander REPL transcript — started at {ts}',
-    'repl.transcript.end':
-      'commander REPL transcript — ended at {ts}',
+    'repl.transcript.start': 'commander REPL transcript — started at {ts}',
+    'repl.transcript.end': 'commander REPL transcript — ended at {ts}',
     'repl.transcript.prompt': '[{ts}] > {input}',
-    'repl.transcript.tab_hint':
-      'TAB completions: commands, flags, built-ins',
+    'repl.transcript.tab_hint': 'TAB completions: commands, flags, built-ins',
     'repl.bye': 'Bye.',
 
     // ── Env loader (loadEnvUp) ───────────────────────────────────────
     'env.feature_missing':
       'commander: process.loadEnvFile requires Node ≥20.6; present={nodeVersion}. Skipping .env auto-load.',
-    'env.parse_failed':
-      'commander: failed to parse {path} ({message}). Continuing without it.',
+    'env.parse_failed': 'commander: failed to parse {path} ({message}). Continuing without it.',
 
     // ── CLI rate limit hint (mention in error path) ────────────────
-    'rate_limit.costly_set':
-      'run, company, swarm, drive, review, fix',
+    'rate_limit.costly_set': 'run, company, swarm, drive, review, fix',
   },
 
   'zh-CN': {
@@ -1611,19 +1419,15 @@ const translations: Record<Locale, Record<string, string>> = {
     'quickstart.need_attention': '{n} 项检查需要关注',
     'quickstart.summary.section': '摘要',
     'quickstart.all_good': '✓ 一切就绪！',
-    'quickstart.run_first_task_hint':
-      '运行 commander "你的第一个任务" 以开始。',
-    'quickstart.fix_and_verify':
-      '修复后，运行 commander quickstart --check 复查。',
+    'quickstart.run_first_task_hint': '运行 commander "你的第一个任务" 以开始。',
+    'quickstart.fix_and_verify': '修复后，运行 commander quickstart --check 复查。',
     'quickstart.first_steps': '你的前几步任务',
-    'quickstart.try.these':
-      '试试这些以熟悉 Commander：',
+    'quickstart.try.these': '试试这些以熟悉 Commander：',
     'quickstart.example.1': 'commander "解释这个代码库"',
     'quickstart.example.1.desc': '快速分析 — 无需额外配置',
     'quickstart.example.2': 'commander plan "构建 REST API"',
     'quickstart.example.2.desc': '再运行前查看多智能体计划',
-    'quickstart.example.3':
-      'commander run "修复所有 TypeScript 错误"',
+    'quickstart.example.3': 'commander run "修复所有 TypeScript 错误"',
     'quickstart.example.3.desc': '完整流水线并执行',
     'quickstart.example.4': 'commander watch "重构认证模块"',
     'quickstart.example.4.desc': '智能体工作中实时显示进度',
@@ -1632,13 +1436,10 @@ const translations: Record<Locale, Record<string, string>> = {
     'quickstart.example.6': 'commander doctor',
     'quickstart.example.6.desc': '如出问题可运行诊断',
     'quickstart.pro_tips': '小贴士：',
-    'quickstart.tip.treat_as_task':
-      '任何未识别的命令都会视为任务：commander fix the login bug',
+    'quickstart.tip.treat_as_task': '任何未识别的命令都会视为任务：commander fix the login bug',
     'quickstart.tip.help': '任何命令都可使用 --help 查看选项',
-    'quickstart.tip.config_test':
-      '使用 commander config test 验证 API 连接',
-    'quickstart.tip.mode_auto_edit':
-      '使用 commander mode auto-edit 跳过审批',
+    'quickstart.tip.config_test': '使用 commander config test 验证 API 连接',
+    'quickstart.tip.mode_auto_edit': '使用 commander mode auto-edit 跳过审批',
     'quickstart.structure': '项目结构',
 
     // ── Pre-check labels & fixes ───────────────────────────────────
@@ -1652,8 +1453,7 @@ const translations: Record<Locale, Record<string, string>> = {
       'export OPENAI_API_KEY=sk-...（或 ANTHROPIC_API_KEY、GOOGLE_API_KEY 等）',
     'quickcheck.fix.git': '安装 git: https://git-scm.com',
     'quickcheck.workspace.found': '找到 .commander/',
-    'quickcheck.workspace.package_json':
-      '找到 package.json（运行任何命令即可初始化 .commander/）',
+    'quickcheck.workspace.package_json': '找到 package.json（运行任何命令即可初始化 .commander/）',
     'quickcheck.workspace.standalone': '（独立模式）',
     'quickcheck.tools_configured': '已配置 {n} 个工具',
     'quickcheck.provider_run_hint': '{type} · {model}',
@@ -1668,8 +1468,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'doctor.all.passed': '所有检查通过 ✓',
     'doctor.needs.attention': '部分检查需要关注',
     'doctor.check.node': 'Node.js v20+',
-    'doctor.check.node_current':
-      '当前：{version}。请从 https://nodejs.org 安装',
+    'doctor.check.node_current': '当前：{version}。请从 https://nodejs.org 安装',
     'doctor.check.git': 'Git',
     'doctor.check.git_version': '{version}',
     'doctor.check.git_missing': '未找到。安装：https://git-scm.com',
@@ -1677,31 +1476,26 @@ const translations: Record<Locale, Record<string, string>> = {
     'doctor.check.pm_unknown': '未知',
     'doctor.check.pm_no_lockfile': '未找到 lockfile',
     'doctor.check.api_key': 'API key',
-    'doctor.check.api_key_missing':
-      '请设置 OPENAI_API_KEY、ANTHROPIC_API_KEY 等',
+    'doctor.check.api_key_missing': '请设置 OPENAI_API_KEY、ANTHROPIC_API_KEY 等',
     'doctor.check.api_key_value': '{type} · {model}',
     'doctor.check.packages': '已安装的包',
     'doctor.check.packages_missing': '运行: pnpm install',
     'doctor.check.commander_dir': '.commander/ 目录',
     'doctor.check.commander_dir.found': '已找到',
-    'doctor.check.commander_dir.missing':
-      '未找到（首次运行时会自动创建）',
+    'doctor.check.commander_dir.missing': '未找到（首次运行时会自动创建）',
     'doctor.check.tools_configured': '已配置的工具',
     'doctor.check.tools_count': '{n} 个工具',
     'doctor.check.disk_space': '磁盘空间',
     'doctor.check.disk_space.low': ' — 空间不足',
-    'doctor.connectivity.testing':
-      '正在测试 {provider} 于 {url}...',
+    'doctor.connectivity.testing': '正在测试 {provider} 于 {url}...',
     'doctor.connectivity.reachable': 'API 可达（HTTP {status}）',
     'doctor.connectivity.http_error': 'API 返回 HTTP {status}',
     'doctor.connectivity.invalid_key': '→ API key 无效。请检查凭证。',
     'doctor.connectivity.rate_limited': '→ 被限流。请稍后再试。',
     'doctor.connectivity.unreachable': 'API 不可达',
-    'doctor.connectivity.dns_failed':
-      '→ DNS 解析失败。请检查网络。',
+    'doctor.connectivity.dns_failed': '→ DNS 解析失败。请检查网络。',
     'doctor.connectivity.refused': '→ 连接被拒绝。服务是否运行？',
-    'doctor.connectivity.timeout':
-      '→ 连接超时。请检查网络/防火墙。',
+    'doctor.connectivity.timeout': '→ 连接超时。请检查网络/防火墙。',
 
     // ── Status ──────────────────────────────────────────────────────
     'status.title': '系统状态',
@@ -1720,28 +1514,24 @@ const translations: Record<Locale, Record<string, string>> = {
     'status.field.strategies': '策略',
     'status.field.avg_success': '平均成功率',
     'status.section.optimizations': '优化项',
-    'status.optimization.row':
-      '{type}: {from} → {to}（{pct}%）',
+    'status.optimization.row': '{type}: {from} → {to}（{pct}%）',
     'status.section.shadow_mode': '影子模式',
     'status.shadow.last_run': '{main} 对比 {shadow}',
     'status.shadow.main_result_yes': '✓',
     'status.shadow.main_result_no': '✗',
     'status.shadow.shadow_result_yes': '✓',
     'status.shadow.shadow_result_no': '✗',
-    'status.shadow.better_hint':
-      '{strategy} 在上一次运行中表现会更好',
+    'status.shadow.better_hint': '{strategy} 在上一次运行中表现会更好',
     'status.shadow.total': '影子对照数',
     'status.cached_results': '缓存结果数',
-    'status.meta_debug_load_failed':
-      '加载 MetaLearner 统计失败：{message}',
+    'status.meta_debug_load_failed': '加载 MetaLearner 统计失败：{message}',
 
     // ── Config ──────────────────────────────────────────────────────
     'config.title': '配置',
     'config.set': '设置：',
     'config.test': '测试 API 连接',
     'config.show': '{content}',
-    'config.set.theme_usage':
-      'commander config set theme <dark|light|minimal>',
+    'config.set.theme_usage': 'commander config set theme <dark|light|minimal>',
     'config.set.model_usage': 'commander config set model <model-id>',
     'config.set.meta_tools': 'commander config set meta-tools on',
     'config.list_models': 'commander config list-models',
@@ -1750,15 +1540,11 @@ const translations: Record<Locale, Record<string, string>> = {
     'config.set.usage': 'commander config set <key> <value>',
     'config.set.theme_unknown': '未知主题："{theme}"',
     'config.set.theme_available': '可用的：{themes}',
-    'config.set.theme_no_color':
-      'NO_COLOR=1 禁用所有颜色（https://no-color.org）',
+    'config.set.theme_no_color': 'NO_COLOR=1 禁用所有颜色（https://no-color.org）',
     'config.set.theme_done': 'theme = {theme}',
-    'config.set.theme_persist_hint':
-      '主题已在当前会话生效。持久化：export COMMANDER_THEME={theme}',
-    'config.list_providers.subtitle':
-      '设置任意 API key 环境变量以激活提供者：',
-    'config.list_providers.legend':
-      '  ✓ = 已配置  ~ = 通过 OPENAI_API_KEY  (空格) = 未设置',
+    'config.set.theme_persist_hint': '主题已在当前会话生效。持久化：export COMMANDER_THEME={theme}',
+    'config.list_providers.subtitle': '设置任意 API key 环境变量以激活提供者：',
+    'config.list_providers.legend': '  ✓ = 已配置  ~ = 通过 OPENAI_API_KEY  (空格) = 未设置',
     'config.test.no_key': '未找到 API key。请设置环境变量。',
     'config.test.section': '测试中',
     'config.test.provider': '提供者',
@@ -1769,12 +1555,9 @@ const translations: Record<Locale, Record<string, string>> = {
     'config.test.connection_failed': '! 连接失败',
     'config.canary_status.title': '金丝雀部署',
     'config.canary_status.none_active': '当前无活跃的金丝雀部署。',
-    'config.canary_status.intro':
-      '金丝雀部署由 EvolverAgent 自动创建——',
-    'config.canary_status.intro2':
-      '当 EvolverAgent 检测失败模式并提出配置变更时。',
-    'config.canary_status.intro3':
-      '金丝雀部署会以 10% 的比例安全地验证配置变更。',
+    'config.canary_status.intro': '金丝雀部署由 EvolverAgent 自动创建——',
+    'config.canary_status.intro2': '当 EvolverAgent 检测失败模式并提出配置变更时。',
+    'config.canary_status.intro3': '金丝雀部署会以 10% 的比例安全地验证配置变更。',
     'config.canary_status.status': '状态',
     'config.canary_status.promoted': '已提升',
     'config.canary_status.rejected': '已拒绝',
@@ -1796,8 +1579,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'error.run.doctor': '运行 commander doctor 诊断问题。',
     'error.run.quickstart': '运行 commander quickstart 查看设置指南。',
     'error_messages.api.not_available': '无可用的 LLM 提供者。',
-    'error_messages.api.provider_not_available':
-      '提供者 "{provider}" 不可用。请检查 API key。',
+    'error_messages.api.provider_not_available': '提供者 "{provider}" 不可用。请检查 API key。',
     'error_messages.run.no_task': '未提供任务。',
     'error_messages.run.no_task.usage': '用法：',
     'error_messages.run.no_task.example': '示例：',
@@ -1807,8 +1589,7 @@ const translations: Record<Locale, Record<string, string>> = {
       '无效的 --effort="{value}"。允许: {allowed}。{hint} 运行 commander run --help',
     'error_messages.invalid_topology':
       '无效的 --topology="{value}"。允许: {allowed}。{hint} 运行 commander run --help',
-    'error_messages.invalid_quality_threshold':
-      '无效的 --quality-threshold="{value}"。',
+    'error_messages.invalid_quality_threshold': '无效的 --quality-threshold="{value}"。',
     'error_messages.quality_threshold_hint':
       '必须为 0 到 1 之间的数字（如 0.8）。运行 commander run --help',
     'error_messages.did_you_mean': ' 你是不是想用 --{flag}={value}？',
@@ -1824,14 +1605,11 @@ const translations: Record<Locale, Record<string, string>> = {
     'mode.fullauto': '无审批门控',
     'mode.title.curr': '模式',
     'mode.label.suggest': 'Suggest 模式 — 风险操作前提示',
-    'mode.label.autoedit':
-      'Auto-edit 模式 — 允许大部分操作，标记沙箱逃逸',
+    'mode.label.autoedit': 'Auto-edit 模式 — 允许大部分操作，标记沙箱逃逸',
     'mode.label.fullauto': 'Full-auto 模式 — 无审批门控',
-    'mode.label.readonly':
-      'Read-only 模式 — 不写入，不执行破坏性操作',
+    'mode.label.readonly': 'Read-only 模式 — 不写入，不执行破坏性操作',
     'mode.label.plan': 'Plan 模式 — 仅分析，不修改',
-    'mode.set_cmd':
-      'commander mode <plan|read-only|auto-edit|full-auto|suggest>',
+    'mode.set_cmd': 'commander mode <plan|read-only|auto-edit|full-auto|suggest>',
     'mode.invalid': '无效模式："{mode}"',
     'mode.valid_list': '有效模式：',
     'mode.set_done': '模式已设置为 {mode}',
@@ -1844,10 +1622,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'history.prune': '清理：',
     'history.del': '删除：',
     'history.view.deleted_session': '已删除会话 {runId}',
-    'history.view.prune.usage':
-      '用法：commander history prune <keep-count>',
-    'history.view.pruned':
-      '已精简至 {keep} 个会话（删除 {removed} 个）',
+    'history.view.prune.usage': '用法：commander history prune <keep-count>',
+    'history.view.pruned': '已精简至 {keep} 个会话（删除 {removed} 个）',
     'history.list.total': '总数',
     'history.detail.title': '会话详情',
     'history.detail.run_id': 'Run ID',
@@ -1860,22 +1636,15 @@ const translations: Record<Locale, Record<string, string>> = {
     'history.detail.timestamp': '时间戳',
     'history.detail.error': '错误',
     'history.detail.tools': '工具',
-    'history.error.failed_to_read':
-      '读取会话历史失败：{message}',
-    'history.error.check_dir':
-      '检查 .commander/ 目录是否存在且可读。',
+    'history.error.failed_to_read': '读取会话历史失败：{message}',
+    'history.error.check_dir': '检查 .commander/ 目录是否存在且可读。',
     'history.error.session_not_found': '未找到会话：{runId}',
-    'history.error.session_not_found_hint':
-      '运行 commander history 查看可用会话。',
-    'history.error.failed_to_load':
-      '加载会话失败：{message}',
-    'history.error.session_corrupt':
-      '会话文件可能已损坏或缺失。',
+    'history.error.session_not_found_hint': '运行 commander history 查看可用会话。',
+    'history.error.failed_to_load': '加载会话失败：{message}',
+    'history.error.session_corrupt': '会话文件可能已损坏或缺失。',
     'history.view_hint_view': '查看：commander history view <runId>',
-    'history.view_hint_prune':
-      '清理：commander history prune <keep-count>',
-    'history.view_hint_del':
-      '删除：commander history delete <runId>',
+    'history.view_hint_prune': '清理：commander history prune <keep-count>',
+    'history.view_hint_del': '删除：commander history delete <runId>',
     'history.phase.completed': '已完成',
     'history.phase.failed': '失败',
     'history.phase.started': '已启动',
@@ -1896,8 +1665,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'workflow.run': '执行工作流',
     'workflow.schedule': '调度工作流',
     'workflow.daemon': '启动调度守护进程',
-    'workflow.run.usage':
-      '用法：commander workflow run <workflow-id>',
+    'workflow.run.usage': '用法：commander workflow run <workflow-id>',
     'workflow.run.not_found': '未找到工作流 "{id}"',
     'workflow.run.error.no_api_key': '未找到 API 密钥。',
     'workflow.run.executing': '→ 正在执行工作流：{name}',
@@ -1907,21 +1675,17 @@ const translations: Record<Locale, Record<string, string>> = {
     'workflow.run.partial_marker': '部分',
     'workflow.run.fail_marker': '失败',
     'workflow.run.error_prefix': '✗',
-    'workflow.schedule.usage':
-      '用法：commander workflow schedule <workflow-id> --cron="0 6 * * 1"',
+    'workflow.schedule.usage': '用法：commander workflow schedule <workflow-id> --cron="0 6 * * 1"',
     'workflow.schedule.not_found': '未找到工作流 "{id}"',
     'workflow.schedule.confirmed': '已调度 "{name}"',
     'workflow.schedule.trigger_label': 'trigger: {label}',
     'workflow.schedule.id_label': 'id: {id}',
-    'workflow.unschedule.usage':
-      '用法：commander workflow unschedule <schedule-id>',
+    'workflow.unschedule.usage': '用法：commander workflow unschedule <schedule-id>',
     'workflow.unschedule.removed': '已移除调度 {id}',
     'workflow.unschedule.not_found': '未找到调度 "{id}"',
-    'workflow.pause.usage':
-      '未找到调度。用法：commander workflow pause <schedule-id>',
+    'workflow.pause.usage': '未找到调度。用法：commander workflow pause <schedule-id>',
     'workflow.pause.paused': '已暂停调度 {id}',
-    'workflow.resume.usage':
-      '未找到调度。用法：commander workflow resume <schedule-id>',
+    'workflow.resume.usage': '未找到调度。用法：commander workflow resume <schedule-id>',
     'workflow.resume.resumed': '已恢复调度 {id}',
     'workflow.history.empty': '未找到执行记录',
     'workflow.history.header': '执行历史',
@@ -1946,8 +1710,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'skill.misc.list_empty': '未找到技能。',
     'skill.misc.list_header': '技能（{count}）',
     'skill.misc.pin_indicator': '📌',
-    'skill.misc.list_meta':
-      'quality: {pct}% · uses: {n} · {category} · [{tags}]',
+    'skill.misc.list_meta': 'quality: {pct}% · uses: {n} · {category} · [{tags}]',
     'skill.misc.view_usage': '用法：commander skill view <name>',
     'skill.misc.view_not_found': '未找到技能 "{name}"',
     'skill.misc.view_header': '技能：{name}',
@@ -1956,22 +1719,19 @@ const translations: Record<Locale, Record<string, string>> = {
     'skill.misc.view_tags': '标签',
     'skill.misc.view_quality': '质量',
     'skill.misc.view_usage_field': '使用情况',
-    'skill.misc.view_usage_value':
-      '{n} · 成功率：{pct}%',
+    'skill.misc.view_usage_value': '{n} · 成功率：{pct}%',
     'skill.misc.view_pinned': '已固定',
     'skill.misc.view_pinned_yes': '是',
     'skill.misc.view_pinned_no': '否',
     'skill.misc.view_source': '来源',
     'skill.misc.view_created': '创建时间',
-    'skill.misc.create_usage':
-      '用法：commander skill create <name> [description]',
+    'skill.misc.create_usage': '用法：commander skill create <name> [description]',
     'skill.misc.created': '已创建技能 "{name}"',
     'skill.misc.pin_usage': '用法：commander skill pin <name>',
     'skill.misc.pinned': '已固定 "{name}"',
     'skill.misc.unpin_usage': '用法：commander skill unpin <name>',
     'skill.misc.unpinned': '取消固定 "{name}"',
-    'skill.misc.delete_usage':
-      '用法：commander skill delete <name>',
+    'skill.misc.delete_usage': '用法：commander skill delete <name>',
     'skill.misc.deleted': '已删除 "{name}"',
     'skill.misc.curate_header': '整理',
     'skill.misc.curate_spinner': '运行策展器中...',
@@ -1987,8 +1747,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'completion.script': '脚本',
     'completion.add.to': '添加到你的',
     'completion.unknown_shell': '未知 shell："{name}"',
-    'completion.usage':
-      '用法：commander completion [bash|zsh|fish|install]',
+    'completion.usage': '用法：commander completion [bash|zsh|fish|install]',
     'completion.already_configured': '已在 {path} 中配置',
     'completion.restart_hint': '重启你的 shell 或者运行：source {rc}',
     'completion.add_to_rc': '添加到你的 {rc}：',
@@ -2008,10 +1767,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'onboarding.env_vars.glm': 'GLM（智谱）',
     'onboarding.env_vars.mimo': 'MiMo（专用）',
     'onboarding.env_vars.xiaomi': '小米 MiMo',
-    'onboarding.env_vars.ollama':
-      'Ollama（本地）— http://localhost:11434/v1',
-    'onboarding.env_vars.vllm':
-      'vLLM（本地）— http://localhost:8000/v1',
+    'onboarding.env_vars.ollama': 'Ollama（本地）— http://localhost:11434/v1',
+    'onboarding.env_vars.vllm': 'vLLM（本地）— http://localhost:8000/v1',
     'onboarding.env_vars.cohere': 'Cohere',
     'onboarding.env_vars.mistral': 'Mistral AI',
     'onboarding.env_vars.groq': 'Groq（高速推理）',
@@ -2019,8 +1776,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'onboarding.env_vars.perplexity': 'Perplexity',
     'onboarding.env_vars.fireworks': 'Fireworks AI',
     'onboarding.env_vars.replicate': 'Replicate',
-    'onboarding.env_vars.aws_bedrock':
-      'AWS Bedrock（需要 AWS_SECRET_ACCESS_KEY）',
+    'onboarding.env_vars.aws_bedrock': 'AWS Bedrock（需要 AWS_SECRET_ACCESS_KEY）',
 
     // ── Run ─────────────────────────────────────────────────────────
     'run.no_task': '未提供任务。',
@@ -2028,10 +1784,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'run.example_usage': '示例：',
     'run.usage.template': 'commander run "{task}"',
     'run.example.analyze': 'commander run "分析此代码库"',
-    'run.tui.dashboard_started':
-      '终端仪表盘已在子进程中启动（PID: {pid}）',
-    'run.tui.could_not_start':
-      '无法启动 TUI 仪表盘 — 请在另一个终端运行：commander tui',
+    'run.tui.dashboard_started': '终端仪表盘已在子进程中启动（PID: {pid}）',
+    'run.tui.could_not_start': '无法启动 TUI 仪表盘 — 请在另一个终端运行：commander tui',
     'run.sse.agent_started': '已启动',
     'run.sse.agent_completed': '已完成',
     'run.sse.agent_completed_tokens': '已完成 · {tokens} tok',
@@ -2094,22 +1848,22 @@ const translations: Record<Locale, Record<string, string>> = {
     'showcase.full_report': '完整报告',
     'showcase.error.showcase_failed': '演示失败：{message}',
     'showcase.error.check_api_key': '请检查 API 密钥和网络连接。',
-    'showcase.error.run_init':
-      '运行 commander init 验证提供者连通性。',
+    'showcase.error.run_init': '运行 commander init 验证提供者连通性。',
 
     // ── Plan ────────────────────────────────────────────────────────
     'plan.section': '计划',
     'plan.summary.section': '摘要',
-    'plan.task_label':
-      '{type} · {effort} 力度 · {topology} 拓扑',
+    'plan.task_label': '{type} · {effort} 力度 · {topology} 拓扑',
     'plan.agents': '智能体数',
     'plan.steps': '步骤数',
     'plan.confidence': '置信度',
     'plan.external_info_yes': '是',
     'plan.external_info_no': '否',
+    'plan.duration.label': '耗时',
+    'plan.task_nature.label': '任务性质',
+    'plan.speculation.label': '推测',
     'plan.tokens': 'Token',
-    'plan.tokens_breakdown':
-      '{total}（思考: {thinking}, 执行: {execution}）',
+    'plan.tokens_breakdown': '{total}（思考: {thinking}, 执行: {execution}）',
     'plan.duration': '{seconds}秒（每智能体: {perAgent}秒）',
     'plan.task_nature.IO': 'IO_BOUND',
     'plan.task_nature.COMPUTE': 'COMPUTE_BOUND',
@@ -2151,6 +1905,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'company.quality.confidence': '置信度',
     'company.summary.section': '总结',
     'company.engine_stats': '引擎统计',
+    'company.spinner': '正在执行 Company 引擎...',
     'company.stats.total_executions': '总执行次数',
     'company.stats.avg_quality': '平均质量',
     'company.stats.avg_tokens': '平均 Token',
@@ -2169,10 +1924,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'saga.run.nodes_with_arrow': '{count}（{order}）',
     'saga.error.missing_saga_name': '缺少 saga 名称',
     'saga.error.unknown_saga': '未知 saga "{name}"',
-    'saga.suggest.run_examples':
-      '运行 commander saga examples 查看可用的 saga',
-    'saga.list.empty':
-      '未找到运行记录。运行：commander saga run order-fulfillment',
+    'saga.suggest.run_examples': '运行 commander saga examples 查看可用的 saga',
+    'saga.list.empty': '未找到运行记录。运行：commander saga run order-fulfillment',
     'saga.list.cols': 'RUN ID | 状态 | 更新时间',
     'saga.run.header.count': '{count} 个运行{plural}',
     'saga.status.header': '状态：{runId}',
@@ -2184,16 +1937,13 @@ const translations: Record<Locale, Record<string, string>> = {
     'saga.status.nodes_header': '节点：',
     'saga.error.missing_run_id': '缺少 runId',
     'saga.error.run_not_found': '未找到 run "{runId}"',
-    'saga.resume.note_finalized':
-      'run "{runId}" 已处于 {state} 状态；无可恢复内容',
+    'saga.resume.note_finalized': 'run "{runId}" 已处于 {state} 状态；无可恢复内容',
     'saga.resume.rebuilding': '正在恢复 run — 从快照重建 saga...',
     'saga.resume.snapshot_state': 'snapshot:      {state}',
     'saga.resume.events_total': 'events total:  {count}',
     'saga.resume.events_since': 'events since:  {count}',
-    'saga.resume.warning.no_nodes':
-      '快照中未找到节点状态；无可恢复内容',
-    'saga.resume.all_completed':
-      '✓ 所有节点已完成 — 运行成功',
+    'saga.resume.warning.no_nodes': '快照中未找到节点状态；无可恢复内容',
+    'saga.resume.all_completed': '✓ 所有节点已完成 — 运行成功',
     'saga.resume.field.completed': 'completed:  {done}/{total}',
     'saga.resume.field.pending': 'pending:     {pending}/{total}',
     'saga.resume.field.nodes': 'nodes:       {names}',
@@ -2201,14 +1951,12 @@ const translations: Record<Locale, Record<string, string>> = {
     'saga.resume.result': '恢复结果：',
     'saga.resume.no_definition': '未找到 saga 定义 "{name}"。',
     'saga.resume.manual_inspect': '快照可手动检查于：',
-    'saga.approve.error.usage':
-      '用法: commander saga {decision} <runId> <nodeId> [--by=<user>]',
+    'saga.approve.error.usage': '用法: commander saga {decision} <runId> <nodeId> [--by=<user>]',
     'saga.approve.recorded_label': 'by',
     'saga.examples.header': '{count} 个内置示例',
     'saga.examples.nodes_label': '节点：',
     'saga.subcommand.run': '运行内置示例 saga',
-    'saga.subcommand.list':
-      '列出所有运行（已提交、已中止、进行中）',
+    'saga.subcommand.list': '列出所有运行（已提交、已中止、进行中）',
     'saga.subcommand.status': '查看运行的快照',
     'saga.subcommand.resume': '检查可恢复的运行',
     'saga.subcommand.approve': '批准待处理审批',
@@ -2216,19 +1964,15 @@ const translations: Record<Locale, Record<string, string>> = {
     'saga.subcommand.examples': '列出内置示例 saga',
     'saga.help.intro': 'commander saga — 管理 saga 运行',
     'saga.flag.input': '--input=<json>        Saga 输入（JSON）',
-    'saga.flag.run_id':
-      '--run-id=<id>         自定义 run ID（默认: <name>-<timestamp>）',
-    'saga.flag.timeout':
-      '--timeout=<ms>        总超时（默认: 60000）',
-    'saga.flag.in_memory':
-      '--in-memory           使用内存存储（不落盘）',
+    'saga.flag.run_id': '--run-id=<id>         自定义 run ID（默认: <name>-<timestamp>）',
+    'saga.flag.timeout': '--timeout=<ms>        总超时（默认: 60000）',
+    'saga.flag.in_memory': '--in-memory           使用内存存储（不落盘）',
     'saga.error.could_not_recover': '无法恢复 {runId}',
     'saga.result.label.error': 'error:',
     'saga.result.label.results': 'results:',
     'saga.result.label.summary': 'summary:',
     'saga.result.label.duration_ms': '({ms}ms)',
-    'saga.recover_hint':
-      '使用以下命令恢复运行：commander saga resume {runId}',
+    'saga.recover_hint': '使用以下命令恢复运行：commander saga resume {runId}',
 
     // ── Goal ────────────────────────────────────────────────────────
     'goal.field.provider': '提供者',
@@ -2248,8 +1992,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'goal.improvement.improving': '改进中',
     'goal.improvement.plateaued': '已平稳',
     'goal.history.section': '轮次历史',
-    'goal.history.row':
-      '第 {n} 轮：{findings} 个发现 · {pct}% 改进 · {decision}',
+    'goal.history.row': '第 {n} 轮：{findings} 个发现 · {pct}% 改进 · {decision}',
 
     // ── Swarm ───────────────────────────────────────────────────────
     'swarm.field.mode': '模式',
@@ -2293,10 +2036,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'drive.status.failed': '失败',
 
     // ── Checkpoint ──────────────────────────────────────────────────
-    'checkpoint.prune.no_op':
-      '仅有 {total} 个 checkpoint — 无可清理（keep={keep}）',
-    'checkpoint.prune.done':
-      '已清理 {removed} 个旧 checkpoint（保留最新 {kept} 个）',
+    'checkpoint.prune.no_op': '仅有 {total} 个 checkpoint — 无可清理（keep={keep}）',
+    'checkpoint.prune.done': '已清理 {removed} 个旧 checkpoint（保留最新 {kept} 个）',
     'checkpoint.view.header': 'Checkpoint — {runId}',
     'checkpoint.view.not_found': '未找到 run {runId} 的 checkpoint',
     'checkpoint.view.version': '版本：',
@@ -2323,17 +2064,14 @@ const translations: Record<Locale, Record<string, string>> = {
     'checkpoint.list.empty':
       '暂无 checkpoint。在执行过程中将自动写入 checkpoint（20%、45%、70% 预算时）。',
     'checkpoint.list.header': 'Checkpoints（{count}）',
-    'checkpoint.list.cols_trigger':
-      'Trigger: {label} | {bar} | v{version}{budget}',
+    'checkpoint.list.cols_trigger': 'Trigger: {label} | {bar} | v{version}{budget}',
     'checkpoint.list.bar.empty': '无任务',
     'checkpoint.list.written': '写入时间：{time} | {kb}KB',
 
     // ── Intelligence ───────────────────────────────────────────────
-    'intelligence.title':
-      'Commander 智能 — 我学到的内容',
+    'intelligence.title': 'Commander 智能 — 我学到的内容',
     'intelligence.section.meta_learner': 'META-LEARNER',
-    'intelligence.empty.experiences':
-      '暂无经验记录。运行一些任务以建立学习数据。',
+    'intelligence.empty.experiences': '暂无经验记录。运行一些任务以建立学习数据。',
     'intelligence.meta.experiences': '经验：',
     'intelligence.meta.strategies': '策略：',
     'intelligence.meta.success_rate': '成功率：',
@@ -2341,39 +2079,28 @@ const translations: Record<Locale, Record<string, string>> = {
     'intelligence.section.top_strategies': '顶级策略',
     'intelligence.strategy.bar': '{runs} 次运行 · p95 {p95}',
     'intelligence.section.regression_alerts': '回退警告',
-    'intelligence.regression.row':
-      '{strategy} on {model}: 下降 {pct}%（{from}% → {to}%）',
+    'intelligence.regression.row': '{strategy} on {model}: 下降 {pct}%（{from}% → {to}%）',
     'intelligence.section.suggestions': '建议',
     'intelligence.section.skills': '技能',
-    'intelligence.empty.skills':
-      '尚未提取技能。技能会在成功的运行中自动提取。',
+    'intelligence.empty.skills': '尚未提取技能。技能会在成功的运行中自动提取。',
     'intelligence.skills.summary': '{count} 个技能（{cats}）',
     'intelligence.skills.row': '{usage}× · {pct}%',
-    'intelligence.skills.more':
-      '... 还有 {count} 个（用 --skills 查看完整列表）',
+    'intelligence.skills.more': '... 还有 {count} 个（用 --skills 查看完整列表）',
     'intelligence.section.failure_patterns': '失败模式',
-    'intelligence.empty.patterns':
-      '尚未发现模式。模式会在反复失败中浮现。',
-    'intelligence.patterns.summary':
-      '{count} 个模式（{active} 个活跃，出现≥2 次）',
-    'intelligence.patterns.row':
-      '{desc}  {n}× · {confidence} 置信度',
-    'intelligence.patterns.more':
-      '... 还有 {count} 个（用 --patterns 查看完整列表）',
+    'intelligence.empty.patterns': '尚未发现模式。模式会在反复失败中浮现。',
+    'intelligence.patterns.summary': '{count} 个模式（{active} 个活跃，出现≥2 次）',
+    'intelligence.patterns.row': '{desc}  {n}× · {confidence} 置信度',
+    'intelligence.patterns.more': '... 还有 {count} 个（用 --patterns 查看完整列表）',
     'intelligence.section.overview': '概览',
     'intelligence.overview.experiences': '经验：',
     'intelligence.overview.strategies': '策略：',
     'intelligence.overview.success': '平均成功率：',
     'intelligence.overview.reflections': '反思：',
-    'intelligence.section.strategy_perf':
-      '策略表现（Thompson 采样）',
+    'intelligence.section.strategy_perf': '策略表现（Thompson 采样）',
     'intelligence.empty.strategies': '尚无策略数据。',
-    'intelligence.strategy.bar.full':
-      '{runs} 次运行 · p95 {p95} · avg {avg}',
-    'intelligence.section.task_type_scores':
-      '按任务类型的策略评分',
-    'intelligence.task_type_strategy.row':
-      '{strategy}: {pct}%（{trials} 次试验{p95}）',
+    'intelligence.strategy.bar.full': '{runs} 次运行 · p95 {p95} · avg {avg}',
+    'intelligence.section.task_type_scores': '按任务类型的策略评分',
+    'intelligence.task_type_strategy.row': '{strategy}: {pct}%（{trials} 次试验{p95}）',
     'intelligence.task_type.p95_suffix': ' · p95 {p95}',
     'intelligence.section.optimization_suggestions': '优化建议',
     'intelligence.section.prediction_loop': '预测循环',
@@ -2390,8 +2117,7 @@ const translations: Record<Locale, Record<string, string>> = {
       '{uses} 次使用 · {pct}% 成功率 · {tools} 个工具 · 上次使用 {ago}',
     'intelligence.skills.steps': '步骤：{steps}',
     'intelligence.skills.more_steps': ' …',
-    'intelligence.skills.stored_at':
-      '技能存储于 .commander/intelligence/extracted-skills.json',
+    'intelligence.skills.stored_at': '技能存储于 .commander/intelligence/extracted-skills.json',
     'intelligence.failure_patterns.empty':
       '尚未记录失败模式。\n当同一类型的失败在多次运行中重复时会检测模式。\n出现 2 次以上后，Commander 会主动给出警告。',
     'intelligence.failure_patterns.occurrences': '出现次数：',
@@ -2424,8 +2150,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'experience.reset.warning.all': '这将重置所有学习经验：',
     'experience.reset.warning.skills': '提取的技能',
     'experience.reset.warning.patterns': '失败模式',
-    'experience.reset.warning.meta':
-      'MetaLearner（Thompson 先验、反思、策略评分）',
+    'experience.reset.warning.meta': 'MetaLearner（Thompson 先验、反思、策略评分）',
     'experience.reset.warning.meta_short': 'MetaLearner 状态',
     'experience.reset.confirm_prompt': '继续？[y/N]',
     'experience.reset.cancelled': '已取消。',
@@ -2457,12 +2182,9 @@ const translations: Record<Locale, Record<string, string>> = {
     'feedback.message.thanks': '感谢您的反馈！',
     'feedback.section.quick': '快速反馈',
     'feedback.section.examples': '示例',
-    'feedback.example.rating':
-      'commander feedback --rating=4 --message="watch 命令很好用！"',
-    'feedback.example.bug':
-      'commander feedback --bug="无网络时崩溃"',
-    'feedback.example.feature':
-      'commander feedback --feature="为 TUI 加上深色主题"',
+    'feedback.example.rating': 'commander feedback --rating=4 --message="watch 命令很好用！"',
+    'feedback.example.bug': 'commander feedback --bug="无网络时崩溃"',
+    'feedback.example.feature': 'commander feedback --feature="为 TUI 加上深色主题"',
     'feedback.type.icon.bug': '🐛',
     'feedback.type.icon.feature': '💡',
     'feedback.type.icon.rating': '⭐',
@@ -2505,8 +2227,7 @@ const translations: Record<Locale, Record<string, string>> = {
     // ── Budget ──────────────────────────────────────────────────────
     'budget.not_found': 'run {runId} 未找到预算',
     'budget.list.empty': '无活跃的 token 预算。',
-    'budget.list.empty_hint':
-      "运行 'commander run \"<goal>\"' 以查看预算跟踪。",
+    'budget.list.empty_hint': '运行 \'commander run "<goal>"\' 以查看预算跟踪。',
     'budget.list.header': 'Token 预算（{count} 活跃）',
     'budget.detail.title': 'Token 预算：{runId}',
     'budget.detail.field.status': '状态',
@@ -2524,8 +2245,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'budget.phase.exceeded': '⛔ 超限',
     'budget.subagents.header': '子智能体（{count}）',
     'budget.subagents.over_budget': '⚠️  超支 {n} token',
-    'budget.summary.agents':
-      '{n} 个子智能体，{over} 个超出预算',
+    'budget.summary.agents': '{n} 个子智能体，{over} 个超出预算',
 
     // ── Review ──────────────────────────────────────────────────────
     'review.section.title': '代码审查',
@@ -2557,15 +2277,13 @@ const translations: Record<Locale, Record<string, string>> = {
     'help.flag.dry_run': '只展示计划，不执行',
     'help.flag.stream': '实时 SSE 进度',
     'help.flag.tui': '带实时拓扑的终端面板',
-    'help.flag.mode_balanced':
-      'balanced（默认）, fast, thorough, goal',
+    'help.flag.mode_balanced': 'balanced（默认）, fast, thorough, goal',
     'help.flag.provider': '强制指定提供者（openai, anthropic 等）',
     'help.flag.budget': 'Token 预算（默认: 100000）',
     'help.section.management': '管理',
     'help.mgmt.init': '扫描环境，测试提供者，保存 fallback 链',
     'help.mgmt.doctor': '运行诊断',
-    'help.mgmt.mode':
-      '审批模式（plan|read-only|suggest|auto-edit|full-auto）',
+    'help.mgmt.mode': '审批模式（plan|read-only|suggest|auto-edit|full-auto）',
     'help.mgmt.skill': '管理可学习技能（list, view, create, curate）',
     'help.mgmt.gui': '启动 Agent 作战室网页面板',
     'help.section.advanced': '高级执行',
@@ -2616,8 +2334,7 @@ const translations: Record<Locale, Record<string, string>> = {
     // ── Small features ─────────────────────────────────────────────
     'small_features.ask.title': 'Commander Ask — 快速问答模式',
     'small_features.ask.question': '问题：',
-    'small_features.ask.no_provider':
-      '未配置 LLM 提供者。请先运行 commander init。',
+    'small_features.ask.no_provider': '未配置 LLM 提供者。请先运行 commander init。',
     'small_features.ask.answer': '回答：',
     'small_features.ask.no_output': '（无输出）',
     'small_features.ask.status': '状态：',
@@ -2633,8 +2350,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'small_features.cost.no_records':
       '在 .commander_samples/llm_calls.ndjson 未找到 LLM 调用记录。',
     'small_features.cost.run_first': '先运行一个任务：commander run "<task>"',
-    'small_features.cost.parse_errors':
-      '注: llm_calls.ndjson 中跳过 {n} 行格式异常的行。',
+    'small_features.cost.parse_errors': '注: llm_calls.ndjson 中跳过 {n} 行格式异常的行。',
     'small_features.cost.filters_applied': '已应用筛选：{filters}',
     'small_features.cost.error': '计算成本时出错：{message}',
     'small_features.undo.title': 'Commander Undo',
@@ -2642,48 +2358,39 @@ const translations: Record<Locale, Record<string, string>> = {
     'small_features.undo.hint': '要撤销 Commander 的变更，可使用：',
     'small_features.undo.checkout': 'git checkout -- <file>     还原指定文件',
     'small_features.undo.stash': 'git stash                  暂存所有变更',
-    'small_features.undo.reset':
-      'git reset --hard HEAD      丢弃所有变更（破坏性）',
+    'small_features.undo.reset': 'git reset --hard HEAD      丢弃所有变更（破坏性）',
     'small_features.undo.no_changes': '没有可撤销的变更。',
     'small_features.approval_history.title': '审批历史',
     'small_features.approval_history.empty': '未找到审批历史。',
     'small_features.approval_history.recent': '最近审批：',
     'small_features.approval_history.total': '总条目：{n}',
-    'small_features.approval_history.error':
-      '读取审批历史失败：{message}',
+    'small_features.approval_history.error': '读取审批历史失败：{message}',
     'small_features.resume.title': 'Commander Resume — 崩溃恢复',
     'small_features.resume.empty': '未找到可恢复的运行。',
     'small_features.resume.header': '可恢复的运行：',
     'small_features.resume.run_hint': '恢复：commander resume <runId>',
     'small_features.resume.attempting': '正在尝试恢复 run {runId}...',
-    'small_features.resume.failed':
-      '恢复失败。Checkpoint 可能不存在或租约丢失。',
-    'small_features.resume.list_hint':
-      '运行 commander resume --list 查看可用的 checkpoint。',
+    'small_features.resume.failed': '恢复失败。Checkpoint 可能不存在或租约丢失。',
+    'small_features.resume.list_hint': '运行 commander resume --list 查看可用的 checkpoint。',
     'small_features.resume.recovered': '已从 checkpoint 恢复运行',
     'small_features.resume.status': '状态：',
     'small_features.resume.resume_from_step': '从步骤恢复：',
     'small_features.resume.completed_tool_calls': '已完成的工具调用：',
     'small_features.resume.phase': '阶段：',
     'small_features.resume.goal': '目标：',
-    'small_features.resume.continue_hint':
-      '使用 commander run "<continue>" 继续执行。',
+    'small_features.resume.continue_hint': '使用 commander run "<continue>" 继续执行。',
     'small_features.resume.error': '错误：{message}',
-    'small_features.compensation.title':
-      'Commander Compensation — 持久化重试队列',
+    'small_features.compensation.title': 'Commander Compensation — 持久化重试队列',
     'small_features.compensation.queue_summary': '队列摘要：',
     'small_features.compensation.pending': '待处理：',
     'small_features.compensation.in_progress': '进行中：',
     'small_features.compensation.escalated': '已升级：',
     'small_features.compensation.commands_section': '命令：',
-    'small_features.compensation.cmd.list':
-      'commander compensation list',
+    'small_features.compensation.cmd.list': 'commander compensation list',
     'small_features.compensation.cmd.list_desc': '查看所有队列项',
-    'small_features.compensation.cmd.retry':
-      'commander compensation retry <id>',
+    'small_features.compensation.cmd.retry': 'commander compensation retry <id>',
     'small_features.compensation.cmd.retry_desc': '重试已升级项',
-    'small_features.compensation.list.header':
-      '补偿队列项（{count}）：',
+    'small_features.compensation.list.header': '补偿队列项（{count}）：',
     'small_features.compensation.list.tool': '工具：',
     'small_features.compensation.list.run': '运行：',
     'small_features.compensation.list.attempts': '尝试次数：',
@@ -2694,30 +2401,25 @@ const translations: Record<Locale, Record<string, string>> = {
     'small_features.compensation.list.empty': '补偿队列为空。',
     'small_features.compensation.retry.missing_id':
       '缺少项 ID。用法：commander compensation retry <id>',
-    'small_features.compensation.retry.success':
-      '项 {id} 已重置为待处理，将立即重试。',
-    'small_features.compensation.retry.failed':
-      '项 {id} 不存在或不在已升级状态。',
+    'small_features.compensation.retry.success': '项 {id} 已重置为待处理，将立即重试。',
+    'small_features.compensation.retry.failed': '项 {id} 不存在或不在已升级状态。',
     'small_features.compensation.unknown_sub': '未知子命令：{name}',
     'small_features.compensation.unknown_usage':
       '用法: commander compensation [list|retry <id>|status]',
     'small_features.compensation.error': '错误：{message}',
-    'small_features.compensation.sqlite_hint':
-      '补偿队列需要 better-sqlite3。',
+    'small_features.compensation.sqlite_hint': '补偿队列需要 better-sqlite3。',
     'small_features.trace.title': 'Commander 跟踪',
     'small_features.trace.no_traces': '未找到跟踪。请先运行一个任务。',
     'small_features.trace.no_traces_short': '未找到跟踪。',
     'small_features.trace.recent': '最近跟踪：',
     'small_features.trace.total': '总计：{n} 条跟踪',
-    'small_features.trace.otel_hint':
-      '查看 OpenTelemetry: http://localhost:16686 (Jaeger)',
+    'small_features.trace.otel_hint': '查看 OpenTelemetry: http://localhost:16686 (Jaeger)',
     'small_features.trace.success_status': '成功',
     'small_features.trace.failed_status': '失败',
     'small_features.trace.error': '错误：{message}',
     'small_features.trace.sqlite_hint':
       '补偿队列需要 better-sqlite3。安装：pnpm add better-sqlite3',
-    'small_features.trace.run_doctor_hint':
-      '运行 commander doctor 诊断。',
+    'small_features.trace.run_doctor_hint': '运行 commander doctor 诊断。',
 
     // ── Convenience ─────────────────────────────────────────────────
     'convenience.pr.title': 'Commander PR — 创建 Pull Request',
@@ -2727,13 +2429,11 @@ const translations: Record<Locale, Record<string, string>> = {
     'convenience.pr.generating': '正在生成 PR 描述...',
     'convenience.pr.description': '描述：',
     'convenience.pr.create': '创建 PR：',
-    'convenience.pr.create_cmd':
-      'gh pr create --title "{desc}" --body "..."',
+    'convenience.pr.create_cmd': 'gh pr create --title "{desc}" --body "..."',
     'convenience.pr.dry_run_hint': '使用 --dry-run 预览而不真正创建。',
     'convenience.pr.error': '错误：{message}',
     'convenience.commit.title': 'Commander Commit — 智能提交',
-    'convenience.commit.no_staged':
-      '无已暂存变更。请先使用 git add。',
+    'convenience.commit.no_staged': '无已暂存变更。请先使用 git add。',
     'convenience.commit.staged': '已暂存变更：',
     'convenience.commit.suggested': '建议提交：',
     'convenience.commit.run_hint': '运行: git commit -m "{type}: {file}"',
@@ -2741,8 +2441,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'convenience.fix.title': 'Commander Fix — 自动修复',
     'convenience.fix.running_eslint': '运行 ESLint fix...',
     'convenience.fix.eslint_ok': '已应用 ESLint 修复',
-    'convenience.fix.eslint_warn':
-      'ESLint 发现问题（部分可能需要手动修复）',
+    'convenience.fix.eslint_warn': 'ESLint 发现问题（部分可能需要手动修复）',
     'convenience.fix.running_prettier': '运行 Prettier fix...',
     'convenience.fix.prettier_ok': '已应用 Prettier 格式化',
     'convenience.fix.prettier_warn': 'Prettier 出现问题',
@@ -2777,10 +2476,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'convenience.test.error': '错误：{message}',
     'convenience.refactor.title': 'Commander Refactor',
     'convenience.refactor.description': '描述：',
-    'convenience.refactor.full_hint':
-      '要执行完整重构，请使用：commander run "refactor: {desc}"',
-    'convenience.refactor.preview_hint':
-      '要预览请使用：commander run "refactor: {desc}" --dry-run',
+    'convenience.refactor.full_hint': '要执行完整重构，请使用：commander run "refactor: {desc}"',
+    'convenience.refactor.preview_hint': '要预览请使用：commander run "refactor: {desc}" --dry-run',
     'convenience.learn.title': 'Commander Learn — 代码库分析',
     'convenience.learn.project': '项目：',
     'convenience.learn.project_unknown': '未知',
@@ -2816,8 +2513,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'init.field.redis.missing': '未配置',
     'init.field.kubernetes.in_cluster': '集群内（{ns}）',
     'init.field.kubernetes.missing': '未检测到',
-    'init.test_progress':
-      '正在测试 {n} 个提供者的连通性（{ms}ms 超时）...',
+    'init.test_progress': '正在测试 {n} 个提供者的连通性（{ms}ms 超时）...',
     'init.provider_status.reachable': '可用',
     'init.provider_status.auth': '认证错',
     'init.provider_status.timeout': '超时',
@@ -2830,12 +2526,9 @@ const translations: Record<Locale, Record<string, string>> = {
     'init.tests_summary.auth_errors': '，{n} 个认证错误',
     'init.section.no_reachable': '未找到可用提供者。',
     'init.section.fallback_chain': '推荐的 fallback 链',
-    'init.fallback_chain.delegate_quickstart':
-      '正在启动 commander quickstart 以协助配置...',
-    'init.fallback_chain.quickstart_failed':
-      'Quickstart 失败：{message}',
-    'init.fallback_chain.set_api_key_hint':
-      '请设置 API key（如 OPENAI_API_KEY）后重试。',
+    'init.fallback_chain.delegate_quickstart': '正在启动 commander quickstart 以协助配置...',
+    'init.fallback_chain.quickstart_failed': 'Quickstart 失败：{message}',
+    'init.fallback_chain.set_api_key_hint': '请设置 API key（如 OPENAI_API_KEY）后重试。',
     'init.config_saved': '配置已保存到 .commander.json',
     'init.config_provider_line': '提供者: {p}  模型: {m}',
     'init.config_fallback_line': 'Fallback: {chain}',
@@ -2867,7 +2560,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'goal_judge.section.evidence': '证据：',
     'goal_judge.conditions.empty': '未设置全局停止条件。',
     'goal_judge.conditions.list_hint':
-      "使用 'commander goal conditions set --id=<id> --desc=\"...\" --type=MUST_HAVE' 添加一个。",
+      '使用 \'commander goal conditions set --id=<id> --desc="..." --type=MUST_HAVE\' 添加一个。',
     'goal_judge.conditions.header': '全局停止条件',
     'goal_judge.conditions.added': '已添加停止条件 {id}。',
     'goal_judge.conditions.deleted': '已删除条件 {id}。',
@@ -2880,10 +2573,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'goal_judge.conditions.list_sub.delete': '移除停止条件',
     'goal_judge.conditions.list_sub.clear': '清空所有停止条件',
     'goal_judge.conditions.list_set_flags': '设置参数：',
-    'goal_judge.conditions.flag.add':
-      '--add=<id>               条件 ID（如 "no-ts-errors"）',
-    'goal_judge.conditions.flag.desc':
-      '--desc=<text>            人可读的描述',
+    'goal_judge.conditions.flag.add': '--add=<id>               条件 ID（如 "no-ts-errors"）',
+    'goal_judge.conditions.flag.desc': '--desc=<text>            人可读的描述',
     'goal_judge.conditions.flag.type':
       '--type=<type>            MUST_HAVE | MUST_NOT_HAVE | MUST_MATCH | MUST_BE_ABOVE | CUSTOM',
     'goal_judge.conditions.flag.pattern':
@@ -2893,11 +2584,9 @@ const translations: Record<Locale, Record<string, string>> = {
     'goal_judge.conditions.flag.custom':
       '--custom=<prompt>         自定义评估 prompt（适用于 CUSTOM）',
     'goal_judge.judge.empty': '用法：commander goal judge <task description>',
-    'goal_judge.judge.example':
-      '示例：commander goal judge "修复 src/ 下的所有 TypeScript 错误"',
+    'goal_judge.judge.example': '示例：commander goal judge "修复 src/ 下的所有 TypeScript 错误"',
     'goal_judge.judge.running': '运行独立目标判定中...',
-    'goal_judge.help.run_intro':
-      '基于已定义的停止条件进行独立目标验证。',
+    'goal_judge.help.run_intro': '基于已定义的停止条件进行独立目标验证。',
     'goal_judge.help.usage_section': '用法：',
     'goal_judge.help.usage.run': 'commander goal judge <task>',
     'goal_judge.help.usage.conditions': 'commander goal conditions [cmd]',
@@ -2906,14 +2595,11 @@ const translations: Record<Locale, Record<string, string>> = {
     'debug.title': '调试：已记录的运行意图',
     'debug.intent.title': '意图调试',
     'debug.intent.no_runs': '未找到已记录意图的运行。',
-    'debug.intent.no_runs_hint_1':
-      '运行会通过完整流水线（commander run）记录意图。',
-    'debug.intent.no_runs_hint_2':
-      '请先运行一个任务，再使用 commander debug intent <runId> 检查。',
+    'debug.intent.no_runs_hint_1': '运行会通过完整流水线（commander run）记录意图。',
+    'debug.intent.no_runs_hint_2': '请先运行一个任务，再使用 commander debug intent <runId> 检查。',
     'debug.intent.no_record': '未找到 run 的意图记录：',
     'debug.intent.no_record_hint': '此运行可能未被记录意图。',
-    'debug.intent.inspect_hint':
-      '使用 commander debug intent 列出已记录的运行。',
+    'debug.intent.inspect_hint': '使用 commander debug intent 列出已记录的运行。',
     'debug.intent.column': '运行 ID',
     'debug.intent.inspect_label': '检查：commander debug intent <runId>',
     'debug.section.goal': '目标',
@@ -2950,8 +2636,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'debug.llm.row': '{model} {tokens} tok {duration}',
     'debug.tool.row': '{name} {duration}{error}',
     'debug.routing_reason': '路由原因：',
-    'debug.estimated':
-      '估算: {agents} 个智能体 · {steps} 步 · {tokens} tok · {duration}',
+    'debug.estimated': '估算: {agents} 个智能体 · {steps} 步 · {tokens} tok · {duration}',
     'debug.task_meta': '{task} · {effort}',
     'debug.confidence_suffix': '置信度：{pct}%',
 
@@ -2961,17 +2646,14 @@ const translations: Record<Locale, Record<string, string>> = {
     'up.no_api_key': '未找到 {provider} 的 API key。',
     'up.run_init_probe': '运行 commander init --probe 进行配置。',
     'up.tui.url': 'Web TUI：',
-    'up.tui.api_only':
-      'Web TUI：{url}（仅 API — 通过 cd apps/web && npx vite build 构建）',
+    'up.tui.api_only': 'Web TUI：{url}（仅 API — 通过 cd apps/web && npx vite build 构建）',
     'up.press_ctrl_c_to_stop': '按 Ctrl+C 停止并冻结执行',
     'up.task_complete': '任务完成。Web TUI 在 {url}',
     'up.press_ctrl_c_to_exit': '按 Ctrl+C 退出。',
     'up.freeze.section': '未找到冻结',
     'up.freeze.no_manifest': '无冻结清单，但存在 checkpoint 目录：',
-    'up.freeze.resume_hint':
-      '通过以下命令恢复：commander resume <runId>',
-    'up.freeze.no_runs':
-      '未找到冻结运行或 checkpoint。新建。',
+    'up.freeze.resume_hint': '通过以下命令恢复：commander resume <runId>',
+    'up.freeze.no_runs': '未找到冻结运行或 checkpoint。新建。',
     'up.freeze.manifest_missing': '冻结清单为空。',
     'up.freeze.read_failed': '读取冻结清单失败。',
     'up.freeze.frozen_runs': '{n} 个运行在 {timestamp} 已冻结',
@@ -2979,17 +2661,12 @@ const translations: Record<Locale, Record<string, string>> = {
     'up.freeze.run_goal': '目标：',
     'up.freeze.run_state': '状态：',
     'up.freeze.run_resuming': '正在恢复...',
-    'up.freeze.missing_checkpoint':
-      '⚠ {runId} 的 checkpoint 缺失，已跳过。',
-    'up.freeze.corrupt_checkpoint':
-      '⚠ {runId} 的 checkpoint 已损坏，已跳过。',
-    'up.freeze.resume_failed':
-      '✗ 恢复 {runId} 失败（租约丢失或 checkpoint 缺失）',
-    'up.freeze.recovered':
-      '{runId} 已恢复 — 跳过 {n} 个已完成的工具调用',
+    'up.freeze.missing_checkpoint': '⚠ {runId} 的 checkpoint 缺失，已跳过。',
+    'up.freeze.corrupt_checkpoint': '⚠ {runId} 的 checkpoint 已损坏，已跳过。',
+    'up.freeze.resume_failed': '✗ 恢复 {runId} 失败（租约丢失或 checkpoint 缺失）',
+    'up.freeze.recovered': '{runId} 已恢复 — 跳过 {n} 个已完成的工具调用',
     'up.freeze.manifest_archived': '冻结清单已归档于 {path}',
-    'up.freeze.all_recovered':
-      '所有运行已恢复。使用 commander up "task" 继续。',
+    'up.freeze.all_recovered': '所有运行已恢复。使用 commander up "task" 继续。',
 
     // ── Sandbox ─────────────────────────────────────────────────────
     'sandbox.title': '沙箱状态',
@@ -3032,8 +2709,7 @@ const translations: Record<Locale, Record<string, string>> = {
     // ── Env loader ──────────────────────────────────────────────────
     'env.feature_missing':
       'commander: process.loadEnvFile 需要 Node ≥20.6；当前={nodeVersion}。已跳过 .env 自动载入。',
-    'env.parse_failed':
-      'commander: 解析 {path} 失败（{message}）。继续但不使用。',
+    'env.parse_failed': 'commander: 解析 {path} 失败（{message}）。继续但不使用。',
 
     // ── CLI rate limit hint ────────────────────────────────────────
     'rate_limit.costly_set': 'run, company, swarm, drive, review, fix',
