@@ -31,6 +31,7 @@ import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import type { SecurityEvent } from './securityAuditLogger';
 import { getCurrentTenantId } from '../runtime/tenantContext';
+import { getMetricsCollector } from '../runtime/metricsCollector';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { recordSinkFailure } from '../observability/sinkFailureCounter';
 
@@ -67,7 +68,11 @@ export interface LineageNode {
 }
 
 /** Event written to the audit chain on lineage changes. */
-export type LineageEventType = 'agent_spawned' | 'agent_terminated' | 'agent_revoked' | 'agent_handoff';
+export type LineageEventType =
+  | 'agent_spawned'
+  | 'agent_terminated'
+  | 'agent_revoked'
+  | 'agent_handoff';
 
 /** Summary of a lineage tree for API responses. */
 export interface LineageSummary {
@@ -193,6 +198,17 @@ export class AgentLineage {
     // Write lineage event to audit chain
     this.auditLineageEvent('agent_spawned', node);
 
+    try {
+      getMetricsCollector().incrementCounter(
+        'agent_lineage_spawns_total',
+        'Agent lineage spawn events',
+        1,
+        [{ name: 'agent_id', value: childAgentId }],
+      );
+    } catch {
+      /* best-effort */
+    }
+
     return node;
   }
 
@@ -279,7 +295,7 @@ export class AgentLineage {
       const id = queue.shift()!;
       if (visited.has(id)) continue;
       visited.add(id);
-      
+
       const node = this.nodes.get(id);
       if (!node) continue;
 
@@ -287,7 +303,10 @@ export class AgentLineage {
       if (node.capabilityTokenJti) {
         try {
           const { getCapabilityTokenIssuer } = require('./capabilityToken');
-          getCapabilityTokenIssuer().revoke(node.capabilityTokenJti, `lineage_tree_revoke: ${reason}`);
+          getCapabilityTokenIssuer().revoke(
+            node.capabilityTokenJti,
+            `lineage_tree_revoke: ${reason}`,
+          );
         } catch {
           /* best-effort — token revocation is separate from lineage marking */
         }

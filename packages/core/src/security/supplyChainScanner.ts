@@ -25,7 +25,11 @@
 
 import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
-import { scanSkillContent, SecurityScanResult, SecurityWarning } from '../skills/skillSecurityScanner';
+import {
+  scanSkillContent,
+  SecurityScanResult,
+  SecurityWarning,
+} from '../skills/skillSecurityScanner';
 import { getCurrentTenantId } from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { recordSinkFailure } from '../observability/sinkFailureCounter';
@@ -456,11 +460,7 @@ export class SupplyChainScanner {
     }
 
     const riskLevel =
-      knownVulnerableDeps.length > 0
-        ? 'high'
-        : unverifiedDeps.length > 2
-          ? 'medium'
-          : 'low';
+      knownVulnerableDeps.length > 0 ? 'high' : unverifiedDeps.length > 2 ? 'medium' : 'low';
 
     return {
       totalDependencies: deps.length,
@@ -483,14 +483,29 @@ export class SupplyChainScanner {
     let exceedsWorkspace = false;
     let accessesProtected = false;
 
-    const PROTECTED_PATHS = ['/etc/', '/usr/', '/bin/', '/boot/', '/dev/', '/proc/', '/sys/', '/root/', '/var/log/', '/private/'];
+    const PROTECTED_PATHS = [
+      '/etc/',
+      '/usr/',
+      '/bin/',
+      '/boot/',
+      '/dev/',
+      '/proc/',
+      '/sys/',
+      '/root/',
+      '/var/log/',
+      '/private/',
+    ];
 
     for (const fp of filePerms) {
       if (fp.access === 'read') readsPaths.push(fp.path);
       if (fp.access === 'write') writesPaths.push(fp.path);
       if (fp.access === 'delete' || fp.access === 'execute') deletesPaths.push(fp.path);
 
-      if (fp.path.startsWith('/') && !fp.path.startsWith('/tmp/') && !fp.path.startsWith('/workspace/')) {
+      if (
+        fp.path.startsWith('/') &&
+        !fp.path.startsWith('/tmp/') &&
+        !fp.path.startsWith('/workspace/')
+      ) {
         exceedsWorkspace = true;
       }
 
@@ -515,7 +530,12 @@ export class SupplyChainScanner {
 
     const fileRisk = accessesProtected ? 'high' : exceedsWorkspace ? 'medium' : 'low';
     const netRisk = allowsArbitraryUrls ? 'high' : allowsInternalNetwork ? 'medium' : 'low';
-    const riskLevel = fileRisk === 'high' || netRisk === 'high' ? 'high' : fileRisk === 'medium' || netRisk === 'medium' ? 'medium' : 'low';
+    const riskLevel =
+      fileRisk === 'high' || netRisk === 'high'
+        ? 'high'
+        : fileRisk === 'medium' || netRisk === 'medium'
+          ? 'medium'
+          : 'low';
 
     return {
       fileAccess: { readsPaths, writesPaths, deletesPaths, exceedsWorkspace, accessesProtected },
@@ -546,7 +566,11 @@ export class SupplyChainScanner {
     }
 
     const trustLevel: ProvenanceAssessment['trustLevel'] =
-      prov.verifiedBy && prov.signature ? 'verified' : prov.source === 'marketplace' ? 'community' : 'untrusted';
+      prov.verifiedBy && prov.signature
+        ? 'verified'
+        : prov.source === 'marketplace'
+          ? 'community'
+          : 'untrusted';
 
     return {
       source: prov.source,
@@ -621,7 +645,12 @@ export class SupplyChainScanner {
 
   // ── Audit Chain ──────────────────────────────────────────────────────
 
-  private auditScan(name: string, scanId: string, result: SupplyChainScanResult, durationMs: number): void {
+  private auditScan(
+    name: string,
+    scanId: string,
+    result: SupplyChainScanResult,
+    durationMs: number,
+  ): void {
     try {
       getAuditChainLedger().logEvent({
         type: 'security_scan',

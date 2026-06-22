@@ -40,6 +40,7 @@ import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import { getCurrentTenantId } from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+import { getMetricsCollector } from '../runtime/metricsCollector';
 import { recordSinkFailure } from '../observability/sinkFailureCounter';
 
 // ============================================================================
@@ -242,7 +243,8 @@ const DETECTION_RULES: RedactionRule[] = [
   // ── Private Keys (critical) ────────────────────────────────────────────
   {
     category: 'private_key',
-    pattern: /-----BEGIN\s+(?:RSA\s+|EC\s+|DSA\s+|OPENSSH\s+)?PRIVATE\s+KEY-----\s*[\s\S]*?-----END\s+(?:RSA\s+|EC\s+|DSA\s+|OPENSSH\s+)?PRIVATE\s+KEY-----/g,
+    pattern:
+      /-----BEGIN\s+(?:RSA\s+|EC\s+|DSA\s+|OPENSSH\s+)?PRIVATE\s+KEY-----\s*[\s\S]*?-----END\s+(?:RSA\s+|EC\s+|DSA\s+|OPENSSH\s+)?PRIVATE\s+KEY-----/g,
     strategy: 'remove',
     label: 'Private key block (PEM)',
   },
@@ -441,6 +443,19 @@ export class OutputSanitizer {
     const outputHash = this.config.hashOutput ? this.hashString(sanitized) : '';
     const durationMs = Date.now() - startTime;
 
+    if (totalRedactions > 0) {
+      try {
+        getMetricsCollector().incrementCounter(
+          'output_sanitizer_redactions_total',
+          'Output sanitizer redaction events',
+          totalRedactions,
+          [{ name: 'category', value: records[0]?.category ?? 'unknown' }],
+        );
+      } catch {
+        /* best-effort */
+      }
+    }
+
     // Audit every sanitization event
     if (this.config.auditEnabled && totalRedactions > 0) {
       this.auditSanitization(sanitized, records, totalRedactions, context, durationMs);
@@ -551,12 +566,10 @@ export class OutputSanitizer {
    */
   private buildEffectiveRules(): RedactionRule[] {
     const skipSet = new Set(this.config.skipCategories);
-    return DETECTION_RULES.filter((rule) => !skipSet.has(rule.category)).map(
-      (rule) => {
-        const override = this.config.strategyOverrides[rule.category];
-        return override ? { ...rule, strategy: override } : rule;
-      },
-    );
+    return DETECTION_RULES.filter((rule) => !skipSet.has(rule.category)).map((rule) => {
+      const override = this.config.strategyOverrides[rule.category];
+      return override ? { ...rule, strategy: override } : rule;
+    });
   }
 
   /**
@@ -635,17 +648,16 @@ export class OutputSanitizer {
 
       audit.logEvent({
         type: 'security_scan',
-        severity:
-          records.some(
-            (r) =>
-              r.category === 'api_key' ||
-              r.category === 'private_key' ||
-              r.category === 'cloud_credential',
-          )
-            ? 'critical'
-            : records.some((r) => r.category === 'password_secret' || r.category === 'jwt_token')
-              ? 'high'
-              : 'medium',
+        severity: records.some(
+          (r) =>
+            r.category === 'api_key' ||
+            r.category === 'private_key' ||
+            r.category === 'cloud_credential',
+        )
+          ? 'critical'
+          : records.some((r) => r.category === 'password_secret' || r.category === 'jwt_token')
+            ? 'high'
+            : 'medium',
         source: `OutputSanitizer${context?.source ? `:${context.source}` : ''}`,
         message: `Sanitized ${totalRedactions} sensitive value(s): ${uniqueCategories.join(', ')}`,
         details: {
@@ -711,9 +723,7 @@ export function sanitizeIfNeeded(
 // Singleton
 // ============================================================================
 
-const outputSanitizerSingleton = createTenantAwareSingleton(
-  () => new OutputSanitizer(),
-);
+const outputSanitizerSingleton = createTenantAwareSingleton(() => new OutputSanitizer());
 
 export function getOutputSanitizer(): OutputSanitizer {
   return outputSanitizerSingleton.get();
