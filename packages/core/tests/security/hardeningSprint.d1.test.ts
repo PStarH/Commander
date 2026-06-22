@@ -33,10 +33,7 @@ import {
   CAPABILITY_TOKEN_KEY_ENV,
   resolveMasterKey as resolveCapabilityTokenKey,
 } from '../../src/security/capabilityToken';
-import {
-  FEDERATION_KEY_ENV,
-  resolveFederationKey,
-} from '../../src/security/federatedIdentity';
+import { FEDERATION_KEY_ENV, resolveFederationKey } from '../../src/security/federatedIdentity';
 
 describe('D1 hardening sprint — production fail-fast', () => {
   let savedNodeEnv: string | undefined;

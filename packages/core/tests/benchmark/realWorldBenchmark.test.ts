@@ -29,7 +29,7 @@ async function callStepFun(request: {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${STEPFUN_API_KEY}`,
+      Authorization: `Bearer ${STEPFUN_API_KEY}`,
     },
     body: JSON.stringify({
       model: STEPFUN_MODEL,
@@ -51,14 +51,38 @@ async function callStepFun(request: {
 }
 
 const REAL_TASKS = [
-  { name: 'auth_fix', goal: 'Fix the JWT token validation in our Express middleware - tokens are being rejected even when valid' },
-  { name: 'api_refactor', goal: 'Refactor the user service to use dependency injection and add proper error handling for database connection failures' },
-  { name: 'security_audit', goal: 'Audit this codebase for SQL injection vulnerabilities and add parameterized queries where needed' },
-  { name: 'perf_optimize', goal: 'Optimize the slow /api/search endpoint - it currently takes 3 seconds to return results' },
-  { name: 'test_coverage', goal: 'Add integration tests for the authentication flow covering token refresh, expiration, and invalid tokens' },
-  { name: 'feature_impl', goal: 'Implement WebSocket support for real-time notifications with proper connection management and reconnection logic' },
-  { name: 'debug_memory', goal: 'Debug the memory leak in the WebSocket connection handler - heap usage grows 50MB per hour' },
-  { name: 'cicd_setup', goal: 'Set up GitHub Actions CI/CD pipeline with linting, testing, and Docker deployment to AWS ECS' },
+  {
+    name: 'auth_fix',
+    goal: 'Fix the JWT token validation in our Express middleware - tokens are being rejected even when valid',
+  },
+  {
+    name: 'api_refactor',
+    goal: 'Refactor the user service to use dependency injection and add proper error handling for database connection failures',
+  },
+  {
+    name: 'security_audit',
+    goal: 'Audit this codebase for SQL injection vulnerabilities and add parameterized queries where needed',
+  },
+  {
+    name: 'perf_optimize',
+    goal: 'Optimize the slow /api/search endpoint - it currently takes 3 seconds to return results',
+  },
+  {
+    name: 'test_coverage',
+    goal: 'Add integration tests for the authentication flow covering token refresh, expiration, and invalid tokens',
+  },
+  {
+    name: 'feature_impl',
+    goal: 'Implement WebSocket support for real-time notifications with proper connection management and reconnection logic',
+  },
+  {
+    name: 'debug_memory',
+    goal: 'Debug the memory leak in the WebSocket connection handler - heap usage grows 50MB per hour',
+  },
+  {
+    name: 'cicd_setup',
+    goal: 'Set up GitHub Actions CI/CD pipeline with linting, testing, and Docker deployment to AWS ECS',
+  },
 ];
 
 const REAL_QUERIES = [
@@ -96,7 +120,12 @@ describe('Real-World Benchmarks (StepFun API)', () => {
         latencies.push(performance.now() - start);
       }
       const plan = deliberate(task.goal);
-      results.push({ task: task.name, type: plan.taskType, topology: plan.recommendedTopology, tokens: plan.estimatedTokens });
+      results.push({
+        task: task.name,
+        type: plan.taskType,
+        topology: plan.recommendedTopology,
+        tokens: plan.estimatedTokens,
+      });
     }
 
     latencies.sort((a, b) => a - b);
@@ -110,7 +139,7 @@ describe('Real-World Benchmarks (StepFun API)', () => {
         total_tasks: REAL_TASKS.length,
         p50_us: Number((p50 * 1000).toFixed(2)),
         p99_us: Number((p99 * 1000).toFixed(2)),
-        classifications: results.map(r => `${r.task}→${r.type}/${r.topology}`).join(', '),
+        classifications: results.map((r) => `${r.task}→${r.type}/${r.topology}`).join(', '),
       },
       timestamp: new Date().toISOString(),
       durationMs: latencies.reduce((a, b) => a + b, 0),
@@ -213,12 +242,20 @@ describe('Real-World Benchmarks (StepFun API)', () => {
 
     const compactor = new ContextCompactor({ maxContextTokens: 500 });
     const messages: LLMMessage[] = [
-      { role: 'system', content: 'You are a senior software engineer helping debug a Node.js application.' },
+      {
+        role: 'system',
+        content: 'You are a senior software engineer helping debug a Node.js application.',
+      },
     ];
 
     for (let i = 0; i < 8; i++) {
       const { response } = await callStepFun({
-        messages: [{ role: 'user', content: `Give a detailed technical answer in 5+ sentences: ${REAL_QUERIES[i % REAL_QUERIES.length]}` }],
+        messages: [
+          {
+            role: 'user',
+            content: `Give a detailed technical answer in 5+ sentences: ${REAL_QUERIES[i % REAL_QUERIES.length]}`,
+          },
+        ],
         max_tokens: 300,
       });
 
@@ -272,14 +309,17 @@ describe('Real-World Benchmarks (StepFun API)', () => {
         max_tokens: 200,
       });
 
-      await cache.store(
-        { model: STEPFUN_MODEL, messages: [{ role: 'user', content: query }] },
-        {
-          id: `resp-${Math.random()}`,
-          choices: [{ message: { role: 'assistant', content: response.choices[0].message.content ?? '' }, finish_reason: 'stop', index: 0 }],
-          usage: response.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-        } as LLMResponse,
-      );
+      await cache.store({ model: STEPFUN_MODEL, messages: [{ role: 'user', content: query }] }, {
+        id: `resp-${Math.random()}`,
+        choices: [
+          {
+            message: { role: 'assistant', content: response.choices[0].message.content ?? '' },
+            finish_reason: 'stop',
+            index: 0,
+          },
+        ],
+        usage: response.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      } as LLMResponse);
     }
 
     const latencies: number[] = [];
@@ -288,7 +328,10 @@ describe('Real-World Benchmarks (StepFun API)', () => {
     for (let i = 0; i < 15; i++) {
       const query = REAL_QUERIES[i % storeQueries.length];
       const start = performance.now();
-      const cached = await cache.lookup({ model: STEPFUN_MODEL, messages: [{ role: 'user', content: query }] });
+      const cached = await cache.lookup({
+        model: STEPFUN_MODEL,
+        messages: [{ role: 'user', content: query }],
+      });
       latencies.push(performance.now() - start);
       if (cached) hits++;
     }

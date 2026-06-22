@@ -43,13 +43,13 @@ function makePlan(taskType: DeliberationPlan['taskType']): DeliberationPlan {
 describe('LearnedWeights', () => {
   describe('EMA updates', () => {
     it('starts at 0 EMA (neutral) for all pairs', () => {
-            const lw = new LearnedWeights();
+      const lw = new LearnedWeights();
       expect(lw.getAdjustedWeights('CODING', BASE_WEIGHTS).adjusted).toEqual(BASE_WEIGHTS);
       expect(lw.getAdjustedWeights('CODING', BASE_WEIGHTS).maturePairs).toBe(0);
     });
 
     it('moves the EMA toward +0.5 after a series of perfect successes', () => {
-            const lw = new LearnedWeights({ smoothingFactor: 0.3 });
+      const lw = new LearnedWeights({ smoothingFactor: 0.3 });
       // 10 perfect successes → signal = +0.5
       for (let i = 0; i < 10; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0);
       const stats = lw.getStats().find((s) => s.taskType === 'CODING' && s.topology === 'PARALLEL');
@@ -61,7 +61,7 @@ describe('LearnedWeights', () => {
     });
 
     it('moves the EMA toward -0.5 after a series of failures', () => {
-            // α=0.5 + 30 failures: signal saturates near 1/(1+15)−0.5 = −0.437, EMA converges to ≈ −0.43.
+      // α=0.5 + 30 failures: signal saturates near 1/(1+15)−0.5 = −0.437, EMA converges to ≈ −0.43.
       const lw = new LearnedWeights({ smoothingFactor: 0.5 });
       for (let i = 0; i < 30; i++) lw.recordSignal('CODING', 'PARALLEL', false, 0.0);
       const stats = lw.getStats().find((s) => s.taskType === 'CODING' && s.topology === 'PARALLEL');
@@ -72,7 +72,7 @@ describe('LearnedWeights', () => {
     });
 
     it('is reactive to recent evidence (EMA window)', () => {
-            // α=1.0 means EMA = latest signal (no smoothing). Use 1 success + 5
+      // α=1.0 means EMA = latest signal (no smoothing). Use 1 success + 5
       // failures so the final pheromone confidence drops below 0.5 and the
       // last signal goes negative (a single failure after 5 successes is not
       // enough because the cumulative posterior keeps confidence > 0.8).
@@ -92,14 +92,14 @@ describe('LearnedWeights', () => {
 
   describe('getAdjustedWeights blend', () => {
     it('returns base unchanged when no pairs are mature', () => {
-            const lw = new LearnedWeights({ minSamplesBeforeAdjust: 3 });
+      const lw = new LearnedWeights({ minSamplesBeforeAdjust: 3 });
       const result = lw.getAdjustedWeights('CODING', BASE_WEIGHTS);
       expect(result.adjusted).toEqual(BASE_WEIGHTS);
       expect(result.maturePairs).toBe(0);
     });
 
     it('boosts the parallel dimension when PARALLEL is reinforced', () => {
-            const lw = new LearnedWeights({ smoothingFactor: 0.3, minSamplesBeforeAdjust: 3 });
+      const lw = new LearnedWeights({ smoothingFactor: 0.3, minSamplesBeforeAdjust: 3 });
       for (let i = 0; i < 10; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0);
       const result = lw.getAdjustedWeights('CODING', BASE_WEIGHTS);
       // Base parallel = 2. With positive EMA on PARALLEL, adjusted.parallel > 2.
@@ -109,7 +109,7 @@ describe('LearnedWeights', () => {
     });
 
     it('reduces the parallel dimension when PARALLEL is penalized', () => {
-            const lw = new LearnedWeights({ smoothingFactor: 0.3, minSamplesBeforeAdjust: 3 });
+      const lw = new LearnedWeights({ smoothingFactor: 0.3, minSamplesBeforeAdjust: 3 });
       for (let i = 0; i < 10; i++) lw.recordSignal('CODING', 'PARALLEL', false, 0.0);
       const result = lw.getAdjustedWeights('CODING', BASE_WEIGHTS);
       expect(result.adjusted.parallel).toBeLessThan(BASE_WEIGHTS.parallel);
@@ -117,7 +117,7 @@ describe('LearnedWeights', () => {
     });
 
     it('caps the adjustment at maxAdjustment (default 0.5)', () => {
-            const lw = new LearnedWeights({ smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
+      const lw = new LearnedWeights({ smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
       // 50 perfect successes → EMA should saturate at +0.5
       for (let i = 0; i < 50; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0);
       const result = lw.getAdjustedWeights('CODING', BASE_WEIGHTS);
@@ -129,7 +129,7 @@ describe('LearnedWeights', () => {
     });
 
     it('honors custom maxAdjustment (smaller cap)', () => {
-            const lw = new LearnedWeights({
+      const lw = new LearnedWeights({
         smoothingFactor: 0.5,
         minSamplesBeforeAdjust: 3,
         maxAdjustment: 0.2,
@@ -140,7 +140,7 @@ describe('LearnedWeights', () => {
     });
 
     it('keeps weights non-negative even with strong negative signal', () => {
-            const lw = new LearnedWeights({ smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
+      const lw = new LearnedWeights({ smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
       for (let i = 0; i < 50; i++) lw.recordSignal('CODING', 'PARALLEL', false, 0.0);
       const result = lw.getAdjustedWeights('CODING', BASE_WEIGHTS);
       // adjusted.parallel = 2 * (1 - 0.5) = 1.0, never negative
@@ -164,7 +164,7 @@ describe('LearnedWeights', () => {
 
     for (const [topology, expectedDim] of cases) {
       it(`${topology} → ${expectedDim}`, () => {
-                const lw = new LearnedWeights({ smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
+        const lw = new LearnedWeights({ smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
         // Set base so the target dimension is non-zero.
         const base: TypeWeights = {
           research: 0,
@@ -183,7 +183,7 @@ describe('LearnedWeights', () => {
 
   describe('isolation + reset', () => {
     it('isolates state across (taskType, topology) pairs', () => {
-            const lw = new LearnedWeights();
+      const lw = new LearnedWeights();
       for (let i = 0; i < 10; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0);
       for (let i = 0; i < 10; i++) lw.recordSignal('RESEARCH', 'HYBRID', false, 0.0);
       const stats = lw.getStats();
@@ -195,7 +195,7 @@ describe('LearnedWeights', () => {
     });
 
     it('reset() clears all state', () => {
-            const lw = new LearnedWeights();
+      const lw = new LearnedWeights();
       lw.recordSignal('CODING', 'PARALLEL', true, 1.0);
       expect(lw.getStats().length).toBe(1);
       lw.reset();
@@ -218,7 +218,7 @@ describe('TopologyRouter × LearnedWeights integration', () => {
   });
 
   it('route() exposes adjustedWeights and uses them in scoring', () => {
-        const tr = new TopologyRouter();
+    const tr = new TopologyRouter();
     const result = tr.route(makePlan('CODING'));
     expect(result.adjustedWeights).toBeDefined();
     // CODING base weights: parallel=2, sequential=2, complex=1
@@ -228,7 +228,7 @@ describe('TopologyRouter × LearnedWeights integration', () => {
   });
 
   it('after enough signals, route() reflects the learned adjustment in the scores', () => {
-        const tr = new TopologyRouter();
+    const tr = new TopologyRouter();
     // Reinforce PARALLEL strongly for CODING.
     for (let i = 0; i < 15; i++)
       tr.getLearnedWeights().recordSignal('CODING', 'PARALLEL', true, 1.0);
@@ -250,7 +250,7 @@ describe('TopologyRouter × LearnedWeights integration', () => {
   });
 
   it('reasoning includes the learned-weights line when mature pairs exist', () => {
-        const tr = new TopologyRouter();
+    const tr = new TopologyRouter();
     for (let i = 0; i < 5; i++)
       tr.getLearnedWeights().recordSignal('CODING', 'PARALLEL', true, 1.0);
     const result = tr.route(makePlan('CODING'));
@@ -260,7 +260,7 @@ describe('TopologyRouter × LearnedWeights integration', () => {
   });
 
   it('reasoning omits the learned-weights line when no signal exists', () => {
-        const tr = new TopologyRouter();
+    const tr = new TopologyRouter();
     const result = tr.route(makePlan('CODING'));
     const learnedLine = result.reasoning.find((r) => r.startsWith('Learned weights for'));
     expect(learnedLine).toBeUndefined();

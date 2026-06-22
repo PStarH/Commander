@@ -160,9 +160,7 @@ describe('AgentRuntime Integration', () => {
         defaultResponse: '',
       });
 
-      vi.spyOn(persistentFailingProvider, 'call').mockRejectedValue(
-        new Error('Persistent error'),
-      );
+      vi.spyOn(persistentFailingProvider, 'call').mockRejectedValue(new Error('Persistent error'));
 
       const runtimeWithRetries = new AgentRuntime(
         { maxRetries: 2, timeoutMs: 5000 },

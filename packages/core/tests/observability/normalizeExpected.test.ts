@@ -61,9 +61,8 @@ function safeRepr(input: unknown): string {
   if (typeof input === 'bigint') return `BigInt(${String(input)})`;
   try {
     return (
-      JSON.stringify(input, (_k, v) =>
-        typeof v === 'bigint' ? `${String(v)}n` : v,
-      ) ?? String(input)
+      JSON.stringify(input, (_k, v) => (typeof v === 'bigint' ? `${String(v)}n` : v)) ??
+      String(input)
     );
   } catch {
     return String(input);
@@ -300,9 +299,7 @@ describe('classifyExpectedForSubstringMatch', () => {
 
   // ── Diverges from classifyExpected() on non-string inputs ──────────
   it('non-string object expected → non_string_expected_not_substring_matchable (≠ classifyExpected)', () => {
-    expect(
-      classifyExpectedForSubstringMatch({ outputContains: ['y'] }),
-    ).toEqual({
+    expect(classifyExpectedForSubstringMatch({ outputContains: ['y'] })).toEqual({
       ungraded: true,
       reason: 'non_string_expected_not_substring_matchable',
     });
@@ -342,27 +339,14 @@ describe('classifyExpectedForSubstringMatch', () => {
  */
 describe('audit: classifyExpected vs classifyExpectedForSubstringMatch divergence table', () => {
   it('agree on undefined, null, "", "   ", "...", "Tim Cook"', () => {
-    const SEVEN_AGREE_CASES: unknown[] = [
-      undefined,
-      null,
-      '',
-      '   ',
-      '...',
-      'Tim Cook',
-    ];
+    const SEVEN_AGREE_CASES: unknown[] = [undefined, null, '', '   ', '...', 'Tim Cook'];
     for (const c of SEVEN_AGREE_CASES) {
       expect(classifyExpectedForSubstringMatch(c)).toEqual(classifyExpected(c));
     }
   });
 
   it('intentionally diverge on non-string inputs (call-site must pick the right classifier)', () => {
-    const DIVERGE_CASES: unknown[] = [
-      { outputContains: ['y'] },
-      42,
-      [1, 2, 3],
-      true,
-      false,
-    ];
+    const DIVERGE_CASES: unknown[] = [{ outputContains: ['y'] }, 42, [1, 2, 3], true, false];
     for (const c of DIVERGE_CASES) {
       const general = classifyExpected(c);
       const substring = classifyExpectedForSubstringMatch(c);

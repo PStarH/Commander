@@ -39,7 +39,7 @@ function makePlan(taskType: DeliberationPlan['taskType']): DeliberationPlan {
 describe('P2: LearnedWeights tenant isolation', () => {
   describe('key + state isolation', () => {
     it('uses DEFAULT_TENANT_ID when no tenantId is passed', () => {
-            const lw = new LearnedWeights();
+      const lw = new LearnedWeights();
       lw.recordSignal('CODING', 'PARALLEL', true, 1.0);
       expect(lw.listTenants()).toEqual([DEFAULT_TENANT_ID]);
       expect(lw.getState('CODING', 'PARALLEL')).toBeDefined();
@@ -48,9 +48,8 @@ describe('P2: LearnedWeights tenant isolation', () => {
       expect(lw.getState('CODING', 'PARALLEL')).toBe(lw.getState('CODING', 'PARALLEL', undefined));
     });
 
-
     it('isolates state across tenants — cross-tenant signal does not leak', () => {
-            // α=0.5 + 30 outcomes per tenant converges the EMA close to ±0.5.
+      // α=0.5 + 30 outcomes per tenant converges the EMA close to ±0.5.
       const lw = new LearnedWeights({ smoothingFactor: 0.5 });
       // Tenant A: 30 successes → EMA near +0.43
       for (let i = 0; i < 30; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0, 'tenant-A');
@@ -66,7 +65,7 @@ describe('P2: LearnedWeights tenant isolation', () => {
     });
 
     it('routes omitted tenantId and explicit DEFAULT_TENANT_ID to the same bucket', () => {
-            const lw = new LearnedWeights();
+      const lw = new LearnedWeights();
       for (let i = 0; i < 5; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0); // no tenantId
       for (let i = 0; i < 5; i++)
         lw.recordSignal('CODING', 'SEQUENTIAL', true, 1.0, DEFAULT_TENANT_ID);
@@ -79,7 +78,7 @@ describe('P2: LearnedWeights tenant isolation', () => {
 
   describe('getAdjustedWeights is tenant-scoped', () => {
     it('returns the base unchanged for a tenant with no signal', () => {
-            const lw = new LearnedWeights();
+      const lw = new LearnedWeights();
       // Train tenant-A only.
       for (let i = 0; i < 10; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0, 'tenant-A');
       // tenant-B has no signal.
@@ -90,7 +89,7 @@ describe('P2: LearnedWeights tenant isolation', () => {
     });
 
     it('returns different adjustments for two tenants with opposite signals', () => {
-            const lw = new LearnedWeights({ smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
+      const lw = new LearnedWeights({ smoothingFactor: 0.5, minSamplesBeforeAdjust: 3 });
       // tenant-A: reinforce PARALLEL (15 successes)
       for (let i = 0; i < 15; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0, 'tenant-A');
       // tenant-B: penalize PARALLEL (15 failures)
@@ -110,7 +109,7 @@ describe('P2: LearnedWeights tenant isolation', () => {
     });
 
     it('getStats filters by tenantId', () => {
-            const lw = new LearnedWeights();
+      const lw = new LearnedWeights();
       for (let i = 0; i < 3; i++) lw.recordSignal('CODING', 'PARALLEL', true, 1.0, 'tenant-A');
       for (let i = 0; i < 3; i++) lw.recordSignal('CODING', 'SEQUENTIAL', false, 0.0, 'tenant-B');
       const all = lw.getStats();
@@ -128,7 +127,7 @@ describe('P2: LearnedWeights tenant isolation', () => {
 
   describe('reset(tenantId) scopes cleanup', () => {
     it('reset(tenantId) clears only that tenant', () => {
-            const lw = new LearnedWeights();
+      const lw = new LearnedWeights();
       lw.recordSignal('CODING', 'PARALLEL', true, 1.0, 'tenant-A');
       lw.recordSignal('CODING', 'SEQUENTIAL', false, 0.0, 'tenant-B');
       expect(lw.size()).toBe(2);
@@ -140,7 +139,7 @@ describe('P2: LearnedWeights tenant isolation', () => {
     });
 
     it('reset() with no arg clears every tenant', () => {
-            const lw = new LearnedWeights();
+      const lw = new LearnedWeights();
       lw.recordSignal('CODING', 'PARALLEL', true, 1.0, 'tenant-A');
       lw.recordSignal('CODING', 'SEQUENTIAL', false, 0.0, 'tenant-B');
       expect(lw.size()).toBe(2);
@@ -151,10 +150,9 @@ describe('P2: LearnedWeights tenant isolation', () => {
   });
 });
 
-
 describe('P2: TopologyRouter routes per-tenant pheromone + learned weights', () => {
   it('route(plan, dag, budget, tenantId) applies tenant-scoped adjustments', () => {
-        const tr = new TopologyRouter();
+    const tr = new TopologyRouter();
     const lw = tr.getLearnedWeights();
 
     // tenant-A: reinforce PARALLEL, penalize SINGLE
@@ -176,7 +174,7 @@ describe('P2: TopologyRouter routes per-tenant pheromone + learned weights', () 
   });
 
   it('two tenants with opposite signals see different scores for the same plan', () => {
-        const tr = new TopologyRouter();
+    const tr = new TopologyRouter();
     const lw = tr.getLearnedWeights();
 
     // tenant-A: 20 PARALLEL successes

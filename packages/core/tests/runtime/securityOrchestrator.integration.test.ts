@@ -135,9 +135,7 @@ describe('SecurityOrchestrator Integration — agentRuntime.ts wiring', () => {
       const provider = new ToolCallMockProvider('openai', {
         defaultResponse: 'I will use a shell tool for this.',
       });
-      provider.setToolCalls([
-        { id: 'shell1', name: 'shell', arguments: { cmd: 'rm -rf /' } },
-      ]);
+      provider.setToolCalls([{ id: 'shell1', name: 'shell', arguments: { cmd: 'rm -rf /' } }]);
 
       runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000, maxStepsPerRun: 3 }, router);
       runtime.registerProvider('openai', provider);
@@ -188,16 +186,13 @@ describe('SecurityOrchestrator Integration — agentRuntime.ts wiring', () => {
       const resultEvents = events.filter((e) => e.type === 'tool_result');
       expect(resultEvents.length).toBeGreaterThan(0);
       expect(resultEvents[0].metadata.hasError).toBe(true);
-
     });
 
     it('should allow a low-risk tool to execute', async () => {
       const provider = new ToolCallMockProvider('openai', {
         defaultResponse: 'I will echo a message.',
       });
-      provider.setToolCalls([
-        { id: 't1', name: 'echo', arguments: { msg: 'hello' } },
-      ]);
+      provider.setToolCalls([{ id: 't1', name: 'echo', arguments: { msg: 'hello' } }]);
 
       runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000, maxStepsPerRun: 3 }, router);
       runtime.registerProvider('openai', provider);
@@ -216,9 +211,7 @@ describe('SecurityOrchestrator Integration — agentRuntime.ts wiring', () => {
       const provider = new ToolCallMockProvider('openai', {
         defaultResponse: 'I will echo for the correlator test.',
       });
-      provider.setToolCalls([
-        { id: 'ct1', name: 'echo', arguments: { msg: 'correlator-test' } },
-      ]);
+      provider.setToolCalls([{ id: 'ct1', name: 'echo', arguments: { msg: 'correlator-test' } }]);
 
       runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000, maxStepsPerRun: 3 }, router);
       runtime.registerProvider('openai', provider);
@@ -274,9 +267,7 @@ describe('SecurityOrchestrator Integration — agentRuntime.ts wiring', () => {
       const provider = new ToolCallMockProvider('openai', {
         defaultResponse: 'I will use the echo tool.',
       });
-      provider.setToolCalls([
-        { id: 'tr1', name: 'echo', arguments: { msg: 'result-test' } },
-      ]);
+      provider.setToolCalls([{ id: 'tr1', name: 'echo', arguments: { msg: 'result-test' } }]);
 
       runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000, maxStepsPerRun: 3 }, router);
       runtime.registerProvider('openai', provider);
@@ -339,9 +330,7 @@ describe('SecurityOrchestrator Integration — agentRuntime.ts wiring', () => {
       const provider = new ToolCallMockProvider('openai', {
         defaultResponse: 'I will use echo.',
       });
-      provider.setToolCalls([
-        { id: 'all1', name: 'echo', arguments: { msg: 'all-events' } },
-      ]);
+      provider.setToolCalls([{ id: 'all1', name: 'echo', arguments: { msg: 'all-events' } }]);
 
       runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000, maxStepsPerRun: 3 }, router);
       runtime.registerProvider('openai', provider);
@@ -407,11 +396,12 @@ describe('SecurityOrchestrator Integration — agentRuntime.ts wiring', () => {
       expect(budget.consumedBudget).toBeGreaterThan(0);
 
       // Verify the spy return value: epsilonUsed > 0 and answerable
-      const outcome = spy.mock.results[0]?.value as DPQueryOutcome<Array<{ importance?: number; accessCount?: number; decayScore?: number }>> | undefined;
+      const outcome = spy.mock.results[0]?.value as
+        | DPQueryOutcome<Array<{ importance?: number; accessCount?: number; decayScore?: number }>>
+        | undefined;
       expect(outcome).toBeDefined();
       expect(outcome!.epsilonUsed).toBeGreaterThan(0);
       expect(outcome!.answerable).toBe(true);
-
     });
 
     it('should handle empty memory gracefully', async () => {
@@ -436,7 +426,6 @@ describe('SecurityOrchestrator Integration — agentRuntime.ts wiring', () => {
       expect(spy).toHaveBeenCalled();
       const [entries] = spy.mock.calls[0];
       expect((entries as unknown[]).length).toBe(0);
-
     });
 
     it('should not crash when DP module is disabled', async () => {
@@ -473,11 +462,12 @@ describe('SecurityOrchestrator Integration — agentRuntime.ts wiring', () => {
       expect(budget.consumedBudget).toBe(0);
 
       // Verify the spy return value: epsilonUsed === 0 on pass-through
-      const outcome = spy.mock.results[0]?.value as DPQueryOutcome<Array<{ importance?: number; accessCount?: number; decayScore?: number }>> | undefined;
+      const outcome = spy.mock.results[0]?.value as
+        | DPQueryOutcome<Array<{ importance?: number; accessCount?: number; decayScore?: number }>>
+        | undefined;
       expect(outcome).toBeDefined();
       expect(outcome!.epsilonUsed).toBe(0);
       expect(outcome!.answerable).toBe(true);
-
     });
 
     it('should reject with too_few_items when fewer than minItemsForSanitization', async () => {
@@ -509,14 +499,15 @@ describe('SecurityOrchestrator Integration — agentRuntime.ts wiring', () => {
       expect((entries as unknown[]).length).toBe(3);
 
       // Verify the rejection outcome: not answerable, reason too_few_items, no budget spent
-      const outcome = spy.mock.results[0]?.value as DPQueryOutcome<Array<{ importance?: number; accessCount?: number; decayScore?: number }>> | undefined;
+      const outcome = spy.mock.results[0]?.value as
+        | DPQueryOutcome<Array<{ importance?: number; accessCount?: number; decayScore?: number }>>
+        | undefined;
       expect(outcome).toBeDefined();
       expect(outcome!.answerable).toBe(false);
       if (!outcome!.answerable) {
         expect((outcome as { reason: string }).reason).toBe('too_few_items');
       }
       expect(outcome!.epsilonUsed).toBe(0);
-
     });
   });
 

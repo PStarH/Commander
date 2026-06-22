@@ -61,7 +61,11 @@ describe('EdgeSecurityProfile', () => {
   });
 
   afterEach(() => {
-    try { profile.stop(); } catch { /* ok */ }
+    try {
+      profile.stop();
+    } catch {
+      /* ok */
+    }
     resetEdgeSecurityProfile();
   });
 
@@ -110,10 +114,12 @@ describe('EdgeSecurityProfile', () => {
 
   describe('state encryption', () => {
     it('encrypts and decrypts state data round-trip', async () => {
-      profile = new EdgeSecurityProfile(makeConfig({
-        mode: 'always-edge',
-        stateEncryptionKey: 'my-secret-key',
-      }));
+      profile = new EdgeSecurityProfile(
+        makeConfig({
+          mode: 'always-edge',
+          stateEncryptionKey: 'my-secret-key',
+        }),
+      );
       await profile.start();
 
       const plaintext = '{"agentId":"test","step":42,"goal":"build feature"}';
@@ -160,9 +166,11 @@ describe('EdgeSecurityProfile', () => {
     });
 
     it('auto-generates encryption key when none provided', async () => {
-      profile = new EdgeSecurityProfile(makeConfig({
-        stateEncryptionKey: undefined,
-      }));
+      profile = new EdgeSecurityProfile(
+        makeConfig({
+          stateEncryptionKey: undefined,
+        }),
+      );
       await profile.start();
 
       const encrypted = profile.encryptState('data');
@@ -204,11 +212,13 @@ describe('EdgeSecurityProfile', () => {
     });
 
     it('returns relaxed sandbox when not in strict mode', async () => {
-      profile = new EdgeSecurityProfile(makeConfig({
-        mode: 'always-edge',
-        strictEdgeSandbox: false,
-        readOnlyWorkspace: false,
-      }));
+      profile = new EdgeSecurityProfile(
+        makeConfig({
+          mode: 'always-edge',
+          strictEdgeSandbox: false,
+          readOnlyWorkspace: false,
+        }),
+      );
       await profile.start();
 
       const policy = profile.getEdgeSandboxPolicy();
@@ -238,15 +248,17 @@ describe('EdgeSecurityProfile', () => {
     });
 
     it('caps tokens at 4000 for low-resource devices', async () => {
-      profile = new EdgeSecurityProfile(makeConfig({
-        mode: 'auto',
-        edgeMaxTokens: 16000,
-        resourceThresholds: {
-          minFreeMemoryBytes: 100 * 1024 * 1024 * 1024, // 100 GB — forces low-resource
-          minCpuCores: 128,
-          maxCpuLoad: 0.01,
-        },
-      }));
+      profile = new EdgeSecurityProfile(
+        makeConfig({
+          mode: 'auto',
+          edgeMaxTokens: 16000,
+          resourceThresholds: {
+            minFreeMemoryBytes: 100 * 1024 * 1024 * 1024, // 100 GB — forces low-resource
+            minCpuCores: 128,
+            maxCpuLoad: 0.01,
+          },
+        }),
+      );
       await profile.start();
 
       const limits = profile.getEdgeResourceLimits();
@@ -270,11 +282,13 @@ describe('EdgeSecurityProfile', () => {
     });
 
     it('reports edge-basic when only sandbox is active (no encryption)', async () => {
-      profile = new EdgeSecurityProfile(makeConfig({
-        mode: 'always-edge',
-        enableStateEncryption: false,
-        enableFreezeDry: false,
-      }));
+      profile = new EdgeSecurityProfile(
+        makeConfig({
+          mode: 'always-edge',
+          enableStateEncryption: false,
+          enableFreezeDry: false,
+        }),
+      );
       await profile.start();
 
       const status = profile.getStatus();
@@ -361,10 +375,12 @@ describe('EdgeSecurityProfile', () => {
     });
 
     it('does not activate freezeDry when disabled in config', async () => {
-      profile = new EdgeSecurityProfile(makeConfig({
-        mode: 'always-edge',
-        enableFreezeDry: false,
-      }));
+      profile = new EdgeSecurityProfile(
+        makeConfig({
+          mode: 'always-edge',
+          enableFreezeDry: false,
+        }),
+      );
       await profile.start();
 
       expect(profile.isFreezeDryActive()).toBe(false);

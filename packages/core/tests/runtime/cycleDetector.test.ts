@@ -162,7 +162,9 @@ describe('CycleDetector', () => {
       const cd = new CycleDetector();
       cd.checkOutput('the analysis shows the code needs refactoring for better performance');
       cd.checkOutput('the analysis shows the code needs refactoring for better performance');
-      const result = cd.checkOutput('the analysis shows the code needs refactoring for better performance');
+      const result = cd.checkOutput(
+        'the analysis shows the code needs refactoring for better performance',
+      );
       expect(result.detected).toBe(true);
       expect(result.type).toBe('semantic_stagnation');
       if (result.detected) {

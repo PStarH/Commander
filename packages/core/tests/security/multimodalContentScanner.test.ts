@@ -9,10 +9,10 @@ import {
 import type { MultimodalThreat } from '../../src/security/multimodalContentScanner';
 
 // Minimal valid file headers
-const PNG_HEADER = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-const JPEG_HEADER = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0]);
+const PNG_HEADER = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const JPEG_HEADER = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
 const GIF_HEADER = Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
-const PDF_HEADER = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2D]);
+const PDF_HEADER = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d]);
 
 function makePNG(width: number = 1, height: number = 1): Buffer {
   // Minimal PNG with IHDR chunk
@@ -195,7 +195,9 @@ describe('MultimodalContentScanner', () => {
     });
 
     it('calculates risk score', () => {
-      const svg = Buffer.from('<svg><script>alert(1)</script><foreignObject></foreignObject></svg>');
+      const svg = Buffer.from(
+        '<svg><script>alert(1)</script><foreignObject></foreignObject></svg>',
+      );
       const result = scanner.scan(svg, { fileExtension: '.svg' });
       expect(result.riskScore).toBeGreaterThan(40);
       expect(result.riskScore).toBeLessThanOrEqual(100);

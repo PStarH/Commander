@@ -41,12 +41,7 @@ import * as publicIndex from '../../src';
 import { AgentRuntime } from '../../src/runtime/agentRuntime';
 import { ModelRouter } from '../../src/runtime/modelRouter';
 import { getHookManager } from '../../src/pluginManager';
-import {
-  makeContext,
-  ToolCallMockProvider,
-  makeEchoTool,
-  fullReset,
-} from './_gateHarness';
+import { makeContext, ToolCallMockProvider, makeEchoTool, fullReset } from './_gateHarness';
 
 describe('toolErrorRow canonical shape', () => {
   it('returns exactly the 5-field SyntheticErrorRow with empty output and zero duration', () => {

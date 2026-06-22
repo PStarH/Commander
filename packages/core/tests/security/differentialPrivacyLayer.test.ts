@@ -366,10 +366,7 @@ describe('DifferentialPrivacyLayer', () => {
 
     it('should never return negative count (clamped to 0)', () => {
       // With very small epsilon, noise could push negative
-      const results = runMany(
-        () => dp.sanitizeCount(1, 'agent-3', 0.1),
-        20,
-      );
+      const results = runMany(() => dp.sanitizeCount(1, 'agent-3', 0.1), 20);
       for (const r of results) {
         if (r.answerable) {
           expect(r.result).toBeGreaterThanOrEqual(0);
@@ -417,13 +414,7 @@ describe('DifferentialPrivacyLayer', () => {
 
     it('should DP-sanitize an average', () => {
       // sum=500, count=10, bounds [0, 100], ε=4.0
-      const result = dp.sanitizeAverage(
-        500,
-        10,
-        { min: 0, max: 100 },
-        'agent-1',
-        4.0,
-      );
+      const result = dp.sanitizeAverage(500, 10, { min: 0, max: 100 }, 'agent-1', 4.0);
       if (!result.answerable) throw new Error('Expected answerable');
       // Average is 500/10 = 50, should be in [0, 100] after noise
       expect(result.result).toBeGreaterThanOrEqual(0);
@@ -437,13 +428,7 @@ describe('DifferentialPrivacyLayer', () => {
         maxBudgetPerWindow: 50.0,
         minItemsForSanitization: 10,
       });
-      const result = dpStrict.sanitizeAverage(
-        15,
-        3,
-        { min: 0, max: 10 },
-        'agent-1',
-        1.0,
-      );
+      const result = dpStrict.sanitizeAverage(15, 3, { min: 0, max: 10 }, 'agent-1', 1.0);
       expect(result.answerable).toBe(false);
       if (!result.answerable) {
         expect(result.reason).toBe('too_few_items');
@@ -451,13 +436,7 @@ describe('DifferentialPrivacyLayer', () => {
     });
 
     it('should reject invalid bounds', () => {
-      const result = dp.sanitizeAverage(
-        500,
-        10,
-        { min: 10, max: 5 },
-        'agent-1',
-        1.0,
-      );
+      const result = dp.sanitizeAverage(500, 10, { min: 10, max: 5 }, 'agent-1', 1.0);
       expect(result.answerable).toBe(false);
       if (!result.answerable) {
         expect(result.reason).toBe('invalid_bounds');
@@ -467,8 +446,7 @@ describe('DifferentialPrivacyLayer', () => {
     it('should clip result to bounds after noise', () => {
       // Even with extreme noise, the result should stay in bounds
       const results = runMany(
-        () =>
-          dp.sanitizeAverage(90, 10, { min: 0, max: 100 }, 'agent-avg', 0.5),
+        () => dp.sanitizeAverage(90, 10, { min: 0, max: 100 }, 'agent-avg', 0.5),
         20,
       );
       for (const r of results) {
@@ -488,12 +466,7 @@ describe('DifferentialPrivacyLayer', () => {
     });
 
     it('should DP-sanitize a numeric value within bounds', () => {
-      const result = dp.sanitizeNumeric(
-        0.7,
-        { min: 0, max: 1 },
-        'agent-1',
-        2.0,
-      );
+      const result = dp.sanitizeNumeric(0.7, { min: 0, max: 1 }, 'agent-1', 2.0);
       if (!result.answerable) throw new Error('Expected answerable');
       expect(result.result).toBeGreaterThanOrEqual(0);
       expect(result.result).toBeLessThanOrEqual(1);
@@ -501,12 +474,7 @@ describe('DifferentialPrivacyLayer', () => {
 
     it('should reject budget exhaustion', () => {
       dp.spendBudget('agent-1', 49.9);
-      const result = dp.sanitizeNumeric(
-        0.5,
-        { min: 0, max: 1 },
-        'agent-1',
-        1.0,
-      );
+      const result = dp.sanitizeNumeric(0.5, { min: 0, max: 1 }, 'agent-1', 1.0);
       expect(result.answerable).toBe(false);
     });
   });
@@ -556,11 +524,7 @@ describe('DifferentialPrivacyLayer', () => {
     });
 
     it('should reject too few entries', () => {
-      const result = dp.sanitizeMemoryEntries(
-        [{ importance: 0.5 }],
-        'agent-1',
-        1.0,
-      );
+      const result = dp.sanitizeMemoryEntries([{ importance: 0.5 }], 'agent-1', 1.0);
       expect(result.answerable).toBe(false);
       if (!result.answerable) {
         expect(result.reason).toBe('too_few_items');
