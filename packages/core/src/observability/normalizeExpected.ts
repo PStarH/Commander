@@ -52,7 +52,8 @@ export type UngradedReason =
 export interface UngradedClassification {
   ungraded: true;
   reason: UngradedReason;
-}export interface GradedClassification {
+}
+export interface GradedClassification {
   ungraded: false;
   /**
    * Post-normalize expected value.
