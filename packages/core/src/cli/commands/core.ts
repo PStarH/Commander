@@ -445,37 +445,48 @@ async function cmdShowcase() {
 
 async function cmdPlanInternal(task: string) {
   cmdHeader(task);
-  const done = startSpinner('Analyzing task...');
+  const done = startSpinner(t('plan.spinner'));
   const plan = deliberate(task);
   const effort = classifyEffortLevel(task);
   done();
 
-  section('PLAN');
-  bullet(`${plan.taskType} · ${effort} effort · ${plan.recommendedTopology} topology`, $.cyan);
+  section(t('plan.section'));
+  bullet(t('plan.task_label', { type: plan.taskType, effort, topology: plan.recommendedTopology }), $.cyan);
   console.log();
-  kv('Agents', `${plan.estimatedAgentCount}`, $.yellow);
-  kv('Steps', `${plan.estimatedSteps}`, $.yellow);
+  kv(t('plan.agents'), `${plan.estimatedAgentCount}`, $.yellow);
+  kv(t('plan.steps'), `${plan.estimatedSteps}`, $.yellow);
   kv(
-    'Confidence',
+    t('plan.confidence'),
     `${(plan.confidence * 100).toFixed(0)}%`,
     plan.confidence > 0.7 ? $.green : $.yellow,
   );
   kv(
-    'External info',
-    plan.requiresExternalInfo ? 'Yes' : 'No',
+    t('plan.external_info_yes') + ' / ' + t('plan.external_info_no'),
+    plan.requiresExternalInfo ? t('plan.external_info_yes') : t('plan.external_info_no'),
     plan.requiresExternalInfo ? $.yellow : $.dim,
   );
   kv(
-    'Tokens',
-    `${plan.estimatedTokens.toLocaleString()} (think: ${plan.tokenBudget.thinking.toLocaleString()}, exec: ${plan.tokenBudget.execution.toLocaleString()})`,
+    t('plan.tokens'),
+    t('plan.tokens_breakdown', {
+      total: plan.estimatedTokens.toLocaleString(),
+      thinking: plan.tokenBudget.thinking.toLocaleString(),
+      execution: plan.tokenBudget.execution.toLocaleString(),
+    }),
   );
   kv(
     'Duration',
-    `${(plan.estimatedDurationMs / 1000).toFixed(1)}s (per agent: ${(plan.timeBudgetPerAgentMs / 1000).toFixed(1)}s)`,
+    t('plan.duration', {
+      seconds: (plan.estimatedDurationMs / 1000).toFixed(1),
+      perAgent: (plan.timeBudgetPerAgentMs / 1000).toFixed(1),
+    }),
   );
   kv(
     'Task nature',
-    plan.taskNature,
+    plan.taskNature === 'IO_BOUND'
+      ? t('plan.task_nature.IO')
+      : plan.taskNature === 'COMPUTE_BOUND'
+        ? t('plan.task_nature.COMPUTE')
+        : plan.taskNature,
     plan.taskNature === 'IO_BOUND'
       ? $.cyan
       : plan.taskNature === 'COMPUTE_BOUND'
@@ -484,12 +495,12 @@ async function cmdPlanInternal(task: string) {
   );
   kv(
     'Speculation',
-    plan.suitableForSpeculation ? 'Yes — early steps can run in parallel' : 'No',
+    plan.suitableForSpeculation ? t('plan.speculation_yes') : t('plan.speculation_no'),
     plan.suitableForSpeculation ? $.green : $.dim,
   );
 
   if (plan.capabilitiesNeeded.length > 0) {
-    section('NEEDS');
+    section(t('plan.needs_section'));
     for (const cap of plan.capabilitiesNeeded) {
       bullet(cap);
     }
@@ -500,10 +511,7 @@ async function cmdRunInternal(task: string, routingFlags: RoutingFlags = {}) {
   const provider = detectProvider();
   const runtime = createRuntime();
   if (!runtime || !provider) {
-    fatalError(
-      'No API key found.',
-      'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider env var. Run: commander quickstart',
-    );
+    fatalError(t('error.no.apikey'), t('plan.fail.no_runtime'));
   }
 
   cmdHeader(task);
@@ -568,8 +576,18 @@ async function cmdRunInternal(task: string, routingFlags: RoutingFlags = {}) {
           EXECUTION: '⚡',
           SYNTHESIS: '🔗',
         };
+        const phaseKey: Record<string, string> = {
+          INIT: 'run.phase.init',
+          DELIBERATION: 'run.phase.deliberation',
+          EFFORT_SCALING: 'run.phase.effort_scaling',
+          TOPOLOGY_ROUTING: 'run.phase.topology_routing',
+          DECOMPOSITION: 'run.phase.decomposition',
+          TEAM_FORMATION: 'run.phase.team_formation',
+          EXECUTION: 'run.phase.execution',
+          SYNTHESIS: 'run.phase.synthesis',
+        };
         console.log(
-          `  ${$.dim}[${elapsed}s]${$.reset} ${icons[phase] || ' '} ${$.bold}${phase}${$.reset} ${$.dim}${detail.slice(0, 70)}${$.reset}`,
+          `  ${$.dim}[${elapsed}s]${$.reset} ${icons[phase] || ' '} ${$.bold}${t(phaseKey[phase] ?? 'help.title')}${$.reset} ${$.dim}${detail.slice(0, 70)}${$.reset}`,
         );
         lastPhase = phase;
       }
@@ -579,7 +597,7 @@ async function cmdRunInternal(task: string, routingFlags: RoutingFlags = {}) {
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log();
 
-  section('RESULTS');
+  section(t('run.section.results'));
   const icon = result.status === 'SUCCESS' ? '✅' : result.status === 'PARTIAL' ? '⚠️' : '❌';
   const statusColor =
     result.status === 'SUCCESS' ? $.green : result.status === 'PARTIAL' ? $.yellow : $.red;
@@ -614,10 +632,7 @@ async function cmdRunInternal(task: string, routingFlags: RoutingFlags = {}) {
 async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
   const runtime = createRuntime();
   if (!runtime) {
-    fatalError(
-      'No API key found.',
-      'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider env var. Run: commander quickstart',
-    );
+    fatalError(t('error.no.apikey'), t('plan.fail.no_runtime'));
   }
   const rt: AgentRuntime = runtime;
 
@@ -661,7 +676,7 @@ async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
           const agentId = payload.agentId || `agent-${agentCount}`;
           agents.set(agentId, { status: 'running', tokens: 0 });
           console.log(
-            `  ${$.dim}${ts}${$.reset} ${$.green}▶${$.reset} ${$.bold}${agentId}${$.reset} ${$.dim}started${$.reset}`,
+            `  ${$.dim}${ts}${$.reset} ${$.green}▶${$.reset} ${$.bold}${agentId}${$.reset} ${$.dim}${t('run.sse.agent_started')}${$.reset}`,
           );
           break;
         }
@@ -671,8 +686,11 @@ async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
           if (agent) agent.status = 'done';
           const tokens = payload.tokens || 0;
           if (tokens > 0) totalTokens += tokens;
+          const completedLabel = tokens > 0
+            ? t('run.sse.agent_completed_tokens', { tokens: tokens.toLocaleString() })
+            : t('run.sse.agent_completed');
           console.log(
-            `  ${$.dim}${ts}${$.reset} ${$.green}✓${$.reset} ${$.bold}${agentId}${$.reset} ${$.dim}completed · ${tokens.toLocaleString()} tok${$.reset}`,
+            `  ${$.dim}${ts}${$.reset} ${$.green}✓${$.reset} ${$.bold}${agentId}${$.reset} ${$.dim}${completedLabel}${$.reset}`,
           );
           break;
         }
@@ -690,7 +708,9 @@ async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
           toolCalls++;
           const toolName = payload.tool || 'tool';
           const duration = payload.durationMs ? `${(payload.durationMs / 1000).toFixed(1)}s` : '';
-          const status = payload.success === false ? `${$.red}✗${$.reset}` : `${$.cyan}→${$.reset}`;
+          const status = payload.success === false
+            ? `${$.red}${t('run.sse.tool_failed')}${$.reset}`
+            : `${$.cyan}→${$.reset}`;
           console.log(
             `  ${$.dim}${ts}${$.reset} ${status} ${$.dim}${toolName}${$.reset} ${$.gray}${duration}${$.reset}`,
           );
@@ -701,7 +721,7 @@ async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
           const msg = typeof payload.message === 'string' ? payload.message.slice(0, 80) : '';
           if (msg) {
             console.log(
-              `  ${$.dim}${ts}${$.reset} ${$.cyan}💬${$.reset} ${$.dim}${agentId}:${$.reset} ${msg}`,
+              `  ${$.dim}${ts}${$.reset} ${$.cyan}💬${$.reset} ${$.dim}${t('run.sse.message_prefix', { agent: agentId })}${$.reset} ${msg}`,
             );
           }
           break;
@@ -709,7 +729,9 @@ async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
         case 'system.alert': {
           const level = payload.level || 'warn';
           const msg = payload.message || JSON.stringify(payload).slice(0, 80);
-          const icon = level === 'error' ? `${$.red}⚠${$.reset}` : `${$.yellow}⚠${$.reset}`;
+          const icon = level === 'error'
+            ? `${$.red}${t('run.sse.alert_error')}${$.reset}`
+            : `${$.yellow}${t('run.sse.alert_warn')}${$.reset}`;
           console.log(`  ${$.dim}${ts}${$.reset} ${icon} ${msg}`);
           break;
         }
@@ -774,7 +796,7 @@ async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
   // Final summary with live metrics
-  section('EXECUTION SUMMARY');
+  section(t('watch.execution_summary'));
   const statusIcon =
     result.status === 'SUCCESS'
       ? `${$.green}✓${$.reset}`
@@ -783,11 +805,11 @@ async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
         : `${$.red}✗${$.reset}`;
   console.log(`  ${statusIcon} ${$.bold}${result.status}${$.reset}  ${$.dim}${elapsed}s${$.reset}`);
   console.log();
-  kv('Agents', `${agentCount}`, $.cyan);
-  kv('Tool calls', `${toolCalls}`, $.cyan);
-  kv('Events', `${eventCount}`, $.dim);
-  kv('Tokens', `${(totalTokens || result.metrics.totalTokens).toLocaleString()}`, $.yellow);
-  kv('Cost', `$${(result.metrics.totalCostUsd || 0).toFixed(4)}`, $.dim);
+  kv(t('watch.field.agents'), `${agentCount}`, $.cyan);
+  kv(t('watch.field.tool_calls'), `${toolCalls}`, $.cyan);
+  kv(t('watch.field.events'), `${eventCount}`, $.dim);
+  kv(t('watch.field.tokens'), `${(totalTokens || result.metrics.totalTokens).toLocaleString()}`, $.yellow);
+  kv(t('watch.field.cost'), `$${(result.metrics.totalCostUsd || 0).toFixed(4)}`, $.dim);
 
   if (result.status !== 'SUCCESS' && result.errors.length > 0) {
     console.log();
@@ -818,7 +840,7 @@ async function promptHumanFeedback(success: boolean, task: string): Promise<void
   if (!process.stdin.isTTY) return;
 
   console.log(
-    `  ${$.dim}Was this helpful?${$.reset} ${$.green}[👍 Good]${$.reset} ${$.red}[👎 Wrong]${$.reset} ${$.dim}[Enter skip]${$.reset}`,
+    `  ${$.dim}${t('run.feedback.prompt')}${$.reset} ${$.green}${t('run.feedback.good_option')}${$.reset} ${$.red}${t('run.feedback.bad_option')}${$.reset} ${$.dim}${t('run.feedback.skip_option')}${$.reset}`,
   );
 
   try {
@@ -875,8 +897,8 @@ async function promptHumanFeedback(success: boolean, task: string): Promise<void
         /* best-effort */
       }
       const result = ratedGood
-        ? `${$.green}👍 Thanks!${$.reset}`
-        : `${$.red}👎 Noted. Will improve.${$.reset}`;
+        ? `${$.green}${t('run.feedback.thanks_good')}${$.reset}`
+        : `${$.red}${t('run.feedback.thanks_bad')}${$.reset}`;
       console.log(`  ${result}`);
     }
   } catch {
