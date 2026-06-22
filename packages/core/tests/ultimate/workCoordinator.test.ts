@@ -278,6 +278,7 @@ describe('WorkCoordinator — GAP-M2.2 Sqlite persistence', () => {
     expect(status.completed).toBe(1);
     expect(status.pending).toBe(2);
     expect(coord2.list({ runId: 'team-X', status: 'COMPLETED' })[0].claimedBy).toBe('agent-A');
+    store1.close(); // must close before afterEach cleanup — Windows EBUSY otherwise
     store2.close();
   });
 
