@@ -170,13 +170,13 @@ const AUDIO_FORMATS: AudioFormatInfo[] = [
   // WAV fmt chunk: after "fmt " (4 bytes) + chunk size (4 bytes) = offset 20
   { format: 'wav', magic: [0x52, 0x49, 0x46, 0x46], sampleRateOffset: 24, dataOffset: 44 },
   // MP3 frame header: 0xFF 0xFB (or 0xFF 0xF3, 0xFF 0xFA, 0xFF 0xF2)
-  { format: 'mp3', magic: [0xFF, 0xFB], sampleRateOffset: 2, dataOffset: 0 },
-  { format: 'mp3', magic: [0xFF, 0xF3], sampleRateOffset: 2, dataOffset: 0 },
-  { format: 'mp3', magic: [0xFF, 0xFA], sampleRateOffset: 2, dataOffset: 0 },
+  { format: 'mp3', magic: [0xff, 0xfb], sampleRateOffset: 2, dataOffset: 0 },
+  { format: 'mp3', magic: [0xff, 0xf3], sampleRateOffset: 2, dataOffset: 0 },
+  { format: 'mp3', magic: [0xff, 0xfa], sampleRateOffset: 2, dataOffset: 0 },
   // OGG: "OggS" at offset 0
-  { format: 'ogg', magic: [0x4F, 0x67, 0x67, 0x53], sampleRateOffset: 56, dataOffset: 58 },
+  { format: 'ogg', magic: [0x4f, 0x67, 0x67, 0x53], sampleRateOffset: 56, dataOffset: 58 },
   // FLAC: "fLaC" at offset 0
-  { format: 'flac', magic: [0x66, 0x4C, 0x61, 0x43], sampleRateOffset: 18, dataOffset: 42 },
+  { format: 'flac', magic: [0x66, 0x4c, 0x61, 0x43], sampleRateOffset: 18, dataOffset: 42 },
 ];
 
 // ============================================================================
@@ -200,7 +200,10 @@ export class VoiceContentScanner {
 
     // Early size check
     if (buffer.length > this.config.maxFileSize) {
-      return this.buildResult(buffer, 'unknown', threats, startMs, { fileSize: buffer.length, format: 'unknown' });
+      return this.buildResult(buffer, 'unknown', threats, startMs, {
+        fileSize: buffer.length,
+        format: 'unknown',
+      });
     }
 
     // Detect audio format
@@ -275,7 +278,8 @@ export class VoiceContentScanner {
             severity: group.severity,
             description: `Voice command trigger detected: "${group.name}"`,
             evidence: `Found "${pattern}" in audio metadata/content`,
-            remediation: 'Strip voice command triggers from audio. Re-encode audio from trusted source.',
+            remediation:
+              'Strip voice command triggers from audio. Re-encode audio from trusted source.',
           });
           break; // One match per group is enough
         }
@@ -319,7 +323,8 @@ export class VoiceContentScanner {
           severity: 'HIGH',
           description: 'DTMF tone sequence or metadata detected in audio',
           evidence: `Matched pattern: ${indicator.source}`,
-          remediation: 'Verify audio source. Strip non-audio metadata. Detect and flag DTMF tones during playback.',
+          remediation:
+            'Verify audio source. Strip non-audio metadata. Detect and flag DTMF tones during playback.',
         });
         break;
       }
@@ -329,10 +334,7 @@ export class VoiceContentScanner {
   }
 
   /** Detect spectrogram-encoded data channels. */
-  private scanSpectrogram(
-    buffer: Buffer,
-    formatInfo?: AudioFormatInfo | null,
-  ): VoiceThreat[] {
+  private scanSpectrogram(buffer: Buffer, formatInfo?: AudioFormatInfo | null): VoiceThreat[] {
     const threats: VoiceThreat[] = [];
 
     // Spectrogram hidden data indicators:
@@ -389,10 +391,7 @@ export class VoiceContentScanner {
   }
 
   /** Detect audio steganography indicators. */
-  private scanSteganography(
-    buffer: Buffer,
-    formatInfo?: AudioFormatInfo | null,
-  ): VoiceThreat[] {
+  private scanSteganography(buffer: Buffer, formatInfo?: AudioFormatInfo | null): VoiceThreat[] {
     const threats: VoiceThreat[] = [];
 
     // LSB steganography indicators:
@@ -408,7 +407,11 @@ export class VoiceContentScanner {
 
       // DeepSound signature: "DS" at specific offset
       const content = audioData.toString('latin1');
-      if (content.includes('DeepSound') || content.includes('Steghide') || content.includes('SilentEye')) {
+      if (
+        content.includes('DeepSound') ||
+        content.includes('Steghide') ||
+        content.includes('SilentEye')
+      ) {
         threats.push({
           type: 'audio_steganography',
           severity: 'CRITICAL',
@@ -434,7 +437,8 @@ export class VoiceContentScanner {
           severity: 'HIGH',
           description: `LSB analysis suggests hidden data (LSB 1-ratio: ${(lsbRatio * 100).toFixed(1)}% — near random 50%)`,
           evidence: `LSB ratio: ${(lsbRatio * 100).toFixed(1)}% (expected: significantly biased away from 50%)`,
-          remediation: 'Investigate audio source. Apply LSB destruction filter to strip hidden data.',
+          remediation:
+            'Investigate audio source. Apply LSB destruction filter to strip hidden data.',
         });
       }
     }
@@ -449,7 +453,10 @@ export class VoiceContentScanner {
       if (buffer.length >= fmt.magic.length) {
         let match = true;
         for (let i = 0; i < fmt.magic.length; i++) {
-          if (buffer[i] !== fmt.magic[i]) { match = false; break; }
+          if (buffer[i] !== fmt.magic[i]) {
+            match = false;
+            break;
+          }
         }
         if (match) return fmt;
       }
@@ -479,7 +486,12 @@ export class VoiceContentScanner {
     format: string,
     threats: VoiceThreat[],
     startMs: number,
-    meta: { fileSize: number; format: string; durationEstimate?: number; sampleRateEstimate?: number },
+    meta: {
+      fileSize: number;
+      format: string;
+      durationEstimate?: number;
+      sampleRateEstimate?: number;
+    },
   ): VoiceScanResult {
     const riskScore = this.calculateRiskScore(threats);
     const audioHash = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 16);
@@ -503,9 +515,15 @@ export class VoiceContentScanner {
   private calculateRiskScore(threats: VoiceThreat[]): number {
     if (threats.length === 0) return 0;
     const weights: Record<VoiceThreatSeverity, number> = {
-      LOW: 5, MEDIUM: 15, HIGH: 35, CRITICAL: 45,
+      LOW: 5,
+      MEDIUM: 15,
+      HIGH: 35,
+      CRITICAL: 45,
     };
-    return Math.min(100, threats.reduce((sum, t) => sum + weights[t.severity], 0));
+    return Math.min(
+      100,
+      threats.reduce((sum, t) => sum + weights[t.severity], 0),
+    );
   }
 }
 
@@ -515,9 +533,7 @@ export class VoiceContentScanner {
 
 const scannerSingleton = createTenantAwareSingleton(() => new VoiceContentScanner());
 
-export function getVoiceContentScanner(
-  config?: Partial<VoiceScannerConfig>,
-): VoiceContentScanner {
+export function getVoiceContentScanner(config?: Partial<VoiceScannerConfig>): VoiceContentScanner {
   return scannerSingleton.get();
 }
 

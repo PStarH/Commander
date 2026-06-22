@@ -466,11 +466,7 @@ export class MLInjectionDetector {
 
   // ── Internal ───────────────────────────────────────────────────────
 
-  private auditDetection(
-    content: string,
-    confidence: number,
-    nearest: InjectionVector,
-  ): void {
+  private auditDetection(content: string, confidence: number, nearest: InjectionVector): void {
     try {
       getAuditChainLedger().logEvent({
         type: 'content_threat',
@@ -503,9 +499,7 @@ export class MLInjectionDetector {
 
 const detectorSingleton = createTenantAwareSingleton(() => new MLInjectionDetector());
 
-export function getMLInjectionDetector(
-  config?: Partial<MLDetectorConfig>,
-): MLInjectionDetector {
+export function getMLInjectionDetector(config?: Partial<MLDetectorConfig>): MLInjectionDetector {
   return detectorSingleton.get();
 }
 

@@ -53,6 +53,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getCurrentTenantId } from '../runtime/tenantContext';
+import { getMetricsCollector } from '../runtime/metricsCollector';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { SecurityEvent, SecurityEventType, SecuritySeverity } from './securityAuditLogger';
 
@@ -224,8 +225,17 @@ export class AuditChainLedger {
     this.entryCache.push(entry);
     if (this.entryCache.length > this.maxCache) this.entryCache.shift();
 
-    // Persist directly via our own writer. Keep `SecurityAuditLogger`
-    // untouched: it stays a clean audit sink for non-chain events.
+    try {
+      getMetricsCollector().incrementCounter(
+        'audit_chain_events_total',
+        'Audit chain ledger events logged',
+        1,
+        [{ name: 'type', value: event.type }],
+      );
+    } catch {
+      /* best-effort */
+    }
+
     this.persistChainedLine(entry);
     return entry;
   }
