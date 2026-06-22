@@ -26,6 +26,7 @@ import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getAuditChainLedger } from './auditChainLedger';
 import { getGlobalLogger, getGlobalMetrics } from '../logging';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+import { getLiteLLMPricing } from './litellmPricing';
 
 // ============================================================================
 // Types
@@ -67,7 +68,7 @@ export interface CostGuardConfig {
   /** Max cost per month in USD */
   maxCostPerMonth: number;
   /** Cost per 1K tokens by model tier */
-  costPer1KTokens: Record<string, number>;
+  costPer1MTokens: Record<string, number>;
   /** Enable automatic MELT on critical threshold breach */
   enableAutoMelt: boolean;
   /** Enable quota enforcement */
@@ -154,22 +155,22 @@ const DEFAULT_CONFIG: CostGuardConfig = {
   maxCostPerSession: 5.0,
   maxCostPerDay: 100.0,
   maxCostPerMonth: 1000.0,
-  costPer1KTokens: {
-    'gpt-4o': 0.005,
-    'gpt-4o-mini': 0.00015,
-    'claude-3-opus': 0.015,
-    'claude-3-sonnet': 0.003,
-    'claude-3-haiku': 0.00025,
-    'gemini-1.5-pro': 0.0035,
-    'gemini-1.5-flash': 0.000075,
-    'deepseek-v3': 0.00027,
-    'default': 0.005,
+  costPer1MTokens: {
+    'gpt-4o': 5.0,
+    'gpt-4o-mini': 0.15,
+    'claude-3-opus': 15.0,
+    'claude-3-sonnet': 3.0,
+    'claude-3-haiku': 0.25,
+    'gemini-1.5-pro': 3.5,
+    'gemini-1.5-flash': 0.075,
+    'deepseek-v3': 0.27,
+    default: 5.0,
   },
   enableAutoMelt: true,
   enableQuotaEnforcement: true,
   tierLimits: {
     free: { daily: 1.0, monthly: 10.0, perRequest: 0.05 },
-    standard: { daily: 10.0, monthly: 100.0, perRequest: 0.20 },
+    standard: { daily: 10.0, monthly: 100.0, perRequest: 0.2 },
     pro: { daily: 50.0, monthly: 500.0, perRequest: 1.0 },
     enterprise: { daily: 500.0, monthly: 5000.0, perRequest: 5.0 },
     unlimited: { daily: Infinity, monthly: Infinity, perRequest: Infinity },
@@ -188,9 +189,35 @@ const DEFAULT_CONFIG: CostGuardConfig = {
 // Cost Estimator (token → dollar)
 // ============================================================================
 
-function estimateCost(tokens: number, model: string, config: CostGuardConfig): number {
-  const rate = config.costPer1KTokens[model] ?? config.costPer1KTokens['default'] ?? 0.005;
-  return (tokens / 1000) * rate;
+function estimateCost(
+  tokens: number,
+  model: string,
+  config: CostGuardConfig,
+  cacheHitRatio = 0,
+): number {
+  const litellm = getLiteLLMPricing();
+
+  // Try cache-aware estimate first
+  if (cacheHitRatio > 0) {
+    const cacheRate = litellm.getCacheReadCostPer1MTokens(model);
+    const fullRate =
+      litellm.getCostPer1MTokens(model) ??
+      config.costPer1MTokens[model] ??
+      config.costPer1MTokens['default'] ??
+      5.0;
+    if (cacheRate !== undefined) {
+      const blendedRate = cacheHitRatio * cacheRate + (1 - cacheHitRatio) * fullRate;
+      return (tokens / 1_000_000) * blendedRate;
+    }
+    // No cache entry, fall through to full-rate estimate
+  }
+
+  const litellmRate = litellm.getCostPer1MTokens(model);
+  if (litellmRate !== undefined) {
+    return (tokens / 1_000_000) * litellmRate;
+  }
+  const rate = config.costPer1MTokens[model] ?? config.costPer1MTokens['default'] ?? 5.0;
+  return (tokens / 1_000_000) * rate;
 }
 
 // ============================================================================
@@ -262,6 +289,8 @@ export class CostGuard {
     input?: string;
     /** Task category for cost estimation */
     taskCategory?: TaskCategory;
+    /** Fraction of tokens expected to hit cache (0-1), for cache-aware cost estimation */
+    cacheHitRatio?: number;
   }): CostGuardDecision {
     const { tokens, model, source, input } = params;
     const now = Date.now();
@@ -271,25 +300,43 @@ export class CostGuard {
 
     // 1. Check if source is already melted
     if (this.state.activeMelts.has(source)) {
-      return this.decide('MELT', 'token_flood', 'Source is circuit-broken (MELT)', {
-        currentTokens: tokens,
-        limitTokens: 0,
-      }, 0);
+      return this.decide(
+        'MELT',
+        'token_flood',
+        'Source is circuit-broken (MELT)',
+        {
+          currentTokens: tokens,
+          limitTokens: 0,
+        },
+        0,
+      );
     }
 
     // 1. Detect token flood
     if (tokens > this.config.meltTokensPerRequest) {
-      this.applyAction('MELT', source, 'token_flood',
-        `Request tokens (${tokens}) exceed MELT threshold (${this.config.meltTokensPerRequest})`);
-      return this.decide('MELT', 'token_flood',
+      this.applyAction(
+        'MELT',
+        source,
+        'token_flood',
+        `Request tokens (${tokens}) exceed MELT threshold (${this.config.meltTokensPerRequest})`,
+      );
+      return this.decide(
+        'MELT',
+        'token_flood',
         `MELT: ${tokens} tokens exceeds ${this.config.meltTokensPerRequest} limit`,
-        { currentTokens: tokens, limitTokens: this.config.meltTokensPerRequest }, 0);
+        { currentTokens: tokens, limitTokens: this.config.meltTokensPerRequest },
+        0,
+      );
     }
 
     if (tokens > this.config.maxTokensPerRequest) {
-      return this.decide('THROTTLE', 'token_flood',
+      return this.decide(
+        'THROTTLE',
+        'token_flood',
         `THROTTLE: ${tokens} tokens exceeds ${this.config.maxTokensPerRequest} limit`,
-        { currentTokens: tokens, limitTokens: this.config.maxTokensPerRequest }, 30_000);
+        { currentTokens: tokens, limitTokens: this.config.maxTokensPerRequest },
+        30_000,
+      );
     }
 
     // 2. Detect concurrent burst
@@ -299,33 +346,53 @@ export class CostGuard {
     const concurrentCount = this.state.requestTimestamps.length;
 
     if (concurrentCount > this.config.burstThreshold * 2) {
-      this.applyAction('MELT', source, 'concurrent_burst',
-        `Burst ${concurrentCount} requests in ${this.config.burstWindowMs}ms (MELT threshold: ${this.config.burstThreshold * 2})`);
-      return this.decide('MELT', 'concurrent_burst',
+      this.applyAction(
+        'MELT',
+        source,
+        'concurrent_burst',
+        `Burst ${concurrentCount} requests in ${this.config.burstWindowMs}ms (MELT threshold: ${this.config.burstThreshold * 2})`,
+      );
+      return this.decide(
+        'MELT',
+        'concurrent_burst',
         `MELT: ${concurrentCount} requests detected in burst window`,
-        { concurrentCount, maxConcurrent: this.config.burstThreshold * 2 }, 0);
+        { concurrentCount, maxConcurrent: this.config.burstThreshold * 2 },
+        0,
+      );
     }
 
     if (concurrentCount > this.config.burstThreshold) {
-      return this.decide('THROTTLE', 'concurrent_burst',
+      return this.decide(
+        'THROTTLE',
+        'concurrent_burst',
         `THROTTLE: ${concurrentCount} requests in burst window`,
-        { concurrentCount, maxConcurrent: this.config.burstThreshold }, 60_000);
+        { concurrentCount, maxConcurrent: this.config.burstThreshold },
+        60_000,
+      );
     }
 
     // 3. Detect context stuffing (large context window usage over time)
     if (this.state.sessionTokens > 200_000 && tokens > 10_000) {
-      return this.decide('QUARANTINE', 'context_stuffing',
+      return this.decide(
+        'QUARANTINE',
+        'context_stuffing',
         `Session tokens (${this.state.sessionTokens}) with large request (${tokens} tokens)`,
-        { currentTokens: this.state.sessionTokens, limitTokens: 200_000 }, 300_000);
+        { currentTokens: this.state.sessionTokens, limitTokens: 200_000 },
+        300_000,
+      );
     }
 
     // 4. Detect expensive query patterns
     if (input) {
       for (const pattern of this.config.expensiveQueryPatterns) {
         if (pattern.test(input)) {
-          return this.decide('QUARANTINE', 'expensive_query',
+          return this.decide(
+            'QUARANTINE',
+            'expensive_query',
             `Query matches expensive pattern: ${pattern.source}`,
-            {}, 300_000);
+            {},
+            300_000,
+          );
         }
       }
     }
@@ -333,18 +400,26 @@ export class CostGuard {
     // 5. Quota enforcement (only for requests that passed all other checks)
     if (this.config.enableQuotaEnforcement) {
       const limits = this.config.tierLimits[this.state.tier];
-      const estimatedCost = estimateCost(tokens, model, this.config);
+      const estimatedCost = estimateCost(tokens, model, this.config, params.cacheHitRatio ?? 0);
 
       if (this.state.dailyCost + estimatedCost > limits.daily) {
-        return this.decide('THROTTLE', 'token_flood',
+        return this.decide(
+          'THROTTLE',
+          'token_flood',
           `Daily cost limit reached: $${this.state.dailyCost.toFixed(2)} + $${estimatedCost.toFixed(4)} > $${limits.daily.toFixed(2)}`,
-          { currentCost: this.state.dailyCost, limitCost: limits.daily }, 86_400_000);
+          { currentCost: this.state.dailyCost, limitCost: limits.daily },
+          86_400_000,
+        );
       }
 
       if (estimatedCost > limits.perRequest) {
-        return this.decide('THROTTLE', 'expensive_query',
+        return this.decide(
+          'THROTTLE',
+          'expensive_query',
           `Per-request cost $${estimatedCost.toFixed(4)} exceeds tier limit $${limits.perRequest.toFixed(2)}`,
-          { currentCost: estimatedCost, limitCost: limits.perRequest }, 30_000);
+          { currentCost: estimatedCost, limitCost: limits.perRequest },
+          30_000,
+        );
       }
     }
 
@@ -389,32 +464,62 @@ export class CostGuard {
 
     // 6. Detect tool call loops (excessive calls per session)
     if (this.state.sessionToolCalls > this.config.maxToolCallsPerSession * 2) {
-      this.applyAction('MELT', source, 'tool_loop',
-        `Session tool calls (${this.state.sessionToolCalls}) exceed 2x max (${this.config.maxToolCallsPerSession})`);
-      return this.decide('MELT', 'tool_loop',
+      this.applyAction(
+        'MELT',
+        source,
+        'tool_loop',
+        `Session tool calls (${this.state.sessionToolCalls}) exceed 2x max (${this.config.maxToolCallsPerSession})`,
+      );
+      return this.decide(
+        'MELT',
+        'tool_loop',
         `MELT: ${this.state.sessionToolCalls} tool calls this session`,
-        { toolCalls: this.state.sessionToolCalls, maxToolCalls: this.config.maxToolCallsPerSession }, 0);
+        {
+          toolCalls: this.state.sessionToolCalls,
+          maxToolCalls: this.config.maxToolCallsPerSession,
+        },
+        0,
+      );
     }
 
     if (this.state.sessionToolCalls > this.config.maxToolCallsPerSession) {
-      return this.decide('QUARANTINE', 'tool_loop',
+      return this.decide(
+        'QUARANTINE',
+        'tool_loop',
         `QUARANTINE: ${this.state.sessionToolCalls} tool calls exceeds ${this.config.maxToolCallsPerSession}`,
-        { toolCalls: this.state.sessionToolCalls, maxToolCalls: this.config.maxToolCallsPerSession }, 300_000);
+        {
+          toolCalls: this.state.sessionToolCalls,
+          maxToolCalls: this.config.maxToolCallsPerSession,
+        },
+        300_000,
+      );
     }
 
     // 7. Detect tool call amplification (high rate)
     if (callsPerMinute > this.config.maxToolCallsPerMinute * 3) {
-      this.applyAction('MELT', source, 'amplification_loop',
-        `Tool call amplification: ${callsPerMinute}/min (3x limit)`);
-      return this.decide('MELT', 'amplification_loop',
+      this.applyAction(
+        'MELT',
+        source,
+        'amplification_loop',
+        `Tool call amplification: ${callsPerMinute}/min (3x limit)`,
+      );
+      return this.decide(
+        'MELT',
+        'amplification_loop',
         `MELT: ${callsPerMinute} tool calls/minute`,
-        { toolCalls: callsPerMinute, maxToolCalls: this.config.maxToolCallsPerMinute * 3 }, 0);
+        { toolCalls: callsPerMinute, maxToolCalls: this.config.maxToolCallsPerMinute * 3 },
+        0,
+      );
     }
 
     if (callsPerMinute > this.config.maxToolCallsPerMinute) {
-      return this.decide('THROTTLE', 'amplification_loop',
+      return this.decide(
+        'THROTTLE',
+        'amplification_loop',
         `THROTTLE: ${callsPerMinute} tool calls/minute exceeds ${this.config.maxToolCallsPerMinute}`,
-        { toolCalls: callsPerMinute, maxToolCalls: this.config.maxToolCallsPerMinute }, 30_000);
+        { toolCalls: callsPerMinute, maxToolCalls: this.config.maxToolCallsPerMinute },
+        30_000,
+      );
     }
 
     return this.decide('LOGONLY', null, `Tool call: ${toolName}`, {}, 0);
@@ -433,18 +538,27 @@ export class CostGuard {
     source: string;
   }): CostGuardDecision {
     const { fromModel, toModel, reason, source } = params;
-    const fromCost = this.config.costPer1KTokens[fromModel] ?? this.config.costPer1KTokens['default'] ?? 0;
-    const toCost = this.config.costPer1KTokens[toModel] ?? this.config.costPer1KTokens['default'] ?? 0;
+    const fromCost = estimateCost(1000, fromModel, this.config);
+    const toCost = estimateCost(1000, toModel, this.config);
 
     // Detect aggressive cost escalation
     if (toCost > fromCost * 5) {
-      return this.decide('QUARANTINE', 'model_degradation',
+      return this.decide(
+        'QUARANTINE',
+        'model_degradation',
         `Provider switch cost escalation: $${fromCost}→$${toCost} per 1K tokens (reason: ${reason})`,
-        {}, 300_000);
+        {},
+        300_000,
+      );
     }
 
-    return this.decide('LOGONLY', null,
-      `Provider switch: ${fromModel}→${toModel} (${reason})`, {}, 0);
+    return this.decide(
+      'LOGONLY',
+      null,
+      `Provider switch: ${fromModel}→${toModel} (${reason})`,
+      {},
+      0,
+    );
   }
 
   // ── State Management ──────────────────────────────────────────────
@@ -550,7 +664,8 @@ export class CostGuard {
   /** Clean expired throttles. */
   private cleanExpiredThrottles(now: number): void {
     for (const [source, timestamp] of this.state.activeThrottles) {
-      if (now - timestamp > 120_000) { // Throttles expire after 2 min max
+      if (now - timestamp > 120_000) {
+        // Throttles expire after 2 min max
         this.state.activeThrottles.delete(source);
       }
     }
@@ -610,7 +725,10 @@ export class CostGuard {
     // Report metrics
     try {
       const metrics = getGlobalMetrics();
-      metrics.incrementCounter('costguard.decisions', 1, { action, attackType: attackType ?? 'none' });
+      metrics.incrementCounter('costguard.decisions', 1, {
+        action,
+        attackType: attackType ?? 'none',
+      });
       if (action === 'MELT') {
         metrics.incrementCounter('costguard.melts', 1, { attackType: attackType ?? 'unknown' });
       }

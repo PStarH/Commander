@@ -140,12 +140,13 @@ const EMERGING_SIGNATURES: Omit<ThreatSignature, 'addedAt' | 'deprecated'>[] = [
   {
     id: 'THREAT-2026-001',
     name: 'LangChain prompt chaining bypass',
-    description: 'Multi-step prompt injection that chains across tool calls to bypass single-step filters',
+    description:
+      'Multi-step prompt injection that chains across tool calls to bypass single-step filters',
     severity: 'critical',
     patterns: [
-      /\[TOOL_CALL\].*ignore.*previous.*\[END_TOOL_CALL\]/si,
-      /step\s*\d+.*\n.*forget.*\n.*step\s*\d+/si,
-      /chain.*thought.*\n.*disregard.*\n.*chain.*thought/si,
+      /\[TOOL_CALL\].*ignore.*previous.*\[END_TOOL_CALL\]/is,
+      /step\s*\d+.*\n.*forget.*\n.*step\s*\d+/is,
+      /chain.*thought.*\n.*disregard.*\n.*chain.*thought/is,
     ],
     tlp: 'GREEN',
     category: 'injection',
@@ -170,13 +171,10 @@ const EMERGING_SIGNATURES: Omit<ThreatSignature, 'addedAt' | 'deprecated'>[] = [
   {
     id: 'THREAT-2026-003',
     name: 'Context window compression attack',
-    description: 'Deliberately filling context to trigger compaction that drops safety instructions',
+    description:
+      'Deliberately filling context to trigger compaction that drops safety instructions',
     severity: 'high',
-    patterns: [
-      /padding.*\n{100,}/s,
-      /lorem\s+ipsum.{500,}/si,
-      /\[FILLER\].{200,}\[\/FILLER\]/s,
-    ],
+    patterns: [/padding.*\n{100,}/s, /lorem\s+ipsum.{500,}/is, /\[FILLER\].{200,}\[\/FILLER\]/s],
     tlp: 'GREEN',
     category: 'injection',
     source: 'Commander Threat Intelligence',
@@ -201,7 +199,8 @@ const EMERGING_SIGNATURES: Omit<ThreatSignature, 'addedAt' | 'deprecated'>[] = [
   {
     id: 'THREAT-2026-005',
     name: 'Vector embedding poisoning',
-    description: 'Crafted content designed to shift embedding similarity scores toward malicious intent',
+    description:
+      'Crafted content designed to shift embedding similarity scores toward malicious intent',
     severity: 'medium',
     patterns: [
       /cosine_similarity.*manipulat/i,
@@ -216,7 +215,8 @@ const EMERGING_SIGNATURES: Omit<ThreatSignature, 'addedAt' | 'deprecated'>[] = [
   {
     id: 'THREAT-2026-006',
     name: 'Tool output length DoS',
-    description: 'Tool output that produces massive results to exhaust token budget and crash the agent',
+    description:
+      'Tool output that produces massive results to exhaust token budget and crash the agent',
     severity: 'high',
     patterns: [
       /for\s*\(\s*let\s+i\s*=\s*0\s*;\s*i\s*<\s*\d{6,}/,
@@ -248,7 +248,8 @@ const EMERGING_SIGNATURES: Omit<ThreatSignature, 'addedAt' | 'deprecated'>[] = [
   {
     id: 'THREAT-2026-008',
     name: 'Skill marketplace typosquatting',
-    description: 'Malicious skill packages with names similar to popular skills (dependency confusion)',
+    description:
+      'Malicious skill packages with names similar to popular skills (dependency confusion)',
     severity: 'high',
     patterns: [
       /commader-skills/i,
@@ -343,20 +344,14 @@ export class ThreatIntelligenceFeed {
   /** Get all active (non-deprecated, non-expired) signatures. */
   getActiveSignatures(): ThreatSignature[] {
     const now = new Date().toISOString();
-    return this.signatures.filter(
-      (s) =>
-        !s.deprecated &&
-        (!s.expiresAt || s.expiresAt > now),
-    );
+    return this.signatures.filter((s) => !s.deprecated && (!s.expiresAt || s.expiresAt > now));
   }
 
   /** Get signatures by TLP level (for feed sharing boundaries). */
   getSignaturesByTlp(maxTlp: TlpLevel): ThreatSignature[] {
     const tlpOrder: TlpLevel[] = ['WHITE', 'GREEN', 'AMBER', 'RED'];
     const maxIndex = tlpOrder.indexOf(maxTlp);
-    return this.getActiveSignatures().filter(
-      (s) => tlpOrder.indexOf(s.tlp) <= maxIndex,
-    );
+    return this.getActiveSignatures().filter((s) => tlpOrder.indexOf(s.tlp) <= maxIndex);
   }
 
   /** Get signatures by category. */
@@ -406,15 +401,14 @@ export class ThreatIntelligenceFeed {
     severity: ThreatSignature['severity'];
     name: string;
   }> {
-    return this.getActiveSignatures()
-      .flatMap((s) =>
-        s.patterns.map((p) => ({
-          id: s.id,
-          pattern: p,
-          severity: s.severity,
-          name: s.name,
-        })),
-      );
+    return this.getActiveSignatures().flatMap((s) =>
+      s.patterns.map((p) => ({
+        id: s.id,
+        pattern: p,
+        severity: s.severity,
+        name: s.name,
+      })),
+    );
   }
 
   // ── Health & Monitoring ────────────────────────────────────────────
@@ -507,22 +501,15 @@ export class ThreatIntelligenceFeed {
     const deprecated = this.signatures.filter((s) => s.deprecated);
     const active = this.signatures.filter((s) => !s.deprecated);
     if (deprecated.length > 0) {
-      deprecated.sort(
-        (a, b) => new Date(a.addedAt).getTime() - new Date(b.addedAt).getTime(),
-      );
-      const toRemove = deprecated.slice(
-        0,
-        this.signatures.length - this.config.maxSignatures,
-      );
+      deprecated.sort((a, b) => new Date(a.addedAt).getTime() - new Date(b.addedAt).getTime());
+      const toRemove = deprecated.slice(0, this.signatures.length - this.config.maxSignatures);
       for (const sig of toRemove) {
         this.signatures = this.signatures.filter((s) => s !== sig);
       }
     }
     // If still over limit, remove oldest active
     while (this.signatures.length > this.config.maxSignatures) {
-      this.signatures.sort(
-        (a, b) => new Date(a.addedAt).getTime() - new Date(b.addedAt).getTime(),
-      );
+      this.signatures.sort((a, b) => new Date(a.addedAt).getTime() - new Date(b.addedAt).getTime());
       this.signatures.shift();
     }
   }
@@ -559,7 +546,9 @@ export class ThreatIntelligenceFeed {
 
 const feedSingleton = createTenantAwareSingleton(() => new ThreatIntelligenceFeed());
 
-export function getThreatIntelligenceFeed(config?: Partial<ThreatFeedConfig>): ThreatIntelligenceFeed {
+export function getThreatIntelligenceFeed(
+  config?: Partial<ThreatFeedConfig>,
+): ThreatIntelligenceFeed {
   return feedSingleton.get();
 }
 
