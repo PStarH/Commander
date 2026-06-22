@@ -7,6 +7,18 @@
  * Usage:
  *   import { t } from './i18n';
  *   console.log(t('help.title'));  // "Commander" or "Commander — 多智能体编排系统"
+ *
+ * Interpolation: t('key', { name: 'value' }) substitutes {name}.
+ *
+ * Coverage (post-expansion):
+ *   - Original 60 keys preserved verbatim
+ *   - ~280 new keys covering hardcoded English in util.ts, envLoader.ts,
+ *     cliRateLimiter.ts, repl.ts and every commands/*.ts file
+ *   - 19 namespaces total
+ *
+ * Lookup behaviour: missing locale key falls back to en, which falls back
+ * to the key itself. This means untranslated keys NEVER throw — they
+ * silently degrade to English.
  */
 
 // ============================================================================
@@ -27,26 +39,87 @@ function detectLocale(): Locale {
 
 const translations: Record<Locale, Record<string, string>> = {
   en: {
-    // General
+    // ── General ──────────────────────────────────────────────────────
     'app.title': 'Commander — multi-agent orchestration',
     'app.version': 'Version',
 
-    // Help
+    // ── Help ─────────────────────────────────────────────────────────
     'help.title': 'QUICK START',
     'help.get.started': 'Set an API key and run:',
     'help.commands': 'COMMANDS',
     'help.options': 'OPTIONS',
     'help.run.help': 'Run {cmd} for command-specific help.',
 
-    // Quickstart
+    // ── Quickstart (original + wizard expansion) ────────────────────
     'quickstart.title': 'Commander Quickstart',
     'quickstart.subtitle': "Let's get you set up",
     'quickstart.prereqs': 'PREREQUISITES',
     'quickstart.all.passed': 'All checks passed!',
     'quickstart.ready': "You're ready to go.",
     'quickstart.try': 'Try:',
+    'quickstart.title.banner': 'Commander Quickstart',
+    'quickstart.subtitle.banner': "Let's get you set up",
+    'quickstart.want_setup': 'SET UP API PROVIDER',
+    'quickstart.provider_supports': 'Commander supports 20+ providers. Pick one:',
+    'quickstart.openai.desc': 'GPT-4o, GPT-4.1, o3',
+    'quickstart.anthropic.desc': 'Claude Sonnet 4.6, Opus 4.8',
+    'quickstart.google.desc': 'Gemini 2.5 Pro/Flash',
+    'quickstart.openrouter.desc': '200+ models',
+    'quickstart.deepseek.desc': 'DeepSeek R1, V3',
+    'quickstart.ollama.desc': 'Llama 3, Mistral, etc.',
+    'quickstart.to_configure': 'To configure:',
+    'quickstart.config_alt_step': 'or',
+    'quickstart.all_passed_try': 'Try: commander "Hello, world!"',
+    'quickstart.need_attention': '{n} check(s) need attention',
+    'quickstart.summary.section': 'SUMMARY',
+    'quickstart.all_good': '✓ Everything looks good!',
+    'quickstart.run_first_task_hint':
+      'Run commander "your first task" to get started.',
+    'quickstart.fix_and_verify':
+      'Fix them, then run commander quickstart --check to verify.',
+    'quickstart.first_steps': 'YOUR FIRST TASKS',
+    'quickstart.try.these': 'Try these to get familiar with Commander:',
+    'quickstart.example.1': 'commander "Explain this codebase"',
+    'quickstart.example.1.desc': 'Quick analysis — no setup needed',
+    'quickstart.example.2': 'commander plan "Build a REST API"',
+    'quickstart.example.2.desc': 'See the multi-agent plan before running',
+    'quickstart.example.3': 'commander run "Fix all TypeScript errors"',
+    'quickstart.example.3.desc': 'Full pipeline with execution',
+    'quickstart.example.4': 'commander watch "Refactor auth module"',
+    'quickstart.example.4.desc': 'Real-time progress as agents work',
+    'quickstart.example.5': 'commander status',
+    'quickstart.example.5.desc': 'Check your system & provider status',
+    'quickstart.example.6': 'commander doctor',
+    'quickstart.example.6.desc': 'Run diagnostics if something is wrong',
+    'quickstart.pro_tips': 'Pro tips:',
+    'quickstart.tip.treat_as_task':
+      'Any unrecognized command is treated as a task: commander fix the login bug',
+    'quickstart.tip.help': 'Use --help with any command for options',
+    'quickstart.tip.config_test':
+      "Use commander config test to verify your API connection",
+    'quickstart.tip.mode_auto_edit':
+      'Use commander mode auto-edit to skip approval prompts',
+    'quickstart.structure': 'PROJECT STRUCTURE',
 
-    // Doctor
+    // ── Pre-check labels & fixes ─────────────────────────────────────
+    'quickcheck.label.node': 'Node.js',
+    'quickcheck.label.provider': 'API Provider',
+    'quickcheck.label.git': 'Git',
+    'quickcheck.label.workspace': 'Workspace',
+    'quickcheck.label.tools': 'Tools',
+    'quickcheck.fix.node': 'Install Node.js v20+ from https://nodejs.org',
+    'quickcheck.fix.provider':
+      'export OPENAI_API_KEY=sk-... (or ANTHROPIC_API_KEY, GOOGLE_API_KEY, etc.)',
+    'quickcheck.fix.git': 'Install git: https://git-scm.com',
+    'quickcheck.workspace.found': '.commander/ found',
+    'quickcheck.workspace.package_json':
+      'package.json found (run any command to initialize .commander/)',
+    'quickcheck.workspace.standalone': '(standalone mode)',
+    'quickcheck.tools_configured': '{n} tools configured',
+    'quickcheck.provider_run_hint': '{type} · {model}',
+    'quickcheck.provider_missing': 'No API key found',
+
+    // ── Doctor ──────────────────────────────────────────────────────
     'doctor.title': 'DOCTOR',
     'doctor.env': 'ENVIRONMENT',
     'doctor.provider': 'PROVIDER',
@@ -54,27 +127,155 @@ const translations: Record<Locale, Record<string, string>> = {
     'doctor.connectivity': 'CONNECTIVITY',
     'doctor.all.passed': 'All checks passed ✓',
     'doctor.needs.attention': 'Some checks need attention',
+    'doctor.check.node': 'Node.js v20+',
+    'doctor.check.node_current':
+      'Current: {version}. Install from https://nodejs.org',
+    'doctor.check.git': 'Git',
+    'doctor.check.git_version': '{version}',
+    'doctor.check.git_missing': 'Not found. Install: https://git-scm.com',
+    'doctor.check.pm': 'Package manager',
+    'doctor.check.pm_unknown': 'Unknown',
+    'doctor.check.pm_no_lockfile': 'No lockfile found',
+    'doctor.check.api_key': 'API key',
+    'doctor.check.api_key_missing':
+      'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.',
+    'doctor.check.api_key_value': '{type} · {model}',
+    'doctor.check.packages': 'Packages installed',
+    'doctor.check.packages_missing': 'Run: pnpm install',
+    'doctor.check.commander_dir': '.commander/ dir',
+    'doctor.check.commander_dir.found': 'Found',
+    'doctor.check.commander_dir.missing':
+      'Not found (will be created on first run)',
+    'doctor.check.tools_configured': 'Tools configured',
+    'doctor.check.tools_count': '{n} tools',
+    'doctor.check.disk_space': 'Disk space',
+    'doctor.check.disk_space.low': ' — LOW SPACE',
+    'doctor.connectivity.testing': 'Testing {provider} at {url}...',
+    'doctor.connectivity.reachable': 'API reachable (HTTP {status})',
+    'doctor.connectivity.http_error': 'API returned HTTP {status}',
+    'doctor.connectivity.invalid_key':
+      '→ Invalid API key. Check your credentials.',
+    'doctor.connectivity.rate_limited': '→ Rate limited. Try again later.',
+    'doctor.connectivity.unreachable': 'API unreachable',
+    'doctor.connectivity.dns_failed':
+      '→ DNS resolution failed. Check your internet connection.',
+    'doctor.connectivity.refused':
+      '→ Connection refused. Is the server running?',
+    'doctor.connectivity.timeout':
+      '→ Connection timed out. Check network/firewall.',
 
-    // Status
+    // ── Status (cmdStatus banner + extras) ──────────────────────────
     'status.title': 'SYSTEM STATUS',
     'status.provider': 'ACTIVE PROVIDER',
     'status.keys': 'API KEYS',
     'status.runtime': 'Runtime',
+    'status.version': '1.0.0-alpha.1',
+    'status.platform': 'Platform',
+    'status.provider_name': 'Name',
+    'status.provider.api_url': 'API URL',
+    'status.provider.model': 'Model',
+    'status.provider.none': 'None — set an API key env var',
+    'status.runtime.ready': 'ready',
+    'status.runtime.no_key': 'no API key',
+    'status.field.experiences': 'Experiences',
+    'status.field.strategies': 'Strategies',
+    'status.field.avg_success': 'Avg success',
+    'status.section.optimizations': 'OPTIMIZATIONS',
+    'status.optimization.row': '{type}: {from} → {to} ({pct}%)',
+    'status.section.shadow_mode': 'SHADOW MODE',
+    'status.shadow.last_run': '{main} vs {shadow}',
+    'status.shadow.main_result_yes': '✓',
+    'status.shadow.main_result_no': '✗',
+    'status.shadow.shadow_result_yes': '✓',
+    'status.shadow.shadow_result_no': '✗',
+    'status.shadow.better_hint':
+      '{strategy} would have performed better in the last run',
+    'status.shadow.total': 'Total shadows',
+    'status.cached_results': 'Cached results',
+    'status.meta_debug_load_failed':
+      'Failed to load MetaLearner stats: {message}',
 
-    // Config
+    // ── Config (cmdConfig banner + extras) ─────────────────────────
     'config.title': 'CONFIGURATION',
     'config.set': 'Set:',
     'config.test': 'Test API connection',
+    'config.show': '{content}',
+    'config.set.theme_usage':
+      'commander config set theme <dark|light|minimal>',
+    'config.set.model_usage': 'commander config set model <model-id>',
+    'config.set.meta_tools': 'commander config set meta-tools on',
+    'config.list_models': 'commander config list-models',
+    'config.list_providers': 'commander config list-providers',
+    'config.test_cmd': 'commander config test',
+    'config.set.usage': 'commander config set <key> <value>',
+    'config.set.theme_unknown': 'Unknown theme: "{theme}"',
+    'config.set.theme_available': 'Available: {themes}',
+    'config.set.theme_no_color':
+      'NO_COLOR=1 disables all colors (https://no-color.org)',
+    'config.set.theme_done': 'theme = {theme}',
+    'config.set.theme_persist_hint':
+      'Colors updated for this session. Persist with: export COMMANDER_THEME={theme}',
+    'config.list_providers.subtitle':
+      'Set any API key env var to activate a provider:',
+    'config.list_providers.legend':
+      '  ✓ = configured  ~ = via OPENAI_API_KEY  (space) = not set',
+    'config.test.no_key': 'No API key found. Set one of the env vars.',
+    'config.test.section': 'TESTING',
+    'config.test.provider': 'Provider',
+    'config.test.url': 'URL',
+    'config.test.testing': 'Testing...',
+    'config.test.success': '✓ Connection OK',
+    'config.test.http_error': '✗ {status}',
+    'config.test.connection_failed': '! Connection failed',
+    'config.canary_status.title': 'CANARY DEPLOYMENT',
+    'config.canary_status.none_active': 'No active canary deployment.',
+    'config.canary_status.intro':
+      'Canary deployments are created automatically when the EvolverAgent',
+    'config.canary_status.intro2':
+      'detects failure patterns and proposes config mutations.',
+    'config.canary_status.intro3':
+      'A 10% canary rollout is used to safely verify config changes.',
+    'config.canary_status.status': 'Status',
+    'config.canary_status.promoted': 'Promoted',
+    'config.canary_status.rejected': 'Rejected',
+    'config.canary_status.active': 'Active',
+    'config.canary_status.mutations': 'Mutations',
+    'config.canary_status.runs': 'Runs',
+    'config.canary_status.rollout': 'Rollout',
+    'config.canary_status.success_rate': 'Success rate',
+    'config.canary_status.pending_runs':
+      '{n} more needed for auto-decision',
+    'config.canary_status.running_for': '{s}s',
+    'config.usage.main':
+      'commander config [show|set <key> <val>|list-providers|list-models|test|canary-status]',
 
-    // Errors
+    // ── Errors (shared + run-specific) ──────────────────────────────
     'error.no.apikey': 'No API key found.',
     'error.fix.apikey':
       'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider env var. Run: commander quickstart',
     'error.fatal': 'ERROR',
     'error.run.doctor': 'Run commander doctor to diagnose issues.',
     'error.run.quickstart': 'Run commander quickstart for setup guidance.',
+    'error_messages.api.not_available': 'No LLM provider available.',
+    'error_messages.api.provider_not_available':
+      'Provider "{provider}" not available. Check your API key.',
+    'error_messages.run.no_task': 'No task provided.',
+    'error_messages.run.no_task.usage': 'Usage:',
+    'error_messages.run.no_task.example': 'Example:',
+    'error_messages.invalid_tier':
+      'Invalid --tier="{value}". Allowed: {allowed}.{hint} Run commander run --help',
+    'error_messages.invalid_effort':
+      'Invalid --effort="{value}". Allowed: {allowed}.{hint} Run commander run --help',
+    'error_messages.invalid_topology':
+      'Invalid --topology="{value}". Allowed: {allowed}.{hint} Run commander run --help',
+    'error_messages.invalid_quality_threshold':
+      'Invalid --quality-threshold="{value}".',
+    'error_messages.quality_threshold_hint':
+      'Must be a number between 0 and 1 (e.g. 0.8). Run commander run --help',
+    'error_messages.did_you_mean': ' Did you mean --{flag}={value}?',
+    'error_messages.tui.fallback': 'Could not start TUI dashboard',
 
-    // Mode
+    // ── Mode ─────────────────────────────────────────────────────────
     'mode.title': 'APPROVAL MODE',
     'mode.set': 'Set:',
     'mode.plan': 'Analysis only, no modifications',
@@ -82,62 +283,1383 @@ const translations: Record<Locale, Record<string, string>> = {
     'mode.suggest': 'Prompts before risky operations',
     'mode.autoedit': 'Allows most operations, flags sandbox escapes',
     'mode.fullauto': 'No approval gates',
+    'mode.title.curr': 'Mode',
+    'mode.label.suggest': 'Suggest mode — prompts before risky operations',
+    'mode.label.autoedit':
+      'Auto-edit mode — allows most operations, flags sandbox escapes',
+    'mode.label.fullauto': 'Full-auto mode — no approval gates',
+    'mode.label.readonly': 'Read-only mode — no writes, no destructive ops',
+    'mode.label.plan': 'Plan mode — analysis only, no modifications',
+    'mode.set_cmd':
+      'commander mode <plan|read-only|auto-edit|full-auto|suggest>',
+    'mode.invalid': 'Invalid mode: "{mode}"',
+    'mode.valid_list': 'Valid modes:',
+    'mode.set_done': 'Mode set to {mode}',
 
-    // History
+    // ── History ──────────────────────────────────────────────────────
     'history.title': 'SESSION HISTORY',
     'history.none': 'No saved sessions found.',
     'history.run.first': 'Run a task first:',
     'history.view': 'View:',
     'history.prune': 'Prune:',
     'history.del': 'Del:',
+    'history.view.deleted_session': 'Deleted session {runId}',
+    'history.view.prune.usage':
+      'Usage: commander history prune <keep-count>',
+    'history.view.pruned': 'Pruned to {keep} sessions (removed {removed})',
+    'history.list.total': 'Total',
+    'history.detail.title': 'SESSION DETAIL',
+    'history.detail.run_id': 'Run ID',
+    'history.detail.agent': 'Agent',
+    'history.detail.phase': 'Phase',
+    'history.detail.goal': 'Goal',
+    'history.detail.steps': 'Steps',
+    'history.detail.tokens': 'Tokens',
+    'history.detail.duration': 'Duration',
+    'history.detail.timestamp': 'Timestamp',
+    'history.detail.error': 'Error',
+    'history.detail.tools': 'Tools',
+    'history.error.failed_to_read':
+      'Failed to read session history: {message}',
+    'history.error.check_dir':
+      'Check that .commander/ directory exists and is readable.',
+    'history.error.session_not_found': 'Session not found: {runId}',
+    'history.error.session_not_found_hint':
+      'Run commander history to list available sessions.',
+    'history.error.failed_to_load':
+      'Failed to load session: {message}',
+    'history.error.session_corrupt':
+      'The session file may be corrupted or missing.',
+    'history.view_hint_view': 'View:  commander history view <runId>',
+    'history.view_hint_prune': 'Prune: commander history prune <keep-count>',
+    'history.view_hint_del': 'Del:   commander history delete <runId>',
+    'history.phase.completed': 'completed',
+    'history.phase.failed': 'failed',
+    'history.phase.started': 'started',
+    'history.phase.llm_call': 'llm_call',
+    'history.phase.tool_execution': 'tool_execution',
+    'history.phase.verification': 'verification',
+    'history.phase.icon.completed': '✅',
+    'history.phase.icon.failed': '❌',
+    'history.phase.icon.started': '📋',
+    'history.phase.icon.llm_call': '🤖',
+    'history.phase.icon.tool_execution': '🔧',
+    'history.phase.icon.verification': '🔍',
+    'history.phase.icon.default': '📄',
 
-    // Workflow
+    // ── Workflow (original 4 + extended) ───────────────────────────
     'workflow.title': 'WORKFLOW COMMANDS',
     'workflow.list': 'List available and scheduled workflows',
     'workflow.run': 'Execute a workflow',
     'workflow.schedule': 'Schedule a workflow',
     'workflow.daemon': 'Start the scheduler daemon',
+    'workflow.run.usage': 'Usage: commander workflow run <workflow-id>',
+    'workflow.run.not_found': 'Workflow "{id}" not found',
+    'workflow.run.error.no_api_key': 'No API key found.',
+    'workflow.run.executing': '→ Executing workflow: {name}',
+    'workflow.run.description_steps': '{desc} | {n} steps',
+    'workflow.run.progress_prefix': '[{elapsed}s]',
+    'workflow.run.success_marker': 'SUCCESS',
+    'workflow.run.partial_marker': 'PARTIAL',
+    'workflow.run.fail_marker': 'FAIL',
+    'workflow.run.error_prefix': '✗',
+    'workflow.schedule.usage':
+      'Usage: commander workflow schedule <workflow-id> --cron="0 6 * * 1"',
+    'workflow.schedule.not_found': 'Workflow "{id}" not found',
+    'workflow.schedule.confirmed': 'Scheduled "{name}"',
+    'workflow.schedule.trigger_label': 'trigger: {label}',
+    'workflow.schedule.id_label': 'id: {id}',
+    'workflow.unschedule.usage':
+      'Usage: commander workflow unschedule <schedule-id>',
+    'workflow.unschedule.removed': 'Removed schedule {id}',
+    'workflow.unschedule.not_found': 'Schedule "{id}" not found',
+    'workflow.pause.usage':
+      'Schedule not found. Usage: commander workflow pause <schedule-id>',
+    'workflow.pause.paused': 'Paused schedule {id}',
+    'workflow.resume.usage':
+      'Schedule not found. Usage: commander workflow resume <schedule-id>',
+    'workflow.resume.resumed': 'Resumed schedule {id}',
+    'workflow.history.empty': 'No execution records found',
+    'workflow.history.header': 'Execution history',
+    'workflow.daemon.started': 'Scheduler daemon running',
+    'workflow.daemon.tick': 'Tick: {seconds}s',
+    'workflow.daemon.state_path': 'State: {path}',
+    'workflow.daemon.workflows_loaded': 'Workflows: {count} loaded',
+    'workflow.daemon.stopped': 'Scheduler daemon stopped',
+    'workflow.daemon.stopped_short': 'Scheduler stopped',
+    'workflow.create.usage':
+      'Usage: commander workflow create <name> [--description=...] [--cron="0 6 * * *"]',
+    'workflow.create.exists': 'Workflow already exists: {path}',
+    'workflow.create.created': 'Created workflow: {path}',
+    'workflow.reload': '[{time}] reloaded: {id}',
 
-    // Skill
+    // ── Skill ────────────────────────────────────────────────────────
     'skill.title': 'SKILL COMMANDS',
     'skill.list': 'List all skills',
     'skill.view': 'View skill details',
     'skill.create': 'Create a new skill',
     'skill.curate': 'Run curator (archive+consolidate)',
+    'skill.misc.list_empty': 'No skills found.',
+    'skill.misc.list_header': 'SKILLS ({count})',
+    'skill.misc.pin_indicator': '📌',
+    'skill.misc.list_meta':
+      'quality: {pct}% · uses: {n} · {category} · [{tags}]',
+    'skill.misc.view_usage': 'Usage: commander skill view <name>',
+    'skill.misc.view_not_found': 'Skill "{name}" not found',
+    'skill.misc.view_header': 'SKILL: {name}',
+    'skill.misc.view_description': 'Description',
+    'skill.misc.view_category': 'Category',
+    'skill.misc.view_tags': 'Tags',
+    'skill.misc.view_quality': 'Quality',
+    'skill.misc.view_usage_field': 'Usage',
+    'skill.misc.view_usage_value':
+      '{n} · success rate: {pct}%',
+    'skill.misc.view_pinned': 'Pinned',
+    'skill.misc.view_pinned_yes': 'Yes',
+    'skill.misc.view_pinned_no': 'No',
+    'skill.misc.view_source': 'Source',
+    'skill.misc.view_created': 'Created',
+    'skill.misc.create_usage':
+      'Usage: commander skill create <name> [description]',
+    'skill.misc.created': 'Created skill "{name}"',
+    'skill.misc.pin_usage': 'Usage: commander skill pin <name>',
+    'skill.misc.pinned': 'Pinned "{name}"',
+    'skill.misc.unpin_usage': 'Usage: commander skill unpin <name>',
+    'skill.misc.unpinned': 'Unpinned "{name}"',
+    'skill.misc.delete_usage': 'Usage: commander skill delete <name>',
+    'skill.misc.deleted': 'Deleted "{name}"',
+    'skill.misc.curate_header': 'CURATE',
+    'skill.misc.curate_spinner': 'Running curator...',
+    'skill.misc.curate_archived': 'Archived:',
+    'skill.misc.curate_consolidated': 'Consolidated:',
+    'skill.misc.curate_before': 'Before',
+    'skill.misc.curate_after': 'After',
+    'skill.misc.curate_archived_count': 'Archived',
 
-    // Completion
+    // ── Completion ───────────────────────────────────────────────────
     'completion.installed': 'AUTOCOMPLETION INSTALLED',
     'completion.shell': 'Shell',
     'completion.script': 'Script',
     'completion.add.to': 'Add this to your',
+    'completion.unknown_shell': 'Unknown shell: "{name}"',
+    'completion.usage':
+      'Usage: commander completion [bash|zsh|fish|install]',
+    'completion.already_configured': 'Already configured in {path}',
+    'completion.restart_hint':
+      'Restart your shell or run: source {rc}',
+    'completion.add_to_rc': 'Add this to your {rc}:',
+    'completion.or_run': 'Or run:',
 
-    // Onboarding
+    // ── Onboarding (original 3 + extended env vars + examples) ──────
     'onboarding.welcome': 'Welcome to Commander',
-    'onboarding.env.vars': 'To get started, set one of these environment variables:',
+    'onboarding.env.vars':
+      'To get started, set one of these environment variables:',
     'onboarding.example': 'Example:',
+    'onboarding.example.cmd': '$ export OPENAI_API_KEY=sk-...',
+    'onboarding.example.run': '$ commander "Hello, world!"',
+    'onboarding.env_vars.openai': 'OpenAI / DeepSeek / GLM / MiMo',
+    'onboarding.env_vars.anthropic': 'Anthropic Claude',
+    'onboarding.env_vars.google': 'Google Gemini',
+    'onboarding.env_vars.openrouter': 'OpenRouter (200+ models)',
+    'onboarding.env_vars.deepseek': 'DeepSeek (dedicated)',
+    'onboarding.env_vars.glm': 'GLM (Zhipu AI)',
+    'onboarding.env_vars.mimo': 'MiMo (dedicated)',
+    'onboarding.env_vars.xiaomi': 'Xiaomi MiMo',
+    'onboarding.env_vars.ollama':
+      'Ollama (local) — http://localhost:11434/v1',
+    'onboarding.env_vars.vllm': 'vLLM (local) — http://localhost:8000/v1',
+    'onboarding.env_vars.cohere': 'Cohere',
+    'onboarding.env_vars.mistral': 'Mistral AI',
+    'onboarding.env_vars.groq': 'Groq (fast inference)',
+    'onboarding.env_vars.together': 'Together AI',
+    'onboarding.env_vars.perplexity': 'Perplexity',
+    'onboarding.env_vars.fireworks': 'Fireworks AI',
+    'onboarding.env_vars.replicate': 'Replicate',
+    'onboarding.env_vars.aws_bedrock':
+      'AWS Bedrock (+ AWS_SECRET_ACCESS_KEY)',
+
+    // ── Run (cmdRun, cmdRunInternal, cmdWatchInternal, cmdShowcase) ─
+    'run.no_task': 'No task provided.',
+    'run.usage': 'Usage:',
+    'run.example_usage': 'Example:',
+    'run.usage.template': 'commander run "{task}"',
+    'run.example.analyze': 'commander run "analyze this codebase"',
+    'run.tui.dashboard_started':
+      'Terminal dashboard started in child process (PID: {pid})',
+    'run.tui.could_not_start':
+      'Could not start TUI dashboard — run in a separate terminal: commander tui',
+    'run.sse.agent_started': 'started',
+    'run.sse.agent_completed': 'completed',
+    'run.sse.agent_completed_tokens': 'completed · {tokens} tok',
+    'run.sse.agent_failed': 'failed',
+    'run.sse.tool_completed': 'completed',
+    'run.sse.tool_failed': 'failed',
+    'run.sse.message_prefix': '{agent}:',
+    'run.sse.alert_error': 'ERROR',
+    'run.sse.alert_warn': 'WARN',
+    'run.phase.init': 'Init',
+    'run.phase.deliberation': 'Deliberation',
+    'run.phase.effort_scaling': 'Effort scaling',
+    'run.phase.topology_routing': 'Topology routing',
+    'run.phase.decomposition': 'Decomposition',
+    'run.phase.team_formation': 'Team formation',
+    'run.phase.execution': 'Execution',
+    'run.phase.synthesis': 'Synthesis',
+    'run.feedback.prompt': 'Was this helpful?',
+    'run.feedback.good_option': '[👍 Good]',
+    'run.feedback.bad_option': '[👎 Wrong]',
+    'run.feedback.skip_option': '[Enter skip]',
+    'run.feedback.thanks_good': '👍 Thanks!',
+    'run.feedback.thanks_bad': '👎 Noted. Will improve.',
+    'run.feedback.human_label': 'Human feedback',
+    'run.section.results': 'RESULTS',
+
+    // ── Showcase ────────────────────────────────────────────────────
+    'showcase.title': 'Commander Showcase — 3-Agent DEBATE Code Audit',
+    'showcase.subtitle':
+      'Scanning codebase + running 3-agent debate...',
+    'showcase.topology_header': 'TOPOLOGY',
+    'showcase.team.red': 'Red team',
+    'showcase.team.red_role':
+      '(attacker) → find bugs, vulnerabilities, anti-patterns',
+    'showcase.team.blue': 'Blue team',
+    'showcase.team.blue_role':
+      '(defender) → architecture strengths, design rationale',
+    'showcase.team.judge': 'Judge',
+    'showcase.team.judge_role':
+      '(arbitrator) → consolidate scoring, output health report',
+    'showcase.files_scanned_zero':
+      'No scannable code files found in current directory. Run `commander run showcase` in a directory with code.',
+    'showcase.execution_complete': 'EXECUTION COMPLETE',
+    'showcase.field.files_scanned': 'Files scanned',
+    'showcase.field.red_team': 'Red team',
+    'showcase.field.blue_team': 'Blue team',
+    'showcase.field.judge': 'Judge',
+    'showcase.field.total_tokens': 'Total tokens',
+    'showcase.field.duration': 'Duration',
+    'showcase.field.provider': 'Provider',
+    'showcase.scores_header': 'CODE HEALTH SCORES',
+    'showcase.score.security': 'Security',
+    'showcase.score.code_quality': 'Code Quality',
+    'showcase.score.architecture': 'Architecture',
+    'showcase.score.overall': '⭐ Overall',
+    'showcase.grade.S': 'S',
+    'showcase.grade.A': 'A',
+    'showcase.grade.B': 'B',
+    'showcase.grade.C': 'C',
+    'showcase.grade.D': 'D',
+    'showcase.critical_header': '🔴 CRITICAL',
+    'showcase.high_header': '🟠 HIGH',
+    'showcase.more': '... and {count} more',
+    'showcase.full_report': 'FULL REPORT',
+    'showcase.error.showcase_failed': 'Showcase failed: {message}',
+    'showcase.error.check_api_key':
+      'Check your API key and network connection.',
+    'showcase.error.run_init':
+      'Run commander init to verify provider connectivity.',
+
+    // ── Plan ─────────────────────────────────────────────────────────
+    'plan.section': 'PLAN',
+    'plan.summary.section': 'SUMMARY',
+    'plan.task_label': '{type} · {effort} effort · {topology} topology',
+    'plan.agents': 'Agents',
+    'plan.steps': 'Steps',
+    'plan.confidence': 'Confidence',
+    'plan.external_info_yes': 'Yes',
+    'plan.external_info_no': 'No',
+    'plan.tokens': 'Tokens',
+    'plan.tokens_breakdown':
+      '{total} (think: {thinking}, exec: {execution})',
+    'plan.duration': '{seconds}s (per agent: {perAgent}s)',
+    'plan.task_nature.IO': 'IO_BOUND',
+    'plan.task_nature.COMPUTE': 'COMPUTE_BOUND',
+    'plan.speculation_yes': 'Yes — early steps can run in parallel',
+    'plan.speculation_no': 'No',
+    'plan.needs_section': 'NEEDS',
+    'plan.spinner': 'Analyzing task...',
+    'plan.fail.no_runtime':
+      'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or another provider env var. Run: commander quickstart',
+
+    // ── Watch ────────────────────────────────────────────────────────
+    'watch.execution_summary': 'EXECUTION SUMMARY',
+    'watch.field.agents': 'Agents',
+    'watch.field.tool_calls': 'Tool calls',
+    'watch.field.events': 'Events',
+    'watch.field.tokens': 'Tokens',
+    'watch.field.cost': 'Cost',
+
+    // ── Company ──────────────────────────────────────────────────────
+    'company.title.shell': 'COMPANY MODE',
+    'company.field.mode': 'Mode',
+    'company.field.budget': 'Budget',
+    'company.field.capability_matching': 'Capability Matching',
+    'company.field.quality_gating': 'Quality Gating',
+    'company.field.memory': 'Memory',
+    'company.execution.section': 'EXECUTION',
+    'company.status.run': 'Status',
+    'company.agents': 'Agents',
+    'company.tokens': 'Tokens',
+    'company.duration': 'Duration',
+    'company.quality': 'Quality',
+    'company.strategy': 'Strategy',
+    'company.savings': '~{pct}%',
+    'company.quality.section': 'QUALITY',
+    'company.quality.action': 'Action',
+    'company.quality.action.escalate': 'escalate',
+    'company.quality.action.deescalate': 'de-escalate',
+    'company.quality.reason': 'Reason',
+    'company.quality.confidence': 'Confidence',
+    'company.summary.section': 'SUMMARY',
+    'company.engine_stats': 'ENGINE STATS',
+    'company.stats.total_executions': 'Total Executions',
+    'company.stats.avg_quality': 'Avg Quality',
+    'company.stats.avg_tokens': 'Avg Tokens',
+    'company.stats.pool_size': 'Pool Size',
+
+    // ── Saga ─────────────────────────────────────────────────────────
+    'saga.title': 'Saga',
+    'saga.run.header': '{name}',
+    'saga.run.description': 'description:',
+    'saga.run.run_id_label': 'runId:      ',
+    'saga.run.storage': 'storage:    ',
+    'saga.run.storage_in_memory': '(in-memory)',
+    'saga.run.timeout': 'timeout:    ',
+    'saga.run.timeout_ms': '{ms}ms',
+    'saga.run.nodes': 'nodes:      ',
+    'saga.run.nodes_with_arrow': '{count} ({order})',
+    'saga.error.missing_saga_name': 'missing saga name',
+    'saga.error.unknown_saga': 'unknown saga "{name}"',
+    'saga.suggest.run_examples':
+      'Run commander saga examples to see available sagas',
+    'saga.list.empty':
+      'No runs found. Run one with: commander saga run order-fulfillment',
+    'saga.list.cols': 'RUN ID | STATE | UPDATED',
+    'saga.run.header.count': '{count} run{plural}',
+    'saga.status.header': 'Status: {runId}',
+    'saga.status.field.state': 'state:        ',
+    'saga.status.field.fencing': 'fencingEpoch: ',
+    'saga.status.field.created': 'createdAt:    ',
+    'saga.status.field.updated': 'updatedAt:    ',
+    'saga.status.field.error': 'error:        ',
+    'saga.status.nodes_header': 'Nodes:',
+    'saga.error.missing_run_id': 'missing runId',
+    'saga.error.run_not_found': 'run "{runId}" not found',
+    'saga.resume.note_finalized':
+      'run "{runId}" is already {state}; nothing to resume',
+    'saga.resume.rebuilding':
+      'Resuming run — rebuilding saga from snapshot...',
+    'saga.resume.snapshot_state': 'snapshot:      {state}',
+    'saga.resume.events_total': 'events total:  {count}',
+    'saga.resume.events_since': 'events since:  {count}',
+    'saga.resume.warning.no_nodes':
+      'no node states found in snapshot; nothing to resume',
+    'saga.resume.all_completed':
+      '✓ All nodes already completed — run was successful',
+    'saga.resume.field.completed': 'completed:  {done}/{total}',
+    'saga.resume.field.pending': 'pending:     {pending}/{total}',
+    'saga.resume.field.nodes': 'nodes:       {names}',
+    'saga.resume.field.graph': 'graph:       {order}',
+    'saga.resume.result': 'Resume result:',
+    'saga.resume.no_definition': 'saga definition "{name}" not found.',
+    'saga.resume.manual_inspect':
+      'The snapshot is available for manual inspection at:',
+    'saga.approve.error.usage':
+      'usage: commander saga {decision} <runId> <nodeId> [--by=<user>]',
+    'saga.approve.recorded_label': 'by',
+    'saga.examples.header': '{count} built-in examples',
+    'saga.examples.nodes_label': 'nodes:',
+    'saga.subcommand.run': 'Run a built-in example saga',
+    'saga.subcommand.list':
+      'List all runs (committed, aborted, in-progress)',
+    'saga.subcommand.status': "Show a run's snapshot",
+    'saga.subcommand.resume': 'Inspect a resumable run',
+    'saga.subcommand.approve': 'Approve a pending approval',
+    'saga.subcommand.reject': 'Reject a pending approval',
+    'saga.subcommand.examples': 'List built-in example sagas',
+    'saga.help.intro': 'commander saga — manage saga runs',
+    'saga.flag.input': '--input=<json>        Saga input (JSON)',
+    'saga.flag.run_id':
+      '--run-id=<id>         Custom run ID (default: <name>-<timestamp>)',
+    'saga.flag.timeout':
+      '--timeout=<ms>        Total timeout (default: 60000)',
+    'saga.flag.in_memory':
+      '--in-memory           Use in-memory stores (no disk persistence)',
+    'saga.error.could_not_recover': 'could not recover {runId}',
+    'saga.result.label.error': 'error:',
+    'saga.result.label.results': 'results:',
+    'saga.result.label.summary': 'summary:',
+    'saga.result.label.duration_ms': '({ms}ms)',
+    'saga.recover_hint':
+      'Recover the run with: commander saga resume {runId}',
+
+    // ── Goal (cmdGoal, cmdGoalInternal) ──────────────────────────────
+    'goal.field.provider': 'Provider',
+    'goal.field.mode': 'Mode',
+    'goal.field.budget': 'Budget',
+    'goal.field.max_rounds': 'Max rounds',
+    'goal.field.default_budget': '{tokens} tok',
+    'goal.field.auto': 'auto',
+    'goal.section': 'GOAL RESULT',
+    'goal.spinner': 'Goal loop running...',
+    'goal.field.rounds': 'Rounds',
+    'goal.field.tokens': 'Tokens',
+    'goal.field.duration': 'Duration',
+    'goal.field.stop_reason': 'Stop reason',
+    'goal.field.remaining': 'Remaining findings',
+    'goal.field.improvement': 'Improvement trend',
+    'goal.improvement.improving': 'improving',
+    'goal.improvement.plateaued': 'plateaued',
+    'goal.history.section': 'ROUND HISTORY',
+    'goal.history.row':
+      'Round {n}: {findings} findings · {pct}% improvement · {decision}',
+
+    // ── Swarm (cmdSwarm) ─────────────────────────────────────────────
+    'swarm.field.mode': 'Mode',
+    'swarm.field.max_depth': 'Max depth',
+    'swarm.field.max_workers': 'Max workers',
+    'swarm.default.mode': 'balanced',
+    'swarm.default.depth': '3',
+    'swarm.default.workers': '10',
+    'swarm.spinner': 'Swarm loop running...',
+    'swarm.section': 'SWARM RESULT',
+    'swarm.field.rounds': 'Rounds',
+    'swarm.field.tokens': 'Tokens',
+    'swarm.field.duration': 'Duration',
+    'swarm.field.tree_depth': 'Tree depth',
+    'swarm.field.managers': 'Managers',
+    'swarm.field.total_nodes': 'Total nodes',
+    'swarm.field.fusion_conflicts': 'Fusion conflicts',
+    'swarm.fusion.section': 'FUSION CONFLICTS',
+    'swarm.topology.section': 'TOPOLOGY',
+    'swarm.topology.levels': 'level {n}: {count} nodes',
+    'swarm.topology.levels_joined': 'Levels: {parts}',
+    'swarm.conflict.warning': '⚠ {type}',
+    'swarm.conflict.suggestion': '→ {text}',
+
+    // ── Drive ────────────────────────────────────────────────────────
+    'drive.field.mode': 'Mode',
+    'drive.field.max_iterations': 'Max iterations',
+    'drive.spinner': 'Drive loop running...',
+    'drive.section': 'DRIVE RESULT',
+    'drive.field.iterations': 'Iterations',
+    'drive.field.steps': 'Steps',
+    'drive.field.tokens': 'Tokens',
+    'drive.field.duration': 'Duration',
+    'drive.blocked.section': 'BLOCKED STEPS',
+    'drive.blocked.warning': '⚠',
+    'drive.step.section': 'STEP BREAKDOWN',
+    'drive.step.retries': '(retries: {n})',
+    'drive.status.completed': 'COMPLETED',
+    'drive.status.running': 'RUNNING',
+    'drive.status.blocked': 'BLOCKED',
+    'drive.status.failed': 'FAILED',
+
+    // ── Checkpoint ───────────────────────────────────────────────────
+    'checkpoint.prune.no_op':
+      'Only {total} checkpoints — nothing to prune (keep={keep})',
+    'checkpoint.prune.done':
+      'Pruned {removed} old checkpoints (kept {kept} newest)',
+    'checkpoint.view.header': 'Checkpoint — {runId}',
+    'checkpoint.view.not_found': 'No checkpoint found for run {runId}',
+    'checkpoint.view.version': 'Version:',
+    'checkpoint.view.trigger': 'Trigger:',
+    'checkpoint.view.trigger_pct': '{pct}%',
+    'checkpoint.view.trigger_manual': 'manual',
+    'checkpoint.view.timestamp': 'Timestamp:',
+    'checkpoint.view.phase': 'Phase:',
+    'checkpoint.view.step': 'Step:',
+    'checkpoint.view.goal': 'Goal:',
+    'checkpoint.section.completed': '✓ Completed:',
+    'checkpoint.section.pending': '⏳ Pending:',
+    'checkpoint.section.failed': '✗ Failed:',
+    'checkpoint.items.more': '... and {n} more',
+    'checkpoint.section.token_budget': 'Token Budget:',
+    'checkpoint.token_usage': '{used} / {cap} tokens',
+    'checkpoint.section.key_decisions': 'Key Decisions:',
+    'checkpoint.section.errors': 'Errors:',
+    'checkpoint.error.recovered': '↻',
+    'checkpoint.error.failed': '✗',
+    'checkpoint.error.prefix_node': '[{node}] {message}',
+    'checkpoint.section.next_action': 'Next Action:',
+    'checkpoint.full_file': 'Full file: {path}',
+    'checkpoint.list.empty':
+      'No checkpoints yet. Checkpoints are written automatically during execution at 20%, 45%, and 70% token budget.',
+    'checkpoint.list.header': 'Checkpoints ({count})',
+    'checkpoint.list.cols_trigger':
+      'Trigger: {label} | {bar} | v{version}{budget}',
+    'checkpoint.list.bar.empty': 'no tasks',
+    'checkpoint.list.written': 'Written: {time} | {kb}KB',
+
+    // ── Intelligence (cmdIntelligence) ───────────────────────────────
+    'intelligence.title': 'Commander Intelligence — What I\'ve Learned',
+    'intelligence.section.meta_learner': 'META-LEARNER',
+    'intelligence.empty.experiences':
+      'No experiences yet. Run some tasks to build up learning data.',
+    'intelligence.meta.experiences': 'Experiences:',
+    'intelligence.meta.strategies': 'Strategies:',
+    'intelligence.meta.success_rate': 'Success Rate:',
+    'intelligence.meta.reflections': 'Reflections:',
+    'intelligence.section.top_strategies': 'Top Strategies',
+    'intelligence.strategy.bar': '{runs} runs · p95 {p95}',
+    'intelligence.section.regression_alerts': 'Regression Alerts',
+    'intelligence.regression.row':
+      '{strategy} on {model}: dropped {pct}% ({from}% → {to}%)',
+    'intelligence.section.suggestions': 'Suggestions',
+    'intelligence.section.skills': 'SKILLS',
+    'intelligence.empty.skills':
+      'No skills extracted yet. Skills are auto-extracted from successful runs.',
+    'intelligence.skills.summary': '{count} skills ({cats})',
+    'intelligence.skills.row': '{usage}× · {pct}%',
+    'intelligence.skills.more':
+      '... and {count} more (use --skills for full list)',
+    'intelligence.section.failure_patterns': 'FAILURE PATTERNS',
+    'intelligence.empty.patterns':
+      'No patterns yet. Patterns emerge from repeated failures.',
+    'intelligence.patterns.summary':
+      '{count} patterns ({active} active with ≥2 occurrences)',
+    'intelligence.patterns.row':
+      '{desc}  {n}× · {confidence} confidence',
+    'intelligence.patterns.more':
+      '... and {count} more (use --patterns for full list)',
+    'intelligence.section.overview': 'Overview',
+    'intelligence.overview.experiences': 'Experiences:',
+    'intelligence.overview.strategies': 'Strategies:',
+    'intelligence.overview.success': 'Avg success:',
+    'intelligence.overview.reflections': 'Reflections:',
+    'intelligence.section.strategy_perf':
+      'Strategy Performance (Thompson Sampling)',
+    'intelligence.empty.strategies': 'No strategy data yet.',
+    'intelligence.strategy.bar.full':
+      '{runs} runs · p95 {p95} · avg {avg}',
+    'intelligence.section.task_type_scores':
+      'Per Task-Type Strategy Scores',
+    'intelligence.task_type_strategy.row':
+      '{strategy}: {pct}%  ({trials} trials{p95})',
+    'intelligence.task_type.p95_suffix': ' · p95 {p95}',
+    'intelligence.section.optimization_suggestions':
+      'Optimization Suggestions',
+    'intelligence.section.prediction_loop': 'Prediction Loop',
+    'intelligence.prediction.total': 'Total verdicts:',
+    'intelligence.prediction.confirmed': 'Confirmed (✓):',
+    'intelligence.prediction.reverted': 'Reverted (✗):',
+    'intelligence.section.recent_reflections': 'Recent Reflections',
+    'intelligence.show_details_hint':
+      'Show details: commander intelligence --stats | --skills | --patterns | --all',
+    'intelligence.skills.empty':
+      'No skills extracted yet.\nSkills are auto-extracted from successful task executions.\nEach time Commander completes a task, it analyzes the trace and\nextracts reusable patterns.',
+    'intelligence.skills.tool_count': '{n} tools',
+    'intelligence.skills.usage_bar.full':
+      '{uses} uses · {pct}% success · {tools} tools · last used {ago}',
+    'intelligence.skills.steps': 'Steps: {steps}',
+    'intelligence.skills.more_steps': ' …',
+    'intelligence.skills.stored_at':
+      'Skills are stored in .commander/intelligence/extracted-skills.json',
+    'intelligence.failure_patterns.empty':
+      'No failure patterns recorded yet.\nPatterns are detected when the same type of failure repeats across runs.\nAfter 2+ occurrences, Commander starts warning you proactively.',
+    'intelligence.failure_patterns.occurrences': 'Occurrences:',
+    'intelligence.failure_patterns.confidence': 'Confidence:',
+    'intelligence.failure_patterns.last': 'Last:',
+    'intelligence.failure_patterns.resolved': 'resolved: {text}',
+    'intelligence.failure_patterns.auto_warn': 'auto-warn ON',
+    'intelligence.failure_patterns.stored_at':
+      'Patterns stored in .commander/intelligence/failure-patterns.json',
+    'intelligence.confidence.high': 'high',
+    'intelligence.confidence.medium': 'med',
+    'intelligence.confidence.low': 'low',
+
+    // ── Experience (cmdExperience) ───────────────────────────────────
+    'experience.title': 'Commander Experience — Learned State',
+    'experience.section.meta_learner': 'META-LEARNER',
+    'experience.meta.experiences': 'Experiences',
+    'experience.meta.strategies': 'Strategies',
+    'experience.meta.success_rate': 'Success Rate',
+    'experience.meta.reflections': 'Reflections',
+    'experience.meta.regression_alerts': 'Regression alerts',
+    'experience.meta.predictions': 'Predictions',
+    'experience.section.skills': 'EXTRACTED SKILLS',
+    'experience.skills.count': 'Skills',
+    'experience.skills.newest': 'Newest',
+    'experience.section.failure_patterns': 'FAILURE PATTERNS',
+    'experience.patterns.count': 'Patterns',
+    'experience.patterns.active_warnings': 'Active warnings',
+    'experience.reset.banner': 'Commander Experience Reset',
+    'experience.reset.warning.all':
+      'This will reset ALL learned experience:',
+    'experience.reset.warning.skills': 'Extracted skills',
+    'experience.reset.warning.patterns': 'Failure patterns',
+    'experience.reset.warning.meta':
+      'MetaLearner (Thompson priors, reflections, strategy scores)',
+    'experience.reset.warning.meta_short': 'MetaLearner state',
+    'experience.reset.confirm_prompt': 'Continue? [y/N]',
+    'experience.reset.cancelled': 'Cancelled.',
+    'experience.reset.done': 'Experience reset complete.',
+    'experience.reset.backups_at': 'Backups saved to:',
+    'experience.reset.hint':
+      'Run commander experience status to verify.',
+    'experience.status.hint':
+      'Reset: commander experience reset [--skills|--patterns|--meta] [--force]',
+    'experience.not_initialized': 'Not initialized',
+
+    // ── Feedback ─────────────────────────────────────────────────────
+    'feedback.title': 'Commander Feedback',
+    'feedback.subtitle': 'Help us improve Commander',
+    'feedback.no_data': 'No feedback collected yet.',
+    'feedback.summary.title': 'FEEDBACK SUMMARY',
+    'feedback.field.total': 'Total feedback',
+    'feedback.field.avg_rating': 'Average rating',
+    'feedback.field.ratings': 'Ratings',
+    'feedback.field.bugs': 'Bug reports',
+    'feedback.field.features': 'Feature requests',
+    'feedback.field.general': 'General',
+    'feedback.section.recent': 'Recent feedback:',
+    'feedback.bug.saved': 'Bug report saved',
+    'feedback.bug.thanks':
+      'Thank you! This helps us improve Commander.',
+    'feedback.feature.saved': 'Feature request saved',
+    'feedback.feature.thanks':
+      "Thank you! We'll consider this for a future release.",
+    'feedback.rating.saved': 'Rating saved',
+    'feedback.message.saved': 'Feedback saved',
+    'feedback.message.thanks': 'Thank you for your feedback!',
+    'feedback.section.quick': 'QUICK FEEDBACK',
+    'feedback.section.examples': 'EXAMPLES',
+    'feedback.example.rating':
+      'commander feedback --rating=4 --message="Love the watch command!"',
+    'feedback.example.bug':
+      'commander feedback --bug="crash when running with no network"',
+    'feedback.example.feature':
+      'commander feedback --feature="add dark mode to TUI"',
+    'feedback.type.icon.bug': '🐛',
+    'feedback.type.icon.feature': '💡',
+    'feedback.type.icon.rating': '⭐',
+    'feedback.type.icon.general': '💬',
+
+    // ── Plugin ───────────────────────────────────────────────────────
+    'plugin.install.usage': 'Usage: commander plugin install <source>',
+    'plugin.install.sources_header': 'Sources:',
+    'plugin.install.npm_hint': 'npm-package-name',
+    'plugin.install.npm_desc': 'Install from npm',
+    'plugin.install.git_hint': 'github:user/repo',
+    'plugin.install.git_desc': 'Install from git',
+    'plugin.install.local_hint': './path/to/plugin',
+    'plugin.install.local_desc': 'Install from local directory',
+    'plugin.install.success': 'Plugin installed successfully',
+    'plugin.install.failed': 'Installation failed: {message}',
+    'plugin.list.empty': 'No plugins loaded.',
+    'plugin.list.install_hint':
+      'Install a plugin with: commander plugin install <name>',
+    'plugin.section': 'PLUGINS ({count})',
+    'plugin.uninstall.usage': 'Usage: commander plugin uninstall <name>',
+    'plugin.uninstall.success': 'Plugin "{name}" uninstalled',
+    'plugin.uninstall.not_found': 'Plugin "{name}" not found',
+    'plugin.info.usage': 'Usage: commander plugin info <name>',
+    'plugin.info.not_found': 'Plugin "{name}" not found',
+    'plugin.info.section': 'PLUGIN: {name}',
+    'plugin.info.name': 'Name',
+    'plugin.info.version': 'Version',
+    'plugin.info.description': 'Description',
+    'plugin.info.description_empty': '(none)',
+    'plugin.info.status': 'Status',
+    'plugin.info.status_loaded': 'Loaded',
+    'plugin.info.path': 'Path',
+    'plugin.help.title': 'PLUGIN COMMANDS',
+    'plugin.help.install': 'Install a plugin (npm/git/local)',
+    'plugin.help.list': 'List installed plugins',
+    'plugin.help.uninstall': 'Uninstall a plugin',
+    'plugin.help.info': 'Show plugin details',
+    'plugin.section.examples': 'Examples:',
+
+    // ── Budget ───────────────────────────────────────────────────────
+    'budget.not_found': 'No budget found for run: {runId}',
+    'budget.list.empty': 'No active token budgets.',
+    'budget.list.empty_hint':
+      "Run a task with 'commander run \"<goal>\"' to see budget tracking.",
+    'budget.list.header': 'Token Budgets ({count} active)',
+    'budget.detail.title': 'Token Budget: {runId}',
+    'budget.detail.field.status': 'Status',
+    'budget.detail.field.total': 'Total Budget',
+    'budget.detail.field.used': 'Used',
+    'budget.detail.field.remaining': 'Remaining',
+    'budget.detail.field.utilization': 'Utilization',
+    'budget.detail.field.soft_cap': 'Soft Cap',
+    'budget.detail.field.created': 'Created',
+    'budget.detail.field.updated': 'Updated',
+    'budget.phase.relaxed': '🟢 Relaxed',
+    'budget.phase.moderate': '🟡 Moderate',
+    'budget.phase.tight': '🟠 Tight',
+    'budget.phase.critical': '🔴 Critical',
+    'budget.phase.exceeded': '⛔ Exceeded',
+    'budget.subagents.header': 'Sub-Agents ({count})',
+    'budget.subagents.over_budget':
+      '⚠️  OVER BUDGET by {n} tokens',
+    'budget.summary.agents':
+      '{n} sub-agents, {over} over budget',
+
+    // ── Review (cmdReview) ───────────────────────────────────────────
+    'review.section.title': 'CODE REVIEW',
+    'review.bullet.scope': 'Scope: {scope}{base}{commit}',
+    'review.bullet.scope.base': ' (base: {ref})',
+    'review.bullet.scope.commit': ' (commit: {sha})',
+    'review.bullet.guidelines': 'Guidelines: {n} rule(s)',
+    'review.spinner': 'Reviewing changes...',
+    'review.failed': 'Review failed: {message}',
+
+    // ── Help banner (cmdHelp) ────────────────────────────────────────
+    'help.banner.title': 'Commander',
+    'help.banner.tagline':
+      'one command · 10 topologies · 22 providers',
+    'help.section.getting_started': 'GETTING STARTED',
+    'help.cmd.init': 'commander init',
+    'help.cmd.init_desc': 'Zero-config setup + provider scan',
+    'help.cmd.first_task': 'commander run "Hello, world!"',
+    'help.cmd.first_task_desc': 'Your first task',
+    'help.cmd.showcase': 'commander run showcase',
+    'help.cmd.showcase_desc': '3-agent code audit demo',
+    'help.section.core': 'CORE COMMANDS',
+    'help.core.run_desc':
+      'Execute with full multi-agent pipeline',
+    'help.core.review_desc': 'AI code review',
+    'help.core.fix_desc':
+      'Auto-fix lint, formatting & type errors',
+    'help.core.status_desc': 'System status & active provider',
+    'help.core.config_desc': 'View/change settings',
+    'help.core.history_desc': 'List past sessions',
+    'help.section.run_flags': 'RUN FLAGS',
+    'help.flag.dry_run': 'Show plan without executing',
+    'help.flag.stream': 'Real-time SSE progress',
+    'help.flag.tui': 'Terminal dashboard with live topology',
+    'help.flag.mode_balanced':
+      'balanced (default), fast, thorough, goal',
+    'help.flag.provider':
+      'Force provider (openai, anthropic, etc.)',
+    'help.flag.budget': 'Token budget (default: 100000)',
+    'help.section.management': 'MANAGEMENT',
+    'help.mgmt.init':
+      'Scan env, test providers, save fallback chain',
+    'help.mgmt.doctor': 'Run diagnostics',
+    'help.mgmt.mode':
+      'Approval mode (plan|read-only|suggest|auto-edit|full-auto)',
+    'help.mgmt.skill':
+      'Manage learnable skills (list, view, create, curate)',
+    'help.mgmt.gui': 'Start Agent War Room web dashboard',
+    'help.section.advanced': 'ADVANCED EXECUTION',
+    'help.adv.company': 'Enterprise: quality gating + memory',
+    'help.adv.swarm': 'Recursive decomposition + parallel',
+    'help.adv.drive': 'Autonomous step-by-step loop',
+    'help.section.infrastructure': 'INFRASTRUCTURE',
+    'help.infra.saga': 'Durable compensating transactions',
+    'help.infra.resume': 'Resume a crashed run from checkpoint',
+    'help.infra.compensation': 'Durable retry queue',
+    'help.infra.cost': 'Token usage & cost reports',
+    'help.section.misc': 'MISC',
+    'help.misc.completion':
+      'Shell autocompletion (bash, zsh, fish)',
+    'help.misc.feedback':
+      'Submit feedback to improve Commander',
+    'help.section.options': 'OPTIONS',
+    'help.option.version': 'Show version',
+    'help.option.help': 'Show this help',
+    'help.option.help_all': 'Show all commands',
+
+    // ── GUI (cmdGui) ─────────────────────────────────────────────────
+    'gui.dashboard.title': 'GUI DASHBOARD',
+    'gui.api_missing': 'API server not found at apps/api/',
+    'gui.starting.api': 'Starting API server...',
+    'gui.starting.web': 'Starting Web dashboard...',
+    'gui.api.url': 'API:',
+    'gui.web.url': 'Web:',
+
+    // ── Command aliases ─────────────────────────────────────────────
+    'alias.r': 'run',
+    'alias.s': 'status',
+    'alias.d': 'drive',
+    'alias.g': 'goal',
+    'alias.c': 'company',
+    'alias.sw': 'swarm',
+    'alias.rv': 'review',
+    'alias.h': 'history',
+    'alias.sk': 'skill',
+    'alias.p': 'plugin',
+    'alias.m': 'mode',
+    'alias.q': 'ask',
+    'alias.question': 'help',
+    'alias.t': 'test',
+    'alias.e': 'explain',
+    'alias.f': 'fix',
+    'alias.w': 'watch',
+    'alias.i': 'intelligence',
+
+    // ── Small features ──────────────────────────────────────────────
+    'small_features.ask.title': 'Commander Ask — Quick Q&A Mode',
+    'small_features.ask.question': 'Question:',
+    'small_features.ask.no_provider':
+      'No LLM provider configured. Run commander init first.',
+    'small_features.ask.answer': 'Answer:',
+    'small_features.ask.no_output': '(no output)',
+    'small_features.ask.status': 'Status:',
+    'small_features.ask.tokens': 'Tokens:',
+    'small_features.ask.tokens_na': 'N/A',
+    'small_features.diff.title':
+      'Commander Diff — Recent Changes',
+    'small_features.diff.modified_files': 'Modified files:',
+    'small_features.diff.no_changes': 'No changes detected.',
+    'small_features.diff.recent_commits': 'Recent commits:',
+    'small_features.diff.more': '... and {n} more',
+    'small_features.diff.git_error':
+      'Error reading git status: {message}',
+    'small_features.cost.title': 'Commander Cost — Token Usage',
+    'small_features.cost.no_records':
+      'No LLM call records found at .commander_samples/llm_calls.ndjson.',
+    'small_features.cost.run_first':
+      'Run a task first: commander run "<task>"',
+    'small_features.cost.parse_errors':
+      'Note: {n} malformed line(s) in llm_calls.ndjson were skipped.',
+    'small_features.cost.filters_applied':
+      'Filters applied: {filters}',
+    'small_features.cost.error':
+      'Error computing cost: {message}',
+    'small_features.undo.title': 'Commander Undo',
+    'small_features.undo.uncommitted':
+      'You have uncommitted changes:',
+    'small_features.undo.hint':
+      'To undo Commander changes, use:',
+    'small_features.undo.checkout':
+      'git checkout -- <file>     Restore specific file',
+    'small_features.undo.stash':
+      'git stash                  Stash all changes',
+    'small_features.undo.reset':
+      'git reset --hard HEAD      Discard all changes (destructive)',
+    'small_features.undo.no_changes': 'No changes to undo.',
+    'small_features.approval_history.title': 'Approval History',
+    'small_features.approval_history.empty':
+      'No approval history found.',
+    'small_features.approval_history.recent': 'Recent approvals:',
+    'small_features.approval_history.total':
+      'Total entries: {n}',
+    'small_features.approval_history.error':
+      'Error reading approval history: {message}',
+    'small_features.resume.title':
+      'Commander Resume — Crash Recovery',
+    'small_features.resume.empty':
+      'No resumable runs found.',
+    'small_features.resume.header': 'Resumable runs:',
+    'small_features.resume.run_hint':
+      'To resume: commander resume <runId>',
+    'small_features.resume.attempting':
+      'Attempting to resume run {runId}...',
+    'small_features.resume.failed':
+      'Recovery failed. The checkpoint may not exist or the lease was lost.',
+    'small_features.resume.list_hint':
+      'Run commander resume --list to see available checkpoints.',
+    'small_features.resume.recovered':
+      'Run recovered from checkpoint',
+    'small_features.resume.status': 'Status:',
+    'small_features.resume.resume_from_step': 'Resume from step:',
+    'small_features.resume.completed_tool_calls':
+      'Completed tool calls:',
+    'small_features.resume.phase': 'Phase:',
+    'small_features.resume.goal': 'Goal:',
+    'small_features.resume.continue_hint':
+      'Use commander run "<continue>" to continue execution.',
+    'small_features.resume.error': 'Error: {message}',
+    'small_features.compensation.title':
+      'Commander Compensation — Durable Retry Queue',
+    'small_features.compensation.queue_summary': 'Queue Summary:',
+    'small_features.compensation.pending': 'Pending:',
+    'small_features.compensation.in_progress': 'In Progress:',
+    'small_features.compensation.escalated': 'Escalated:',
+    'small_features.compensation.commands_section': 'Commands:',
+    'small_features.compensation.cmd.list':
+      'commander compensation list',
+    'small_features.compensation.cmd.list_desc':
+      'View all queue items',
+    'small_features.compensation.cmd.retry':
+      'commander compensation retry <id>',
+    'small_features.compensation.cmd.retry_desc':
+      'Retry an escalated item',
+    'small_features.compensation.list.header':
+      'Compensation Queue Items ({count}):',
+    'small_features.compensation.list.tool': 'Tool:',
+    'small_features.compensation.list.run': 'Run:',
+    'small_features.compensation.list.attempts': 'Attempts:',
+    'small_features.compensation.list.age': 'Age:',
+    'small_features.compensation.list.status': 'Status:',
+    'small_features.compensation.list.error': 'Error:',
+    'small_features.compensation.list.next_attempt':
+      'Next attempt:',
+    'small_features.compensation.list.empty':
+      'No items in the compensation queue.',
+    'small_features.compensation.retry.missing_id':
+      'Missing item ID. Usage: commander compensation retry <id>',
+    'small_features.compensation.retry.success':
+      'Item {id} reset to pending for immediate retry.',
+    'small_features.compensation.retry.failed':
+      'Item {id} not found or not in escalated status.',
+    'small_features.compensation.unknown_sub':
+      'Unknown subcommand: {name}',
+    'small_features.compensation.unknown_usage':
+      'Usage: commander compensation [list|retry <id>|status]',
+    'small_features.compensation.error': 'Error: {message}',
+    'small_features.compensation.sqlite_hint':
+      'Compensation queue requires better-sqlite3.',
+    'small_features.trace.title': 'Commander Traces',
+    'small_features.trace.no_traces':
+      'No traces found. Run a task first.',
+    'small_features.trace.no_traces_short': 'No traces found.',
+    'small_features.trace.recent': 'Recent traces:',
+    'small_features.trace.total': 'Total: {n} traces',
+    'small_features.trace.otel_hint':
+      'View OpenTelemetry: http://localhost:16686 (Jaeger)',
+    'small_features.trace.success_status': 'success',
+    'small_features.trace.failed_status': 'failed',
+    'small_features.trace.error': 'Error: {message}',
+    'small_features.trace.sqlite_hint':
+      'Compensation queue requires better-sqlite3. Install: pnpm add better-sqlite3',
+    'small_features.trace.run_doctor_hint':
+      'Run commander doctor to diagnose.',
+
+    // ── Convenience (cmdPr, cmdCommit, cmdFix, etc.) ────────────────
+    'convenience.pr.title': 'Commander PR — Create Pull Request',
+    'convenience.pr.branch': 'Branch:',
+    'convenience.pr.no_changes':
+      'No changes detected against main.',
+    'convenience.pr.commits': 'Commits:',
+    'convenience.pr.generating': 'Generating PR description...',
+    'convenience.pr.description': 'Description:',
+    'convenience.pr.create': 'Create PR:',
+    'convenience.pr.create_cmd':
+      'gh pr create --title "{desc}" --body "..."',
+    'convenience.pr.dry_run_hint':
+      'Run with --dry-run to preview without creating.',
+    'convenience.pr.error': 'Error: {message}',
+    'convenience.commit.title':
+      'Commander Commit — Smart Commit',
+    'convenience.commit.no_staged':
+      'No staged changes. Use git add first.',
+    'convenience.commit.staged': 'Staged changes:',
+    'convenience.commit.suggested': 'Suggested commit:',
+    'convenience.commit.run_hint': 'Run: git commit -m "{type}: {file}"',
+    'convenience.commit.error': 'Error: {message}',
+    'convenience.fix.title': 'Commander Fix — Auto-Fix Errors',
+    'convenience.fix.running_eslint': 'Running ESLint fix...',
+    'convenience.fix.eslint_ok': 'ESLint fixes applied',
+    'convenience.fix.eslint_warn':
+      'ESLint found issues (some may need manual fix)',
+    'convenience.fix.running_prettier': 'Running Prettier fix...',
+    'convenience.fix.prettier_ok': 'Prettier formatting applied',
+    'convenience.fix.prettier_warn': 'Prettier had issues',
+    'convenience.fix.checking_ts': 'Checking TypeScript...',
+    'convenience.fix.ts_ok': 'TypeScript check passed',
+    'convenience.fix.ts_errors': 'TypeScript found {n} errors',
+    'convenience.fix.running_tests': 'Running tests...',
+    'convenience.fix.tests_ok': 'Tests passed',
+    'convenience.fix.tests_failed': 'Tests failed',
+    'convenience.fix.error': 'Error: {message}',
+    'convenience.explain.title': 'Commander Explain',
+    'convenience.explain.file': 'File:',
+    'convenience.explain.lines': 'Lines:',
+    'convenience.explain.size': 'Size:',
+    'convenience.explain.size_kb': '{kb} KB',
+    'convenience.explain.structure': 'Structure:',
+    'convenience.explain.functions': 'Functions:',
+    'convenience.explain.classes': 'Classes:',
+    'convenience.explain.exports': 'Exports:',
+    'convenience.explain.preview': 'Preview:',
+    'convenience.explain.more_lines': '... ({n} more lines)',
+    'convenience.explain.directory': 'Directory:',
+    'convenience.explain.files_count': 'Files:',
+    'convenience.explain.contents': 'Contents:',
+    'convenience.explain.error': 'Error: {message}',
+    'convenience.test.title': 'Commander Test',
+    'convenience.test.running_tests': 'Running tests...',
+    'convenience.test.tests_ok': 'Tests passed',
+    'convenience.test.tests_failed': 'Tests failed',
+    'convenience.test.attempting_fix': 'Attempting auto-fix...',
+    'convenience.test.manual_cmd': 'pnpm test',
+    'convenience.test.error': 'Error: {message}',
+    'convenience.refactor.title': 'Commander Refactor',
+    'convenience.refactor.description': 'Description:',
+    'convenience.refactor.full_hint':
+      'For full refactoring, use: commander run "refactor: {desc}"',
+    'convenience.refactor.preview_hint':
+      'For preview: commander run "refactor: {desc}" --dry-run',
+    'convenience.learn.title':
+      'Commander Learn — Codebase Analysis',
+    'convenience.learn.project': 'Project:',
+    'convenience.learn.project_unknown': 'unknown',
+    'convenience.learn.version': 'Version:',
+    'convenience.learn.file_distribution': 'File distribution:',
+    'convenience.learn.ext_count': '{ext}: {count}',
+    'convenience.learn.dependencies': 'Dependencies:',
+    'convenience.learn.prod_deps': 'Production: {n}',
+    'convenience.learn.dev_deps': 'Development: {n}',
+    'convenience.learn.detected_patterns': 'Detected patterns:',
+    'convenience.learn.error': 'Error: {message}',
+    'convenience.monitor.title': 'Commander Monitor — File Watcher',
+    'convenience.monitor.directory': 'Directory:',
+    'convenience.monitor.watching': 'Watching for changes...',
+    'convenience.monitor.pattern': 'Pattern:',
+    'convenience.monitor.exit_hint': 'Press Ctrl+C to stop',
+    'convenience.monitor.change_event': '{name} changed',
+    'convenience.monitor.running': 'Running: {cmd}',
+    'convenience.monitor.error': 'Error: {message}',
+
+    // ── Init (cmdInit) ───────────────────────────────────────────────
+    'init.title': 'Commander Init — Zero-Config Environment Setup',
+    'init.spinner.scan_env': 'Scanning environment for API keys...',
+    'init.section.env': 'ENVIRONMENT',
+    'init.field.api_keys_found': 'API keys found',
+    'init.field.ollama.available': 'available',
+    'init.field.ollama.missing': 'not found',
+    'init.field.vllm.available': 'available',
+    'init.field.vllm.missing': 'not found',
+    'init.field.docker.available': 'available',
+    'init.field.docker.missing': 'not found',
+    'init.field.redis.configured': '{url}',
+    'init.field.redis.missing': 'not configured',
+    'init.field.kubernetes.in_cluster': 'in-cluster ({ns})',
+    'init.field.kubernetes.missing': 'not detected',
+    'init.test_progress':
+      'Testing connectivity to {n} providers ({ms}ms timeout)...',
+    'init.provider_status.reachable': 'OK',
+    'init.provider_status.auth': 'AUTH',
+    'init.provider_status.timeout': 'T/O',
+    'init.provider_status.down': 'DOWN',
+    'init.provider_status.skipped': '--',
+    'init.provider_tier.local': 'local',
+    'init.provider_tier.cloud': 'cloud',
+    'init.provider_tier.premium': 'premium',
+    'init.tests_summary': '{ms}ms — {n} reachable{auth}',
+    'init.tests_summary.auth_errors': ', {n} auth errors',
+    'init.section.no_reachable': 'No reachable providers found.',
+    'init.section.fallback_chain': 'RECOMMENDED FALLBACK CHAIN',
+    'init.fallback_chain.delegate_quickstart':
+      'Launching commander quickstart to set one up...',
+    'init.fallback_chain.quickstart_failed':
+      'Quickstart failed: {message}',
+    'init.fallback_chain.set_api_key_hint':
+      'Set an API key (e.g., OPENAI_API_KEY) and try again.',
+    'init.config_saved':
+      'Configuration saved to .commander.json',
+    'init.config_provider_line': 'Provider: {p}  Model: {m}',
+    'init.config_fallback_line': 'Fallback: {chain}',
+    'init.save_failed': 'Failed to save config: {message}',
+    'init.tests_skipped':
+      'Connectivity tests skipped (--skip-tests).',
+    'init.section.get_started': 'GET STARTED',
+    'init.first_task': 'Run your first task:',
+    'init.first_task_cmd': 'commander run "Hello, world!"',
+    'init.common_commands': 'Common commands:',
+    'init.cmd.run_desc': 'Execute a task',
+    'init.cmd.dry_run_desc': 'Plan without executing',
+    'init.cmd.stream_desc': 'Real-time progress',
+    'init.cmd.status_desc': 'System status',
+    'init.cmd.config_desc': 'Manage configuration',
+    'init.cmd.doctor_desc': 'Run diagnostics',
+    'init.cmd.tui_desc': 'Interactive dashboard',
+    'init.error.no_api_key': 'No API key found for {provider}.',
+    'init.error.run_probe':
+      'Run commander init --probe to configure.',
+
+    // ── Goal Judge (cmdGoalJudge) ────────────────────────────────────
+    'goal_judge.verdict_passed': '✅ PASS',
+    'goal_judge.verdict_failed': '❌ FAIL',
+    'goal_judge.verdict_title': 'Goal Judge Verdict',
+    'goal_judge.confidence': 'Confidence:',
+    'goal_judge.model': 'Model:',
+    'goal_judge.tokens_suffix': 'tokens',
+    'goal_judge.reasoning': 'Reasoning:',
+    'goal_judge.section.stop_conditions': 'Stop Conditions:',
+    'goal_judge.section.evidence': 'Evidence:',
+    'goal_judge.conditions.empty':
+      'No global stop conditions set.',
+    'goal_judge.conditions.list_hint':
+      "Use 'commander goal conditions set --id=<id> --desc=\"...\" --type=MUST_HAVE' to add one.",
+    'goal_judge.conditions.header': 'Global Stop Conditions',
+    'goal_judge.conditions.added': 'Stop condition {id} added.',
+    'goal_judge.conditions.deleted': 'Condition {id} deleted.',
+    'goal_judge.conditions.deleted_none':
+      'Condition {id} not found.',
+    'goal_judge.conditions.cleared':
+      'All stop conditions cleared.',
+    'goal_judge.conditions.type.label': 'Type:',
+    'goal_judge.conditions.list_subcommands': 'Subcommands:',
+    'goal_judge.conditions.list_sub.list':
+      'List global stop conditions',
+    'goal_judge.conditions.list_sub.set':
+      'Add/update a stop condition',
+    'goal_judge.conditions.list_sub.delete':
+      'Remove a stop condition',
+    'goal_judge.conditions.list_sub.clear':
+      'Clear all stop conditions',
+    'goal_judge.conditions.list_set_flags': 'Set flags:',
+    'goal_judge.conditions.flag.add':
+      '--add=<id>              Condition ID (e.g., "no-ts-errors")',
+    'goal_judge.conditions.flag.desc':
+      '--desc=<text>           Human-readable description',
+    'goal_judge.conditions.flag.type':
+      '--type=<type>           MUST_HAVE | MUST_NOT_HAVE | MUST_MATCH | MUST_BE_ABOVE | CUSTOM',
+    'goal_judge.conditions.flag.pattern':
+      '--pattern=<regex>       Pattern to match (for MUST_MATCH/MUST_HAVE/MUST_NOT_HAVE)',
+    'goal_judge.conditions.flag.threshold':
+      '--threshold=<N>         Numeric threshold (for MUST_BE_ABOVE)',
+    'goal_judge.conditions.flag.custom':
+      '--custom=<prompt>       Custom evaluation prompt (for CUSTOM)',
+    'goal_judge.judge.empty':
+      'Usage: commander goal judge <task description>',
+    'goal_judge.judge.example':
+      'Example: commander goal judge "Fix all TypeScript errors in src/"',
+    'goal_judge.judge.running':
+      'Running independent goal judge...',
+    'goal_judge.help.run_intro':
+      'Run an independent goal verification against defined stop conditions.',
+    'goal_judge.help.usage_section': 'Usage:',
+    'goal_judge.help.usage.run':
+      'commander goal judge <task>',
+    'goal_judge.help.usage.conditions':
+      'commander goal conditions [cmd]',
+
+    // ── Debug intent (cmdDebugIntent) ────────────────────────────────
+    'debug.title': 'Debug: Captured Intent Runs',
+    'debug.intent.title': 'Intent Debug',
+    'debug.intent.no_runs': 'No intent-captured runs found.',
+    'debug.intent.no_runs_hint_1':
+      'Runs are captured when using the full pipeline (commander run).',
+    'debug.intent.no_runs_hint_2':
+      'Run a task first, then use commander debug intent <runId> to inspect.',
+    'debug.intent.no_record': 'No intent record found for run:',
+    'debug.intent.no_record_hint':
+      'Intent may not have been captured for this run.',
+    'debug.intent.inspect_hint':
+      'Use commander debug intent to list captured runs.',
+    'debug.intent.column': 'RunId',
+    'debug.intent.inspect_label':
+      'Inspect: commander debug intent <runId>',
+    'debug.section.goal': 'GOAL',
+    'debug.section.model_selection': 'MODEL SELECTION',
+    'debug.section.strategy': 'STRATEGY SELECTION',
+    'debug.section.exec_trace': 'EXECUTION TRACE',
+    'debug.section.verdict': 'VERDICT',
+    'debug.section.escalations': 'CASCADE ESCALATIONS',
+    'debug.field.model': 'Model',
+    'debug.field.provider': 'Provider',
+    'debug.field.tier': 'Tier',
+    'debug.field.model_not_recorded': 'Not recorded',
+    'debug.field.topology': 'Topology',
+    'debug.no_trace':
+      'No execution trace found for this run.',
+    'debug.no_trace_hint':
+      'Traces are held in-memory and may have been evicted.',
+    'debug.escalation.row': '{from} → {to}',
+    'debug.escalation.reason': '{reason} ({timestamp})',
+    'debug.verdict.status.success': 'SUCCESS',
+    'debug.verdict.status.partial': 'PARTIAL',
+    'debug.verdict.status.incomplete': 'INCOMPLETE',
+    'debug.verdict.llm_calls': 'LLM calls',
+    'debug.verdict.tool_calls': 'Tool calls',
+    'debug.verdict.tokens': 'Tokens',
+    'debug.verdict.duration': 'Duration',
+    'debug.verdict.errors': 'Errors',
+    'debug.verdict.started': 'Started',
+    'debug.verdict.completed': 'Completed',
+    'debug.verdict.confidence':
+      'PASSED · confidence: {pct}%',
+    'debug.llm.label': 'LLM Calls ({n})',
+    'debug.tool.label': 'Tool Calls ({n})',
+    'debug.decision.label': 'Decisions ({n})',
+    'debug.verification.label': 'Verifications ({n})',
+    'debug.error.label': 'Errors ({n})',
+    'debug.llm.row': '{model} {tokens} tok {duration}',
+    'debug.tool.row': '{name} {duration}{error}',
+    'debug.routing_reason': 'Routing reason:',
+    'debug.estimated':
+      'Estimated: {agents} agents · {steps} steps · {tokens} tok · {duration}',
+    'debug.task_meta': '{task} · {effort}',
+    'debug.confidence_suffix': 'Confidence: {pct}%',
+
+    // ── Up (cmdUp) ───────────────────────────────────────────────────
+    'up.title': 'Commander Up — Unified Execution + Web TUI',
+    'up.task': 'Task:',
+    'up.no_api_key': 'No API key found for {provider}.',
+    'up.run_init_probe': 'Run commander init --probe to configure.',
+    'up.tui.url': 'Web TUI:',
+    'up.tui.api_only':
+      'Web TUI: {url} (API only — build with cd apps/web && npx vite build)',
+    'up.press_ctrl_c_to_stop':
+      'Press Ctrl+C to stop and freeze execution',
+    'up.task_complete': 'Task complete. Web TUI at {url}',
+    'up.press_ctrl_c_to_exit': 'Press Ctrl+C to exit.',
+    'up.freeze.section': 'NO FREEZE FOUND',
+    'up.freeze.no_manifest':
+      'No freeze manifest, but checkpoint dirs exist:',
+    'up.freeze.resume_hint':
+      'Resume with: commander resume <runId>',
+    'up.freeze.no_runs':
+      'No frozen runs or checkpoints found. Starting fresh.',
+    'up.freeze.manifest_missing': 'Freeze manifest is empty.',
+    'up.freeze.read_failed': 'Failed to read freeze manifest.',
+    'up.freeze.frozen_runs':
+      '{n} run(s) frozen at {timestamp}',
+    'up.freeze.run_line': '► {runId}',
+    'up.freeze.run_goal': 'Goal:',
+    'up.freeze.run_state': 'State:',
+    'up.freeze.run_resuming': 'Resuming...',
+    'up.freeze.missing_checkpoint':
+      '⚠ Checkpoint missing for {runId}, skipping.',
+    'up.freeze.corrupt_checkpoint':
+      '⚠ Corrupt checkpoint for {runId}, skipping.',
+    'up.freeze.resume_failed':
+      '✗ Resume failed for {runId} (lease lost or missing checkpoint)',
+    'up.freeze.recovered':
+      '{runId} recovered — {n} completed tool calls skipped',
+    'up.freeze.manifest_archived':
+      'Freeze manifest archived to {path}',
+    'up.freeze.all_recovered':
+      'All runs recovered. Use commander up "task" to continue.',
+
+    // ── Sandbox (cmdSandbox) ─────────────────────────────────────────
+    'sandbox.title': 'Sandbox Status',
+    'sandbox.available': 'yes',
+    'sandbox.unavailable': 'no (UNSANDBOXED)',
+    'sandbox.mechanisms': 'Mechanisms:',
+    'sandbox.profiles':
+      'read-only, workspace-write, full-access, hardened',
+    'sandbox.unknown_sub':
+      'Unknown sandbox subcommand: {name}',
+    'sandbox.usage': 'Usage: commander sandbox status',
+
+    // ── REPL (startRepl) ────────────────────────────────────────────
+    'repl.banner.title': 'Commander REPL',
+    'repl.banner.subtitle':
+      'type a task — same as the CLI',
+    'repl.banner.examples.header': 'Examples:',
+    'repl.banner.examples.run_desc': '# execute a task',
+    'repl.banner.examples.dry_run_desc':
+      '# deliberate only, no API call',
+    'repl.banner.examples.review_desc': '# review code changes',
+    'repl.banner.examples.status_desc': '# see providers / API keys',
+    'repl.banner.examples.doctor_desc': '# diagnose issues',
+    'repl.banner.examples.help_desc': '# built-ins',
+    'repl.banner.examples.exit_desc': '/ Ctrl-D # leave the REPL',
+    'repl.banner.multiline':
+      'Multi-line input: end a line with \\ \\ to continue.',
+    'repl.banner.tab':
+      'TAB completion: commands + built-ins + flags.',
+    'repl.env_loaded_one': '📄 .env loaded: {path}',
+    'repl.env_loaded_header': '📄 .env loaded from:',
+    'repl.builtins.help': 'Show this help',
+    'repl.builtins.exit':
+      'Leave the REPL (also works: Ctrl-D)',
+    'repl.builtins.clear': 'Clear the screen',
+    'repl.builtins.header': 'Built-ins',
+    'repl.prompt': 'commander> ',
+    'repl.cont_hint': '      …',
+    'repl.transcript.off': 'off (use --profile)',
+    'repl.transcript.saved': 'Transcript saved: {path}',
+    'repl.transcript.start':
+      'commander REPL transcript — started at {ts}',
+    'repl.transcript.end':
+      'commander REPL transcript — ended at {ts}',
+    'repl.transcript.prompt': '[{ts}] > {input}',
+    'repl.transcript.tab_hint':
+      'TAB completions: commands, flags, built-ins',
+    'repl.bye': 'Bye.',
+
+    // ── Env loader (loadEnvUp) ───────────────────────────────────────
+    'env.feature_missing':
+      'commander: process.loadEnvFile requires Node ≥20.6; present={nodeVersion}. Skipping .env auto-load.',
+    'env.parse_failed':
+      'commander: failed to parse {path} ({message}). Continuing without it.',
+
+    // ── CLI rate limit hint (mention in error path) ────────────────
+    'rate_limit.costly_set':
+      'run, company, swarm, drive, review, fix',
   },
 
   'zh-CN': {
-    // General
+    // ── General ──────────────────────────────────────────────────────
     'app.title': 'Commander — 多智能体编排系统',
     'app.version': '版本',
 
-    // Help
+    // ── Help ─────────────────────────────────────────────────────────
     'help.title': '快速开始',
     'help.get.started': '设置 API 密钥并运行：',
     'help.commands': '命令',
     'help.options': '选项',
     'help.run.help': '运行 {cmd} 查看命令帮助。',
 
-    // Quickstart
+    // ── Quickstart ──────────────────────────────────────────────────
     'quickstart.title': 'Commander 快速入门',
     'quickstart.subtitle': '让我们开始设置',
     'quickstart.prereqs': '前置检查',
     'quickstart.all.passed': '所有检查通过！',
     'quickstart.ready': '你已准备就绪。',
     'quickstart.try': '试试：',
+    'quickstart.title.banner': 'Commander 快速入门',
+    'quickstart.subtitle.banner': '帮助您完成设置',
+    'quickstart.want_setup': '设置 API 提供者',
+    'quickstart.provider_supports': 'Commander 支持 20+ 提供者。请选择一个：',
+    'quickstart.openai.desc': 'GPT-4o, GPT-4.1, o3',
+    'quickstart.anthropic.desc': 'Claude Sonnet 4.6, Opus 4.8',
+    'quickstart.google.desc': 'Gemini 2.5 Pro/Flash',
+    'quickstart.openrouter.desc': '200+ 模型',
+    'quickstart.deepseek.desc': 'DeepSeek R1, V3',
+    'quickstart.ollama.desc': 'Llama 3, Mistral 等',
+    'quickstart.to_configure': '配置方法：',
+    'quickstart.config_alt_step': '或',
+    'quickstart.all_passed_try': '试试：commander "Hello, world!"',
+    'quickstart.need_attention': '{n} 项检查需要关注',
+    'quickstart.summary.section': '摘要',
+    'quickstart.all_good': '✓ 一切就绪！',
+    'quickstart.run_first_task_hint':
+      '运行 commander "你的第一个任务" 以开始。',
+    'quickstart.fix_and_verify':
+      '修复后，运行 commander quickstart --check 复查。',
+    'quickstart.first_steps': '你的前几步任务',
+    'quickstart.try.these':
+      '试试这些以熟悉 Commander：',
+    'quickstart.example.1': 'commander "解释这个代码库"',
+    'quickstart.example.1.desc': '快速分析 — 无需额外配置',
+    'quickstart.example.2': 'commander plan "构建 REST API"',
+    'quickstart.example.2.desc': '再运行前查看多智能体计划',
+    'quickstart.example.3':
+      'commander run "修复所有 TypeScript 错误"',
+    'quickstart.example.3.desc': '完整流水线并执行',
+    'quickstart.example.4': 'commander watch "重构认证模块"',
+    'quickstart.example.4.desc': '智能体工作中实时显示进度',
+    'quickstart.example.5': 'commander status',
+    'quickstart.example.5.desc': '检查系统与提供者状态',
+    'quickstart.example.6': 'commander doctor',
+    'quickstart.example.6.desc': '如出问题可运行诊断',
+    'quickstart.pro_tips': '小贴士：',
+    'quickstart.tip.treat_as_task':
+      '任何未识别的命令都会视为任务：commander fix the login bug',
+    'quickstart.tip.help': '任何命令都可使用 --help 查看选项',
+    'quickstart.tip.config_test':
+      '使用 commander config test 验证 API 连接',
+    'quickstart.tip.mode_auto_edit':
+      '使用 commander mode auto-edit 跳过审批',
+    'quickstart.structure': '项目结构',
 
-    // Doctor
+    // ── Pre-check labels & fixes ───────────────────────────────────
+    'quickcheck.label.node': 'Node.js',
+    'quickcheck.label.provider': 'API 提供者',
+    'quickcheck.label.git': 'Git',
+    'quickcheck.label.workspace': '工作区',
+    'quickcheck.label.tools': '工具',
+    'quickcheck.fix.node': '安装 Node.js v20+: https://nodejs.org',
+    'quickcheck.fix.provider':
+      'export OPENAI_API_KEY=sk-...（或 ANTHROPIC_API_KEY、GOOGLE_API_KEY 等）',
+    'quickcheck.fix.git': '安装 git: https://git-scm.com',
+    'quickcheck.workspace.found': '找到 .commander/',
+    'quickcheck.workspace.package_json':
+      '找到 package.json（运行任何命令即可初始化 .commander/）',
+    'quickcheck.workspace.standalone': '（独立模式）',
+    'quickcheck.tools_configured': '已配置 {n} 个工具',
+    'quickcheck.provider_run_hint': '{type} · {model}',
+    'quickcheck.provider_missing': '未找到 API key',
+
+    // ── Doctor ──────────────────────────────────────────────────────
     'doctor.title': '诊断',
     'doctor.env': '环境',
     'doctor.provider': '提供者',
@@ -145,27 +1667,154 @@ const translations: Record<Locale, Record<string, string>> = {
     'doctor.connectivity': '连接测试',
     'doctor.all.passed': '所有检查通过 ✓',
     'doctor.needs.attention': '部分检查需要关注',
+    'doctor.check.node': 'Node.js v20+',
+    'doctor.check.node_current':
+      '当前：{version}。请从 https://nodejs.org 安装',
+    'doctor.check.git': 'Git',
+    'doctor.check.git_version': '{version}',
+    'doctor.check.git_missing': '未找到。安装：https://git-scm.com',
+    'doctor.check.pm': '包管理器',
+    'doctor.check.pm_unknown': '未知',
+    'doctor.check.pm_no_lockfile': '未找到 lockfile',
+    'doctor.check.api_key': 'API key',
+    'doctor.check.api_key_missing':
+      '请设置 OPENAI_API_KEY、ANTHROPIC_API_KEY 等',
+    'doctor.check.api_key_value': '{type} · {model}',
+    'doctor.check.packages': '已安装的包',
+    'doctor.check.packages_missing': '运行: pnpm install',
+    'doctor.check.commander_dir': '.commander/ 目录',
+    'doctor.check.commander_dir.found': '已找到',
+    'doctor.check.commander_dir.missing':
+      '未找到（首次运行时会自动创建）',
+    'doctor.check.tools_configured': '已配置的工具',
+    'doctor.check.tools_count': '{n} 个工具',
+    'doctor.check.disk_space': '磁盘空间',
+    'doctor.check.disk_space.low': ' — 空间不足',
+    'doctor.connectivity.testing':
+      '正在测试 {provider} 于 {url}...',
+    'doctor.connectivity.reachable': 'API 可达（HTTP {status}）',
+    'doctor.connectivity.http_error': 'API 返回 HTTP {status}',
+    'doctor.connectivity.invalid_key': '→ API key 无效。请检查凭证。',
+    'doctor.connectivity.rate_limited': '→ 被限流。请稍后再试。',
+    'doctor.connectivity.unreachable': 'API 不可达',
+    'doctor.connectivity.dns_failed':
+      '→ DNS 解析失败。请检查网络。',
+    'doctor.connectivity.refused': '→ 连接被拒绝。服务是否运行？',
+    'doctor.connectivity.timeout':
+      '→ 连接超时。请检查网络/防火墙。',
 
-    // Status
+    // ── Status ──────────────────────────────────────────────────────
     'status.title': '系统状态',
     'status.provider': '当前提供者',
     'status.keys': 'API 密钥',
     'status.runtime': '运行时',
+    'status.version': '1.0.0-alpha.1',
+    'status.platform': '平台',
+    'status.provider_name': '名称',
+    'status.provider.api_url': 'API URL',
+    'status.provider.model': '模型',
+    'status.provider.none': '未设置 — 请设置 API key 环境变量',
+    'status.runtime.ready': '已就绪',
+    'status.runtime.no_key': '无 API key',
+    'status.field.experiences': '经验',
+    'status.field.strategies': '策略',
+    'status.field.avg_success': '平均成功率',
+    'status.section.optimizations': '优化项',
+    'status.optimization.row':
+      '{type}: {from} → {to}（{pct}%）',
+    'status.section.shadow_mode': '影子模式',
+    'status.shadow.last_run': '{main} 对比 {shadow}',
+    'status.shadow.main_result_yes': '✓',
+    'status.shadow.main_result_no': '✗',
+    'status.shadow.shadow_result_yes': '✓',
+    'status.shadow.shadow_result_no': '✗',
+    'status.shadow.better_hint':
+      '{strategy} 在上一次运行中表现会更好',
+    'status.shadow.total': '影子对照数',
+    'status.cached_results': '缓存结果数',
+    'status.meta_debug_load_failed':
+      '加载 MetaLearner 统计失败：{message}',
 
-    // Config
+    // ── Config ──────────────────────────────────────────────────────
     'config.title': '配置',
     'config.set': '设置：',
     'config.test': '测试 API 连接',
+    'config.show': '{content}',
+    'config.set.theme_usage':
+      'commander config set theme <dark|light|minimal>',
+    'config.set.model_usage': 'commander config set model <model-id>',
+    'config.set.meta_tools': 'commander config set meta-tools on',
+    'config.list_models': 'commander config list-models',
+    'config.list_providers': 'commander config list-providers',
+    'config.test_cmd': 'commander config test',
+    'config.set.usage': 'commander config set <key> <value>',
+    'config.set.theme_unknown': '未知主题："{theme}"',
+    'config.set.theme_available': '可用的：{themes}',
+    'config.set.theme_no_color':
+      'NO_COLOR=1 禁用所有颜色（https://no-color.org）',
+    'config.set.theme_done': 'theme = {theme}',
+    'config.set.theme_persist_hint':
+      '主题已在当前会话生效。持久化：export COMMANDER_THEME={theme}',
+    'config.list_providers.subtitle':
+      '设置任意 API key 环境变量以激活提供者：',
+    'config.list_providers.legend':
+      '  ✓ = 已配置  ~ = 通过 OPENAI_API_KEY  (空格) = 未设置',
+    'config.test.no_key': '未找到 API key。请设置环境变量。',
+    'config.test.section': '测试中',
+    'config.test.provider': '提供者',
+    'config.test.url': 'URL',
+    'config.test.testing': '正在测试...',
+    'config.test.success': '✓ 连接正常',
+    'config.test.http_error': '✗ {status}',
+    'config.test.connection_failed': '! 连接失败',
+    'config.canary_status.title': '金丝雀部署',
+    'config.canary_status.none_active': '当前无活跃的金丝雀部署。',
+    'config.canary_status.intro':
+      '金丝雀部署由 EvolverAgent 自动创建——',
+    'config.canary_status.intro2':
+      '当 EvolverAgent 检测失败模式并提出配置变更时。',
+    'config.canary_status.intro3':
+      '金丝雀部署会以 10% 的比例安全地验证配置变更。',
+    'config.canary_status.status': '状态',
+    'config.canary_status.promoted': '已提升',
+    'config.canary_status.rejected': '已拒绝',
+    'config.canary_status.active': '进行中',
+    'config.canary_status.mutations': '变更数',
+    'config.canary_status.runs': '运行数',
+    'config.canary_status.rollout': '灰度比例',
+    'config.canary_status.success_rate': '成功率',
+    'config.canary_status.pending_runs': '还需 {n} 次运行以自动决策',
+    'config.canary_status.running_for': '{s}s',
+    'config.usage.main':
+      'commander config [show|set <key> <val>|list-providers|list-models|test|canary-status]',
 
-    // Errors
+    // ── Errors ──────────────────────────────────────────────────────
     'error.no.apikey': '未找到 API 密钥。',
     'error.fix.apikey':
       '请设置 OPENAI_API_KEY、ANTHROPIC_API_KEY 或其他提供者环境变量。运行：commander quickstart',
     'error.fatal': '错误',
     'error.run.doctor': '运行 commander doctor 诊断问题。',
     'error.run.quickstart': '运行 commander quickstart 查看设置指南。',
+    'error_messages.api.not_available': '无可用的 LLM 提供者。',
+    'error_messages.api.provider_not_available':
+      '提供者 "{provider}" 不可用。请检查 API key。',
+    'error_messages.run.no_task': '未提供任务。',
+    'error_messages.run.no_task.usage': '用法：',
+    'error_messages.run.no_task.example': '示例：',
+    'error_messages.invalid_tier':
+      '无效的 --tier="{value}"。允许: {allowed}。{hint} 运行 commander run --help',
+    'error_messages.invalid_effort':
+      '无效的 --effort="{value}"。允许: {allowed}。{hint} 运行 commander run --help',
+    'error_messages.invalid_topology':
+      '无效的 --topology="{value}"。允许: {allowed}。{hint} 运行 commander run --help',
+    'error_messages.invalid_quality_threshold':
+      '无效的 --quality-threshold="{value}"。',
+    'error_messages.quality_threshold_hint':
+      '必须为 0 到 1 之间的数字（如 0.8）。运行 commander run --help',
+    'error_messages.did_you_mean': ' 你是不是想用 --{flag}={value}？',
+    'error_messages.tui.fallback': '无法启动 TUI 仪表盘',
 
-    // Mode
+    // ── Mode ────────────────────────────────────────────────────────
     'mode.title': '审批模式',
     'mode.set': '设置：',
     'mode.plan': '仅分析，不修改',
@@ -173,39 +1822,1221 @@ const translations: Record<Locale, Record<string, string>> = {
     'mode.suggest': '风险操作前提示',
     'mode.autoedit': '允许大部分操作，标记沙箱逃逸',
     'mode.fullauto': '无审批门控',
+    'mode.title.curr': '模式',
+    'mode.label.suggest': 'Suggest 模式 — 风险操作前提示',
+    'mode.label.autoedit':
+      'Auto-edit 模式 — 允许大部分操作，标记沙箱逃逸',
+    'mode.label.fullauto': 'Full-auto 模式 — 无审批门控',
+    'mode.label.readonly':
+      'Read-only 模式 — 不写入，不执行破坏性操作',
+    'mode.label.plan': 'Plan 模式 — 仅分析，不修改',
+    'mode.set_cmd':
+      'commander mode <plan|read-only|auto-edit|full-auto|suggest>',
+    'mode.invalid': '无效模式："{mode}"',
+    'mode.valid_list': '有效模式：',
+    'mode.set_done': '模式已设置为 {mode}',
 
-    // History
+    // ── History ─────────────────────────────────────────────────────
     'history.title': '会话历史',
     'history.none': '未找到已保存的会话。',
     'history.run.first': '请先运行任务：',
     'history.view': '查看：',
     'history.prune': '清理：',
     'history.del': '删除：',
+    'history.view.deleted_session': '已删除会话 {runId}',
+    'history.view.prune.usage':
+      '用法：commander history prune <keep-count>',
+    'history.view.pruned':
+      '已精简至 {keep} 个会话（删除 {removed} 个）',
+    'history.list.total': '总数',
+    'history.detail.title': '会话详情',
+    'history.detail.run_id': 'Run ID',
+    'history.detail.agent': '智能体',
+    'history.detail.phase': '阶段',
+    'history.detail.goal': '目标',
+    'history.detail.steps': '步骤',
+    'history.detail.tokens': 'Token',
+    'history.detail.duration': '耗时',
+    'history.detail.timestamp': '时间戳',
+    'history.detail.error': '错误',
+    'history.detail.tools': '工具',
+    'history.error.failed_to_read':
+      '读取会话历史失败：{message}',
+    'history.error.check_dir':
+      '检查 .commander/ 目录是否存在且可读。',
+    'history.error.session_not_found': '未找到会话：{runId}',
+    'history.error.session_not_found_hint':
+      '运行 commander history 查看可用会话。',
+    'history.error.failed_to_load':
+      '加载会话失败：{message}',
+    'history.error.session_corrupt':
+      '会话文件可能已损坏或缺失。',
+    'history.view_hint_view': '查看：commander history view <runId>',
+    'history.view_hint_prune':
+      '清理：commander history prune <keep-count>',
+    'history.view_hint_del':
+      '删除：commander history delete <runId>',
+    'history.phase.completed': '已完成',
+    'history.phase.failed': '失败',
+    'history.phase.started': '已启动',
+    'history.phase.llm_call': 'llm_call',
+    'history.phase.tool_execution': '工具执行',
+    'history.phase.verification': '验证',
+    'history.phase.icon.completed': '✅',
+    'history.phase.icon.failed': '❌',
+    'history.phase.icon.started': '📋',
+    'history.phase.icon.llm_call': '🤖',
+    'history.phase.icon.tool_execution': '🔧',
+    'history.phase.icon.verification': '🔍',
+    'history.phase.icon.default': '📄',
 
-    // Workflow
+    // ── Workflow ────────────────────────────────────────────────────
     'workflow.title': '工作流命令',
     'workflow.list': '列出可用和已调度的工作流',
     'workflow.run': '执行工作流',
     'workflow.schedule': '调度工作流',
     'workflow.daemon': '启动调度守护进程',
+    'workflow.run.usage':
+      '用法：commander workflow run <workflow-id>',
+    'workflow.run.not_found': '未找到工作流 "{id}"',
+    'workflow.run.error.no_api_key': '未找到 API 密钥。',
+    'workflow.run.executing': '→ 正在执行工作流：{name}',
+    'workflow.run.description_steps': '{desc} | {n} 个步骤',
+    'workflow.run.progress_prefix': '[{elapsed}s]',
+    'workflow.run.success_marker': '成功',
+    'workflow.run.partial_marker': '部分',
+    'workflow.run.fail_marker': '失败',
+    'workflow.run.error_prefix': '✗',
+    'workflow.schedule.usage':
+      '用法：commander workflow schedule <workflow-id> --cron="0 6 * * 1"',
+    'workflow.schedule.not_found': '未找到工作流 "{id}"',
+    'workflow.schedule.confirmed': '已调度 "{name}"',
+    'workflow.schedule.trigger_label': 'trigger: {label}',
+    'workflow.schedule.id_label': 'id: {id}',
+    'workflow.unschedule.usage':
+      '用法：commander workflow unschedule <schedule-id>',
+    'workflow.unschedule.removed': '已移除调度 {id}',
+    'workflow.unschedule.not_found': '未找到调度 "{id}"',
+    'workflow.pause.usage':
+      '未找到调度。用法：commander workflow pause <schedule-id>',
+    'workflow.pause.paused': '已暂停调度 {id}',
+    'workflow.resume.usage':
+      '未找到调度。用法：commander workflow resume <schedule-id>',
+    'workflow.resume.resumed': '已恢复调度 {id}',
+    'workflow.history.empty': '未找到执行记录',
+    'workflow.history.header': '执行历史',
+    'workflow.daemon.started': '调度守护进程已运行',
+    'workflow.daemon.tick': 'Tick: {seconds}s',
+    'workflow.daemon.state_path': '状态: {path}',
+    'workflow.daemon.workflows_loaded': '已载入工作流: {count}',
+    'workflow.daemon.stopped': '调度守护进程已停止',
+    'workflow.daemon.stopped_short': '调度已停止',
+    'workflow.create.usage':
+      '用法：commander workflow create <name> [--description=...] [--cron="0 6 * * *"]',
+    'workflow.create.exists': '工作流已存在：{path}',
+    'workflow.create.created': '已创建工作流：{path}',
+    'workflow.reload': '[{time}] 重新加载: {id}',
 
-    // Skill
+    // ── Skill ────────────────────────────────────────────────────────
     'skill.title': '技能命令',
     'skill.list': '列出所有技能',
     'skill.view': '查看技能详情',
     'skill.create': '创建新技能',
     'skill.curate': '运行策展器（归档+合并）',
+    'skill.misc.list_empty': '未找到技能。',
+    'skill.misc.list_header': '技能（{count}）',
+    'skill.misc.pin_indicator': '📌',
+    'skill.misc.list_meta':
+      'quality: {pct}% · uses: {n} · {category} · [{tags}]',
+    'skill.misc.view_usage': '用法：commander skill view <name>',
+    'skill.misc.view_not_found': '未找到技能 "{name}"',
+    'skill.misc.view_header': '技能：{name}',
+    'skill.misc.view_description': '描述',
+    'skill.misc.view_category': '分类',
+    'skill.misc.view_tags': '标签',
+    'skill.misc.view_quality': '质量',
+    'skill.misc.view_usage_field': '使用情况',
+    'skill.misc.view_usage_value':
+      '{n} · 成功率：{pct}%',
+    'skill.misc.view_pinned': '已固定',
+    'skill.misc.view_pinned_yes': '是',
+    'skill.misc.view_pinned_no': '否',
+    'skill.misc.view_source': '来源',
+    'skill.misc.view_created': '创建时间',
+    'skill.misc.create_usage':
+      '用法：commander skill create <name> [description]',
+    'skill.misc.created': '已创建技能 "{name}"',
+    'skill.misc.pin_usage': '用法：commander skill pin <name>',
+    'skill.misc.pinned': '已固定 "{name}"',
+    'skill.misc.unpin_usage': '用法：commander skill unpin <name>',
+    'skill.misc.unpinned': '取消固定 "{name}"',
+    'skill.misc.delete_usage':
+      '用法：commander skill delete <name>',
+    'skill.misc.deleted': '已删除 "{name}"',
+    'skill.misc.curate_header': '整理',
+    'skill.misc.curate_spinner': '运行策展器中...',
+    'skill.misc.curate_archived': '已归档：',
+    'skill.misc.curate_consolidated': '已合并：',
+    'skill.misc.curate_before': '之前',
+    'skill.misc.curate_after': '之后',
+    'skill.misc.curate_archived_count': '已归档',
 
-    // Completion
+    // ── Completion ──────────────────────────────────────────────────
     'completion.installed': '自动补全已安装',
     'completion.shell': 'Shell',
     'completion.script': '脚本',
     'completion.add.to': '添加到你的',
+    'completion.unknown_shell': '未知 shell："{name}"',
+    'completion.usage':
+      '用法：commander completion [bash|zsh|fish|install]',
+    'completion.already_configured': '已在 {path} 中配置',
+    'completion.restart_hint': '重启你的 shell 或者运行：source {rc}',
+    'completion.add_to_rc': '添加到你的 {rc}：',
+    'completion.or_run': '或者运行：',
 
-    // Onboarding
+    // ── Onboarding ──────────────────────────────────────────────────
     'onboarding.welcome': '欢迎使用 Commander',
     'onboarding.env.vars': '要开始使用，请设置以下环境变量之一：',
     'onboarding.example': '示例：',
+    'onboarding.example.cmd': '$ export OPENAI_API_KEY=sk-...',
+    'onboarding.example.run': '$ commander "Hello, world!"',
+    'onboarding.env_vars.openai': 'OpenAI / DeepSeek / GLM / MiMo',
+    'onboarding.env_vars.anthropic': 'Anthropic Claude',
+    'onboarding.env_vars.google': 'Google Gemini',
+    'onboarding.env_vars.openrouter': 'OpenRouter（200+ 模型）',
+    'onboarding.env_vars.deepseek': 'DeepSeek（专用）',
+    'onboarding.env_vars.glm': 'GLM（智谱）',
+    'onboarding.env_vars.mimo': 'MiMo（专用）',
+    'onboarding.env_vars.xiaomi': '小米 MiMo',
+    'onboarding.env_vars.ollama':
+      'Ollama（本地）— http://localhost:11434/v1',
+    'onboarding.env_vars.vllm':
+      'vLLM（本地）— http://localhost:8000/v1',
+    'onboarding.env_vars.cohere': 'Cohere',
+    'onboarding.env_vars.mistral': 'Mistral AI',
+    'onboarding.env_vars.groq': 'Groq（高速推理）',
+    'onboarding.env_vars.together': 'Together AI',
+    'onboarding.env_vars.perplexity': 'Perplexity',
+    'onboarding.env_vars.fireworks': 'Fireworks AI',
+    'onboarding.env_vars.replicate': 'Replicate',
+    'onboarding.env_vars.aws_bedrock':
+      'AWS Bedrock（需要 AWS_SECRET_ACCESS_KEY）',
+
+    // ── Run ─────────────────────────────────────────────────────────
+    'run.no_task': '未提供任务。',
+    'run.usage': '用法：',
+    'run.example_usage': '示例：',
+    'run.usage.template': 'commander run "{task}"',
+    'run.example.analyze': 'commander run "分析此代码库"',
+    'run.tui.dashboard_started':
+      '终端仪表盘已在子进程中启动（PID: {pid}）',
+    'run.tui.could_not_start':
+      '无法启动 TUI 仪表盘 — 请在另一个终端运行：commander tui',
+    'run.sse.agent_started': '已启动',
+    'run.sse.agent_completed': '已完成',
+    'run.sse.agent_completed_tokens': '已完成 · {tokens} tok',
+    'run.sse.agent_failed': '失败',
+    'run.sse.tool_completed': '已完成',
+    'run.sse.tool_failed': '失败',
+    'run.sse.message_prefix': '{agent}：',
+    'run.sse.alert_error': '错误',
+    'run.sse.alert_warn': '警告',
+    'run.phase.init': '初始化',
+    'run.phase.deliberation': '审议',
+    'run.phase.effort_scaling': '力度评估',
+    'run.phase.topology_routing': '拓扑路由',
+    'run.phase.decomposition': '分解',
+    'run.phase.team_formation': '团队组建',
+    'run.phase.execution': '执行',
+    'run.phase.synthesis': '综合',
+    'run.feedback.prompt': '本次有帮助吗？',
+    'run.feedback.good_option': '[👍 好]',
+    'run.feedback.bad_option': '[👎 错]',
+    'run.feedback.skip_option': '[回车跳过]',
+    'run.feedback.thanks_good': '👍 感谢！',
+    'run.feedback.thanks_bad': '👎 已记下，会改进。',
+    'run.feedback.human_label': '人工反馈',
+    'run.section.results': '结果',
+
+    // ── Showcase ────────────────────────────────────────────────────
+    'showcase.title': 'Commander 演示 — 3 智能体 DEBATE 代码审计',
+    'showcase.subtitle': '扫描代码库并启动 3 智能体辩论...',
+    'showcase.topology_header': '拓扑',
+    'showcase.team.red': '红队',
+    'showcase.team.red_role': '（攻击方）→ 找 Bug、漏洞、反模式',
+    'showcase.team.blue': '蓝队',
+    'showcase.team.blue_role': '（防守方）→ 架构优点、设计合理性',
+    'showcase.team.judge': '裁判',
+    'showcase.team.judge_role': '（仲裁方）→ 综合评分，输出体检报告',
+    'showcase.files_scanned_zero':
+      '当前目录未找到可扫描的代码文件。请在有代码文件的目录下运行 `commander run showcase`。',
+    'showcase.execution_complete': '执行完成',
+    'showcase.field.files_scanned': '扫描文件数',
+    'showcase.field.red_team': '红队',
+    'showcase.field.blue_team': '蓝队',
+    'showcase.field.judge': '裁判',
+    'showcase.field.total_tokens': '总 token',
+    'showcase.field.duration': '耗时',
+    'showcase.field.provider': '提供者',
+    'showcase.scores_header': '代码健康评分',
+    'showcase.score.security': '安全',
+    'showcase.score.code_quality': '代码质量',
+    'showcase.score.architecture': '架构',
+    'showcase.score.overall': '⭐ 总分',
+    'showcase.grade.S': 'S',
+    'showcase.grade.A': 'A',
+    'showcase.grade.B': 'B',
+    'showcase.grade.C': 'C',
+    'showcase.grade.D': 'D',
+    'showcase.critical_header': '🔴 严重',
+    'showcase.high_header': '🟠 高',
+    'showcase.more': '...还有 {count} 个',
+    'showcase.full_report': '完整报告',
+    'showcase.error.showcase_failed': '演示失败：{message}',
+    'showcase.error.check_api_key': '请检查 API 密钥和网络连接。',
+    'showcase.error.run_init':
+      '运行 commander init 验证提供者连通性。',
+
+    // ── Plan ────────────────────────────────────────────────────────
+    'plan.section': '计划',
+    'plan.summary.section': '摘要',
+    'plan.task_label':
+      '{type} · {effort} 力度 · {topology} 拓扑',
+    'plan.agents': '智能体数',
+    'plan.steps': '步骤数',
+    'plan.confidence': '置信度',
+    'plan.external_info_yes': '是',
+    'plan.external_info_no': '否',
+    'plan.tokens': 'Token',
+    'plan.tokens_breakdown':
+      '{total}（思考: {thinking}, 执行: {execution}）',
+    'plan.duration': '{seconds}秒（每智能体: {perAgent}秒）',
+    'plan.task_nature.IO': 'IO_BOUND',
+    'plan.task_nature.COMPUTE': 'COMPUTE_BOUND',
+    'plan.speculation_yes': '是 — 早期步骤可并行',
+    'plan.speculation_no': '否',
+    'plan.needs_section': '需要',
+    'plan.spinner': '分析任务中...',
+    'plan.fail.no_runtime':
+      '请设置 OPENAI_API_KEY、ANTHROPIC_API_KEY 等环境变量。运行：commander quickstart',
+
+    // ── Watch ───────────────────────────────────────────────────────
+    'watch.execution_summary': '执行摘要',
+    'watch.field.agents': '智能体',
+    'watch.field.tool_calls': '工具调用',
+    'watch.field.events': '事件',
+    'watch.field.tokens': 'Token',
+    'watch.field.cost': '成本',
+
+    // ── Company ─────────────────────────────────────────────────────
+    'company.title.shell': '公司模式',
+    'company.field.mode': '模式',
+    'company.field.budget': '预算',
+    'company.field.capability_matching': '能力匹配',
+    'company.field.quality_gating': '质量门控',
+    'company.field.memory': '记忆',
+    'company.execution.section': '执行',
+    'company.status.run': '状态',
+    'company.agents': '智能体',
+    'company.tokens': 'Token',
+    'company.duration': '耗时',
+    'company.quality': '质量',
+    'company.strategy': '策略',
+    'company.savings': '~{pct}%',
+    'company.quality.section': '质量',
+    'company.quality.action': '操作',
+    'company.quality.action.escalate': '升级',
+    'company.quality.action.deescalate': '降级',
+    'company.quality.reason': '原因',
+    'company.quality.confidence': '置信度',
+    'company.summary.section': '总结',
+    'company.engine_stats': '引擎统计',
+    'company.stats.total_executions': '总执行次数',
+    'company.stats.avg_quality': '平均质量',
+    'company.stats.avg_tokens': '平均 Token',
+    'company.stats.pool_size': '资源池大小',
+
+    // ── Saga ────────────────────────────────────────────────────────
+    'saga.title': 'Saga',
+    'saga.run.header': '{name}',
+    'saga.run.description': '描述：',
+    'saga.run.run_id_label': 'runId：      ',
+    'saga.run.storage': '存储：    ',
+    'saga.run.storage_in_memory': '（内存中）',
+    'saga.run.timeout': '超时：    ',
+    'saga.run.timeout_ms': '{ms}ms',
+    'saga.run.nodes': '节点：      ',
+    'saga.run.nodes_with_arrow': '{count}（{order}）',
+    'saga.error.missing_saga_name': '缺少 saga 名称',
+    'saga.error.unknown_saga': '未知 saga "{name}"',
+    'saga.suggest.run_examples':
+      '运行 commander saga examples 查看可用的 saga',
+    'saga.list.empty':
+      '未找到运行记录。运行：commander saga run order-fulfillment',
+    'saga.list.cols': 'RUN ID | 状态 | 更新时间',
+    'saga.run.header.count': '{count} 个运行{plural}',
+    'saga.status.header': '状态：{runId}',
+    'saga.status.field.state': 'state:        ',
+    'saga.status.field.fencing': 'fencingEpoch: ',
+    'saga.status.field.created': 'createdAt:    ',
+    'saga.status.field.updated': 'updatedAt:    ',
+    'saga.status.field.error': 'error:        ',
+    'saga.status.nodes_header': '节点：',
+    'saga.error.missing_run_id': '缺少 runId',
+    'saga.error.run_not_found': '未找到 run "{runId}"',
+    'saga.resume.note_finalized':
+      'run "{runId}" 已处于 {state} 状态；无可恢复内容',
+    'saga.resume.rebuilding': '正在恢复 run — 从快照重建 saga...',
+    'saga.resume.snapshot_state': 'snapshot:      {state}',
+    'saga.resume.events_total': 'events total:  {count}',
+    'saga.resume.events_since': 'events since:  {count}',
+    'saga.resume.warning.no_nodes':
+      '快照中未找到节点状态；无可恢复内容',
+    'saga.resume.all_completed':
+      '✓ 所有节点已完成 — 运行成功',
+    'saga.resume.field.completed': 'completed:  {done}/{total}',
+    'saga.resume.field.pending': 'pending:     {pending}/{total}',
+    'saga.resume.field.nodes': 'nodes:       {names}',
+    'saga.resume.field.graph': 'graph:       {order}',
+    'saga.resume.result': '恢复结果：',
+    'saga.resume.no_definition': '未找到 saga 定义 "{name}"。',
+    'saga.resume.manual_inspect': '快照可手动检查于：',
+    'saga.approve.error.usage':
+      '用法: commander saga {decision} <runId> <nodeId> [--by=<user>]',
+    'saga.approve.recorded_label': 'by',
+    'saga.examples.header': '{count} 个内置示例',
+    'saga.examples.nodes_label': '节点：',
+    'saga.subcommand.run': '运行内置示例 saga',
+    'saga.subcommand.list':
+      '列出所有运行（已提交、已中止、进行中）',
+    'saga.subcommand.status': '查看运行的快照',
+    'saga.subcommand.resume': '检查可恢复的运行',
+    'saga.subcommand.approve': '批准待处理审批',
+    'saga.subcommand.reject': '拒绝待处理审批',
+    'saga.subcommand.examples': '列出内置示例 saga',
+    'saga.help.intro': 'commander saga — 管理 saga 运行',
+    'saga.flag.input': '--input=<json>        Saga 输入（JSON）',
+    'saga.flag.run_id':
+      '--run-id=<id>         自定义 run ID（默认: <name>-<timestamp>）',
+    'saga.flag.timeout':
+      '--timeout=<ms>        总超时（默认: 60000）',
+    'saga.flag.in_memory':
+      '--in-memory           使用内存存储（不落盘）',
+    'saga.error.could_not_recover': '无法恢复 {runId}',
+    'saga.result.label.error': 'error:',
+    'saga.result.label.results': 'results:',
+    'saga.result.label.summary': 'summary:',
+    'saga.result.label.duration_ms': '({ms}ms)',
+    'saga.recover_hint':
+      '使用以下命令恢复运行：commander saga resume {runId}',
+
+    // ── Goal ────────────────────────────────────────────────────────
+    'goal.field.provider': '提供者',
+    'goal.field.mode': '模式',
+    'goal.field.budget': '预算',
+    'goal.field.max_rounds': '最大轮数',
+    'goal.field.default_budget': '{tokens} tok',
+    'goal.field.auto': '自动',
+    'goal.section': '目标结果',
+    'goal.spinner': '目标循环运行中...',
+    'goal.field.rounds': '轮数',
+    'goal.field.tokens': 'Token',
+    'goal.field.duration': '耗时',
+    'goal.field.stop_reason': '停止原因',
+    'goal.field.remaining': '剩余发现',
+    'goal.field.improvement': '改进趋势',
+    'goal.improvement.improving': '改进中',
+    'goal.improvement.plateaued': '已平稳',
+    'goal.history.section': '轮次历史',
+    'goal.history.row':
+      '第 {n} 轮：{findings} 个发现 · {pct}% 改进 · {decision}',
+
+    // ── Swarm ───────────────────────────────────────────────────────
+    'swarm.field.mode': '模式',
+    'swarm.field.max_depth': '最大深度',
+    'swarm.field.max_workers': '最大工作节点',
+    'swarm.default.mode': 'balanced',
+    'swarm.default.depth': '3',
+    'swarm.default.workers': '10',
+    'swarm.spinner': 'Swarm 循环运行中...',
+    'swarm.section': 'Swarm 结果',
+    'swarm.field.rounds': '轮数',
+    'swarm.field.tokens': 'Token',
+    'swarm.field.duration': '耗时',
+    'swarm.field.tree_depth': '树深度',
+    'swarm.field.managers': '管理者数',
+    'swarm.field.total_nodes': '总节点数',
+    'swarm.field.fusion_conflicts': '融合冲突数',
+    'swarm.fusion.section': '融合冲突',
+    'swarm.topology.section': '拓扑',
+    'swarm.topology.levels': '第 {n} 层: {count} 节点',
+    'swarm.topology.levels_joined': '层级：{parts}',
+    'swarm.conflict.warning': '⚠ {type}',
+    'swarm.conflict.suggestion': '→ {text}',
+
+    // ── Drive ───────────────────────────────────────────────────────
+    'drive.field.mode': '模式',
+    'drive.field.max_iterations': '最大迭代',
+    'drive.spinner': 'Drive 循环运行中...',
+    'drive.section': 'Drive 结果',
+    'drive.field.iterations': '迭代数',
+    'drive.field.steps': '步骤',
+    'drive.field.tokens': 'Token',
+    'drive.field.duration': '耗时',
+    'drive.blocked.section': '阻塞步骤',
+    'drive.blocked.warning': '⚠',
+    'drive.step.section': '步骤明细',
+    'drive.step.retries': '（重试次数: {n}）',
+    'drive.status.completed': '已完成',
+    'drive.status.running': '进行中',
+    'drive.status.blocked': '已阻塞',
+    'drive.status.failed': '失败',
+
+    // ── Checkpoint ──────────────────────────────────────────────────
+    'checkpoint.prune.no_op':
+      '仅有 {total} 个 checkpoint — 无可清理（keep={keep}）',
+    'checkpoint.prune.done':
+      '已清理 {removed} 个旧 checkpoint（保留最新 {kept} 个）',
+    'checkpoint.view.header': 'Checkpoint — {runId}',
+    'checkpoint.view.not_found': '未找到 run {runId} 的 checkpoint',
+    'checkpoint.view.version': '版本：',
+    'checkpoint.view.trigger': '触发：',
+    'checkpoint.view.trigger_pct': '{pct}%',
+    'checkpoint.view.trigger_manual': '手动',
+    'checkpoint.view.timestamp': '时间戳：',
+    'checkpoint.view.phase': '阶段：',
+    'checkpoint.view.step': '步骤：',
+    'checkpoint.view.goal': '目标：',
+    'checkpoint.section.completed': '✓ 已完成：',
+    'checkpoint.section.pending': '⏳ 待处理：',
+    'checkpoint.section.failed': '✗ 失败：',
+    'checkpoint.items.more': '... 还有 {n} 项',
+    'checkpoint.section.token_budget': 'Token 预算：',
+    'checkpoint.token_usage': '{used} / {cap} token',
+    'checkpoint.section.key_decisions': '关键决策：',
+    'checkpoint.section.errors': '错误：',
+    'checkpoint.error.recovered': '↻',
+    'checkpoint.error.failed': '✗',
+    'checkpoint.error.prefix_node': '[{node}] {message}',
+    'checkpoint.section.next_action': '下一步：',
+    'checkpoint.full_file': '完整文件：{path}',
+    'checkpoint.list.empty':
+      '暂无 checkpoint。在执行过程中将自动写入 checkpoint（20%、45%、70% 预算时）。',
+    'checkpoint.list.header': 'Checkpoints（{count}）',
+    'checkpoint.list.cols_trigger':
+      'Trigger: {label} | {bar} | v{version}{budget}',
+    'checkpoint.list.bar.empty': '无任务',
+    'checkpoint.list.written': '写入时间：{time} | {kb}KB',
+
+    // ── Intelligence ───────────────────────────────────────────────
+    'intelligence.title':
+      'Commander 智能 — 我学到的内容',
+    'intelligence.section.meta_learner': 'META-LEARNER',
+    'intelligence.empty.experiences':
+      '暂无经验记录。运行一些任务以建立学习数据。',
+    'intelligence.meta.experiences': '经验：',
+    'intelligence.meta.strategies': '策略：',
+    'intelligence.meta.success_rate': '成功率：',
+    'intelligence.meta.reflections': '反思：',
+    'intelligence.section.top_strategies': '顶级策略',
+    'intelligence.strategy.bar': '{runs} 次运行 · p95 {p95}',
+    'intelligence.section.regression_alerts': '回退警告',
+    'intelligence.regression.row':
+      '{strategy} on {model}: 下降 {pct}%（{from}% → {to}%）',
+    'intelligence.section.suggestions': '建议',
+    'intelligence.section.skills': '技能',
+    'intelligence.empty.skills':
+      '尚未提取技能。技能会在成功的运行中自动提取。',
+    'intelligence.skills.summary': '{count} 个技能（{cats}）',
+    'intelligence.skills.row': '{usage}× · {pct}%',
+    'intelligence.skills.more':
+      '... 还有 {count} 个（用 --skills 查看完整列表）',
+    'intelligence.section.failure_patterns': '失败模式',
+    'intelligence.empty.patterns':
+      '尚未发现模式。模式会在反复失败中浮现。',
+    'intelligence.patterns.summary':
+      '{count} 个模式（{active} 个活跃，出现≥2 次）',
+    'intelligence.patterns.row':
+      '{desc}  {n}× · {confidence} 置信度',
+    'intelligence.patterns.more':
+      '... 还有 {count} 个（用 --patterns 查看完整列表）',
+    'intelligence.section.overview': '概览',
+    'intelligence.overview.experiences': '经验：',
+    'intelligence.overview.strategies': '策略：',
+    'intelligence.overview.success': '平均成功率：',
+    'intelligence.overview.reflections': '反思：',
+    'intelligence.section.strategy_perf':
+      '策略表现（Thompson 采样）',
+    'intelligence.empty.strategies': '尚无策略数据。',
+    'intelligence.strategy.bar.full':
+      '{runs} 次运行 · p95 {p95} · avg {avg}',
+    'intelligence.section.task_type_scores':
+      '按任务类型的策略评分',
+    'intelligence.task_type_strategy.row':
+      '{strategy}: {pct}%（{trials} 次试验{p95}）',
+    'intelligence.task_type.p95_suffix': ' · p95 {p95}',
+    'intelligence.section.optimization_suggestions': '优化建议',
+    'intelligence.section.prediction_loop': '预测循环',
+    'intelligence.prediction.total': '总判定：',
+    'intelligence.prediction.confirmed': '已确认（✓）：',
+    'intelligence.prediction.reverted': '已回退（✗）：',
+    'intelligence.section.recent_reflections': '近期反思',
+    'intelligence.show_details_hint':
+      '查看详情: commander intelligence --stats | --skills | --patterns | --all',
+    'intelligence.skills.empty':
+      '尚未提取技能。\n技能会在成功任务执行后自动提取。\n每次 Commander 完成任务后，都会分析轨迹并\n提取可复用的模式。',
+    'intelligence.skills.tool_count': '{n} 个工具',
+    'intelligence.skills.usage_bar.full':
+      '{uses} 次使用 · {pct}% 成功率 · {tools} 个工具 · 上次使用 {ago}',
+    'intelligence.skills.steps': '步骤：{steps}',
+    'intelligence.skills.more_steps': ' …',
+    'intelligence.skills.stored_at':
+      '技能存储于 .commander/intelligence/extracted-skills.json',
+    'intelligence.failure_patterns.empty':
+      '尚未记录失败模式。\n当同一类型的失败在多次运行中重复时会检测模式。\n出现 2 次以上后，Commander 会主动给出警告。',
+    'intelligence.failure_patterns.occurrences': '出现次数：',
+    'intelligence.failure_patterns.confidence': '置信度：',
+    'intelligence.failure_patterns.last': '最近：',
+    'intelligence.failure_patterns.resolved': '已解决: {text}',
+    'intelligence.failure_patterns.auto_warn': '自动警告开启',
+    'intelligence.failure_patterns.stored_at':
+      '模式存储于 .commander/intelligence/failure-patterns.json',
+    'intelligence.confidence.high': '高',
+    'intelligence.confidence.medium': '中',
+    'intelligence.confidence.low': '低',
+
+    // ── Experience ──────────────────────────────────────────────────
+    'experience.title': 'Commander 经验 — 学习状态',
+    'experience.section.meta_learner': 'META-LEARNER',
+    'experience.meta.experiences': '经验',
+    'experience.meta.strategies': '策略',
+    'experience.meta.success_rate': '成功率',
+    'experience.meta.reflections': '反思',
+    'experience.meta.regression_alerts': '回退警告',
+    'experience.meta.predictions': '预测',
+    'experience.section.skills': '提取的技能',
+    'experience.skills.count': '技能',
+    'experience.skills.newest': '最新',
+    'experience.section.failure_patterns': '失败模式',
+    'experience.patterns.count': '模式',
+    'experience.patterns.active_warnings': '活跃警告',
+    'experience.reset.banner': 'Commander 经验重置',
+    'experience.reset.warning.all': '这将重置所有学习经验：',
+    'experience.reset.warning.skills': '提取的技能',
+    'experience.reset.warning.patterns': '失败模式',
+    'experience.reset.warning.meta':
+      'MetaLearner（Thompson 先验、反思、策略评分）',
+    'experience.reset.warning.meta_short': 'MetaLearner 状态',
+    'experience.reset.confirm_prompt': '继续？[y/N]',
+    'experience.reset.cancelled': '已取消。',
+    'experience.reset.done': '经验重置完成。',
+    'experience.reset.backups_at': '备份已保存于：',
+    'experience.reset.hint': '运行 commander experience status 验证。',
+    'experience.status.hint':
+      '重置: commander experience reset [--skills|--patterns|--meta] [--force]',
+    'experience.not_initialized': '未初始化',
+
+    // ── Feedback ────────────────────────────────────────────────────
+    'feedback.title': 'Commander 反馈',
+    'feedback.subtitle': '帮助我们改进 Commander',
+    'feedback.no_data': '暂未收到反馈。',
+    'feedback.summary.title': '反馈摘要',
+    'feedback.field.total': '总反馈数',
+    'feedback.field.avg_rating': '平均评分',
+    'feedback.field.ratings': '评分条目',
+    'feedback.field.bugs': 'Bug 报告',
+    'feedback.field.features': '功能请求',
+    'feedback.field.general': '一般反馈',
+    'feedback.section.recent': '近期反馈：',
+    'feedback.bug.saved': 'Bug 报告已保存',
+    'feedback.bug.thanks': '感谢！这有助于我们改进 Commander。',
+    'feedback.feature.saved': '功能请求已保存',
+    'feedback.feature.thanks': '感谢！我们会考虑在未来的版本中加入。',
+    'feedback.rating.saved': '评分已保存',
+    'feedback.message.saved': '反馈已保存',
+    'feedback.message.thanks': '感谢您的反馈！',
+    'feedback.section.quick': '快速反馈',
+    'feedback.section.examples': '示例',
+    'feedback.example.rating':
+      'commander feedback --rating=4 --message="watch 命令很好用！"',
+    'feedback.example.bug':
+      'commander feedback --bug="无网络时崩溃"',
+    'feedback.example.feature':
+      'commander feedback --feature="为 TUI 加上深色主题"',
+    'feedback.type.icon.bug': '🐛',
+    'feedback.type.icon.feature': '💡',
+    'feedback.type.icon.rating': '⭐',
+    'feedback.type.icon.general': '💬',
+
+    // ── Plugin ──────────────────────────────────────────────────────
+    'plugin.install.usage': '用法：commander plugin install <source>',
+    'plugin.install.sources_header': '来源：',
+    'plugin.install.npm_hint': 'npm-package-name',
+    'plugin.install.npm_desc': '从 npm 安装',
+    'plugin.install.git_hint': 'github:user/repo',
+    'plugin.install.git_desc': '从 git 安装',
+    'plugin.install.local_hint': './path/to/plugin',
+    'plugin.install.local_desc': '从本地目录安装',
+    'plugin.install.success': '插件安装成功',
+    'plugin.install.failed': '安装失败：{message}',
+    'plugin.list.empty': '暂无加载的插件。',
+    'plugin.list.install_hint': '安装插件：commander plugin install <name>',
+    'plugin.section': '插件（{count}）',
+    'plugin.uninstall.usage': '用法：commander plugin uninstall <name>',
+    'plugin.uninstall.success': '插件 "{name}" 已卸载',
+    'plugin.uninstall.not_found': '未找到插件 "{name}"',
+    'plugin.info.usage': '用法：commander plugin info <name>',
+    'plugin.info.not_found': '未找到插件 "{name}"',
+    'plugin.info.section': '插件：{name}',
+    'plugin.info.name': '名称',
+    'plugin.info.version': '版本',
+    'plugin.info.description': '描述',
+    'plugin.info.description_empty': '（无）',
+    'plugin.info.status': '状态',
+    'plugin.info.status_loaded': '已加载',
+    'plugin.info.path': '路径',
+    'plugin.help.title': '插件命令',
+    'plugin.help.install': '安装插件（npm/git/本地）',
+    'plugin.help.list': '列出已安装的插件',
+    'plugin.help.uninstall': '卸载插件',
+    'plugin.help.info': '查看插件详情',
+    'plugin.section.examples': '示例：',
+
+    // ── Budget ──────────────────────────────────────────────────────
+    'budget.not_found': 'run {runId} 未找到预算',
+    'budget.list.empty': '无活跃的 token 预算。',
+    'budget.list.empty_hint':
+      "运行 'commander run \"<goal>\"' 以查看预算跟踪。",
+    'budget.list.header': 'Token 预算（{count} 活跃）',
+    'budget.detail.title': 'Token 预算：{runId}',
+    'budget.detail.field.status': '状态',
+    'budget.detail.field.total': '总预算',
+    'budget.detail.field.used': '已使用',
+    'budget.detail.field.remaining': '剩余',
+    'budget.detail.field.utilization': '使用率',
+    'budget.detail.field.soft_cap': '软上限',
+    'budget.detail.field.created': '创建时间',
+    'budget.detail.field.updated': '更新时间',
+    'budget.phase.relaxed': '🟢 宽松',
+    'budget.phase.moderate': '🟡 适中',
+    'budget.phase.tight': '🟠 紧张',
+    'budget.phase.critical': '🔴 严重',
+    'budget.phase.exceeded': '⛔ 超限',
+    'budget.subagents.header': '子智能体（{count}）',
+    'budget.subagents.over_budget': '⚠️  超支 {n} token',
+    'budget.summary.agents':
+      '{n} 个子智能体，{over} 个超出预算',
+
+    // ── Review ──────────────────────────────────────────────────────
+    'review.section.title': '代码审查',
+    'review.bullet.scope': '范围：{scope}{base}{commit}',
+    'review.bullet.scope.base': '（基准：{ref}）',
+    'review.bullet.scope.commit': '（提交：{sha}）',
+    'review.bullet.guidelines': '规则：{n} 条',
+    'review.spinner': '审查中...',
+    'review.failed': '审查失败：{message}',
+
+    // ── Help banner ─────────────────────────────────────────────────
+    'help.banner.title': 'Commander',
+    'help.banner.tagline': '一条命令 · 10 种拓扑 · 22 个提供者',
+    'help.section.getting_started': '入门',
+    'help.cmd.init': 'commander init',
+    'help.cmd.init_desc': '零配置初始化 + 提供者扫描',
+    'help.cmd.first_task': 'commander run "Hello, world!"',
+    'help.cmd.first_task_desc': '你的第一个任务',
+    'help.cmd.showcase': 'commander run showcase',
+    'help.cmd.showcase_desc': '3 智能体代码审计演示',
+    'help.section.core': '核心命令',
+    'help.core.run_desc': '执行完整多智能体流水线',
+    'help.core.review_desc': 'AI 代码审查',
+    'help.core.fix_desc': '自动修复 lint、格式与类型错误',
+    'help.core.status_desc': '系统状态与活跃提供者',
+    'help.core.config_desc': '查看/修改设置',
+    'help.core.history_desc': '查看历史会话',
+    'help.section.run_flags': '运行参数',
+    'help.flag.dry_run': '只展示计划，不执行',
+    'help.flag.stream': '实时 SSE 进度',
+    'help.flag.tui': '带实时拓扑的终端面板',
+    'help.flag.mode_balanced':
+      'balanced（默认）, fast, thorough, goal',
+    'help.flag.provider': '强制指定提供者（openai, anthropic 等）',
+    'help.flag.budget': 'Token 预算（默认: 100000）',
+    'help.section.management': '管理',
+    'help.mgmt.init': '扫描环境，测试提供者，保存 fallback 链',
+    'help.mgmt.doctor': '运行诊断',
+    'help.mgmt.mode':
+      '审批模式（plan|read-only|suggest|auto-edit|full-auto）',
+    'help.mgmt.skill': '管理可学习技能（list, view, create, curate）',
+    'help.mgmt.gui': '启动 Agent 作战室网页面板',
+    'help.section.advanced': '高级执行',
+    'help.adv.company': '企业级：质量门控 + 记忆',
+    'help.adv.swarm': '递归分解 + 并行',
+    'help.adv.drive': '自主逐步循环',
+    'help.section.infrastructure': '基础设施',
+    'help.infra.saga': '持久化补偿事务',
+    'help.infra.resume': '从 checkpoint 恢复崩溃的运行',
+    'help.infra.compensation': '持久化重试队列',
+    'help.infra.cost': 'Token 用量与成本报告',
+    'help.section.misc': '其他',
+    'help.misc.completion': 'Shell 自动补全（bash, zsh, fish）',
+    'help.misc.feedback': '提交反馈以改进 Commander',
+    'help.section.options': '选项',
+    'help.option.version': '显示版本',
+    'help.option.help': '显示此帮助',
+    'help.option.help_all': '显示所有命令',
+
+    // ── GUI ─────────────────────────────────────────────────────────
+    'gui.dashboard.title': 'GUI 面板',
+    'gui.api_missing': '未在 apps/api/ 找到 API 服务',
+    'gui.starting.api': '正在启动 API 服务...',
+    'gui.starting.web': '正在启动 Web 面板...',
+    'gui.api.url': 'API：',
+    'gui.web.url': 'Web：',
+
+    // ── Command aliases ─────────────────────────────────────────────
+    'alias.r': 'run',
+    'alias.s': 'status',
+    'alias.d': 'drive',
+    'alias.g': 'goal',
+    'alias.c': 'company',
+    'alias.sw': 'swarm',
+    'alias.rv': 'review',
+    'alias.h': 'history',
+    'alias.sk': 'skill',
+    'alias.p': 'plugin',
+    'alias.m': 'mode',
+    'alias.q': 'ask',
+    'alias.question': 'help',
+    'alias.t': 'test',
+    'alias.e': 'explain',
+    'alias.f': 'fix',
+    'alias.w': 'watch',
+    'alias.i': 'intelligence',
+
+    // ── Small features ─────────────────────────────────────────────
+    'small_features.ask.title': 'Commander Ask — 快速问答模式',
+    'small_features.ask.question': '问题：',
+    'small_features.ask.no_provider':
+      '未配置 LLM 提供者。请先运行 commander init。',
+    'small_features.ask.answer': '回答：',
+    'small_features.ask.no_output': '（无输出）',
+    'small_features.ask.status': '状态：',
+    'small_features.ask.tokens': 'Token：',
+    'small_features.ask.tokens_na': 'N/A',
+    'small_features.diff.title': 'Commander Diff — 最近变更',
+    'small_features.diff.modified_files': '修改的文件：',
+    'small_features.diff.no_changes': '未检测到变更。',
+    'small_features.diff.recent_commits': '最近提交：',
+    'small_features.diff.more': '... 还有 {n} 项',
+    'small_features.diff.git_error': '读取 git 状态失败：{message}',
+    'small_features.cost.title': 'Commander Cost — Token 用量',
+    'small_features.cost.no_records':
+      '在 .commander_samples/llm_calls.ndjson 未找到 LLM 调用记录。',
+    'small_features.cost.run_first': '先运行一个任务：commander run "<task>"',
+    'small_features.cost.parse_errors':
+      '注: llm_calls.ndjson 中跳过 {n} 行格式异常的行。',
+    'small_features.cost.filters_applied': '已应用筛选：{filters}',
+    'small_features.cost.error': '计算成本时出错：{message}',
+    'small_features.undo.title': 'Commander Undo',
+    'small_features.undo.uncommitted': '你有未提交的变更：',
+    'small_features.undo.hint': '要撤销 Commander 的变更，可使用：',
+    'small_features.undo.checkout': 'git checkout -- <file>     还原指定文件',
+    'small_features.undo.stash': 'git stash                  暂存所有变更',
+    'small_features.undo.reset':
+      'git reset --hard HEAD      丢弃所有变更（破坏性）',
+    'small_features.undo.no_changes': '没有可撤销的变更。',
+    'small_features.approval_history.title': '审批历史',
+    'small_features.approval_history.empty': '未找到审批历史。',
+    'small_features.approval_history.recent': '最近审批：',
+    'small_features.approval_history.total': '总条目：{n}',
+    'small_features.approval_history.error':
+      '读取审批历史失败：{message}',
+    'small_features.resume.title': 'Commander Resume — 崩溃恢复',
+    'small_features.resume.empty': '未找到可恢复的运行。',
+    'small_features.resume.header': '可恢复的运行：',
+    'small_features.resume.run_hint': '恢复：commander resume <runId>',
+    'small_features.resume.attempting': '正在尝试恢复 run {runId}...',
+    'small_features.resume.failed':
+      '恢复失败。Checkpoint 可能不存在或租约丢失。',
+    'small_features.resume.list_hint':
+      '运行 commander resume --list 查看可用的 checkpoint。',
+    'small_features.resume.recovered': '已从 checkpoint 恢复运行',
+    'small_features.resume.status': '状态：',
+    'small_features.resume.resume_from_step': '从步骤恢复：',
+    'small_features.resume.completed_tool_calls': '已完成的工具调用：',
+    'small_features.resume.phase': '阶段：',
+    'small_features.resume.goal': '目标：',
+    'small_features.resume.continue_hint':
+      '使用 commander run "<continue>" 继续执行。',
+    'small_features.resume.error': '错误：{message}',
+    'small_features.compensation.title':
+      'Commander Compensation — 持久化重试队列',
+    'small_features.compensation.queue_summary': '队列摘要：',
+    'small_features.compensation.pending': '待处理：',
+    'small_features.compensation.in_progress': '进行中：',
+    'small_features.compensation.escalated': '已升级：',
+    'small_features.compensation.commands_section': '命令：',
+    'small_features.compensation.cmd.list':
+      'commander compensation list',
+    'small_features.compensation.cmd.list_desc': '查看所有队列项',
+    'small_features.compensation.cmd.retry':
+      'commander compensation retry <id>',
+    'small_features.compensation.cmd.retry_desc': '重试已升级项',
+    'small_features.compensation.list.header':
+      '补偿队列项（{count}）：',
+    'small_features.compensation.list.tool': '工具：',
+    'small_features.compensation.list.run': '运行：',
+    'small_features.compensation.list.attempts': '尝试次数：',
+    'small_features.compensation.list.age': '时长：',
+    'small_features.compensation.list.status': '状态：',
+    'small_features.compensation.list.error': '错误：',
+    'small_features.compensation.list.next_attempt': '下次尝试：',
+    'small_features.compensation.list.empty': '补偿队列为空。',
+    'small_features.compensation.retry.missing_id':
+      '缺少项 ID。用法：commander compensation retry <id>',
+    'small_features.compensation.retry.success':
+      '项 {id} 已重置为待处理，将立即重试。',
+    'small_features.compensation.retry.failed':
+      '项 {id} 不存在或不在已升级状态。',
+    'small_features.compensation.unknown_sub': '未知子命令：{name}',
+    'small_features.compensation.unknown_usage':
+      '用法: commander compensation [list|retry <id>|status]',
+    'small_features.compensation.error': '错误：{message}',
+    'small_features.compensation.sqlite_hint':
+      '补偿队列需要 better-sqlite3。',
+    'small_features.trace.title': 'Commander 跟踪',
+    'small_features.trace.no_traces': '未找到跟踪。请先运行一个任务。',
+    'small_features.trace.no_traces_short': '未找到跟踪。',
+    'small_features.trace.recent': '最近跟踪：',
+    'small_features.trace.total': '总计：{n} 条跟踪',
+    'small_features.trace.otel_hint':
+      '查看 OpenTelemetry: http://localhost:16686 (Jaeger)',
+    'small_features.trace.success_status': '成功',
+    'small_features.trace.failed_status': '失败',
+    'small_features.trace.error': '错误：{message}',
+    'small_features.trace.sqlite_hint':
+      '补偿队列需要 better-sqlite3。安装：pnpm add better-sqlite3',
+    'small_features.trace.run_doctor_hint':
+      '运行 commander doctor 诊断。',
+
+    // ── Convenience ─────────────────────────────────────────────────
+    'convenience.pr.title': 'Commander PR — 创建 Pull Request',
+    'convenience.pr.branch': '分支：',
+    'convenience.pr.no_changes': '未检测到与 main 的差异。',
+    'convenience.pr.commits': '提交：',
+    'convenience.pr.generating': '正在生成 PR 描述...',
+    'convenience.pr.description': '描述：',
+    'convenience.pr.create': '创建 PR：',
+    'convenience.pr.create_cmd':
+      'gh pr create --title "{desc}" --body "..."',
+    'convenience.pr.dry_run_hint': '使用 --dry-run 预览而不真正创建。',
+    'convenience.pr.error': '错误：{message}',
+    'convenience.commit.title': 'Commander Commit — 智能提交',
+    'convenience.commit.no_staged':
+      '无已暂存变更。请先使用 git add。',
+    'convenience.commit.staged': '已暂存变更：',
+    'convenience.commit.suggested': '建议提交：',
+    'convenience.commit.run_hint': '运行: git commit -m "{type}: {file}"',
+    'convenience.commit.error': '错误：{message}',
+    'convenience.fix.title': 'Commander Fix — 自动修复',
+    'convenience.fix.running_eslint': '运行 ESLint fix...',
+    'convenience.fix.eslint_ok': '已应用 ESLint 修复',
+    'convenience.fix.eslint_warn':
+      'ESLint 发现问题（部分可能需要手动修复）',
+    'convenience.fix.running_prettier': '运行 Prettier fix...',
+    'convenience.fix.prettier_ok': '已应用 Prettier 格式化',
+    'convenience.fix.prettier_warn': 'Prettier 出现问题',
+    'convenience.fix.checking_ts': '检查 TypeScript...',
+    'convenience.fix.ts_ok': 'TypeScript 检查通过',
+    'convenience.fix.ts_errors': 'TypeScript 发现 {n} 个错误',
+    'convenience.fix.running_tests': '运行测试...',
+    'convenience.fix.tests_ok': '测试通过',
+    'convenience.fix.tests_failed': '测试失败',
+    'convenience.fix.error': '错误：{message}',
+    'convenience.explain.title': 'Commander Explain',
+    'convenience.explain.file': '文件：',
+    'convenience.explain.lines': '行数：',
+    'convenience.explain.size': '大小：',
+    'convenience.explain.size_kb': '{kb} KB',
+    'convenience.explain.structure': '结构：',
+    'convenience.explain.functions': '函数：',
+    'convenience.explain.classes': '类：',
+    'convenience.explain.exports': '导出：',
+    'convenience.explain.preview': '预览：',
+    'convenience.explain.more_lines': '...（还有 {n} 行）',
+    'convenience.explain.directory': '目录：',
+    'convenience.explain.files_count': '文件数：',
+    'convenience.explain.contents': '内容：',
+    'convenience.explain.error': '错误：{message}',
+    'convenience.test.title': 'Commander Test',
+    'convenience.test.running_tests': '运行测试...',
+    'convenience.test.tests_ok': '测试通过',
+    'convenience.test.tests_failed': '测试失败',
+    'convenience.test.attempting_fix': '尝试自动修复...',
+    'convenience.test.manual_cmd': 'pnpm test',
+    'convenience.test.error': '错误：{message}',
+    'convenience.refactor.title': 'Commander Refactor',
+    'convenience.refactor.description': '描述：',
+    'convenience.refactor.full_hint':
+      '要执行完整重构，请使用：commander run "refactor: {desc}"',
+    'convenience.refactor.preview_hint':
+      '要预览请使用：commander run "refactor: {desc}" --dry-run',
+    'convenience.learn.title': 'Commander Learn — 代码库分析',
+    'convenience.learn.project': '项目：',
+    'convenience.learn.project_unknown': '未知',
+    'convenience.learn.version': '版本：',
+    'convenience.learn.file_distribution': '文件分布：',
+    'convenience.learn.ext_count': '{ext}: {count}',
+    'convenience.learn.dependencies': '依赖：',
+    'convenience.learn.prod_deps': '生产依赖: {n}',
+    'convenience.learn.dev_deps': '开发依赖: {n}',
+    'convenience.learn.detected_patterns': '检测到的模式：',
+    'convenience.learn.error': '错误：{message}',
+    'convenience.monitor.title': 'Commander Monitor — 文件监听',
+    'convenience.monitor.directory': '目录：',
+    'convenience.monitor.watching': '监听变更...',
+    'convenience.monitor.pattern': '匹配模式：',
+    'convenience.monitor.exit_hint': '按 Ctrl+C 停止',
+    'convenience.monitor.change_event': '{name} 已变更',
+    'convenience.monitor.running': '正在运行：{cmd}',
+    'convenience.monitor.error': '错误：{message}',
+
+    // ── Init ────────────────────────────────────────────────────────
+    'init.title': 'Commander Init — 零配置环境设置',
+    'init.spinner.scan_env': '正在扫描环境中的 API 密钥...',
+    'init.section.env': '环境',
+    'init.field.api_keys_found': '找到的 API key',
+    'init.field.ollama.available': '可用',
+    'init.field.ollama.missing': '未找到',
+    'init.field.vllm.available': '可用',
+    'init.field.vllm.missing': '未找到',
+    'init.field.docker.available': '可用',
+    'init.field.docker.missing': '未找到',
+    'init.field.redis.configured': '{url}',
+    'init.field.redis.missing': '未配置',
+    'init.field.kubernetes.in_cluster': '集群内（{ns}）',
+    'init.field.kubernetes.missing': '未检测到',
+    'init.test_progress':
+      '正在测试 {n} 个提供者的连通性（{ms}ms 超时）...',
+    'init.provider_status.reachable': '可用',
+    'init.provider_status.auth': '认证错',
+    'init.provider_status.timeout': '超时',
+    'init.provider_status.down': '宕机',
+    'init.provider_status.skipped': '--',
+    'init.provider_tier.local': '本地',
+    'init.provider_tier.cloud': '云端',
+    'init.provider_tier.premium': '高级',
+    'init.tests_summary': '{ms}ms — {n} 可用{auth}',
+    'init.tests_summary.auth_errors': '，{n} 个认证错误',
+    'init.section.no_reachable': '未找到可用提供者。',
+    'init.section.fallback_chain': '推荐的 fallback 链',
+    'init.fallback_chain.delegate_quickstart':
+      '正在启动 commander quickstart 以协助配置...',
+    'init.fallback_chain.quickstart_failed':
+      'Quickstart 失败：{message}',
+    'init.fallback_chain.set_api_key_hint':
+      '请设置 API key（如 OPENAI_API_KEY）后重试。',
+    'init.config_saved': '配置已保存到 .commander.json',
+    'init.config_provider_line': '提供者: {p}  模型: {m}',
+    'init.config_fallback_line': 'Fallback: {chain}',
+    'init.save_failed': '保存配置失败：{message}',
+    'init.tests_skipped': '已跳过连通性测试（--skip-tests）。',
+    'init.section.get_started': '开始使用',
+    'init.first_task': '运行你的第一个任务：',
+    'init.first_task_cmd': 'commander run "Hello, world!"',
+    'init.common_commands': '常用命令：',
+    'init.cmd.run_desc': '执行任务',
+    'init.cmd.dry_run_desc': '只生成计划，不执行',
+    'init.cmd.stream_desc': '实时进度',
+    'init.cmd.status_desc': '系统状态',
+    'init.cmd.config_desc': '管理配置',
+    'init.cmd.doctor_desc': '运行诊断',
+    'init.cmd.tui_desc': '交互式面板',
+    'init.error.no_api_key': '未找到 {provider} 的 API key。',
+    'init.error.run_probe': '运行 commander init --probe 进行配置。',
+
+    // ── Goal Judge ──────────────────────────────────────────────────
+    'goal_judge.verdict_passed': '✅ 通过',
+    'goal_judge.verdict_failed': '❌ 失败',
+    'goal_judge.verdict_title': '目标判定结果',
+    'goal_judge.confidence': '置信度：',
+    'goal_judge.model': '模型：',
+    'goal_judge.tokens_suffix': 'token',
+    'goal_judge.reasoning': '理由：',
+    'goal_judge.section.stop_conditions': '停止条件：',
+    'goal_judge.section.evidence': '证据：',
+    'goal_judge.conditions.empty': '未设置全局停止条件。',
+    'goal_judge.conditions.list_hint':
+      "使用 'commander goal conditions set --id=<id> --desc=\"...\" --type=MUST_HAVE' 添加一个。",
+    'goal_judge.conditions.header': '全局停止条件',
+    'goal_judge.conditions.added': '已添加停止条件 {id}。',
+    'goal_judge.conditions.deleted': '已删除条件 {id}。',
+    'goal_judge.conditions.deleted_none': '未找到条件 {id}。',
+    'goal_judge.conditions.cleared': '所有停止条件已清空。',
+    'goal_judge.conditions.type.label': '类型：',
+    'goal_judge.conditions.list_subcommands': '子命令：',
+    'goal_judge.conditions.list_sub.list': '列出全局停止条件',
+    'goal_judge.conditions.list_sub.set': '添加/更新停止条件',
+    'goal_judge.conditions.list_sub.delete': '移除停止条件',
+    'goal_judge.conditions.list_sub.clear': '清空所有停止条件',
+    'goal_judge.conditions.list_set_flags': '设置参数：',
+    'goal_judge.conditions.flag.add':
+      '--add=<id>               条件 ID（如 "no-ts-errors"）',
+    'goal_judge.conditions.flag.desc':
+      '--desc=<text>            人可读的描述',
+    'goal_judge.conditions.flag.type':
+      '--type=<type>            MUST_HAVE | MUST_NOT_HAVE | MUST_MATCH | MUST_BE_ABOVE | CUSTOM',
+    'goal_judge.conditions.flag.pattern':
+      '--pattern=<regex>         要匹配的模式（适用于 MUST_MATCH/MUST_HAVE/MUST_NOT_HAVE）',
+    'goal_judge.conditions.flag.threshold':
+      '--threshold=<N>          数值阈值（适用于 MUST_BE_ABOVE）',
+    'goal_judge.conditions.flag.custom':
+      '--custom=<prompt>         自定义评估 prompt（适用于 CUSTOM）',
+    'goal_judge.judge.empty': '用法：commander goal judge <task description>',
+    'goal_judge.judge.example':
+      '示例：commander goal judge "修复 src/ 下的所有 TypeScript 错误"',
+    'goal_judge.judge.running': '运行独立目标判定中...',
+    'goal_judge.help.run_intro':
+      '基于已定义的停止条件进行独立目标验证。',
+    'goal_judge.help.usage_section': '用法：',
+    'goal_judge.help.usage.run': 'commander goal judge <task>',
+    'goal_judge.help.usage.conditions': 'commander goal conditions [cmd]',
+
+    // ── Debug intent ────────────────────────────────────────────────
+    'debug.title': '调试：已记录的运行意图',
+    'debug.intent.title': '意图调试',
+    'debug.intent.no_runs': '未找到已记录意图的运行。',
+    'debug.intent.no_runs_hint_1':
+      '运行会通过完整流水线（commander run）记录意图。',
+    'debug.intent.no_runs_hint_2':
+      '请先运行一个任务，再使用 commander debug intent <runId> 检查。',
+    'debug.intent.no_record': '未找到 run 的意图记录：',
+    'debug.intent.no_record_hint': '此运行可能未被记录意图。',
+    'debug.intent.inspect_hint':
+      '使用 commander debug intent 列出已记录的运行。',
+    'debug.intent.column': '运行 ID',
+    'debug.intent.inspect_label': '检查：commander debug intent <runId>',
+    'debug.section.goal': '目标',
+    'debug.section.model_selection': '模型选择',
+    'debug.section.strategy': '策略选择',
+    'debug.section.exec_trace': '执行轨迹',
+    'debug.section.verdict': '总结',
+    'debug.section.escalations': '级联升级',
+    'debug.field.model': '模型',
+    'debug.field.provider': '提供者',
+    'debug.field.tier': '层级',
+    'debug.field.model_not_recorded': '未记录',
+    'debug.field.topology': '拓扑',
+    'debug.no_trace': '未找到此运行的执行轨迹。',
+    'debug.no_trace_hint': '轨迹是保存在内存中的，可能已被淘汰。',
+    'debug.escalation.row': '{from} → {to}',
+    'debug.escalation.reason': '{reason}（{timestamp}）',
+    'debug.verdict.status.success': '成功',
+    'debug.verdict.status.partial': '部分',
+    'debug.verdict.status.incomplete': '未完成',
+    'debug.verdict.llm_calls': 'LLM 调用',
+    'debug.verdict.tool_calls': '工具调用',
+    'debug.verdict.tokens': 'Token',
+    'debug.verdict.duration': '耗时',
+    'debug.verdict.errors': '错误',
+    'debug.verdict.started': '开始',
+    'debug.verdict.completed': '完成',
+    'debug.verdict.confidence': 'PASSED · 置信度: {pct}%',
+    'debug.llm.label': 'LLM 调用（{n}）',
+    'debug.tool.label': '工具调用（{n}）',
+    'debug.decision.label': '决策（{n}）',
+    'debug.verification.label': '验证（{n}）',
+    'debug.error.label': '错误（{n}）',
+    'debug.llm.row': '{model} {tokens} tok {duration}',
+    'debug.tool.row': '{name} {duration}{error}',
+    'debug.routing_reason': '路由原因：',
+    'debug.estimated':
+      '估算: {agents} 个智能体 · {steps} 步 · {tokens} tok · {duration}',
+    'debug.task_meta': '{task} · {effort}',
+    'debug.confidence_suffix': '置信度：{pct}%',
+
+    // ── Up ──────────────────────────────────────────────────────────
+    'up.title': 'Commander Up — 统一执行 + Web TUI',
+    'up.task': '任务：',
+    'up.no_api_key': '未找到 {provider} 的 API key。',
+    'up.run_init_probe': '运行 commander init --probe 进行配置。',
+    'up.tui.url': 'Web TUI：',
+    'up.tui.api_only':
+      'Web TUI：{url}（仅 API — 通过 cd apps/web && npx vite build 构建）',
+    'up.press_ctrl_c_to_stop': '按 Ctrl+C 停止并冻结执行',
+    'up.task_complete': '任务完成。Web TUI 在 {url}',
+    'up.press_ctrl_c_to_exit': '按 Ctrl+C 退出。',
+    'up.freeze.section': '未找到冻结',
+    'up.freeze.no_manifest': '无冻结清单，但存在 checkpoint 目录：',
+    'up.freeze.resume_hint':
+      '通过以下命令恢复：commander resume <runId>',
+    'up.freeze.no_runs':
+      '未找到冻结运行或 checkpoint。新建。',
+    'up.freeze.manifest_missing': '冻结清单为空。',
+    'up.freeze.read_failed': '读取冻结清单失败。',
+    'up.freeze.frozen_runs': '{n} 个运行在 {timestamp} 已冻结',
+    'up.freeze.run_line': '► {runId}',
+    'up.freeze.run_goal': '目标：',
+    'up.freeze.run_state': '状态：',
+    'up.freeze.run_resuming': '正在恢复...',
+    'up.freeze.missing_checkpoint':
+      '⚠ {runId} 的 checkpoint 缺失，已跳过。',
+    'up.freeze.corrupt_checkpoint':
+      '⚠ {runId} 的 checkpoint 已损坏，已跳过。',
+    'up.freeze.resume_failed':
+      '✗ 恢复 {runId} 失败（租约丢失或 checkpoint 缺失）',
+    'up.freeze.recovered':
+      '{runId} 已恢复 — 跳过 {n} 个已完成的工具调用',
+    'up.freeze.manifest_archived': '冻结清单已归档于 {path}',
+    'up.freeze.all_recovered':
+      '所有运行已恢复。使用 commander up "task" 继续。',
+
+    // ── Sandbox ─────────────────────────────────────────────────────
+    'sandbox.title': '沙箱状态',
+    'sandbox.available': '是',
+    'sandbox.unavailable': '否（未沙箱化）',
+    'sandbox.mechanisms': '机制：',
+    'sandbox.profiles': 'read-only, workspace-write, full-access, hardened',
+    'sandbox.unknown_sub': '未知 sandbox 子命令：{name}',
+    'sandbox.usage': '用法：commander sandbox status',
+
+    // ── REPL ────────────────────────────────────────────────────────
+    'repl.banner.title': 'Commander REPL',
+    'repl.banner.subtitle': '键入任务 — 与 CLI 行为一致',
+    'repl.banner.examples.header': '示例：',
+    'repl.banner.examples.run_desc': '# 执行任务',
+    'repl.banner.examples.dry_run_desc': '# 仅审议，不调 API',
+    'repl.banner.examples.review_desc': '# 审查代码变更',
+    'repl.banner.examples.status_desc': '# 查看提供者 / API keys',
+    'repl.banner.examples.doctor_desc': '# 诊断问题',
+    'repl.banner.examples.help_desc': '# 内置命令',
+    'repl.banner.examples.exit_desc': '/ Ctrl-D # 退出 REPL',
+    'repl.banner.multiline': '多行输入：以 \\ \\ 结尾以续行。',
+    'repl.banner.tab': 'TAB 补全：命令、内置命令、参数。',
+    'repl.env_loaded_one': '📄 .env 已载入：{path}',
+    'repl.env_loaded_header': '📄 .env 载入自：',
+    'repl.builtins.help': '显示此帮助',
+    'repl.builtins.exit': '关闭 REPL（也可使用 Ctrl-D）',
+    'repl.builtins.clear': '清屏',
+    'repl.builtins.header': '内置命令',
+    'repl.prompt': 'commander> ',
+    'repl.cont_hint': '      …',
+    'repl.transcript.off': '关闭（使用 --profile）',
+    'repl.transcript.saved': '已保存记录：{path}',
+    'repl.transcript.start': 'commander REPL 记录 —— 开始于 {ts}',
+    'repl.transcript.end': 'commander REPL 记录 —— 结束于 {ts}',
+    'repl.transcript.prompt': '[{ts}] > {input}',
+    'repl.transcript.tab_hint': 'TAB 补全：命令、参数、内置命令',
+    'repl.bye': '再见。',
+
+    // ── Env loader ──────────────────────────────────────────────────
+    'env.feature_missing':
+      'commander: process.loadEnvFile 需要 Node ≥20.6；当前={nodeVersion}。已跳过 .env 自动载入。',
+    'env.parse_failed':
+      'commander: 解析 {path} 失败（{message}）。继续但不使用。',
+
+    // ── CLI rate limit hint ────────────────────────────────────────
+    'rate_limit.costly_set': 'run, company, swarm, drive, review, fix',
   },
 };
 

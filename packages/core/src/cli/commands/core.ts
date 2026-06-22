@@ -23,6 +23,7 @@ import {
   onboardingMessage,
   fatalError,
 } from './_shared';
+import { t } from '../i18n';
 import { runShowcase } from '../../showcase/showcaseRunner';
 import { startTUI } from '../../tui';
 import { getMetaLearner } from '../../selfEvolution/metaLearner';
@@ -84,11 +85,15 @@ function parseRoutingFlags(flags: Record<string, string>): RoutingFlags {
   if (tierRaw !== undefined) {
     if (!(allowedTiers as readonly string[]).includes(tierRaw)) {
       const closest = didYouMean(tierRaw, allowedTiers);
+      const hint = closest
+        ? t('error_messages.did_you_mean', { flag: 'tier', value: closest })
+        : '';
       fatalError(
-        `Invalid --tier="${tierRaw}".`,
-        `Allowed: ${allowedTiers.join(', ')}.${
-          closest ? ` Did you mean --tier=${closest}?` : ''
-        } Run commander run --help`,
+        t('error_messages.invalid_tier', {
+          value: tierRaw,
+          allowed: allowedTiers.join(', '),
+          hint,
+        }),
       );
     }
     tier = tierRaw as RoutingFlags['tier'];
@@ -98,11 +103,15 @@ function parseRoutingFlags(flags: Record<string, string>): RoutingFlags {
   if (effortRaw !== undefined) {
     if (!(allowedEfforts as readonly string[]).includes(effortRaw)) {
       const closest = didYouMean(effortRaw, allowedEfforts);
+      const hint = closest
+        ? t('error_messages.did_you_mean', { flag: 'effort', value: closest })
+        : '';
       fatalError(
-        `Invalid --effort="${effortRaw}".`,
-        `Allowed: ${allowedEfforts.join(', ')}.${
-          closest ? ` Did you mean --effort=${closest}?` : ''
-        } Run commander run --help`,
+        t('error_messages.invalid_effort', {
+          value: effortRaw,
+          allowed: allowedEfforts.join(', '),
+          hint,
+        }),
       );
     }
     effort = effortRaw as RoutingFlags['effort'];
@@ -112,11 +121,15 @@ function parseRoutingFlags(flags: Record<string, string>): RoutingFlags {
   if (topologyRaw !== undefined) {
     if (!(allowedTopologies as readonly string[]).includes(topologyRaw)) {
       const closest = didYouMean(topologyRaw, allowedTopologies);
+      const hint = closest
+        ? t('error_messages.did_you_mean', { flag: 'topology', value: closest })
+        : '';
       fatalError(
-        `Invalid --topology="${topologyRaw}".`,
-        `Allowed: ${allowedTopologies.join(', ')}.${
-          closest ? ` Did you mean --topology=${closest}?` : ''
-        } Run commander run --help`,
+        t('error_messages.invalid_topology', {
+          value: topologyRaw,
+          allowed: allowedTopologies.join(', '),
+          hint,
+        }),
       );
     }
     topology = topologyRaw as RoutingFlags['topology'];
@@ -136,8 +149,10 @@ function parseRoutingFlags(flags: Record<string, string>): RoutingFlags {
     const parsed = Number(flags['quality-threshold']);
     if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
       fatalError(
-        `Invalid --quality-threshold="${flags['quality-threshold']}".`,
-        'Must be a number between 0 and 1 (e.g. 0.8). Run commander run --help',
+        t('error_messages.invalid_quality_threshold', {
+          value: flags['quality-threshold'],
+        }),
+        t('error_messages.quality_threshold_hint'),
       );
     }
     qualityThreshold = parsed;
@@ -232,7 +247,7 @@ export async function cmdRun(task: string, flags: Record<string, string> = {}) {
   // Reject empty or whitespace-only tasks
   if (!task || !task.trim()) {
     console.error(
-      `\n  ${$.red}${$.bold}ERROR${$.reset} No task provided.\n\n  Usage: ${$.cyan}commander run "<task>"${$.reset}\n  Example: ${$.cyan}commander run "analyze this codebase"${$.reset}\n`,
+      `\n  ${$.red}${$.bold}${t('error.fatal')}${$.reset} ${t('error_messages.run.no_task')}\n\n  ${t('error_messages.run.no_task.usage')} ${$.cyan}${t('run.usage.template', { task: '<task>' })}${$.reset}\n  ${t('error_messages.run.no_task.example')} ${$.cyan}${t('run.example.analyze')}${$.reset}\n`,
     );
     process.exit(1);
   }
@@ -257,11 +272,11 @@ export async function cmdRun(task: string, flags: Record<string, string> = {}) {
       });
       child.unref(); // Don't let the child prevent process exit
       console.log(
-        `  ${$.dim}Terminal dashboard started in child process (PID: ${child.pid})${$.reset}`,
+        `  ${$.dim}${t('run.tui.dashboard_started', { pid: child.pid })}${$.reset}`,
       );
     } catch {
       console.log(
-        `  ${$.yellow}⚠ Could not start TUI dashboard — run in a separate terminal: ${$.cyan}commander tui${$.reset}`,
+        `  ${$.yellow}⚠ ${t('run.tui.could_not_start')}${$.reset}`,
       );
     }
   }
@@ -305,10 +320,7 @@ async function cmdShowcase() {
   const provider = detectProvider();
   const runtime = createRuntime();
   if (!runtime || !provider) {
-    fatalError(
-      'No API key found.',
-      'Set an API key (e.g., OPENAI_API_KEY) and run: commander init',
-    );
+    fatalError(t('error.no.apikey'), t('error.fix.apikey'));
   }
 
   // ── Header ────────────────────────────────────────────────────────
@@ -316,113 +328,113 @@ async function cmdShowcase() {
     `\n  ${$.bold}${$.blue}╭──────────────────────────────────────────────────────────╮${$.reset}`,
   );
   console.log(
-    `  ${$.bold}${$.blue}│${$.reset}  ${$.bold}Commander Showcase${$.reset} — 3-Agent DEBATE Code Audit              ${$.bold}${$.blue}│${$.reset}`,
+    `  ${$.bold}${$.blue}│${$.reset}  ${$.bold}${t('showcase.title')}${$.reset}              ${$.bold}${$.blue}│${$.reset}`,
   );
   console.log(
     `  ${$.bold}${$.blue}╰──────────────────────────────────────────────────────────╯${$.reset}\n`,
   );
 
-  section('TOPOLOGY');
-  console.log(`  ${$.cyan}🔴 红队${$.reset} ${$.dim}(攻击方)${$.reset}  →  找Bug、漏洞、反模式`);
-  console.log(`  ${$.cyan}🔵 蓝队${$.reset} ${$.dim}(防守方)${$.reset}  →  架构优点、设计合理性`);
-  console.log(`  ${$.cyan}🟡 裁判${$.reset} ${$.dim}(仲裁方)${$.reset}  →  综合评分、输出体检报告`);
+  section(t('showcase.topology_header'));
+  console.log(`  ${$.cyan}🔴 ${t('showcase.team.red')}${$.reset} ${$.dim}${t('showcase.team.red_role')}${$.reset}`);
+  console.log(`  ${$.cyan}🔵 ${t('showcase.team.blue')}${$.reset} ${$.dim}${t('showcase.team.blue_role')}${$.reset}`);
+  console.log(`  ${$.cyan}🟡 ${t('showcase.team.judge')}${$.reset} ${$.dim}${t('showcase.team.judge_role')}${$.reset}`);
 
-  kv('Provider', `${provider.type} · ${provider.defaultModel}`, $.cyan);
+  kv(t('showcase.field.provider'), `${provider.type} · ${provider.defaultModel}`, $.cyan);
   console.log();
 
   // ── Phase 1: Execution ─────────────────────────────────────────────
   let result;
   try {
-    console.log(`  ${$.dim}🔴 红队 (攻击方)  →  找Bug、漏洞、反模式${$.reset}`);
-    console.log(`  ${$.dim}🔵 蓝队 (防守方)  →  架构优点、设计合理性${$.reset}`);
-    console.log(`  ${$.dim}🟡 裁判 (仲裁方)  →  综合评分、体检报告${$.reset}\n`);
-    const agentDone = startSpinner('Scanning codebase + running 3-agent debate...');
+    console.log(`  ${$.dim}🔴 ${t('showcase.team.red')} ${t('showcase.team.red_role')}${$.reset}`);
+    console.log(`  ${$.dim}🔵 ${t('showcase.team.blue')} ${t('showcase.team.blue_role')}${$.reset}`);
+    console.log(`  ${$.dim}🟡 ${t('showcase.team.judge')} ${t('showcase.team.judge_role')}${$.reset}\n`);
+    const agentDone = startSpinner(t('showcase.subtitle'));
     result = await runShowcase(runtime);
     agentDone();
   } catch (err) {
     console.error(
-      `\n  ${$.red}${$.bold}ERROR${$.reset} Showcase failed: ${(err as Error).message}`,
+      `\n  ${$.red}${$.bold}${t('error.fatal')}${$.reset} ${t('showcase.error.showcase_failed', { message: (err as Error).message })}`,
     );
-    console.error(`  ${$.dim}Check your API key and network connection.${$.reset}`);
+    console.error(`  ${$.dim}${t('showcase.error.check_api_key')}${$.reset}`);
     console.error(
-      `  ${$.dim}Run ${$.cyan}commander init${$.reset}${$.dim} to verify provider connectivity.${$.reset}\n`,
+      `  ${$.dim}${t('showcase.error.run_init')}${$.reset}\n`,
     );
     return;
   }
 
   if (result.metrics.filesScanned === 0) {
-    console.log(`\n  ${$.yellow}当前目录未找到可扫描的代码文件。${$.reset}`);
-    console.log(`  ${$.dim}请在有代码文件的目录下运行 ${$.cyan}commander run showcase${$.reset}\n`);
+    console.log(`\n  ${$.yellow}${t('showcase.files_scanned_zero').split('.')[0]}.${$.reset}`);
+    console.log(`  ${$.dim}${$.cyan}commander run showcase${$.reset} ${$.dim}↩${$.reset}\n`);
     return;
   }
 
   // ── Results ───────────────────────────────────────────────────────
-  section('EXECUTION COMPLETE');
-  kv('Files scanned', `${result.metrics.filesScanned}`, $.cyan);
+  section(t('showcase.execution_complete'));
+  kv(t('showcase.field.files_scanned'), `${result.metrics.filesScanned}`, $.cyan);
   kv(
-    'Red team',
+    t('showcase.field.red_team'),
     result.redTeamRaw.length > 0
-      ? `${$.green}completed${$.reset} (${result.metrics.redTeamTokens.toLocaleString()} tok)`
-      : `${$.red}failed${$.reset}`,
+      ? `${$.green}${t('history.phase.completed')}${$.reset} (${result.metrics.redTeamTokens.toLocaleString()} tok)`
+      : `${$.red}${t('history.phase.failed')}${$.reset}`,
     result.redTeamRaw.length > 0 ? $.green : $.red,
   );
   kv(
-    'Blue team',
+    t('showcase.field.blue_team'),
     result.blueTeamRaw.length > 0
-      ? `${$.green}completed${$.reset} (${result.metrics.blueTeamTokens.toLocaleString()} tok)`
-      : `${$.red}failed${$.reset}`,
+      ? `${$.green}${t('history.phase.completed')}${$.reset} (${result.metrics.blueTeamTokens.toLocaleString()} tok)`
+      : `${$.red}${t('history.phase.failed')}${$.reset}`,
     result.blueTeamRaw.length > 0 ? $.green : $.red,
   );
   kv(
-    'Judge',
+    t('showcase.field.judge'),
     result.judgeRaw.length > 0
-      ? `${$.green}completed${$.reset} (${result.metrics.judgeTokens.toLocaleString()} tok)`
-      : `${$.red}failed${$.reset}`,
+      ? `${$.green}${t('history.phase.completed')}${$.reset} (${result.metrics.judgeTokens.toLocaleString()} tok)`
+      : `${$.red}${t('history.phase.failed')}${$.reset}`,
     result.judgeRaw.length > 0 ? $.green : $.red,
   );
-  kv('Total tokens', `${result.metrics.totalTokens.toLocaleString()}`, $.yellow);
-  kv('Duration', `${(result.metrics.durationMs / 1000).toFixed(1)}s`, $.yellow);
+  kv(t('showcase.field.total_tokens'), `${result.metrics.totalTokens.toLocaleString()}`, $.yellow);
+  kv(t('showcase.field.duration'), `${(result.metrics.durationMs / 1000).toFixed(1)}s`, $.yellow);
 
   // ── Scores ────────────────────────────────────────────────────────
-  section('CODE HEALTH SCORES');
+  section(t('showcase.scores_header'));
   const scoreColor = (s: number) => (s >= 90 ? $.green : s >= 70 ? $.yellow : $.red);
-  const grade = (s: number) =>
-    s >= 90 ? 'S' : s >= 80 ? 'A' : s >= 70 ? 'B' : s >= 60 ? 'C' : 'D';
+  const grade = (s: number): string =>
+    s >= 90 ? t('showcase.grade.S') : s >= 80 ? t('showcase.grade.A') : s >= 70 ? t('showcase.grade.B') : s >= 60 ? t('showcase.grade.C') : t('showcase.grade.D');
 
   console.log(
-    `  🔒 ${$.bold}Security${$.reset}      ${scoreColor(result.metrics.securityScore)}${result.metrics.securityScore}/100${$.reset} ${$.dim}(${grade(result.metrics.securityScore)})${$.reset}`,
+    `  🔒 ${$.bold}${t('showcase.score.security')}${$.reset}      ${scoreColor(result.metrics.securityScore)}${result.metrics.securityScore}/100${$.reset} ${$.dim}(${grade(result.metrics.securityScore)})${$.reset}`,
   );
   console.log(
-    `  📝 ${$.bold}Code Quality${$.reset}   ${scoreColor(result.metrics.qualityScore)}${result.metrics.qualityScore}/100${$.reset} ${$.dim}(${grade(result.metrics.qualityScore)})${$.reset}`,
+    `  📝 ${$.bold}${t('showcase.score.code_quality')}${$.reset}   ${scoreColor(result.metrics.qualityScore)}${result.metrics.qualityScore}/100${$.reset} ${$.dim}(${grade(result.metrics.qualityScore)})${$.reset}`,
   );
   console.log(
-    `  🏗️ ${$.bold}Architecture${$.reset}  ${scoreColor(result.metrics.architectureScore)}${result.metrics.architectureScore}/100${$.reset} ${$.dim}(${grade(result.metrics.architectureScore)})${$.reset}`,
+    `  🏗️ ${$.bold}${t('showcase.score.architecture')}${$.reset}  ${scoreColor(result.metrics.architectureScore)}${result.metrics.architectureScore}/100${$.reset} ${$.dim}(${grade(result.metrics.architectureScore)})${$.reset}`,
   );
   console.log(`  ${$.dim}${'─'.repeat(30)}${$.reset}`);
   console.log(
-    `  ${$.bold}⭐ Overall${$.reset}       ${scoreColor(result.metrics.overallScore)}${result.metrics.overallScore}/100${$.reset} ${$.dim}(${grade(result.metrics.overallScore)})${$.reset}\n`,
+    `  ${$.bold}${t('showcase.score.overall')}${$.reset}       ${scoreColor(result.metrics.overallScore)}${result.metrics.overallScore}/100${$.reset} ${$.dim}(${grade(result.metrics.overallScore)})${$.reset}\n`,
   );
 
   // ── Findings summary ─────────────────────────────────────────────
   const { critical, high, medium, low } = result.findings;
   if (critical.length > 0) {
-    section(`🔴 CRITICAL (${critical.length})`);
+    section(`${t('showcase.critical_header')} (${critical.length})`);
     for (const f of critical.slice(0, 3)) {
       console.log(`  ${$.red}•${$.reset} ${f.slice(0, 120)}`);
     }
     if (critical.length > 3)
-      console.log(`  ${$.dim}  ... and ${critical.length - 3} more${$.reset}`);
+      console.log(`  ${$.dim}  ${t('showcase.more', { count: critical.length - 3 })}${$.reset}`);
   }
   if (high.length > 0) {
-    section(`🟠 HIGH (${high.length})`);
+    section(`${t('showcase.high_header')} (${high.length})`);
     for (const f of high.slice(0, 3)) {
       console.log(`  ${$.yellow}•${$.reset} ${f.slice(0, 120)}`);
     }
-    if (high.length > 3) console.log(`  ${$.dim}  ... and ${high.length - 3} more${$.reset}`);
+    if (high.length > 3) console.log(`  ${$.dim}  ${t('showcase.more', { count: high.length - 3 })}${$.reset}`);
   }
 
   // ── Full report ───────────────────────────────────────────────────
-  section('FULL REPORT');
+  section(t('showcase.full_report'));
   console.log(result.report);
   console.log();
 }
