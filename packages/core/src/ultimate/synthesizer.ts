@@ -44,6 +44,10 @@ const CHARS_PER_SUBTASK = 200;
 export class MultiAgentSynthesizer {
   private artifactSystem = getArtifactSystem();
 
+  // Quality gates are regex-based heuristics, not LLM evaluation.
+  // They penalize hedging language, uncertainty phrases, and known unsafe
+  // patterns rather than performing semantic assessment.
+
   async synthesize(
     strategy: SynthesisStrategy,
     config: SynthesisConfig,

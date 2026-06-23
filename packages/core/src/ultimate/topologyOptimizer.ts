@@ -23,7 +23,10 @@ import type {
 import type { ExecutionExperience } from '../runtime/types';
 import { getMetaLearner } from '../selfEvolution/metaLearner';
 import { getGlobalReflectionEngine } from '../reflectionEngine';
-import { ExecutionTraceRecorder, getTraceRecorder } from '../runtime/executionTrace';
+import { getTraceRecorder } from '../runtime/executionTrace';
+import type { LearnedWeights } from './learnedWeights';
+import type { ExplorationEventLog } from './explorationEventLog';
+import { getGlobalLearnedWeights, getGlobalExplorationEventLog } from './topologyStores';
 
 // ============================================================================
 // 拓扑诊断
@@ -122,7 +125,7 @@ class ExecutionAnalyzer {
    * 分析执行轨迹，找出瓶颈和优化点
    */
   analyze(snapshot: ExecutionSnapshot): TopologyDiagnostics {
-    const { tree, result, metrics } = snapshot;
+    const { tree, metrics } = snapshot;
 
     // 1. 计算关键路径
     const criticalPath = this.findCriticalPath(tree);
@@ -419,6 +422,13 @@ export class ReflexionTopologicalOptimizer {
   private history: OptimizationResult[] = [];
   private static readonly MAX_HISTORY = 100;
   private reflectionEngine = getGlobalReflectionEngine();
+  private readonly learnedWeights: LearnedWeights;
+  private readonly explorationEventLog: ExplorationEventLog;
+
+  constructor(learnedWeights?: LearnedWeights, explorationEventLog?: ExplorationEventLog) {
+    this.learnedWeights = learnedWeights ?? getGlobalLearnedWeights();
+    this.explorationEventLog = explorationEventLog ?? getGlobalExplorationEventLog();
+  }
 
   /**
    * 基于执行经验执行一次完整的优化周期
@@ -429,7 +439,8 @@ export class ReflexionTopologicalOptimizer {
     context: UltimateExecutionContext,
   ): Promise<OptimizationResult> {
     // 1. 构建执行快照
-    const snapshot = await this.buildSnapshot(originalTree, experience);
+    const topology = (experience.topology as OrchestrationTopology) ?? context.topology ?? 'SINGLE';
+    const snapshot = await this.buildSnapshot(originalTree, experience, topology);
 
     // 2. 诊断拓扑问题
     const diagnostics = this.analyzer.analyze(snapshot);
@@ -444,12 +455,29 @@ export class ReflexionTopologicalOptimizer {
     const reflection = await this.reflectOnOptimization(diagnostics, proposal, experience);
     proposal.rationale += `\n\nReflexion: ${reflection}`;
 
-    // 6. 记录结果
+    // 6. 闭环反馈到学习系统
+    const taskType = experience.taskType ?? 'general';
+    const tenantId = context.tenantId;
+    this.learnedWeights.recordSignal(taskType, topology, experience.success, undefined, tenantId);
+    this.learnedWeights.recordCoordinationWeight(
+      'coupling',
+      taskType,
+      diagnostics.bottlenecks.length > 0 ? 0.75 : 0.35,
+      tenantId,
+    );
+    this.learnedWeights.recordCoordinationWeight(
+      'breadth_gain',
+      taskType,
+      diagnostics.maxParallelism > 2 ? 0.12 : 0.03,
+      tenantId,
+    );
+
+    // 7. 记录结果
     const result: OptimizationResult = {
       proposal,
       newTree,
       predictedImprovement: proposal.expectedImprovement,
-      applied: true,
+      applied: proposal.actions.length > 0,
     };
 
     if (this.history.length >= ReflexionTopologicalOptimizer.MAX_HISTORY) this.history.shift();
@@ -459,48 +487,97 @@ export class ReflexionTopologicalOptimizer {
 
   /**
    * 构建执行快照
+   *
+   * 从实际执行树和 trace recorder 中读取真实指标，而不是用经验数据估算。
+   * 这样瓶颈分析、关键路径和负载均衡计算才有依据。
    */
   private async buildSnapshot(
     tree: TaskTreeNode,
     experience: ExecutionExperience,
+    topology: OrchestrationTopology,
   ): Promise<ExecutionSnapshot> {
-    // 从trace recorder获取详细的执行数据
     const tracer = getTraceRecorder();
     const nodeDurations = new Map<string, number>();
     const nodeTokenUsage = new Map<string, number>();
-    const parallelismHistory: number[] = [];
 
-    // 使用经验数据估算节点指标
-    if (experience.lessons && experience.lessons.length > 0) {
-      nodeDurations.set('estimated', experience.durationMs ?? 0);
+    // 1. 优先从执行树读取每个节点的真实耗时和 token 消耗
+    const allNodes = this.flattenTree(tree);
+    for (const node of allNodes) {
+      if (node.durationMs && node.durationMs > 0) {
+        nodeDurations.set(node.id, node.durationMs);
+      }
+      if (node.tokenUsage) {
+        nodeTokenUsage.set(node.id, node.tokenUsage.totalTokens);
+      }
+    }
+
+    // 2. 从 trace recorder 补充/覆盖指标，并计算每个时间窗口的并发度
+    const parallelismHistory: number[] = [];
+    const trace = experience.runId ? tracer.getTrace(experience.runId) : undefined;
+    if (trace?.events && trace.events.length > 0) {
+      // 按 agentId（即 nodeId）聚合 trace 中的耗时和 token
+      for (const event of trace.events) {
+        if (event.type === 'llm_call' && event.durationMs > 0) {
+          const agentId = event.agentId;
+          const existing = nodeDurations.get(agentId) ?? 0;
+          nodeDurations.set(agentId, existing + event.durationMs);
+          if (event.data.tokenUsage) {
+            const existingTokens = nodeTokenUsage.get(agentId) ?? 0;
+            nodeTokenUsage.set(agentId, existingTokens + event.data.tokenUsage.totalTokens);
+          }
+        }
+      }
+
+      // 按 1 秒时间窗口统计并发 LLM 调用数，作为并行度历史
+      const eventsBySecond = new Map<number, import('../runtime/types/trace').TraceEvent[]>();
+      for (const event of trace.events) {
+        if (event.type !== 'llm_call') continue;
+        const ts = new Date(event.timestamp).getTime();
+        const second = Math.floor(ts / 1000);
+        const bucket = eventsBySecond.get(second) ?? [];
+        bucket.push(event);
+        eventsBySecond.set(second, bucket);
+      }
+      const sortedSeconds = Array.from(eventsBySecond.keys()).sort((a, b) => a - b);
+      for (const second of sortedSeconds) {
+        const events = eventsBySecond.get(second) ?? [];
+        // 同一秒内不同 agent 的事件计为并发
+        const concurrentAgents = new Set(events.map((e) => e.agentId)).size;
+        parallelismHistory.push(concurrentAgents);
+      }
+    }
+
+    // 兜底：如果 trace 和树都没有数据，用经验总时长作为根节点时长
+    if (nodeDurations.size === 0 && experience.durationMs) {
+      nodeDurations.set(tree.id, experience.durationMs);
     }
 
     return {
       tree,
       result: {
-        status: 'SUCCESS' as const,
+        status: experience.success ? 'SUCCESS' : 'FAILED',
         summary: '',
-        id: '',
+        id: experience.runId,
         synthesis: '',
         artifacts: [],
         executionTree: [],
-        reasoning: [],
+        reasoning: experience.lessons ?? [],
         metrics: {
-          totalTokens: 0,
+          totalTokens: experience.tokenCost ?? 0,
           totalCostUsd: 0,
-          totalDurationMs: 0,
+          totalDurationMs: experience.durationMs ?? 0,
           llmCalls: 0,
           toolCalls: 0,
           subAgentsSpawned: 0,
           artifactsCreated: 0,
           qualityScore: 0,
-          topologyUsed: 'SINGLE' as const,
-          effortLevelUsed: 'COMPLEX' as const,
+          topologyUsed: topology,
+          effortLevelUsed: 'COMPLEX',
         },
         errors: [],
       } as UltimateExecutionResult,
       metrics: {
-        totalDurationMs: experience.durationMs,
+        totalDurationMs: experience.durationMs ?? 0,
         totalTokens: experience.tokenCost ?? 0,
         nodeDurations,
         nodeTokenUsage,
@@ -778,5 +855,14 @@ export class ReflexionTopologicalOptimizer {
    */
   reset(): void {
     this.history = [];
+  }
+
+  /** Flatten a task tree for metric aggregation. */
+  private flattenTree(node: TaskTreeNode): TaskTreeNode[] {
+    const result: TaskTreeNode[] = [node];
+    for (const sub of node.subtasks) {
+      result.push(...this.flattenTree(sub));
+    }
+    return result;
   }
 }

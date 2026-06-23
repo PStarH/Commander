@@ -3,7 +3,7 @@ import { execSync } from 'child_process';
 import type { ExecutionBackend, DockerExecConfig, SandboxExecutionResult } from '../types';
 
 /** Validate Docker container name/ID — must be alphanumeric with limited special chars. */
-function isValidContainerName(name: string): boolean {
+export function isValidContainerName(name: string): boolean {
   // Docker container names: alphanumeric, hyphens, underscores, dots, slashes (for namespaced)
   // Docker container IDs: hex characters (12-64 chars)
   return /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127}$/.test(name);

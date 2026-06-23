@@ -14,6 +14,22 @@ import type { MultiAgentStrategy, TaskComplexity } from '../index';
 import { measureTaskComplexity, shouldDecompose } from '../index';
 
 /**
+ * Carrier for retry/breaker routing. Lets a pipeline builder attach the
+ * upstream provider and model identifier to each step without changing
+ * the existing `agentId` plumbing. Optional today; once present, the
+ * executor uses `(provider, model)` as the circuit-breaker key so a bad
+ * model cannot lock the tenant out of an entire provider.
+ *
+ * Audit #1/#3 hardening.
+ */
+export interface SequentialStepMetadata {
+  provider?: string;
+  model?: string;
+  /** Free-form tags — propagated to audit chain for forensic grouping. */
+  tags?: string[];
+}
+
+/**
  * Represents a single step in a sequential pipeline.
  */
 export interface SequentialStep {
@@ -46,6 +62,13 @@ export interface SequentialStep {
 
   /** Step-specific validation function */
   validator?: (output: unknown) => ValidationResult;
+
+  /**
+   * Audit #1 hardening — optional metadata carrying provider/model for
+   * circuit-breaker keying (`<provider>|<model>`) and audit-chain tags.
+   * When absent the executor falls back to `agentId` (legacy behaviour).
+   */
+  metadata?: SequentialStepMetadata;
 }
 
 /**
@@ -57,6 +80,10 @@ export interface SequentialStepResult {
   status: 'SUCCESS' | 'FAILURE' | 'SKIPPED' | 'TIMEOUT';
   output?: unknown;
   error?: string;
+  /** Audit #1 hardening — classification of the failure when status='FAILURE'. */
+  errorClass?: 'transient' | 'permanent' | 'unknown';
+  /** Audit #4 hardening — token usage delta captured from this step. */
+  tokensUsed?: number;
   duration: number; // ms
   timestamp: string;
 }
@@ -140,6 +167,23 @@ export interface SequentialPipeline {
   projectId?: string;
   /** Initial input for the first step */
   initialInput?: unknown;
+  /**
+   * Audit #4 hardening — soft cap on total tokens across all steps in
+   * the run (sum of `agent`'s `tokenUsage.totalTokens`). When exceeded:
+   *   1. warn + emit `token_budget_breach` to AuditChainLedger
+   *   2. trip semantic circuit (provider, model) via onSemanticDrift(1.0)
+   *   3. the next step is BLOCKED (fail-fast status='FAILURE')
+   * The current step is allowed to complete (LLM responses are
+   * non-truncatable; we only protect against further spend). Set to 0 or
+   * omit to disable the cap.
+   */
+  tokenBudget?: number;
+  /**
+   * Audit #4 hardening — ENV-overridable fallback for tokenBudget when the
+   * pipeline object omits it. Prefer setting `tokenBudget` explicitly per-
+   * pipeline; this is the escape hatch for tests and one-shots.
+   */
+  envTokenBudgetKey?: string;
 }
 
 /**

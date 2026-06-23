@@ -21,6 +21,12 @@ export interface TenantAwareSingleton<T> {
 /**
  * Create a tenant-aware singleton wrapper.
  *
+ * WARNING: This is NOT true multi-tenancy. Tenant isolation is in-process
+ * context scoping only. There is zero data isolation at the storage layer.
+ * Tenant state is silently lost after 30 minutes of inactivity (TTL eviction).
+ * MAX_TENANTS = 100 with LRU eviction when exceeded. getGlobal() explicitly
+ * bypasses all tenant isolation.
+ *
  * Usage:
  *   const memSingleton = createTenantAwareSingleton(() => new ThreeLayerMemory());
  *   export function getGlobalThreeLayerMemory() { return memSingleton.get(); }

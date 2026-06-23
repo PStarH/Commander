@@ -210,51 +210,12 @@ export async function cmdConfig(args: string[]) {
 
   if (args[0] === 'canary-status') {
     section('CANARY DEPLOYMENT');
-    const evolver = getEvolverAgent();
-    const status = evolver.getCanaryStatus();
-
-    if (!status.active) {
-      console.log(`\n  ${$.dim}No active canary deployment.${$.reset}`);
-      console.log(
-        `  ${$.dim}Canary deployments are created automatically when the EvolverAgent${$.reset}`,
-      );
-      console.log(`  ${$.dim}detects failure patterns and proposes config mutations.${$.reset}`);
-      console.log(
-        `  ${$.dim}A 10% canary rollout is used to safely verify config changes.${$.reset}\n`,
-      );
-      return;
-    }
-
-    kv(
-      'Status',
-      status.decided
-        ? status.successRate >= 0.5
-          ? `${$.green}Promoted${$.reset}`
-          : `${$.red}Rejected${$.reset}`
-        : `${$.yellow}Active${$.reset}`,
-    );
-    kv('Mutations', `${status.mutations}`, $.cyan);
-    kv('Runs', `${status.runCount}`, $.dim);
-    kv('Rollout', `${(status.rolloutFraction * 100).toFixed(0)}%`, $.yellow);
-    kv(
-      'Success rate',
-      `${(status.successRate * 100).toFixed(0)}%`,
-      status.successRate >= 0.5 ? $.green : $.red,
-    );
-
-    if (!status.decided && status.pendingRuns > 0) {
-      kv('Pending runs', `${status.pendingRuns} more needed for auto-decision`, $.dim);
-    }
-
-    const elapsed = Date.now() - status.startedAt;
-    kv('Running for', `${(elapsed / 1000).toFixed(0)}s`, $.dim);
-
-    console.log();
+    console.log(`\n  ${$.dim}Canary deployment was removed.${$.reset}\n`);
     return;
   }
 
   console.log(
-    `  ${$.red}Usage:${$.reset} commander config [show|set <key> <val>|list-providers|list-models|test|canary-status]`,
+    `  ${$.red}Usage:${$.reset} commander config [show|set <key> <val>|list-providers|list-models|test]`,
   );
 }
 

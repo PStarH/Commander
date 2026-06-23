@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import { ExplorationEventLog } from '../../src/ultimate/explorationEventLog';
 import type { OrchestrationTopology } from '../../src/ultimate/types';
 
@@ -392,5 +395,53 @@ describe('ExplorationEventLog', () => {
     for (let i = 0; i < 3; i++) log.record(makeEvent({ tenantId: 'medium' }));
     const snap = log.getSnapshot();
     expect(snap.tenants.map((t) => t.tenantId)).toEqual(['big', 'medium', 'small']);
+  });
+
+  describe('persistence', () => {
+    let tmpDir = '';
+    let persistPath = '';
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exploration-log-'));
+      persistPath = path.join(tmpDir, 'events.jsonl');
+    });
+
+    afterEach(() => {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    it('appends recorded events to a JSONL file', () => {
+      const log = new ExplorationEventLog(100, undefined, persistPath);
+      log.record(makeEvent({ tenantId: 'tenant-A', chosenTopology: 'SINGLE' }));
+      const contents = fs.readFileSync(persistPath, 'utf-8');
+      expect(contents.trim()).not.toBe('');
+      const parsed = JSON.parse(contents.trim()) as { tenantId: string; chosenTopology: string };
+      expect(parsed.tenantId).toBe('tenant-A');
+      expect(parsed.chosenTopology).toBe('SINGLE');
+    });
+
+    it('reloads events from disk on construction', () => {
+      const log1 = new ExplorationEventLog(100, undefined, persistPath);
+      log1.record(makeEvent({ tenantId: 'tenant-A', chosenTopology: 'SINGLE' }));
+      log1.record(makeEvent({ tenantId: 'tenant-B', diverged: true }));
+
+      const log2 = new ExplorationEventLog(100, undefined, persistPath);
+      const snap = log2.getSnapshot();
+      expect(snap.globalStats.lifetimeRoutingCount).toBe(2);
+      expect(snap.tenants.map((t) => t.tenantId).sort()).toEqual(['tenant-A', 'tenant-B']);
+    });
+
+    it('restarts eventId counter from persisted max', () => {
+      const log1 = new ExplorationEventLog(100, undefined, persistPath);
+      const { eventId } = log1.record(makeEvent());
+
+      const log2 = new ExplorationEventLog(100, undefined, persistPath);
+      const { eventId: nextId } = log2.record(makeEvent());
+      expect(nextId).toBe(eventId + 1);
+    });
   });
 });

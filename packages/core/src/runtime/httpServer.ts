@@ -39,6 +39,10 @@ import { openApiSpec } from './openapi';
 import { handleAtrHttpRequest, type AtrHttpDeps } from '../atr/atrHttp';
 import { getExecutionScheduler } from '../atr/scheduler';
 import { handleObservabilityRequest, type ObservabilityDeps } from '../observability/httpApi';
+import {
+  handleRoutingDashboardRequest,
+  type RoutingDashboardDeps,
+} from '../observability/routingDashboard';
 import { getCompensationData, renderDashboardHtml } from './compensationDashboard';
 import {
   type MemoryLayer,
@@ -56,6 +60,7 @@ import {
 } from './sopDashboard';
 import { getTraceRecorder } from './executionTrace';
 import { getCostModel } from '../observability/costModel';
+import { getGlobalExplorationEventLog } from '../ultimate/topologyStores';
 import { PersistentTraceStore } from './traceStore';
 import { LeaseManager } from '../atr/leaseManager';
 import type { AuthPlugin } from './oidcAuthPlugin';
@@ -93,6 +98,8 @@ export interface HttpServerConfig {
   oidcEnabled?: boolean;
   /** SIEM forwarder instance for log forwarding (loaded from env if available) */
   siemForwarder?: SIEMForwarder;
+  /** Require authentication on health/readiness/metrics endpoints. Default: false. */
+  protectHealthEndpoints?: boolean;
 }
 
 function pickTopology(
@@ -125,6 +132,7 @@ const DEFAULT_CONFIG: HttpServerConfig = {
   ],
   maxBodyBytes: 1024 * 1024,
   rateLimitPerMinute: 120,
+  protectHealthEndpoints: process.env.COMMANDER_AUTH_PROTECT_HEALTH === 'true',
 };
 
 class HttpRequestError extends Error {
@@ -496,6 +504,49 @@ export class CommanderHttpServer {
     });
   }
 
+  /** Full auth gate (API key + OIDC). Returns true if allowed; sends 401 and returns false otherwise. */
+  private async authenticateRequest(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    const authResult = authenticate(req, this.authDisabled, this.apiKeyHash, this.authPlugins);
+    if (authResult.success) return true;
+
+    // If auth plugins are registered, try async OIDC authentication
+    if (this.authPlugins.length > 0) {
+      const bearerToken = extractAuthKey(req);
+      if (bearerToken) {
+        for (const plugin of this.authPlugins) {
+          try {
+            const result = await plugin.authenticate(bearerToken);
+            if (result) return true;
+          } catch {
+            continue;
+          }
+        }
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error: 'Unauthorized. Provide Authorization: Bearer <api-key> or valid OIDC token.',
+          }),
+        );
+        return false;
+      }
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: 'Unauthorized. Provide Authorization: Bearer <token> header.',
+        }),
+      );
+      return false;
+    }
+
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: 'Unauthorized. Provide Authorization: Bearer <api-key> header.',
+      }),
+    );
+    return false;
+  }
+
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     this.applyCommonHeaders(req, res);
     if (req.method === 'OPTIONS') {
@@ -507,8 +558,11 @@ export class CommanderHttpServer {
     const [pathPart, queryStr] = url.split('?');
     const segments = pathPart.split('/').filter(Boolean);
 
-    // GAP-31: Health endpoint bypasses auth and rate limiting
+    // GAP-31: Health endpoint bypasses auth and rate limiting by default.
+    // Set COMMANDER_AUTH_PROTECT_HEALTH=true to require auth on health/metrics/readiness.
+    const protectHealth = this.config.protectHealthEndpoints ?? false;
     if (segments[0] === 'health' && (req.method ?? 'GET') === 'GET') {
+      if (protectHealth && !(await this.authenticateRequest(req, res))) return;
       sendJson(res, 200, {
         status: 'ok',
         uptime: process.uptime(),
@@ -521,6 +575,7 @@ export class CommanderHttpServer {
 
     // Detailed health check with component statuses
     if (segments[0] === 'health' && segments[1] === 'detailed' && (req.method ?? 'GET') === 'GET') {
+      if (protectHealth && !(await this.authenticateRequest(req, res))) return;
       const { HealthCollector } = await import('./healthCheck');
       const collector = new HealthCollector();
       const report = await collector.collect();
@@ -536,6 +591,7 @@ export class CommanderHttpServer {
 
     // GAP-33: Metrics endpoint for monitoring (JSON + OpenMetrics text)
     if (segments[0] === 'metrics' && (req.method ?? 'GET') === 'GET') {
+      if (protectHealth && !(await this.authenticateRequest(req, res))) return;
       const accept = req.headers.accept ?? '';
       if (accept.includes('text/plain') || accept.includes('openmetrics')) {
         res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' });
@@ -588,6 +644,7 @@ export class CommanderHttpServer {
 
     // Readiness probe (separate from health — checks deps)
     if (segments[0] === 'ready' && (req.method ?? 'GET') === 'GET') {
+      if (protectHealth && !(await this.authenticateRequest(req, res))) return;
       const mem = process.memoryUsage();
       const healthy = true;
       sendJson(res, healthy ? 200 : 503, {
@@ -601,54 +658,7 @@ export class CommanderHttpServer {
       return;
     }
 
-    // Authenticate: try API key first, then registered auth plugins (OIDC)
-    const authResult = authenticate(req, this.authDisabled, this.apiKeyHash, this.authPlugins);
-    if (!authResult.success) {
-      // If auth plugins are registered, try async OIDC authentication
-      if (this.authPlugins.length > 0) {
-        const bearerToken = extractAuthKey(req);
-        if (bearerToken) {
-          let oidcAuthenticated = false;
-          for (const plugin of this.authPlugins) {
-            try {
-              const result = await plugin.authenticate(bearerToken);
-              if (result) {
-                oidcAuthenticated = true;
-                break;
-              }
-            } catch {
-              continue;
-            }
-          }
-          if (!oidcAuthenticated) {
-            res.writeHead(401, { 'Content-Type': 'application/json' });
-            res.end(
-              JSON.stringify({
-                error: 'Unauthorized. Provide Authorization: Bearer <api-key> or valid OIDC token.',
-              }),
-            );
-            return;
-          }
-          // Passed OIDC auth — continue to request handling
-        } else {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(
-            JSON.stringify({
-              error: 'Unauthorized. Provide Authorization: Bearer <token> header.',
-            }),
-          );
-          return;
-        }
-      } else {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            error: 'Unauthorized. Provide Authorization: Bearer <api-key> header.',
-          }),
-        );
-        return;
-      }
-    }
+    if (!(await this.authenticateRequest(req, res))) return;
 
     // Reject new run requests during graceful shutdown to prevent new runtimes
     // from being created while we're cancelling in-flight steps and draining connections.
@@ -1171,6 +1181,26 @@ export class CommanderHttpServer {
           });
           return;
         }
+      }
+      if (resource === 'topology') {
+        const eventLog = getGlobalExplorationEventLog(
+          1000,
+          process.cwd() + '/.commander/topology-exploration-events.jsonl',
+        );
+        const dashboardDeps: RoutingDashboardDeps = {
+          eventLog,
+          epsilonStore: eventLog.getEpsilonStore(),
+          resolveTenant: (r) => this.resolveTenantFromAuth(r),
+        };
+        const topologySegments = segments.slice(1);
+        const r = await handleRoutingDashboardRequest(
+          req,
+          res,
+          dashboardDeps,
+          topologySegments,
+          queryStr,
+        );
+        if (r.handled) return;
       }
       if (resource === 'observability') {
         const traceStore = new PersistentTraceStore();

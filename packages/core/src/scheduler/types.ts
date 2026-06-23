@@ -39,6 +39,8 @@ export interface WorkflowDefinition {
   topology?: OrchestrationTopology;
   effort?: EffortLevel;
   agentCount?: number;
+  /** Optional tenant ID for per-tenant topology learning */
+  tenantId?: string;
   /** File path this was loaded from */
   sourcePath: string;
   /** Whether this was loaded from project or user scope */
@@ -88,6 +90,8 @@ export interface ScheduleEntry {
   enabled: boolean;
   /** Tags for grouping/filtering */
   tags: string[];
+  /** Optional tenant ID for per-tenant topology learning */
+  tenantId?: string;
 }
 
 // ============================================================================
