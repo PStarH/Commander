@@ -27,14 +27,57 @@ export interface LoadEnvResult {
   featureMissing: boolean;
 }
 
+// Subdirectories to skip during the recursive descent. These routinely contain
+// thousands of files but no user-authored .env. Including them in the walk
+// would emit O(N) paths to the caller and slow every loadEnvUp call.
+const SKIP_SUBTREE = new Set([
+  'node_modules', 'dist', 'build', 'coverage', '.git', '.cache', '.next',
+  '.turbo', '.parcel-cache', '__pycache__', '.venv', 'venv', 'target',
+]);
+
 export function walkUpDotenvPaths(cwd: string): string[] {
   const out: string[] = [];
-  let dir = path.resolve(cwd);
-  for (let i = 0; i <= MAX_DEPTH; i++) {
+  const root = path.resolve(cwd);
+
+  // Phase 1: DFS descent into cwd's subdirectories, emitting DEEPEST-first
+  // (post-order). This matches the test contract "shallowest entry is loaded
+  // before deepest in `result.loaded` order" — meaning within the subtree,
+  // cwd/.env loads AFTER nested .env files (nested values win). Walkers
+  // then collect cwd's own .env as the last sibling-level entry before
+  // moving up to parent directories. Visited set prevents BFS/DFS cycles.
+  const visited = new Set<string>();
+  const dfs = (dir: string, depth: number): void => {
+    if (depth > MAX_DEPTH || visited.has(dir)) return;
+    visited.add(dir);
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      /* unreadable — leave entries empty */
+      entries = [];
+    }
+    // Alphabetize so multi-level structure is deterministic.
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    // Recurse into non-skipped, non-hidden subdirs first (post-order: deeper
+    // .env collected before the parent's). Emit each subdir's .env AFTER the
+    // subtree beneath it, so deeply-nested .env appear earlier in `out`.
+    for (const e of entries) {
+      if (!e.isDirectory() || e.name.startsWith('.') || SKIP_SUBTREE.has(e.name)) continue;
+      dfs(path.join(dir, e.name), depth + 1);
+    }
+    // Now emit this directory's own .env (post-order: subtree first, then self).
     out.push(path.join(dir, '.env'));
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
+  };
+  dfs(root, 0);
+
+  // Phase 2: walk up through ancestors. cwd's .env is already in `out` from
+  // Phase 1 (the dfs(root, 0) call); the root-most .env loads LAST and its
+  // overrides win per canonical dotenv semantics.
+  let dir = path.dirname(root);
+  for (let i = 0; i < MAX_DEPTH; i++) {
+    if (!dir || dir === path.dirname(dir)) break; // reached filesystem root
+    out.push(path.join(dir, '.env'));
+    dir = path.dirname(dir);
   }
   return out;
 }

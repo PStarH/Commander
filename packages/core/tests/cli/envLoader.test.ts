@@ -92,7 +92,7 @@ describe('loadEnvUp behavior', () => {
     // rejection reason across Node versions, so we just require that:
     //   (a) the file is listed in either `loaded` OR `skipped`,
     //   (b) any other valid .env is still loaded.
-    fs.writeFileSync(path.join(cwd, '.env'), 'GOOD_VAR=ok\n').toString();
+    fs.writeFileSync(path.join(cwd, '.env'), 'GOOD_VAR=ok\n');
     const badPath = path.join(cwd, 'bad.env');
     // process.loadEnvFile only targets literal `.env` by default, so write
     // a sibling to verify the walker does NOT pick it up.
