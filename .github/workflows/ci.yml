@@ -114,9 +114,10 @@ jobs:
               # Resolve the actual better-sqlite3 directory from packages/core's perspective
               BETTER_DIR="$(cd packages/core && node -e "
                 var p=require.resolve('better-sqlite3/package.json');
-                console.log(p.substring(0,p.lastIndexOf('/')).replace(/\//g,'\\\\'));
-              " 2>/dev/null)"
-              echo "  resolved better-sqlite3 dir: $BETTER_DIR"
+                var d=require('path').dirname(p);
+                console.log(d);
+              ")"
+              echo "  resolved better-sqlite3 dir: [$BETTER_DIR]"
               # Write a batch file to source vcvars64.bat and rebuild better-sqlite3
               batpath="$(pwd)/rebuild.bat"
               echo '@echo on' > "$batpath"
