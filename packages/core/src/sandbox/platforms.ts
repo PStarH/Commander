@@ -5,7 +5,7 @@ import * as os from 'os';
 import type { PlatformSandbox, SandboxProfile, SandboxExecutionResult } from './types';
 import { getGlobalLogger } from '../logging';
 import { buildSeccompFilter, countAllowedSyscalls } from './seccompBpf';
-import { getLLMAPIDomains, writeProxyScript } from './networkProxy';
+import { getLLMAPIDomains, shquote, writeProxyScript } from './networkProxy';
 import { AppContainerSB } from './appContainer';
 import { TEESandbox } from './teeEnclave';
 
@@ -555,11 +555,14 @@ class BwrapSB implements PlatformSandbox {
           /* process may have exited */
         }
       };
-      const sigHandler = (sig: NodeJS.Signals) => () => forwardSignal(sig);
-      process.on('SIGHUP', sigHandler('SIGHUP'));
-      process.on('SIGINT', sigHandler('SIGINT'));
-      process.on('SIGQUIT', sigHandler('SIGQUIT'));
-      process.on('SIGTERM', sigHandler('SIGTERM'));
+      const onSighup = () => forwardSignal('SIGHUP');
+      const onSigint = () => forwardSignal('SIGINT');
+      const onSigquit = () => forwardSignal('SIGQUIT');
+      const onSigterm = () => forwardSignal('SIGTERM');
+      process.on('SIGHUP', onSighup);
+      process.on('SIGINT', onSigint);
+      process.on('SIGQUIT', onSigquit);
+      process.on('SIGTERM', onSigterm);
 
       let timedOut = false;
       const killTimer = setTimeout(() => {
@@ -570,10 +573,10 @@ class BwrapSB implements PlatformSandbox {
 
       const cleanup = () => {
         clearTimeout(killTimer);
-        process.removeListener('SIGHUP', sigHandler('SIGHUP'));
-        process.removeListener('SIGINT', sigHandler('SIGINT'));
-        process.removeListener('SIGQUIT', sigHandler('SIGQUIT'));
-        process.removeListener('SIGTERM', sigHandler('SIGTERM'));
+        process.removeListener('SIGHUP', onSighup);
+        process.removeListener('SIGINT', onSigint);
+        process.removeListener('SIGQUIT', onSigquit);
+        process.removeListener('SIGTERM', onSigterm);
         // Clean up seccomp fd and temp file
         if (seccompFd !== null) {
           try {
@@ -695,7 +698,7 @@ class GVisorSB implements PlatformSandbox {
           `export HTTP_PROXY=http://127.0.0.1:1999`,
           `export HTTPS_PROXY=http://127.0.0.1:1999`,
           `export NO_PROXY=''`,
-          cmd,
+          `sh -c ${shquote(cmd)}`,
           `EXIT_CODE=$?`,
           `kill $PROXY_PID 2>/dev/null`,
           `exit $EXIT_CODE`,
@@ -919,7 +922,7 @@ class DockerSB implements PlatformSandbox {
           `export HTTP_PROXY=http://127.0.0.1:1999`,
           `export HTTPS_PROXY=http://127.0.0.1:1999`,
           `export NO_PROXY=''`,
-          cmd,
+          `sh -c ${shquote(cmd)}`,
           `EXIT_CODE=$?`,
           `kill $PROXY_PID 2>/dev/null`,
           `exit $EXIT_CODE`,
