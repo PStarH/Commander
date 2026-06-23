@@ -190,9 +190,13 @@ jobs:
         run: pnpm audit:wiring
 
       - name: Run core tests
+        env:
+          COMMANDER_ALLOW_NO_SANDBOX: true
         run: pnpm --filter @commander/core test
 
       - name: Path security tests
+        env:
+          COMMANDER_ALLOW_NO_SANDBOX: true
         run: pnpm --filter @commander/core test:node:pathsec
 
       - name: CLI check
