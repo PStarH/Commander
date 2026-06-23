@@ -205,6 +205,18 @@ export class DefaultContentScanner implements ContentScanner {
     /(no\s+)?(content\s+)?(filter|moderation|safety\s+check|restriction)\s*(applies|enabled|active|on)/gi,
     /remove\s+(all\s+)?(content\s+)?(filter|moderation|safety|restriction|policy)/gi,
     /(disable|turn\s+off|deactivate)\s+(all\s+)?(safety|content\s+filter|moderation|restriction)/gi,
+    // Direct DAN persona swap (HIGH: explicit jailbreak preamble without "a helpful")
+    /you\s+are\s+now\s+DAN\b/gi,
+    // "ignore all content policies" -- HIGH full-policy override attempt
+    /ignore\s+all\s+content\s+policies/gi,
+    // Indirect-instruction framing — "you no longer need to follow safety guidelines"
+    /you\s+no\s+longer\s+need\s+(?:to\s+)?follow\s+(?:the\s+)?(?:any\s+)?(?:safety|security|rules|guidelines|restrictions|policies|instructions)/gi,
+    // Safety-bypass dismissal — "safety rules don't apply"
+    /(?:safety|security|rules|guidelines|restrictions)\s+(?:rules?\s+)?(?:don't|do\s+not|doesn't|won't|no\s+longer)\s+(?:apply|exist|matter)/gi,
+    // "without safety guidelines / bounds / filters" — covers roleplay jailbreak phrasing
+    /without\s+(?:any\s+|all\s+)?(?:safety|security|rules?|guidelines|restrictions|filters?|limits?|restraints?)/gi,
+    // Expanded hypothetical framing — "hypothetical scenario / situation / world"
+    /hypothetical\s+(?:scenario|situation|story|world|context|example|setting|case)/gi,
   ];
 
   // 隐藏 Unicode 字符
@@ -274,9 +286,21 @@ export class DefaultContentScanner implements ContentScanner {
     const scanDurationMs = Date.now() - startTime;
     const riskScore = this.calculateRiskScore(threats);
 
+    // isSafe: block when (1) any HIGH/CRITICAL threat, OR (2) accumulated
+    // riskScore >= 50 (composite MEDIUM threats that individually wouldn't
+    // block but collectively indicate a likely attack).
+    const hasHighOrCritical = threats.some(
+      (t) => t.severity === 'HIGH' || t.severity === 'CRITICAL',
+    );
+    // Composite block: requires riskScore >= 75 (>=5 MEDIUM matches) AND at
+    // least 2 distinct threat types OR any single HIGH/CRITICAL. This catches
+    // multi-pronged attacks (e.g. semantic-manipulation + jailbreak-synonym)
+    // while not over-blocking benign text that contains one or two MEDIUM
+    // keywords in passing (e.g. a docs FAQ mentioning "hypothetical scenarios").
+    const distinctTypes = new Set(threats.map((t) => t.type));
+    const compositeDangerous = riskScore >= 75 && distinctTypes.size >= 2;
     return {
-      isSafe:
-        threats.filter((t) => t.severity === 'HIGH' || t.severity === 'CRITICAL').length === 0,
+      isSafe: !hasHighOrCritical && !compositeDangerous,
       threats,
       riskScore,
       scannedAt: new Date().toISOString(),
@@ -516,6 +540,10 @@ export class DefaultContentScanner implements ContentScanner {
 
     const severityWeights = {
       LOW: 5,
+      // MEDIUM stays at 15: composite block threshold is raised to riskScore>=75
+      // (see isSafe below) so benign single-or-double MEDIUM matches in real
+      // production text don't trigger false-positive blocks. Single HIGH or
+      // CRITICAL matches still auto-block regardless.
       MEDIUM: 15,
       HIGH: 35,
       CRITICAL: 45,
