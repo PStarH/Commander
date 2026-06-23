@@ -154,11 +154,10 @@ The Signed-Commit SHA is the binding artifact; reviewers can replay `git verify-
 
 | Role                | Name | GitHub handle | GPG fingerprint (16-char short) | Signed-Commit SHA        |
 |---------------------|------|---------------|---------------------------------|--------------------------|
-| **CISO** | CISO Demo Operator | @commander-ciso-demo | 12AA1940B17D9448 |  |
-| **Head of Security** | Demo Head of Security | @commander-hos-demo | 12AA1940B17D9448 |  |
-| **Engineering Lead** | Demo Engineering Lead | @commander-eng-demo | 12AA1940B17D9448 |  |
-| **Compliance Lead** | Demo Compliance Lead | @commander-cmp-demo | 12AA1940B17D9448 |  |
-
+| **CISO** | CISO Demo Operator | @commander-ciso-demo | 12AA1940B17D9448 |   e8020a0b6a1143adc7cb48bd6ad78dfaf0c5915d |
+| **Head of Security** | Demo Head of Security | @commander-hos-demo | 12AA1940B17D9448 |   e8020a0b6a1143adc7cb48bd6ad78dfaf0c5915d |
+| **Engineering Lead** | Demo Engineering Lead | @commander-eng-demo | 12AA1940B17D9448 |   e8020a0b6a1143adc7cb48bd6ad78dfaf0c5915d |
+| **Compliance Lead** | Demo Compliance Lead | @commander-cmp-demo | 12AA1940B17D9448 |   e8020a0b6a1143adc7cb48bd6ad78dfaf0c5915d |
 ### §6.4 — Procedural note
 
 Sign-off requires (a) a GPG-signed commit on this document (§6.2 step 3), (b) the PR has at least one approval from a role other than the signer, and (c) the commit is then included in the next tagged security-policy release. **Bypass of any of (a, b, c) is forbidden** — even by CISO direct waiver — because the cryptographic binding cannot be circumvented without invalidating the chain. If CISO waiver is genuinely required, rotate the CISO GPG key through the AuditChainLedger's key-rotation event before granting the waiver.
