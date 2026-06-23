@@ -155,7 +155,10 @@ jobs:
             pnpm rebuild better-sqlite3 \
               || (echo "::warning::better-sqlite3 rebuild failed" && exit 0)
           fi
-          # Probe: actually open a database to verify native binding is functional
+          # Probe: check if compiled binary exists, then try to load binding
+          echo "  checking for compiled binary:"
+          ls -la packages/core/node_modules/better-sqlite3/build/Release/ 2>/dev/null || echo "  (no build/Release in packages/core)"
+          ls -la node_modules/.pnpm/better-sqlite3*/node_modules/better-sqlite3/build/Release/ 2>/dev/null || echo "  (no build/Release in .pnpm store)"
           (cd packages/core && node -e "
             try {
               var D=require('better-sqlite3'), db=new D(':memory:');
@@ -163,7 +166,7 @@ jobs:
               var row=db.prepare('SELECT 1 AS v').get();
               db.close();
               process.exit(row&&row.v===1?0:1);
-            } catch(e) { process.exit(1); }
+            } catch(e) { console.error('  PROBE_ERROR:', e.message); process.exit(1); }
           ") && echo "::notice::better-sqlite3 binding loaded and functional OK" \
             || echo "::warning::binding did not load post-rebuild"
           echo "::notice::Post-rebuild binding status: ABI=$(node -p 'process.versions.modules') platform=$(node -p 'process.platform') arch=$(node -p 'process.arch')"
