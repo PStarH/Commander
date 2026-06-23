@@ -36,6 +36,8 @@
     "benchmark:gaia": "npx tsx scripts/benchmark-gaia.ts",
     "benchmark:gaia:quick": "npx tsx scripts/benchmark-gaia.ts --quick",
     "benchmark:multiagent": "npx tsx scripts/benchmark-multiagent.ts",
+    "benchmark:topology": "npx tsx scripts/benchmark-topology.ts",
+    "benchmark:topology:quick": "npx tsx scripts/benchmark-topology.ts --iterations=3 --topology=single",
     "cli": "npx tsx cli.ts",
     "typecheck": "cd packages/core && npx tsc --noEmit",
     "docker:build": "docker compose build",
