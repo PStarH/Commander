@@ -42,6 +42,10 @@ export interface CrashSafetyDeps {
   tenantIdFor?: (runId: string) => string | undefined;
   /** Graceful shutdown timeout before force-exit (ms) */
   exitTimeoutMs?: number;
+  /** Called for each active run during crash shutdown (for checkpoint flush, etc.) */
+  onRunCrash?: (runId: string) => void;
+  /** Called once after all runs are processed (for closing DB connections, etc.) */
+  onShutdownComplete?: () => void;
 }
 
 let installed = false;
@@ -69,6 +73,8 @@ export function installProcessCrashHandlers(deps: CrashSafetyDeps): void {
       const leaseToken = deps.leaseTokenFor?.(runId);
       const fencingEpoch = deps.fencingEpochFor?.(runId);
       const tenantId = deps.tenantIdFor?.(runId);
+
+      deps.onRunCrash?.(runId);
 
       const entry: DeadLetterEntry = {
         id: `crash-${runId}-${Date.now()}`,
@@ -134,6 +140,12 @@ export function installProcessCrashHandlers(deps: CrashSafetyDeps): void {
       runsAborted,
       errorMessage,
     });
+
+    try {
+      deps.onShutdownComplete?.();
+    } catch {
+      /* best-effort */
+    }
 
     try {
       deps.dlq.flush();
