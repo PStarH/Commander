@@ -137,8 +137,7 @@ export class TaskPool {
     // persisted runId is what `reliabilityEngine.getLatestCheckpoint(runId)`
     // returns to callers wanting to resume.
     const runId =
-      this.config.runId ??
-      `task-pool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      this.config.runId ?? `task-pool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     // Day 4 ABI: pre-populate `results` and `batchIndex` when a prior
     // session committed partial work to the WAL.
