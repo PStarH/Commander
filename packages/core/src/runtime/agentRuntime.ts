@@ -2959,18 +2959,43 @@ export class AgentRuntime implements AgentRuntimeInterface {
               // Early exit: skip verification when model is confident and has no tool calls.
               // This saves the verification token cost (~500-2000 tokens) and avoids
               // unnecessary retries on confident responses.
-              if (earlyExit) {
-                const safeContent =
+                            if (earlyExit) {
+                let safeContent =
                   response.content ||
                   (response as { reasoning_content?: string }).reasoning_content ||
                   '';
+                // Hoisted scan-then-gate: previously lived as `await (async () => {...})()`
+                // inside the result.summary assignment, which fired bus events during
+                // object construction. Extracting the side effects out of the object
+                // literal makes the data flow obvious: safeContent is sanitized in
+                // place, then the result object captures it.
+                let scannedSummary = safeContent;
+                try {
+                  const earlyExitScan = await this.contentScanner.scan(safeContent);
+                  if (!earlyExitScan.isSafe) {
+                    getMessageBus().publish('system.alert', 'runtime', {
+                      type: 'content_threat_blocked',
+                      via: 'early_exit_scan',
+                      runId,
+                      agentId: ctx.agentId,
+                      threats: earlyExitScan.threats.map((t) => `${t.type}:${t.severity}`),
+                      riskScore: earlyExitScan.riskScore,
+                    });
+                    scannedSummary = `[Content blocked: ${earlyExitScan.threats.length} threat(s) (risk=${earlyExitScan.riskScore})]`;
+                    safeContent = scannedSummary;
+                  }
+                } catch (e) {
+                  getGlobalLogger().debug('AgentRuntime', 'earlyExit content scan failed', {
+                    error: (e as Error)?.message,
+                  });
+                }
                 const totalDurationMs = Date.now() - startTime;
                 const result: AgentExecutionResult = {
                   runId,
                   agentId: ctx.agentId,
                   missionId: ctx.missionId,
                   status: 'success',
-                  summary: safeContent || '[Early exit: confident response]',
+                  summary: scannedSummary || '[Early exit: confident response]',
                   steps,
                   totalTokenUsage: totalTokens,
                   totalDurationMs,
@@ -3498,16 +3523,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
               try {
                 const scanResult = await this.contentScanner.scan(safeContent);
                 if (!scanResult.isSafe) {
-                  const criticalThreats = scanResult.threats.filter(
-                    (t) => t.severity === 'HIGH' || t.severity === 'CRITICAL',
-                  );
-                  if (criticalThreats.length > 0) {
-                    bus.publish('system.alert', 'runtime', {
-                      type: 'content_threat_blocked',
-                      threats: criticalThreats.map((t) => `${t.type}:${t.severity}`),
-                    });
-                    safeContent = `[Content blocked: ${criticalThreats.length} security threat(s) detected. Review and resubmit.]`;
-                  }
+                  // Any non-safe result blocks -- covers both HIGH/CRITICAL single
+                  // threats AND composite MEDIUM threats that pushed riskScore >= 50.
+                  bus.publish('system.alert', 'runtime', {
+                    type: 'content_threat_blocked',
+                    threats: scanResult.threats.map((t) => `${t.type}:${t.severity}`),
+                    riskScore: scanResult.riskScore,
+                  });
+                  safeContent = `[Content blocked: ${scanResult.threats.length} security threat(s) detected (risk=${scanResult.riskScore}). Review and resubmit.]`;
                 }
               } catch (e) {
                 getGlobalLogger().warn('AgentRuntime', 'Content scan failed (best-effort)', {
@@ -4535,7 +4558,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
     this.tenantManager.flushAll();
   }
 }
-
 function derivePromptCacheKey(ctx: AgentExecutionContext, tenantId: string | undefined): string {
   const goal = ctx.goal ?? '';
   let hash = 0;
