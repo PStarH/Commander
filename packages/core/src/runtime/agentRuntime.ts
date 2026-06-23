@@ -2959,7 +2959,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               // Early exit: skip verification when model is confident and has no tool calls.
               // This saves the verification token cost (~500-2000 tokens) and avoids
               // unnecessary retries on confident responses.
-                            if (earlyExit) {
+              if (earlyExit) {
                 let safeContent =
                   response.content ||
                   (response as { reasoning_content?: string }).reasoning_content ||
