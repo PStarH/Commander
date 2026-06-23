@@ -2,6 +2,7 @@ import { TELOSOrchestrator } from '../../telos/telosOrchestrator';
 import { UltimateOrchestrator } from '../../ultimate/orchestrator';
 import { SSEStream } from '../../runtime/sseStream';
 import { AgentRuntime } from '../../runtime/agentRuntime';
+import { getGlobalTenantProvider } from '../../runtime/tenantProvider';
 import { deliberate } from '../../ultimate/deliberation';
 import { classifyEffortLevel } from '../../ultimate/effortScaler';
 import { normalizeTopology, type OrchestrationTopology } from '../../ultimate/types';
@@ -576,6 +577,7 @@ async function cmdRunInternal(task: string, routingFlags: RoutingFlags = {}) {
   const result = await orch.execute({
     projectId: 'cli',
     agentId: 'commander-cli',
+    tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
     goal: task,
     contextData: routingContextData,
     onProgress: (phase, detail) => {
@@ -805,6 +807,7 @@ async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
     result = await orch.execute({
       projectId: 'cli',
       agentId: 'commander-cli',
+      tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
       goal: task,
       contextData: watchContextData,
     });
@@ -1050,6 +1053,7 @@ export async function cmdCompany(
 
   const engine = createCompanyEngine(orchestrator, {
     projectId: 'commander-cli',
+    tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
     userId: options?.userId,
     enableCapabilityMatching: true,
     enableQualityGating: true,

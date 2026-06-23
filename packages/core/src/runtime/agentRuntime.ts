@@ -1,6 +1,16 @@
 /**
  * Agent Runtime — Core execution engine for the Commander agent loop.
  *
+ * WARNING: This file is a God object (~3,000-line execute(), 4,571 LOC total).
+ * It cannot be tested, reasoned about, or modified safely. Every change risks
+ * breaking one of the many intertwined execution paths.
+ *
+ * Known issues:
+ * - Mutable instance fields (slidingWindow, governor, tools) are reassigned
+ *   per-run, creating data races under concurrent execute() calls.
+ * - 76 getGlobal*() singleton calls make isolation impossible.
+ * - 110 catch blocks, 61 marked "best-effort", swallow errors silently.
+ *
  * The central orchestrator that drives the LLM → Tools → Verification → Retry
  * cycle. Each call to execute() runs one full agent turn:
  *   1. Model routing (eco → standard → power)
@@ -1012,6 +1022,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
   getHandoff(): AgentHandoff {
     return this.agentHandoff;
   }
+
+  /** Expose the tool orchestrator's circuit breaker registry for runtime observation. */
+  getBreakerRegistry(): import('./circuitBreakerRegistry').CircuitBreakerRegistry {
+    return this.orchestrator.getBreakerRegistry();
+  }
+
   getExecutionScheduler() {
     return getExecutionScheduler();
   }
@@ -2297,7 +2313,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                           toolLoopCount,
                           siblingAbort.signal,
                         );
-                        if (gate.kind !== 'allowed') {
+                    if (gate.kind !== 'allowed') {
+                      console.log(`[SERIAL] GATE BLOCKED ${tc.name} kind=${gate.kind}`);
                           if (gate.kind === 'retry') {
                             retryLoopDetected = true;
                             retryLoopCount = gate.count;
@@ -2512,10 +2529,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     }
                     // SecurityOrchestrator: unify ToolApproval + AdaptiveHITL before execution
                     const sec = await this.applyBeforeToolCallSecurity(tc, ctx.agentId, runId);
+                    if (!sec.allowed && sec.blockedToolResult) {
+                      console.log(`[SERIAL] BLOCKED ${tc.name} by security: ${sec.decision.blockReason ?? 'unknown'}`);
+                    }
                     let toolResult: ToolResult;
                     if (!sec.allowed && sec.blockedToolResult) {
                       toolResult = sec.blockedToolResult;
                     } else {
+                      console.log(`[SERIAL] EXECUTING ${tc.name} toolLoopCount=${toolLoopCount}`);
                       toolResult = await this.executeTool(
                         runId,
                         tc,
@@ -4072,12 +4093,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
             const sop = exportSOPFromTrace(trace);
             if (sop) {
               const sopDir = path.join(this.config.sopDir || '.commander/sops', ctx.agentId);
-              fs.mkdirSync(sopDir, { recursive: true });
+              await fs.promises.mkdir(sopDir, { recursive: true });
               const sopPath = path.join(sopDir, `${runId}.md`);
-              fs.writeFileSync(sopPath, formatSOPAsMarkdown(sop), 'utf-8');
+              await fs.promises.writeFile(sopPath, formatSOPAsMarkdown(sop), 'utf-8');
               // Also write structured JSON for API retrieval
               const jsonPath = path.join(sopDir, `${runId}.json`);
-              fs.writeFileSync(jsonPath, JSON.stringify(sop, null, 2), 'utf-8');
+              await fs.promises.writeFile(jsonPath, JSON.stringify(sop, null, 2), 'utf-8');
               getGlobalLogger().debug('AgentRuntime', 'SOP auto-exported', {
                 runId,
                 path: sopPath,

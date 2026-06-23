@@ -26,6 +26,7 @@ import {
 import { defaultCompensationRetryPolicy } from './compensationScheduler';
 import { ApprovalManager } from './approvalManager';
 import { WorkerPool, InProcessWorkerPool } from './workerPool';
+import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
 
 export interface SagaCoordinatorOptions {
   checkpoint: CheckpointManager;
@@ -76,6 +77,20 @@ export class SagaCoordinator {
     this.idGenerator = options.idGenerator ?? (() => randomUUID());
     this.tenantId = ctx.tenantId;
     this.parentRunId = ctx.parentRunId;
+
+    // Global saga timeout — if set, AbortSignal.timeout cancels the
+    // entire saga execution, triggering the compensation flow.
+    const globalTimeoutMs = this.graphValue.timeoutMs;
+    if (globalTimeoutMs && globalTimeoutMs > 0) {
+      const timeoutSignal = AbortSignal.timeout(globalTimeoutMs);
+      const onTimeout = () => {
+        if (!this.cancelController.signal.aborted) {
+          this.cancelController.abort(new Error(`Saga timed out after ${globalTimeoutMs}ms`));
+        }
+      };
+      timeoutSignal.addEventListener('abort', onTimeout, { once: true });
+    }
+
     const now = this.clock().toISOString();
     this.createdAt = now;
     this.updatedAt = now;
@@ -114,6 +129,30 @@ export class SagaCoordinator {
   }
 
   async run(options: SagaRunOptions = {}): Promise<SagaResult> {
+    // Track 1 — Business idempotency: if this idempotencyKey has already
+    // been processed (e.g. from an upstream gateway retry), return the
+    // existing committed result without re-execution.
+    if (options.idempotencyKey) {
+      const existing = await this.checkpointMgr.getStore().findByIdempotencyKey(options.idempotencyKey);
+      if (existing && existing.state === 'COMMITTED') {
+        // Reconstruct result from snapshot
+        return {
+          runId: existing.runId,
+          status: 'committed',
+          results: {},
+          summary: `Idempotent replay: saga "${this.graph.name}" already committed`,
+          durationMs: 0,
+        };
+      }
+      if (existing && existing.state === 'EXECUTING') {
+        // Previous execution is still in progress (or crashed).  Recover
+        // from the snapshot rather than starting a new run.
+        return this.recoverFromSnapshot(existing, options);
+      }
+      // Track it for this run
+      this.intentHash = options.idempotencyKey;
+    }
+
     this.sagaState = 'EXECUTING';
     await this.appendEvent(this.eventFor('begin', {}));
     await this.persist();
@@ -129,6 +168,30 @@ export class SagaCoordinator {
     } catch (err) {
       return await this.handleFailure(err, options);
     }
+  }
+
+  private async recoverFromSnapshot(snapshot: SagaStateSnapshot, options: SagaRunOptions): Promise<SagaResult> {
+    this.sagaState = snapshot.state;
+    for (const [id, state] of Object.entries(snapshot.nodeStates)) {
+      this.nodeStates.set(id, state);
+    }
+    // Resume execution from pending nodes
+    if (this.sagaState === 'EXECUTING') {
+      try {
+        await this.executeSequence(this.graph.rootId);
+        this.sagaState = 'COMMITTED';
+        await this.appendEvent(this.eventFor('commit', {}));
+        await this.persist();
+        return this.makeResult('committed', options);
+      } catch (err) {
+        return await this.handleFailure(err, options);
+      }
+    }
+    // Already in a terminal state
+    return this.makeResult(
+      this.sagaState === 'COMMITTED' ? 'committed' : 'aborted',
+      options,
+    );
   }
 
   private async executeSequence(startId: string): Promise<void> {
@@ -176,6 +239,17 @@ export class SagaCoordinator {
   private async executeStep(node: SagaStepNode): Promise<void> {
     const policy = node.retryPolicy ?? DEFAULT_RETRY_POLICY;
     const timeoutMs = node.timeoutMs ?? 30_000;
+
+    // Global circuit breaker check — fail fast if downstream is degraded.
+    // The breaker is keyed by SERVICE BOUNDARY (e.g. "stripe", "github"),
+    // NOT by node id, so ALL concurrent saga instances share the same
+    // breaker state and collectively back off.
+    const breakerKey = node.breakerKey ?? CircuitBreakerRegistry.resolveBreakerKey(node.name);
+    const breaker = CircuitBreakerRegistry.getInstance().breakerFor(breakerKey);
+    if (breaker.isCircuitOpen()) {
+      throw new SagaCircuitBreakerError(node.name, breakerKey);
+    }
+
     let attempt = 0;
     let lastError: Error | undefined;
 
@@ -188,6 +262,7 @@ export class SagaCoordinator {
           timeoutMs,
           this.cancelController.signal,
         );
+        breaker.recordSuccess();
         this.results.set(node.id, result);
         this.ctx.results.set(node.name, result);
         this.ctx.results.set(node.id, result);
@@ -201,10 +276,9 @@ export class SagaCoordinator {
         return;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        if (attempt >= policy.maxAttempts) break;
-        const retryable = policy.retryOn === undefined || policy.retryOn(lastError);
-        if (!retryable) break;
-        const delay = this.computeBackoff(policy, attempt);
+        breaker.recordFailure();
+        if (!breaker.shouldRetry(lastError, attempt)) break;
+        const delay = breaker.computeDelay(attempt);
         await this.appendEvent(
           this.eventFor('retry.scheduled', {
             nodeId: node.id,
@@ -358,7 +432,7 @@ export class SagaCoordinator {
       this.eventFor('abort', { nodeId: sagaError.nodeId, error: sagaError.message }),
     );
 
-    const compensablePath = this.collectCompensablePath(sagaError.nodeId);
+    const compensablePath = this.collectAllCompensable();
     const result = await this.compensation.compensate(compensablePath, this.ctx);
     if (result.failed.length > 0) {
       await this.appendEvent(
@@ -379,33 +453,23 @@ export class SagaCoordinator {
     return this.makeResult('aborted', options);
   }
 
-  private collectCompensablePath(failedNodeId: string): CompensableStep[] {
-    if (failedNodeId === '?') return [];
+  private collectAllCompensable(): CompensableStep[] {
     const steps: CompensableStep[] = [];
-    const visited = new Set<string>();
-
-    const visit = (id: string): void => {
-      if (visited.has(id)) return;
-      visited.add(id);
-      const node = this.graph.getNode(id);
-      if (!node) return;
-
+    this.graph.walk((node, _depth) => {
       if (node.kind === 'step' && node.compensable) {
-        const state = this.nodeStates.get(id);
-        if (state === 'completed' && this.results.has(id)) {
-          steps.push({ node, result: this.results.get(id) });
+        const state = this.nodeStates.get(node.id);
+        if (state === 'completed' && this.results.has(node.id)) {
+          steps.push({ node: node as SagaStepNode, result: this.results.get(node.id) });
         }
       }
+    });
+    // Reverse for LIFO compensation order (last completed step compensated first)
+    return steps.reverse();
+  }
 
-      const prev = this.graph.previousSiblingOf(id);
-      if (prev) visit(prev.id);
-
-      const parentId = this.graph.parentOf(id);
-      if (parentId !== undefined) visit(parentId);
-    };
-
-    visit(failedNodeId);
-    return steps;
+  /** @deprecated Use collectAllCompensable() — walk-based collection covers parallel branches. */
+  private collectCompensablePath(_failedNodeId: string): CompensableStep[] {
+    return this.collectAllCompensable();
   }
 
   private makeResult(status: 'committed' | 'aborted', options: SagaRunOptions): SagaResult {
@@ -432,6 +496,7 @@ export class SagaCoordinator {
   }
 
   private async persist(): Promise<void> {
+    const idempotencyKey = this.intentHash || undefined;
     const snapshot = this.checkpointMgr.createSnapshot({
       runId: this.ctx.runId,
       state: this.sagaState,
@@ -442,6 +507,7 @@ export class SagaCoordinator {
       childRunIds: Array.from(this.childRunIds),
       error: this.error,
       tenantId: this.tenantId,
+      idempotencyKey,
       previous:
         this.checkpointVersion > 0
           ? await this.checkpointMgr.loadSnapshot(this.ctx.runId)
@@ -505,19 +571,6 @@ export class SagaCoordinator {
     });
   }
 
-  private computeBackoff(policy: import('./types').RetryPolicy, attempt: number): number {
-    const base =
-      policy.backoff === 'fixed'
-        ? policy.initialDelayMs
-        : policy.backoff === 'linear'
-          ? policy.initialDelayMs * attempt
-          : policy.initialDelayMs * Math.pow(2, attempt - 1);
-    const capped = Math.min(base, policy.maxDelayMs);
-    if (policy.jitter === 'none') return capped;
-    if (policy.jitter === 'full') return Math.floor(Math.random() * capped);
-    return Math.floor(capped / 2 + Math.random() * (capped / 2));
-  }
-
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -555,6 +608,16 @@ export class SagaCoordinatorError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'SagaCoordinatorError';
+  }
+}
+
+export class SagaCircuitBreakerError extends Error {
+  constructor(
+    public readonly nodeName: string,
+    public readonly breakerKey: string,
+  ) {
+    super(`Circuit breaker OPEN for "${breakerKey}" — step "${nodeName}" blocked. Downstream may be degraded.`);
+    this.name = 'SagaCircuitBreakerError';
   }
 }
 

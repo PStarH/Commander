@@ -7,6 +7,12 @@ export interface SagaStore {
   readEvents(runId: string): Promise<SagaEvent[]>;
   writeSnapshot(snapshot: SagaStateSnapshot): Promise<void>;
   readSnapshot(runId: string): Promise<SagaStateSnapshot | undefined>;
+  /** Look up a completed snapshot by business-level idempotency key.
+   *  Returns the COMMITTED snapshot if found, undefined otherwise.
+   *  This enables cross-request deduplication: if the same idempotencyKey
+   *  is submitted again (e.g. gateway retry), the existing result is
+   *  returned without re-execution. */
+  findByIdempotencyKey(key: string): Promise<SagaStateSnapshot | undefined>;
   listRunIds(): Promise<string[]>;
   deleteRun(runId: string): Promise<void>;
 }
@@ -85,6 +91,21 @@ export class FileSagaStore implements SagaStore {
     }
   }
 
+  async findByIdempotencyKey(key: string): Promise<SagaStateSnapshot | undefined> {
+    try {
+      const ids = await this.listRunIds();
+      for (const runId of ids) {
+        const snapshot = await this.readSnapshot(runId);
+        if (snapshot?.idempotencyKey === key && snapshot.state === 'COMMITTED') {
+          return snapshot;
+        }
+      }
+    } catch {
+      // If listing fails, silently return undefined
+    }
+    return undefined;
+  }
+
   async deleteRun(runId: string): Promise<void> {
     const path = join(this.options.baseDir, runId);
     try {
@@ -99,6 +120,8 @@ export class FileSagaStore implements SagaStore {
 export class InMemorySagaStore implements SagaStore {
   private readonly events = new Map<string, SagaEvent[]>();
   private readonly snapshots = new Map<string, SagaStateSnapshot>();
+  /** Reverse index: idempotencyKey → runId */
+  private readonly idempotencyIndex = new Map<string, string>();
 
   async appendEvent(event: SagaEvent): Promise<void> {
     const list = this.events.get(event.runId) ?? [];
@@ -112,10 +135,21 @@ export class InMemorySagaStore implements SagaStore {
 
   async writeSnapshot(snapshot: SagaStateSnapshot): Promise<void> {
     this.snapshots.set(snapshot.runId, snapshot);
+    if (snapshot.idempotencyKey) {
+      this.idempotencyIndex.set(snapshot.idempotencyKey, snapshot.runId);
+    }
   }
 
   async readSnapshot(runId: string): Promise<SagaStateSnapshot | undefined> {
     return this.snapshots.get(runId);
+  }
+
+  async findByIdempotencyKey(key: string): Promise<SagaStateSnapshot | undefined> {
+    const runId = this.idempotencyIndex.get(key);
+    if (!runId) return undefined;
+    const snapshot = this.snapshots.get(runId);
+    if (snapshot && snapshot.state !== 'COMMITTED') return undefined;
+    return snapshot;
   }
 
   async listRunIds(): Promise<string[]> {
@@ -124,6 +158,10 @@ export class InMemorySagaStore implements SagaStore {
   }
 
   async deleteRun(runId: string): Promise<void> {
+    const snapshot = this.snapshots.get(runId);
+    if (snapshot?.idempotencyKey) {
+      this.idempotencyIndex.delete(snapshot.idempotencyKey);
+    }
     this.events.delete(runId);
     this.snapshots.delete(runId);
   }

@@ -14,6 +14,16 @@ import { formatAnchoredOutput } from '../edit/hashAnchoredEditor';
 import { getInternalUrlRouter, isInternalUrl } from '../runtime/internalUrls';
 import { atomicWriteFile } from './_utils/atomicWrite';
 
+/** Async path existence check compatible with Node 18+ types. */
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await fs.promises.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Get the safe root directory. Dynamic to support runtime COMMANDER_WORKSPACE changes. */
 export function getSafeRoot(): string {
   return path.resolve(process.env.COMMANDER_WORKSPACE || process.cwd());
@@ -143,13 +153,13 @@ export class FileReadTool implements Tool {
 
     try {
       const resolved = safePath(filePath);
-      if (!fs.existsSync(resolved)) return `Error: file not found: ${filePath}`;
+      if (!(await pathExists(resolved))) return `Error: file not found: ${filePath}`;
 
-      const stat = fs.statSync(resolved);
+      const stat = await fs.promises.stat(resolved);
       if (stat.size > 1024 * 1024)
         return `Error: file too large (${(stat.size / 1024 / 1024).toFixed(1)}MB). Max: 1MB`;
 
-      const content = fs.readFileSync(resolved, 'utf-8');
+      const content = await fs.promises.readFile(resolved, 'utf-8');
 
       // Record snapshot for hashline edit recovery
       const store = getSnapshotStore();
@@ -232,7 +242,7 @@ export class FileWriteTool implements Tool {
     try {
       const resolved = safePath(filePath);
       const dir = path.dirname(resolved);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      if (!(await pathExists(dir))) await fs.promises.mkdir(dir, { recursive: true });
 
       await atomicWriteFile(resolved, content, { encoding: 'utf-8' });
 
@@ -369,9 +379,9 @@ LEGACY MODE (backward-compatible): Use path + oldString + newString for simple s
 
     try {
       const resolved = safePath(filePath);
-      if (!fs.existsSync(resolved)) return `Error: file not found: ${filePath}`;
+      if (!(await pathExists(resolved))) return `Error: file not found: ${filePath}`;
 
-      let content = fs.readFileSync(resolved, 'utf-8');
+      let content = await fs.promises.readFile(resolved, 'utf-8');
       const idx = content.indexOf(oldStr);
       if (idx === -1) return `Error: oldString not found in ${filePath}`;
 

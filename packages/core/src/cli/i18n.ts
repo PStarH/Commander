@@ -1,6 +1,10 @@
 /**
  * Commander CLI i18n — Lightweight internationalization.
  *
+ * WARNING: All translations are hardcoded in this 2,700+ line TypeScript file.
+ * Translators cannot edit without TypeScript tooling. The file must be recompiled
+ * for any translation change. No lazy loading of locale files.
+ *
  * Supports en (English) and zh-CN (Simplified Chinese).
  * Detects locale from LANG, LC_ALL, or COMMANDER_LANG env vars.
  *

@@ -11,17 +11,21 @@ describe('ToolApproval', () => {
   let approval: ToolApproval;
   let lastRequest: unknown;
 
-  beforeEach(() => {
+  const createApproval = (autoApprove = true) => {
     lastRequest = null;
-    approval = new ToolApproval(async (req) => {
+    return new ToolApproval(async (req) => {
       lastRequest = req;
       return {
-        approved: true,
+        approved: autoApprove,
         requestId: req.id,
         approvedAt: new Date().toISOString(),
-        reason: 'test',
+        reason: autoApprove ? 'test' : 'denied by test',
       };
     });
+  };
+
+  beforeEach(() => {
+    approval = createApproval(true);
   });
 
   // ── Auto-approved tools ────────────────────────────────────────────────────
@@ -62,20 +66,22 @@ describe('ToolApproval', () => {
   // ── Manual approval tools ──────────────────────────────────────────────────
 
   describe('manual approval tools', () => {
-    it('requires manual approval for shell_execute', async () => {
+    it('invokes callback for shell_execute', async () => {
+      approval = createApproval(false);
       const result = await approval.requestApproval('shell_execute', { command: 'ls' });
-      // The callback auto-approves in test setup
-      assert.strictEqual(result.approved, true);
+      assert.strictEqual(result.approved, false);
       assert.ok(lastRequest); // Callback was called
     });
 
-    it('requires manual approval for git_push', async () => {
+    it('invokes callback for git_push', async () => {
+      approval = createApproval(false);
       const result = await approval.requestApproval('git_push', { remote: 'origin' });
-      assert.strictEqual(result.approved, true);
+      assert.strictEqual(result.approved, false);
       assert.ok(lastRequest);
     });
 
     it('passes tool args to callback', async () => {
+      approval = createApproval(true);
       await approval.requestApproval('shell_execute', { command: 'npm test' });
       const req = lastRequest as { toolName: string; arguments: Record<string, unknown> };
       assert.strictEqual(req.toolName, 'shell_execute');
@@ -96,12 +102,12 @@ describe('ToolApproval', () => {
     });
 
     it('does not auto-approve python_execute with timeout > 10000', async () => {
+      approval = createApproval(false);
       const result = await approval.requestApproval('python_execute', {
         code: 'print(1)',
         timeout: 30000,
       });
-      // Falls through to callback (which auto-approves in test)
-      assert.strictEqual(result.approved, true);
+      assert.strictEqual(result.approved, false);
       assert.ok(lastRequest); // Callback was called
     });
 
@@ -115,12 +121,12 @@ describe('ToolApproval', () => {
     });
 
     it('does not auto-approve file_write to /etc', async () => {
+      approval = createApproval(false);
       const result = await approval.requestApproval('file_write', {
         path: '/etc/passwd',
         content: 'bad',
       });
-      // Falls through to callback
-      assert.strictEqual(result.approved, true);
+      assert.strictEqual(result.approved, false);
       assert.ok(lastRequest);
     });
 

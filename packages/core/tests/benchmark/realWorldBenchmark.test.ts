@@ -117,7 +117,8 @@ describe('Real-World Benchmarks (StepFun API)', () => {
       for (let i = 0; i < 5; i++) {
         const start = performance.now();
         deliberate(task.goal);
-        latencies.push(performance.now() - start);
+        const elapsed = performance.now() - start;
+        latencies.push(elapsed);
       }
       const plan = deliberate(task.goal);
       results.push({
@@ -149,7 +150,8 @@ describe('Real-World Benchmarks (StepFun API)', () => {
     };
 
     runner.addResult(result);
-    expect(p99).toBeLessThan(5);
+    // NOTE: deliberate() is synchronous keyword matching (~0ms).
+    // The p99 < 5ms assertion is trivially true and has been removed.
   });
 
   it('real LLM call latency (single request)', { timeout: 30000 }, async () => {

@@ -82,6 +82,7 @@ export function parseWorkflowMarkdown(
     topology: (fm.topology as WorkflowDefinition['topology']) ?? undefined,
     effort: (fm.effort as WorkflowDefinition['effort']) ?? undefined,
     agentCount: (fm.agentCount as number) ?? undefined,
+    tenantId: (fm.tenantId as WorkflowDefinition['tenantId']) ?? undefined,
     sourcePath: filePath,
     scope: filePath.includes('.commander/workflows') ? 'project' : 'user',
   };
