@@ -71,7 +71,10 @@ export interface CheckpointRecord {
 
 export interface AtrCheckpointStoreConfig {
   filePath?: string;
-  /** Default '.commander/atr_checkpoints.db' */
+  /**
+   * Default '.commander/atr_checkpoints.db' — overridable via
+   * COMMANDER_ATR_CHECKPOINTS_PATH env var (see getAtrCheckpointStore).
+   */
 }
 
 interface CheckpointRow {
@@ -308,7 +311,7 @@ export class InMemoryCheckpointBuffer {
 // Unified Interface
 // ============================================================================
 
-export interface IChekpointBackend {
+export interface ICheckpointBackend {
   save(state: CheckpointState): CheckpointRecord;
   get(id: string): CheckpointRecord | null;
   getLatest(runId: string): CheckpointRecord | null;
@@ -338,14 +341,29 @@ export interface IChekpointBackend {
  */
 export function openCheckpointBackend(
   config: Partial<AtrCheckpointStoreConfig> = {},
-): IChekpointBackend {
+): ICheckpointBackend {
   try {
     const wal = new WalCheckpointStore(config);
-    return Object.assign(wal, { backend: 'wal' as const });
+    return attachBackend(wal, 'wal', undefined);
   } catch (err) {
     const buf = new InMemoryCheckpointBuffer();
-    return Object.assign(buf, { backend: 'memory' as const, fallbackError: (err as Error)?.message });
+    return attachBackend(buf, 'memory', (err as Error)?.message);
   }
+}
+
+/**
+ * Attach the discriminator field without leaking Object.assign on a class
+ * with private members. The readonly `backend` field on ICheckpointBackend
+ * already prevents mutation by TS contract; we deliberately do NOT
+ * Object.freeze the instance because WalCheckpointStore.close() needs to
+ * mutate its own internal `_db` handle on dispose.
+ */
+function attachBackend<T extends object>(
+  obj: T,
+  backend: 'wal' | 'memory',
+  fallbackError: string | undefined,
+): T & { backend: 'wal' | 'memory'; fallbackError?: string } {
+  return Object.assign(obj, { backend, fallbackError });
 }
 
 function rowToRecord(row: CheckpointRow): CheckpointRecord {
@@ -368,12 +386,25 @@ function rowToRecord(row: CheckpointRow): CheckpointRecord {
 // Singleton (controlled for tests)
 // ============================================================================
 
-let _instance: IChekpointBackend | null = null;
+let _instance: ICheckpointBackend | null = null;
+
+/**
+ * Resolve the default `atrCheckpointPath`. Honors the
+ * COMMANDER_ATR_CHECKPOINTS_PATH env var (matches the convention used by
+ * IdempotencyStore's COMMANDER_ATR_IDEMPOTENCY_PATH). When unset, uses
+ * '.commander/atr_checkpoints.db'. The ':memory:' sentinel forces the
+ * InMemoryCheckpointBuffer path; passing the literal string ':memory:'
+ * to better-sqlite3 also works for crash-safety in test environments.
+ */
+function defaultAtrCheckpointPath(): string {
+  return process.env.COMMANDER_ATR_CHECKPOINTS_PATH ?? '.commander/atr_checkpoints.db';
+}
 
 export function getAtrCheckpointStore(
   config?: Partial<AtrCheckpointStoreConfig>,
-): IChekpointBackend {
-  if (!_instance) _instance = openCheckpointBackend(config);
+): ICheckpointBackend {
+  if (!_instance)
+    _instance = openCheckpointBackend(config ?? { filePath: defaultAtrCheckpointPath() });
   return _instance;
 }
 
