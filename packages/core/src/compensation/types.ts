@@ -14,10 +14,14 @@ import type { CompensableAction } from '../runtime/compensationRegistry';
 
 export function inferToolTags(toolName: string): string[] {
   if (toolName.startsWith('file_') || toolName.startsWith('fs_')) return ['low_risk'];
-  if (toolName.startsWith('read_') || toolName.startsWith('list_') || toolName.startsWith('get_')) return ['low_risk'];
-  if (toolName.includes('delete') || toolName.includes('remove') || toolName.includes('destroy')) return ['destructive'];
-  if (toolName.includes('create') || toolName.includes('write') || toolName.includes('update')) return ['requires_approval'];
-  if (toolName.includes('send_') || toolName.includes('notify') || toolName.includes('email')) return ['irreversible', 'requires_approval'];
+  if (toolName.startsWith('read_') || toolName.startsWith('list_') || toolName.startsWith('get_'))
+    return ['low_risk'];
+  if (toolName.includes('delete') || toolName.includes('remove') || toolName.includes('destroy'))
+    return ['destructive'];
+  if (toolName.includes('create') || toolName.includes('write') || toolName.includes('update'))
+    return ['requires_approval'];
+  if (toolName.includes('send_') || toolName.includes('notify') || toolName.includes('email'))
+    return ['irreversible', 'requires_approval'];
   return [];
 }
 
