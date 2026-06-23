@@ -111,7 +111,9 @@ jobs:
             # ---- Activate MSVC and rebuild ----
             if [ -n "$VS_VCVARS" ]; then
               echo "::notice::Activating MSVC at $VS_VCVARS_BASH, then rebuilding better-sqlite3 in same shell"
-              cmd //c "call \"$VS_VCVARS\" >nul && pnpm rebuild better-sqlite3" \
+              # Use single-quote + double-quote bash concatenation to pass
+              # the path to cmd.exe without MSYS2 mangling \" escapes.
+              cmd //c 'call "'"$VS_VCVARS"'" >nul && pnpm rebuild better-sqlite3' \
                 || (echo "::warning::better-sqlite3 rebuild failed (post-MsVC)" && exit 0)
             else
               echo "::warning::MSVC vcvars64 not located on Windows runner — attempting pnpm rebuild without MSVC source-build fallback"
