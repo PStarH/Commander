@@ -111,16 +111,19 @@ jobs:
             # ---- Activate MSVC and rebuild ----
             if [ -n "$VS_VCVARS" ]; then
               echo "::notice::Activating MSVC at $VS_VCVARS_BASH, then rebuilding better-sqlite3 in same shell"
-              # Verify the vcvars file exists before trying to source it
+              # Verify the vcvars file exists and list VC build tools directory
               if [ -f "$VS_VCVARS_BASH" ]; then
-                echo "  verified vcvars64.bat exists at: $VS_VCVARS_BASH"
+                echo "  verified vcvars64.bat exists"
               else
-                echo "  WARNING: vcvars64.bat NOT found at expected path: $VS_VCVARS_BASH"
+                echo "  WARNING: vcvars64.bat NOT found at expected path"
               fi
+              # List contents of VC build tools directory for diagnostics
+              VS_VC_DIR=$(dirname "$(dirname "$VS_VCVARS_BASH")")
+              echo "  ls VC/Auxiliary/Build/: $(ls "$VS_VC_DIR" 2>/dev/null | tr '\n' ' ')"
               # Use single-quote + double-quote bash concatenation to pass
               # the path to cmd.exe without MSYS2 mangling \" escapes.
-              cmd //c 'call "'"$VS_VCVARS"'" && where cl.exe && cl.exe 2>&1 | head -3 && pnpm rebuild better-sqlite3' \
-                || (echo "::warning::better-sqlite3 rebuild failed (post-MsVC)" && cmd //c 'call "'"$VS_VCVARS"'" && where cl.exe 2>&1' 2>/dev/null || echo "  (could not run cl.exe diagnostics)")
+              cmd //c 'call "'"$VS_VCVARS"'" && echo [VCVARS_OK] && where cl.exe && cl.exe 2>&1 | head -5 && echo [PNPM_START] && pnpm rebuild better-sqlite3' \
+                || (echo "::warning::better-sqlite3 rebuild failed (post-MsVC)" && echo "  exit code: $?")
             else
               echo "::warning::MSVC vcvars64 not located on Windows runner — attempting pnpm rebuild without MSVC source-build fallback"
               pnpm rebuild better-sqlite3 \
