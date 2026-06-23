@@ -69,6 +69,21 @@ export class MCPServer {
     this.prompts.set(prompt.name, { prompt, handler });
   }
 
+  private async withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+          timer.unref();
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   getCapabilities(): MCPServerCapabilities {
     const caps: MCPServerCapabilities = {};
     if (this.tools.size > 0) caps.tools = {};
@@ -151,15 +166,11 @@ export class MCPServer {
           };
         }
         const MCP_TOOL_TIMEOUT_MS = 60000;
-        const result = await Promise.race([
+        const result = await this.withTimeout(
           reg.handler(p.arguments ?? {}),
-          new Promise<never>((_, reject) =>
-            setTimeout(
-              () => reject(new Error(`Tool execution timed out after ${MCP_TOOL_TIMEOUT_MS}ms`)),
-              MCP_TOOL_TIMEOUT_MS,
-            ),
-          ),
-        ]);
+          MCP_TOOL_TIMEOUT_MS,
+          'Tool execution',
+        );
         if (Array.isArray(result)) {
           return { jsonrpc: '2.0', id, result: { content: result } satisfies MCPToolResult };
         }
