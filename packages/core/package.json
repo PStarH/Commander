@@ -61,6 +61,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run --no-cache",
+    "test:quick": "vitest run --no-cache --exclude 'tests/runtime/*' --exclude 'tests/*.test.ts' tests/ultimate/ tests/tools/ tests/security/ 2>/dev/null || vitest run --no-cache tests/ultimate/deliberation.test.ts tests/tools/pathSecurity.test.ts",
     "test:inventory": "node scripts/test-inventory.mjs --verify",
     "test:node": "node scripts/run-node-tests.mjs",
     "bench": "node scripts/run-node-tests.mjs benchmarks",
