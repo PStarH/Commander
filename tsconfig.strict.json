@@ -21,7 +21,7 @@
 //
 // DO NOT OVERRIDE the following inherited keys here — they are
 // base-contractual invariants and must come exclusively from
-// tsconfig.base.json: target, module, moduleResolution, strict,
+// tsconfig.base.json: target, module, moduleResolution, lib, strict,
 // esModuleInterop, skipLibCheck, resolveJsonModule, declaration,
 // declarationMap, noEmit. (Per code-reviewer-minimax-m3 round, `strict`,
 // `esModuleInterop`, and `noEmit` were added because future contributors
