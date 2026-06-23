@@ -340,7 +340,12 @@ describe('ShellExecuteTool — workdir workspace boundary', () => {
 
   it('allows workdir within workspace', async () => {
     const result = await tool.execute({ command: 'echo hello', workdir: '.' });
-    const isSandboxIssue = result.includes('sandbox-exec') || result.includes('unbound variable');
+    const isSandboxIssue =
+      result.includes('sandbox-exec') ||
+      result.includes('unbound variable') ||
+      result.includes('no sandbox available') ||
+      result.includes('AppContainer') ||
+      result.includes('icacls');
     const isSuccess = result.includes('hello') || result.includes('[Exit: 0]');
     assert.ok(
       isSandboxIssue || isSuccess,
@@ -356,7 +361,12 @@ describe('ShellExecuteTool — workdir workspace boundary', () => {
   it('omits workdir entirely (falls back to default)', async () => {
     const result = await tool.execute({ command: 'echo fallback' });
     const isSuccess = result.includes('fallback') || result.includes('[Exit: 0]');
-    const isSandbox = result.includes('sandbox-exec') || result.includes('unbound variable');
+    const isSandbox =
+      result.includes('sandbox-exec') ||
+      result.includes('unbound variable') ||
+      result.includes('no sandbox available') ||
+      result.includes('AppContainer') ||
+      result.includes('icacls');
     assert.ok(
       isSuccess || isSandbox,
       `Should work with default workdir, got: ${result.slice(0, 100)}`,

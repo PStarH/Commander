@@ -282,6 +282,33 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
         await smallServer.stop();
       }
     });
+
+    it('protects health endpoints when protectHealthEndpoints is enabled', async () => {
+      const protectedServer = new CommanderHttpServer({
+        port: 0,
+        host: '127.0.0.1',
+        apiKey: 'health-test-key',
+        rateLimitPerMinute: 0,
+        protectHealthEndpoints: true,
+      });
+      await protectedServer.start();
+      const protectedBaseUrl = `http://127.0.0.1:${protectedServer.getPort()}`;
+
+      try {
+        const { status } = await requestJson('GET', `${protectedBaseUrl}/health`);
+        assert.strictEqual(status, 401);
+
+        const { status: readyStatus } = await requestJson('GET', `${protectedBaseUrl}/ready`);
+        assert.strictEqual(readyStatus, 401);
+
+        const { status: okStatus } = await requestJson('GET', `${protectedBaseUrl}/health`, {
+          headers: { Authorization: 'Bearer health-test-key' },
+        });
+        assert.strictEqual(okStatus, 200);
+      } finally {
+        await protectedServer.stop();
+      }
+    });
   });
 
   describe('/dashboard/compensation', () => {

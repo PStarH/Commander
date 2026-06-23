@@ -75,7 +75,7 @@ export interface HumanApprovalGate {
  *   ORCHESTRATOR   — orchestrator + worker hierarchy (Orchestrator-Workers)
  *   REVIEW         — generator + evaluator iterative loop (Evaluator-Optimizer)
  *
- * AdaptOrch research shows topology selection alone yields 12-23% improvement.
+ * Topology selection is based on task DAG analysis and cost constraints.
  */
 export type OrchestrationTopologyCanonical =
   | 'SINGLE' // Single agent handles everything
@@ -238,6 +238,8 @@ export interface DeliberationPlan {
     synthesis: number; // tokens for result aggregation
   };
   decompositionStrategy: 'NONE' | 'ASPECT' | 'STEP' | 'RECURSIVE';
+  /** Optional agent-role hint propagated by topology-aware decomposition. */
+  role?: ROMARole;
   capabilitiesNeeded: string[];
   confidence: number; // 0-1, how well the system understands the task
   reasoning: string[];
@@ -489,6 +491,8 @@ export type SharedStateUpdate = Partial<SharedState>;
 export interface UltimateExecutionContext {
   id: string;
   projectId: string;
+  /** Optional tenant id for multi-tenant routing/learning isolation. */
+  tenantId?: string;
   goal: string;
   context: Record<string, unknown>;
   sharedState: SharedState;

@@ -5,7 +5,7 @@ import type { ExecutionBackend, SSHConfig, SandboxExecutionResult } from '../typ
 import { getSecurityAuditLogger } from '../../security/securityAuditLogger';
 
 /** Validate that a path contains no shell metacharacters (prevents command injection via workdir). */
-function isValidShellPath(p: string): boolean {
+export function isValidShellPath(p: string): boolean {
   // Allow only safe path characters: alphanumeric, /, -, _, ., ~, spaces
   // Reject anything that could break out of quotes or chain commands
   return /^[a-zA-Z0-9/_. ~@:-]+$/.test(p) && !p.includes('..');
@@ -18,7 +18,7 @@ function buildSshArgs(config: SSHConfig): string[] {
     '-o',
     `ConnectTimeout=${Math.ceil((config.connectTimeoutMs ?? 10000) / 1000)}`,
     '-o',
-    'StrictHostKeyChecking=accept-new',
+    'StrictHostKeyChecking=yes',
     '-o',
     'BatchMode=yes',
   ];
@@ -36,7 +36,8 @@ function buildSshArgs(config: SSHConfig): string[] {
 
 /**
  * SSH execution backend — runs commands on a remote host via the `ssh` CLI.
- * Uses BatchMode and StrictHostKeyChecking=accept-new for non-interactive auth.
+ * Uses StrictHostKeyChecking=yes and BatchMode for non-interactive auth.
+ * Note: the remote host runs unconfined; sandboxing depends on the local OS.
  */
 export class SSHBackend implements ExecutionBackend {
   readonly type = 'ssh' as const;
@@ -73,7 +74,7 @@ export class SSHBackend implements ExecutionBackend {
         stderr: `Rejected: workdir contains unsafe characters: ${workdir}`,
         exitCode: 1,
         durationMs: Date.now() - start,
-        sandboxMechanism: 'seatbelt',
+        sandboxMechanism: 'ssh',
       };
     }
 
@@ -128,7 +129,7 @@ export class SSHBackend implements ExecutionBackend {
           stderr,
           exitCode: exitCode ?? -1,
           durationMs: Date.now() - start,
-          sandboxMechanism: 'seatbelt', // SSH inherits local sandbox; remote is unconfined
+          sandboxMechanism: 'ssh',
         });
       });
 
@@ -140,7 +141,7 @@ export class SSHBackend implements ExecutionBackend {
           stderr: stderr || err.message,
           exitCode: -1,
           durationMs: Date.now() - start,
-          sandboxMechanism: 'seatbelt',
+          sandboxMechanism: 'ssh',
         });
       });
     });

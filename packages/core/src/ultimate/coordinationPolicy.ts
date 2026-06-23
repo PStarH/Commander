@@ -138,6 +138,14 @@ export function evaluateCoordinationPolicy(
     'Anthropic: multi-agent research helps breadth-first, parallel, high-value research but used about 15x chat tokens.',
     'Amdahl/Brooks: serial work and coordination channels bound returns as participants increase.',
     'OpenAI: start with one agent; add specialists only for capability, policy, prompt, or trace isolation.',
+    ...buildDynamicEvidence(
+      deliberation,
+      candidateTopology,
+      learnedWeights,
+      tenantId,
+      coupling,
+      roiThreshold,
+    ),
   ];
 
   if (agentCount <= 1) reasons.push('Only one useful worker estimated.');
@@ -385,4 +393,50 @@ function hasPositiveCoordinationSignal(
   if (deliberation.taskType === 'CODING' && deliberation.estimatedAgentCount >= 3 && !dag)
     return true;
   return false;
+}
+
+function buildDynamicEvidence(
+  deliberation: DeliberationPlan,
+  candidateTopology: OrchestrationTopology,
+  learnedWeights: LearnedWeights | undefined,
+  tenantId: string | undefined,
+  coupling: number,
+  roiThreshold: number,
+): string[] {
+  if (!learnedWeights) return [];
+
+  const out: string[] = [];
+  const state = learnedWeights.getState(deliberation.taskType, candidateTopology, tenantId);
+  if (state && state.samples > 0) {
+    const successRate = ((state.ema + 0.5) * 100).toFixed(0);
+    out.push(
+      `Tenant history: ${candidateTopology} on ${deliberation.taskType} has observed success rate ~${successRate}% across ${state.samples} samples.`,
+    );
+  }
+
+  const observedCoupling = learnedWeights.getCoordinationWeight(
+    'coupling',
+    deliberation.taskType,
+    -1,
+    tenantId,
+  );
+  if (observedCoupling >= 0) {
+    out.push(
+      `Learned coupling estimate for tenant: ${observedCoupling.toFixed(2)} (heuristic: ${coupling.toFixed(2)}).`,
+    );
+  }
+
+  const observedRoiThreshold = learnedWeights.getCoordinationWeight(
+    'roi_threshold',
+    deliberation.taskType,
+    -1,
+    tenantId,
+  );
+  if (observedRoiThreshold >= 0) {
+    out.push(
+      `Learned ROI threshold for tenant: ${observedRoiThreshold.toFixed(2)} (default: ${roiThreshold.toFixed(2)}).`,
+    );
+  }
+
+  return out;
 }

@@ -9,6 +9,7 @@ export * from './approvalManager';
 export * from './sagaBuilder';
 export * from './sagaCoordinator';
 export * from './examples';
+export * from './circuitBreakerRegistry';
 
 export type {
   ApprovalRequest as SagaApprovalRequest,

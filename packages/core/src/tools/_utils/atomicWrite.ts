@@ -82,7 +82,6 @@ export function registerTmpCleanup(directory: string): () => void {
   const onExit = (): void => cleanup();
   const onSignal = (sig: NodeJS.Signals): void => {
     cleanup();
-    process.exit(128 + (sig === 'SIGINT' ? 2 : 15));
   };
 
   process.on('exit', onExit);

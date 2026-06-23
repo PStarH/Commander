@@ -10,6 +10,11 @@ export interface RecoveredState {
 export class CheckpointManager {
   constructor(private readonly store: SagaStore) {}
 
+  /** Expose the underlying store for idempotency lookups. */
+  getStore(): SagaStore {
+    return this.store;
+  }
+
   async saveSnapshot(snapshot: SagaStateSnapshot): Promise<void> {
     await this.store.writeSnapshot(snapshot);
   }
@@ -62,6 +67,7 @@ export class CheckpointManager {
     childRunIds?: string[];
     error?: string;
     tenantId?: string;
+    idempotencyKey?: string;
     previous?: SagaStateSnapshot;
   }): SagaStateSnapshot {
     const now = new Date().toISOString();

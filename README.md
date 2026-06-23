@@ -2,7 +2,7 @@
   <a href="https://www.npmjs.com/package/@commander/core"><img src="https://img.shields.io/badge/npm-pending-CB3837?style=flat-square&label=npm" /></a>
   <a href="https://github.com/PStarH/Commander/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/PStarH/Commander/ci.yml?style=flat-square&label=CI&logo=github" /></a>
   <img src="https://img.shields.io/badge/providers-22-7C3AED?style=flat-square" />
-  <img src="https://img.shields.io/badge/topologies-8-EF4444?style=flat-square" />
+  <img src="https://img.shields.io/badge/topologies-5-EF4444?style=flat-square" />
   <img src="https://img.shields.io/github/license/PStarH/Commander?style=flat-square&color=EAB308" />
   <a href="https://github.com/PStarH/Commander/releases"><img src="https://img.shields.io/github/v/release/PStarH/Commander?style=flat-square&label=release&color=22C55E" /></a>
 </p>
@@ -10,7 +10,7 @@
 <h1 align="center">Commander</h1>
 <p align="center"><strong>Multi-agent orchestration framework.</strong></p>
 
-> **v0.2.0 — Pre-production.** Checkpointing is currently in-memory (SQLite-backed persistence engine in development). SLOs below are design targets, not guaranteed. See [ARCHITECTURE.md](ARCHITECTURE.md) for current status.
+> **v0.2.0 — Pre-production.** Checkpointing is SQLite-backed with WAL persistence. SLOs below are design targets, not guaranteed. See [ARCHITECTURE.md](ARCHITECTURE.md) for current status.
 
 <p align="center">
   <code>npx tsx packages/core/src/cli.ts run "audit this repo" --stream</code><br>
@@ -41,7 +41,7 @@ These are architectural goals for the current v0.2.0 release. Measurement infras
 
 | Target | Goal | Notes |
 |--------|------|-------|
-| **Checkpoint Recovery** | <5 seconds | In-memory currently; SQLite persistence in progress |
+| **Checkpoint Recovery** | <5 seconds | SQLite-backed with WAL persistence |
 | **Failover** | <10 seconds | Provider failure to next provider |
 | **Compensation** | <30 seconds | Failed mutation to rollback complete |
 | **DLQ Processing** | <60 seconds | Error detection to persisted entry |
@@ -81,7 +81,7 @@ Every agent thought, tool call, and decision streams to your terminal in real ti
 
 ### Automatic topology selection
 
-The deliberation engine classifies each task (CODING / RESEARCH / ANALYSIS / FACTUAL), estimates complexity, and picks from 8 orchestration topologies — SINGLE, SEQUENTIAL, PARALLEL, HIERARCHICAL, HYBRID, DEBATE, ENSEMBLE, EVALUATOR-OPTIMIZER. A one-line task uses 1 agent. A cross-repository audit spins up 20. Zero configuration.
+The deliberation engine classifies each task (CODING / RESEARCH / ANALYSIS / FACTUAL), estimates complexity, and picks from 5 canonical orchestration topologies — SINGLE, CHAIN, DISPATCH, ORCHESTRATOR, REVIEW. A one-line task uses 1 agent. A cross-repository audit spins up 20. Zero configuration.
 
 ### 22 providers with automatic failover
 
@@ -89,11 +89,11 @@ Set any one API key. Commander detects your provider, and if it fails, falls thr
 
 ### Quality gates on every output
 
-Before returning any result, Commander runs heuristic quality checks: hallucination signal detection, consistency verification, completeness scoring, accuracy estimation, and safety scanning. These are currently regex-based heuristics (LLM-as-Judge verification is planned). If the output fails any gate, the system retries or reports the failure with full context.
+Before returning any result, Commander runs quality checks: regex-based hallucination signal detection, consistency verification, completeness scoring, accuracy estimation, and safety scanning. If the output fails any gate, the system retries or reports the failure with full context.
 
 ### Self-optimizing runtime
 
-A meta-learner using Thompson Sampling and Reflexion tunes agent configurations across runs. It learns which topologies work best for which task types, which providers are fastest, and which parameter combinations produce the highest quality results. The system gets better the more you use it.
+A meta-learner using Thompson Sampling and Reflexion tunes agent configurations across runs. It learns which topologies work best for which task types, which providers are fastest, and which parameter combinations produce the highest quality results. Note: the meta-learner needs 5+ recorded experiences before it begins to influence strategy selection; new users see sequential execution until that threshold is reached.
 
 ---
 
@@ -108,10 +108,9 @@ A meta-learner using Thompson Sampling and Reflexion tunes agent configurations 
                         └──────────┬───────────────────┘
                                    │
                         ┌──────────▼───────────────────┐
-                        │      TOPOLOGY ROUTER          │
-                        │  SINGLE · SEQUENTIAL · PARALLEL│
-                        │  HIERARCHICAL · DEBATE · HYBRID│
-                        │  ENSEMBLE · EVALUATOR-OPTIMIZER│
+                         │      TOPOLOGY ROUTER          │
+                         │  SINGLE · CHAIN · DISPATCH     │
+                         │  ORCHESTRATOR · REVIEW          │
                         └──────────┬───────────────────┘
                                    │
                ┌───────────────────┼───────────────────┐
@@ -151,9 +150,9 @@ Commander includes these infrastructure components (see notes for development st
 | **SSE streaming**           | Structured events via message bus pub/sub with Last-Event-ID replay             | ✅ Live |
 | **Fallback chains**         | Auto-failover between providers, configurable order and timeouts                | ✅ Live |
 | **Semantic caching**        | SHA-256 exact + cosine-similarity deduplication (via EmbeddingFunction)         | ✅ Live |
-| **Checkpointing**           | In-memory conversation checkpoints for backtrack/rewind                          | ⚠️ In-memory; SQLite WAL in development |
+| **Checkpointing**           | SQLite-backed with WAL persistence; falls back to in-memory if SQLite is unavailable (no warning logged)                          | ✅ Live |
 | **Multi-tenancy**           | Tenant-aware singleton isolation via AsyncLocalStorage                           | ⚠️ Isolation only; per-tenant budgets/storage pending |
-| **Quality gates**           | Regex-based heuristic checks (hallucination signals, hedging, contradiction)     | ⚠️ Regex only; LLM-as-Judge planned |
+| **Quality gates**           | Regex heuristics (hallucination signals, hedging, contradiction)     | ✅ Live |
 | **Self-optimization**       | Beta-distribution Thompson Sampling with Reflexion and cross-session persistence | ⚠️ Needs 5+ runs to activate |
 | **Metrics/Tracing**         | OpenMetrics counters + span-based execution traces                               | ⚠️ Partial; persistent store pending |
 | **Security**                | Auth manager, CORS, privacy router, content scanner                              | ⚠️ Partial; rate limiting pending |
@@ -166,12 +165,12 @@ Commander includes these infrastructure components (see notes for development st
 |                       | Commander                     | LangGraph       | CrewAI           | AutoGen       |
 | --------------------- | ----------------------------- | --------------- | ---------------- | ------------- |
 | **SSE streaming**     | Built-in                      | ❌              | ❌               | ❌            |
-| **Auto topology**     | 8 patterns, auto-chosen       | Manual DAG      | Fixed sequential | Manual        |
+| **Auto topology**     | 5 canonical patterns, auto-chosen       | Manual DAG      | Fixed sequential | Manual        |
 | **Providers**         | 22, auto-failover             | 1-3 (LangChain) | 3-5              | Mostly OpenAI |
 | **Self-optimization** | Thompson Sampling + Reflexion | ❌              | ❌               | ❌            |
 | **Multi-tenant**      | Tenant-aware singleton context | ❌              | ❌               | ❌            |
-| **Crash safety**      | In-memory checkpoints (SQLite WAL in progress) | ❌ | ❌ | ❌ |
-| **Quality gates**     | Regex-based heuristic checks  | ❌              | ❌               | ❌            |
+| **Crash safety**      | SQLite-backed checkpoints with WAL; silent fallback to in-memory if SQLite unavailable | ❌ | ❌ | ❌ |
+| **Quality gates**     | Regex heuristics (hallucination signals, hedging, contradiction)  | ❌              | ❌               | ❌            |
 | **Circuit breakers**  | Per-provider 3-state          | ❌              | ❌               | ❌            |
 | **Dead letter queue** | Append-only ndjson files with replay | ❌       | ❌               | ❌            |
 
@@ -186,7 +185,7 @@ cd Commander && pnpm install
 
 # Set any API key — Commander auto-detects
 export OPENAI_API_KEY=sk-...
-# or: ANTHROPIC / DEEPSEEK / GROQ / OLLAMA / 18 others
+# or: ANTHROPIC / DEEPSEEK / GROQ / OLLAMA / 17 others
 
 # Run anything
 npx tsx packages/core/src/cli.ts run "audit this repo for security vulnerabilities"
@@ -208,7 +207,7 @@ Set any one environment variable. Commander auto-detects from 22 providers:
 
 OpenAI · Anthropic · Google · DeepSeek · Zhipu · MIMO · Xiaomi · Groq · Together · Perplexity · Fireworks · Replicate · Mistral · Cohere · OpenRouter · Agnes · Ollama · vLLM · AWS Bedrock · xAI · Anyscale · DeepInfra
 
-If your primary provider fails, Commander automatically falls through the chain. Every provider is interchangeable — switch with one env var change.
+If your primary provider fails, Commander automatically falls through the chain. Note: not all providers support tool/function calling (Replicate and Perplexity currently throw errors for tool use). Switch with one env var change when using a compatible provider.
 
 ---
 
@@ -225,5 +224,5 @@ The system is being built with the same discipline as any production distributed
 MIT — use it, ship it, build on it. [Star on GitHub](https://github.com/PStarH/Commander) · [Documentation](https://github.com/PStarH/commander-docs) · [Architecture](ARCHITECTURE.md)
 
 <p align="center">
-  <sub>8 topologies · 22 providers · 26 built-in tools · Built for engineers who want to see what their AI is actually doing.</sub>
+  <sub>5 topologies · 22 providers · 26 built-in tools · Built for engineers who want to see what their AI is actually doing.</sub>
 </p>

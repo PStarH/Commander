@@ -8,24 +8,25 @@
 import type { CompensableAction } from '../runtime/compensationRegistry';
 
 // ============================================================================
-// Tool tag and cost lookup (used by rollback planner)
+// Runtime inference helpers (fallback when no explicit registration)
+// Used by rollback planner when TOOL_COMPENSATION_METADATA has no entry.
 // ============================================================================
 
-/**
- * Look up tags associated with a tool name. Used by the rollback
- * planner to classify compensation risk. Returns empty array when
- * no tags are registered (safe default).
- */
-export function getToolTags(_toolName: string): string[] {
+export function inferToolTags(toolName: string): string[] {
+  if (toolName.startsWith('file_') || toolName.startsWith('fs_')) return ['low_risk'];
+  if (toolName.startsWith('read_') || toolName.startsWith('list_') || toolName.startsWith('get_')) return ['low_risk'];
+  if (toolName.includes('delete') || toolName.includes('remove') || toolName.includes('destroy')) return ['destructive'];
+  if (toolName.includes('create') || toolName.includes('write') || toolName.includes('update')) return ['requires_approval'];
+  if (toolName.includes('send_') || toolName.includes('notify') || toolName.includes('email')) return ['irreversible', 'requires_approval'];
   return [];
 }
 
-/**
- * Look up the USD cost associated with a tool invocation. Used by the
- * rollback planner to estimate compensation cost and drive approval
- * thresholds. Returns undefined when no cost is registered.
- */
-export function getToolCost(_toolName: string): number | undefined {
+export function inferToolCost(toolName: string): number | undefined {
+  if (toolName.startsWith('stripe_')) return 0.05;
+  if (toolName.startsWith('aws_')) return 0.01;
+  if (toolName.startsWith('gcp_')) return 0.01;
+  if (toolName.startsWith('slack_')) return 0;
+  if (toolName.startsWith('github_')) return 0;
   return undefined;
 }
 

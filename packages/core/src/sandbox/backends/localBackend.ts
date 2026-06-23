@@ -3,7 +3,7 @@ import type { ExecutionBackend, SandboxExecutionResult } from '../types';
 import { getSandboxManager } from '../manager';
 
 /** Shell metacharacters that enable command injection — blocks fallback execSync. */
-const SHELL_UNSAFE_RE = /[;&|`$(){}[\]!#~<>*\n\t'"\\\x00-\x1f]/;
+export const SHELL_UNSAFE_RE = /[;&|`$(){}[\]!#~<>*\n\t'"\\\x00-\x1f]/;
 
 /**
  * Shell-aware split: splits on whitespace but preserves quoted substrings.
