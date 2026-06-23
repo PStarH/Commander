@@ -25,7 +25,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   openCheckpointBackend,
-  type IChekpointBackend,
+  resetAtrCheckpointStore,
+  type ICheckpointBackend,
 } from '../../src/atr/checkpointStore';
 import type { CheckpointState } from '../../src/runtime/stateCheckpointer';
 
@@ -84,6 +85,7 @@ describe('AtrCheckpointStore — kill9 recovery contract', () => {
   });
 
   afterEach(() => {
+    resetAtrCheckpointStore();
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {
@@ -167,25 +169,28 @@ describe('AtrCheckpointStore — kill9 recovery contract', () => {
    *   5. Assert: 2 <= rows.length <= 3 (the kill landed mid-step, and
    *      either 2 or 3 of 4 checkpoints survived).
    */
-  it('after SIGKILL during step N, recovery reveals step N or N-1 (redo ≤ 1)', { timeout: 30000 }, async () => {
-    const dist = locateDist();
-    if (!dist) {
-      // Skip if the dist is not available — but the in-process test above
-      // already covers the atomicity contract at the API layer. Mark skip
-      // with a clear reason rather than failing.
-      // Vitest does not have skip() at runtime; instead we assert a
-      // tautology to keep CI green when dist is absent.
-      console.warn('kill9 fork test: dist/atr/checkpointStore.js missing — fork branch skipped');
-      expect(true).toBe(true);
-      return;
-    }
+  it(
+    'after SIGKILL during step N, recovery reveals step N or N-1 (redo ≤ 1)',
+    { timeout: 30000 },
+    async () => {
+      const dist = locateDist();
+      if (!dist) {
+        // Skip if the dist is not available — but the in-process test above
+        // already covers the atomicity contract at the API layer. Mark skip
+        // with a clear reason rather than failing.
+        // Vitest does not have skip() at runtime; instead we assert a
+        // tautology to keep CI green when dist is absent.
+        console.warn('kill9 fork test: dist/atr/checkpointStore.js missing — fork branch skipped');
+        expect(true).toBe(true);
+        return;
+      }
 
-    const runId = 'kill9-contract-run';
+      const runId = 'kill9-contract-run';
 
-    // The child's body. Note: write to stderr so the parent can observe
-    // progress markers (these are advisory; the contract check uses DB
-    // state, not markers).
-    const childScript = `
+      // The child's body. Note: write to stderr so the parent can observe
+      // progress markers (these are advisory; the contract check uses DB
+      // state, not markers).
+      const childScript = `
 const path = ${JSON.stringify(dist)};
 const dbPath = ${JSON.stringify(dbPath)};
 const runId  = ${JSON.stringify(runId)};
@@ -213,41 +218,42 @@ const sleep  = (ms) => new Promise((r) => setTimeout(r, ms));
 })().catch((e) => { process.stderr.write('CHILD:err ' + e.message + '\\n'); process.exit(1); });
     `;
 
-    const child = childProcess.spawn(process.execPath, ['-e', childScript], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+      const child = childProcess.spawn(process.execPath, ['-e', childScript], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
 
-    // Wait long enough that the child has written at least step 2 but
-    // is probably mid-step 3 (writes ~80ms each).
-    await new Promise((r) => setTimeout(r, 175));
+      // Wait long enough that the child has written at least step 2 but
+      // is probably mid-step 3 (writes ~80ms each).
+      await new Promise((r) => setTimeout(r, 175));
 
-    // SIGKILL — uncatchable, immediate termination.
-    child.kill('SIGKILL');
+      // SIGKILL — uncatchable, immediate termination.
+      child.kill('SIGKILL');
 
-    // Reap the child.
-    await new Promise<void>((resolve) => {
-      child.on('exit', () => resolve());
-    });
+      // Reap the child.
+      await new Promise<void>((resolve) => {
+        child.on('exit', () => resolve());
+      });
 
-    // Re-open the WAL store from the parent and check what committed
-    // atomically before SIGKILL.
-    const recover: IChekpointBackend = openCheckpointBackend({ filePath: dbPath });
-    const rows = recover.listByRun(runId);
+      // Re-open the WAL store from the parent and check what committed
+      // atomically before SIGKILL.
+      const recover: ICheckpointBackend = openCheckpointBackend({ filePath: dbPath });
+      const rows = recover.listByRun(runId);
 
-    // Step-redo <= 1 contract:
-    //   - 2 rows  → kill landed during step 3's sleep (committed step 2)
-    //   - 3 rows  → kill landed right after step 3's commit
-    //   - 0 or 1  → broken: even the first WAL row didn't survive
-    //   - 4 rows  → broken: SIGKILL didn't interrupt
-    expect(rows.length).toBeGreaterThanOrEqual(2);
-    expect(rows.length).toBeLessThanOrEqual(3);
+      // Step-redo <= 1 contract:
+      //   - 2 rows  → kill landed during step 3's sleep (committed step 2)
+      //   - 3 rows  → kill landed right after step 3's commit
+      //   - 0 or 1  → broken: even the first WAL row didn't survive
+      //   - 4 rows  → broken: SIGKILL didn't interrupt
+      expect(rows.length).toBeGreaterThanOrEqual(2);
+      expect(rows.length).toBeLessThanOrEqual(3);
 
-    if (rows.length > 0) {
-      const maxStep = Math.max(...rows.map((r) => r.stepNumber));
-      expect(maxStep).toBeGreaterThanOrEqual(2);
-      expect(maxStep).toBeLessThanOrEqual(3);
-    }
+      if (rows.length > 0) {
+        const maxStep = Math.max(...rows.map((r) => r.stepNumber));
+        expect(maxStep).toBeGreaterThanOrEqual(2);
+        expect(maxStep).toBeLessThanOrEqual(3);
+      }
 
-    recover.close();
-  });
+      recover.close();
+    },
+  );
 });
