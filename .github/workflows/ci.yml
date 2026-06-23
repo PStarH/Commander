@@ -119,15 +119,20 @@ jobs:
               echo 'echo [VCVARS_OK]' >> "$batpath"
               echo 'where cl.exe' >> "$batpath"
               echo 'cl.exe 2>&1 | head -5' >> "$batpath"
+              echo 'where pnpm 2>&1' >> "$batpath"
+              echo 'pnpm --version 2>&1' >> "$batpath"
               echo 'echo [PNPM_START]' >> "$batpath"
               echo 'cd /d %GITHUB_WORKSPACE%' >> "$batpath"
-              echo 'pnpm rebuild better-sqlite3' >> "$batpath"
+              echo 'echo [PNPM_REBUILD_START]' >> "$batpath"
+              echo 'pnpm rebuild better-sqlite3 2>&1' >> "$batpath"
+              echo 'echo [PNPM_EXIT_CODE]: %errorlevel%' >> "$batpath"
               # Convert to Windows path for cmd.exe
               batwin=$(echo "$batpath" | sed 's|^/\([a-z]\)/|\1:\\|' | sed 's|/|\\|g')
               echo "  [BAT] batch file (unix): $batpath"
               echo "  [BAT] batch file (win):  $batwin"
               echo "  [BAT] vcvars64.bat:      $VS_VCVARS"
               echo "  [BAT] workspace:         $GITHUB_WORKSPACE"
+              echo "  [BAT] displaying batch file:"
               cat "$batpath"
               echo "  [BAT] running..."
               MSYS2_ARG_CONV_EXCL=* cmd /c "$batwin" \
