@@ -39,7 +39,7 @@ describe('safePath — workspace boundary enforcement', () => {
 
   it('accepts nested paths within workspace', () => {
     const result = safePath('src/tools/fileSystemTool.ts');
-    assert.ok(result.endsWith('src/tools/fileSystemTool.ts'));
+    assert.ok(result.endsWith(path.normalize('src/tools/fileSystemTool.ts')));
     assert.ok(fs.existsSync(result));
   });
 
@@ -50,7 +50,7 @@ describe('safePath — workspace boundary enforcement', () => {
 
   it('accepts non-existent paths within workspace (ENOENT)', () => {
     const result = safePath('nonexistent-dir-xyz/nonexistent-file.test');
-    assert.ok(result.endsWith('nonexistent-dir-xyz/nonexistent-file.test'));
+    assert.ok(result.endsWith(path.normalize('nonexistent-dir-xyz/nonexistent-file.test')));
     assert.ok(!fs.existsSync(result));
   });
 
