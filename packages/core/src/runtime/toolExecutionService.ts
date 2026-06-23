@@ -70,7 +70,7 @@ export class ToolExecutionService {
     const startTime = Date.now();
     try {
       if (toolCall.name.startsWith('chaos_')) {
-        console.log(`[ToolExecSvc] ENTER ${toolCall.name} round=${String((toolCall.arguments as any)?.payload?.round ?? '?')}`);
+        console.warn(`[ToolExecSvc] ENTER ${toolCall.name} round=${String((toolCall.arguments as { payload?: { round?: number | string } }).payload?.round ?? '?')}`);
       }
       // Sub-agent tool whitelist enforcement: if an allowlist is provided,
       // reject any tool call outside the allowed set.
