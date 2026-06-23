@@ -55,19 +55,58 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
+            # ---- Diagnostics: dump what's available on the runner ----
+            echo "::debug::VS diagnostics:"
+            echo "::debug::  where cl.exe = $(cmd //c 'where cl.exe 2>nul' 2>/dev/null || echo NOT_FOUND)"
+            echo "::debug::  where vswhere = $(cmd //c 'where vswhere 2>nul' 2>/dev/null || echo NOT_FOUND)"
+            echo "::debug::  ls /c/Program Files/Microsoft Visual Studio/ = $(ls '/c/Program Files/Microsoft Visual Studio/' 2>/dev/null || echo NOT_FOUND)"
+            echo "::debug::  ls /c/Program Files (x86)/Microsoft Visual Studio/ = $(ls '/c/Program Files (x86)/Microsoft Visual Studio/' 2>/dev/null || echo NOT_FOUND)"
+            # ---- locate vcvars64.bat by trying multiple methods ----
             VS_VCVARS=""
             VS_VCVARS_BASH=""
-            # vswhere is the canonical VS locator on Windows runners
-            if command -v vswhere &>/dev/null; then
-              VS_INSTALL_PATH=$(vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>/dev/null | head -1)
+            # Method A: vswhere (canonical, but needs full path on some runners)
+            cmd_vswhere=""
+            for candidate in "/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" "/c/Program Files/Microsoft Visual Studio/Installer/vswhere.exe" "vswhere"; do
+              if command -v "$candidate" &>/dev/null || [ -f "$candidate" ]; then
+                cmd_vswhere="$candidate"
+                break
+              fi
+            done
+            if [ -n "$cmd_vswhere" ]; then
+              VS_INSTALL_PATH=$("$cmd_vswhere" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>/dev/null | head -1)
               if [ -n "$VS_INSTALL_PATH" ]; then
-                # Keep Windows backslash path for cmd.exe
+                echo "::debug::vswhere found VS at: $VS_INSTALL_PATH"
                 VS_VCVARS="${VS_INSTALL_PATH}\\VC\\Auxiliary\\Build\\vcvars64.bat"
-                # Convert to bash path for display
-                VS_VCVARS_BASH=$(echo "$VS_INSTALL_PATH" | sed 's/\\/\//g' | sed 's/^C:/\/c/')
-                VS_VCVARS_BASH="${VS_VCVARS_BASH}/VC/Auxiliary/Build/vcvars64.bat"
+                VS_VCVARS_BASH=$(echo "$VS_INSTALL_PATH" | sed 's/\\/\//g' | sed 's/^C:/\/c/')"/VC/Auxiliary/Build/vcvars64.bat"
               fi
             fi
+            # Method B: find in both possible VS base directories
+            if [ -z "$VS_VCVARS" ]; then
+              for base in "/c/Program Files/Microsoft Visual Studio" "/c/Program Files (x86)/Microsoft Visual Studio"; do
+                if [ -d "$base" ]; then
+                  found=$(find "$base" -maxdepth 5 -name "vcvars64.bat" -path "*/VC/Auxiliary/Build/*" 2>/dev/null | head -1)
+                  if [ -n "$found" ]; then
+                    VS_VCVARS=$(echo "$found" | sed 's|^/c/|C:\\|' | sed 's|/|\\|g')
+                    VS_VCVARS_BASH="$found"
+                    echo "::debug::find located vcvars64 at: $found"
+                    break
+                  fi
+                fi
+              done
+            fi
+            # Method C: cmd.exe /s dir glob
+            if [ -z "$VS_VCVARS" ]; then
+              found=$(cmd //c 'dir /s /b "C:\Program Files\Microsoft Visual Studio\*\*\VC\Auxiliary\Build\vcvars64.bat" 2>nul' | head -1)
+              if [ -z "$found" ]; then
+                found=$(cmd //c 'dir /s /b "C:\Program Files (x86)\Microsoft Visual Studio\*\*\VC\Auxiliary\Build\vcvars64.bat" 2>nul' | head -1)
+              fi
+              if [ -n "$found" ]; then
+                VS_VCVARS="$found"
+                VS_VCVARS_BASH=$(echo "$found" | sed 's|\\|/|g' | sed 's|^C:|/c|')
+                echo "::debug::cmd dir glob located vcvars64 at: $found"
+              fi
+            fi
+            # ---- Activate MSVC and rebuild ----
             if [ -n "$VS_VCVARS" ]; then
               echo "::notice::Activating MSVC at $VS_VCVARS_BASH, then rebuilding better-sqlite3 in same shell"
               cmd //c "call \"$VS_VCVARS\" >nul && pnpm rebuild better-sqlite3" \
