@@ -2210,7 +2210,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 !retryLoopDetected &&
                 this.governor.getState().phase !== 'critical'
               ) {
-                console.log(
+                console.warn(
                   `[TOOL LOOP] iteration ${toolLoopCount + 1} calls=${response.toolCalls?.length} phase=${this.governor.getState().phase}`,
                 );
                 toolLoopCount++;
@@ -2936,7 +2936,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   }
                 }
               }
-              console.log(
+              console.warn(
                 `[TOOL LOOP] EXIT after ${toolLoopCount} iterations. calls=${response.toolCalls?.length} cycle=${cycleDetected} retry=${retryLoopDetected} phase=${this.governor.getState().phase}`,
               );
 
