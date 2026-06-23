@@ -1,9 +1,10 @@
 /**
- * Dynamic Topology Router - AdaptOrch-inspired topology selection.
+ * Dynamic Topology Router - hardcoded topology selection.
  *
- * AdaptOrch research shows topology-aware orchestration achieves 12-23%
- * improvement over fixed-topology baselines. The router analyzes task
- * dependency DAGs and selects the optimal topology in O(|V|+|E|) time.
+ * Scores topologies using fixed heuristic tables and selects the highest-scoring
+ * candidate. No learned weights are applied (epsilon defaults to 0, pheromone
+ * biasing is a no-op). The "DAG analysis" is derived from deliberation estimates,
+ * not actual task dependencies.
  */
 import type {
   OrchestrationTopology,
@@ -213,9 +214,6 @@ export class TopologyRouter {
     biasedScores?: Array<{
       topology: OrchestrationTopology;
       score: number;
-      pheromoneBias: number;
-      pheromoneSamples: number;
-      expectedSuccess: number;
     }>;
     adjustedWeights?: {
       adjusted: TypeWeights;
@@ -324,25 +322,6 @@ export class TopologyRouter {
       scores.push({ topology, score });
     }
 
-    // Apply pheromone biasing if there's enough data
-    // (PheromoneRouter removed; bias is now a no-op placeholder so the
-    // routing structure and observability fields remain intact.)
-    const biasedScores:
-      | Array<{
-          topology: OrchestrationTopology;
-          score: number;
-          pheromoneBias: number;
-          pheromoneSamples: number;
-          expectedSuccess: number;
-        }>
-      | undefined = scores.map((s) => ({
-      topology: s.topology,
-      score: s.score,
-      pheromoneBias: 0,
-      pheromoneSamples: 0,
-      expectedSuccess: 0.5,
-    }));
-
     scores.sort((a, b) => b.score - a.score);
     const argmaxTopology = scores[0].topology;
     const argmaxScore = scores[0].score;
@@ -404,6 +383,22 @@ export class TopologyRouter {
       CONSENSUS: '20-60s',
     };
 
+    // Allow tenant/provider-specific benchmark calibration to override the
+    // static latency bands. Calibration is stored as observed p50 ms in
+    // LearnedWeights coordination weights and formatted back into bands.
+    const observedLatencyMap: Record<OrchestrationTopology, string> = { ...latencyMap };
+    for (const topology of Object.keys(latencyMap) as OrchestrationTopology[]) {
+      const observedMs = this.learnedWeights.getCoordinationWeight(
+        `latency_band_ms_${topology}`,
+        deliberation.taskType,
+        0,
+        _tenantId,
+      );
+      if (observedMs > 0) {
+        observedLatencyMap[topology] = formatLatencyBand(observedMs);
+      }
+    }
+
     // Compute coordination decision
     const coordination = evaluateCoordinationPolicy(
       deliberation,
@@ -418,12 +413,12 @@ export class TopologyRouter {
       topology: selected,
       reasoning,
       expectedCost,
-      expectedLatency: latencyMap[selected],
+      expectedLatency: observedLatencyMap[selected],
       explorationTriggered,
       epsilonUsed: effectiveEpsilon,
       argmaxTopology,
       coordination,
-      biasedScores,
+      biasedScores: scores,
       adjustedWeights: adjustedWeightsResult,
     };
   }
@@ -654,4 +649,14 @@ function boltzmannDraw(
     if (target <= cumulative) return scores[i].topology;
   }
   return scores[scores.length - 1].topology;
+}
+
+function formatLatencyBand(ms: number): string {
+  if (ms < 5000) return '< 5s';
+  if (ms < 15000) return '5-15s';
+  if (ms < 30000) return '10-30s';
+  if (ms < 60000) return '30-60s';
+  if (ms < 120000) return '30-120s';
+  if (ms < 300000) return '1-5min';
+  return '> 5min';
 }

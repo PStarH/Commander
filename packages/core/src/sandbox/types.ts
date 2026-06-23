@@ -13,6 +13,7 @@ export type SandboxMechanism =
   | 'docker'
   | 'gvisor'
   | 'tee'
+  | 'ssh'
   | 'none';
 
 export interface FileAccessPolicy {

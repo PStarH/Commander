@@ -163,6 +163,11 @@ export const SECURITY_EVENT_TYPE_TO_ASI: Record<SecurityEventType, readonly Owas
   // security_scan defaults to ASI10, but the detector hint can override
   // to ASI06 when the scan is a supply chain scan.
   security_scan: ['ASI10'],
+  key_rotation_attempt: ['ASI08'],
+  key_rotation_confirmed: ['ASI08'],
+  key_rotation_dry_run: ['ASI08'],
+  token_budget_breach: ['ASI04'],
+  circuit_breaker_short_circuit: ['ASI04'],
 };
 
 /**
@@ -631,6 +636,11 @@ const _SECURITY_TYPE_IS_EXHAUSTIVE: Record<SecurityEventType, true> = {
   skill_security_violation: true,
   config_change: true,
   security_scan: true,
+  key_rotation_attempt: true,
+  key_rotation_confirmed: true,
+  key_rotation_dry_run: true,
+  token_budget_breach: true,
+  circuit_breaker_short_circuit: true,
 };
 void _SECURITY_TYPE_IS_EXHAUSTIVE;
 

@@ -1,11 +1,11 @@
 /**
- * Recursive Atomizer - ROMA-inspired task decomposition.
+ * Recursive Atomizer - template-based task decomposition.
  *
- * ROMA (Recursive Open Meta-Agents) decomposes goals into dependency-aware
- * subtask trees that can be executed in parallel. The Atomizer determines
- * whether a task should be decomposed (non-atomic) or executed directly (atomic).
+ * Decomposes goals into subtask trees using fixed templates and text splitting.
+ * ASPECT mode creates fixed subtask groups, STEP mode creates fixed execution
+ * steps, and RECURSIVE mode splits goal text at paragraph boundaries.
  */
-import type { TaskTreeNode, DeliberationPlan } from './types';
+import type { TaskTreeNode, DeliberationPlan, OrchestrationTopology, ROMARole } from './types';
 import * as path from 'path';
 
 /** Ms per estimated token for timeout calculation */
@@ -74,6 +74,7 @@ export class RecursiveAtomizer {
     parentId: string | null = null,
     depth = 0,
     availableTools: string[] = [],
+    topology?: OrchestrationTopology,
   ): TaskTreeNode {
     const nodeId = `task_${Date.now()}_${++this.nodeCounter}`;
     const isAtomic = this.shouldBeAtomic(goal, deliberation, depth);
@@ -92,12 +93,12 @@ export class RecursiveAtomizer {
       id: nodeId,
       parentId,
       goal,
-      role: isAtomic ? 'EXECUTOR' : 'ATOMIZER',
+      role: deliberation.role ?? (isAtomic ? 'EXECUTOR' : 'ATOMIZER'),
       isAtomic,
       subtasks: [],
       dependencies: [],
       context: {
-        systemPrompt: this.buildSystemPrompt(goal, deliberation, isAtomic),
+        systemPrompt: this.buildSystemPrompt(goal, deliberation, isAtomic, topology),
         availableTools,
         estimatedTokens,
       },
@@ -106,18 +107,19 @@ export class RecursiveAtomizer {
     };
 
     if (!isAtomic && depth < this.maxDepth) {
-      const subtasks = this.generateSubtasks(goal, deliberation, depth);
+      const subtasks = this.generateSubtasks(goal, deliberation, depth, topology);
       const limitedSubtasks = subtasks.slice(0, this.maxSubtasks);
 
       if (limitedSubtasks.length > 1) {
         node.role = 'PLANNER';
-        const children = limitedSubtasks.map((sub, i) => {
+        const children = limitedSubtasks.map((sub) => {
           return this.decompose(
             sub.goal,
             sub.deliberation as DeliberationPlan,
             nodeId,
             depth + 1,
             sub.availableTools ?? availableTools,
+            topology,
           );
         });
         for (let i = 0; i < limitedSubtasks.length; i++) {
@@ -147,12 +149,24 @@ export class RecursiveAtomizer {
     goal: string,
     deliberation: DeliberationPlan,
     depth: number,
+    topology?: OrchestrationTopology,
   ): Array<{
     goal: string;
     deliberation: Partial<DeliberationPlan>;
     dependencies: number[];
     availableTools?: string[];
   }> {
+    if (
+      topology &&
+      topology !== 'SINGLE' &&
+      topology !== 'CHAIN' &&
+      topology !== 'DISPATCH' &&
+      topology !== 'ORCHESTRATOR' &&
+      topology !== 'REVIEW'
+    ) {
+      return this.decomposeByTopology(goal, deliberation, topology);
+    }
+
     const strategy = deliberation.decompositionStrategy;
 
     switch (strategy) {
@@ -182,6 +196,7 @@ export class RecursiveAtomizer {
     dependencies: number[];
     availableTools?: string[];
   }> {
+    // Fixed 3-aspect template: research, analysis, synthesis
     const aspects = [
       {
         aspect: 'research',
@@ -224,6 +239,100 @@ Include specific code snippets with line numbers when referencing code.`;
     });
   }
 
+  private decomposeByTopology(
+    goal: string,
+    deliberation: DeliberationPlan,
+    topology: OrchestrationTopology,
+  ): Array<{
+    goal: string;
+    deliberation: Partial<DeliberationPlan>;
+    dependencies: number[];
+    availableTools?: string[];
+  }> {
+    const minAgents = topology === 'DEBATE' || topology === 'ENSEMBLE' ? 3 : 2;
+    const agentCount = Math.min(
+      8,
+      Math.max(minAgents, deliberation.estimatedAgentCount ?? minAgents),
+    );
+    const base: Partial<DeliberationPlan> = {
+      ...deliberation,
+      decompositionStrategy: 'NONE',
+      estimatedAgentCount: 1,
+      estimatedSteps: Math.max(3, Math.floor((deliberation.estimatedSteps ?? 10) / agentCount)),
+    };
+    const roleOf = (r: string): ROMARole => r as ROMARole;
+
+    switch (topology) {
+      case 'HANDOFF':
+        return Array.from({ length: agentCount }, (_, i) => ({
+          goal:
+            i === 0
+              ? `[Handoff Agent ${i + 1}/${agentCount}] ${goal}`
+              : `[Handoff Agent ${i + 1}/${agentCount}] Continue the task using context from the previous agent. Original task: ${goal}`,
+          deliberation: { ...base, role: roleOf(`HANDOFF_AGENT_${i + 1}`) },
+          dependencies: i > 0 ? [i - 1] : [],
+        }));
+      case 'DEBATE': {
+        const debaterCount = agentCount - 1;
+        const debaters = Array.from({ length: debaterCount }, (_, i) => ({
+          goal: `[Debate position ${i + 1}/${debaterCount}] ${goal}`,
+          deliberation: { ...base, role: roleOf(`DEBATER_${i + 1}`) },
+          dependencies: [],
+        }));
+        return [
+          ...debaters,
+          {
+            goal: `[Judge] Evaluate the debate positions and select the best answer for: ${goal}`,
+            deliberation: { ...base, role: roleOf('JUDGE') },
+            dependencies: [],
+          },
+        ];
+      }
+      case 'ENSEMBLE': {
+        const voterCount = agentCount - 1;
+        const perspectives = [
+          'pragmatic engineer (correctness + feasibility)',
+          'senior architect (design quality + edge cases)',
+          'creative problem solver (novel approaches)',
+        ];
+        const voters = Array.from({ length: voterCount }, (_, i) => ({
+          goal: `[Voter ${i + 1}/${voterCount} — ${perspectives[i % perspectives.length]}] ${goal}`,
+          deliberation: { ...base, role: roleOf(`VOTER_${i + 1}`) },
+          dependencies: [],
+        }));
+        return [
+          ...voters,
+          {
+            goal: `[Aggregator] Synthesize the voter outputs into the best final answer for: ${goal}`,
+            deliberation: { ...base, role: roleOf('AGGREGATOR') },
+            dependencies: [],
+          },
+        ];
+      }
+      case 'CONSENSUS':
+        return Array.from({ length: agentCount }, (_, i) => ({
+          goal: `[Consensus Agent ${i + 1}/${agentCount}] Refine your position toward agreement. Task: ${goal}`,
+          deliberation: { ...base, role: roleOf(`CONSENSUS_AGENT_${i + 1}`) },
+          dependencies: [],
+        }));
+      case 'EVALUATOR_OPTIMIZER':
+        return [
+          {
+            goal: `[Implementer] Produce an initial solution for: ${goal}`,
+            deliberation: { ...base, role: roleOf('IMPLEMENTER') },
+            dependencies: [],
+          },
+          {
+            goal: `[Evaluator] Critically evaluate the implementation against requirements for: ${goal}`,
+            deliberation: { ...base, role: roleOf('EVALUATOR') },
+            dependencies: [0],
+          },
+        ];
+      default:
+        return [{ goal, deliberation: base, dependencies: [] }];
+    }
+  }
+
   private decomposeByStep(
     goal: string,
     deliberation: DeliberationPlan,
@@ -233,6 +342,7 @@ Include specific code snippets with line numbers when referencing code.`;
     dependencies: number[];
     availableTools?: string[];
   }> {
+    // Fixed 4-step template
     const steps = [
       'Plan and design approach',
       'Implement core logic',
@@ -331,9 +441,8 @@ Write a comprehensive output with:
   }
 
   /**
-   * Split text at semantic boundaries (paragraphs, sentences) instead of
-   * arbitrary character positions. This preserves meaning and avoids
-   * mid-sentence splits that confuse sub-agents.
+   * Split text at paragraph boundaries. This is simple text chunking, not
+   * semantic boundary detection.
    */
   private splitAtSemanticBoundaries(text: string, targetChunks: number): string[] {
     if (targetChunks <= 1) return [text];
@@ -387,14 +496,17 @@ Write a comprehensive output with:
     goal: string,
     deliberation: DeliberationPlan,
     isAtomic: boolean,
+    topology?: OrchestrationTopology,
   ): string {
-    const role = isAtomic
-      ? 'You are an EXECUTOR agent. Execute the assigned subtask directly and produce a concrete result.'
-      : deliberation.decompositionStrategy === 'ASPECT'
-        ? 'You are an ASPECT RESEARCHER. Explore one aspect of the problem thoroughly.'
-        : deliberation.decompositionStrategy === 'RECURSIVE'
-          ? 'You are a RECURSIVE PLANNER. Decompose this subtask further if needed.'
-          : 'You are a TASK PLANNER. Plan and execute the next step in the workflow.';
+    const role = deliberation.role
+      ? this.roleToSystemPrompt(deliberation.role, topology)
+      : isAtomic
+        ? 'You are an EXECUTOR agent. Execute the assigned subtask directly and produce a concrete result.'
+        : deliberation.decompositionStrategy === 'ASPECT'
+          ? 'You are an ASPECT RESEARCHER. Explore one aspect of the problem thoroughly.'
+          : deliberation.decompositionStrategy === 'RECURSIVE'
+            ? 'You are a RECURSIVE PLANNER. Decompose this subtask further if needed.'
+            : 'You are a TASK PLANNER. Plan and execute the next step in the workflow.';
 
     const taskTypeGuidance = this.getTaskTypeGuidance(deliberation.taskType);
 
@@ -409,6 +521,37 @@ Write a comprehensive output with:
       taskTypeGuidance,
       'Use the artifact pattern: write results to shared storage and return references.',
     ].join('\n');
+  }
+
+  private roleToSystemPrompt(role: string, topology?: OrchestrationTopology): string {
+    if (role.startsWith('HANDOFF_AGENT_')) {
+      return `You are a serial handoff agent. ${role.endsWith('_1') ? 'Start the task from scratch and pass forward a clear result.' : 'Continue from the previous agent’s output and move the task forward.'}`;
+    }
+    if (role.startsWith('DEBATER_')) {
+      return 'You are a debater. Argue your assigned position clearly and thoroughly.';
+    }
+    if (role === 'JUDGE') {
+      return 'You are a judge. Evaluate the debate positions and select the best answer with justification.';
+    }
+    if (role.startsWith('VOTER_')) {
+      return 'You are an ensemble voter. Provide your independent perspective on the task.';
+    }
+    if (role === 'AGGREGATOR') {
+      return 'You are a voting coordinator. Synthesize the voter outputs into the best final answer.';
+    }
+    if (role.startsWith('CONSENSUS_AGENT_')) {
+      return 'You are a consensus participant. Refine your position toward group agreement while preserving correctness.';
+    }
+    if (role === 'IMPLEMENTER') {
+      return 'You are an implementer. Produce a concrete initial solution.';
+    }
+    if (role === 'EVALUATOR') {
+      return 'You are an evaluator. Critically assess the implementation against requirements and identify concrete improvements.';
+    }
+    if (topology) {
+      return `You are executing the ${topology} topology. Fulfill your assigned role.`;
+    }
+    return `You are ${role}. Execute the assigned subtask directly and produce a concrete result.`;
   }
 
   private getTaskTypeGuidance(taskType: DeliberationPlan['taskType']): string {

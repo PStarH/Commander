@@ -8,6 +8,7 @@ import type {
   PredictionVerdict,
   PerModelStrategyStats,
   RegressionEvent,
+  ShadowComparison,
   StrategyPerformance,
 } from '../runtime/types';
 import { getMessageBus } from '../runtime/messageBus';
@@ -36,17 +37,7 @@ export class MetaLearner {
   private minSamplesForSuggestion: number;
   private persistPath: string | null;
   private config: MetaLearnerConfig;
-  private shadowComparisons: Array<{
-    runId: string;
-    taskType: string;
-    mainStrategy: string;
-    shadowStrategy: string;
-    mainSuccess: boolean;
-    shadowSuccess: boolean;
-    mainDurationMs: number;
-    shadowDurationMs: number;
-    timestamp: string;
-  }> = [];
+  private shadowComparisons: ShadowComparison[] = [];
 
   // Sub-module instances
   private selector = new StrategySelector();
@@ -168,56 +159,6 @@ export class MetaLearner {
     return chosen;
   }
 
-  /**
-   * Select the runner-up (second-best) strategy for shadow mode comparison.
-   */
-  selectShadowStrategy(taskType: string): string | null {
-    return this.selector.selectShadowStrategy(taskType, this.perfTracker.getStrategyPerformance());
-  }
-
-  /**
-   * Record a shadow comparison result.
-   */
-  recordShadowComparison(params: {
-    runId: string;
-    taskType: string;
-    mainStrategy: string;
-    shadowStrategy: string;
-    mainSuccess: boolean;
-    shadowSuccess: boolean;
-    mainDurationMs: number;
-    shadowDurationMs: number;
-  }): void {
-    this.shadowComparisons.push({
-      ...params,
-      timestamp: new Date().toISOString(),
-    });
-    if (this.shadowComparisons.length > 200) this.shadowComparisons.shift();
-
-    this.selector.recordShadowComparison({
-      taskType: params.taskType,
-      shadowStrategy: params.shadowStrategy,
-      shadowSuccess: params.shadowSuccess,
-    });
-  }
-
-  /**
-   * Get recent shadow mode comparisons.
-   */
-  getShadowComparisons(limit = 10): Array<{
-    runId: string;
-    taskType: string;
-    mainStrategy: string;
-    shadowStrategy: string;
-    mainSuccess: boolean;
-    shadowSuccess: boolean;
-    mainDurationMs: number;
-    shadowDurationMs: number;
-    timestamp: string;
-  }> {
-    return this.shadowComparisons.slice(-limit);
-  }
-
   // ========================================================================
   // Query Methods
   // ========================================================================
@@ -322,6 +263,10 @@ export class MetaLearner {
 
   getReflections(limit = 10): string[] {
     return this.reflections.slice(-limit);
+  }
+
+  getShadowComparisons(limit = 10): ShadowComparison[] {
+    return this.shadowComparisons.slice(-limit);
   }
 
   getSuggestions(): OptimizationSuggestion[] {

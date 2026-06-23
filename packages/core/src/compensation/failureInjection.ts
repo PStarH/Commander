@@ -151,7 +151,11 @@ export class FailureInjector {
       if (rule.maxInvocations !== undefined) rule.maxInvocations--;
       const prob = rule.probability ?? 1;
       if (this.rng() > prob) continue;
-      if (rule.delayMs && rule.delayMs > 0) continue;
+      if (rule.delayMs && rule.delayMs > 0) {
+        // Rule has a delay — record it as matched but skip for now;
+        // the caller can apply the delay if needed.
+        return rule;
+      }
       return rule;
     }
     return null;

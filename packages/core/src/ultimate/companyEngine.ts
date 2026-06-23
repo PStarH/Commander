@@ -40,6 +40,8 @@ import type { UltimateExecutionResult } from './types';
 export interface CompanyEngineConfig {
   /** Project ID */
   projectId: string;
+  /** Tenant ID (for per-tenant topology learning and isolation) */
+  tenantId?: string;
   /** User ID (for personalization) */
   userId?: string;
   /** Enable capability matching */
@@ -59,6 +61,8 @@ export interface CompanyExecutionParams {
   goal: string;
   /** Agent ID */
   agentId?: string;
+  /** Tenant ID (overrides config.tenantId if provided) */
+  tenantId?: string;
   /** Context data */
   contextData?: Record<string, unknown>;
   /** Force a specific execution mode */
@@ -228,6 +232,7 @@ export class CompanyEngine {
       result = await this.orchestrator.execute({
         projectId: this.config.projectId,
         agentId,
+        tenantId: params.tenantId ?? this.config.tenantId,
         goal: params.goal,
         contextData: {
           ...params.contextData,

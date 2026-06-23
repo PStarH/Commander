@@ -763,6 +763,11 @@ const EVENT_TYPE_TO_ATLAS: Record<SecurityEventType, string[]> = {
   skill_security_violation: ['AML.T0040'],
   config_change: ['AML.T0019'],
   security_scan: [], // informational only
+  key_rotation_attempt: ['AML.T0019'],
+  key_rotation_confirmed: ['AML.T0019'],
+  key_rotation_dry_run: ['AML.T0019'],
+  token_budget_breach: ['AML.T0038'],
+  circuit_breaker_short_circuit: ['AML.T0038'],
 };
 
 /** Map RedTeamFramework AttackCategory → ATLAS technique IDs */

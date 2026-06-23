@@ -97,8 +97,24 @@ export class AppContainerSB implements PlatformSandbox {
         return false;
       }
 
-      // Verify we can run PowerShell
-      execSync('powershell.exe -Command "Write-Host ok"', { timeout: 5000 });
+      // Verify we can run PowerShell and that the AppContainer cmdlets exist
+      execSync(
+        'powershell.exe -NoProfile -Command "if (-not (Get-Command New-AppContainerProfile -ErrorAction SilentlyContinue)) { exit 1 }"',
+        { timeout: 5000 },
+      );
+
+      // Functional smoke test: create and delete a test container. Some Windows
+      // environments (e.g. GitHub Actions runners) expose the cmdlet but block
+      // the operation or the subsequent icacls grant.
+      const testName = `Commander-SmokeTest-${process.pid}`;
+      execSync(
+        `powershell.exe -NoProfile -Command "` +
+          `$ErrorActionPreference = 'Stop'; ` +
+          `New-AppContainerProfile -Name '${testName}' -DisplayName 'Commander Smoke Test'; ` +
+          `Remove-AppContainerProfile -Name '${testName}' -Confirm:$false -ErrorAction SilentlyContinue;"`,
+        { timeout: 10000 },
+      );
+
       return true;
     } catch (e) {
       getGlobalLogger().debug('AppContainerSB', 'AppContainer unavailable', {

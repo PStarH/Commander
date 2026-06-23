@@ -15,6 +15,7 @@ import type { ToolCall, ToolResult, Tool } from './types';
 import { toolErrorRow } from './toolResultShape';
 import type { ToolApproval, ApprovalResult } from './toolApproval';
 import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
+export { CircuitBreakerRegistry };
 import { getApprovalSystem } from '../sandbox/approval';
 import { getIdempotencyStore } from '../atr/idempotencyStore';
 import { generateIdempotencyKey } from '../atr/canonicalJson';
