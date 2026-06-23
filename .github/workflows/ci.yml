@@ -47,41 +47,40 @@ jobs:
         # invokes MSVC; if extraction fails, node-gyp falls back to a
         # source-build using the just-activated MSVC env.
         #
-        # `continue-on-error: true` surfaces an absent toolchain as a
-        # downstream test failure (clear), not as a workflow-config error
-        # (confusing).
+        # The vcvars64.bat search uses `find` under the VS base dir rather
+        # than hardcoded version folders. GitHub windows-latest runners
+        # have been known to install VS under varying version directories
+        # (e.g. "2022" for VS 2022, "18" for VS 2025 Preview). The find
+        # walk is fast (~1s) and immune to version folder changes.
         continue-on-error: true
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
-            # Locate vcvars64.bat across the most common VS editions
-            # installed on github-hosted windows-latest runners.
+            # Dynamically locate vcvars64.bat under any VS version directory
+            # so runner image updates (VS 2022 → VS 2025 Preview, etc.)
+            # don't require workflow YAML changes.
             VS_VCVARS=""
-            for p in \
-              "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Auxiliary/Build/vcvars64.bat" \
-              "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Auxiliary/Build/vcvars64.bat" \
-              "C:/Program Files/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvars64.bat"; do
-              if [ -f "$p" ]; then VS_VCVARS="$p"; break; fi
-            done
+            VS_BASE="/c/Program Files/Microsoft Visual Studio"
+            if [ -d "$VS_BASE" ]; then
+              VS_VCVARS=$(find "$VS_BASE" -maxdepth 5 -name "vcvars64.bat" -path "*/VC/Auxiliary/Build/*" 2>/dev/null | head -1)
+            fi
             if [ -n "$VS_VCVARS" ]; then
               echo "::notice::Activating MSVC at $VS_VCVARS, then rebuilding better-sqlite3 in same shell"
               cmd //c "call \"$VS_VCVARS\" >nul && pnpm rebuild better-sqlite3" \
-                || (echo "::warning::better-sqlite3 rebuild failed (post-MsVC); workQueueStore tests will fail" && exit 0)
+                || (echo "::warning::better-sqlite3 rebuild failed (post-MsVC)" && exit 0)
             else
               echo "::warning::MSVC vcvars64 not located on Windows runner — attempting pnpm rebuild without MSVC source-build fallback"
               pnpm rebuild better-sqlite3 \
-                || (echo "::warning::better-sqlite3 rebuild failed; workQueueStore tests will fail" && exit 0)
+                || (echo "::warning::better-sqlite3 rebuild failed" && exit 0)
             fi
           else
             pnpm rebuild better-sqlite3 \
-              || (echo "::warning::better-sqlite3 rebuild failed; workQueueStore tests will fail" && exit 0)
+              || (echo "::warning::better-sqlite3 rebuild failed" && exit 0)
           fi
-          # Belt-and-suspenders probe: confirm the binding actually loads
-          # so a silent rebuild failure surfaces here (~5s) rather than
-          # collapsing into a 5-min test-runner error. Use a Node ABI-aware
-          # path so Windows + Linux + macOS can all self-report the
-          # binding location they expect after the rebuild.
-          node -e "require('better-sqlite3')" || echo "::warning::binding did not load post-rebuild"
+          # Probe: run from packages/core so pnpm resolution finds the module
+          (cd packages/core && node -e "require('better-sqlite3')" 2>/dev/null) \
+            && echo "::notice::better-sqlite3 binding loaded OK" \
+            || echo "::warning::binding did not load post-rebuild"
           echo "::notice::Post-rebuild binding status: ABI=$(node -p 'process.versions.modules') platform=$(node -p 'process.platform') arch=$(node -p 'process.arch')"
 
       - name: Security audit
