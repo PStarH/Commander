@@ -8,6 +8,8 @@ export default defineConfig({
       // --- atr ---
       'tests/atr/recoveryBootstrapper.test.ts',
       'tests/atr/taskQueue.test.ts',
+      // --- recovery ---
+      'tests/recovery/kill9.test.ts',
       // --- runtime ---
       'tests/runtime/agentHandoff.test.ts',
       'tests/runtime/agentInbox.test.ts',
