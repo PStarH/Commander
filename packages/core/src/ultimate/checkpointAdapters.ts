@@ -19,10 +19,7 @@
  */
 
 import { ReliabilityEngine } from '../runtime/reliabilityEngine';
-import type {
-  CheckpointState,
-  CheckpointPhase,
-} from '../runtime/stateCheckpointer';
+import type { CheckpointState, CheckpointPhase } from '../runtime/stateCheckpointer';
 import type { LLMMessage, TokenUsage } from '../runtime/types';
 import type {
   SequentialPipelineRun,
@@ -30,17 +27,8 @@ import type {
   OrchestrationMetrics,
 } from './sequential';
 import type { PoolResult } from './taskPool';
-import type {
-  GoalNode,
-  RoundLedger,
-  CritiqueResult,
-} from '../goal/types';
-import type {
-  SwarmNode,
-  SwarmManager,
-  SwarmResult,
-  FusionReport,
-} from '../swarm/types';
+import type { GoalNode, RoundLedger, CritiqueResult } from '../goal/types';
+import type { SwarmNode, SwarmManager, SwarmResult, FusionReport } from '../swarm/types';
 
 // ============================================================================
 // Phase labels
@@ -146,11 +134,7 @@ export function withTestOnlyPhasesAllowed<T>(allowed: boolean, fn: () => T): T {
 // Envelope contract
 // ============================================================================
 
-export type ExecutorCheckpointKind =
-  | 'sequential'
-  | 'task-pool'
-  | 'goal-round'
-  | 'swarm-round';
+export type ExecutorCheckpointKind = 'sequential' | 'task-pool' | 'goal-round' | 'swarm-round';
 
 export interface ExecutorCheckpointEnvelope {
   kind: ExecutorCheckpointKind;
@@ -766,8 +750,7 @@ function describeRejectedSource(source: unknown): string {
     return `symbol:local:${desc ?? '<unnamed>'}`;
   }
   if (t === 'object') {
-    const ctor =
-      (source as { constructor?: { name?: string } })?.constructor?.name ?? 'Object';
+    const ctor = (source as { constructor?: { name?: string } })?.constructor?.name ?? 'Object';
     return `object:${ctor}`;
   }
   if (t === 'string') return `string:${JSON.stringify(source)}`;
@@ -807,9 +790,7 @@ export function tryResumeFromATR(
   runId: string,
   options?: ResumeFilter,
 ): ResumePoint {
-  const opened = engineOpens(engineOrPath, (engine) =>
-    readResumePoint(engine, runId, options),
-  );
+  const opened = engineOpens(engineOrPath, (engine) => readResumePoint(engine, runId, options));
   if (opened.ok) return opened.value;
   return { kind: 'not-found', runId, reason: opened.reason };
 }
