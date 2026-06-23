@@ -2328,6 +2328,29 @@ export class AgentRuntime implements AgentRuntimeInterface {
                               reason: 'hook_denied',
                               detail: gate.errorMsg,
                             });
+                            // Cross-agent correlator: record the attempt that
+                            // the HookManager denied (the applyBeforeToolCallSecurity
+                            // correlator fire only runs on the allowed-path branch,
+                            // so this denial path would otherwise leave the
+                            // correlator empty). Fires once per hook-denial.
+                            try {
+                              this.securityOrch.onAgentEvent({
+                                id: generateId(),
+                                agentId: ctx.agentId,
+                                runId,
+                                type: 'tool_call',
+                                summary: `Tool ${tc.name} (denied by hook)`,
+                                metadata: {
+                                  toolName: tc.name,
+                                  allowed: false,
+                                  hookReason: gate.errorMsg,
+                                },
+                                timestamp: Date.now(),
+                                severity: 'high',
+                              } as CrossAgentEvent);
+                            } catch {
+                              /* best-effort */
+                            }
                             return toolErrorRow(tc, `Hook blocked: ${gate.errorMsg || 'denied'}`);
                           }
                           // gate.kind === 'siblingAbort'

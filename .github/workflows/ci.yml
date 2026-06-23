@@ -27,28 +27,62 @@ jobs:
 
       - run: pnpm install
 
-      - name: Rebuild better-sqlite3 native binding
+      - name: Rebuild better-sqlite3 native binding (Windows MSVC fallback inline)
         # better-sqlite3 ships prebuilt binaries for most OS × ABI combos
         # but pnpm 9.x's prebuild extraction occasionally fails on warm
         # CI caches, producing 'Could not locate the bindings file
         # ... node-v{N}-... better_sqlite3.node' on Node 20 / 22 runners.
-        # `pnpm rebuild better-sqlite3` re-runs prebuild-install and
-        # transparently falls back to a node-gyp source build for any
-        # ABI the prebuilds don't cover. `continue-on-error: true`
-        # surfaces an absent toolchain as a downstream test failure
-        # (clear), not as a workflow-config error (confusing).
+        #
+        # On Linux/macOS (github-hosted ubuntu/macos runners), the prebuild
+        # revert path is enough — `pnpm rebuild better-sqlite3` re-extracts
+        # or source-builds via the bundled clang toolchain.
+        #
+        # On Windows, source-build needs MSVC active IN THE SAME SHELL as
+        # `pnpm rebuild` (env does NOT auto-propagate between separate
+        # GitHub Actions steps without `>> $GITHUB_ENV` plumbing). To
+        # remove that brittle plumbing dependency, we combine MSVC
+        # activation + rebuild into ONE Windows-only step: `cmd //c` sources
+        # vcvars64.bat inline and chains the rebuild inside the same child
+        # process. prebuild extraction exits early on success and never
+        # invokes MSVC; if extraction fails, node-gyp falls back to a
+        # source-build using the just-activated MSVC env.
+        #
+        # `continue-on-error: true` surfaces an absent toolchain as a
+        # downstream test failure (clear), not as a workflow-config error
+        # (confusing).
         continue-on-error: true
+        shell: bash
         run: |
-          pnpm rebuild better-sqlite3 || (
-            echo "::warning::better-sqlite3 rebuild failed; tests requiring" \
-                 "the binding (e.g. tests/ultimate/workQueueStore.test.ts)" \
-                 "will fail in the next step"
-            exit 0
-          )
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            # Locate vcvars64.bat across the most common VS editions
+            # installed on github-hosted windows-latest runners.
+            VS_VCVARS=""
+            for p in \
+              "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Auxiliary/Build/vcvars64.bat" \
+              "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Auxiliary/Build/vcvars64.bat" \
+              "C:/Program Files/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvars64.bat"; do
+              if [ -f "$p" ]; then VS_VCVARS="$p"; break; fi
+            done
+            if [ -n "$VS_VCVARS" ]; then
+              echo "::notice::Activating MSVC at $VS_VCVARS, then rebuilding better-sqlite3 in same shell"
+              cmd //c "call \"$VS_VCVARS\" >nul && pnpm rebuild better-sqlite3" \
+                || (echo "::warning::better-sqlite3 rebuild failed (post-MsVC); workQueueStore tests will fail" && exit 0)
+            else
+              echo "::warning::MSVC vcvars64 not located on Windows runner — attempting pnpm rebuild without MSVC source-build fallback"
+              pnpm rebuild better-sqlite3 \
+                || (echo "::warning::better-sqlite3 rebuild failed; workQueueStore tests will fail" && exit 0)
+            fi
+          else
+            pnpm rebuild better-sqlite3 \
+              || (echo "::warning::better-sqlite3 rebuild failed; workQueueStore tests will fail" && exit 0)
+          fi
           # Belt-and-suspenders probe: confirm the binding actually loads
           # so a silent rebuild failure surfaces here (~5s) rather than
-          # collapsing into a 5-min test-runner error.
+          # collapsing into a 5-min test-runner error. Use a Node ABI-aware
+          # path so Windows + Linux + macOS can all self-report the
+          # binding location they expect after the rebuild.
           node -e "require('better-sqlite3')" || echo "::warning::binding did not load post-rebuild"
+          echo "::notice::Post-rebuild binding status: ABI=$(node -p 'process.versions.modules') platform=$(node -p 'process.platform') arch=$(node -p 'process.arch')"
 
       - name: Security audit
         run: pnpm audit --audit-level=high
