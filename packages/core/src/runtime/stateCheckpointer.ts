@@ -16,20 +16,26 @@ import type { LeaseManager } from '../atr/leaseManager';
 import { getMetricsCollector } from './metricsCollector';
 import { CheckpointStore, type CheckpointSnapshot } from './checkpointStore';
 
+export type CheckpointPhase =
+  | 'started'
+  | 'llm_call'
+  | 'tool_execution'
+  | 'verification'
+  | 'completed'
+  | 'completed_early_exit'
+  | 'failed'
+  | 'interrupted'
+  | 'sequential-step'
+  | 'task-pool-batch'
+  | 'goal-round'
+  | 'swarm-round';
+
 export interface CheckpointState {
   runId: string;
   agentId: string;
   missionId?: string;
   timestamp: string;
-  phase:
-    | 'started'
-    | 'llm_call'
-    | 'tool_execution'
-    | 'verification'
-    | 'completed'
-    | 'completed_early_exit'
-    | 'failed'
-    | 'interrupted';
+  phase: CheckpointPhase;
   stepNumber: number;
   attemptNumber: number;
   messages: LLMMessage[];
@@ -51,6 +57,7 @@ export interface CheckpointState {
   leaseToken?: string;
   fencingEpoch?: number;
   version?: number;
+  executorState?: unknown;
 }
 
 export class StateCheckpointer {
