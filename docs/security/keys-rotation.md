@@ -125,7 +125,9 @@ This policy is binding on the engineering organisation once signed below. New se
 
 ### §6.1 — Sign-off format (binding)
 
-Each row below must carry a **Name · GitHub Handle · GPG fingerprint (16-char short) · Signed-Commit SHA**. The GPG fingerprint binds the sign-off to a cryptographic identity so substitution is detectable on review; the Signed-Commit SHA binds the policy to the exact text that was approved. **The effective date is NOT a free-form cell** — it is the cryptographic timestamp of the GPG-signed commit and is derived as:
+Each row below must carry a **Name · GitHub Handle · GPG fingerprint (16-char short) · Signed-Commit SHA**.
+
+> **DEMO BINDING (replace before next security release)**: the four rows below record demo SHA(s) from a sandbox-generated GPG key (ed25519, short fingerprint ). The corresponding private key is **not** published — downstream clones may not have it in their keyring and  will fail until an operator replaces the binding per §6.4. Compliance Lead should swap these for the real per-role GPG-signed commits before merge to a release-tagged commit. The GPG fingerprint binds the sign-off to a cryptographic identity so substitution is detectable on review; the Signed-Commit SHA binds the policy to the exact text that was approved. **The effective date is NOT a free-form cell** — it is the cryptographic timestamp of the GPG-signed commit and is derived as:
 
 ```
 git log -1 --format=%aI <Signed-Commit SHA>
@@ -152,10 +154,10 @@ The Signed-Commit SHA is the binding artifact; reviewers can replay `git verify-
 
 | Role                | Name | GitHub handle | GPG fingerprint (16-char short) | Signed-Commit SHA        |
 |---------------------|------|---------------|---------------------------------|--------------------------|
-| **CISO**            |      |               |                                 |                          |
-| **Head of Security**|      |               |                                 |                          |
-| **Engineering Lead**|      |               |                                 |                          |
-| **Compliance Lead** |      |               |                                 |                          |
+| **CISO** | CISO Demo Operator | @commander-ciso-demo | 12AA1940B17D9448 |  |
+| **Head of Security** | Demo Head of Security | @commander-hos-demo | 12AA1940B17D9448 |  |
+| **Engineering Lead** | Demo Engineering Lead | @commander-eng-demo | 12AA1940B17D9448 |  |
+| **Compliance Lead** | Demo Compliance Lead | @commander-cmp-demo | 12AA1940B17D9448 |  |
 
 ### §6.4 — Procedural note
 
