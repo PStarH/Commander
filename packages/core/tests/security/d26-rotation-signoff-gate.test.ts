@@ -63,14 +63,23 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-/** On Windows, npx is a .cmd batch file — Node.js spawnSync won't find it without .cmd suffix. */
+/**
+ * Spawn `tsx` to run the rotation sign-off verifier script as a subprocess.
+ *
+ * On Windows, `npx.cmd` is unreliably reachable via `spawnSync` on GitHub
+ * Actions runners when pnpm manages PATH (produces EINVAL). We use the
+ * `tsx` shim directly from `packages/core/node_modules/.bin/` instead.
+ * The `.cmd` suffix is required on Windows; omitted on POSIX.
+ */
 function npxSpawn(args: string[], opts?: { timeout?: number }) {
-  const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+  const isWin = process.platform === 'win32';
+  const tsxBin = path.join(
+    REPO_ROOT,
+    'packages/core/node_modules/.bin/tsx' + (isWin ? '.cmd' : ''),
+  );
   const cliPath = path.join(REPO_ROOT, 'scripts', 'verify-rotation-signoff.ts');
-  // Use the package dir as cwd so npx resolves tsx from packages/core/node_modules/.bin/
-  // (tsx is a direct devDependency, not hoisted to the repo root on pnpm workspaces).
   const pkgDir = path.join(REPO_ROOT, 'packages/core');
-  const result = spawnSync(npxCmd, ['tsx', cliPath, ...args], {
+  const result = spawnSync(tsxBin, [cliPath, ...args], {
     cwd: pkgDir,
     encoding: 'utf-8',
     timeout: opts?.timeout ?? 60_000,
@@ -82,7 +91,7 @@ function npxSpawn(args: string[], opts?: { timeout?: number }) {
       ? result.error.message
       : 'process did not exit (timeout or spawn failure)';
     throw new Error(
-      `[npxSpawn] tsx subprocess failed to produce exit code: ${reason}\n  command: ${npxCmd} tsx ${cliPath} ${args.join(' ')}`,
+      `[npxSpawn] tsx subprocess failed to produce exit code: ${reason}\n  command: ${tsxBin} ${cliPath} ${args.join(' ')}`,
     );
   }
   return result;
