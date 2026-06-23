@@ -39,6 +39,10 @@ export class ExecutionGraph {
     return this.graph.nodes;
   }
 
+  get timeoutMs(): number | undefined {
+    return this.graph.timeoutMs;
+  }
+
   hasNode(id: string): boolean {
     return this._nodes.has(id);
   }
