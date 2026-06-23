@@ -111,18 +111,13 @@ jobs:
             # ---- Activate MSVC and rebuild ----
             if [ -n "$VS_VCVARS" ]; then
               echo "::notice::Activating MSVC at $VS_VCVARS_BASH, then rebuilding better-sqlite3 in same shell"
-              # Verify the vcvars file exists and list VC build tools directory
-              if [ -f "$VS_VCVARS_BASH" ]; then
-                echo "  verified vcvars64.bat exists"
-              else
-                echo "  WARNING: vcvars64.bat NOT found at expected path"
-              fi
-              # List contents of VC build tools directory for diagnostics
-              VS_VC_DIR=$(dirname "$(dirname "$VS_VCVARS_BASH")")
-              echo "  ls VC/Auxiliary/Build/: $(ls "$VS_VC_DIR" 2>/dev/null | tr '\n' ' ')"
-              # Use single-quote + double-quote bash concatenation to pass
-              # the path to cmd.exe without MSYS2 mangling \" escapes.
-              cmd //c 'call "'"$VS_VCVARS"'" && echo [VCVARS_OK] && where cl.exe && cl.exe 2>&1 | head -5 && echo [PNPM_START] && pnpm rebuild better-sqlite3' \
+              # Search broadly for vcvars*.bat in VC tree to find actual path
+              VS_VC_DIR=$(dirname "$(dirname "$(dirname "$VS_VCVARS_BASH")")")
+              echo "  find vcvars*.bat: $(find "$VS_VC_DIR" -name 'vcvars*.bat' -maxdepth 5 2>/dev/null | tr '\n' ' ')"
+              echo "  ls VC build dir: $(ls "$(dirname "$VS_VCVARS_BASH")" 2>/dev/null | tr '\n' ' ')"
+
+              # Disable MSYS2 path conversion for cmd.exe, then source vcvars and rebuild
+              MSYS2_ARG_CONV_EXCL=* cmd //c 'call "'"$VS_VCVARS"'" && echo [VCVARS_OK] && where cl.exe && cl.exe 2>&1 | head -5 && echo [PNPM_START] && pnpm rebuild better-sqlite3' \
                 || (echo "::warning::better-sqlite3 rebuild failed (post-MsVC)" && echo "  exit code: $?")
             else
               echo "::warning::MSVC vcvars64 not located on Windows runner — attempting pnpm rebuild without MSVC source-build fallback"
