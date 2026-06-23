@@ -1,12 +1,16 @@
 <p align="center">
+  <a href="https://www.npmjs.com/package/@commander/core"><img src="https://img.shields.io/badge/npm-pending-CB3837?style=flat-square&label=npm" /></a>
+  <a href="https://github.com/PStarH/Commander/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/PStarH/Commander/ci.yml?style=flat-square&label=CI&logo=github" /></a>
   <img src="https://img.shields.io/badge/providers-22-7C3AED?style=flat-square" />
   <img src="https://img.shields.io/badge/topologies-8-EF4444?style=flat-square" />
-  <img src="https://img.shields.io/badge/modules-448-22C55E?style=flat-square" />
-  <img src="https://img.shields.io/badge/license-MIT-EAB308?style=flat-square" />
+  <img src="https://img.shields.io/github/license/PStarH/Commander?style=flat-square&color=EAB308" />
+  <a href="https://github.com/PStarH/Commander/releases"><img src="https://img.shields.io/github/v/release/PStarH/Commander?style=flat-square&label=release&color=22C55E" /></a>
 </p>
 
 <h1 align="center">Commander</h1>
-<p align="center"><strong>The most stable agent runtime.</strong></p>
+<p align="center"><strong>Multi-agent orchestration framework.</strong></p>
+
+> **v0.2.0 — Pre-production.** Checkpointing is currently in-memory (SQLite-backed persistence engine in development). SLOs below are design targets, not guaranteed. See [ARCHITECTURE.md](ARCHITECTURE.md) for current status.
 
 <p align="center">
   <code>npx tsx packages/core/src/cli.ts run "audit this repo" --stream</code><br>
@@ -27,22 +31,20 @@
 
 AI agents are becoming production infrastructure. But most frameworks were built for demos, not deployments. They hide their reasoning, fail silently, and have no circuit breakers.
 
-**Commander was built for production from day one.** Every agent decision streams to you in real time. Every output passes through quality gates before you see it. The deliberation engine automatically classifies your task and picks the optimal topology — 1 agent for a simple fix, 20 for deep research. No graph building. No YAML. No black boxes.
+**Commander is being built for production.** Every agent decision streams to you in real time. The deliberation engine automatically classifies your task and picks the optimal topology — 1 agent for a simple fix, up to 20 for deep research. No graph building. No YAML. No black boxes.
 
 ---
 
-## Reliability SLOs
+## Reliability Design Targets
 
-Commander commits to these service level objectives:
+These are architectural goals for the current v0.2.0 release. Measurement infrastructure is under development.
 
-| SLO | Target | Measurement |
-|-----|--------|-------------|
-| **Uptime** | 99.9% | Monthly, excluding planned maintenance |
-| **Checkpoint Recovery** | <5 seconds | From crash to resumed execution |
+| Target | Goal | Notes |
+|--------|------|-------|
+| **Checkpoint Recovery** | <5 seconds | In-memory currently; SQLite persistence in progress |
 | **Failover** | <10 seconds | Provider failure to next provider |
 | **Compensation** | <30 seconds | Failed mutation to rollback complete |
 | **DLQ Processing** | <60 seconds | Error detection to persisted entry |
-| **Memory Consistency** | 100% | Zero data loss on crash |
 
 ---
 
@@ -87,7 +89,7 @@ Set any one API key. Commander detects your provider, and if it fails, falls thr
 
 ### Quality gates on every output
 
-Before returning any result, Commander runs a 5-gate verification pipeline: hallucination detection, consistency check, completeness verification, accuracy validation, and safety scanning. If the output fails any gate, the system retries or reports the failure with full context.
+Before returning any result, Commander runs heuristic quality checks: hallucination signal detection, consistency verification, completeness scoring, accuracy estimation, and safety scanning. These are currently regex-based heuristics (LLM-as-Judge verification is planned). If the output fails any gate, the system retries or reports the failure with full context.
 
 ### Self-optimizing runtime
 
@@ -138,25 +140,24 @@ A meta-learner using Thompson Sampling and Reflexion tunes agent configurations 
 
 ---
 
-## Production infrastructure
+## Current infrastructure
 
-Every component that belongs in a production system exists in Commander:
+Commander includes these infrastructure components (see notes for development status):
 
-| Capability                  | Implementation                                                                    |
-| --------------------------- | --------------------------------------------------------------------------------- |
-| **Circuit breakers**        | 3-state (CLOSED / OPEN / HALF-OPEN), 5 failures → 30s cooldown, per-provider      |
-| **Crash-safe checkpoints**  | Atomic write-tmp-rename at every step. Recover from any failure.                  |
-| **Dead letter queue**       | Unrecoverable errors persisted for analysis, with replay support                  |
-| **Multi-tenancy**           | Per-tenant token budgets, concurrency limits, rate limits, storage isolation      |
-| **Rate limiting**           | Per-tenant and per-provider, configurable windows                                 |
-| **Metrics**                 | OpenMetrics / Prometheus counters, gauges, histograms with tenant labels          |
-| **Tracing**                 | Span-based execution traces with persistent store                                 |
-| **Security**                | Bearer auth, CORS allow-lists, request body limits, request IDs, privacy router   |
-| **Hallucination detection** | Signal-based detector with configurable thresholds                                |
-| **Semantic caching**        | SHA-256 + semantic similarity deduplication, per-tenant key isolation             |
-| **Fallback chains**         | Auto-failover between providers, configurable order and timeouts                  |
-| **Plugin system**           | 19 hook points: LLM, tool, agent lifecycle, context compaction, session lifecycle |
-| **SSE streaming**           | Real-time agent thinking, tool calls, decisions streamed via Server-Sent Events   |
+| Capability                  | Implementation                                                                  | Status |
+| --------------------------- | ------------------------------------------------------------------------------- | ------ |
+| **Circuit breakers**        | 3-state (CLOSED / OPEN / HALF-OPEN), error-rate windowing, per-provider         | ✅ Live |
+| **Dead letter queue**       | Append-only ndjson files with replay support                                    | ✅ Live |
+| **SSE streaming**           | Structured events via message bus pub/sub with Last-Event-ID replay             | ✅ Live |
+| **Fallback chains**         | Auto-failover between providers, configurable order and timeouts                | ✅ Live |
+| **Semantic caching**        | SHA-256 exact + cosine-similarity deduplication (via EmbeddingFunction)         | ✅ Live |
+| **Checkpointing**           | In-memory conversation checkpoints for backtrack/rewind                          | ⚠️ In-memory; SQLite WAL in development |
+| **Multi-tenancy**           | Tenant-aware singleton isolation via AsyncLocalStorage                           | ⚠️ Isolation only; per-tenant budgets/storage pending |
+| **Quality gates**           | Regex-based heuristic checks (hallucination signals, hedging, contradiction)     | ⚠️ Regex only; LLM-as-Judge planned |
+| **Self-optimization**       | Beta-distribution Thompson Sampling with Reflexion and cross-session persistence | ⚠️ Needs 5+ runs to activate |
+| **Metrics/Tracing**         | OpenMetrics counters + span-based execution traces                               | ⚠️ Partial; persistent store pending |
+| **Security**                | Auth manager, CORS, privacy router, content scanner                              | ⚠️ Partial; rate limiting pending |
+| **Plugin system**           | Hook points for LLM, tool, and agent lifecycle                                   | ⚠️ Under development |
 
 ---
 
@@ -168,12 +169,11 @@ Every component that belongs in a production system exists in Commander:
 | **Auto topology**     | 8 patterns, auto-chosen       | Manual DAG      | Fixed sequential | Manual        |
 | **Providers**         | 22, auto-failover             | 1-3 (LangChain) | 3-5              | Mostly OpenAI |
 | **Self-optimization** | Thompson Sampling + Reflexion | ❌              | ❌               | ❌            |
-| **Multi-tenant**      | Per-tenant isolation          | ❌              | ❌               | ❌            |
-| **Crash safety**      | Atomic checkpoints            | ❌              | ❌               | ❌            |
-| **Quality gates**     | 5-stage pipeline              | ❌              | ❌               | ❌            |
+| **Multi-tenant**      | Tenant-aware singleton context | ❌              | ❌               | ❌            |
+| **Crash safety**      | In-memory checkpoints (SQLite WAL in progress) | ❌ | ❌ | ❌ |
+| **Quality gates**     | Regex-based heuristic checks  | ❌              | ❌               | ❌            |
 | **Circuit breakers**  | Per-provider 3-state          | ❌              | ❌               | ❌            |
-| **Dead letter queue** | Persistent with replay        | ❌              | ❌               | ❌            |
-| **Cost per task**     | ~$1.13 typical ($0.75 - $3.00 max) | Unknown        | Unknown          | Unknown       |
+| **Dead letter queue** | Append-only ndjson files with replay | ❌       | ❌               | ❌            |
 
 ---
 
@@ -198,7 +198,7 @@ npx tsx packages/core/src/cli.ts review --commit     # AI code review
 npx tsx packages/core/src/cli.ts status              # System health
 ```
 
-No configuration files. No YAML pipelines. No graph builders. One command and you're running multi-agent orchestration with production-grade infrastructure.
+No configuration files. No YAML pipelines. No graph builders. One command and you're running multi-agent orchestration.
 
 ---
 
@@ -218,12 +218,12 @@ Existing agent frameworks treat you like a passenger. You write configuration, y
 
 Commander treats you like an **engineer**. You see every decision. You trust every result. You ship faster because you're not guessing what your AI is doing.
 
-The system is built with the same discipline as any production distributed system: circuit breakers, crash-safe state, dead letter queues, rate limiting, multi-tenancy, metrics, tracing, and security. The only difference is that the workload is LLM calls instead of HTTP requests.
+The system is being built with the same discipline as any production distributed system: circuit breakers, dead letter queues, SSE streaming, semantic caching, and provider fallback chains. The only difference is that the workload is LLM calls instead of HTTP requests.
 
 ---
 
 MIT — use it, ship it, build on it. [Star on GitHub](https://github.com/PStarH/Commander) · [Documentation](https://github.com/PStarH/commander-docs) · [Architecture](ARCHITECTURE.md)
 
 <p align="center">
-  <sub>448 modules · 8 topologies · 22 providers · 24 built-in tools · Built for engineers who want to see what their AI is actually doing.</sub>
+  <sub>8 topologies · 22 providers · 26 built-in tools · Built for engineers who want to see what their AI is actually doing.</sub>
 </p>

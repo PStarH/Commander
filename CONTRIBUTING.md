@@ -4,17 +4,79 @@ We love contributions! Here's how to get started.
 
 ## Quick Start
 
+### 5-minute Setup Verification
+
+Run these commands to verify your development environment is ready:
+
 ```bash
+# 1. Clone and install
 git clone https://github.com/PStarH/Commander.git
 cd Commander
 pnpm install
-cd packages/core
-pnpm test              # Run all tests (node:test + vitest)
-pnpm test:core         # Core package tests only
-npx tsc --noEmit       # Type check
-pnpm lint              # ESLint check
-pnpm build:core        # Build the core package
+
+# 2. Verify the CLI works (no API key needed)
+npx tsx packages/core/src/cli.ts status
+# Expected: shows system status with runtime ready
+
+# 3. Run core unit tests (fast, <30s, no API key needed)
+cd packages/core && npx vitest run --no-cache tests/ultimate/deliberation.test.ts
+# Expected: all tests pass
+
+# 4. Full test suite (~90s)
+pnpm test
+
+# 5. Type check
+cd packages/core && npx tsc --noEmit
+
+# 6. Build
+cd packages/core && pnpm build
 ```
+
+**Troubleshooting:**
+- `pnpm install` fails → ensure you have Node >=18 and pnpm >=9 (`node --version && pnpm --version`)
+- `better-sqlite3` errors → run `pnpm rebuild better-sqlite3` (optional dependency, tests will skip if missing)
+- No API key? → The CLI status command and most unit tests work without one. Only integration tests require a key.
+
+## Test Categories
+
+Tests are categorized by their dependencies and runtime:
+
+| Category | Command | Runtime | API Key Needed? | Description |
+|----------|---------|---------|-----------------|-------------|
+| **Unit** | `pnpm --filter @commander/core test:quick` | <30s | No | Core logic, deliberation, topology, quality gates |
+| **Core** | `pnpm --filter @commander/core test` | ~90s | No* | All core tests (unit + runtime, excluding adversarial) |
+| **Full** | `cd packages/core && npx vitest run --no-cache` | ~80s | No* | All vitest tests (143 files, 2400+ tests) |
+| **Integration** | `pnpm --filter @commander/core test:node:pathsec` | ~30s | No | Security path scanning tests |
+| **Adversarial** | `pnpm --filter @commander/core test:security` | ~10s | No | Security adversarial tests (known pre-existing failures) |
+| **E2E** | `cd packages/core && npx tsx --test tests/e2e.test.ts` | varies | Yes | End-to-end tests with real LLM calls |
+
+*\* Most tests mock LLM providers. 6 adversarial tests have pre-existing failures unrelated to your changes.*
+
+### Running Specific Categories
+
+```bash
+# Quick unit tests (what you want during development)
+cd packages/core && pnpm test:quick
+
+# Full core test suite
+pnpm --filter @commander/core test
+
+# Type check only
+cd packages/core && npx tsc --noEmit
+
+# API app tests
+pnpm --filter @commander/api test
+```
+
+## Versioning
+
+Commander follows [Semantic Versioning](https://semver.org/):
+
+- **Major** (1.x): Breaking changes to public API or CLI interface
+- **Minor** (0.x): New features, topology additions, provider support
+- **Patch** (0.x): Bug fixes, performance improvements, documentation
+
+The core packages (`@commander/core`, `@commander/sdk`) are versioned independently from the apps (`@commander/api`, `@commander/web`). The monorepo root version tracks the core package.
 
 ## What We Need Help With
 
@@ -44,7 +106,7 @@ By submitting a pull request, you grant the project license to use your contribu
 
 1. Fork the repo
 2. Create a feature branch
-3. Run `cd packages/core && npx tsx --test tests/*.test.ts` - all passing
+3. Run `cd packages/core && pnpm test` - all 2400+ tests passing (or known pre-existing failures only)
 4. Run `npx tsc --noEmit` - clean
 5. Run `pnpm --filter @commander/sdk typecheck` - clean
 6. Run `pnpm format:check` - clean (broader scope: `packages/**`, `apps/**`, `scripts/**`)
@@ -107,6 +169,13 @@ Tests use two runners:
 - **Vitest** for runtime tests in `packages/core/tests/runtime/` — use `describe`/`it`/`expect` from `vitest`
 
 When adding a new source module, add a corresponding test file following the naming convention: `src/foo.ts` → `tests/foo.test.ts`.
+
+### Pre-existing Test Failures
+
+The following test failures are **pre-existing** and unrelated to your changes:
+
+- `tests/runtime/runtimeAdversarial.test.ts` — 6 failures in content scanner adversarial patterns. These are security hardening benchmarks that need pattern tuning.
+- These failures **do not block** contributions. We accept PRs as long as you don't introduce new failures.
 
 ### Architecture
 
