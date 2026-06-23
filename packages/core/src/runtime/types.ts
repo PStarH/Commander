@@ -90,4 +90,5 @@ export type {
   RegressionEvent,
   PerModelStrategyStats,
   MetaLearnerConfig,
+  ShadowComparison,
 } from './types/selfEvolution';

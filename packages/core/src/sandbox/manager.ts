@@ -8,16 +8,46 @@ import { discoverSandboxes, NoopSB } from './platforms';
 import { PROFILES } from './profiles';
 import { getGlobalLogger } from '../logging';
 
+export class SandboxInitializationError extends Error {
+  constructor(
+    message: string,
+    readonly requested?: SandboxMechanism,
+  ) {
+    super(message);
+    this.name = 'SandboxInitializationError';
+  }
+}
+
+function allowNoSandboxFallback(): boolean {
+  const v = process.env.COMMANDER_ALLOW_NO_SANDBOX?.toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
+export interface SandboxManagerDeps {
+  /** Override sandbox discovery for testing. */
+  sandboxes?: PlatformSandbox[];
+  /** Override the no-sandbox fallback policy. */
+  allowNoSandbox?: boolean;
+}
+
 export class SandboxManager {
   private sandboxes: PlatformSandbox[] = [];
-  private noop = new NoopSB();
+  private allowNoSandbox: boolean;
 
-  constructor() {
-    this.sandboxes = discoverSandboxes();
+  constructor(deps?: SandboxManagerDeps) {
+    this.allowNoSandbox = deps?.allowNoSandbox ?? allowNoSandboxFallback();
+    this.sandboxes = deps?.sandboxes ?? discoverSandboxes();
+    if (this.sandboxes.length === 0 && !this.allowNoSandbox) {
+      throw new SandboxInitializationError(
+        'No OS-level sandbox available. ' +
+          'Install seatbelt (macOS), bubblewrap (Linux), Docker, or gVisor, ' +
+          'or set COMMANDER_ALLOW_NO_SANDBOX=true to explicitly accept unsandboxed execution.',
+      );
+    }
     if (this.sandboxes.length === 0) {
-      getGlobalLogger().debug(
+      getGlobalLogger().warn(
         'SandboxManager',
-        'No OS-level sandbox available, using noop fallback',
+        'COMMANDER_ALLOW_NO_SANDBOX is set — commands will run UNSANDBOXED',
       );
     }
   }
@@ -34,20 +64,27 @@ export class SandboxManager {
     if (mechanism) {
       const found = this.sandboxes.find((s) => s.name === mechanism);
       if (found) return found;
-      // SECURITY FIX: warn on silent fallback instead of quietly using NoopSB
-      getGlobalLogger().warn(
-        'SandboxManager',
-        `Requested sandbox "${mechanism}" not available, falling back to ${this.sandboxes[0]?.name ?? 'none (UNSANDBOXED)'}`,
+      throw new SandboxInitializationError(
+        `Requested sandbox "${mechanism}" is not available on this system. ` +
+          `Available: ${this.sandboxes.map((s) => s.name).join(', ') || 'none'}.`,
+        mechanism,
       );
     }
-    const fallback = this.sandboxes[0] ?? this.noop;
-    if (fallback.name === 'none') {
-      getGlobalLogger().warn(
-        'SandboxManager',
-        '⚠️  No OS-level sandbox available — commands will run UNSANDBOXED',
+    if (this.sandboxes.length === 0) {
+      if (this.allowNoSandbox) {
+        getGlobalLogger().warn(
+          'SandboxManager',
+          'COMMANDER_ALLOW_NO_SANDBOX is set — returning NoopSB fallback',
+        );
+        return new NoopSB();
+      }
+      throw new SandboxInitializationError(
+        'No OS-level sandbox available. ' +
+          'Install seatbelt (macOS), bubblewrap (Linux), Docker, or gVisor, ' +
+          'or set COMMANDER_ALLOW_NO_SANDBOX=true to explicitly accept unsandboxed execution.',
       );
     }
-    return fallback;
+    return this.sandboxes[0];
   }
 
   getProfile(name?: string): SandboxProfile {

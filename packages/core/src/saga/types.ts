@@ -27,6 +27,10 @@ export interface SagaStepOptions {
   retryPolicy?: Partial<RetryPolicy>;
   description?: string;
   tags?: string[];
+  /** Circuit breaker dimension key.  Defaults to first segment of step name.
+   *  All steps sharing the same key share circuit breaker state across
+   *  ALL concurrent Saga instances.  Example: "stripe", "github". */
+  breakerKey?: string;
 }
 
 export interface SagaStepNode {
@@ -41,6 +45,7 @@ export interface SagaStepNode {
   compensable: boolean;
   description?: string;
   tags: string[];
+  breakerKey?: string;
 }
 
 export interface SagaParallelNode {
@@ -117,6 +122,8 @@ export interface SagaStateSnapshot {
   checkpointVersion: number;
   error?: string;
   tenantId?: string;
+  /** Business-level idempotency key for cross-request dedup. */
+  idempotencyKey?: string;
 }
 
 interface SagaEventBase {
@@ -153,8 +160,8 @@ export interface SagaEvent extends SagaEventBase {
 // Result types
 // ============================================================================
 
-/** Compensation outcome for a single node. */
-export interface CompensationOutcome {
+/** Compensation outcome for a single Saga node. */
+export interface SagaCompensationOutcome {
   nodeId: string;
   success: boolean;
   error?: string;
@@ -182,6 +189,11 @@ export interface SagaRunOptions {
   ttlSeconds?: number;
   holder?: string;
   includeResults?: boolean;
+  /** Business-level idempotency key.  When set, the saga engine checks
+   *  if this key has already been processed BEFORE executing any step.
+   *  If found, the previous result is returned directly (idempotent response).
+   *  Use this to guard against upstream gateway / client retry floods. */
+  idempotencyKey?: string;
 }
 
 export interface SagaRunHandle {

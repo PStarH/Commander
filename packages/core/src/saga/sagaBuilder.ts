@@ -23,6 +23,7 @@ export interface SagaStepConfig {
   retryPolicy?: Partial<RetryPolicy>;
   description?: string;
   tags?: string[];
+  breakerKey?: string;
 }
 
 export interface SagaParallelConfig {
@@ -103,6 +104,7 @@ export class SagaBuilder {
       compensable: config.compensate !== undefined,
       description: config.description,
       tags: config.tags ?? [],
+      breakerKey: config.breakerKey,
     };
     this.nodes.push(node);
     return this;

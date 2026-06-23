@@ -9,7 +9,10 @@ import {
   type CheckpointRecord,
 } from '../src/runtime/checkpointStore';
 
-const makeSnapshot = ({ checkpoint: cpOverrides, ...rest }: Partial<CheckpointSnapshot> = {}): CheckpointSnapshot => ({
+const makeSnapshot = ({
+  checkpoint: cpOverrides,
+  ...rest
+}: Partial<CheckpointSnapshot> = {}): CheckpointSnapshot => ({
   checkpoint: {
     id: `cp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     runId: 'test-run',
@@ -57,7 +60,13 @@ describe('CheckpointStore — basic CRUD', () => {
   it('getSnapshot returns full message and file payload', () => {
     const messages = [
       { role: 'user' as const, content: 'hello' },
-      { role: 'assistant' as const, content: 'world', tool_calls: [{ id: 'tc1', type: 'function' as const, function: { name: 'read', arguments: '{}' } }] },
+      {
+        role: 'assistant' as const,
+        content: 'world',
+        tool_calls: [
+          { id: 'tc1', type: 'function' as const, function: { name: 'read', arguments: '{}' } },
+        ],
+      },
     ];
     const snap = makeSnapshot({
       checkpoint: { id: 'cp-full' },
@@ -79,7 +88,9 @@ describe('CheckpointStore — basic CRUD', () => {
   it('listByRun returns summaries ordered by step descending', () => {
     const runId = 'list-run';
     store.save(makeSnapshot({ checkpoint: { id: 'cp-s1', runId, stepNumber: 1, label: 'first' } }));
-    store.save(makeSnapshot({ checkpoint: { id: 'cp-s2', runId, stepNumber: 2, label: 'second' } }));
+    store.save(
+      makeSnapshot({ checkpoint: { id: 'cp-s2', runId, stepNumber: 2, label: 'second' } }),
+    );
     store.save(makeSnapshot({ checkpoint: { id: 'cp-s3', runId, stepNumber: 3, label: 'third' } }));
 
     const list = store.listByRun(runId);
@@ -123,18 +134,24 @@ describe('CheckpointStore — rewind', () => {
 
   it('rewindTo deletes later checkpoints and returns messages', () => {
     const runId = 'rewind-run';
-    store.save(makeSnapshot({
-      checkpoint: { id: 'cp-r1', runId, stepNumber: 1, label: 'start' },
-      messages: [{ role: 'user', content: 'begin' }],
-    }));
-    store.save(makeSnapshot({
-      checkpoint: { id: 'cp-r2', runId, stepNumber: 2, label: 'middle' },
-      messages: [{ role: 'user', content: 'wasted effort' }],
-    }));
-    store.save(makeSnapshot({
-      checkpoint: { id: 'cp-r3', runId, stepNumber: 3, label: 'dead end' },
-      messages: [{ role: 'user', content: 'wrong path' }],
-    }));
+    store.save(
+      makeSnapshot({
+        checkpoint: { id: 'cp-r1', runId, stepNumber: 1, label: 'start' },
+        messages: [{ role: 'user', content: 'begin' }],
+      }),
+    );
+    store.save(
+      makeSnapshot({
+        checkpoint: { id: 'cp-r2', runId, stepNumber: 2, label: 'middle' },
+        messages: [{ role: 'user', content: 'wasted effort' }],
+      }),
+    );
+    store.save(
+      makeSnapshot({
+        checkpoint: { id: 'cp-r3', runId, stepNumber: 3, label: 'dead end' },
+        messages: [{ role: 'user', content: 'wrong path' }],
+      }),
+    );
 
     expect(store.listByRun(runId)).toHaveLength(3);
 
@@ -192,12 +209,20 @@ describe('CheckpointStore — delete and prune', () => {
 
   it('deleteExpired removes expired checkpoints', () => {
     const past = new Date(Date.now() - 100_000).toISOString();
-    store.save(makeSnapshot({
-      checkpoint: { id: 'cp-e1', runId: 'expired', createdAt: past, expiresAt: past },
-    }));
-    store.save(makeSnapshot({
-      checkpoint: { id: 'cp-e2', runId: 'fresh', expiresAt: new Date(Date.now() + 86_400_000).toISOString() },
-    }));
+    store.save(
+      makeSnapshot({
+        checkpoint: { id: 'cp-e1', runId: 'expired', createdAt: past, expiresAt: past },
+      }),
+    );
+    store.save(
+      makeSnapshot({
+        checkpoint: {
+          id: 'cp-e2',
+          runId: 'fresh',
+          expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+        },
+      }),
+    );
 
     const deleted = store.deleteExpired();
     expect(deleted).toBeGreaterThanOrEqual(1);
@@ -222,13 +247,15 @@ describe('CheckpointStore — crash recovery / persistence', () => {
 
   it('data survives close + reopen', () => {
     const s1 = new CheckpointStore({ filePath: dbPath });
-    s1.save(makeSnapshot({
-      checkpoint: { id: 'crash-cp', runId: 'persist-run', stepNumber: 1, label: 'survived' },
-      messages: [
-        { role: 'user', content: 'hello' },
-        { role: 'assistant', content: 'world' },
-      ],
-    }));
+    s1.save(
+      makeSnapshot({
+        checkpoint: { id: 'crash-cp', runId: 'persist-run', stepNumber: 1, label: 'survived' },
+        messages: [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', content: 'world' },
+        ],
+      }),
+    );
     s1.close();
 
     const s2 = new CheckpointStore({ filePath: dbPath });
@@ -296,11 +323,13 @@ describe('CheckpointStore — file tracking', () => {
   });
 
   it('preserves file read/modified lists', () => {
-    store.save(makeSnapshot({
-      checkpoint: { id: 'cp-files' },
-      filesRead: ['a.js', 'b.js', 'c.js'],
-      filesModified: ['d.js'],
-    }));
+    store.save(
+      makeSnapshot({
+        checkpoint: { id: 'cp-files' },
+        filesRead: ['a.js', 'b.js', 'c.js'],
+        filesModified: ['d.js'],
+      }),
+    );
 
     const snap = store.getSnapshot('cp-files');
     expect(snap!.filesRead).toEqual(['a.js', 'b.js', 'c.js']);
