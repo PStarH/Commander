@@ -40,6 +40,11 @@ import { StateCheckpointer, type CheckpointState } from './stateCheckpointer';
 import { getMetricsCollector } from './metricsCollector';
 import type { LeaseManager } from '../atr/leaseManager';
 import type { CompensationQueue } from '../atr/compensationQueue';
+import {
+  openCheckpointBackend,
+  type IChekpointBackend,
+  type CheckpointRecord,
+} from '../atr/checkpointStore';
 
 // ============================================================================
 // Configuration
@@ -66,6 +71,18 @@ export interface ReliabilityEngineConfig {
   leaseManager?: LeaseManager;
   /** Durable compensation queue (requires better-sqlite3). */
   compensationQueue?: CompensationQueue;
+  /**
+   * Optional file path for the ATR-layer checkpoint store (WAL + sync=NORMAL).
+   * Defaults to '.commander/atr_checkpoints.db' when the field is present
+   * but empty. Falls back to InMemoryCheckpointBuffer if better-sqlite3
+   * is not installed or open() throws — never propagates an error.
+   */
+  atrCheckpointPath?: string;
+  /**
+   * Pre-built ATR checkpoint backend. Used by tests + callers that want
+   * to control the backend selection (e.g., pass an InMemory buffer).
+   */
+  atrCheckpointBackend?: IChekpointBackend;
 }
 
 // ============================================================================
@@ -88,6 +105,7 @@ export class ReliabilityEngine {
   private _deadLetterQueue: DeadLetterQueue;
   private _compensationRegistry: CompensationRegistry;
   private _stateCheckpointer: StateCheckpointer;
+  private _atrCheckpointStore: IChekpointBackend;
 
   private disposed = false;
 
@@ -104,6 +122,16 @@ export class ReliabilityEngine {
     this._stateCheckpointer = new StateCheckpointer(config.checkpointBaseDir, config.tenantId, {
       leaseManager: config.leaseManager,
     });
+
+    // ATR checkpoint store: prefer an injected backend; otherwise open one
+    // (WAL when better-sqlite3 is available, InMemory otherwise).
+    this._atrCheckpointStore =
+      config.atrCheckpointBackend ??
+      openCheckpointBackend(
+        config.atrCheckpointPath === null
+          ? { filePath: ':memory:' }
+          : { filePath: config.atrCheckpointPath },
+      );
 
     // Wire observability
     const extraTransitionHandler = config.circuitTransitionHandler;
@@ -345,6 +373,36 @@ export class ReliabilityEngine {
   /** Direct access to the managed compensation registry. */
   getCompensationRegistry(): CompensationRegistry {
     return this._compensationRegistry;
+  }
+
+  /**
+   * Direct access to the ATR-layer checkpoint backend. Writes:
+   *   engine.getAtrCheckpointStore().save(state)
+   * commit durably to SQLite (WAL + synchronous=NORMAL) when available, or
+   * to an in-process buffer as the safest degradation. The backend is
+   * shared across the engine's lifetime; closing the engine disposes it.
+   */
+  getAtrCheckpointStore(): IChekpointBackend {
+    return this._atrCheckpointStore;
+  }
+
+  /**
+   * Commit a checkpoint directly through the ATR backend. The runtime
+   * typically routes through stateCheckpointer.checkpoint() instead, but
+   * this method is exposed for callers that want the atomic single-step
+   * contract without the dual-write JSON file layer.
+   */
+  checkpointAtomically(state: CheckpointState): CheckpointRecord {
+    return this._atrCheckpointStore.save(state);
+  }
+
+  /**
+   * Returns the LATEST ATR checkpoint (or null) for a run. Used by recovery
+   * flows that want the most recent durable state without the JSON file
+   * fallback path. Honors WAL durability across SIGKILL.
+   */
+  getLatestCheckpoint(runId: string): CheckpointRecord | null {
+    return this._atrCheckpointStore.getLatest(runId);
   }
 
   /** Get a unified stats snapshot. */
