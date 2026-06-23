@@ -899,4 +899,13 @@ export const BUILTIN_HARNESS_RULES: HarnessSelectionRule[] = [
     harness: 'default',
     reason: 'fallback → default harness',
   },
+
+  // ── Priority -10: Tier-1 harness for all production runs ──
+  {
+    priority: -10,
+    name: 'tier1-production',
+    matcher: () => true,
+    harness: 'tier1',
+    reason: 'tier-1 production harness (fallback after default)',
+  },
 ];
