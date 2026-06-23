@@ -63,7 +63,8 @@ function computeNextCronMatch(cronExpr: string, after: Date): Date | undefined {
       continue;
     }
 
-    const startHour = yearOffset === 0 && month === startMonth && day === startDay ? candidate.getHours() : 0;
+    const startHour =
+      yearOffset === 0 && month === startMonth && day === startDay ? candidate.getHours() : 0;
     const hour = findNextFieldMatch(fields[1], startHour, 0, 23);
     if (hour === undefined) {
       candidate = new Date(year, month - 1, day + 1, 0, 0);
@@ -71,7 +72,8 @@ function computeNextCronMatch(cronExpr: string, after: Date): Date | undefined {
       continue;
     }
 
-    const startMinute = yearOffset === 0 && month === startMonth && day === startDay ? candidate.getMinutes() : 0;
+    const startMinute =
+      yearOffset === 0 && month === startMonth && day === startDay ? candidate.getMinutes() : 0;
     const minute = findNextFieldMatch(fields[0], startMinute, 0, 59);
     if (minute === undefined) {
       candidate = new Date(year, month - 1, day, hour + 1, 0);
@@ -87,7 +89,12 @@ function computeNextCronMatch(cronExpr: string, after: Date): Date | undefined {
 }
 
 /** Find the next value matching a cron field pattern within [min, max]. */
-function findNextFieldMatch(pattern: string, start: number, min: number, max: number): number | undefined {
+function findNextFieldMatch(
+  pattern: string,
+  start: number,
+  min: number,
+  max: number,
+): number | undefined {
   for (let v = start; v <= max; v++) {
     if (cronValueMatches(pattern, v, min, max)) return v;
   }
@@ -121,14 +128,24 @@ function cronValueMatches(pattern: string, value: number, _min: number, _max: nu
  * Find a matching day considering BOTH day-of-month and day-of-week.
  * Standard cron: if both fields are restricted, EITHER match fires.
  */
-function findMatchingDay(domPattern: string, dowPattern: string, year: number, monthIndex: number, startDay: number): number | undefined {
+function findMatchingDay(
+  domPattern: string,
+  dowPattern: string,
+  year: number,
+  monthIndex: number,
+  startDay: number,
+): number | undefined {
   const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
   const domWild = domPattern === '*';
   const dowWild = dowPattern === '*';
   for (let d = startDay; d <= daysInMonth; d++) {
     const domMatch = cronValueMatches(domPattern, d, 1, 31);
     const dowMatch = cronValueMatches(dowPattern, new Date(year, monthIndex, d).getDay(), 0, 6);
-    if ((domWild && dowWild) || (domMatch && (dowWild || dowMatch)) || (dowMatch && (domWild || domMatch))) {
+    if (
+      (domWild && dowWild) ||
+      (domMatch && (dowWild || dowMatch)) ||
+      (dowMatch && (domWild || domMatch))
+    ) {
       return d;
     }
   }

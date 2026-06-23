@@ -514,6 +514,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
     this.cycleDetector = new CycleDetector();
     this.contentScanner = createContentScanner();
     this.securityOrch = getSecurityOrchestrator();
+    // Benchmarks may intentionally generate high tool-call volumes; let callers
+    // disable GuardianAgent monitoring through the runtime config.
+    if (this.config.securityMonitor?.enabled === false) {
+      this.securityOrch.updateConfig({ enableGuardianAgent: false });
+    }
 
     // Initialize ConversationStore for FTS5-powered conversation persistence
     try {
@@ -676,11 +681,13 @@ export class AgentRuntime implements AgentRuntimeInterface {
       });
     }
 
-    // Start security monitoring (best-effort)
-    try {
-      getSecurityMonitor().start();
-    } catch {
-      /* best-effort */
+    // Start security monitoring (best-effort, can be disabled for benchmarks)
+    if (this.config.securityMonitor?.enabled !== false) {
+      try {
+        getSecurityMonitor().start();
+      } catch {
+        /* best-effort */
+      }
     }
   }
 
@@ -2203,6 +2210,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 !retryLoopDetected &&
                 this.governor.getState().phase !== 'critical'
               ) {
+                console.log(
+                  `[TOOL LOOP] iteration ${toolLoopCount + 1} calls=${response.toolCalls?.length} phase=${this.governor.getState().phase}`,
+                );
                 toolLoopCount++;
 
                 // Reset output manager turn budget (governor-aware: shrink under pressure)
@@ -2313,8 +2323,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                           toolLoopCount,
                           siblingAbort.signal,
                         );
-                    if (gate.kind !== 'allowed') {
-                      console.warn(`[SERIAL] GATE BLOCKED ${tc.name} kind=${gate.kind}`);
+                        if (gate.kind !== 'allowed') {
+                          console.warn(`[SERIAL] GATE BLOCKED ${tc.name} kind=${gate.kind}`);
                           if (gate.kind === 'retry') {
                             retryLoopDetected = true;
                             retryLoopCount = gate.count;
@@ -2530,7 +2540,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     // SecurityOrchestrator: unify ToolApproval + AdaptiveHITL before execution
                     const sec = await this.applyBeforeToolCallSecurity(tc, ctx.agentId, runId);
                     if (!sec.allowed && sec.blockedToolResult) {
-                      console.warn(`[SERIAL] BLOCKED ${tc.name} by security: ${sec.decision.blockReason ?? 'unknown'}`);
+                      console.warn(
+                        `[SERIAL] BLOCKED ${tc.name} by security: ${sec.decision.blockReason ?? 'unknown'}`,
+                      );
                     }
                     let toolResult: ToolResult;
                     if (!sec.allowed && sec.blockedToolResult) {
@@ -2924,6 +2936,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   }
                 }
               }
+              console.log(
+                `[TOOL LOOP] EXIT after ${toolLoopCount} iterations. calls=${response.toolCalls?.length} cycle=${cycleDetected} retry=${retryLoopDetected} phase=${this.governor.getState().phase}`,
+              );
 
               // Interrupt check: if a tool requested human input, pause execution
               if (interruptData) {

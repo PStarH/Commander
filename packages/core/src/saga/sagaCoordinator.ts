@@ -133,7 +133,9 @@ export class SagaCoordinator {
     // been processed (e.g. from an upstream gateway retry), return the
     // existing committed result without re-execution.
     if (options.idempotencyKey) {
-      const existing = await this.checkpointMgr.getStore().findByIdempotencyKey(options.idempotencyKey);
+      const existing = await this.checkpointMgr
+        .getStore()
+        .findByIdempotencyKey(options.idempotencyKey);
       if (existing && existing.state === 'COMMITTED') {
         // Reconstruct result from snapshot
         return {
@@ -170,7 +172,10 @@ export class SagaCoordinator {
     }
   }
 
-  private async recoverFromSnapshot(snapshot: SagaStateSnapshot, options: SagaRunOptions): Promise<SagaResult> {
+  private async recoverFromSnapshot(
+    snapshot: SagaStateSnapshot,
+    options: SagaRunOptions,
+  ): Promise<SagaResult> {
     this.sagaState = snapshot.state;
     for (const [id, state] of Object.entries(snapshot.nodeStates)) {
       this.nodeStates.set(id, state);
@@ -188,10 +193,7 @@ export class SagaCoordinator {
       }
     }
     // Already in a terminal state
-    return this.makeResult(
-      this.sagaState === 'COMMITTED' ? 'committed' : 'aborted',
-      options,
-    );
+    return this.makeResult(this.sagaState === 'COMMITTED' ? 'committed' : 'aborted', options);
   }
 
   private async executeSequence(startId: string): Promise<void> {
@@ -616,7 +618,9 @@ export class SagaCircuitBreakerError extends Error {
     public readonly nodeName: string,
     public readonly breakerKey: string,
   ) {
-    super(`Circuit breaker OPEN for "${breakerKey}" — step "${nodeName}" blocked. Downstream may be degraded.`);
+    super(
+      `Circuit breaker OPEN for "${breakerKey}" — step "${nodeName}" blocked. Downstream may be degraded.`,
+    );
     this.name = 'SagaCircuitBreakerError';
   }
 }
