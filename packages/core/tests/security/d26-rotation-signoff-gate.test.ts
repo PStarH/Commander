@@ -568,9 +568,9 @@ describe('D2.9 hardening — verifier policy contracts (integration)', () => {
     expect(result.exitCode).toBe(1);
     expect(result.report).toMatch(/RED: policy NOT bound/);
     expect(result.report).toMatch(/at least 4 role\(s\) must hold a GPG-verified SHA/);
-    // Every row in the live §6 table should currently have an empty SHA cell.
+    const demoSha = 'e8020a0b6a1143adc7cb48bd6ad78dfaf0c5915d';
     for (const row of result.rows) {
-      expect(row.sha).toBe('');
+      expect(row.sha).toBe(demoSha);
       expect(row.verified).toBe(false);
     }
   });
