@@ -126,7 +126,14 @@ jobs:
               echo '@if exist "node_modules\better-sqlite3\build" rmdir /s /q "node_modules\better-sqlite3\build"' >> "$batpath"
               echo '@if exist "packages\core\node_modules\better-sqlite3\build" rmdir /s /q "packages\core\node_modules\better-sqlite3\build"' >> "$batpath"
               echo '@echo [PNPM_REBUILD_START]' >> "$batpath"
-              echo '@call pnpm rebuild better-sqlite3' >> "$batpath"
+              echo '@call pnpm rebuild better-sqlite3 2>&1' >> "$batpath"
+              echo '@echo [PNPM_EXIT]: %errorlevel%' >> "$batpath"
+              echo '@echo [TRY_NODE_GYP_DIRECT]' >> "$batpath"
+              echo '@for /d %%p in (node_modules\.pnpm\better-sqlite3*) do @if exist "%%p\node_modules\better-sqlite3\binding.gyp" cd /d "%%p\node_modules\better-sqlite3"' >> "$batpath"
+              echo '@echo cd to: %cd%' >> "$batpath"
+              echo '@call npx --yes node-gyp rebuild 2>&1' >> "$batpath"
+              echo '@echo [NODE_GYP_EXIT]: %errorlevel%' >> "$batpath"
+              echo '@cd /d %GITHUB_WORKSPACE%' >> "$batpath"
               echo '@echo [PNPM_EXIT_CODE]: %errorlevel%' >> "$batpath"
               # Convert to Windows path for cmd.exe
               batwin=$(echo "$batpath" | sed 's|^/\([a-z]\)/|\1:\\|' | sed 's|/|\\|g')
