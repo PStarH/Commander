@@ -56,11 +56,13 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
             # ---- Diagnostics: dump what's available on the runner ----
-            echo "::debug::VS diagnostics:"
-            echo "::debug::  where cl.exe = $(cmd //c 'where cl.exe 2>nul' 2>/dev/null || echo NOT_FOUND)"
-            echo "::debug::  where vswhere = $(cmd //c 'where vswhere 2>nul' 2>/dev/null || echo NOT_FOUND)"
-            echo "::debug::  ls /c/Program Files/Microsoft Visual Studio/ = $(ls '/c/Program Files/Microsoft Visual Studio/' 2>/dev/null || echo NOT_FOUND)"
-            echo "::debug::  ls /c/Program Files (x86)/Microsoft Visual Studio/ = $(ls '/c/Program Files (x86)/Microsoft Visual Studio/' 2>/dev/null || echo NOT_FOUND)"
+            echo "--- VS diagnostics ---"
+            echo "  where cl.exe: $(cmd //c 'where cl.exe 2>nul' 2>/dev/null || echo NOT_FOUND)"
+            echo "  where vswhere: $(cmd //c 'where vswhere 2>nul' 2>/dev/null || echo NOT_FOUND)"
+            echo "  ls 'Program Files/Microsoft Visual Studio/': $(ls '/c/Program Files/Microsoft Visual Studio/' 2>/dev/null || echo NOT_FOUND)"
+            echo "  ls 'Program Files (x86)/Microsoft Visual Studio/': $(ls '/c/Program Files (x86)/Microsoft Visual Studio/' 2>/dev/null || echo NOT_FOUND)"
+            echo "  vswhere version: $(cmd //c '"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -version 2>nul' 2>/dev/null || echo NOT_FOUND)"
+            echo "  vswhere any products: $(cmd //c '"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath 2>nul' 2>/dev/null || echo NOT_FOUND)"
             # ---- locate vcvars64.bat by trying multiple methods ----
             VS_VCVARS=""
             VS_VCVARS_BASH=""
@@ -75,7 +77,7 @@ jobs:
             if [ -n "$cmd_vswhere" ]; then
               VS_INSTALL_PATH=$("$cmd_vswhere" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>/dev/null | head -1)
               if [ -n "$VS_INSTALL_PATH" ]; then
-                echo "::debug::vswhere found VS at: $VS_INSTALL_PATH"
+                echo "  vswhere found VS at: $VS_INSTALL_PATH"
                 VS_VCVARS="${VS_INSTALL_PATH}\\VC\\Auxiliary\\Build\\vcvars64.bat"
                 VS_VCVARS_BASH=$(echo "$VS_INSTALL_PATH" | sed 's/\\/\//g' | sed 's/^C:/\/c/')"/VC/Auxiliary/Build/vcvars64.bat"
               fi
@@ -88,7 +90,7 @@ jobs:
                   if [ -n "$found" ]; then
                     VS_VCVARS=$(echo "$found" | sed 's|^/c/|C:\\|' | sed 's|/|\\|g')
                     VS_VCVARS_BASH="$found"
-                    echo "::debug::find located vcvars64 at: $found"
+                    echo "  find located vcvars64 at: $found"
                     break
                   fi
                 fi
@@ -103,7 +105,7 @@ jobs:
               if [ -n "$found" ]; then
                 VS_VCVARS="$found"
                 VS_VCVARS_BASH=$(echo "$found" | sed 's|\\|/|g' | sed 's|^C:|/c|')
-                echo "::debug::cmd dir glob located vcvars64 at: $found"
+                echo "  cmd dir glob located vcvars64 at: $found"
               fi
             fi
             # ---- Activate MSVC and rebuild ----
