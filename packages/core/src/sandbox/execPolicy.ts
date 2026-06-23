@@ -21,9 +21,15 @@ interface PolicyFile {
 export class ExecPolicyEngine {
   private rules: PolicyRule[] = [];
   private loadedFiles: Set<string> = new Set();
+  private userRulesLoaded = false;
 
   constructor() {
     this.loadDefaultRules();
+  }
+
+  private ensureUserRulesLoaded(): void {
+    if (this.userRulesLoaded) return;
+    this.userRulesLoaded = true;
     this.loadUserRules();
   }
 
@@ -234,6 +240,7 @@ export class ExecPolicyEngine {
     rule?: PolicyRule;
     matchedPattern?: string;
   } {
+    this.ensureUserRulesLoaded();
     const normalized = command.toLowerCase().trim();
 
     // Strip process wrapper prefixes for matching (Claude Code pattern)
