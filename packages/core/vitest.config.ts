@@ -104,6 +104,14 @@ export default defineConfig({
 
       // --- storage ---
       'tests/storage/dataRetention.test.ts',
+      'tests/storage/inMemoryDriver.test.ts',
+      'tests/storage/jsonDriver.test.ts',
+      'tests/storage/sqliteDriver.test.ts',
+      'tests/storage/persistentStore.test.ts',
+      'tests/storage/inMemoryDriver.test.ts',
+      'tests/storage/jsonDriver.test.ts',
+      'tests/storage/sqliteDriver.test.ts',
+      'tests/storage/persistentStore.test.ts',
 
       // --- security ---
       'tests/security/guardianAgent.test.ts',
@@ -138,6 +146,9 @@ export default defineConfig({
       'tests/security/supplyChainAttestor.test.ts',
       'tests/security/differentialPrivacyLayer.test.ts',
       'tests/security/security-hardening.test.ts',
+      // --- harness ---
+      'tests/harness/tier1AgentLoop.test.ts',
+      'tests/harness/tier1Harness.test.ts',
       // Note: commander-rotate integration tests spawn the CLI via tsx. They
       // pass when invoked directly but fail inside the vitest worker because
       // the sandboxed environment cannot resolve /bin/sh or the node binary.
