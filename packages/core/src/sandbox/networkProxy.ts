@@ -271,12 +271,19 @@ export function writeProxyScript(allowDomains: string[]): string {
  * @param proxyPort — proxy listen port
  * @returns Wrapped shell command string
  */
+export function shquote(s: string): string {
+  if (/^[a-zA-Z0-9_/.:=,@-]+$/.test(s)) return s;
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 export function wrapCommandWithProxy(
   command: string,
   scriptPath: string = '/proxy.js',
   proxyPort: number = PROXY_PORT,
 ): string {
   const proxyUrl = `http://127.0.0.1:${proxyPort}`;
+  // Wrap the user command with sh -c and proper quoting so shell
+  // metacharacters cannot break out of the proxy wrapper.
   return [
     `node ${scriptPath} &`,
     `PROXY_PID=$!`,
@@ -284,7 +291,7 @@ export function wrapCommandWithProxy(
     `export HTTP_PROXY=${proxyUrl}`,
     `export HTTPS_PROXY=${proxyUrl}`,
     `export NO_PROXY=''`,
-    command,
+    `sh -c ${shquote(command)}`,
     `EXIT_CODE=$?`,
     `kill $PROXY_PID 2>/dev/null`,
     `exit $EXIT_CODE`,
