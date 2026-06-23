@@ -244,7 +244,9 @@ export class AppContainerSB implements PlatformSandbox {
     // Invoke-CommandInAppContainer requires Windows 10 1809+.
     // Fallback: use START /APPCONTAINER.
     const appContainerSid = `S-1-15-2-1`;
-    const escapedCmd = cmd.replace(/"/g, '""');
+    // Base64-encode the command so PowerShell metacharacters cannot break out
+    // of the ScriptBlock argument list.
+    const b64Cmd = Buffer.from(cmd, 'utf-8').toString('base64');
 
     // Build environment block
     const envBlock =
@@ -257,10 +259,11 @@ export class AppContainerSB implements PlatformSandbox {
       `if (-not $container) { Write-Error "Container not found"; exit 1 }`,
       `$sid = $container.Sid`,
       // Use Invoke-CommandInAppContainer (Win10 1809+)
-      `$result = Invoke-CommandInAppContainer -AppContainerSid $sid -ArgumentList "${escapedCmd}" -ScriptBlock {`,
-      `  param($cmdStr)`,
+      `$result = Invoke-CommandInAppContainer -AppContainerSid $sid -ArgumentList "${b64Cmd}" -ScriptBlock {`,
+      `  param($b64CmdStr)`,
       `  $ErrorActionPreference = "Continue"`,
       `  try {`,
+      `    $cmdStr = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64CmdStr))`,
       `    $out = cmd /c "$cmdStr" 2>&1`,
       `    Write-Host $out`,
       `    exit $LASTEXITCODE`,
@@ -275,19 +278,36 @@ export class AppContainerSB implements PlatformSandbox {
     const tmpDir = this.getTempDir();
     const scriptPath = path.join(tmpDir, `cmd-${Date.now()}.ps1`);
     const fs = await import('fs');
-    fs.writeFileSync(scriptPath, psScript, 'utf-8');
+    await fs.promises.writeFile(scriptPath, psScript, 'utf-8');
 
     return new Promise((resolve) => {
-      const child = spawn(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
-        {
-          cwd,
-          env,
-          stdio: ['pipe', 'pipe', 'pipe'],
-          windowsHide: true,
-        },
-      );
+      let child: ReturnType<typeof spawn> | undefined;
+      try {
+        child = spawn(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+          {
+            cwd,
+            env,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            windowsHide: true,
+          },
+        );
+      } catch (err) {
+        try {
+          fs.unlinkSync(scriptPath);
+        } catch {
+          /* ignore */
+        }
+        resolve({
+          stdout: '',
+          stderr: err instanceof Error ? err.message : String(err),
+          exitCode: -1,
+          durationMs: Date.now() - startMs,
+          sandboxMechanism: 'appcontainer',
+        });
+        return;
+      }
 
       let stdout = '',
         stderr = '';
@@ -366,7 +386,7 @@ export class AppContainerSB implements PlatformSandbox {
 
   // ── Helpers ────────────────────────────────────────────────────────
 
-  private async runPowerShell(script: string): Promise<string> {
+  private async runPowerShell(script: string, timeoutMs = 30000): Promise<string> {
     return new Promise((resolve, reject) => {
       const child = spawn(
         'powershell.exe',
@@ -379,6 +399,13 @@ export class AppContainerSB implements PlatformSandbox {
 
       let output = '';
       let errorOutput = '';
+      let settled = false;
+
+      const timer = setTimeout(() => {
+        settled = true;
+        child.kill('SIGKILL');
+        reject(new Error(`PowerShell timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
 
       child.stdout?.on('data', (d: Buffer) => {
         output += d.toString();
@@ -388,6 +415,8 @@ export class AppContainerSB implements PlatformSandbox {
       });
 
       child.on('close', (code) => {
+        clearTimeout(timer);
+        if (settled) return;
         if (
           code === 0 ||
           output.includes('CONTAINER_CREATED') ||
@@ -400,7 +429,10 @@ export class AppContainerSB implements PlatformSandbox {
         }
       });
 
-      child.on('error', reject);
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        if (!settled) reject(err);
+      });
     });
   }
 
