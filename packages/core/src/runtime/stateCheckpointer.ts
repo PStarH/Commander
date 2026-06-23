@@ -4,6 +4,8 @@
  * Writes a JSON snapshot of mutable execution state after every LLM call,
  * tool execution cycle, and verification. Atomic writes (write to tmp, rename)
  * prevent corruption. Enables crash recovery and long-running workflow resilience.
+ *
+ * Can optionally dual-write to CheckpointStore (SQLite) for queryable history.
  */
 
 import * as fs from 'fs';
@@ -12,6 +14,7 @@ import { getGlobalLogger } from '../logging';
 import type { LLMMessage, TokenUsage } from './types';
 import type { LeaseManager } from '../atr/leaseManager';
 import { getMetricsCollector } from './metricsCollector';
+import { CheckpointStore, type CheckpointSnapshot } from './checkpointStore';
 
 export interface CheckpointState {
   runId: string;
@@ -40,18 +43,13 @@ export interface CheckpointState {
     availableTools: string[];
     maxSteps: number;
     tokenBudget: number;
-    /** Cache key of loaded project context files, for resumability. */
     projectContextCacheKey?: string;
-    /** Project context files read at run start. */
     projectContextFiles?: string[];
   };
   lastError?: string;
   totalDurationMs: number;
-  /** ATR lease token — required when StateCheckpointer is bound to a LeaseManager. */
   leaseToken?: string;
-  /** ATR fencing epoch — must match the live lease for the write to be accepted. */
   fencingEpoch?: number;
-  /** Monotonic version of this checkpoint file; bumped on every successful write. */
   version?: number;
 }
 
@@ -59,11 +57,17 @@ export class StateCheckpointer {
   private baseDir: string;
   private tenantId?: string;
   private leaseManager?: LeaseManager;
+  private store?: CheckpointStore;
   private pruneCounter = 0;
 
-  constructor(baseDir?: string, tenantId?: string, options?: { leaseManager?: LeaseManager }) {
+  constructor(
+    baseDir?: string,
+    tenantId?: string,
+    options?: { leaseManager?: LeaseManager; store?: CheckpointStore },
+  ) {
     this.tenantId = tenantId;
     this.leaseManager = options?.leaseManager;
+    this.store = options?.store;
     const base = baseDir ?? path.join(process.cwd(), '.commander_state');
     this.baseDir = tenantId ? path.join(base, `tenant_${tenantId}`) : base;
     fs.mkdirSync(this.baseDir, { recursive: true, mode: 0o700 });
@@ -132,6 +136,7 @@ export class StateCheckpointer {
       } catch {
         /* best-effort */
       }
+      this.writeStoreCheckpoint(state);
       try {
         getMetricsCollector().recordCheckpointFlush(state.phase ?? 'unknown');
       } catch {
@@ -170,6 +175,7 @@ export class StateCheckpointer {
       } catch {
         /* best-effort */
       }
+      this.writeStoreCheckpoint(state);
     } catch (e) {
       getGlobalLogger().warn('StateCheckpointer', 'Failed to write terminal checkpoint', {
         error: (e as Error)?.message,
@@ -247,13 +253,32 @@ export class StateCheckpointer {
   }
 
   listCheckpoints(): { runId: string; phase: string; timestamp: string }[] {
+    if (this.store) {
+      try {
+        const records = this.store.getLatestByRun('');
+        if (records) {
+          const summaries = this.store.listByRun('*');
+          if (summaries.length > 0) {
+            return summaries
+              .filter((s) => s.phase)
+              .map((s) => ({
+                runId: s.runId,
+                phase: s.phase!,
+                timestamp: s.createdAt,
+              }));
+          }
+        }
+      } catch {
+        /* fall through to file-based listing */
+      }
+    }
+
     const results: { runId: string; phase: string; timestamp: string }[] = [];
 
     const addFromDir = (dir: string) => {
       try {
         const entries = fs.readdirSync(dir);
         for (const f of entries) {
-          // Skip non-checkpoint files and directories
           if (f.endsWith('.tmp')) continue;
           if (!f.endsWith('.checkpoint') && !f.endsWith('.json')) continue;
           const state = this._readFile(path.join(dir, f));
@@ -329,6 +354,47 @@ export class StateCheckpointer {
       }
     }
     return state;
+  }
+
+  private writeStoreCheckpoint(state: CheckpointState): void {
+    if (!this.store) return;
+    const id = `${state.runId}_${state.stepNumber}`;
+    const tokenCount =
+      (state.tokenUsage?.totalTokens ?? 0) ||
+      (state.tokenUsage?.promptTokens ?? 0) + (state.tokenUsage?.completionTokens ?? 0);
+
+    const snapshot: CheckpointSnapshot = {
+      checkpoint: {
+        id,
+        runId: state.runId,
+        label: state.phase,
+        phase: state.phase,
+        stepNumber: state.stepNumber,
+        tokenCount,
+        agentId: state.agentId,
+        tenantId: this.tenantId,
+        createdAt: state.timestamp,
+        metadata: {
+          attemptNumber: state.attemptNumber,
+          lastError: state.lastError,
+          totalDurationMs: state.totalDurationMs,
+          leaseToken: state.leaseToken,
+          fencingEpoch: state.fencingEpoch,
+          projectId: state.context?.projectId,
+          goal: state.context?.goal,
+        },
+        version: state.version ?? 1,
+      },
+      messages: state.messages ?? [],
+      filesRead: state.context?.projectContextFiles ?? [],
+      filesModified: [],
+    };
+
+    try {
+      this.store.save(snapshot);
+    } catch {
+      /* store write is best-effort — file-based checkpoint is primary */
+    }
   }
 
   private _readFile(filePath: string): CheckpointState | null {
