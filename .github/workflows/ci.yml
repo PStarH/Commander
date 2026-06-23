@@ -111,14 +111,27 @@ jobs:
             # ---- Activate MSVC and rebuild ----
             if [ -n "$VS_VCVARS" ]; then
               echo "::notice::Activating MSVC at $VS_VCVARS_BASH, then rebuilding better-sqlite3 in same shell"
-              # Search broadly for vcvars*.bat in VC tree to find actual path
+              # List VC build tools directory for diagnostics
               VS_VC_DIR=$(dirname "$(dirname "$(dirname "$VS_VCVARS_BASH")")")
               echo "  find vcvars*.bat: $(find "$VS_VC_DIR" -name 'vcvars*.bat' -maxdepth 5 2>/dev/null | tr '\n' ' ')"
-              echo "  ls VC build dir: $(ls "$(dirname "$VS_VCVARS_BASH")" 2>/dev/null | tr '\n' ' ')"
 
-              # Disable MSYS2 path conversion for cmd.exe, then source vcvars and rebuild
-              MSYS2_ARG_CONV_EXCL=* cmd //c 'call "'"$VS_VCVARS"'" && echo [VCVARS_OK] && where cl.exe && cl.exe 2>&1 | head -5 && echo [PNPM_START] && pnpm rebuild better-sqlite3' \
-                || (echo "::warning::better-sqlite3 rebuild failed (post-MsVC)" && echo "  exit code: $?")
+              # Write temp batch file to avoid MSYS2 path quoting issues
+              batpath="$(pwd)/rebuild.bat"
+              echo '@echo off' > "$batpath"
+              echo 'call "'"$VS_VCVARS"'"' >> "$batpath"
+              echo 'if errorlevel 1 echo [VCVARS_FAIL] && exit /b 1' >> "$batpath"
+              echo 'echo [VCVARS_OK]' >> "$batpath"
+              echo 'where cl.exe' >> "$batpath"
+              echo 'cl.exe 2>&1 | head -5' >> "$batpath"
+              echo 'echo [PNPM_START]' >> "$batpath"
+              echo 'cd /d %GITHUB_WORKSPACE%' >> "$batpath"
+              echo 'pnpm rebuild better-sqlite3' >> "$batpath"
+              echo "  [BAT] wrote batch file at: $batpath"
+              echo "  [BAT] vcvars64.bat path: $VS_VCVARS"
+              type "$batpath" 2>/dev/null
+              echo "  [BAT] running batch file..."
+              MSYS2_ARG_CONV_EXCL=* cmd /c "$batpath" \
+                || (echo "::warning::better-sqlite3 rebuild failed (post-MsVC)")
             else
               echo "::warning::MSVC vcvars64 not located on Windows runner — attempting pnpm rebuild without MSVC source-build fallback"
               pnpm rebuild better-sqlite3 \
