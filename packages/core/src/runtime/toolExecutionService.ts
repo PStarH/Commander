@@ -69,6 +69,9 @@ export class ToolExecutionService {
     const bus = getMessageBus();
     const startTime = Date.now();
     try {
+      if (toolCall.name.startsWith('chaos_')) {
+        console.log(`[ToolExecSvc] ENTER ${toolCall.name} round=${String((toolCall.arguments as any)?.payload?.round ?? '?')}`);
+      }
       // Sub-agent tool whitelist enforcement: if an allowlist is provided,
       // reject any tool call outside the allowed set.
       if (allowedTools && !allowedTools.includes(toolCall.name)) {

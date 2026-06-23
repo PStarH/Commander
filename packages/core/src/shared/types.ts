@@ -33,9 +33,50 @@ export type ModelTier = 'eco' | 'standard' | 'power' | 'consensus';
 // ============================================================================
 
 /**
- * ROMA's four core roles for recursive agent construction.
+ * ROMA's core roles for recursive agent construction, extended with
+ * topology-specific roles so the atomizer can tag sub-agents for their
+ * execution semantics (debate, ensemble, consensus, handoff, evaluator-optimizer).
  */
-export type ROMARole = 'ATOMIZER' | 'PLANNER' | 'EXECUTOR' | 'AGGREGATOR';
+export type ROMARole =
+  | 'ATOMIZER'
+  | 'PLANNER'
+  | 'EXECUTOR'
+  | 'AGGREGATOR'
+  | 'HANDOFF_AGENT_1'
+  | 'HANDOFF_AGENT_2'
+  | 'HANDOFF_AGENT_3'
+  | 'HANDOFF_AGENT_4'
+  | 'HANDOFF_AGENT_5'
+  | 'HANDOFF_AGENT_6'
+  | 'HANDOFF_AGENT_7'
+  | 'HANDOFF_AGENT_8'
+  | 'DEBATER_1'
+  | 'DEBATER_2'
+  | 'DEBATER_3'
+  | 'DEBATER_4'
+  | 'DEBATER_5'
+  | 'DEBATER_6'
+  | 'DEBATER_7'
+  | 'DEBATER_8'
+  | 'JUDGE'
+  | 'VOTER_1'
+  | 'VOTER_2'
+  | 'VOTER_3'
+  | 'VOTER_4'
+  | 'VOTER_5'
+  | 'VOTER_6'
+  | 'VOTER_7'
+  | 'VOTER_8'
+  | 'CONSENSUS_AGENT_1'
+  | 'CONSENSUS_AGENT_2'
+  | 'CONSENSUS_AGENT_3'
+  | 'CONSENSUS_AGENT_4'
+  | 'CONSENSUS_AGENT_5'
+  | 'CONSENSUS_AGENT_6'
+  | 'CONSENSUS_AGENT_7'
+  | 'CONSENSUS_AGENT_8'
+  | 'IMPLEMENTER'
+  | 'EVALUATOR';
 
 /**
  * Reference to a stored artifact.

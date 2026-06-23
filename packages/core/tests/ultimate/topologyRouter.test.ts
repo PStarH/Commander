@@ -905,4 +905,47 @@ describe('TopologyRouter', () => {
       expect(() => router.buildDAG(nodes, edges)).not.toThrow();
     });
   });
+
+  describe('provider/model-specific latency calibration', () => {
+    it('uses static latency band when no calibration exists', () => {
+      const result = router.route(makeDeliberation({ taskType: 'FACTUAL' }));
+      expect(result.expectedLatency).toBe('< 5s');
+    });
+
+    it('overrides latency band from learned coordination weights', () => {
+      const learned = router.getLearnedWeights();
+      learned.recordCoordinationWeight(
+        'latency_band_ms_SINGLE',
+        'FACTUAL',
+        25000,
+        'openai__gpt-4o',
+      );
+
+      const result = router.route(
+        makeDeliberation({ taskType: 'FACTUAL' }),
+        undefined,
+        undefined,
+        'openai__gpt-4o',
+      );
+      expect(result.expectedLatency).toBe('10-30s');
+    });
+
+    it('falls back to static band for uncalibrated topologies', () => {
+      const learned = router.getLearnedWeights();
+      learned.recordCoordinationWeight(
+        'latency_band_ms_PARALLEL',
+        'FACTUAL',
+        80000,
+        'openai__gpt-4o',
+      );
+
+      const result = router.route(
+        makeDeliberation({ taskType: 'FACTUAL' }),
+        undefined,
+        undefined,
+        'openai__gpt-4o',
+      );
+      expect(result.expectedLatency).toBe('< 5s');
+    });
+  });
 });

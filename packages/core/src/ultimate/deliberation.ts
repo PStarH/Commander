@@ -1,14 +1,10 @@
 /**
- * Deliberation Engine - DOVA-inspired meta-reasoning before tool invocation.
+ * Deliberation Engine - keyword-based task classification before tool invocation.
  *
- * DOVA research shows deliberation-first orchestration reduces unnecessary
- * API calls by 40-60% on simple tasks while preserving deep reasoning capacity.
- * The engine determines whether external info is needed, classifies the task,
- * and allocates thinking budget before any agent is spawned.
- *
- * Two modes:
+ * Classifies tasks by keyword overlap against hardcoded lists, estimates
+ * complexity via heuristic tables, and selects a topology. Two modes:
  *   deliberate()          — fast, keyword-based (no LLM call)
- *   deliberateWithLLM()   — LLM-powered meta-reasoning (richer, more accurate)
+ *   deliberateWithLLM()   — LLM-powered planning (richer, but falls back to deliberate() for every field)
  */
 import type { DeliberationPlan, OrchestrationTopology, EffortLevel } from './types';
 import type { LLMProvider, LLMRequest } from '../runtime/types';
@@ -157,8 +153,8 @@ export function deliberate(goal: string, context?: Record<string, unknown>): Del
 
 function classifyTaskType(goal: string): DeliberationTaskType {
   const lower = goal.toLowerCase();
-  // For short keywords (<= 3 chars), use word boundary to avoid substring false positives
-  // For longer keywords, substring matching is safe
+  // Keyword overlap classifier: scores task types by counting hardcoded keyword matches.
+  // This is not semantic classification.
   const wordMatch = (word: string) => {
     if (word.includes(' ')) return lower.includes(word);
     if (word.length <= 3) return getWordBoundaryRe(word).test(lower);
@@ -359,12 +355,9 @@ function estimateTotalTokens(effortLevel: EffortLevel, steps: number): number {
 /**
  * Estimate total execution duration in milliseconds.
  *
- * Inspired by Astraea (2512.14142): uses historical state + future predictions.
- * Inspired by Chimera (2603.22206): predicts remaining output length for scheduling.
- *
- * Two-tier estimation:
- *   1. Heuristic baseline (effort level × task type × steps)
- *   2. History-aware calibration from meta-learner (when available)
+ * Primary: hardcoded heuristic tables (effort level × task type × steps).
+ * Secondary: historical averages from meta-learner (empty for first 5 runs,
+ * so calibration is inert until then).
  *
  * Parallel topologies get a discount based on estimated concurrency.
  */
@@ -559,8 +552,9 @@ Field values:
 Remember: output ONLY the JSON object, nothing else.`;
 
 /**
- * LLM-powered deliberation — rich meta-reasoning using a cheap LLM call.
- * Falls back to keyword-based deliberate() if no provider is available or the call fails.
+ * LLM-powered deliberation — sends goal to an LLM, then falls back to
+ * keyword-based deliberate() for every field. The LLM call adds latency
+ * and cost with no behavioral benefit over deliberate() alone.
  */
 export async function deliberateWithLLM(
   goal: string,

@@ -250,15 +250,18 @@ describe('NoopSB Fallback', () => {
 
 describe('SandboxManager', () => {
   it('discovers available sandboxes without crashing', async () => {
-    const { discoverSandboxes } = await import('../src/sandbox/platforms');
-    const sandboxes = discoverSandboxes();
-    assert.ok(Array.isArray(sandboxes), 'Should return an array');
+    const { SandboxManager } = await import('../src/sandbox/manager');
+    // CI/test runners usually lack OS-level sandboxes; allow explicit noop fallback.
+    const manager = new SandboxManager({ allowNoSandbox: true });
+    const mechanisms = manager.getAvailableMechanisms();
+    assert.ok(Array.isArray(mechanisms), 'Should return an array');
+  });
 
-    // Each sandbox should have name and available properties
-    for (const sb of sandboxes) {
-      assert.ok(typeof sb.name === 'string', 'Sandbox should have a name');
-      assert.ok(typeof sb.available === 'boolean', 'Sandbox should have available flag');
-      assert.ok(sb.available, `Sandbox ${sb.name} should be available`);
-    }
+  it('fails closed when no sandbox is available and fallback is not allowed', async () => {
+    const { SandboxManager, SandboxInitializationError } = await import('../src/sandbox/manager');
+    assert.throws(
+      () => new SandboxManager({ sandboxes: [], allowNoSandbox: false }),
+      SandboxInitializationError,
+    );
   });
 });

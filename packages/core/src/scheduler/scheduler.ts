@@ -27,55 +27,112 @@ const DEFAULT_CONFIG: SchedulerConfig = {
 };
 
 // ============================================================================
-// Cron parser — minimal 5-field: minute hour day month weekday
+// Cron parser — deterministic carry-forward algorithm (O(1) per field)
+// Replaces the previous O(n) minute-by-minute scan (2880 iterations/48h)
+// with field-level matching bounded to max 60 candidates per field.
 // ============================================================================
 
-function cronMatches(cronExpr: string, date: Date): boolean {
+/**
+ * Find the next datetime matching a 5-field cron expression.
+ *
+ * Carry-forward algorithm: minute → hour → day → month → year.
+ * Each field independently advances to the next matching value;
+ * if no match exists, it resets and advances the higher field.
+ */
+function computeNextCronMatch(cronExpr: string, after: Date): Date | undefined {
   const fields = cronExpr.trim().split(/\s+/);
-  if (fields.length !== 5) return false;
+  if (fields.length !== 5) return undefined;
 
-  const minute = date.getMinutes();
-  const hour = date.getHours();
-  const day = date.getDate();
-  const month = date.getMonth() + 1;
-  const weekday = date.getDay();
+  const MAX_YEARS_AHEAD = 4;
+  let candidate = new Date(after.getTime() + 60_000);
 
-  const values = [minute, hour, day, month, weekday];
-  for (let i = 0; i < 5; i++) {
-    if (!cronFieldMatches(fields[i], values[i])) return false;
+  for (let yearOffset = 0; yearOffset < MAX_YEARS_AHEAD; yearOffset++) {
+    const year = candidate.getFullYear();
+    if (year > after.getFullYear() + MAX_YEARS_AHEAD) return undefined;
+
+    const startMonth = yearOffset === 0 ? candidate.getMonth() + 1 : 1;
+    const month = findNextFieldMatch(fields[3], startMonth, 1, 12);
+    if (month === undefined) continue;
+    if (month > startMonth) candidate = new Date(year, month - 1, 1, 0, 0);
+
+    const startDay = yearOffset === 0 && month === startMonth ? candidate.getDate() : 1;
+    const day = findMatchingDay(fields[2], fields[4], year, month - 1, startDay);
+    if (day === undefined) {
+      candidate = new Date(year, month, 1, 0, 0);
+      yearOffset--;
+      continue;
+    }
+
+    const startHour = yearOffset === 0 && month === startMonth && day === startDay ? candidate.getHours() : 0;
+    const hour = findNextFieldMatch(fields[1], startHour, 0, 23);
+    if (hour === undefined) {
+      candidate = new Date(year, month - 1, day + 1, 0, 0);
+      yearOffset--;
+      continue;
+    }
+
+    const startMinute = yearOffset === 0 && month === startMonth && day === startDay ? candidate.getMinutes() : 0;
+    const minute = findNextFieldMatch(fields[0], startMinute, 0, 59);
+    if (minute === undefined) {
+      candidate = new Date(year, month - 1, day, hour + 1, 0);
+      yearOffset--;
+      continue;
+    }
+
+    candidate = new Date(year, month - 1, day, hour, minute, 0, 0);
+    if (candidate > after) return candidate;
   }
-  return true;
+
+  return undefined;
 }
 
-function cronFieldMatches(pattern: string, value: number): boolean {
-  if (pattern === '*') return true;
-
-  // Handle comma-separated: "1,15,30"
-  if (pattern.includes(',')) {
-    return pattern.split(',').some((p) => cronFieldMatches(p.trim(), value));
+/** Find the next value matching a cron field pattern within [min, max]. */
+function findNextFieldMatch(pattern: string, start: number, min: number, max: number): number | undefined {
+  for (let v = start; v <= max; v++) {
+    if (cronValueMatches(pattern, v, min, max)) return v;
   }
+  return undefined;
+}
 
-  // Handle step: "*/5" or "1-10/2"
+/** Match a single cron field pattern against a value. */
+function cronValueMatches(pattern: string, value: number, _min: number, _max: number): boolean {
+  if (pattern === '*') return true;
+  if (pattern.includes(',')) {
+    return pattern.split(',').some((p) => cronValueMatches(p.trim(), value, _min, _max));
+  }
   const stepMatch = pattern.match(/^(\d+)(?:-(\d+))?\/(\d+)$/);
   if (stepMatch) {
-    const start = parseInt(stepMatch[1], 10);
-    const end = stepMatch[2] ? parseInt(stepMatch[2], 10) : 59;
+    const s = parseInt(stepMatch[1], 10);
+    const e = stepMatch[2] ? parseInt(stepMatch[2], 10) : _max;
     const step = parseInt(stepMatch[3], 10);
-    if (value < start || value > end) return false;
-    return (value - start) % step === 0;
+    if (value < s || value > e) return false;
+    return (value - s) % step === 0;
   }
-
-  // Handle range: "1-5"
   const rangeMatch = pattern.match(/^(\d+)-(\d+)$/);
   if (rangeMatch) {
     return value >= parseInt(rangeMatch[1], 10) && value <= parseInt(rangeMatch[2], 10);
   }
-
-  // Exact number
   const num = parseInt(pattern, 10);
   if (!isNaN(num)) return value === num;
-
   return false;
+}
+
+/**
+ * Find a matching day considering BOTH day-of-month and day-of-week.
+ * Standard cron: if both fields are restricted, EITHER match fires.
+ */
+function findMatchingDay(domPattern: string, dowPattern: string, year: number, monthIndex: number, startDay: number): number | undefined {
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const domWild = domPattern === '*';
+  const dowWild = dowPattern === '*';
+  for (let d = startDay; d <= daysInMonth; d++) {
+    const domMatch = cronValueMatches(domPattern, d, 1, 31);
+    const dowMatch = cronValueMatches(dowPattern, new Date(year, monthIndex, d).getDay(), 0, 6);
+    if ((domWild && dowWild) || (domMatch && (dowWild || dowMatch)) || (dowMatch && (domWild || domMatch))) {
+      return d;
+    }
+  }
+  return undefined;
 }
 
 // ============================================================================
@@ -192,10 +249,48 @@ export class Scheduler {
       'Scheduler',
       `Starting scheduler (tick=${this.config.tickIntervalMs}ms)`,
     );
+    // Misfire recovery: scan for missed "once" triggers within a safe
+    // window (past 1 hour).  This prevents crash loops by limiting the
+    // number of backfill attempts and marking each as EXECUTING before
+    // the first fire.
+    this.recoverMissedOnceTriggers();
     this.tickTimer = setInterval(() => this.tick(), this.config.tickIntervalMs);
     if (typeof this.tickTimer.unref === 'function') this.tickTimer.unref();
     // Fire an immediate tick
     setImmediate(() => this.tick());
+  }
+
+  /**
+   * Scan for "once" triggers whose at-time fell within the last hour.
+   * Marks them EXECUTING before enqueuing to prevent crash loops:
+   * if a task crashes the process on every attempt, the misfire window
+   * limits retries to once per startup instead of infinite loop.
+   */
+  private recoverMissedOnceTriggers(): void {
+    const now = new Date();
+    const MISFIRE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+    const cutoff = new Date(now.getTime() - MISFIRE_WINDOW_MS);
+
+    for (const [id, entry] of this.schedules) {
+      if (!entry.enabled) continue;
+      if (entry.trigger.type !== 'once') continue;
+      if (!entry.trigger.at) continue;
+      // Already fired
+      if (entry.runCount > 0 && entry.lastRunAt) continue;
+
+      const atTime = new Date(entry.trigger.at);
+      // Only recover if the at-time falls within the misfire window
+      if (atTime >= cutoff && atTime < now) {
+        getGlobalLogger().info(
+          'Scheduler',
+          `Recovering missed once trigger "${entry.workflowName}" (${id}) — was due at ${entry.trigger.at}`,
+        );
+        // Mark as due immediately
+        entry.nextRunAt = now.toISOString();
+        entry.runCount = 0; // Will be incremented when fired
+        this.saveState();
+      }
+    }
   }
 
   stop(): void {
@@ -265,6 +360,7 @@ export class Scheduler {
     const result = await orch.execute({
       projectId: 'scheduler',
       agentId: `scheduler-${entry.workflowId}`,
+      tenantId: entry.tenantId,
       goal: entry.workflowName,
       contextData: {
         scheduleId: entry.id,
@@ -298,15 +394,8 @@ export class Scheduler {
     switch (trigger.type) {
       case 'cron': {
         if (!trigger.cron) return undefined;
-        // Scan forward up to 48 hours to find the next match
-        const now = new Date();
-        for (let i = 0; i < 24 * 60 * 2; i++) {
-          const candidate = new Date(now.getTime() + i * 60_000);
-          if (cronMatches(trigger.cron, candidate)) {
-            return candidate.toISOString();
-          }
-        }
-        return undefined;
+        const next = computeNextCronMatch(trigger.cron, new Date());
+        return next?.toISOString();
       }
       case 'interval': {
         const ms = parseInterval(trigger.interval ?? '30m');

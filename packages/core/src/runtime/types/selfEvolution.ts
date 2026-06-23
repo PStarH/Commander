@@ -181,6 +181,25 @@ export interface PerModelStrategyStats {
  * Unified config for the extended MetaLearner.
  * All features default ON except LLM analysis (defaults to light).
  */
+/**
+ * Shadow-mode comparison between the main selected strategy and an
+ * alternate strategy executed in the background.
+ */
+export interface ShadowComparison {
+  id: string;
+  runId: string;
+  timestamp: string;
+  taskType: string;
+  mainStrategy: string;
+  shadowStrategy: string;
+  mainSuccess: boolean;
+  shadowSuccess: boolean;
+  mainDurationMs: number;
+  shadowDurationMs: number;
+  mainTokenCost: number;
+  shadowTokenCost: number;
+}
+
 export interface MetaLearnerConfig {
   /** Trajectory analysis depth. Light = zero extra LLM cost. */
   analysisMode: AnalysisMode;

@@ -18,6 +18,9 @@ export interface ServiceOverrides {
 }
 
 export class ServiceContainer {
+  // WARNING: Singleton anti-pattern. Global mutable state via getInstance().
+  // Any code can mutate ServiceContainer.instance.overrides and break every
+  // consumer. It is impossible to run two independent runtimes in the same process.
   private static instance: ServiceContainer | null = null;
   private overrides: ServiceOverrides = {};
 

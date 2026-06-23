@@ -54,14 +54,14 @@ Every call: `max_tokens: 512`, `temperature: 0.3`.
 ### Running
 
 ```bash
-# Full benchmark (all topologies, 3 iterations each)
+# Full benchmark (all topologies, 10 iterations each)
 OPENAI_API_KEY=sk-... npx tsx scripts/benchmark-topology.ts
 
 # Specific topology and iterations
 OPENAI_API_KEY=sk-... npx tsx scripts/benchmark-topology.ts \
   --model=gpt-4o-mini \
   --topology=debate \
-  --iterations=5 \
+  --iterations=10 \
   --output=docs/benchmarks/results.json
 
 # Quick smoke test (SINGLE only, 3 iterations)
@@ -70,15 +70,24 @@ pnpm benchmark:topology:quick
 # Full benchmark using project script
 pnpm benchmark:topology
 
-# OpenAI-compatible providers (e.g., StepFun, DeepSeek, Groq)
+# True parallelism (requires a provider with generous rate limits)
+OPENAI_API_KEY=sk-... npx tsx scripts/benchmark-topology.ts --delay=0 --iterations=10
+
+# OpenAI-compatible providers (e.g., StepFun, DeepSeek, Groq, Anthropic)
 OPENAI_API_KEY=sk-... \
   OPENAI_BASE_URL=https://api.stepfun.com/v1 \
   npx tsx scripts/benchmark-topology.ts --model=step-3.7-flash
+
+# Multi-provider comparison: run once per provider, then compare the JSON reports.
+OPENAI_BASE_URL=https://api.anthropic.com/v1 OPENAI_API_KEY=sk-... \
+  npx tsx scripts/benchmark-topology.ts --model=claude-3-5-sonnet --output=anthropic.json
+OPENAI_BASE_URL=https://api.openai.com/v1 OPENAI_API_KEY=sk-... \
+  npx tsx scripts/benchmark-topology.ts --model=gpt-4o --output=openai.json
 ```
 
 ## Results — step-3.7-flash (StepFun)
 
-**Date**: 2026-06-23 | **Iterations**: 3 per topology | **RPM limit**: 10 (StepFun free tier)
+**Date**: 2026-06-23 | **Iterations**: 10 per topology | **RPM limit**: 10 (StepFun free tier)
 
 > ⚠️ StepFun's free-tier API has a 10 RPM rate limit. The script enforces ~17 RPM with exponential 429 backoff, but concurrent multi-call topologies still experienced 33–67% failure rates. Results below are computed from **successful runs only** (see `failureRate` column).
 
@@ -171,10 +180,10 @@ OPENAI_API_KEY=sk-... \
 
 ## Limitations
 
-- **Rate limits**: StepFun free tier throttles at 10 RPM. The benchmark's sequential throttling (3.5s between calls) helps but doesn't eliminate 429s on multi-call topologies. Results are from 2–3 successful runs per topology.
-- **Sequential throttle affects latency**: Because all calls are serialized (to avoid 429s), topologies designed for true parallelism (PARALLEL, DEBATE, ENSEMBLE) show inflated wall-clock times. Remove the throttle (`--delay=0`) for realistic latency on providers without tight RPM limits.
-- **Single provider**: All data from one model (step-3.7-flash). GPT-4o, Claude Sonnet, and local Ollama models will differ.
-- **Small sample**: 3 iterations per topology. Low statistical power — treat as directional, not definitive.
+- **Rate limits**: StepFun free tier throttles at 10 RPM. The benchmark's sequential throttling (3.5s between calls by default) helps but doesn't eliminate 429s on multi-call topologies. Use `--delay=0` for true-parallelism measurement on providers with generous rate limits.
+- **Sequential throttle affects latency**: Because calls are serialized by default, topologies designed for true parallelism (PARALLEL, DEBATE, ENSEMBLE) show inflated wall-clock times. Remove the throttle (`--delay=0`) for realistic latency on providers without tight RPM limits.
+- **Single provider**: All data from one model (step-3.7-flash). GPT-4o, Claude Sonnet, and local Ollama models will differ. Run the benchmark against multiple providers and compare reports for a fuller picture.
+- **Small sample**: 10 iterations per topology is better than the previous 3, but still modest statistical power — treat as directional, not definitive.
 
 ## Raw Data
 

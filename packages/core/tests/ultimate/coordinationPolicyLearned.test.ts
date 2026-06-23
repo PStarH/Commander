@@ -101,5 +101,28 @@ describe('CoordinationPolicy learned weights', () => {
       const decisionWithLW = evaluateCoordinationPolicy(plan(), 'PARALLEL', undefined, lw);
       expect(decisionWithLW.overhead.coupling).toBe(decisionDefault.overhead.coupling);
     });
+
+    it('includes dynamic evidence from learned topology history', () => {
+      const lw = new LearnedWeights({ smoothingFactor: 1.0 });
+      lw.recordSignal('RESEARCH', 'PARALLEL', true, undefined, 'tenantA');
+      const decision = evaluateCoordinationPolicy(plan(), 'PARALLEL', undefined, lw, 'tenantA');
+      expect(decision.evidence.some((e) => e.includes('Tenant history'))).toBe(true);
+      expect(decision.evidence.some((e) => e.includes('PARALLEL'))).toBe(true);
+    });
+
+    it('includes dynamic evidence from learned coordination weights', () => {
+      const lw = new LearnedWeights({ smoothingFactor: 1.0 });
+      lw.recordCoordinationWeight('coupling', 'RESEARCH', 0.33, 'tenantA');
+      lw.recordCoordinationWeight('roi_threshold', 'RESEARCH', 0.12, 'tenantA');
+      const decision = evaluateCoordinationPolicy(plan(), 'PARALLEL', undefined, lw, 'tenantA');
+      expect(decision.evidence.some((e) => e.includes('Learned coupling estimate'))).toBe(true);
+      expect(decision.evidence.some((e) => e.includes('Learned ROI threshold'))).toBe(true);
+    });
+
+    it('omits dynamic evidence when no learned weights are provided', () => {
+      const decision = evaluateCoordinationPolicy(plan(), 'PARALLEL');
+      expect(decision.evidence.some((e) => e.includes('Tenant history'))).toBe(false);
+      expect(decision.evidence.some((e) => e.includes('Learned coupling'))).toBe(false);
+    });
   });
 });

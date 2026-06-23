@@ -1,3 +1,8 @@
+// WARNING: Observability module contains 28 files and 6,362 lines.
+// Many exported metrics/scoring functions are hardcoded formulas that produce
+// numbers nobody acts on. experimentRunner.ts compares metric counts across
+// runs with no statistical rigor. Consumers should verify that exported
+// metrics feed into actual alerts, dashboards, or decisions.
 export * from './types';
 export { CostModel, getCostModel, resetCostModel, DEFAULT_PRICING } from './costModel';
 export { buildTimeline, buildSpanTree } from './timelineBuilder';
