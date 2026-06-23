@@ -2314,7 +2314,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                           siblingAbort.signal,
                         );
                     if (gate.kind !== 'allowed') {
-                      console.log(`[SERIAL] GATE BLOCKED ${tc.name} kind=${gate.kind}`);
+                      console.warn(`[SERIAL] GATE BLOCKED ${tc.name} kind=${gate.kind}`);
                           if (gate.kind === 'retry') {
                             retryLoopDetected = true;
                             retryLoopCount = gate.count;
@@ -2530,13 +2530,13 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     // SecurityOrchestrator: unify ToolApproval + AdaptiveHITL before execution
                     const sec = await this.applyBeforeToolCallSecurity(tc, ctx.agentId, runId);
                     if (!sec.allowed && sec.blockedToolResult) {
-                      console.log(`[SERIAL] BLOCKED ${tc.name} by security: ${sec.decision.blockReason ?? 'unknown'}`);
+                      console.warn(`[SERIAL] BLOCKED ${tc.name} by security: ${sec.decision.blockReason ?? 'unknown'}`);
                     }
                     let toolResult: ToolResult;
                     if (!sec.allowed && sec.blockedToolResult) {
                       toolResult = sec.blockedToolResult;
                     } else {
-                      console.log(`[SERIAL] EXECUTING ${tc.name} toolLoopCount=${toolLoopCount}`);
+                      console.warn(`[SERIAL] EXECUTING ${tc.name} toolLoopCount=${toolLoopCount}`);
                       toolResult = await this.executeTool(
                         runId,
                         tc,
