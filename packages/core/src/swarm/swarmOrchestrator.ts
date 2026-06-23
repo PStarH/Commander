@@ -31,8 +31,8 @@ import {
   buildBaseSummary,
   SHARED_MANAGER_REVIEW_PROMPT,
   SHARED_CRITIC_PROMPT,
-} from '../orchestration/baseOrchestrator';
-import type { DecompositionSubGoal } from '../orchestration/baseOrchestrator';
+} from '../ultimate/baseOrchestrator';
+import type { DecompositionSubGoal } from '../ultimate/baseOrchestrator';
 
 // ============================================================================
 // Swarm-specific prompts
