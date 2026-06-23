@@ -119,11 +119,11 @@ jobs:
               echo '@where cl.exe' >> "$batpath"
               echo '@cl.exe' >> "$batpath"
               echo '@where pnpm' >> "$batpath"
-              echo '@pnpm --version' >> "$batpath"
+              echo '@call pnpm --version' >> "$batpath"
               echo '@echo [PNPM_START]' >> "$batpath"
               echo '@cd /d %GITHUB_WORKSPACE%' >> "$batpath"
               echo '@echo [PNPM_REBUILD_START]' >> "$batpath"
-              echo '@pnpm rebuild better-sqlite3' >> "$batpath"
+              echo '@call pnpm rebuild better-sqlite3' >> "$batpath"
               echo '@echo [PNPM_EXIT_CODE]: %errorlevel%' >> "$batpath"
               # Convert to Windows path for cmd.exe
               batwin=$(echo "$batpath" | sed 's|^/\([a-z]\)/|\1:\\|' | sed 's|/|\\|g')
