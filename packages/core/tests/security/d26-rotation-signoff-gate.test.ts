@@ -83,6 +83,7 @@ function npxSpawn(args: string[], opts?: { timeout?: number }) {
     cwd: pkgDir,
     encoding: 'utf-8',
     timeout: opts?.timeout ?? 60_000,
+    shell: isWin,  // .cmd files need cmd.exe on Windows
   });
   // Surface spawn errors explicitly so CI logs show the root cause instead of
   // a cryptic "expected null to be 1" assertion failure.
