@@ -31,8 +31,19 @@ export interface LoadEnvResult {
 // thousands of files but no user-authored .env. Including them in the walk
 // would emit O(N) paths to the caller and slow every loadEnvUp call.
 const SKIP_SUBTREE = new Set([
-  'node_modules', 'dist', 'build', 'coverage', '.git', '.cache', '.next',
-  '.turbo', '.parcel-cache', '__pycache__', '.venv', 'venv', 'target',
+  'node_modules',
+  'dist',
+  'build',
+  'coverage',
+  '.git',
+  '.cache',
+  '.next',
+  '.turbo',
+  '.parcel-cache',
+  '__pycache__',
+  '.venv',
+  'venv',
+  'target',
 ]);
 
 export function walkUpDotenvPaths(cwd: string): string[] {
