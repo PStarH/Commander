@@ -17,6 +17,13 @@ export {
   DEFAULT_GUARDIAN_CONFIG,
 } from './codeAgentHarness';
 export { McpHarness, MCP_HARNESS_CAPABILITIES } from './mcpHarness';
+export {
+  Tier1Harness,
+  TIER1_HARNESS_CAPABILITIES,
+  Tier1AgentLoop,
+  type Tier1LoopParams,
+  type Tier1LoopResult,
+} from './tier1Harness';
 
 // Registry
 export { HarnessRegistry } from './harnessRegistry';
