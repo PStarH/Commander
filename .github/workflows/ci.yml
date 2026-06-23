@@ -111,11 +111,7 @@ jobs:
             # ---- Activate MSVC and rebuild ----
             if [ -n "$VS_VCVARS" ]; then
               echo "::notice::Activating MSVC at $VS_VCVARS_BASH, then rebuilding better-sqlite3 in same shell"
-              # List VC build tools directory for diagnostics
-              VS_VC_DIR=$(dirname "$(dirname "$(dirname "$VS_VCVARS_BASH")")")
-              echo "  find vcvars*.bat: $(find "$VS_VC_DIR" -name 'vcvars*.bat' -maxdepth 5 2>/dev/null | tr '\n' ' ')"
-
-              # Write temp batch file to avoid MSYS2 path quoting issues
+              # Write a batch file to source vcvars64.bat and rebuild better-sqlite3
               batpath="$(pwd)/rebuild.bat"
               echo '@echo off' > "$batpath"
               echo 'call "'"$VS_VCVARS"'"' >> "$batpath"
@@ -126,11 +122,15 @@ jobs:
               echo 'echo [PNPM_START]' >> "$batpath"
               echo 'cd /d %GITHUB_WORKSPACE%' >> "$batpath"
               echo 'pnpm rebuild better-sqlite3' >> "$batpath"
-              echo "  [BAT] wrote batch file at: $batpath"
-              echo "  [BAT] vcvars64.bat path: $VS_VCVARS"
-              type "$batpath" 2>/dev/null
-              echo "  [BAT] running batch file..."
-              MSYS2_ARG_CONV_EXCL=* cmd /c "$batpath" \
+              # Convert to Windows path for cmd.exe
+              batwin=$(echo "$batpath" | sed 's|^/\([a-z]\)/|\1:\\|' | sed 's|/|\\|g')
+              echo "  [BAT] batch file (unix): $batpath"
+              echo "  [BAT] batch file (win):  $batwin"
+              echo "  [BAT] vcvars64.bat:      $VS_VCVARS"
+              echo "  [BAT] workspace:         $GITHUB_WORKSPACE"
+              cat "$batpath"
+              echo "  [BAT] running..."
+              MSYS2_ARG_CONV_EXCL=* cmd /c "$batwin" \
                 || (echo "::warning::better-sqlite3 rebuild failed (post-MsVC)")
             else
               echo "::warning::MSVC vcvars64 not located on Windows runner — attempting pnpm rebuild without MSVC source-build fallback"
