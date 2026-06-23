@@ -263,4 +263,8 @@ export interface AgentRuntimeConfig {
   /** Name of the LLM provider to use for verification (Stage 2/3). When set, the verification
    *  pipeline uses a different provider than the agent, breaking the evaluator echo chamber. */
   evaluatorProviderName?: string;
+  /** Security monitor configuration. */
+  securityMonitor?: {
+    enabled?: boolean;
+  };
 }
