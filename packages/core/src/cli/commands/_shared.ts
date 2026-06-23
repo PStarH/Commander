@@ -58,7 +58,7 @@ import { getGlobalLogger, setGlobalLogLevel } from '../../logging';
 import { StateCheckpointer } from '../../runtime/stateCheckpointer';
 import { startTUI } from '../../tui';
 import { spawn } from 'child_process';
-import { TaskPool } from '../../orchestration/taskPool';
+import { TaskPool } from '../../ultimate/taskPool';
 import { GoalOrchestrator } from '../../goal/goalOrchestrator';
 import type { GoalConfig } from '../../goal/types';
 import { SwarmOrchestrator } from '../../swarm/swarmOrchestrator';

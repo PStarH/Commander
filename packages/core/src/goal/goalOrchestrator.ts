@@ -36,7 +36,7 @@ import {
   SHARED_MANAGER_DECOMPOSE_PROMPT,
   SHARED_MANAGER_REVIEW_PROMPT,
   SHARED_CRITIC_PROMPT,
-} from '../orchestration/baseOrchestrator';
+} from '../ultimate/baseOrchestrator';
 
 export class GoalOrchestrator {
   private provider: LLMProvider;
