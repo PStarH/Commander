@@ -42,7 +42,7 @@ import type { LeaseManager } from '../atr/leaseManager';
 import type { CompensationQueue } from '../atr/compensationQueue';
 import {
   openCheckpointBackend,
-  type IChekpointBackend,
+  type ICheckpointBackend,
   type CheckpointRecord,
 } from '../atr/checkpointStore';
 
@@ -73,16 +73,18 @@ export interface ReliabilityEngineConfig {
   compensationQueue?: CompensationQueue;
   /**
    * Optional file path for the ATR-layer checkpoint store (WAL + sync=NORMAL).
-   * Defaults to '.commander/atr_checkpoints.db' when the field is present
-   * but empty. Falls back to InMemoryCheckpointBuffer if better-sqlite3
-   * is not installed or open() throws — never propagates an error.
+   * Defaults to '.commander/atr_checkpoints.db' when omitted. Pass the
+   * literal ':memory:' to opt into an in-memory backend (persistence is
+   * per-process only — restart loses all rows). Falls back to
+   * InMemoryCheckpointBuffer if better-sqlite3 is not installed or open()
+   * throws — never propagates an error.
    */
   atrCheckpointPath?: string;
   /**
    * Pre-built ATR checkpoint backend. Used by tests + callers that want
    * to control the backend selection (e.g., pass an InMemory buffer).
    */
-  atrCheckpointBackend?: IChekpointBackend;
+  atrCheckpointBackend?: ICheckpointBackend;
 }
 
 // ============================================================================
@@ -105,7 +107,7 @@ export class ReliabilityEngine {
   private _deadLetterQueue: DeadLetterQueue;
   private _compensationRegistry: CompensationRegistry;
   private _stateCheckpointer: StateCheckpointer;
-  private _atrCheckpointStore: IChekpointBackend;
+  private _atrCheckpointStore: ICheckpointBackend;
 
   private disposed = false;
 
@@ -124,14 +126,11 @@ export class ReliabilityEngine {
     });
 
     // ATR checkpoint store: prefer an injected backend; otherwise open one
-    // (WAL when better-sqlite3 is available, InMemory otherwise).
+    // (WAL when better-sqlite3 is available, InMemory otherwise). Callers
+    // wanting an in-memory backend can pass the literal ':memory:' (which
+    // better-sqlite3 honors) — no special-case sentinel.
     this._atrCheckpointStore =
-      config.atrCheckpointBackend ??
-      openCheckpointBackend(
-        config.atrCheckpointPath === null
-          ? { filePath: ':memory:' }
-          : { filePath: config.atrCheckpointPath },
-      );
+      config.atrCheckpointBackend ?? openCheckpointBackend({ filePath: config.atrCheckpointPath });
 
     // Wire observability
     const extraTransitionHandler = config.circuitTransitionHandler;
@@ -382,7 +381,7 @@ export class ReliabilityEngine {
    * to an in-process buffer as the safest degradation. The backend is
    * shared across the engine's lifetime; closing the engine disposes it.
    */
-  getAtrCheckpointStore(): IChekpointBackend {
+  getAtrCheckpointStore(): ICheckpointBackend {
     return this._atrCheckpointStore;
   }
 
@@ -430,5 +429,28 @@ export class ReliabilityEngine {
     this.flush();
     this._stateCheckpointer.dispose();
     this._compensationRegistry.clear();
+    // Close the ATR checkpoint backend so tests do not leak open SQLite
+    // file handles. Production callers reach shutdown() during graceful
+    // process exit, where closing is also correct.
+    try {
+      this._atrCheckpointStore.close();
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  /**
+   * Stats surface for the ATR checkpoint backend. Operators use this to
+   * observe WAL vs InMemory degradation and per-run state volume.
+   */
+  getCheckpointStats(): {
+    backend: 'wal' | 'memory';
+    fallbackError?: string;
+  } {
+    const be = this._atrCheckpointStore as ICheckpointBackend & Partial<{ fallbackError: string }>;
+    return {
+      backend: be.backend,
+      fallbackError: be.fallbackError,
+    };
   }
 }
