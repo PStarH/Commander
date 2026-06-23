@@ -111,36 +111,32 @@ jobs:
             # ---- Activate MSVC and rebuild ----
             if [ -n "$VS_VCVARS" ]; then
               echo "::notice::Activating MSVC at $VS_VCVARS_BASH, then rebuilding better-sqlite3 in same shell"
+              # Resolve the actual better-sqlite3 directory from packages/core's perspective
+              BETTER_DIR="$(cd packages/core && node -e "
+                var p=require.resolve('better-sqlite3/package.json');
+                console.log(p.substring(0,p.lastIndexOf('/')).replace(/\//g,'\\\\'));
+              " 2>/dev/null)"
+              echo "  resolved better-sqlite3 dir: $BETTER_DIR"
               # Write a batch file to source vcvars64.bat and rebuild better-sqlite3
               batpath="$(pwd)/rebuild.bat"
               echo '@echo on' > "$batpath"
               echo '@call "'"$VS_VCVARS"'"' >> "$batpath"
               echo '@echo [VCVARS_OK]' >> "$batpath"
-              echo '@where cl.exe' >> "$batpath"
-              echo '@cl.exe' >> "$batpath"
-              echo '@where pnpm' >> "$batpath"
-              echo '@call pnpm --version' >> "$batpath"
-              echo '@echo [PNPM_START]' >> "$batpath"
               echo '@cd /d %GITHUB_WORKSPACE%' >> "$batpath"
-              echo '@echo [REMOVE_OLD_BINARY]' >> "$batpath"
-              echo '@if exist "node_modules\better-sqlite3\build" rmdir /s /q "node_modules\better-sqlite3\build"' >> "$batpath"
-              echo '@if exist "packages\core\node_modules\better-sqlite3\build" rmdir /s /q "packages\core\node_modules\better-sqlite3\build"' >> "$batpath"
-              echo '@echo [PNPM_REBUILD_START]' >> "$batpath"
-              echo '@call pnpm rebuild better-sqlite3 2>&1' >> "$batpath"
-              echo '@echo [PNPM_EXIT]: %errorlevel%' >> "$batpath"
-              echo '@echo [TRY_NODE_GYP_DIRECT]' >> "$batpath"
-              echo '@for /d %%p in (node_modules\.pnpm\better-sqlite3*) do @if exist "%%p\node_modules\better-sqlite3\binding.gyp" cd /d "%%p\node_modules\better-sqlite3"' >> "$batpath"
-              echo '@echo cd to: %cd%' >> "$batpath"
+              echo '@echo [REMOVE_OLD_BUILD]' >> "$batpath"
+              echo '@if exist "'"$BETTER_DIR"'\build" rmdir /s /q "'"$BETTER_DIR"'\build"' >> "$batpath"
+              echo '@echo [NODE_GYP_REBUILD]' >> "$batpath"
+              echo '@cd /d "'"$BETTER_DIR"'"' >> "$batpath"
               echo '@call npx --yes node-gyp rebuild 2>&1' >> "$batpath"
               echo '@echo [NODE_GYP_EXIT]: %errorlevel%' >> "$batpath"
               echo '@cd /d %GITHUB_WORKSPACE%' >> "$batpath"
-              echo '@echo [PNPM_EXIT_CODE]: %errorlevel%' >> "$batpath"
               # Convert to Windows path for cmd.exe
               batwin=$(echo "$batpath" | sed 's|^/\([a-z]\)/|\1:\\|' | sed 's|/|\\|g')
               echo "  [BAT] batch file (unix): $batpath"
               echo "  [BAT] batch file (win):  $batwin"
               echo "  [BAT] vcvars64.bat:      $VS_VCVARS"
               echo "  [BAT] workspace:         $GITHUB_WORKSPACE"
+              echo "  [BAT] better-sqlite3 dir: $BETTER_DIR"
               echo "  [BAT] displaying batch file:"
               cat "$batpath"
               echo "  [BAT] running..."
