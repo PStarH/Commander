@@ -8,7 +8,11 @@ export class SkillInjector {
     this.manager = manager;
   }
 
-  async buildSkillsBlock(goal: string, maxLevel: DisclosureLevel = 0): Promise<string> {
+  async buildSkillsBlock(
+    goal: string,
+    maxLevel: DisclosureLevel = 0,
+    recommendationLimit = 3,
+  ): Promise<string> {
     const catalog = await this.manager.list();
     if (catalog.length === 0) return '';
 
@@ -21,7 +25,7 @@ export class SkillInjector {
 
     if (maxLevel === 0) return level0;
 
-    const relevant = await this.manager.suggestForTask(goal, 3);
+    const relevant = await this.manager.suggestForTask(goal, recommendationLimit);
     let level1 = '';
     if (relevant.length > 0) {
       const blocks: string[] = ['\n\n### Recommended Skills'];

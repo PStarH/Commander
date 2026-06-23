@@ -50,6 +50,11 @@ class LSPClient {
   private diagnosticsInsertOrder: string[] = [];
   // O(1) membership check alongside the insert-order array
   private diagnosticsFileSet: Set<string> = new Set();
+  private listeners: Array<{
+    target: NodeJS.EventEmitter;
+    event: string;
+    handler: (...args: unknown[]) => void;
+  }> = [];
 
   constructor(
     private serverCommand: string,
@@ -59,10 +64,15 @@ class LSPClient {
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
+      if (!this.serverCommand) {
+        reject(new Error('LSP server command is required'));
+        return;
+      }
       this.process = spawn(this.serverCommand, this.serverArgs, {
         cwd: this.workspaceRoot,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, NODE_ENV: 'development' },
+        shell: false,
       });
 
       // Guard against multiple resolve/reject calls (timeout + error + sendRequest can race)
@@ -84,35 +94,63 @@ class LSPClient {
         10000,
       );
 
-      this.process.on('error', (err) => {
+      const onError = (err: Error) => {
         settle(() => {
           clearTimeout(timeout);
           this.process?.kill();
           this.process = null;
           reject(new Error(`LSP process error: ${err.message}`));
         });
+      };
+      this.process.on('error', onError);
+      this.listeners.push({
+        target: this.process,
+        event: 'error',
+        handler: onError as (...args: unknown[]) => void,
       });
 
-      this.process.on('close', (code) => {
+      const onClose = (code: number | null) => {
         this.isConnected = false;
         if (code !== 0 && code !== null) {
           getGlobalLogger().warn('LSP', 'Server exited with non-zero code', { code });
         }
+      };
+      this.process.on('close', onClose);
+      this.listeners.push({
+        target: this.process,
+        event: 'close',
+        handler: onClose as (...args: unknown[]) => void,
       });
 
       let buffer = '';
-      this.process.stdout?.on('data', (chunk: Buffer) => {
+      const onStdoutData = (chunk: Buffer) => {
         buffer += chunk.toString();
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
         for (const line of lines) {
           if (line.trim()) this.handleMessage(line);
         }
-      });
+      };
+      this.process.stdout?.on('data', onStdoutData);
+      if (this.process.stdout) {
+        this.listeners.push({
+          target: this.process.stdout,
+          event: 'data',
+          handler: onStdoutData as (...args: unknown[]) => void,
+        });
+      }
 
-      this.process.stderr?.on('data', (chunk: Buffer) => {
+      const onStderrData = (chunk: Buffer) => {
         getGlobalLogger().warn('LSP', 'stderr output', { output: chunk.toString().slice(0, 200) });
-      });
+      };
+      this.process.stderr?.on('data', onStderrData);
+      if (this.process.stderr) {
+        this.listeners.push({
+          target: this.process.stderr,
+          event: 'data',
+          handler: onStderrData as (...args: unknown[]) => void,
+        });
+      }
 
       this.sendRequest('initialize', {
         processId: process.pid ?? null,
@@ -146,6 +184,10 @@ class LSPClient {
       this.isConnected = false;
       this.pendingRequests.clear();
     }
+    for (const { target, event, handler } of this.listeners) {
+      target.off(event, handler);
+    }
+    this.listeners = [];
   }
 
   get isReady(): boolean {
@@ -259,18 +301,23 @@ class LSPClient {
     }
   }
 
-  openDocument(filePath: string, content?: string): void {
-    const text = content ?? (fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : '');
-    this.sendNotification('textDocument/didOpen', {
+  async openDocument(filePath: string, content?: string): Promise<void> {
+    let text = content;
+    if (text === undefined) {
+      try {
+        text = await fs.promises.readFile(filePath, 'utf-8');
+      } catch {
+        text = '';
+      }
+    }
+    await this.sendNotification('textDocument/didOpen', {
       textDocument: {
         uri: `file://${filePath}`,
         languageId: this.getLanguageId(filePath),
         version: 1,
         text,
       },
-    }).catch((e) =>
-      getGlobalLogger().debug('LSP', 'didOpen error', { error: (e as Error)?.message }),
-    );
+    });
   }
 
   private getLanguageId(filePath: string): string {
