@@ -129,46 +129,6 @@ export class StrategySelector {
     }).sort((a, b) => b.score - a.score);
   }
 
-  /**
-   * Select the runner-up (second-best) strategy for shadow mode comparison.
-   * Returns null if there aren't at least 2 strategies with data.
-   */
-  selectShadowStrategy(
-    taskType: string,
-    strategyPerformance: Map<string, { totalRuns: number }>,
-  ): string | null {
-    const priors = this.getOrCreatePriors(taskType);
-    const ranked = this.getStrategyScores(taskType, strategyPerformance);
-    if (ranked.length < 2) return null;
-
-    const runnerUp = ranked.find((r, i) => {
-      if (i === 0) return false; // skip the winner
-      return priors[STRATEGY_NAMES.indexOf(r.strategy as StrategyName)].totalTrials > 0;
-    });
-
-    return runnerUp?.strategy ?? null;
-  }
-
-  /**
-   * Feed a shadow comparison result into the Thompson priors as a weak signal.
-   */
-  recordShadowComparison(params: {
-    taskType: string;
-    shadowStrategy: string;
-    shadowSuccess: boolean;
-  }): void {
-    const priors = this.getOrCreatePriors(params.taskType);
-    const shadowIdx = STRATEGY_NAMES.indexOf(params.shadowStrategy as StrategyName);
-    if (shadowIdx < 0) return;
-
-    const weight = 0.5;
-    if (params.shadowSuccess) {
-      priors[shadowIdx].alpha += weight;
-    } else {
-      priors[shadowIdx].beta += weight;
-    }
-  }
-
   getTrackedTaskTypes(): string[] {
     return Array.from(this.thompsonPriors.keys());
   }

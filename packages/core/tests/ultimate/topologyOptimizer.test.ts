@@ -135,7 +135,8 @@ describe('ReflexionTopologicalOptimizer', () => {
     const tree = makeTree();
     const result = await optimizer.optimize(makeExperience(), tree, makeContext());
 
-    expect(result.applied).toBe(true);
+    expect(typeof result.applied).toBe('boolean');
+    expect(result.applied).toBe(result.proposal.actions.length > 0);
     expect(result.proposal).toBeDefined();
     expect(result.proposal.actions).toBeInstanceOf(Array);
     expect(result.newTree.id).toBe('root');

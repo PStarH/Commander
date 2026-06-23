@@ -28,10 +28,12 @@ describe('Load Benchmarks', () => {
     const router = new TopologyRouter();
     const concurrency = 1000;
 
+    // NOTE: router.route() is synchronous, so true concurrent execution is not possible.
+    // This test measures microtask scheduling overhead, not actual contention.
     const start = performance.now();
     const promises = Array.from({ length: concurrency }, (_, i) => {
       const plan = deliberate(realisticGoal(i));
-      return Promise.resolve(router.route(plan));
+      return Promise.resolve().then(() => router.route(plan));
     });
     await Promise.all(promises);
     const durationMs = performance.now() - start;

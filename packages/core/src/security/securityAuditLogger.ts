@@ -55,7 +55,16 @@ export type SecurityEventType =
   | 'memory_poisoning_detected'
   | 'skill_security_violation'
   | 'config_change'
-  | 'security_scan';
+  | 'security_scan'
+  // Audit #1/#4/#7 hardening — operational events emitted by the
+  // SequentialPipelineExecutor + commander-rotate CLI. Routed through
+  // the same SecurityAuditLogger so dashboards / alerting rules pick them
+  // up without bespoke plumbing.
+  | 'key_rotation_attempt'
+  | 'key_rotation_confirmed'
+  | 'key_rotation_dry_run'
+  | 'token_budget_breach'
+  | 'circuit_breaker_short_circuit';
 
 export type SecuritySeverity = 'low' | 'medium' | 'high' | 'critical';
 

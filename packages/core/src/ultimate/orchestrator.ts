@@ -15,6 +15,7 @@ import type {
   QualityGateConfig,
 } from './types';
 import { DEFAULT_ULTIMATE_CONFIG } from './types';
+import { COST_PER_TOKEN } from '../config/constants';
 import type { ModelTier, TokenUsage } from '../runtime/types';
 import type { AgentRuntimeInterface } from '../runtime';
 import { TELOSOrchestrator } from '../telos/telosOrchestrator';
@@ -45,7 +46,6 @@ import { AgentTeamManager, getTeamManager } from './agentTeamManager';
 import { getEffortRules, classifyEffortLevel } from './effortScaler';
 import { ReflexionTopologicalOptimizer } from './topologyOptimizer';
 import { getEvolutionEngine } from '../runtime/evolutionaryWorkflowEngine';
-import { COST_PER_TOKEN } from '../config/constants';
 import { getGlobalLogger } from '../logging';
 import { createInitialSharedState, mergeSharedState } from './stateManager';
 import { TokenBudgetManager, getTokenBudgetManager } from '../runtime/tokenBudgetManager';
@@ -81,18 +81,6 @@ const MIN_AGENT_FILE_SIZE = 200;
 const FILE_DETECTION_BUFFER_MS = 1000;
 
 // ============================================================================
-// Session Pinning — version-lock config per run
-// ============================================================================
-
-export interface PinnedSessionConfig {
-  runId: string;
-  configHash: string;
-  topology: string;
-  effortLevel: string;
-  modelTierMapping: Record<string, string>;
-  qualityGateThresholds: Record<string, number>;
-  pinnedAt: string;
-}
 
 export class UltimateOrchestrator {
   private config: UltimateOrchestratorConfig;
@@ -109,9 +97,6 @@ export class UltimateOrchestrator {
   private workCoordinator: WorkCoordinator;
   private activeExecutions: Map<string, UltimateExecutionContext> = new Map();
   private executionCounter = { value: 0 };
-  /** Session-pinned configs: per-run config snapshot to prevent mid-task changes */
-  private pinnedSessions: Map<string, PinnedSessionConfig> = new Map();
-  private maxPinnedSessions = 100;
 
   constructor(
     telos: TELOSOrchestrator,
@@ -150,6 +135,7 @@ export class UltimateOrchestrator {
     contextData?: Record<string, unknown>;
     effortLevel?: EffortLevel;
     topology?: OrchestrationTopology;
+    tenantId?: string;
     onProgress?: (phase: string, detail: string) => void;
   }): Promise<UltimateExecutionResult> {
     const execId = generateExecId(this.executionCounter);
@@ -189,8 +175,7 @@ export class UltimateOrchestrator {
     const ctx = this.buildContext(execId, params);
     this.activeExecutions.set(execId, ctx);
 
-    // Session Pinning: snapshot config at execution start
-    this.pinSessionConfig(execId, params.topology || ctx.topology, params.effortLevel);
+    // Unified trajectory analysis + evolution cycle (deduplicated: single TrajectoryAnalyzer call)
 
     let taskTree!: TaskTreeNode;
 
@@ -280,6 +265,7 @@ export class UltimateOrchestrator {
         null,
         0,
         (params.contextData?.availableTools as string[] | undefined) ?? [],
+        topology,
       );
       ctx.taskTree = taskTree;
 
@@ -448,13 +434,23 @@ export class UltimateOrchestrator {
 
       // Phase 6: Parallel Execution with team inbox collaboration
       emit('EXECUTION', `Executing ${taskTree.subtasks.length} subtasks...`);
+      this.subAgentExecutor.setRunId(execId);
       if (teamId) {
         this.subAgentExecutor.setTeam(teamId);
       }
 
-      // EVALUATOR_OPTIMIZER: dedicated generator→evaluator→optimizer loop
+      // Topology-specific execution paths. Each topology has a dedicated runner
+      // so the execution semantics match the routing decision.
       if (topology === 'EVALUATOR_OPTIMIZER' && taskTree.subtasks.length >= 2) {
         await this.executeEvaluatorOptimizerLoop(taskTree, execId, params, errors, reasoning);
+      } else if (topology === 'HANDOFF' && taskTree.subtasks.length >= 2) {
+        await this.executeHandoffLoop(taskTree, execId, params, errors, reasoning);
+      } else if (topology === 'DEBATE' && taskTree.subtasks.length >= 3) {
+        await this.executeDebateLoop(taskTree, execId, params, errors, reasoning);
+      } else if (topology === 'ENSEMBLE' && taskTree.subtasks.length >= 3) {
+        await this.executeEnsembleLoop(taskTree, execId, params, errors, reasoning);
+      } else if (topology === 'CONSENSUS' && taskTree.subtasks.length >= 2) {
+        await this.executeConsensusLoop(taskTree, execId, params, errors, reasoning);
       } else {
         await this.subAgentExecutor.executeNode(
           taskTree,
@@ -488,7 +484,7 @@ export class UltimateOrchestrator {
         findings: completedNodes.map((n) => `[${n.goal.slice(0, 80)}] ${n.result!.slice(0, 500)}`),
         errors: failedNodes.map((n) => `[${n.goal.slice(0, 80)}] ${n.result ?? 'failed'}`),
         artifacts: allArtifacts.map((a) => a.id),
-        costAccumulator: this.sumTokenUsage(taskTree) * COST_PER_TOKEN,
+        costAccumulator: this.estimateTotalCost(taskTree),
       });
 
       // Phase 7: Multi-Agent Synthesis
@@ -687,56 +683,6 @@ export class UltimateOrchestrator {
 
       // Self-optimize: apply meta-learner suggestions after each execution
       this.applyOptimizationSuggestions(exp);
-
-      // ── Shadow Mode: run challenger strategy with read-only tools ──────
-      let shadowResult: { strategy: string; success: boolean; durationMs: number } | null = null;
-      try {
-        const shadowStrategy = getMetaLearner().selectShadowStrategy(topology);
-        if (shadowStrategy) {
-          const shadowStart = Date.now();
-          reasoning.push(`Shadow mode: testing ${shadowStrategy} vs ${exp.strategyUsed}...`);
-
-          // Run shadow with the same goal but read-only tools only
-          const shadowExec = await this.runtime.execute({
-            agentId: `shadow-${execId}`,
-            projectId: params.projectId,
-            goal: params.goal,
-            contextData: { ...params.contextData },
-            availableTools:
-              (params.contextData?.availableTools as string[])?.filter(
-                (t) =>
-                  !['file_write', 'file_edit', 'apply_patch', 'git', 'shell_execute'].includes(t),
-              ) ?? [],
-            maxSteps: 3,
-            tokenBudget: 10000,
-          });
-
-          shadowResult = {
-            strategy: shadowStrategy,
-            success: shadowExec.status === 'success',
-            durationMs: Date.now() - shadowStart,
-          };
-
-          reasoning.push(
-            `Shadow: ${shadowStrategy} ${shadowResult.success ? '✅ would succeed' : '❌ would fail'} (${(shadowResult.durationMs / 1000).toFixed(1)}s)`,
-          );
-
-          getMetaLearner().recordShadowComparison({
-            runId: execId,
-            taskType: topology,
-            mainStrategy: exp.strategyUsed,
-            shadowStrategy: shadowResult.strategy,
-            mainSuccess: allSuccess,
-            shadowSuccess: shadowResult.success,
-            mainDurationMs: totalDurationMs,
-            shadowDurationMs: shadowResult.durationMs,
-          });
-        }
-      } catch (e) {
-        getGlobalLogger().warn('UltimateOrchestrator', 'Shadow mode failed', {
-          error: (e as Error)?.message,
-        });
-      }
 
       // Unified trajectory analysis + evolution cycle (deduplicated: single TrajectoryAnalyzer call)
       if (!allSuccess) {
@@ -1082,11 +1028,13 @@ export class UltimateOrchestrator {
       projectId: string;
       goal: string;
       contextData?: Record<string, unknown>;
+      tenantId?: string;
     },
   ): UltimateExecutionContext {
     return {
       id: execId,
       projectId: params.projectId,
+      tenantId: params.tenantId,
       goal: params.goal,
       context: params.contextData ?? {},
       sharedState: createInitialSharedState(),
@@ -1132,7 +1080,7 @@ export class UltimateOrchestrator {
 
     return {
       totalTokens,
-      totalCostUsd: totalTokens * COST_PER_TOKEN,
+      totalCostUsd: this.estimateTotalCost(taskTree),
       totalDurationMs: Date.now() - startTime,
       llmCalls: subAgentCount * 2,
       toolCalls: subAgentCount * 5,
@@ -1195,60 +1143,6 @@ export class UltimateOrchestrator {
     // changes to types.ts defaults propagate without drift. (Reviewer fix.)
     this.config.modelTierMapping[effortLevel] =
       tier ?? DEFAULT_ULTIMATE_CONFIG.modelTierMapping[effortLevel];
-  }
-
-  // ========================================================================
-  // Session Pinning
-  // ========================================================================
-
-  /** Snapshots the current config for a run, preventing mid-task mutations. */
-  pinSessionConfig(
-    runId: string,
-    topology: string | undefined,
-    effortLevel: string | undefined,
-  ): void {
-    const hash = this.computeConfigHash();
-    const modelTierMapping: Record<string, string> = {};
-    for (const [k, v] of Object.entries(this.config.modelTierMapping)) {
-      modelTierMapping[k] = v;
-    }
-    const qualityGateThresholds: Record<string, number> = {};
-    for (const g of this.config.qualityGates) {
-      qualityGateThresholds[g.name] = g.threshold;
-    }
-
-    this.pinnedSessions.set(runId, {
-      runId,
-      configHash: hash,
-      topology: topology ?? 'SINGLE',
-      effortLevel: effortLevel ?? 'MODERATE',
-      modelTierMapping,
-      qualityGateThresholds,
-      pinnedAt: new Date().toISOString(),
-    });
-
-    // Evict oldest if over capacity
-    if (this.pinnedSessions.size > this.maxPinnedSessions) {
-      const oldest = this.pinnedSessions.keys().next().value;
-      if (oldest) this.pinnedSessions.delete(oldest);
-    }
-  }
-
-  /** Get pinned config for a session, or null if not pinned. */
-  getSessionPinnedConfig(runId: string): PinnedSessionConfig | null {
-    return this.pinnedSessions.get(runId) ?? null;
-  }
-
-  /** List all active pinned sessions. */
-  getPinnedSessions(): PinnedSessionConfig[] {
-    return Array.from(this.pinnedSessions.values()).sort((a, b) =>
-      b.pinnedAt.localeCompare(a.pinnedAt),
-    );
-  }
-
-  /** Number of active pinned sessions. */
-  getPinnedSessionCount(): number {
-    return this.pinnedSessions.size;
   }
 
   /**
@@ -1582,6 +1476,30 @@ export class UltimateOrchestrator {
     return total || Math.ceil(taskTree.goal.length / 3.7) * countNodes(taskTree);
   }
 
+  /**
+   * Estimate total cost in USD using actual model pricing from ModelRouter.
+   * Falls back to a conservative per-token rate when the router is unavailable.
+   */
+  private estimateTotalCost(taskTree: TaskTreeNode): number {
+    const totalTokens = this.sumTokenUsage(taskTree);
+    if (totalTokens === 0) return 0;
+
+    try {
+      const router = getModelRouter();
+      const models = router.listModels();
+      if (models.length > 0) {
+        const avgInputCost = models.reduce((sum, m) => sum + m.costPer1MInput, 0) / models.length;
+        const avgOutputCost = models.reduce((sum, m) => sum + m.costPer1MOutput, 0) / models.length;
+        const blendedCostPer1K = (avgInputCost + avgOutputCost) / 2;
+        return (totalTokens / 1000) * blendedCostPer1K;
+      }
+    } catch {
+      // best-effort
+    }
+
+    return totalTokens * COST_PER_TOKEN;
+  }
+
   private collectCompletedNodes(node: TaskTreeNode): TaskTreeNode[] {
     const completed: TaskTreeNode[] = [];
     if (node.status === 'COMPLETED' && node.result) {
@@ -1748,6 +1666,269 @@ export class UltimateOrchestrator {
     reasoning.push(
       `E-O loop completed: ${iteration} iterations, final quality=${(qualityScore * 100).toFixed(0)}%`,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Topology-specific execution loops
+  // ---------------------------------------------------------------------------
+
+  /**
+   * HANDOFF: serially execute subtasks, passing the previous agent's output
+   * into the next agent's context. This implements the "agent handoff" pattern
+   * where each specialist builds on the prior result.
+   */
+  private async executeHandoffLoop(
+    taskTree: TaskTreeNode,
+    execId: string,
+    params: { projectId: string; contextData?: Record<string, unknown> },
+    errors: ExecutionError[],
+    reasoning: string[],
+  ): Promise<void> {
+    reasoning.push(`HANDOFF: ${taskTree.subtasks.length} agents in serial handoff`);
+    let handoffContext = '';
+    const originalGoals = taskTree.subtasks.map((s) => s.goal);
+    const originalPrompts = taskTree.subtasks.map((s) => s.context.systemPrompt);
+
+    try {
+      for (let i = 0; i < taskTree.subtasks.length; i++) {
+        const sub = taskTree.subtasks[i];
+        sub.context.systemPrompt =
+          `You are Agent ${i + 1} of ${taskTree.subtasks.length}. ` +
+          (i > 0
+            ? 'Review the handoff context from the previous agent and continue the task.'
+            : 'Start the task from scratch.');
+        sub.goal =
+          i === 0
+            ? sub.goal
+            : `Handoff from Agent ${i}. Prior context:\n${handoffContext.slice(0, 1500)}\n\nContinue: ${sub.goal}`;
+
+        await this.subAgentExecutor.executeNode(
+          sub,
+          params.projectId,
+          params.contextData ?? {},
+          errors,
+        );
+        handoffContext = `Agent ${i + 1} completed. Result: ${(sub.result ?? '').slice(0, 1000)}`;
+        if (sub.status !== 'COMPLETED') {
+          reasoning.push(`HANDOFF: Agent ${i + 1} failed, stopping handoff`);
+          break;
+        }
+      }
+    } finally {
+      for (let i = 0; i < taskTree.subtasks.length; i++) {
+        taskTree.subtasks[i].goal = originalGoals[i];
+        taskTree.subtasks[i].context.systemPrompt = originalPrompts[i];
+      }
+    }
+
+    taskTree.status = 'COMPLETED';
+    taskTree.result = taskTree.subtasks[taskTree.subtasks.length - 1]?.result ?? '';
+    reasoning.push('HANDOFF: completed');
+  }
+
+  /**
+   * DEBATE: run multiple debaters in parallel, then run a judge to pick/evaluate
+   * the best answer. The last subtask is the judge; all preceding subtasks are
+   * debaters.
+   */
+  private async executeDebateLoop(
+    taskTree: TaskTreeNode,
+    execId: string,
+    params: { projectId: string; contextData?: Record<string, unknown> },
+    errors: ExecutionError[],
+    reasoning: string[],
+  ): Promise<void> {
+    const debaters = taskTree.subtasks.slice(0, -1);
+    const judge = taskTree.subtasks[taskTree.subtasks.length - 1];
+    reasoning.push(`DEBATE: ${debaters.length} debaters + 1 judge`);
+
+    const originalDebateGoals = debaters.map((s) => s.goal);
+    const originalJudgeGoal = judge.goal;
+
+    try {
+      await Promise.all(
+        debaters.map(async (sub, i) => {
+          sub.context.systemPrompt = `You are Debater ${i + 1}. Argue your position clearly and thoroughly.`;
+          sub.goal = `[Debate position ${i + 1}] ${sub.goal}`;
+          await this.subAgentExecutor.executeNode(
+            sub,
+            params.projectId,
+            params.contextData ?? {},
+            errors,
+          );
+        }),
+      );
+
+      const successfulDebaters = debaters.filter((d) => d.status === 'COMPLETED');
+      if (successfulDebaters.length === 0) {
+        reasoning.push('DEBATE: all debaters failed');
+        return;
+      }
+
+      const debateResults = successfulDebaters
+        .map((d, i) => `## Debater ${i + 1}\n${(d.result ?? '').slice(0, 1500)}`)
+        .join('\n\n');
+      judge.context.systemPrompt =
+        'You are a judge. Evaluate the debater positions and select the best answer with justification.';
+      judge.goal = `Evaluate these debate positions and pick the best answer:\n\n${debateResults}`;
+      await this.subAgentExecutor.executeNode(
+        judge,
+        params.projectId,
+        params.contextData ?? {},
+        errors,
+      );
+
+      taskTree.status = judge.status;
+      taskTree.result = judge.result ?? '';
+      reasoning.push('DEBATE: judge completed');
+    } finally {
+      for (let i = 0; i < debaters.length; i++) {
+        debaters[i].goal = originalDebateGoals[i];
+      }
+      judge.goal = originalJudgeGoal;
+    }
+  }
+
+  /**
+   * ENSEMBLE: run multiple voters with different perspectives in parallel, then
+   * aggregate into a single vote. The last subtask is the aggregator; preceding
+   * subtasks are voters.
+   */
+  private async executeEnsembleLoop(
+    taskTree: TaskTreeNode,
+    execId: string,
+    params: { projectId: string; contextData?: Record<string, unknown> },
+    errors: ExecutionError[],
+    reasoning: string[],
+  ): Promise<void> {
+    const voters = taskTree.subtasks.slice(0, -1);
+    const aggregator = taskTree.subtasks[taskTree.subtasks.length - 1];
+    reasoning.push(`ENSEMBLE: ${voters.length} voters + 1 aggregator`);
+
+    const originalVoterGoals = voters.map((s) => s.goal);
+    const originalAggregatorGoal = aggregator.goal;
+    const voterPrompts = [
+      'You are a pragmatic engineer. Focus on correctness and feasibility.',
+      'You are a senior architect. Focus on design quality and edge cases.',
+      'You are a creative problem solver. Focus on novel approaches.',
+    ];
+
+    try {
+      await Promise.all(
+        voters.map(async (sub, i) => {
+          sub.context.systemPrompt = voterPrompts[i % voterPrompts.length];
+          sub.goal = `[Voter ${i + 1}] ${sub.goal}`;
+          await this.subAgentExecutor.executeNode(
+            sub,
+            params.projectId,
+            params.contextData ?? {},
+            errors,
+          );
+        }),
+      );
+
+      const successfulVoters = voters.filter((v) => v.status === 'COMPLETED');
+      if (successfulVoters.length === 0) {
+        reasoning.push('ENSEMBLE: all voters failed');
+        return;
+      }
+
+      const votes = successfulVoters
+        .map((v, i) => `## Voter ${i + 1}\n${(v.result ?? '').slice(0, 1200)}`)
+        .join('\n\n');
+      aggregator.context.systemPrompt =
+        'You are a voting coordinator. Synthesize the voter outputs into the best final answer.';
+      aggregator.goal = `Synthesize these voter outputs into the best final answer:\n\n${votes}`;
+      await this.subAgentExecutor.executeNode(
+        aggregator,
+        params.projectId,
+        params.contextData ?? {},
+        errors,
+      );
+
+      taskTree.status = aggregator.status;
+      taskTree.result = aggregator.result ?? '';
+      reasoning.push('ENSEMBLE: aggregation completed');
+    } finally {
+      for (let i = 0; i < voters.length; i++) {
+        voters[i].goal = originalVoterGoals[i];
+      }
+      aggregator.goal = originalAggregatorGoal;
+    }
+  }
+
+  /**
+   * CONSENSUS: run multiple agents across several rounds, sharing context each
+   * round, until convergence or max rounds. Subtasks participate in every round.
+   */
+  private async executeConsensusLoop(
+    taskTree: TaskTreeNode,
+    execId: string,
+    params: { projectId: string; contextData?: Record<string, unknown> },
+    errors: ExecutionError[],
+    reasoning: string[],
+  ): Promise<void> {
+    const MAX_ROUNDS = 3;
+    const agents = taskTree.subtasks;
+    reasoning.push(`CONSENSUS: ${agents.length} agents × up to ${MAX_ROUNDS} rounds`);
+
+    const originalGoals = agents.map((s) => s.goal);
+    let sharedContext = '';
+
+    try {
+      for (let round = 0; round < MAX_ROUNDS; round++) {
+        reasoning.push(`CONSENSUS: round ${round + 1}`);
+        await Promise.all(
+          agents.map(async (sub, i) => {
+            sub.context.systemPrompt = `You are Consensus Agent ${i + 1}. Refine your position toward agreement with the group.`;
+            sub.goal =
+              round === 0
+                ? `[Round 1] ${originalGoals[i]}`
+                : `[Round ${round + 1}] Shared context:\n${sharedContext.slice(0, 1200)}\n\nRefine your answer.`;
+            await this.subAgentExecutor.executeNode(
+              sub,
+              params.projectId,
+              params.contextData ?? {},
+              errors,
+            );
+          }),
+        );
+
+        const successful = agents.filter((a) => a.status === 'COMPLETED');
+        if (successful.length === 0) {
+          reasoning.push('CONSENSUS: all agents failed');
+          break;
+        }
+
+        sharedContext = successful
+          .map(
+            (a, i) => `## Agent ${i + 1} (round ${round + 1})\n${(a.result ?? '').slice(0, 800)}`,
+          )
+          .join('\n\n');
+
+        // Simple convergence heuristic: if all agents produced similar-length
+        // answers in the last round, stop early.
+        if (round >= 1) {
+          const lengths = successful.map((a) => (a.result ?? '').length);
+          const avg = lengths.reduce((s, l) => s + l, 0) / lengths.length;
+          const variance = lengths.reduce((s, l) => s + Math.pow(l - avg, 2), 0) / lengths.length;
+          if (Math.sqrt(variance) < avg * 0.2) {
+            reasoning.push(`CONSENSUS: converged after ${round + 1} rounds`);
+            break;
+          }
+        }
+      }
+    } finally {
+      for (let i = 0; i < agents.length; i++) {
+        agents[i].goal = originalGoals[i];
+      }
+    }
+
+    // Final synthesis: use the first successful agent's result as the consensus output
+    const successful = agents.filter((a) => a.status === 'COMPLETED');
+    taskTree.status = successful.length > 0 ? 'COMPLETED' : 'FAILED';
+    taskTree.result = successful[0]?.result ?? '';
+    reasoning.push('CONSENSUS: completed');
   }
 
   dispose(): void {

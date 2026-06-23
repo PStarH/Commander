@@ -13,6 +13,7 @@ import { A2ADiscoveryManager } from './mcp/a2aClient';
 import { A2ADelegateTool } from './tools/a2aDelegateTool';
 import type { A2AAgentCard } from './mcp/a2aCompliance';
 import { getGlobalLogger } from './logging';
+import { getGlobalTenantProvider } from './runtime/tenantProvider';
 
 export interface AgentLoopConfig {
   projectRoot: string;
@@ -41,8 +42,10 @@ export class CommanderAgentLoop {
     priority: number;
     status: string;
     createdAt: string;
+    tenantId?: string;
   }> = [];
-  private activeSessions: Map<string, { startTime: number; goal: string }> = new Map();
+  private activeSessions: Map<string, { startTime: number; goal: string; tenantId?: string }> =
+    new Map();
   private isRunning = false;
   private mcpManager: MCPIntegrationManager | null = null;
   private a2aServer: A2AServer | null = null;
@@ -299,7 +302,7 @@ export class CommanderAgentLoop {
 
   private static readonly MAX_QUEUE_SIZE = 1000;
 
-  addTask(goal: string, priority = 0): string {
+  addTask(goal: string, priority = 0, tenantId?: string): string {
     const id = `task_${Date.now()}_${this.taskQueue.length}`;
     const newTask = {
       id,
@@ -307,6 +310,7 @@ export class CommanderAgentLoop {
       priority,
       status: 'pending' as const,
       createdAt: new Date().toISOString(),
+      tenantId,
     };
     // Insertion sort: find correct position and insert (O(N) instead of O(N log N) full sort)
     let insertIdx = this.taskQueue.length;
@@ -525,9 +529,10 @@ export class CommanderAgentLoop {
     this.logger.info('AgentLoop', 'Queue empty. All sessions complete.');
   }
 
-  private async executeTask(task: { id: string; goal: string }) {
+  private async executeTask(task: { id: string; goal: string; tenantId?: string }) {
     const bus = getMessageBus();
-    this.activeSessions.set(task.id, { startTime: Date.now(), goal: task.goal });
+    const tenantId = task.tenantId ?? getGlobalTenantProvider().getCurrentTenantId() ?? undefined;
+    this.activeSessions.set(task.id, { startTime: Date.now(), goal: task.goal, tenantId });
     // Persist queue state now that the task is confirmed running.
     // Must happen before any async yield point so that crash between
     // shift() and execution start does not lose the task.
@@ -551,6 +556,7 @@ export class CommanderAgentLoop {
       const result = await this.orchestrator.execute({
         projectId: 'commander',
         agentId: 'commander-lead',
+        tenantId,
         goal: task.goal,
         contextData: {
           availableTools: this.config.tools,

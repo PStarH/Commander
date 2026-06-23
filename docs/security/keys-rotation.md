@@ -71,6 +71,12 @@ Runbook (5 steps):
 
 Recovery is not complete until the on-call can answer: "Which tickets / consumers / chains used the old key, and did any of them accept traffic between compromise-confirmation and rotate-deploy?" — typically answered via the supply-chain attestor's generated `SpdxDocument` (CTL-010).
 
+### §3.1 — Incident log
+
+| Date       | Incident ID | Secret           | Trigger                | Status     | Notes |
+|------------|-------------|------------------|------------------------|------------|-------|
+| 2026-06-23 | CMDR-2026-0623-001 | STEPFUN_API_KEY | External security audit | **ROTATE** | Key was present in committed `.env`. Key removed from working tree; `.env` is gitignored. Full history scrub with `git filter-branch` / BFG still required. Rotate the key in StepFun console before any release. |
+
 ---
 
 ## §4 — CI Gate
