@@ -26,8 +26,8 @@
 
 import type { CompensableAction } from '../runtime/compensationRegistry';
 import {
-  getToolTags,
-  getToolCost,
+  inferToolTags,
+  inferToolCost,
   type CompensationRisk,
   type PlanStep,
   type CompensationPlan,
@@ -52,17 +52,20 @@ export function registerCompensationMetadata(toolName: string, meta: Compensatio
 }
 
 function getMetadata(toolName: string): CompensationMetadata {
-  return (
-    TOOL_COMPENSATION_METADATA.get(toolName) ?? {
-      externalSystem: 'unknown',
-      risk: classifyRisk(toolName, getToolTags(toolName)),
-      fullyRecoverable: !getToolTags(toolName).includes('non_reversible'),
-      costUsd: getToolCost(toolName),
-      tags: getToolTags(toolName),
-      idempotent: getToolTags(toolName).includes('low_risk') || true, // Most HTTP DELETEs are idempotent
-      resourceKeyFields: inferResourceKeyFields(toolName),
-    }
-  );
+  const registered = TOOL_COMPENSATION_METADATA.get(toolName);
+  if (registered) return registered;
+
+  // Fallback: runtime inference from tool name
+  const tags = inferToolTags(toolName);
+  return {
+    externalSystem: toolName.split('_')[0] ?? 'unknown',
+    risk: classifyRisk(toolName, tags),
+    fullyRecoverable: !tags.includes('non_reversible') && !tags.includes('irreversible'),
+    costUsd: inferToolCost(toolName),
+    tags,
+    idempotent: tags.includes('low_risk') || ['DELETE', 'delete', 'remove'].some((k) => toolName.includes(k)),
+    resourceKeyFields: inferResourceKeyFields(toolName),
+  };
 }
 
 function classifyRisk(toolName: string, tags: string[]): CompensationRisk {
@@ -75,43 +78,53 @@ function classifyRisk(toolName: string, tags: string[]): CompensationRisk {
   return 'review';
 }
 
+// ============================================================================
+// Resource Key Registry — declarative mapping of tool prefixes to their
+// resource identifier fields.  Plugin authors register their tools here
+// instead of adding to a growing if/else chain.
+// ============================================================================
+
+const RESOURCE_KEY_REGISTRY: Record<string, string[]> = {
+  'stripe_charge': ['chargeId'],
+  'stripe_payment_intent': ['paymentIntentId'],
+  'stripe_subscription': ['subscriptionId'],
+  'stripe_customer': ['customerId'],
+  'stripe_transfer': ['transferId'],
+  'github_pr': ['owner', 'repo', 'pullNumber'],
+  'github_issue': ['owner', 'repo', 'issueNumber'],
+  'github_branch': ['owner', 'repo', 'branch'],
+  'github_tag': ['owner', 'repo', 'tag'],
+  'slack_chat_postMessage': ['channel', 'ts'],
+  'slack_reactions': ['channel', 'timestamp', 'name'],
+  'slack_chat_scheduleMessage': ['channel', 'scheduledMessageId'],
+  'slack_conversations_invite': ['channel', 'user'],
+  'notion_page': ['pageId'],
+  'notion_block': ['blockId'],
+  'notion_database': ['databaseId'],
+  'notion_comment': ['commentId'],
+  'jira_issue': ['issueIdOrKey'],
+  'linear_': ['id'],
+  'file_': ['path'],
+  'mkdir': ['path'],
+  'rmdir': ['path'],
+  'db_': ['connectionId', 'rows'],
+  'sql_': ['connectionId', 'rows'],
+  'pg_': ['connectionId', 'rows'],
+  'mysql_': ['connectionId', 'rows'],
+};
+
+/**
+ * Register resource key fields for a tool prefix.  Plugin authors call
+ * this at startup instead of modifying the hardcoded if/else chain.
+ */
+export function registerResourceKeys(prefix: string, fields: string[]): void {
+  RESOURCE_KEY_REGISTRY[prefix] = fields;
+}
+
 function inferResourceKeyFields(toolName: string): string[] {
-  if (toolName.includes('stripe_charge')) return ['chargeId'];
-  if (toolName.includes('stripe_payment_intent')) return ['paymentIntentId'];
-  if (toolName.includes('stripe_subscription')) return ['subscriptionId'];
-  if (toolName.includes('stripe_customer')) return ['customerId'];
-  if (toolName.includes('stripe_transfer')) return ['transferId'];
-  if (toolName.startsWith('github_pr') || toolName === 'gh_pr_create') {
-    return ['owner', 'repo', 'pullNumber'];
-  }
-  if (toolName.startsWith('github_issue') || toolName === 'gh_issue_create') {
-    return ['owner', 'repo', 'issueNumber'];
-  }
-  if (toolName.startsWith('github_branch') || toolName === 'gh_branch_create') {
-    return ['owner', 'repo', 'branch'];
-  }
-  if (toolName.startsWith('github_tag')) return ['owner', 'repo', 'tag'];
-  if (toolName.startsWith('slack_chat_postMessage')) return ['channel', 'ts'];
-  if (toolName.startsWith('slack_reactions')) return ['channel', 'timestamp', 'name'];
-  if (toolName.startsWith('slack_chat_scheduleMessage')) return ['channel', 'scheduledMessageId'];
-  if (toolName.startsWith('slack_conversations_invite')) return ['channel', 'user'];
-  if (toolName.startsWith('notion_')) {
-    if (toolName.includes('page')) return ['pageId'];
-    if (toolName.includes('block')) return ['blockId'];
-    if (toolName.includes('database')) return ['databaseId'];
-    if (toolName.includes('comment')) return ['commentId'];
-  }
-  if (toolName.startsWith('jira_issue')) return ['issueIdOrKey'];
-  if (toolName.startsWith('linear_')) return ['id'];
-  if (toolName.startsWith('file_')) return ['path'];
-  if (toolName.startsWith('mkdir') || toolName.startsWith('rmdir')) return ['path'];
-  if (
-    toolName.startsWith('db_') ||
-    toolName.startsWith('sql_') ||
-    toolName.startsWith('pg_') ||
-    toolName.startsWith('mysql_')
-  ) {
-    return ['connectionId', 'rows'];
+  // Exact prefix match first
+  for (const [prefix, fields] of Object.entries(RESOURCE_KEY_REGISTRY)) {
+    if (toolName.startsWith(prefix)) return fields;
   }
   return [];
 }
@@ -256,16 +269,28 @@ export interface ExecutePlanOptions {
 }
 
 import type { CompensationResult } from './types';
+import { assertPlanFeasible, type HandlerMap } from './planValidator';
 
 /**
  * Execute a plan. Returns the per-step results and a flag indicating
  * full state recovery. The caller (typically the agent runtime) is
  * responsible for resolving any approval gates before calling.
+ *
+ * Pre-condition: `assertPlanFeasible()` is called first to guarantee
+ * that every non-buffered step has a registered handler. If the plan
+ * is infeasible, this throws BEFORE any step executes, preventing
+ * partial rollback.
  */
 export async function executeRollbackPlan(
   plan: CompensationPlan,
   options: ExecutePlanOptions = {},
 ): Promise<CompensationResult> {
+  // PRE-FLIGHT: validate that all non-buffered steps have handlers
+  // BEFORE executing anything. This prevents the "partial rollback"
+  // disaster where steps 1-2 succeed, step 3 throws "no handler",
+  // and the system is left in an unrecoverable half-rolled state.
+  assertPlanFeasible(plan, options.handlers as HandlerMap | undefined);
+
   const max = options.maxAttemptsPerStep ?? 3;
   const startTime = Date.now();
 

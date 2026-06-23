@@ -18,6 +18,8 @@
  */
 import type { OrchestrationTopology } from './types';
 import { EpsilonStore, type EpsilonOverride } from './epsilonStore';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
+import { dirname } from 'path';
 
 export interface ExplorationEvent {
   /** ISO-8601 timestamp recorded at insertion time. */
@@ -187,9 +189,19 @@ export class ExplorationEventLog {
    */
   private readonly epsilonStore: EpsilonStore;
 
-  constructor(maxSize: number = DEFAULT_MAX_SIZE, epsilonStore?: EpsilonStore) {
+  private readonly persistPath?: string;
+
+  constructor(
+    maxSize: number = DEFAULT_MAX_SIZE,
+    epsilonStore?: EpsilonStore,
+    persistPath?: string,
+  ) {
     this.maxSize = maxSize > 0 ? Math.floor(maxSize) : DEFAULT_MAX_SIZE;
     this.epsilonStore = epsilonStore ?? new EpsilonStore();
+    this.persistPath = persistPath;
+    if (this.persistPath) {
+      this.loadFromDisk();
+    }
   }
 
   /**
@@ -198,6 +210,61 @@ export class ExplorationEventLog {
    */
   getEpsilonStore(): EpsilonStore {
     return this.epsilonStore;
+  }
+
+  private loadFromDisk(): void {
+    if (!this.persistPath || !existsSync(this.persistPath)) return;
+    const lines = readFileSync(this.persistPath, 'utf-8').split('\n');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line) as ExplorationEvent;
+        if (!event.eventId || !event.timestamp || !event.tenantId) continue;
+        this.events.push(event);
+        this.nextEventId = Math.max(this.nextEventId, event.eventId);
+        this.routingCount += 1;
+        if (event.diverged) {
+          this.explorationCount += 1;
+          this.divergenceCount += 1;
+        }
+        if (event.coordinationOverride) {
+          this.coordinationOverrideCount += 1;
+        }
+        const tenant = this.perTenant.get(event.tenantId) ?? {
+          routing: 0,
+          exploration: 0,
+          divergence: 0,
+          coordinationOverride: 0,
+        };
+        tenant.routing += 1;
+        if (event.diverged) {
+          tenant.exploration += 1;
+          tenant.divergence += 1;
+        }
+        if (event.coordinationOverride) {
+          tenant.coordinationOverride += 1;
+        }
+        this.perTenant.set(event.tenantId, tenant);
+      } catch {
+        /* skip corrupt lines */
+      }
+    }
+    // Trim to maxSize in case the persisted file grew larger
+    while (this.events.length > this.maxSize) {
+      this.events.shift();
+      this.overflowCount += 1;
+    }
+  }
+
+  private appendToDisk(event: ExplorationEvent): void {
+    if (!this.persistPath) return;
+    try {
+      const dir = dirname(this.persistPath);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      appendFileSync(this.persistPath, JSON.stringify(event) + '\n', 'utf-8');
+    } catch {
+      /* best-effort persistence */
+    }
   }
 
   /**
@@ -249,6 +316,7 @@ export class ExplorationEventLog {
       tenant.coordinationOverride += 1;
     }
     this.perTenant.set(event.tenantId, tenant);
+    this.appendToDisk(fullEvent);
     return { eventId, timestamp };
   }
 

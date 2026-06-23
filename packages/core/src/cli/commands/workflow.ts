@@ -96,6 +96,7 @@ export async function cmdWorkflow(subargs: string[]) {
       const result = await orch.execute({
         projectId: 'workflow',
         agentId: `wf-${wf.id}`,
+        tenantId: wf.tenantId,
         goal: wf.goal,
         contextData: {
           availableTools: loadTools(),
@@ -174,6 +175,7 @@ export async function cmdWorkflow(subargs: string[]) {
         workflowId: wf.id,
         workflowName: wf.name,
         trigger,
+        tenantId: wf.tenantId,
         createdAt: new Date().toISOString(),
         runCount: 0,
         enabled: true,

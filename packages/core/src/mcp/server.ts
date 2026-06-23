@@ -106,20 +106,29 @@ export class MCPServer {
           jsonrpc: '2.0',
           id,
           result: {
-            protocolVersion: '0.1.0',
+            protocolVersion: '2024-11-05',
             capabilities: this.getCapabilities(),
             serverInfo: { name: this.serverName, version: this.serverVersion },
           } satisfies MCPInitializeResult,
         };
 
-      case 'tools/list':
+      case 'tools/list': {
+        const p = params as { cursor?: string; limit?: number } | undefined;
+        const allTools = Array.from(this.tools.values()).map((t) => t.definition);
+        const limit = p?.limit && p.limit > 0 ? p.limit : allTools.length;
+        const startIdx = p?.cursor ? parseInt(p.cursor, 10) : 0;
+        const page = allTools.slice(startIdx, startIdx + limit);
+        const nextCursor =
+          startIdx + limit < allTools.length ? String(startIdx + limit) : undefined;
         return {
           jsonrpc: '2.0',
           id,
           result: {
-            tools: Array.from(this.tools.values()).map((t) => t.definition),
+            tools: page,
+            nextCursor,
           } satisfies ListToolsResult,
         };
+      }
 
       case 'tools/call': {
         const p = params as { name: string; arguments?: Record<string, unknown> };
@@ -141,7 +150,16 @@ export class MCPServer {
             error: { code: MCP_ERROR_CODES.METHOD_NOT_FOUND, message: `Tool not found: ${p.name}` },
           };
         }
-        const result = await reg.handler(p.arguments ?? {});
+        const MCP_TOOL_TIMEOUT_MS = 60000;
+        const result = await Promise.race([
+          reg.handler(p.arguments ?? {}),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error(`Tool execution timed out after ${MCP_TOOL_TIMEOUT_MS}ms`)),
+              MCP_TOOL_TIMEOUT_MS,
+            ),
+          ),
+        ]);
         if (Array.isArray(result)) {
           return { jsonrpc: '2.0', id, result: { content: result } satisfies MCPToolResult };
         }
@@ -247,17 +265,7 @@ export class MCPServer {
    * Register the standard "run_agent" distributed execution tool on this server.
    * This is what MCPRemoteRuntime calls to execute agents remotely.
    */
-  registerAgentExecutor(
-    handler: (args: {
-      agentId: string;
-      projectId: string;
-      goal: string;
-      availableTools: string[];
-      maxSteps: number;
-      tokenBudget: number;
-      contextData: Record<string, unknown>;
-    }) => Promise<MCPToolResult>,
-  ): void {
+  registerAgentExecutor(handler: ToolHandler): void {
     this.registerTool(
       {
         name: 'run_agent',
@@ -280,16 +288,24 @@ export class MCPServer {
           required: ['agentId', 'projectId', 'goal'],
         },
       },
-      handler as unknown as ToolHandler,
+      handler,
     );
   }
 
   /**
    * Auto-register all Commander tools as MCP tools.
    * Enables external MCP clients (Claude Desktop, Cursor, etc.) to use Commander's tool ecosystem.
+   *
+   * @param tools - All registered Commander tools
+   * @param filter - Optional filter to restrict which tools are exposed to MCP clients.
+   *   Use this to prevent exposing destructive tools (shell_execute, git, etc.) to untrusted clients.
    */
-  registerCommanderTools(tools: Map<string, Tool>): void {
+  registerCommanderTools(
+    tools: Map<string, Tool>,
+    filter?: (name: string, tool: Tool) => boolean,
+  ): void {
     for (const [name, tool] of tools) {
+      if (filter && !filter(name, tool)) continue;
       const def = tool.definition;
       this.registerTool(
         {

@@ -16,7 +16,7 @@ User Task → Deliberation → EffortScaling → TopologyRoute → Decompose →
 | ----------------------- | ------------------------------------------------------------------------------------------------------- |
 | `deliberation.ts`       | Task classification (keyword + LLM). Determines topology, effort, capabilities                          |
 | `effortScaler.ts`       | Anthropic-style effort scaling: SIMPLE→MODERATE→COMPLEX→DEEP_RESEARCH                                   |
-| `topologyRouter.ts`     | 8 topologies: SINGLE, SEQUENTIAL, PARALLEL, HIERARCHICAL, HYBRID, DEBATE, ENSEMBLE, EVALUATOR_OPTIMIZER |
+| `topologyRouter.ts`     | 5 canonical topologies: SINGLE, CHAIN, DISPATCH, ORCHESTRATOR, REVIEW (9 legacy aliases accepted) |
 | `atomizer.ts`           | Recursive decomposition (ROMA-inspired). Aspect/Step/Recursive strategies                               |
 | `subAgentExecutor.ts`   | Executes decomposed tasks with dependency-aware topological ordering                                    |
 | `synthesizer.ts`        | Multi-agent synthesis with 5 quality gates (hallucination, consistency, completeness, accuracy, safety) |
@@ -70,8 +70,7 @@ Token budget enforcement, provider pooling, and cost-aware routing.
 
 ### Phase 3: Topology Routing
 
-- 8 topology types selected based on task DAG analysis
-- AdaptOrch-inspired: topology selection yields 12-23% improvement
+- 5 canonical topology types selected based on task DAG analysis
 - Cost-aware: adjusts topology under budget constraints
 
 ### Phase 4: Task Decomposition
@@ -161,7 +160,7 @@ pnpm test:coverage           # Tests with coverage
 ## Key Design Decisions
 
 1. **No framework lock-in**: Commander is a system, not a framework. Import what you need.
-2. **Dynamic topology over fixed**: 8 topologies beat 1-2 (LangGraph, CrewAI).
+2. **Dynamic topology over fixed**: 5 canonical topologies beat 1-2 (LangGraph, CrewAI).
 3. **Artifact-based communication**: References instead of raw text to prevent information loss.
 4. **Self-optimizing**: Meta-learner adjusts config based on execution outcomes.
 5. **MCP-native**: First-class MCP support for tool exposure and distributed execution.

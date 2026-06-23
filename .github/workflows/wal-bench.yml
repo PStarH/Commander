@@ -1,0 +1,272 @@
+name: WAL Bench Regression
+
+# Day 6 closeout: capture today's WAL baseline via `pnpm bench:wal:quick`,
+# compare against yesterday's baseline JSON, fail the run if p99 latency
+# regressed more than the threshold (default 15%).
+#
+# Triggers:
+#   - workflow_dispatch: manual run, supports overriding the regression
+#     threshold (handy for triaging a known-bad commit without editing the
+#     workflow file).
+#   - schedule: 06:00 UTC daily. Captures a fresh baseline alongside the
+#     same-day run inside the workflow so the JSON lands in docs/baselines/
+#     and is preserved as a workflow artifact.
+#
+# Outputs:
+#   - docs/baselines/wal-baseline.<UTC-today>.json  (committed-artifact)
+#   - GitHub Step Summary markdown table (rows-per-sec, p50, p99, p999)
+#   - exit 0: p99 within threshold OR first-day run (no yesterday)
+#   - exit 1: p99 regressed > threshold
+
+on:
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: 'p99 regression threshold (percent, default 15)'
+        required: false
+        default: '15'
+      iterations:
+        description: 'Override bench iterations (default 2000 = quick mode)'
+        required: false
+        default: '2000'
+  schedule:
+    # Daily at 06:00 UTC. Adjust as needed; keep UTC so it matches
+    # the date the regress script reads.
+    - cron: '0 6 * * *'
+
+jobs:
+  bench-wal-regress:
+    name: WAL Bench Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Force UTC so the bench-wal-throughput.ts default --output filename
+      # (docs/baselines/wal-baseline.<YYYY-MM-DD>.json) and the regress
+      # script's lookup of yesterday's path use the SAME date.
+      TZ: UTC
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          # Preserve existing baseline JSONs so yesterday's run is
+          # available even on a fresh runner clone (the workflow reads
+          # both files in the regress step).
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Rebuild better-sqlite3 native binding (Windows MSVC fallback inline)
+        # Reuses the same conditional pattern as ci.yml so a Windows
+        # runner can also produce the WAL backend ATL-safe.
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cmd_vswhere=""
+            for candidate in "/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" "/c/Program Files/Microsoft Visual Studio/Installer/vswhere.exe" "vswhere"; do
+              if [ -f "$candidate" ] || command -v "$candidate" &>/dev/null; then
+                cmd_vswhere="$candidate"
+                break
+              fi
+            done
+            if [ -n "$cmd_vswhere" ]; then
+              VS_INSTALL_PATH=$("$cmd_vswhere" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>/dev/null | head -1)
+              if [ -n "$VS_INSTALL_PATH" ]; then
+                echo "vswhere found VS at: $VS_INSTALL_PATH"
+                cmd //c "\"${VS_INSTALL_PATH}\\VC\\Auxiliary\\Build\\vcvars64.bat\" && pnpm rebuild better-sqlite3" || true
+              else
+                echo "vswhere gave no VS install; falling back to pnpm rebuild"
+                pnpm rebuild better-sqlite3 || true
+              fi
+            fi
+          else
+            pnpm rebuild better-sqlite3 || true
+          fi
+
+      - name: Resolve today / yesterday (UTC)
+        id: dates
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          # Portable yesterday via Node — avoids OS-specific date(1) flags
+          # (-d on Linux, -v on macOS) and guarantees UTC alignment with the
+          # filename emitted by bench-wal-throughput.ts.
+          YESTERDAY=$(node -e "const d=new Date();d.setUTCDate(d.getUTCDate()-1);console.log(d.toISOString().slice(0,10))")
+          echo "today=$TODAY"
+          echo "yesterday=$YESTERDAY"
+          echo "today=$TODAY"     >> "$GITHUB_OUTPUT"
+          echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
+
+      - name: Run WAL throughput bench (captures today baseline)
+        run: |
+          ITER="${{ github.event.inputs.iterations || '2000' }}"
+          echo "Running pnpm bench:wal:quick (TZ=UTC, iterations=${ITER})..."
+          pnpm bench:wal:quick --iterations="${ITER}"
+        env:
+          TZ: UTC
+
+      - name: Verify today's baseline JSON exists
+        run: |
+          TODAY_FILE="docs/baselines/wal-baseline.${{ steps.dates.outputs.today }}.json"
+          if [ ! -s "$TODAY_FILE" ]; then
+            echo "::error::$TODAY_FILE is missing or empty — bench-wal-throughput.ts did not write a baseline"
+            exit 2
+          fi
+          echo "today's baseline: $TODAY_FILE"
+          cat "$TODAY_FILE"
+
+      - name: Extract today's metrics for PR body
+        id: metrics
+        if: success()
+        shell: bash
+        # Reads today's baseline JSON and exposes rowsPerSec / p50 / p99 /
+        # p999 / backend as step outputs that the peter-evans step below
+        # references for the PR title + commit message + body table.
+        # Done with inline node (no extra CI dep) — the file is small and
+        # synchronous so no streaming concerns.
+        run: |
+          TODAY_FILE="docs/baselines/wal-baseline.${{ steps.dates.outputs.today }}.json"
+          node -e '
+            const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf-8"));
+            const out = (k, v) => console.log(`${k}=${v}`);
+            out("rowsPerSec", d.rowsPerSec.toFixed(1));
+            out("p50Us", d.latency.p50Us.toFixed(1));
+            out("p99Us", d.latency.p99Us.toFixed(1));
+            out("p999Us", d.latency.p999Us.toFixed(1));
+            out("backend", d.backend);
+          ' "$TODAY_FILE" >> "$GITHUB_OUTPUT"
+          echo "metrics extracted → rows-per-sec=${{ steps.metrics.outputs.rowsPerSec }} p99=${{ steps.metrics.outputs.p99Us }}µs"
+
+      - name: Compare today vs yesterday (gate)
+        id: regress
+        env:
+          # Threshold input from workflow_dispatch falls back to 15% when
+          # not provided. `REGRESSION_THRESHOLD_PCT` is the highest-priority
+          # knob per scripts/bench-wal-regress.ts resolveThreshold() —
+          # the script reads env > flag > default.
+          REGRESSION_THRESHOLD_PCT: ${{ github.event.inputs.threshold || '15' }}
+        run: |
+          TODAY_FILE="docs/baselines/wal-baseline.${{ steps.dates.outputs.today }}.json"
+          YESTERDAY_FILE="docs/baselines/wal-baseline.${{ steps.dates.outputs.yesterday }}.json"
+          echo "Comparing $TODAY_FILE against $YESTERDAY_FILE (threshold=${REGRESSION_THRESHOLD_PCT}% p99 latency regression)"
+          # --summary writes the markdown that the next step appends to
+          # $GITHUB_STEP_SUMMARY. The script auto-handles missing-yesterday
+          # (first-day run) without falling into the regress exit code.
+          npx tsx scripts/bench-wal-regress.ts "$TODAY_FILE" "$YESTERDAY_FILE" \
+            --threshold="${REGRESSION_THRESHOLD_PCT}" \
+            --summary="${RUNNER_TEMP}/wal-regress-summary.md"
+          echo "summary-file=${RUNNER_TEMP}/wal-regress-summary.md" >> "$GITHUB_OUTPUT"
+
+      - name: Append markdown to GitHub Step Summary
+        if: always()
+        run: |
+          SUMMARY="${{ steps.regress.outputs.summary-file }}"
+          if [ -s "$SUMMARY" ]; then
+            cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+            echo ""
+            echo "::notice::Step summary appended from $SUMMARY"
+          else
+            echo "::error::regress script did not write a summary file at $SUMMARY"
+            exit 2
+          fi
+
+      - name: Upload today's baseline as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wal-baseline-${{ steps.dates.outputs.today }}
+          path: docs/baselines/wal-baseline.${{ steps.dates.outputs.today }}.json
+          retention-days: 90
+          if-no-files-found: error
+
+      # Day-N+1 regress gate dependency: this PR is the commit-back path so
+      # the next day's `actions/checkout@v6 fetch-depth: 0` finds today's
+      # JSON in HEAD. PR auto-creation is paired with team auto-merge policy
+      # (Settings → General → "Allow auto-merge" + branch rule matching
+      # labels `automated`+`ci-bench`). Until auto-merge is enabled, the
+      # next run sees a first-day SKIP for the day the PR is open but not
+      # yet merged; the day AFTER it merges, the gate fires for real.
+      #
+      # We do NOT add an `actions/download-artifact@v4` cross-run restore
+      # here because v4 only fetches artifacts from the CURRENT workflow
+      # run; crossing run boundaries would require `actions/github-script@v7`
+      # calls against the GitHub REST API + archive-format decoding
+      # (zip/tar). That's a Day 7+2 followup if the team doesn't adopt
+      # auto-merge policy.
+      #
+      # `if: success()` excludes failing regress runs; baseline JSONs that
+      # show a regression are still preserved as 90d artifacts above for
+      # forensic inspection, even though they don't accumulate as
+      # peter-evans PRs.
+      - name: Open PR for today's WAL baseline (commit-back for day-N+1 regress gate)
+        id: open-pr
+        if: success()
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: bench/wal-baseline-${{ steps.dates.outputs.today }}
+          delete-branch: true
+          title: 'ci(wal-bench): baseline ${{ steps.dates.outputs.today }} — ${{ steps.metrics.outputs.rowsPerSec }} rows/sec, p99=${{ steps.metrics.outputs.p99Us }}µs'
+          commit-message: |
+            ci(wal-bench): baseline ${{ steps.dates.outputs.today }}
+
+            Auto-generated by .github/workflows/wal-bench.yml. Provides yesterday's
+            WAL throughput baseline for the next day's regress gate (see
+            scripts/bench-wal-regress.ts).
+
+            rows-per-sec: ${{ steps.metrics.outputs.rowsPerSec }}
+            p50 (µs):     ${{ steps.metrics.outputs.p50Us }}
+            p99 (µs):     ${{ steps.metrics.outputs.p99Us }}
+            p999 (µs):    ${{ steps.metrics.outputs.p999Us }}
+            backend:      ${{ steps.metrics.outputs.backend }}
+          body: |
+            ## WAL bench baseline — ${{ steps.dates.outputs.today }}
+
+            Auto-generated by [`.github/workflows/wal-bench.yml`](../workflows/wal-bench.yml).
+            Triggered daily at `06:00 UTC` or via manual `workflow_dispatch`.
+
+            Today's metrics (single-writer WAL steady state, `better-sqlite3`+`journal_mode=WAL`+`synchronous=NORMAL`):
+
+            | Metric | Value |
+            |---|---|
+            | rows-per-sec | **${{ steps.metrics.outputs.rowsPerSec }}** |
+            | p50 (µs) | **${{ steps.metrics.outputs.p50Us }}** |
+            | p99 (µs) | **${{ steps.metrics.outputs.p99Us }}** |
+            | p999 (µs) | **${{ steps.metrics.outputs.p999Us }}** |
+            | backend | **${{ steps.metrics.outputs.backend }}** |
+
+            ### What this PR does
+
+            Commits today's `docs/baselines/wal-baseline.<TODAY>.json` to the
+            default branch so tomorrow's workflow run finds it as yesterday's
+            baseline via `actions/checkout@v6 fetch-depth: 0`. Without this
+            commit-back, tomorrow's regress gate would perpetually see
+            "first-day run" and never fire.
+
+            ### Recommended team policy
+
+            To make the day-N+1 gate fully automatic without manual clicks:
+
+            1. Settings → General → **Allow auto-merge**
+            2. Add a branch rule for the default branch matching labels
+               `automated` + `ci-bench` with **auto-merge enabled** and
+               "Squash" merge method.
+
+            With auto-merge enabled, today's PR here merges automatically
+            (subject to status checks) and tomorrow's `actions/checkout@v6`
+            sees today's JSON in HEAD. Without auto-merge, the PR has to be
+            merged manually and the gate stays skipped for the day the PR
+            is open but unmerged.
+
+            🤖 Generated by `.github/workflows/wal-bench.yml`
+          labels: |
+            automated
+            ci-bench

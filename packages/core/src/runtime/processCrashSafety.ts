@@ -154,8 +154,6 @@ export function installProcessCrashHandlers(deps: CrashSafetyDeps): void {
         errorMessage: (e as Error).message,
       });
     }
-
-    setTimeout(() => process.exit(1), exitTimeoutMs).unref();
   };
 
   process.on('uncaughtException', (err) => gracefulShutdown('uncaughtException', err));
