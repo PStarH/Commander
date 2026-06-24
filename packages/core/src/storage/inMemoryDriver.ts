@@ -45,9 +45,7 @@ class InMemoryTable<T extends { id: string }> implements PersistentTable<T> {
       throw new Error(`InMemoryTable(${this.name}).insert: row.id required`);
     }
     if (this.state.rows.has(row.id)) {
-      throw new Error(
-        `InMemoryTable(${this.name}).insert: row with id ${row.id} already exists`,
-      );
+      throw new Error(`InMemoryTable(${this.name}).insert: row with id ${row.id} already exists`);
     }
     const clone = cloneRow(row);
     this.state.rows.set(row.id, clone);
@@ -143,10 +141,7 @@ export class InMemoryDriver implements PersistentDriver {
     /* no-op */
   }
 
-  getTable<T extends { id: string }>(
-    name: string,
-    schema: TableSchema<T>,
-  ): PersistentTable<T> {
+  getTable<T extends { id: string }>(name: string, schema: TableSchema<T>): PersistentTable<T> {
     if (this.closed) throw new Error('InMemoryDriver: already closed');
     const existing = this.tables.get(name) as InMemoryTableState<T> | undefined;
     if (existing) {
@@ -183,9 +178,7 @@ export class InMemoryDriver implements PersistentDriver {
     } catch (err) {
       // Rollback: restore every table's row map from the snapshot.
       for (const snap of snapshot) {
-        const state = this.tables.get(snap.name) as
-          | InMemoryTableState<{ id: string }>
-          | undefined;
+        const state = this.tables.get(snap.name) as InMemoryTableState<{ id: string }> | undefined;
         if (state) (state.rows as Map<string, unknown>).clear();
         if (state) {
           for (const [k, v] of snap.rows.entries()) {
@@ -213,10 +206,7 @@ export class InMemoryDriver implements PersistentDriver {
   }
 }
 
-function schemasMatch<T extends { id: string }>(
-  a: TableSchema<T>,
-  b: TableSchema<T>,
-): boolean {
+function schemasMatch<T extends { id: string }>(a: TableSchema<T>, b: TableSchema<T>): boolean {
   if (a.name !== b.name) return false;
   if (a.columns.length !== b.columns.length) return false;
   for (let i = 0; i < a.columns.length; i++) {
