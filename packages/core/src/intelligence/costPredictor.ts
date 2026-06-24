@@ -72,7 +72,8 @@ export class CostPredictor {
       if (fs.existsSync(this.historyPath)) {
         this.history = JSON.parse(fs.readFileSync(this.historyPath, 'utf-8'));
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
   }
@@ -83,7 +84,8 @@ export class CostPredictor {
       const path = require('path');
       fs.mkdirSync(path.dirname(this.historyPath), { recursive: true });
       fs.writeFileSync(this.historyPath, JSON.stringify(this.history.slice(-1000), null, 2));
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
   }
