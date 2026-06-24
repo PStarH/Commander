@@ -296,7 +296,8 @@ export class AppContainerSB implements PlatformSandbox {
       } catch (err) {
         try {
           fs.unlinkSync(scriptPath);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* ignore */
         }
         resolve({
@@ -345,7 +346,8 @@ export class AppContainerSB implements PlatformSandbox {
         clearTimeout(killTimer);
         try {
           fs.unlinkSync(scriptPath);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* ignore */
         }
       };
