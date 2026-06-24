@@ -143,7 +143,8 @@ export function nextId(tag: string): string {
     } else {
       suffix = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     suffix = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   }
   return `${tag}_${suffix}`;
