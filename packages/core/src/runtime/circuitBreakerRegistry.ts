@@ -97,6 +97,18 @@ export class CircuitBreakerRegistry {
     this.breakers.get(name)?.onFailure();
   }
 
+  /**
+   * Force a breaker into the OPEN state. Used when a tool has permanently
+   * failed after retries and we want to isolate it immediately, rather than
+   * waiting for the LLM to fail the same tool N more times.
+   */
+  forceOpen(name: string): void {
+    const breaker = this.breakers.get(name);
+    if (breaker && breaker.getState() !== 'OPEN') {
+      breaker.open();
+    }
+  }
+
   getStats(name: string): CircuitStats {
     const breaker = this.breakers.get(name);
     if (!breaker) {

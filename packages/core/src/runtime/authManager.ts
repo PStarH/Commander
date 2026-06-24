@@ -228,7 +228,8 @@ export class AuthManager {
         if (k.keyHash.length !== keyHash.length) return false;
         try {
           if (!crypto.timingSafeEqual(Buffer.from(k.keyHash, 'hex'), keyHashBuf)) return false;
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           return false;
         }
         if (k.expiresAt && new Date(k.expiresAt) < new Date()) return false;

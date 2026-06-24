@@ -201,7 +201,8 @@ export class SecurityOrchestrator {
             toolName,
             agentId,
           });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
         // Fail-open: allow tool execution if HITL evaluation fails
@@ -254,7 +255,8 @@ export class SecurityOrchestrator {
           agentId: sourceAgentId,
           entryCount: entries.length,
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       // Fail-open: return unsanitized entries on DP failure
@@ -315,7 +317,8 @@ export class SecurityOrchestrator {
           getGlobalLogger().debug('SecurityOrchestrator', 'GuardianAgent.monitor failed', {
             error: (e as Error)?.message,
           });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       }
@@ -332,7 +335,8 @@ export class SecurityOrchestrator {
           getGlobalLogger().debug('SecurityOrchestrator', 'CrossAgentCorrelator.ingest failed', {
             error: (e as Error)?.message,
           });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       }
@@ -386,7 +390,8 @@ export class SecurityOrchestrator {
           })),
         },
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

@@ -43,7 +43,8 @@ export class StepTimeoutManager {
         if (options.onTimeout) {
           try {
             options.onTimeout(controller.signal);
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* best-effort */
           }
         }

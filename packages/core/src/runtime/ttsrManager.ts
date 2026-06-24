@@ -244,7 +244,8 @@ export class TtsrManager {
     for (const pattern of rule.condition ?? []) {
       try {
         compiled.push(new RegExp(pattern, 'g'));
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         // Invalid regex — skip this condition
       }
     }
@@ -282,7 +283,8 @@ export class TtsrManager {
 
     try {
       return new RegExp(`^${regexStr}$`).test(normalized);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }

@@ -80,13 +80,15 @@ export class StateCheckpointer {
     fs.mkdirSync(this.baseDir, { recursive: true, mode: 0o700 });
     try {
       fs.chmodSync(this.baseDir, 0o700);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
     fs.mkdirSync(path.join(this.baseDir, 'completed'), { recursive: true, mode: 0o700 });
     try {
       fs.chmodSync(path.join(this.baseDir, 'completed'), 0o700);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }
@@ -134,19 +136,22 @@ export class StateCheckpointer {
       fs.writeFileSync(tmpPath, JSON.stringify(state), { encoding: 'utf-8', mode: 0o600 });
       try {
         fs.chmodSync(tmpPath, 0o600);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       fs.renameSync(tmpPath, chkPath);
       try {
         fs.chmodSync(chkPath, 0o600);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       this.writeStoreCheckpoint(state);
       try {
         getMetricsCollector().recordCheckpointFlush(state.phase ?? 'unknown');
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     } catch (e) {
@@ -168,18 +173,21 @@ export class StateCheckpointer {
       fs.writeFileSync(writeTmp, JSON.stringify(state), { encoding: 'utf-8', mode: 0o600 });
       try {
         fs.chmodSync(writeTmp, 0o600);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       fs.renameSync(writeTmp, donePath);
       try {
         fs.chmodSync(donePath, 0o600);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       try {
         getMetricsCollector().recordCheckpointFlush('terminal');
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       this.writeStoreCheckpoint(state);
@@ -275,7 +283,8 @@ export class StateCheckpointer {
               }));
           }
         }
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* fall through to file-based listing */
       }
     }
@@ -399,7 +408,8 @@ export class StateCheckpointer {
 
     try {
       this.store.save(snapshot);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* store write is best-effort — file-based checkpoint is primary */
     }
   }

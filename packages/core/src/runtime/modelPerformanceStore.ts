@@ -57,7 +57,8 @@ export class ModelPerformanceStore {
     // Ensure directory exists
     try {
       fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -180,7 +181,8 @@ export class ModelPerformanceStore {
         const prunedLines = this.loadedRecords.map((r) => JSON.stringify(r)).join('\n') + '\n';
         fs.writeFileSync(this.filePath, prunedLines, 'utf-8');
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort: don't crash runtime for analytics */
     }
   }
@@ -218,14 +220,16 @@ export class ModelPerformanceStore {
         if (!trimmed) continue;
         try {
           records.push(JSON.parse(trimmed) as ModelOutcome);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* skip malformed lines */
         }
       }
 
       // Return most recent up to maxRecords
       return records.slice(-this.config.maxRecords);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return [];
     }
   }

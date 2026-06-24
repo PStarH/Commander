@@ -26,7 +26,8 @@ export function extractJSON<T>(raw: string): T | null {
   // Strategy 1: Direct parse
   try {
     return JSON.parse(trimmed) as T;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* continue */
   }
 
@@ -35,7 +36,8 @@ export function extractJSON<T>(raw: string): T | null {
   if (fenceMatch) {
     try {
       return JSON.parse(fenceMatch[1].trim()) as T;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* continue */
     }
   }
@@ -56,7 +58,8 @@ export function extractJSON<T>(raw: string): T | null {
     if (end > firstBrace) {
       try {
         return JSON.parse(trimmed.slice(firstBrace, end + 1)) as T;
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* continue */
       }
     }
@@ -78,7 +81,8 @@ export function extractJSON<T>(raw: string): T | null {
     if (start >= 0 && start < lastBrace) {
       try {
         return JSON.parse(trimmed.slice(start, lastBrace + 1)) as T;
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* continue */
       }
     }

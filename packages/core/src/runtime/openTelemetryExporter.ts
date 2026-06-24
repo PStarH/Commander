@@ -306,7 +306,8 @@ export class OpenTelemetryExporter {
             }
           }
           fs.unlinkSync(path.join(dir, file));
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           // Delete corrupted files to prevent retry loop on every restart
           try {
             fs.unlinkSync(path.join(dir, file));
@@ -324,7 +325,8 @@ export class OpenTelemetryExporter {
           spans: this.queue.length,
         });
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // Directory may not exist yet
     }
   }

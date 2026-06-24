@@ -137,7 +137,8 @@ function buildSolidifySummary(turns: LLMMessage[][]): string {
             const args = JSON.parse(tc.function.arguments);
             if (args.path) filesTouched.push(args.path);
             if (args.file_path) filesTouched.push(args.file_path);
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* skip unparseable args */
           }
         }
