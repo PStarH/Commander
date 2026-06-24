@@ -142,7 +142,8 @@ export function loadSkill(name: string): LegacySkillDef | null {
     if (fs.existsSync(jsonPath)) {
       return JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return null;
   }
   return null;
@@ -160,13 +161,15 @@ export function listSkills(): LegacySkillDef[] {
           return JSON.parse(
             fs.readFileSync(path.join(LEGACY_SKILLS_DIR, f), 'utf-8'),
           ) as LegacySkillDef;
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           return null;
         }
       })
       .filter((s): s is LegacySkillDef => s !== null)
       .sort((a, b) => b.usageCount - a.usageCount);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return [];
   }
 }
@@ -204,7 +207,8 @@ export function deleteSkill(name: string): boolean {
     if (fs.existsSync(jsonPath)) {
       fs.unlinkSync(jsonPath);
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return false;
   }
   return true;

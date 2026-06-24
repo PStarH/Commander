@@ -212,7 +212,8 @@ export class SkillCurator {
     // Create pre-run snapshot
     try {
       report.snapshotPath = await this.createSnapshot();
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       getGlobalLogger().warn('SkillCurator', 'Snapshot creation failed (best-effort)');
     }
 
@@ -336,13 +337,15 @@ export class SkillCurator {
       await execFileAsync('tar', ['-czf', snapshotPath, '-C', parentDir, baseName], {
         timeout: 30000,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       try {
         await execFileAsync('zip', ['-rq', snapshotPath, baseName], {
           cwd: parentDir,
           timeout: 30000,
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         getGlobalLogger().warn('SkillCurator', 'Snapshot creation failed with both tar and zip');
         return '';
       }
@@ -476,7 +479,8 @@ export class SkillCurator {
       if (mergedContent) {
         await this.manager.update(survivor.name, { content: mergedContent } as Partial<Skill>);
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // LLM merge failed — archive the secondary, keep primary
     }
 
