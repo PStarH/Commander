@@ -76,7 +76,8 @@ export async function cmdUp(args: string[], flags: Record<string, string>): Prom
           res.write(
             `data: ${JSON.stringify({ type: 'snapshot', metrics: getMetricsCollector().getMetricsSnapshot() })}\n\n`,
           );
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           clearInterval(interval);
         }
       }, 1000);
@@ -193,7 +194,8 @@ async function cmdResumeUp(): Promise<void> {
   let manifest: { runs: string[]; frozenAt: string };
   try {
     manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     console.log(`  ${$.red}Failed to read freeze manifest.${$.reset}\n`);
     return;
   }
@@ -219,7 +221,8 @@ async function cmdResumeUp(): Promise<void> {
     let cp: { stepNumber?: number; phase?: string; context?: { goal?: string } };
     try {
       cp = JSON.parse(fs.readFileSync(cpPath, 'utf-8'));
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       console.log(`  ${$.yellow}⚠ Corrupt checkpoint for ${runId}, skipping.${$.reset}`);
       continue;
     }
@@ -248,7 +251,8 @@ async function cmdResumeUp(): Promise<void> {
     const archived = manifestPath + '.archived';
     fs.renameSync(manifestPath, archived);
     console.log(`  ${$.dim}Freeze manifest archived to ${archived}${$.reset}\n`);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     void 0;
   }
 
@@ -262,7 +266,8 @@ function listCheckpointDirs(stateDir: string): string[] {
     return fs
       .readdirSync(stateDir)
       .filter((f) => f.startsWith('run_') && fs.statSync(path.join(stateDir, f)).isDirectory());
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return [];
   }
 }
