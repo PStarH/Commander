@@ -120,7 +120,7 @@ export class ReflexionInjector {
     const recent = reflections.slice(0, this.config.maxReflections);
 
     const reflectionText = recent
-      .map((r, i) => {
+      .map((r) => {
         const typeLabel = r.type === 'success' ? '成功经验' : '失败教训';
         const taskLabel = this.config.includeTaskType && r.taskType ? ` (${r.taskType})` : '';
         return `[${typeLabel}${taskLabel}] ${r.insight}`;
