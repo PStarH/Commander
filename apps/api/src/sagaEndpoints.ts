@@ -34,7 +34,8 @@ function readSnapshot(runId: string): SagaStateSnapshot | undefined {
   if (!existsSync(path)) return undefined;
   try {
     return JSON.parse(readFileSync(path, 'utf-8')) as SagaStateSnapshot;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return undefined;
   }
 }

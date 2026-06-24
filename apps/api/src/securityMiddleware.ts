@@ -11,6 +11,19 @@
  */
 
 import type { Request, Response, NextFunction } from 'express';
+import { PersistentRateLimitStore } from './persistentRateLimitStore';
+
+// ── Persistent source of truth (audit MED item 3, follow-up) ────────────────
+//
+// Without persistence, a process restart wipes all rate-limit counters and
+// an attacker who hit 429 just before the restart can immediately resume
+// brute-forcing — an auth-reset bypass vector. The persistent store mirrors
+// every Map mutation (write-through) and the boot path hydrates the Map from
+// SQL on init. The store is optional so dev/CI runs don't have to ship
+// better-sqlite3 cold; turn off with API_RATE_LIMIT_PERSISTENT=off.
+let persistentRateLimitStore: PersistentRateLimitStore | null = null;
+const RATE_LIMIT_PERSISTENT_ENABLED =
+  (process.env.API_RATE_LIMIT_PERSISTENT ?? 'on').toLowerCase() !== 'off';
 
 // ============================================================================
 // Request ID Tracking
@@ -57,39 +70,282 @@ interface RateLimitEntry {
   resetAt: number;
 }
 
+/**
+ * Rate-limit tier classification (audit MED item 3 — security theater fix).
+ *
+ * Production deployments need layered rate limits so a flood against one
+ * route class doesn't blackhole monitoring or silently allow IP rotation
+ * sweeps. Three tiers evaluated in order on every request:
+ *   1. GLOBAL token bucket — caps aggregate req/sec across ALL IPs.
+ *      Without it, attackers rotate IPs and bypass per-IP limits.
+ *   2. Per-tier per-IP — each route class has a multiplier so /health
+ *      isn't knocked off during a /execute spike.
+ *   3. Per-tier headers — X-RateLimit-Tier lets well-behaved SDKs back off
+ *      before 429.
+ */
+type RateLimitTier = 'health' | 'read' | 'write';
+
+const TIER_MULTIPLIER: Record<RateLimitTier, number> = {
+  health: 10,
+  read: 1,
+  write: 0.25,
+};
+
+function classifyTier(url: string, method: string = 'GET'): RateLimitTier {
+  if (/\/(health|metrics|ready|system\/status)/.test(url)) return 'health';
+  // Audit MED item 3 polish: classify writes by HTTP method, not path alone.
+  // Without this, GET /api/v1/memory?action=stats would share the 0.25x
+  // write tier with POST /api/v1/memory?action=write, over-throttling cheap
+  // reads. The 'read' tier is the default for all non-write paths.
+  if (method === 'POST' && /\/api\/v1\/(execute|plan|memory)/.test(url)) return 'write';
+  return 'read';
+}
+
 const rateLimitStore = new Map<string, RateLimitEntry>();
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 const RATE_LIMIT_MAX = parseInt(process.env.API_RATE_LIMIT ?? '120', 10);
+// Cap rateLimitStore size (audit MED item 3 — RAM-DoS amplifier mitigation).
+// Without a max-entries bound, an attacker rotating source IPs (e.g. spoofed
+// X-Forwarded-For in permissive CORS, IPv6 prefix brute), grows the Map
+// unboundedly until the periodic 5-minute cleanup runs — at which point the
+// process is already under memory pressure. The MAX_ENTRIES boundary evicts
+// the oldest entry (Map preserves insertion order so the first iterator
+// entry is FIFO) when capacity is exceeded, plus opportunistically drops
+// any expired entries on the same pass to amortize cleanup cost.
+const RATE_LIMIT_MAX_ENTRIES = parseInt(process.env.API_RATE_LIMIT_MAX_ENTRIES ?? '50000', 10);
 
-// Cleanup old entries every 5 minutes
+// GLOBAL token bucket — burst capacity and refill rate are env-overridable
+// so production deployments behind a CDN / sharded multi-tenant can re-tune.
+// Defaults: capacity = max(1000, 2x RATE_LIMIT_MAX), refill = 1000 req/sec.
+const GLOBAL_BUCKET_CAPACITY = Math.max(
+  1000,
+  parseInt(process.env.API_GLOBAL_RATE_LIMIT ?? String(RATE_LIMIT_MAX * 2), 10),
+);
+const GLOBAL_BUCKET_REFILL_PER_SEC = parseInt(
+  process.env.API_GLOBAL_RATE_REFILL_PER_SEC ?? '1000',
+  10,
+);
+const globalBucket = { tokens: GLOBAL_BUCKET_CAPACITY, lastRefill: Date.now() };
+
+function consumeGlobalToken(now: number): boolean {
+  const elapsedSec = Math.max(0, (now - globalBucket.lastRefill) / 1000);
+  globalBucket.tokens = Math.min(
+    GLOBAL_BUCKET_CAPACITY,
+    globalBucket.tokens + elapsedSec * GLOBAL_BUCKET_REFILL_PER_SEC,
+  );
+  globalBucket.lastRefill = now;
+  if (globalBucket.tokens < 1) return false;
+  globalBucket.tokens -= 1;
+  return true;
+}
+
+// ── Write-through helpers (audit MED item 3 follow-up) ────────────────────
+//
+// Wrap Map mutations with a SQLite op so the persistent store stays in
+// lockstep with the in-memory cache. SQLite failures are logged but never
+// thrown — a wedged DB cannot deny service to well-behaved clients. Sync
+// (better-sqlite3) keeps the request path on the microsecond scale; we
+// only do ~1 extra SQL op per allowed request, well within p99 budget.
+
+/**
+ * writeThroughSet — upsert (ip, count, resetAt) into SQL after the in-memory
+ * Map write. Called on every counted request so the persistent counter
+ * never lags the Map counter (defeats the auth-reset bypass). Failures log.
+ */
+function writeThroughSet(ip: string, entry: RateLimitEntry): void {
+  rateLimitStore.set(ip, entry);
+  if (persistentRateLimitStore) {
+    try {
+      persistentRateLimitStore.set(ip, entry.count, entry.resetAt);
+    } catch (e) {
+      process.stderr.write(
+        `[RateLimit] Persistent set failed for ip=${ip}: ${(e as Error).message}\n`,
+      );
+    }
+  }
+}
+
+/**
+ * writeThroughDelete — Map.delete + SQL delete. Only called from the
+ * periodic 5-minute cleanup pass so SQLite writes stay amortized.
+ * Per-request memory-pressure evictions are Map-only (handled inline) so
+ * the SQL op doesn't fire on every flood.
+ */
+function writeThroughDelete(ip: string): void {
+  rateLimitStore.delete(ip);
+  if (persistentRateLimitStore) {
+    try {
+      persistentRateLimitStore.delete(ip);
+    } catch (e) {
+      process.stderr.write(
+        `[RateLimit] Persistent delete failed for ip=${ip}: ${(e as Error).message}\n`,
+      );
+    }
+  }
+}
+
+// Cleanup old entries every 5 minutes — Map cleanup preserves existing
+// behavior; persistent.cleanup() runs on the same cadence via
+// writeThroughDelete so the SQLite table doesn't grow unboundedly with
+// rows that the Map has already evicted.
 setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of rateLimitStore) {
-    if (entry.resetAt < now) rateLimitStore.delete(key);
+    if (entry.resetAt < now) {
+      writeThroughDelete(key);
+    }
+  }
+  // Belt-and-braces: even if rateLimitStore was empty, sweep any orphaned
+  // rows (e.g. left behind by an abnormal shutdown that didn't run write-
+  // through) directly from SQL.
+  if (persistentRateLimitStore) {
+    try {
+      persistentRateLimitStore.cleanup(now);
+    } catch (e) {
+      process.stderr.write(`[RateLimit] Persistent cleanup failed: ${(e as Error).message}\n`);
+    }
   }
 }, 300_000).unref();
+
+/**
+ * initRateLimitStore — open the persistent store (if enabled) and hydrate
+ * the in-memory Map from SQL on boot. Returns a Promise so callers
+ * (apps/api/src/index.ts) can await before app.listen() and avoid the
+ * race where the first request after boot reads an empty Map.
+ *
+ * Hydration is best-effort: SQL failures log and fall through to an empty
+ * Map (graceful degradation, never a startup crash). Repeated calls are
+ * idempotent — second call is a no-op so test runs that import the module
+ * multiple times don't double-open the SQLite handle.
+ */
+let initialized = false;
+export async function initRateLimitStore(now: number = Date.now()): Promise<void> {
+  if (initialized) return;
+  if (!RATE_LIMIT_PERSISTENT_ENABLED) {
+    initialized = true;
+    process.stdout.write('[RateLimit] Persistent store disabled (API_RATE_LIMIT_PERSISTENT=off)\n');
+    return;
+  }
+  try {
+    persistentRateLimitStore = new PersistentRateLimitStore(process.env.API_RATE_LIMIT_DB_PATH);
+    const activeRows = persistentRateLimitStore.listActive(now);
+    for (const row of activeRows) {
+      rateLimitStore.set(row.ip, { count: row.count, resetAt: row.resetAt });
+    }
+    initialized = true;
+    process.stdout.write(
+      `[RateLimit] Hydrated ${activeRows.length} active entries from persistent store\n`,
+    );
+  } catch (e) {
+    // Graceful fallback — server still serves traffic; rate limits are
+    // process-local. Re-allow init() retry on the next boot.
+    persistentRateLimitStore = null;
+    initialized = false;
+    process.stderr.write(
+      `[RateLimit] Persistent store init failed, falling back to in-memory only: ${(e as Error).message}\n`,
+    );
+  }
+}
+
+/**
+ * closeRateLimitStore — close the persistent store on graceful shutdown.
+ * Idempotent and safe to call even if init failed (null check).
+ */
+export function closeRateLimitStore(): void {
+  if (!persistentRateLimitStore) return;
+  try {
+    persistentRateLimitStore.close();
+    process.stdout.write('[RateLimit] Persistent store closed\n');
+  } catch (e) {
+    process.stderr.write(`[RateLimit] Persistent store close failed: ${(e as Error).message}\n`);
+  } finally {
+    persistentRateLimitStore = null;
+    initialized = false;
+  }
+}
+
+/**
+ * _resetRateLimitStoreForTesting — test-only escape hatch to clear the
+ * `initialized` latch so a test can re-run initRateLimitStore against a
+ * fresh DB path. NOT exported via index.ts.
+ */
+export function _resetRateLimitStoreForTesting(): void {
+  persistentRateLimitStore = null;
+  initialized = false;
+  rateLimitStore.clear();
+}
 
 export function rateLimitMiddleware(req: Request, res: Response, next: NextFunction): void {
   const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
   const now = Date.now();
 
+  // Layer 1: GLOBAL token bucket — takes precedence over per-IP so an
+  // attacker spraying IPs cannot bypass by spreading load.
+  if (!consumeGlobalToken(now)) {
+    res.setHeader('X-RateLimit-Reason', 'global-token-bucket');
+    res.setHeader('Retry-After', '1');
+    res.status(429).json({
+      error: 'Server overloaded. Retry after rate-limit reset.',
+      retryAfter: 1,
+    });
+    return;
+  }
+
+  // Layer 2: per-tier per-IP. Tier ceilings are scaled from RATE_LIMIT_MAX
+  // so /health-monitoring isn't knocked off by a /execute spike.
+  const tier = classifyTier(req.url ?? '/', req.method ?? 'GET');
+  const tierMax = Math.max(1, Math.floor(RATE_LIMIT_MAX * TIER_MULTIPLIER[tier]));
+
+  // Memory-pressure guard: when the rateLimitStore exceeds the cap, evict
+  // one expired entry opportunistically and (if none are expired) the FIFO
+  // oldest. Capped to at most 256 evictions per request to bound tail
+  // latency under adversarial floods. Per-request eviction only touches
+  // Map — the periodic 5-minute interval is the authoritative cleanup
+  // channel for persistent (alignment keeps SQL writes amortized).
+  if (rateLimitStore.size >= RATE_LIMIT_MAX_ENTRIES) {
+    let evicted = 0;
+    for (const [key, exp] of rateLimitStore) {
+      if (exp.resetAt < now) {
+        rateLimitStore.delete(key);
+        evicted++;
+        if (evicted >= 256) break;
+      }
+    }
+    if (evicted === 0) {
+      // FIFO eviction — Map insertion order throws away the cold tail first.
+      const oldest = rateLimitStore.keys().next().value;
+      if (oldest !== undefined) rateLimitStore.delete(oldest);
+    }
+  }
+
   let entry = rateLimitStore.get(ip);
   if (!entry || entry.resetAt < now) {
     entry = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
-    rateLimitStore.set(ip, entry);
   }
-
   entry.count++;
+  // writeThroughSet AFTER increment so the persistent counter matches the
+  // in-memory one — defeats the auth-reset bypass where a restart between
+  // the Map write and the SQL upsert would cause counter drift.
+  writeThroughSet(ip, entry);
 
-  // Set rate limit headers
-  res.setHeader('X-RateLimit-Limit', RATE_LIMIT_MAX);
-  res.setHeader('X-RateLimit-Remaining', Math.max(0, RATE_LIMIT_MAX - entry.count));
+  res.setHeader('X-RateLimit-Limit', tierMax);
+  res.setHeader('X-RateLimit-Tier', tier);
+  res.setHeader('X-RateLimit-Remaining', Math.max(0, tierMax - entry.count));
   res.setHeader('X-RateLimit-Reset', Math.ceil(entry.resetAt / 1000));
 
-  if (entry.count > RATE_LIMIT_MAX) {
+  if (entry.count > tierMax) {
+    res.setHeader('X-RateLimit-Reason', `per-ip-tier-${tier}`);
+    // Best-effort structured stderr audit so SIEM tier (Phase 2) can pick
+    // this up via /api/v1/security/owasp-ingest without proxying through the
+    // full audit bus.
+    process.stderr.write(
+      `[RateLimit] ip=${ip} tier=${tier} count=${entry.count} max=${tierMax} url=${req.url ?? '/'}\n`,
+    );
     res.status(429).json({
       error: 'Too many requests',
       retryAfter: Math.ceil((entry.resetAt - now) / 1000),
+      tier,
+      limit: tierMax,
     });
     return;
   }
