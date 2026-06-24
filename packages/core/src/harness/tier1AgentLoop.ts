@@ -333,7 +333,8 @@ export class Tier1AgentLoop {
         try {
           const parsed = JSON.parse(loopResult.summary);
           loopResult.outputData = parsed;
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           // not JSON — leave unstructured
         }
         await params.services.fireOnAgentComplete({
@@ -480,7 +481,8 @@ export class Tier1AgentLoop {
         );
         return `[Content scan blocked output — potential injection detected]\nReason: ${scanResult.reason ?? 'unknown'}`;
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // If scanner fails, continue with output — fail open for availability
     }
 

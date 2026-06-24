@@ -316,7 +316,8 @@ export class DefaultHarness implements AgentHarness {
               try {
                 const parsed = JSON.parse(safeContent);
                 result.outputData = parsed;
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* not JSON — leave unstructured */
               }
             }
