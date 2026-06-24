@@ -50,8 +50,18 @@ export class JsonMemoryStore implements MemoryStore {
           if (!isNaN(num) && num >= this.nextId) this.nextId = num + 1;
         }
       }
-    } catch {
-      getGlobalLogger().debug('JsonMemoryStore', 'Init load failed — starting empty');
+    } catch (err) {
+      if (err instanceof Error && 'code' in err && err.code === 'ENOENT') {
+        getGlobalLogger().debug('JsonMemoryStore', 'No existing memory file — starting empty');
+      } else {
+        const errorObj = err instanceof Error ? err : new Error(String(err));
+        getGlobalLogger().error(
+          'JsonMemoryStore',
+          'Failed to load memory file — data may be corrupted',
+          errorObj,
+        );
+        throw err;
+      }
     }
     // Rebuild inverted index after loading
     this.rebuildIndex();
@@ -59,8 +69,9 @@ export class JsonMemoryStore implements MemoryStore {
 
   private async persist(): Promise<void> {
     if (!this.dirty) return;
-    const dir = this.filePath.substring(0, this.filePath.lastIndexOf('/'));
-    if (dir) await mkdir(dir, { recursive: true });
+    const path = await import('path');
+    const dir = path.dirname(this.filePath);
+    if (dir && dir !== '.') await mkdir(dir, { recursive: true });
     await writeFile(this.filePath, JSON.stringify(Array.from(this.items.values()), null, 2));
     this.dirty = false;
   }
