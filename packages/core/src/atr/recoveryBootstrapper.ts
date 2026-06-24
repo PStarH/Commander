@@ -25,7 +25,7 @@ import { RunLedger, getRunLedgerBundle } from './runLedger';
 import { getExecutionScheduler } from './scheduler';
 import { getDeadLetterQueue } from '../runtime/deadLetterQueueSingleton';
 import { getMessageBus } from '../runtime/messageBus';
-import type { RunState, RunTransaction } from './types';
+import type { RunState } from './types';
 
 const log = getGlobalLogger();
 
@@ -89,8 +89,6 @@ export class RecoveryBootstrapper {
           result.scanned++;
           const runId = run.runId;
           const tenantId = run.tenantId;
-          const leaseToken = run.leaseToken;
-          const fencingEpoch = run.fencingEpoch;
 
           // Step 1: Check if the lease is still alive
           const currentLease = leaseManager.get(runId, { tenantId });
