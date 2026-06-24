@@ -23,7 +23,6 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // BPF instruction encoding
@@ -41,7 +40,6 @@ const BPF_ABS = 0x20; // absolute offset from data start
 
 // BPF jump opcodes
 const BPF_JEQ = 0x10;
-const BPF_JSET = 0x40;
 
 // seccomp return actions
 const SECCOMP_RET_KILL_PROCESS = 0x00000000;
@@ -447,11 +445,9 @@ export function buildSeccompFilter(options: SeccompFilterOptions = {}): Buffer {
   // Step 3: Whitelist check — for each allowed syscall, JEQ → ALLOW, else → next
   const allowedArr = Array.from(allowed).sort((a, b) => a - b);
   for (let i = 0; i < allowedArr.length; i++) {
-    const isLast = i === allowedArr.length - 1;
     instructions.push(bpfJump(BPF_JMP | BPF_JEQ | BPF_K, allowedArr[i], 0, 1));
     instructions.push(bpfStmt(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
-    // If not last, the next instruction checks the next syscall
-    // If last, the fall-through hits the default KILL
+    // The fall-through checks the next syscall; after the last, it hits the default KILL
   }
 
   // Step 4: Default — kill the process

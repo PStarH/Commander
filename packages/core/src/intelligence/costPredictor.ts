@@ -11,7 +11,6 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import { getGlobalLogger } from '../logging';
 import { calculateCostBreakdown } from '../telos/tokenSentinel';
 import { getModelRouter } from '../runtime/modelRouter';
 

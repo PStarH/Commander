@@ -137,7 +137,6 @@ function canonicalize(value: unknown): unknown {
 export function nextId(tag: string): string {
   let suffix: string;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const crypto = require('crypto') as { randomUUID?: () => string };
     if (typeof crypto.randomUUID === 'function') {
       suffix = crypto.randomUUID();
