@@ -45,35 +45,17 @@ import type {
 } from './types';
 import {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
-  DEFAULT_TOKEN_GOVERNOR_BUDGET,
-  TOOL_OUTPUT_TURN_BUDGET,
-  CIRCUIT_BREAKER_THRESHOLD,
-  CIRCUIT_BREAKER_RECOVERY_MS,
-  VERIFICATION_FLOOR_TOKENS,
-  VERIFICATION_BUDGET_TOKENS,
-  MAX_REFLEXION_MEMORIES,
-  MAX_TOKENS_PER_REFLEXION,
-  TOOL_ORCHESTRATOR_MAX_RETRIES,
-  TOOL_ORCHESTRATOR_CIRCUIT_THRESHOLD,
   GOAL_TELEMETRY_MAX_CHARS,
   GOAL_RESULT_MAX_CHARS,
   GOAL_FULL_MAX_CHARS,
   OUTPUT_PREFIX_MAX_CHARS,
   SUMMARY_MAX_CHARS,
   ERROR_MAX_CHARS,
-  MEMORY_SNIPPET_MAX_CHARS,
   TOOL_PATTERN_MAX_CHARS,
-  VERIFICATION_FEEDBACK_MAX_CHARS,
   RESULT_CONTENT_MAX_CHARS,
-  CONCISE_OUTPUT_THRESHOLD,
   RETRY_LOOP_THRESHOLD,
   RETRY_LOOP_PATTERN_HISTORY,
-  CONTEXT_TOKEN_FRACTION,
-  MIN_CONTEXT_TOKENS,
-  FALLBACK_COST_PER_1K_INPUT,
-  MAX_OUTPUT_TOKENS_ESTIMATE,
   DEFAULT_LLM_TIMEOUT_MS,
-  INPUT_TOKEN_SAFETY_MARGIN,
 } from './runtimeConstants';
 import type { AgentRuntimeInterface } from './agentRuntimeInterface';
 import { ModelRouter, getModelRouter } from './modelRouter';
@@ -1127,7 +1109,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
    */
   private restoreTenantOverrides(
     overrides: TenantOverrides | undefined,
-    tenantId: string | undefined,
+    _tenantId: string | undefined,
   ): void {
     if (!overrides) return;
     this.samplesStore = overrides.origSamplesStore;
@@ -1956,7 +1938,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
           let lastError: string | undefined;
           let lastErrorIsPermanent = false;
           const steps: AgentExecutionStep[] = [];
-          let totalTokens: TokenUsage = {
+          const totalTokens: TokenUsage = {
             promptTokens: 0,
             completionTokens: 0,
             totalTokens: 0,
@@ -1964,7 +1946,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
           };
           // Track content written by file_write tool calls for artifact propagation
           let largestFileWriteContent = '';
-          let largestFileWritePath = '';
           // Cumulative evidence for SubAgentGuard progress tracking (persists across retries)
           let cumulativeEvidence = 0;
 
@@ -2037,7 +2018,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
           for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
             const llmCtx = { request, agentId: ctx.agentId, runId };
-            let llmRequest = await getHookManager().fireBeforeLLMCall(llmCtx);
+            const llmRequest = await getHookManager().fireBeforeLLMCall(llmCtx);
             let response = await this.callWithTimeout(llmRequest, routing);
             await getHookManager().fireAfterLLMCall({
               request: llmRequest,
@@ -2060,7 +2041,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               this.governor.reportUsage(response.usage.totalTokens);
               ctx.guard?.recordTokens(response.usage.totalTokens);
 
-              const traceEventId = tracer.recordLLMCall(
+              const _traceEventId = tracer.recordLLMCall(
                 runId,
                 routing.modelId,
                 routing.provider,
@@ -2251,7 +2232,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               // arguments >= 3 times within a short window (last 20 calls).
               const recentToolPatterns: string[] = [];
               let retryLoopDetected = false;
-              let retryLoopCount = 0;
+              void 0;
               let cycleDetected = false;
               let interruptData: { reason: string; value: unknown } | null = null;
               while (
@@ -2379,7 +2360,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
                           console.warn(`[SERIAL] GATE BLOCKED ${tc.name} kind=${gate.kind}`);
                           if (gate.kind === 'retry') {
                             retryLoopDetected = true;
-                            retryLoopCount = gate.count;
                             return toolErrorRow(tc, `Retry loop detected: ${tc.name}`);
                           }
                           if (gate.kind === 'cycle') {
@@ -2499,7 +2479,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
                           const writtenContent = String(tc.arguments?.content ?? '');
                           if (writtenContent.length > largestFileWriteContent.length) {
                             largestFileWriteContent = writtenContent;
-                            largestFileWritePath = String(tc.arguments?.path ?? '');
                           }
                         }
                         return {
@@ -2559,7 +2538,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
                           break;
                         case 'retry':
                           retryLoopDetected = true;
-                          retryLoopCount = gate.count;
                           blockingRow = toolErrorRow(tc, `Retry loop detected: ${tc.name}`);
                           shouldBreak = true;
                           break;
@@ -2632,7 +2610,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
                       const writtenContent = String(tc.arguments?.content ?? '');
                       if (writtenContent.length > largestFileWriteContent.length) {
                         largestFileWriteContent = writtenContent;
-                        largestFileWritePath = String(tc.arguments?.path ?? '');
                       }
                     }
                     if (!toolResult.error) cumulativeEvidence++;
@@ -2909,7 +2886,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 // followUpRequest is created fresh from the mutated request object,
                 // so it correctly sees the updated messages array.
                 const followUpCtx = { request, agentId: ctx.agentId, runId };
-                let followUpRequest = await getHookManager().fireBeforeLLMCall(followUpCtx);
+                const followUpRequest = await getHookManager().fireBeforeLLMCall(followUpCtx);
                 const followUp = await this.callWithTimeout(followUpRequest, routing);
                 await getHookManager().fireAfterLLMCall({
                   request: followUpRequest,
@@ -3086,7 +3063,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     agentId: ctx.agentId,
                     runId,
                   });
-                } catch (e) {
+                } catch {
                   /* best-effort hook */
                 }
                 const vDuration = Date.now() - vStart;
@@ -4497,9 +4474,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
       const flightKey = SingleFlightRequestCache.computeKey(request, tenantIdForFlight);
       const evictionsBefore = this.cacheManager.getSingleFlightStats().evictions;
       const inflightBefore = this.cacheManager.getSingleFlightInflightCount();
-      let result: LLMResponse;
       const llmTimeoutMs = this.config.llmTimeoutMs ?? DEFAULT_LLM_TIMEOUT_MS;
-      result = await this.cacheManager.dedupeSingleFlight(
+      const result: LLMResponse = await this.cacheManager.dedupeSingleFlight(
         flightKey,
         async () => {
           return this.stepTimeout.wrap(provider.call(request), {
