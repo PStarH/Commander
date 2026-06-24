@@ -55,7 +55,8 @@ jobs:
           echo "$OUTPUT"
           echo "$OUTPUT" > /tmp/mdlint.txt
           # Aggregate both-rule hit count for the step summary table.
-          echo "hits_total=$(echo "$OUTPUT" | grep -cE 'cc-(no-competitor-bash|readme-superlative-quote)' || echo 0)" >> $GITHUB_OUTPUT
+          HITS=$(echo "$OUTPUT" | grep -cE 'cc-(no-competitor-bash|readme-superlative-quote)' || true)
+          echo "hits_total=$HITS" >> "$GITHUB_OUTPUT"
           exit $EXIT
         shell: bash
 
