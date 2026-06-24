@@ -1,5 +1,3 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import { deliberate, deliberateWithLLM } from '../../ultimate/deliberation';
 import { classifyEffortLevel } from '../../ultimate/effortScaler';
 import { AgentRuntime } from '../../runtime/agentRuntime';
@@ -33,30 +31,17 @@ import {
   reviewReportToJson,
   loadReviewGuidelines,
 } from '../../reviewAgent';
-import type { LLMProvider, ModelConfig } from '../../runtime/types';
+import type { LLMProvider } from '../../runtime/types';
 import type { EffortLevel, OrchestrationTopology } from '../../ultimate/types';
 import { UltimateOrchestrator } from '../../ultimate/orchestrator';
 import { TELOSOrchestrator } from '../../telos/telosOrchestrator';
 import { CompanyEngine } from '../../ultimate/companyEngine';
 import { SSEStream } from '../../runtime/sseStream';
-import { getMessageBus } from '../../runtime/messageBus';
-import { getTraceRecorder } from '../../runtime/executionTrace';
 import { getMetaLearner } from '../../selfEvolution/metaLearner';
-import {
-  detectProvider,
-  getEffectiveModel,
-  setConfig,
-  showConfig,
-  listProviders,
-  listModels,
-  resetConfig,
-} from '../../config/commanderConfig';
-import type { ProviderInfo } from '../../config/commanderConfig';
+import { detectProvider, getEffectiveModel } from '../../config/commanderConfig';
 import { getApprovalSystem } from '../../sandbox';
-import type { ApprovalMode } from '../../sandbox';
-import { getGlobalLogger, setGlobalLogLevel } from '../../logging';
+import { getGlobalLogger } from '../../logging';
 import { StateCheckpointer } from '../../runtime/stateCheckpointer';
-import { startTUI } from '../../tui';
 import { spawn } from 'child_process';
 import { TaskPool } from '../../ultimate/taskPool';
 import { GoalOrchestrator } from '../../goal/goalOrchestrator';
