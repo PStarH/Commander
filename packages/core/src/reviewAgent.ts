@@ -141,7 +141,8 @@ function getGitDiff(scope: ReviewScope, baseRef?: string, commitSha?: string): G
     const delMatch = stat.match(/(\d+) deletion/i);
     totalAdditions = addMatch ? parseInt(addMatch[1], 10) : 0;
     totalDeletions = delMatch ? parseInt(delMatch[1], 10) : 0;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     // stat parse failure is non-fatal
   }
 
@@ -178,7 +179,8 @@ export function parseFindings(text: string): ReviewFinding[] {
       }
       if (findings.length > 0) return findings;
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     // Not JSON — try markdown parsing
   }
 
@@ -203,7 +205,8 @@ export function parseFindings(text: string): ReviewFinding[] {
         }
         if (findings.length > 0) return findings;
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // fall through to markdown parsing
     }
   }
@@ -641,7 +644,8 @@ export function loadReviewGuidelines(): string[] {
           }
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // skip unreadable files
     }
   }
