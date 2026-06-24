@@ -87,29 +87,35 @@ export class SqliteMemoryStore implements MemoryStore {
     }
 
     this.initPromise = (async () => {
-      const dir = this.filePath.substring(0, this.filePath.lastIndexOf('/'));
-      if (dir) {
-        const fs = require('fs');
-        fs.mkdirSync(dir, { recursive: true });
+      try {
+        const fs = await import('fs/promises');
+        const path = await import('path');
+        const dir = path.dirname(this.filePath);
+        if (dir && dir !== '.') {
+          await fs.mkdir(dir, { recursive: true });
+        }
+
+        this.db = new BetterSqlite3(this.filePath);
+        this.db.pragma('journal_mode = WAL');
+        this.db.pragma('synchronous = NORMAL');
+        this.db.pragma('foreign_keys = ON');
+
+        this.createSchema();
+        this.prepareStatements();
+        this.initialized = true;
+
+        getGlobalLogger().info('SqliteMemoryStore', 'Initialized', { path: this.filePath });
+      } catch (err) {
+        this.initPromise = null;
+        throw err;
       }
-
-      this.db = new BetterSqlite3(this.filePath);
-      this.db.pragma('journal_mode = WAL');
-      this.db.pragma('synchronous = NORMAL');
-      this.db.pragma('foreign_keys = ON');
-
-      this.createSchema();
-      this.prepareStatements();
-      this.initialized = true;
-
-      getGlobalLogger().info('SqliteMemoryStore', 'Initialized', { path: this.filePath });
     })();
 
     return this.initPromise;
   }
 
   private createSchema(): void {
-    this.db!.exec(`
+    this.ensureInitialized().exec(`
       -- Main memory items table
       CREATE TABLE IF NOT EXISTS memory_items (
         id TEXT PRIMARY KEY,
@@ -169,7 +175,7 @@ export class SqliteMemoryStore implements MemoryStore {
   }
 
   private prepareStatements(): void {
-    const d = this.db!;
+    const d = this.ensureInitialized();
 
     this.stmtInsert = d.prepare(`
       INSERT INTO memory_items (id, project_id, mission_id, agent_id, kind, duration, title, content, tags, priority, created_at, last_accessed_at, expires_at, evidence_refs, confidence)
@@ -313,7 +319,7 @@ export class SqliteMemoryStore implements MemoryStore {
     type BatchTx = (
       fn: (batch: MemoryWriteOptions[]) => void,
     ) => (batch: MemoryWriteOptions[]) => void;
-    const txFn = this.db!.transaction as BatchTx;
+    const txFn = this.ensureInitialized().transaction as BatchTx;
     const insertMany = txFn((batch: MemoryWriteOptions[]) => {
       for (const options of batch) {
         // Reuse write logic inline for transaction
@@ -387,7 +393,9 @@ export class SqliteMemoryStore implements MemoryStore {
 
     // Update last accessed time
     const now = new Date().toISOString();
-    this.db!.prepare('UPDATE memory_items SET last_accessed_at = ? WHERE id = ?').run(now, id);
+    this.ensureInitialized()
+      .prepare('UPDATE memory_items SET last_accessed_at = ? WHERE id = ?')
+      .run(now, id);
 
     return this.rowToItem(row);
   }
@@ -493,22 +501,24 @@ export class SqliteMemoryStore implements MemoryStore {
         new Date().toISOString(),
         limit,
       );
-      return rows.map((r) => this.rowToItem(r));
+      return rows.map((r: SqliteRow) => this.rowToItem(r));
     } catch (err) {
       getGlobalLogger().warn('SqliteMemoryStore', 'FTS search failed, falling back to LIKE', {
         error: String(err),
       });
       // Fallback to LIKE search
       const lowerQuery = query.toLowerCase();
-      const rows = this.db!.prepare(
-        `
+      const rows = this.ensureInitialized()
+        .prepare(
+          `
         SELECT * FROM memory_items
         WHERE project_id = ? AND (title LIKE ? OR content LIKE ?)
         ORDER BY priority DESC, created_at DESC
         LIMIT ?
       `,
-      ).all<SqliteRow>(projectId, `%${lowerQuery}%`, `%${lowerQuery}%`, limit);
-      return rows.map((r) => this.rowToItem(r));
+        )
+        .all<SqliteRow>(projectId, `%${lowerQuery}%`, `%${lowerQuery}%`, limit);
+      return rows.map((r: SqliteRow) => this.rowToItem(r));
     }
   }
 
@@ -534,11 +544,13 @@ export class SqliteMemoryStore implements MemoryStore {
     }
 
     // Get top tags
-    const tagRows = this.db!.prepare(
-      `
+    const tagRows = this.ensureInitialized()
+      .prepare(
+        `
       SELECT tags FROM memory_items WHERE project_id = ?
     `,
-    ).all<SqliteRow>(projectId);
+      )
+      .all<SqliteRow>(projectId);
 
     const tagCounts = new Map<string, number>();
     for (const tagRow of tagRows) {
@@ -582,11 +594,27 @@ export class SqliteMemoryStore implements MemoryStore {
   // ============================================================================
 
   async close(): Promise<void> {
+    // Wait for any in-flight init before closing to avoid racing the DB handle.
+    if (this.initPromise) {
+      try {
+        await this.initPromise;
+      } catch {
+        /* init failed; close is still safe */
+      }
+    }
     if (this.db) {
       this.db.close();
-      this.db = null;
-      this.initialized = false;
     }
+    this.db = null;
+    this.initPromise = null;
+    this.initialized = false;
+  }
+
+  private ensureInitialized(): BetterSqlite3DB {
+    if (!this.db) {
+      throw new Error('SqliteMemoryStore is not initialized or has been closed');
+    }
+    return this.db;
   }
 
   // ============================================================================
@@ -607,13 +635,22 @@ export class SqliteMemoryStore implements MemoryStore {
       /* ok */
     }
 
+    const kind = row.kind as string;
+    if (!['DECISION', 'ISSUE', 'LESSON', 'SUMMARY'].includes(kind)) {
+      throw new Error(`Invalid memory kind in DB: ${kind}`);
+    }
+    const duration = row.duration as string;
+    if (!['EPISODIC', 'LONG_TERM'].includes(duration)) {
+      throw new Error(`Invalid memory duration in DB: ${duration}`);
+    }
+
     return {
       id: row.id as string,
       projectId: row.project_id as string,
       missionId: (row.mission_id as string) || undefined,
       agentId: (row.agent_id as string) || undefined,
-      kind: row.kind as MemoryKind,
-      duration: row.duration as MemoryDuration,
+      kind: kind as MemoryKind,
+      duration: duration as MemoryDuration,
       title: row.title as string,
       content: row.content as string,
       tags,
