@@ -146,7 +146,14 @@ class SqliteTable<T extends { id: string }> implements PersistentTable<T> {
       const name = String(k);
       const raw = (patch as unknown as Record<string, unknown>)[name];
       const col = this.state.schema.columns.find((c) => c.name === name);
-      bindArgs[name] = raw === undefined ? null : col && col.type === 'boolean' && typeof raw === 'boolean' ? (raw ? 1 : 0) : raw;
+      bindArgs[name] =
+        raw === undefined
+          ? null
+          : col && col.type === 'boolean' && typeof raw === 'boolean'
+            ? raw
+              ? 1
+              : 0
+            : raw;
       setClauses.push(`${qid(name)} = @${name}`);
     }
 
@@ -159,16 +166,16 @@ class SqliteTable<T extends { id: string }> implements PersistentTable<T> {
       const col = this.state.schema.columns.find((c) => c.name === name);
       const bound = col && col.type === 'boolean' && typeof v === 'boolean' ? (v ? 1 : 0) : v;
       bindArgs[`w${wIndex}`] = bound;
-      whereClauses.push(bound === null ? `${qid(name)} IS @w${wIndex}` : `${qid(name)} = @w${wIndex}`);
+      whereClauses.push(
+        bound === null ? `${qid(name)} IS @w${wIndex}` : `${qid(name)} = @w${wIndex}`,
+      );
       wIndex++;
     }
 
     if (setClauses.length === 0) {
       // Predicate-only check on the unchanged row.
       const exists = this.db
-        .prepare(
-          `SELECT 1 FROM ${qid(this.tableName)} WHERE ${whereClauses.join(' AND ')} LIMIT 1`,
-        )
+        .prepare(`SELECT 1 FROM ${qid(this.tableName)} WHERE ${whereClauses.join(' AND ')} LIMIT 1`)
         .get(bindArgs);
       return exists ? this.get(id) : null;
     }
@@ -184,23 +191,25 @@ class SqliteTable<T extends { id: string }> implements PersistentTable<T> {
 
   delete(id: string): boolean {
     this.assertOpen();
-    const info = this.db
-      .prepare(`DELETE FROM ${qid(this.tableName)} WHERE id = @id`)
-      .run({ id });
+    const info = this.db.prepare(`DELETE FROM ${qid(this.tableName)} WHERE id = @id`).run({ id });
     return info.changes > 0;
   }
 
   query(filter?: Partial<T>, opts?: QueryOptions<T>): T[] {
     this.assertOpen();
-    const raw = this.db
-      .prepare(`SELECT * FROM ${qid(this.tableName)}`)
-      .all() as Record<string, unknown>[];
+    const raw = this.db.prepare(`SELECT * FROM ${qid(this.tableName)}`).all() as Record<
+      string,
+      unknown
+    >[];
     const filterKeys: string[] = filter ? Object.keys(filter) : [];
     const sortSpecs = opts && opts.sort ? opts.sort : [];
 
-    const out: T[] = raw.map(cloneRow as <U>(v: U) => U).map(
-      (r) => normalizeRow(r as Record<string, unknown>, this.state.schema.columns) as unknown as T,
-    );
+    const out: T[] = raw
+      .map(cloneRow as <U>(v: U) => U)
+      .map(
+        (r) =>
+          normalizeRow(r as Record<string, unknown>, this.state.schema.columns) as unknown as T,
+      );
 
     const filtered: T[] =
       filterKeys.length === 0
@@ -243,9 +252,10 @@ class SqliteTable<T extends { id: string }> implements PersistentTable<T> {
 
   count(filter?: Partial<T>): number {
     this.assertOpen();
-    const rows = this.db
-      .prepare(`SELECT * FROM ${qid(this.tableName)}`)
-      .all() as Record<string, unknown>[];
+    const rows = this.db.prepare(`SELECT * FROM ${qid(this.tableName)}`).all() as Record<
+      string,
+      unknown
+    >[];
     let n = 0;
     for (const raw of rows) {
       const row = normalizeRow(raw, this.state.schema.columns) as Record<string, unknown>;
@@ -378,10 +388,7 @@ export class SqliteDriver implements PersistentDriver {
     chmodSafe(this.filePath, 0o600);
   }
 
-  getTable<T extends { id: string }>(
-    name: string,
-    schema: TableSchema<T>,
-  ): PersistentTable<T> {
+  getTable<T extends { id: string }>(name: string, schema: TableSchema<T>): PersistentTable<T> {
     const existing = this.tables.get(name) as SqliteTableState<T> | undefined;
     if (!existing) {
       this.createTable(name, schema);

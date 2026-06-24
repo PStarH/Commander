@@ -17,11 +17,7 @@
  * `result.errors`.
  */
 
-import type {
-  ApplyMigrationsResult,
-  MigrationStep,
-  PersistentDriver,
-} from './types';
+import type { ApplyMigrationsResult, MigrationStep, PersistentDriver } from './types';
 
 const MIGRATIONS_TABLE = '_migrations';
 
@@ -135,9 +131,9 @@ function readApplied(driver: PersistentDriver): Set<string> {
   };
   if (!anyDriver.db || typeof anyDriver.db.prepare !== 'function') return out;
   try {
-    const rows = anyDriver.db
-      .prepare(`SELECT version FROM ${MIGRATIONS_TABLE}`)
-      .all() as Array<{ version: string }>;
+    const rows = anyDriver.db.prepare(`SELECT version FROM ${MIGRATIONS_TABLE}`).all() as Array<{
+      version: string;
+    }>;
     for (const r of rows) out.add(r.version);
   } catch {
     // table missing → no applied versions
@@ -145,10 +141,7 @@ function readApplied(driver: PersistentDriver): Set<string> {
   return out;
 }
 
-function recordApplied(
-  driver: PersistentDriver,
-  row: MigrationRow,
-): void {
+function recordApplied(driver: PersistentDriver, row: MigrationRow): void {
   if (driver.backend !== 'sqlite') return;
   const anyDriver = driver as PersistentDriver & {
     db?: {
