@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 // IdempotencyStore — P0-1 ATR kernel component.
 // Persistent deduplication for tool side-effect calls. SQLite-backed, per-tenant.
 //
@@ -18,12 +19,10 @@
 // Tenancy: when tenantId is provided, the stored key is
 //   SHA256(tenantId || "::" || inputKey) — prevents cross-tenant collisions.
 
-import { reportSilentFailure } from '../silentFailureReporter';
 import { createHash, randomUUID } from 'crypto';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { getGlobalLogger } from '../logging';
-import { walCheckpoint } from '../storage/walCheckpoint';
 import type { IdempotencyOptions, IdempotencyRecord, IdempotencyState } from './types';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
@@ -61,8 +60,8 @@ let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
-} catch (err) {
-  reportSilentFailure(err, 'idempotencyStore:64');
+} catch (_silentE_) {
+  reportSilentFailure(_silentE_, 'idempotencyStore:62');
 }
 
 export class IdempotencyStore {
@@ -271,7 +270,6 @@ export class IdempotencyStore {
   }
 
   close(): void {
-    walCheckpoint(this.db);
     this.db?.close();
     this.db = null;
     this.stmtGet = null;
