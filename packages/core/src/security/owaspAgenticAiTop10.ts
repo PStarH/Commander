@@ -344,7 +344,7 @@ export class OwaspAgenticAiTop10 {
     try {
       // Lazy require avoids hard-cyclic dependency in test environments where
       // the bus singleton has not been constructed.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
+
       const { getMessageBus } = require('../runtime/messageBus');
       const bus = getMessageBus();
       this.busUnsub = bus.subscribe('security.event', (msg: BusMessage) => {

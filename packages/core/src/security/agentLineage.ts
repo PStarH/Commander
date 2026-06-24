@@ -257,7 +257,6 @@ export class AgentLineage {
     } catch (err) {
       recordSinkFailure('agentLineage');
       try {
-        // eslint-disable-next-line no-console
         console.error(
           `[agentLineage] audit chain unavailable for handoff: ${(err as Error)?.message ?? String(err)}`,
         );
@@ -524,7 +523,6 @@ export class AgentLineage {
     } catch (err) {
       recordSinkFailure('agentLineage');
       try {
-        // eslint-disable-next-line no-console
         console.error(
           `[agentLineage] audit chain unavailable: ${(err as Error)?.message ?? String(err)}`,
         );

@@ -111,6 +111,9 @@ export default defineConfig({
       // --- memory (audit MED item 1 — Phase A route-out) ---
       'tests/threeLayerRouting.test.ts',
 
+      // --- hub event glue (Phase 1) ---
+      'tests/hub/eventGlue.test.ts',
+
       // --- storage ---
       'tests/storage/dataRetention.test.ts',
       'tests/storage/inMemoryDriver.test.ts',

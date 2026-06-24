@@ -16,13 +16,9 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import {
-  getSecurityAuditLogger,
-  type SecurityEvent,
-  type SecuritySeverity,
-} from './securityAuditLogger';
-import { getSecurityMonitor, type SecurityAlert } from './securityMonitor';
-import { AuditChainLedger, getAuditChainLedger } from './auditChainLedger';
+import type { SecurityEvent } from './securityAuditLogger';
+import type { SecurityAlert } from './securityMonitor';
+import { getAuditChainLedger } from './auditChainLedger';
 import { getGlobalLogger, getGlobalMetrics } from '../logging';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 

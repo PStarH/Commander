@@ -26,7 +26,6 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
-import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // Types
@@ -441,7 +440,7 @@ export class FuzzTestFramework {
   }
 
   /** Inject a boundary value (null byte, max-length, empty, etc.). */
-  private mutateBoundaryInject(value: unknown, paramDef: HarnessParam): unknown {
+  private mutateBoundaryInject(value: unknown, _paramDef: HarnessParam): unknown {
     // 70% chance: replace with boundary value; 30% chance: inject into string
     if (Math.random() < 0.7 || typeof value !== 'string') {
       return BOUNDARY_VALUES[Math.floor(Math.random() * BOUNDARY_VALUES.length)];
@@ -612,7 +611,7 @@ export class FuzzTestFramework {
         try {
           harness.validate(input.mutated);
           coveragePaths.push(`validate:ok:${input.strategy}`);
-        } catch (err) {
+        } catch {
           coveragePaths.push(`validate:rejected:${input.strategy}`);
           // Validation rejection is expected for fuzz — but count as coverage
           return this.buildResult(input, 'info', false, coveragePaths, Date.now() - startMs);
@@ -851,7 +850,7 @@ export function createWebSearchToolHarness(): ToolHarness {
 
 const fuzzerSingleton = createTenantAwareSingleton(() => new FuzzTestFramework());
 
-export function getFuzzTestFramework(config?: Partial<FuzzerConfig>): FuzzTestFramework {
+export function getFuzzTestFramework(_config?: Partial<FuzzerConfig>): FuzzTestFramework {
   return fuzzerSingleton.get();
 }
 
