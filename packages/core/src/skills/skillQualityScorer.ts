@@ -107,7 +107,8 @@ export async function evaluateWithRubric(
   let rawScores: number[] | null;
   try {
     rawScores = await config.evaluator(prompt);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return null;
   }
 
