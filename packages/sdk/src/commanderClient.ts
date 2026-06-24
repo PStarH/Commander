@@ -337,19 +337,18 @@ export class CommanderClient {
   // ==========================================================================
 
   async writeMemory(content: string, options: MemoryWriteOptions = {}): Promise<string | null> {
-    try {
-      const { getGlobalThreeLayerMemory } = await import('@commander/core');
-      const memory = getGlobalThreeLayerMemory();
-      const id = `mem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      memory.add(
-        content,
-        options.layer ?? 'episodic',
-        `id:${id}`,
-        options.importance ?? 0.5,
-        options.tags ?? [],
-      );
-      return id;
-    } catch {
+    try { const { getGlobalThreeLayerMemory } = await import('@commander/core');
+    const memory = getGlobalThreeLayerMemory();
+    const id = `mem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    memory.add(
+      content,
+      options.layer ?? 'episodic',
+      `id:${id}`,
+      options.importance ?? 0.5,
+      options.tags ?? [],
+    );
+    return id; } catch (err) {
+      console.warn('[Catch]', err);
       return null;
     }
   }
