@@ -21,18 +21,6 @@ const ENSEMBLE_COMPLETENESS_WEIGHT = 0.4;
 /** Weight for depth (shallower = higher priority) in ensemble scoring */
 const ENSEMBLE_DEPTH_WEIGHT = 0.3;
 
-/** Maximum number of contradiction patterns to check */
-const MAX_CONTRADICTION_PAIRS = 10;
-
-/** Expected characters of synthesis per subtask (mirrors qualityGates.ts) */
-const CHARS_PER_SUBTASK = 200;
-
-/** Penalty per hallucination signal detected */
-const HALLUCINATION_PENALTY = 0.1;
-
-/** Penalty per uncertainty phrase detected */
-const UNCERTAINTY_PENALTY = 0.05;
-
 export class MultiAgentSynthesizer {
   private artifactSystem = getArtifactSystem();
   private qualityGateEngine: QualityGateEngine;
@@ -190,8 +178,8 @@ export class MultiAgentSynthesizer {
 
   private async voteSynthesis(
     taskTree: TaskTreeNode,
-    artifacts: ArtifactReference[],
-    config: SynthesisConfig,
+    _artifacts: ArtifactReference[],
+    _config: SynthesisConfig,
   ): Promise<string> {
     const completed = this.collectCompleted(taskTree);
     if (completed.length === 0) return 'No completed results to synthesize.';
@@ -278,8 +266,8 @@ export class MultiAgentSynthesizer {
 
   private async ensembleSynthesis(
     taskTree: TaskTreeNode,
-    artifacts: ArtifactReference[],
-    config: SynthesisConfig,
+    _artifacts: ArtifactReference[],
+    _config: SynthesisConfig,
   ): Promise<string> {
     const completed = this.collectCompleted(taskTree);
     if (completed.length === 0) return 'No completed results to synthesize.';
