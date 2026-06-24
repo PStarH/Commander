@@ -102,7 +102,7 @@ export const defaultBuiltins: BuiltinRegistry = {
     const list = Array.isArray(args[1]) ? (args[1] as string[]) : [];
     return list.includes(value);
   },
-  b_now(args: LiteralValue[]): number {
+  b_now(_args: LiteralValue[]): number {
     return Date.now();
   },
 };
