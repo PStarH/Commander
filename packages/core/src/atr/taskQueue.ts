@@ -17,6 +17,7 @@
  * with configurable concurrency and token budgets. Each task runs in its
  * own AgentRuntime instance with isolation from other tasks.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import { randomUUID } from 'crypto';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
@@ -117,7 +118,7 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
 } catch (err) {
-  console.warn('[Catch]', err);
+  reportSilentFailure(err, 'taskQueue:120');
   /* not available — will throw on construction */
 }
 
@@ -465,7 +466,7 @@ export class TaskQueue {
       const { OpenAIProvider } = require('../runtime/providers/openaiProvider');
       return new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY ?? '' }) as LLMProvider;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'taskQueue:468');
       return null;
     }
   }

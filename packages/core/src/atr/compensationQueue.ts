@@ -29,6 +29,7 @@
  * Tier 2.4 of reversibility-rfc-v2 (M1 + M11).
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { walCheckpoint } from '../storage/walCheckpoint';
@@ -51,7 +52,7 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
 } catch (err) {
-  console.warn('[Catch]', err);
+  reportSilentFailure(err, 'compensationQueue:54');
 }
 
 export type CompensationStatus = 'pending' | 'in_progress' | 'escalated';

@@ -14,6 +14,7 @@
  *   const result = await engine.execute({ goal: "..." });
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { CapabilityMatcher, getCapabilityMatcher } from '../runtime/capabilityMatcher';
 import type {
@@ -153,7 +154,7 @@ export class CompanyEngine {
         goal: params.goal,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'companyEngine:156');
       context = {
         systemContext: '',
         userContext: '',

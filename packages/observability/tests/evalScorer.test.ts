@@ -14,7 +14,9 @@ describe('parseJudgeResponse', () => {
   });
 
   it('parses JSON with surrounding text', () => {
-    const result = parseJudgeResponse('Here is the result: {"score": 0.9, "reasoning": "great"} done');
+    const result = parseJudgeResponse(
+      'Here is the result: {"score": 0.9, "reasoning": "great"} done',
+    );
     expect(result.score).toBe(0.9);
   });
 

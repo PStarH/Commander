@@ -21,6 +21,7 @@
  * has been resolved from the API key.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { ExecutionScheduler, RunHandle } from './scheduler';
 import type { RunState, RunTransaction, CompensableAction } from './types';
@@ -66,7 +67,7 @@ function readBody(req: IncomingMessage, maxBytes: number): Promise<unknown> {
       try {
         resolve(body ? JSON.parse(body) : {});
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'atrHttp:69');
         reject(new Error('Invalid JSON'));
       }
     });

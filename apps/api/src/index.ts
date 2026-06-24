@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
 import express from 'express';
 import { createWarRoomStore } from './store';
 import { ProjectMemoryStore } from './memoryStore';
@@ -53,7 +54,7 @@ let API_VERSION = '0.0.0';
 try {
   API_VERSION = require('../package.json').version;
 } catch (err) {
-  console.warn('[Catch]', err);
+  reportSilentFailure(err, 'index:56');
   /* use default */
 }
 

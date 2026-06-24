@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { AgentRuntimeConfig, ToolCall } from './types';
 import { purifyObservation } from './observationPurifier';
 import { createContentScanner } from '../contentScanner';
@@ -96,7 +97,7 @@ export async function applyObservationMask(
             };
           }
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'runtimeHelpers:99');
           // Scan failure should not break execution; fall through to normal masking.
         }
 

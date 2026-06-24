@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
 import type {
   WarRoomSnapshot,
   ProjectMemoryItem,
@@ -24,7 +25,7 @@ async function readError(response: Response, fallback: string): Promise<string> 
     const data = (await response.json()) as { error?: string };
     return data.error || fallback;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'api:27');
     return fallback;
   }
 }

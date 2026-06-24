@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../../../packages/core/src/silentFailureReporter';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type {
   WarRoomSnapshot,
@@ -79,7 +80,7 @@ export function useWarRoom() {
         setConnectionStatus('disconnected');
       };
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'useWarRoom:82');
       setConnectionStatus('disconnected');
     }
 

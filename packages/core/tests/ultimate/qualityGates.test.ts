@@ -8,7 +8,13 @@ import type { QualityGateConfig, TaskTreeNode } from '../../src/ultimate/types';
 import type { LLMProvider, LLMRequest } from '../../src/runtime/types';
 
 const defaultGates: QualityGateConfig[] = [
-  { name: 'hallucination', type: 'HALLUCINATION_CHECK', enabled: true, threshold: 0.8, autoFix: false },
+  {
+    name: 'hallucination',
+    type: 'HALLUCINATION_CHECK',
+    enabled: true,
+    threshold: 0.8,
+    autoFix: false,
+  },
   { name: 'consistency', type: 'CONSISTENCY', enabled: true, threshold: 0.8, autoFix: false },
   { name: 'completeness', type: 'COMPLETENESS', enabled: true, threshold: 0.5, autoFix: false },
   { name: 'accuracy', type: 'ACCURACY', enabled: true, threshold: 0.8, autoFix: false },

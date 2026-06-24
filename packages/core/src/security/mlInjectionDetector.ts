@@ -25,6 +25,7 @@
  * MLInjectionDetector runs second for semantic analysis on suspicious content.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getAuditChainLedger } from './auditChainLedger';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
@@ -481,7 +482,7 @@ export class MLInjectionDetector {
         },
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'mlInjectionDetector:484');
       /* best-effort */
     }
   }

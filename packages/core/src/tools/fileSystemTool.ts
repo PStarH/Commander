@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Tool, ToolDefinition } from '../runtime/types';
@@ -20,7 +21,7 @@ async function pathExists(p: string): Promise<boolean> {
     await fs.promises.access(p);
     return true;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'fileSystemTool:23');
     return false;
   }
 }
@@ -47,7 +48,7 @@ export function safePath(target: string): string {
   try {
     resolvedReal = fs.realpathSync(resolved);
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'fileSystemTool:50');
     // File doesn't exist yet — resolve the parent directory
     let parent = path.dirname(resolved);
     while (parent !== '/' && !fs.existsSync(parent)) {
@@ -56,7 +57,7 @@ export function safePath(target: string): string {
     try {
       resolvedReal = fs.realpathSync(parent) + resolved.slice(parent.length);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'fileSystemTool:59');
       resolvedReal = resolved;
     }
   }
@@ -667,7 +668,7 @@ export class GlobTool implements Tool {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'fileSystemTool:670');
       // Skip unreadable directories
     }
   }
@@ -693,7 +694,7 @@ export class GlobTool implements Tool {
     try {
       return new RegExp(regexStr).test(name);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'fileSystemTool:696');
       return false;
     }
   }

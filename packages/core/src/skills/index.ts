@@ -11,6 +11,7 @@
  *   Level 2: Reference files on demand
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 export type {
   SkillSource,
   SkillCategory,
@@ -143,7 +144,7 @@ export function loadSkill(name: string): LegacySkillDef | null {
       return JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'index:146');
     return null;
   }
   return null;
@@ -162,14 +163,14 @@ export function listSkills(): LegacySkillDef[] {
             fs.readFileSync(path.join(LEGACY_SKILLS_DIR, f), 'utf-8'),
           ) as LegacySkillDef;
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'index:165');
           return null;
         }
       })
       .filter((s): s is LegacySkillDef => s !== null)
       .sort((a, b) => b.usageCount - a.usageCount);
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'index:172');
     return [];
   }
 }
@@ -208,7 +209,7 @@ export function deleteSkill(name: string): boolean {
       fs.unlinkSync(jsonPath);
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'index:211');
     return false;
   }
   return true;

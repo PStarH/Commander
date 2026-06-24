@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
 import fs from 'fs';
 import path from 'path';
 import {
@@ -391,7 +392,7 @@ export class SqliteWarRoomStore implements IWarRoomStore {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       Database = require('better-sqlite3');
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'store:394');
       throw new Error(
         'SqliteWarRoomStore requires the "better-sqlite3" package. ' +
           'Install it with: npm install better-sqlite3',

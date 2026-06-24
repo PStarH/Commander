@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
 import { Router } from 'express';
 import { join } from 'path';
 import { existsSync, readdirSync, readFileSync } from 'fs';
@@ -35,7 +36,7 @@ function readSnapshot(runId: string): SagaStateSnapshot | undefined {
   try {
     return JSON.parse(readFileSync(path, 'utf-8')) as SagaStateSnapshot;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'sagaEndpoints:38');
     return undefined;
   }
 }

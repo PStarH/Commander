@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Skill, SkillFrontmatter, SkillMetadata } from './types';
@@ -296,7 +297,7 @@ export class SkillStore {
       fs.rmSync(dir, { recursive: true, force: true });
       return true;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'skillStore:299');
       return false;
     }
   }
@@ -308,12 +309,12 @@ export class SkillStore {
         try {
           return fs.statSync(path.join(this.skillsDir, f)).isDirectory();
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'skillStore:311');
           return false;
         }
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'skillStore:316');
       return [];
     }
   }

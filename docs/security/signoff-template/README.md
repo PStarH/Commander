@@ -10,12 +10,12 @@ operator's machine.
 
 ## Who needs to sign
 
-| Role (in §6.3)     | Operator shorthand  | Required?                                  |
-|--------------------|---------------------|--------------------------------------------|
-| CISO               | `ciso`              | Yes — security policy cannot bind          |
-| Head of Security   | `head-of-security`  | Yes — operational ownership                |
-| Engineering Lead   | `eng`               | Yes — implementation-side binding          |
-| Compliance Lead    | `compliance`        | Yes — audit-side binding                   |
+| Role (in §6.3)   | Operator shorthand | Required?                         |
+| ---------------- | ------------------ | --------------------------------- |
+| CISO             | `ciso`             | Yes — security policy cannot bind |
+| Head of Security | `head-of-security` | Yes — operational ownership       |
+| Engineering Lead | `eng`              | Yes — implementation-side binding |
+| Compliance Lead  | `compliance`       | Yes — audit-side binding          |
 
 ## Two-commit flow (mandatory)
 
@@ -97,6 +97,7 @@ npx tsx scripts/verify-rotation-signoff.ts --json
 ## SHA format requirements
 
 d26's `verifySha()` accepts:
+
 - 7-char abbreviated (`abc1234`)
 - 40-char SHA-1
 - 64-char SHA-256

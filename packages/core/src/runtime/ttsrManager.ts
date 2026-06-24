@@ -27,6 +27,7 @@
 // Types
 // ============================================================================
 
+import { reportSilentFailure } from '../silentFailureReporter';
 export type TtsrMatchSource = 'text' | 'thinking' | 'tool';
 
 export interface TtsrMatchContext {
@@ -245,7 +246,7 @@ export class TtsrManager {
       try {
         compiled.push(new RegExp(pattern, 'g'));
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'ttsrManager:248');
         // Invalid regex — skip this condition
       }
     }
@@ -284,7 +285,7 @@ export class TtsrManager {
     try {
       return new RegExp(`^${regexStr}$`).test(normalized);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'ttsrManager:287');
       return false;
     }
   }

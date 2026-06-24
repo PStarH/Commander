@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Tool, ToolDefinition } from '../runtime/types';
@@ -105,7 +106,7 @@ export class MemoryRecallTool implements Tool {
         try {
           d = JSON.parse(fs.readFileSync(path.join(nsDir, file), 'utf-8'));
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'persistenceTool:108');
           d = {};
         }
         if (

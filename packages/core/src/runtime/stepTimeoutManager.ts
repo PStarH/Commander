@@ -12,6 +12,7 @@
  *   - clear() called on success releases resources
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 export class StepTimeoutError extends Error {
   readonly stepId: string;
   readonly timeoutMs: number;
@@ -44,7 +45,7 @@ export class StepTimeoutManager {
           try {
             options.onTimeout(controller.signal);
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'stepTimeoutManager:47');
             /* best-effort */
           }
         }

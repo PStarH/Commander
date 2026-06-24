@@ -16,6 +16,7 @@
  *   return null. NULL `where` values use `IS @wN` semantics.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -369,7 +370,7 @@ export class SqliteDriver implements PersistentDriver {
       fs.mkdirSync(dir, { recursive: true });
       chmodSafe(dir, 0o700);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'sqliteDriver:372');
       /* dir may already exist */
     }
     try {
@@ -384,7 +385,7 @@ export class SqliteDriver implements PersistentDriver {
       this.db.pragma('journal_mode = WAL');
       this.db.pragma('synchronous = NORMAL');
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'sqliteDriver:387');
       /* pragma failures are recoverable */
     }
     chmodSafe(this.filePath, 0o600);
@@ -413,7 +414,7 @@ export class SqliteDriver implements PersistentDriver {
       try {
         this.db.exec('ROLLBACK');
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'sqliteDriver:416');
         /* rollback failure is swallowed; original error propagates */
       }
       throw err;
@@ -426,13 +427,13 @@ export class SqliteDriver implements PersistentDriver {
     try {
       this.db.pragma('wal_checkpoint(FULL)');
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'sqliteDriver:429');
       /* best-effort checkpoint */
     }
     try {
       this.db.close();
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'sqliteDriver:435');
       /* close-after-corruption: test invariant still holds */
     }
   }

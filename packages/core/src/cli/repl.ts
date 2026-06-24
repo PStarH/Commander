@@ -11,6 +11,7 @@
  *   - ".env loaded from …" notice on startup when loadEnvUp found files
  *   - --profile transcript file recording all inputs with timestamps
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -126,7 +127,7 @@ function loadHistory(rl: readline.Interface): void {
     const history = (rl as unknown as InterfaceWithHistory).history;
     for (const line of lines) history.push(line);
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'repl:129');
     /* missing/unreadable history is fine */
   }
 }
@@ -140,7 +141,7 @@ function saveHistoryLine(line: string): void {
     try {
       prev = fs.readFileSync(HISTORY_FILE, 'utf8');
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'repl:143');
       /* first write */
     }
     const lines = prev.split('\n').filter(Boolean);
@@ -148,7 +149,7 @@ function saveHistoryLine(line: string): void {
     const trimmed = lines.slice(-MAX_HISTORY);
     fs.writeFileSync(HISTORY_FILE, trimmed.join('\n') + '\n');
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'repl:151');
     /* best-effort */
   }
 }
@@ -171,7 +172,7 @@ function profileLog(profilePath: string, line: string): void {
     fs.mkdirSync(path.dirname(profilePath), { recursive: true });
     fs.appendFileSync(profilePath, line + '\n');
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'repl:174');
     /* best-effort */
   }
 }

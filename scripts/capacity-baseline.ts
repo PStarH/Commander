@@ -4,6 +4,7 @@
  * Exercises the local Commander API with mocked LLM providers (no API keys).
  * Reports throughput, latency distribution, queue depth, and memory growth.
  */
+import { reportSilentFailure } from '../packages/core/src/silentFailureReporter';
 import http from 'http';
 
 const API_PORT = process.env.PORT || '4000';
@@ -51,7 +52,7 @@ function postJson(path: string, body: unknown, tenantId?: string): Promise<unkno
           try {
             resolve(JSON.parse(data));
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'capacity-baseline:54');
             resolve({ raw: data, statusCode: res.statusCode });
           }
         });
@@ -75,7 +76,7 @@ function getJson(path: string): Promise<unknown> {
           try {
             resolve(JSON.parse(data));
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'capacity-baseline:78');
             resolve({ raw: data, statusCode: res.statusCode });
           }
         });
@@ -90,7 +91,7 @@ async function healthCheck(): Promise<void> {
       const res = await getJson('/health');
       if ((res as Record<string, unknown>).status) return;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'capacity-baseline:93');
       /* not ready yet */
     }
     await new Promise((r) => setTimeout(r, 1000));
@@ -131,7 +132,7 @@ async function runLoadTest(options: LoadTestOptions): Promise<LoadTestResult> {
         if (result.status === 'success') completed++;
         else failed++;
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'capacity-baseline:134');
         failed++;
       }
     }
