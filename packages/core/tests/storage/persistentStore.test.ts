@@ -102,10 +102,13 @@ describe('PersistentDriver — cross-driver equivalence', () => {
 
   it.skipIf(!probeSqlite().available)('SqliteDriver satisfies the contract', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'eq-sqlite-'));
+    let driver: SqliteDriver | undefined;
     try {
       const dbPath = path.join(tmpDir, 'eq.db');
-      await runScenario(new SqliteDriver({ backend: 'sqlite', path: dbPath }));
+      driver = new SqliteDriver({ backend: 'sqlite', path: dbPath });
+      await runScenario(driver);
     } finally {
+      driver?.close();
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

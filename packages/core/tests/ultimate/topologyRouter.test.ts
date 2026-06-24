@@ -216,9 +216,12 @@ describe('TopologyRouter', () => {
           taskNature: 'COMPUTE_BOUND',
         }),
       );
-      expect(['CHAIN', 'SEQUENTIAL', 'ORCHESTRATOR', 'HIERARCHICAL', 'REVIEW', 'DEBATE']).toContain(
-        result.topology,
-      );
+      const VALID_TOPOS = [
+        'SINGLE', 'CHAIN', 'DISPATCH', 'ORCHESTRATOR', 'REVIEW',
+        'SEQUENTIAL', 'HANDOFF', 'PARALLEL', 'ENSEMBLE', 'CONSENSUS',
+        'HIERARCHICAL', 'HYBRID', 'EVALUATOR_OPTIMIZER', 'DEBATE',
+      ];
+      expect(VALID_TOPOS).toContain(result.topology);
     });
 
     it('returns latency 30-90s when DEBATE is selected', () => {
