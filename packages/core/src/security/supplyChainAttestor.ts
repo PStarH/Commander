@@ -362,7 +362,8 @@ export class SupplyChainAttestor {
           });
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -384,7 +385,8 @@ export class SupplyChainAttestor {
           });
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -555,7 +557,8 @@ export class SupplyChainAttestor {
           `SBOM hash mismatch: expected ${expectedHash.slice(0, 16)}..., computed ${computedHash.slice(0, 16)}...`,
         );
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       warnings.push('Could not parse DSSE payload for hash comparison');
       hashMatch = false;
     }
@@ -598,7 +601,8 @@ export class SupplyChainAttestor {
         if (!certPem.includes(expectedIdentity)) {
           warnings.push(`Expected identity "${expectedIdentity}" not found in certificate`);
         }
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* soft-check */
       }
     }
@@ -645,7 +649,8 @@ export class SupplyChainAttestor {
       const bundle = JSON.parse(bundleJson) as AttestationBundle;
 
       return this.verify(sbom, bundle);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return null;
     }
   }
@@ -729,7 +734,8 @@ export class SupplyChainAttestor {
       fs.writeFileSync(path.join(dir, 'bundle.json'), JSON.stringify(bundle, null, 2), {
         mode: 0o644,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort persistence */
     }
   }

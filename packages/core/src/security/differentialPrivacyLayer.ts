@@ -458,7 +458,8 @@ export class DifferentialPrivacyLayer {
         budget.remainingBudget,
         [0.001, 0.01, 0.1, 0.5, 1, 5, 10],
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -479,7 +480,8 @@ export class DifferentialPrivacyLayer {
         },
         context: {},
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort audit */
     }
 

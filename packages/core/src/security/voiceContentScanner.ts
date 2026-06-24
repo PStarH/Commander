@@ -225,7 +225,8 @@ export class VoiceContentScanner {
             durationEstimate = dataSize / byteRate;
           }
         }
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* not enough data for parsing */
       }
     }
@@ -355,7 +356,8 @@ export class VoiceContentScanner {
             remediation: 'Downsample audio to standard rate. Verify source legitimacy.',
           });
         }
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* parsing error, skip */
       }
     }

@@ -433,7 +433,8 @@ export class SupplyChainScanner {
         const attestor = getSupplyChainAttestor();
         // Generate SPDX SBOM for passed scans (non-blocking, best-effort)
         void attestor.generateProjectSbom();
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         recordSinkFailure('scannerAttestorBridge');
       }
     }

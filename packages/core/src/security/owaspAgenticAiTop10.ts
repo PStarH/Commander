@@ -328,7 +328,8 @@ export class OwaspAgenticAiTop10 {
     if (this.busUnsub) {
       try {
         this.busUnsub();
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* swallow */
       }
       this.busUnsub = null;
@@ -350,7 +351,8 @@ export class OwaspAgenticAiTop10 {
         if (!event || !event.type) return;
         this.classifyFromSecurityEvent(event);
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       this.busUnsub = null;
     }
   }
@@ -482,7 +484,8 @@ export class OwaspAgenticAiTop10 {
           details: { type: event.type, message: event.message },
         });
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* never throw */
     }
   }
