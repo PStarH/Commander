@@ -23,7 +23,7 @@ import type {
 } from './harnessTypes';
 import type { AgentExecutionResult } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
-import { generateId, now } from '../runtime/runtimeHelpers';
+import { generateId } from '../runtime/runtimeHelpers';
 
 export const MCP_HARNESS_CAPABILITIES: HarnessCapabilities = {
   supportsSubAgents: false,
