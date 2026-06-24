@@ -177,7 +177,8 @@ export class UserModelManager {
     const filePath = this.getModelPath(userId);
     try {
       await access(filePath);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return null;
     }
 
