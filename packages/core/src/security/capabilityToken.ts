@@ -283,7 +283,7 @@ export function resolveMasterKey(env: NodeJS.ProcessEnv = process.env): Buffer {
         'Refusing to issue capability tokens with a default key.',
     );
   }
-  // eslint-disable-next-line no-console
+
   console.error(
     `[capabilityToken] WARNING: ${CAPABILITY_TOKEN_KEY_ENV} not set in non-production. ` +
       'Using insecure dev key derived from constants. Set the env var before shipping. ' +
@@ -696,7 +696,6 @@ function safelyFireAudit(
   } catch (err) {
     recordSinkFailure(sinkName);
     try {
-      // eslint-disable-next-line no-console
       console.error(
         `[capabilityToken] audit sink (${sinkName}) threw: ${(err as Error)?.message ?? String(err)}`,
       );
@@ -744,7 +743,6 @@ export function getCapabilityTokenIssuer(): CapabilityTokenIssuer {
           // Don't let chain failures break issuance; the in-process
           // auditLogger (if wired) is the fallback.
           try {
-            // eslint-disable-next-line no-console
             console.error(
               `[capabilityToken] auditChain ledger unavailable: ${(err as Error)?.message ?? String(err)}`,
             );

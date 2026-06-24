@@ -202,7 +202,7 @@ export function resolveFederationKey(env: NodeJS.ProcessEnv = process.env): Buff
         'Refusing to issue federation trusts with a default key.',
     );
   }
-  // eslint-disable-next-line no-console
+
   console.error(
     `[federatedIdentity] WARNING: ${FEDERATION_KEY_ENV} not set in non-production. ` +
       'Using insecure dev key. Trusts are NOT cryptographically valid. Set the env var before shipping.',
@@ -341,7 +341,7 @@ export class FederatedIdentity {
         trust.jwtToken = this.signOIDCJWT(trustPayload, this.oidcPrivateKey);
       } catch (err) {
         // JWT signing is best-effort — the HMAC signature is always present
-        // eslint-disable-next-line no-console
+
         console.error(
           `[federatedIdentity] OIDC JWT signing failed (HMAC signature still valid): ${(err as Error)?.message}`,
         );
@@ -913,7 +913,6 @@ export class FederatedIdentity {
     } catch (err) {
       recordSinkFailure('federatedIdentity');
       try {
-        // eslint-disable-next-line no-console
         console.error(
           `[federatedIdentity] audit chain unavailable: ${(err as Error)?.message ?? String(err)}`,
         );

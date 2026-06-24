@@ -1,5 +1,4 @@
 import { reportSilentFailure } from '../silentFailureReporter';
-import { getSecurityMonitor, type SecurityAlert } from './securityMonitor';
 import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getMetricsCollector } from '../runtime/metricsCollector';
 import type { ContentThreat } from '../contentScanner';
