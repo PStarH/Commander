@@ -152,7 +152,8 @@ export class CompanyEngine {
         userId: this.config.userId,
         goal: params.goal,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       context = {
         systemContext: '',
         userContext: '',

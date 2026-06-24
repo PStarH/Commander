@@ -245,7 +245,8 @@ export class ExplorationEventLog {
           tenant.coordinationOverride += 1;
         }
         this.perTenant.set(event.tenantId, tenant);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* skip corrupt lines */
       }
     }
@@ -262,7 +263,8 @@ export class ExplorationEventLog {
       const dir = dirname(this.persistPath);
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
       appendFileSync(this.persistPath, JSON.stringify(event) + '\n', 'utf-8');
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort persistence */
     }
   }

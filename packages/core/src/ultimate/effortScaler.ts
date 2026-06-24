@@ -27,7 +27,7 @@ const EFFORT_RULES: Record<EffortLevel, EffortScalingRules> = {
     maxSubAgents: 4,
     minToolCallsPerAgent: 10,
     maxToolCallsPerAgent: 15,
-    recommendedTopology: 'PARALLEL',
+    recommendedTopology: 'DISPATCH',
     thinkingTokens: 2048,
     maxDepth: 1,
     leadModelTier: 'power',
@@ -39,7 +39,7 @@ const EFFORT_RULES: Record<EffortLevel, EffortScalingRules> = {
     maxSubAgents: 10,
     minToolCallsPerAgent: 10,
     maxToolCallsPerAgent: 20,
-    recommendedTopology: 'HIERARCHICAL',
+    recommendedTopology: 'ORCHESTRATOR',
     thinkingTokens: 4096,
     maxDepth: 2,
     leadModelTier: 'power',
@@ -51,7 +51,7 @@ const EFFORT_RULES: Record<EffortLevel, EffortScalingRules> = {
     maxSubAgents: 20,
     minToolCallsPerAgent: 15,
     maxToolCallsPerAgent: 30,
-    recommendedTopology: 'HYBRID',
+    recommendedTopology: 'ORCHESTRATOR',
     thinkingTokens: 8192,
     maxDepth: 3,
     leadModelTier: 'consensus',
@@ -97,13 +97,13 @@ export function selectTopologyForEffort(
   if (!dag) return rules.recommendedTopology;
 
   if (dag.interSubtaskCoupling > 0.7) {
-    return 'SEQUENTIAL';
+    return 'CHAIN';
   }
   if (dag.criticalPathDepth > 3 && dag.parallelismWidth > 2) {
-    return 'HIERARCHICAL';
+    return 'ORCHESTRATOR';
   }
   if (dag.parallelismWidth > 3) {
-    return 'PARALLEL';
+    return 'DISPATCH';
   }
   return rules.recommendedTopology;
 }
