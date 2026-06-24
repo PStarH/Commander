@@ -58,7 +58,8 @@ export class FailurePatternLearner {
           this.patterns.set(p.id, p);
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
   }
@@ -72,7 +73,8 @@ export class FailurePatternLearner {
         this.patternsPath,
         JSON.stringify(Array.from(this.patterns.values()), null, 2),
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
   }
