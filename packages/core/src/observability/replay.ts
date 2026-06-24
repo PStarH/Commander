@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { ExecutionTrace, TraceEvent } from '../runtime/types';
 import type { ReplayResult, ReplaySpec, TimelineView, TimelineNode } from './types';
 import { buildTimeline } from './timelineBuilder';
@@ -25,7 +26,7 @@ function previewOf(v: unknown, n = 200): string {
     const s = JSON.stringify(v);
     return s.length > n ? s.slice(0, n) + '…' : s;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'replay:28');
     return String(v).slice(0, n);
   }
 }

@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { Skill } from './types';
 
 export interface QualityFactor {
@@ -108,7 +109,7 @@ export async function evaluateWithRubric(
   try {
     rawScores = await config.evaluator(prompt);
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'skillQualityScorer:111');
     return null;
   }
 

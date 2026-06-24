@@ -3,6 +3,7 @@
  * and from the in-memory ExecutionTraceRecorder.
  */
 
+import { reportSilentFailure } from '../../core/src/silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { ExecutionData, TraceEvent } from './topology';
@@ -23,23 +24,25 @@ export interface TraceFileInfo {
  */
 export function listTraceFiles(tracesDir?: string): TraceFileInfo[] {
   const dir = tracesDir || path.join(process.cwd(), '.commander_traces');
-  try { if (!fs.existsSync(dir)) return [];
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  const files: TraceFileInfo[] = [];
-  for (const entry of entries) {
-    if (entry.isFile() && entry.name.endsWith('.ndjson')) {
-      const fp = path.join(dir, entry.name);
-      const stat = fs.statSync(fp);
-      files.push({
-        runId: entry.name.replace(/\.ndjson$/, ''),
-        filePath: fp,
-        size: stat.size,
-        modifiedAt: stat.mtime,
-      });
+  try {
+    if (!fs.existsSync(dir)) return [];
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const files: TraceFileInfo[] = [];
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith('.ndjson')) {
+        const fp = path.join(dir, entry.name);
+        const stat = fs.statSync(fp);
+        files.push({
+          runId: entry.name.replace(/\.ndjson$/, ''),
+          filePath: fp,
+          size: stat.size,
+          modifiedAt: stat.mtime,
+        });
+      }
     }
-  }
-  return files.sort((a, b) => b.modifiedAt.getTime() - a.modifiedAt.getTime()); } catch (err) {
-    console.warn('[Catch]', err);
+    return files.sort((a, b) => b.modifiedAt.getTime() - a.modifiedAt.getTime());
+  } catch (err) {
+    reportSilentFailure(err, 'traceReader:44');
     return [];
   }
 }
@@ -48,44 +51,46 @@ export function listTraceFiles(tracesDir?: string): TraceFileInfo[] {
  * Read a single trace file and parse its NDJSON events into ExecutionData.
  */
 export function readTraceFile(filePath: string): ExecutionData | null {
-  try { if (!fs.existsSync(filePath)) return null;
-  const content = fs.readFileSync(filePath, 'utf-8');
-  const lines = content.trim().split('\n').filter(Boolean);
-  if (lines.length === 0) return null;
-  
-  const events: TraceEvent[] = [];
-  let runId = '';
-  let agentId = 'unknown';
-  let startedAt = '';
-  let completedAt = '';
-  
-  for (const line of lines) {
-    try {
-      const ev = JSON.parse(line);
-      events.push(ev);
-      if (ev.runId && !runId) runId = ev.runId;
-      if (ev.agentId && agentId === 'unknown') agentId = ev.agentId;
-      if (ev.timestamp) {
-        if (!startedAt || ev.timestamp < startedAt) startedAt = ev.timestamp;
-        if (!completedAt || ev.timestamp > completedAt) completedAt = ev.timestamp;
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const lines = content.trim().split('\n').filter(Boolean);
+    if (lines.length === 0) return null;
+
+    const events: TraceEvent[] = [];
+    let runId = '';
+    let agentId = 'unknown';
+    let startedAt = '';
+    let completedAt = '';
+
+    for (const line of lines) {
+      try {
+        const ev = JSON.parse(line);
+        events.push(ev);
+        if (ev.runId && !runId) runId = ev.runId;
+        if (ev.agentId && agentId === 'unknown') agentId = ev.agentId;
+        if (ev.timestamp) {
+          if (!startedAt || ev.timestamp < startedAt) startedAt = ev.timestamp;
+          if (!completedAt || ev.timestamp > completedAt) completedAt = ev.timestamp;
+        }
+      } catch (err) {
+        reportSilentFailure(err, 'traceReader:76');
+        // skip malformed lines
       }
-    } catch (err) {
-      console.warn('[Catch]', err);
-      // skip malformed lines
     }
-  }
-  
-  if (events.length === 0) return null;
-  
-  return {
-    runId,
-    agentId,
-    startedAt,
-    completedAt,
-    events,
-    summary: computeSummary(events),
-  }; } catch (err) {
-    console.warn('[Catch]', err);
+
+    if (events.length === 0) return null;
+
+    return {
+      runId,
+      agentId,
+      startedAt,
+      completedAt,
+      events,
+      summary: computeSummary(events),
+    };
+  } catch (err) {
+    reportSilentFailure(err, 'traceReader:92');
     return null;
   }
 }

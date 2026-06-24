@@ -24,6 +24,7 @@
  *   - Logs via GlobalLogger
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { getMetricsCollector } from './metricsCollector';
 
@@ -224,7 +225,7 @@ export class DlqRetryWorker {
                   { name: 'outcome', value: 'recovered' },
                 ]);
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'dlqRetryWorker:227');
                 /* best-effort */
               }
             } else {
@@ -235,7 +236,7 @@ export class DlqRetryWorker {
                   { name: 'outcome', value: 'retry_failed' },
                 ]);
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'dlqRetryWorker:238');
                 /* best-effort */
               }
             }
@@ -250,7 +251,7 @@ export class DlqRetryWorker {
                 { name: 'outcome', value: 'handler_error' },
               ]);
             } catch (err) {
-              console.warn('[Catch]', err);
+              reportSilentFailure(err, 'dlqRetryWorker:253');
               /* best-effort */
             }
           }
@@ -344,7 +345,7 @@ export class DlqRetryWorker {
       });
       this.dlq.flush(entry.category as string);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'dlqRetryWorker:347');
       /* best-effort */
     }
   }
@@ -379,11 +380,11 @@ export class DlqRetryWorker {
           { name: 'outcome', value: 'escalated' },
         ]);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'dlqRetryWorker:382');
         /* best-effort */
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'dlqRetryWorker:386');
       /* best-effort */
     }
   }

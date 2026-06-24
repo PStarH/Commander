@@ -4,6 +4,7 @@
  * Each failure is recorded as a JSON line in .commander_dlq/{category}.ndjson.
  * Uses append-only writes for performance. Supports per-category isolation (llm, tool, execution).
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
@@ -237,7 +238,7 @@ export class DeadLetterQueue {
           const parsed = JSON.parse(line) as DeadLetterEntry;
           return parsed.id === entryId;
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'deadLetterQueue:240');
           return false;
         }
       });

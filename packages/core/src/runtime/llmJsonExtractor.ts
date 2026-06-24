@@ -7,6 +7,7 @@
  * - Reasoning models that put output in reasoning_content
  * - MiMo/DeepSeek-R style responses with reasoning + final answer
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { LLMProvider } from './types';
 import { getGlobalLogger } from '../logging';
 
@@ -27,7 +28,7 @@ export function extractJSON<T>(raw: string): T | null {
   try {
     return JSON.parse(trimmed) as T;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'llmJsonExtractor:30');
     /* continue */
   }
 
@@ -37,7 +38,7 @@ export function extractJSON<T>(raw: string): T | null {
     try {
       return JSON.parse(fenceMatch[1].trim()) as T;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'llmJsonExtractor:40');
       /* continue */
     }
   }
@@ -59,7 +60,7 @@ export function extractJSON<T>(raw: string): T | null {
       try {
         return JSON.parse(trimmed.slice(firstBrace, end + 1)) as T;
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'llmJsonExtractor:62');
         /* continue */
       }
     }
@@ -82,7 +83,7 @@ export function extractJSON<T>(raw: string): T | null {
       try {
         return JSON.parse(trimmed.slice(start, lastBrace + 1)) as T;
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'llmJsonExtractor:85');
         /* continue */
       }
     }

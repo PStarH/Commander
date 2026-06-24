@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -203,7 +204,7 @@ export async function cmdConfig(args: string[]) {
       if (res.ok) console.log(` ${$.green}✓ Connection OK${$.reset}`);
       else console.log(` ${$.red}✗ ${res.status}${$.reset}`);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'manage:206');
       console.log(` ${$.yellow}! Connection failed${$.reset}`);
     }
     return;
@@ -243,7 +244,7 @@ export async function cmdDoctor() {
     gitVersion = execSync('git --version', { stdio: 'pipe', encoding: 'utf-8' }).trim();
     checks.push({ label: 'Git', pass: true, msg: gitVersion });
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'manage:246');
     checks.push({ label: 'Git', pass: false, msg: 'Not found. Install: https://git-scm.com' });
   }
 
@@ -260,7 +261,7 @@ export async function cmdDoctor() {
       msg: pm !== 'unknown' ? pm : 'No lockfile found',
     });
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'manage:263');
     checks.push({ label: 'Package manager', pass: false, msg: 'Unknown' });
   }
 
@@ -314,7 +315,7 @@ export async function cmdDoctor() {
       msg: `${avail} available (${parts[4]} used)${usePercent >= 95 ? ' — LOW SPACE' : ''}`,
     });
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'manage:317');
     // Non-critical
   }
 
@@ -350,7 +351,7 @@ export async function cmdDoctor() {
             console.log(`  ${$.green}✓${$.reset} ${modelCount} models available`);
           }
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'manage:353');
           /* ignore */
         }
       } else {

@@ -13,6 +13,7 @@
  *   - ~/.commander/skills/ (user-global)
  *   - .commander/skills/ (project-local)
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -352,7 +353,7 @@ export async function installFromGit(gitUrl: string, targetName?: string): Promi
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'skillInstaller:355');
       /* ignore */
     }
   }
@@ -402,7 +403,7 @@ export async function installFromNpm(
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'skillInstaller:405');
       /* ignore */
     }
   }

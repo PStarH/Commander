@@ -10,6 +10,7 @@
  * 3. After task: record outcome, extract skills
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getCostPredictor, type CostEstimate } from './costPredictor';
 import { getFailurePatternLearner, type FailureWarning } from './failurePatterns';
 import { getImpactAnalyzer } from './impactAnalyzer';
@@ -145,7 +146,7 @@ export class AgentIntelligence {
             : 'rejected';
         getMetricsCollector().recordSkillExtraction(outcome, result.skills[0]?.category);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'agentIntegration:148');
         /* best-effort */
       }
 

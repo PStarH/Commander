@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import { randomUUID } from 'crypto';
 import { getMessageBus } from '../runtime/messageBus';
 import { getGlobalLogger } from '../logging';
@@ -455,7 +456,7 @@ export class WorkCoordinator {
         payload,
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'workCoordinator:458');
       // Bus may be uninitialized in tests
     }
   }

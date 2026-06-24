@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import { existsSync, readdirSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import {
@@ -48,7 +49,7 @@ function listRuns(): Array<{ runId: string; state: string; updatedAt: string }> 
           updatedAt: snap.updatedAt ?? '',
         };
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'saga:51');
         return { runId: runId.name, state: 'CORRUPT', updatedAt: '' };
       }
     })
@@ -348,7 +349,7 @@ async function cmdSagaResume(args: string[]) {
       sagaDefinition = getEx(runId.split('-')[0]!);
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'saga:351');
     /* saga definition not found — will run without graph */
   }
 

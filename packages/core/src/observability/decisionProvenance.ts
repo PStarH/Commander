@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { TraceEvent, ExecutionTrace } from '../runtime/types';
 import type { DecisionNode } from './types';
 
@@ -69,7 +70,7 @@ function preview(v: unknown, n = 300): string | undefined {
     const s = JSON.stringify(v);
     return s.length > n ? s.slice(0, n) + '…' : s;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'decisionProvenance:72');
     return undefined;
   }
 }

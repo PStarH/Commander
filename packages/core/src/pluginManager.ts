@@ -1,3 +1,4 @@
+import { reportSilentFailure } from './silentFailureReporter';
 import type {
   ToolCall,
   ToolResult,
@@ -378,7 +379,7 @@ export class HookManager {
       try {
         await entry.plugin.onUnload();
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'pluginManager:381');
         getGlobalLogger().warn('PluginManager', `Plugin "${name}" onUnload failed`);
       }
     }

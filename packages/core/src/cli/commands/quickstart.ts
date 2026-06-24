@@ -5,6 +5,7 @@
  *   commander quickstart          Interactive setup wizard
  *   commander quickstart --check  Check prerequisites only
  */
+import { reportSilentFailure } from '../../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { detectProvider, getEffectiveModel, listProviders } from '../../config/commanderConfig';
@@ -58,7 +59,7 @@ function checkGit(): CheckResult {
     execSync('git --version', { stdio: 'pipe' });
     return { label: t('quickcheck.label.git'), pass: true, detail: 'available' };
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'quickstart:61');
     return {
       label: t('quickcheck.label.git'),
       pass: false,

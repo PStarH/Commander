@@ -33,18 +33,14 @@ describe('ToolMetricsCollector', () => {
   });
 
   it('records failures', () => {
-    collector.recordToolExecution(
-      makeEvent({ data: { input: 'web_search', error: 'timeout' } }),
-    );
+    collector.recordToolExecution(makeEvent({ data: { input: 'web_search', error: 'timeout' } }));
     const stats = collector.getToolStats('web_search');
     expect(stats!.failures).toBe(1);
     expect(stats!.successes).toBe(0);
   });
 
   it('ignores non-tool events', () => {
-    collector.recordToolExecution(
-      makeEvent({ type: 'llm_call', data: {} }),
-    );
+    collector.recordToolExecution(makeEvent({ type: 'llm_call', data: {} }));
     expect(collector.getAllStats()).toHaveLength(0);
   });
 
@@ -62,9 +58,7 @@ describe('ToolMetricsCollector', () => {
 
   it('computes success rate', () => {
     collector.recordToolExecution(makeEvent({ data: { input: 'tool1' } }));
-    collector.recordToolExecution(
-      makeEvent({ data: { input: 'tool1', error: 'fail' } }),
-    );
+    collector.recordToolExecution(makeEvent({ data: { input: 'tool1', error: 'fail' } }));
     expect(collector.getSuccessRate('tool1')).toBe(0.5);
   });
 

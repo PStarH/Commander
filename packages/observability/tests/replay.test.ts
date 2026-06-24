@@ -68,9 +68,7 @@ describe('dryReplay', () => {
     ]);
     const spec: ReplaySpec = {
       runId: 'run-1',
-      substitutions: [
-        { target: 'tool_output', spanId, value: 'new output' },
-      ],
+      substitutions: [{ target: 'tool_output', spanId, value: 'new output' }],
       reExecuteLlm: false,
     };
     const result = dryReplay(trace, spec);
@@ -88,9 +86,7 @@ describe('dryReplay', () => {
     ]);
     const spec: ReplaySpec = {
       runId: 'run-1',
-      substitutions: [
-        { target: 'llm_response', spanId, value: 'new reasoning' },
-      ],
+      substitutions: [{ target: 'llm_response', spanId, value: 'new reasoning' }],
       reExecuteLlm: false,
     };
     const result = dryReplay(trace, spec);

@@ -21,6 +21,7 @@
  * ), so tenant A cannot reclaim tenant B's lease.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { createHash, randomUUID } from 'crypto';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
@@ -59,7 +60,7 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
 } catch (err) {
-  console.warn('[Catch]', err);
+  reportSilentFailure(err, 'leaseManager:62');
 }
 
 interface LeaseRow {

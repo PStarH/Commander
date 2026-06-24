@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../../silentFailureReporter';
 import { createHash } from 'crypto';
 import type { ExecutionScheduler, RunHandle } from '../../scheduler';
 import type { PolicyInput, PolicyDecision, PolicyEngineOptions, PolicyEffect } from '../types';
@@ -164,7 +165,7 @@ export class PolicyHook {
         },
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'scheduler:167');
       void 0;
     }
   }

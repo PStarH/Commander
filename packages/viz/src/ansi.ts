@@ -10,6 +10,7 @@
 
 // Cursor & Screen Control
 
+import { reportSilentFailure } from '../../core/src/silentFailureReporter';
 export const cursorHide = '\x1b[?25l';
 export const cursorShow = '\x1b[?25h';
 export const clearScreen = '\x1b[2J\x1b[H';
@@ -117,15 +118,19 @@ export const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', 
 // Terminal Info
 
 export function terminalWidth(): number {
-  try { return process.stdout.columns || 80; } catch (err) {
-    console.warn('[Catch]', err);
+  try {
+    return process.stdout.columns || 80;
+  } catch (err) {
+    reportSilentFailure(err, 'ansi:123');
     return 80;
   }
 }
 
 export function terminalHeight(): number {
-  try { return process.stdout.rows || 24; } catch (err) {
-    console.warn('[Catch]', err);
+  try {
+    return process.stdout.rows || 24;
+  } catch (err) {
+    reportSilentFailure(err, 'ansi:132');
     return 24;
   }
 }

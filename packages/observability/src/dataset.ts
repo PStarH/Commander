@@ -162,7 +162,10 @@ export class DatasetStore {
       this.datasets.set(parsed.id, parsed);
       return parsed;
     } catch (err) {
-      log.warn('DatasetStore', `Failed to load dataset from ${filePath}: ${(err as Error).message}`);
+      log.warn(
+        'DatasetStore',
+        `Failed to load dataset from ${filePath}: ${(err as Error).message}`,
+      );
       return undefined;
     }
   }

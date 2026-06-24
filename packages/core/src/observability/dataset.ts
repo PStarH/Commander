@@ -14,6 +14,7 @@
  *  - store exposes list/get/create/update/delete + bulk load/save
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -73,7 +74,7 @@ export class DatasetStore {
       try {
         fs.mkdirSync(this.persistenceDir, { recursive: true });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'dataset:76');
         /* best-effort */
       }
     }
@@ -136,7 +137,7 @@ export class DatasetStore {
       fs.writeFileSync(filePath, JSON.stringify(dataset, null, 2), 'utf-8');
       return true;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'dataset:139');
       return false;
     }
   }
@@ -160,7 +161,7 @@ export class DatasetStore {
       this.datasets.set(parsed.id, parsed);
       return parsed;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'dataset:163');
       return undefined;
     }
   }
@@ -175,7 +176,7 @@ export class DatasetStore {
         if (this.loadFromFile(path.join(this.persistenceDir, f))) n++;
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'dataset:178');
       /* best-effort */
     }
     return n;

@@ -33,6 +33,7 @@
  *   - MANAGE: AI risk treatment and response
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -1172,7 +1173,7 @@ export class ComplianceAuditManager {
         },
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'complianceAuditReport:1175');
       /* best-effort */
     }
 
@@ -1622,7 +1623,7 @@ export class ComplianceAuditManager {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'complianceAuditReport:1625');
       this.snapshots = [];
     }
   }

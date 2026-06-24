@@ -36,6 +36,7 @@
  *   - tenant-aware singleton via createTenantAwareSingleton
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import {
   getSecurityAuditLogger,
   type SecurityEvent,
@@ -329,7 +330,7 @@ export class OwaspAgenticAiTop10 {
       try {
         this.busUnsub();
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'owaspAgenticAiTop10:332');
         /* swallow */
       }
       this.busUnsub = null;
@@ -352,7 +353,7 @@ export class OwaspAgenticAiTop10 {
         this.classifyFromSecurityEvent(event);
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'owaspAgenticAiTop10:355');
       this.busUnsub = null;
     }
   }
@@ -485,7 +486,7 @@ export class OwaspAgenticAiTop10 {
         });
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'owaspAgenticAiTop10:488');
       /* never throw */
     }
   }

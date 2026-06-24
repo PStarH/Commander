@@ -8,6 +8,7 @@
  * Can optionally dual-write to CheckpointStore (SQLite) for queryable history.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
@@ -81,14 +82,14 @@ export class StateCheckpointer {
     try {
       fs.chmodSync(this.baseDir, 0o700);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'stateCheckpointer:84');
       /* best-effort */
     }
     fs.mkdirSync(path.join(this.baseDir, 'completed'), { recursive: true, mode: 0o700 });
     try {
       fs.chmodSync(path.join(this.baseDir, 'completed'), 0o700);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'stateCheckpointer:91');
       /* best-effort */
     }
   }
@@ -137,21 +138,21 @@ export class StateCheckpointer {
       try {
         fs.chmodSync(tmpPath, 0o600);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'stateCheckpointer:140');
         /* best-effort */
       }
       fs.renameSync(tmpPath, chkPath);
       try {
         fs.chmodSync(chkPath, 0o600);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'stateCheckpointer:147');
         /* best-effort */
       }
       this.writeStoreCheckpoint(state);
       try {
         getMetricsCollector().recordCheckpointFlush(state.phase ?? 'unknown');
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'stateCheckpointer:154');
         /* best-effort */
       }
     } catch (e) {
@@ -174,20 +175,20 @@ export class StateCheckpointer {
       try {
         fs.chmodSync(writeTmp, 0o600);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'stateCheckpointer:177');
         /* best-effort */
       }
       fs.renameSync(writeTmp, donePath);
       try {
         fs.chmodSync(donePath, 0o600);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'stateCheckpointer:184');
         /* best-effort */
       }
       try {
         getMetricsCollector().recordCheckpointFlush('terminal');
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'stateCheckpointer:190');
         /* best-effort */
       }
       this.writeStoreCheckpoint(state);
@@ -284,7 +285,7 @@ export class StateCheckpointer {
           }
         }
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'stateCheckpointer:287');
         /* fall through to file-based listing */
       }
     }
@@ -409,7 +410,7 @@ export class StateCheckpointer {
     try {
       this.store.save(snapshot);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'stateCheckpointer:412');
       /* store write is best-effort — file-based checkpoint is primary */
     }
   }

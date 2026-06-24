@@ -67,24 +67,24 @@ const routes = OBSERVABILITY_HTTP_ROUTES;
 
 ### Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/runs` | List all runs |
-| GET | `/runs/:runId` | Get a specific run |
-| GET | `/runs/:runId/timeline` | Get execution timeline |
-| GET | `/runs/:runId/tree` | Get span tree |
-| GET | `/runs/:runId/cost` | Get cost breakdown |
-| GET | `/runs/:runId/decisions` | Get decision provenance |
-| GET | `/runs/:runId/summary` | Get executive summary |
-| POST | `/runs/:runId/replay` | Replay a trace |
-| POST | `/runs/:runId/feedback` | Submit feedback |
-| GET | `/agents/:agentId` | Get agent runs |
-| GET | `/conversations/:conversationId` | Get conversation runs |
-| GET | `/tools` | Get tool metrics |
-| GET | `/compare/:runIdA/:runIdB` | Compare two runs |
-| GET | `/prompts` | Get prompt versions |
-| GET | `/slos` | Get SLO status |
-| GET | `/search` | Search runs |
+| Method | Path                             | Description             |
+| ------ | -------------------------------- | ----------------------- |
+| GET    | `/runs`                          | List all runs           |
+| GET    | `/runs/:runId`                   | Get a specific run      |
+| GET    | `/runs/:runId/timeline`          | Get execution timeline  |
+| GET    | `/runs/:runId/tree`              | Get span tree           |
+| GET    | `/runs/:runId/cost`              | Get cost breakdown      |
+| GET    | `/runs/:runId/decisions`         | Get decision provenance |
+| GET    | `/runs/:runId/summary`           | Get executive summary   |
+| POST   | `/runs/:runId/replay`            | Replay a trace          |
+| POST   | `/runs/:runId/feedback`          | Submit feedback         |
+| GET    | `/agents/:agentId`               | Get agent runs          |
+| GET    | `/conversations/:conversationId` | Get conversation runs   |
+| GET    | `/tools`                         | Get tool metrics        |
+| GET    | `/compare/:runIdA/:runIdB`       | Compare two runs        |
+| GET    | `/prompts`                       | Get prompt versions     |
+| GET    | `/slos`                          | Get SLO status          |
+| GET    | `/search`                        | Search runs             |
 
 ## OTel Export
 
@@ -95,8 +95,8 @@ const exporter = new OtelSpanExporter({
   endpoint: 'http://otel-collector:4318',
   serviceName: 'my-service',
   samplingPolicy: new SamplingPolicy({ baseRate: 0.05 }),
-  redactInput: true,   // strip prompts (default)
-  redactOutput: true,  // strip completions (default)
+  redactInput: true, // strip prompts (default)
+  redactOutput: true, // strip completions (default)
   redactToolArgs: true, // strip tool args (default)
 });
 
@@ -118,9 +118,7 @@ const runner = new ExperimentRunner(store, scorer);
 const dataset = store.create({
   name: 'Code Quality',
   rubricId: 'default-quality',
-  cases: [
-    { id: 'case-1', input: { goal: 'Write a function that sorts an array' } },
-  ],
+  cases: [{ id: 'case-1', input: { goal: 'Write a function that sorts an array' } }],
 });
 
 // Run evaluation

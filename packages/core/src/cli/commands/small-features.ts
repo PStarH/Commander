@@ -14,6 +14,7 @@
  * 10. history --export
  */
 
+import { reportSilentFailure } from '../../silentFailureReporter';
 import { $, parseFlags } from '../util';
 import { deliberate } from '../../ultimate/deliberation';
 import { createRuntime } from './_shared';
@@ -515,7 +516,7 @@ export async function cmdTrace(flags: Record<string, string>): Promise<void> {
         const tokens = data.totalTokens ? `${data.totalTokens.toLocaleString()} tok` : '?';
         console.log(`    ${status} ${$.bold}${file}${$.reset} [${duration}, ${tokens}]`);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'small-features:518');
         console.log(`    ${$.dim}${file}${$.reset}`);
       }
     }

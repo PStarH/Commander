@@ -17,6 +17,7 @@
  * `result.errors`.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { ApplyMigrationsResult, MigrationStep, PersistentDriver } from './types';
 
 const MIGRATIONS_TABLE = '_migrations';
@@ -115,7 +116,7 @@ function ensureMigrationsTable(driver: PersistentDriver): void {
         '(version TEXT PRIMARY KEY, appliedAt TEXT NOT NULL, description TEXT)',
     );
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'migration:118');
     /* best-effort bootstrap */
   }
 }
@@ -137,7 +138,7 @@ function readApplied(driver: PersistentDriver): Set<string> {
     }>;
     for (const r of rows) out.add(r.version);
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'migration:140');
     // table missing → no applied versions
   }
   return out;
@@ -165,7 +166,7 @@ function recordApplied(driver: PersistentDriver, row: MigrationRow): void {
         description: row.description,
       });
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'migration:168');
     /* best-effort */
   }
 }

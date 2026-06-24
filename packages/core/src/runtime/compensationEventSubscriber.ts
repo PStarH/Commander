@@ -9,6 +9,7 @@
  * Register in AgentRuntime constructor alongside other observability setup.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { MessageBus } from './messageBus';
 import type { PersistentTraceStore } from './traceStore';
 import { getGlobalLogger } from '../logging';
@@ -49,7 +50,7 @@ export class CompensationEventSubscriber {
           ],
         );
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'compensationEventSubscriber:52');
         /* best-effort */
       }
 
@@ -71,7 +72,7 @@ export class CompensationEventSubscriber {
           },
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'compensationEventSubscriber:74');
         /* best-effort */
       }
     });
@@ -108,7 +109,7 @@ export class CompensationEventSubscriber {
           ],
         );
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'compensationEventSubscriber:111');
         /* best-effort */
       }
 
@@ -130,7 +131,7 @@ export class CompensationEventSubscriber {
           },
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'compensationEventSubscriber:133');
         /* best-effort */
       }
     });

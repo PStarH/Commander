@@ -14,6 +14,7 @@
  * adjustment based on message composition (tool density, error density, code blocks).
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { LLMMessage, LLMProvider } from './types';
 import { TokenGovernor, getTokenGovernor } from './tokenGovernor';
 import { getGlobalLogger } from '../logging';
@@ -1762,7 +1763,7 @@ export class ContextCompactor {
         return response.content;
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'contextCompactor:1765');
       // Summarization failed; fall back to structured summary
     }
 

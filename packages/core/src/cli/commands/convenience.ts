@@ -12,6 +12,7 @@
  * 8. commander learn — Learn from codebase patterns
  */
 
+import { reportSilentFailure } from '../../silentFailureReporter';
 import { $ } from '../util';
 
 // ============================================================================
@@ -134,7 +135,7 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
       });
       console.log(`  ${$.green}✓${$.reset} ESLint fixes applied`);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'convenience:137');
       console.log(`  ${$.yellow}⚠${$.reset} ESLint found issues (some may need manual fix)`);
     }
 
@@ -147,7 +148,7 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
       });
       console.log(`  ${$.green}✓${$.reset} Prettier formatting applied`);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'convenience:150');
       console.log(`  ${$.yellow}⚠${$.reset} Prettier had issues`);
     }
 
@@ -173,7 +174,7 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
         execSync('pnpm test 2>&1', { encoding: 'utf-8', stdio: 'pipe' });
         console.log(`  ${$.green}✓${$.reset} Tests passed`);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'convenience:176');
         console.log(`  ${$.red}✗${$.reset} Tests failed`);
       }
     }
@@ -261,7 +262,7 @@ export async function cmdTest(flags: Record<string, string>): Promise<void> {
       const output = execSync('pnpm test 2>&1', { encoding: 'utf-8', stdio: 'pipe' });
       console.log(`  ${$.green}✓${$.reset} Tests passed`);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'convenience:264');
       console.log(`  ${$.red}✗${$.reset} Tests failed`);
 
       if (flags['--fix']) {
@@ -330,7 +331,7 @@ export async function cmdLearn(flags: Record<string, string>): Promise<void> {
           }
         }
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'convenience:333');
         /* skip */
       }
     };
@@ -400,7 +401,7 @@ export async function cmdMonitor(dir: string, flags: Record<string, string>): Pr
             const { execSync } = require('child_process');
             execSync(flags['--run'], { stdio: 'inherit' });
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'convenience:403');
             /* command failed */
           }
         }

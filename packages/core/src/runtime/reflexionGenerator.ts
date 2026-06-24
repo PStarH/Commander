@@ -13,6 +13,7 @@
  * 10s timeout) to control cost.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { LLMProvider } from './types';
 import type { ErrorClass } from './llmRetry';
 import { getGlobalLogger } from '../logging';
@@ -374,7 +375,7 @@ Be specific. Avoid generic advice like "try again" or "be more careful".`;
         raw,
       };
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'reflexionGenerator:377');
       return {
         whatFailed: `Action failed: ${truncate(ctx.error, 100)}`,
         whyFailed: `LLM reflexion JSON parse failed`,

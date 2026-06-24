@@ -36,6 +36,7 @@
  *   - Large base64 blobs (potential exfiltration)
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import { getCurrentTenantId } from '../runtime/tenantContext';
@@ -452,7 +453,7 @@ export class OutputSanitizer {
           [{ name: 'category', value: records[0]?.category ?? 'unknown' }],
         );
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'outputSanitizer:455');
         /* best-effort */
       }
     }

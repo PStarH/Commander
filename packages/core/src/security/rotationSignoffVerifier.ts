@@ -162,6 +162,7 @@
 // D3.2: also uses `execFile` (native Promise return) for async git-invocation
 // instead of wrapping `spawnSync` — preserves arg-array (no shell interpretation).
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { spawnSync, execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -1059,7 +1060,7 @@ export async function runVerifierAsync(
   try {
     await fs.promises.access(resolvedDocPath);
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'rotationSignoffVerifier:1062');
     exists = false;
   }
   if (!exists) {

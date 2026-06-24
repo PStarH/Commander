@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import { BaseOpenAICompatibleProvider, type OpenAICompatibleConfig } from './baseOpenAICompatible';
 import type { LLMRequest, LLMResponse } from '../types';
 import { getGlobalLogger } from '../../logging';
@@ -57,7 +58,7 @@ export class VLLMProvider extends BaseOpenAICompatibleProvider {
       });
       return response.ok;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'vllmProvider:60');
       return false;
     }
   }
@@ -77,7 +78,7 @@ export class VLLMProvider extends BaseOpenAICompatibleProvider {
       const data = await response.json();
       return (data.data || []).map((m: { id: string }) => m.id);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'vllmProvider:80');
       return [];
     }
   }
@@ -126,7 +127,7 @@ export class VLLMProvider extends BaseOpenAICompatibleProvider {
         });
         VLLMProvider.healthCache = { healthy: true, timestamp: now };
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'vllmProvider:129');
         VLLMProvider.healthCache = { healthy: false, timestamp: now };
         getGlobalLogger().warn(
           'VLLMProvider',

@@ -163,6 +163,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MIT License
 
 [Unreleased]: https://github.com/PStarH/Commander/compare/main...HEAD
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -173,6 +174,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
 - CHANGELOG.md, CODE_OF_CONDUCT.md, SECURITY.md for project governance
 - Dependabot configuration for automated dependency updates
 - Pull request template for consistent PR descriptions
@@ -181,6 +183,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] — 2026-05-19
 
 ### Added
+
 - Agent War Room dashboard GUI (`commander gui` command)
 - OpenAPI 3.0 specification served at `/openapi.json`
 - Readiness probe (`/ready`) for Kubernetes-style deployment checks
@@ -193,6 +196,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependabot configuration for automated dependency updates
 
 ### Changed
+
 - HTTP server binds to localhost by default (security hardening)
 - All empty catch blocks replaced with structured logging
 - All `console.*` calls replaced with structured logger (zero in production code)
@@ -202,6 +206,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dockerfile: 6-stage multi-architecture build with health checks
 
 ### Fixed
+
 - agentRuntime.ts corruption from earlier catch-block edits (373 lines restored)
 - httpServer.ts type errors (3 `string | undefined` → `string` fallbacks)
 - `getDefaultProvider` return type (`any` → `LLMProvider`)
@@ -212,6 +217,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] — 2026-05-18
 
 ### Added
+
 - GAIA 69.7% benchmark (+48.5pp over bare MiMo 21.2%)
 - PinchBench 97.7% (42/43) on core tasks (beat OpenClaw 89.5%; multifile.json failed)
 - BFCL 30-task subset evaluation (80.0% tool/param accuracy; NOT official 2000+ leaderboard)
@@ -236,10 +242,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TaskPool: parallel multi-agent execution engine
 
 ### Changed
+
 - All benchmark reports updated with evidence chains and verified results
 - module audit marking `@experimental` components
 
 ### Fixed
+
 - Silent catch blocks in authentication provider, HTTP server
 - JSON.parse crash in edge cases
 - unhandled LSP rejection
@@ -249,18 +257,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.0.2] — 2026-05-15
 
 ### Added
+
 - Browser search and fetch using stealth Playwright (DuckDuckGo/Brave)
 - Public benchmark comparison report
 - Transparent performance comparison methodology
 - CI workflow setup
 
 ### Fixed
+
 - Multi-turn tool loop for MiMo reasoning models
 - Skill system integration from OpenClaw/Hermes
 
 ## [0.0.1] — 2026-05-14
 
 ### Added
+
 - Initial multi-agent orchestration system
 - AgentRuntime with LLM → tools → verification → retry loop
 - 6 providers (OpenAI, Anthropic, Google, DeepSeek, GLM, Xiaomi)

@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import type { CapabilityTokenVerifier, CapabilityRejectReason } from '../security/capabilityToken';
 import { getMetricsCollector } from './metricsCollector';
@@ -357,7 +358,7 @@ function recordSinkFailure(sink: string): void {
       [{ name: 'sink', value: sink }],
     );
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'toolApproval:360');
     /* metrics collector unavailable — last-resort swallow */
   }
 }
@@ -559,7 +560,7 @@ export class ToolApproval {
               toolName,
             });
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'toolApproval:562');
             /* logger inaccessible, swallow */
           }
         }
@@ -667,7 +668,7 @@ export class ToolApproval {
             toolName,
           });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'toolApproval:670');
           /* logger inaccessible, swallow */
         }
         this.pendingApprovals.set(pendingKey, approvalRequest);

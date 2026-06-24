@@ -30,6 +30,7 @@
  *   - GitHub Annotations → per-benchmark inline failure annotations
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -1099,7 +1100,7 @@ export class SecurityBenchmarkRunner {
 
       return baseline;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'securityBenchmarkRunner:1102');
       return null;
     }
   }
@@ -1330,7 +1331,7 @@ export class SecurityBenchmarkRunner {
         },
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'securityBenchmarkRunner:1333');
       /* best-effort */
     }
   }

@@ -62,6 +62,7 @@
  *   );
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import type { SecurityEvent } from './securityAuditLogger';
@@ -369,7 +370,7 @@ export class FederatedIdentity {
         ],
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'federatedIdentity:372');
       /* metrics unavailable — non-critical */
     }
 
@@ -410,7 +411,7 @@ export class FederatedIdentity {
       }
       trust = parsed;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'federatedIdentity:413');
       return { accepted: false, reason: 'malformed_trust', detail: 'JSON parse failed' };
     }
 
@@ -555,7 +556,7 @@ export class FederatedIdentity {
         },
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'federatedIdentity:558');
       /* best-effort — lineage is secondary to exchange */
     }
 
@@ -579,7 +580,7 @@ export class FederatedIdentity {
         ],
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'federatedIdentity:582');
       /* metrics unavailable */
     }
 
@@ -666,7 +667,7 @@ export class FederatedIdentity {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'federatedIdentity:669');
       /* best-effort — token revocation */
     }
 
@@ -679,7 +680,7 @@ export class FederatedIdentity {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'federatedIdentity:682');
       /* best-effort — lineage marking */
     }
 
@@ -702,7 +703,7 @@ export class FederatedIdentity {
         ],
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'federatedIdentity:705');
       /* metrics unavailable */
     }
 
@@ -784,7 +785,7 @@ export class FederatedIdentity {
         Buffer.from(trust.hmacSignature, 'utf-8'),
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'federatedIdentity:787');
       return false;
     }
   }
@@ -825,11 +826,11 @@ export class FederatedIdentity {
         const publicKey = crypto.createPublicKey(privateKey);
         return crypto.verify('sha256', Buffer.from(data, 'utf-8'), publicKey, signature);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'federatedIdentity:828');
         return false;
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'federatedIdentity:832');
       return false;
     }
   }
@@ -917,7 +918,7 @@ export class FederatedIdentity {
           `[federatedIdentity] audit chain unavailable: ${(err as Error)?.message ?? String(err)}`,
         );
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'federatedIdentity:920');
         /* stderr inaccessible */
       }
     }

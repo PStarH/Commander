@@ -45,24 +45,64 @@ describe('SLOManager', () => {
   });
 
   it('lists SLOs', () => {
-    manager.createSLO({ name: 'SLO 1', metric: 'latency_ms', threshold: 1000, operator: 'lt', windowSize: 60, alertChannels: [], enabled: true });
-    manager.createSLO({ name: 'SLO 2', metric: 'error_rate', threshold: 0.1, operator: 'lt', windowSize: 60, alertChannels: [], enabled: true });
+    manager.createSLO({
+      name: 'SLO 1',
+      metric: 'latency_ms',
+      threshold: 1000,
+      operator: 'lt',
+      windowSize: 60,
+      alertChannels: [],
+      enabled: true,
+    });
+    manager.createSLO({
+      name: 'SLO 2',
+      metric: 'error_rate',
+      threshold: 0.1,
+      operator: 'lt',
+      windowSize: 60,
+      alertChannels: [],
+      enabled: true,
+    });
     expect(manager.listSLOs()).toHaveLength(2);
   });
 
   it('gets an SLO by id', () => {
-    const created = manager.createSLO({ name: 'Test', metric: 'latency_ms', threshold: 1000, operator: 'lt', windowSize: 60, alertChannels: [], enabled: true });
+    const created = manager.createSLO({
+      name: 'Test',
+      metric: 'latency_ms',
+      threshold: 1000,
+      operator: 'lt',
+      windowSize: 60,
+      alertChannels: [],
+      enabled: true,
+    });
     expect(manager.getSLO(created.id)?.name).toBe('Test');
   });
 
   it('updates an SLO', () => {
-    const created = manager.createSLO({ name: 'Original', metric: 'latency_ms', threshold: 1000, operator: 'lt', windowSize: 60, alertChannels: [], enabled: true });
+    const created = manager.createSLO({
+      name: 'Original',
+      metric: 'latency_ms',
+      threshold: 1000,
+      operator: 'lt',
+      windowSize: 60,
+      alertChannels: [],
+      enabled: true,
+    });
     const updated = manager.updateSLO(created.id, { name: 'Updated' });
     expect(updated?.name).toBe('Updated');
   });
 
   it('deletes an SLO', () => {
-    const created = manager.createSLO({ name: 'Test', metric: 'latency_ms', threshold: 1000, operator: 'lt', windowSize: 60, alertChannels: [], enabled: true });
+    const created = manager.createSLO({
+      name: 'Test',
+      metric: 'latency_ms',
+      threshold: 1000,
+      operator: 'lt',
+      windowSize: 60,
+      alertChannels: [],
+      enabled: true,
+    });
     expect(manager.deleteSLO(created.id)).toBe(true);
     expect(manager.getSLO(created.id)).toBeUndefined();
   });
@@ -130,20 +170,44 @@ describe('SLOManager', () => {
   });
 
   it('getStatus returns status for all SLOs', () => {
-    manager.createSLO({ name: 'SLO 1', metric: 'latency_ms', threshold: 1000, operator: 'lt', windowSize: 60, alertChannels: [], enabled: true });
+    manager.createSLO({
+      name: 'SLO 1',
+      metric: 'latency_ms',
+      threshold: 1000,
+      operator: 'lt',
+      windowSize: 60,
+      alertChannels: [],
+      enabled: true,
+    });
     const status = manager.getStatus();
     expect(status).toHaveLength(1);
     expect(status[0]!.name).toBe('SLO 1');
   });
 
   it('getViolations returns all violations', () => {
-    manager.createSLO({ name: 'Test', metric: 'latency_ms', threshold: 100, operator: 'gt', windowSize: 60, alertChannels: [], enabled: true });
+    manager.createSLO({
+      name: 'Test',
+      metric: 'latency_ms',
+      threshold: 100,
+      operator: 'gt',
+      windowSize: 60,
+      alertChannels: [],
+      enabled: true,
+    });
     manager.checkTrace(makeTrace({ summary: { ...makeTrace().summary, totalDurationMs: 500 } }));
     expect(manager.getViolations()).toHaveLength(1);
   });
 
   it('getViolations filters by sloId', () => {
-    const slo = manager.createSLO({ name: 'Test', metric: 'latency_ms', threshold: 100, operator: 'gt', windowSize: 60, alertChannels: [], enabled: true });
+    const slo = manager.createSLO({
+      name: 'Test',
+      metric: 'latency_ms',
+      threshold: 100,
+      operator: 'gt',
+      windowSize: 60,
+      alertChannels: [],
+      enabled: true,
+    });
     manager.checkTrace(makeTrace({ summary: { ...makeTrace().summary, totalDurationMs: 500 } }));
     expect(manager.getViolations(slo.id)).toHaveLength(1);
     expect(manager.getViolations('other-id')).toHaveLength(0);

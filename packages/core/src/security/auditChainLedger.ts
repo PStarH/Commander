@@ -49,6 +49,7 @@
  *   if (!report.ok) alert(report.brokenChain);
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -233,7 +234,7 @@ export class AuditChainLedger {
         [{ name: 'type', value: event.type }],
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'auditChainLedger:236');
       /* best-effort */
     }
 
@@ -580,7 +581,7 @@ export function collectPersistedEntries(persistDir: string): AuditChainEntry[] {
           entries.push(parsed as AuditChainEntry);
         }
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'auditChainLedger:583');
         // Skip malformed lines; worst-case we miss them in the verify,
         // never crash.
       }

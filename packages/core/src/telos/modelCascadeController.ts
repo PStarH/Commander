@@ -7,6 +7,7 @@
  *
  * Exposes cascade savings metrics via MetricsCollector.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import type {
   AgentExecutionResult,
   LLMRequest,
@@ -239,7 +240,7 @@ export class ModelCascadeController {
     try {
       return getCostEstimator().estimateCostFromUsage(modelId, promptTokens, completionTokens);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'modelCascadeController:242');
       return 0;
     }
   }

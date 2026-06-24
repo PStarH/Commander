@@ -33,6 +33,7 @@ cd packages/core && pnpm build
 ```
 
 **Troubleshooting:**
+
 - `pnpm install` fails → ensure you have Node >=18 and pnpm >=9 (`node --version && pnpm --version`)
 - `better-sqlite3` errors → run `pnpm rebuild better-sqlite3` (optional dependency, tests will skip if missing)
 - No API key? → The CLI status command and most unit tests work without one. Only integration tests require a key.
@@ -41,14 +42,14 @@ cd packages/core && pnpm build
 
 Tests are categorized by their dependencies and runtime:
 
-| Category | Command | Runtime | API Key Needed? | Description |
-|----------|---------|---------|-----------------|-------------|
-| **Unit** | `pnpm --filter @commander/core test:quick` | <30s | No | Core logic, deliberation, topology, quality gates |
-| **Core** | `pnpm --filter @commander/core test` | ~90s | No | All core tests (unit + runtime, including adversarial) |
-| **Full** | `cd packages/core && npx vitest run --no-cache` | ~80s | No | All vitest tests (143 files, 2400+ tests) |
-| **Integration** | `pnpm --filter @commander/core test:node:pathsec` | ~30s | No | Security path scanning tests |
-| **Adversarial** | `pnpm --filter @commander/core test:security` | ~10s | No | Security adversarial tests (33 tests) |
-| **E2E** | `cd packages/core && npx tsx --test tests/e2e.test.ts` | varies | Yes | End-to-end tests with real LLM calls |
+| Category        | Command                                                | Runtime | API Key Needed? | Description                                            |
+| --------------- | ------------------------------------------------------ | ------- | --------------- | ------------------------------------------------------ |
+| **Unit**        | `pnpm --filter @commander/core test:quick`             | <30s    | No              | Core logic, deliberation, topology, quality gates      |
+| **Core**        | `pnpm --filter @commander/core test`                   | ~90s    | No              | All core tests (unit + runtime, including adversarial) |
+| **Full**        | `cd packages/core && npx vitest run --no-cache`        | ~80s    | No              | All vitest tests (143 files, 2400+ tests)              |
+| **Integration** | `pnpm --filter @commander/core test:node:pathsec`      | ~30s    | No              | Security path scanning tests                           |
+| **Adversarial** | `pnpm --filter @commander/core test:security`          | ~10s    | No              | Security adversarial tests (33 tests)                  |
+| **E2E**         | `cd packages/core && npx tsx --test tests/e2e.test.ts` | varies  | Yes             | End-to-end tests with real LLM calls                   |
 
 ### Running Specific Categories
 

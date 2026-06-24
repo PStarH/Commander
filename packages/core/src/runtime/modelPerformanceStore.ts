@@ -15,6 +15,7 @@
  * - The marginal cost of reading this file at startup is ~5ms for 10K records
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { ModelOutcome } from './modelRouter';
@@ -58,7 +59,7 @@ export class ModelPerformanceStore {
     try {
       fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'modelPerformanceStore:61');
       /* best-effort */
     }
 
@@ -182,7 +183,7 @@ export class ModelPerformanceStore {
         fs.writeFileSync(this.filePath, prunedLines, 'utf-8');
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'modelPerformanceStore:185');
       /* best-effort: don't crash runtime for analytics */
     }
   }
@@ -221,7 +222,7 @@ export class ModelPerformanceStore {
         try {
           records.push(JSON.parse(trimmed) as ModelOutcome);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'modelPerformanceStore:224');
           /* skip malformed lines */
         }
       }
@@ -229,7 +230,7 @@ export class ModelPerformanceStore {
       // Return most recent up to maxRecords
       return records.slice(-this.config.maxRecords);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'modelPerformanceStore:232');
       return [];
     }
   }

@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
@@ -251,7 +252,7 @@ Using specialized tools is REQUIRED because they return hashline-anchored output
     try {
       resolvedWorkdir = safePath(workdir);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'codeExecutionTool:254');
       return `Error: Access denied: workdir "${workdir}" is outside workspace`;
     }
     // Pass full args as backendArgs so the router can pick the right backend

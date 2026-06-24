@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types';
 import { getGlobalLogger } from '../../logging';
 
@@ -47,7 +48,7 @@ export class ReplicateProvider implements LLMProvider {
     try {
       return await this.callChatCompat(request, model);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'replicateProvider:50');
       // Fall back to Replicate's prediction API
       return await this.callPrediction(request, model);
     }

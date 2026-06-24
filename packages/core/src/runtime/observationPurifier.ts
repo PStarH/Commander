@@ -12,6 +12,7 @@
  * would lose information.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 export interface PurifyOptions {
   /** Maximum characters to return after purification. 0 = no limit. */
   maxChars?: number;
@@ -136,7 +137,7 @@ export function purifyJson(content: string, options: PurifyOptions = {}): string
   try {
     parsed = JSON.parse(content);
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'observationPurifier:139');
     // Not valid JSON — fall back to stripping whitespace
     const minified = content.replace(/\s+/g, ' ').trim();
     return maxChars > 0 && minified.length > maxChars

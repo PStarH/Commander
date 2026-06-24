@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import { execFileSync } from 'child_process';
 
 const SERVICE = 'commander-agnes-api';
@@ -9,7 +10,7 @@ export function getAgnesApiKey(): string | null {
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'keychain:12');
     return null;
   }
 }
@@ -28,7 +29,7 @@ export function deleteAgnesApiKey(): void {
       stdio: 'pipe',
     });
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'keychain:31');
     /* ignore if not found */
   }
 }

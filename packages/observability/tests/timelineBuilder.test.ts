@@ -69,26 +69,31 @@ describe('buildTimeline', () => {
   });
 
   it('maps tool_execution events to TOOL nodes', () => {
-    const trace = makeTrace([
-      makeEvent({ type: 'tool_execution', data: { input: 'web_search' } }),
-    ]);
+    const trace = makeTrace([makeEvent({ type: 'tool_execution', data: { input: 'web_search' } })]);
     const view = buildTimeline(trace);
     expect(view.nodes[0]!.type).toBe('TOOL');
     expect(view.nodes[0]!.name).toContain('web_search');
   });
 
   it('maps error events to ERROR nodes', () => {
-    const trace = makeTrace([
-      makeEvent({ type: 'error', data: { error: 'something failed' } }),
-    ]);
+    const trace = makeTrace([makeEvent({ type: 'error', data: { error: 'something failed' } })]);
     const view = buildTimeline(trace);
     expect(view.nodes[0]!.type).toBe('ERROR');
     expect(view.nodes[0]!.status).toBe('error');
   });
 
   it('computes hasChildren correctly', () => {
-    const parent = makeEvent({ spanId: 'parent-1', type: 'tool_execution', data: { input: 'tool1' } });
-    const child = makeEvent({ spanId: 'child-1', parentSpanId: 'parent-1', type: 'llm_call', data: {} });
+    const parent = makeEvent({
+      spanId: 'parent-1',
+      type: 'tool_execution',
+      data: { input: 'tool1' },
+    });
+    const child = makeEvent({
+      spanId: 'child-1',
+      parentSpanId: 'parent-1',
+      type: 'llm_call',
+      data: {},
+    });
     const trace = makeTrace([parent, child]);
     const view = buildTimeline(trace);
     expect(view.nodes.find((n) => n.spanId === 'parent-1')!.hasChildren).toBe(true);
@@ -140,9 +145,24 @@ describe('buildSpanTree', () => {
 
   it('builds a tree from parent-child relationships', () => {
     const root = makeEvent({ spanId: 'root', type: 'tool_execution', data: { input: 'tool1' } });
-    const child1 = makeEvent({ spanId: 'child1', parentSpanId: 'root', type: 'llm_call', data: {} });
-    const child2 = makeEvent({ spanId: 'child2', parentSpanId: 'root', type: 'error', data: { error: 'fail' } });
-    const grandchild = makeEvent({ spanId: 'gc', parentSpanId: 'child1', type: 'llm_call', data: {} });
+    const child1 = makeEvent({
+      spanId: 'child1',
+      parentSpanId: 'root',
+      type: 'llm_call',
+      data: {},
+    });
+    const child2 = makeEvent({
+      spanId: 'child2',
+      parentSpanId: 'root',
+      type: 'error',
+      data: { error: 'fail' },
+    });
+    const grandchild = makeEvent({
+      spanId: 'gc',
+      parentSpanId: 'child1',
+      type: 'llm_call',
+      data: {},
+    });
     const trace = makeTrace([root, child1, child2, grandchild]);
 
     const tree = buildSpanTree(trace);
@@ -154,7 +174,12 @@ describe('buildSpanTree', () => {
   });
 
   it('identifies orphans when parent is missing', () => {
-    const orphan = makeEvent({ spanId: 'orphan', parentSpanId: 'missing-parent', type: 'llm_call', data: {} });
+    const orphan = makeEvent({
+      spanId: 'orphan',
+      parentSpanId: 'missing-parent',
+      type: 'llm_call',
+      data: {},
+    });
     const trace = makeTrace([orphan]);
     const tree = buildSpanTree(trace);
     expect(tree.orphans).toHaveLength(1);
@@ -164,7 +189,12 @@ describe('buildSpanTree', () => {
   it('assigns correct depth to nodes', () => {
     const root = makeEvent({ spanId: 'root', type: 'tool_execution', data: { input: 'tool1' } });
     const child = makeEvent({ spanId: 'child', parentSpanId: 'root', type: 'llm_call', data: {} });
-    const grandchild = makeEvent({ spanId: 'gc', parentSpanId: 'child', type: 'llm_call', data: {} });
+    const grandchild = makeEvent({
+      spanId: 'gc',
+      parentSpanId: 'child',
+      type: 'llm_call',
+      data: {},
+    });
     const trace = makeTrace([root, child, grandchild]);
     const tree = buildSpanTree(trace);
     expect(tree.root.depth).toBe(0);

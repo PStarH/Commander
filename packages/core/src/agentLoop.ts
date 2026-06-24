@@ -1,3 +1,4 @@
+import { reportSilentFailure } from './silentFailureReporter';
 import { AgentRuntime } from './runtime/agentRuntime';
 import { getMessageBus } from './runtime/messageBus';
 import { createAllTools, wireResourceToolDependencies } from './tools/index';
@@ -351,7 +352,7 @@ export class CommanderAgentLoop {
         commanderConfig = JSON.parse(data) as Record<string, unknown>;
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'agentLoop:354');
       this.logger.warn('AgentLoop', 'Failed to read .commander.json config');
     }
 
@@ -490,7 +491,7 @@ export class CommanderAgentLoop {
           );
         }
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'agentLoop:493');
         this.logger.warn('AgentLoop', 'Failed to parse COMMANDER_A2A_AGENTS env var');
       }
     }

@@ -17,6 +17,7 @@
  * - Stale-tag rejection prevents silent corruption
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import { computeFileHash, getSnapshotStore, type FileSnapshot } from './snapshotStore';
 
@@ -370,7 +371,7 @@ export function applyHashlineSection(section: HashlineSection): HashlineApplyRes
     try {
       fs.unlinkSync(tmpPath);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'hashline:373');
       /* ignore */
     }
     return {
@@ -553,7 +554,7 @@ function applyWithRecovery(
     try {
       fs.unlinkSync(tmpPath);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'hashline:556');
       /* ignore */
     }
     return {

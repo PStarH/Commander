@@ -28,6 +28,7 @@
  *   mobile/offline-first deployments, embedded AI assistants.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -536,7 +537,7 @@ export class EdgeSecurityProfile {
         clearTimeout(timeout);
         return true;
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'edgeSecurityProfile:539');
         continue;
       }
     }
@@ -576,7 +577,7 @@ export class EdgeSecurityProfile {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'edgeSecurityProfile:579');
       /* non-critical */
     }
 
@@ -590,7 +591,7 @@ export class EdgeSecurityProfile {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'edgeSecurityProfile:593');
       /* non-critical */
     }
 
@@ -626,7 +627,7 @@ export class EdgeSecurityProfile {
       // IoT Edge runtime
       if (fs.existsSync('/etc/iotedge')) return true;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'edgeSecurityProfile:629');
       /* non-critical */
     }
 
@@ -638,7 +639,7 @@ export class EdgeSecurityProfile {
         if (totalMem < 2 * 1024 * 1024 * 1024) return true;
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'edgeSecurityProfile:641');
       /* non-critical */
     }
 
@@ -659,7 +660,7 @@ export class EdgeSecurityProfile {
         providers.push('ollama');
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'edgeSecurityProfile:662');
       /* unavailable */
     }
 
@@ -673,7 +674,7 @@ export class EdgeSecurityProfile {
         providers.push('vllm');
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'edgeSecurityProfile:676');
       /* unavailable */
     }
 
@@ -713,7 +714,7 @@ export class EdgeSecurityProfile {
         '❄️ FreezeDry activated for crash-resume cycles',
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'edgeSecurityProfile:716');
       getGlobalLogger().warn(
         'EdgeSecurityProfile',
         'FreezeDry unavailable — continuing without crash-resume',
@@ -751,7 +752,7 @@ export class EdgeSecurityProfile {
           try {
             return os.userInfo().username;
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'edgeSecurityProfile:754');
             return 'edge-agent';
           }
         })(),
@@ -807,7 +808,7 @@ export class EdgeSecurityProfile {
         },
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'edgeSecurityProfile:810');
       /* best-effort */
     }
   }

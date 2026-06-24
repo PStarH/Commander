@@ -6,6 +6,7 @@
  * and learns from historical effectiveness.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getMetricsCollector } from './metricsCollector';
 import { getMessageBus } from './messageBus';
 import { getGlobalLogger } from '../logging';
@@ -695,7 +696,7 @@ export class TokenGovernor {
         { name: 'run_id', value: runId },
       ]);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'tokenGovernor:698');
       /* best-effort */
     }
   }

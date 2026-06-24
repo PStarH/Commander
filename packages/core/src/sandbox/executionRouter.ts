@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { ExecutionBackend, ExecutionBackendType, SandboxExecutionResult } from './types';
 import { LocalBackend } from './backends/localBackend';
 import { SSHBackend, resolveSSHConfig } from './backends/sshBackend';
@@ -79,7 +80,7 @@ export class ExecutionRouter {
         return this.backends.get(hookOverride)!;
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'executionRouter:82');
       getGlobalLogger().debug('ExecutionRouter', 'beforeBackendSelect hook failed');
     }
 
