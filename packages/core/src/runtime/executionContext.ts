@@ -75,9 +75,8 @@ const DEFAULT_CONFIG: Required<ExecutionContextConfig> = {
   slidingWindowConfig: {},
 };
 
-// Fallback when caller did not supply a config at all and a code path
-// bypasses `this.config`. Kept as a constant so reviewers can grep for it.
-const DEFAULT_BUDGET_HARD_CAP_FALLBACK = 200_000;
+// Fallback constant removed (round 3, reviewer accept). DEFAULT_CONFIG is the
+// single source of truth; the constructor merges it before any read.
 
 // ============================================================================
 // ExecutionContext
@@ -122,14 +121,13 @@ export class ExecutionContext {
   private _active = false;
 
   constructor(config?: Partial<ExecutionContextConfig>) {
-    this.config = { ...config };
+    this.config = { ...DEFAULT_CONFIG, ...config };
     this._slidingWindow = new SlidingWindowOrchestrator(this.config.slidingWindowConfig);
     // Pre-populated governor — will be replaced per `enter()` call when
     // ctx.tokenBudget is known. Default ensures external readers never see
     // null after construction.
     this._governor = new TokenGovernor({
-      totalBudget:
-        this.config.defaultBudgetHardCap ?? DEFAULT_BUDGET_HARD_CAP_FALLBACK,
+      totalBudget: this.config.defaultBudgetHardCap,
     });
   }
 
@@ -151,10 +149,7 @@ export class ExecutionContext {
     this._slidingWindow.resetSession();
 
     this._governor = new TokenGovernor({
-      totalBudget:
-        tokenBudget ||
-        this.config.defaultBudgetHardCap ||
-        DEFAULT_BUDGET_HARD_CAP_FALLBACK,
+      totalBudget: tokenBudget || this.config.defaultBudgetHardCap,
     });
     this._governor.setTaskCategory(taskCategory);
 
@@ -198,8 +193,7 @@ export class ExecutionContext {
   get governor(): TokenGovernor {
     if (!this._governor) {
       this._governor = new TokenGovernor({
-        totalBudget:
-          this.config.defaultBudgetHardCap ?? DEFAULT_BUDGET_HARD_CAP_FALLBACK,
+        totalBudget: this.config.defaultBudgetHardCap,
       });
     }
     return this._governor;
