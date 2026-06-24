@@ -14,7 +14,8 @@ function readRateLimitFile(): RateLimitFile {
   try {
     const raw = fs.readFileSync(RATE_LIMIT_FILE, 'utf-8');
     return JSON.parse(raw);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return { timestamps: [] };
   }
 }
@@ -22,7 +23,8 @@ function readRateLimitFile(): RateLimitFile {
 function writeRateLimitFile(data: RateLimitFile): void {
   try {
     fs.writeFileSync(RATE_LIMIT_FILE, JSON.stringify(data), 'utf-8');
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     // best-effort: if we can't write, allow the request
   }
 }
