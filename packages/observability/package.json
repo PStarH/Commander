@@ -39,11 +39,15 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run --no-cache",
+    "test:watch": "vitest",
     "prepublishOnly": "tsc -p tsconfig.json"
   },
   "devDependencies": {
     "typescript": "^5.0.0",
-    "@commander/core": "workspace:*"
+    "@commander/core": "workspace:*",
+    "vitest": "^4.1.9",
+    "@vitest/coverage-v8": "^4.1.9"
   },
   "peerDependencies": {
     "@commander/core": "^0.2.0"
