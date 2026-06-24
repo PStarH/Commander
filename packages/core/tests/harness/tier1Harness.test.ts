@@ -4,7 +4,11 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Tier1Harness, TIER1_HARNESS_CAPABILITIES } from '../../src/harness/tier1Harness';
-import type { HarnessSelectionContext, HarnessRunParams, HarnessServices } from '../../src/harness/harnessTypes';
+import type {
+  HarnessSelectionContext,
+  HarnessRunParams,
+  HarnessServices,
+} from '../../src/harness/harnessTypes';
 import type { AgentExecutionResult } from '../../src/runtime/types';
 
 // ============================================================================
@@ -12,16 +16,19 @@ import type { AgentExecutionResult } from '../../src/runtime/types';
 // ============================================================================
 
 const createMockServices = (): HarnessServices => ({
-  getProvider: vi.fn((name: string) => ({
-    call: vi.fn().mockResolvedValue({
-      content: 'Final answer',
-      toolCalls: [],
-      usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
-      finishReason: 'stop',
-      model: 'test-model',
-      provider: 'test-provider',
-    }),
-  }) as any),
+  getProvider: vi.fn(
+    (name: string) =>
+      ({
+        call: vi.fn().mockResolvedValue({
+          content: 'Final answer',
+          toolCalls: [],
+          usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+          finishReason: 'stop',
+          model: 'test-model',
+          provider: 'test-provider',
+        }),
+      }) as any,
+  ),
   getTool: vi.fn(),
   getToolDefinition: vi.fn(),
   listTools: vi.fn(() => []),

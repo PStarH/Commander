@@ -54,7 +54,8 @@ export const TIER1_HARNESS_CAPABILITIES: HarnessCapabilities = {
   supportsReasoningEffort: true,
   maxConcurrentTools: 8,
   maxToolCallsPerTurn: 30,
-  description: 'Tier-1 production harness — parallel execution, structured errors, sanitization, loop guards, Guardian approval',
+  description:
+    'Tier-1 production harness — parallel execution, structured errors, sanitization, loop guards, Guardian approval',
 };
 
 export class Tier1Harness implements AgentHarness {
@@ -119,7 +120,10 @@ export class Tier1Harness implements AgentHarness {
     // Auto-load relevant skills if none specified
     if (!skills || skills.length === 0) {
       try {
-        const relevantSkills = await services.loadSkills({ tags: ['harness', 'tool-calling', 'security'], limit: 5 });
+        const relevantSkills = await services.loadSkills({
+          tags: ['harness', 'tool-calling', 'security'],
+          limit: 5,
+        });
         for (const skill of relevantSkills) {
           effectiveSystemPrompt = await services.injectSkill(skill.id, effectiveSystemPrompt);
         }
@@ -129,7 +133,9 @@ export class Tier1Harness implements AgentHarness {
     }
 
     const initialMessages: typeof messages = [
-      ...(effectiveSystemPrompt ? [{ role: 'system' as const, content: effectiveSystemPrompt }] : []),
+      ...(effectiveSystemPrompt
+        ? [{ role: 'system' as const, content: effectiveSystemPrompt }]
+        : []),
       ...nonSystemMessages,
     ];
 

@@ -22,11 +22,7 @@ import type {
   ToolDefinition,
   AgentExecutionResult,
 } from '../runtime/types';
-import type {
-  HarnessServices,
-  HarnessEvent,
-  HarnessEventHandler,
-} from './harnessTypes';
+import type { HarnessServices, HarnessEvent, HarnessEventHandler } from './harnessTypes';
 import { getGlobalLogger } from '../logging';
 import { generateId, now } from '../runtime/runtimeHelpers';
 import { scanToolOutputForInjection } from '../contentScanner';
@@ -54,7 +50,12 @@ export interface Tier1LoopParams {
   planMode?: { readOnly: boolean; allowedTools: string[] };
   skills?: string[];
   sessionId?: string;
-  networkPolicy?: { allowedDomains: string[]; blockedDomains: string[]; allowPrivateNetworks: boolean; allowLocalProtocols: boolean };
+  networkPolicy?: {
+    allowedDomains: string[];
+    blockedDomains: string[];
+    allowPrivateNetworks: boolean;
+    allowLocalProtocols: boolean;
+  };
   eventHandler?: HarnessEventHandler;
 }
 
@@ -67,7 +68,7 @@ export interface Tier1LoopResult {
     steps: Array<{
       stepNumber: number;
       timestamp: string;
-      type: 'response' | 'tool_result',
+      type: 'response' | 'tool_result';
       content?: string;
       tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number };
       durationMs?: number;
@@ -134,7 +135,9 @@ export class Tier1AgentLoop {
         messages: [...params.initialMessages],
         maxTokens: params.routing.maxTokens,
         tools: toolDefs,
-        reasoningConfig: params.reasoningEffort ? { enabled: true, effort: params.reasoningEffort } : undefined,
+        reasoningConfig: params.reasoningEffort
+          ? { enabled: true, effort: params.reasoningEffort }
+          : undefined,
       };
 
       request = await params.services.fireBeforeLLMCall({ request, agentId, runId });
@@ -219,7 +222,10 @@ export class Tier1AgentLoop {
           consecutiveNoOps++;
           if (consecutiveNoOps >= this.MAX_REPEATED_STEPS) {
             lastError = 'Repeated tool call pattern detected — aborting to avoid infinite loop';
-            getGlobalLogger().warn('Tier1AgentLoop', `[${runId}] Repeated steps: ${consecutiveNoOps}`);
+            getGlobalLogger().warn(
+              'Tier1AgentLoop',
+              `[${runId}] Repeated steps: ${consecutiveNoOps}`,
+            );
             break;
           }
         } else {
@@ -277,7 +283,13 @@ export class Tier1AgentLoop {
           const compacted = params.services.compactMessages(request.messages);
           if (compacted.dropped > 0) {
             request.messages = compacted.messages;
-            emit({ type: 'compaction', dropped: compacted.dropped, saved: compacted.saved, runId, timestamp: Date.now() });
+            emit({
+              type: 'compaction',
+              dropped: compacted.dropped,
+              saved: compacted.saved,
+              runId,
+              timestamp: Date.now(),
+            });
           }
         }
 
@@ -311,7 +323,10 @@ export class Tier1AgentLoop {
         steps,
         totalTokenUsage,
         totalDurationMs: Date.now() - startTime,
-        error: status === 'failed' || status === 'cancelled' ? (lastError || finalContent || 'No content produced') : undefined,
+        error:
+          status === 'failed' || status === 'cancelled'
+            ? lastError || finalContent || 'No content produced'
+            : undefined,
       } as Tier1LoopResult['result'];
 
       if (status === 'success') {
@@ -321,11 +336,24 @@ export class Tier1AgentLoop {
         } catch {
           // not JSON — leave unstructured
         }
-        await params.services.fireOnAgentComplete({ result: loopResult as AgentExecutionResult, runId });
-        emit({ type: 'run_complete', result: loopResult as AgentExecutionResult, runId, timestamp: Date.now() });
+        await params.services.fireOnAgentComplete({
+          result: loopResult as AgentExecutionResult,
+          runId,
+        });
+        emit({
+          type: 'run_complete',
+          result: loopResult as AgentExecutionResult,
+          runId,
+          timestamp: Date.now(),
+        });
       } else {
         await params.services.fireOnError({ error: lastError ?? 'Loop exhausted', runId, agentId });
-        emit({ type: 'run_error', error: lastError ?? 'Loop exhausted', runId, timestamp: Date.now() });
+        emit({
+          type: 'run_error',
+          error: lastError ?? 'Loop exhausted',
+          runId,
+          timestamp: Date.now(),
+        });
       }
 
       return { result: loopResult, totalToolCallsExecuted, loopCount };
@@ -387,7 +415,13 @@ export class Tier1AgentLoop {
     agentId: string,
     runId: string,
     emit: (event: HarnessEvent) => void,
-  ): Promise<{ results: ToolResult[]; plan: ToolExecutionPlan; totalDurationMs: number; retriedCount: number; approvalRejectedCount: number }> {
+  ): Promise<{
+    results: ToolResult[];
+    plan: ToolExecutionPlan;
+    totalDurationMs: number;
+    retriedCount: number;
+    approvalRejectedCount: number;
+  }> {
     const orchestrator = new ToolOrchestrator(
       {
         defaultToolTimeoutMs: 30_000,
@@ -430,15 +464,20 @@ export class Tier1AgentLoop {
     const raw = typeof output === 'string' ? output : JSON.stringify(output);
 
     // Size limit
-    const truncated = raw.length > this.MAX_OUTPUT_CHARS
-      ? `${raw.slice(0, this.MAX_OUTPUT_CHARS)}\n...[truncated, total ${raw.length} chars]`
-      : raw;
+    const truncated =
+      raw.length > this.MAX_OUTPUT_CHARS
+        ? `${raw.slice(0, this.MAX_OUTPUT_CHARS)}\n...[truncated, total ${raw.length} chars]`
+        : raw;
 
     // Scan for injection patterns
     try {
       const scanResult = scanToolOutputForInjection(truncated);
       if (scanResult.blocked) {
-        getGlobalLogger().warn('Tier1AgentLoop', `Tool ${toolName} output blocked by content scan`, { reason: scanResult.reason ?? 'unknown' });
+        getGlobalLogger().warn(
+          'Tier1AgentLoop',
+          `Tool ${toolName} output blocked by content scan`,
+          { reason: scanResult.reason ?? 'unknown' },
+        );
         return `[Content scan blocked output — potential injection detected]\nReason: ${scanResult.reason ?? 'unknown'}`;
       }
     } catch {
@@ -453,9 +492,7 @@ export class Tier1AgentLoop {
   // ============================================================================
 
   private hashToolCalls(toolCalls: ToolCall[]): string {
-    return toolCalls
-      .map((tc) => `${tc.name}:${JSON.stringify(tc.arguments)}`)
-      .join('|');
+    return toolCalls.map((tc) => `${tc.name}:${JSON.stringify(tc.arguments)}`).join('|');
   }
 
   // ============================================================================
