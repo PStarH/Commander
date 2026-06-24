@@ -8,7 +8,8 @@ export function getAgnesApiKey(): string | null {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return null;
   }
 }
@@ -26,7 +27,8 @@ export function deleteAgnesApiKey(): void {
     execFileSync('security', ['delete-generic-password', '-s', SERVICE, '-a', 'agnes'], {
       stdio: 'pipe',
     });
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* ignore if not found */
   }
 }

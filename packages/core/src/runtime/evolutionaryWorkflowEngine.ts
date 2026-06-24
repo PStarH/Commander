@@ -128,7 +128,8 @@ export class EvolutionaryWorkflowEngine {
       if (data.bestIndividual) this.population['bestIndividualAccessor'] = data.bestIndividual;
       if (data.fitnessHistory) this.population['fitnessHistory'] = data.fitnessHistory;
       return true;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       getGlobalLogger().warn('EvolutionaryWorkflowEngine', 'Failed to load population state', {
         filePath,
       });

@@ -191,7 +191,8 @@ export class XiaomiProvider implements LLMProvider {
               let args: Record<string, unknown> = {};
               try {
                 args = JSON.parse(tc.arguments || '{}');
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 args = {};
               }
               return { id: tc.id, name: tc.name, arguments: args };
@@ -231,7 +232,8 @@ export class XiaomiProvider implements LLMProvider {
         let args: Record<string, unknown> = {};
         try {
           args = JSON.parse(tc.function.arguments || '{}');
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           args = {};
         }
         return { id: tc.id, name: tc.function.name, arguments: args };

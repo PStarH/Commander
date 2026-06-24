@@ -180,7 +180,8 @@ export class ToolResultCache {
       this.stats.misses++;
       try {
         getMetricsCollector().recordToolCacheEvent('miss', tenantId);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       return undefined;
@@ -193,7 +194,8 @@ export class ToolResultCache {
       this.stats.misses++;
       try {
         getMetricsCollector().recordToolCacheEvent('miss', tenantId);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       return undefined;
@@ -208,7 +210,8 @@ export class ToolResultCache {
     // Record metrics
     try {
       getMetricsCollector().recordToolCacheEvent('hit', tenantId);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -277,7 +280,8 @@ export class ToolResultCache {
               this.memoryEstimateBytes -= entrySize;
             }
           }
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           // Scan failure should not prevent caching; fail open on scanner errors.
         }
       })();
@@ -286,7 +290,8 @@ export class ToolResultCache {
     // Record metrics
     try {
       getMetricsCollector().recordToolCacheEvent('store', tenantId);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

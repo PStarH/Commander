@@ -151,7 +151,8 @@ export class OIDCAuthPlugin implements AuthPlugin {
     try {
       header = JSON.parse(base64UrlDecode(parts[0]));
       payload = JSON.parse(base64UrlDecode(parts[1]));
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return null; // Malformed JWT
     }
 
@@ -358,7 +359,8 @@ export class OIDCAuthPlugin implements AuthPlugin {
                 return;
               }
               this.fetchJWKSFromUrl(jwksUrl).then(resolve).catch(reject);
-            } catch {
+            } catch (err) {
+              console.warn('[Catch]', err);
               reject(new Error('Failed to parse OIDC discovery document'));
             }
           });
@@ -392,7 +394,8 @@ export class OIDCAuthPlugin implements AuthPlugin {
                 return;
               }
               resolve(keys);
-            } catch {
+            } catch (err) {
+              console.warn('[Catch]', err);
               reject(new Error('Failed to parse JWKS response'));
             }
           });
