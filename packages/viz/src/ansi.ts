@@ -117,17 +117,15 @@ export const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', 
 // Terminal Info
 
 export function terminalWidth(): number {
-  try {
-    return process.stdout.columns || 80;
-  } catch {
+  try { return process.stdout.columns || 80; } catch (err) {
+    console.warn('[Catch]', err);
     return 80;
   }
 }
 
 export function terminalHeight(): number {
-  try {
-    return process.stdout.rows || 24;
-  } catch {
+  try { return process.stdout.rows || 24; } catch (err) {
+    console.warn('[Catch]', err);
     return 24;
   }
 }
