@@ -132,7 +132,8 @@ export function readLLMCallRecords(baseDir?: string): {
     try {
       const raw = JSON.parse(trimmed) as Record<string, unknown>;
       records.push(normalizeRecord(raw));
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       parseErrors++;
     }
   }
