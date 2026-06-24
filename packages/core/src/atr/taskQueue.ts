@@ -26,7 +26,7 @@ import { getGlobalLogger } from '../logging';
 import { getMessageBus } from '../runtime/messageBus';
 import { getWebhookDispatcher } from '../runtime/webhookDispatcher';
 import { walCheckpoint } from '../storage/walCheckpoint';
-import type { AgentExecutionResult, LLMProvider } from '../runtime/types';
+import type { LLMProvider } from '../runtime/types';
 
 const log = getGlobalLogger();
 
@@ -115,7 +115,6 @@ interface BetterSqlite3DB {
 
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
 } catch (err) {
   reportSilentFailure(err, 'taskQueue:120');
@@ -316,7 +315,7 @@ export class TaskQueue {
   }
 
   /** Execute a task in a sandboxed AgentRuntime. */
-  private async executeTask(task: TaskRecord, worker: WorkerHandle): Promise<void> {
+  private async executeTask(task: TaskRecord, _worker: WorkerHandle): Promise<void> {
     const startTime = Date.now();
     log.info('TaskQueue', 'Worker starting task', { jobId: task.jobId });
 
@@ -461,7 +460,7 @@ export class TaskQueue {
 
   // ── Provider Resolution ────────────────────────────────────────
 
-  private resolveProvider(provider: string): LLMProvider | null {
+  private resolveProvider(_provider: string): LLMProvider | null {
     try {
       const { OpenAIProvider } = require('../runtime/providers/openaiProvider');
       return new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY ?? '' }) as LLMProvider;
