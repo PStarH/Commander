@@ -54,9 +54,7 @@ class JsonTable<T extends { id: string }> implements PersistentTable<T> {
       throw new Error(`JsonTable(${this.name}).insert: row.id required`);
     }
     if (this.state.rows.has(row.id)) {
-      throw new Error(
-        `JsonTable(${this.name}).insert: row with id ${row.id} already exists`,
-      );
+      throw new Error(`JsonTable(${this.name}).insert: row with id ${row.id} already exists`);
     }
     const clone = cloneRow(row);
     this.state.rows.set(row.id, clone);
@@ -170,16 +168,11 @@ export class JsonDriver implements PersistentDriver {
       fs.mkdirSync(this.rootDir, { recursive: true });
       chmodSafe(this.rootDir, 0o700);
     } catch (err) {
-      throw new Error(
-        `JsonDriver: could not create root dir ${this.rootDir}: ${String(err)}`,
-      );
+      throw new Error(`JsonDriver: could not create root dir ${this.rootDir}: ${String(err)}`);
     }
   }
 
-  getTable<T extends { id: string }>(
-    name: string,
-    schema: TableSchema<T>,
-  ): PersistentTable<T> {
+  getTable<T extends { id: string }>(name: string, schema: TableSchema<T>): PersistentTable<T> {
     if (this.closed) throw new Error('JsonDriver: already closed');
     const existing = this.tables.get(name) as JsonTableState<T> | undefined;
     if (existing) {
@@ -222,9 +215,7 @@ export class JsonDriver implements PersistentDriver {
     } catch (err) {
       this.transactionDepth--;
       for (const snap of snapshot) {
-        const state = this.tables.get(snap.name) as
-          | JsonTableState<{ id: string }>
-          | undefined;
+        const state = this.tables.get(snap.name) as JsonTableState<{ id: string }> | undefined;
         if (state) {
           (state.rows as Map<string, unknown>).clear();
           for (const [k, v] of snap.rows.entries()) {
