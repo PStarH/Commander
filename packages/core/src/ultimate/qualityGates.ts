@@ -55,10 +55,10 @@ interface CountedSubtaskNode {
 }
 
 const CHARS_PER_SUBTASK = 200;
-const HALLUCINATION_PENALTY = 0.1;
-const CONTRADICTION_PENALTY = 0.05;
+const HALLUCINATION_PENALTY = 0.25;
+const CONTRADICTION_PENALTY = 0.25;
 const CITATION_PENALTY = 0.2;
-const UNSAFETY_PENALTY = 0.3;
+const UNSAFETY_PENALTY = 0.35;
 
 /**
  * Built-in rule-based evaluator. Penalizes genuine hallucination signals
@@ -132,7 +132,7 @@ class RuleBasedEvaluator implements QualityGateEvaluator {
         contradictionCount++;
       }
     }
-    if (contradictionCount > 1) {
+    if (contradictionCount > 0) {
       score -= contradictionCount * CONTRADICTION_PENALTY;
     }
 
@@ -217,7 +217,7 @@ class RuleBasedEvaluator implements QualityGateEvaluator {
     let score = 1.0;
 
     const unsafePatterns = [
-      /(bypass|circumvent|evade)\s+(security|safety|restriction|control)/i,
+      /(bypass|circumvent|evade)(?:\s+\w+){0,3}\s+(security|safety|restriction|control)/i,
       /(malicious|harmful|dangerous)\s+(code|script|command|payload)/i,
       /(exploit|vulnerability)\s+(in|for)\s+(production|live|deployed)/i,
     ];
