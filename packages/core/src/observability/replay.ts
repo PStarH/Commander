@@ -24,7 +24,8 @@ function previewOf(v: unknown, n = 200): string {
   try {
     const s = JSON.stringify(v);
     return s.length > n ? s.slice(0, n) + '…' : s;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return String(v).slice(0, n);
   }
 }

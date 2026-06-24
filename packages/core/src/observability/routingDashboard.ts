@@ -281,7 +281,8 @@ async function handleEpsilonPut(
     if (raw && typeof raw === 'object') {
       body = raw as { tenantId?: string; epsilon?: number };
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* ignore — fall back to query */
   }
 
@@ -348,7 +349,8 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
       if (!data.trim()) return resolve({});
       try {
         resolve(JSON.parse(data));
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         resolve({});
       }
     });
