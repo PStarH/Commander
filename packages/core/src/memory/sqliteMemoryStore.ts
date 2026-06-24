@@ -14,6 +14,7 @@
  */
 
 import { getGlobalLogger } from '../logging';
+import { walCheckpoint } from '../storage/walCheckpoint';
 import type {
   EpisodicMemoryItem,
   MemoryWriteOptions,
@@ -50,7 +51,8 @@ interface BetterSqlite3DB {
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   BetterSqlite3 = require('better-sqlite3');
-} catch {
+} catch (err) {
+  console.warn('[Catch]', err);
   // better-sqlite3 not installed
 }
 
@@ -253,7 +255,7 @@ export class SqliteMemoryStore implements MemoryStore {
     await this.init();
 
     const now = new Date().toISOString();
-    const id = `memory-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = options.id ?? `memory-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     const kindPriority: Record<MemoryKind, number> = {
       DECISION: 80,
@@ -324,7 +326,7 @@ export class SqliteMemoryStore implements MemoryStore {
       for (const options of batch) {
         // Reuse write logic inline for transaction
         const now = new Date().toISOString();
-        const id = `memory-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const id = options.id ?? `memory-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const kindPriority: Record<MemoryKind, number> = {
           DECISION: 80,
           ISSUE: 70,
@@ -459,9 +461,9 @@ export class SqliteMemoryStore implements MemoryStore {
         agentId: query.agentId ?? null,
         minPriority: query.minPriority ?? null,
         minConfidence: query.minConfidence ?? null,
+        limit,
       },
       now,
-      limit,
     );
 
     let items = rows.map((r) => this.rowToItem(r));
@@ -559,7 +561,8 @@ export class SqliteMemoryStore implements MemoryStore {
         for (const tag of tags) {
           tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
         }
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* skip malformed */
       }
     }
@@ -598,7 +601,8 @@ export class SqliteMemoryStore implements MemoryStore {
     if (this.initPromise) {
       try {
         await this.initPromise;
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* init failed; close is still safe */
       }
     }
@@ -626,12 +630,14 @@ export class SqliteMemoryStore implements MemoryStore {
     let evidenceRefs: string[] | undefined;
     try {
       tags = JSON.parse((row.tags as string) || '[]');
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ok */
     }
     try {
       evidenceRefs = row.evidence_refs ? JSON.parse(row.evidence_refs as string) : undefined;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ok */
     }
 

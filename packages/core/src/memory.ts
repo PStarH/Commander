@@ -87,6 +87,7 @@ export interface MemorySearchResult {
  * Memory write options
  */
 export interface MemoryWriteOptions {
+  id?: string;
   projectId: string;
   missionId?: string;
   agentId?: string;
