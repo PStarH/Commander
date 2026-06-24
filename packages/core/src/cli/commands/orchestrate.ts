@@ -6,17 +6,7 @@ import { SwarmOrchestrator } from '../../swarm/swarmOrchestrator';
 import type { SwarmConfig } from '../../swarm/types';
 import { DriveOrchestrator } from '../../drive/driveOrchestrator';
 import type { DriveConfig } from '../../drive/types';
-import {
-  createRuntime,
-  $,
-  section,
-  kv,
-  bullet,
-  cmdHeader,
-  startSpinner,
-  onboardingMessage,
-  fatalError,
-} from './_shared';
+import { createRuntime, $, section, cmdHeader, startSpinner, fatalError } from './_shared';
 
 export async function cmdGoal(task: string, flags: Record<string, string>) {
   const provider = detectProvider();

@@ -189,7 +189,7 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
 // 4. commander explain — Explain code
 // ============================================================================
 
-export async function cmdExplain(target: string, flags: Record<string, string>): Promise<void> {
+export async function cmdExplain(target: string, _flags: Record<string, string>): Promise<void> {
   console.log(`\n  ${$.cyan}${$.bold}Commander Explain${$.reset}\n`);
 
   try {
@@ -259,7 +259,7 @@ export async function cmdTest(flags: Record<string, string>): Promise<void> {
     // Run tests
     console.log(`  ${$.bold}Running tests...${$.reset}`);
     try {
-      const output = execSync('pnpm test 2>&1', { encoding: 'utf-8', stdio: 'pipe' });
+      execSync('pnpm test 2>&1', { encoding: 'utf-8', stdio: 'pipe' });
       console.log(`  ${$.green}✓${$.reset} Tests passed`);
     } catch (err) {
       reportSilentFailure(err, 'convenience:264');
@@ -285,7 +285,7 @@ export async function cmdTest(flags: Record<string, string>): Promise<void> {
 
 export async function cmdRefactor(
   description: string,
-  flags: Record<string, string>,
+  _flags: Record<string, string>,
 ): Promise<void> {
   console.log(`\n  ${$.cyan}${$.bold}Commander Refactor${$.reset}\n`);
   console.log(`  ${$.dim}Description:${$.reset} ${description}`);
@@ -301,7 +301,7 @@ export async function cmdRefactor(
 // 7. commander learn — Learn from codebase
 // ============================================================================
 
-export async function cmdLearn(flags: Record<string, string>): Promise<void> {
+export async function cmdLearn(_flags: Record<string, string>): Promise<void> {
   console.log(`\n  ${$.cyan}${$.bold}Commander Learn${$.reset} — Codebase Analysis\n`);
 
   try {
@@ -378,7 +378,6 @@ export async function cmdMonitor(dir: string, flags: Record<string, string>): Pr
 
   try {
     const fs = await import('fs');
-    const path = await import('path');
 
     const watchDir = dir || '.';
     const pattern = flags['--pattern'] || '.ts';
