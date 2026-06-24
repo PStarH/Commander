@@ -24,9 +24,9 @@
  */
 
 import { StepFunProvider } from '../runtime/providers/stepfunProvider';
+import type { LLMMessage } from '../runtime/types';
 import {
   createComprehensiveDefender,
-  generateSecurityReport,
   generateSecurityReportJson,
   type AttackCategory,
   type RedTeamTestScenario,
@@ -393,7 +393,7 @@ async function generatePayload(
   const vectors = pickVectorsForCategory(category, round, allVectors);
   const systemPrompt = buildRedTeamSystemPrompt(category, round, previousAttempts, vectors);
 
-  const messages = [
+  const messages: LLMMessage[] = [
     { role: 'system' as const, content: systemPrompt },
     {
       role: 'user' as const,
@@ -403,7 +403,7 @@ async function generatePayload(
 
   const response = await provider.call({
     model: 'step-3.7-flash',
-    messages: messages as any,
+    messages,
     maxTokens: 2048,
     temperature: 0.95,
     cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
@@ -475,7 +475,6 @@ async function main(): Promise<void> {
 
   const allResults: RedTeamTestResult[] = [];
   const startTime = Date.now();
-  let missedCount = 0;
 
   for (const category of allCats) {
     console.log(`\n-- ${category.toUpperCase()} --`);
@@ -518,7 +517,6 @@ async function main(): Promise<void> {
         previousAttempts.push({ payload, result: result.result, defense: result.triggeredDefense });
 
         if (result.result === 'missed') {
-          missedCount++;
           console.log(`\n\n  BREACH DETECTED`);
           console.log(
             `  Payload: ${payload.substring(0, 200)}${payload.length > 200 ? '...' : ''}`,
