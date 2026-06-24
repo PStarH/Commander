@@ -105,14 +105,17 @@ export class CPUWorkerPool {
     });
 
     worker.on('error', (err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      getGlobalLogger().error('cpuWorkerPool', `[CPUWorkerPool] Worker ${index} error:`, message);
+      const error = err instanceof Error ? err : new Error(String(err));
+      getGlobalLogger().error('cpuWorkerPool', `[CPUWorkerPool] Worker ${index} error:`, error);
       this.restartWorker(index);
     });
 
     worker.on('exit', (code) => {
       if (code !== 0 && !this.closed) {
-        getGlobalLogger().error('cpuWorkerPool', `[CPUWorkerPool] Worker ${index} exited with code ${code}`);
+        getGlobalLogger().error(
+          'cpuWorkerPool',
+          `[CPUWorkerPool] Worker ${index} exited with code ${code}`,
+        );
         this.restartWorker(index);
       }
     });
@@ -136,7 +139,7 @@ export class CPUWorkerPool {
     try {
       this.workers[index]?.terminate();
     } catch (_silentE_) {
-        reportSilentFailure(_silentE_, 'cpuWorkerPool:136');
+      reportSilentFailure(_silentE_ instanceof Error ? _silentE_ : undefined, 'cpuWorkerPool:140');
     }
 
     try {
@@ -145,7 +148,11 @@ export class CPUWorkerPool {
       this.availableWorkers.add(index);
       this.processQueue();
     } catch (err) {
-      getGlobalLogger().error('cpuWorkerPool', `[CPUWorkerPool] Failed to restart worker ${index}:`, err);
+      getGlobalLogger().error(
+        'cpuWorkerPool',
+        `[CPUWorkerPool] Failed to restart worker ${index}:`,
+        err instanceof Error ? err : new Error(String(err)),
+      );
     }
   }
 
