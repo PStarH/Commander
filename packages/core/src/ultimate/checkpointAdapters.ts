@@ -709,7 +709,8 @@ function engineOpens<T>(
     if (ownsEngine) {
       try {
         engine.shutdown();
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort — transient engine */
       }
     }
@@ -849,7 +850,8 @@ function readResumePoint(
   let state: CheckpointState;
   try {
     state = JSON.parse(latest.stateJson) as CheckpointState;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     // Corrupt stateJson → collapse to not-found with a forensic
     // reason tag, and log first so ops can spot partial WAL rows
     // that would otherwise be silently overwritten by a fresh

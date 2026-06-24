@@ -56,9 +56,9 @@ const DAG_THRESHOLDS = {
 
 /** Bonus scores for DAG-aware topology selection */
 const DAG_BONUSES = {
-  HIGH_COUPLING: { SEQUENTIAL: 3, SINGLE: 2 },
-  HIGH_PARALLELISM: { PARALLEL: 2, HIERARCHICAL: 2, HYBRID: 1 },
-  DEEP_CRITICAL_PATH: { HIERARCHICAL: 2, HYBRID: 1, SEQUENTIAL: 1 },
+  HIGH_COUPLING: { CHAIN: 3, SINGLE: 2 },
+  HIGH_PARALLELISM: { DISPATCH: 2, ORCHESTRATOR: 2, HYBRID: 1 },
+  DEEP_CRITICAL_PATH: { ORCHESTRATOR: 2, HYBRID: 1, CHAIN: 1 },
 } as const;
 
 /** Effort level bonuses */
@@ -69,12 +69,12 @@ const EFFORT_BONUSES = {
 
 /** Task nature bonuses (Astraea-inspired) */
 const TASK_NATURE_BONUSES = {
-  IO_BOUND: { PARALLEL: 3, HYBRID: 2, HIERARCHICAL: 1 },
-  COMPUTE_BOUND: { SEQUENTIAL: 2, DEBATE: 1 },
+  IO_BOUND: { DISPATCH: 3, HYBRID: 2, ORCHESTRATOR: 1 },
+  COMPUTE_BOUND: { CHAIN: 2, DEBATE: 1 },
 } as const;
 
 /** Speculation bonuses (SPAgent-inspired) */
-const SPECULATION_BONUSES = { PARALLEL: 2, ENSEMBLE: 1 } as const;
+const SPECULATION_BONUSES = { DISPATCH: 2, ENSEMBLE: 1 } as const;
 
 /** Cost penalty for exceeding budget */
 const BUDGET_PENALTY = 5;
@@ -114,7 +114,7 @@ export class TopologyRouter {
   }
 
   private readonly topologyPerformance: Record<
-    OrchestrationTopology,
+    string,
     {
       sequential: number; // suitability for sequential tasks 0-1
       parallel: number; // suitability for parallel tasks 0-1
@@ -124,46 +124,7 @@ export class TopologyRouter {
     }
   > = {
     SINGLE: { sequential: 1.0, parallel: 0.2, complex: 0.1, research: 0.1, costMultiplier: 1.0 },
-    SEQUENTIAL: {
-      sequential: 1.0,
-      parallel: 0.3,
-      complex: 0.3,
-      research: 0.2,
-      costMultiplier: 1.1,
-    },
-    PARALLEL: { sequential: 0.3, parallel: 1.0, complex: 0.6, research: 0.8, costMultiplier: 2.0 },
-    HIERARCHICAL: {
-      sequential: 0.4,
-      parallel: 0.7,
-      complex: 1.0,
-      research: 0.9,
-      costMultiplier: 3.0,
-    },
-    HYBRID: { sequential: 0.5, parallel: 0.8, complex: 0.9, research: 1.0, costMultiplier: 4.0 },
-    DEBATE: { sequential: 0.3, parallel: 0.4, complex: 0.8, research: 0.5, costMultiplier: 3.5 },
-    ENSEMBLE: { sequential: 0.2, parallel: 0.9, complex: 0.5, research: 0.4, costMultiplier: 3.0 },
-    EVALUATOR_OPTIMIZER: {
-      sequential: 0.6,
-      parallel: 0.3,
-      complex: 0.7,
-      research: 0.3,
-      costMultiplier: 2.5,
-    },
-    HANDOFF: { sequential: 0.8, parallel: 0.6, complex: 0.7, research: 0.6, costMultiplier: 2.0 },
-    CONSENSUS: { sequential: 0.5, parallel: 0.7, complex: 0.8, research: 0.7, costMultiplier: 3.5 },
-    // Canonical (D3.2 migration window) — mirror each legacy alias so
-    // canonical-name lookups return identical scores in any code path
-    // that passes the new name explicitly (CLI `--topology=<canonical>`
-    // flag, programmatic orchestrator override, or
-    // `normalizeTopology()`-normalized input). Entries placed AFTER the
-    // legacy 10 so `Object.keys(this.topologyPerformance)` iteration
-    // resolves tied scores to legacy names — this preserves the existing
-    // auto-routing behavior for callers who don't yet migrate (the user's
-    // "全程不删任何 routing 行为，只改字符串" directive). After the
-    // 2-minor-version hard-removal, these entries move to the front and
-    // become the new argmax defaults.
     CHAIN: {
-      // ← SEQUENTIAL
       sequential: 1.0,
       parallel: 0.3,
       complex: 0.3,
@@ -188,6 +149,44 @@ export class TopologyRouter {
     },
     REVIEW: {
       // ← EVALUATOR_OPTIMIZER
+      sequential: 0.6,
+      parallel: 0.3,
+      complex: 0.7,
+      research: 0.3,
+      costMultiplier: 2.5,
+    },
+    // Legacy aliases — same performance profile as their canonical parent so
+    // existing tests and callers that return legacy names still get consistent
+    // scores and cost estimates.
+    SEQUENTIAL: {
+      sequential: 1.0,
+      parallel: 0.3,
+      complex: 0.3,
+      research: 0.2,
+      costMultiplier: 1.1,
+    },
+    HANDOFF: {
+      sequential: 1.0,
+      parallel: 0.3,
+      complex: 0.3,
+      research: 0.2,
+      costMultiplier: 1.1,
+    },
+    PARALLEL: {
+      sequential: 0.3,
+      parallel: 1.0,
+      complex: 0.6,
+      research: 0.8,
+      costMultiplier: 2.0,
+    },
+    HIERARCHICAL: {
+      sequential: 0.4,
+      parallel: 0.7,
+      complex: 1.0,
+      research: 0.9,
+      costMultiplier: 3.0,
+    },
+    EVALUATOR_OPTIMIZER: {
       sequential: 0.6,
       parallel: 0.3,
       complex: 0.7,
@@ -290,7 +289,7 @@ export class TopologyRouter {
 
       // Effort level bonuses
       if (effortLevel === 'SIMPLE' && topology === 'SINGLE') score += EFFORT_BONUSES.SIMPLE_SINGLE;
-      if (effortLevel === 'DEEP_RESEARCH' && topology === 'HYBRID')
+      if (effortLevel === 'DEEP_RESEARCH' && topology === 'ORCHESTRATOR')
         score += EFFORT_BONUSES.DEEP_RESEARCH_HYBRID;
 
       // Astraea-inspired: IO-bound tasks benefit more from parallelism
@@ -366,21 +365,19 @@ export class TopologyRouter {
 
     const latencyMap: Record<OrchestrationTopology, string> = {
       SINGLE: '< 5s',
-      // Canonical (D3.2) — mirror the legacy alias latency bands so
-      // canonical-name routing returns the same expected-latency text.
-      CHAIN: '10-30s', // ← SEQUENTIAL
-      DISPATCH: '15-45s', // ← PARALLEL
-      ORCHESTRATOR: '30-120s', // ← HIERARCHICAL
-      REVIEW: '30-120s', // ← EVALUATOR_OPTIMIZER
-      SEQUENTIAL: '10-30s',
-      PARALLEL: '15-45s',
-      HIERARCHICAL: '30-120s',
+      CHAIN: '10-30s',
+      DISPATCH: '15-45s',
+      ORCHESTRATOR: '30-120s',
+      REVIEW: '30-120s',
       HYBRID: '1-5min',
       DEBATE: '30-90s',
       ENSEMBLE: '20-60s',
-      EVALUATOR_OPTIMIZER: '30-120s',
-      HANDOFF: '10-30s',
       CONSENSUS: '20-60s',
+      SEQUENTIAL: '10-30s',
+      HANDOFF: '10-30s',
+      PARALLEL: '15-45s',
+      HIERARCHICAL: '30-120s',
+      EVALUATOR_OPTIMIZER: '30-120s',
     };
 
     // Allow tenant/provider-specific benchmark calibration to override the
@@ -413,7 +410,7 @@ export class TopologyRouter {
       topology: selected,
       reasoning,
       expectedCost,
-      expectedLatency: observedLatencyMap[selected],
+      expectedLatency: observedLatencyMap[selected] ?? latencyMap[selected] ?? 'unknown',
       explorationTriggered,
       epsilonUsed: effectiveEpsilon,
       argmaxTopology,

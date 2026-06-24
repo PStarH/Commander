@@ -151,7 +151,7 @@ class WorkflowAdapter {
     if (candidates.length === 0) {
       return {
         subWorkflowId: 'default',
-        topology: 'SEQUENTIAL',
+        topology: 'CHAIN',
         priority: 0,
         rationale: 'No sub-workflows registered, using default sequential',
         alternatives: [],
@@ -218,15 +218,15 @@ class WorkflowAdapter {
       DISPATCH: { execution: 0.3, discovery: 0.2 }, // ← PARALLEL
       ORCHESTRATOR: { planning: 0.2, execution: 0.1, refinement: 0.2 }, // ← HIERARCHICAL
       REVIEW: { planning: 0.2, verification: 0.35 }, // ← EVALUATOR_OPTIMIZER
-      SEQUENTIAL: { discovery: 0.1, planning: 0.3, verification: 0.2 },
-      PARALLEL: { execution: 0.3, discovery: 0.2 },
-      HIERARCHICAL: { planning: 0.2, execution: 0.1, refinement: 0.2 },
       HYBRID: { execution: 0.2, refinement: 0.3 },
-      HANDOFF: { verification: 0.3, termination: 0.2 },
       CONSENSUS: { verification: 0.4 },
       SINGLE: { discovery: 0.2, planning: 0.2 },
       DEBATE: { discovery: 0.15, planning: 0.2 },
       ENSEMBLE: { execution: 0.25, verification: 0.3 },
+      SEQUENTIAL: { discovery: 0.1, planning: 0.3, verification: 0.2 },
+      HANDOFF: { discovery: 0.1, planning: 0.3, verification: 0.2 },
+      PARALLEL: { execution: 0.3, discovery: 0.2 },
+      HIERARCHICAL: { planning: 0.2, execution: 0.1, refinement: 0.2 },
       EVALUATOR_OPTIMIZER: { planning: 0.2, verification: 0.35 },
     };
 
@@ -235,7 +235,7 @@ class WorkflowAdapter {
 
     // 5. 置信度影响 — 低置信度时倾向于更保守的工作流
     if (state.confidence < 0.4) {
-      if (wf.topology === 'SEQUENTIAL' || wf.topology === 'SINGLE') score += 0.15;
+      if ((wf.topology as string) === 'SEQUENTIAL' || wf.topology === 'SINGLE') score += 0.15;
     }
 
     return Math.max(0, score);
@@ -315,7 +315,7 @@ export class RuntimeWorkflowAdapter {
     const defaultWorkflows: SubWorkflow[] = [
       {
         id: 'deep-research',
-        topology: 'HIERARCHICAL',
+        topology: 'ORCHESTRATOR',
         steps: ['research', 'analyze', 'synthesize', 'verify'],
         estimatedCost: 8000,
         estimatedDuration: 30000,
@@ -323,7 +323,7 @@ export class RuntimeWorkflowAdapter {
       },
       {
         id: 'quick-answer',
-        topology: 'SEQUENTIAL',
+        topology: 'CHAIN',
         steps: ['search', 'verify', 'respond'],
         estimatedCost: 2000,
         estimatedDuration: 10000,
@@ -331,7 +331,7 @@ export class RuntimeWorkflowAdapter {
       },
       {
         id: 'parallel-exploration',
-        topology: 'PARALLEL',
+        topology: 'DISPATCH',
         steps: ['search-branch-1', 'search-branch-2', 'merge', 'verify'],
         estimatedCost: 12000,
         estimatedDuration: 25000,
@@ -339,7 +339,7 @@ export class RuntimeWorkflowAdapter {
       },
       {
         id: 'code-generation',
-        topology: 'HYBRID',
+        topology: 'ORCHESTRATOR',
         steps: ['understand', 'design', 'implement', 'test', 'refine'],
         estimatedCost: 15000,
         estimatedDuration: 45000,
@@ -441,7 +441,7 @@ export class RuntimeWorkflowAdapter {
   private selectEmergencyWorkflow(): WorkflowDecision {
     return {
       subWorkflowId: 'quick-answer',
-      topology: 'SEQUENTIAL',
+      topology: 'CHAIN',
       priority: 1,
       rationale: 'Emergency replan: switching to sequential conservative approach',
       alternatives: ['verification-focused', 'deep-research'],
