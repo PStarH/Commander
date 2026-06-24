@@ -37,7 +37,10 @@ import {
   securityHeaders,
   rateLimitMiddleware,
   errorHandler,
+  initRateLimitStore,
+  closeRateLimitStore,
 } from './securityMiddleware';
+import { authMiddleware } from './authMiddleware';
 import { createEvaluationRunnerRouter } from './evaluationRunnerEndpoints';
 import { createOrchestratorRouter } from './orchestratorEndpoints';
 import { createObservabilityRouter } from './observabilityEndpoints';
@@ -49,7 +52,8 @@ const app = express();
 let API_VERSION = '0.0.0';
 try {
   API_VERSION = require('../package.json').version;
-} catch {
+} catch (err) {
+  console.warn('[Catch]', err);
   /* use default */
 }
 
@@ -106,7 +110,10 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', origin);
   }
   res.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,PUT,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID');
+  res.header(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization, X-Request-ID, X-API-Key',
+  );
   res.header('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
@@ -170,6 +177,8 @@ app.get('/system/status', (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+app.use(authMiddleware);
 
 // ── Routers ─────────────────────────────────────────────────────────────────
 app.use(createProjectRouter(store, memoryStore, agentStateStore));
@@ -448,9 +457,25 @@ app.use(errorHandler);
 
 // ── Startup + Graceful Shutdown ──────────────────────────────────────────────
 const port = Number(process.env.PORT || 4000);
-const server = app.listen(port, () => {
-  process.stdout.write(`API listening on http://localhost:${port}\n`);
-  process.stdout.write(`War room project ready at GET /projects/${PROJECT_ID}/war-room\n`);
+
+// initRateLimitStore() opens the persistent SQLite store and hydrates the
+// in-memory Map BEFORE listen() so the first request after boot doesn't see
+// an empty rate-limit cache (which would defeat the auth-reset bypass
+// mitigation this persistence layer was added for). Server reference is
+// captured so gracefulShutdown can drain it.
+let httpServer: { close: (cb?: () => void) => void } | null = null;
+
+async function startServer(): Promise<void> {
+  await initRateLimitStore();
+  httpServer = app.listen(port, () => {
+    process.stdout.write(`API listening on http://localhost:${port}\n`);
+    process.stdout.write(`War room project ready at GET /projects/${PROJECT_ID}/war-room\n`);
+  });
+}
+
+startServer().catch((err: Error) => {
+  process.stderr.write(`[startup] Failed to start API server: ${err.message}\n`);
+  process.exit(1);
 });
 
 // P1: Graceful shutdown — drain connections, flush state, then exit
@@ -460,8 +485,8 @@ function gracefulShutdown(signal: string) {
   shuttingDown = true;
   process.stdout.write(`\n[${signal}] Shutting down gracefully...\n`);
 
-  // Stop accepting new connections
-  server.close(() => {
+  // Stop accepting new connections.
+  httpServer?.close(() => {
     process.stdout.write('[shutdown] HTTP server closed\n');
 
     // Flush any pending state
@@ -477,6 +502,10 @@ function gracefulShutdown(signal: string) {
     } catch (closeErr) {
       process.stderr.write(`[shutdown] Failed to close store: ${closeErr}\n`);
     }
+
+    // Close the rate-limit persistent store (audit MED item 3 follow-up).
+    // Idempotent — safe even if init failed.
+    closeRateLimitStore();
 
     process.stdout.write('[shutdown] Complete\n');
     process.exit(0);

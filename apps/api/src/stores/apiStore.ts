@@ -170,7 +170,8 @@ function createMemoryApiStore(dbPath: string): SqliteApiStore {
         let required: string[] = [];
         try {
           required = JSON.parse(c.required_approvals_json);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           required = [];
         }
         return required.includes(approverId);
@@ -276,7 +277,8 @@ function createSqliteApiStore(dbPath: string): SqliteApiStore {
   };
   try {
     Database = require('better-sqlite3');
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     throw new Error(
       'SqliteApiStore requires "better-sqlite3". Install it with: pnpm add better-sqlite3',
     );
@@ -411,7 +413,9 @@ function createSqliteApiStore(dbPath: string): SqliteApiStore {
     close() {
       try {
         db.close();
-      } catch {}
+      } catch (err) {
+        console.warn('[Catch]', err);
+      }
     },
     listTasksByStatus(status: string) {
       return stmtListByStatus.all(status) as ApiTaskRow[];
@@ -464,7 +468,8 @@ function createSqliteApiStore(dbPath: string): SqliteApiStore {
         try {
           const required = JSON.parse(c.required_approvals_json || '[]');
           return required.includes(approverId);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           return false;
         }
       });
