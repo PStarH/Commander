@@ -19,7 +19,8 @@ async function pathExists(p: string): Promise<boolean> {
   try {
     await fs.promises.access(p);
     return true;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return false;
   }
 }
@@ -45,7 +46,8 @@ export function safePath(target: string): string {
   let resolvedReal: string;
   try {
     resolvedReal = fs.realpathSync(resolved);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     // File doesn't exist yet — resolve the parent directory
     let parent = path.dirname(resolved);
     while (parent !== '/' && !fs.existsSync(parent)) {
@@ -53,7 +55,8 @@ export function safePath(target: string): string {
     }
     try {
       resolvedReal = fs.realpathSync(parent) + resolved.slice(parent.length);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       resolvedReal = resolved;
     }
   }
@@ -663,7 +666,8 @@ export class GlobTool implements Tool {
           }
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // Skip unreadable directories
     }
   }
@@ -688,7 +692,8 @@ export class GlobTool implements Tool {
       '$';
     try {
       return new RegExp(regexStr).test(name);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }

@@ -73,10 +73,14 @@ export function registerTmpCleanup(directory: string): () => void {
         if (entry.includes('.tmp')) {
           try {
             fs.unlinkSync(path.join(directory, entry));
-          } catch {}
+          } catch (err) {
+            console.warn('[Catch]', err);
+          }
         }
       }
-    } catch {}
+    } catch (err) {
+      console.warn('[Catch]', err);
+    }
   };
 
   const onExit = (): void => cleanup();
