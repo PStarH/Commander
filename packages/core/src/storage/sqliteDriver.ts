@@ -368,7 +368,8 @@ export class SqliteDriver implements PersistentDriver {
     try {
       fs.mkdirSync(dir, { recursive: true });
       chmodSafe(dir, 0o700);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* dir may already exist */
     }
     try {
@@ -382,7 +383,8 @@ export class SqliteDriver implements PersistentDriver {
     try {
       this.db.pragma('journal_mode = WAL');
       this.db.pragma('synchronous = NORMAL');
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* pragma failures are recoverable */
     }
     chmodSafe(this.filePath, 0o600);
@@ -410,7 +412,8 @@ export class SqliteDriver implements PersistentDriver {
     } catch (err) {
       try {
         this.db.exec('ROLLBACK');
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* rollback failure is swallowed; original error propagates */
       }
       throw err;
@@ -422,12 +425,14 @@ export class SqliteDriver implements PersistentDriver {
     this.tables.clear();
     try {
       this.db.pragma('wal_checkpoint(FULL)');
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort checkpoint */
     }
     try {
       this.db.close();
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* close-after-corruption: test invariant still holds */
     }
   }

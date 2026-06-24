@@ -36,7 +36,8 @@ describe('DataRetentionJanitor', () => {
   afterEach(() => {
     try {
       fs.rmSync(tmp, { recursive: true, force: true });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* tmp may have already been removed */
     }
   });
