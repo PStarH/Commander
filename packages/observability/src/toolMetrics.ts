@@ -77,14 +77,3 @@ export class ToolMetricsCollector {
     };
   }
 }
-
-let globalCollector: ToolMetricsCollector | null = null;
-
-export function getToolMetricsCollector(): ToolMetricsCollector {
-  if (!globalCollector) globalCollector = new ToolMetricsCollector();
-  return globalCollector;
-}
-
-export function resetToolMetricsCollector(): void {
-  globalCollector = null;
-}

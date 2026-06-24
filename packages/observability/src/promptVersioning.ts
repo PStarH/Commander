@@ -138,14 +138,3 @@ export class PromptVersionTracker {
     };
   }
 }
-
-let globalTracker: PromptVersionTracker | null = null;
-
-export function getPromptVersionTracker(): PromptVersionTracker {
-  if (!globalTracker) globalTracker = new PromptVersionTracker();
-  return globalTracker;
-}
-
-export function resetPromptVersionTracker(): void {
-  globalTracker = null;
-}
