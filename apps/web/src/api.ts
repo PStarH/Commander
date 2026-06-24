@@ -23,7 +23,8 @@ async function readError(response: Response, fallback: string): Promise<string> 
   try {
     const data = (await response.json()) as { error?: string };
     return data.error || fallback;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return fallback;
   }
 }
