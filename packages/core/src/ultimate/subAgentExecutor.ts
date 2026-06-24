@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import type {
@@ -133,20 +134,20 @@ export class SubAgentExecutor {
       agentId: node.id,
       timestamp: new Date().toISOString(),
       phase: node.status === 'COMPLETED' || node.status === 'PARTIAL' ? 'completed' : 'failed',
-      stepNumber: 0,
-      attemptNumber: 0,
+      stepNumber: node.subtasks.length > 0 ? node.subtasks.length : 1,
+      attemptNumber: 1,
       messages: [],
-      tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-      stepDurations: [],
+      tokenUsage: node.tokenUsage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      stepDurations: node.durationMs ? [node.durationMs] : [],
       context: {
         agentId: node.id,
-        projectId: '',
+        projectId: this.currentRunId,
         goal: node.goal,
         availableTools: node.context.availableTools ?? [],
-        maxSteps: 0,
-        tokenBudget: 0,
+        maxSteps: node.subtasks.length > 0 ? node.subtasks.length : 1,
+        tokenBudget: node.context.estimatedTokens ?? 0,
       },
-      totalDurationMs: 0,
+      totalDurationMs: node.durationMs ?? 0,
     });
   }
 
@@ -531,8 +532,9 @@ export class SubAgentExecutor {
         lineageInstanceId = child.instanceId;
         // Store on the node so parent→child lineage links work for recursive decomposition
         node.lineageInstanceId = lineageInstanceId;
-      } catch {
-        /* best-effort — lineage tracking must never break execution */
+      } catch (_silentE_) {
+        /* best-effort */
+        reportSilentFailure(_silentE_, 'subAgentExecutor:534');
       }
 
       const ctx: AgentExecutionContext = {
@@ -570,8 +572,9 @@ export class SubAgentExecutor {
             lineageInstanceId,
           },
         });
-      } catch {
+      } catch (_silentE_) {
         /* best-effort */
+        reportSilentFailure(_silentE_, 'subAgentExecutor:573');
       }
 
       let execResult: AgentExecutionResult;
@@ -614,8 +617,9 @@ export class SubAgentExecutor {
                 limit: err.limit,
               },
             });
-          } catch {
+          } catch (_silentE_) {
             /* best-effort */
+            reportSilentFailure(_silentE_, 'subAgentExecutor:617');
           }
           try {
             getMetricsCollector().recordSubAgentOutcome(
@@ -624,8 +628,9 @@ export class SubAgentExecutor {
               (baseContext as { __depth?: number }).__depth ?? 1,
               ctx.tenantId,
             );
-          } catch {
+          } catch (_silentE_) {
             /* best-effort */
+            reportSilentFailure(_silentE_, 'subAgentExecutor:627');
           }
           errors.push({
             nodeId: node.id,
@@ -653,8 +658,9 @@ export class SubAgentExecutor {
             reason: errorMsg.slice(0, 200),
             payload: { agentId: node.id, status: 'failed', parentRunId: this.currentRunId },
           });
-        } catch {
+        } catch (_silentE_) {
           /* best-effort */
+          reportSilentFailure(_silentE_, 'subAgentExecutor:656');
         }
         try {
           getMetricsCollector().recordSubAgentOutcome(
@@ -663,8 +669,9 @@ export class SubAgentExecutor {
             (baseContext as { __depth?: number }).__depth ?? 1,
             ctx.tenantId,
           );
-        } catch {
+        } catch (_silentE_) {
           /* best-effort */
+          reportSilentFailure(_silentE_, 'subAgentExecutor:666');
         }
         return;
       }
@@ -699,8 +706,9 @@ export class SubAgentExecutor {
           node.id,
           execResult.totalTokenUsage.totalTokens,
         );
-      } catch {
+      } catch (_silentE_) {
         /* best-effort */
+        reportSilentFailure(_silentE_, 'subAgentExecutor:702');
       }
 
       if (execResult.status !== 'success') {
@@ -733,8 +741,9 @@ export class SubAgentExecutor {
               tokenUsage: node.tokenUsage,
             },
           });
-        } catch {
+        } catch (_silentE_) {
           /* best-effort */
+          reportSilentFailure(_silentE_, 'subAgentExecutor:736');
         }
         try {
           getMetricsCollector().recordSubAgentOutcome(
@@ -743,8 +752,9 @@ export class SubAgentExecutor {
             (baseContext as { __depth?: number }).__depth ?? 1,
             ctx.tenantId,
           );
-        } catch {
+        } catch (_silentE_) {
           /* best-effort */
+          reportSilentFailure(_silentE_, 'subAgentExecutor:746');
         }
       }
 
@@ -943,8 +953,9 @@ export class SubAgentExecutor {
           subAgentRole: 'synthesizer',
         },
       });
-    } catch {
+    } catch (_silentE_) {
       /* best-effort */
+      reportSilentFailure(_silentE_, 'subAgentExecutor:946');
     }
 
     try {
@@ -1003,8 +1014,8 @@ export class SubAgentExecutor {
         const remaining = fs.readdirSync(commanderOutputDir);
         if (remaining.length === 0) fs.rmSync(commanderOutputDir, { recursive: true });
       }
-    } catch {
-      /* ignore */
+    } catch (_silentE_) {
+      reportSilentFailure(_silentE_, 'subAgentExecutor:1006');
     }
   }
 
