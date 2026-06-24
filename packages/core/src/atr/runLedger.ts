@@ -732,6 +732,7 @@ export class RunLedger {
   }
 
   close(): void {
+    walCheckpoint(this.db);
     this.db?.close();
     this.db = null;
     this.handlers.clear();
