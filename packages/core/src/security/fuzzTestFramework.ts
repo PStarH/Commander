@@ -339,7 +339,8 @@ export class FuzzTestFramework {
           coveragePaths: this.coverageMap.size,
         },
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -470,7 +471,8 @@ export class FuzzTestFramework {
       try {
         const parsed = JSON.parse(value);
         return this.scrambleJSON(parsed);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         // Not valid JSON — add/remove brackets
         if (value.startsWith('{') || value.startsWith('[')) {
           return value.slice(0, -1) + Math.random().toString(36).slice(2);
@@ -759,7 +761,8 @@ export class FuzzTestFramework {
     if (typeof value === 'symbol') return value.toString();
     try {
       return JSON.stringify(value) ?? String(value);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return '[unserializable]';
     }
   }

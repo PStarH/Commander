@@ -154,7 +154,8 @@ export class PostQuantumCrypto {
           'No PQ-suitable hash available. Upgrade to Node.js 22+ for SHAKE-256.',
         );
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       getGlobalLogger().warn(
         'PostQuantumCrypto',
         'Crypto detection failed. PQ features may be unavailable.',
@@ -333,7 +334,8 @@ export class PostQuantumCrypto {
     if (this.config.constantTimeVerify) {
       try {
         return crypto.timingSafeEqual(computed, expected);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         // Length mismatch — definitely invalid
         return false;
       }

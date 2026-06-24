@@ -263,7 +263,8 @@ function toolMatches(pattern: string, tool: string): boolean {
     return new RegExp(
       `^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`,
     ).test(tool);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return false;
   }
 }
@@ -486,7 +487,8 @@ export class CapabilityTokenVerifier {
     let parts: string[];
     try {
       parts = encoded.split('.');
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return reject('malformed_encoding', 'token is not a string');
     }
     if (parts.length !== 3) return reject('malformed_encoding', 'expected 3 dot-separated parts');
@@ -512,7 +514,8 @@ export class CapabilityTokenVerifier {
     let providedSig: string;
     try {
       providedSig = b64urlDecode(parts[2]!);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return reject('malformed_encoding', 'signature is not valid base64url');
     }
     if (
@@ -565,7 +568,8 @@ export class CapabilityTokenVerifier {
         const matched = regexes.some((rx) => {
           try {
             return new RegExp(rx).test(str);
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             return false;
           }
         });
@@ -668,7 +672,8 @@ function recordSinkFailure(sink: string): void {
       1,
       [{ name: 'sink', value: sink }],
     );
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* metrics collector unavailable — last-resort swallow */
   }
 }
@@ -694,7 +699,8 @@ function safelyFireAudit(
       console.error(
         `[capabilityToken] audit sink (${sinkName}) threw: ${(err as Error)?.message ?? String(err)}`,
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* stderr inaccessible, swallow */
     }
   }
@@ -741,7 +747,8 @@ export function getCapabilityTokenIssuer(): CapabilityTokenIssuer {
             console.error(
               `[capabilityToken] auditChain ledger unavailable: ${(err as Error)?.message ?? String(err)}`,
             );
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* stderr inaccessible, swallow */
           }
         }
