@@ -163,7 +163,8 @@ export class PolicyHook {
           tenantId: decision.tenantId ?? undefined,
         },
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       void 0;
     }
   }

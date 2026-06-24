@@ -32,6 +32,7 @@ import { LeaseManager, type AcquireResult } from './leaseManager';
 import { IdempotencyStore, getIdempotencyStore } from './idempotencyStore';
 import { getGlobalLogger } from '../logging';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+import { walCheckpoint } from '../storage/walCheckpoint';
 
 export interface RunLedgerConfig {
   filePath: string;
@@ -64,7 +65,9 @@ let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
-} catch {}
+} catch (err) {
+  console.warn('[Catch]', err);
+}
 
 export type CompensationHandler = (
   action: CompensableAction,
