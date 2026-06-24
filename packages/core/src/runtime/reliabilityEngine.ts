@@ -138,7 +138,8 @@ export class ReliabilityEngine {
       onTransition: (from, to, provider) => {
         try {
           getMetricsCollector().recordCircuitTransition(from, to, provider ?? 'reliabilityEngine');
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
         try {
@@ -149,13 +150,15 @@ export class ReliabilityEngine {
             tags: [`from:${from}`, `to:${to}`],
             failureMode: 'circuit_open',
           });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
         if (extraTransitionHandler) {
           try {
             extraTransitionHandler(from, to, provider);
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* best-effort */
           }
         }
@@ -166,7 +169,8 @@ export class ReliabilityEngine {
     if (config.compensationQueue) {
       try {
         this._compensationRegistry.setCompensationQueue(config.compensationQueue);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* queue requires better-sqlite3; skip durable retry */
       }
     }
@@ -175,21 +179,24 @@ export class ReliabilityEngine {
       onSuccess: (action) => {
         try {
           getMetricsCollector().recordCompensation(action.toolName, 'success');
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       },
       onFailed: (action, err) => {
         try {
           getMetricsCollector().recordCompensation(action.toolName, 'failed');
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       },
       onExhausted: (action, err) => {
         try {
           getMetricsCollector().recordCompensation(action.toolName, 'exhausted');
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
         try {
@@ -200,7 +207,8 @@ export class ReliabilityEngine {
             tags: [action.toolName],
             failureMode: 'compensation_exhausted',
           });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       },
@@ -434,7 +442,8 @@ export class ReliabilityEngine {
     // process exit, where closing is also correct.
     try {
       this._atrCheckpointStore.close();
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

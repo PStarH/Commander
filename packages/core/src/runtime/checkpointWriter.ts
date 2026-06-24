@@ -338,7 +338,8 @@ export class CheckpointWriter {
         pendingCount: params.pendingSubtasks.length,
         filePath,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -374,7 +375,8 @@ export class CheckpointWriter {
       fs.renameSync(tmpPath, filePath);
       try {
         fs.chmodSync(filePath, 0o600);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     } catch (e) {
@@ -620,7 +622,8 @@ export class CheckpointWriter {
         })
         .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
       return files;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return [];
     }
   }
@@ -636,7 +639,8 @@ export class CheckpointWriter {
     const filePath = path.join(this.config.storageDir!, `${runId}.md`);
     try {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
   }
@@ -720,7 +724,8 @@ export class CheckpointWriter {
         nextAction: nextMatch?.[1]?.trim() ?? nextFallbackMatch?.[1]?.trim() ?? '',
         recentMessages: [],
       };
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return null;
     }
   }

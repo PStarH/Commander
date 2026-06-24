@@ -356,7 +356,8 @@ function recordSinkFailure(sink: string): void {
       1,
       [{ name: 'sink', value: sink }],
     );
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* metrics collector unavailable — last-resort swallow */
   }
 }
@@ -557,7 +558,8 @@ export class ToolApproval {
               error: (err as Error)?.message,
               toolName,
             });
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* logger inaccessible, swallow */
           }
         }
@@ -664,7 +666,8 @@ export class ToolApproval {
             error: (e as Error)?.message,
             toolName,
           });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* logger inaccessible, swallow */
         }
         this.pendingApprovals.set(pendingKey, approvalRequest);

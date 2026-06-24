@@ -135,7 +135,8 @@ export function purifyJson(content: string, options: PurifyOptions = {}): string
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     // Not valid JSON — fall back to stripping whitespace
     const minified = content.replace(/\s+/g, ' ').trim();
     return maxChars > 0 && minified.length > maxChars

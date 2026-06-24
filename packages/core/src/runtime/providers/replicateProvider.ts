@@ -46,7 +46,8 @@ export class ReplicateProvider implements LLMProvider {
     // Try chat/compat endpoint first (OpenAI-compatible, supported by many models)
     try {
       return await this.callChatCompat(request, model);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // Fall back to Replicate's prediction API
       return await this.callPrediction(request, model);
     }

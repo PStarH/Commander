@@ -94,13 +94,15 @@ export class CompensationRegistry {
         this.addToCompensated(actionId);
         try {
           this.observability?.onSuccess?.(action);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       } else {
         try {
           this.observability?.onFailed?.(action, result.error ?? 'unknown');
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       }
@@ -109,7 +111,8 @@ export class CompensationRegistry {
       const errStr = String(err);
       try {
         this.observability?.onFailed?.(action, errStr);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       return { success: false, error: errStr };
@@ -140,7 +143,8 @@ export class CompensationRegistry {
               compensationHandlerKey: action.toolName,
               maxAttempts: 10,
             });
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* queue down; proceed with drop */
           }
         }
@@ -151,7 +155,8 @@ export class CompensationRegistry {
         errors.push(errMsg);
         try {
           this.observability?.onExhausted?.(action, errMsg);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
         continue;
@@ -217,7 +222,8 @@ export class CompensationRegistry {
                 action,
                 `Queue compensation exhausted: ${result.error}`,
               );
-            } catch {
+            } catch (err) {
+              console.warn('[Catch]', err);
               /* best-effort */
             }
           }
@@ -231,7 +237,8 @@ export class CompensationRegistry {
               { actionId: item.id, toolName: item.toolName, args: {}, description: '', tags: [] },
               `Queue compensation error: ${errStr}`,
             );
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* best-effort */
           }
         }

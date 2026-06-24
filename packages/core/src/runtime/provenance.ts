@@ -63,7 +63,8 @@ function fetchGitState(): { commitHash: string; branch: string; dirty: boolean }
       timeout: 3000,
     }).trim();
     dirty = status.length > 0;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     getGlobalLogger().debug('Provenance', 'Not in a git repo or git not available');
   }
 

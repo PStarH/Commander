@@ -223,7 +223,8 @@ export class DlqRetryWorker {
                   { name: 'category', value: entry.category },
                   { name: 'outcome', value: 'recovered' },
                 ]);
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort */
               }
             } else {
@@ -233,7 +234,8 @@ export class DlqRetryWorker {
                   { name: 'category', value: entry.category },
                   { name: 'outcome', value: 'retry_failed' },
                 ]);
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort */
               }
             }
@@ -247,7 +249,8 @@ export class DlqRetryWorker {
                 { name: 'category', value: entry.category },
                 { name: 'outcome', value: 'handler_error' },
               ]);
-            } catch {
+            } catch (err) {
+              console.warn('[Catch]', err);
               /* best-effort */
             }
           }
@@ -340,7 +343,8 @@ export class DlqRetryWorker {
         tags: ['dlq_retry', 'recovered'],
       });
       this.dlq.flush(entry.category as string);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }
@@ -374,10 +378,12 @@ export class DlqRetryWorker {
           { name: 'category', value: entry.category },
           { name: 'outcome', value: 'escalated' },
         ]);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

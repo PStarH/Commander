@@ -124,7 +124,8 @@ export class ToolPlanner {
           ? (() => {
               try {
                 return JSON.parse(tc.arguments);
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 return {};
               }
             })()
@@ -405,7 +406,8 @@ export class ToolPlanner {
         ? (() => {
             try {
               return JSON.parse(tc.arguments);
-            } catch {
+            } catch (err) {
+              console.warn('[Catch]', err);
               return {};
             }
           })()

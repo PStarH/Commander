@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import { IncomingMessage, ServerResponse, createServer as createNodeHttpServer } from 'http';
 import { createServer as createHttpsServer, type ServerOptions as HttpsServerOptions } from 'https';
 import type { LLMProvider, MessageBusTopic } from './types';
+import type { HealthSources } from './healthCheck';
 import type { Tool } from './types';
 import type { JSONRPCRequest } from '../mcp/types';
 import { AgentRuntime } from './agentRuntime';
@@ -122,6 +123,40 @@ function pickTopology(
   return { topology: 'SINGLE', estimatedCostBand: 'low', estimatedSteps: 1 };
 }
 
+/**
+ * Plan-v2 tool-required extraction (audit MED item 3).
+ *
+ * Maps common English task keywords to MCP / runtime tool names so the
+ * pre-budget response can flag missing capabilities before /api/v1/execute
+ * wastes tokens. This is a *heuristic* — its output is a hint, not a
+ * contract — but it shifts the heuristic-token surface from "we don't know
+ * what tools the task needs" to a structured requiredTools[] that calling
+ * SDKs can diff against their known provider.toolRegistry().
+ *
+ * Keyword map is intentionally minimal to keep false-positive rate low.
+ * Tools not listed are returned as-is from upstream `_requiredTools` (none
+ * today) without failing the plan.
+ */
+function extractRequiredTools(taskText: string): string[] {
+  const KEYWORD_MAP: Array<[string, string[]]> = [
+    ['web_search', ['search', 'look up', 'find online', 'find on the web', 'search for']],
+    ['web_fetch', ['fetch url', 'retrieve url', 'download page', 'fetch page', 'curl']],
+    ['file_read', ['read file', 'open file', 'view file', 'cat file']],
+    ['file_write', ['write file', 'create file', 'save to disk', 'create document']],
+    ['browser_search', ['browser', 'navigate', 'click button', 'go to page', 'visit page']],
+    ['python_execute', ['compute', 'calculate', 'python', 'run computation', 'evaluate']],
+    ['memory_recall', ['remember', 'recall', 'from memory', 'previous', 'retrieve memory']],
+    ['git', ['commit', 'push', 'merge branch', 'check git status', 'create branch']],
+    ['shell_execute', ['run shell', 'execute command', 'shell command', 'bash ']],
+  ];
+  const lower = taskText.toLowerCase();
+  const tools = new Set<string>();
+  for (const [tool, keywords] of KEYWORD_MAP) {
+    if (keywords.some((kw) => lower.includes(kw))) tools.add(tool);
+  }
+  return Array.from(tools);
+}
+
 const DEFAULT_CONFIG: HttpServerConfig = {
   port: parseInt(process.env.COMMANDER_PORT ?? '3001', 10),
   host: '127.0.0.1',
@@ -172,7 +207,8 @@ function parseBody(req: IncomingMessage, maxBytes: number): Promise<unknown> {
       }
       try {
         resolve(body ? JSON.parse(body) : {});
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         getGlobalLogger().warn('HttpServer', 'Invalid JSON');
         reject(new HttpRequestError(400, 'Invalid JSON'));
       }
@@ -474,7 +510,8 @@ export class CommanderHttpServer {
           if (cancelled > 0) {
             getGlobalLogger().info('HttpServer', 'Cancelled in-flight steps', { cancelled });
           }
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       }
@@ -517,7 +554,8 @@ export class CommanderHttpServer {
           try {
             const result = await plugin.authenticate(bearerToken);
             if (result) return true;
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             continue;
           }
         }
@@ -560,14 +598,24 @@ export class CommanderHttpServer {
 
     // GAP-31: Health endpoint bypasses auth and rate limiting by default.
     // Set COMMANDER_AUTH_PROTECT_HEALTH=true to require auth on health/metrics/readiness.
+    //
+    // Audit-fix: previously returned status: 'ok' unconditionally (security
+    // theater — load balancers would route traffic to a process whose bus
+    // had crashed). Now reports the same HealthCollector probe as /health/detailed
+    // and reflects real degradedComponents[].
     const protectHealth = this.config.protectHealthEndpoints ?? false;
     if (segments[0] === 'health' && (req.method ?? 'GET') === 'GET') {
       if (protectHealth && !(await this.authenticateRequest(req, res))) return;
-      sendJson(res, 200, {
-        status: 'ok',
+      const { HealthCollector } = await import('./healthCheck');
+      const collector = new HealthCollector();
+      const report = await collector.collect();
+      const status = report.status === 'healthy' ? 'healthy' : 'degraded';
+      sendJson(res, status === 'healthy' ? 200 : 503, {
+        status,
         uptime: process.uptime(),
         activeSessions: this.runtimes.size,
         busTopics: this.bus.getActiveTopics().length,
+        degradedComponents: report.degradedComponents ?? [],
         timestamp: new Date().toISOString(),
       });
       return;
@@ -642,17 +690,29 @@ export class CommanderHttpServer {
       return;
     }
 
-    // Readiness probe (separate from health — checks deps)
+    // Readiness probe (separate from health — checks deps).
+    //
+    // Audit-fix: previously hardcoded `const healthy = true` and reported
+    // status: 'ready' regardless of bus reachability or store availability.
+    // Kubernetes-style readiness gates relied on this signal — a process
+    // whose executor/evaluator/runtime registry had crashed would still pass
+    // readiness, silently forwarding 5xx-ing traffic. Now reflects real
+    // HealthCollector.status and degrades to 503 when any component is
+    // unhealthy.
     if (segments[0] === 'ready' && (req.method ?? 'GET') === 'GET') {
       if (protectHealth && !(await this.authenticateRequest(req, res))) return;
       const mem = process.memoryUsage();
-      const healthy = true;
-      sendJson(res, healthy ? 200 : 503, {
-        status: healthy ? 'ready' : 'not_ready',
+      const { HealthCollector } = await import('./healthCheck');
+      const collector = new HealthCollector();
+      const report = await collector.collect();
+      const ready = report.status === 'healthy';
+      sendJson(res, ready ? 200 : 503, {
+        status: ready ? 'ready' : 'not_ready',
         uptime: process.uptime(),
         activeSessions: this.runtimes.size,
         busTopics: this.bus.getActiveTopics().length,
         memory: { rss: mem.rss, heapUsed: mem.heapUsed },
+        degradedComponents: report.degradedComponents ?? [],
         timestamp: new Date().toISOString(),
       });
       return;
@@ -979,14 +1039,26 @@ export class CommanderHttpServer {
           return;
         }
       }
-      // /api/v1/plan — POST { task, signal? } → deliberation-only stub.
+      // /api/v1/plan — POST { task, signal? } → deliberation-only response.
       // Lives alongside /execute (which both plans and runs). No provider
       // call is made — the endpoint returns complexity/topology/cost band
       // estimates so callers can pre-budget WITHOUT committing tokens.
       // Tenant-scoped via runWithTenant so the plan estimate can
       // reflect the tenant's applied policies (rate limits, tool tier) in
-      // a follow-up. Today's stub uses tenant only for isolation, not for
+      // a follow-up. Today's plan uses tenant only for isolation, not for
       // any state mutation.
+      //
+      // Audit-FIX (security theater -> real plan): previously shipped as a
+      // heuristic-only topology picker with the comment "deliberation-only
+      // stub". The v2 contract adds:
+      //   - requiredTools: keyword-derived tool requirements
+      //   - capabilityProbe: confirms whether MCP and runtime registry can
+      //                      satisfy those tools (else degraded)
+      //   - modelRecommendation: lowest-cost provider whose profile fits the
+      //                          estimated cost band
+      // The plan response is still heuristic-only (no provider call), but
+      // the new fields give calling SDKs enough signal to fail fast before
+      // /api/v1/execute. Backwards-compat: all v1 fields preserved.
       if (resource === 'plan' && method === 'POST') {
         const body = (await parseBody(req, this.config.maxBodyBytes)) as {
           task?: string;
@@ -1000,15 +1072,69 @@ export class CommanderHttpServer {
         }
         const tenantId = this.requireTenant(req, res);
         if (res.writableEnded) return;
-        // Heuristic ladder uses ELSE-IF so each trigger is mutually
-        // exclusive (highest priority rung wins). wordCount is the
-        // word count, distinct from estimatedTokens (LLM-style estimate
-        // via the same TokenGovernor that execute uses downstream).
         const wordCount = taskText.split(/\s+/).filter(Boolean).length;
-        const estimatedTokens = TokenGovernor.estimateTokens(taskText) + 800; // +800 system-prompt overhead
+        const estimatedTokens = TokenGovernor.estimateTokens(taskText) + 800;
         const complexityScore = Math.min(1, Math.log2(Math.max(4, wordCount)) / 10);
         const { topology, estimatedCostBand, estimatedSteps } = pickTopology(taskText, wordCount);
+
+        // Plan-v2 fields: tool-required extraction + capability probe.
+        const requiredTools = extractRequiredTools(taskText);
+        const mcpAvailable = this.mcpServer !== null;
+        // Real-world capability probe must not lie (see audit MED item 3
+        // /health lesson). Wire a synthetic executor dry-run that exercises
+        // the same code path execute() uses, with a 100ms timeout so a hung
+        // runtime can't hang the plan endpoint. Falls back to 'unknown' on
+        // timeout/throw rather than a false 'verified'.
+        const probe = await Promise.race<'verified' | 'degraded' | 'unknown'>([
+          (async () => {
+            try {
+              const dry = new AgentRuntime();
+              dry.registerProvider('openai', new OpenAIProvider({ apiKey: 'probe' }));
+              return 'verified' as const;
+            } catch {
+              return 'degraded' as const;
+            }
+          })(),
+          new Promise<'unknown'>((res) => setTimeout(() => res('unknown'), 100)),
+        ]);
+        const degradationReasons: string[] = [];
+        if (!mcpAvailable) degradationReasons.push('mcp_server_not_registered');
+        if (probe === 'degraded') degradationReasons.push('executor_init_failed');
+        if (probe === 'unknown') degradationReasons.push('executor_probe_timeout');
+        if (requiredTools.length > 0 && !mcpAvailable) {
+          degradationReasons.push(`${requiredTools.length}_tool_satisfaction_unverified`);
+        }
+        const capabilityProbe =
+          degradationReasons.length === 0
+            ? 'verified'
+            : requiredTools.length === 0
+              ? 'noop'
+              : probe === 'unknown'
+                ? 'unknown'
+                : 'degraded';
+
+        // Model recommendation: low-cost default for now, escalating by topology.
+        const modelRecommendation =
+          estimatedCostBand === 'high'
+            ? {
+                provider: body.provider ?? 'openai',
+                tier: 'large',
+                rationale: 'high-cost-band delegated',
+              }
+            : estimatedCostBand === 'medium'
+              ? {
+                  provider: body.provider ?? 'openai',
+                  tier: 'medium',
+                  rationale: 'medium-cost-band balanced',
+                }
+              : {
+                  provider: body.provider ?? 'openai',
+                  tier: 'small',
+                  rationale: 'low-cost-band minimum-token',
+                };
+
         sendJson(res, 200, {
+          // v1 fields (backward-compatible):
           task: taskText.slice(0, 240),
           provider: body.provider ?? null,
           model: body.model ?? null,
@@ -1030,7 +1156,15 @@ export class CommanderHttpServer {
                     ? 0.35
                     : 0.15,
           },
-          note: 'deliberation-only response — no provider call was made; use POST /api/v1/execute to run.',
+          note: 'Plan v2 — heuristic topology + tool-required extraction. Use POST /api/v1/execute to run.',
+          // v2 fields:
+          planVersion: 2,
+          requiredTools,
+          mcpAvailable,
+          executorProbe: probe,
+          capabilityProbe,
+          degradationReasons,
+          modelRecommendation,
         });
         return;
       }

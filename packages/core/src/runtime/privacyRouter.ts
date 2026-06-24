@@ -553,7 +553,8 @@ export class PrivacyRouter {
       };
 
       audit.logEvent(event);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // Security audit logging is best-effort
     }
 
@@ -570,7 +571,8 @@ export class PrivacyRouter {
           `🔒 Routed to local model: ${matches.length} sensitive pattern(s) detected`,
         );
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // Logging is best-effort
     }
   }
@@ -613,7 +615,8 @@ export class PrivacyRouter {
         const model = this.config.preferredLocalModel ?? 'llama3.2';
         return { provider: 'ollama', model };
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* Ollama not available */
     }
 
@@ -628,7 +631,8 @@ export class PrivacyRouter {
         const model = this.config.preferredLocalModel ?? 'meta-llama/Llama-3.2-3B-Instruct';
         return { provider: 'vllm', model };
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* vLLM not available */
     }
 
