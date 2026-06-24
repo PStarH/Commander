@@ -174,7 +174,8 @@ export class TEESandbox implements PlatformSandbox {
       if (dockerCheck.includes('NO_DOCKER')) return false;
 
       return true;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }
@@ -651,7 +652,8 @@ done
     try {
       if (!fs.existsSync(p)) return null;
       return fs.readFileSync(p, 'utf-8').trim();
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return null;
     }
   }

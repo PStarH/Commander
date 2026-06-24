@@ -112,7 +112,8 @@ export function getLLMAPIDomains(): string[] {
           const host = new URL(process.env[entry.baseUrlEnv]!).hostname;
           if (host) domains.add(host.toLowerCase());
           continue; // Skip default domain since we have a custom one
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           // Invalid URL — fall through to default domain
         }
       }
@@ -129,7 +130,8 @@ export function getLLMAPIDomains(): string[] {
       try {
         const host = new URL(url).hostname;
         if (host) domains.add(host.toLowerCase());
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         // Ignore invalid URLs
       }
     }
@@ -142,7 +144,8 @@ export function getLLMAPIDomains(): string[] {
     if (hostStr.startsWith('http://') || hostStr.startsWith('https://')) {
       try {
         hostStr = new URL(hostStr).host;
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* keep original */
       }
     }
@@ -215,8 +218,12 @@ server.on('connect', (req, clientSocket, head) => {
     clientSocket.pipe(serverSocket);
   });
 
-  serverSocket.on('error', () => { try { clientSocket.end(); } catch {} });
-  clientSocket.on('error', () => { try { serverSocket.end(); } catch {} });
+  serverSocket.on('error', () => {
+    try { clientSocket.end(); } catch (err) { console.warn('[Catch]', err); }
+  });
+  clientSocket.on('error', () => {
+    try { serverSocket.end(); } catch (err) { console.warn('[Catch]', err); }
+  });
 });
 
 // Handle plain HTTP requests (block — we only allow CONNECT)

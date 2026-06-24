@@ -78,7 +78,8 @@ export class ExecutionRouter {
       if (hookOverride && this.backends.has(hookOverride)) {
         return this.backends.get(hookOverride)!;
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       getGlobalLogger().debug('ExecutionRouter', 'beforeBackendSelect hook failed');
     }
 
