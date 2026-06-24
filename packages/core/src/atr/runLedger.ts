@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 /**
  * RunLedger — P0-2 ATR kernel component.
  *
@@ -24,7 +25,6 @@
  * tenant's run records are physically isolated.
  */
 
-import { reportSilentFailure } from '../silentFailureReporter';
 import { randomUUID } from 'crypto';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
@@ -33,7 +33,6 @@ import { LeaseManager, type AcquireResult } from './leaseManager';
 import { IdempotencyStore, getIdempotencyStore } from './idempotencyStore';
 import { getGlobalLogger } from '../logging';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
-import { walCheckpoint } from '../storage/walCheckpoint';
 
 export interface RunLedgerConfig {
   filePath: string;
@@ -66,8 +65,8 @@ let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
-} catch (err) {
-  reportSilentFailure(err, 'runLedger:69');
+} catch (_silentE_) {
+  reportSilentFailure(_silentE_, 'runLedger:67');
 }
 
 export type CompensationHandler = (
@@ -733,7 +732,6 @@ export class RunLedger {
   }
 
   close(): void {
-    walCheckpoint(this.db);
     this.db?.close();
     this.db = null;
     this.handlers.clear();

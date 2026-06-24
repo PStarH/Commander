@@ -8,6 +8,8 @@ export interface MCPRemoteRuntimeConfig {
     args: Record<string, unknown>,
   ) => Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }>;
   maxSteps?: number;
+  /** Timeout in ms for the remote call (default: 300000 = 5 minutes) */
+  timeoutMs?: number;
 }
 
 /**
@@ -48,15 +50,21 @@ export class MCPRemoteRuntime {
     });
 
     try {
-      const result = await this.config.callTool('run_agent', {
-        agentId: ctx.agentId,
-        projectId: ctx.projectId,
-        goal: ctx.goal,
-        availableTools: ctx.availableTools,
-        maxSteps: ctx.maxSteps,
-        tokenBudget: ctx.tokenBudget,
-        contextData: ctx.contextData,
-      });
+      const timeoutMs = this.config.timeoutMs ?? 300_000;
+      const result = await Promise.race([
+        this.config.callTool('run_agent', {
+          agentId: ctx.agentId,
+          projectId: ctx.projectId,
+          goal: ctx.goal,
+          availableTools: ctx.availableTools,
+          maxSteps: ctx.maxSteps,
+          tokenBudget: ctx.tokenBudget,
+          contextData: ctx.contextData,
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error(`MCP remote call timed out after ${timeoutMs}ms`)), timeoutMs);
+        }),
+      ]);
 
       const durationMs = Date.now() - startTime;
 

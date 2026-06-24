@@ -79,15 +79,23 @@ esac
 
 # GPG fingerprint is 40-char hex / 16-char short. Stricter here than d26
 # because this is the per-operator invariant.
-case "$FINGERPRINT" in
-  ""|[A-F0-9]\{16\}|[A-F0-9]\{40\}|[A-F0-9]\{64\})
-    [ -z "$FINGERPRINT" ] && {
-      echo "sign-off: --fingerprint is required (16-char short, 40-char SHA-1, or 64-char SHA-256)" >&2
+if [ -z "$FINGERPRINT" ]; then
+  echo "sign-off: --fingerprint is required (16-char short, 40-char SHA-1, or 64-char SHA-256)" >&2
+  exit 1
+fi
+
+# Validate fingerprint: must be hex of length 16, 40, or 64
+case ${#FINGERPRINT} in
+  16|40|64)
+    if ! echo "$FINGERPRINT" | grep -qE '^[A-Fa-f0-9]+$'; then
+      echo "sign-off: --fingerprint=$FINGERPRINT is not valid hex" >&2
       exit 1
-    } ;;
+    fi
+    ;;
   *)
-    echo "sign-off: --fingerprint=$FINGERPRINT is not a valid hex fingerprint" >&2
-    exit 1 ;;
+    echo "sign-off: --fingerprint=$FINGERPRINT must be 16, 40, or 64 hex characters (got ${#FINGERPRINT})" >&2
+    exit 1
+    ;;
 esac
 
 # Refuse to auto-sign — GPG contract is HUMAN-ONLY.
@@ -168,12 +176,6 @@ process.stdin.on('end',()=>{
   console.log('  exit_code='+r.exitCode+' status='+r.status);
   for(const reason of r.reasons){console.log('  - '+reason);}
 });"
-# (legacy python3 fallback removed — see comment above)
-r = json.load(sys.stdin)
-print(f\"  exit_code={r['exitCode']} status={r['status']}\")
-for reason in r['reasons']:
-    print(f\"  - {reason}\")
-"
 
 # The verifier already exits with the binding code; we just summarize.
 echo "[sign-off] done"
