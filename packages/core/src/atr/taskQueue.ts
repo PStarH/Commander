@@ -272,6 +272,7 @@ export class TaskQueue {
   /** Dispose of the queue — stop workers and close DB. */
   dispose(): void {
     this.stop();
+    walCheckpoint(this.db);
     this.db?.close();
     this.db = null;
     this.workers = [];
