@@ -71,7 +71,8 @@ export class StdioClientTransport implements MCPTransport {
               p.resolve(parsed);
               this.pending.delete(id);
             }
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             getGlobalLogger().debug('MCPClient', 'Ignoring parse error in stdio response');
           }
         }
@@ -186,7 +187,8 @@ export class StreamableHTTPClientTransport implements MCPTransport {
     const text = await res.text();
     try {
       return JSON.parse(text) as JSONRPCResponse;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       throw new Error(
         `MCP HTTP server returned invalid JSON (status ${res.status}): ${text.slice(0, 200)}`,
       );
@@ -227,7 +229,8 @@ export class MCPClient {
     if (this.capabilities.tools) {
       try {
         await this.listTools();
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         // Non-critical: tools will be fetched on first explicit listTools() call
       }
     }

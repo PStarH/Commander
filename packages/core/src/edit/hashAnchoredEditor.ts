@@ -645,7 +645,8 @@ export function applyHashEdit(section: HashEditSection): HashEditApplyResult {
   } catch (err) {
     try {
       fs.unlinkSync(tmpPath);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
     return {

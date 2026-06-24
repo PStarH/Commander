@@ -350,7 +350,8 @@ export class CommanderAgentLoop {
         const data = await fs.promises.readFile(configPath, 'utf-8');
         commanderConfig = JSON.parse(data) as Record<string, unknown>;
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       this.logger.warn('AgentLoop', 'Failed to read .commander.json config');
     }
 
@@ -488,7 +489,8 @@ export class CommanderAgentLoop {
             `Connected to ${this.a2aDiscoveryManager.getAgentCount()} env-configured A2A agents`,
           );
         }
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         this.logger.warn('AgentLoop', 'Failed to parse COMMANDER_A2A_AGENTS env var');
       }
     }
