@@ -76,7 +76,8 @@ async function waitForApiReady(url: string, timeoutMs = 15000): Promise<void> {
     try {
       const res = await fetch(url);
       if (res.ok) return;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* not ready yet */
     }
     await sleep(200);
