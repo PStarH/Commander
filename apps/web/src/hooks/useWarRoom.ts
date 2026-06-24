@@ -78,7 +78,8 @@ export function useWarRoom() {
       eventSource.onerror = () => {
         setConnectionStatus('disconnected');
       };
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       setConnectionStatus('disconnected');
     }
 
