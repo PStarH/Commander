@@ -75,12 +75,12 @@ export function registerTmpCleanup(directory: string): () => void {
           try {
             fs.unlinkSync(path.join(directory, entry));
           } catch (_silentE_) {
-                    reportSilentFailure(_silentE_, 'atomicWrite:76');
+            reportSilentFailure(_silentE_, 'atomicWrite:76');
           }
         }
       }
     } catch (_silentE_) {
-        reportSilentFailure(_silentE_, 'atomicWrite:79');
+      reportSilentFailure(_silentE_, 'atomicWrite:79');
     }
   };
 
