@@ -428,34 +428,36 @@ export class ToolExecutionService {
       );
 
       // Guardian security check
-      try {
-        const intervention = getGuardianAgent().monitor({
-          agentId,
-          runId,
-          timestamp: Date.now(),
-          type: 'tool_call',
-          content: `${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 200)})`,
-          metadata: { args: toolCall.arguments },
-        });
-        if (intervention) {
-          const errorMsg = `GUARDIAN_BLOCKED: ${intervention} by security guardian for ${toolCall.name}`;
-          const durationMs = Date.now() - startTime;
-          bus.publish('tool.blocked', agentId, {
+      if (this.runtime.config.securityMonitor?.enabled !== false) {
+        try {
+          const intervention = getGuardianAgent().monitor({
+            agentId,
             runId,
-            toolName: toolCall.name,
-            reason: 'guardian_blocked',
-            detail: errorMsg,
+            timestamp: Date.now(),
+            type: 'tool_call',
+            content: `${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 200)})`,
+            metadata: { args: toolCall.arguments },
           });
-          return {
-            toolCallId: toolCall.id,
-            name: toolCall.name,
-            output: errorMsg,
-            error: errorMsg,
-            durationMs,
-          };
+          if (intervention) {
+            const errorMsg = `GUARDIAN_BLOCKED: ${intervention} by security guardian for ${toolCall.name}`;
+            const durationMs = Date.now() - startTime;
+            bus.publish('tool.blocked', agentId, {
+              runId,
+              toolName: toolCall.name,
+              reason: 'guardian_blocked',
+              detail: errorMsg,
+            });
+            return {
+              toolCallId: toolCall.id,
+              name: toolCall.name,
+              output: errorMsg,
+              error: errorMsg,
+              durationMs,
+            };
+          }
+        } catch {
+          /* best-effort */
         }
-      } catch {
-        /* best-effort */
       }
 
       let latestReflexion: Reflexion | null = null;
