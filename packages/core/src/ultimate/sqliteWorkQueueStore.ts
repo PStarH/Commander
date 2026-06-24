@@ -306,6 +306,7 @@ export class SqliteWorkQueueStore implements WorkQueueStore {
   }
 
   close(): void {
+    walCheckpoint(this.db);
     this.db?.close();
     this.db = null;
     this.stmtLoadAll = null;
