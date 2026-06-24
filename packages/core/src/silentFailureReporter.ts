@@ -125,11 +125,7 @@ export function reportSilentFailure(error: unknown, context: string): void {
  * exception is observable via reportSilentFailure. Returns the result of fn
  * or `fallback` (default undefined) if fn throws.
  */
-export function withSilentFailure<T>(
-  fn: () => T,
-  context: string,
-  fallback?: T,
-): T | undefined {
+export function withSilentFailure<T>(fn: () => T, context: string, fallback?: T): T | undefined {
   try {
     return fn();
   } catch (err) {

@@ -185,7 +185,7 @@ export default defineConfig({
       'tests/benchmark/reliabilityBenchmark.test.ts',
       'tests/benchmark/comparisonBenchmark.test.ts',
       'tests/benchmark/advancedPerformanceBenchmark.test.ts',
-      'tests/benchmark/realWorldBenchmark.test.ts',
+      // 'tests/benchmark/realWorldBenchmark.test.ts', // skipped: requires external StepFun API and times out in CI
       // 'tests/benchmark/multiAgentBenchmark.metrics.test.ts', // TODO: depends on missing src/benchmark/multiAgentBenchmark module
     ],
     environment: 'node',

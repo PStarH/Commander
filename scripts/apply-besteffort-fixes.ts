@@ -74,10 +74,12 @@ function computeRelativeImport(fromAbs: string, toAbs: string): string {
 
 /** Detect whether `body` is comments + whitespace only. */
 function isEffectivelyEmpty(body: string): boolean {
-  return body
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/[^\n]*/g, '')
-    .replace(/\s+/g, '') === '';
+  return (
+    body
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '')
+      .replace(/\s+/g, '') === ''
+  );
 }
 
 /** 1-based line number for a byte offset. */
@@ -86,6 +88,29 @@ function lineOf(src: string, offset: number): number {
 }
 
 /** Quick paren-balance sniff — refuses to commit a write if the result is unbalanced. */
+/**
+ * Strip a stale `.ts` suffix from any `from '....'` import path.
+ * Required because project tsconfig sets `moduleResolution: 'Bundler'`,
+ * which rejects `.ts` extensions in import paths unless
+ * `allowImportingTsExtensions` is enabled. Some files in the repo carry
+ * stale `.ts` imports left over from earlier broken rewriter runs;
+ * cleaning them in-place here avoids manual triage during future passes.
+ *
+ * Idempotent: extensionless imports are left alone. Reports how many
+ * sources were scrubbed so callers can surface the count in logs.
+ */
+function scrubStaleTsExtensions(content: string): { content: string; stripped: number } {
+  let stripped = 0;
+  const out = content.replace(
+    /(\bfrom\s+['"][^'"\n]+)\.ts(['"])/g,
+    (_whole, prefix: string, suffix: string) => {
+      stripped++;
+      return prefix + suffix;
+    },
+  );
+  return { content: out, stripped };
+}
+
 function isBalanced(s: string): boolean {
   let depth = 0;
   let inStr: string | null = null;
@@ -159,8 +184,7 @@ function isBalanced(s: string): boolean {
 // .catch(...) invocations — those are not empty catches and would only be
 // mutated by mistake.
 
-const RE_CATCH =
-  /([ \t]*)}(?:\s|\n)+catch\s*(?:\(\s*([A-Za-z_$][\w$]*)\s*\))?\s*\{([\s\S]*?)\}/g;
+const RE_CATCH = /([ \t]*)}(?:\s|\n)+catch\s*(?:\(\s*([A-Za-z_$][\w$]*)\s*\))?\s*\{([\s\S]*?)\}/g;
 
 function rewriteCatches(content: string, baseName: string): { content: string; edits: number } {
   let edits = 0;
@@ -196,7 +220,10 @@ function rewriteCatches(content: string, baseName: string): { content: string; e
 // often include template literals that span paragraph breaks; the
 // conservative omission is intentional.
 
-function rewriteConsoleCalls(content: string, baseName: string): { content: string; edits: number } {
+function rewriteConsoleCalls(
+  content: string,
+  baseName: string,
+): { content: string; edits: number } {
   let edits = 0;
   let out = content;
 
@@ -252,18 +279,14 @@ function ensureImport(
 
   // Try to extend an existing `import { already } from './x'` block.
   const re_named = new RegExp(
-    `^(import\\s*\\{)([^}]*)(\\}\\s*from\\s*['"]${sourceRel.replace(
-      /\./g,
-      '\\.',
-    )}['"]\\s*;?)$`,
+    `^(import\\s*\\{)([^}]*)(\\}\\s*from\\s*['"]${sourceRel.replace(/\./g, '\\.')}['"]\\s*;?)$`,
     'm',
   );
   const m = re_named.exec(content);
   if (m) {
     const inside = m[2].trim();
-    const extended = inside === ''
-      ? `${m[1]}${symbol}${m[3]}`
-      : `${m[1]}${inside}, ${symbol}${m[3]}`;
+    const extended =
+      inside === '' ? `${m[1]}${symbol}${m[3]}` : `${m[1]}${inside}, ${symbol}${m[3]}`;
     return { content: content.replace(m[0], extended), added: true };
   }
 
@@ -278,6 +301,17 @@ function processFile(absPath: string): { mode: 'fixed' | 'skipped' | 'no-changes
   const baseName = path.basename(absPath, '.ts');
 
   let content = original;
+
+  // Scrub any pre-existing `.ts` extensions in import paths. The project
+  // tsconfig sets moduleResolution: 'Bundler' which forbids `.ts` in
+  // import paths unless `allowImportingTsExtensions` is set. Some files
+  // have stale `.ts` imports left over from earlier broken reruns; this
+  // strips them in-place before any other transformation runs.
+  const scrub = scrubStaleTsExtensions(content);
+  if (scrub.stripped > 0) {
+    console.warn(`[SCRUB] ${relPath}: stripped ${scrub.stripped} stale .ts extension(s)`);
+    content = scrub.content;
+  }
 
   // Refuse files that already use a namespace/renamed getGlobalLogger:
   // our rewriter writes fresh `getGlobalLogger()` calls which would clash.
@@ -320,9 +354,26 @@ function processFile(absPath: string): { mode: 'fixed' | 'skipped' | 'no-changes
   }
 
   // Sanity: paren balance.
+  //
+  // The `isBalanced` heuristic is a single-pass counter that recognizes
+  // strings, template literals, and comments — but does NOT understand
+  // regex literals. Files that contain a regex literal with embedded
+  // quote chars (e.g. `/^["'`]+|["'`]+$/g`) will trip a false positive
+  // because the heuristic treats the inner `"`/'\''/`` as a string
+  // start and consumes the rest of the regex as a string, never closing.
+  // Fixing that reliably requires full TS tokenization (a heavyweight
+  // dep); the pragmatic escape hatch is FORCE_IGNORE_BALANCE=1 in the
+  // env, gated behind an explicit acknowledgment so accidental bypass
+  // does not write broken code paths.
   if (!isBalanced(content)) {
-    console.error(`[REFUSE] ${relPath} — paren balance check failed after rewrite.`);
-    return { mode: 'skipped', edits: 0 };
+    if (process.env.FORCE_IGNORE_BALANCE === '1') {
+      console.warn(
+        `[WARN] ${relPath} — paren balance false-positive, bypass via FORCE_IGNORE_BALANCE=1.`,
+      );
+    } else {
+      console.error(`[REFUSE] ${relPath} — paren balance check failed after rewrite.`);
+      return { mode: 'skipped', edits: 0 };
+    }
   }
 
   // Inject imports if they're now referenced.
@@ -330,10 +381,7 @@ function processFile(absPath: string): { mode: 'fixed' | 'skipped' | 'no-changes
     absPath,
     path.join(SRC_ROOT, 'silentFailureReporter.ts'),
   );
-  const loggerRel = computeRelativeImport(
-    absPath,
-    path.join(SRC_ROOT, 'logging.ts'),
-  );
+  const loggerRel = computeRelativeImport(absPath, path.join(SRC_ROOT, 'logging.ts'));
 
   let tmp = ensureImport(content, 'reportSilentFailure', reporterRel).content;
   if (tmp !== content) content = tmp;
