@@ -63,7 +63,7 @@ export function loadProjectContext(projectPath: string = process.cwd()): Project
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'ENOENT' && code !== 'EACCES' && code !== 'EPERM') {
         // Best-effort warning for unexpected errors; do not fail the run.
-        // eslint-disable-next-line no-console
+
         console.warn(
           `[projectContextLoader] Could not read ${filePath}: ${(err as Error).message}`,
         );
