@@ -45,7 +45,8 @@ function loadFeedback(): FeedbackEntry[] {
   try {
     const lines = fs.readFileSync(file, 'utf-8').trim().split('\n').filter(Boolean);
     return lines.map((line) => JSON.parse(line));
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return [];
   }
 }

@@ -47,7 +47,8 @@ function listRuns(): Array<{ runId: string; state: string; updatedAt: string }> 
           state: snap.state ?? 'UNKNOWN',
           updatedAt: snap.updatedAt ?? '',
         };
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         return { runId: runId.name, state: 'CORRUPT', updatedAt: '' };
       }
     })
@@ -346,7 +347,8 @@ async function cmdSagaResume(args: string[]) {
     if (!sagaDefinition && runId.includes('-')) {
       sagaDefinition = getEx(runId.split('-')[0]!);
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* saga definition not found — will run without graph */
   }
 

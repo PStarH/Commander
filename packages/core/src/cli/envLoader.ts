@@ -63,7 +63,8 @@ export function walkUpDotenvPaths(cwd: string): string[] {
     let entries: fs.Dirent[] = [];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* unreadable — leave entries empty */
       entries = [];
     }
@@ -148,7 +149,8 @@ export function findDotenvDefining(key: string, cwd: string = process.cwd()): st
       const content = fs.readFileSync(p, 'utf8');
       const re = new RegExp(`^\\s*${key}\\s*=`, 'm');
       if (re.test(content)) return p;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* unreadable — skip */
     }
   }
