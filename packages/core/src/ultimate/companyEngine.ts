@@ -28,7 +28,7 @@ import {
   getInitialMode,
   getModeConfig,
 } from '../runtime/qualityGater';
-import type { ExecutionMode, QualityMetrics, EscalationDecision } from '../runtime/qualityGater';
+import type { ExecutionMode, EscalationDecision } from '../runtime/qualityGater';
 import { UnifiedMemory, getUnifiedMemory } from '../memory/unifiedMemory';
 import type { UnifiedContext } from '../memory/unifiedMemory';
 import type { UltimateOrchestrator } from './orchestrator';
@@ -483,7 +483,7 @@ export class CompanyEngine {
   /**
    * Estimate task complexity (0-10).
    */
-  private estimateComplexity(goal: string, contextData?: Record<string, unknown>): number {
+  private estimateComplexity(goal: string, _contextData?: Record<string, unknown>): number {
     let complexity = 3; // Baseline
 
     const goalLower = goal.toLowerCase();
@@ -511,7 +511,6 @@ export class CompanyEngine {
    */
   private estimateSavings(mode: ExecutionMode, match: MatchResult): number {
     // Base savings from quality-gated mode selection
-    const modeConfig = getModeConfig(mode);
     const modeSavings = mode === 'compound' ? 0.5 : mode === 'standard' ? 0 : -1;
 
     // Savings from capability matching (reuse vs create)
