@@ -193,6 +193,13 @@ export class UserModelManager {
   }
 
   /**
+   * Persist all loaded profiles to disk.
+   */
+  async close(): Promise<void> {
+    await Promise.all(Array.from(this.models.keys()).map((userId) => this.saveProfile(userId)));
+  }
+
+  /**
    * Save a user profile to disk.
    */
   async saveProfile(userId: string): Promise<void> {
@@ -594,36 +601,63 @@ export class UserModelManager {
   }
 
   private deserializeProfile(data: Record<string, unknown>): UserProfile {
+    if (typeof data !== 'object' || data === null) {
+      throw new Error('Profile data is not an object');
+    }
+
+    const asObj = (v: unknown): Record<string, unknown> =>
+      typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {};
+    const asStr = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback);
+    const asNum = (v: unknown, fallback = 0): number => (typeof v === 'number' ? v : fallback);
+    const asBool = (v: unknown, fallback = false): boolean =>
+      typeof v === 'boolean' ? v : fallback;
+    const asMap = (v: unknown): Map<string, unknown> => new Map(Object.entries(asObj(v)));
+
     const profile = data as unknown as UserProfile;
-    profile.expertise = new Map(Object.entries(data.expertise as Record<string, unknown>)) as Map<
-      string,
-      ExpertiseLevel
-    >;
-    profile.topicInterests = new Map(
-      Object.entries(data.topicInterests as Record<string, unknown>),
-    ) as Map<string, number>;
+    profile.expertise = asMap(data.expertise) as Map<string, ExpertiseLevel>;
+    profile.topicInterests = asMap(data.topicInterests) as Map<string, number>;
+
+    const toolPatterns = asObj(data.toolPatterns);
     profile.toolPatterns = {
-      ...(data.toolPatterns as ToolUsagePatterns),
-      mostUsedTools: new Map(
-        Object.entries(
-          ((data.toolPatterns as Record<string, unknown>)?.mostUsedTools as Record<
-            string,
-            unknown
-          >) ?? {},
-        ),
-      ) as Map<string, number>,
+      mostUsedTools: asMap(toolPatterns.mostUsedTools) as Map<string, number>,
       avoidedTools: new Set(
-        ((data.toolPatterns as Record<string, unknown>)?.avoidedTools as string[]) ?? [],
+        Array.isArray(toolPatterns.avoidedTools) ? toolPatterns.avoidedTools : [],
       ),
+      preferredSearchMethod: ['semantic', 'keyword', 'regex'].includes(
+        asStr(toolPatterns.preferredSearchMethod),
+      )
+        ? (asStr(toolPatterns.preferredSearchMethod) as ToolUsagePatterns['preferredSearchMethod'])
+        : 'keyword',
+      averageSessionLength: asNum(toolPatterns.averageSessionLength),
+      peakUsageHours: Array.isArray(toolPatterns.peakUsageHours)
+        ? toolPatterns.peakUsageHours.filter((h): h is number => typeof h === 'number')
+        : [],
     };
+
+    const preferences = asObj(data.preferences);
     profile.preferences = {
-      ...(data.preferences as UserPreferences),
-      custom: new Map(
-        Object.entries(
-          ((data.preferences as Record<string, unknown>)?.custom as Record<string, unknown>) ?? {},
-        ),
-      ) as Map<string, string>,
+      codingStyle: ['verbose', 'minimal', 'balanced'].includes(asStr(preferences.codingStyle))
+        ? (asStr(preferences.codingStyle) as UserPreferences['codingStyle'])
+        : 'balanced',
+      language: asStr(preferences.language, 'en'),
+      explanationLevel: ['brief', 'moderate', 'detailed'].includes(
+        asStr(preferences.explanationLevel),
+      )
+        ? (asStr(preferences.explanationLevel) as UserPreferences['explanationLevel'])
+        : 'moderate',
+      showDiffs: asBool(preferences.showDiffs),
+      askBeforeEditing: asBool(preferences.askBeforeEditing, true),
+      preferredTestFramework: preferences.preferredTestFramework
+        ? asStr(preferences.preferredTestFramework)
+        : undefined,
+      preferredPackageManager: preferences.preferredPackageManager
+        ? asStr(preferences.preferredPackageManager)
+        : undefined,
+      custom: asMap(preferences.custom) as Map<string, string>,
     };
+
+    profile.modelConfidence = asNum(data.modelConfidence);
+    profile.interactionCount = asNum(data.interactionCount);
     return profile;
   }
 }
