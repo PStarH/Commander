@@ -1,4 +1,4 @@
-import { reportSilentFailure } from '../../core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 import type { ValifySchema, ValifySchemaDef, ParseResult } from './types.js';
 import { ValifyError, ValifyIssue, createIssue, prependPath } from './errors.js';
 

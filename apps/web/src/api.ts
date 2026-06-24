@@ -1,4 +1,4 @@
-import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 import type {
   WarRoomSnapshot,
   ProjectMemoryItem,
