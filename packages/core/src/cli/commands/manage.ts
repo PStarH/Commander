@@ -202,7 +202,8 @@ export async function cmdConfig(args: string[]) {
       });
       if (res.ok) console.log(` ${$.green}✓ Connection OK${$.reset}`);
       else console.log(` ${$.red}✗ ${res.status}${$.reset}`);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       console.log(` ${$.yellow}! Connection failed${$.reset}`);
     }
     return;
@@ -241,7 +242,8 @@ export async function cmdDoctor() {
     const { execSync } = require('child_process');
     gitVersion = execSync('git --version', { stdio: 'pipe', encoding: 'utf-8' }).trim();
     checks.push({ label: 'Git', pass: true, msg: gitVersion });
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     checks.push({ label: 'Git', pass: false, msg: 'Not found. Install: https://git-scm.com' });
   }
 
@@ -257,7 +259,8 @@ export async function cmdDoctor() {
       pass: pm !== 'unknown',
       msg: pm !== 'unknown' ? pm : 'No lockfile found',
     });
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     checks.push({ label: 'Package manager', pass: false, msg: 'Unknown' });
   }
 
@@ -310,7 +313,8 @@ export async function cmdDoctor() {
       pass: usePercent < 95,
       msg: `${avail} available (${parts[4]} used)${usePercent >= 95 ? ' — LOW SPACE' : ''}`,
     });
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     // Non-critical
   }
 
@@ -345,7 +349,8 @@ export async function cmdDoctor() {
           if (modelCount > 0) {
             console.log(`  ${$.green}✓${$.reset} ${modelCount} models available`);
           }
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* ignore */
         }
       } else {

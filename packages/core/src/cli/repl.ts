@@ -125,7 +125,8 @@ function loadHistory(rl: readline.Interface): void {
       .slice(-MAX_HISTORY);
     const history = (rl as unknown as InterfaceWithHistory).history;
     for (const line of lines) history.push(line);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* missing/unreadable history is fine */
   }
 }
@@ -138,14 +139,16 @@ function saveHistoryLine(line: string): void {
     let prev = '';
     try {
       prev = fs.readFileSync(HISTORY_FILE, 'utf8');
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* first write */
     }
     const lines = prev.split('\n').filter(Boolean);
     if (lines[lines.length - 1] !== line) lines.push(line);
     const trimmed = lines.slice(-MAX_HISTORY);
     fs.writeFileSync(HISTORY_FILE, trimmed.join('\n') + '\n');
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* best-effort */
   }
 }
@@ -167,7 +170,8 @@ function profileLog(profilePath: string, line: string): void {
   try {
     fs.mkdirSync(path.dirname(profilePath), { recursive: true });
     fs.appendFileSync(profilePath, line + '\n');
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* best-effort */
   }
 }

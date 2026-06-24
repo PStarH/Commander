@@ -7,7 +7,6 @@ import { deliberate } from '../../ultimate/deliberation';
 import { classifyEffortLevel } from '../../ultimate/effortScaler';
 import { normalizeTopology, type OrchestrationTopology } from '../../ultimate/types';
 import { getGlobalLogger } from '../../logging';
-import { CompanyEngine as LegacyCompanyEngine } from '../../company';
 import { CompanyEngine, createCompanyEngine } from '../../ultimate/companyEngine';
 import { detectProvider } from '../../config/commanderConfig';
 import { GoalOrchestrator } from '../../goal/goalOrchestrator';
@@ -273,7 +272,8 @@ export async function cmdRun(task: string, flags: Record<string, string> = {}) {
       });
       child.unref(); // Don't let the child prevent process exit
       console.log(`  ${$.dim}${t('run.tui.dashboard_started', { pid: child.pid })}${$.reset}`);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       console.log(`  ${$.yellow}⚠ ${t('run.tui.could_not_start')}${$.reset}`);
     }
   }
@@ -919,7 +919,8 @@ async function promptHumanFeedback(success: boolean, task: string): Promise<void
           topology: undefined,
         } as import('../../runtime/types').ExecutionExperience;
         ml.recordExperience(exp);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       const result = ratedGood
@@ -927,7 +928,8 @@ async function promptHumanFeedback(success: boolean, task: string): Promise<void
         : `${$.red}${t('run.feedback.thanks_bad')}${$.reset}`;
       console.log(`  ${result}`);
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     // Timeout or read error — silently skip
   }
 }

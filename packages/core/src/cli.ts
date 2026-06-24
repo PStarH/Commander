@@ -116,7 +116,8 @@ async function main() {
     try {
       const pkgPath = require.resolve('../../package.json');
       console.log(require(pkgPath).version);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       console.log('unknown');
     }
     process.exit(0);
@@ -294,7 +295,8 @@ async function main() {
       const vizPath = require('path').join(__dirname, '../../../viz/dist/index.js');
       try {
         execSync(`node ${vizPath} ${rest.join(' ')}`, { stdio: 'inherit' });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         console.error(
           `\n  ${$.yellow}⚠${$.reset} ${$.dim}Viz package not built. Run: cd packages/viz && pnpm build${$.reset}\n`,
         );

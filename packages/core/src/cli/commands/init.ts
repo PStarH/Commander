@@ -89,6 +89,23 @@ export async function cmdInit(flags: Record<string, string> = {}): Promise<void>
     `  ${$.bold}${$.blue}╰──────────────────────────────────────────────────────────╯${$.reset}\n`,
   );
 
+  // ── Phase 0: Auto-create .env from template ──────────────────────
+  const envPath = path.join(process.cwd(), '.env');
+  const envExamplePath = path.join(process.cwd(), '.env.example');
+  if (!fs.existsSync(envPath) && fs.existsSync(envExamplePath)) {
+    try {
+      const template = fs.readFileSync(envExamplePath, 'utf-8');
+      fs.writeFileSync(envPath, template, 'utf-8');
+      console.log(
+        `  ${$.green}✓${$.reset} Created ${$.cyan}.env${$.reset} from template. Edit it to add your API keys.\n`,
+      );
+    } catch (err) {
+      console.log(
+        `  ${$.yellow}⚠${$.reset} Could not create .env: ${(err as Error).message}${$.reset}\n`,
+      );
+    }
+  }
+
   // ── Phase 1: Probe ──────────────────────────────────────────────────
   const probeDone = startSpinner('Scanning environment for API keys...');
   const probe = await probeEnvironment();
@@ -250,7 +267,8 @@ export async function cmdInit(flags: Record<string, string> = {}): Promise<void>
       if (fs.existsSync(configPath)) {
         existingConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* start fresh */
     }
 
