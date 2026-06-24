@@ -1,3 +1,5 @@
+import { getGlobalLogger } from '../logging';
+import { reportSilentFailure } from '../silentFailureReporter';
 /**
  * CPU Worker Pool — Offload CPU-intensive operations to worker_threads.
  *
@@ -10,7 +12,6 @@
  * - Automatic worker restart on crash
  * - Timeout support for long-running tasks
  */
-import { reportSilentFailure } from '../silentFailureReporter';
 import { Worker, type WorkerOptions } from 'worker_threads';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -105,13 +106,13 @@ export class CPUWorkerPool {
 
     worker.on('error', (err) => {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[CPUWorkerPool] Worker ${index} error:`, message);
+      getGlobalLogger().error('cpuWorkerPool', `[CPUWorkerPool] Worker ${index} error:`, message);
       this.restartWorker(index);
     });
 
     worker.on('exit', (code) => {
       if (code !== 0 && !this.closed) {
-        console.error(`[CPUWorkerPool] Worker ${index} exited with code ${code}`);
+        getGlobalLogger().error('cpuWorkerPool', `[CPUWorkerPool] Worker ${index} exited with code ${code}`);
         this.restartWorker(index);
       }
     });
@@ -134,8 +135,8 @@ export class CPUWorkerPool {
 
     try {
       this.workers[index]?.terminate();
-    } catch (err) {
-      reportSilentFailure(err, 'cpuWorkerPool:137');
+    } catch (_silentE_) {
+        reportSilentFailure(_silentE_, 'cpuWorkerPool:136');
     }
 
     try {
@@ -144,7 +145,7 @@ export class CPUWorkerPool {
       this.availableWorkers.add(index);
       this.processQueue();
     } catch (err) {
-      console.error(`[CPUWorkerPool] Failed to restart worker ${index}:`, err);
+      getGlobalLogger().error('cpuWorkerPool', `[CPUWorkerPool] Failed to restart worker ${index}:`, err);
     }
   }
 

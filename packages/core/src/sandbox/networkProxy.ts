@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 /**
  * NetworkProxy — HTTP CONNECT proxy with domain allowlist for sandbox network isolation.
  *
@@ -19,7 +20,6 @@
  * the user already configured — zero additional configuration.
  */
 
-import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -113,9 +113,8 @@ export function getLLMAPIDomains(): string[] {
           const host = new URL(process.env[entry.baseUrlEnv]!).hostname;
           if (host) domains.add(host.toLowerCase());
           continue; // Skip default domain since we have a custom one
-        } catch (err) {
-          reportSilentFailure(err, 'networkProxy:116');
-          // Invalid URL — fall through to default domain
+        } catch (_silentE_) {
+                reportSilentFailure(_silentE_, 'networkProxy:115');
         }
       }
       domains.add(entry.defaultDomain);
@@ -131,9 +130,8 @@ export function getLLMAPIDomains(): string[] {
       try {
         const host = new URL(url).hostname;
         if (host) domains.add(host.toLowerCase());
-      } catch (err) {
-        reportSilentFailure(err, 'networkProxy:134');
-        // Ignore invalid URLs
+      } catch (_silentE_) {
+            reportSilentFailure(_silentE_, 'networkProxy:132');
       }
     }
   }
@@ -145,9 +143,8 @@ export function getLLMAPIDomains(): string[] {
     if (hostStr.startsWith('http://') || hostStr.startsWith('https://')) {
       try {
         hostStr = new URL(hostStr).host;
-      } catch (err) {
-        reportSilentFailure(err, 'networkProxy:148');
-        /* keep original */
+      } catch (_silentE_) {
+            reportSilentFailure(_silentE_, 'networkProxy:145');
       }
     }
     // Strip port
@@ -219,12 +216,12 @@ server.on('connect', (req, clientSocket, head) => {
     clientSocket.pipe(serverSocket);
   });
 
-  serverSocket.on('error', () => {
-    try { clientSocket.end(); } catch (err) { console.warn('[Catch]', err); }
-  });
-  clientSocket.on('error', () => {
-    try { serverSocket.end(); } catch (err) { console.warn('[Catch]', err); }
-  });
+  serverSocket.on('error', () => { try { clientSocket.end(); } catch (_silentE_) {
+  reportSilentFailure(_silentE_, 'networkProxy:218');
+ } });
+  clientSocket.on('error', () => { try { serverSocket.end(); } catch (_silentE_) {
+  reportSilentFailure(_silentE_, 'networkProxy:219');
+ } });
 });
 
 // Handle plain HTTP requests (block — we only allow CONNECT)

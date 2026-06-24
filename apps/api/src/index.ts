@@ -122,6 +122,9 @@ app.use((req, res, next) => {
   next();
 });
 
+// 5. Authentication (skipped when AUTH_DISABLED=true or no API_KEYS configured)
+app.use(authMiddleware);
+
 // Initialize default memory domains on startup
 DEFAULT_DOMAINS.forEach(({ domain, description }) => {
   try {
