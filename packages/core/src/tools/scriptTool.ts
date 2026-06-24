@@ -216,7 +216,8 @@ export class ExecuteScriptTool implements Tool {
             writable: false,
             configurable: false,
           });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           // Some properties (e.g. __proto__ on some objects) may be non-configurable;
           // ignore silently — the Proxy layer still blocks them at the object level.
         }

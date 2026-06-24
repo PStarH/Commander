@@ -69,7 +69,8 @@ export class VisionAnalyzeTool implements Tool {
         let resolved: string;
         try {
           resolved = safePath(source);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           return `Error: Access denied: path "${source}" is outside workspace`;
         }
         if (!fs.existsSync(resolved)) return `Error: File not found: ${source}`;

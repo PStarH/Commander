@@ -256,7 +256,9 @@ export class WebSearchTool implements Tool {
         try {
           const encoded = redirectMatch[1].replace(/^a1/, '');
           url = Buffer.from(encoded, 'base64').toString('utf-8');
-        } catch {}
+        } catch (err) {
+          console.warn('[Catch]', err);
+        }
       }
       const title = urlMatch[2].replace(/<[^>]*>/g, '').trim();
       const snipMatch =
