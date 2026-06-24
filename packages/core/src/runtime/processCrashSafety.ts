@@ -17,6 +17,7 @@
  * Idempotent: calling install() multiple times is safe (replaces handler).
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import type { DeadLetterQueue, DeadLetterEntry } from './deadLetterQueue';
 import type { LeaseManager } from '../atr/leaseManager';
@@ -144,7 +145,7 @@ export function installProcessCrashHandlers(deps: CrashSafetyDeps): void {
     try {
       deps.onShutdownComplete?.();
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'processCrashSafety:147');
       /* best-effort */
     }
 

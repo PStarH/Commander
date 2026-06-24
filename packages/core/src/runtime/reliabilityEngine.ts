@@ -25,6 +25,7 @@
  * ```
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { CircuitBreaker } from './circuitBreaker';
 import type { CircuitStats, CircuitState } from './circuitBreaker';
 import {
@@ -139,7 +140,7 @@ export class ReliabilityEngine {
         try {
           getMetricsCollector().recordCircuitTransition(from, to, provider ?? 'reliabilityEngine');
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'reliabilityEngine:142');
           /* best-effort */
         }
         try {
@@ -151,14 +152,14 @@ export class ReliabilityEngine {
             failureMode: 'circuit_open',
           });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'reliabilityEngine:154');
           /* best-effort */
         }
         if (extraTransitionHandler) {
           try {
             extraTransitionHandler(from, to, provider);
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'reliabilityEngine:161');
             /* best-effort */
           }
         }
@@ -170,7 +171,7 @@ export class ReliabilityEngine {
       try {
         this._compensationRegistry.setCompensationQueue(config.compensationQueue);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'reliabilityEngine:173');
         /* queue requires better-sqlite3; skip durable retry */
       }
     }
@@ -180,7 +181,7 @@ export class ReliabilityEngine {
         try {
           getMetricsCollector().recordCompensation(action.toolName, 'success');
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'reliabilityEngine:183');
           /* best-effort */
         }
       },
@@ -188,7 +189,7 @@ export class ReliabilityEngine {
         try {
           getMetricsCollector().recordCompensation(action.toolName, 'failed');
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'reliabilityEngine:191');
           /* best-effort */
         }
       },
@@ -196,7 +197,7 @@ export class ReliabilityEngine {
         try {
           getMetricsCollector().recordCompensation(action.toolName, 'exhausted');
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'reliabilityEngine:199');
           /* best-effort */
         }
         try {
@@ -208,7 +209,7 @@ export class ReliabilityEngine {
             failureMode: 'compensation_exhausted',
           });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'reliabilityEngine:211');
           /* best-effort */
         }
       },
@@ -443,7 +444,7 @@ export class ReliabilityEngine {
     try {
       this._atrCheckpointStore.close();
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'reliabilityEngine:446');
       /* best-effort */
     }
   }

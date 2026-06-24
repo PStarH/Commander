@@ -18,6 +18,7 @@
  *    output, not just say "looks good".
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { LLMProvider, LLMRequest, TokenUsage } from './types';
 import { ModelRouter, getModelRouter } from './modelRouter';
 import { getMessageBus } from './messageBus';
@@ -382,7 +383,7 @@ export class GoalJudge {
         { name: 'model', value: verdict.modelUsed },
       ]);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'goalJudge:385');
       /* best-effort */
     }
 
@@ -458,7 +459,7 @@ export class GoalJudge {
     try {
       parsed = jsonMatch ? (JSON.parse(jsonMatch[0]) as JudgeResponse) : null;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'goalJudge:461');
       parsed = null;
     }
 
@@ -515,7 +516,7 @@ export class GoalJudge {
         undefined,
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'goalJudge:518');
       /* best-effort */
     }
 
@@ -658,7 +659,7 @@ export class GoalJudge {
               : `Output does not match pattern: ${condition.pattern}`,
           };
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'goalJudge:661');
           return {
             conditionId: condition.id,
             description: condition.description,

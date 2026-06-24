@@ -8,6 +8,7 @@
  *   - Token usage counter + cost accumulator
  *   - Scrollable event log
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as blessed from 'blessed';
 import type { Widgets } from 'blessed';
 import * as fs from 'fs';
@@ -126,7 +127,7 @@ export class WatchRenderer {
       try {
         this.logFile = fs.openSync(logFilePath, 'a');
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'watchRenderer:129');
       }
     }
     // ── Screen ──────────────────────────────────────────────────────
@@ -275,7 +276,7 @@ export class WatchRenderer {
       try {
         fs.closeSync(this.logFile);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'watchRenderer:278');
       }
     }
     this.screen.destroy();

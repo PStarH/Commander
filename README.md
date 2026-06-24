@@ -39,12 +39,12 @@ AI agents are becoming production infrastructure. But most frameworks were built
 
 These are architectural goals for the current v0.2.0 release. Measurement infrastructure is under development.
 
-| Target | Goal | Notes |
-|--------|------|-------|
-| **Checkpoint Recovery** | <5 seconds | SQLite-backed with WAL persistence |
-| **Failover** | <10 seconds | Provider failure to next provider |
-| **Compensation** | <30 seconds | Failed mutation to rollback complete |
-| **DLQ Processing** | <60 seconds | Error detection to persisted entry |
+| Target                  | Goal        | Notes                                |
+| ----------------------- | ----------- | ------------------------------------ |
+| **Checkpoint Recovery** | <5 seconds  | SQLite-backed with WAL persistence   |
+| **Failover**            | <10 seconds | Provider failure to next provider    |
+| **Compensation**        | <30 seconds | Failed mutation to rollback complete |
+| **DLQ Processing**      | <60 seconds | Error detection to persisted entry   |
 
 ---
 
@@ -62,6 +62,7 @@ curl http://localhost:3000/ready
 ```
 
 Health check monitors 8 components:
+
 - Memory usage (heap)
 - Circuit breaker states
 - Dead letter queue size
@@ -143,36 +144,36 @@ A meta-learner using Thompson Sampling and Reflexion tunes agent configurations 
 
 Commander includes these infrastructure components (see notes for development status):
 
-| Capability                  | Implementation                                                                  | Status |
-| --------------------------- | ------------------------------------------------------------------------------- | ------ |
-| **Circuit breakers**        | 3-state (CLOSED / OPEN / HALF-OPEN), error-rate windowing, per-provider (🛡 audit-verified 2026-06-23, d34 — `runtime/healthCheck.ts` + `saga/circuitBreakerRegistry.ts`) | ✅ Live |
-| **Dead letter queue**       | Append-only ndjson files with replay support                                    | ✅ Live |
-| **SSE streaming**           | Structured events via message bus pub/sub with Last-Event-ID replay             | ✅ Live |
-| **Fallback chains**         | Auto-failover between providers, configurable order and timeouts                | ✅ Live |
-| **Semantic caching**        | SHA-256 exact + cosine-similarity deduplication (via EmbeddingFunction)         | ✅ Live |
-| **Checkpointing**           | SQLite-backed with WAL persistence; falls back to in-memory if SQLite is unavailable (no warning logged)                          | ✅ Live |
-| **Multi-tenancy**           | Tenant-aware singleton isolation via AsyncLocalStorage                           | ⚠️ Isolation only; per-tenant budgets/storage pending |
-| **Quality gates**           | Regex heuristics (hallucination signals, hedging, contradiction)     | ✅ Live |
-| **Self-optimization**       | Beta-distribution Thompson Sampling with Reflexion and cross-session persistence | ⚠️ Needs 5+ runs to activate |
-| **Metrics/Tracing**         | OpenMetrics counters + span-based execution traces                               | ⚠️ Partial; persistent store pending |
-| **Security**                | Auth manager, CORS, privacy router, content scanner                              | ⚠️ Partial; rate limiting pending |
-| **Plugin system**           | Hook points for LLM, tool, and agent lifecycle                                   | ⚠️ Under development |
+| Capability            | Implementation                                                                                                                                                            | Status                                                |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| **Circuit breakers**  | 3-state (CLOSED / OPEN / HALF-OPEN), error-rate windowing, per-provider (🛡 audit-verified 2026-06-23, d34 — `runtime/healthCheck.ts` + `saga/circuitBreakerRegistry.ts`) | ✅ Live                                               |
+| **Dead letter queue** | Append-only ndjson files with replay support                                                                                                                              | ✅ Live                                               |
+| **SSE streaming**     | Structured events via message bus pub/sub with Last-Event-ID replay                                                                                                       | ✅ Live                                               |
+| **Fallback chains**   | Auto-failover between providers, configurable order and timeouts                                                                                                          | ✅ Live                                               |
+| **Semantic caching**  | SHA-256 exact + cosine-similarity deduplication (via EmbeddingFunction)                                                                                                   | ✅ Live                                               |
+| **Checkpointing**     | SQLite-backed with WAL persistence; falls back to in-memory if SQLite is unavailable (no warning logged)                                                                  | ✅ Live                                               |
+| **Multi-tenancy**     | Tenant-aware singleton isolation via AsyncLocalStorage                                                                                                                    | ⚠️ Isolation only; per-tenant budgets/storage pending |
+| **Quality gates**     | Regex heuristics (hallucination signals, hedging, contradiction)                                                                                                          | ✅ Live                                               |
+| **Self-optimization** | Beta-distribution Thompson Sampling with Reflexion and cross-session persistence                                                                                          | ⚠️ Needs 5+ runs to activate                          |
+| **Metrics/Tracing**   | OpenMetrics counters + span-based execution traces                                                                                                                        | ⚠️ Partial; persistent store pending                  |
+| **Security**          | Auth manager, CORS, privacy router, content scanner                                                                                                                       | ⚠️ Partial; rate limiting pending                     |
+| **Plugin system**     | Hook points for LLM, tool, and agent lifecycle                                                                                                                            | ⚠️ Under development                                  |
 
 ---
 
 ## How Commander compares
 
-|                       | Commander                     | LangGraph       | CrewAI           | AutoGen       |
-| --------------------- | ----------------------------- | --------------- | ---------------- | ------------- |
-| **SSE streaming**     | Built-in                      | ❌              | ❌               | ❌            |
-| **Auto topology**     | 5 canonical patterns, auto-chosen (matches `topologyRouter.test.ts` enumeration: SINGLE / CHAIN / DISPATCH / ORCHESTRATOR / REVIEW)       | Manual DAG      | Fixed sequential | Manual        |
-| **Providers**         | 23, auto-failover             | 1-3 (LangChain) | 3-5              | Mostly OpenAI |
-| **Self-optimization** | Thompson Sampling + Reflexion | ❌              | ❌               | ❌            |
-| **Multi-tenant**      | Tenant-aware singleton context | ❌              | ❌               | ❌            |
-| **Crash safety**      | SQLite-backed checkpoints with WAL; silent fallback to in-memory if SQLite unavailable | ❌ | ❌ | ❌ |
-| **Quality gates**     | Regex heuristics (hallucination signals, hedging, contradiction)  | ❌              | ❌               | ❌            |
-| **Circuit breakers**  | Per-provider 3-state          | ❌              | ❌               | ❌            |
-| **Dead letter queue** | Append-only ndjson files with replay | ❌       | ❌               | ❌            |
+|                       | Commander                                                                                                                           | LangGraph       | CrewAI           | AutoGen       |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------- | ---------------- | ------------- |
+| **SSE streaming**     | Built-in                                                                                                                            | ❌              | ❌               | ❌            |
+| **Auto topology**     | 5 canonical patterns, auto-chosen (matches `topologyRouter.test.ts` enumeration: SINGLE / CHAIN / DISPATCH / ORCHESTRATOR / REVIEW) | Manual DAG      | Fixed sequential | Manual        |
+| **Providers**         | 23, auto-failover                                                                                                                   | 1-3 (LangChain) | 3-5              | Mostly OpenAI |
+| **Self-optimization** | Thompson Sampling + Reflexion                                                                                                       | ❌              | ❌               | ❌            |
+| **Multi-tenant**      | Tenant-aware singleton context                                                                                                      | ❌              | ❌               | ❌            |
+| **Crash safety**      | SQLite-backed checkpoints with WAL; silent fallback to in-memory if SQLite unavailable                                              | ❌              | ❌               | ❌            |
+| **Quality gates**     | Regex heuristics (hallucination signals, hedging, contradiction)                                                                    | ❌              | ❌               | ❌            |
+| **Circuit breakers**  | Per-provider 3-state                                                                                                                | ❌              | ❌               | ❌            |
+| **Dead letter queue** | Append-only ndjson files with replay                                                                                                | ❌              | ❌               | ❌            |
 
 ---
 

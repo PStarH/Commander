@@ -4,7 +4,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-const { WarRoomStore } = require('../dist/store.js') as { WarRoomStore: new (filePath?: string) => any };
+const { WarRoomStore } = require('../dist/store.js') as {
+  WarRoomStore: new (filePath?: string) => any;
+};
 
 function createLegacyFixture(filePath: string): void {
   const data = {

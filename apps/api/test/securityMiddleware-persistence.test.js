@@ -41,8 +41,8 @@ try {
   // eslint-disable-next-line global-require
   sm = require('../dist/securityMiddleware.js');
   // eslint-disable-next-line global-require
-  PersistentRateLimitStore = require('../dist/persistentRateLimitStore.js')
-    .PersistentRateLimitStore;
+  PersistentRateLimitStore =
+    require('../dist/persistentRateLimitStore.js').PersistentRateLimitStore;
 } catch (err) {
   test('securityMiddleware-persistence: SKIPPED (deps unavailable)', { skip: true }, () => {
     assert.fail(`Could not load dist modules: ${err.message}`);
@@ -59,17 +59,14 @@ try {
  */
 function fireRequest(port, p) {
   return new Promise((resolve, reject) => {
-    const req = http.request(
-      { hostname: '127.0.0.1', port, path: p, method: 'GET' },
-      (res) => {
-        const headers = { ...res.headers };
-        let body = '';
-        res.on('data', (chunk) => {
-          body += chunk;
-        });
-        res.on('end', () => resolve({ status: res.statusCode, headers, body }));
-      },
-    );
+    const req = http.request({ hostname: '127.0.0.1', port, path: p, method: 'GET' }, (res) => {
+      const headers = { ...res.headers };
+      let body = '';
+      res.on('data', (chunk) => {
+        body += chunk;
+      });
+      res.on('end', () => resolve({ status: res.statusCode, headers, body }));
+    });
     req.on('error', reject);
     req.end();
   });
@@ -181,10 +178,7 @@ test('write-through: rate-limit counters persist to SQL after every counted requ
         const rows = fresh.listActive(Date.now());
         assert.equal(rows.length, 1, 'exactly one row expected post-fire');
         assert.equal(rows[0].count, 5, 'counter matches last seen count');
-        assert.ok(
-          rows[0].resetAt > Date.now(),
-          'resetAt is in the future',
-        );
+        assert.ok(rows[0].resetAt > Date.now(), 'resetAt is in the future');
       } finally {
         fresh.close();
       }
@@ -228,15 +222,8 @@ test('restart round-trip: counter survives a fresh process handle against the sa
     try {
       const rows = reopened.listActive(Date.now());
       assert.equal(rows.length, 1, 'one row survives restart');
-      assert.equal(
-        rows[0].count,
-        3,
-        'counter === 3 after restart — defeats the auth-reset bypass',
-      );
-      assert.ok(
-        rows[0].resetAt > Date.now(),
-        'resetAt still in the future after restart',
-      );
+      assert.equal(rows[0].count, 3, 'counter === 3 after restart — defeats the auth-reset bypass');
+      assert.ok(rows[0].resetAt > Date.now(), 'resetAt still in the future after restart');
 
       // The fresh handle should also be ready to UNION state on next fire.
       // Hydration semantics: a fresh in-process map would be empty, but a
@@ -294,15 +281,8 @@ test('hydrate-on-init: rows in the DB are loaded into the in-memory Map before t
         const byIp = Object.fromEntries(rows.map((r) => [r.ip, r]));
         assert.ok(byIp['1.2.3.4'], 'seeded row preserved across restart');
         assert.equal(byIp['1.2.3.4'].count, 7);
-        assert.ok(
-          byIp['127.0.0.1'],
-          'loopback IP 127.0.0.1 present (explicit bind)',
-        );
-        assert.equal(
-          byIp['127.0.0.1'].count,
-          1,
-          'fresh request was counted exactly once',
-        );
+        assert.ok(byIp['127.0.0.1'], 'loopback IP 127.0.0.1 present (explicit bind)');
+        assert.equal(byIp['127.0.0.1'].count, 1, 'fresh request was counted exactly once');
       } finally {
         reopened.close();
       }

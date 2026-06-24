@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../../runtime/types';
 
 const DEFINITION: ToolDefinition = {
@@ -44,7 +45,7 @@ export class PdfExtractTool implements Tool {
       try {
         resolved = safePath(filePath);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'pdfTool:47');
         return `Error: Access denied: path "${filePath}" is outside workspace`;
       }
       if (!fs.existsSync(resolved)) return `Error: File not found: ${filePath}`;

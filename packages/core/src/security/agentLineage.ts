@@ -27,6 +27,7 @@
  * └────────────────────────────────────────────────────────────────────────┘
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import type { SecurityEvent } from './securityAuditLogger';
@@ -206,7 +207,7 @@ export class AgentLineage {
         [{ name: 'agent_id', value: childAgentId }],
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'agentLineage:209');
       /* best-effort */
     }
 
@@ -261,7 +262,7 @@ export class AgentLineage {
           `[agentLineage] audit chain unavailable for handoff: ${(err as Error)?.message ?? String(err)}`,
         );
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'agentLineage:264');
         /* stderr inaccessible */
       }
     }
@@ -310,7 +311,7 @@ export class AgentLineage {
             `lineage_tree_revoke: ${reason}`,
           );
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'agentLineage:313');
           /* best-effort — token revocation is separate from lineage marking */
         }
       }
@@ -528,7 +529,7 @@ export class AgentLineage {
           `[agentLineage] audit chain unavailable: ${(err as Error)?.message ?? String(err)}`,
         );
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'agentLineage:531');
         /* stderr inaccessible */
       }
     }

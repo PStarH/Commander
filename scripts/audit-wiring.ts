@@ -13,6 +13,7 @@
  *   1 = one or more modules are unwired
  */
 
+import { reportSilentFailure } from '../packages/core/src/silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -40,7 +41,7 @@ function countMatches(content: string, pattern: string): number {
     const matches = content.match(new RegExp(pattern, 'g'));
     return matches?.length ?? 0;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'audit-wiring:43');
     console.error(`  Invalid regex pattern: ${pattern}`);
     return 0;
   }

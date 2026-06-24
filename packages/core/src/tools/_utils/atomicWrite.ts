@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
@@ -74,12 +75,12 @@ export function registerTmpCleanup(directory: string): () => void {
           try {
             fs.unlinkSync(path.join(directory, entry));
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'atomicWrite:77');
           }
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'atomicWrite:82');
     }
   };
 

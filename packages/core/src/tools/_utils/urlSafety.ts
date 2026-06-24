@@ -19,6 +19,7 @@
  *   - IPv6 ULA (fc00::/7) is not blocked. Add if you serve in IPv6 networks.
  */
 
+import { reportSilentFailure } from '../../silentFailureReporter';
 const BLOCKED_HOSTS = new Set([
   'localhost',
   '127.0.0.1',
@@ -65,7 +66,7 @@ export function isUrlSafe(url: string): UrlSafetyResult {
   try {
     parsed = new URL(url);
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'urlSafety:68');
     return { safe: false, reason: 'unparseable URL' };
   }
 

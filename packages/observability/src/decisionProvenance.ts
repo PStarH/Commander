@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../core/src/silentFailureReporter';
 import type { TraceEvent, ExecutionTrace } from '@commander/core';
 import type { DecisionNode } from './types';
 
@@ -65,9 +66,11 @@ function extractReason(llm: TraceEvent | undefined): string {
 function preview(v: unknown, n = 300): string | undefined {
   if (v === undefined || v === null) return undefined;
   if (typeof v === 'string') return v.length > n ? v.slice(0, n) + '…' : v;
-  try { const s = JSON.stringify(v);
-  return s.length > n ? s.slice(0, n) + '…' : s; } catch (err) {
-    console.warn('[Catch]', err);
+  try {
+    const s = JSON.stringify(v);
+    return s.length > n ? s.slice(0, n) + '…' : s;
+  } catch (err) {
+    reportSilentFailure(err, 'decisionProvenance:72');
     return undefined;
   }
 }

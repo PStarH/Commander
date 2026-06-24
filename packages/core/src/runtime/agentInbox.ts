@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
@@ -202,7 +203,7 @@ export class AgentInbox {
         try {
           messages.push(JSON.parse(line) as InboxMessage);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'agentInbox:205');
           getGlobalLogger().warn('AgentInbox', 'Skipping corrupt inbox line', { agentId });
         }
       }

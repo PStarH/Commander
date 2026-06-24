@@ -10,6 +10,7 @@
  * self-test that increments the truncation/cascade counters, then checks metrics.
  */
 
+import { reportSilentFailure } from '../../packages/core/src/silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
@@ -35,7 +36,7 @@ async function waitForApiReady(timeoutMs = 15000): Promise<void> {
       const res = await fetch(`${API_URL}/health`);
       if (res.ok) return;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'verify-artifacts:38');
       /* not ready yet */
     }
     await new Promise((r) => setTimeout(r, 200));

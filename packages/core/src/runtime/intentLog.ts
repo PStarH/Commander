@@ -13,6 +13,7 @@
  *
  * Schema version 1 — add fields without bumping by accepting undefined.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
@@ -91,7 +92,7 @@ export class IntentLog {
     try {
       fs.chmodSync(this.baseDir, 0o700);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'intentLog:94');
       /* best-effort */
     }
   }
@@ -108,7 +109,7 @@ export class IntentLog {
       try {
         fs.chmodSync(filePath, 0o600);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'intentLog:111');
         /* best-effort */
       }
     });
@@ -126,7 +127,7 @@ export class IntentLog {
         try {
           return JSON.parse(lines[i]) as IntentRecord;
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'intentLog:129');
           // skip corrupt line
         }
       }
@@ -146,7 +147,7 @@ export class IntentLog {
       const entries = fs.readdirSync(this.baseDir);
       return entries.filter((f) => f.endsWith('.ndjson')).map((f) => f.replace(/\.ndjson$/, ''));
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'intentLog:149');
       return [];
     }
   }

@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { ExecutionTrace, TraceEvent } from '../runtime/types';
 import { PersistentTraceStore, type TraceStore } from '../runtime/traceStore';
@@ -723,7 +724,7 @@ async function readFeedbackBody(
       try {
         resolve(data ? JSON.parse(data) : {});
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'httpApi:726');
         reject(new Error('Invalid JSON'));
       }
     });
@@ -752,7 +753,7 @@ async function readBody(req: IncomingMessage): Promise<{
       try {
         resolve(data ? JSON.parse(data) : { runId: '', substitutions: [], reExecuteLlm: false });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'httpApi:755');
         reject(new Error('Invalid JSON'));
       }
     });
@@ -775,7 +776,7 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
       try {
         resolve(JSON.parse(data));
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'httpApi:778');
         reject(new Error('Invalid JSON'));
       }
     });

@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../core/src/silentFailureReporter';
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { ExecutionTrace, TraceEvent } from '@commander/core';
 import { PersistentTraceStore, type TraceStore } from '@commander/core';
@@ -396,11 +397,7 @@ export function handleGetConversationRuns(
           reasoning: 0,
           total: e.data.tokenUsage.totalTokens ?? 0,
         };
-        const cost = costModel.calculate(
-          e.data.modelInfo.provider,
-          e.data.modelInfo.model,
-          tokens,
-        );
+        const cost = costModel.calculate(e.data.modelInfo.provider, e.data.modelInfo.model, tokens);
         runCost = costModel.addCost(runCost, cost);
         runTokens = costModel.addTokens(runTokens, tokens);
       }
@@ -657,10 +654,7 @@ export async function handleDatasetRun(
   return { handled: true, status: 202 };
 }
 
-export function handleExperimentsList(
-  res: ServerResponse,
-  deps: ObservabilityDeps,
-): RouteResult {
+export function handleExperimentsList(res: ServerResponse, deps: ObservabilityDeps): RouteResult {
   const runner = deps.experimentRunner;
   if (!runner) {
     sendJson(res, 501, { error: 'ExperimentRunner not configured' });
@@ -747,10 +741,7 @@ export function handleAutoScoreResultsDelete(
   return { handled: true, status: 200 };
 }
 
-export function handleRubricsList(
-  res: ServerResponse,
-  deps: ObservabilityDeps,
-): RouteResult {
+export function handleRubricsList(res: ServerResponse, deps: ObservabilityDeps): RouteResult {
   const es = deps.evalScorer;
   if (!es) {
     sendJson(res, 501, { error: 'EvalScorer not configured' });
@@ -821,8 +812,10 @@ async function readFeedbackBody(req: IncomingMessage): Promise<FeedbackBody> {
       data += chunk.toString('utf-8');
     });
     req.on('end', () => {
-      try { resolve(data ? (JSON.parse(data) as FeedbackBody) : {}); } catch (err) {
-        console.warn('[Catch]', err);
+      try {
+        resolve(data ? (JSON.parse(data) as FeedbackBody) : {});
+      } catch (err) {
+        reportSilentFailure(err, 'httpRoutes:817');
         reject(new Error('Invalid JSON'));
       }
     });
@@ -840,12 +833,14 @@ async function readBody(req: IncomingMessage): Promise<ReplayRequestBody> {
       data += chunk.toString('utf-8');
     });
     req.on('end', () => {
-      try { resolve(
-        data
-          ? (JSON.parse(data) as ReplayRequestBody)
-          : { runId: '', substitutions: [], reExecuteLlm: false },
-      ); } catch (err) {
-        console.warn('[Catch]', err);
+      try {
+        resolve(
+          data
+            ? (JSON.parse(data) as ReplayRequestBody)
+            : { runId: '', substitutions: [], reExecuteLlm: false },
+        );
+      } catch (err) {
+        reportSilentFailure(err, 'httpRoutes:842');
         reject(new Error('Invalid JSON'));
       }
     });
@@ -868,8 +863,10 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
         resolve(undefined);
         return;
       }
-      try { resolve(JSON.parse(data) as Record<string, unknown>); } catch (err) {
-        console.warn('[Catch]', err);
+      try {
+        resolve(JSON.parse(data) as Record<string, unknown>);
+      } catch (err) {
+        reportSilentFailure(err, 'httpRoutes:868');
         reject(new Error('Invalid JSON'));
       }
     });

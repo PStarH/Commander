@@ -17,6 +17,7 @@
  *   - Baseline is stored as tamper-proof JSON via AuditChainLedger.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -259,7 +260,7 @@ export class RedTeamBaselineManager {
       fs.accessSync(this.config.baselinePath);
       return true;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'redTeamBaseline:262');
       return false;
     }
   }

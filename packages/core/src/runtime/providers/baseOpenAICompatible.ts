@@ -13,6 +13,7 @@
  * buildBody() or parseResponse() for provider-specific behavior.
  */
 
+import { reportSilentFailure } from '../../silentFailureReporter';
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types';
 import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
@@ -175,11 +176,11 @@ export function parseOpenAIResponse(
       try {
         parsed = JSON.parse(tc.function.arguments || '{}');
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'baseOpenAICompatible:178');
         try {
           parsed = JSON.parse(`{${tc.function.arguments}}`);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'baseOpenAICompatible:182');
           parsed = { raw: tc.function.arguments };
         }
       }
@@ -231,7 +232,7 @@ function tryParseOpenAICompatibleStructured(
   try {
     return JSON.parse(trimmed) as Record<string, unknown>;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'baseOpenAICompatible:234');
     return undefined;
   }
 }
@@ -344,11 +345,11 @@ export async function callOpenAICompatibleAPI(
               try {
                 parsed = JSON.parse(tc.arguments || '{}');
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'baseOpenAICompatible:347');
                 try {
                   parsed = JSON.parse(`{${tc.arguments}}`);
                 } catch (err) {
-                  console.warn('[Catch]', err);
+                  reportSilentFailure(err, 'baseOpenAICompatible:351');
                   parsed = { raw: tc.arguments };
                 }
               }

@@ -19,3 +19,5 @@ docs/api/
 
 # Runtime state
 .commander*/
+deploy/helm/commander/templates/*.yaml
+.github/workflows/markdownlint.yml

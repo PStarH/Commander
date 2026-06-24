@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
 import { isUrlSafe } from './_utils/urlSafety';
@@ -257,7 +258,7 @@ export class WebSearchTool implements Tool {
           const encoded = redirectMatch[1].replace(/^a1/, '');
           url = Buffer.from(encoded, 'base64').toString('utf-8');
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'webSearchTool:260');
         }
       }
       const title = urlMatch[2].replace(/<[^>]*>/g, '').trim();

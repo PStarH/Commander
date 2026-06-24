@@ -14,6 +14,7 @@
  * - BERTScore methodology (Zhang et al., 2020)
  */
 
+import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -50,7 +51,7 @@ export function persistConsistencySnapshot(report: ConsistencyReport, missionId?
     const filePath = path.join(dir, SNAPSHOT_FILE);
     fs.appendFileSync(filePath, JSON.stringify(record) + '\n', 'utf-8');
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'consistencyMonitor:53');
     /* best-effort persistence */
   }
 }
@@ -68,7 +69,7 @@ export function loadConsistencySnapshots(
     const records = lines.map((line) => JSON.parse(line));
     return records.slice(-limit).reverse();
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'consistencyMonitor:71');
     return [];
   }
 }

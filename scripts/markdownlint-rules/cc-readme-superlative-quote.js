@@ -12,20 +12,24 @@
 
 module.exports = {
   names: ['cc-readme-superlative-quote'],
-  description: 'Reject superlative claims in README*.md blockquotes per AGENTS.md Documentation Policy',
+  description:
+    'Reject superlative claims in README*.md blockquotes per AGENTS.md Documentation Policy',
   tags: ['custom', 'commander-doc-policy'],
   function: function Rule(params, onError) {
     const fname = params.name || '';
     const isReadme = /^README[^/]*\.md$/i.test(fname);
     if (!isReadme) return;
-    const re = /^>.*(the only|the fastest|#1 in.*benchmark|best-in-class|industry-leading|world-class)/i;
+    const re =
+      /^>.*(the only|the fastest|#1 in.*benchmark|best-in-class|industry-leading|world-class)/i;
     params.lines.forEach(function (line, idx) {
       const m = line.match(re);
       if (!m) return;
       onError({
         lineNumber: idx + 1,
         detail:
-          'Superlative phrase "' + m[1].trim() + '" inside a README blockquote. ' +
+          'Superlative phrase "' +
+          m[1].trim() +
+          '" inside a README blockquote. ' +
           'AGENTS.md Documentation Policy: SCRUB. Use descriptive and specific phrasing.',
         context: line.replace(/^\s+/, '').slice(0, 160),
       });

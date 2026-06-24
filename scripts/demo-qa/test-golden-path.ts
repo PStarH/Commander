@@ -10,6 +10,7 @@
  *   - Recovery / fallback / completion markers appear in output
  */
 
+import { reportSilentFailure } from '../../packages/core/src/silentFailureReporter';
 import { spawn, ChildProcess } from 'child_process';
 import { setTimeout as sleep } from 'timers/promises';
 import * as fs from 'fs';
@@ -77,7 +78,7 @@ async function waitForApiReady(url: string, timeoutMs = 15000): Promise<void> {
       const res = await fetch(url);
       if (res.ok) return;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'test-golden-path:80');
       /* not ready yet */
     }
     await sleep(200);

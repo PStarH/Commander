@@ -18,6 +18,7 @@
  * Wired into AgentRuntime after each tool loop iteration.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { LLMMessage } from './types';
 import { getGlobalLogger } from '../logging';
 
@@ -138,7 +139,7 @@ function buildSolidifySummary(turns: LLMMessage[][]): string {
             if (args.path) filesTouched.push(args.path);
             if (args.file_path) filesTouched.push(args.file_path);
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'slidingWindowOrchestrator:141');
             /* skip unparseable args */
           }
         }

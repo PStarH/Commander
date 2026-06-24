@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
   DEFAULT_TOKEN_GOVERNOR_BUDGET,
@@ -137,7 +138,7 @@ export function initializeServices(
           payload: { from, to, provider: provider ?? 'agentRuntime' },
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'serviceInitializer:140');
         /* best-effort */
       }
     },
@@ -152,7 +153,7 @@ export function initializeServices(
       try {
         getMetricsCollector().recordCircuitTransition(from, to, provider ?? 'agentRuntime');
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'serviceInitializer:155');
         /* best-effort */
       }
       try {
@@ -165,7 +166,7 @@ export function initializeServices(
           failureModeNumber: 11,
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'serviceInitializer:168');
         /* best-effort */
       }
       try {
@@ -179,7 +180,7 @@ export function initializeServices(
           payload: { from, to, provider: provider ?? 'agentRuntime' },
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'serviceInitializer:182');
         /* best-effort */
       }
     },
@@ -202,7 +203,7 @@ export function initializeServices(
         failureModeNumber: 7,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'serviceInitializer:205');
       /* best-effort */
     }
     try {
@@ -216,7 +217,7 @@ export function initializeServices(
         payload: { consecutiveFailures, reason },
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'serviceInitializer:219');
       /* best-effort */
     }
   });
@@ -463,7 +464,7 @@ export function initializeServices(
   try {
     getSecurityMonitor().start();
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'serviceInitializer:466');
     /* best-effort */
   }
 

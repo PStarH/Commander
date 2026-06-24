@@ -24,6 +24,7 @@
  * tenant's run records are physically isolated.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { randomUUID } from 'crypto';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
@@ -66,7 +67,7 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
 } catch (err) {
-  console.warn('[Catch]', err);
+  reportSilentFailure(err, 'runLedger:69');
 }
 
 export type CompensationHandler = (

@@ -31,6 +31,7 @@
  * Halt switch: COMMANDER_SKIP_PRECOMMIT=1 (handled in .githooks/pre-commit).
  */
 
+import { reportSilentFailure } from '../packages/core/src/silentFailureReporter';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -297,7 +298,7 @@ function runD25PlaintextGate(scannableFiles: string[]): void {
       if (stat.size > MAX_FILE_BYTES) continue;
       content = fs.readFileSync(full, 'utf-8');
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'precommitHook:300');
       continue;
     }
     violations.push(...scanFileForPlaintextKeys(rel, content));
@@ -332,7 +333,7 @@ function runExecPolicySmoke(): void {
     });
     console.log('[D3 hook] ExecPolicy smoke green ✅');
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'precommitHook:335');
     throw new Error('precommit ExecPolicy smoke failed — see vitest output above');
   }
 }

@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../../runtime/types';
 
 const DEFINITION: ToolDefinition = {
@@ -68,7 +69,7 @@ export class ScreenshotCaptureTool implements Tool {
       try {
         resolvedPath = safePath(outputPath);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'screenshotTool:71');
         return `Error: Access denied: path "${outputPath}" is outside workspace`;
       }
     } else {

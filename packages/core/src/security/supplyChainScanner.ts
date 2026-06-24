@@ -23,6 +23,7 @@
  * └────────────────────────────────────────────────────────────────────┘
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import {
@@ -434,7 +435,7 @@ export class SupplyChainScanner {
         // Generate SPDX SBOM for passed scans (non-blocking, best-effort)
         void attestor.generateProjectSbom();
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'supplyChainScanner:437');
         recordSinkFailure('scannerAttestorBridge');
       }
     }

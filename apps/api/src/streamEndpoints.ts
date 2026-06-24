@@ -15,6 +15,7 @@
  *   - Sends `: heartbeat` comments on the wire to keep proxies / load balancers alive
  *   - Cleans up the MessageBus subscription + heartbeat when the client disconnects
  */
+import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
 import express, { Router, Request, Response } from 'express';
 import { getMessageBus } from '@commander/core';
 import type { MessageBusTopic, BusMessage } from '@commander/core';
@@ -74,7 +75,7 @@ export function createStreamRouter(): Router {
         try {
           (res as unknown as { flush: () => void }).flush();
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'streamEndpoints:77');
           /* best-effort */
         }
       }
@@ -94,7 +95,7 @@ export function createStreamRouter(): Router {
       try {
         res.write(': heartbeat\n\n');
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'streamEndpoints:97');
         /* socket closed mid-write — defer to req close */
       }
     }, heartbeatMs);
@@ -106,13 +107,13 @@ export function createStreamRouter(): Router {
       try {
         unsubscribe();
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'streamEndpoints:109');
         /* best-effort */
       }
       try {
         res.end();
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'streamEndpoints:115');
         /* already closed */
       }
     };

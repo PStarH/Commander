@@ -26,6 +26,7 @@
  *   }
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { RoutingDecision, AgentExecutionContext } from './types';
 import { getGlobalLogger } from '../logging';
 import { getSecurityAuditLogger } from '../security/securityAuditLogger';
@@ -554,7 +555,7 @@ export class PrivacyRouter {
 
       audit.logEvent(event);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'privacyRouter:557');
       // Security audit logging is best-effort
     }
 
@@ -572,7 +573,7 @@ export class PrivacyRouter {
         );
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'privacyRouter:575');
       // Logging is best-effort
     }
   }
@@ -616,7 +617,7 @@ export class PrivacyRouter {
         return { provider: 'ollama', model };
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'privacyRouter:619');
       /* Ollama not available */
     }
 
@@ -632,7 +633,7 @@ export class PrivacyRouter {
         return { provider: 'vllm', model };
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'privacyRouter:635');
       /* vLLM not available */
     }
 

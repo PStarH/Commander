@@ -6,6 +6,7 @@
  * AgentRuntime can pass `this` without creating a circular module dependency.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type {
   ToolCall,
   ToolResult,
@@ -458,7 +459,7 @@ export class ToolExecutionService {
             };
           }
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'toolExecutionService:461');
           /* best-effort */
         }
       }
@@ -730,7 +731,7 @@ export class ToolExecutionService {
       try {
         getMetricsCollector().recordStepLatency('tool_execution', durationMs, tenantId);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'toolExecutionService:733');
         /* best-effort */
       }
     }

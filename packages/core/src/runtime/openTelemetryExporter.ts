@@ -16,6 +16,7 @@
  *   exporter.exportSpan(executionSpan);
  *   await exporter.stop();
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as http from 'http';
 import * as https from 'https';
 import * as fs from 'fs';
@@ -307,7 +308,7 @@ export class OpenTelemetryExporter {
           }
           fs.unlinkSync(path.join(dir, file));
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'openTelemetryExporter:310');
           // Delete corrupted files to prevent retry loop on every restart
           try {
             fs.unlinkSync(path.join(dir, file));
@@ -326,7 +327,7 @@ export class OpenTelemetryExporter {
         });
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'openTelemetryExporter:329');
       // Directory may not exist yet
     }
   }

@@ -10,6 +10,7 @@
  *   commander experience status                   Show what's currently learned
  */
 
+import { reportSilentFailure } from '../../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { $, startSpinner } from '../util';
@@ -41,7 +42,7 @@ function backupFile(sourcePath: string, label: string): string | null {
     fs.copyFileSync(sourcePath, dest);
     return dest;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'experience:44');
     return null;
   }
 }
@@ -89,7 +90,7 @@ async function showStatus(): Promise<void> {
     const verdicts = ml.getVerdicts();
     kv('Predictions', `${verdicts.length}`);
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'experience:92');
     kv('Status', 'Not initialized', $.dim);
   }
 
@@ -109,7 +110,7 @@ async function showStatus(): Promise<void> {
       kv('Newest', `${newest.name}`, $.dim);
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'experience:112');
     kv('Status', 'Not initialized', $.dim);
   }
 
@@ -122,7 +123,7 @@ async function showStatus(): Promise<void> {
     const warnCount = patterns.filter((p) => p.autoWarn).length;
     if (warnCount > 0) kv('Active warnings', `${warnCount}`, $.yellow);
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'experience:125');
     kv('Status', 'Not initialized', $.dim);
   }
 
@@ -207,7 +208,7 @@ async function doReset(flags: Record<string, string>): Promise<void> {
         const { getSkillExtractor } = await import('../../intelligence/skillExtractor');
         getSkillExtractor()['skills'].clear();
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'experience:210');
         /* best-effort */
       }
     }
@@ -230,7 +231,7 @@ async function doReset(flags: Record<string, string>): Promise<void> {
         const { getFailurePatternLearner } = await import('../../intelligence/failurePatterns');
         getFailurePatternLearner()['patterns'].clear();
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'experience:233');
         /* best-effort */
       }
     }

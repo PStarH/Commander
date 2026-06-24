@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
@@ -331,13 +332,13 @@ function loadSettings(): CommanderSettings {
         try {
           return JSON.parse(fs.readFileSync(p, 'utf-8'));
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'commanderConfig:334');
           getGlobalLogger().warn('CommanderConfig', `Failed to parse config file ${p}`);
           return {};
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'commanderConfig:340');
       getGlobalLogger().debug('CommanderConfig', `Skipping config file ${p}`);
     }
   }

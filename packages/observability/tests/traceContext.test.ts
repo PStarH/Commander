@@ -40,11 +40,15 @@ describe('parseTraceparent', () => {
   });
 
   it('returns undefined for all-zeros trace-id', () => {
-    expect(parseTraceparent('00-00000000000000000000000000000000-b7ad6b7169203331-01')).toBeUndefined();
+    expect(
+      parseTraceparent('00-00000000000000000000000000000000-b7ad6b7169203331-01'),
+    ).toBeUndefined();
   });
 
   it('returns undefined for all-zeros parent-id', () => {
-    expect(parseTraceparent('00-0af7651916cd43dd8448eb211c80319c-0000000000000000-01')).toBeUndefined();
+    expect(
+      parseTraceparent('00-0af7651916cd43dd8448eb211c80319c-0000000000000000-01'),
+    ).toBeUndefined();
   });
 
   it('trims whitespace', () => {
@@ -56,20 +60,12 @@ describe('parseTraceparent', () => {
 
 describe('formatTraceparent', () => {
   it('formats a valid traceparent', () => {
-    const result = formatTraceparent(
-      '0af7651916cd43dd8448eb211c80319c',
-      'b7ad6b7169203331',
-      true,
-    );
+    const result = formatTraceparent('0af7651916cd43dd8448eb211c80319c', 'b7ad6b7169203331', true);
     expect(result).toBe('00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01');
   });
 
   it('formats unsampled traceparent', () => {
-    const result = formatTraceparent(
-      '0af7651916cd43dd8448eb211c80319c',
-      'b7ad6b7169203331',
-      false,
-    );
+    const result = formatTraceparent('0af7651916cd43dd8448eb211c80319c', 'b7ad6b7169203331', false);
     expect(result).toBe('00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00');
   });
 
@@ -88,9 +84,7 @@ describe('formatTraceparent', () => {
 
 describe('parseTracestate', () => {
   it('parses valid tracestate', () => {
-    expect(parseTracestate('vendor1=value1,vendor2=value2')).toBe(
-      'vendor1=value1,vendor2=value2',
-    );
+    expect(parseTracestate('vendor1=value1,vendor2=value2')).toBe('vendor1=value1,vendor2=value2');
   });
 
   it('returns undefined for null', () => {

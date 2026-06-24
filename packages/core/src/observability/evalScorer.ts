@@ -25,6 +25,7 @@
  *    break the run.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { LLMRequest, LLMResponse } from '../runtime/types';
 import { classifyExpected } from './normalizeExpected';
 
@@ -357,7 +358,7 @@ function safeJson(v: unknown): string {
       2,
     );
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'evalScorer:360');
     return String(v);
   }
 }
@@ -394,7 +395,7 @@ function tryParseJson(s: string): Record<string, unknown> | null {
     const v = JSON.parse(s);
     if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'evalScorer:397');
     /* fall through */
   }
   return null;

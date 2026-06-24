@@ -45,6 +45,7 @@
  *   const sanitized = dp.sanitizeMemoryEntries(entries, 3.0);
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { getMetricsCollector } from '../runtime/metricsCollector';
@@ -459,7 +460,7 @@ export class DifferentialPrivacyLayer {
         [0.001, 0.01, 0.1, 0.5, 1, 5, 10],
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'differentialPrivacyLayer:462');
       /* best-effort */
     }
 
@@ -481,7 +482,7 @@ export class DifferentialPrivacyLayer {
         context: {},
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'differentialPrivacyLayer:484');
       /* best-effort audit */
     }
 

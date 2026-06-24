@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
@@ -246,7 +247,7 @@ export class WorkflowRegistry {
         return wf;
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'workflowRegistry:249');
       // file may have been deleted
       this.workflows.delete(id);
     }

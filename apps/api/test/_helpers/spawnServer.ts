@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../../../packages/core/src/silentFailureReporter';
 import { spawn, ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
@@ -54,18 +55,16 @@ async function startServer(apiDir: string): Promise<ServerContext> {
 
     let serverProcess: ChildProcess;
     try {
-      serverProcess = spawn(
-        process.execPath,
-        [path.join(apiDir, 'dist', 'index.js')],
-        {
-          cwd: tmpDir,
-          env: { ...process.env, PORT: String(port), AUTH_DISABLED: 'true' },
-          stdio: ['ignore', 'pipe', 'pipe'],
-        },
-      );
+      serverProcess = spawn(process.execPath, [path.join(apiDir, 'dist', 'index.js')], {
+        cwd: tmpDir,
+        env: { ...process.env, PORT: String(port), AUTH_DISABLED: 'true' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
     } catch (syncErr: any) {
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (err) {
-        console.warn('[Catch]', err);
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch (err) {
+        reportSilentFailure(err, 'spawnServer:66');
         /* best-effort */
       }
       if (syncErr.code === 'ENOENT' || syncErr.code === 'EACCES') {
@@ -103,31 +102,32 @@ async function startServer(apiDir: string): Promise<ServerContext> {
       return { baseUrl, serverProcess, tmpDir, port };
     }
 
-    const reason = healthyOrExit && healthyOrExit.reason
-      ? healthyOrExit.reason
-      : healthyOrExit instanceof Error
-        ? healthyOrExit.message
-        : String(healthyOrExit);
+    const reason =
+      healthyOrExit && healthyOrExit.reason
+        ? healthyOrExit.reason
+        : healthyOrExit instanceof Error
+          ? healthyOrExit.message
+          : String(healthyOrExit);
     const stderrSnippet = formatStderrSnippet(stderrBuf);
-    lastError = stderrSnippet
-      ? `${reason}\n-- child stderr --\n${stderrSnippet}`
-      : reason;
+    lastError = stderrSnippet ? `${reason}\n-- child stderr --\n${stderrSnippet}` : reason;
 
     if (!serverProcess.killed) {
-      try { serverProcess.kill('SIGKILL'); } catch (err) {
-        console.warn('[Catch]', err);
+      try {
+        serverProcess.kill('SIGKILL');
+      } catch (err) {
+        reportSilentFailure(err, 'spawnServer:117');
         /* best-effort */
       }
     }
     await new Promise<void>((resolve) => serverProcess.once('close', resolve));
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (err) {
-      console.warn('[Catch]', err);
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch (err) {
+      reportSilentFailure(err, 'spawnServer:125');
       /* best-effort */
     }
   }
-  throw new Error(
-    `API server did not start after ${SPAWN_RETRY_ATTEMPTS} attempts: ${lastError}`,
-  );
+  throw new Error(`API server did not start after ${SPAWN_RETRY_ATTEMPTS} attempts: ${lastError}`);
 }
 
 function formatStderrSnippet(buf: string): string {
@@ -146,9 +146,11 @@ function truncateSyncErrMessage(msg: string): string {
 async function waitHealthy(baseUrl: string): Promise<string> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < STARTUP_TIMEOUT_MS) {
-    try { const response = await fetch(`${baseUrl}/health`);
-    if (response.ok) return 'healthy'; } catch (err) {
-      console.warn('[Catch]', err);
+    try {
+      const response = await fetch(`${baseUrl}/health`);
+      if (response.ok) return 'healthy';
+    } catch (err) {
+      reportSilentFailure(err, 'spawnServer:152');
       /* not yet listening */
     }
     await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
@@ -176,8 +178,10 @@ async function stopServer(context: ServerContext | null): Promise<void> {
       const timer = setTimeout(() => finish(true), STOP_CLOSE_TIMEOUT_MS);
       timer.unref();
       if (!child.killed && child.exitCode === null) {
-        try { child.kill('SIGKILL'); } catch (err) {
-          console.warn('[Catch]', err);
+        try {
+          child.kill('SIGKILL');
+        } catch (err) {
+          reportSilentFailure(err, 'spawnServer:183');
           finish(false);
         }
       } else {
@@ -186,8 +190,10 @@ async function stopServer(context: ServerContext | null): Promise<void> {
     });
   }
   if (context && context.tmpDir) {
-    try { fs.rmSync(context.tmpDir, { recursive: true, force: true }); } catch (err) {
-      console.warn('[Catch]', err);
+    try {
+      fs.rmSync(context.tmpDir, { recursive: true, force: true });
+    } catch (err) {
+      reportSilentFailure(err, 'spawnServer:195');
       /* best-effort */
     }
   }

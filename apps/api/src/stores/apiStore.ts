@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../../../packages/core/src/silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -171,7 +172,7 @@ function createMemoryApiStore(dbPath: string): SqliteApiStore {
         try {
           required = JSON.parse(c.required_approvals_json);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'apiStore:174');
           required = [];
         }
         return required.includes(approverId);
@@ -278,7 +279,7 @@ function createSqliteApiStore(dbPath: string): SqliteApiStore {
   try {
     Database = require('better-sqlite3');
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'apiStore:281');
     throw new Error(
       'SqliteApiStore requires "better-sqlite3". Install it with: pnpm add better-sqlite3',
     );
@@ -414,7 +415,7 @@ function createSqliteApiStore(dbPath: string): SqliteApiStore {
       try {
         db.close();
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'apiStore:417');
       }
     },
     listTasksByStatus(status: string) {
@@ -469,7 +470,7 @@ function createSqliteApiStore(dbPath: string): SqliteApiStore {
           const required = JSON.parse(c.required_approvals_json || '[]');
           return required.includes(approverId);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'apiStore:472');
           return false;
         }
       });

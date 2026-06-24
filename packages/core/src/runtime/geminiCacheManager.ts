@@ -23,6 +23,7 @@
  *   will return an error if the resource has expired/been pruned; we evict on that signal.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { ToolDefinition } from './types';
 
 // FNV-1a hash — same as toolResultCache.ts and singleFlightRequestCache.ts
@@ -208,7 +209,7 @@ export class GeminiCacheManager {
         this.stats.hits++;
         return { contentHash, cachedContentName: name, createdNow: false };
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'geminiCacheManager:211');
         // In-flight create failed; surface the same error
         this.stats.errors++;
         throw new Error(`Gemini cached content create failed for hash ${contentHash}`);

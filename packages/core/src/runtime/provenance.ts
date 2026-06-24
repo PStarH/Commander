@@ -6,6 +6,7 @@
  * Used by SamplesStore and the evaluation framework to ensure every
  * execution trace is reproducible.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
@@ -64,7 +65,7 @@ function fetchGitState(): { commitHash: string; branch: string; dirty: boolean }
     }).trim();
     dirty = status.length > 0;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'provenance:67');
     getGlobalLogger().debug('Provenance', 'Not in a git repo or git not available');
   }
 

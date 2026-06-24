@@ -7,6 +7,7 @@
  * Flow:
  *   Remote Agent → HTTP POST / → A2A JSON-RPC → A2AServer → AgentRuntimeInterface → Response
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import type { AgentRuntimeInterface } from '../runtime';
 import type {
@@ -467,7 +468,7 @@ export class A2AServer {
         try {
           resolve(body ? JSON.parse(body) : {});
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'a2aServer:470');
           reject(new Error('Invalid JSON'));
         }
       });

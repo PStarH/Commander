@@ -14,6 +14,7 @@
  * - Cross-service correlation
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { AsyncLocalStorage } from 'async_hooks';
 import { getGlobalLogger } from '../logging';
 
@@ -169,7 +170,7 @@ export function extractTraceFromHeaders(
       baggage = JSON.parse(baggageHeader);
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'distributedTracing:172');
     /* ignore malformed baggage */
   }
 

@@ -4,6 +4,7 @@
  * Each task has a type, status, lifecycle, and can be killed.
  * Tasks write output to files for parallel sub-agent communication.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -83,7 +84,7 @@ function pruneTerminalTasks(): void {
       try {
         fs.unlinkSync(task.outputFile);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'task:86');
         /* already deleted */
       }
       activeTasks.delete(id);
