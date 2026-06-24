@@ -18,52 +18,16 @@ import type {
   AgentExecutionResult,
   ExecutionExperience,
 } from '../runtime/types';
-import type { OrchestrationTopology, TaskTreeNode } from './types';
+import type {
+  OrchestrationTopology,
+  TaskTreeNode,
+  TaskState,
+  EvidenceItem,
+  StepResult,
+  WorkflowDecision,
+} from './types';
 import { getMessageBus } from '../runtime/messageBus';
 import { getTraceRecorder } from '../runtime/executionTrace';
-
-// ============================================================================
-// 任务状态构造器
-// ============================================================================
-
-export interface TaskState {
-  /** 当前执行阶段 */
-  phase: 'discovery' | 'planning' | 'execution' | 'refinement' | 'verification' | 'termination';
-  /** 已完成步骤数 */
-  completedSteps: number;
-  /** 总步骤数估计 */
-  estimatedTotalSteps: number;
-  /** 已收集的关键信息 */
-  gatheredEvidence: EvidenceItem[];
-  /** 当前置信度 */
-  confidence: number;
-  /** 剩余预算（token） */
-  remainingBudget: number;
-  /** 已用时间 */
-  elapsedMs: number;
-  /** 上一步结果 */
-  lastStepResult?: StepResult;
-  /** 是否需要重新规划 */
-  needsReplanning: boolean;
-  /** 终止原因 */
-  terminationReason?: string;
-}
-
-export interface EvidenceItem {
-  source: string;
-  content: string;
-  confidence: number;
-  timestamp: number;
-}
-
-export interface StepResult {
-  stepId: string;
-  success: boolean;
-  output: string;
-  durationMs: number;
-  tokenCost: number;
-  qualityScore?: number;
-}
 
 class TaskStateConstructor {
   /**
@@ -161,18 +125,10 @@ class TaskStateConstructor {
 interface SubWorkflow {
   id: string;
   topology: OrchestrationTopology;
-  steps: string[]; // 目标步骤描述
-  estimatedCost: number; // 预估token消耗
-  estimatedDuration: number; // 预估耗时(ms)
-  successRate: number; // 历史成功率
-}
-
-export interface WorkflowDecision {
-  subWorkflowId: string;
-  topology: OrchestrationTopology;
-  priority: number;
-  rationale: string;
-  alternatives: string[];
+  steps: string[];
+  estimatedCost: number;
+  estimatedDuration: number;
+  successRate: number;
 }
 
 class WorkflowAdapter {
@@ -426,6 +382,11 @@ export class RuntimeWorkflowAdapter {
     // 更新任务状态
     this.stageResults.push(completedStep);
     this.taskState = TaskStateConstructor.build(ctx, this.stageResults, elapsedMs);
+
+    // Track stage duration
+    const currentPhase = this.taskState.phase;
+    const prev = this.stageDurations.get(currentPhase) ?? 0;
+    this.stageDurations.set(currentPhase, prev + completedStep.durationMs);
 
     // 记录之前的决策结果
     if (completedStep.stepId && this.decisions.length > 0) {
