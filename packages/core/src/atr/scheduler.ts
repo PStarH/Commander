@@ -27,7 +27,7 @@ import type { CompensationHandler } from '../runtime/compensationRegistry';
 import type { RunState, RunTransaction } from './types';
 import { hashIntent } from './canonicalJson';
 import { LeaseManager } from './leaseManager';
-import { IdempotencyStore, getIdempotencyStore } from './idempotencyStore';
+import { IdempotencyStore } from './idempotencyStore';
 import { RunLedger, getRunLedgerBundle, type CompensationOutcome } from './runLedger';
 import { CompensationBridge } from './compensationBridge';
 import { defaultCompensationHandlers } from './defaultCompensation';
