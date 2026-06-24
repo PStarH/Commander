@@ -23,13 +23,7 @@
 import { getGlobalLogger } from '../logging';
 import { getGlobalThreeLayerMemory } from '../threeLayerMemory';
 import type { ThreeLayerMemory, MemoryEntry } from '../threeLayerMemory';
-import type {
-  MemoryStore,
-  EpisodicMemoryItem,
-  MemoryWriteOptions,
-  MemorySearchQuery,
-  MemorySearchResult,
-} from '../memory';
+import type { MemoryStore, EpisodicMemoryItem, MemoryWriteOptions } from '../memory';
 import { ConversationStore, getConversationStore } from './conversationStore';
 import type {
   ConversationSearchResult,
@@ -273,8 +267,7 @@ export class UnifiedMemory {
     const sources = options.sources ?? ['working', 'episodic', 'longterm', 'conversations'];
     const limit = options.limit ?? 5;
 
-    // Parallel search across all sources
-    const searchPromises: Promise<void>[] = [];
+    // Search across all sources
     let workingResults: MemoryEntry[] = [];
     let episodicResults: EpisodicMemoryItem[] = [];
     let longtermResults: MemoryEntry[] = [];
@@ -376,7 +369,6 @@ export class UnifiedMemory {
     this.ensureInitialized();
 
     const maxTokens = params.maxTokens ?? this.config.maxContextTokens;
-    const parts: string[] = [];
 
     // 1. User context (if available)
     let userContext = '';
@@ -558,7 +550,7 @@ export class UnifiedMemory {
     let archived = 0;
     let promoted = 0;
     let deduplicated = 0;
-    let decayed = 0;
+    const decayed = 0;
 
     // Step 1: Archive old working memories to episodic
     const working = this.threeLayer.getByLayer('working');
