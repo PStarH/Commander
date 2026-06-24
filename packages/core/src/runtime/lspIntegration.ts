@@ -306,7 +306,8 @@ class LSPClient {
     if (text === undefined) {
       try {
         text = await fs.promises.readFile(filePath, 'utf-8');
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         text = '';
       }
     }
@@ -390,7 +391,8 @@ function getLSPClient(): LSPClient | null {
   if (!_lspConfig) return null;
   try {
     return lspClientSingleton.get();
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return null;
   }
 }
@@ -459,7 +461,8 @@ export class LSPDiagnosticsTool implements Tool {
     // Validate workspace boundary
     try {
       safePath(filePath);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return `Error: Access denied: filePath "${filePath}" is outside workspace`;
     }
 
@@ -502,7 +505,8 @@ export class LSPAttachTool implements Tool {
     let resolved: string;
     try {
       resolved = safePath(filePath);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return `Error: Access denied: filePath "${filePath}" is outside workspace`;
     }
     if (!fs.existsSync(resolved)) return `Error: file not found: ${filePath}`;

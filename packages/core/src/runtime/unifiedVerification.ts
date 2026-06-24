@@ -168,7 +168,8 @@ function runStage0(
     } else if (hReport.recommendation === 'flag_for_review') {
       confidence = Math.min(confidence, 0.5);
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     getGlobalLogger().debug('UnifiedVerification', 'Hallucination detection failed');
   }
 
@@ -325,14 +326,16 @@ function runStage1(ctx: UVPTaskContext): { signals: VerificationSignal[]; confid
   let parsed: unknown;
   try {
     parsed = JSON.parse(ctx.output);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     getGlobalLogger().debug('UnifiedVerification', 'JSON parse failed in stage 1');
     // Try to extract JSON from markdown code blocks
     const jsonMatch = ctx.output.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
     if (jsonMatch) {
       try {
         parsed = JSON.parse(jsonMatch[1].trim());
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         getGlobalLogger().debug(
           'UnifiedVerification',
           'JSON parse failed for extracted code block',
@@ -472,7 +475,8 @@ async function runStage2(
       const confidence = result.pass ? 0.9 : 0.3;
       return { signals, confidence, tokensUsed };
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     getGlobalLogger().debug('UnifiedVerification', 'LLM verification failed');
     // LLM verification failure is non-fatal
   }

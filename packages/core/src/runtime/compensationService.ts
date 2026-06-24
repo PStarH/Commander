@@ -52,7 +52,8 @@ export class CompensationService {
           }
         })
         .catch(() => {});
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -61,7 +62,8 @@ export class CompensationService {
       () => {
         try {
           this.registry.processQueue().catch(() => {});
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       },
@@ -218,7 +220,8 @@ export class CompensationService {
               failureMode: 'compensation_exhausted',
               failureModeNumber: 12,
             });
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* best-effort */
           }
         }
@@ -230,7 +233,8 @@ export class CompensationService {
             totalSteps,
             runId,
           });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
         getGlobalLogger().debug('CompensationService', 'Compensation via saga threw unexpectedly', {

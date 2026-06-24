@@ -168,7 +168,8 @@ export function extractTraceFromHeaders(
     if (baggageHeader) {
       baggage = JSON.parse(baggageHeader);
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* ignore malformed baggage */
   }
 

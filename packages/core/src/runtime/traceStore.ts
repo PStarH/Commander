@@ -38,7 +38,8 @@ export class PersistentTraceStore implements TraceStore {
     fs.mkdirSync(this.baseDir, { recursive: true, mode: 0o700 });
     try {
       fs.chmodSync(this.baseDir, 0o700);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }
@@ -80,7 +81,8 @@ export class PersistentTraceStore implements TraceStore {
       const fd = fs.openSync(filePath, 'a', 0o600);
       try {
         fs.fchmodSync(fd, 0o600);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       try {

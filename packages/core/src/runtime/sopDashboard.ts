@@ -98,15 +98,18 @@ export function listSOPs(customDir?: string): SOPListItem[] {
               hasMarkdown: files.includes(`${runId}.md`),
               hasJson: true,
             });
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             // Corrupt JSON file — skip
           }
         }
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         // Permission error or similar — skip this agent
       }
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     // Base dir doesn't exist or can't be read
   }
 
@@ -130,7 +133,8 @@ export function getSOP(agentId: string, runId: string, customDir?: string): SOPT
   try {
     const raw = fs.readFileSync(jsonPath, 'utf-8');
     return JSON.parse(raw) as SOPTemplate;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return null;
   }
 }
@@ -148,7 +152,8 @@ export function getSOPMarkdown(agentId: string, runId: string, customDir?: strin
 
   try {
     return fs.readFileSync(mdPath, 'utf-8');
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return null;
   }
 }

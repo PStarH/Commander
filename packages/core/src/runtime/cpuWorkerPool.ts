@@ -133,7 +133,9 @@ export class CPUWorkerPool {
 
     try {
       this.workers[index]?.terminate();
-    } catch {}
+    } catch (err) {
+      console.warn('[Catch]', err);
+    }
 
     try {
       const worker = await this.createWorker(index);

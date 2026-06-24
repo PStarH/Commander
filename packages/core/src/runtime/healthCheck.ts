@@ -1,10 +1,18 @@
 /**
  * Health check system for Commander runtime.
  * 8-component monitoring: memory, circuit breaker, DLQ, checkpoint, compensation, event bus, providers, disk space.
+ *
+ * Wiring: create a HealthCollector with optional factory functions that return
+ * live data from the running system. Without wiring, checks return "healthy"
+ * with "not wired" messages (backward compatible).
  */
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
+
+// ============================================================================
+// Types
+// ============================================================================
 
 export interface HealthCheckResult {
   status: 'healthy' | 'degraded' | 'unhealthy';
@@ -18,6 +26,7 @@ export interface HealthCheckResult {
     providers: ComponentCheck;
     diskSpace: ComponentCheck;
   };
+  degradedComponents?: string[];
   timestamp: string;
 }
 
@@ -27,13 +36,52 @@ export interface ComponentCheck {
   details?: Record<string, unknown>;
 }
 
+// DLQ category-count entry returned by getDLQStats
+export interface DLQCategoryCount {
+  category: string;
+  count: number;
+}
+
+/**
+ * Live-data sources that callers (e.g. CommanderHttpServer) provide so the
+ * health collector returns real component status instead of "not implemented".
+ *
+ * Every field is a getter function — called fresh on each collect() so the
+ * returned data reflects current system state.
+ */
+export interface HealthSources {
+  /** Return open circuit breaker names and total breaker count. */
+  getCircuitBreakerInfo?: () => { open: string[]; total: number };
+  /** Return aggregate dead-letter-queue size and per-category breakdown. */
+  getDLQInfo?: () => { totalEntries: number; byCategory: DLQCategoryCount[] };
+  /** Return pending and completed compensation counts. */
+  getCompensationInfo?: () => { pending: number; compensated: number };
+  /** Return active topic count and subscriber count on the event bus. */
+  getEventBusInfo?: () => { activeTopics: number; subscriberCount: number };
+  /** Return available / total provider counts. */
+  getProviderInfo?: () => { available: number; total: number };
+}
+
+// DLQ size threshold — when total entries exceeds this, mark as degraded
+const DLQ_DEGRADED_THRESHOLD = 100;
+
+// ============================================================================
+// HealthCollector
+// ============================================================================
+
 export class HealthCollector {
   private readonly warningThresholdMB: number;
   private readonly criticalThresholdMB: number;
+  private readonly sources?: HealthSources;
 
-  constructor(opts?: { warningThresholdMB?: number; criticalThresholdMB?: number }) {
+  constructor(opts?: {
+    warningThresholdMB?: number;
+    criticalThresholdMB?: number;
+    sources?: HealthSources;
+  }) {
     this.warningThresholdMB = opts?.warningThresholdMB ?? 512;
     this.criticalThresholdMB = opts?.criticalThresholdMB ?? 1024;
+    this.sources = opts?.sources;
   }
 
   async collect(): Promise<HealthCheckResult> {
@@ -104,11 +152,53 @@ export class HealthCollector {
   }
 
   private async checkCircuitBreaker(): Promise<ComponentCheck> {
-    return { status: 'healthy', message: 'Circuit breaker check not implemented' };
+    const cb = this.sources?.getCircuitBreakerInfo;
+    if (!cb) {
+      return { status: 'healthy', message: 'Circuit breaker check not wired — no source provided' };
+    }
+    try {
+      const info = cb();
+      if (info.open.length > 0) {
+        return {
+          status: 'degraded',
+          message: `${info.open.length} circuit breaker(s) OPEN: ${info.open.join(', ')}`,
+          details: { open: info.open, total: info.total },
+        };
+      }
+      return {
+        status: 'healthy',
+        message: `All ${info.total} circuit breaker(s) CLOSED`,
+        details: { open: info.open, total: info.total },
+      };
+    } catch (err) {
+      console.warn('[Catch]', err);
+      return { status: 'healthy', message: 'Circuit breaker check failed — assuming healthy' };
+    }
   }
 
   private async checkDeadLetterQueue(): Promise<ComponentCheck> {
-    return { status: 'healthy', message: 'DLQ check not implemented' };
+    const dlq = this.sources?.getDLQInfo;
+    if (!dlq) {
+      return { status: 'healthy', message: 'DLQ check not wired — no source provided' };
+    }
+    try {
+      const info = dlq();
+      if (info.totalEntries > DLQ_DEGRADED_THRESHOLD) {
+        return {
+          status: 'degraded',
+          message: `DLQ has ${info.totalEntries} entries (>${DLQ_DEGRADED_THRESHOLD} threshold)`,
+          details: { totalEntries: info.totalEntries, byCategory: info.byCategory },
+        };
+      }
+      return {
+        status: 'healthy',
+        message: `DLQ has ${info.totalEntries} entries`,
+        details: { totalEntries: info.totalEntries, byCategory: info.byCategory },
+      };
+    } catch (err) {
+      console.warn('[Catch]', err);
+      return { status: 'healthy', message: 'DLQ check failed — assuming healthy' };
+    }
   }
 
   private async checkCheckpoint(): Promise<ComponentCheck> {
@@ -137,21 +227,85 @@ export class HealthCollector {
         message: `${files.length} checkpoint(s) healthy`,
         details: { total: files.length },
       };
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return { status: 'healthy', message: 'Checkpoint directory not accessible' };
     }
   }
 
   private async checkCompensation(): Promise<ComponentCheck> {
-    return { status: 'healthy', message: 'Compensation check not implemented' };
+    const comp = this.sources?.getCompensationInfo;
+    if (!comp) {
+      return { status: 'healthy', message: 'Compensation check not wired — no source provided' };
+    }
+    try {
+      const info = comp();
+      if (info.pending > 0) {
+        return {
+          status: 'degraded',
+          message: `${info.pending} pending compensation(s), ${info.compensated} compensated`,
+          details: { pending: info.pending, compensated: info.compensated },
+        };
+      }
+      return {
+        status: 'healthy',
+        message: `No pending compensations (${info.compensated} total compensated)`,
+        details: { pending: info.pending, compensated: info.compensated },
+      };
+    } catch (err) {
+      console.warn('[Catch]', err);
+      return { status: 'healthy', message: 'Compensation check failed — assuming healthy' };
+    }
   }
 
   private async checkEventBus(): Promise<ComponentCheck> {
-    return { status: 'healthy', message: 'Event bus check not implemented' };
+    const bus = this.sources?.getEventBusInfo;
+    if (!bus) {
+      return { status: 'healthy', message: 'Event bus check not wired — no source provided' };
+    }
+    try {
+      const info = bus();
+      return {
+        status: 'healthy',
+        message: `${info.activeTopics} active topic(s), ${info.subscriberCount} subscriber(s)`,
+        details: { activeTopics: info.activeTopics, subscriberCount: info.subscriberCount },
+      };
+    } catch (err) {
+      console.warn('[Catch]', err);
+      return { status: 'healthy', message: 'Event bus check failed — assuming healthy' };
+    }
   }
 
   private async checkProviders(): Promise<ComponentCheck> {
-    return { status: 'healthy', message: 'Provider check not implemented' };
+    const prov = this.sources?.getProviderInfo;
+    if (!prov) {
+      return { status: 'healthy', message: 'Provider check not wired — no source provided' };
+    }
+    try {
+      const info = prov();
+      if (info.available === 0 && info.total > 0) {
+        return {
+          status: 'unhealthy',
+          message: `0/${info.total} providers available`,
+          details: { available: info.available, total: info.total },
+        };
+      }
+      if (info.available < info.total) {
+        return {
+          status: 'degraded',
+          message: `${info.available}/${info.total} providers available`,
+          details: { available: info.available, total: info.total },
+        };
+      }
+      return {
+        status: 'healthy',
+        message: `All ${info.total} provider(s) available`,
+        details: { available: info.available, total: info.total },
+      };
+    } catch (err) {
+      console.warn('[Catch]', err);
+      return { status: 'healthy', message: 'Provider check failed — assuming healthy' };
+    }
   }
 
   private async checkDiskSpace(): Promise<ComponentCheck> {
@@ -182,7 +336,8 @@ export class HealthCollector {
         message: `Disk space adequate: ${freeGB}GB free (${usagePercent}% used)`,
         details: { freeGB, totalGB, usagePercent },
       };
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return { status: 'healthy', message: 'Disk space check not available' };
     }
   }

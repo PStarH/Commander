@@ -90,7 +90,8 @@ export class IntentLog {
     fs.mkdirSync(this.baseDir, { recursive: true, mode: 0o700 });
     try {
       fs.chmodSync(this.baseDir, 0o700);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }
@@ -106,7 +107,8 @@ export class IntentLog {
       fs.appendFileSync(filePath, line, 'utf-8');
       try {
         fs.chmodSync(filePath, 0o600);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     });
@@ -123,7 +125,8 @@ export class IntentLog {
       for (let i = lines.length - 1; i >= 0; i--) {
         try {
           return JSON.parse(lines[i]) as IntentRecord;
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           // skip corrupt line
         }
       }
@@ -142,7 +145,8 @@ export class IntentLog {
     try {
       const entries = fs.readdirSync(this.baseDir);
       return entries.filter((f) => f.endsWith('.ndjson')).map((f) => f.replace(/\.ndjson$/, ''));
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return [];
     }
   }

@@ -56,7 +56,8 @@ export class VLLMProvider extends BaseOpenAICompatibleProvider {
         signal: AbortSignal.timeout(3000),
       });
       return response.ok;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }
@@ -75,7 +76,8 @@ export class VLLMProvider extends BaseOpenAICompatibleProvider {
       if (!response.ok) return [];
       const data = await response.json();
       return (data.data || []).map((m: { id: string }) => m.id);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return [];
     }
   }
@@ -123,7 +125,8 @@ export class VLLMProvider extends BaseOpenAICompatibleProvider {
           signal: AbortSignal.timeout(1000),
         });
         VLLMProvider.healthCache = { healthy: true, timestamp: now };
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         VLLMProvider.healthCache = { healthy: false, timestamp: now };
         getGlobalLogger().warn(
           'VLLMProvider',

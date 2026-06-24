@@ -55,6 +55,12 @@ export interface AgentExecutionContext {
   /** AgentLineage instance ID (Phase 2.2) — set by subAgentExecutor on spawn so
    *  downstream tool calls and LLM calls can reference their lineage node. */
   lineageInstanceId?: string;
+  /**
+   * Optional verification tool. When set, the runtime will execute this tool
+   * after the assistant indicates it is done. If the tool fails, the runtime
+   * re-prompts the agent to continue rather than accepting the stop signal.
+   */
+  verificationTool?: string;
 }
 
 /**
@@ -270,5 +276,33 @@ export interface AgentRuntimeConfig {
   /** Cycle detector configuration. */
   cycleDetection?: {
     enabled?: boolean;
+  };
+  /** Circuit breaker configuration. */
+  circuitBreaker?: {
+    /** Open the breaker immediately when a tool permanently fails, rather than
+     *  waiting for the LLM to retry the same tool N times. */
+    openOnFailure?: boolean;
+    /** Default failure threshold before opening the breaker. */
+    threshold?: number;
+  };
+  /** Provider-level retry configuration for transient LLM provider failures. */
+  providerRetry?: {
+    attempts?: number;
+    initialDelayMs?: number;
+    maxDelayMs?: number;
+  };
+  /** Goal-completion loop: continue executing if the LLM stops before the goal
+   *  is demonstrably complete. */
+  goalCompletion?: {
+    /** When true, re-prompt the LLM to continue if it stops without a clear
+     *  completion signal and budget remains. */
+    continueOnStop?: boolean;
+    /** Phrases in the assistant message that are treated as completion signals. */
+    completionPhrases?: string[];
+    /** Custom prompt to append when continuing after an early stop. */
+    continuationPrompt?: string;
+    /** Maximum number of times the runtime will invoke the verification tool
+     *  and re-prompt the agent after a failed verification. Default: 3. */
+    verificationAttempts?: number;
   };
 }

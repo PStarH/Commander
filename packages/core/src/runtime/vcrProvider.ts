@@ -142,7 +142,8 @@ export class VCRProvider implements LLMProvider {
         const raw = fs.readFileSync(this.cassettePath, 'utf-8');
         return JSON.parse(raw) as VCRCassette;
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // corrupt cassette → start fresh
     }
     return {
