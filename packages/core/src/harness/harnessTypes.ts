@@ -19,7 +19,6 @@ import type {
   Tool,
   ToolCall,
   ToolResult,
-  AgentExecutionContext,
   AgentExecutionResult,
   ModelTier,
   ToolDefinition,

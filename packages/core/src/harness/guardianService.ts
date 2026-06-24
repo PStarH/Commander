@@ -77,7 +77,7 @@ export class GuardianService {
     toolCall: ToolCall,
     goal: string,
     services: HarnessServices,
-    tenantId?: string,
+    _tenantId?: string,
   ): Promise<GuardianDecision> {
     if (!this.config.enabled) {
       return { approved: true, reason: 'Guardian disabled — auto-approved' };
