@@ -24,6 +24,7 @@ import { AgentRuntime } from '../runtime/agentRuntime';
 import { getGlobalLogger } from '../logging';
 import { getMessageBus } from '../runtime/messageBus';
 import { getWebhookDispatcher } from '../runtime/webhookDispatcher';
+import { walCheckpoint } from '../storage/walCheckpoint';
 import type { AgentExecutionResult, LLMProvider } from '../runtime/types';
 
 const log = getGlobalLogger();
@@ -115,7 +116,8 @@ let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
-} catch {
+} catch (err) {
+  console.warn('[Catch]', err);
   /* not available — will throw on construction */
 }
 
@@ -461,7 +463,8 @@ export class TaskQueue {
     try {
       const { OpenAIProvider } = require('../runtime/providers/openaiProvider');
       return new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY ?? '' }) as LLMProvider;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return null;
     }
   }

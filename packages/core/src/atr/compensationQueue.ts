@@ -49,7 +49,9 @@ let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
-} catch {}
+} catch (err) {
+  console.warn('[Catch]', err);
+}
 
 export type CompensationStatus = 'pending' | 'in_progress' | 'escalated';
 

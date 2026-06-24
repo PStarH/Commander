@@ -252,7 +252,8 @@ export class PolicyEngine {
     try {
       const value = evaluateExpr(rule.body, input, builtins, this.maxDepth);
       return { fired: Boolean(value) };
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return { fired: false };
     }
   }
