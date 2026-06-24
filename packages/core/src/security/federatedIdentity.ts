@@ -368,7 +368,8 @@ export class FederatedIdentity {
           { name: 'audience_tenant', value: params.audienceTenant },
         ],
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* metrics unavailable — non-critical */
     }
 
@@ -408,7 +409,8 @@ export class FederatedIdentity {
         return { accepted: false, reason: 'malformed_trust', detail: 'missing required fields' };
       }
       trust = parsed;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return { accepted: false, reason: 'malformed_trust', detail: 'JSON parse failed' };
     }
 
@@ -552,7 +554,8 @@ export class FederatedIdentity {
           },
         },
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort — lineage is secondary to exchange */
     }
 
@@ -575,7 +578,8 @@ export class FederatedIdentity {
           { name: 'audience_tenant', value: audienceTenant },
         ],
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* metrics unavailable */
     }
 
@@ -661,7 +665,8 @@ export class FederatedIdentity {
           tokensRevoked++;
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort — token revocation */
     }
 
@@ -673,7 +678,8 @@ export class FederatedIdentity {
           instancesKilled++;
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort — lineage marking */
     }
 
@@ -695,7 +701,8 @@ export class FederatedIdentity {
           { name: 'audience_tenant', value: entry.trust.audienceTenant },
         ],
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* metrics unavailable */
     }
 
@@ -776,7 +783,8 @@ export class FederatedIdentity {
         Buffer.from(expected, 'utf-8'),
         Buffer.from(trust.hmacSignature, 'utf-8'),
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }
@@ -816,10 +824,12 @@ export class FederatedIdentity {
         const privateKey = crypto.createPrivateKey(this.oidcPrivateKey);
         const publicKey = crypto.createPublicKey(privateKey);
         return crypto.verify('sha256', Buffer.from(data, 'utf-8'), publicKey, signature);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         return false;
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }
@@ -906,7 +916,8 @@ export class FederatedIdentity {
         console.error(
           `[federatedIdentity] audit chain unavailable: ${(err as Error)?.message ?? String(err)}`,
         );
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* stderr inaccessible */
       }
     }

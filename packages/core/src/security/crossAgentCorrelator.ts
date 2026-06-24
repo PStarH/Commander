@@ -260,7 +260,8 @@ export class CrossAgentCorrelator {
             1,
             [{ name: 'rule_type', value: match.ruleType }],
           );
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       }
@@ -589,7 +590,8 @@ export class CrossAgentCorrelator {
         },
         timestamp: match.detectedAt,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

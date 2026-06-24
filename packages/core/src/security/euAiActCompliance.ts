@@ -218,7 +218,8 @@ export class EuAiActComplianceReporter {
         complianceScore: complianceSummary.overallComplianceScore,
         timestamp: now,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* non-critical */
     }
 
@@ -851,7 +852,8 @@ export class EuAiActComplianceReporter {
       if (lastRun) {
         return lastRun.totalScore;
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* RedTeam not available */
     }
     return 100; // Default if no red team run available
@@ -878,7 +880,8 @@ export class EuAiActComplianceReporter {
         entry?.hash ??
         crypto.createHmac('sha256', 'commander-compliance').update(payload).digest('hex')
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // AuditChainLedger unavailable — self-sign with fixed key for reproducibility
       const fixedKey = 'commander-eu-ai-act-compliance-v1.0.0';
       return crypto

@@ -538,7 +538,8 @@ export class AdaptiveHITL {
         compositeScore,
         [{ name: 'agent', value: signals.agentId }],
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -1073,7 +1074,8 @@ export class AdaptiveHITL {
         },
         timestamp: decision.timestamp,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

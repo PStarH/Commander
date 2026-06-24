@@ -1058,7 +1058,8 @@ export async function runVerifierAsync(
   let exists = true;
   try {
     await fs.promises.access(resolvedDocPath);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     exists = false;
   }
   if (!exists) {

@@ -717,7 +717,8 @@ export class CostGuard {
           details,
           timestamp: decision.timestamp,
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* non-critical */
       }
     }
@@ -732,7 +733,8 @@ export class CostGuard {
       if (action === 'MELT') {
         metrics.incrementCounter('costguard.melts', 1, { attackType: attackType ?? 'unknown' });
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* non-critical */
     }
 
