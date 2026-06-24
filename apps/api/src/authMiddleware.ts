@@ -8,8 +8,6 @@ declare global {
   }
 }
 
-const API_KEYS = parseApiKeys(process.env.API_KEYS);
-const AUTH_DISABLED = process.env.AUTH_DISABLED === 'true';
 const PUBLIC_PATHS = new Set([
   '/health',
   '/system/status',
@@ -32,33 +30,42 @@ function parseApiKeys(raw: string | undefined): Map<string, { name: string; scop
   return keys;
 }
 
+function isPublicPath(path: string): boolean {
+  return PUBLIC_PATHS.has(path) || path.startsWith('/health') || path.startsWith('/system');
+}
+
+function readHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 export function authMiddleware(req: Request, res: Response, next: NextFunction) {
-  if (AUTH_DISABLED) return next();
+  if (process.env.AUTH_DISABLED === 'true') return next();
 
   const path = req.path;
-  if (PUBLIC_PATHS.has(path) || path.startsWith('/health') || path.startsWith('/system')) {
+  if (isPublicPath(path)) {
     return next();
   }
 
-  const authHeader = req.headers.authorization;
-  const apiKeyHeader = req.headers['x-api-key'] as string | undefined;
+  const apiKeys = parseApiKeys(process.env.API_KEYS);
+  const authHeader = readHeader(req.headers.authorization);
+  const apiKeyHeader = readHeader(req.headers['x-api-key']);
 
   let keyId: string | null = null;
 
   if (apiKeyHeader) {
-    if (!API_KEYS.has(apiKeyHeader)) {
+    if (!apiKeys.has(apiKeyHeader)) {
       res.status(401).json({ error: 'Invalid API key' });
       return;
     }
-    keyId = API_KEYS.get(apiKeyHeader)!.name;
+    keyId = apiKeys.get(apiKeyHeader)!.name;
   } else if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
-    if (!API_KEYS.has(token)) {
+    if (!apiKeys.has(token)) {
       res.status(401).json({ error: 'Invalid bearer token' });
       return;
     }
-    keyId = API_KEYS.get(token)!.name;
-  } else if (API_KEYS.size > 0) {
+    keyId = apiKeys.get(token)!.name;
+  } else if (apiKeys.size > 0) {
     res.status(401).json({
       error: 'Authentication required',
       hint: 'Provide X-API-Key header or Authorization: Bearer <token>',
