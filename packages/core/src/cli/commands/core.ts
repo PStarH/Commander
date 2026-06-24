@@ -8,7 +8,7 @@ import { deliberate } from '../../ultimate/deliberation';
 import { classifyEffortLevel } from '../../ultimate/effortScaler';
 import { normalizeTopology, type OrchestrationTopology } from '../../ultimate/types';
 import { getGlobalLogger } from '../../logging';
-import { CompanyEngine, createCompanyEngine } from '../../ultimate/companyEngine';
+import { createCompanyEngine } from '../../ultimate/companyEngine';
 import { detectProvider } from '../../config/commanderConfig';
 import { GoalOrchestrator } from '../../goal/goalOrchestrator';
 import type { GoalConfig } from '../../goal/types';
@@ -21,12 +21,10 @@ import {
   bullet,
   cmdHeader,
   startSpinner,
-  onboardingMessage,
   fatalError,
 } from './_shared';
 import { t } from '../i18n';
 import { runShowcase } from '../../showcase/showcaseRunner';
-import { startTUI } from '../../tui';
 import { getMetaLearner } from '../../selfEvolution/metaLearner';
 
 // Routing-flag plumbing (audit P0-2 / P1-1 surface). Declared at top-of-file so it
@@ -430,7 +428,7 @@ async function cmdShowcase() {
   );
 
   // ── Findings summary ─────────────────────────────────────────────
-  const { critical, high, medium, low } = result.findings;
+  const { critical, high } = result.findings;
   if (critical.length > 0) {
     section(`${t('showcase.critical_header')} (${critical.length})`);
     for (const f of critical.slice(0, 3)) {
@@ -862,7 +860,7 @@ async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
 // Human-in-the-Loop Feedback
 // ============================================================================
 
-async function promptHumanFeedback(success: boolean, task: string): Promise<void> {
+async function promptHumanFeedback(_success: boolean, _task: string): Promise<void> {
   // Only prompt in interactive TTY mode
   if (!process.stdin.isTTY) return;
 
