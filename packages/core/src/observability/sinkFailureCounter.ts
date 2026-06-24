@@ -39,7 +39,8 @@ export function recordSinkFailure(sink: string): void {
       1,
       [{ name: SINK_LABEL, value: sink }],
     );
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* metrics collector unavailable — last-resort swallow */
   }
 }

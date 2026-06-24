@@ -25,7 +25,8 @@ function preview(value: unknown): string | undefined {
   if (typeof value === 'string') return truncate(value);
   try {
     return truncate(JSON.stringify(value));
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return undefined;
   }
 }

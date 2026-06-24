@@ -98,7 +98,8 @@ export class TokenUsageAnomalyDetector {
         1,
         [{ name: 'severity', value: severity }],
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
