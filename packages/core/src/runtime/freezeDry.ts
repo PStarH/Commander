@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
@@ -123,7 +124,7 @@ export class FreezeDryManager {
       const raw = fs.readFileSync(manifestPath, 'utf-8');
       return JSON.parse(raw) as FreezeManifest;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'freezeDry:126');
       return null;
     }
   }
@@ -162,13 +163,13 @@ export class FreezeDryManager {
               pruned++;
             }
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'freezeDry:165');
             void 0;
           }
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'freezeDry:171');
       void 0;
     }
     return pruned;

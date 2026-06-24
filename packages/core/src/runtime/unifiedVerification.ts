@@ -10,6 +10,7 @@
  * - Budget-gated LLM verification
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { LLMProvider } from './types';
 import { HallucinationDetector } from '../hallucinationDetector';
 import { getGlobalLogger } from '../logging';
@@ -169,7 +170,7 @@ function runStage0(
       confidence = Math.min(confidence, 0.5);
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'unifiedVerification:172');
     getGlobalLogger().debug('UnifiedVerification', 'Hallucination detection failed');
   }
 
@@ -327,7 +328,7 @@ function runStage1(ctx: UVPTaskContext): { signals: VerificationSignal[]; confid
   try {
     parsed = JSON.parse(ctx.output);
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'unifiedVerification:330');
     getGlobalLogger().debug('UnifiedVerification', 'JSON parse failed in stage 1');
     // Try to extract JSON from markdown code blocks
     const jsonMatch = ctx.output.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
@@ -335,7 +336,7 @@ function runStage1(ctx: UVPTaskContext): { signals: VerificationSignal[]; confid
       try {
         parsed = JSON.parse(jsonMatch[1].trim());
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'unifiedVerification:338');
         getGlobalLogger().debug(
           'UnifiedVerification',
           'JSON parse failed for extracted code block',
@@ -476,7 +477,7 @@ async function runStage2(
       return { signals, confidence, tokensUsed };
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'unifiedVerification:479');
     getGlobalLogger().debug('UnifiedVerification', 'LLM verification failed');
     // LLM verification failure is non-fatal
   }

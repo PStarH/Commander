@@ -10,6 +10,7 @@
  * - Automatic worker restart on crash
  * - Timeout support for long-running tasks
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import { Worker, type WorkerOptions } from 'worker_threads';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -134,7 +135,7 @@ export class CPUWorkerPool {
     try {
       this.workers[index]?.terminate();
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'cpuWorkerPool:137');
     }
 
     try {

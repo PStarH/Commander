@@ -175,7 +175,7 @@ export class TEESandbox implements PlatformSandbox {
 
       return true;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'teeEnclave:178');
       return false;
     }
   }
@@ -653,7 +653,7 @@ done
       if (!fs.existsSync(p)) return null;
       return fs.readFileSync(p, 'utf-8').trim();
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'teeEnclave:656');
       return null;
     }
   }

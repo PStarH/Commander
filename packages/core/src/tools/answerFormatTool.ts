@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../runtime/types';
 
 const DEFINITION: ToolDefinition = {
@@ -95,7 +96,7 @@ export class AnswerFormatTool implements Tool {
         try {
           JSON.parse(answer);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'answerFormatTool:98');
           issues.push('Answer is not valid JSON');
         }
         break;

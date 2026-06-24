@@ -8,6 +8,7 @@
  *   commander feedback --bug="..."      Report a bug
  *   commander feedback --feature="..."  Request a feature
  */
+import { reportSilentFailure } from '../../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { $, section, kv, bullet, parseFlags } from './_shared';
@@ -46,7 +47,7 @@ function loadFeedback(): FeedbackEntry[] {
     const lines = fs.readFileSync(file, 'utf-8').trim().split('\n').filter(Boolean);
     return lines.map((line) => JSON.parse(line));
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'feedback:49');
     return [];
   }
 }

@@ -24,6 +24,7 @@
  * Integrates CircuitBreaker, TokenGovernor, ContextCompactor, CompensationRegistry,
  * DeadLetterQueue, CycleDetector, and all tool subsystems.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import type {
   LLMProvider,
   LLMRequest,
@@ -331,7 +332,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
             payload: { from, to, provider: provider ?? 'agentRuntime' },
           });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'agentRuntime:334');
           /* best-effort */
         }
       },
@@ -344,7 +345,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
         try {
           getMetricsCollector().recordCircuitTransition(from, to, provider ?? 'agentRuntime');
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'agentRuntime:347');
           /* best-effort */
         }
         try {
@@ -357,7 +358,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
             failureModeNumber: 11,
           });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'agentRuntime:360');
           /* best-effort */
         }
         try {
@@ -371,7 +372,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
             payload: { from, to, provider: provider ?? 'agentRuntime' },
           });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'agentRuntime:374');
           /* best-effort */
         }
       },
@@ -397,7 +398,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
           failureModeNumber: 7,
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'agentRuntime:400');
         /* best-effort */
       }
       try {
@@ -411,7 +412,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
           payload: { consecutiveFailures, reason },
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'agentRuntime:414');
         /* best-effort */
       }
     });
@@ -709,7 +710,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       try {
         getSecurityMonitor().start();
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'agentRuntime:712');
         /* best-effort */
       }
     }
@@ -795,7 +796,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
           [{ name: 'tool', value: toolName }],
         );
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'agentRuntime:798');
         /* best-effort */
       }
       try {
@@ -809,7 +810,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
           payload: { toolName, calls: count, toolLoopCount },
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'agentRuntime:812');
         /* best-effort */
       }
       return { detected: true, count };
@@ -878,7 +879,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
         severity: decision.allowed ? 'low' : 'high',
       } as CrossAgentEvent);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'agentRuntime:881');
       /* best-effort */
     }
 
@@ -1068,7 +1069,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
     try {
       this.dlq.flush();
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'agentRuntime:1071');
       /* best-effort */
     }
   }
@@ -1185,7 +1186,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
         args: ctx.lane ? { lane: ctx.lane } : undefined,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'agentRuntime:1188');
       // Decrement tenant running count on lane acquisition failure
       this.tenantManager.releaseTenantConcurrency(tenantId);
       this.concurrencyController.releaseSlot();
@@ -1225,7 +1226,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
         },
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'agentRuntime:1228');
       /* best-effort */
     }
     getMetricsCollector().setGauge(
@@ -1436,7 +1437,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   ],
                 );
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'agentRuntime:1439');
                 /* best-effort */
               }
               try {
@@ -1455,7 +1456,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   },
                 });
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'agentRuntime:1458');
                 /* best-effort */
               }
             }
@@ -1492,7 +1493,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   [],
                 );
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'agentRuntime:1495');
                 /* best-effort */
               }
               return {
@@ -1532,7 +1533,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   [],
                 );
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'agentRuntime:1535');
                 /* best-effort */
               }
             }
@@ -1578,7 +1579,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               ],
             );
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'agentRuntime:1581');
             /* best-effort */
           }
 
@@ -1692,7 +1693,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
             getMetricsCollector().recordPromptPrefixCache(cacheHit, ctx.tenantId);
             getMetricsCollector().setPromptPrefixCacheKey(newPrefixKey, ctx.tenantId);
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'agentRuntime:1695');
             /* best-effort */
           }
 
@@ -1886,7 +1887,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               try {
                 getMetricsCollector().recordSkillRecallHit(true, ctx.tenantId);
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'agentRuntime:1889');
                 /* best-effort */
               }
               const skillLines = [
@@ -1916,7 +1917,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               try {
                 getMetricsCollector().recordSkillRecallHit(false, ctx.tenantId);
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'agentRuntime:1919');
                 /* best-effort */
               }
             }
@@ -2101,7 +2102,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 };
                 this.securityOrch.onAgentEvent(llmEvent);
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'agentRuntime:2104');
                 /* best-effort */
               }
 
@@ -2138,11 +2139,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     timestamp: Date.now(),
                   });
                 } catch (err) {
-                  console.warn('[Catch]', err);
+                  reportSilentFailure(err, 'agentRuntime:2141');
                   /* best-effort */
                 }
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'agentRuntime:2145');
                 /* best-effort learning */
               }
 
@@ -2427,7 +2428,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                                 severity: 'high',
                               } as CrossAgentEvent);
                             } catch (err) {
-                              console.warn('[Catch]', err);
+                              reportSilentFailure(err, 'agentRuntime:2430');
                               /* best-effort */
                             }
                             return toolErrorRow(tc, `Hook blocked: ${gate.errorMsg || 'denied'}`);
@@ -2709,12 +2710,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
                           [{ name: 'reason', value: injectionScan.reason ?? 'unknown' }],
                         );
                       } catch (err) {
-                        console.warn('[Catch]', err);
+                        reportSilentFailure(err, 'agentRuntime:2712');
                         /* best-effort */
                       }
                     }
                   } catch (err) {
-                    console.warn('[Catch]', err);
+                    reportSilentFailure(err, 'agentRuntime:2717');
                     /* best-effort defense */
                   }
                   // Output sanitization: redact credentials, API keys, PII before tool results
@@ -2734,7 +2735,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                       });
                     }
                   } catch (err) {
-                    console.warn('[Catch]', err);
+                    reportSilentFailure(err, 'agentRuntime:2737');
                     /* best-effort sanitization */
                   }
                   // Apply truncation if governor says so and output is verbose
@@ -2788,7 +2789,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     };
                     this.securityOrch.onAgentEvent(toolEvent);
                   } catch (err) {
-                    console.warn('[Catch]', err);
+                    reportSilentFailure(err, 'agentRuntime:2791');
                     /* best-effort */
                   }
 
@@ -3043,7 +3044,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     ctx.tenantId,
                   );
                 } catch (err) {
-                  console.warn('[Catch]', err);
+                  reportSilentFailure(err, 'agentRuntime:3046');
                   /* best-effort */
                 }
                 return result;
@@ -3223,7 +3224,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                       },
                     );
                   } catch (err) {
-                    console.warn('[Catch]', err);
+                    reportSilentFailure(err, 'agentRuntime:3226');
                     /* best-effort */
                   }
                 }
@@ -3263,7 +3264,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     true,
                   );
                 } catch (err) {
-                  console.warn('[Catch]', err);
+                  reportSilentFailure(err, 'agentRuntime:3266');
                   /* best-effort */
                 }
 
@@ -3348,7 +3349,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     [{ name: 'reason', value: 'governor_skip' }],
                   );
                 } catch (err) {
-                  console.warn('[Catch]', err);
+                  reportSilentFailure(err, 'agentRuntime:3351');
                   /* best-effort */
                 }
               } else {
@@ -3376,7 +3377,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
                   );
                 } catch (err) {
-                  console.warn('[Catch]', err);
+                  reportSilentFailure(err, 'agentRuntime:3379');
                   /* best-effort */
                 }
                 if (!verifReport.passed) {
@@ -3412,7 +3413,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
                 );
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'agentRuntime:3415');
                 /* best-effort */
               }
               try {
@@ -3430,7 +3431,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   report: verifReport,
                 });
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'agentRuntime:3433');
                 /* best-effort */
               }
 
@@ -3568,7 +3569,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                         getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
                       );
                     } catch (err) {
-                      console.warn('[Catch]', err);
+                      reportSilentFailure(err, 'agentRuntime:3571');
                       /* best-effort */
                     }
 
@@ -3676,7 +3677,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                         getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
                       );
                     } catch (err) {
-                      console.warn('[Catch]', err);
+                      reportSilentFailure(err, 'agentRuntime:3679');
                       /* best-effort */
                     }
                     try {
@@ -3690,7 +3691,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                         payload: { from: routing.modelId, to: fallbackModel.id },
                       });
                     } catch (err) {
-                      console.warn('[Catch]', err);
+                      reportSilentFailure(err, 'agentRuntime:3693');
                       /* best-effort */
                     }
                   }
@@ -3744,7 +3745,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 try {
                   JSON.parse(safeContent);
                 } catch (err) {
-                  console.warn('[Catch]', err);
+                  reportSilentFailure(err, 'agentRuntime:3747');
                   // Not JSON — no transformation applied
                 }
               }
@@ -3835,7 +3836,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   ],
                 );
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'agentRuntime:3838');
                 /* best-effort learning */
               }
 
@@ -3934,7 +3935,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   runId,
                 });
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'agentRuntime:3937');
                 /* best-effort */
               }
 
@@ -3955,7 +3956,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   lessons: result.summary ? [result.summary.slice(0, 200)] : [],
                 });
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'agentRuntime:3958');
                 /* best-effort */
               }
               if (this.runHandle) {
@@ -4032,11 +4033,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 timestamp: Date.now(),
               });
             } catch (err) {
-              console.warn('[Catch]', err);
+              reportSilentFailure(err, 'agentRuntime:4035');
               /* best-effort */
             }
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'agentRuntime:4039');
             /* best-effort learning */
           }
 
@@ -4126,7 +4127,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               runId,
             });
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'agentRuntime:4129');
             /* best-effort */
           }
 
@@ -4148,7 +4149,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               lessons: lastError ? [lastError.slice(0, 200)] : [],
             });
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'agentRuntime:4151');
             /* best-effort */
           }
 
@@ -4160,7 +4161,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               category: 'other',
             });
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'agentRuntime:4163');
             /* best-effort */
           }
 
@@ -4438,7 +4439,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
             getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
           );
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'agentRuntime:4441');
           /* best-effort */
         }
         return cached;
@@ -4450,7 +4451,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
           getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
         );
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'agentRuntime:4453');
         /* best-effort */
       }
 
@@ -4477,16 +4478,16 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 tenantForGemini,
               );
             } catch (err) {
-              console.warn('[Catch]', err);
+              reportSilentFailure(err, 'agentRuntime:4480');
               /* best-effort */
             }
           }
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'agentRuntime:4485');
           try {
             getMetricsCollector().recordGeminiCacheEvent('error', tenantForGemini);
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'agentRuntime:4489');
             /* best-effort */
           }
         }
@@ -4514,14 +4515,14 @@ export class AgentRuntime implements AgentRuntimeInterface {
       try {
         getMetricsCollector().recordSingleFlightEvent(wasHit ? 'hit' : 'miss', tenantIdForFlight);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'agentRuntime:4517');
         /* best-effort */
       }
       if (recentEvictionDelta > 0) {
         try {
           getMetricsCollector().recordSingleFlightEvent('eviction', tenantIdForFlight);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'agentRuntime:4524');
           /* best-effort */
         }
       }
@@ -4533,7 +4534,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
           getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
         );
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'agentRuntime:4536');
         /* best-effort */
       }
 
@@ -4572,7 +4573,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
         getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'agentRuntime:4575');
       /* best-effort */
     }
   }
@@ -4776,7 +4777,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
     try {
       getModelPerformanceStore().dispose();
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'agentRuntime:4779');
       /* best-effort */
     }
     this.agentInbox.dispose();

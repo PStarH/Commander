@@ -16,6 +16,7 @@
  * - CheckpointWriter: produces human/LLM-readable progress document (out-of-band)
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
@@ -339,7 +340,7 @@ export class CheckpointWriter {
         filePath,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'checkpointWriter:342');
       /* best-effort */
     }
 
@@ -376,7 +377,7 @@ export class CheckpointWriter {
       try {
         fs.chmodSync(filePath, 0o600);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'checkpointWriter:379');
         /* best-effort */
       }
     } catch (e) {
@@ -623,7 +624,7 @@ export class CheckpointWriter {
         .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
       return files;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'checkpointWriter:626');
       return [];
     }
   }
@@ -640,7 +641,7 @@ export class CheckpointWriter {
     try {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'checkpointWriter:643');
       /* ignore */
     }
   }
@@ -725,7 +726,7 @@ export class CheckpointWriter {
         recentMessages: [],
       };
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'checkpointWriter:728');
       return null;
     }
   }

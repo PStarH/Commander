@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../core/src/silentFailureReporter';
 import type { TraceEvent, ExecutionTrace } from '@commander/core';
 import {
   COMMANDER_TYPE_TO_SPAN_KIND,
@@ -23,8 +24,10 @@ function truncate(s: string, n: number = PREVIEW_CHARS): string {
 function preview(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value === 'string') return truncate(value);
-  try { return truncate(JSON.stringify(value)); } catch (err) {
-    console.warn('[Catch]', err);
+  try {
+    return truncate(JSON.stringify(value));
+  } catch (err) {
+    reportSilentFailure(err, 'timelineBuilder:29');
     return undefined;
   }
 }

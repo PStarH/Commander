@@ -28,6 +28,7 @@
  *   CNSA 2.0 (Commercial National Security Algorithm Suite 2.0)
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import { getGlobalLogger } from '../logging';
@@ -155,7 +156,7 @@ export class PostQuantumCrypto {
         );
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'postQuantumCrypto:158');
       getGlobalLogger().warn(
         'PostQuantumCrypto',
         'Crypto detection failed. PQ features may be unavailable.',
@@ -335,7 +336,7 @@ export class PostQuantumCrypto {
       try {
         return crypto.timingSafeEqual(computed, expected);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'postQuantumCrypto:338');
         // Length mismatch — definitely invalid
         return false;
       }

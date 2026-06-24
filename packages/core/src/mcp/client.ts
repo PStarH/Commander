@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type {
   MCPTransport,
   MCPClientConfig,
@@ -72,7 +73,7 @@ export class StdioClientTransport implements MCPTransport {
               this.pending.delete(id);
             }
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'client:75');
             getGlobalLogger().debug('MCPClient', 'Ignoring parse error in stdio response');
           }
         }
@@ -188,7 +189,7 @@ export class StreamableHTTPClientTransport implements MCPTransport {
     try {
       return JSON.parse(text) as JSONRPCResponse;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'client:191');
       throw new Error(
         `MCP HTTP server returned invalid JSON (status ${res.status}): ${text.slice(0, 200)}`,
       );
@@ -230,7 +231,7 @@ export class MCPClient {
       try {
         await this.listTools();
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'client:233');
         // Non-critical: tools will be fetched on first explicit listTools() call
       }
     }

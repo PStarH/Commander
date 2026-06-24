@@ -15,6 +15,7 @@
  * propagate back to the underlying audit/observability pipeline it sits
  * inside.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getMetricsCollector } from '../runtime/metricsCollector';
 
 /**
@@ -40,7 +41,7 @@ export function recordSinkFailure(sink: string): void {
       [{ name: SINK_LABEL, value: sink }],
     );
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'sinkFailureCounter:43');
     /* metrics collector unavailable — last-resort swallow */
   }
 }

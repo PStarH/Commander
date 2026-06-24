@@ -5,6 +5,7 @@
  * File-based persistence using .commander/auth.json.
  * Uses built-in crypto only — no external dependencies.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -229,7 +230,7 @@ export class AuthManager {
         try {
           if (!crypto.timingSafeEqual(Buffer.from(k.keyHash, 'hex'), keyHashBuf)) return false;
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'authManager:232');
           return false;
         }
         if (k.expiresAt && new Date(k.expiresAt) < new Date()) return false;

@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import type { MemoryStore, EpisodicMemoryItem, MemoryKind, MemoryDuration } from '../memory';
 import { JsonMemoryStore } from './jsonStore';
@@ -21,7 +22,7 @@ export async function createMemoryStore(
         );
         return store;
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'utils:24');
         getGlobalLogger().warn(
           'createMemoryStore',
           'SqliteMemoryStore not available, falling back to JSON store',

@@ -10,6 +10,7 @@
  *   commander config set notify.slack.webhook <url>
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
@@ -55,7 +56,7 @@ export class NotificationManager {
         return JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'notifications:58');
       /* ignore */
     }
 
@@ -146,7 +147,7 @@ export class NotificationManager {
         execFile('notify-send', [title, body]);
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'notifications:149');
       /* best-effort */
     }
   }

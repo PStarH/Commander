@@ -7,6 +7,7 @@
  * Uses AST analysis and dependency tracking.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 
 // ============================================================================
@@ -166,7 +167,7 @@ export class ImpactAnalyzer {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'impactAnalyzer:169');
       /* ignore */
     }
   }
@@ -197,7 +198,7 @@ export class ImpactAnalyzer {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'impactAnalyzer:200');
       /* ignore */
     }
   }

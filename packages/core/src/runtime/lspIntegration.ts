@@ -6,6 +6,7 @@
  * It supports on-demand inspection of source files during execution.
  * The goal is fast, localized feedback without leaving the workflow.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
@@ -307,7 +308,7 @@ class LSPClient {
       try {
         text = await fs.promises.readFile(filePath, 'utf-8');
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'lspIntegration:310');
         text = '';
       }
     }
@@ -392,7 +393,7 @@ function getLSPClient(): LSPClient | null {
   try {
     return lspClientSingleton.get();
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'lspIntegration:395');
     return null;
   }
 }
@@ -462,7 +463,7 @@ export class LSPDiagnosticsTool implements Tool {
     try {
       safePath(filePath);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'lspIntegration:465');
       return `Error: Access denied: filePath "${filePath}" is outside workspace`;
     }
 
@@ -506,7 +507,7 @@ export class LSPAttachTool implements Tool {
     try {
       resolved = safePath(filePath);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'lspIntegration:509');
       return `Error: Access denied: filePath "${filePath}" is outside workspace`;
     }
     if (!fs.existsSync(resolved)) return `Error: file not found: ${filePath}`;

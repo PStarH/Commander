@@ -19,6 +19,7 @@
  * and confidence increases as more evidence accumulates.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { mkdir, readFile, writeFile, access } from 'fs/promises';
 import { join } from 'path';
@@ -178,7 +179,7 @@ export class UserModelManager {
     try {
       await access(filePath);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'userModel:181');
       return null;
     }
 

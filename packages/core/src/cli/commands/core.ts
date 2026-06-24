@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import { TELOSOrchestrator } from '../../telos/telosOrchestrator';
 import { UltimateOrchestrator } from '../../ultimate/orchestrator';
 import { SSEStream } from '../../runtime/sseStream';
@@ -273,7 +274,7 @@ export async function cmdRun(task: string, flags: Record<string, string> = {}) {
       child.unref(); // Don't let the child prevent process exit
       console.log(`  ${$.dim}${t('run.tui.dashboard_started', { pid: child.pid })}${$.reset}`);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'core:276');
       console.log(`  ${$.yellow}⚠ ${t('run.tui.could_not_start')}${$.reset}`);
     }
   }
@@ -920,7 +921,7 @@ async function promptHumanFeedback(success: boolean, task: string): Promise<void
         } as import('../../runtime/types').ExecutionExperience;
         ml.recordExperience(exp);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'core:923');
         /* best-effort */
       }
       const result = ratedGood
@@ -929,7 +930,7 @@ async function promptHumanFeedback(success: boolean, task: string): Promise<void
       console.log(`  ${result}`);
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'core:932');
     // Timeout or read error — silently skip
   }
 }
