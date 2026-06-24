@@ -159,6 +159,7 @@ export class UnifiedMemory {
   private writeCount = 0;
   private initialized = false;
   private initPromise: Promise<void> | null = null;
+  private consolidationTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(config?: Partial<UnifiedMemoryConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -645,6 +646,38 @@ export class UnifiedMemory {
     }
 
     return { archived, promoted, deduplicated, decayed };
+  }
+
+  /**
+   * Schedule periodic consolidation on a recurring interval.
+   * Runs consolidation for the given projectId every `intervalMs`.
+   * The timer is unref'd so it does not prevent process exit.
+   * Idempotent — stops the previous schedule if already running.
+   */
+  scheduleConsolidation(projectId: string, intervalMs: number = 300_000): void {
+    this.stopScheduledConsolidation();
+    this.consolidationTimer = setInterval(() => {
+      this.consolidate(projectId).catch((err: Error) => {
+        getGlobalLogger().warn('UnifiedMemory', 'scheduled consolidation failed', {
+          projectId,
+          error: err.message,
+        });
+      });
+    }, intervalMs);
+    if (
+      typeof this.consolidationTimer === 'object' &&
+      typeof this.consolidationTimer.unref === 'function'
+    ) {
+      this.consolidationTimer.unref();
+    }
+  }
+
+  /** Stop the scheduled consolidation timer. Idempotent. */
+  stopScheduledConsolidation(): void {
+    if (this.consolidationTimer) {
+      clearInterval(this.consolidationTimer);
+      this.consolidationTimer = null;
+    }
   }
 
   // --------------------------------------------------------------------------
