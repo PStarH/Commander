@@ -607,6 +607,7 @@ export class SqliteMemoryStore implements MemoryStore {
       }
     }
     if (this.db) {
+      walCheckpoint(this.db);
       this.db.close();
     }
     this.db = null;
