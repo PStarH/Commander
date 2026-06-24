@@ -238,7 +238,8 @@ export class ModelCascadeController {
   private estimateCost(modelId: string, promptTokens: number, completionTokens: number): number {
     try {
       return getCostEstimator().estimateCostFromUsage(modelId, promptTokens, completionTokens);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return 0;
     }
   }

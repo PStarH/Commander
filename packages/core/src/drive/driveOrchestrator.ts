@@ -347,7 +347,8 @@ export class DriveOrchestrator {
       if (!fs.existsSync(cp)) return null;
       const data = JSON.parse(fs.readFileSync(cp, 'utf-8'));
       return data as DriveState;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return null;
     }
   }

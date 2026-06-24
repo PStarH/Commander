@@ -54,7 +54,8 @@ export class NotificationManager {
       if (fs.existsSync(this.configPath)) {
         return JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
 
@@ -144,7 +145,8 @@ export class NotificationManager {
       } else if (process.platform === 'linux') {
         execFile('notify-send', [title, body]);
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

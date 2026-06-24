@@ -57,7 +57,8 @@ function shortMessage(err: unknown): string {
   if (typeof err === 'string') return err;
   try {
     return JSON.stringify(err);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return String(err);
   }
 }
@@ -76,7 +77,8 @@ export function reportSilentFailure(error: unknown, context: string): void {
   let logger;
   try {
     logger = getGlobalLogger();
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     // Logger itself unavailable — fall through to a no-op. We deliberately
     // do NOT console.error here: the whole point of this module is silence
     // with observability, and a noisy reporter would defeat the contract.
@@ -86,7 +88,8 @@ export function reportSilentFailure(error: unknown, context: string): void {
   let msg: string;
   try {
     msg = shortMessage(error);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     msg = 'unknown';
   }
   const key = `${context}::${msg}`;
@@ -115,7 +118,8 @@ export function reportSilentFailure(error: unknown, context: string): void {
       error: msg,
       stack: shortStack(error),
     });
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* logger may throw — never let reporter throw */
   }
 }

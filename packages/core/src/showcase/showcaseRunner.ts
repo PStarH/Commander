@@ -205,7 +205,8 @@ function scanCodebase(config: Required<ShowcaseConfig>): ScannedFile[] {
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return;
     }
 
@@ -225,7 +226,8 @@ function scanCodebase(config: Required<ShowcaseConfig>): ScannedFile[] {
       let stat: fs.Stats;
       try {
         stat = fs.statSync(fullPath);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         continue;
       }
       if (stat.size > config.maxFileSize) continue;
@@ -234,7 +236,8 @@ function scanCodebase(config: Required<ShowcaseConfig>): ScannedFile[] {
         const content = fs.readFileSync(fullPath, 'utf-8');
         const relativePath = path.relative(cwd, fullPath);
         files.push({ relativePath, content, size: stat.size, ext });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         // skip binary / unreadable files
       }
     }
