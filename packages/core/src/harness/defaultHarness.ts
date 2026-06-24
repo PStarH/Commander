@@ -23,8 +23,6 @@ import type {
 import type {
   AgentExecutionResult,
   LLMMessage,
-  LLMProvider,
-  Tool,
   ToolCall,
   ToolResult,
   LLMRequest,
@@ -76,7 +74,6 @@ export class DefaultHarness implements AgentHarness {
       goal,
       messages,
       availableTools,
-      tokenBudget,
       maxSteps,
       signal,
       tenantId,

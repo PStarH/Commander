@@ -3109,8 +3109,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
                 if (!verificationPassed && attempt < this.config.maxRetries) {
                   const feedback = vResult.error
-                    ? `Verification tool "${ctx.verificationTool}" reported an error: ${vResult.error}. Fix the issue and try again.`
-                    : `Verification tool "${ctx.verificationTool}" did not report success. Output: ${vOutput.slice(0, 500)}. Fix the issue and verify again.`;
+                    ? `Verification tool "${ctx.verificationTool}" reported an error: ${vResult.error}. Use the available tools to complete the task, then call "${ctx.verificationTool}" again.`
+                    : `Verification tool "${ctx.verificationTool}" did not report success because the task is not complete. Use the available tools to finish the work, then call "${ctx.verificationTool}" again.`;
                   lastError = feedback;
                   request.messages.push({ role: 'user', content: feedback });
                   continue;
