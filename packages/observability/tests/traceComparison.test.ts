@@ -69,11 +69,23 @@ describe('compareTraces', () => {
 
   it('detects modified events', () => {
     const traceA = makeTrace(
-      [makeEvent({ spanId: 's1', type: 'llm_call', data: { tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 } } })],
+      [
+        makeEvent({
+          spanId: 's1',
+          type: 'llm_call',
+          data: { tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 } },
+        }),
+      ],
       'run-A',
     );
     const traceB = makeTrace(
-      [makeEvent({ spanId: 's1', type: 'llm_call', data: { tokenUsage: { promptTokens: 200, completionTokens: 100, totalTokens: 300 } } })],
+      [
+        makeEvent({
+          spanId: 's1',
+          type: 'llm_call',
+          data: { tokenUsage: { promptTokens: 200, completionTokens: 100, totalTokens: 300 } },
+        }),
+      ],
       'run-B',
     );
     const comparison = compareTraces(traceA, traceB);
@@ -83,11 +95,27 @@ describe('compareTraces', () => {
 
   it('computes cost delta', () => {
     const traceA = makeTrace(
-      [makeEvent({ type: 'llm_call', data: { modelInfo: { model: 'gpt-4o', provider: 'openai', tier: 'standard' }, tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 } } })],
+      [
+        makeEvent({
+          type: 'llm_call',
+          data: {
+            modelInfo: { model: 'gpt-4o', provider: 'openai', tier: 'standard' },
+            tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+          },
+        }),
+      ],
       'run-A',
     );
     const traceB = makeTrace(
-      [makeEvent({ type: 'llm_call', data: { modelInfo: { model: 'gpt-4o', provider: 'openai', tier: 'standard' }, tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 } } })],
+      [
+        makeEvent({
+          type: 'llm_call',
+          data: {
+            modelInfo: { model: 'gpt-4o', provider: 'openai', tier: 'standard' },
+            tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+          },
+        }),
+      ],
       'run-B',
     );
     const comparison = compareTraces(traceA, traceB);

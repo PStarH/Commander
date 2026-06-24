@@ -17,6 +17,7 @@
  * review: AdaptiveHITL ghost engine, DP orphan, Guardian/Correlator not wired.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { getSecurityMonitor } from '../security/securityMonitor';
 import { getAuditChainLedger } from '../security/auditChainLedger';
@@ -202,7 +203,7 @@ export class SecurityOrchestrator {
             agentId,
           });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'securityOrchestrator:205');
           /* best-effort */
         }
         // Fail-open: allow tool execution if HITL evaluation fails
@@ -256,7 +257,7 @@ export class SecurityOrchestrator {
           entryCount: entries.length,
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'securityOrchestrator:259');
         /* best-effort */
       }
       // Fail-open: return unsanitized entries on DP failure
@@ -318,7 +319,7 @@ export class SecurityOrchestrator {
             error: (e as Error)?.message,
           });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'securityOrchestrator:321');
           /* best-effort */
         }
       }
@@ -336,7 +337,7 @@ export class SecurityOrchestrator {
             error: (e as Error)?.message,
           });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'securityOrchestrator:339');
           /* best-effort */
         }
       }
@@ -391,7 +392,7 @@ export class SecurityOrchestrator {
         },
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'securityOrchestrator:394');
       /* best-effort */
     }
   }

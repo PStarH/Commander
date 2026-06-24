@@ -25,6 +25,7 @@
  *   OIDC_ROLE_CLAIM=commander_role
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import * as https from 'https';
 import { getGlobalLogger } from '../logging';
@@ -152,7 +153,7 @@ export class OIDCAuthPlugin implements AuthPlugin {
       header = JSON.parse(base64UrlDecode(parts[0]));
       payload = JSON.parse(base64UrlDecode(parts[1]));
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'oidcAuthPlugin:155');
       return null; // Malformed JWT
     }
 
@@ -360,7 +361,7 @@ export class OIDCAuthPlugin implements AuthPlugin {
               }
               this.fetchJWKSFromUrl(jwksUrl).then(resolve).catch(reject);
             } catch (err) {
-              console.warn('[Catch]', err);
+              reportSilentFailure(err, 'oidcAuthPlugin:363');
               reject(new Error('Failed to parse OIDC discovery document'));
             }
           });
@@ -395,7 +396,7 @@ export class OIDCAuthPlugin implements AuthPlugin {
               }
               resolve(keys);
             } catch (err) {
-              console.warn('[Catch]', err);
+              reportSilentFailure(err, 'oidcAuthPlugin:398');
               reject(new Error('Failed to parse JWKS response'));
             }
           });

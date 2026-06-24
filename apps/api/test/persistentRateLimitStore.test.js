@@ -28,8 +28,8 @@ const os = require('node:os');
 let PersistentRateLimitStore;
 try {
   // eslint-disable-next-line global-require
-  PersistentRateLimitStore = require('../dist/persistentRateLimitStore.js')
-    .PersistentRateLimitStore;
+  PersistentRateLimitStore =
+    require('../dist/persistentRateLimitStore.js').PersistentRateLimitStore;
 } catch (err) {
   // Dist artifacts missing (no `tsc` run) or better-sqlite3 missing — skip
   // the suite. The optional `better-sqlite3` peer dep is declared in

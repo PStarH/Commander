@@ -10,6 +10,7 @@
  * All agents run in parallel using the DEBATE topology. The result is a
  * Chinese-language code health report with scores, findings, and recommendations.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { AgentRuntimeInterface } from '../runtime';
@@ -206,7 +207,7 @@ function scanCodebase(config: Required<ShowcaseConfig>): ScannedFile[] {
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'showcaseRunner:209');
       return;
     }
 
@@ -227,7 +228,7 @@ function scanCodebase(config: Required<ShowcaseConfig>): ScannedFile[] {
       try {
         stat = fs.statSync(fullPath);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'showcaseRunner:230');
         continue;
       }
       if (stat.size > config.maxFileSize) continue;
@@ -237,7 +238,7 @@ function scanCodebase(config: Required<ShowcaseConfig>): ScannedFile[] {
         const relativePath = path.relative(cwd, fullPath);
         files.push({ relativePath, content, size: stat.size, ext });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'showcaseRunner:240');
         // skip binary / unreadable files
       }
     }

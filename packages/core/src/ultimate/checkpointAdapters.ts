@@ -18,6 +18,7 @@
  *      ATR backend is the canonical recovery point.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { ReliabilityEngine } from '../runtime/reliabilityEngine';
 import type { CheckpointState, CheckpointPhase } from '../runtime/stateCheckpointer';
 import type { LLMMessage, TokenUsage } from '../runtime/types';
@@ -710,7 +711,7 @@ function engineOpens<T>(
       try {
         engine.shutdown();
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'checkpointAdapters:713');
         /* best-effort — transient engine */
       }
     }
@@ -851,7 +852,7 @@ function readResumePoint(
   try {
     state = JSON.parse(latest.stateJson) as CheckpointState;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'checkpointAdapters:854');
     // Corrupt stateJson → collapse to not-found with a forensic
     // reason tag, and log first so ops can spot partial WAL rows
     // that would otherwise be silently overwritten by a fresh

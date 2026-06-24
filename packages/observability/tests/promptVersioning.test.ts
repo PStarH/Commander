@@ -101,8 +101,12 @@ describe('PromptVersionTracker', () => {
 
   it('compareVersions computes similarity', () => {
     const tracker = new PromptVersionTracker();
-    tracker.recordEvent(makeLlmEvent({ spanId: 's1', data: { input: { messages: 'Hello world' } } }));
-    tracker.recordEvent(makeLlmEvent({ spanId: 's2', data: { input: { messages: 'Hello world!' } } }));
+    tracker.recordEvent(
+      makeLlmEvent({ spanId: 's1', data: { input: { messages: 'Hello world' } } }),
+    );
+    tracker.recordEvent(
+      makeLlmEvent({ spanId: 's2', data: { input: { messages: 'Hello world!' } } }),
+    );
     const versions = tracker.getAllVersions();
     const diff = tracker.compareVersions(versions[0]!.versionId, versions[1]!.versionId);
     expect(diff).toBeDefined();
@@ -111,10 +115,9 @@ describe('PromptVersionTracker', () => {
 
   it('getSummary returns correct stats', () => {
     const tracker = new PromptVersionTracker();
-    tracker.recordFromTrace(makeTrace([
-      makeLlmEvent({ spanId: 's1' }),
-      makeLlmEvent({ spanId: 's2' }),
-    ]));
+    tracker.recordFromTrace(
+      makeTrace([makeLlmEvent({ spanId: 's1' }), makeLlmEvent({ spanId: 's2' })]),
+    );
     const summary = tracker.getSummary();
     expect(summary.totalVersions).toBe(1);
     expect(summary.totalEvents).toBe(2);

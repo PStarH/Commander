@@ -93,11 +93,15 @@ export async function handleObservabilityRequest(
       if (method === 'GET' && action === 'cost') return handleGetCost(res, deps, runId);
       if (method === 'GET' && action === 'decisions') return handleGetDecisions(res, deps, runId);
       if (method === 'GET' && action === 'summary') return handleGetSummary(res, deps, runId);
-      if (method === 'POST' && action === 'replay')
-        return handleReplay(req, res, deps, runId);
+      if (method === 'POST' && action === 'replay') return handleReplay(req, res, deps, runId);
     }
 
-    if (segments[0] === 'runs' && segments.length === 3 && segments[2] === 'feedback' && method === 'POST') {
+    if (
+      segments[0] === 'runs' &&
+      segments.length === 3 &&
+      segments[2] === 'feedback' &&
+      method === 'POST'
+    ) {
       return handleFeedback(req, res, deps, segments[1]!);
     }
 
@@ -147,7 +151,8 @@ export async function handleObservabilityRequest(
       if (segments[1] === 'config' && method === 'GET') return handleAutoScoreConfigGet(res, deps);
       if (segments[1] === 'config' && method === 'POST')
         return handleAutoScoreConfigPost(req, res, deps);
-      if (segments[1] === 'results' && method === 'GET') return handleAutoScoreResultsGet(res, deps);
+      if (segments[1] === 'results' && method === 'GET')
+        return handleAutoScoreResultsGet(res, deps);
       if (segments[1] === 'results' && method === 'DELETE')
         return handleAutoScoreResultsDelete(res, deps);
     }

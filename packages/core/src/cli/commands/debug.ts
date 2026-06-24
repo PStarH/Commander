@@ -10,6 +10,7 @@
  *   commander debug intent           List all runs with captured intent
  */
 
+import { reportSilentFailure } from '../../silentFailureReporter';
 import { getIntentLog } from '../../runtime/intentLog';
 import { getTraceRecorder } from '../../runtime/executionTrace';
 import { getMetaLearner } from '../../selfEvolution/metaLearner';
@@ -124,7 +125,7 @@ function renderTopologyChoice(record: IntentRecord, ml: ReturnType<typeof getMet
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'debug:127');
       /* best-effort */
     }
   }
@@ -336,7 +337,7 @@ export async function cmdDebugIntent(
   try {
     ml = getMetaLearner();
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'debug:339');
     /* best-effort */
   }
 

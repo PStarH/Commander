@@ -19,6 +19,7 @@
  *   monitor.stop(); // Stop monitoring
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import {
   getSecurityAuditLogger,
   type SecurityEvent,
@@ -351,7 +352,7 @@ export class SecurityMonitor {
       const metrics = getGlobalMetrics();
       metrics.incrementCounter('security.alerts', 1, { level: alert.level });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'securityMonitor:354');
       /* non-critical */
     }
 
@@ -363,7 +364,7 @@ export class SecurityMonitor {
         priority: alert.level === 'critical' ? 0 : 2,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'securityMonitor:366');
       /* non-critical */
     }
 
@@ -384,7 +385,7 @@ export class SecurityMonitor {
         alert: fullAlert,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'securityMonitor:387');
       /* non-critical — AgentSOC may not be initialized */
     }
   }

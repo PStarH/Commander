@@ -1,10 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  CostModel,
-  getCostModel,
-  resetCostModel,
-  DEFAULT_PRICING,
-} from '../src/costModel';
+import { CostModel, getCostModel, resetCostModel, DEFAULT_PRICING } from '../src/costModel';
 
 describe('CostModel', () => {
   let model: CostModel;
@@ -167,7 +162,12 @@ describe('CostModel', () => {
     });
 
     it('strips @tier suffix from model', () => {
-      const savings = model.getSavingsForCachedReads('anthropic', 'claude-3-5-sonnet@eco', 500, 1000);
+      const savings = model.getSavingsForCachedReads(
+        'anthropic',
+        'claude-3-5-sonnet@eco',
+        500,
+        1000,
+      );
       expect(savings.cachedClamped).toBe(500);
       expect(savings.dollarsSaved).toBeGreaterThan(0);
     });

@@ -14,6 +14,7 @@
  *   commander --version                 Show version
  *   commander help                      Show this help
  */
+import { reportSilentFailure } from './silentFailureReporter';
 import { $, parseFlags, setTheme } from './cli/util';
 
 // Initialize theme from env var before any output
@@ -117,7 +118,7 @@ async function main() {
       const pkgPath = require.resolve('../../package.json');
       console.log(require(pkgPath).version);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'cli:120');
       console.log('unknown');
     }
     process.exit(0);
@@ -296,7 +297,7 @@ async function main() {
       try {
         execSync(`node ${vizPath} ${rest.join(' ')}`, { stdio: 'inherit' });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'cli:299');
         console.error(
           `\n  ${$.yellow}⚠${$.reset} ${$.dim}Viz package not built. Run: cd packages/viz && pnpm build${$.reset}\n`,
         );

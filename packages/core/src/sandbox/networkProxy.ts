@@ -19,6 +19,7 @@
  * the user already configured — zero additional configuration.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -113,7 +114,7 @@ export function getLLMAPIDomains(): string[] {
           if (host) domains.add(host.toLowerCase());
           continue; // Skip default domain since we have a custom one
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'networkProxy:116');
           // Invalid URL — fall through to default domain
         }
       }
@@ -131,7 +132,7 @@ export function getLLMAPIDomains(): string[] {
         const host = new URL(url).hostname;
         if (host) domains.add(host.toLowerCase());
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'networkProxy:134');
         // Ignore invalid URLs
       }
     }
@@ -145,7 +146,7 @@ export function getLLMAPIDomains(): string[] {
       try {
         hostStr = new URL(hostStr).host;
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'networkProxy:148');
         /* keep original */
       }
     }

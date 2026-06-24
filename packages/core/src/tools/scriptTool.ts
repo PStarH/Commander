@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import vm from 'vm';
 
@@ -217,7 +218,7 @@ export class ExecuteScriptTool implements Tool {
             configurable: false,
           });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'scriptTool:220');
           // Some properties (e.g. __proto__ on some objects) may be non-configurable;
           // ignore silently — the Proxy layer still blocks them at the object level.
         }

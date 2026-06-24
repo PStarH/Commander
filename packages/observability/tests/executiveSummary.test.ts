@@ -18,7 +18,10 @@ function makeEvent(overrides: Partial<TraceEvent> = {}): TraceEvent {
   };
 }
 
-function makeTrace(events: TraceEvent[] = [], overrides: Partial<ExecutionTrace> = {}): ExecutionTrace {
+function makeTrace(
+  events: TraceEvent[] = [],
+  overrides: Partial<ExecutionTrace> = {},
+): ExecutionTrace {
   return {
     runId: 'run-1',
     traceId: 'trace-1',
@@ -53,9 +56,7 @@ describe('buildExecutiveSummary', () => {
   });
 
   it('marks status as error when errors present', () => {
-    const trace = makeTrace([
-      makeEvent({ type: 'error', data: { error: 'fail' } }),
-    ]);
+    const trace = makeTrace([makeEvent({ type: 'error', data: { error: 'fail' } })]);
     const summary = buildExecutiveSummary(trace);
     expect(summary.status).toBe('error');
   });
@@ -101,7 +102,10 @@ describe('buildExecutiveSummary', () => {
 
   it('builds timeline events', () => {
     const trace = makeTrace([
-      makeEvent({ type: 'llm_call', data: { modelInfo: { model: 'gpt-4o', provider: 'openai', tier: 'standard' } } }),
+      makeEvent({
+        type: 'llm_call',
+        data: { modelInfo: { model: 'gpt-4o', provider: 'openai', tier: 'standard' } },
+      }),
       makeEvent({ type: 'tool_execution', data: { input: 'tool1' } }),
     ]);
     const summary = buildExecutiveSummary(trace);

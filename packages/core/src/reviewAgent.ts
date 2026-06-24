@@ -6,6 +6,7 @@
  * from AGENTS.md or CLI arguments, and JSON output for CI integration.
  */
 
+import { reportSilentFailure } from './silentFailureReporter';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -142,7 +143,7 @@ function getGitDiff(scope: ReviewScope, baseRef?: string, commitSha?: string): G
     totalAdditions = addMatch ? parseInt(addMatch[1], 10) : 0;
     totalDeletions = delMatch ? parseInt(delMatch[1], 10) : 0;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'reviewAgent:145');
     // stat parse failure is non-fatal
   }
 
@@ -180,7 +181,7 @@ export function parseFindings(text: string): ReviewFinding[] {
       if (findings.length > 0) return findings;
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'reviewAgent:183');
     // Not JSON — try markdown parsing
   }
 
@@ -206,7 +207,7 @@ export function parseFindings(text: string): ReviewFinding[] {
         if (findings.length > 0) return findings;
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'reviewAgent:209');
       // fall through to markdown parsing
     }
   }
@@ -645,7 +646,7 @@ export function loadReviewGuidelines(): string[] {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'reviewAgent:648');
       // skip unreadable files
     }
   }

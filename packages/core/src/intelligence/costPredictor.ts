@@ -10,6 +10,7 @@
  * for per-model real pricing. No more hardcoded $2/M fallback.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { calculateCostBreakdown } from '../telos/tokenSentinel';
 import { getModelRouter } from '../runtime/modelRouter';
@@ -73,7 +74,7 @@ export class CostPredictor {
         this.history = JSON.parse(fs.readFileSync(this.historyPath, 'utf-8'));
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'costPredictor:76');
       /* ignore */
     }
   }
@@ -85,7 +86,7 @@ export class CostPredictor {
       fs.mkdirSync(path.dirname(this.historyPath), { recursive: true });
       fs.writeFileSync(this.historyPath, JSON.stringify(this.history.slice(-1000), null, 2));
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'costPredictor:88');
       /* ignore */
     }
   }

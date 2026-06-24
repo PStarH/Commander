@@ -11,6 +11,7 @@
  * - Read-only tools are auto-approved without LLM call
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { ToolCall } from '../runtime/types';
 import type { HarnessServices } from './harnessTypes';
 import { getGlobalLogger } from '../logging';
@@ -161,7 +162,7 @@ Respond with JSON:
     try {
       return JSON.parse(match[0]) as GuardianDecision;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'guardianService:164');
       return { approved: true, reason: 'Guardian response parse failed — auto-approved' };
     }
   }

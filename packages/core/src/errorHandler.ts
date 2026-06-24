@@ -5,6 +5,7 @@
  * 提供统一的错误处理、恢复和重试机制
  */
 
+import { reportSilentFailure } from './silentFailureReporter';
 import { CircuitBreaker } from './runtime/circuitBreaker';
 import { getGlobalLogger } from './logging';
 
@@ -247,7 +248,7 @@ export class ErrorHandler {
       try {
         listener(error);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'errorHandler:250');
         /* listener threw — don't propagate */
       }
     }

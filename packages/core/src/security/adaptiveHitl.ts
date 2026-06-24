@@ -33,6 +33,7 @@
  * Each signal contributes 0-100, then strategy is interpolated.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getSecurityMonitor } from './securityMonitor';
@@ -539,7 +540,7 @@ export class AdaptiveHITL {
         [{ name: 'agent', value: signals.agentId }],
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'adaptiveHitl:542');
       /* best-effort */
     }
 
@@ -1075,7 +1076,7 @@ export class AdaptiveHITL {
         timestamp: decision.timestamp,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'adaptiveHitl:1078');
       /* best-effort */
     }
   }

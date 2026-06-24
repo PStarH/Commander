@@ -17,6 +17,7 @@
  * Backward compatible: same class name, same route() interface.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { ModelConfig, ModelTier, RoutingDecision, AgentExecutionContext } from './types';
 import { detectTaskType } from './unifiedVerification';
 
@@ -1501,7 +1502,7 @@ const routerSingleton = createTenantAwareSingleton(() => {
       );
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'modelRouter:1504');
     /* best-effort: don't crash if store unavailable */
   }
   return router;

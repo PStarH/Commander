@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSandboxed } from './sandboxedExec';
 import { safePath } from './fileSystemTool';
@@ -93,7 +94,7 @@ export class CodeRefinerTool implements Tool {
         try {
           resolvedCodeFile = safePath(codeFile);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'codeRefinerTool:96');
           return `Error: Access denied: codeFile "${codeFile}" is outside workspace`;
         }
         if (fs.existsSync(resolvedCodeFile)) {

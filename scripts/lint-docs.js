@@ -76,7 +76,13 @@ function loadRules() {
       loaded.push({ id: r.id, names: m.names, fn: m.function, description: m.description || '' });
     } catch (e) {
       console.error('[lint-docs] FATAL: failed to load rule', r.id, '--', e.message);
-      console.error('  stack:', String(e.stack || '').split('\n').slice(0, 6).join('\n'));
+      console.error(
+        '  stack:',
+        String(e.stack || '')
+          .split('\n')
+          .slice(0, 6)
+          .join('\n'),
+      );
       process.exit(2);
     }
   }

@@ -10,6 +10,7 @@
  *   - nextId: collision-resistant id factory (preferring crypto.randomUUID)
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { ColumnSpec, ColumnType } from './types';
 
 // ── Filter predicate ────────────────────────────────────────────────
@@ -144,7 +145,7 @@ export function nextId(tag: string): string {
       suffix = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'utils:147');
     suffix = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   }
   return `${tag}_${suffix}`;

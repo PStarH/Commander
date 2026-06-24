@@ -16,6 +16,7 @@
  * snapshots for a few milliseconds during a flush.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import type {
@@ -273,7 +274,7 @@ function chmodSafe(target: string, mode: number): void {
   try {
     fs.chmodSync(target, mode);
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'jsonDriver:276');
     if (process.platform === 'win32') return;
     // eslint-disable-next-line no-console
     console.warn(`[JsonDriver] chmod ${mode.toString(8)} on ${target} failed`);

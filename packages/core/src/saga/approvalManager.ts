@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -188,7 +189,7 @@ export class FileApprovalStore implements ApprovalStore {
       await fs.access(path);
       return true;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'approvalManager:191');
       return false;
     }
   }

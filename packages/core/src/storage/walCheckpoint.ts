@@ -98,10 +98,7 @@ export class WalCheckpointScheduler {
   private readonly config: WalCheckpointSchedulerConfig;
   private timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(
-    db: WalDbHandle,
-    config?: Partial<WalCheckpointSchedulerConfig>,
-  ) {
+  constructor(db: WalDbHandle, config?: Partial<WalCheckpointSchedulerConfig>) {
     this.db = db;
     this.config = { ...DEFAULT_SCHEDULER_CONFIG, ...config };
   }

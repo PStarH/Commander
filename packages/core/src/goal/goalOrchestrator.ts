@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { LLMProvider } from '../runtime/types';
@@ -131,7 +132,7 @@ export class GoalOrchestrator {
       try {
         fs.unlinkSync(this.checkpointPath);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'goalOrchestrator:134');
         /* ignore */
       }
     }

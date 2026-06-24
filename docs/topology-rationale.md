@@ -40,13 +40,13 @@ Anthropic's research and customer-facing teams concluded that the most successfu
 production agentic systems are built from **simple, composable patterns** rather
 than complex frameworks. They define five canonical workflow patterns:
 
-| Anthropic Pattern | Commander Topology | Mapping |
-|-------------------|-------------------|---------|
-| Prompt chaining | `CHAIN` / `SEQUENTIAL` | Serial decomposition with intermediate gates. |
-| Routing | `TopologyRouter` + `coordinationPolicy` | Classify task characteristics and dispatch to a topology. |
-| Parallelization | `DISPATCH` / `PARALLEL` / `ENSEMBLE` | Fan-out workers or voters, then aggregate. |
-| Orchestrator-workers | `ORCHESTRATOR` / `HIERARCHICAL` | Central planner dynamically decomposes and delegates. |
-| Evaluator-optimizer | `REVIEW` / `EVALUATOR_OPTIMIZER` | Generate → evaluate → refine loop. |
+| Anthropic Pattern    | Commander Topology                      | Mapping                                                   |
+| -------------------- | --------------------------------------- | --------------------------------------------------------- |
+| Prompt chaining      | `CHAIN` / `SEQUENTIAL`                  | Serial decomposition with intermediate gates.             |
+| Routing              | `TopologyRouter` + `coordinationPolicy` | Classify task characteristics and dispatch to a topology. |
+| Parallelization      | `DISPATCH` / `PARALLEL` / `ENSEMBLE`    | Fan-out workers or voters, then aggregate.                |
+| Orchestrator-workers | `ORCHESTRATOR` / `HIERARCHICAL`         | Central planner dynamically decomposes and delegates.     |
+| Evaluator-optimizer  | `REVIEW` / `EVALUATOR_OPTIMIZER`        | Generate → evaluate → refine loop.                        |
 
 Anthropic also stresses **"start simple, measure, and add complexity only when
 it demonstrably improves outcomes"**. Commander enforces this through:
@@ -189,21 +189,21 @@ level:
 
 ## 4. Design Evidence Map
 
-| Design Decision in Commander | Supported By | Why It Matters |
-|------------------------------|--------------|----------------|
-| 5 canonical topologies + 9 legacy aliases | Anthropic's 5 patterns | Aligns with the industry-accepted ontology; eases migration. |
+| Design Decision in Commander                                                          | Supported By                                                                    | Why It Matters                                                                |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 5 canonical topologies + 9 legacy aliases                                             | Anthropic's 5 patterns                                                          | Aligns with the industry-accepted ontology; eases migration.                  |
 | `TopologyRouter` scores by task type, DAG width, critical path, coupling, task nature | Anthropic routing + LangGraph graph execution + Amdahl/Brooks coordination laws | Selects the cheapest topology that can exploit the real dependency structure. |
-| ε-greedy exploration with Boltzmann sampling | Multi-armed bandit literature + online experimentation best practice | Prevents premature convergence to a sub-optimal topology. |
-| `LearnedWeights` EMA per `(tenant, taskType, topology)` | Reflexion-style feedback + online meta-learning | Converts production outcomes into adaptive routing priors. |
-| `evaluateCoordinationPolicy` ROI guard | Anthropic "start simple" + OpenAI guardrails | Avoids paying multi-agent overhead when a single agent is sufficient. |
-| `HANDOFF` serial execution with context passing | LangGraph/AutoGen handoff patterns | Specialist chaining with clean responsibility boundaries. |
-| `DEBATE` parallel debaters + judge | Du et al. Multi-Agent Debate | Improves reasoning and reduces hallucination via perspective diversity. |
-| `ENSEMBLE` voters + aggregator | Wang et al. Self-Consistency | Improves reliability via consistency across diverse reasoning paths. |
-| `CONSENSUS` multi-round convergence | Society-of-minds / iterative consensus | Useful when agreement among agents is itself the success criterion. |
-| `EVALUATOR_OPTIMIZER` generate-evaluate-refine loop | Shinn et al. Reflexion | Iterative improvement through structured critique. |
-| Critical-path scheduling + token boost in `SubAgentExecutor` | Operations research / LAMaS | Reduces wall-clock time by prioritizing bottleneck nodes. |
-| `ExplorationEventLog` + routing dashboard | Production observability best practice (OpenAI/Anthropic) | Operators can monitor topology choices, exploration rate, and divergence. |
-| Real benchmark against live providers | Anthropic/OpenAI measurement emphasis | Decisions are validated against latency/token/failure data, not assumptions. |
+| ε-greedy exploration with Boltzmann sampling                                          | Multi-armed bandit literature + online experimentation best practice            | Prevents premature convergence to a sub-optimal topology.                     |
+| `LearnedWeights` EMA per `(tenant, taskType, topology)`                               | Reflexion-style feedback + online meta-learning                                 | Converts production outcomes into adaptive routing priors.                    |
+| `evaluateCoordinationPolicy` ROI guard                                                | Anthropic "start simple" + OpenAI guardrails                                    | Avoids paying multi-agent overhead when a single agent is sufficient.         |
+| `HANDOFF` serial execution with context passing                                       | LangGraph/AutoGen handoff patterns                                              | Specialist chaining with clean responsibility boundaries.                     |
+| `DEBATE` parallel debaters + judge                                                    | Du et al. Multi-Agent Debate                                                    | Improves reasoning and reduces hallucination via perspective diversity.       |
+| `ENSEMBLE` voters + aggregator                                                        | Wang et al. Self-Consistency                                                    | Improves reliability via consistency across diverse reasoning paths.          |
+| `CONSENSUS` multi-round convergence                                                   | Society-of-minds / iterative consensus                                          | Useful when agreement among agents is itself the success criterion.           |
+| `EVALUATOR_OPTIMIZER` generate-evaluate-refine loop                                   | Shinn et al. Reflexion                                                          | Iterative improvement through structured critique.                            |
+| Critical-path scheduling + token boost in `SubAgentExecutor`                          | Operations research / LAMaS                                                     | Reduces wall-clock time by prioritizing bottleneck nodes.                     |
+| `ExplorationEventLog` + routing dashboard                                             | Production observability best practice (OpenAI/Anthropic)                       | Operators can monitor topology choices, exploration rate, and divergence.     |
+| Real benchmark against live providers                                                 | Anthropic/OpenAI measurement emphasis                                           | Decisions are validated against latency/token/failure data, not assumptions.  |
 
 ---
 
@@ -269,21 +269,21 @@ industry have already shown to work.
 
 ## 8. References
 
-1. Anthropic, *Building effective agents*, Oct 2024.
+1. Anthropic, _Building effective agents_, Oct 2024.
    https://www.anthropic.com/research/building-effective-agents
-2. OpenAI, *Agents SDK | OpenAI API*.
+2. OpenAI, _Agents SDK | OpenAI API_.
    https://platform.openai.com/docs/guides/agents
-3. LangChain, *LangGraph: Multi-Agent Workflows*.
+3. LangChain, _LangGraph: Multi-Agent Workflows_.
    https://blog.langchain.dev/langgraph-multi-agent-workflows/
-4. AutoGen documentation, *Intro — AutoGen*.
+4. AutoGen documentation, _Intro — AutoGen_.
    https://microsoft.github.io/autogen/dev/user-guide/core-user-guide/design-patterns/intro.html
-5. Shinn et al., *Reflexion: Language Agents with Verbal Reinforcement Learning*,
+5. Shinn et al., _Reflexion: Language Agents with Verbal Reinforcement Learning_,
    arXiv:2303.11366, 2023.
-6. Du et al., *Improving Factuality and Reasoning in Language Models through
-   Multiagent Debate*, arXiv:2305.14325, 2023.
-7. Wang et al., *Self-Consistency Improves Chain of Thought Reasoning in
-   Language Models*, arXiv:2203.11171 (ICLR 2023), 2022.
-8. Wang et al., *Mixture-of-Agents Enhances Large Language Model Capabilities*,
+6. Du et al., _Improving Factuality and Reasoning in Language Models through
+   Multiagent Debate_, arXiv:2305.14325, 2023.
+7. Wang et al., _Self-Consistency Improves Chain of Thought Reasoning in
+   Language Models_, arXiv:2203.11171 (ICLR 2023), 2022.
+8. Wang et al., _Mixture-of-Agents Enhances Large Language Model Capabilities_,
    arXiv:2406.04692, 2024.
-9. Shen et al., *Small LLMs Are Weak Tool Learners: A Multi-LLM Agent*,
+9. Shen et al., _Small LLMs Are Weak Tool Learners: A Multi-LLM Agent_,
    arXiv:2401.07324, 2024.

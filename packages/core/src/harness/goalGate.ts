@@ -11,6 +11,7 @@
  * only partially met or when critical constraints were ignored.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 export interface GoalGateConfig {
   enabled: boolean;
   judgeModel: string;
@@ -146,7 +147,7 @@ Respond with JSON:
     try {
       return JSON.parse(match[0]) as GoalGateDecision;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'goalGate:149');
       return { satisfied: true, reason: 'Judge response parse failed — auto-approved' };
     }
   }

@@ -17,6 +17,7 @@
  *   - Skills injection
  *   - Full audit trail via HarnessEvent stream
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import type {
   AgentHarness,
   HarnessSelectionContext,
@@ -112,7 +113,7 @@ export class Tier1Harness implements AgentHarness {
           const injected = await services.injectSkill(skillId, effectiveSystemPrompt);
           effectiveSystemPrompt = injected;
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'tier1Harness:115');
           getGlobalLogger().warn('Tier1Harness', `Failed to inject skill ${skillId}`);
         }
       }
@@ -129,7 +130,7 @@ export class Tier1Harness implements AgentHarness {
           effectiveSystemPrompt = await services.injectSkill(skill.id, effectiveSystemPrompt);
         }
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'tier1Harness:132');
         // best-effort
       }
     }

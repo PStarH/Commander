@@ -23,6 +23,7 @@
  * Correlation Graph: agents are nodes, correlated events are edges with weights.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import { getSecurityMonitor } from './securityMonitor';
@@ -261,7 +262,7 @@ export class CrossAgentCorrelator {
             [{ name: 'rule_type', value: match.ruleType }],
           );
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'crossAgentCorrelator:264');
           /* best-effort */
         }
       }
@@ -591,7 +592,7 @@ export class CrossAgentCorrelator {
         timestamp: match.detectedAt,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'crossAgentCorrelator:594');
       /* best-effort */
     }
   }

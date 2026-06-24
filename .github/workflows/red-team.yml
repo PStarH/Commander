@@ -55,7 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 2  # Needed for git diff checks
+          fetch-depth: 2 # Needed for git diff checks
 
       - uses: pnpm/action-setup@v6
 

@@ -9,6 +9,7 @@
  * Lines: stored for stale-anchor recovery (recomputing line numbers after drift).
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 
@@ -105,7 +106,7 @@ export class SnapshotStore {
       const content = fs.readFileSync(filePath, 'utf-8');
       return computeFileHash(content);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'snapshotStore:108');
       return null;
     }
   }

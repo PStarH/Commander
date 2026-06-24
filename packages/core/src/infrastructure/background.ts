@@ -12,6 +12,7 @@
  *   commander jobs <id> --stop  # Stop a job
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -74,7 +75,7 @@ export class BackgroundTaskManager extends EventEmitter {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'background:77');
       /* ignore */
     }
   }
@@ -211,7 +212,7 @@ export class BackgroundTaskManager extends EventEmitter {
         execFile('notify-send', [title, body], { stdio: 'ignore' });
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'background:214');
       /* notification best-effort */
     }
   }
@@ -267,7 +268,7 @@ export class BackgroundTaskManager extends EventEmitter {
       this.saveJobs();
       return true;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'background:270');
       return false;
     }
   }
@@ -287,7 +288,7 @@ export class BackgroundTaskManager extends EventEmitter {
         try {
           fs.unlinkSync(job.logFile);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'background:290');
           /* ignore */
         }
       }

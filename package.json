@@ -1,7 +1,7 @@
 {
   "name": "commander-monorepo",
   "version": "0.2.0",
-  "description": "Commander \u2014 Multi-Agent Orchestration System (monorepo root)",
+  "description": "Commander — Multi-Agent Orchestration System (monorepo root)",
   "private": true,
   "author": "PStarH <sampan090611@gmail.com>",
   "license": "MIT",

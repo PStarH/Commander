@@ -16,6 +16,7 @@
  *   - Defense-in-depth: complements text ContentScanner + multimodal metadata checks
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { getGlobalLogger } from '../logging';
@@ -226,7 +227,7 @@ export class VoiceContentScanner {
           }
         }
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'voiceContentScanner:229');
         /* not enough data for parsing */
       }
     }
@@ -357,7 +358,7 @@ export class VoiceContentScanner {
           });
         }
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'voiceContentScanner:360');
         /* parsing error, skip */
       }
     }

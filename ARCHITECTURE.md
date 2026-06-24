@@ -16,7 +16,7 @@ User Task → Deliberation → EffortScaling → TopologyRoute → Decompose →
 | ----------------------- | ------------------------------------------------------------------------------------------------------- |
 | `deliberation.ts`       | Task classification (keyword + LLM). Determines topology, effort, capabilities                          |
 | `effortScaler.ts`       | Anthropic-style effort scaling: SIMPLE→MODERATE→COMPLEX→DEEP_RESEARCH                                   |
-| `topologyRouter.ts`     | 5 canonical topologies: SINGLE, CHAIN, DISPATCH, ORCHESTRATOR, REVIEW (9 legacy aliases accepted) |
+| `topologyRouter.ts`     | 5 canonical topologies: SINGLE, CHAIN, DISPATCH, ORCHESTRATOR, REVIEW (9 legacy aliases accepted)       |
 | `atomizer.ts`           | Recursive decomposition (ROMA-inspired). Aspect/Step/Recursive strategies                               |
 | `subAgentExecutor.ts`   | Executes decomposed tasks with dependency-aware topological ordering                                    |
 | `synthesizer.ts`        | Multi-agent synthesis with 5 quality gates (hallucination, consistency, completeness, accuracy, safety) |

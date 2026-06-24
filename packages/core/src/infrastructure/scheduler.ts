@@ -11,6 +11,7 @@
  *   commander schedule remove <id>
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
@@ -94,7 +95,7 @@ function parseCron(expr: string): {
       dayOfWeek: parseField(parts[4], 0, 6),
     };
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'scheduler:97');
     return null;
   }
 }
@@ -186,7 +187,7 @@ export class TaskScheduler {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'scheduler:189');
       /* ignore */
     }
   }

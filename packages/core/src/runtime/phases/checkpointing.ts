@@ -20,6 +20,7 @@
  * without a schema-versioned migration.
  */
 
+import { reportSilentFailure } from '../../silentFailureReporter';
 import type { AgentExecutionContext } from '../types';
 import { RunRecovery } from '../runRecovery';
 import type { RunRecoveryResult } from '../runRecovery';
@@ -165,7 +166,7 @@ export class CheckpointingPhase {
         .listCheckpoints()
         .filter((cp) => cp.phase !== 'completed' && cp.phase !== 'failed');
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'checkpointing:168');
       return [];
     }
   }
@@ -184,7 +185,7 @@ export class CheckpointingPhase {
       }
       return result;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'checkpointing:187');
       return null;
     }
   }
@@ -198,7 +199,7 @@ export class CheckpointingPhase {
         timestamp: entry.timestamp,
       }));
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'checkpointing:201');
       return [];
     }
   }

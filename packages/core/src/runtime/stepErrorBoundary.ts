@@ -7,6 +7,7 @@
  *
  * State recorded to DeadLetterQueue for post-mortem analysis.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import { DeadLetterQueue, type DeadLetterEntry, type DLQCategory } from './deadLetterQueue';
 import { classifyLLMError, computeBackoff, type ErrorClass } from './llmRetry';
 import type { Reflexion, ReflexionContext, ReflexionGenerator } from './reflexionGenerator';
@@ -157,7 +158,7 @@ export class StepErrorBoundary {
               reflexionHistory.push(reflexion);
               await options.onReflexion(reflexion, reflexionCtx);
             } catch (err) {
-              console.warn('[Catch]', err);
+              reportSilentFailure(err, 'stepErrorBoundary:160');
               // Reflexion is best-effort: never let a generator failure
               // block the retry path.
             }

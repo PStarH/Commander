@@ -26,6 +26,7 @@
  *     failure is loud and early (no silent network calls in tests).
  */
 
+import { reportSilentFailure } from '../../silentFailureReporter';
 import type { Tool } from '../../runtime/types';
 import type { IdempotencyKeyContext } from '../../runtime/types';
 import type {
@@ -249,7 +250,7 @@ export function getGitHubCompensationHandlers(
           const parsed = JSON.parse(result) as { number?: number };
           number = safeNumber(parsed);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'github:252');
           /* swallow */
         }
       }

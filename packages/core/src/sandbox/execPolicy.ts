@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -508,7 +509,7 @@ export class ExecPolicyEngine {
       try {
         if (fs.existsSync(token)) return fs.realpathSync(token);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'execPolicy:511');
         return null;
       }
     } else {
@@ -518,7 +519,7 @@ export class ExecPolicyEngine {
         try {
           if (fs.existsSync(fullPath)) return fs.realpathSync(fullPath);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'execPolicy:521');
           continue;
         }
       }

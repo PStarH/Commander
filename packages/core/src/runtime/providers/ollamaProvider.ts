@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import { BaseOpenAICompatibleProvider, type OpenAICompatibleConfig } from './baseOpenAICompatible';
 import type { LLMResponse, LLMRequest } from '../types';
 import { getGlobalLogger } from '../../logging';
@@ -92,7 +93,7 @@ export class OllamaProvider extends BaseOpenAICompatibleProvider {
       });
       return response.ok;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'ollamaProvider:95');
       return false;
     }
   }
@@ -111,7 +112,7 @@ export class OllamaProvider extends BaseOpenAICompatibleProvider {
       const data: OllamaTagResponse = await response.json();
       return (data.models || []).map((m: OllamaModel) => m.name);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'ollamaProvider:114');
       return [];
     }
   }
@@ -174,7 +175,7 @@ export class OllamaProvider extends BaseOpenAICompatibleProvider {
         });
         OllamaProvider.healthCache = { healthy: true, timestamp: now };
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'ollamaProvider:177');
         OllamaProvider.healthCache = { healthy: false, timestamp: now };
         getGlobalLogger().warn(
           'OllamaProvider',

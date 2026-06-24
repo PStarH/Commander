@@ -16,6 +16,7 @@
  * - No external dependencies so it works in tests, embedded
  *   runtimes, and the HTTP server equally.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { OrchestrationTopology } from './types';
 import { EpsilonStore, type EpsilonOverride } from './epsilonStore';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
@@ -246,7 +247,7 @@ export class ExplorationEventLog {
         }
         this.perTenant.set(event.tenantId, tenant);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'explorationEventLog:249');
         /* skip corrupt lines */
       }
     }
@@ -264,7 +265,7 @@ export class ExplorationEventLog {
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
       appendFileSync(this.persistPath, JSON.stringify(event) + '\n', 'utf-8');
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'explorationEventLog:267');
       /* best-effort persistence */
     }
   }

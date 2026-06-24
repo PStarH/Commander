@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -15,7 +16,7 @@ function readRateLimitFile(): RateLimitFile {
     const raw = fs.readFileSync(RATE_LIMIT_FILE, 'utf-8');
     return JSON.parse(raw);
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'cliRateLimiter:18');
     return { timestamps: [] };
   }
 }
@@ -24,7 +25,7 @@ function writeRateLimitFile(data: RateLimitFile): void {
   try {
     fs.writeFileSync(RATE_LIMIT_FILE, JSON.stringify(data), 'utf-8');
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'cliRateLimiter:27');
     // best-effort: if we can't write, allow the request
   }
 }
