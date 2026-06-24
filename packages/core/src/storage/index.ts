@@ -25,7 +25,14 @@ export {
 
 export type { ApplyMigrationsResult, MigrationStep, FallbackInfo } from './types';
 
-export { matchesFilter, isCompatibleWithSpec, shortHash, canonicalJson, nextId, coerceColumn } from './utils';
+export {
+  matchesFilter,
+  isCompatibleWithSpec,
+  shortHash,
+  canonicalJson,
+  nextId,
+  coerceColumn,
+} from './utils';
 export type { DriverBackend as DriverBackendType } from './types';
 
 export { InMemoryDriver } from './inMemoryDriver';
