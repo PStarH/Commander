@@ -414,9 +414,15 @@ describe('ExplorationEventLog', () => {
       }
     });
 
-    it('appends recorded events to a JSONL file', () => {
+    it('appends recorded events to a JSONL file', async () => {
       const log = new ExplorationEventLog(100, undefined, persistPath);
       log.record(makeEvent({ tenantId: 'tenant-A', chosenTopology: 'SINGLE' }));
+      // Disk append is fire-and-forget async (sync `fs.appendFileSync`
+      // → `fs.promises.appendFile`). Await the deterministic
+      // `whenLastAppended()` instead of racing the disk I/O queue
+      // with `setTimeout(50)` — the full vitest suite puts the I/O
+      // queue under load and 50 ms isn't reliably enough.
+      await log.whenLastAppended();
       const contents = fs.readFileSync(persistPath, 'utf-8');
       expect(contents.trim()).not.toBe('');
       const parsed = JSON.parse(contents.trim()) as { tenantId: string; chosenTopology: string };
@@ -424,22 +430,33 @@ describe('ExplorationEventLog', () => {
       expect(parsed.chosenTopology).toBe('SINGLE');
     });
 
-    it('reloads events from disk on construction', () => {
+    it('reloads events from disk on construction', async () => {
       const log1 = new ExplorationEventLog(100, undefined, persistPath);
       log1.record(makeEvent({ tenantId: 'tenant-A', chosenTopology: 'SINGLE' }));
       log1.record(makeEvent({ tenantId: 'tenant-B', diverged: true }));
+      // Wait for both async appends (fire-and-forget from `record()`).
+      await log1.whenLastAppended();
 
       const log2 = new ExplorationEventLog(100, undefined, persistPath);
+      // The constructor kicks off async `loadFromDisk()`; await the
+      // `ready` promise so the assert reads the freshly loaded state
+      // instead of an empty events array.
+      await log2.waitForReady();
       const snap = log2.getSnapshot();
       expect(snap.globalStats.lifetimeRoutingCount).toBe(2);
       expect(snap.tenants.map((t) => t.tenantId).sort()).toEqual(['tenant-A', 'tenant-B']);
     });
 
-    it('restarts eventId counter from persisted max', () => {
+    it('restarts eventId counter from persisted max', async () => {
       const log1 = new ExplorationEventLog(100, undefined, persistPath);
       const { eventId } = log1.record(makeEvent());
+      // Wait for log1's async disk append so log2 can read it back.
+      await log1.whenLastAppended();
 
       const log2 = new ExplorationEventLog(100, undefined, persistPath);
+      // Let log2's ctor-initiated loadFromDisk finish so nextEventId
+      // reflects the persisted max.
+      await log2.waitForReady();
       const { eventId: nextId } = log2.record(makeEvent());
       expect(nextId).toBe(eventId + 1);
     });

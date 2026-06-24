@@ -5,7 +5,8 @@ import {
   measureDepth,
   flattenTree,
 } from '../../src/ultimate/orchestrator';
-import type { TaskTreeNode } from '../../src/ultimate/types';
+import { TopologyExecutionRunner } from '../../src/ultimate/topologyExecutionLoops';
+import type { ExecutionError, TaskTreeNode } from '../../src/ultimate/types';
 import type { AgentRuntimeInterface } from '../../src/runtime';
 import { TELOSOrchestrator } from '../../src/telos/telosOrchestrator';
 import { resetArtifactSystem } from '../../src/ultimate/artifactSystem';
@@ -142,27 +143,39 @@ function makeTopologyTree(topology: string): TaskTreeNode {
 }
 
 function mockExecutor(): {
-  executeNode: ReturnType<typeof vi.fn>;
+  executeNode: (
+    node: TaskTreeNode,
+    projectId: string,
+    baseContext: Record<string, unknown>,
+    errors: ExecutionError[],
+  ) => Promise<void>;
   callOrder: string[];
   callSnapshots: Array<{ id: string; goal: string; systemPrompt: string }>;
 } {
   const callOrder: string[] = [];
   const callSnapshots: Array<{ id: string; goal: string; systemPrompt: string }> = [];
-  const executeNode = vi.fn(async (sub: TaskTreeNode) => {
-    callOrder.push(sub.id);
-    callSnapshots.push({
-      id: sub.id,
-      goal: sub.goal,
-      systemPrompt: sub.context.systemPrompt,
-    });
-    if (sub.goal.includes('FAIL')) {
-      sub.status = 'FAILED';
-      sub.result = `failed:${sub.id}`;
-    } else {
-      sub.status = 'COMPLETED';
-      sub.result = `result:${sub.id}`;
-    }
-  });
+  const executeNode = vi.fn(
+    async (
+      sub: TaskTreeNode,
+      _projectId: string,
+      _baseContext: Record<string, unknown>,
+      _errors: ExecutionError[],
+    ) => {
+      callOrder.push(sub.id);
+      callSnapshots.push({
+        id: sub.id,
+        goal: sub.goal,
+        systemPrompt: sub.context.systemPrompt,
+      });
+      if (sub.goal.includes('FAIL')) {
+        sub.status = 'FAILED';
+        sub.result = `failed:${sub.id}`;
+      } else {
+        sub.status = 'COMPLETED';
+        sub.result = `result:${sub.id}`;
+      }
+    },
+  );
   return { executeNode, callOrder, callSnapshots };
 }
 
@@ -174,33 +187,19 @@ describe('UltimateOrchestrator topology execution loops', () => {
     resetProviderPool();
   });
 
-  function setupOrchestrator() {
-    const runtime = makeRuntime();
-    const telos = new TELOSOrchestrator(runtime);
-    const orch = new UltimateOrchestrator(telos, runtime);
+  function setupTopologyRunner() {
     const { executeNode, callOrder, callSnapshots } = mockExecutor();
-    (orch as unknown as Record<string, unknown>).subAgentExecutor = { executeNode };
-    return { orch, executeNode, callOrder, callSnapshots };
+    const runner = new TopologyExecutionRunner({ executeNode });
+    return { runner, executeNode, callOrder, callSnapshots };
   }
 
   it('HANDOFF runs subtasks serially and forwards context', async () => {
-    const { orch, callOrder, callSnapshots } = setupOrchestrator();
+    const { runner, callOrder, callSnapshots } = setupTopologyRunner();
     const tree = makeTopologyTree('HANDOFF');
     const reasoning: string[] = [];
-    const errors: unknown[] = [];
+    const errors: ExecutionError[] = [];
 
-    await (
-      orch as unknown as Record<
-        string,
-        (
-          tree: TaskTreeNode,
-          execId: string,
-          params: unknown,
-          errors: unknown[],
-          reasoning: string[],
-        ) => Promise<void>
-      >
-    ).executeHandoffLoop(tree, 'exec-1', { projectId: 'test' }, errors, reasoning);
+    await runner.executeHandoffLoop(tree, { projectId: 'test' }, errors, reasoning);
 
     expect(callOrder).toEqual(['sub-1', 'sub-2']);
     expect(tree.subtasks[0].status).toBe('COMPLETED');
@@ -213,24 +212,13 @@ describe('UltimateOrchestrator topology execution loops', () => {
   });
 
   it('HANDOFF stops when a subtask fails', async () => {
-    const { orch } = setupOrchestrator();
+    const { runner } = setupTopologyRunner();
     const tree = makeTopologyTree('HANDOFF');
     tree.subtasks[0].goal = 'FAIL';
     const reasoning: string[] = [];
-    const errors: unknown[] = [];
+    const errors: ExecutionError[] = [];
 
-    await (
-      orch as unknown as Record<
-        string,
-        (
-          tree: TaskTreeNode,
-          execId: string,
-          params: unknown,
-          errors: unknown[],
-          reasoning: string[],
-        ) => Promise<void>
-      >
-    ).executeHandoffLoop(tree, 'exec-1', { projectId: 'test' }, errors, reasoning);
+    await runner.executeHandoffLoop(tree, { projectId: 'test' }, errors, reasoning);
 
     expect(tree.subtasks[0].status).toBe('FAILED');
     expect(tree.subtasks[1].status).toBe('PENDING');
@@ -238,23 +226,12 @@ describe('UltimateOrchestrator topology execution loops', () => {
   });
 
   it('DEBATE runs debaters in parallel then a judge', async () => {
-    const { orch, callOrder, callSnapshots } = setupOrchestrator();
+    const { runner, callOrder, callSnapshots } = setupTopologyRunner();
     const tree = makeTopologyTree('DEBATE');
     const reasoning: string[] = [];
-    const errors: unknown[] = [];
+    const errors: ExecutionError[] = [];
 
-    await (
-      orch as unknown as Record<
-        string,
-        (
-          tree: TaskTreeNode,
-          execId: string,
-          params: unknown,
-          errors: unknown[],
-          reasoning: string[],
-        ) => Promise<void>
-      >
-    ).executeDebateLoop(tree, 'exec-1', { projectId: 'test' }, errors, reasoning);
+    await runner.executeDebateLoop(tree, { projectId: 'test' }, errors, reasoning);
 
     const debaterCalls = callOrder.slice(0, -1);
     const judgeCall = callOrder[callOrder.length - 1];
@@ -267,25 +244,14 @@ describe('UltimateOrchestrator topology execution loops', () => {
   });
 
   it('DEBATE short-circuits when all debaters fail', async () => {
-    const { orch, callOrder } = setupOrchestrator();
+    const { runner, callOrder } = setupTopologyRunner();
     const tree = makeTopologyTree('DEBATE');
     tree.subtasks[0].goal = 'FAIL';
     tree.subtasks[1].goal = 'FAIL';
     const reasoning: string[] = [];
-    const errors: unknown[] = [];
+    const errors: ExecutionError[] = [];
 
-    await (
-      orch as unknown as Record<
-        string,
-        (
-          tree: TaskTreeNode,
-          execId: string,
-          params: unknown,
-          errors: unknown[],
-          reasoning: string[],
-        ) => Promise<void>
-      >
-    ).executeDebateLoop(tree, 'exec-1', { projectId: 'test' }, errors, reasoning);
+    await runner.executeDebateLoop(tree, { projectId: 'test' }, errors, reasoning);
 
     expect(callOrder).toEqual(['sub-1', 'sub-2']);
     expect(callOrder).not.toContain('sub-3');
@@ -293,23 +259,12 @@ describe('UltimateOrchestrator topology execution loops', () => {
   });
 
   it('ENSEMBLE runs voters in parallel then an aggregator', async () => {
-    const { orch, callOrder, callSnapshots } = setupOrchestrator();
+    const { runner, callOrder, callSnapshots } = setupTopologyRunner();
     const tree = makeTopologyTree('ENSEMBLE');
     const reasoning: string[] = [];
-    const errors: unknown[] = [];
+    const errors: ExecutionError[] = [];
 
-    await (
-      orch as unknown as Record<
-        string,
-        (
-          tree: TaskTreeNode,
-          execId: string,
-          params: unknown,
-          errors: unknown[],
-          reasoning: string[],
-        ) => Promise<void>
-      >
-    ).executeEnsembleLoop(tree, 'exec-1', { projectId: 'test' }, errors, reasoning);
+    await runner.executeEnsembleLoop(tree, { projectId: 'test' }, errors, reasoning);
 
     const voterCalls = callOrder.slice(0, -1);
     const aggregatorCall = callOrder[callOrder.length - 1];
@@ -324,25 +279,14 @@ describe('UltimateOrchestrator topology execution loops', () => {
   });
 
   it('ENSEMBLE short-circuits when all voters fail', async () => {
-    const { orch, callOrder } = setupOrchestrator();
+    const { runner, callOrder } = setupTopologyRunner();
     const tree = makeTopologyTree('ENSEMBLE');
     tree.subtasks[0].goal = 'FAIL';
     tree.subtasks[1].goal = 'FAIL';
     const reasoning: string[] = [];
-    const errors: unknown[] = [];
+    const errors: ExecutionError[] = [];
 
-    await (
-      orch as unknown as Record<
-        string,
-        (
-          tree: TaskTreeNode,
-          execId: string,
-          params: unknown,
-          errors: unknown[],
-          reasoning: string[],
-        ) => Promise<void>
-      >
-    ).executeEnsembleLoop(tree, 'exec-1', { projectId: 'test' }, errors, reasoning);
+    await runner.executeEnsembleLoop(tree, { projectId: 'test' }, errors, reasoning);
 
     expect(callOrder).toEqual(['sub-1', 'sub-2']);
     expect(callOrder).not.toContain('sub-3');
@@ -350,23 +294,12 @@ describe('UltimateOrchestrator topology execution loops', () => {
   });
 
   it('CONSENSUS runs multiple rounds with shared context', async () => {
-    const { orch, callOrder } = setupOrchestrator();
+    const { runner, callOrder } = setupTopologyRunner();
     const tree = makeTopologyTree('CONSENSUS');
     const reasoning: string[] = [];
-    const errors: unknown[] = [];
+    const errors: ExecutionError[] = [];
 
-    await (
-      orch as unknown as Record<
-        string,
-        (
-          tree: TaskTreeNode,
-          execId: string,
-          params: unknown,
-          errors: unknown[],
-          reasoning: string[],
-        ) => Promise<void>
-      >
-    ).executeConsensusLoop(tree, 'exec-1', { projectId: 'test' }, errors, reasoning);
+    await runner.executeConsensusLoop(tree, { projectId: 'test' }, errors, reasoning);
 
     expect(callOrder.length).toBeGreaterThanOrEqual(2);
     expect(tree.subtasks.every((s) => s.status === 'COMPLETED')).toBe(true);
@@ -376,24 +309,13 @@ describe('UltimateOrchestrator topology execution loops', () => {
   });
 
   it('CONSENSUS handles all-agent failure gracefully', async () => {
-    const { orch } = setupOrchestrator();
+    const { runner } = setupTopologyRunner();
     const tree = makeTopologyTree('CONSENSUS');
     tree.subtasks.forEach((s) => (s.goal = 'FAIL'));
     const reasoning: string[] = [];
-    const errors: unknown[] = [];
+    const errors: ExecutionError[] = [];
 
-    await (
-      orch as unknown as Record<
-        string,
-        (
-          tree: TaskTreeNode,
-          execId: string,
-          params: unknown,
-          errors: unknown[],
-          reasoning: string[],
-        ) => Promise<void>
-      >
-    ).executeConsensusLoop(tree, 'exec-1', { projectId: 'test' }, errors, reasoning);
+    await runner.executeConsensusLoop(tree, { projectId: 'test' }, errors, reasoning);
 
     expect(tree.subtasks.every((s) => s.status === 'FAILED')).toBe(true);
     expect(tree.status).toBe('FAILED');
