@@ -582,7 +582,7 @@ export function safeCheckpointAtomically(
     const kind = String(
       (state.executorState as ExecutorCheckpointEnvelope | undefined)?.kind ?? 'unknown',
     );
-    // eslint-disable-next-line no-console
+
     console.warn(
       `[checkpoint] soft-fail kind=${kind} step=${state.stepNumber} err=${(err as Error)?.message}`,
     );
@@ -858,7 +858,7 @@ function readResumePoint(
     // that would otherwise be silently overwritten by a fresh
     // start. Forensic recovery goes through the raw backend, not
     // this convenience layer.
-    // eslint-disable-next-line no-console
+
     console.warn(`[resume] corrupt stateJson for runId=${runId}`);
     return { kind: 'not-found', runId, reason: 'corrupt-state-json' };
   }

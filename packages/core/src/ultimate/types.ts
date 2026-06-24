@@ -137,7 +137,7 @@ const warnedTopologyAliases = new Set<string>();
 export function warnDeprecatedTopologyOnce(name: string): void {
   if (warnedTopologyAliases.has(name)) return;
   warnedTopologyAliases.add(name);
-  // eslint-disable-next-line no-console
+
   console.warn(
     `[DeprecationWarning] OrchestrationTopology "${name}" is deprecated. ` +
       `Use "${TOPOLOGY_ALIAS_MAP[name]}" instead. ` +

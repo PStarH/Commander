@@ -20,14 +20,12 @@ import type {
 } from '../runtime/types';
 import type {
   OrchestrationTopology,
-  TaskTreeNode,
   TaskState,
   EvidenceItem,
   StepResult,
   WorkflowDecision,
 } from './types';
 import { getMessageBus } from '../runtime/messageBus';
-import { getTraceRecorder } from '../runtime/executionTrace';
 
 class TaskStateConstructor {
   /**
@@ -271,15 +269,6 @@ interface StageConfig {
   /** 最小成功率阈值，低于此则触发重新规划 */
   minSuccessRate: number;
 }
-
-const DEFAULT_STAGES: StageConfig[] = [
-  { name: 'discovery', timeoutMs: 30000, maxRetries: 2, minSuccessRate: 0.3 },
-  { name: 'planning', timeoutMs: 60000, maxRetries: 2, minSuccessRate: 0.5 },
-  { name: 'execution', timeoutMs: 120000, maxRetries: 3, minSuccessRate: 0.4 },
-  { name: 'refinement', timeoutMs: 60000, maxRetries: 2, minSuccessRate: 0.6 },
-  { name: 'verification', timeoutMs: 30000, maxRetries: 1, minSuccessRate: 0.7 },
-  { name: 'termination', timeoutMs: 10000, maxRetries: 0, minSuccessRate: 0.8 },
-];
 
 export interface AdaptiveExecutionResult {
   finalResult: AgentExecutionResult;

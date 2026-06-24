@@ -708,7 +708,6 @@ export class AgentRuntime implements AgentRuntimeInterface {
     args: Record<string, unknown>,
     error: string,
   ): Promise<void> {
-    console.log('DEBUG handleMutationToolFailure', toolName, this.executedMutations.length);
     return this.compensationService.handleMutationToolFailure(
       toolName,
       args,

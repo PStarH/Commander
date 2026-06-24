@@ -157,7 +157,7 @@ export class AgentTeamManager {
     const team = this.teamStore.get(teamId);
     if (!team) return [];
 
-    let messages = team.inbox.filter((m) => {
+    const messages = team.inbox.filter((m) => {
       const isForAgent = m.to === 'ALL' || m.to === agentId;
       const isUnread = includeRead || !m.readAt;
       const matchesPriority = !priorityFilter || m.priority === priorityFilter;
