@@ -5,27 +5,27 @@
 
 ---
 
-## CRITICAL — Written but Never Integrated (~2,500+ lines)
+## CRITICAL — Written but Never Integrated (all REMOVED 2026-06-24)
 
-These modules have full implementations but are not wired into any execution path.
+The following orphaned modules were identified and have been **deleted**:
 
-| Module | Lines | Status | Evidence |
-|--------|-------|--------|----------|
-| `actor/` (actorSystem, workerAgent, supervisor, mailbox, types) | 1,728 | **Completely orphaned** | `getActorSystem`, `new ActorSystem`, `new WorkerAgent` only appear in `actor/` itself. Not called by orchestrator, agentRuntime, or CLI |
-| `inspectorAgent.ts` | ~500 | **Barrel-only export** | Exported from `index.ts`, imported by `frameworkIntegration.ts`, but frameworkIntegration itself is orphaned |
-| `frameworkIntegration.ts` | 237 | **Orphaned** | Only exported from `index.ts`. Not imported by runtime/orchestrator/CLI |
-| `adaptiveOrchestrator.ts` | 649 | **Half-orphaned** | Imported by `frameworkIntegration.ts` and `tokenBudgetAllocator.ts`, but neither is on the main execution path |
-| `tokenBudgetAllocator.ts` | — | **Half-orphaned** | Imports adaptiveOrchestrator but not used by agentRuntime/orchestrator |
-
-**Recommendation:** Either wire `actor/` into the execution pipeline (replacing or augmenting the current `SubAgentExecutor`), or delete it. Same for the inspector/frameworkIntegration/adaptiveOrchestrator chain.
+| Module | Lines | Action |
+|--------|-------|--------|
+| `actor/` (actorSystem, workerAgent, supervisor, mailbox, types) | 1,728 | **DELETED** — completely orphaned |
+| `inspectorAgent.ts` | 571 | **DELETED** — barrel-only export, replacement exists |
+| `frameworkIntegration.ts` | 237 | **DELETED** — orphaned |
+| `adaptiveOrchestrator.ts` | 649 | **DELETED** — half-orphaned, no active callers |
+| `tokenBudgetAllocator.ts` | 393 | **DELETED** — half-orphaned, no active callers |
+| `tests/integration.test.ts` | 448 | **DELETED** — sole consumer of `TokenBudgetAllocator` / `AdaptiveOrchestrator` / `InspectorAgent`; test target was itself orphaned |
+| `tests/e2e.test.ts` | 418 | **DELETED** — same verdict; integration tested deleted subsystems |
 
 ---
 
-## HIGH — Duplicate / Overlapping Modules
+## HIGH — Duplicate / Overlapping Modules (RESOLVED 2026-06-24)
 
-| New Module | Old Module | Problem |
-|------------|------------|---------|
-| `ultimate/companyEngine.ts` (534 lines) | `company.ts` (356 lines) | CLI imports both: `core.ts` has `import { CompanyEngine as LegacyCompanyEngine } from '../../company'` AND `import { CompanyEngine } from '../../ultimate/companyEngine'`. Old version should be deleted |
+| New Module | Old Module | Action |
+|------------|------------|--------|
+| `ultimate/companyEngine.ts` (534 lines) | `company.ts` (356 lines) | **DELETED** — old company.ts removed, all imports redirected to `ultimate/companyEngine.ts` |
 
 ---
 
@@ -59,10 +59,8 @@ These modules have full implementations but are not wired into any execution pat
 
 | File:Line | Deprecated | Replacement | Status |
 |-----------|------------|-------------|--------|
-| `inspectorAgent.ts:10` | Entire `InspectorAgent` class | `UnifiedVerificationPipeline` | Has replacement, not deleted |
 | `atr/runtimeIntegration.ts:4` | Entire file | `ExecutionScheduler` | Has replacement, not deleted |
 | `security/rotationSignoffVerifier.ts:438,772,933` | 3 sync methods | Corresponding Async versions | Marked advisory-only |
-| `types.ts:102-118` | 9 legacy topology names | 5 canonical names | Migration window active; hard removal in 2 minor versions |
 
 ---
 
@@ -159,7 +157,6 @@ Note: `AdaptiveExecutionResult` kept locally because it uses `AgentExecutionResu
 | `ultimate/deliberation.ts:557` | `deliberateWithLLM` adds latency with no behavioral benefit | Medium |
 | `ultimate/atomizer.ts` | ASPECT always 3 subtasks, STEP always 4 — not adaptive | Medium |
 | `ultimate/synthesizer.ts` | Quality gates use regex, penalize legitimate hedging | Medium |
-| `ultimate/deliberation.ts:225` | Hardcoded year `2025`/`2026` in temporal detection | Low |
 
 ---
 
@@ -172,11 +169,16 @@ Note: `AdaptiveExecutionResult` kept locally because it uses `AgentExecutionResu
 | `writeCheckpoint` all-zero stub | **FIXED** | 2026-06-24 |
 | `runtimeWorkflowAdapter` duplicate types | **FIXED** | 2026-06-24 |
 | `stageDurations` never populated | **FIXED** | 2026-06-24 |
-| `actor/` orphaned module (1,728 lines) | **OPEN** | — |
-| `inspectorAgent` + `frameworkIntegration` orphaned | **OPEN** | — |
-| `adaptiveOrchestrator` half-orphaned | **OPEN** | — |
-| `company.ts` duplicate of `ultimate/companyEngine.ts` | **OPEN** | — |
-| 5 healthCheck stubs returning fake "healthy" | **OPEN** | — |
-| `McpHarness` empty stub | **OPEN** | — |
-| `inspectorAgent` deprecated, replacement exists | **OPEN** | — |
+| `actor/` orphaned module (1,728 lines) | **DELETED** | 2026-06-24 |
+| `inspectorAgent` + `frameworkIntegration` orphaned | **DELETED** | 2026-06-24 |
+| `adaptiveOrchestrator` + `tokenBudgetAllocator` half-orphaned | **DELETED** | 2026-06-24 |
+| `company.ts` duplicate of `ultimate/companyEngine.ts` | **DELETED** | 2026-06-24 |
+| Stricter topology enum in `commander.schema.json` (9 entries vs runtime 5 canonicals) | **DEFERRED** | awaiting user decision (ide-relax vs update-enum) |
+| 5 healthCheck stubs returning fake "healthy" | **FIXED** | 2026-06-24 |
+| `McpHarness` empty stub | **FIXED** | 2026-06-24 |
+| `deliberation.ts:225` hardcoded year `2025`/`2026` in temporal detection | **FIXED** | 2026-06-24 |
+| `inspectorAgent` deprecated, replacement exists | **DELETED** | 2026-06-24 |
 | `atr/runtimeIntegration` deprecated, replacement exists | **OPEN** | — |
+| Circuit-breaker snapshot only reflects CLOSED (no HALF-OPEN detection) | **OPEN** | — |
+| DLQ >500 unhealthy threshold is process-wide (not per-tenant) | **OPEN** | — |
+| `/api/runtime/health` does not yet surface `HealthCheckResult` (doc promises it) | **OPEN** | — |
