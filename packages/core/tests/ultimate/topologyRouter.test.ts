@@ -74,7 +74,7 @@ describe('TopologyRouter', () => {
   let router: TopologyRouter;
 
   beforeEach(() => {
-    router = new TopologyRouter();
+    router = new TopologyRouter(undefined, { epsilon: 0 });
   });
 
   // =====================================================================
