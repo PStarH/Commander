@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import { createHash, randomBytes } from 'crypto';
 import {
   type PolicyDecision,
@@ -253,7 +254,7 @@ export class PolicyEngine {
       const value = evaluateExpr(rule.body, input, builtins, this.maxDepth);
       return { fired: Boolean(value) };
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'engine:256');
       return { fired: false };
     }
   }

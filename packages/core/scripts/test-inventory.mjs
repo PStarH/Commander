@@ -99,5 +99,3 @@ if (json) {
     console.log(`- unknown runner files: ${unknownFiles.join(', ')}`);
   }
 }
-
-

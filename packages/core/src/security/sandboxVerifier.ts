@@ -19,6 +19,7 @@
  *   - Red Team: verify that sandbox hardening is effective
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getSandboxManager } from '../sandbox/manager';
 import { getAuditChainLedger } from './auditChainLedger';
 import { getGlobalLogger } from '../logging';
@@ -429,7 +430,7 @@ export class SandboxVerifier {
         },
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'sandboxVerifier:432');
       /* best-effort */
     }
 

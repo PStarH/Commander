@@ -22,6 +22,7 @@
  * dashboards, regress alerts) against backwards-incompatible changes.
  */
 
+import { reportSilentFailure } from '../packages/core/src/silentFailureReporter';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { openCheckpointBackend } from '../packages/core/src/atr/checkpointStore';
@@ -112,7 +113,7 @@ async function runBenchmark(args: CliArgs): Promise<BenchResult> {
     try {
       fs.unlinkSync(dbPath);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'bench-wal-throughput:115');
       /* best-effort */
     }
   }

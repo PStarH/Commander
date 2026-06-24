@@ -19,6 +19,7 @@
  *   WHITE - Unlimited distribution, subject to standard copyright rules
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import { getSecurityMonitor } from './securityMonitor';
@@ -524,7 +525,7 @@ export class ThreatIntelligenceFeed {
         details: { action, signatureCount: this.signatures.length },
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'threatIntelligenceFeed:527');
       /* best-effort */
     }
   }

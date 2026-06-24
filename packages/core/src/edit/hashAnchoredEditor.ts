@@ -30,6 +30,7 @@
  *   const host = '0.0.0.0';
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { computeFileHash, getSnapshotStore } from './snapshotStore';
@@ -646,7 +647,7 @@ export function applyHashEdit(section: HashEditSection): HashEditApplyResult {
     try {
       fs.unlinkSync(tmpPath);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'hashAnchoredEditor:649');
       /* ignore */
     }
     return {

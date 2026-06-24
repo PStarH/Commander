@@ -60,6 +60,7 @@
  *   // result.ok === true, result.jti === <32 hex chars>
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { SecurityEvent } from './securityAuditLogger';
 import { getAuditChainLedger } from './auditChainLedger';
@@ -264,7 +265,7 @@ function toolMatches(pattern: string, tool: string): boolean {
       `^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`,
     ).test(tool);
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'capabilityToken:267');
     return false;
   }
 }
@@ -488,7 +489,7 @@ export class CapabilityTokenVerifier {
     try {
       parts = encoded.split('.');
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'capabilityToken:491');
       return reject('malformed_encoding', 'token is not a string');
     }
     if (parts.length !== 3) return reject('malformed_encoding', 'expected 3 dot-separated parts');
@@ -515,7 +516,7 @@ export class CapabilityTokenVerifier {
     try {
       providedSig = b64urlDecode(parts[2]!);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'capabilityToken:518');
       return reject('malformed_encoding', 'signature is not valid base64url');
     }
     if (
@@ -569,7 +570,7 @@ export class CapabilityTokenVerifier {
           try {
             return new RegExp(rx).test(str);
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'capabilityToken:572');
             return false;
           }
         });
@@ -673,7 +674,7 @@ function recordSinkFailure(sink: string): void {
       [{ name: 'sink', value: sink }],
     );
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'capabilityToken:676');
     /* metrics collector unavailable — last-resort swallow */
   }
 }
@@ -700,7 +701,7 @@ function safelyFireAudit(
         `[capabilityToken] audit sink (${sinkName}) threw: ${(err as Error)?.message ?? String(err)}`,
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'capabilityToken:703');
       /* stderr inaccessible, swallow */
     }
   }
@@ -748,7 +749,7 @@ export function getCapabilityTokenIssuer(): CapabilityTokenIssuer {
               `[capabilityToken] auditChain ledger unavailable: ${(err as Error)?.message ?? String(err)}`,
             );
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'capabilityToken:751');
             /* stderr inaccessible, swallow */
           }
         }

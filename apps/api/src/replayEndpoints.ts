@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
 import { Router } from 'express';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
@@ -50,7 +51,7 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
     await fsp.access(filePath);
     return JSON.parse(await fsp.readFile(filePath, 'utf-8')) as T;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'replayEndpoints:53');
     return null;
   }
 }
@@ -65,13 +66,13 @@ async function readNdjsonFile(filePath: string): Promise<TraceEvent[]> {
       try {
         events.push(JSON.parse(line));
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'replayEndpoints:68');
         /* skip corrupt lines */
       }
     }
     return events;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'replayEndpoints:74');
     return [];
   }
 }
@@ -106,7 +107,7 @@ export function createReplayRouter(): Router {
       try {
         files = (await fsp.readdir(completedDir)).filter((f) => f.endsWith('.json'));
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'replayEndpoints:109');
         /* dir may not exist */
       }
       for (const file of files) {
@@ -144,7 +145,7 @@ export function createReplayRouter(): Router {
         });
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'replayEndpoints:147');
       /* ignore scan errors */
     }
 
@@ -154,7 +155,7 @@ export function createReplayRouter(): Router {
       try {
         files = (await fsp.readdir(stateDir)).filter((f) => f.endsWith('.checkpoint'));
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'replayEndpoints:157');
         /* dir may not exist */
       }
       for (const file of files) {
@@ -182,7 +183,7 @@ export function createReplayRouter(): Router {
         });
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'replayEndpoints:185');
       /* ignore */
     }
 

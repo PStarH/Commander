@@ -5,6 +5,7 @@
  * Types and subcomponents are extracted to separate modules for maintainability.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { AgentExecutionContext, AgentExecutionResult, ExecutionExperience } from './types';
@@ -129,7 +130,7 @@ export class EvolutionaryWorkflowEngine {
       if (data.fitnessHistory) this.population['fitnessHistory'] = data.fitnessHistory;
       return true;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'evolutionaryWorkflowEngine:132');
       getGlobalLogger().warn('EvolutionaryWorkflowEngine', 'Failed to load population state', {
         filePath,
       });

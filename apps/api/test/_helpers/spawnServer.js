@@ -92,15 +92,11 @@ async function startServer(apiDir) {
 
     let serverProcess;
     try {
-      serverProcess = spawn(
-        process.execPath,
-        [path.join(apiDir, 'dist', 'index.js')],
-        {
-          cwd: tmpDir,
-          env: { ...process.env, PORT: String(port) },
-          stdio: ['ignore', 'pipe', 'pipe'],
-        },
-      );
+      serverProcess = spawn(process.execPath, [path.join(apiDir, 'dist', 'index.js')], {
+        cwd: tmpDir,
+        env: { ...process.env, PORT: String(port) },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
     } catch (syncErr) {
       // Synchronous spawn failure. ENOENT/EACCES on the binary cannot recover
       // by retrying — surface the real cause immediately to the test runner
@@ -153,15 +149,14 @@ async function startServer(apiDir) {
 
     // Attempt failed — annotate the error with the stderr we captured so
     // repeated runs that all fail point at a single readable reason.
-    const reason = healthyOrExit && healthyOrExit.reason
-      ? healthyOrExit.reason
-      : healthyOrExit instanceof Error
-        ? healthyOrExit.message
-        : String(healthyOrExit);
+    const reason =
+      healthyOrExit && healthyOrExit.reason
+        ? healthyOrExit.reason
+        : healthyOrExit instanceof Error
+          ? healthyOrExit.message
+          : String(healthyOrExit);
     const stderrSnippet = formatStderrSnippet(stderrBuf);
-    lastError = stderrSnippet
-      ? `${reason}\n-- child stderr --\n${stderrSnippet}`
-      : reason;
+    lastError = stderrSnippet ? `${reason}\n-- child stderr --\n${stderrSnippet}` : reason;
 
     if (!serverProcess.killed) {
       try {
@@ -177,9 +172,7 @@ async function startServer(apiDir) {
       /* best-effort */
     }
   }
-  throw new Error(
-    `API server did not start after ${SPAWN_RETRY_ATTEMPTS} attempts: ${lastError}`,
-  );
+  throw new Error(`API server did not start after ${SPAWN_RETRY_ATTEMPTS} attempts: ${lastError}`);
 }
 
 /**

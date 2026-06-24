@@ -11,6 +11,7 @@
  *   commander webhook start --port 9876
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
@@ -71,7 +72,7 @@ export class WebhookManager {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'webhooks:74');
       /* ignore */
     }
   }
@@ -196,7 +197,7 @@ export class WebhookManager {
       if (signature.length !== expected.length) return false;
       return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'webhooks:199');
       return false;
     }
   }

@@ -9,6 +9,7 @@
  * This prevents huge tool outputs from consuming the entire context window.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
@@ -111,7 +112,7 @@ export class ToolOutputStore {
     try {
       return await fsp.readFile(entry.filePath, 'utf-8');
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'toolOutputStore:114');
       return null;
     }
   }
@@ -135,7 +136,7 @@ export class ToolOutputStore {
         try {
           await fsp.unlink(entry.filePath);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'toolOutputStore:138');
         }
         this.entries.delete(id);
       }
@@ -175,7 +176,7 @@ export class ToolOutputStore {
     try {
       await fsp.mkdir(this.config.outputDir, { recursive: true });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'toolOutputStore:178');
     }
   }
 }

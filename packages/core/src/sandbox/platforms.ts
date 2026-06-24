@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import { execSync, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -516,7 +517,7 @@ class BwrapSB implements PlatformSandbox {
         seccompFd = fs.openSync(seccompFile, 'r');
         stdio.push(seccompFd as unknown as number);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'platforms:519');
         // Proceed without seccomp if fd open fails
         seccompFile = null;
         seccompFd = null;
@@ -553,7 +554,7 @@ class BwrapSB implements PlatformSandbox {
         try {
           child.kill(sig);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'platforms:556');
           /* process may have exited */
         }
       };
@@ -584,7 +585,7 @@ class BwrapSB implements PlatformSandbox {
           try {
             fs.closeSync(seccompFd);
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'platforms:587');
             /* ignore */
           }
         }
@@ -592,7 +593,7 @@ class BwrapSB implements PlatformSandbox {
           try {
             fs.unlinkSync(seccompFile);
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'platforms:595');
             /* ignore */
           }
         }
@@ -636,7 +637,7 @@ class GVisorSB implements PlatformSandbox {
         execSync('runsc --version 2>/dev/null', { timeout: 3000 });
         return true;
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'platforms:639');
         // Also check if Docker has a runsc runtime configured
         try {
           const info = execSync('docker info --format "{{.Runtimes}}" 2>/dev/null', {
@@ -645,7 +646,7 @@ class GVisorSB implements PlatformSandbox {
           });
           return info.includes('runsc');
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'platforms:648');
           getGlobalLogger().debug('GVisorSB', 'gVisor (runsc) not available');
           return false;
         }
@@ -734,7 +735,7 @@ class GVisorSB implements PlatformSandbox {
       args.push('--env-file', envFile);
       cleanupPaths.push(envFile);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'platforms:737');
       for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`);
     }
 
@@ -757,7 +758,7 @@ class GVisorSB implements PlatformSandbox {
         try {
           fs.unlinkSync(p);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'platforms:760');
           /* best-effort */
         }
       }
@@ -765,7 +766,7 @@ class GVisorSB implements PlatformSandbox {
         try {
           fs.rmSync(d, { recursive: true, force: true });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'platforms:768');
           /* best-effort */
         }
       }
@@ -858,7 +859,7 @@ class DockerSB implements PlatformSandbox {
           fs.unlinkSync(p);
         }
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'platforms:861');
         /* best-effort cleanup */
       }
     }
@@ -965,7 +966,7 @@ class DockerSB implements PlatformSandbox {
       args.push('--env-file', envFile);
       cleanupPaths.push(envFile);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'platforms:968');
       // Fallback to -e flags if env-file fails
       for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`);
     }

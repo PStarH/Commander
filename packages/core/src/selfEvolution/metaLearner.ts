@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as nodePath from 'path';
 import type {
   EvolutionPrediction,
@@ -108,7 +109,7 @@ export class MetaLearner {
       try {
         getMetricsCollector().recordMetaLearnerReflection(exp.strategyUsed, exp.success);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'metaLearner:111');
         /* best-effort */
       }
 
@@ -149,7 +150,7 @@ export class MetaLearner {
     try {
       getMetricsCollector().recordMetaLearnerStrategySelection(chosen, taskType, modelId);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'metaLearner:152');
       /* best-effort */
     }
 

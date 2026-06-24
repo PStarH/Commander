@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import { spawn } from 'child_process';
 import { execSync } from 'child_process';
 import type { ExecutionBackend, DockerExecConfig, SandboxExecutionResult } from '../types';
@@ -25,7 +26,7 @@ export class DockerExecBackend implements ExecutionBackend {
       execSync('docker info 2>/dev/null', { timeout: 5000 });
       this._available = true;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'dockerExecBackend:28');
       this._available = false;
     }
   }

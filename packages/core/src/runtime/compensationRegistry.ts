@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 export interface CompensableAction {
   /** Unique identifier for this specific action instance */
   actionId: string;
@@ -95,14 +96,14 @@ export class CompensationRegistry {
         try {
           this.observability?.onSuccess?.(action);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'compensationRegistry:98');
           /* best-effort */
         }
       } else {
         try {
           this.observability?.onFailed?.(action, result.error ?? 'unknown');
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'compensationRegistry:105');
           /* best-effort */
         }
       }
@@ -112,7 +113,7 @@ export class CompensationRegistry {
       try {
         this.observability?.onFailed?.(action, errStr);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'compensationRegistry:115');
         /* best-effort */
       }
       return { success: false, error: errStr };
@@ -144,7 +145,7 @@ export class CompensationRegistry {
               maxAttempts: 10,
             });
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'compensationRegistry:147');
             /* queue down; proceed with drop */
           }
         }
@@ -156,7 +157,7 @@ export class CompensationRegistry {
         try {
           this.observability?.onExhausted?.(action, errMsg);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'compensationRegistry:159');
           /* best-effort */
         }
         continue;
@@ -223,7 +224,7 @@ export class CompensationRegistry {
                 `Queue compensation exhausted: ${result.error}`,
               );
             } catch (err) {
-              console.warn('[Catch]', err);
+              reportSilentFailure(err, 'compensationRegistry:226');
               /* best-effort */
             }
           }
@@ -238,7 +239,7 @@ export class CompensationRegistry {
               `Queue compensation error: ${errStr}`,
             );
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'compensationRegistry:241');
             /* best-effort */
           }
         }

@@ -18,6 +18,7 @@
  * Design: Zero-config — all data is extracted from running system state.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { AuditChainLedger, getAuditChainLedger } from './auditChainLedger';
 import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getSecurityMonitor } from './securityMonitor';
@@ -219,7 +220,7 @@ export class EuAiActComplianceReporter {
         timestamp: now,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'euAiActCompliance:222');
       /* non-critical */
     }
 
@@ -853,7 +854,7 @@ export class EuAiActComplianceReporter {
         return lastRun.totalScore;
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'euAiActCompliance:856');
       /* RedTeam not available */
     }
     return 100; // Default if no red team run available
@@ -881,7 +882,7 @@ export class EuAiActComplianceReporter {
         crypto.createHmac('sha256', 'commander-compliance').update(payload).digest('hex')
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'euAiActCompliance:884');
       // AuditChainLedger unavailable — self-sign with fixed key for reproducibility
       const fixedKey = 'commander-eu-ai-act-compliance-v1.0.0';
       return crypto

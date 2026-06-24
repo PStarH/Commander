@@ -22,14 +22,19 @@ module.exports = {
     const fname = params.name || '';
     const isReadme = /^README[^/]*\.md$/i.test(fname);
     if (!isReadme) return;
-    const re = /(LangGraph|CrewAI|AutoGen|LangChain|Claude Code|Cline|Aider)\s+(fails|broken|terrible|useless|sucks|crush|beat|碾压)/i;
+    const re =
+      /(LangGraph|CrewAI|AutoGen|LangChain|Claude Code|Cline|Aider)\s+(fails|broken|terrible|useless|sucks|crush|beat|碾压)/i;
     params.lines.forEach(function (line, idx) {
       const m = line.match(re);
       if (!m) return;
       onError({
         lineNumber: idx + 1,
         detail:
-          'Competitor name "' + m[1] + '" is followed by bashful term "' + m[2] + '". ' +
+          'Competitor name "' +
+          m[1] +
+          '" is followed by bashful term "' +
+          m[2] +
+          '". ' +
           'AGENTS.md Documentation Policy: SCRUB on customer-facing copy. ' +
           'Engineering citations of competitor design patterns remain OK.',
         context: line.replace(/^\s+/, '').slice(0, 160),

@@ -23,6 +23,7 @@
  * the response is auto-filtered to that tenant so cross-tenant data
  * is not leaked.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { IncomingMessage, ServerResponse } from 'http';
 import type {
   ExplorationEventLog,
@@ -282,7 +283,7 @@ async function handleEpsilonPut(
       body = raw as { tenantId?: string; epsilon?: number };
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'routingDashboard:285');
     /* ignore — fall back to query */
   }
 
@@ -350,7 +351,7 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
       try {
         resolve(JSON.parse(data));
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'routingDashboard:353');
         resolve({});
       }
     });

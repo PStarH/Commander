@@ -18,6 +18,7 @@
  * - Generative Agents' retrieval scoring (recency + importance + relevance)
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { walCheckpoint } from '../storage/walCheckpoint';
 
@@ -114,7 +115,7 @@ let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   BetterSqlite3 = require('better-sqlite3');
 } catch (err) {
-  console.warn('[Catch]', err);
+  reportSilentFailure(err, 'conversationStore:117');
   // better-sqlite3 not installed
 }
 
@@ -160,7 +161,7 @@ export class ConversationStore {
         try {
           await fs.chmod(dir, 0o700);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'conversationStore:163');
           /* best-effort */
         }
       }
@@ -169,7 +170,7 @@ export class ConversationStore {
       try {
         await fs.chmod(dbPath, 0o600);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'conversationStore:172');
         /* best-effort */
       }
       this.db.pragma('journal_mode = WAL');
@@ -660,13 +661,13 @@ export class ConversationStore {
     try {
       tags = JSON.parse((row.tags as string) || '[]');
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'conversationStore:663');
       /* ok */
     }
     try {
       metadata = JSON.parse((row.metadata as string) || '{}');
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'conversationStore:669');
       /* ok */
     }
 

@@ -26,6 +26,7 @@
  *     storePath to use a different retentionMs without touching this file.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -420,7 +421,7 @@ export class DataRetentionJanitor {
     try {
       entries = await fs.promises.readdir(rootDir, { withFileTypes: true });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'dataRetention:423');
       return out;
     }
     for (const entry of entries) {
@@ -430,7 +431,7 @@ export class DataRetentionJanitor {
         try {
           sub = await fs.promises.readdir(abs, { withFileTypes: true });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'dataRetention:433');
           continue;
         }
         for (const subEntry of sub) {
@@ -440,7 +441,7 @@ export class DataRetentionJanitor {
             const stat = await fs.promises.stat(subAbs);
             out.push({ absolute: subAbs, mtimeMs: stat.mtimeMs });
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'dataRetention:443');
             /* skip unreadable */
           }
         }
@@ -449,7 +450,7 @@ export class DataRetentionJanitor {
           const stat = await fs.promises.stat(abs);
           out.push({ absolute: abs, mtimeMs: stat.mtimeMs });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'dataRetention:452');
           /* skip unreadable */
         }
       }
@@ -490,7 +491,7 @@ export class DataRetentionJanitor {
         )}`,
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'dataRetention:493');
       /* swallow */
     }
   }

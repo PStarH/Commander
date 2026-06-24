@@ -33,6 +33,7 @@
  *   - AuditChainLedger: tamper-evident switch trail
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { StateCheckpointer } from '../runtime/stateCheckpointer';
 import { RunRecovery } from '../runtime/runRecovery';
 import type { LeaseManager } from '../atr/leaseManager';
@@ -526,7 +527,7 @@ export class AgentStandbyManager {
         timestamp: event.startedAt,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'agentStandbyManager:529');
       /* non-critical */
     }
 
@@ -622,7 +623,7 @@ export class AgentStandbyManager {
           description: 'Recovery Point Objective (seconds)',
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'agentStandbyManager:625');
         /* non-critical */
       }
 
@@ -642,7 +643,7 @@ export class AgentStandbyManager {
           },
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'agentStandbyManager:645');
         /* non-critical */
       }
 
@@ -748,7 +749,7 @@ export class AgentStandbyManager {
       const maxAge = this.config.healthCheckIntervalMs * 2;
       return Date.now() - latestTime < maxAge;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'agentStandbyManager:751');
       return false;
     }
   }

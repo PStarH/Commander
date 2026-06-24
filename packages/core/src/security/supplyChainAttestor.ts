@@ -39,6 +39,7 @@
  * └────────────────────────────────────────────────────────────────────┘
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -363,7 +364,7 @@ export class SupplyChainAttestor {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'supplyChainAttestor:366');
       /* best-effort */
     }
 
@@ -386,7 +387,7 @@ export class SupplyChainAttestor {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'supplyChainAttestor:389');
       /* best-effort */
     }
 
@@ -558,7 +559,7 @@ export class SupplyChainAttestor {
         );
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'supplyChainAttestor:561');
       warnings.push('Could not parse DSSE payload for hash comparison');
       hashMatch = false;
     }
@@ -602,7 +603,7 @@ export class SupplyChainAttestor {
           warnings.push(`Expected identity "${expectedIdentity}" not found in certificate`);
         }
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'supplyChainAttestor:605');
         /* soft-check */
       }
     }
@@ -650,7 +651,7 @@ export class SupplyChainAttestor {
 
       return this.verify(sbom, bundle);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'supplyChainAttestor:653');
       return null;
     }
   }
@@ -735,7 +736,7 @@ export class SupplyChainAttestor {
         mode: 0o644,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'supplyChainAttestor:738');
       /* best-effort persistence */
     }
   }

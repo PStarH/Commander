@@ -57,12 +57,13 @@ Commander implements the following security measures:
 - **Multi-tenant isolation** with per-tenant rate limits, storage, and memory
 - **Circuit breakers** to prevent cascade failures
 - **Prompt injection detection** across multiple languages
+
 # Security Policy
 
 ## Supported Versions
 
-| Version | Supported          |
-| ------- | ------------------ |
+| Version | Supported             |
+| ------- | --------------------- |
 | 0.x     | ✅ Active development |
 
 ## Reporting a Vulnerability

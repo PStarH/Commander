@@ -18,6 +18,7 @@
 // Tenancy: when tenantId is provided, the stored key is
 //   SHA256(tenantId || "::" || inputKey) — prevents cross-tenant collisions.
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { createHash, randomUUID } from 'crypto';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
@@ -61,7 +62,7 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
 } catch (err) {
-  console.warn('[Catch]', err);
+  reportSilentFailure(err, 'idempotencyStore:64');
 }
 
 export class IdempotencyStore {

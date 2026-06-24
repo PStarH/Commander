@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { TraceEvent, ExecutionTrace } from '../runtime/types';
 import {
   COMMANDER_TYPE_TO_SPAN_KIND,
@@ -26,7 +27,7 @@ function preview(value: unknown): string | undefined {
   try {
     return truncate(JSON.stringify(value));
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'timelineBuilder:29');
     return undefined;
   }
 }

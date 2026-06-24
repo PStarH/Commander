@@ -39,10 +39,7 @@ const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-store-override-
 process.env['COMMANDER_WARROOM_FILE'] = path.join(tmpRoot, 'war-room.json');
 process.env['COMMANDER_MEMORY_FILE'] = path.join(tmpRoot, 'project-memory.json');
 process.env['COMMANDER_EPISODIC_FILE'] = path.join(tmpRoot, 'episodic-memory.json');
-process.env['COMMANDER_VECTOR_INDEX_FILE'] = path.join(
-  tmpRoot,
-  'episodic-memory-vectors.json',
-);
+process.env['COMMANDER_VECTOR_INDEX_FILE'] = path.join(tmpRoot, 'episodic-memory-vectors.json');
 process.env['COMMANDER_AGENT_STATE_FILE'] = path.join(tmpRoot, 'agent-state.json');
 process.env['COMMANDER_ACTION_RATIONALE_FILE'] = path.join(tmpRoot, 'action-rationales.json');
 process.env['COMMANDER_MEMORY_DIR'] = path.join(tmpRoot, 'memory-index-dir');
@@ -79,12 +76,7 @@ const FALLBACK = {
     'episodic-memory-vectors.json',
   ),
   COMMANDER_AGENT_STATE_FILE: path.resolve(__dirname, '..', 'data', 'agent-state.json'),
-  COMMANDER_ACTION_RATIONALE_FILE: path.resolve(
-    __dirname,
-    '..',
-    'data',
-    'action-rationales.json',
-  ),
+  COMMANDER_ACTION_RATIONALE_FILE: path.resolve(__dirname, '..', 'data', 'action-rationales.json'),
   COMMANDER_MEMORY_DIR: path.resolve(__dirname, '..', '..', 'memory'),
 };
 
@@ -127,11 +119,7 @@ function snapshot(p) {
 function assertFallbackNotTouched(before, label) {
   if (before.file.exists) {
     const stat = fs.statSync(before.p);
-    assert.equal(
-      stat.mtimeMs,
-      before.file.mtimeMs,
-      `${label}: fallback ${before.p} mtime changed`,
-    );
+    assert.equal(stat.mtimeMs, before.file.mtimeMs, `${label}: fallback ${before.p} mtime changed`);
     assert.equal(
       fs.readFileSync(before.p, 'utf8'),
       before.file.content,
@@ -239,9 +227,7 @@ test('EpisodicMemoryStore reads/writes ONLY at COMMANDER_EPISODIC_FILE + COMMAND
   });
   assert.ok(fs.existsSync(process.env['COMMANDER_EPISODIC_FILE']));
   assert.ok(fs.existsSync(process.env['COMMANDER_VECTOR_INDEX_FILE']));
-  const episodicItems = JSON.parse(
-    fs.readFileSync(process.env['COMMANDER_EPISODIC_FILE'], 'utf8'),
-  );
+  const episodicItems = JSON.parse(fs.readFileSync(process.env['COMMANDER_EPISODIC_FILE'], 'utf8'));
   assert.ok(episodicItems.some((m) => m.title === 'Override episodic test'));
   assertFallbackNotTouched(beforeEp, 'EpisodicMemoryStore.episodic');
   assertFallbackNotTouched(beforeVec, 'EpisodicMemoryStore.vector');
@@ -261,9 +247,7 @@ test('ActionRationaleStore reads/writes only at COMMANDER_ACTION_RATIONALE_FILE'
     goalContext: 'Verify env var redirect',
   });
   assert.ok(fs.existsSync(process.env['COMMANDER_ACTION_RATIONALE_FILE']));
-  const items = JSON.parse(
-    fs.readFileSync(process.env['COMMANDER_ACTION_RATIONALE_FILE'], 'utf8'),
-  );
+  const items = JSON.parse(fs.readFileSync(process.env['COMMANDER_ACTION_RATIONALE_FILE'], 'utf8'));
   assert.ok(items.some((i) => i.actionType === 'test-action'));
   assertFallbackNotTouched(before, 'ActionRationaleStore');
 });
@@ -291,11 +275,7 @@ function runChildProbe(probeBody) {
     const path = require('node:path');
     ${probeBody}
   `;
-  return spawnSync(
-    process.execPath,
-    ['-e', script],
-    { encoding: 'utf8', cwd: distDir },
-  );
+  return spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', cwd: distDir });
 }
 
 test('EpisodicMemoryStore: only-set-episodic (asymmetric) throws at module load', () => {

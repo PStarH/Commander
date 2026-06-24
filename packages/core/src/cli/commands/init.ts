@@ -7,6 +7,7 @@
  *
  * This is the main onboarding experience for Commander.
  */
+import { reportSilentFailure } from '../../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { probeEnvironment, testConnectivity, recommendFallbackChain } from '../../commander/probe';
@@ -268,7 +269,7 @@ export async function cmdInit(flags: Record<string, string> = {}): Promise<void>
         existingConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'init:271');
       /* start fresh */
     }
 

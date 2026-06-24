@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 
 export interface CircuitStats {
@@ -316,7 +317,7 @@ export class CircuitBreaker {
       try {
         this.observability?.onTransition?.(old, newState, this.providerName);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'circuitBreaker:319');
         /* best-effort */
       }
     }

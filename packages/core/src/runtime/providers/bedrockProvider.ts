@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types';
 import { getGlobalLogger } from '../../logging';
 
@@ -57,7 +58,7 @@ export class BedrockProvider implements LLMProvider {
       this.sdk = bedrockModule;
       this.sdkLoaded = true;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'bedrockProvider:60');
       throw new Error(
         'AWS Bedrock SDK not found. Install it: npm install @aws-sdk/client-bedrock-runtime',
       );

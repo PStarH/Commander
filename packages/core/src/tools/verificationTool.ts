@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSandboxed } from './sandboxedExec';
 import { safePath } from './fileSystemTool';
@@ -63,7 +64,7 @@ export class VerificationTool implements Tool {
       try {
         directory = safePath(String(args.directory));
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'verificationTool:66');
         return `Error: Access denied: directory "${args.directory}" is outside workspace`;
       }
     } else {

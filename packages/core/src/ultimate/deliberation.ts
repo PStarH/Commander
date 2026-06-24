@@ -6,6 +6,7 @@
  *   deliberate()          — fast, keyword-based (no LLM call)
  *   deliberateWithLLM()   — LLM-powered planning (richer, but falls back to deliberate() for every field)
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { DeliberationPlan, OrchestrationTopology, EffortLevel } from './types';
 import type { LLMProvider, LLMRequest } from '../runtime/types';
 import { classifyEffortLevel } from './effortScaler';
@@ -431,7 +432,7 @@ function getHistoricalDuration(taskType: string): number {
     }
     return totalWeight > 0 ? weightedDuration / totalWeight : 0;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'deliberation:434');
     return 0;
   }
 }

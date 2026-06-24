@@ -22,6 +22,7 @@
  * (leaves 63K for the model to respond within a 128K window).
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { getMessageBus } from './messageBus';
 import { TokenGovernor } from './tokenGovernor';
@@ -203,7 +204,7 @@ export class RebuildPrompt {
         durationMs: Date.now() - startTime,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'rebuildPrompt:206');
       /* best-effort */
     }
 

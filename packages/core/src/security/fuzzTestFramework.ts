@@ -22,6 +22,7 @@
  *   - Generates fuzz corpus for regression testing
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
@@ -340,7 +341,7 @@ export class FuzzTestFramework {
         },
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'fuzzTestFramework:343');
       /* best-effort */
     }
 
@@ -472,7 +473,7 @@ export class FuzzTestFramework {
         const parsed = JSON.parse(value);
         return this.scrambleJSON(parsed);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'fuzzTestFramework:475');
         // Not valid JSON — add/remove brackets
         if (value.startsWith('{') || value.startsWith('[')) {
           return value.slice(0, -1) + Math.random().toString(36).slice(2);
@@ -762,7 +763,7 @@ export class FuzzTestFramework {
     try {
       return JSON.stringify(value) ?? String(value);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'fuzzTestFramework:765');
       return '[unserializable]';
     }
   }

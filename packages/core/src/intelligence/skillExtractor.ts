@@ -7,6 +7,7 @@
  * Analyzes execution traces and extracts patterns that can be reused.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 
 // ============================================================================
@@ -88,7 +89,7 @@ export class SkillExtractor {
         this.purgeStaleSkills();
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'skillExtractor:91');
       /* ignore */
     }
   }
@@ -100,7 +101,7 @@ export class SkillExtractor {
       fs.mkdirSync(path.dirname(this.skillsPath), { recursive: true });
       fs.writeFileSync(this.skillsPath, JSON.stringify(Array.from(this.skills.values()), null, 2));
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'skillExtractor:103');
       /* ignore */
     }
   }

@@ -9,6 +9,7 @@
  *
  * Storage: append-only NDJSON per run under .commander_verifications/.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
@@ -44,7 +45,7 @@ export class VerificationReportStore {
     try {
       fs.chmodSync(this.baseDir, 0o700);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'verificationReportStore:47');
       /* best-effort */
     }
   }
@@ -57,7 +58,7 @@ export class VerificationReportStore {
       try {
         fs.chmodSync(filePath, 0o600);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'verificationReportStore:60');
         /* best-effort */
       }
     });
@@ -74,7 +75,7 @@ export class VerificationReportStore {
         try {
           out.push(JSON.parse(line) as StoredVerificationRecord);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'verificationReportStore:77');
           // skip corrupt line
         }
       }

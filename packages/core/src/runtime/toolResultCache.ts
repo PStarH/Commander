@@ -13,6 +13,7 @@
  * - Token savings: cached results skip execution AND reduce context rebuilds
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { ToolCall, ToolResult } from './types';
 import { getMetricsCollector } from './metricsCollector';
 import { createContentScanner } from '../contentScanner';
@@ -181,7 +182,7 @@ export class ToolResultCache {
       try {
         getMetricsCollector().recordToolCacheEvent('miss', tenantId);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'toolResultCache:184');
         /* best-effort */
       }
       return undefined;
@@ -195,7 +196,7 @@ export class ToolResultCache {
       try {
         getMetricsCollector().recordToolCacheEvent('miss', tenantId);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'toolResultCache:198');
         /* best-effort */
       }
       return undefined;
@@ -211,7 +212,7 @@ export class ToolResultCache {
     try {
       getMetricsCollector().recordToolCacheEvent('hit', tenantId);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'toolResultCache:214');
       /* best-effort */
     }
 
@@ -281,7 +282,7 @@ export class ToolResultCache {
             }
           }
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'toolResultCache:284');
           // Scan failure should not prevent caching; fail open on scanner errors.
         }
       })();
@@ -291,7 +292,7 @@ export class ToolResultCache {
     try {
       getMetricsCollector().recordToolCacheEvent('store', tenantId);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'toolResultCache:294');
       /* best-effort */
     }
   }

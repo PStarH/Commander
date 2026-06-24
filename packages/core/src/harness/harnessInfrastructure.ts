@@ -13,6 +13,7 @@
  * - PatchEngine (Codex apply_patch)
  * - PlanTracker (Codex plan mode)
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
@@ -245,7 +246,7 @@ export class SubAgentBridge {
       try {
         await runPromise;
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'harnessInfrastructure:248');
         // ignore
       }
     } else {
@@ -323,7 +324,7 @@ export class FileWatcher {
     try {
       absolutePath = safePath(filePath);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'harnessInfrastructure:326');
       getGlobalLogger().warn('FileWatcher', `Cannot watch path outside workspace: ${filePath}`);
       // Return no-op unsubscribe for safety
       const noop: Unsubscribe = () => {};
@@ -473,7 +474,7 @@ export class SessionStore {
           const content = await fsp.readFile(path.join(this.sessionDir, f), 'utf-8');
           sessions.push(JSON.parse(content) as SessionInfo);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'harnessInfrastructure:476');
           // skip
         }
       }
@@ -511,7 +512,7 @@ export class NetworkPolicyEnforcer {
       hostname = parsed.hostname.toLowerCase();
       protocol = parsed.protocol.toLowerCase();
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'harnessInfrastructure:514');
       return {
         allowed: false,
         reason: `Invalid URL: ${url}`,
@@ -808,7 +809,7 @@ export class PatchEngine {
       try {
         filePath = safePath(request.filePath);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'harnessInfrastructure:811');
         return {
           success: false,
           error: `Access denied: filePath "${request.filePath}" is outside workspace`,

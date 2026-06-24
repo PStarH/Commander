@@ -6,6 +6,7 @@
  * live data from the running system. Without wiring, checks return "healthy"
  * with "not wired" messages (backward compatible).
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
@@ -171,7 +172,7 @@ export class HealthCollector {
         details: { open: info.open, total: info.total },
       };
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'healthCheck:174');
       return { status: 'healthy', message: 'Circuit breaker check failed — assuming healthy' };
     }
   }
@@ -196,7 +197,7 @@ export class HealthCollector {
         details: { totalEntries: info.totalEntries, byCategory: info.byCategory },
       };
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'healthCheck:199');
       return { status: 'healthy', message: 'DLQ check failed — assuming healthy' };
     }
   }
@@ -228,7 +229,7 @@ export class HealthCollector {
         details: { total: files.length },
       };
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'healthCheck:231');
       return { status: 'healthy', message: 'Checkpoint directory not accessible' };
     }
   }
@@ -253,7 +254,7 @@ export class HealthCollector {
         details: { pending: info.pending, compensated: info.compensated },
       };
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'healthCheck:256');
       return { status: 'healthy', message: 'Compensation check failed — assuming healthy' };
     }
   }
@@ -271,7 +272,7 @@ export class HealthCollector {
         details: { activeTopics: info.activeTopics, subscriberCount: info.subscriberCount },
       };
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'healthCheck:274');
       return { status: 'healthy', message: 'Event bus check failed — assuming healthy' };
     }
   }
@@ -303,7 +304,7 @@ export class HealthCollector {
         details: { available: info.available, total: info.total },
       };
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'healthCheck:306');
       return { status: 'healthy', message: 'Provider check failed — assuming healthy' };
     }
   }
@@ -337,7 +338,7 @@ export class HealthCollector {
         details: { freeGB, totalGB, usagePercent },
       };
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'healthCheck:340');
       return { status: 'healthy', message: 'Disk space check not available' };
     }
   }

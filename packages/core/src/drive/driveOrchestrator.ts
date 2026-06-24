@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { LLMProvider } from '../runtime/types';
@@ -348,7 +349,7 @@ export class DriveOrchestrator {
       const data = JSON.parse(fs.readFileSync(cp, 'utf-8'));
       return data as DriveState;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'driveOrchestrator:351');
       return null;
     }
   }

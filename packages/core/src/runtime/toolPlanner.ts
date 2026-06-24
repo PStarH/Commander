@@ -12,6 +12,7 @@
  * execution schedule that respects dependencies while maximizing parallelism.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { ToolCall, Tool } from './types';
 
 const READ_ONLY_PATTERNS = ['read', 'search', 'list', 'fetch', 'browse', 'recall', 'get'];
@@ -125,7 +126,7 @@ export class ToolPlanner {
               try {
                 return JSON.parse(tc.arguments);
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'toolPlanner:128');
                 return {};
               }
             })()
@@ -407,7 +408,7 @@ export class ToolPlanner {
             try {
               return JSON.parse(tc.arguments);
             } catch (err) {
-              console.warn('[Catch]', err);
+              reportSilentFailure(err, 'toolPlanner:410');
               return {};
             }
           })()

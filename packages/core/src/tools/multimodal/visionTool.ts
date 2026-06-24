@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../../runtime/types';
 
 const DEFINITION: ToolDefinition = {
@@ -70,7 +71,7 @@ export class VisionAnalyzeTool implements Tool {
         try {
           resolved = safePath(source);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'visionTool:73');
           return `Error: Access denied: path "${source}" is outside workspace`;
         }
         if (!fs.existsSync(resolved)) return `Error: File not found: ${source}`;
