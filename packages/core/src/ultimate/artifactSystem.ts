@@ -14,6 +14,19 @@ const MAX_ARTIFACTS = 500;
 /** Characters per token estimate for token counting */
 const CHARS_PER_TOKEN = 3.7;
 
+/** HARD cap on query-term length passed to RegExp — defense-in-depth alongside
+ *  the escapeRegex() helper. Prevents catastrophic-backtracking ReDoS even if
+ *  escapeRegex() is somehow bypassed. CVSS 7.5+ bug class. */
+const MAX_QUERY_TERM_LENGTH = 64;
+
+/** CVE remediation (audit MED item 3): escape regex metacharacters so user-
+ *  derived search terms cannot inject patterns like `(a+)+$` that cause
+ *  catastrophic backtracking. Without this, a single search query can hang
+ *  the process for minutes. */
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 const ARTIFACT_STORE = new Map<string, { artifact: ArtifactReference; content: string }>();
 let artifactCounter = 0;
 
@@ -129,8 +142,13 @@ export class ArtifactSystem {
       const contentLower = content.toLowerCase();
       let relevance = 0;
 
-      // Count term occurrences
-      for (const term of queryTerms) {
+      // Count term occurrences — escapeRegex() blocks ReDoS injection.
+      // Without it, a term like `(a+)+$` triggers catastrophic backtracking
+      // (CVSS 7.5+). MAX_QUERY_TERM_LENGTH is a belt-and-braces cap in case
+      // a future contributor drops the escapeRegex() call.
+      for (const rawTerm of queryTerms) {
+        if (rawTerm.length === 0 || rawTerm.length > MAX_QUERY_TERM_LENGTH) continue;
+        const term = escapeRegex(rawTerm);
         const titleMatches = (artifact.title.toLowerCase().match(new RegExp(term, 'g')) || [])
           .length;
         const summaryMatches = (artifact.summary.toLowerCase().match(new RegExp(term, 'g')) || [])

@@ -312,18 +312,18 @@ class ExecutionAnalyzer {
   ): OrchestrationTopology {
     // 基于分析结果推荐拓扑
     if (parallelism.utilization < 0.5 && parallelism.max > 2) {
-      return 'PARALLEL'; // 并行度低，切换到并行
+      return 'DISPATCH'; // 并行度低，切换到并行
     }
     if (criticalPath.length > 6) {
-      return 'HIERARCHICAL'; // 关键路径太长，使用层级架构
+      return 'ORCHESTRATOR'; // 关键路径太长，使用层级架构
     }
     if (loadBalance.score < 0.5) {
-      return 'HYBRID'; // 负载不均衡，使用混合架构
+      return 'ORCHESTRATOR'; // 负载不均衡，使用 orchestrator 架构
     }
     if (parallelism.max <= 2) {
-      return 'SEQUENTIAL'; // 任务少，串行即可
+      return 'CHAIN'; // 任务少，串行即可
     }
-    return 'PARALLEL';
+    return 'DISPATCH';
   }
 
   private generateDiagnosis(
@@ -613,7 +613,7 @@ export class ReflexionTopologicalOptimizer {
     if (diagnostics.parallelismUtilization < 0.5) {
       actions.push({
         type: 'change_topology',
-        from: 'SEQUENTIAL',
+        from: 'CHAIN',
         to: diagnostics.recommendedTopology,
         rationale: `当前并行度利用率仅 ${(diagnostics.parallelismUtilization * 100).toFixed(0)}%，切换到 ${diagnostics.recommendedTopology}`,
       });

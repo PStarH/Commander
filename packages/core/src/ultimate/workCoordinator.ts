@@ -454,7 +454,8 @@ export class WorkCoordinator {
         'work-coordinator',
         payload,
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // Bus may be uninitialized in tests
     }
   }

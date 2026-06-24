@@ -234,16 +234,16 @@ function selectTopology(
   if (effortLevel === 'SIMPLE') return 'SINGLE';
   if (effortLevel === 'DEEP_RESEARCH') return 'HYBRID';
   if (taskType === 'RESEARCH' || taskType === 'ANALYSIS') {
-    return effortLevel === 'COMPLEX' ? 'HIERARCHICAL' : 'PARALLEL';
+    return effortLevel === 'COMPLEX' ? 'ORCHESTRATOR' : 'DISPATCH';
   }
-  if (taskType === 'CODING') return 'PARALLEL';
+  if (taskType === 'CODING') return 'DISPATCH';
   if (taskType === 'REASONING') {
-    return effortLevel === 'COMPLEX' ? 'DEBATE' : 'SEQUENTIAL';
+    return effortLevel === 'COMPLEX' ? 'DEBATE' : 'CHAIN';
   }
   if (taskType === 'CREATIVE') {
-    return effortLevel === 'COMPLEX' ? 'ENSEMBLE' : 'PARALLEL';
+    return effortLevel === 'COMPLEX' ? 'ENSEMBLE' : 'DISPATCH';
   }
-  return 'SEQUENTIAL';
+  return 'CHAIN';
 }
 
 function selectDecompositionStrategy(
@@ -430,7 +430,8 @@ function getHistoricalDuration(taskType: string): number {
       }
     }
     return totalWeight > 0 ? weightedDuration / totalWeight : 0;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return 0;
   }
 }
@@ -471,11 +472,11 @@ function allocateTimeBudget(
   // Parallel topologies: agents run concurrently, so each gets roughly the full time
   // but with diminishing returns (not all agents start at the same time)
   const parallelFactor =
-    topology === 'PARALLEL' || topology === 'ENSEMBLE'
+    topology === 'DISPATCH' || topology === 'ENSEMBLE'
       ? 0.85
       : topology === 'HYBRID'
         ? 0.7
-        : topology === 'HIERARCHICAL'
+        : topology === 'ORCHESTRATOR'
           ? 0.5
           : topology === 'DEBATE' || topology === 'CONSENSUS'
             ? 0.6

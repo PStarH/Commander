@@ -452,7 +452,8 @@ export class SequentialPipelineExecutor {
                   lastStepId: result.stepId,
                 },
               });
-            } catch {
+            } catch (err) {
+              console.warn('[Catch]', err);
               /* best-effort */
             }
           }
@@ -604,7 +605,8 @@ export class SequentialPipelineExecutor {
           message: `Step ${stepId} short-circuited (circuit OPEN)`,
           details: { stepId, breakerKey, pipelineId: state.run.pipelineId },
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       await this.emitEvent({
