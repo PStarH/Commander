@@ -17,7 +17,7 @@ import type {
 } from './types';
 import { DEFAULT_ULTIMATE_CONFIG } from './types';
 import { COST_PER_TOKEN } from '../config/constants';
-import type { ModelTier, TokenUsage } from '../runtime/types';
+import type { ModelTier } from '../runtime/types';
 import type { AgentRuntimeInterface } from '../runtime';
 import { TELOSOrchestrator } from '../telos/telosOrchestrator';
 import { getMessageBus } from '../runtime/messageBus';
@@ -28,12 +28,7 @@ import { getModelRouter } from '../runtime/modelRouter';
 import { getMetaLearner, DEFAULT_META_LEARNER_CONFIG } from '../selfEvolution/metaLearner';
 import { TrajectoryAnalyzer } from '../selfEvolution/trajectoryAnalyzer';
 import { getEvolverAgent } from '../selfEvolution/evolverAgent';
-import type {
-  LLMProvider,
-  AnalysisMode,
-  ExecutionExperience,
-  FailureCategory,
-} from '../runtime/types';
+import type { LLMProvider, AnalysisMode, ExecutionExperience } from '../runtime/types';
 import type { OptimizationAction } from './topologyOptimizer';
 import { getGlobalThreeLayerMemory } from '../threeLayerMemory';
 import { deliberate, deliberateWithLLM } from './deliberation';
@@ -49,8 +44,8 @@ import { ReflexionTopologicalOptimizer } from './topologyOptimizer';
 import { getEvolutionEngine } from '../runtime/evolutionaryWorkflowEngine';
 import { getGlobalLogger } from '../logging';
 import { createInitialSharedState, mergeSharedState } from './stateManager';
-import { TokenBudgetManager, getTokenBudgetManager } from '../runtime/tokenBudgetManager';
-import { CheckpointWriter, getCheckpointWriter } from '../runtime/checkpointWriter';
+import { getTokenBudgetManager } from '../runtime/tokenBudgetManager';
+import { getCheckpointWriter } from '../runtime/checkpointWriter';
 import { getRebuildPrompt } from '../runtime/rebuildPrompt';
 
 function generateExecId(counter: { value: number }): string {
@@ -142,7 +137,7 @@ export class UltimateOrchestrator {
     const execId = generateExecId(this.executionCounter);
     const startTime = Date.now();
     const bus = getMessageBus();
-    const tracer = getTraceRecorder();
+    void getTraceRecorder();
     const errors: ExecutionError[] = [];
     const reasoning: string[] = [];
     const artifactsCreated: ArtifactReference[] = [];
@@ -327,7 +322,7 @@ export class UltimateOrchestrator {
       const totalBudget = this.config.defaultBudget.hardCapTokens;
       const budgetManager = getTokenBudgetManager();
       budgetManager.startRun(execId, { hardCap: totalBudget });
-      const checkpointWriter = getCheckpointWriter();
+      void getCheckpointWriter();
       const subAgentEstimates = taskTree.subtasks.map((s) => ({
         nodeId: s.id,
         estimatedTokens:
