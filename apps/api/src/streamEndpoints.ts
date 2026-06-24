@@ -15,7 +15,7 @@
  *   - Sends `: heartbeat` comments on the wire to keep proxies / load balancers alive
  *   - Cleans up the MessageBus subscription + heartbeat when the client disconnects
  */
-import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 import express, { Router, Request, Response } from 'express';
 import { getMessageBus } from '@commander/core';
 import type { MessageBusTopic, BusMessage } from '@commander/core';

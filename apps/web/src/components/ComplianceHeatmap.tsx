@@ -1,4 +1,4 @@
-import type { IsoComplianceSummary, NistRmfAlignmentSummary } from '../types';
+import type { IsoComplianceSummary, NistRmfAlignmentSummary, IsoClause } from '../types';
 
 interface Props {
   iso: IsoComplianceSummary;
@@ -23,7 +23,7 @@ const ISO_DESC: Record<string, string> = {
   '10.2': 'Continual improvement',
 };
 
-const ALL_CLAUSES = Object.keys(ISO_DESC);
+const ALL_CLAUSES = Object.keys(ISO_DESC) as IsoClause[];
 
 const NIST_FUNC_LABELS: Record<string, string> = {
   GOVERN: 'Govern',
