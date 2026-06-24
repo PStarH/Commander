@@ -31,6 +31,7 @@
 
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { walCheckpoint } from '../storage/walCheckpoint';
 
 interface BetterSqlite3Stmt {
   run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
@@ -313,6 +314,7 @@ export class CompensationQueue {
 
   close(): void {
     if (this.db) {
+      walCheckpoint(this.db);
       this.db.close();
       this.db = null;
     }

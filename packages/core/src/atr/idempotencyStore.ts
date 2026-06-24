@@ -270,6 +270,7 @@ export class IdempotencyStore {
   }
 
   close(): void {
+    walCheckpoint(this.db);
     this.db?.close();
     this.db = null;
     this.stmtGet = null;
