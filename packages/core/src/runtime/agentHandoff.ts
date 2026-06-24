@@ -1,7 +1,7 @@
 import type { AgentInbox } from './agentInbox';
 import type { StateCheckpointer } from './stateCheckpointer';
 import { TokenGovernor } from './tokenGovernor';
-import { injectTraceContext, type InboxTraceContext } from '../observability/traceContextBridge';
+import type { InboxTraceContext } from '../observability/traceContextBridge';
 
 export type HandoffStatus = 'requested' | 'accepted' | 'rejected' | 'completed' | 'failed';
 
@@ -91,7 +91,7 @@ export class AgentHandoff {
   /** Prune handoffs that have been in a non-terminal state for too long */
   private pruneUnresolved(): void {
     const threshold = Date.now() - this.UNRESOLVED_TTL_MS;
-    for (const [id, h] of this.handoffs) {
+    for (const [, h] of this.handoffs) {
       if (h.status === 'requested' && new Date(h.createdAt).getTime() < threshold) {
         h.status = 'failed';
         h.resolvedAt = new Date().toISOString();
@@ -343,7 +343,7 @@ export class AgentHandoff {
       estimate(s.environmentSnapshot) +
       estimate(s.openQuestions.join('\n'));
 
-    let current: ContextSummary & Record<string, unknown> = { ...summary };
+    const current: ContextSummary & Record<string, unknown> = { ...summary };
     if (totalTokens(current) <= maxTokens) return current;
 
     // Budget per field: allocate proportionally, with a floor
