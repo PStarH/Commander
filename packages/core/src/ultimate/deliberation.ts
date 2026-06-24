@@ -697,14 +697,22 @@ function isValidTopology(t: unknown): t is OrchestrationTopology {
   return (
     typeof t === 'string' &&
     [
+      // Canonical names (Anthropic-aligned)
       'SINGLE',
+      'CHAIN',
+      'DISPATCH',
+      'ORCHESTRATOR',
+      'REVIEW',
+      // Legacy aliases (deprecated but still accepted)
       'SEQUENTIAL',
+      'HANDOFF',
       'PARALLEL',
+      'ENSEMBLE',
+      'CONSENSUS',
       'HIERARCHICAL',
       'HYBRID',
-      'DEBATE',
-      'ENSEMBLE',
       'EVALUATOR_OPTIMIZER',
+      'DEBATE',
     ].includes(t)
   );
 }

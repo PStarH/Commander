@@ -99,7 +99,7 @@ export class TopologyRouter {
     learnedWeights?: LearnedWeights,
     config?: EpsilonGreedyConfig & { epsilonStore?: import('./epsilonStore').EpsilonStore },
   ) {
-    const rawEpsilon = config?.epsilon ?? 0;
+    const rawEpsilon = config?.epsilon ?? 0.05;
     this.epsilon = Number.isNaN(rawEpsilon) ? 0 : Math.max(0, Math.min(1, rawEpsilon));
     this.explorationTemperature = config?.explorationTemperature ?? 1.0;
     this.rng = config?.rng ?? Math.random;
