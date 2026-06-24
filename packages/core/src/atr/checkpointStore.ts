@@ -28,12 +28,14 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { CheckpointState } from '../runtime/stateCheckpointer';
+import { walCheckpoint } from '../storage/walCheckpoint';
 
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
-} catch {
+} catch (err) {
+  console.warn('[Catch]', err);
   /* not installed — fall back to InMemoryCheckpointBuffer */
 }
 
@@ -346,6 +348,10 @@ export function openCheckpointBackend(
     const wal = new WalCheckpointStore(config);
     return attachBackend(wal, 'wal', undefined);
   } catch (err) {
+    console.warn(
+      '[CheckpointStore] WARN: CheckpointStore falling back to in-memory — crash recovery DISABLED',
+      (err as Error)?.message ?? '',
+    );
     const buf = new InMemoryCheckpointBuffer();
     return attachBackend(buf, 'memory', (err as Error)?.message);
   }
