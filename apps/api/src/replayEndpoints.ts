@@ -1,4 +1,4 @@
-import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 import { Router } from 'express';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
