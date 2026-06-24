@@ -143,9 +143,8 @@ function validateByType<T>(
         if (meta.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input))
           issues.push(createIssue(path, 'Invalid email', 'invalid_email'));
         if (meta.url) {
-          try {
-            new URL(input);
-          } catch {
+          try { new URL(input); } catch (err) {
+            console.warn('[Catch]', err);
             issues.push(createIssue(path, 'Invalid URL', 'invalid_url'));
           }
         }
