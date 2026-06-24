@@ -9,6 +9,7 @@
  * must still key their data by tenant. The helpers below make that easier.
  */
 import { AsyncLocalStorage } from 'async_hooks';
+import { getGlobalTenantProvider } from './tenantProvider';
 
 export interface TenantContextValue {
   tenantId?: string;
@@ -78,6 +79,7 @@ export function hasTenantContext(): boolean {
 }
 
 /**
+<<<<<<< Updated upstream
  * Sanitize a tenant ID so it can be safely embedded in file paths, cache keys,
  * and database identifiers without traversal/injection issues.
  */
@@ -119,4 +121,19 @@ export function assertSameTenant(tenantId: string): void {
       `Cross-tenant access blocked: requested=${tenantId}, current=${current}`,
     );
   }
+}
+
+/**
+ * Compact helper that collapses the repeated
+ * `getGlobalTenantProvider().getCurrentTenantId() ?? <opt> ?? undefined` pattern
+ * into a single named call. Priority order matches the original inline expression:
+ * global tenant provider first, then the caller's `explicitTenantId`
+ * (typically `ctx.tenantId`), then undefined.
+ */
+export function resolveActiveTenantId(explicitTenantId?: string): string | undefined {
+  return (
+    (getGlobalTenantProvider().getCurrentTenantId() ?? undefined) ??
+    explicitTenantId ??
+    undefined
+  );
 }

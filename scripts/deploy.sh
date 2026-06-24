@@ -298,7 +298,57 @@ deploy_production() {
         log "warn" "Production deployment requires --force flag"
         exit 1
     fi
-    
+
+    # Verify Docker is available
+    if ! command -v docker &> /dev/null; then
+        log "error" "Docker is required for production deployment"
+        exit 1
+    fi
+
+    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+        log "error" "Docker Compose is required for production deployment"
+        exit 1
+    fi
+
+    # Check that .env file exists (contains API keys and secrets)
+    if [ ! -f "${PROJECT_ROOT}/.env" ]; then
+        log "error" "Missing .env file — copy .env.example and configure secrets before deploying"
+        exit 1
+    fi
+
+    log "info" "Building production images..."
+    if docker compose -f docker-compose.yml -f docker-compose.prod.yml build; then
+        log "success" "Production images built"
+    else
+        log "error" "Failed to build production images"
+        exit 1
+    fi
+
+    log "info" "Starting production services..."
+    if docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans; then
+        log "success" "Production services started"
+    else
+        log "error" "Failed to start production services"
+        exit 1
+    fi
+
+    # Wait for health check
+    log "info" "Waiting for services to become healthy..."
+    local retries=0
+    local max_retries=30
+    while [ $retries -lt $max_retries ]; do
+        if curl -sf http://localhost:${PORT:-4000}/health > /dev/null 2>&1; then
+            log "success" "API is healthy"
+            break
+        fi
+        retries=$((retries + 1))
+        sleep 2
+    done
+
+    if [ $retries -ge $max_retries ]; then
+        log "warn" "Health check timed out after ${max_retries} attempts — services may still be starting"
+    fi
+
     log "success" "Production deployment complete"
 }
 
