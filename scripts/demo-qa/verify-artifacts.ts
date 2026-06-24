@@ -34,7 +34,8 @@ async function waitForApiReady(timeoutMs = 15000): Promise<void> {
     try {
       const res = await fetch(`${API_URL}/health`);
       if (res.ok) return;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* not ready yet */
     }
     await new Promise((r) => setTimeout(r, 200));

@@ -50,7 +50,8 @@ function postJson(path: string, body: unknown, tenantId?: string): Promise<unkno
         res.on('end', () => {
           try {
             resolve(JSON.parse(data));
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             resolve({ raw: data, statusCode: res.statusCode });
           }
         });
@@ -73,7 +74,8 @@ function getJson(path: string): Promise<unknown> {
         res.on('end', () => {
           try {
             resolve(JSON.parse(data));
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             resolve({ raw: data, statusCode: res.statusCode });
           }
         });
@@ -87,7 +89,8 @@ async function healthCheck(): Promise<void> {
     try {
       const res = await getJson('/health');
       if ((res as Record<string, unknown>).status) return;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* not ready yet */
     }
     await new Promise((r) => setTimeout(r, 1000));
@@ -127,7 +130,8 @@ async function runLoadTest(options: LoadTestOptions): Promise<LoadTestResult> {
         latencies.push(Date.now() - start);
         if (result.status === 'success') completed++;
         else failed++;
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         failed++;
       }
     }
