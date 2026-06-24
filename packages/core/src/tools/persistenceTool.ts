@@ -104,7 +104,8 @@ export class MemoryRecallTool implements Tool {
         let d;
         try {
           d = JSON.parse(fs.readFileSync(path.join(nsDir, file), 'utf-8'));
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           d = {};
         }
         if (
