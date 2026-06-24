@@ -114,7 +114,8 @@ function ensureMigrationsTable(driver: PersistentDriver): void {
       `CREATE TABLE IF NOT EXISTS ${MIGRATIONS_TABLE} ` +
         '(version TEXT PRIMARY KEY, appliedAt TEXT NOT NULL, description TEXT)',
     );
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* best-effort bootstrap */
   }
 }
@@ -135,7 +136,8 @@ function readApplied(driver: PersistentDriver): Set<string> {
       version: string;
     }>;
     for (const r of rows) out.add(r.version);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     // table missing → no applied versions
   }
   return out;
@@ -162,7 +164,8 @@ function recordApplied(driver: PersistentDriver, row: MigrationRow): void {
         appliedAt: row.appliedAt,
         description: row.description,
       });
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* best-effort */
   }
 }

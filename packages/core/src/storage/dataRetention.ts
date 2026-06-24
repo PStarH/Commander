@@ -110,6 +110,12 @@ export const DEFAULT_RETENTION_TABLE: RetentionRule[] = [
     policy: 'delete',
   },
   {
+    name: 'dead-letter-queue',
+    match: /^\.commander_dlq\/[^/]+\.ndjson$/,
+    retentionMs: 90 * 24 * 60 * 60 * 1000,
+    policy: 'delete',
+  },
+  {
     name: 'tmp-cbor',
     match: /.*\.tmp\.cbor$/,
     retentionMs: 24 * 60 * 60 * 1000,
@@ -413,7 +419,8 @@ export class DataRetentionJanitor {
     let entries: fs.Dirent[];
     try {
       entries = await fs.promises.readdir(rootDir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return out;
     }
     for (const entry of entries) {
@@ -422,7 +429,8 @@ export class DataRetentionJanitor {
         let sub: fs.Dirent[];
         try {
           sub = await fs.promises.readdir(abs, { withFileTypes: true });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           continue;
         }
         for (const subEntry of sub) {
@@ -431,7 +439,8 @@ export class DataRetentionJanitor {
           try {
             const stat = await fs.promises.stat(subAbs);
             out.push({ absolute: subAbs, mtimeMs: stat.mtimeMs });
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* skip unreadable */
           }
         }
@@ -439,7 +448,8 @@ export class DataRetentionJanitor {
         try {
           const stat = await fs.promises.stat(abs);
           out.push({ absolute: abs, mtimeMs: stat.mtimeMs });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* skip unreadable */
         }
       }
@@ -479,7 +489,8 @@ export class DataRetentionJanitor {
           (err as Error)?.message ?? err,
         )}`,
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* swallow */
     }
   }
