@@ -319,6 +319,15 @@ export function buildDynamicContext(
       '- Cross-file verification: after editing, verify downstream consumers still compile and pass tests.',
     );
   }
+  if (ctx.verificationTool) {
+    lines.push(
+      '',
+      '## Verification Gate',
+      `- Before finishing, you MUST call the verification tool "${ctx.verificationTool}" and ensure it reports success.`,
+      '- Do not declare the task complete until the verification tool passes.',
+      '- If the verification tool fails, fix the underlying issue and call it again.',
+    );
+  }
   lines.push('</context>');
   return lines.join('\n');
 }

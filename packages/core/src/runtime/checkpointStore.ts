@@ -20,6 +20,7 @@ import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { getGlobalLogger } from '../logging';
 import type { LLMMessage } from './types/llm';
+import { walCheckpoint } from '../storage/walCheckpoint';
 
 // ============================================================================
 // SQLite Interface Types
@@ -43,7 +44,8 @@ let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
-} catch {
+} catch (err) {
+  console.warn('[Catch]', err);
   /* better-sqlite3 not installed — operations throw at runtime */
 }
 
@@ -455,7 +457,8 @@ export class CheckpointStore {
     try {
       this.db.prepare('SELECT 1').get();
       return true;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }
@@ -500,7 +503,8 @@ export class CheckpointStore {
     if (row.tool_calls_json) {
       try {
         msg.tool_calls = JSON.parse(row.tool_calls_json);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* skip malformed tool_calls */
       }
     }
@@ -525,7 +529,8 @@ export function resetCheckpointStores(): void {
   for (const store of storeInstances.values()) {
     try {
       store.close();
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

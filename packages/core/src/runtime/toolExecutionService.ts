@@ -36,6 +36,7 @@ import type { CacheManager } from './cacheManager';
 import type { DeadLetterQueue } from './deadLetterQueue';
 import type { StepTimeoutManager } from './stepTimeoutManager';
 import type { PlannedToolCall } from '../compensation/rollbackPlanner';
+import type { CircuitBreakerRegistry } from './circuitBreakerRegistry';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -51,6 +52,7 @@ export interface ToolExecutionRuntime {
   stepTimeout: StepTimeoutManager;
   getPromotedTools(): Set<string>;
   generateActionId(): string;
+  getBreakerRegistry(): CircuitBreakerRegistry;
 }
 
 export class ToolExecutionService {
@@ -455,7 +457,8 @@ export class ToolExecutionService {
               durationMs,
             };
           }
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       }
@@ -519,6 +522,16 @@ export class ToolExecutionService {
         );
         getMetricsCollector().recordToolCall(toolCall.name, durationMs, errorMsg, tenantId);
         getMetricsCollector().recordError(boundaryResult.errorClass, tenantId);
+
+        // If configured, open the circuit breaker immediately on permanent tool
+        // failure so the LLM does not have to fail the same tool N more times.
+        if (this.runtime.config.circuitBreaker?.openOnFailure !== false) {
+          try {
+            this.runtime.getBreakerRegistry?.().forceOpen(toolCall.name);
+          } catch {
+            /* best-effort */
+          }
+        }
 
         // Detect timeout from both legacy format and StepTimeoutManager
         if (errorMsg.includes('TOOL_TIMEOUT') || errorMsg.includes('exceeded timeout')) {
@@ -711,7 +724,8 @@ export class ToolExecutionService {
       const durationMs = Date.now() - startTime;
       try {
         getMetricsCollector().recordStepLatency('tool_execution', durationMs, tenantId);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     }

@@ -202,7 +202,8 @@ export class RebuildPrompt {
         sections: sections.map((s) => ({ name: s.name, used: s.used, cap: s.cap })),
         durationMs: Date.now() - startTime,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 

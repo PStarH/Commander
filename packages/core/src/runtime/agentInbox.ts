@@ -201,7 +201,8 @@ export class AgentInbox {
         if (!line.trim()) continue;
         try {
           messages.push(JSON.parse(line) as InboxMessage);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           getGlobalLogger().warn('AgentInbox', 'Skipping corrupt inbox line', { agentId });
         }
       }

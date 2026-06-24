@@ -95,7 +95,8 @@ export async function applyObservationMask(
               output: `[security filter: ${r.name} result blocked due to ${threatTypes}]`,
             };
           }
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           // Scan failure should not break execution; fall through to normal masking.
         }
 
