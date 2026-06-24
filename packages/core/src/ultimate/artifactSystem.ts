@@ -14,23 +14,15 @@ const MAX_ARTIFACTS = 500;
 /** Characters per token estimate for token counting */
 const CHARS_PER_TOKEN = 3.7;
 
-/** HARD cap on query-term length passed to RegExp — defense-in-depth alongside
- *  the escapeRegex() helper. Prevents catastrophic-backtracking ReDoS even if
- *  escapeRegex() is somehow bypassed. CVSS 7.5+ bug class. */
-const MAX_QUERY_TERM_LENGTH = 64;
-
-/** CVE remediation (audit MED item 3): escape regex metacharacters so user-
- *  derived search terms cannot inject patterns like `(a+)+$` that cause
- *  catastrophic backtracking. Without this, a single search query can hang
- *  the process for minutes. */
-function escapeRegex(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Escape regex metacharacters to prevent regex injection from user input */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-const ARTIFACT_STORE = new Map<string, { artifact: ArtifactReference; content: string }>();
-let artifactCounter = 0;
-
 export class ArtifactSystem {
+  private store = new Map<string, { artifact: ArtifactReference; content: string }>();
+  private artifactCounter = 0;
+
   async write(
     agentId: string,
     type: ArtifactReference['type'],
@@ -40,7 +32,7 @@ export class ArtifactSystem {
     tags: string[] = [],
     externalUri?: string,
   ): Promise<ArtifactReference> {
-    const id = `artifact_${Date.now()}_${++artifactCounter}`;
+    const id = `artifact_${Date.now()}_${++this.artifactCounter}`;
     const tokenCount = this.estimateTokens(content);
 
     const artifact: ArtifactReference = {
@@ -56,15 +48,15 @@ export class ArtifactSystem {
       externalUri,
     };
 
-    ARTIFACT_STORE.set(id, { artifact, content });
+    this.store.set(id, { artifact, content });
 
     // Evict oldest entries when over capacity
-    if (ARTIFACT_STORE.size > MAX_ARTIFACTS) {
-      const evictCount = ARTIFACT_STORE.size - MAX_ARTIFACTS;
+    if (this.store.size > MAX_ARTIFACTS) {
+      const evictCount = this.store.size - MAX_ARTIFACTS;
       let evicted = 0;
-      for (const key of ARTIFACT_STORE.keys()) {
+      for (const key of this.store.keys()) {
         if (evicted >= evictCount) break;
-        ARTIFACT_STORE.delete(key);
+        this.store.delete(key);
         evicted++;
       }
     }
@@ -73,7 +65,7 @@ export class ArtifactSystem {
   }
 
   async read(id: string): Promise<{ artifact: ArtifactReference; content: string } | null> {
-    const stored = ARTIFACT_STORE.get(id);
+    const stored = this.store.get(id);
     if (!stored) return null;
     return {
       artifact: { ...stored.artifact },
@@ -82,7 +74,7 @@ export class ArtifactSystem {
   }
 
   async readContent(id: string): Promise<string | null> {
-    const stored = ARTIFACT_STORE.get(id);
+    const stored = this.store.get(id);
     if (!stored) return null;
     return stored.content;
   }
@@ -99,7 +91,7 @@ export class ArtifactSystem {
   ): Promise<ArtifactReference[]> {
     const results: ArtifactReference[] = [];
 
-    for (const { artifact, content } of ARTIFACT_STORE.values()) {
+    for (const { artifact, content } of this.store.values()) {
       if (limit > 0 && results.length >= limit) break;
 
       if (query.tags && !query.tags.some((t) => artifact.tags.includes(t))) continue;
@@ -136,24 +128,21 @@ export class ArtifactSystem {
 
     const scored: Array<{ artifact: ArtifactReference; relevance: number }> = [];
 
-    for (const { artifact, content } of ARTIFACT_STORE.values()) {
+    for (const { artifact, content } of this.store.values()) {
       if (options?.type && artifact.type !== options.type) continue;
 
       const contentLower = content.toLowerCase();
       let relevance = 0;
 
-      // Count term occurrences — escapeRegex() blocks ReDoS injection.
-      // Without it, a term like `(a+)+$` triggers catastrophic backtracking
-      // (CVSS 7.5+). MAX_QUERY_TERM_LENGTH is a belt-and-braces cap in case
-      // a future contributor drops the escapeRegex() call.
-      for (const rawTerm of queryTerms) {
-        if (rawTerm.length === 0 || rawTerm.length > MAX_QUERY_TERM_LENGTH) continue;
-        const term = escapeRegex(rawTerm);
-        const titleMatches = (artifact.title.toLowerCase().match(new RegExp(term, 'g')) || [])
+      // Count term occurrences (escape regex metacharacters to prevent injection)
+      for (const term of queryTerms) {
+        const safeTerm = escapeRegex(term);
+        const titleMatches = (artifact.title.toLowerCase().match(new RegExp(safeTerm, 'g')) || [])
           .length;
-        const summaryMatches = (artifact.summary.toLowerCase().match(new RegExp(term, 'g')) || [])
-          .length;
-        const contentMatches = (contentLower.match(new RegExp(term, 'g')) || []).length;
+        const summaryMatches = (
+          artifact.summary.toLowerCase().match(new RegExp(safeTerm, 'g')) || []
+        ).length;
+        const contentMatches = (contentLower.match(new RegExp(safeTerm, 'g')) || []).length;
 
         // Weight: title > summary > content
         relevance += titleMatches * 3 + summaryMatches * 2 + contentMatches;
@@ -168,7 +157,7 @@ export class ArtifactSystem {
   }
 
   async delete(id: string): Promise<boolean> {
-    return ARTIFACT_STORE.delete(id);
+    return this.store.delete(id);
   }
 
   async getStats(): Promise<{
@@ -181,7 +170,7 @@ export class ArtifactSystem {
     const byType: Record<string, number> = {};
     const tagCounts = new Map<string, number>();
 
-    for (const { artifact } of ARTIFACT_STORE.values()) {
+    for (const { artifact } of this.store.values()) {
       totalTokens += artifact.tokenCount;
       byType[artifact.type] = (byType[artifact.type] ?? 0) + 1;
       for (const tag of artifact.tags) {
@@ -195,7 +184,7 @@ export class ArtifactSystem {
       .map(([tag, count]) => ({ tag, count }));
 
     return {
-      totalArtifacts: ARTIFACT_STORE.size,
+      totalArtifacts: this.store.size,
       totalTokens,
       byType,
       topTags,
@@ -203,7 +192,7 @@ export class ArtifactSystem {
   }
 
   clear(): void {
-    ARTIFACT_STORE.clear();
+    this.store.clear();
   }
 
   private estimateTokens(text: string): number {
@@ -221,5 +210,4 @@ export function getArtifactSystem(): ArtifactSystem {
 
 export function resetArtifactSystem(): void {
   artifactSystemSingleton.reset();
-  ARTIFACT_STORE.clear();
 }

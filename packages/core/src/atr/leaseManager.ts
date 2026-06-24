@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 /**
  * LeaseManager — P0-2 ATR kernel component.
  *
@@ -21,13 +22,11 @@
  * ), so tenant A cannot reclaim tenant B's lease.
  */
 
-import { reportSilentFailure } from '../silentFailureReporter';
 import { createHash, randomUUID } from 'crypto';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 import type { RunLease } from './types';
 import { getGlobalLogger } from '../logging';
-import { walCheckpoint } from '../storage/walCheckpoint';
 
 export interface LeaseManagerConfig {
   filePath: string;
@@ -59,8 +58,8 @@ let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
-} catch (err) {
-  reportSilentFailure(err, 'leaseManager:62');
+} catch (_silentE_) {
+  reportSilentFailure(_silentE_, 'leaseManager:60');
 }
 
 interface LeaseRow {
@@ -339,7 +338,6 @@ export class LeaseManager {
   }
 
   close(): void {
-    walCheckpoint(this.db);
     this.db?.close();
     this.db = null;
     this.stmtGet = null;

@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 /**
  * CompensationQueue — durable, cross-process compensation retry queue.
  *
@@ -29,10 +30,8 @@
  * Tier 2.4 of reversibility-rfc-v2 (M1 + M11).
  */
 
-import { reportSilentFailure } from '../silentFailureReporter';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { walCheckpoint } from '../storage/walCheckpoint';
 
 interface BetterSqlite3Stmt {
   run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
@@ -51,8 +50,8 @@ let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
-} catch (err) {
-  reportSilentFailure(err, 'compensationQueue:54');
+} catch (_silentE_) {
+  reportSilentFailure(_silentE_, 'compensationQueue:52');
 }
 
 export type CompensationStatus = 'pending' | 'in_progress' | 'escalated';
@@ -315,7 +314,6 @@ export class CompensationQueue {
 
   close(): void {
     if (this.db) {
-      walCheckpoint(this.db);
       this.db.close();
       this.db = null;
     }
