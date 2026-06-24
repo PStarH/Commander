@@ -111,7 +111,8 @@ async function runBenchmark(args: CliArgs): Promise<BenchResult> {
   if (fs.existsSync(dbPath)) {
     try {
       fs.unlinkSync(dbPath);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

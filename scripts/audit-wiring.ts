@@ -39,7 +39,8 @@ function countMatches(content: string, pattern: string): number {
   try {
     const matches = content.match(new RegExp(pattern, 'g'));
     return matches?.length ?? 0;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     console.error(`  Invalid regex pattern: ${pattern}`);
     return 0;
   }
