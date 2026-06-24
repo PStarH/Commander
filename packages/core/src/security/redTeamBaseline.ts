@@ -258,7 +258,8 @@ export class RedTeamBaselineManager {
     try {
       fs.accessSync(this.config.baselinePath);
       return true;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }

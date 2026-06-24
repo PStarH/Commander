@@ -535,7 +535,8 @@ export class EdgeSecurityProfile {
         });
         clearTimeout(timeout);
         return true;
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         continue;
       }
     }
@@ -574,7 +575,8 @@ export class EdgeSecurityProfile {
           return true; // Empty cred store in Docker config suggests air-gapped
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* non-critical */
     }
 
@@ -587,7 +589,8 @@ export class EdgeSecurityProfile {
           return true;
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* non-critical */
     }
 
@@ -622,7 +625,8 @@ export class EdgeSecurityProfile {
       if (fs.existsSync('/var/snap/microk8s')) return true;
       // IoT Edge runtime
       if (fs.existsSync('/etc/iotedge')) return true;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* non-critical */
     }
 
@@ -633,7 +637,8 @@ export class EdgeSecurityProfile {
         // Small container (< 2GB) = likely edge, not cloud
         if (totalMem < 2 * 1024 * 1024 * 1024) return true;
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* non-critical */
     }
 
@@ -653,7 +658,8 @@ export class EdgeSecurityProfile {
       if (running) {
         providers.push('ollama');
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* unavailable */
     }
 
@@ -666,7 +672,8 @@ export class EdgeSecurityProfile {
       if (response.ok) {
         providers.push('vllm');
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* unavailable */
     }
 
@@ -705,7 +712,8 @@ export class EdgeSecurityProfile {
         'EdgeSecurityProfile',
         '❄️ FreezeDry activated for crash-resume cycles',
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       getGlobalLogger().warn(
         'EdgeSecurityProfile',
         'FreezeDry unavailable — continuing without crash-resume',
@@ -742,7 +750,8 @@ export class EdgeSecurityProfile {
         (() => {
           try {
             return os.userInfo().username;
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             return 'edge-agent';
           }
         })(),
@@ -797,7 +806,8 @@ export class EdgeSecurityProfile {
           },
         },
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

@@ -525,7 +525,8 @@ export class AgentStandbyManager {
         to: event.toInstanceId,
         timestamp: event.startedAt,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* non-critical */
     }
 
@@ -620,7 +621,8 @@ export class AgentStandbyManager {
         metrics.setGauge('standby.rpo', Number(event.rpo), {
           description: 'Recovery Point Objective (seconds)',
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* non-critical */
       }
 
@@ -639,7 +641,8 @@ export class AgentStandbyManager {
             details: { trigger, reason, rto: event.rto, rpo: event.rpo },
           },
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* non-critical */
       }
 
@@ -744,7 +747,8 @@ export class AgentStandbyManager {
       const latestTime = new Date(latest.timestamp).getTime();
       const maxAge = this.config.healthCheckIntervalMs * 2;
       return Date.now() - latestTime < maxAge;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }

@@ -523,7 +523,8 @@ export class ThreatIntelligenceFeed {
         message,
         details: { action, signatureCount: this.signatures.length },
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

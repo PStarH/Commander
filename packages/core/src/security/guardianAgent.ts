@@ -510,7 +510,8 @@ export class GuardianAgent {
         1,
         [{ name: 'type', value: type }],
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 

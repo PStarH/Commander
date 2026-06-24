@@ -428,7 +428,8 @@ export class SandboxVerifier {
           results,
         },
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
