@@ -85,27 +85,6 @@ export class PythonExecuteTool implements Tool {
   }
 }
 
-/**
- * Build a user-facing description of the available backends based on environment.
- * This is shown in the tool definition so the LLM knows what's available.
- */
-function buildBackendDescriptions(): string {
-  const parts: string[] = [];
-  parts.push('local — run on the local machine through sandbox (default)');
-  if (process.env.COMMANDER_SSH_HOST)
-    parts.push(
-      'ssh — run on a remote host (configured via env, or override with ssh_host/ssh_user/ssh_key args)',
-    );
-  if (process.env.COMMANDER_DOCKER_CONTAINER)
-    parts.push(
-      'docker — run inside a running Docker container (container configured via env, or override with container/container_id args)',
-    );
-  if (parts.length === 1) parts.push('ssh — run on a remote host (set ssh_host argument)');
-  if (parts.length <= 2)
-    parts.push('docker — run inside a running container (set container argument)');
-  return parts.join('; ');
-}
-
 // ============================================================================
 // Bash Interception — Tool Priority Enforcement
 //
