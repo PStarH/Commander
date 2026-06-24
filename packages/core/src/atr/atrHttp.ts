@@ -65,7 +65,8 @@ function readBody(req: IncomingMessage, maxBytes: number): Promise<unknown> {
       if (rejected) return;
       try {
         resolve(body ? JSON.parse(body) : {});
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         reject(new Error('Invalid JSON'));
       }
     });
