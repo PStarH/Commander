@@ -94,7 +94,8 @@ export class AnswerFormatTool implements Tool {
       case 'json':
         try {
           JSON.parse(answer);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           issues.push('Answer is not valid JSON');
         }
         break;

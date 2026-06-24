@@ -92,7 +92,8 @@ export class CodeRefinerTool implements Tool {
         let resolvedCodeFile: string;
         try {
           resolvedCodeFile = safePath(codeFile);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           return `Error: Access denied: codeFile "${codeFile}" is outside workspace`;
         }
         if (fs.existsSync(resolvedCodeFile)) {

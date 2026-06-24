@@ -67,7 +67,8 @@ export class ScreenshotCaptureTool implements Tool {
     if (outputPath) {
       try {
         resolvedPath = safePath(outputPath);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         return `Error: Access denied: path "${outputPath}" is outside workspace`;
       }
     } else {
