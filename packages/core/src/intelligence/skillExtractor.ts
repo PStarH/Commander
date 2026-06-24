@@ -87,7 +87,8 @@ export class SkillExtractor {
         // Run decay check on load
         this.purgeStaleSkills();
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
   }
@@ -98,7 +99,8 @@ export class SkillExtractor {
       const path = require('path');
       fs.mkdirSync(path.dirname(this.skillsPath), { recursive: true });
       fs.writeFileSync(this.skillsPath, JSON.stringify(Array.from(this.skills.values()), null, 2));
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
   }

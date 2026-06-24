@@ -165,7 +165,8 @@ export class ImpactAnalyzer {
           this.scanFile(fullPath);
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
   }
@@ -195,7 +196,8 @@ export class ImpactAnalyzer {
           depNode.importedBy.push(filePath);
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
   }

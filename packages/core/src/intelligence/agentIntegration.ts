@@ -144,7 +144,8 @@ export class AgentIntelligence {
               : 'extracted'
             : 'rejected';
         getMetricsCollector().recordSkillExtraction(outcome, result.skills[0]?.category);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
 
