@@ -49,7 +49,8 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
   try {
     await fsp.access(filePath);
     return JSON.parse(await fsp.readFile(filePath, 'utf-8')) as T;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return null;
   }
 }
@@ -63,12 +64,14 @@ async function readNdjsonFile(filePath: string): Promise<TraceEvent[]> {
     for (const line of raw.split('\n')) {
       try {
         events.push(JSON.parse(line));
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* skip corrupt lines */
       }
     }
     return events;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return [];
   }
 }
@@ -102,7 +105,8 @@ export function createReplayRouter(): Router {
       let files: string[] = [];
       try {
         files = (await fsp.readdir(completedDir)).filter((f) => f.endsWith('.json'));
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* dir may not exist */
       }
       for (const file of files) {
@@ -139,7 +143,8 @@ export function createReplayRouter(): Router {
           stepCount: checkpoint.stepNumber ?? 0,
         });
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore scan errors */
     }
 
@@ -148,7 +153,8 @@ export function createReplayRouter(): Router {
       let files: string[] = [];
       try {
         files = (await fsp.readdir(stateDir)).filter((f) => f.endsWith('.checkpoint'));
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* dir may not exist */
       }
       for (const file of files) {
@@ -175,7 +181,8 @@ export function createReplayRouter(): Router {
           stepCount: checkpoint.stepNumber ?? 0,
         });
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
 
