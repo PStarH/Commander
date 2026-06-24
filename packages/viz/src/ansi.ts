@@ -10,7 +10,7 @@
 
 // Cursor & Screen Control
 
-import { reportSilentFailure } from '../../core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 export const cursorHide = '\x1b[?25l';
 export const cursorShow = '\x1b[?25h';
 export const clearScreen = '\x1b[2J\x1b[H';

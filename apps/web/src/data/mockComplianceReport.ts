@@ -62,7 +62,7 @@ export function generateMockReport(): ComplianceAuditReport {
     snapshotCount: history.length,
     scoreDelta: currentPosture.overallScore - history[0].posture.overallScore,
     scoreDeltaRecent:
-      currentPosture.overallScore - history[history.length - 6]?.posture.overallScore ?? 0,
+      currentPosture.overallScore - history[history.length - 6].posture.overallScore,
     trend: 'improving',
     averageScore: Math.round(
       history.reduce((s, h) => s + h.posture.overallScore, 0) / history.length,

@@ -4,6 +4,7 @@
  * Re-exports all public types, interfaces, and classes.
  */
 export * from './models';
+export { reportSilentFailure } from './silentFailureReporter';
 
 // Orchestration exports
 export {
