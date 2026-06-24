@@ -64,7 +64,8 @@ export function isUrlSafe(url: string): UrlSafetyResult {
   let parsed: URL;
   try {
     parsed = new URL(url);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return { safe: false, reason: 'unparseable URL' };
   }
 

@@ -43,7 +43,8 @@ export class PdfExtractTool implements Tool {
       let resolved: string;
       try {
         resolved = safePath(filePath);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         return `Error: Access denied: path "${filePath}" is outside workspace`;
       }
       if (!fs.existsSync(resolved)) return `Error: File not found: ${filePath}`;
