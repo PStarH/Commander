@@ -10,6 +10,8 @@
  */
 
 interface CycleDetectorConfig {
+  /** When false, the detector always reports no cycle. */
+  enabled?: boolean;
   /** 最大允许的相同连续工具调用次数 (默认: 3) */
   maxConsecutiveSameTool: number;
   /** 检测交替模式的窗口大小 (默认: 6) */
@@ -21,6 +23,7 @@ interface CycleDetectorConfig {
 }
 
 const DEFAULT_CONFIG: CycleDetectorConfig = {
+  enabled: true,
   maxConsecutiveSameTool: 3,
   alternatingPatternWindow: 6,
   maxDriftIterations: 5,
@@ -196,6 +199,9 @@ export class CycleDetector {
    * 检查新工具调用是否构成循环
    */
   check(toolName: string, args: Record<string, unknown>, stepNumber: number): CycleDetectionResult {
+    if (this.config.enabled === false) {
+      return { detected: false };
+    }
     const record: ToolCallRecord = { name: toolName, args, stepNumber };
     // Ring buffer: O(1) insert, no allocation
     this.history[this.historyHead] = record;
@@ -297,8 +303,13 @@ export class CycleDetector {
     stepNumber?: number,
   ): CycleDetectionResult {
     // Concurrent calls from the same LLM turn share the same step number.
-    // These are parallel tool invocations, not consecutive loops — skip tracking.
-    if (stepNumber !== undefined && stepNumber === this.lastStepNumber) {
+    // These are parallel tool invocations, not consecutive loops — skip tracking
+    // only when the same tool is invoked again in the same turn.
+    if (
+      stepNumber !== undefined &&
+      stepNumber === this.lastStepNumber &&
+      toolName === this.lastToolName
+    ) {
       return { detected: false };
     }
     if (stepNumber !== undefined) this.lastStepNumber = stepNumber;
