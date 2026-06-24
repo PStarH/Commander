@@ -244,7 +244,8 @@ export class SubAgentBridge {
     if (!params.parallel) {
       try {
         await runPromise;
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         // ignore
       }
     } else {
@@ -321,7 +322,8 @@ export class FileWatcher {
     let absolutePath: string;
     try {
       absolutePath = safePath(filePath);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       getGlobalLogger().warn('FileWatcher', `Cannot watch path outside workspace: ${filePath}`);
       // Return no-op unsubscribe for safety
       const noop: Unsubscribe = () => {};
@@ -470,7 +472,8 @@ export class SessionStore {
         try {
           const content = await fsp.readFile(path.join(this.sessionDir, f), 'utf-8');
           sessions.push(JSON.parse(content) as SessionInfo);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           // skip
         }
       }
@@ -507,7 +510,8 @@ export class NetworkPolicyEnforcer {
       const parsed = new URL(url);
       hostname = parsed.hostname.toLowerCase();
       protocol = parsed.protocol.toLowerCase();
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return {
         allowed: false,
         reason: `Invalid URL: ${url}`,
@@ -803,7 +807,8 @@ export class PatchEngine {
       let filePath: string;
       try {
         filePath = safePath(request.filePath);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         return {
           success: false,
           error: `Access denied: filePath "${request.filePath}" is outside workspace`,
