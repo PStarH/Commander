@@ -7,6 +7,7 @@ import type {
 } from './types';
 import { getArtifactSystem } from './artifactSystem';
 import { getGlobalLogger } from '../logging';
+import { QualityGateEngine, type QualityGateEngineOptions } from './qualityGates';
 
 /** Minimum result length to consider for voting */
 const MIN_VOTE_RESULT_LENGTH = 50;
@@ -23,26 +24,13 @@ const ENSEMBLE_DEPTH_WEIGHT = 0.3;
 /** Maximum number of contradiction patterns to check */
 const MAX_CONTRADICTION_PAIRS = 10;
 
-/** Penalty per contradiction found */
-const CONTRADICTION_PENALTY = 0.05;
-
-/** Penalty per hallucination signal found */
-const HALLUCINATION_PENALTY = 0.1;
-
-/** Penalty per uncertainty phrase found */
-const UNCERTAINTY_PENALTY = 0.05;
-
-/** Penalty for citation markers */
-const CITATION_PENALTY = 0.2;
-
-/** Penalty for unsafe content */
-const UNSAFETY_PENALTY = 0.3;
-
-/** Expected characters per subtask for completeness scoring */
-const CHARS_PER_SUBTASK = 200;
-
 export class MultiAgentSynthesizer {
   private artifactSystem = getArtifactSystem();
+  private qualityGateEngine: QualityGateEngine;
+
+  constructor(qualityGateOptions?: QualityGateEngineOptions) {
+    this.qualityGateEngine = new QualityGateEngine(qualityGateOptions);
+  }
 
   // Quality gates are regex-based heuristics, not LLM evaluation.
   // They penalize hedging language, uncertainty phrases, and known unsafe
@@ -83,7 +71,11 @@ export class MultiAgentSynthesizer {
       artifactsUsed.push(artifact.id);
     }
 
-    const gateResults = await this.runQualityGates(config.qualityGates, synthesis, taskTree);
+    const gateResults = await this.qualityGateEngine.run(
+      config.qualityGates,
+      synthesis,
+      { taskTree },
+    );
     const qualityScore =
       gateResults.reduce((acc, g) => acc + (g.passed ? g.score : 0), 0) /
       Math.max(1, gateResults.length);
