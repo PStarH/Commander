@@ -319,48 +319,5 @@ describe('Orchestrator Auto-Optimization', () => {
 });
 
 // ============================================================================
-// Test 8: Company Mode Quality Pipeline
+// Test 8: Company Mode (removed — superseded by ultimate/companyEngine.ts)
 // ============================================================================
-describe('Company Mode', () => {
-  it('8.1 QualityPipeline scores content', async () => {
-    const { QualityPipeline } = require('../src/company');
-    const pipeline = new QualityPipeline();
-
-    const result = await pipeline.run('Good quality content here', 'analysis', 'agent-a');
-    assert.ok(result.draft.id);
-    assert.ok(typeof result.review.score === 'number');
-    assert.ok(result.review.passed || !result.review.passed);
-  });
-
-  it('8.2 detects hallucination signals', async () => {
-    const { QualityPipeline } = require('../src/company');
-    const pipeline = new QualityPipeline();
-
-    const result = await pipeline.run(
-      'This allegedly unverified report supposedly contains information as of my last update',
-      'analysis',
-      'agent-a',
-    );
-    assert.ok(result.review.issues.length > 0);
-  });
-
-  it('8.3 Scheduler manages tasks', () => {
-    // Clean state to avoid pollution from previous runs
-    const statePath = path.join(process.cwd(), '.commander_state', 'schedules.json');
-    try {
-      fs.unlinkSync(statePath);
-    } catch {}
-    const { Scheduler } = require('../src/company');
-    const sched = new Scheduler();
-
-    const id = sched.add('test-task', 'hourly', 'Run test');
-    assert.ok(id);
-
-    const all = sched.list();
-    assert.strictEqual(all.length, 1);
-    assert.strictEqual(all[0].name, 'test-task');
-
-    sched.remove(id);
-    assert.strictEqual(sched.list().length, 0);
-  });
-});
