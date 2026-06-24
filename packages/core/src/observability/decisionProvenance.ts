@@ -68,7 +68,8 @@ function preview(v: unknown, n = 300): string | undefined {
   try {
     const s = JSON.stringify(v);
     return s.length > n ? s.slice(0, n) + '…' : s;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return undefined;
   }
 }
