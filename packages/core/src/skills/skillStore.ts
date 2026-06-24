@@ -295,7 +295,8 @@ export class SkillStore {
       if (!fs.existsSync(dir)) return false;
       fs.rmSync(dir, { recursive: true, force: true });
       return true;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }
@@ -306,11 +307,13 @@ export class SkillStore {
       return fs.readdirSync(this.skillsDir).filter((f) => {
         try {
           return fs.statSync(path.join(this.skillsDir, f)).isDirectory();
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           return false;
         }
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return [];
     }
   }
