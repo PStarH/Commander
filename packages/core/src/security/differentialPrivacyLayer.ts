@@ -427,7 +427,6 @@ export class DifferentialPrivacyLayer {
    */
   spendBudget(principalId: string, epsilon: number): boolean {
     if (epsilon < this.config.minEpsilonPerQuery) {
-      // eslint-disable-next-line no-console
       console.warn(
         `[DifferentialPrivacyLayer] epsilon=${epsilon} below minimum ${this.config.minEpsilonPerQuery}. Clamping.`,
       );

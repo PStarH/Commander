@@ -67,7 +67,32 @@ export type MessageBusTopic =
   | 'checkpoint.written'
   | 'context.rebuilt'
   | 'security.event'
-  | 'recovery.completed';
+  | 'recovery.completed'
+  // --- Hub Glue: closed-loop event taxonomy (Phase 1 wiring) ---
+  // Orchestration arc
+  | 'orchestrator.topology_optimized'
+  | 'orchestrator.suggested_replan'
+  // Runtime arc
+  | 'runtime.conversation_turn'
+  | 'runtime.dlq_enqueued'
+  // Sandbox arc
+  | 'sandbox.escape_attempted'
+  | 'sandbox.executed'
+  // Telemetry arc
+  | 'telemetry.metric.recorded'
+  | 'telemetry.intent.recorded'
+  // Memory arc
+  | 'memory.queried'
+  | 'memory.semantic_promoted'
+  | 'memory.user.interaction_recorded'
+  | 'memory.episodic_reinforced'
+  | 'memory.lesson_derived'
+  | 'memory.feedback_signal'
+  | 'memory.procedural_compiled'
+  // Security arc
+  | 'security.capability_minted'
+  | 'security.capability_revoked'
+  | 'security.token_delegated';
 
 /**
  * Priority levels for messages.
@@ -206,6 +231,105 @@ export interface BusPayloadMap {
       action: string;
       reason: string;
     }>;
+  };
+  // --- Hub Glue: closed-loop event payloads (Phase 1 wiring) ---
+  'orchestrator.topology_optimized': {
+    runId: string;
+    original: string;
+    suggested: string;
+    reasoning: string[];
+  };
+  'orchestrator.suggested_replan': {
+    runId: string;
+    phase: string;
+    reason: string;
+    plan: string;
+  };
+  'runtime.conversation_turn': {
+    runId: string;
+    sessionId: string;
+    role: string;
+    content: string;
+  };
+  'runtime.dlq_enqueued': {
+    runId: string;
+    category: string;
+    operation: string;
+    error: string;
+  };
+  'sandbox.escape_attempted': {
+    runId: string;
+    lane: string;
+    toolName: string;
+    args: string;
+    constraint: string;
+  };
+  'sandbox.executed': {
+    runId: string;
+    lane: string;
+    toolName: string;
+    durationMs: number;
+    result: string;
+  };
+  'telemetry.metric.recorded': {
+    name: string;
+    value: number;
+    tags: string[];
+  };
+  'telemetry.intent.recorded': {
+    runId: string;
+    stage: string;
+    decision: string;
+    payload: unknown;
+  };
+  'memory.queried': {
+    runId: string;
+    query: string;
+    resultsFound: number;
+    latencyMs: number;
+  };
+  'memory.semantic_promoted': {
+    memoryId: string;
+    fromLayer: string;
+    toLayer: string;
+  };
+  'memory.user.interaction_recorded': {
+    userId: string;
+    interactionType: string;
+    content: string;
+  };
+  'memory.episodic_reinforced': {
+    episodeId: string;
+    weight: number;
+  };
+  'memory.lesson_derived': {
+    lessonId: string;
+    scope: string;
+    sourceEpisodeIds: string[];
+  };
+  'memory.feedback_signal': {
+    targetMemoryId: string;
+    signal: 'positive' | 'negative';
+    weight: number;
+  };
+  'memory.procedural_compiled': {
+    procedureId: string;
+    steps: number;
+  };
+  'security.capability_minted': {
+    capabilityId: string;
+    subjectId: string;
+    scope: string[];
+    ttl: number;
+  };
+  'security.capability_revoked': {
+    capabilityId: string;
+    reason: string;
+  };
+  'security.token_delegated': {
+    parentId: string;
+    childId: string;
+    subjectId: string;
   };
 }
 

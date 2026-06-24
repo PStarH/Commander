@@ -592,7 +592,7 @@ async function main(): Promise<void> {
   allResults.push(...semanticResults);
 
   // ══ Phase 4: Layer independence tests ══
-  let layerResults: LayerTestResult[] = [];
+  const layerResults: LayerTestResult[] = [];
   if (args.testLayers) {
     console.log('\n\n═══ LAYER INDEPENDENCE TESTS ═══');
     console.log('Testing each defense layer individually...\n');

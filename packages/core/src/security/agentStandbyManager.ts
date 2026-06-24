@@ -41,7 +41,6 @@ import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getAuditChainLedger } from './auditChainLedger';
 import { getGlobalLogger, getGlobalMetrics } from '../logging';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
-import * as path from 'path';
 
 // ============================================================================
 // Types
@@ -775,7 +774,7 @@ export class AgentStandbyManager {
 const standbyManagerSingleton = createTenantAwareSingleton(() => new AgentStandbyManager());
 
 /** Get the global AgentStandbyManager. */
-export function getAgentStandbyManager(config?: Partial<StandbyConfig>): AgentStandbyManager {
+export function getAgentStandbyManager(_config?: Partial<StandbyConfig>): AgentStandbyManager {
   return standbyManagerSingleton.get();
 }
 
