@@ -525,9 +525,14 @@ export class ToolExecutionService {
 
         // If configured, open the circuit breaker immediately on permanent tool
         // failure so the LLM does not have to fail the same tool N more times.
-        if (this.runtime.config.circuitBreaker?.openOnFailure !== false) {
+        // Transient errors (timeouts, 5xx, retries that may recover) are left to
+        // the normal retry/circuit-breaker path so the agent can retry.
+        if (
+          boundaryResult.errorClass === 'permanent' &&
+          this.runtime.config.circuitBreaker?.openOnFailure !== false
+        ) {
           try {
-            this.runtime.getBreakerRegistry?.().forceOpen(toolCall.name);
+            this.runtime.getBreakerRegistry().forceOpen(toolCall.name);
           } catch {
             /* best-effort */
           }
