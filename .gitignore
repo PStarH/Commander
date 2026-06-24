@@ -272,3 +272,7 @@ packages/core/.commander/memory/
 .commander/refinement/
 packages/core/src/hub/
 packages/core/tests/hub/
+
+# Guard against stray tsc emit inside source trees
+packages/core/src/**/*.js
+packages/core/src/**/*.d.ts
