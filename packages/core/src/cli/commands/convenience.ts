@@ -133,7 +133,8 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
         stdio: 'pipe',
       });
       console.log(`  ${$.green}✓${$.reset} ESLint fixes applied`);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       console.log(`  ${$.yellow}⚠${$.reset} ESLint found issues (some may need manual fix)`);
     }
 
@@ -145,7 +146,8 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
         stdio: 'pipe',
       });
       console.log(`  ${$.green}✓${$.reset} Prettier formatting applied`);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       console.log(`  ${$.yellow}⚠${$.reset} Prettier had issues`);
     }
 
@@ -170,7 +172,8 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
       try {
         execSync('pnpm test 2>&1', { encoding: 'utf-8', stdio: 'pipe' });
         console.log(`  ${$.green}✓${$.reset} Tests passed`);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         console.log(`  ${$.red}✗${$.reset} Tests failed`);
       }
     }
@@ -257,7 +260,8 @@ export async function cmdTest(flags: Record<string, string>): Promise<void> {
     try {
       const output = execSync('pnpm test 2>&1', { encoding: 'utf-8', stdio: 'pipe' });
       console.log(`  ${$.green}✓${$.reset} Tests passed`);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       console.log(`  ${$.red}✗${$.reset} Tests failed`);
 
       if (flags['--fix']) {
@@ -325,7 +329,8 @@ export async function cmdLearn(flags: Record<string, string>): Promise<void> {
             extensions[ext] = (extensions[ext] || 0) + 1;
           }
         }
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* skip */
       }
     };
@@ -394,7 +399,8 @@ export async function cmdMonitor(dir: string, flags: Record<string, string>): Pr
           try {
             const { execSync } = require('child_process');
             execSync(flags['--run'], { stdio: 'inherit' });
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* command failed */
           }
         }

@@ -40,7 +40,8 @@ function backupFile(sourcePath: string, label: string): string | null {
     const dest = path.join(dir, `${label}_${ts}.json`);
     fs.copyFileSync(sourcePath, dest);
     return dest;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return null;
   }
 }
@@ -87,7 +88,8 @@ async function showStatus(): Promise<void> {
     kv('Regression alerts', `${regressions.length}`);
     const verdicts = ml.getVerdicts();
     kv('Predictions', `${verdicts.length}`);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     kv('Status', 'Not initialized', $.dim);
   }
 
@@ -106,7 +108,8 @@ async function showStatus(): Promise<void> {
       const newest = skills.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
       kv('Newest', `${newest.name}`, $.dim);
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     kv('Status', 'Not initialized', $.dim);
   }
 
@@ -118,7 +121,8 @@ async function showStatus(): Promise<void> {
     kv('Patterns', `${patterns.length}`);
     const warnCount = patterns.filter((p) => p.autoWarn).length;
     if (warnCount > 0) kv('Active warnings', `${warnCount}`, $.yellow);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     kv('Status', 'Not initialized', $.dim);
   }
 
@@ -202,7 +206,8 @@ async function doReset(flags: Record<string, string>): Promise<void> {
         // Also reset in-memory SkillExtractor
         const { getSkillExtractor } = await import('../../intelligence/skillExtractor');
         getSkillExtractor()['skills'].clear();
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     }
@@ -224,7 +229,8 @@ async function doReset(flags: Record<string, string>): Promise<void> {
         }
         const { getFailurePatternLearner } = await import('../../intelligence/failurePatterns');
         getFailurePatternLearner()['patterns'].clear();
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     }
