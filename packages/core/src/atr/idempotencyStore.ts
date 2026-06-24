@@ -22,6 +22,7 @@ import { createHash, randomUUID } from 'crypto';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { getGlobalLogger } from '../logging';
+import { walCheckpoint } from '../storage/walCheckpoint';
 import type { IdempotencyOptions, IdempotencyRecord, IdempotencyState } from './types';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
@@ -59,7 +60,9 @@ let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
-} catch {}
+} catch (err) {
+  console.warn('[Catch]', err);
+}
 
 export class IdempotencyStore {
   private db: BetterSqlite3DB | null = null;

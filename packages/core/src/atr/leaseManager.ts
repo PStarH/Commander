@@ -26,6 +26,7 @@ import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 import type { RunLease } from './types';
 import { getGlobalLogger } from '../logging';
+import { walCheckpoint } from '../storage/walCheckpoint';
 
 export interface LeaseManagerConfig {
   filePath: string;
@@ -57,7 +58,9 @@ let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
-} catch {}
+} catch (err) {
+  console.warn('[Catch]', err);
+}
 
 interface LeaseRow {
   run_id: string;
