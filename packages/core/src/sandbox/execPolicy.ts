@@ -507,7 +507,8 @@ export class ExecPolicyEngine {
     if (token.includes('/')) {
       try {
         if (fs.existsSync(token)) return fs.realpathSync(token);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         return null;
       }
     } else {
@@ -516,7 +517,8 @@ export class ExecPolicyEngine {
         const fullPath = path.join(dir, token);
         try {
           if (fs.existsSync(fullPath)) return fs.realpathSync(fullPath);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           continue;
         }
       }

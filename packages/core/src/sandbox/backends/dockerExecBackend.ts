@@ -24,7 +24,8 @@ export class DockerExecBackend implements ExecutionBackend {
     try {
       execSync('docker info 2>/dev/null', { timeout: 5000 });
       this._available = true;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       this._available = false;
     }
   }
