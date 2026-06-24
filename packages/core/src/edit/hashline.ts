@@ -369,7 +369,8 @@ export function applyHashlineSection(section: HashlineSection): HashlineApplyRes
   } catch (err) {
     try {
       fs.unlinkSync(tmpPath);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
     return {
@@ -551,7 +552,8 @@ function applyWithRecovery(
   } catch (err) {
     try {
       fs.unlinkSync(tmpPath);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
     return {

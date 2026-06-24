@@ -245,7 +245,8 @@ export class WorkflowRegistry {
         this.workflows.set(wf.id, wf);
         return wf;
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // file may have been deleted
       this.workflows.delete(id);
     }

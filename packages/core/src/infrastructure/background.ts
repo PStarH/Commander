@@ -73,7 +73,8 @@ export class BackgroundTaskManager extends EventEmitter {
           this.jobs.set(job.id, job);
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
   }
@@ -209,7 +210,8 @@ export class BackgroundTaskManager extends EventEmitter {
       else if (process.platform === 'linux') {
         execFile('notify-send', [title, body], { stdio: 'ignore' });
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* notification best-effort */
     }
   }
@@ -264,7 +266,8 @@ export class BackgroundTaskManager extends EventEmitter {
       job.completedAt = new Date().toISOString();
       this.saveJobs();
       return true;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }
@@ -283,7 +286,8 @@ export class BackgroundTaskManager extends EventEmitter {
         this.jobs.delete(job.id);
         try {
           fs.unlinkSync(job.logFile);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* ignore */
         }
       }

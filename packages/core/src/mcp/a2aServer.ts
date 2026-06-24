@@ -466,7 +466,8 @@ export class A2AServer {
         if (rejected) return;
         try {
           resolve(body ? JSON.parse(body) : {});
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           reject(new Error('Invalid JSON'));
         }
       });

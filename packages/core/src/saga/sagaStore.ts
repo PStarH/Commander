@@ -100,7 +100,8 @@ export class FileSagaStore implements SagaStore {
           return snapshot;
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // If listing fails, silently return undefined
     }
     return undefined;

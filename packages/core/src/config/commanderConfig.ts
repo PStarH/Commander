@@ -330,12 +330,14 @@ function loadSettings(): CommanderSettings {
       if (fs.existsSync(p)) {
         try {
           return JSON.parse(fs.readFileSync(p, 'utf-8'));
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           getGlobalLogger().warn('CommanderConfig', `Failed to parse config file ${p}`);
           return {};
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       getGlobalLogger().debug('CommanderConfig', `Skipping config file ${p}`);
     }
   }
