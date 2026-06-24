@@ -416,7 +416,7 @@ export class Tier1AgentLoop {
     params: Tier1LoopParams,
     agentId: string,
     runId: string,
-    emit: (event: HarnessEvent) => void,
+    _emit: (event: HarnessEvent) => void,
   ): Promise<{
     results: ToolResult[];
     plan: ToolExecutionPlan;

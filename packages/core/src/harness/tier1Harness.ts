@@ -23,15 +23,14 @@ import type {
   HarnessSelectionContext,
   HarnessRunParams,
   HarnessCapabilities,
-  HarnessServices,
   HarnessEvent,
   HarnessEventHandler,
   Unsubscribe,
   SteerMessage,
 } from './harnessTypes';
-import type { AgentExecutionResult, AgentExecutionStep, ToolResult } from '../runtime/types';
+import type { AgentExecutionResult } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
-import { generateId, now } from '../runtime/runtimeHelpers';
+import { generateId } from '../runtime/runtimeHelpers';
 import { Tier1AgentLoop, type Tier1LoopParams, type Tier1LoopResult } from './tier1AgentLoop';
 
 export { Tier1AgentLoop, type Tier1LoopParams, type Tier1LoopResult } from './tier1AgentLoop';
@@ -103,8 +102,8 @@ export class Tier1Harness implements AgentHarness {
     this.currentRunId = runId;
 
     // Inject skills into system prompt if provided
-    let systemMessages = messages.filter((m) => m.role === 'system');
-    let nonSystemMessages = messages.filter((m) => m.role !== 'system');
+    const systemMessages = messages.filter((m) => m.role === 'system');
+    const nonSystemMessages = messages.filter((m) => m.role !== 'system');
     let effectiveSystemPrompt = systemMessages.map((m) => m.content).join('\n\n');
 
     if (skills && skills.length > 0) {
