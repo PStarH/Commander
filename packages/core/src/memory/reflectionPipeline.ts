@@ -13,6 +13,7 @@
  * @module memory/reflectionPipeline
  */
 
+import { getGlobalLogger } from '../logging';
 import type { MemoryEntry } from '../threeLayerMemory.js';
 import type { ThreeLayerMemory } from '../threeLayerMemory.js';
 
@@ -65,6 +66,7 @@ export class ReflectionPipeline {
   private config: ReflectionPipelineConfig;
   private llm: LLMProvider | null = null;
   private memory: ThreeLayerMemory | null = null;
+  private reflecting = false;
 
   constructor(config?: Partial<ReflectionPipelineConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -93,9 +95,11 @@ export class ReflectionPipeline {
     this.pendingMemories.push(memory);
 
     // Auto-reflect when interval is reached
-    if (this.pendingMemories.length >= this.config.reflectionInterval) {
-      this.reflect().catch(() => {
-        // Reflection failed, continue silently
+    if (this.pendingMemories.length >= this.config.reflectionInterval && !this.reflecting) {
+      this.reflect().catch((err) => {
+        getGlobalLogger().warn('ReflectionPipeline', 'Auto-reflection failed', {
+          error: String(err),
+        });
       });
     }
   }
@@ -108,6 +112,8 @@ export class ReflectionPipeline {
   async reflect(): Promise<ReflectionInsight | null> {
     if (!this.llm) return null;
     if (this.pendingMemories.length < 2) return null;
+    if (this.reflecting) return null;
+    this.reflecting = true;
 
     // Take memories for reflection
     const toReflect = this.pendingMemories.slice(0, this.config.reflectionInterval);
@@ -130,9 +136,14 @@ export class ReflectionPipeline {
 
         return insight;
       }
-    } catch {
+    } catch (err) {
       // Synthesis failed, put memories back
+      getGlobalLogger().warn('ReflectionPipeline', 'Reflection synthesis failed', {
+        error: String(err),
+      });
       this.pendingMemories.unshift(...toReflect);
+    } finally {
+      this.reflecting = false;
     }
 
     return null;
