@@ -5,15 +5,12 @@ import {
   type PolicyEffect,
   type PolicyInput,
   type PolicyPackAst,
-  type PolicyExpr,
   type PolicyRuleAst,
   type PolicyEngineOptions,
   type PolicyEngineStats,
   type PolicyDenyClass,
   type LiteralValue,
   type BudgetSnapshot,
-  type PolicyRunContext,
-  type CompensableActionSummary,
 } from './types';
 import { defaultBuiltins } from './builtins';
 import { evaluateExpr } from './evaluator';
@@ -21,8 +18,6 @@ import { detectCycles } from './conflictAnalyzer';
 
 const DEFAULT_MAX_DEPTH = 32;
 const DEFAULT_TIMEOUT_MS = 50;
-const DEFAULT_CACHE_SIZE = 10_000;
-const DEFAULT_CACHE_TTL_MS = 30_000;
 
 export class PolicyEngine {
   private readonly maxDepth: number;
