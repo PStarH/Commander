@@ -120,8 +120,6 @@ export class SkillExtractor {
   }): ExtractionResult {
     if (!params.success) return { skills: [], summary: 'Task failed, no skills extracted' };
 
-    const extracted: ExtractedSkill[] = [];
-
     // Extract pattern from task
     const pattern = this.extractPattern(params.task);
     const category = this.inferCategory(params.taskType, params.steps);
@@ -248,7 +246,6 @@ export class SkillExtractor {
     }
     this.lastPurgeMs = now;
 
-    const decayThreshold = DECAY_DAYS * 24 * 60 * 60 * 1000;
     let decayed = 0;
     let pruned = 0;
 

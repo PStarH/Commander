@@ -41,40 +41,7 @@ import { getGlobalLogger } from '../logging';
 // Types
 // ============================================================================
 
-interface AppContainerConfig {
-  /** Unique container name (derived from workspace) */
-  name: string;
-  /** Container display name */
-  displayName: string;
-  /** Capability SIDs to grant */
-  capabilities: string[];
-  /** File paths that need read access */
-  readablePaths: string[];
-  /** File paths that need write access */
-  writablePaths: string[];
-  /** Whether network is allowed */
-  allowNetwork: boolean;
-}
-
 // ============================================================================
-// Capability SIDs
-// ============================================================================
-
-const CAPABILITY_SIDS: Record<string, string> = {
-  internetClient: 'S-1-15-3-1',
-  internetClientServer: 'S-1-15-3-2',
-  privateNetworkClientServer: 'S-1-15-3-3',
-  documentsLibrary: 'S-1-15-3-4',
-  picturesLibrary: 'S-1-15-3-5',
-  videosLibrary: 'S-1-15-3-6',
-  musicLibrary: 'S-1-15-3-7',
-  enterpriseAuthentication: 'S-1-15-3-8',
-  sharedUserCertificates: 'S-1-15-3-9',
-  removableStorage: 'S-1-15-3-10',
-  appointments: 'S-1-15-3-11',
-  contacts: 'S-1-15-3-12',
-};
-
 // ============================================================================
 // AppContainerSB
 // ============================================================================
@@ -196,7 +163,7 @@ export class AppContainerSB implements PlatformSandbox {
   private async grantFileAccess(
     containerName: string,
     profile: SandboxProfile,
-    cwd: string,
+    _cwd: string,
   ): Promise<void> {
     // Build list of paths to grant access
     const paths: Array<{ path: string; access: 'read' | 'readwrite' }> = [];
@@ -244,16 +211,9 @@ export class AppContainerSB implements PlatformSandbox {
     // Use PowerShell to launch with AppContainer context.
     // Invoke-CommandInAppContainer requires Windows 10 1809+.
     // Fallback: use START /APPCONTAINER.
-    const appContainerSid = `S-1-15-2-1`;
     // Base64-encode the command so PowerShell metacharacters cannot break out
     // of the ScriptBlock argument list.
     const b64Cmd = Buffer.from(cmd, 'utf-8').toString('base64');
-
-    // Build environment block
-    const envBlock =
-      Object.entries(env)
-        .map(([k, v]) => `${k}=${v}`)
-        .join('\x00') + '\x00\x00';
 
     const psScript = [
       `$container = Get-AppContainerProfile -Name "${containerName}" -ErrorAction SilentlyContinue`,

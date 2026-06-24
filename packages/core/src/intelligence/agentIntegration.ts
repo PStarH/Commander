@@ -13,7 +13,6 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getCostPredictor, type CostEstimate } from './costPredictor';
 import { getFailurePatternLearner, type FailureWarning } from './failurePatterns';
-import { getImpactAnalyzer } from './impactAnalyzer';
 import { getSkillExtractor } from './skillExtractor';
 import { getMetricsCollector } from '../runtime/metricsCollector';
 
