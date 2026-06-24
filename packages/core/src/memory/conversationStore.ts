@@ -19,6 +19,7 @@
  */
 
 import { getGlobalLogger } from '../logging';
+import { walCheckpoint } from '../storage/walCheckpoint';
 
 // ============================================================================
 // Types
@@ -112,7 +113,8 @@ interface BetterSqlite3DB {
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   BetterSqlite3 = require('better-sqlite3');
-} catch {
+} catch (err) {
+  console.warn('[Catch]', err);
   // better-sqlite3 not installed
 }
 
@@ -157,7 +159,8 @@ export class ConversationStore {
         await fs.mkdir(dir, { recursive: true, mode: 0o700 });
         try {
           await fs.chmod(dir, 0o700);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       }
@@ -165,7 +168,8 @@ export class ConversationStore {
       this.db = new BetterSqlite3(dbPath);
       try {
         await fs.chmod(dbPath, 0o600);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       this.db.pragma('journal_mode = WAL');
@@ -655,12 +659,14 @@ export class ConversationStore {
     let metadata: Record<string, unknown> = {};
     try {
       tags = JSON.parse((row.tags as string) || '[]');
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ok */
     }
     try {
       metadata = JSON.parse((row.metadata as string) || '{}');
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ok */
     }
 
