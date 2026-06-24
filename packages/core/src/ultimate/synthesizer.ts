@@ -80,11 +80,9 @@ export class MultiAgentSynthesizer {
       artifactsUsed.push(artifact.id);
     }
 
-    const gateResults = await this.qualityGateEngine.run(
-      config.qualityGates,
-      synthesis,
-      { taskTree },
-    );
+    const gateResults = await this.qualityGateEngine.run(config.qualityGates, synthesis, {
+      taskTree,
+    });
     const qualityScore =
       gateResults.reduce((acc, g) => acc + (g.passed ? g.score : 0), 0) /
       Math.max(1, gateResults.length);
