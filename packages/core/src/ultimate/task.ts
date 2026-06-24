@@ -82,7 +82,8 @@ function pruneTerminalTasks(): void {
     if (task.endTime && now - task.endTime > TERMINAL_TASK_TTL_MS) {
       try {
         fs.unlinkSync(task.outputFile);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* already deleted */
       }
       activeTasks.delete(id);

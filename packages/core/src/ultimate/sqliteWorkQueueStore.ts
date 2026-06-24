@@ -2,6 +2,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { getGlobalLogger } from '../logging';
+import { walCheckpoint } from '../storage/walCheckpoint';
 import type { WorkQueueStore } from './workQueueStore';
 import type { WorkItem, WorkStatus } from './workCoordinator';
 

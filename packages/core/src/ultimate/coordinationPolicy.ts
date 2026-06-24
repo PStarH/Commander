@@ -51,19 +51,19 @@ const TOPOLOGY_TOKEN_MULTIPLIER: Record<OrchestrationTopology, number> = {
   // Canonical (D3.2) — mirror the legacy alias values so canonical-name
   // lookups yield the same token multiplier as the deprecated-equivalent
   // legacy name (e.g., `CHAIN` behaves exactly like `SEQUENTIAL`).
-  CHAIN: 1.1, // ← SEQUENTIAL
-  DISPATCH: 2.0, // ← PARALLEL
-  ORCHESTRATOR: 3.0, // ← HIERARCHICAL
-  REVIEW: 2.5, // ← EVALUATOR_OPTIMIZER
-  SEQUENTIAL: 1.1,
-  PARALLEL: 2.0,
-  HIERARCHICAL: 3.0,
+  CHAIN: 1.1,
+  DISPATCH: 2.0,
+  ORCHESTRATOR: 3.0,
+  REVIEW: 2.5,
   HYBRID: 4.0,
   DEBATE: 3.5,
   ENSEMBLE: 3.0,
-  EVALUATOR_OPTIMIZER: 2.5,
-  HANDOFF: 2.0,
   CONSENSUS: 3.5,
+  SEQUENTIAL: 1.1,
+  HANDOFF: 1.1,
+  PARALLEL: 2.0,
+  HIERARCHICAL: 3.0,
+  EVALUATOR_OPTIMIZER: 2.5,
 };
 
 /** Default ROI threshold — learned weights can override this per task type. */
@@ -247,7 +247,7 @@ function estimateCoordinationTokens(
   topology: OrchestrationTopology,
 ): number {
   if (topology === 'SINGLE') return 0;
-  const topologyBase = topology === 'SEQUENTIAL' ? 200 : topology === 'PARALLEL' ? 450 : 700;
+  const topologyBase = topology === 'CHAIN' ? 200 : topology === 'DISPATCH' ? 450 : 700;
   return Math.round(topologyBase + agentCount * 350 + coordinationChannels * 80);
 }
 
@@ -258,7 +258,7 @@ function estimateLatencyPenaltyMs(
   topology: OrchestrationTopology,
 ): number {
   if (topology === 'SINGLE') return 0;
-  const syncPenalty = topology === 'PARALLEL' ? 600 : topology === 'SEQUENTIAL' ? 900 : 1400;
+  const syncPenalty = topology === 'DISPATCH' ? 600 : topology === 'CHAIN' ? 900 : 1400;
   return Math.round(syncPenalty + agentCount * 250 + coordinationChannels * 100 * coupling);
 }
 
@@ -313,7 +313,7 @@ function estimateGain(
 
 function structuralSignal(deliberation: DeliberationPlan, topology: OrchestrationTopology): number {
   if (
-    (topology === 'HIERARCHICAL' || topology === 'HYBRID') &&
+    (topology === 'ORCHESTRATOR' || topology === 'HYBRID') &&
     (deliberation.taskType === 'RESEARCH' || deliberation.taskType === 'REASONING')
   ) {
     return 0.08;
@@ -332,8 +332,8 @@ function breadthSignal(deliberation: DeliberationPlan, usefulParallelism: number
 
 function isolationSignal(deliberation: DeliberationPlan, topology: OrchestrationTopology): number {
   const needsReview = deliberation.taskType === 'CODING' || deliberation.taskType === 'ANALYSIS';
-  if (topology === 'EVALUATOR_OPTIMIZER' && needsReview) return 0.08;
-  if (topology === 'HANDOFF' && deliberation.capabilitiesNeeded.length > 2) return 0.06;
+  if (topology === 'REVIEW' && needsReview) return 0.08;
+  if (topology === 'CHAIN' && deliberation.capabilitiesNeeded.length > 2) return 0.06;
   if (topology === 'DEBATE' && deliberation.taskType === 'REASONING') return 0.05;
   if (topology === 'ENSEMBLE' && deliberation.taskType === 'CREATIVE') return 0.05;
   return 0;
@@ -346,14 +346,14 @@ function selectCoordinationPattern(
   dag?: TaskDAG,
 ): CoordinationPattern {
   if (topology === 'SINGLE' || agentCount <= 1) return 'SINGLE_AGENT';
-  if (topology === 'EVALUATOR_OPTIMIZER') return 'REVIEWER';
-  if (topology === 'HIERARCHICAL' || topology === 'HYBRID') return 'HIERARCHICAL_DELEGATION';
+  if (topology === 'REVIEW') return 'REVIEWER';
+  if (topology === 'ORCHESTRATOR' || topology === 'HYBRID') return 'HIERARCHICAL_DELEGATION';
   if (topology === 'DEBATE') return 'DEBATE';
   if (topology === 'ENSEMBLE') return 'ENSEMBLE';
-  if (topology === 'HANDOFF') return 'HANDOFF';
+  if (topology === 'CHAIN') return 'HANDOFF';
   if (topology === 'CONSENSUS') return 'CONSENSUS';
   if (agentCount === 2 || dag?.metadata.criticalPathDepth === 2) return 'PLANNER_EXECUTOR';
-  if (topology === 'PARALLEL') return 'SPECIALIST_SWARM';
+  if (topology === 'DISPATCH') return 'SPECIALIST_SWARM';
   return deliberation.taskType === 'CODING' ? 'PLANNER_EXECUTOR' : 'SPECIALIST_SWARM';
 }
 
@@ -369,7 +369,7 @@ function chooseFallbackTopology(
   coupling: number,
   _: number,
 ): OrchestrationTopology {
-  if (coupling >= 0.7 && deliberation.estimatedAgentCount > 1) return 'SEQUENTIAL';
+  if (coupling >= 0.7 && deliberation.estimatedAgentCount > 1) return 'CHAIN';
   return 'SINGLE';
 }
 
@@ -387,7 +387,7 @@ function hasPositiveCoordinationSignal(
     return true;
   if (dag && dag.metadata.parallelismWidth > 3 && dag.metadata.interSubtaskCoupling < 0.7)
     return true;
-  if (topology === 'EVALUATOR_OPTIMIZER' && deliberation.taskType === 'CODING') return true;
+  if (topology === 'REVIEW' && deliberation.taskType === 'CODING') return true;
   if (topology === 'DEBATE' && deliberation.taskType === 'REASONING') return true;
   if (topology === 'ENSEMBLE' && deliberation.taskType === 'CREATIVE') return true;
   if (deliberation.taskType === 'CODING' && deliberation.estimatedAgentCount >= 3 && !dag)
