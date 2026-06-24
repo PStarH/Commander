@@ -268,3 +268,4 @@ packages/core/.commander/queues/
 # Vite/React generated type declarations and bundles (apps/web)
 apps/web/src/*.d.ts
 apps/web/src/*.js
+packages/core/.commander/memory/
