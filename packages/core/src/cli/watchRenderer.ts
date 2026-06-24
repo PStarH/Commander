@@ -125,7 +125,9 @@ export class WatchRenderer {
     if (logFilePath) {
       try {
         this.logFile = fs.openSync(logFilePath, 'a');
-      } catch {}
+      } catch (err) {
+        console.warn('[Catch]', err);
+      }
     }
     // ── Screen ──────────────────────────────────────────────────────
     this.screen = blessed.screen({
@@ -272,7 +274,9 @@ export class WatchRenderer {
     if (this.logFile !== null) {
       try {
         fs.closeSync(this.logFile);
-      } catch {}
+      } catch (err) {
+        console.warn('[Catch]', err);
+      }
     }
     this.screen.destroy();
   }

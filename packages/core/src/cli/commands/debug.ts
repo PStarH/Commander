@@ -123,7 +123,8 @@ function renderTopologyChoice(record: IntentRecord, ml: ReturnType<typeof getMet
           );
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }
@@ -334,7 +335,8 @@ export async function cmdDebugIntent(
   let ml: ReturnType<typeof getMetaLearner> | null = null;
   try {
     ml = getMetaLearner();
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* best-effort */
   }
 
