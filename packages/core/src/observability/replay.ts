@@ -137,7 +137,7 @@ export async function liveReplay(
         },
       });
       reExecutedSpans.push(originalNode.spanId);
-    } catch (err) {
+    } catch {
       replayedNodes.push(applySubstitution(originalNode, spec));
     }
   }

@@ -23,7 +23,6 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // Known LLM Provider → API Domain mapping

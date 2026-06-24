@@ -6,7 +6,6 @@ import type {
   SkillCategory,
 } from './types';
 import { SkillStore } from './skillStore';
-import { getGlobalLogger } from '../logging';
 import { computeQualityScore } from './skillQualityScorer';
 import { scanSkillContent, rejectReason } from './skillSecurityScanner';
 

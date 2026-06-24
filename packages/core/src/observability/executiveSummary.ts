@@ -1,11 +1,10 @@
-import type { ExecutionTrace, TraceEvent } from '../runtime/types';
-import type { ExecutiveSummary, TimelineNode } from './types';
+import type { ExecutionTrace } from '../runtime/types';
+import type { ExecutiveSummary } from './types';
 import { buildTimeline } from './timelineBuilder';
 import { getCostModel } from './costModel';
 
 export function buildExecutiveSummary(trace: ExecutionTrace): ExecutiveSummary {
   const timeline = buildTimeline(trace);
-  const costModel = getCostModel();
 
   const modelsUsed = new Set<string>();
   const toolsUsed = new Set<string>();
