@@ -23,6 +23,7 @@
  * ```
  */
 
+import { reportSilentFailure } from '../../core/src/silentFailureReporter';
 import type { CommanderOptions } from '@commander/core';
 
 import type {
@@ -337,18 +338,20 @@ export class CommanderClient {
   // ==========================================================================
 
   async writeMemory(content: string, options: MemoryWriteOptions = {}): Promise<string | null> {
-    try { const { getGlobalThreeLayerMemory } = await import('@commander/core');
-    const memory = getGlobalThreeLayerMemory();
-    const id = `mem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    memory.add(
-      content,
-      options.layer ?? 'episodic',
-      `id:${id}`,
-      options.importance ?? 0.5,
-      options.tags ?? [],
-    );
-    return id; } catch (err) {
-      console.warn('[Catch]', err);
+    try {
+      const { getGlobalThreeLayerMemory } = await import('@commander/core');
+      const memory = getGlobalThreeLayerMemory();
+      const id = `mem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      memory.add(
+        content,
+        options.layer ?? 'episodic',
+        `id:${id}`,
+        options.importance ?? 0.5,
+        options.tags ?? [],
+      );
+      return id;
+    } catch (err) {
+      reportSilentFailure(err, 'commanderClient:353');
       return null;
     }
   }

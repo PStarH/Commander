@@ -13,6 +13,7 @@
  *
  * Both DefaultHarness and CodeAgentHarness delegate to this loop.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import type {
   LLMRequest,
   LLMResponse,
@@ -334,7 +335,7 @@ export class Tier1AgentLoop {
           const parsed = JSON.parse(loopResult.summary);
           loopResult.outputData = parsed;
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'tier1AgentLoop:337');
           // not JSON — leave unstructured
         }
         await params.services.fireOnAgentComplete({
@@ -482,7 +483,7 @@ export class Tier1AgentLoop {
         return `[Content scan blocked output — potential injection detected]\nReason: ${scanResult.reason ?? 'unknown'}`;
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'tier1AgentLoop:485');
       // If scanner fails, continue with output — fail open for availability
     }
 

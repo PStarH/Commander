@@ -13,6 +13,7 @@
  * - Transaction batching for bulk writes
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { walCheckpoint } from '../storage/walCheckpoint';
 import type {
@@ -52,7 +53,7 @@ let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
   BetterSqlite3 = require('better-sqlite3');
 } catch (err) {
-  console.warn('[Catch]', err);
+  reportSilentFailure(err, 'sqliteMemoryStore:55');
   // better-sqlite3 not installed
 }
 
@@ -562,7 +563,7 @@ export class SqliteMemoryStore implements MemoryStore {
           tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
         }
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'sqliteMemoryStore:565');
         /* skip malformed */
       }
     }
@@ -602,7 +603,7 @@ export class SqliteMemoryStore implements MemoryStore {
       try {
         await this.initPromise;
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'sqliteMemoryStore:605');
         /* init failed; close is still safe */
       }
     }
@@ -632,13 +633,13 @@ export class SqliteMemoryStore implements MemoryStore {
     try {
       tags = JSON.parse((row.tags as string) || '[]');
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'sqliteMemoryStore:635');
       /* ok */
     }
     try {
       evidenceRefs = row.evidence_refs ? JSON.parse(row.evidence_refs as string) : undefined;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'sqliteMemoryStore:641');
       /* ok */
     }
 

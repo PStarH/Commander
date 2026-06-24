@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
@@ -85,7 +86,7 @@ export class ApplyPatchTool implements Tool {
       try {
         targetPath = safePath(fileToPatch);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'patchTool:88');
         return `Error: Target file "${fileToPatch}" is outside the workspace.`;
       }
       if (!fs.existsSync(targetPath)) {
@@ -112,7 +113,7 @@ export class ApplyPatchTool implements Tool {
           patchApplied = true;
           break;
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'patchTool:115');
           /* try next variant */
         }
       }

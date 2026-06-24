@@ -81,14 +81,26 @@ function verifyBfcl() {
     const computedParameter = formatPercent(counts.parameterCorrect, total);
 
     assertEqual(data[dataset.toolScoreField], computedTool, `${dataset.file} tool score`);
-    assertEqual(data[dataset.parameterScoreField], computedParameter, `${dataset.file} parameter score`);
+    assertEqual(
+      data[dataset.parameterScoreField],
+      computedParameter,
+      `${dataset.file} parameter score`,
+    );
 
     const summaryDataset = summary.datasets?.[dataset.key];
     if (!summaryDataset) {
       throw new Error(`docs/benchmark-results/bfcl/summary.json missing ${dataset.key}`);
     }
-    assertEqual(summaryDataset.tool_selection_accuracy, computedTool, `${dataset.key} summary tool score`);
-    assertEqual(summaryDataset.parameter_accuracy, computedParameter, `${dataset.key} summary parameter score`);
+    assertEqual(
+      summaryDataset.tool_selection_accuracy,
+      computedTool,
+      `${dataset.key} summary tool score`,
+    );
+    assertEqual(
+      summaryDataset.parameter_accuracy,
+      computedParameter,
+      `${dataset.key} summary parameter score`,
+    );
 
     rows.push({
       label: dataset.label,
@@ -106,7 +118,9 @@ function main() {
   const rows = verifyBfcl();
   console.log('Benchmark result verification passed');
   for (const row of rows) {
-    console.log(`- ${row.label}: ${row.total} cases, tool=${row.tool}, parameter=${row.parameter} (${row.file})`);
+    console.log(
+      `- ${row.label}: ${row.total} cases, tool=${row.tool}, parameter=${row.parameter} (${row.file})`,
+    );
   }
 }
 

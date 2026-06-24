@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { AgentRuntimeInterface } from '../runtime';
@@ -52,7 +53,7 @@ export class OrchestratorOutputCollector {
             });
           }
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'orchestratorOutput:55');
         }
       };
 
@@ -95,7 +96,7 @@ export class OrchestratorOutputCollector {
           tryAddFile(path.join(workspace, entry.name));
         }
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'orchestratorOutput:98');
       }
 
       // Method 4: Scan /tmp/ for files matching goal patterns.
@@ -109,7 +110,7 @@ export class OrchestratorOutputCollector {
           tryAddFile(path.join('/tmp', entry.name));
         }
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'orchestratorOutput:112');
       }
 
       // Method 5: Scan per-agent output directories.
@@ -127,13 +128,13 @@ export class OrchestratorOutputCollector {
                 tryAddFile(path.join(agentPath, file.name));
               }
             } catch (err) {
-              console.warn('[Catch]', err);
+              reportSilentFailure(err, 'orchestratorOutput:130');
               /* ignore per-agent scan errors */
             }
           }
         }
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'orchestratorOutput:136');
       }
 
       const totalAgentContent = agentWrittenFiles.reduce((s, f) => s + f.size, 0);

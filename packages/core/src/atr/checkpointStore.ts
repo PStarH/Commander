@@ -25,6 +25,7 @@
  * Test: see tests/recovery/kill9.test.ts
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { CheckpointState } from '../runtime/stateCheckpointer';
@@ -35,7 +36,7 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
 } catch (err) {
-  console.warn('[Catch]', err);
+  reportSilentFailure(err, 'checkpointStore:38');
   /* not installed — fall back to InMemoryCheckpointBuffer */
 }
 

@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import type { LLMProvider, LLMRequest, LLMResponse, ToolCall } from '../types';
 import { FormatBridge } from '../formatBridge';
 
@@ -123,7 +124,7 @@ export class GoogleProvider implements LLMProvider {
         try {
           responsePayload = JSON.parse(msg.content);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'googleProvider:126');
           responsePayload = { result: msg.content };
         }
         parts.push({
@@ -139,7 +140,7 @@ export class GoogleProvider implements LLMProvider {
           try {
             args = JSON.parse(tc.function.arguments);
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'googleProvider:142');
             args = {};
           }
           parts.push({
@@ -233,7 +234,7 @@ function tryParseGeminiResponse(
   try {
     return JSON.parse(trimmed) as Record<string, unknown>;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'googleProvider:236');
     return undefined;
   }
 }

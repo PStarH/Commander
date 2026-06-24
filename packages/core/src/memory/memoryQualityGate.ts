@@ -13,6 +13,7 @@
  * @module memory/memoryQualityGate
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { MemoryEntry } from '../threeLayerMemory.js';
 import type { InMemoryEmbeddingStore } from '../runtime/embedding.js';
 import { cosineSimilarity } from '../runtime/embedding.js';
@@ -215,7 +216,7 @@ export class MemoryQualityGate {
         JSON.parse(content);
         return { passed: false, reason: 'Raw JSON blob' };
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'memoryQualityGate:218');
         // Not valid JSON, continue
       }
     }

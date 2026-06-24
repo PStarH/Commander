@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getSecurityMonitor, type SecurityAlert } from './securityMonitor';
 import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getMetricsCollector } from '../runtime/metricsCollector';
@@ -511,7 +512,7 @@ export class GuardianAgent {
         [{ name: 'type', value: type }],
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'guardianAgent:514');
       /* best-effort */
     }
 

@@ -59,10 +59,7 @@ describe('SamplingPolicy', () => {
   describe('tail-based rules', () => {
     it('always keeps traces with errors', () => {
       const policy = new SamplingPolicy({ baseRate: 0, salt: 'test' });
-      const events = [
-        makeEvent({ type: 'error', data: { error: 'boom' } }),
-        makeEvent(),
-      ];
+      const events = [makeEvent({ type: 'error', data: { error: 'boom' } }), makeEvent()];
       const decision = policy.decide(events, 'trace-1', 100);
       expect(decision.keep).toBe(true);
       expect(decision.reason).toBe('error');
@@ -70,10 +67,7 @@ describe('SamplingPolicy', () => {
 
     it('always keeps traces with retries', () => {
       const policy = new SamplingPolicy({ baseRate: 0, salt: 'test' });
-      const events = [
-        makeEvent({ type: 'error', data: { retrying: true } }),
-        makeEvent(),
-      ];
+      const events = [makeEvent({ type: 'error', data: { retrying: true } }), makeEvent()];
       const decision = policy.decide(events, 'trace-1', 100);
       expect(decision.keep).toBe(true);
       expect(decision.reason).toBe('retry');
@@ -81,9 +75,7 @@ describe('SamplingPolicy', () => {
 
     it('always keeps traces with transient error class', () => {
       const policy = new SamplingPolicy({ baseRate: 0, salt: 'test' });
-      const events = [
-        makeEvent({ type: 'error', data: { errorClass: 'transient' } }),
-      ];
+      const events = [makeEvent({ type: 'error', data: { errorClass: 'transient' } })];
       const decision = policy.decide(events, 'trace-1', 100);
       expect(decision.keep).toBe(true);
       expect(decision.reason).toBe('retry');
@@ -99,9 +91,7 @@ describe('SamplingPolicy', () => {
 
     it('always keeps traces with failed verification', () => {
       const policy = new SamplingPolicy({ baseRate: 0, salt: 'test' });
-      const events = [
-        makeEvent({ type: 'verification', data: { evaluationPassed: false } }),
-      ];
+      const events = [makeEvent({ type: 'verification', data: { evaluationPassed: false } })];
       const decision = policy.decide(events, 'trace-1', 100);
       expect(decision.keep).toBe(true);
       expect(decision.reason).toBe('verification');
@@ -109,9 +99,7 @@ describe('SamplingPolicy', () => {
 
     it('always keeps traces with low quality score', () => {
       const policy = new SamplingPolicy({ baseRate: 0, keepIfQualityBelow: 0.5, salt: 'test' });
-      const events = [
-        makeEvent({ type: 'verification', data: { evaluationScore: 0.3 } }),
-      ];
+      const events = [makeEvent({ type: 'verification', data: { evaluationScore: 0.3 } })];
       const decision = policy.decide(events, 'trace-1', 100);
       expect(decision.keep).toBe(true);
       expect(decision.reason).toBe('quality');
@@ -151,9 +139,7 @@ describe('SamplingPolicy', () => {
       const config = policy.toCollectorConfig();
       expect(config.tail_sampling).toBeDefined();
       expect(config.tail_sampling.policies.length).toBeGreaterThan(0);
-      const probabilistic = config.tail_sampling.policies.find(
-        (p) => p.type === 'probabilistic',
-      );
+      const probabilistic = config.tail_sampling.policies.find((p) => p.type === 'probabilistic');
       expect(probabilistic).toBeDefined();
     });
   });

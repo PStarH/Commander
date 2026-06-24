@@ -29,6 +29,7 @@
  *   });
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -503,7 +504,7 @@ export class SecurityAuditLogger {
         metrics.incrementCounter('security.events.critical', 1);
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'securityAuditLogger:506');
       // Metrics not available — non-critical
     }
   }
@@ -531,7 +532,7 @@ export class SecurityAuditLogger {
           logger.info('SecurityAudit', `[${event.type}] ${event.message}`, context);
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'securityAuditLogger:534');
       // Logger not available — non-critical
     }
   }
@@ -545,7 +546,7 @@ export class SecurityAuditLogger {
         priority: event.severity === 'critical' ? 0 : event.severity === 'high' ? 1 : 3,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'securityAuditLogger:548');
       // MessageBus not available — non-critical
     }
   }

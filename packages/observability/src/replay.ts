@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../core/src/silentFailureReporter';
 import type { ExecutionTrace, TraceEvent } from '@commander/core';
 import type { ReplayResult, ReplaySpec, TimelineView, TimelineNode } from './types';
 import { buildTimeline } from './timelineBuilder';
@@ -21,9 +22,11 @@ function applySubstitution(node: TimelineNode, spec: ReplaySpec): TimelineNode {
 function previewOf(v: unknown, n = 200): string {
   if (v === undefined || v === null) return '';
   if (typeof v === 'string') return v.length > n ? v.slice(0, n) + '…' : v;
-  try { const s = JSON.stringify(v);
-  return s.length > n ? s.slice(0, n) + '…' : s; } catch (err) {
-    console.warn('[Catch]', err);
+  try {
+    const s = JSON.stringify(v);
+    return s.length > n ? s.slice(0, n) + '…' : s;
+  } catch (err) {
+    reportSilentFailure(err, 'replay:28');
     return String(v).slice(0, n);
   }
 }

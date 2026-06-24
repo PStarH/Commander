@@ -6,6 +6,7 @@
  * standard failure categories.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { HttpRequest, HttpResponse, HttpSendFn } from './types';
 
 export type FailureCategory =
@@ -294,7 +295,7 @@ export async function runScenario(input: {
   try {
     await input.work();
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'failureInjection:297');
     success = false;
   }
   if (input.teardown) await input.teardown();

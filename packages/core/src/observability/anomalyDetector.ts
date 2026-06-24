@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { TraceEvent } from '../runtime/types';
 import { getMetricsCollector } from '../runtime/metricsCollector';
 
@@ -99,7 +100,7 @@ export class TokenUsageAnomalyDetector {
         [{ name: 'severity', value: severity }],
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'anomalyDetector:102');
       /* best-effort */
     }
 

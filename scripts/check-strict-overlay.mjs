@@ -29,7 +29,9 @@ const sentinelMatch = strictRaw.match(/\/\/\s*@strict-list:\s*([^\n]+)/);
 if (!sentinelMatch) {
   console.error('❌ tsconfig.strict.json: missing or malformed `// @strict-list: <keys>` sentinel');
   console.error('   tried pattern: /\\/\\/\\s*@strict-list:\\s*([^\\n]+)/');
-  console.error('   add a single sentinel line, e.g.:  // @strict-list: target, module, ..., declaration');
+  console.error(
+    '   add a single sentinel line, e.g.:  // @strict-list: target, module, ..., declaration',
+  );
   process.exit(2);
 }
 
@@ -45,7 +47,9 @@ const claimTokens = [
 
 // Precompute lowercase base-key Set for O(1) lookup.
 const baseKeysLower = new Set(baseKeys.map((k) => k.toLowerCase()));
-const claimBaseKeys = baseKeys.filter((k) => baseKeysLower.has(k.toLowerCase()) === false ? false : baseKeysLower.has(k.toLowerCase()));
+const claimBaseKeys = baseKeys.filter((k) =>
+  baseKeysLower.has(k.toLowerCase()) === false ? false : baseKeysLower.has(k.toLowerCase()),
+);
 
 const missing = baseKeys.filter((k) => !claimBaseKeys.includes(k));
 const overclaim = claimBaseKeys.filter((k) => !baseKeys.includes(k));

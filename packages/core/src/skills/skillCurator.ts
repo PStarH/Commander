@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFile } from 'child_process';
@@ -213,7 +214,7 @@ export class SkillCurator {
     try {
       report.snapshotPath = await this.createSnapshot();
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'skillCurator:216');
       getGlobalLogger().warn('SkillCurator', 'Snapshot creation failed (best-effort)');
     }
 
@@ -338,14 +339,14 @@ export class SkillCurator {
         timeout: 30000,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'skillCurator:341');
       try {
         await execFileAsync('zip', ['-rq', snapshotPath, baseName], {
           cwd: parentDir,
           timeout: 30000,
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'skillCurator:348');
         getGlobalLogger().warn('SkillCurator', 'Snapshot creation failed with both tar and zip');
         return '';
       }
@@ -480,7 +481,7 @@ export class SkillCurator {
         await this.manager.update(survivor.name, { content: mergedContent } as Partial<Skill>);
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'skillCurator:483');
       // LLM merge failed — archive the secondary, keep primary
     }
 
