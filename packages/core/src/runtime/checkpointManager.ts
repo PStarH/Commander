@@ -9,12 +9,7 @@
  */
 
 import type { LLMMessage } from './types';
-import {
-  CheckpointStore,
-  getCheckpointStore,
-  type CheckpointSnapshot,
-  type CheckpointRecord,
-} from './checkpointStore';
+import { CheckpointStore, getCheckpointStore, type CheckpointSnapshot } from './checkpointStore';
 
 // ============================================================================
 // Types
@@ -107,7 +102,7 @@ export class CheckpointManager {
       };
       try {
         this.store.save(snapshot);
-      } catch (e) {
+      } catch {
         /* persistence failure is non-fatal — in-memory copy still works */
       }
     }
