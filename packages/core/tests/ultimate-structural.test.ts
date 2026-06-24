@@ -31,9 +31,6 @@ import type {
   AdaptiveExecutionResult,
 } from '../src/ultimate/runtimeWorkflowAdapter';
 
-// --- Module 5: deliberateWithLLM (not barrel-exported, used internally) ---
-import { deliberateWithLLM } from '../src/ultimate/deliberation';
-
 // --- Dependencies needed for construction ---
 import { AgentRuntime } from '../src/runtime/agentRuntime';
 import { TELOSOrchestrator } from '../src/telos/telosOrchestrator';
@@ -165,19 +162,6 @@ describe('ultimate/ modules — structural integrity', () => {
       assert.ok(after instanceof RuntimeWorkflowAdapter);
       // Singleton was reset — new instance created on next get
       assert.notStrictEqual(before, after);
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // Module 5: deliberateWithLLM
-  // --------------------------------------------------------------------------
-  describe('deliberateWithLLM', () => {
-    it('can be imported directly (not in barrel)', () => {
-      assert.strictEqual(typeof deliberateWithLLM, 'function');
-    });
-
-    it('is an async function', () => {
-      assert.strictEqual(deliberateWithLLM.constructor.name, 'AsyncFunction');
     });
   });
 

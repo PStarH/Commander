@@ -217,9 +217,20 @@ describe('TopologyRouter', () => {
         }),
       );
       const VALID_TOPOS = [
-        'SINGLE', 'CHAIN', 'DISPATCH', 'ORCHESTRATOR', 'REVIEW',
-        'SEQUENTIAL', 'HANDOFF', 'PARALLEL', 'ENSEMBLE', 'CONSENSUS',
-        'HIERARCHICAL', 'HYBRID', 'EVALUATOR_OPTIMIZER', 'DEBATE',
+        'SINGLE',
+        'CHAIN',
+        'DISPATCH',
+        'ORCHESTRATOR',
+        'REVIEW',
+        'SEQUENTIAL',
+        'HANDOFF',
+        'PARALLEL',
+        'ENSEMBLE',
+        'CONSENSUS',
+        'HIERARCHICAL',
+        'HYBRID',
+        'EVALUATOR_OPTIMIZER',
+        'DEBATE',
       ];
       expect(VALID_TOPOS).toContain(result.topology);
     });

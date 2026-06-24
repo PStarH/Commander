@@ -607,7 +607,7 @@ describe('PatchEngine — workspace boundary', () => {
   it('rejects filePath outside workspace', async () => {
     const { PatchEngine } = await import('../../src/harness/harnessInfrastructure');
     const engine = new PatchEngine();
-    const result = engine.apply({
+    const result = await engine.apply({
       filePath: '../../../etc/passwd',
       hunks: [],
     });
@@ -621,7 +621,7 @@ describe('PatchEngine — workspace boundary', () => {
   it('reports file not found for valid workspace path', async () => {
     const { PatchEngine } = await import('../../src/harness/harnessInfrastructure');
     const engine = new PatchEngine();
-    const result = engine.apply({
+    const result = await engine.apply({
       filePath: 'nonexistent-path-test-xyz.txt',
       hunks: [],
     });
@@ -632,7 +632,7 @@ describe('PatchEngine — workspace boundary', () => {
   it('handles empty hunks on valid workspace path (no-op success)', async () => {
     const { PatchEngine } = await import('../../src/harness/harnessInfrastructure');
     const engine = new PatchEngine();
-    const result = engine.apply({
+    const result = await engine.apply({
       filePath: 'package.json',
       hunks: [],
     });
@@ -645,7 +645,7 @@ describe('PatchEngine — workspace boundary', () => {
   it('rejects /dev/null special path (outside check)', async () => {
     const { PatchEngine } = await import('../../src/harness/harnessInfrastructure');
     const engine = new PatchEngine();
-    const result = engine.apply({
+    const result = await engine.apply({
       filePath: '/dev/null',
       hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, content: 'test' }],
     });

@@ -313,4 +313,46 @@ describe('AgentRuntime', () => {
       expect(keyB).not.toBe(keyNull);
     });
   });
+
+  describe('execute with mock provider', () => {
+    it('is fully drivable by a mock provider without external API calls', async () => {
+      const r = new AgentRuntime({ maxRetries: 1, timeoutMs: 5000 }, new ModelRouter());
+      const provider = new MockLLMProvider('openai', {
+        defaultResponse: 'Mock-driven result',
+      });
+      r.registerProvider('openai', provider);
+
+      const result = await r.execute(makeContext());
+
+      expect(result.status).toBe('success');
+      expect(result.summary).toContain('Mock-driven result');
+      expect(provider.callCount).toBeGreaterThan(0);
+      expect(provider.lastRequest).toBeTruthy();
+    });
+
+    it('delegates execute() to the registered provider', async () => {
+      const r = new AgentRuntime({ maxRetries: 1, timeoutMs: 5000 }, new ModelRouter());
+      const provider = new MockLLMProvider('openai', { defaultResponse: 'delegated' });
+      const spy = vi.spyOn(provider, 'call');
+      r.registerProvider('openai', provider);
+
+      await r.execute(makeContext());
+
+      expect(spy).toHaveBeenCalled();
+      const req = spy.mock.calls[0][0];
+      expect(req.messages.some((m) => m.role === 'user')).toBe(true);
+    });
+
+    it('surfaces provider errors as failed results', async () => {
+      const r = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000 }, new ModelRouter());
+      const provider = new MockLLMProvider('openai', { defaultResponse: '' });
+      vi.spyOn(provider, 'call').mockRejectedValue(new Error('provider down'));
+      r.registerProvider('openai', provider);
+
+      const result = await r.execute(makeContext());
+
+      expect(result.status).toBe('failed');
+      expect(result.error).toBeTruthy();
+    });
+  });
 });
