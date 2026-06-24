@@ -232,6 +232,7 @@ export class WalCheckpointStore {
 
   close(): void {
     if (this.db) {
+      walCheckpoint(this.db);
       this.db.close();
       this.db = null;
     }
