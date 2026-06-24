@@ -356,7 +356,8 @@ function safeJson(v: unknown): string {
       },
       2,
     );
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return String(v);
   }
 }
@@ -392,7 +393,8 @@ function tryParseJson(s: string): Record<string, unknown> | null {
   try {
     const v = JSON.parse(s);
     if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* fall through */
   }
   return null;
