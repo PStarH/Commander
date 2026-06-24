@@ -166,7 +166,8 @@ export class UltimateOrchestrator {
           requestedTopology: params.topology,
         },
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -248,12 +249,14 @@ export class UltimateOrchestrator {
             expectedLatency: topologyResult.expectedLatency,
           },
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       try {
         getMetricsCollector().recordTopoChoice(topology, deliberation.taskType);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
 
@@ -441,15 +444,16 @@ export class UltimateOrchestrator {
 
       // Topology-specific execution paths. Each topology has a dedicated runner
       // so the execution semantics match the routing decision.
-      if (topology === 'EVALUATOR_OPTIMIZER' && taskTree.subtasks.length >= 2) {
+      const t = topology as string;
+      if ((t === 'REVIEW' || t === 'EVALUATOR_OPTIMIZER') && taskTree.subtasks.length >= 2) {
         await this.executeEvaluatorOptimizerLoop(taskTree, execId, params, errors, reasoning);
-      } else if (topology === 'HANDOFF' && taskTree.subtasks.length >= 2) {
+      } else if ((t === 'CHAIN' || t === 'HANDOFF') && taskTree.subtasks.length >= 2) {
         await this.executeHandoffLoop(taskTree, execId, params, errors, reasoning);
-      } else if (topology === 'DEBATE' && taskTree.subtasks.length >= 3) {
+      } else if (t === 'DEBATE' && taskTree.subtasks.length >= 3) {
         await this.executeDebateLoop(taskTree, execId, params, errors, reasoning);
-      } else if (topology === 'ENSEMBLE' && taskTree.subtasks.length >= 3) {
+      } else if (t === 'ENSEMBLE' && taskTree.subtasks.length >= 3) {
         await this.executeEnsembleLoop(taskTree, execId, params, errors, reasoning);
-      } else if (topology === 'CONSENSUS' && taskTree.subtasks.length >= 2) {
+      } else if (t === 'CONSENSUS' && taskTree.subtasks.length >= 2) {
         await this.executeConsensusLoop(taskTree, execId, params, errors, reasoning);
       } else {
         await this.subAgentExecutor.executeNode(
@@ -794,7 +798,8 @@ export class UltimateOrchestrator {
                 size: stat.size,
               });
             }
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* ignore */
           }
         };
@@ -840,7 +845,8 @@ export class UltimateOrchestrator {
             if (entry.name.startsWith('.') || entry.name === 'package.json') continue;
             tryAddFile(path.join(workspace, entry.name));
           }
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* ignore */
         }
 
@@ -854,7 +860,8 @@ export class UltimateOrchestrator {
             if (entry.name.startsWith('.') || entry.name.length < 5) continue;
             tryAddFile(path.join('/tmp', entry.name));
           }
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* ignore */
         }
 
@@ -872,12 +879,14 @@ export class UltimateOrchestrator {
                   if (!file.isFile()) continue;
                   tryAddFile(path.join(agentPath, file.name));
                 }
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* ignore */
               }
             }
           }
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* ignore */
         }
 
@@ -1015,7 +1024,8 @@ export class UltimateOrchestrator {
       // Clean up rebuild tracking for this run (prevents unbounded Map growth)
       try {
         getRebuildPrompt().resetRun(execId);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       this.activeExecutions.delete(execId);
@@ -1321,11 +1331,11 @@ export class UltimateOrchestrator {
         }
         case 'strategy_change': {
           // Adjust topology routing: prefer the suggested topology for compatible effort levels
-          const topologyMap: Record<string, OrchestrationTopology> = {
-            SEQUENTIAL: 'SEQUENTIAL',
-            PARALLEL: 'PARALLEL',
-            HIERARCHICAL: 'HIERARCHICAL',
-            HYBRID: 'HYBRID',
+          const topologyMap: Record<string, string> = {
+            SEQUENTIAL: 'CHAIN',
+            PARALLEL: 'DISPATCH',
+            HIERARCHICAL: 'ORCHESTRATOR',
+            HYBRID: 'ORCHESTRATOR',
           };
           const preferredTopology = topologyMap[suggestion.to];
           if (preferredTopology) {
@@ -1493,7 +1503,8 @@ export class UltimateOrchestrator {
         const blendedCostPer1K = (avgInputCost + avgOutputCost) / 2;
         return (totalTokens / 1000) * blendedCostPer1K;
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // best-effort
     }
 

@@ -249,7 +249,8 @@ Include specific code snippets with line numbers when referencing code.`;
     dependencies: number[];
     availableTools?: string[];
   }> {
-    const minAgents = topology === 'DEBATE' || topology === 'ENSEMBLE' ? 3 : 2;
+    const t = topology as string;
+    const minAgents = t === 'DEBATE' || t === 'ENSEMBLE' ? 3 : 2;
     const agentCount = Math.min(
       8,
       Math.max(minAgents, deliberation.estimatedAgentCount ?? minAgents),
@@ -262,7 +263,7 @@ Include specific code snippets with line numbers when referencing code.`;
     };
     const roleOf = (r: string): ROMARole => r as ROMARole;
 
-    switch (topology) {
+    switch (t) {
       case 'HANDOFF':
         return Array.from({ length: agentCount }, (_, i) => ({
           goal:
