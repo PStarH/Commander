@@ -515,7 +515,8 @@ class BwrapSB implements PlatformSandbox {
       try {
         seccompFd = fs.openSync(seccompFile, 'r');
         stdio.push(seccompFd as unknown as number);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         // Proceed without seccomp if fd open fails
         seccompFile = null;
         seccompFd = null;
@@ -551,7 +552,8 @@ class BwrapSB implements PlatformSandbox {
       const forwardSignal = (sig: NodeJS.Signals) => {
         try {
           child.kill(sig);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* process may have exited */
         }
       };
@@ -581,14 +583,16 @@ class BwrapSB implements PlatformSandbox {
         if (seccompFd !== null) {
           try {
             fs.closeSync(seccompFd);
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* ignore */
           }
         }
         if (seccompFile) {
           try {
             fs.unlinkSync(seccompFile);
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* ignore */
           }
         }
@@ -631,7 +635,8 @@ class GVisorSB implements PlatformSandbox {
       try {
         execSync('runsc --version 2>/dev/null', { timeout: 3000 });
         return true;
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         // Also check if Docker has a runsc runtime configured
         try {
           const info = execSync('docker info --format "{{.Runtimes}}" 2>/dev/null', {
@@ -639,7 +644,8 @@ class GVisorSB implements PlatformSandbox {
             encoding: 'utf-8',
           });
           return info.includes('runsc');
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           getGlobalLogger().debug('GVisorSB', 'gVisor (runsc) not available');
           return false;
         }
@@ -727,7 +733,8 @@ class GVisorSB implements PlatformSandbox {
       );
       args.push('--env-file', envFile);
       cleanupPaths.push(envFile);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`);
     }
 
@@ -749,14 +756,16 @@ class GVisorSB implements PlatformSandbox {
       for (const p of cleanupPaths) {
         try {
           fs.unlinkSync(p);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       }
       for (const d of proxyScriptPaths) {
         try {
           fs.rmSync(d, { recursive: true, force: true });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       }
@@ -848,7 +857,8 @@ class DockerSB implements PlatformSandbox {
         } else {
           fs.unlinkSync(p);
         }
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort cleanup */
       }
     }
@@ -954,7 +964,8 @@ class DockerSB implements PlatformSandbox {
       );
       args.push('--env-file', envFile);
       cleanupPaths.push(envFile);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // Fallback to -e flags if env-file fails
       for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`);
     }
