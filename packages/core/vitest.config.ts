@@ -189,6 +189,7 @@ export default defineConfig({
       'tests/ultimate/workQueueStore.test.ts',
       'tests/ultimate/exeStep.classify.test.ts',
       'tests/ultimate/tokenBudget.test.ts',
+      'tests/ultimate/qualityGates.test.ts',
       // --- e2e ---
       'tests/e2e/orchestration.test.ts',
       'tests/e2e/sloMeasurement.test.ts',
