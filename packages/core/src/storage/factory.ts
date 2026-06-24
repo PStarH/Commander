@@ -38,7 +38,9 @@ export function createDriver(config: DriverConfig): PersistentDriver {
     case 'sqlite':
       return new SqliteDriver(config);
     default:
-      throw new Error(`createDriver: unknown backend ${String((config as { backend: string }).backend)}`);
+      throw new Error(
+        `createDriver: unknown backend ${String((config as { backend: string }).backend)}`,
+      );
   }
 }
 
@@ -65,8 +67,7 @@ export function createDriverSoft(config: DriverConfig): CreateDriverResult {
       description: { ...mem.describe(), fellBack: true },
       fellBack: true,
       fallbackReason:
-        (err as Error)?.message ??
-        (err instanceof SqliteOpenError ? 'SqliteOpenError' : 'unknown'),
+        (err as Error)?.message ?? (err instanceof SqliteOpenError ? 'SqliteOpenError' : 'unknown'),
     };
   }
 }
