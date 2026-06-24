@@ -16,6 +16,9 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { getGlobalLogger } from '@commander/core';
+
+const log = getGlobalLogger();
 
 export interface DatasetCase {
   /** Unique within the dataset. */
@@ -72,8 +75,8 @@ export class DatasetStore {
     if (this.persistenceDir) {
       try {
         fs.mkdirSync(this.persistenceDir, { recursive: true });
-      } catch {
-        /* best-effort */
+      } catch (err) {
+        log.warn('DatasetStore', `Failed to create persistence dir: ${(err as Error).message}`);
       }
     }
   }
@@ -134,7 +137,8 @@ export class DatasetStore {
       const filePath = path.join(this.persistenceDir, `${id}.json`);
       fs.writeFileSync(filePath, JSON.stringify(dataset, null, 2), 'utf-8');
       return true;
-    } catch {
+    } catch (err) {
+      log.warn('DatasetStore', `Failed to save dataset ${id}: ${(err as Error).message}`);
       return false;
     }
   }
@@ -157,7 +161,8 @@ export class DatasetStore {
       if (!parsed.id || !parsed.rubricId || !Array.isArray(parsed.cases)) return undefined;
       this.datasets.set(parsed.id, parsed);
       return parsed;
-    } catch {
+    } catch (err) {
+      log.warn('DatasetStore', `Failed to load dataset from ${filePath}: ${(err as Error).message}`);
       return undefined;
     }
   }
@@ -171,8 +176,8 @@ export class DatasetStore {
       for (const f of files) {
         if (this.loadFromFile(path.join(this.persistenceDir, f))) n++;
       }
-    } catch {
-      /* best-effort */
+    } catch (err) {
+      log.warn('DatasetStore', `Failed to load datasets from dir: ${(err as Error).message}`);
     }
     return n;
   }
