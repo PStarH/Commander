@@ -480,7 +480,8 @@ export class MLInjectionDetector {
           contentSnippet: content.slice(0, 100),
         },
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

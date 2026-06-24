@@ -502,7 +502,8 @@ export class SecurityAuditLogger {
       if (event.severity === 'critical') {
         metrics.incrementCounter('security.events.critical', 1);
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // Metrics not available — non-critical
     }
   }
@@ -529,7 +530,8 @@ export class SecurityAuditLogger {
         default:
           logger.info('SecurityAudit', `[${event.type}] ${event.message}`, context);
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // Logger not available — non-critical
     }
   }
@@ -542,7 +544,8 @@ export class SecurityAuditLogger {
       bus.publish('security.event', 'SecurityAudit', event, {
         priority: event.severity === 'critical' ? 0 : event.severity === 'high' ? 1 : 3,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // MessageBus not available — non-critical
     }
   }
