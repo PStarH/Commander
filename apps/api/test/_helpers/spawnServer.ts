@@ -64,9 +64,8 @@ async function startServer(apiDir: string): Promise<ServerContext> {
         },
       );
     } catch (syncErr: any) {
-      try {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       if (syncErr.code === 'ENOENT' || syncErr.code === 'EACCES') {
@@ -115,16 +114,14 @@ async function startServer(apiDir: string): Promise<ServerContext> {
       : reason;
 
     if (!serverProcess.killed) {
-      try {
-        serverProcess.kill('SIGKILL');
-      } catch {
+      try { serverProcess.kill('SIGKILL'); } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     }
     await new Promise<void>((resolve) => serverProcess.once('close', resolve));
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }
@@ -149,10 +146,9 @@ function truncateSyncErrMessage(msg: string): string {
 async function waitHealthy(baseUrl: string): Promise<string> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < STARTUP_TIMEOUT_MS) {
-    try {
-      const response = await fetch(`${baseUrl}/health`);
-      if (response.ok) return 'healthy';
-    } catch {
+    try { const response = await fetch(`${baseUrl}/health`);
+    if (response.ok) return 'healthy'; } catch (err) {
+      console.warn('[Catch]', err);
       /* not yet listening */
     }
     await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
@@ -180,9 +176,8 @@ async function stopServer(context: ServerContext | null): Promise<void> {
       const timer = setTimeout(() => finish(true), STOP_CLOSE_TIMEOUT_MS);
       timer.unref();
       if (!child.killed && child.exitCode === null) {
-        try {
-          child.kill('SIGKILL');
-        } catch {
+        try { child.kill('SIGKILL'); } catch (err) {
+          console.warn('[Catch]', err);
           finish(false);
         }
       } else {
@@ -191,9 +186,8 @@ async function stopServer(context: ServerContext | null): Promise<void> {
     });
   }
   if (context && context.tmpDir) {
-    try {
-      fs.rmSync(context.tmpDir, { recursive: true, force: true });
-    } catch {
+    try { fs.rmSync(context.tmpDir, { recursive: true, force: true }); } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

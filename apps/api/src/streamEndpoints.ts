@@ -73,7 +73,8 @@ export function createStreamRouter(): Router {
       if (!ok && typeof (res as unknown as { flush?: () => void }).flush === 'function') {
         try {
           (res as unknown as { flush: () => void }).flush();
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       }
@@ -92,7 +93,8 @@ export function createStreamRouter(): Router {
     const heartbeat = setInterval(() => {
       try {
         res.write(': heartbeat\n\n');
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* socket closed mid-write — defer to req close */
       }
     }, heartbeatMs);
@@ -103,12 +105,14 @@ export function createStreamRouter(): Router {
       clearInterval(heartbeat);
       try {
         unsubscribe();
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       try {
         res.end();
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* already closed */
       }
     };
