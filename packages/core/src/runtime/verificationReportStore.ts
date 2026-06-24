@@ -43,7 +43,8 @@ export class VerificationReportStore {
     fs.mkdirSync(this.baseDir, { recursive: true, mode: 0o700 });
     try {
       fs.chmodSync(this.baseDir, 0o700);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }
@@ -55,7 +56,8 @@ export class VerificationReportStore {
       fs.appendFileSync(filePath, line, 'utf-8');
       try {
         fs.chmodSync(filePath, 0o600);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     });
@@ -71,7 +73,8 @@ export class VerificationReportStore {
       for (const line of raw.split('\n')) {
         try {
           out.push(JSON.parse(line) as StoredVerificationRecord);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           // skip corrupt line
         }
       }

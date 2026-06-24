@@ -1500,7 +1500,8 @@ const routerSingleton = createTenantAwareSingleton(() => {
         outcome.tokensUsed,
       );
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* best-effort: don't crash if store unavailable */
   }
   return router;

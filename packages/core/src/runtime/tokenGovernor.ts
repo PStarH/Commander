@@ -694,7 +694,8 @@ export class TokenGovernor {
       mc.setGauge('token_budget_remaining', 'Remaining token budget', status.remainingTokens, [
         { name: 'run_id', value: runId },
       ]);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

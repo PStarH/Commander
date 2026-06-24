@@ -91,7 +91,8 @@ export class OllamaProvider extends BaseOpenAICompatibleProvider {
         signal: AbortSignal.timeout(3000),
       });
       return response.ok;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }
@@ -109,7 +110,8 @@ export class OllamaProvider extends BaseOpenAICompatibleProvider {
       if (!response.ok) return [];
       const data: OllamaTagResponse = await response.json();
       return (data.models || []).map((m: OllamaModel) => m.name);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return [];
     }
   }
@@ -171,7 +173,8 @@ export class OllamaProvider extends BaseOpenAICompatibleProvider {
           signal: AbortSignal.timeout(1000),
         });
         OllamaProvider.healthCache = { healthy: true, timestamp: now };
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         OllamaProvider.healthCache = { healthy: false, timestamp: now };
         getGlobalLogger().warn(
           'OllamaProvider',

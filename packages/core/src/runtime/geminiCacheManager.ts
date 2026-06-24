@@ -207,7 +207,8 @@ export class GeminiCacheManager {
         // The original creator bumps stats; we count a separate hit for the waiter
         this.stats.hits++;
         return { contentHash, cachedContentName: name, createdNow: false };
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         // In-flight create failed; surface the same error
         this.stats.errors++;
         throw new Error(`Gemini cached content create failed for hash ${contentHash}`);

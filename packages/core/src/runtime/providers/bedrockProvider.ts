@@ -56,7 +56,8 @@ export class BedrockProvider implements LLMProvider {
       };
       this.sdk = bedrockModule;
       this.sdkLoaded = true;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       throw new Error(
         'AWS Bedrock SDK not found. Install it: npm install @aws-sdk/client-bedrock-runtime',
       );

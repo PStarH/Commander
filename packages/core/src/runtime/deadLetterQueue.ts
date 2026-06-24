@@ -236,7 +236,8 @@ export class DeadLetterQueue {
         try {
           const parsed = JSON.parse(line) as DeadLetterEntry;
           return parsed.id === entryId;
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           return false;
         }
       });

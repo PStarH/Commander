@@ -1,3 +1,13 @@
+/**
+ * Tenant context management.
+ *
+ * Provides async-context propagation of the current tenant ID plus helpers
+ * for tenant validation, storage isolation, and cross-tenant access guards.
+ *
+ * The default mode is **best-effort isolation**: singletons created via
+ * `createTenantAwareSingleton` are scoped per tenant, but storage backends
+ * must still key their data by tenant. The helpers below make that easier.
+ */
 import { AsyncLocalStorage } from 'async_hooks';
 
 export interface TenantContextValue {
@@ -6,11 +16,38 @@ export interface TenantContextValue {
 
 const storage = new AsyncLocalStorage<TenantContextValue>();
 
+/** Tenant ID format: alphanumeric, hyphen, underscore, dot, colon. Must not be empty. */
+const TENANT_ID_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
+
+/** Characters that are safe in filesystem paths and URL segments. */
+const SANITIZE_RE = /[^a-zA-Z0-9._:-]/g;
+
+export class TenantIsolationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TenantIsolationError';
+  }
+}
+
+/**
+ * Validate a tenant identifier. Throws TenantIsolationError if invalid.
+ */
+export function validateTenantId(tenantId: string): void {
+  if (typeof tenantId !== 'string' || !TENANT_ID_RE.test(tenantId)) {
+    throw new TenantIsolationError(
+      `Invalid tenant id: must be 1-128 chars matching ${TENANT_ID_RE.source}`,
+    );
+  }
+}
+
 /**
  * Run a function within a tenant context.
- * All getX() singleton calls inside fn() will return tenant-scoped instances.
+ * All tenant-aware singleton calls inside fn() will return tenant-scoped instances.
  */
 export function runWithTenant<T>(tenantId: string | undefined, fn: () => T): T {
+  if (tenantId !== undefined) {
+    validateTenantId(tenantId);
+  }
   return storage.run({ tenantId }, fn);
 }
 
@@ -23,8 +60,63 @@ export function getCurrentTenantId(): string | undefined {
 }
 
 /**
+ * Get the current tenant ID or throw if not in a tenant context.
+ */
+export function requireCurrentTenantId(): string {
+  const tenantId = getCurrentTenantId();
+  if (!tenantId) {
+    throw new TenantIsolationError('Tenant context required but not active');
+  }
+  return tenantId;
+}
+
+/**
  * Check if we're currently executing in a tenant context.
  */
 export function hasTenantContext(): boolean {
   return storage.getStore() !== undefined;
+}
+
+/**
+ * Sanitize a tenant ID so it can be safely embedded in file paths, cache keys,
+ * and database identifiers without traversal/injection issues.
+ */
+export function sanitizeTenantId(tenantId: string): string {
+  validateTenantId(tenantId);
+  return tenantId.replace(SANITIZE_RE, '_');
+}
+
+/**
+ * Build a tenant-scoped storage key. Guarantees the returned string cannot be
+ * confused with another tenant's key.
+ */
+export function tenantKey(tenantId: string, suffix: string): string {
+  validateTenantId(tenantId);
+  if (suffix.includes('\0') || suffix.includes('|')) {
+    throw new TenantIsolationError('Tenant key suffix cannot contain \0 or |');
+  }
+  return `tenant:${sanitizeTenantId(tenantId)}|${suffix}`;
+}
+
+/**
+ * Build a tenant-scoped file path segment. The returned segment is safe to join
+ * into a base directory using `path.join(baseDir, tenantPathSegment(tenantId))`.
+ */
+export function tenantPathSegment(tenantId: string): string {
+  validateTenantId(tenantId);
+  return `tenant_${sanitizeTenantId(tenantId)}`;
+}
+
+/**
+ * Assert that the given tenantId matches the current tenant context.
+ * Use this in storage backends before returning data.
+ */
+export function assertSameTenant(tenantId: string): void {
+  validateTenantId(tenantId);
+  const current = getCurrentTenantId();
+  if (current && current !== tenantId) {
+    throw new TenantIsolationError(
+      `Cross-tenant access blocked: requested=${tenantId}, current=${current}`,
+    );
+  }
 }

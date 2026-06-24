@@ -102,10 +102,14 @@ export class ToolOrchestrator {
   private approval?: ToolApproval;
   private breakerRegistry: CircuitBreakerRegistry;
 
-  constructor(config?: Partial<OrchestratorConfig>, approval?: ToolApproval) {
+  constructor(
+    config?: Partial<OrchestratorConfig>,
+    approval?: ToolApproval,
+    breakerRegistry?: CircuitBreakerRegistry,
+  ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.approval = approval;
-    this.breakerRegistry = new CircuitBreakerRegistry();
+    this.breakerRegistry = breakerRegistry ?? new CircuitBreakerRegistry();
   }
 
   /**
@@ -320,7 +324,8 @@ export class ToolOrchestrator {
               attempt: attempt + 1,
             },
           });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
 
@@ -355,7 +360,8 @@ export class ToolOrchestrator {
               willRetry: attempt < this.config.maxRetries,
             },
           });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
 

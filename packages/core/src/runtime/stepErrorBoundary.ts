@@ -156,7 +156,8 @@ export class StepErrorBoundary {
               const reflexion = await this.reflexionGenerator.generate(reflexionCtx);
               reflexionHistory.push(reflexion);
               await options.onReflexion(reflexion, reflexionCtx);
-            } catch {
+            } catch (err) {
+              console.warn('[Catch]', err);
               // Reflexion is best-effort: never let a generator failure
               // block the retry path.
             }

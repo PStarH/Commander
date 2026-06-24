@@ -381,7 +381,8 @@ export class GoalJudge {
         { name: 'passed', value: String(verdict.passed) },
         { name: 'model', value: verdict.modelUsed },
       ]);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -456,7 +457,8 @@ export class GoalJudge {
     let parsed: JudgeResponse | null;
     try {
       parsed = jsonMatch ? (JSON.parse(jsonMatch[0]) as JudgeResponse) : null;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       parsed = null;
     }
 
@@ -512,7 +514,8 @@ export class GoalJudge {
         undefined,
         undefined,
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -654,7 +657,8 @@ export class GoalJudge {
               ? `Output matches pattern: ${condition.pattern}`
               : `Output does not match pattern: ${condition.pattern}`,
           };
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           return {
             conditionId: condition.id,
             description: condition.description,

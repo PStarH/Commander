@@ -1761,7 +1761,8 @@ export class ContextCompactor {
       if (response && response.content && response.content.length > 0) {
         return response.content;
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // Summarization failed; fall back to structured summary
     }
 

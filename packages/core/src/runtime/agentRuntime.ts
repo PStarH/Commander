@@ -330,7 +330,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
             reason: `circuit ${from}->${to}`,
             payload: { from, to, provider: provider ?? 'agentRuntime' },
           });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       },
@@ -342,7 +343,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
       onTransition: (from, to, provider) => {
         try {
           getMetricsCollector().recordCircuitTransition(from, to, provider ?? 'agentRuntime');
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
         try {
@@ -354,7 +356,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
             failureMode: 'circuit_open',
             failureModeNumber: 11,
           });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
         try {
@@ -367,7 +370,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
             reason: `circuit ${from}->${to}`,
             payload: { from, to, provider: provider ?? 'agentRuntime' },
           });
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       },
@@ -392,7 +396,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
           failureMode: 'verification',
           failureModeNumber: 7,
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       try {
@@ -405,7 +410,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
           reason: `semantic circuit tripped: ${consecutiveFailures} consecutive failures`,
           payload: { consecutiveFailures, reason },
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     });
@@ -500,6 +506,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       stepTimeout: this.stepTimeout,
       getPromotedTools: () => this.promotedTools,
       generateActionId: () => this.generateActionId(),
+      getBreakerRegistry: () => this.getBreakerRegistry(),
     });
 
     // Tool calling infrastructure
@@ -701,7 +708,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
     if (this.config.securityMonitor?.enabled !== false) {
       try {
         getSecurityMonitor().start();
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     }
@@ -786,7 +794,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
           1,
           [{ name: 'tool', value: toolName }],
         );
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       try {
@@ -799,7 +808,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
           reason: `${toolName} called ${count} times with identical arguments`,
           payload: { toolName, calls: count, toolLoopCount },
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       return { detected: true, count };
@@ -867,7 +877,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
         timestamp: Date.now(),
         severity: decision.allowed ? 'low' : 'high',
       } as CrossAgentEvent);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -1056,7 +1067,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
   flushDeadLetterQueue(): void {
     try {
       this.dlq.flush();
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }
@@ -1172,7 +1184,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
         runId,
         args: ctx.lane ? { lane: ctx.lane } : undefined,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       // Decrement tenant running count on lane acquisition failure
       this.tenantManager.releaseTenantConcurrency(tenantId);
       this.concurrencyController.releaseSlot();
@@ -1211,7 +1224,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
           subAgentDepth: ctx.subAgentDepth,
         },
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
     getMetricsCollector().setGauge(
@@ -1421,7 +1435,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     { name: 'tier', value: batchModel.tier },
                   ],
                 );
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort */
               }
               try {
@@ -1439,7 +1454,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     estimatedCost: batchRouting.estimatedCost,
                   },
                 });
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort */
               }
             }
@@ -1475,7 +1491,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   1,
                   [],
                 );
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort */
               }
               return {
@@ -1514,7 +1531,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   1,
                   [],
                 );
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort */
               }
             }
@@ -1559,7 +1577,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 ...(tenantId ? [{ name: 'tenant', value: tenantId }] : []),
               ],
             );
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* best-effort */
           }
 
@@ -1672,7 +1691,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
           try {
             getMetricsCollector().recordPromptPrefixCache(cacheHit, ctx.tenantId);
             getMetricsCollector().setPromptPrefixCacheKey(newPrefixKey, ctx.tenantId);
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* best-effort */
           }
 
@@ -1865,7 +1885,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
             if (matchingSkill && matchingSkill.confidence >= 0.5) {
               try {
                 getMetricsCollector().recordSkillRecallHit(true, ctx.tenantId);
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort */
               }
               const skillLines = [
@@ -1894,7 +1915,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
             } else {
               try {
                 getMetricsCollector().recordSkillRecallHit(false, ctx.tenantId);
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort */
               }
             }
@@ -2078,7 +2100,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   severity: 'low' as const,
                 };
                 this.securityOrch.onAgentEvent(llmEvent);
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort */
               }
 
@@ -2114,10 +2137,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     tokensUsed: response.usage.totalTokens,
                     timestamp: Date.now(),
                   });
-                } catch {
+                } catch (err) {
+                  console.warn('[Catch]', err);
                   /* best-effort */
                 }
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort learning */
               }
 
@@ -2401,7 +2426,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                                 timestamp: Date.now(),
                                 severity: 'high',
                               } as CrossAgentEvent);
-                            } catch {
+                            } catch (err) {
+                              console.warn('[Catch]', err);
                               /* best-effort */
                             }
                             return toolErrorRow(tc, `Hook blocked: ${gate.errorMsg || 'denied'}`);
@@ -2682,11 +2708,13 @@ export class AgentRuntime implements AgentRuntimeInterface {
                           1,
                           [{ name: 'reason', value: injectionScan.reason ?? 'unknown' }],
                         );
-                      } catch {
+                      } catch (err) {
+                        console.warn('[Catch]', err);
                         /* best-effort */
                       }
                     }
-                  } catch {
+                  } catch (err) {
+                    console.warn('[Catch]', err);
                     /* best-effort defense */
                   }
                   // Output sanitization: redact credentials, API keys, PII before tool results
@@ -2705,7 +2733,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                         categories: sanitizeResult.categories,
                       });
                     }
-                  } catch {
+                  } catch (err) {
+                    console.warn('[Catch]', err);
                     /* best-effort sanitization */
                   }
                   // Apply truncation if governor says so and output is verbose
@@ -2758,7 +2787,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                       severity: (masked.error ? 'high' : 'low') as CrossAgentEvent['severity'],
                     };
                     this.securityOrch.onAgentEvent(toolEvent);
-                  } catch {
+                  } catch (err) {
+                    console.warn('[Catch]', err);
                     /* best-effort */
                   }
 
@@ -3012,10 +3042,101 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     ctx.subAgentDepth ?? 0,
                     ctx.tenantId,
                   );
-                } catch {
+                } catch (err) {
+                  console.warn('[Catch]', err);
                   /* best-effort */
                 }
                 return result;
+              }
+
+              // ── Goal-completion verification gate ──
+              // If the execution context names a verification tool, invoke it
+              // before accepting a stop signal. A failed verification forces the
+              // agent to continue rather than stopping early.
+              let verificationPassed = !ctx.verificationTool;
+              if (
+                ctx.verificationTool &&
+                (!response.toolCalls || response.toolCalls.length === 0)
+              ) {
+                const vToolCallId = `verify-${Date.now()}`;
+                const vToolCall: ToolCall = {
+                  id: vToolCallId,
+                  name: ctx.verificationTool,
+                  arguments: {},
+                };
+                getGlobalLogger().info('AgentRuntime', 'Running verification tool', {
+                  tool: ctx.verificationTool,
+                  runId,
+                });
+                const vStart = Date.now();
+                let vResult = await this.executeTool(
+                  runId,
+                  vToolCall,
+                  ctx.agentId,
+                  tenantId,
+                  ctx.availableTools,
+                  ctx,
+                );
+                try {
+                  vResult = await getHookManager().fireAfterToolCall({
+                    toolName: vToolCall.name,
+                    args: vToolCall.arguments,
+                    result: vResult,
+                    agentId: ctx.agentId,
+                    runId,
+                  });
+                } catch (e) {
+                  /* best-effort hook */
+                }
+                const vDuration = Date.now() - vStart;
+                const vOutput = vResult.error ? `error: ${vResult.error}` : vResult.output;
+
+                steps.push({
+                  stepNumber: steps.length + 1,
+                  timestamp: now(),
+                  type: 'tool_result',
+                  content: vOutput,
+                  durationMs: vDuration,
+                });
+
+                const vAssistantMsg: import('./types').LLMMessage = {
+                  role: 'assistant',
+                  content: response.content,
+                  ...(response.reasoning_content
+                    ? { reasoning_content: response.reasoning_content }
+                    : {}),
+                  tool_calls: [
+                    {
+                      id: vToolCallId,
+                      type: 'function' as const,
+                      function: {
+                        name: vToolCall.name,
+                        arguments: JSON.stringify(vToolCall.arguments),
+                      },
+                    },
+                  ],
+                };
+                request.messages.push(vAssistantMsg, {
+                  role: 'tool',
+                  content: vOutput,
+                  tool_call_id: vToolCallId,
+                });
+
+                verificationPassed = this.isVerificationResultSuccessful(vResult);
+                getGlobalLogger().info('AgentRuntime', 'Verification tool result', {
+                  tool: ctx.verificationTool,
+                  passed: verificationPassed,
+                  runId,
+                });
+
+                if (!verificationPassed && attempt < this.config.maxRetries) {
+                  const feedback = vResult.error
+                    ? `Verification tool "${ctx.verificationTool}" reported an error: ${vResult.error}. Fix the issue and try again.`
+                    : `Verification tool "${ctx.verificationTool}" did not report success. Output: ${vOutput.slice(0, 500)}. Fix the issue and verify again.`;
+                  lastError = feedback;
+                  request.messages.push({ role: 'user', content: feedback });
+                  continue;
+                }
               }
 
               // Early exit: skip verification when model is confident and has no tool calls.
@@ -3101,7 +3222,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                         durationMs: totalDurationMs,
                       },
                     );
-                  } catch {
+                  } catch (err) {
+                    console.warn('[Catch]', err);
                     /* best-effort */
                   }
                 }
@@ -3140,7 +3262,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     totalDurationMs,
                     true,
                   );
-                } catch {
+                } catch (err) {
+                  console.warn('[Catch]', err);
                   /* best-effort */
                 }
 
@@ -3224,7 +3347,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     1,
                     [{ name: 'reason', value: 'governor_skip' }],
                   );
-                } catch {
+                } catch (err) {
+                  console.warn('[Catch]', err);
                   /* best-effort */
                 }
               } else {
@@ -3251,7 +3375,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     Date.now() - verifStart,
                     getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
                   );
-                } catch {
+                } catch (err) {
+                  console.warn('[Catch]', err);
                   /* best-effort */
                 }
                 if (!verifReport.passed) {
@@ -3286,7 +3411,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   ),
                   getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
                 );
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort */
               }
               try {
@@ -3303,7 +3429,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   goal: ctx.goal.slice(0, GOAL_FULL_MAX_CHARS),
                   report: verifReport,
                 });
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort */
               }
 
@@ -3440,7 +3567,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                         Date.now() - reflexionStart,
                         getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
                       );
-                    } catch {
+                    } catch (err) {
+                      console.warn('[Catch]', err);
                       /* best-effort */
                     }
 
@@ -3547,7 +3675,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                         'verification_failed',
                         getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
                       );
-                    } catch {
+                    } catch (err) {
+                      console.warn('[Catch]', err);
                       /* best-effort */
                     }
                     try {
@@ -3560,7 +3689,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                         reason: 'verification_failed',
                         payload: { from: routing.modelId, to: fallbackModel.id },
                       });
-                    } catch {
+                    } catch (err) {
+                      console.warn('[Catch]', err);
                       /* best-effort */
                     }
                   }
@@ -3613,7 +3743,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
               } else if (outputFormat === 'structured' && safeContent) {
                 try {
                   JSON.parse(safeContent);
-                } catch {
+                } catch (err) {
+                  console.warn('[Catch]', err);
                   // Not JSON — no transformation applied
                 }
               }
@@ -3703,7 +3834,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                     { name: 'model_tier', value: routing.tier },
                   ],
                 );
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort learning */
               }
 
@@ -3801,7 +3933,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   })),
                   runId,
                 });
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort */
               }
 
@@ -3821,7 +3954,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
                   topology: ctx.subAgentRole || 'SEQUENTIAL',
                   lessons: result.summary ? [result.summary.slice(0, 200)] : [],
                 });
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 /* best-effort */
               }
               if (this.runHandle) {
@@ -3897,10 +4031,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 tokensUsed: totalTokens.totalTokens,
                 timestamp: Date.now(),
               });
-            } catch {
+            } catch (err) {
+              console.warn('[Catch]', err);
               /* best-effort */
             }
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* best-effort learning */
           }
 
@@ -3989,7 +4125,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
               error: lastError,
               runId,
             });
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* best-effort */
           }
 
@@ -4010,7 +4147,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
               errorPattern: lastError,
               lessons: lastError ? [lastError.slice(0, 200)] : [],
             });
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* best-effort */
           }
 
@@ -4021,7 +4159,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
               context: `runId:${runId}|topology:${ctx.subAgentRole || 'SINGLE'}|tokens:${totalTokens.totalTokens}`,
               category: 'other',
             });
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* best-effort */
           }
 
@@ -4298,7 +4437,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
             0,
             getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
           );
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
         return cached;
@@ -4309,7 +4449,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
           0,
           getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
         );
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
 
@@ -4335,14 +4476,17 @@ export class AgentRuntime implements AgentRuntimeInterface {
                 lookup.createdNow ? 'create' : 'hit',
                 tenantForGemini,
               );
-            } catch {
+            } catch (err) {
+              console.warn('[Catch]', err);
               /* best-effort */
             }
           }
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           try {
             getMetricsCollector().recordGeminiCacheEvent('error', tenantForGemini);
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             /* best-effort */
           }
         }
@@ -4369,13 +4513,15 @@ export class AgentRuntime implements AgentRuntimeInterface {
       const wasHit = this.cacheManager.getSingleFlightInflightCount() === inflightBefore;
       try {
         getMetricsCollector().recordSingleFlightEvent(wasHit ? 'hit' : 'miss', tenantIdForFlight);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       if (recentEvictionDelta > 0) {
         try {
           getMetricsCollector().recordSingleFlightEvent('eviction', tenantIdForFlight);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort */
         }
       }
@@ -4386,7 +4532,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
           0,
           getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
         );
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
 
@@ -4424,7 +4571,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
         costUsd,
         getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }
@@ -4454,6 +4602,31 @@ export class AgentRuntime implements AgentRuntimeInterface {
   }
   private generateActionId(): string {
     return `act_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  }
+
+  /** Heuristic used by the goal-completion verification gate. A verification
+   *  tool succeeds when it reports no error and its output contains an explicit
+   *  success signal (or a JSON `passed`/`success`/`ok` field). */
+  private isVerificationResultSuccessful(result: ToolResult): boolean {
+    if (result.error) return false;
+    const output = String(result.output ?? '');
+    if (/\b(error|fail|failed|failure|invalid|unsuccessful|false)\b/i.test(output)) {
+      return false;
+    }
+    if (/\b(pass|passed|success|successful|ok|valid|true)\b/i.test(output)) {
+      return true;
+    }
+    try {
+      const parsed = JSON.parse(output);
+      if (parsed && typeof parsed === 'object') {
+        if ('passed' in parsed) return Boolean(parsed.passed);
+        if ('success' in parsed) return Boolean(parsed.success);
+        if ('ok' in parsed) return Boolean(parsed.ok);
+      }
+    } catch {
+      /* not JSON */
+    }
+    return true;
   }
 
   // ---------------------------------------------------------------------------
@@ -4602,7 +4775,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
     this.reliabilityEngine.shutdown();
     try {
       getModelPerformanceStore().dispose();
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
     this.agentInbox.dispose();
