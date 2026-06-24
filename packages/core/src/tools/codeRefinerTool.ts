@@ -3,7 +3,6 @@ import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSandboxed } from './sandboxedExec';
 import { safePath } from './fileSystemTool';
 import * as fs from 'fs';
-import * as path from 'path';
 
 const DEFINITION: ToolDefinition = {
   name: 'refine_code',
