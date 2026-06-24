@@ -114,7 +114,7 @@ export function getLLMAPIDomains(): string[] {
           if (host) domains.add(host.toLowerCase());
           continue; // Skip default domain since we have a custom one
         } catch (_silentE_) {
-                reportSilentFailure(_silentE_, 'networkProxy:115');
+          reportSilentFailure(_silentE_, 'networkProxy:115');
         }
       }
       domains.add(entry.defaultDomain);
@@ -131,7 +131,7 @@ export function getLLMAPIDomains(): string[] {
         const host = new URL(url).hostname;
         if (host) domains.add(host.toLowerCase());
       } catch (_silentE_) {
-            reportSilentFailure(_silentE_, 'networkProxy:132');
+        reportSilentFailure(_silentE_, 'networkProxy:132');
       }
     }
   }
@@ -144,7 +144,7 @@ export function getLLMAPIDomains(): string[] {
       try {
         hostStr = new URL(hostStr).host;
       } catch (_silentE_) {
-            reportSilentFailure(_silentE_, 'networkProxy:145');
+        reportSilentFailure(_silentE_, 'networkProxy:145');
       }
     }
     // Strip port

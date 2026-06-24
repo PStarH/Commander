@@ -62,7 +62,10 @@ export class MCPRemoteRuntime {
           contextData: ctx.contextData,
         }),
         new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error(`MCP remote call timed out after ${timeoutMs}ms`)), timeoutMs);
+          setTimeout(
+            () => reject(new Error(`MCP remote call timed out after ${timeoutMs}ms`)),
+            timeoutMs,
+          );
         }),
       ]);
 
