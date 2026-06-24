@@ -110,7 +110,7 @@ export class DeepSeekProvider implements LLMProvider {
 
     let content = '';
     let reasoningContent = '';
-    let toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
+    const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
     let currentTool: { id: string; name: string; arguments: string } | null = null;
     let usage: OpenAICompletionUsage | null = null;
     let finishReason: string | null = null;
