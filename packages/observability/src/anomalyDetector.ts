@@ -105,14 +105,3 @@ export class TokenUsageAnomalyDetector {
     return this.history.get(agentId)?.mean ?? 0;
   }
 }
-
-let globalDetector: TokenUsageAnomalyDetector | null = null;
-
-export function getAnomalyDetector(): TokenUsageAnomalyDetector {
-  if (!globalDetector) globalDetector = new TokenUsageAnomalyDetector();
-  return globalDetector;
-}
-
-export function resetAnomalyDetector(): void {
-  globalDetector = null;
-}

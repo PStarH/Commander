@@ -165,14 +165,3 @@ export class SLOManager {
     });
   }
 }
-
-let globalManager: SLOManager | null = null;
-
-export function getSLOManager(): SLOManager {
-  if (!globalManager) globalManager = new SLOManager();
-  return globalManager;
-}
-
-export function resetSLOManager(): void {
-  globalManager = null;
-}
