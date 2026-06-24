@@ -24,6 +24,15 @@ const ENSEMBLE_DEPTH_WEIGHT = 0.3;
 /** Maximum number of contradiction patterns to check */
 const MAX_CONTRADICTION_PAIRS = 10;
 
+/** Expected characters of synthesis per subtask (mirrors qualityGates.ts) */
+const CHARS_PER_SUBTASK = 200;
+
+/** Penalty per hallucination signal detected */
+const HALLUCINATION_PENALTY = 0.1;
+
+/** Penalty per uncertainty phrase detected */
+const UNCERTAINTY_PENALTY = 0.05;
+
 export class MultiAgentSynthesizer {
   private artifactSystem = getArtifactSystem();
   private qualityGateEngine: QualityGateEngine;
@@ -329,216 +338,7 @@ export class MultiAgentSynthesizer {
     synthesis: string,
     taskTree: TaskTreeNode,
   ): Promise<Array<{ gate: string; passed: boolean; score: number }>> {
-    return this.runQualityGates(gates, synthesis, taskTree);
-  }
-
-  private async runQualityGates(
-    gates: QualityGateConfig[],
-    synthesis: string,
-    taskTree: TaskTreeNode,
-  ): Promise<Array<{ gate: string; passed: boolean; score: number }>> {
-    const results: Array<{ gate: string; passed: boolean; score: number }> = [];
-
-    for (const gate of gates) {
-      if (!gate.enabled) continue;
-
-      let score = 0;
-      switch (gate.type) {
-        case 'HALLUCINATION_CHECK':
-          score = this.checkHallucination(synthesis);
-          break;
-        case 'CONSISTENCY':
-          score = this.checkConsistency(synthesis, taskTree);
-          break;
-        case 'COMPLETENESS':
-          score = this.checkCompleteness(synthesis, taskTree);
-          break;
-        case 'ACCURACY':
-          score = this.checkAccuracy(synthesis);
-          break;
-        case 'SAFETY':
-          score = this.checkSafety(synthesis);
-          break;
-        default:
-          score = 0;
-          break;
-      }
-
-      results.push({
-        gate: gate.name,
-        passed: score >= gate.threshold,
-        score,
-      });
-    }
-
-    return results;
-  }
-
-  private checkHallucination(synthesis: string): number {
-    let score = 1.0;
-
-    const hallucinationSignals = [
-      /\b(unverified|unsourced|allegedly|reportedly|supposedly)\b/i,
-      /\b(as of my last|as of my knowledge cutoff)\b/i,
-      /\b(I don't have|I cannot|I'm not able)\b/i,
-      /\b(it is important to note that it is important)\b/i,
-    ];
-
-    for (const signal of hallucinationSignals) {
-      if (signal.test(synthesis)) {
-        score -= HALLUCINATION_PENALTY;
-      }
-    }
-
-    return Math.max(0, score);
-  }
-
-  private checkConsistency(synthesis: string, taskTree: TaskTreeNode): number {
-    let score = 1.0;
-    const lower = synthesis.toLowerCase();
-
-    // Check for hedging language that suggests internal disagreement
-    const hedgingPhrases = [
-      'on one hand',
-      'on the other hand',
-      'however',
-      'nevertheless',
-      'despite this',
-      'in contrast',
-      'conversely',
-      'alternatively',
-    ];
-
-    let hedgingCount = 0;
-    for (const phrase of hedgingPhrases) {
-      if (lower.includes(phrase)) hedgingCount++;
-    }
-    // Multiple hedging phrases suggest internal contradiction
-    if (hedgingCount > 2) {
-      score -= Math.min(CONTRADICTION_PENALTY * hedgingCount, 0.3);
-    }
-
-    // Check for direct contradictions (conflicting statements)
-    const contradictionPatterns: [RegExp, RegExp][] = [
-      [/\b(always|must|never)\b/i, /\b(sometimes|may|can)\b/i],
-      [/\bincrease[sd]?\b/i, /\bdecrease[sd]?\b/i],
-      [/\bhigh\b/i, /\blow\b/i],
-    ];
-
-    let contradictionCount = 0;
-    for (const [pos, neg] of contradictionPatterns) {
-      if (pos.test(synthesis) && neg.test(synthesis)) {
-        contradictionCount++;
-      }
-    }
-    if (contradictionCount > 1) {
-      score -= contradictionCount * CONTRADICTION_PENALTY;
-    }
-
-    // Check if subtask results are present and substantial
-    const completed = this.collectCompleted(taskTree);
-    let hasResults = 0;
-    for (const n of completed) {
-      if (n.result && n.result.length > 20) hasResults++;
-    }
-    if (completed.length > 0 && hasResults < completed.length) {
-      score -= 0.2;
-    }
-
-    return Math.max(0, score);
-  }
-
-  private checkCompleteness(synthesis: string, taskTree: TaskTreeNode): number {
-    const completed = this.collectCompleted(taskTree);
-    const total = this.countAllNodes(taskTree);
-    const completionRatio = total > 0 ? completed.length / total : 1;
-
-    // Length score: reward proportional to task complexity
-    const expectedLength = Math.max(500, total * CHARS_PER_SUBTASK);
-    const lengthScore = Math.min(1, synthesis.length / expectedLength);
-
-    return completionRatio * 0.6 + lengthScore * 0.4;
-  }
-
-  private checkAccuracy(synthesis: string): number {
-    let score = 1.0;
-    const lower = synthesis.toLowerCase();
-
-    const uncertaintyPhrases = [
-      'might be',
-      'could be',
-      'possibly',
-      'perhaps',
-      'not sure',
-      'unclear',
-      'unknown',
-      'insufficient',
-      'i think',
-      'i believe',
-      'it seems',
-      'apparently',
-    ];
-    let uncertaintyCount = 0;
-    for (const phrase of uncertaintyPhrases) {
-      if (lower.includes(phrase)) {
-        uncertaintyCount++;
-      }
-    }
-    // Cap the penalty — too many uncertainty phrases shouldn't tank the score
-    score -= Math.min(uncertaintyCount * UNCERTAINTY_PENALTY, 0.4);
-
-    if (synthesis.includes('[citation needed]')) score -= CITATION_PENALTY;
-    if (synthesis.includes('[source missing]')) score -= CITATION_PENALTY;
-
-    return Math.max(0, score);
-  }
-
-  private checkSafety(synthesis: string): number {
-    let score = 1.0;
-
-    const unsafePatterns = [
-      /(bypass|circumvent|evade)\s+(security|safety|restriction|control)/i,
-      /(malicious|harmful|dangerous)\s+(code|script|command|payload)/i,
-      /(exploit|vulnerability)\s+(in|for)\s+(production|live|deployed)/i,
-    ];
-
-    for (const pattern of unsafePatterns) {
-      if (pattern.test(synthesis)) {
-        score -= UNSAFETY_PENALTY;
-      }
-    }
-
-    return Math.max(0, score);
-  }
-
-  private collectCompleted(node: TaskTreeNode): TaskTreeNode[] {
-    const completed: TaskTreeNode[] = [];
-    if (node.status === 'COMPLETED' && node.result !== undefined && node.result !== null) {
-      completed.push(node);
-    }
-    for (const sub of node.subtasks) {
-      completed.push(...this.collectCompleted(sub));
-    }
-    return completed;
-  }
-
-  private collectFailed(node: TaskTreeNode): TaskTreeNode[] {
-    const failed: TaskTreeNode[] = [];
-    if (node.status === 'FAILED') {
-      failed.push(node);
-    }
-    for (const sub of node.subtasks) {
-      failed.push(...this.collectFailed(sub));
-    }
-    return failed;
-  }
-
-  private countAllNodes(node: TaskTreeNode): number {
-    let count = 1;
-    for (const sub of node.subtasks) {
-      count += this.countAllNodes(sub);
-    }
-    return count;
+    return this.qualityGateEngine.run(gates, synthesis, { taskTree });
   }
 
   private getDepth(node: TaskTreeNode, root: TaskTreeNode, currentDepth = 0): number {
