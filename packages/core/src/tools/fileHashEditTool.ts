@@ -19,15 +19,10 @@
 import * as fs from 'fs';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { isHashlineFormat, parseHashline, applyHashlineSection } from '../edit/hashline';
-import {
-  parseAndApplyHashEdit,
-  parseHashEdit,
-  applyHashEdit,
-  isHashEditFormat,
-} from '../edit/hashAnchoredEditor';
+import { parseAndApplyHashEdit, isHashEditFormat } from '../edit/hashAnchoredEditor';
 import { safePath } from './fileSystemTool';
 import { atomicWriteFile } from './_utils/atomicWrite';
-import { getSnapshotStore, computeFileHash } from '../edit/snapshotStore';
+import { getSnapshotStore } from '../edit/snapshotStore';
 
 export class FileHashEditTool implements Tool {
   definition: ToolDefinition = {
