@@ -31,7 +31,6 @@ import type {
   LLMProvider,
   ToolResult,
   ToolCall,
-  ToolDefinition,
   TokenUsage,
 } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
@@ -186,17 +185,8 @@ export class CodeAgentHarness implements AgentHarness {
    *   6. Repeat until done or budget exhausted
    */
   async runAttempt(params: HarnessRunParams): Promise<AgentExecutionResult> {
-    const {
-      goal,
-      messages,
-      availableTools,
-      tokenBudget,
-      maxSteps,
-      signal,
-      tenantId,
-      routing,
-      services,
-    } = params;
+    const { goal, messages, availableTools, maxSteps, signal, tenantId, routing, services } =
+      params;
 
     const runId = generateId();
     const startTime = Date.now();
@@ -214,7 +204,6 @@ export class CodeAgentHarness implements AgentHarness {
       let lastError: string | undefined;
       let finalContent = '';
       let taskComplete = false;
-      let totalToolCallsExecuted = 0;
 
       // ── Detect: start vs continue ──
       // If messages contain assistant responses with tool_calls, we're continuing.
@@ -238,12 +227,6 @@ export class CodeAgentHarness implements AgentHarness {
       const toolDefs = availableTools
         .map((name) => services.getToolDefinition(name))
         .filter((t): t is NonNullable<typeof t> => t !== undefined);
-
-      let effectiveTools = availableTools;
-      if (params.planMode?.readOnly) {
-        const allowed = new Set(params.planMode.allowedTools);
-        effectiveTools = availableTools.filter((t) => allowed.has(t));
-      }
 
       const apiModel = routing.modelId.replace(/@\w+$/, '');
       let request: LLMRequest = {
@@ -475,8 +458,6 @@ export class CodeAgentHarness implements AgentHarness {
             runId,
             tenantId,
           );
-
-          totalToolCallsExecuted += toolResults.length;
 
           // Record tool result steps
           for (const r of toolResults) {
@@ -724,7 +705,7 @@ export class CodeAgentHarness implements AgentHarness {
     toolCall: ToolCall,
     goal: string,
     services: HarnessServices,
-    tenantId?: string,
+    _tenantId?: string,
   ): Promise<GuardianDecision> {
     const alwaysApprove = [
       'file_read',

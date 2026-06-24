@@ -77,7 +77,7 @@ export abstract class BaseHarness {
   /**
    * Prepare a new run and return common run metadata.
    */
-  protected startRun(goal: string): { runId: string; startTime: number } {
+  protected startRun(_goal: string): { runId: string; startTime: number } {
     const runId = generateId();
     this.currentRunId = runId;
     this.abortController = new AbortController();
