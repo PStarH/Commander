@@ -21,10 +21,9 @@ function applySubstitution(node: TimelineNode, spec: ReplaySpec): TimelineNode {
 function previewOf(v: unknown, n = 200): string {
   if (v === undefined || v === null) return '';
   if (typeof v === 'string') return v.length > n ? v.slice(0, n) + '…' : v;
-  try {
-    const s = JSON.stringify(v);
-    return s.length > n ? s.slice(0, n) + '…' : s;
-  } catch {
+  try { const s = JSON.stringify(v);
+  return s.length > n ? s.slice(0, n) + '…' : s; } catch (err) {
+    console.warn('[Catch]', err);
     return String(v).slice(0, n);
   }
 }
