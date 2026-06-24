@@ -350,7 +350,8 @@ export class SecurityMonitor {
     try {
       const metrics = getGlobalMetrics();
       metrics.incrementCounter('security.alerts', 1, { level: alert.level });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* non-critical */
     }
 
@@ -361,7 +362,8 @@ export class SecurityMonitor {
       bus.publish('security.alert', 'SecurityMonitor', fullAlert, {
         priority: alert.level === 'critical' ? 0 : 2,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* non-critical */
     }
 
@@ -381,7 +383,8 @@ export class SecurityMonitor {
         },
         alert: fullAlert,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* non-critical — AgentSOC may not be initialized */
     }
   }
