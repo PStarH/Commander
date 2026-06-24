@@ -143,7 +143,8 @@ export function installProcessCrashHandlers(deps: CrashSafetyDeps): void {
 
     try {
       deps.onShutdownComplete?.();
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 

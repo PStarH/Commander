@@ -303,6 +303,11 @@ export class CircuitBreaker {
     };
   }
 
+  /** Force the breaker into the OPEN state. */
+  open(): void {
+    this.transitionTo('OPEN');
+  }
+
   private transitionTo(newState: CircuitState): void {
     const old = this.state;
     if (old !== newState) {
@@ -310,7 +315,8 @@ export class CircuitBreaker {
       this.onStateChange?.(old, newState);
       try {
         this.observability?.onTransition?.(old, newState, this.providerName);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     }

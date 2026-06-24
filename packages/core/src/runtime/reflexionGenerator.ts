@@ -373,7 +373,8 @@ Be specific. Avoid generic advice like "try again" or "be more careful".`;
         source: 'llm',
         raw,
       };
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return {
         whatFailed: `Action failed: ${truncate(ctx.error, 100)}`,
         whyFailed: `LLM reflexion JSON parse failed`,

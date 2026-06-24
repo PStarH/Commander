@@ -174,10 +174,12 @@ export function parseOpenAIResponse(
       let parsed: Record<string, unknown> = {};
       try {
         parsed = JSON.parse(tc.function.arguments || '{}');
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         try {
           parsed = JSON.parse(`{${tc.function.arguments}}`);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           parsed = { raw: tc.function.arguments };
         }
       }
@@ -228,7 +230,8 @@ function tryParseOpenAICompatibleStructured(
 
   try {
     return JSON.parse(trimmed) as Record<string, unknown>;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return undefined;
   }
 }
@@ -340,10 +343,12 @@ export async function callOpenAICompatibleAPI(
               let parsed: Record<string, unknown> = {};
               try {
                 parsed = JSON.parse(tc.arguments || '{}');
-              } catch {
+              } catch (err) {
+                console.warn('[Catch]', err);
                 try {
                   parsed = JSON.parse(`{${tc.arguments}}`);
-                } catch {
+                } catch (err) {
+                  console.warn('[Catch]', err);
                   parsed = { raw: tc.arguments };
                 }
               }

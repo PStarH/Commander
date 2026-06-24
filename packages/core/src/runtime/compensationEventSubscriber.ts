@@ -48,7 +48,8 @@ export class CompensationEventSubscriber {
             { name: 'risk', value: risk },
           ],
         );
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
 
@@ -69,7 +70,8 @@ export class CompensationEventSubscriber {
             output: { status: 'planned' },
           },
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     });
@@ -105,7 +107,8 @@ export class CompensationEventSubscriber {
             { name: 'status', value: status },
           ],
         );
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
 
@@ -126,7 +129,8 @@ export class CompensationEventSubscriber {
             output: { status, error },
           },
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     });

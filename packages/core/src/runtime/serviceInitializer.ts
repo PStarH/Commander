@@ -38,6 +38,7 @@ import { ToolExecutionService } from './toolExecutionService';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolApproval } from './toolApproval';
 import { ToolOrchestrator } from './toolOrchestrator';
+import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
 import { ToolPlanner } from './toolPlanner';
 import { CycleDetector } from './cycleDetector';
 import { createContentScanner } from '../contentScanner';
@@ -135,7 +136,8 @@ export function initializeServices(
           reason: `circuit ${from}->${to}`,
           payload: { from, to, provider: provider ?? 'agentRuntime' },
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     },
@@ -149,7 +151,8 @@ export function initializeServices(
     onTransition: (from, to, provider) => {
       try {
         getMetricsCollector().recordCircuitTransition(from, to, provider ?? 'agentRuntime');
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       try {
@@ -161,7 +164,8 @@ export function initializeServices(
           failureMode: 'circuit_open',
           failureModeNumber: 11,
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
       try {
@@ -174,7 +178,8 @@ export function initializeServices(
           reason: `circuit ${from}->${to}`,
           payload: { from, to, provider: provider ?? 'agentRuntime' },
         });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     },
@@ -196,7 +201,8 @@ export function initializeServices(
         failureMode: 'verification',
         failureModeNumber: 7,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
     try {
@@ -209,7 +215,8 @@ export function initializeServices(
         reason: `semantic circuit tripped: ${consecutiveFailures} consecutive failures`,
         payload: { consecutiveFailures, reason },
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   });
@@ -310,6 +317,7 @@ export function initializeServices(
   const { ReflexionGenerator } =
     require('./reflexionGenerator') as typeof import('./reflexionGenerator');
   const reflexionGenerator = new ReflexionGenerator();
+  const breakerRegistry = new CircuitBreakerRegistry();
 
   const toolExecutionService = new ToolExecutionService({
     tools,
@@ -322,6 +330,7 @@ export function initializeServices(
     stepTimeout,
     getPromotedTools: () => new Set<string>(),
     generateActionId: () => `action_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    getBreakerRegistry: () => breakerRegistry,
   });
 
   const outputManager = new ToolOutputManager({
@@ -352,6 +361,7 @@ export function initializeServices(
       useApproval: true,
     },
     toolApproval,
+    breakerRegistry,
   );
 
   const planner = new ToolPlanner();
@@ -452,7 +462,8 @@ export function initializeServices(
 
   try {
     getSecurityMonitor().start();
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* best-effort */
   }
 
