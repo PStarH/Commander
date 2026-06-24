@@ -1,8 +1,8 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@commander/core"><img src="https://img.shields.io/badge/npm-pending-CB3837?style=flat-square&label=npm" /></a>
   <a href="https://github.com/PStarH/Commander/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/PStarH/Commander/ci.yml?style=flat-square&label=CI&logo=github" /></a>
-  <img src="https://img.shields.io/badge/providers-22-7C3AED?style=flat-square" />
-  <img src="https://img.shields.io/badge/topologies-5-EF4444?style=flat-square" />
+<img src="https://img.shields.io/badge/providers-22-7C3AED?style=flat-square" />
+<img src="https://img.shields.io/badge/topologies-5-EF4444?style=flat-square" />
   <img src="https://img.shields.io/github/license/PStarH/Commander?style=flat-square&color=EAB308" />
   <a href="https://github.com/PStarH/Commander/releases"><img src="https://img.shields.io/github/v/release/PStarH/Commander?style=flat-square&label=release&color=22C55E" /></a>
 </p>
@@ -10,7 +10,7 @@
 <h1 align="center">Commander</h1>
 <p align="center"><strong>Multi-agent orchestration framework.</strong></p>
 
-> **v0.2.0 — Pre-production.** Checkpointing is SQLite-backed with WAL persistence. SLOs below are design targets, not guaranteed. See [ARCHITECTURE.md](ARCHITECTURE.md) for current status.
+> **v0.2.0 — Pre-production.** Checkpointing is SQLite-backed with WAL persistence. The SLO targets below are design goals only — they are not measured in CI yet. See [ARCHITECTURE.md](ARCHITECTURE.md) §6 for measurement status.
 
 <p align="center">
   <code>npx tsx packages/core/src/cli.ts run "audit this repo" --stream</code><br>
@@ -145,7 +145,7 @@ Commander includes these infrastructure components (see notes for development st
 
 | Capability                  | Implementation                                                                  | Status |
 | --------------------------- | ------------------------------------------------------------------------------- | ------ |
-| **Circuit breakers**        | 3-state (CLOSED / OPEN / HALF-OPEN), error-rate windowing, per-provider         | ✅ Live |
+| **Circuit breakers**        | 3-state (CLOSED / OPEN / HALF-OPEN), error-rate windowing, per-provider (🛡 audit-verified 2026-06-23, d34 — `runtime/healthCheck.ts` + `saga/circuitBreakerRegistry.ts`) | ✅ Live |
 | **Dead letter queue**       | Append-only ndjson files with replay support                                    | ✅ Live |
 | **SSE streaming**           | Structured events via message bus pub/sub with Last-Event-ID replay             | ✅ Live |
 | **Fallback chains**         | Auto-failover between providers, configurable order and timeouts                | ✅ Live |
@@ -165,8 +165,8 @@ Commander includes these infrastructure components (see notes for development st
 |                       | Commander                     | LangGraph       | CrewAI           | AutoGen       |
 | --------------------- | ----------------------------- | --------------- | ---------------- | ------------- |
 | **SSE streaming**     | Built-in                      | ❌              | ❌               | ❌            |
-| **Auto topology**     | 5 canonical patterns, auto-chosen       | Manual DAG      | Fixed sequential | Manual        |
-| **Providers**         | 22, auto-failover             | 1-3 (LangChain) | 3-5              | Mostly OpenAI |
+| **Auto topology**     | 5 canonical patterns, auto-chosen (matches `topologyRouter.test.ts` enumeration: SINGLE / CHAIN / DISPATCH / ORCHESTRATOR / REVIEW)       | Manual DAG      | Fixed sequential | Manual        |
+| **Providers**         | 23, auto-failover             | 1-3 (LangChain) | 3-5              | Mostly OpenAI |
 | **Self-optimization** | Thompson Sampling + Reflexion | ❌              | ❌               | ❌            |
 | **Multi-tenant**      | Tenant-aware singleton context | ❌              | ❌               | ❌            |
 | **Crash safety**      | SQLite-backed checkpoints with WAL; silent fallback to in-memory if SQLite unavailable | ❌ | ❌ | ❌ |
@@ -205,7 +205,7 @@ No configuration files. No YAML pipelines. No graph builders. One command and yo
 
 Set any one environment variable. Commander auto-detects from 22 providers:
 
-OpenAI · Anthropic · Google · DeepSeek · Zhipu · MIMO · Xiaomi · Groq · Together · Perplexity · Fireworks · Replicate · Mistral · Cohere · OpenRouter · Agnes · Ollama · vLLM · AWS Bedrock · xAI · Anyscale · DeepInfra
+OpenAI · Anthropic · Google · DeepSeek · GLM (Zhipu) · MIMO · Xiaomi · Groq · Together · Perplexity · Fireworks · Replicate · Mistral · Cohere · OpenRouter · xAI (Grok) · Anyscale · DeepInfra · Agnes · Ollama · vLLM · AWS Bedrock
 
 If your primary provider fails, Commander automatically falls through the chain. Note: not all providers support tool/function calling (Replicate and Perplexity currently throw errors for tool use). Switch with one env var change when using a compatible provider.
 
@@ -224,5 +224,5 @@ The system is being built with the same discipline as any production distributed
 MIT — use it, ship it, build on it. [Star on GitHub](https://github.com/PStarH/Commander) · [Documentation](https://github.com/PStarH/commander-docs) · [Architecture](ARCHITECTURE.md)
 
 <p align="center">
-  <sub>5 topologies · 22 providers · 26 built-in tools · Built for engineers who want to see what their AI is actually doing.</sub>
+  <sub>5 canonical topologies · 22 providers · 38 built-in tools (🛡 verified 2026-06-23 via `tools/index.ts` export list, exclusive of 10 STRAP resource consolidations) · Built for engineers who want to see what their AI is actually doing.</sub>
 </p>

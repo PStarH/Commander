@@ -194,6 +194,25 @@ jobs:
           COMMANDER_ALLOW_NO_SANDBOX: true
         run: pnpm --filter @commander/core test
 
+      - name: Run SLO measurements
+        env:
+          COMMANDER_ALLOW_NO_SANDBOX: true
+        run: pnpm --filter @commander/core test:slo
+
+      - name: Upload SLO report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: slo-report-${{ matrix.os }}-node${{ matrix.node-version }}
+          path: packages/core/.commander_benchmarks/slo-report-*.json
+          if-no-files-found: ignore
+
+      - name: Print SLO summary
+        if: always()
+        run: |
+          echo "📊 SLO measurement summary"
+          cat packages/core/.commander_benchmarks/slo-report-*.json 2>/dev/null || echo "(no SLO report generated)"
+
       - name: Path security tests
         env:
           COMMANDER_ALLOW_NO_SANDBOX: true
