@@ -81,35 +81,5 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const lines = require('fs').readFileSync('/tmp/mdlint.txt', 'utf-8').split('
-');
-            const findings = lines.filter(l => /cc-no-competitor-bash|cc-readme-superlative-quote/.test(l)).slice(0, 20);
-            const body = [
-              '## 📋 Commander Documentation Policy — lint failed',
-              '',
-              'This PR introduces Markdown that violates the `Documentation Policy — competitor citations` contract in `AGENTS.md`. The custom rules in `scripts/markdownlint-rules/` caught the violation.',
-              '',
-              '### Findings (first 20)',
-              '',
-              findings.length ? findings.map(l => '- `' + l + '`').join('
-') : '- (see workflow log)',
-              '',
-              '### Reproduce locally',
-              '',
-              '```bash',
-              'node scripts/lint-docs.js',
-              '```',
-              '',
-              '### The contract',
-              '',
-              'Engineering citation of non-Commander frameworks **in design docs** is **KEEP** (cite patterns like LangGraph `thread_id`, AutoGen `AssistantAgent` isolation, Temporal workflow determinism freely).',
-              '',
-              'Customer-facing positioning copy **must not** include: ❌ marks in "Commander vs X" tables; "the only multi-agent framework with X" superlatives; brand-bashing words like `碾压` / `crush` / `唯一` / `业界最强` / `World-class`; or named-brand "X fails / breaks" verbal degradations.',
-            ].join('
-');
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body,
-            });
+            const script = require('./scripts/comment-pr-markdownlint.js');
+            await script({ github, context });
