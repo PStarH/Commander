@@ -24,6 +24,9 @@
  * is not leaked.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
+import { getGlobalLogger } from '@commander/core';
+
+const log = getGlobalLogger();
 
 // ----------------------------------------------------------------------------
 // Local type definitions for the exploration / live-dashboard subsystem.
@@ -316,8 +319,9 @@ async function handleEpsilonPut(
     if (raw && typeof raw === 'object') {
       body = raw as { tenantId?: string; epsilon?: number };
     }
-  } catch {
-    /* ignore — fall back to query */
+  } catch (err) {
+    log.warn('RoutingDashboard', `Failed to parse epsilon body: ${(err as Error).message}`);
+    /* fall back to query */
   }
 
   const tenantId = body.tenantId ?? q.get('tenantId') ?? undefined;
@@ -383,7 +387,8 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
       if (!data.trim()) return resolve({});
       try {
         resolve(JSON.parse(data));
-      } catch {
+      } catch (err) {
+        log.warn('RoutingDashboard', `Failed to parse JSON body: ${(err as Error).message}`);
         resolve({});
       }
     });
