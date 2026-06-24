@@ -214,7 +214,8 @@ export class MemoryQualityGate {
       try {
         JSON.parse(content);
         return { passed: false, reason: 'Raw JSON blob' };
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         // Not valid JSON, continue
       }
     }

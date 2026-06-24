@@ -20,7 +20,8 @@ export async function createMemoryStore(
           }),
         );
         return store;
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         getGlobalLogger().warn(
           'createMemoryStore',
           'SqliteMemoryStore not available, falling back to JSON store',
