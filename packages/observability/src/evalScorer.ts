@@ -292,18 +292,17 @@ function clamp(v: number, min: number, max: number): number {
 
 /** JSON.stringify with a fallback for circular references / non-serializable values. */
 function safeJson(v: unknown): string {
-  try {
-    return JSON.stringify(
-      v,
-      (_k, val) => {
-        if (typeof val === 'bigint') return val.toString();
-        if (typeof val === 'function') return '[function]';
-        if (typeof val === 'undefined') return '[undefined]';
-        return val;
-      },
-      2,
-    );
-  } catch {
+  try { return JSON.stringify(
+    v,
+    (_k, val) => {
+      if (typeof val === 'bigint') return val.toString();
+      if (typeof val === 'function') return '[function]';
+      if (typeof val === 'undefined') return '[undefined]';
+      return val;
+    },
+    2,
+  ); } catch (err) {
+    console.warn('[Catch]', err);
     return String(v);
   }
 }
@@ -336,10 +335,9 @@ export function parseJudgeResponse(text: string): ParsedJudgeResponse {
 }
 
 function tryParseJson(s: string): Record<string, unknown> | null {
-  try {
-    const v = JSON.parse(s);
-    if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>;
-  } catch {
+  try { const v = JSON.parse(s);
+  if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>; } catch (err) {
+    console.warn('[Catch]', err);
     /* fall through */
   }
   return null;
