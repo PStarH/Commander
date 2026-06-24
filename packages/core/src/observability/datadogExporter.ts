@@ -1,5 +1,4 @@
 import type { ExecutionTrace, TraceEvent } from '../runtime/types';
-import * as http from 'http';
 import * as https from 'https';
 import { getGlobalLogger } from '../logging';
 
@@ -127,7 +126,7 @@ export class DatadogExporter {
       'DD-EVIL-AGENT': 'true',
     };
 
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, _reject) => {
       const req = https.request(url, { method: 'POST', headers }, (res) => {
         let data = '';
         res.on('data', (chunk) => {

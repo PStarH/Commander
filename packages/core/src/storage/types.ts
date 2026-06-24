@@ -28,7 +28,7 @@ export interface ColumnSpec {
   index?: boolean;
 }
 
-export interface TableSchema<T extends { id: string }> {
+export interface TableSchema<_T extends { id: string }> {
   name: string;
   columns: readonly ColumnSpec[];
 }

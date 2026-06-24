@@ -40,34 +40,6 @@ export interface LLMRubricConfig {
   llmWeight?: number;
 }
 
-const DEFAULT_RUBRIC_CRITERIA: RubricCriterion[] = [
-  {
-    name: 'clarity',
-    description: 'Are the instructions clear, well-structured, and unambiguous?',
-    score: 0,
-    weight: 0.25,
-  },
-  {
-    name: 'actionability',
-    description: 'Can an agent directly act on these instructions without additional context?',
-    score: 0,
-    weight: 0.25,
-  },
-  {
-    name: 'correctness',
-    description:
-      'Does the approach described appear technically correct and follow best practices?',
-    score: 0,
-    weight: 0.25,
-  },
-  {
-    name: 'completeness',
-    description: 'Are all necessary steps, preconditions, and edge cases covered?',
-    score: 0,
-    weight: 0.25,
-  },
-];
-
 /**
  * Build a prompt string for the LLM rubric evaluator.
  * Exported for testing.
