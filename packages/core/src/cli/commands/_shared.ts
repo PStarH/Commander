@@ -37,7 +37,7 @@ import type { LLMProvider, ModelConfig } from '../../runtime/types';
 import type { EffortLevel, OrchestrationTopology } from '../../ultimate/types';
 import { UltimateOrchestrator } from '../../ultimate/orchestrator';
 import { TELOSOrchestrator } from '../../telos/telosOrchestrator';
-import { CompanyEngine } from '../../company';
+import { CompanyEngine } from '../../ultimate/companyEngine';
 import { SSEStream } from '../../runtime/sseStream';
 import { getMessageBus } from '../../runtime/messageBus';
 import { getTraceRecorder } from '../../runtime/executionTrace';
