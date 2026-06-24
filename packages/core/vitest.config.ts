@@ -15,6 +15,7 @@ export default defineConfig({
       'tests/runtime/agentInbox.test.ts',
       'tests/runtime/agentRuntime.test.ts',
       'tests/runtime/agentRuntime.integration.test.ts',
+      'tests/runtime/agentRuntimeInterface.test.ts',
       'tests/checkpointStore.test.ts',
       'tests/runtime/circuitBreaker.test.ts',
       'tests/runtime/compensation-integration.test.ts',
