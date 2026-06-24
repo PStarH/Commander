@@ -130,7 +130,8 @@ export class GoalOrchestrator {
     if (this.checkpointPath && fs.existsSync(this.checkpointPath)) {
       try {
         fs.unlinkSync(this.checkpointPath);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* ignore */
       }
     }

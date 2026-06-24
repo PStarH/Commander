@@ -293,7 +293,8 @@ export async function runScenario(input: {
   let success = true;
   try {
     await input.work();
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     success = false;
   }
   if (input.teardown) await input.teardown();

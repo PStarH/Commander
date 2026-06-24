@@ -377,7 +377,8 @@ export class HookManager {
     if (entry.plugin.onUnload) {
       try {
         await entry.plugin.onUnload();
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         getGlobalLogger().warn('PluginManager', `Plugin "${name}" onUnload failed`);
       }
     }

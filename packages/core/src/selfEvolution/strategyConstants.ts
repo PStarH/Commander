@@ -7,8 +7,8 @@ import type { MetaLearnerConfig } from '../runtime/types';
 // adaptive orchestrator's Bayesian prior + bandit convergence logic remain
 // untouched. Verified via baseline ripple test (port-research, June 2026),
 // each name has ≥1 production caller in src/ outside of this module:
-//   SEQUENTIAL  → adaptiveOrchestrator, taskComplexityAnalyzer, metaLearner, telos
-//   PARALLEL    → adaptiveOrchestrator, taskComplexityAnalyzer, metaLearner, telos
+//   SEQUENTIAL  → taskComplexityAnalyzer, metaLearner, telos
+//   PARALLEL    → taskComplexityAnalyzer, metaLearner, telos
 //   HANDOFF     → taskComplexityAnalyzer (returned as 'HANDOFF' on deep dependency graphs)
 //   MAGENTIC    → metaLearnerBridge (baseline prior for Magentic-One style debates)
 //   CONSENSUS   → taskComplexityAnalyzer (multi-judge consensus reducer)
