@@ -949,7 +949,8 @@ export class AgentSoc {
         playbook: classification.playbookTrigger,
         autoContain: classification.automaticContainment,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* non-critical */
     }
 
@@ -961,7 +962,8 @@ export class AgentSoc {
     try {
       const metrics = getGlobalMetrics();
       metrics.incrementCounter('soc.incidents', 1, { priority: incident.priority });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* non-critical */
     }
 
