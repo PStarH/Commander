@@ -9,7 +9,6 @@ import {
   applyHashlineSection,
   isHashlineFormat,
   formatHashlineHeader,
-  formatNumberedLines,
 } from '../edit/hashline';
 import { formatAnchoredOutput } from '../edit/hashAnchoredEditor';
 import { getInternalUrlRouter, isInternalUrl } from '../runtime/internalUrls';

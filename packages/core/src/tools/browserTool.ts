@@ -116,7 +116,7 @@ async function fetchPage(url: string): Promise<string> {
   return withBrowserPage(async (page) => {
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
     await page.waitForTimeout(1000);
-    return page.evaluate((arg: undefined) => {
+    return page.evaluate(() => {
       for (const s of ['script', 'style', 'nav', 'footer', 'header', 'aside', 'iframe']) {
         document.querySelectorAll(s).forEach((e) => e.remove());
       }

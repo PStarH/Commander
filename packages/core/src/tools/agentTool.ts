@@ -11,12 +11,7 @@
  * - Result summarization (not full transcript)
  * - Hard depth limit of 1 (sub-agents cannot spawn sub-agents)
  */
-import type {
-  Tool,
-  ToolDefinition,
-  AgentExecutionContext,
-  AgentExecutionResult,
-} from '../runtime/types';
+import type { Tool, ToolDefinition, AgentExecutionContext } from '../runtime/types';
 import type { AgentRuntimeInterface } from '../runtime';
 import { getHookManager } from '../pluginManager';
 import { getGlobalLogger } from '../logging';
