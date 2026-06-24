@@ -428,15 +428,6 @@ export class TEESandbox implements PlatformSandbox {
     const MAX_OUTPUT = 10 * 1024 * 1024;
     const timeout = profile.timeout ?? 60000;
 
-    // Collect attestation evidence before execution
-    const attestation: TEEAttestation = {
-      backend: 'gcp_cvm',
-      technology: this.technology,
-      measurements: this.collectGCPMeasurements(),
-      verifiedAt: new Date().toISOString(),
-      verified: this.verifyGCPAttestation(),
-    };
-
     // Execute the command directly (memory is hardware-encrypted on CVM)
     return new Promise((resolve) => {
       const child = spawn('/bin/sh', ['-c', cmd], {

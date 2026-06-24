@@ -83,7 +83,7 @@ export class StoragePool {
 
   /** Run WAL checkpoint on all registered handles. Best-effort per handle. */
   checkpointAll(): void {
-    for (const [label, entry] of this.entries) {
+    for (const [, entry] of this.entries) {
       walCheckpoint(entry.db);
     }
   }
@@ -96,7 +96,7 @@ export class StoragePool {
    * of errors (best-effort per handle).
    */
   closeAll(): void {
-    for (const [label, entry] of this.entries) {
+    for (const [, entry] of this.entries) {
       try {
         entry.db.pragma('wal_checkpoint(TRUNCATE)');
       } catch {

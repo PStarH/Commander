@@ -466,7 +466,7 @@ export class DataRetentionJanitor {
    * If a future operator needs SOC evidence of deletes, route through
    * a dedicated housekeeping bus — not the security one.
    */
-  private logDryRunDelete(relative: string): void {
+  private logDryRunDelete(_relative: string): void {
     // No-op by design; dry-run is operator-visible via the returned
     // `RetentionRunResult`. Reserved for future dedicated audit bus.
   }
@@ -484,7 +484,6 @@ export class DataRetentionJanitor {
     // without needing to subscribe to a bus. Log to stderr as a last
     // resort so a CLI invocation gets *some* signal.
     try {
-      // eslint-disable-next-line no-console
       console.warn(
         `[DataRetentionJanitor] Failed to dispose ${target}: ${String(
           (err as Error)?.message ?? err,

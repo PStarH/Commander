@@ -21,10 +21,6 @@ function writeOldFile(rootDir: string, relPath: string, ageMs: number, content =
   return abs;
 }
 
-function writeFreshFile(rootDir: string, relPath: string, content = 'x'): string {
-  return writeOldFile(rootDir, relPath, 1_000, content);
-}
-
 describe('DataRetentionJanitor', () => {
   let tmp: string;
 
