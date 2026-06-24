@@ -1,4 +1,4 @@
-import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 import express from 'express';
 import { createWarRoomStore } from './store';
 import { ProjectMemoryStore } from './memoryStore';

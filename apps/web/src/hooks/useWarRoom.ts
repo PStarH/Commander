@@ -1,4 +1,4 @@
-import { reportSilentFailure } from '../../../../packages/core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type {
   WarRoomSnapshot,
@@ -29,7 +29,7 @@ export function useWarRoom() {
     'connecting' | 'connected' | 'disconnected'
   >('connecting');
   const isFirstLoad = useRef(true);
-  const loadAllRef = useRef<() => Promise<void>>();
+  const loadAllRef = useRef<() => Promise<void> | undefined>(undefined);
 
   const loadAll = useCallback(async () => {
     try {

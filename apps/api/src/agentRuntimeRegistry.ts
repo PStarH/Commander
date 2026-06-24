@@ -5,7 +5,7 @@
  * compensation registries, tool orchestrators, and in-memory state are isolated.
  * A global fallback instance is used when no tenant context is active.
  */
-import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 import {
   AgentRuntime,
   OpenAIProvider,
