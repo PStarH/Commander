@@ -314,7 +314,6 @@ let cachedAvailability: SqliteAvailability | null = null;
 export function probeSqlite(): SqliteAvailability {
   if (cachedAvailability) return cachedAvailability;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require('better-sqlite3') as new (path: string) => SqliteNativeDatabase;
     if (typeof mod !== 'function') {
       cachedAvailability = {
@@ -472,7 +471,7 @@ function chmodSafe(target: string, mode: number): void {
     fs.chmodSync(target, mode);
   } catch (err) {
     if (process.platform === 'win32') return;
-    // eslint-disable-next-line no-console
+
     console.warn(`[SqliteDriver] chmod ${mode.toString(8)} on ${target} failed: ${String(err)}`);
   }
 }

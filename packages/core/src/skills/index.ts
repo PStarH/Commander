@@ -95,10 +95,6 @@ function getManager(): SkillManager {
   return skillSystemSingleton.get().manager;
 }
 
-function getBridge(): MetaLearnerBridge {
-  return skillSystemSingleton.get().bridge;
-}
-
 /** Legacy: create a skill from explicit fields. */
 export function createSkill(
   name: string,
