@@ -31,7 +31,7 @@ const DEFINITION: ToolDefinition = {
 
 export function fixPythonSyntax(
   code: string,
-  errorHint?: string,
+  _errorHint?: string,
 ): { fixed: string; changes: string[] } {
   const changes: string[] = [];
   let fixed = code;
