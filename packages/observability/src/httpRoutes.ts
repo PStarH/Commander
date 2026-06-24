@@ -821,9 +821,8 @@ async function readFeedbackBody(req: IncomingMessage): Promise<FeedbackBody> {
       data += chunk.toString('utf-8');
     });
     req.on('end', () => {
-      try {
-        resolve(data ? (JSON.parse(data) as FeedbackBody) : {});
-      } catch {
+      try { resolve(data ? (JSON.parse(data) as FeedbackBody) : {}); } catch (err) {
+        console.warn('[Catch]', err);
         reject(new Error('Invalid JSON'));
       }
     });
@@ -841,13 +840,12 @@ async function readBody(req: IncomingMessage): Promise<ReplayRequestBody> {
       data += chunk.toString('utf-8');
     });
     req.on('end', () => {
-      try {
-        resolve(
-          data
-            ? (JSON.parse(data) as ReplayRequestBody)
-            : { runId: '', substitutions: [], reExecuteLlm: false },
-        );
-      } catch {
+      try { resolve(
+        data
+          ? (JSON.parse(data) as ReplayRequestBody)
+          : { runId: '', substitutions: [], reExecuteLlm: false },
+      ); } catch (err) {
+        console.warn('[Catch]', err);
         reject(new Error('Invalid JSON'));
       }
     });
@@ -870,9 +868,8 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
         resolve(undefined);
         return;
       }
-      try {
-        resolve(JSON.parse(data) as Record<string, unknown>);
-      } catch {
+      try { resolve(JSON.parse(data) as Record<string, unknown>); } catch (err) {
+        console.warn('[Catch]', err);
         reject(new Error('Invalid JSON'));
       }
     });
