@@ -44,12 +44,18 @@ export interface Metric {
 // Logger
 // ========================================
 
+export type LogFormat = 'pretty' | 'json';
+
 export interface LoggerConfig {
   level: LogLevel;
   enableConsole: boolean;
   enableStorage: boolean;
   maxEntries: number;
   prettyPrint: boolean;
+  /** Output format — 'pretty' (default) or 'json' (newline-delimited JSON).
+   *  When LOGFORMAT=json is set in the environment, the global logger
+   *  automatically switches to JSON output. */
+  logFormat: LogFormat;
 }
 
 const DEFAULT_CONFIG: LoggerConfig = {
@@ -58,6 +64,7 @@ const DEFAULT_CONFIG: LoggerConfig = {
   enableStorage: true,
   maxEntries: 10000,
   prettyPrint: true,
+  logFormat: 'pretty',
 };
 
 const LEVEL_PRIORITY: Record<LogLevel, number> = {
@@ -75,6 +82,13 @@ export class Logger {
 
   constructor(config?: Partial<LoggerConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    // Auto-detect LOGFORMAT from environment if not explicitly configured
+    if (config?.logFormat === undefined) {
+      const envFormat = process.env.LOGFORMAT?.toLowerCase();
+      if (envFormat === 'json') {
+        this.config.logFormat = 'json';
+      }
+    }
   }
 
   /**
@@ -89,6 +103,20 @@ export class Logger {
    */
   getLevel(): LogLevel {
     return this.config.level;
+  }
+
+  /**
+   * Set the output format at runtime.
+   */
+  setLogFormat(format: LogFormat): void {
+    this.config.logFormat = format;
+  }
+
+  /**
+   * Get the current output format.
+   */
+  getLogFormat(): LogFormat {
+    return this.config.logFormat;
   }
 
   /**
@@ -169,6 +197,25 @@ export class Logger {
    * Console output with formatting
    */
   private consoleLog(entry: LogEntry): void {
+    if (this.config.logFormat === 'json') {
+      const jsonLine = JSON.stringify({
+        timestamp: entry.timestamp,
+        level: entry.level,
+        component: entry.component,
+        message: entry.message,
+        context: entry.context ?? undefined,
+        error: entry.error ?? undefined,
+      });
+      if (entry.level === 'error' || entry.level === 'critical') {
+        console.error(jsonLine);
+      } else if (entry.level === 'warn') {
+        console.warn(jsonLine);
+      } else {
+        console.log(jsonLine);
+      }
+      return;
+    }
+
     const icons: Record<LogLevel, string> = {
       debug: '🔍',
       info: 'ℹ️ ',
@@ -562,6 +609,11 @@ export function getGlobalLogger(): Logger {
 export function setGlobalLogLevel(level: LogLevel): void {
   const logger = getGlobalLogger();
   logger.setLevel(level);
+}
+
+export function setGlobalLogFormat(format: LogFormat): void {
+  const logger = getGlobalLogger();
+  logger.setLogFormat(format);
 }
 
 export function getGlobalMetrics(): MetricsCollector {

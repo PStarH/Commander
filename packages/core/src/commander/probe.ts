@@ -92,7 +92,8 @@ async function checkDocker(): Promise<boolean> {
     const sock = process.env.DOCKER_SOCKET ?? '/var/run/docker.sock';
     await fs.promises.access(sock, fs.constants.R_OK);
     return true;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return false;
   }
 }
@@ -125,7 +126,8 @@ async function checkRedis(): Promise<string | null> {
     } finally {
       clearTimeout(timeout);
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return null;
   }
 }
@@ -139,7 +141,8 @@ function checkKubernetes(): { inK8s: boolean; namespace: string | null } {
       namespace =
         process.env.KUBERNETES_NAMESPACE ??
         fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/namespace', 'utf-8').trim();
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       namespace = null;
     }
   }
@@ -155,12 +158,14 @@ async function checkOllama(): Promise<boolean> {
     try {
       const response = await fetch(`${host}/api/tags`, { signal: controller.signal });
       return response.ok;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     } finally {
       clearTimeout(timeout);
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return false;
   }
 }
@@ -176,12 +181,14 @@ async function checkVllm(): Promise<boolean> {
         signal: controller.signal,
       });
       return response.ok;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     } finally {
       clearTimeout(timeout);
     }
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return false;
   }
 }
@@ -321,7 +328,8 @@ async function testSingleProvider(
         tier,
         defaultModel,
       };
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return {
         provider,
         displayName,
@@ -351,7 +359,8 @@ async function testSingleProvider(
         tier,
         defaultModel,
       };
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return {
         provider,
         displayName,

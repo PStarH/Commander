@@ -246,7 +246,8 @@ export class ErrorHandler {
     for (const listener of this.errorListeners) {
       try {
         listener(error);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* listener threw — don't propagate */
       }
     }

@@ -107,7 +107,8 @@ export class MetaLearner {
 
       try {
         getMetricsCollector().recordMetaLearnerReflection(exp.strategyUsed, exp.success);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
 
@@ -147,7 +148,8 @@ export class MetaLearner {
 
     try {
       getMetricsCollector().recordMetaLearnerStrategySelection(chosen, taskType, modelId);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 

@@ -187,7 +187,8 @@ export class FileApprovalStore implements ApprovalStore {
     try {
       await fs.access(path);
       return true;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }

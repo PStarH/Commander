@@ -12,16 +12,33 @@ import {
 } from './commanderConfig';
 
 export type ExecutionMode = 'fast' | 'balanced' | 'thorough';
+/**
+ * Migration map: legacy topology names → canonical names.
+ * Used to silently upgrade config files written before D3.2.
+ */
+const LEGACY_TOPOLOGY_MAP: Record<string, string> = {
+  sequential: 'chain',
+  parallel: 'dispatch',
+  hierarchical: 'orchestrator',
+  'evaluator-optimizer': 'review',
+};
+
+/** Normalize a topology choice — accepts both legacy and canonical names. */
+function normalizeTopologyChoice(raw: string): string {
+  return LEGACY_TOPOLOGY_MAP[raw] ?? raw;
+}
+
 export type TopologyChoice =
   | 'auto'
   | 'single'
-  | 'sequential'
-  | 'parallel'
-  | 'hierarchical'
+  | 'chain'
+  | 'dispatch'
+  | 'orchestrator'
+  | 'review'
   | 'hybrid'
   | 'debate'
   | 'ensemble'
-  | 'evaluator-optimizer';
+  | 'consensus';
 
 export interface RuntimeConfig {
   provider: string;
@@ -188,7 +205,7 @@ export class ConfigResolver {
     const model = overrides.model ?? file.model ?? (env.model || DEFAULT_CONFIG.model);
     const mode = (overrides.mode ?? file.mode ?? DEFAULT_CONFIG.mode) as ExecutionMode;
     const topology = (overrides.topology ??
-      file.topology ??
+      (file.topology ? normalizeTopologyChoice(file.topology) : undefined) ??
       DEFAULT_CONFIG.topology) as TopologyChoice;
     const budget = overrides.budget ?? file.budget ?? DEFAULT_CONFIG.budget;
     const providerChain = resolveProviderChain(file);

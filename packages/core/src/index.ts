@@ -58,8 +58,6 @@ export {
   resetCompensationQueueForTesting,
   defaultCompensationQueuePath,
 } from './atr/compensationQueue';
-export { AdaptiveOrchestrator } from './adaptiveOrchestrator';
-export { TokenBudgetAllocator } from './tokenBudgetAllocator';
 
 // Ultimate Multi-Agent Orchestration System (v2)
 export {
@@ -244,20 +242,6 @@ export {
   ConsensusError,
   InspectionError,
 } from './errorHandler';
-
-export {
-  initializeFramework,
-  getFramework,
-  createExecutionPlan,
-  allocateBudget,
-  recordMemory,
-  queryMemory,
-  startReflection,
-  completeReflection,
-  runConsensusCheck,
-  updateComponentHealth,
-  runInspection,
-} from './frameworkIntegration';
 
 // Shell & Runner exports
 export {
@@ -814,7 +798,6 @@ export {
 } from './reflectionEngine';
 export { ConsensusChecker, createConsensusChecker } from './consensusCheck';
 
-export { InspectorAgent, createInspector } from './inspectorAgent';
 export { TaskComplexityAnalyzer } from './taskComplexityAnalyzer';
 
 // Runtime Enhancements — Agent Execution Improvements

@@ -15,6 +15,10 @@
 
 import { MemoryQualityGate, quickQualityCheck } from './memory/memoryQualityGate.js';
 import { ThompsonMemoryScorer } from './memory/thompsonMemoryScorer.js';
+// Audit MED item 1 — Phase A additive route-out. Type-only imports keep the
+// bundle clean. The value-side MemoryStore dependency is injected via
+// constructor or setMemoryStore(); see mapMemoryEntryToWriteOptions.
+import type { MemoryStore, MemoryWriteOptions, MemoryKind } from './memory';
 
 function generateUUID(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -128,11 +132,19 @@ export class ThreeLayerMemory {
   private qualityGate: MemoryQualityGate;
   /** Thompson scorer for memory usefulness tracking (0 tokens per check) */
   private thompsonScorer: ThompsonMemoryScorer;
+  /** Optional persistent sink for non-working layers (audit MED item 1 Phase A) */
+  private memoryStore: MemoryStore | null = null;
 
-  constructor(config?: Partial<Record<MemoryLayer, LayerConfig>> & { persistPath?: string }) {
+  constructor(
+    config?: Partial<Record<MemoryLayer, LayerConfig>> & {
+      persistPath?: string;
+      memoryStore?: MemoryStore;
+    },
+  ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.qualityGate = new MemoryQualityGate();
     this.thompsonScorer = new ThompsonMemoryScorer();
+    this.memoryStore = config?.memoryStore ?? null;
     if (config?.persistPath) {
       this.persistPath = config.persistPath;
       this.load();
@@ -206,6 +218,24 @@ export class ThreeLayerMemory {
   /** Returns true if a persist path is configured */
   hasPersistence(): boolean {
     return this.persistPath !== null;
+  }
+
+  /**
+   * Wire or replace the persistent MemoryStore (audit MED item 1 Phase A).
+   * Pass null to disable route-out. File persistence path stays live in
+   * parallel until Phase C retires it; this method is independent of the
+   * `persistPath` legacy JSON file.
+   *
+   * Pre-condition (audit MED item 1 Phase D): once wired, callers MUST
+   * also bootstrap a TTL curator (MemoryCurator.deleteExpired) before
+   * long-running workloads hit `add()`. `applyTimeDecay` suppresses its
+   * own in-memory deletion when a store is wired; decayScore→0 entries
+   * therefore persist in memoryStore indefinitely until the curator runs.
+   * In-memory eviction (`evictIfNeeded` size-cap) still trims growth, so
+   * the failure mode is bounded by working-set cardinality, not unbounded.
+   */
+  setMemoryStore(store: MemoryStore | null): void {
+    this.memoryStore = store;
   }
 
   setEmbeddingFunction(fn: EmbeddingFunction): void {
@@ -305,6 +335,21 @@ export class ThreeLayerMemory {
     // Auto-save after non-working memory writes
     if (this.persistPath && layer !== 'working') {
       this.save();
+    }
+
+    // Audit MED item 1 — Phase A additive route-out. Working layer is
+    // intentionally excluded so ephemeral session context never touches
+    // persistent storage. The async write mirrors the embedding pattern
+    // below — never blocks add(); failures are logged, not thrown.
+    if (this.memoryStore && layer !== 'working') {
+      const opts = mapMemoryEntryToWriteOptions(entry);
+      this.memoryStore.write(opts).catch((err: Error) => {
+        getGlobalLogger().warn('ThreeLayerMemory', 'route-out to memoryStore failed', {
+          entryId: entry.id,
+          layer: entry.layer,
+          error: err.message,
+        });
+      });
     }
 
     // Generate embedding if function is configured (fire-and-forget for async)
@@ -493,11 +538,37 @@ export class ThreeLayerMemory {
   /**
    * 驱逐过期的记忆
    *
-   * Uses Thompson scorer for better eviction decisions (0 tokens)
+   * Uses Thompson scorer for better eviction decisions (0 tokens).
+   *
+   * Phase B (audit MED item 1): when `memoryStore` is wired, propagate the
+   * eviction to the persistent sink so the two stores stay in sync. The
+   * working layer is intentionally skipped — ephemeral session context
+   * never touched the persistent layer in Phase A's route-out path so
+   * there's no row to delete.
+   *
+   * INVARIANT (audit MED item 1 Phase B — reviewer-flagged): this method
+   * MUST complete synchronously relative to the surrounding `add()` call
+   * — never `await` between the in-memory `this.delete(id)` and the
+   * `routeOutDelete(id)` call, nor between `add()` invocations that might
+   * evict each other. SqliteMemoryStore.delete returns `false` (no throw)
+   * for missing rows, so any `await` reopens a write/delete race that
+   * leaks persistent rows without an error.
    */
   evictIfNeeded(layer: MemoryLayer): void {
     const config = this.config[layer];
     const layerMemories = Array.from(this.memories.values()).filter((m) => m.layer === layer);
+
+    const routeOutDelete = (id: string) => {
+      if (this.memoryStore && layer !== 'working') {
+        this.memoryStore.delete(id, 'default').catch((err: Error) => {
+          getGlobalLogger().warn('ThreeLayerMemory', 'evict route-out to memoryStore failed', {
+            entryId: id,
+            layer,
+            error: err.message,
+          });
+        });
+      }
+    };
 
     // 超出数量限制
     if (layerMemories.length > config.maxEntries) {
@@ -518,6 +589,7 @@ export class ThreeLayerMemory {
       for (const entry of toRemove) {
         this.thompsonScorer.remove(entry.id);
         this.delete(entry.id);
+        routeOutDelete(entry.id);
       }
     }
 
@@ -528,12 +600,22 @@ export class ThreeLayerMemory {
       if (entry && entry.layer === layer) {
         this.delete(id);
         this.thompsonScorer.remove(id);
+        routeOutDelete(id);
       }
     }
   }
 
   /**
    * 应用时间衰减 (定时调用)
+   *
+   * Phase B (audit MED item 1): when a `memoryStore` is wired, MemoryCurator
+   * owns TTL-based eviction of the persistent layer via `deleteExpired`.
+   * The in-memory shard keeps the row as a score-only lookup and the
+   * `decayScore` field continues to drive activation scoring via
+   * `getActivationScore`. Returning the deletion count is therefore 0 in
+   * the wired case; legacy in-memory-only callers (no memoryStore wired)
+   * preserve the original deletion path so existing behavior is unchanged.
+   * Working layer is filtered out by the outer conditional either way.
    */
   applyTimeDecay(hoursElapsed: number): number {
     const toDelete: string[] = [];
@@ -544,7 +626,7 @@ export class ThreeLayerMemory {
           config.baseDecayPerHour * hoursElapsed * (1 - entry.importance * config.importanceBoost);
         entry.decayScore = Math.max(0, entry.decayScore - decay);
 
-        if (entry.decayScore <= 0) {
+        if (!this.memoryStore && entry.decayScore <= 0) {
           toDelete.push(entry.id);
         }
       }
@@ -756,7 +838,10 @@ export function resetGlobalThreeLayerMemory(): void {
 }
 
 export function createThreeLayerMemory(
-  config?: Partial<Record<MemoryLayer, LayerConfig>> & { persistPath?: string },
+  config?: Partial<Record<MemoryLayer, LayerConfig>> & {
+    persistPath?: string;
+    memoryStore?: MemoryStore;
+  },
 ): ThreeLayerMemory {
   return new ThreeLayerMemory(config);
 }
@@ -764,8 +849,70 @@ export function createThreeLayerMemory(
 /**
  * Get a persisted three-layer memory instance.
  * Data is stored at `.commander/memory/three-layer.json` relative to the given base path.
+ *
+ * @deprecated (audit MED item 1 — Phase A additive) Use `createThreeLayerMemory`
+ * with `memoryStore` set instead. The `.commander/memory/three-layer.json` file
+ * persistence path will be retired in Phase C. This entry point is preserved
+ * for backward compatibility only and should not be used in new code.
  */
 export function createPersistedThreeLayerMemory(basePath?: string): ThreeLayerMemory {
   const persistPath = basePath ? `${basePath}/three-layer.json` : DEFAULT_PERSIST_PATH;
   return new ThreeLayerMemory({ persistPath });
+}
+
+/**
+ * Pure mapping from a Three-layer MemoryEntry to MemoryWriteOptions.
+ *
+ * Exposed top-level so unit tests can lock the contract without spinning up
+ * a ThreeLayerMemory instance. Decision matrix per audit MED item 1:
+ *
+ *   working     → not routed (caller already filters)
+ *   episodic    → kind=SUMMARY,  duration=EPISODIC
+ *   longterm    → kind=DECISION if importance >= 0.7 else LESSON, duration=LONG_TERM
+ *   procedural  → kind=LESSON,   duration=EPISODIC   (Phase A lossiness —
+ *                   accepts that the typed proceduralType/successRate/
+ *                   usageCount/conditions fields are dropped. Verified by
+ *                   pre-flight grep: no production code reads them on a
+ *                   MemoryEntry. Phase D restores via a `meta` JSON column.)
+ */
+export function mapMemoryEntryToWriteOptions(
+  entry: MemoryEntry,
+  projectId: string = 'default',
+): MemoryWriteOptions {
+  const kind: MemoryKind =
+    entry.layer === 'longterm'
+      ? entry.importance >= 0.7
+        ? 'DECISION'
+        : 'LESSON'
+      : entry.layer === 'episodic'
+        ? 'SUMMARY'
+        : 'LESSON'; // procedural or fallback
+  const duration = entry.layer === 'longterm' ? 'LONG_TERM' : 'EPISODIC';
+  return {
+    // Thread entry.id so SqliteMemoryStore.write uses it as the row's ID —
+    // this lets routeOutDelete(entry.id) in evictIfNeeded find and remove the
+    // same row. Without this, SqliteMemoryStore auto-generates a
+    // `memory-<ts>-<rand>` ID and the eviction delete silently no-ops.
+    id: entry.id,
+    projectId,
+    missionId: undefined,
+    agentId: undefined,
+    kind,
+    duration,
+    title: (entry.context || entry.content).substring(0, 100),
+    content: entry.content,
+    tags: entry.tags,
+    priority: Math.round(entry.importance * 100),
+    confidence: entry.importance,
+  };
+}
+
+/**
+ * Wire the global three-layer singleton to a persistent MemoryStore
+ * (audit MED item 1 Phase A). Idempotent — call with null to clear.
+ * Caller-controlled initialization avoids implicit module-load coupling
+ * with the unified-memory bootstrap.
+ */
+export function wireGlobalThreeLayerMemory(store: MemoryStore | null): void {
+  memorySingleton.get().setMemoryStore(store);
 }
