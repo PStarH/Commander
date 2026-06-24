@@ -122,7 +122,10 @@ describe('E2E: failure injection', () => {
         },
         new ModelRouter(),
       );
-      sqliteRuntime.registerProvider('openai', new MockLLMProvider('openai', { defaultResponse: 'ok' }));
+      sqliteRuntime.registerProvider(
+        'openai',
+        new MockLLMProvider('openai', { defaultResponse: 'ok' }),
+      );
     } catch {
       // Construction failure is acceptable as long as it is a clear error.
       sqliteRuntime = null;
@@ -161,7 +164,9 @@ describe('E2E: failure injection', () => {
     it('returns failed when provider simulates memory exhaustion', async () => {
       const runtime = makeRuntime();
       const provider = new MockLLMProvider('openai', { defaultResponse: 'ok' });
-      vi.spyOn(provider, 'call').mockRejectedValue(new Error('Memory limit exceeded during inference'));
+      vi.spyOn(provider, 'call').mockRejectedValue(
+        new Error('Memory limit exceeded during inference'),
+      );
       runtime.registerProvider('openai', provider);
 
       getModelRouter().registerModel({
