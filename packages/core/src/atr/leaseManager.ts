@@ -338,6 +338,7 @@ export class LeaseManager {
   }
 
   close(): void {
+    walCheckpoint(this.db);
     this.db?.close();
     this.db = null;
     this.stmtGet = null;
