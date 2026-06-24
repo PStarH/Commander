@@ -58,7 +58,6 @@ export class ScreenshotCaptureTool implements Tool {
     const crypto = await import('crypto');
 
     const { safePath } = await import('../fileSystemTool');
-    const hash = crypto.randomBytes(4).toString('hex');
     const outputPath = String(args.outputPath ?? '');
     // Validate output path: reject shell metacharacters to prevent injection (P1-15)
     if (outputPath && /[;&|`$(){}[\]!#~<>*\n\t'"\\]/.test(outputPath)) {
