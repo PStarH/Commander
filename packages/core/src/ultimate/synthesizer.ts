@@ -341,6 +341,36 @@ export class MultiAgentSynthesizer {
     return this.qualityGateEngine.run(gates, synthesis, { taskTree });
   }
 
+  private collectCompleted(node: TaskTreeNode): TaskTreeNode[] {
+    const completed: TaskTreeNode[] = [];
+    if (node.status === 'COMPLETED' && node.result !== undefined && node.result !== null) {
+      completed.push(node);
+    }
+    for (const sub of node.subtasks) {
+      completed.push(...this.collectCompleted(sub));
+    }
+    return completed;
+  }
+
+  private collectFailed(node: TaskTreeNode): TaskTreeNode[] {
+    const failed: TaskTreeNode[] = [];
+    if (node.status === 'FAILED') {
+      failed.push(node);
+    }
+    for (const sub of node.subtasks) {
+      failed.push(...this.collectFailed(sub));
+    }
+    return failed;
+  }
+
+  private countAllNodes(node: TaskTreeNode): number {
+    let count = 1;
+    for (const sub of node.subtasks) {
+      count += this.countAllNodes(sub);
+    }
+    return count;
+  }
+
   private getDepth(node: TaskTreeNode, root: TaskTreeNode, currentDepth = 0): number {
     if (node.id === root.id) return currentDepth;
     for (const sub of root.subtasks) {
