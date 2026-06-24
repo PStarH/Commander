@@ -57,7 +57,8 @@ function checkGit(): CheckResult {
     const { execSync } = require('child_process');
     execSync('git --version', { stdio: 'pipe' });
     return { label: t('quickcheck.label.git'), pass: true, detail: 'available' };
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return {
       label: t('quickcheck.label.git'),
       pass: false,

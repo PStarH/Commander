@@ -514,7 +514,8 @@ export async function cmdTrace(flags: Record<string, string>): Promise<void> {
           : '?';
         const tokens = data.totalTokens ? `${data.totalTokens.toLocaleString()} tok` : '?';
         console.log(`    ${status} ${$.bold}${file}${$.reset} [${duration}, ${tokens}]`);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         console.log(`    ${$.dim}${file}${$.reset}`);
       }
     }
