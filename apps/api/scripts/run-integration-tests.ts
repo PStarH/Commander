@@ -30,10 +30,9 @@ function run(cmd: string, args: string[], options?: { cwd?: string; env?: NodeJS
 async function waitForHealth(url: string, timeoutMs = 30000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    try {
-      const res = await fetch(`${url}/health`);
-      if (res.ok) return;
-    } catch {
+    try { const res = await fetch(`${url}/health`);
+    if (res.ok) return; } catch (err) {
+      console.warn('[Catch]', err);
       // server not ready yet
     }
     await sleep(250);

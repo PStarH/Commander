@@ -1,11 +1,5 @@
 import express, { Router } from 'express';
-import {
-  MCPServer,
-  getModelRouter,
-  getCapabilityRegistry,
-  MCPClient,
-  createMCPClient,
-} from '@commander/core';
+import { MCPServer, getModelRouter, MCPClient, createMCPClient } from '@commander/core';
 import type {
   MCPTool,
   MCPToolResult,
@@ -68,39 +62,6 @@ export function createMCPRouter(): Router {
       const prompts = await client.listPrompts().catch(() => []);
       const serverInfo = client.getServerInfo();
 
-      // Inject tools into CapabilityRegistry
-      const registry = getCapabilityRegistry();
-      let registeredCount = 0;
-      for (const tool of tools) {
-        try {
-          const toolName = `mcp:${discoveryLabel}:${tool.name}`;
-          registry.register(toolName, {
-            capabilities: [
-              {
-                name: tool.name,
-                domain: 'mcp',
-                strength: 1.0,
-                description: tool.description ?? `MCP tool: ${tool.name}`,
-              },
-            ],
-            cost: {
-              perInputToken: 0,
-              perOutputToken: 0,
-              perTask: 0,
-            },
-            limitations: [],
-            reliability: {
-              successRate: 1.0,
-              avgLatencyMs: 0,
-              totalTasksCompleted: 0,
-            },
-          });
-          registeredCount++;
-        } catch {
-          /* tool already registered — skip */
-        }
-      }
-
       await client.disconnect();
 
       res.json({
@@ -112,13 +73,12 @@ export function createMCPRouter(): Router {
           transport: url ? 'streamable-http' : 'stdio',
           url: url ?? `stdio:${command}`,
         },
-        tools: tools.map((t) => ({ name: t.name, description: t.description, registered: true })),
+        tools: tools.map((t) => ({ name: t.name, description: t.description })),
         toolCount: tools.length,
-        registeredCount,
         resources: resources.map((r) => ({ uri: r.uri, name: r.name })),
         prompts: prompts.map((p) => ({ name: p.name, description: p.description })),
         durationMs: Date.now() - startTime,
-        instruction: `MCP server "${discoveryLabel}" discovered. ${registeredCount} tools registered as mcp:${discoveryLabel}:<tool>.`,
+        instruction: `MCP server "${discoveryLabel}" discovered with ${tools.length} tools.`,
       });
     } catch (err) {
       res.status(502).json({

@@ -441,22 +441,24 @@ export class SequentialExecutor {
 import { getSharedRuntime } from './sharedRuntime';
 
 export function createRealAgentExecutor(): AgentExecutor {
-  return async ({ agentId, input, context, timeoutMs }) => {
+  return async ({ agentId, input, context }) => {
     const runtime = getSharedRuntime();
     const result = await runtime.execute({
       agentId,
+      projectId: context.projectId,
       goal: typeof input === 'string' ? input : JSON.stringify(input),
-      contextData: { projectId: context.projectId },
+      contextData: { agentState: { projectId: context.projectId } },
+      availableTools: [],
       maxSteps: 5,
-      timeoutMs,
+      tokenBudget: 16000,
     });
     return {
       output: result.summary,
       tokenUsage: result.totalTokenUsage
         ? {
-            promptTokens: result.totalTokenUsage.prompt ?? 0,
-            completionTokens: result.totalTokenUsage.completion ?? 0,
-            totalTokens: result.totalTokenUsage.total ?? 0,
+            promptTokens: result.totalTokenUsage.promptTokens ?? 0,
+            completionTokens: result.totalTokenUsage.completionTokens ?? 0,
+            totalTokens: result.totalTokenUsage.totalTokens ?? 0,
           }
         : undefined,
     };

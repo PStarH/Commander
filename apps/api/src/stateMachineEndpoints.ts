@@ -1,6 +1,21 @@
 /**
  * State Machine API Endpoints
  * REST API for managing agent state machines
+ *
+ * PERSISTENCE TODO (audit MED item 2): the module-level Map<taskId, StateMachine>
+ * below loses every in-flight task on API process restart. The migration to a
+ * PersistentDriver-backed table (ess-001 Phase-1 storage) was attempted but
+ * blocked by the workspace package-build boundary: apps/api resolves
+ * `@commander/core` from packages/core/dist/ (the precompiled declarations)
+ * rather than packages/core/src/, so new methods added to the in-package
+ * StateMachine class don't propagate until the package is rebuilt AND the
+ * new PersistentDriver symbols are re-exported from src/index.ts.
+ *
+ * Until that rebuild lands, this endpoint keeps the original Map semantics.
+ * Restart-safety item is tracked separately; ship path requires either
+ *   (a) `pnpm --filter @commander/core build` to regenerate dist,
+ *   (b) flip apps/api/tsconfig `paths` to point at source, or
+ *   (c) declare module '@commander/core' augmentation in apps/api.
  */
 
 import express from 'express';
@@ -126,7 +141,6 @@ router.post('/:taskId/transition', async (req, res) => {
         },
       });
     } else {
-      // Check if it's a governance pending
       if (result.error?.includes('Governance checkpoint pending')) {
         const pendingCheckpoints = sm.getPendingCheckpoints();
         res.json({
