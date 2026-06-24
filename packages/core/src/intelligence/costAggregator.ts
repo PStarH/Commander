@@ -9,6 +9,7 @@
  * independently of CLI argument parsing.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { calculateCostBreakdown } from '../telos/tokenSentinel';
@@ -133,7 +134,7 @@ export function readLLMCallRecords(baseDir?: string): {
       const raw = JSON.parse(trimmed) as Record<string, unknown>;
       records.push(normalizeRecord(raw));
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'costAggregator:136');
       parseErrors++;
     }
   }

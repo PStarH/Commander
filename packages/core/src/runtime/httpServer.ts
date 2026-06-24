@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { IncomingMessage, ServerResponse, createServer as createNodeHttpServer } from 'http';
 import { createServer as createHttpsServer, type ServerOptions as HttpsServerOptions } from 'https';
@@ -208,7 +209,7 @@ function parseBody(req: IncomingMessage, maxBytes: number): Promise<unknown> {
       try {
         resolve(body ? JSON.parse(body) : {});
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'httpServer:211');
         getGlobalLogger().warn('HttpServer', 'Invalid JSON');
         reject(new HttpRequestError(400, 'Invalid JSON'));
       }
@@ -511,7 +512,7 @@ export class CommanderHttpServer {
             getGlobalLogger().info('HttpServer', 'Cancelled in-flight steps', { cancelled });
           }
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'httpServer:514');
           /* best-effort */
         }
       }
@@ -555,7 +556,7 @@ export class CommanderHttpServer {
             const result = await plugin.authenticate(bearerToken);
             if (result) return true;
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'httpServer:558');
             continue;
           }
         }

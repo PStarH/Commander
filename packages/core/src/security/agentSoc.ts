@@ -15,6 +15,7 @@
  *   "Monitoring produces data. SOC produces action."
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import {
   getSecurityAuditLogger,
   type SecurityEvent,
@@ -950,7 +951,7 @@ export class AgentSoc {
         autoContain: classification.automaticContainment,
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'agentSoc:953');
       /* non-critical */
     }
 
@@ -963,7 +964,7 @@ export class AgentSoc {
       const metrics = getGlobalMetrics();
       metrics.incrementCounter('soc.incidents', 1, { priority: incident.priority });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'agentSoc:966');
       /* non-critical */
     }
 

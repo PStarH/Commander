@@ -35,18 +35,18 @@ asyncio.run(main())
 
 ## API
 
-| Method | Description |
-|--------|-------------|
-| `client.run(prompt, ...)` | Execute an agent task |
-| `client.plan(task, ...)` | Zero-cost deliberation (no LLM call) |
-| `client.stream(session_id)` | SSE event stream for a running session |
-| `client.memory_write(content, ...)` | Write to memory |
-| `client.memory_query(...)` | Query memory |
-| `client.memory_stats()` | Memory statistics |
-| `client.health()` | Liveness probe |
-| `client.health_detailed()` | Detailed component health |
-| `client.system_status()` | System status |
-| `client.metrics()` | OpenMetrics text |
+| Method                              | Description                            |
+| ----------------------------------- | -------------------------------------- |
+| `client.run(prompt, ...)`           | Execute an agent task                  |
+| `client.plan(task, ...)`            | Zero-cost deliberation (no LLM call)   |
+| `client.stream(session_id)`         | SSE event stream for a running session |
+| `client.memory_write(content, ...)` | Write to memory                        |
+| `client.memory_query(...)`          | Query memory                           |
+| `client.memory_stats()`             | Memory statistics                      |
+| `client.health()`                   | Liveness probe                         |
+| `client.health_detailed()`          | Detailed component health              |
+| `client.system_status()`            | System status                          |
+| `client.metrics()`                  | OpenMetrics text                       |
 
 ## Streaming
 
@@ -78,10 +78,10 @@ Not for Jupyter/notebooks — use `CommanderClient` with `asyncio` there.
 
 ## Configuration
 
-| Env var | Default | Description |
-|---------|---------|-------------|
-| `COMMANDER_API_KEY` | — | API key for Bearer auth |
-| — | `http://localhost:3001` | Commander server base URL |
+| Env var             | Default                 | Description               |
+| ------------------- | ----------------------- | ------------------------- |
+| `COMMANDER_API_KEY` | —                       | API key for Bearer auth   |
+| —                   | `http://localhost:3001` | Commander server base URL |
 
 ## Architecture
 

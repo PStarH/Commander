@@ -25,6 +25,7 @@
  *    break the run.
  */
 
+import { reportSilentFailure } from '../../core/src/silentFailureReporter';
 import type { LLMRequest, LLMResponse } from '@commander/core';
 
 /** A rubric describes HOW to score something. */
@@ -292,17 +293,19 @@ function clamp(v: number, min: number, max: number): number {
 
 /** JSON.stringify with a fallback for circular references / non-serializable values. */
 function safeJson(v: unknown): string {
-  try { return JSON.stringify(
-    v,
-    (_k, val) => {
-      if (typeof val === 'bigint') return val.toString();
-      if (typeof val === 'function') return '[function]';
-      if (typeof val === 'undefined') return '[undefined]';
-      return val;
-    },
-    2,
-  ); } catch (err) {
-    console.warn('[Catch]', err);
+  try {
+    return JSON.stringify(
+      v,
+      (_k, val) => {
+        if (typeof val === 'bigint') return val.toString();
+        if (typeof val === 'function') return '[function]';
+        if (typeof val === 'undefined') return '[undefined]';
+        return val;
+      },
+      2,
+    );
+  } catch (err) {
+    reportSilentFailure(err, 'evalScorer:307');
     return String(v);
   }
 }
@@ -335,9 +338,11 @@ export function parseJudgeResponse(text: string): ParsedJudgeResponse {
 }
 
 function tryParseJson(s: string): Record<string, unknown> | null {
-  try { const v = JSON.parse(s);
-  if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>; } catch (err) {
-    console.warn('[Catch]', err);
+  try {
+    const v = JSON.parse(s);
+    if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>;
+  } catch (err) {
+    reportSilentFailure(err, 'evalScorer:344');
     /* fall through */
   }
   return null;

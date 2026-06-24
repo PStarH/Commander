@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../silentFailureReporter';
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage, CacheConfig } from '../types';
 import { FormatBridge } from '../formatBridge';
 import { parseMiMoTextToolCalls } from './mimoProvider';
@@ -192,7 +193,7 @@ export class XiaomiProvider implements LLMProvider {
               try {
                 args = JSON.parse(tc.arguments || '{}');
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'xiaomiProvider:195');
                 args = {};
               }
               return { id: tc.id, name: tc.name, arguments: args };
@@ -233,7 +234,7 @@ export class XiaomiProvider implements LLMProvider {
         try {
           args = JSON.parse(tc.function.arguments || '{}');
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'xiaomiProvider:236');
           args = {};
         }
         return { id: tc.id, name: tc.function.name, arguments: args };

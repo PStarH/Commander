@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../../core/src/silentFailureReporter';
 import type { ValifySchema, ValifySchemaDef, ParseResult } from './types.js';
 import { ValifyError, ValifyIssue, createIssue, prependPath } from './errors.js';
 
@@ -143,8 +144,10 @@ function validateByType<T>(
         if (meta.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input))
           issues.push(createIssue(path, 'Invalid email', 'invalid_email'));
         if (meta.url) {
-          try { new URL(input); } catch (err) {
-            console.warn('[Catch]', err);
+          try {
+            new URL(input);
+          } catch (err) {
+            reportSilentFailure(err, 'schemas:149');
             issues.push(createIssue(path, 'Invalid URL', 'invalid_url'));
           }
         }

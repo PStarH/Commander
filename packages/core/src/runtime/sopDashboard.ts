@@ -4,6 +4,7 @@
  * Scans the SOP directory (.commander/sops by default) and aggregates
  * bus events for real-time SSE streaming.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getMessageBus } from './messageBus';
@@ -99,17 +100,17 @@ export function listSOPs(customDir?: string): SOPListItem[] {
               hasJson: true,
             });
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'sopDashboard:102');
             // Corrupt JSON file — skip
           }
         }
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'sopDashboard:107');
         // Permission error or similar — skip this agent
       }
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'sopDashboard:112');
     // Base dir doesn't exist or can't be read
   }
 
@@ -134,7 +135,7 @@ export function getSOP(agentId: string, runId: string, customDir?: string): SOPT
     const raw = fs.readFileSync(jsonPath, 'utf-8');
     return JSON.parse(raw) as SOPTemplate;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'sopDashboard:137');
     return null;
   }
 }
@@ -153,7 +154,7 @@ export function getSOPMarkdown(agentId: string, runId: string, customDir?: strin
   try {
     return fs.readFileSync(mdPath, 'utf-8');
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'sopDashboard:156');
     return null;
   }
 }

@@ -30,6 +30,7 @@
  * On non-Windows platforms, available = false.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as os from 'os';
 import * as path from 'path';
 import { execSync, spawn } from 'child_process';
@@ -297,7 +298,7 @@ export class AppContainerSB implements PlatformSandbox {
         try {
           fs.unlinkSync(scriptPath);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'appContainer:300');
           /* ignore */
         }
         resolve({
@@ -347,7 +348,7 @@ export class AppContainerSB implements PlatformSandbox {
         try {
           fs.unlinkSync(scriptPath);
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'appContainer:350');
           /* ignore */
         }
       };

@@ -12,6 +12,7 @@
  * Existing `checkpointCallback` is preserved for backward compatibility.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type {
   SequentialPipeline,
   SequentialPipelineRun,
@@ -453,7 +454,7 @@ export class SequentialPipelineExecutor {
                 },
               });
             } catch (err) {
-              console.warn('[Catch]', err);
+              reportSilentFailure(err, 'executor:456');
               /* best-effort */
             }
           }
@@ -606,7 +607,7 @@ export class SequentialPipelineExecutor {
           details: { stepId, breakerKey, pipelineId: state.run.pipelineId },
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'executor:609');
         /* best-effort */
       }
       await this.emitEvent({

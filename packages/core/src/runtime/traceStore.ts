@@ -4,6 +4,7 @@
  * Appends each event as a JSON line to .commander_traces/{runId}.ndjson.
  * Sync writes for crash safety (same pattern as StateCheckpointer).
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
@@ -39,7 +40,7 @@ export class PersistentTraceStore implements TraceStore {
     try {
       fs.chmodSync(this.baseDir, 0o700);
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'traceStore:42');
       /* best-effort */
     }
   }
@@ -82,7 +83,7 @@ export class PersistentTraceStore implements TraceStore {
       try {
         fs.fchmodSync(fd, 0o600);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'traceStore:85');
         /* best-effort */
       }
       try {

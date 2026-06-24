@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import type {
   UltimateExecutionContext,
   UltimateExecutionResult,
@@ -167,7 +168,7 @@ export class UltimateOrchestrator {
         },
       });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'orchestrator:170');
       /* best-effort */
     }
 
@@ -250,13 +251,13 @@ export class UltimateOrchestrator {
           },
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'orchestrator:253');
         /* best-effort */
       }
       try {
         getMetricsCollector().recordTopoChoice(topology, deliberation.taskType);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'orchestrator:259');
         /* best-effort */
       }
 
@@ -799,7 +800,7 @@ export class UltimateOrchestrator {
               });
             }
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'orchestrator:802');
             /* ignore */
           }
         };
@@ -846,7 +847,7 @@ export class UltimateOrchestrator {
             tryAddFile(path.join(workspace, entry.name));
           }
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'orchestrator:849');
           /* ignore */
         }
 
@@ -861,7 +862,7 @@ export class UltimateOrchestrator {
             tryAddFile(path.join('/tmp', entry.name));
           }
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'orchestrator:864');
           /* ignore */
         }
 
@@ -880,13 +881,13 @@ export class UltimateOrchestrator {
                   tryAddFile(path.join(agentPath, file.name));
                 }
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'orchestrator:883');
                 /* ignore */
               }
             }
           }
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'orchestrator:889');
           /* ignore */
         }
 
@@ -1025,7 +1026,7 @@ export class UltimateOrchestrator {
       try {
         getRebuildPrompt().resetRun(execId);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'orchestrator:1028');
         /* best-effort */
       }
       this.activeExecutions.delete(execId);
@@ -1504,7 +1505,7 @@ export class UltimateOrchestrator {
         return (totalTokens / 1000) * blendedCostPer1K;
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'orchestrator:1507');
       // best-effort
     }
 

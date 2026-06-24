@@ -2,6 +2,7 @@
 // 统计高风险任务、审批率、风险 Agent 分布
 // v2: 增加磁盘持久化，治理证据不再仅存内存
 
+import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -26,7 +27,7 @@ export function persistGovernanceSnapshot(stats: GovernanceStats, alerts: Govern
     const filePath = path.join(dir, SNAPSHOT_FILE);
     fs.appendFileSync(filePath, JSON.stringify(record) + '\n', 'utf-8');
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'governanceObserver:29');
     /* best-effort persistence — never break governance flow */
   }
 }
@@ -45,7 +46,7 @@ export function loadGovernanceSnapshots(
     const records = lines.map((line) => JSON.parse(line));
     return records.slice(-limit).reverse();
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'governanceObserver:48');
     return [];
   }
 }

@@ -11,6 +11,7 @@
  * This is the single entry point for all tool execution in the runtime.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { ToolCall, ToolResult, Tool } from './types';
 import { toolErrorRow } from './toolResultShape';
 import type { ToolApproval, ApprovalResult } from './toolApproval';
@@ -325,7 +326,7 @@ export class ToolOrchestrator {
             },
           });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'toolOrchestrator:328');
           /* best-effort */
         }
 
@@ -361,7 +362,7 @@ export class ToolOrchestrator {
             },
           });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'toolOrchestrator:364');
           /* best-effort */
         }
 

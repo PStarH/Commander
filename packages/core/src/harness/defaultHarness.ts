@@ -8,6 +8,7 @@
  * Capabilities: minimal (no sub-agents, no Guardian, no hashline edits)
  * but 100% backward compatible with existing Commander behavior.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import type {
   AgentHarness,
   HarnessSelectionContext,
@@ -317,7 +318,7 @@ export class DefaultHarness implements AgentHarness {
                 const parsed = JSON.parse(safeContent);
                 result.outputData = parsed;
               } catch (err) {
-                console.warn('[Catch]', err);
+                reportSilentFailure(err, 'defaultHarness:320');
                 /* not JSON — leave unstructured */
               }
             }

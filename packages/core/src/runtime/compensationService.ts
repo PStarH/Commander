@@ -6,6 +6,7 @@
  * rollback plan generation, and saga execution.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { CompensationRegistry, type CompensableAction } from './compensationRegistry';
 import { CompensationEventSubscriber } from './compensationEventSubscriber';
 import { DeadLetterQueue } from './deadLetterQueue';
@@ -53,7 +54,7 @@ export class CompensationService {
         })
         .catch(() => {});
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'compensationService:56');
       /* best-effort */
     }
 
@@ -63,7 +64,7 @@ export class CompensationService {
         try {
           this.registry.processQueue().catch(() => {});
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'compensationService:66');
           /* best-effort */
         }
       },
@@ -221,7 +222,7 @@ export class CompensationService {
               failureModeNumber: 12,
             });
           } catch (err) {
-            console.warn('[Catch]', err);
+            reportSilentFailure(err, 'compensationService:224');
             /* best-effort */
           }
         }
@@ -234,7 +235,7 @@ export class CompensationService {
             runId,
           });
         } catch (err) {
-          console.warn('[Catch]', err);
+          reportSilentFailure(err, 'compensationService:237');
           /* best-effort */
         }
         getGlobalLogger().debug('CompensationService', 'Compensation via saga threw unexpectedly', {

@@ -5,6 +5,7 @@
  * Builds the API, starts the server on a free port, runs the TypeScript
  * integration tests in apps/api/tests, then shuts the server down.
  */
+import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import * as path from 'node:path';
@@ -30,9 +31,11 @@ function run(cmd: string, args: string[], options?: { cwd?: string; env?: NodeJS
 async function waitForHealth(url: string, timeoutMs = 30000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    try { const res = await fetch(`${url}/health`);
-    if (res.ok) return; } catch (err) {
-      console.warn('[Catch]', err);
+    try {
+      const res = await fetch(`${url}/health`);
+      if (res.ok) return;
+    } catch (err) {
+      reportSilentFailure(err, 'run-integration-tests:37');
       // server not ready yet
     }
     await sleep(250);

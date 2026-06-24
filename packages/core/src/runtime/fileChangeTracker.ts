@@ -11,6 +11,7 @@
  *       └── {runId}.json       # Per-run summary (file count, total bytes)
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -555,7 +556,7 @@ export function createFileChangeTrackingPlugin(options?: {
       try {
         afterContent = fs.readFileSync(filePath, 'utf-8');
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'fileChangeTracker:558');
         return hookCtx.result;
       }
 

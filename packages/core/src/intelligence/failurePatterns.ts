@@ -7,6 +7,7 @@
  * Tracks failure patterns and provides proactive warnings.
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 
 // ============================================================================
@@ -59,7 +60,7 @@ export class FailurePatternLearner {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'failurePatterns:62');
       /* ignore */
     }
   }
@@ -74,7 +75,7 @@ export class FailurePatternLearner {
         JSON.stringify(Array.from(this.patterns.values()), null, 2),
       );
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'failurePatterns:77');
       /* ignore */
     }
   }

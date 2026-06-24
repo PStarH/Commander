@@ -14,6 +14,7 @@
  *     runtime.registerTool(tool.definition.name, tool);
  *   }
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { MCPClient, createMCPClient } from '../mcp/client';
 import type { MCPClientConfig, MCPTool, MCPToolResult } from '../mcp/types';
@@ -192,7 +193,7 @@ export class MCPIntegrationManager {
       try {
         await client.disconnect();
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'mcpToolAdapter:195');
         /* ignore disconnect errors */
       }
     }
@@ -235,7 +236,7 @@ export function readMCPConfig(configFile?: {
       const parsed = JSON.parse(envJson) as MCPIntegrationServerConfig[];
       if (Array.isArray(parsed)) return parsed;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'mcpToolAdapter:238');
       getGlobalLogger().warn('MCPConfig', 'Failed to parse COMMANDER_MCP_SERVERS env var');
     }
   }
@@ -258,7 +259,7 @@ export function readA2ADiscoveryConfig(configFile?: { a2aAgents?: string[] }): s
       const parsed = JSON.parse(envJson) as string[];
       if (Array.isArray(parsed)) return parsed;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'mcpToolAdapter:261');
       getGlobalLogger().warn('A2AConfig', 'Failed to parse COMMANDER_A2A_AGENTS env var');
     }
   }

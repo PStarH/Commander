@@ -21,6 +21,7 @@
  * - AuditChainLedger: tamper-evident incident chain
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { type TaskCategory } from '../runtime/tokenGovernor';
 import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getAuditChainLedger } from './auditChainLedger';
@@ -718,7 +719,7 @@ export class CostGuard {
           timestamp: decision.timestamp,
         });
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'costGuard:721');
         /* non-critical */
       }
     }
@@ -734,7 +735,7 @@ export class CostGuard {
         metrics.incrementCounter('costguard.melts', 1, { attackType: attackType ?? 'unknown' });
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'costGuard:737');
       /* non-critical */
     }
 

@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { SagaStateSnapshot, SagaEvent } from './types';
@@ -101,7 +102,7 @@ export class FileSagaStore implements SagaStore {
         }
       }
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'sagaStore:104');
       // If listing fails, silently return undefined
     }
     return undefined;

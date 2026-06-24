@@ -33,6 +33,7 @@
  *   1   All iterations failed (provider unreachable or auth error)
  *   2   Configuration error
  */
+import { reportSilentFailure } from '../packages/core/src/silentFailureReporter';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import { getGlobalLearnedWeights } from '../packages/core/src/ultimate/topologyStores';
@@ -871,7 +872,7 @@ function deriveTenantId(baseUrl: string, model: string): string {
     const host = new URL(baseUrl).hostname.replace(/^api\./, '').replace(/\./g, '_');
     return `${host}__${model}`;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'benchmark-topology:874');
     return `unknown__${model}`;
   }
 }

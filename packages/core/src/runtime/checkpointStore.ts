@@ -16,6 +16,7 @@
  *   - Transactions for multi-table writes
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { getGlobalLogger } from '../logging';
@@ -45,7 +46,7 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   BetterSqlite3 = require('better-sqlite3');
 } catch (err) {
-  console.warn('[Catch]', err);
+  reportSilentFailure(err, 'checkpointStore:48');
   /* better-sqlite3 not installed — operations throw at runtime */
 }
 
@@ -458,7 +459,7 @@ export class CheckpointStore {
       this.db.prepare('SELECT 1').get();
       return true;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'checkpointStore:461');
       return false;
     }
   }
@@ -505,7 +506,7 @@ export class CheckpointStore {
       try {
         msg.tool_calls = JSON.parse(row.tool_calls_json);
       } catch (err) {
-        console.warn('[Catch]', err);
+        reportSilentFailure(err, 'checkpointStore:508');
         /* skip malformed tool_calls */
       }
     }
@@ -531,7 +532,7 @@ export function resetCheckpointStores(): void {
     try {
       store.close();
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'checkpointStore:534');
       /* best-effort */
     }
   }

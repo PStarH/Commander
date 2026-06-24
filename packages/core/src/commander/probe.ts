@@ -11,6 +11,7 @@
  *   - Provider connectivity (latency, reachability)
  */
 
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 
 // ============================================================================
@@ -93,7 +94,7 @@ async function checkDocker(): Promise<boolean> {
     await fs.promises.access(sock, fs.constants.R_OK);
     return true;
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'probe:96');
     return false;
   }
 }
@@ -127,7 +128,7 @@ async function checkRedis(): Promise<string | null> {
       clearTimeout(timeout);
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'probe:130');
     return null;
   }
 }
@@ -142,7 +143,7 @@ function checkKubernetes(): { inK8s: boolean; namespace: string | null } {
         process.env.KUBERNETES_NAMESPACE ??
         fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/namespace', 'utf-8').trim();
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'probe:145');
       namespace = null;
     }
   }
@@ -159,13 +160,13 @@ async function checkOllama(): Promise<boolean> {
       const response = await fetch(`${host}/api/tags`, { signal: controller.signal });
       return response.ok;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'probe:162');
       return false;
     } finally {
       clearTimeout(timeout);
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'probe:168');
     return false;
   }
 }
@@ -182,13 +183,13 @@ async function checkVllm(): Promise<boolean> {
       });
       return response.ok;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'probe:185');
       return false;
     } finally {
       clearTimeout(timeout);
     }
   } catch (err) {
-    console.warn('[Catch]', err);
+    reportSilentFailure(err, 'probe:191');
     return false;
   }
 }
@@ -329,7 +330,7 @@ async function testSingleProvider(
         defaultModel,
       };
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'probe:332');
       return {
         provider,
         displayName,
@@ -360,7 +361,7 @@ async function testSingleProvider(
         defaultModel,
       };
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'probe:363');
       return {
         provider,
         displayName,

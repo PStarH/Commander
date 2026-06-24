@@ -10,6 +10,7 @@
  * or any I/O error, logs a single yellow warning to stderr and returns
  * cleanly. Never throws.
  */
+import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -64,7 +65,7 @@ export function walkUpDotenvPaths(cwd: string): string[] {
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'envLoader:67');
       /* unreadable — leave entries empty */
       entries = [];
     }
@@ -150,7 +151,7 @@ export function findDotenvDefining(key: string, cwd: string = process.cwd()): st
       const re = new RegExp(`^\\s*${key}\\s*=`, 'm');
       if (re.test(content)) return p;
     } catch (err) {
-      console.warn('[Catch]', err);
+      reportSilentFailure(err, 'envLoader:153');
       /* unreadable — skip */
     }
   }
