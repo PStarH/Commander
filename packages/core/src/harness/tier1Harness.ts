@@ -111,7 +111,8 @@ export class Tier1Harness implements AgentHarness {
         try {
           const injected = await services.injectSkill(skillId, effectiveSystemPrompt);
           effectiveSystemPrompt = injected;
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           getGlobalLogger().warn('Tier1Harness', `Failed to inject skill ${skillId}`);
         }
       }
@@ -127,7 +128,8 @@ export class Tier1Harness implements AgentHarness {
         for (const skill of relevantSkills) {
           effectiveSystemPrompt = await services.injectSkill(skill.id, effectiveSystemPrompt);
         }
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         // best-effort
       }
     }
