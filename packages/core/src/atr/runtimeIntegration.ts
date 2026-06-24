@@ -65,7 +65,7 @@ export function startATRRun(
 ): ATRContext | null {
   const bundle = getRunLedgerBundle();
   const intentHash = hashIntent(goal);
-  const { lease, tx } = bundle.ledger.start({
+  const { tx } = bundle.ledger.start({
     runId,
     intentHash,
     tenantId: options?.tenantId,
