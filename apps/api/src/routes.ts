@@ -36,6 +36,7 @@ import { createEvaluationRunnerRouter } from './evaluationRunnerEndpoints';
 import { createOrchestratorRouter } from './orchestratorEndpoints';
 import { createObservabilityRouter } from './observabilityEndpoints';
 import { createStreamRouter } from './streamEndpoints';
+import { authMiddleware } from './authMiddleware';
 
 export interface RouterContext {
   store: IWarRoomStore;
@@ -61,6 +62,8 @@ export function registerRoutes(app: Express, ctx: RouterContext) {
     ctx.a2aArtifactManager,
     ctx.agentCardRegistry,
   );
+
+  app.use(authMiddleware);
 
   app.use(createProjectRouter(ctx.store, ctx.memoryStore, ctx.agentStateStore));
   app.use(createMemoryIndexRouter(ctx.memoryIndexManager));

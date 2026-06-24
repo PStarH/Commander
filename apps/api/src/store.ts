@@ -390,7 +390,8 @@ export class SqliteWarRoomStore implements IWarRoomStore {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       Database = require('better-sqlite3');
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       throw new Error(
         'SqliteWarRoomStore requires the "better-sqlite3" package. ' +
           'Install it with: npm install better-sqlite3',

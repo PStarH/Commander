@@ -136,7 +136,8 @@ function estimateRunCost(tokens: {
       reasoning: 0,
       total: tokens.totalTokens,
     }).totalCostUsd;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return 0;
   }
 }

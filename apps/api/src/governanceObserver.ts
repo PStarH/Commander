@@ -25,7 +25,8 @@ export function persistGovernanceSnapshot(stats: GovernanceStats, alerts: Govern
     };
     const filePath = path.join(dir, SNAPSHOT_FILE);
     fs.appendFileSync(filePath, JSON.stringify(record) + '\n', 'utf-8');
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     /* best-effort persistence — never break governance flow */
   }
 }
@@ -43,7 +44,8 @@ export function loadGovernanceSnapshots(
     const lines = fs.readFileSync(filePath, 'utf-8').trim().split('\n').filter(Boolean);
     const records = lines.map((line) => JSON.parse(line));
     return records.slice(-limit).reverse();
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return [];
   }
 }
