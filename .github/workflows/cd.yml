@@ -10,13 +10,20 @@ jobs:
     name: Deploy to Staging
     runs-on: ubuntu-latest
     environment: staging
-    if: |
-      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-      && secrets.STAGING_HOST != ''
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v6
 
+      - name: Check staging secrets
+        id: secrets
+        run: |
+          if [ -z "${{ secrets.STAGING_HOST }}" ] || [ -z "${{ secrets.STAGING_USER }}" ] || [ -z "${{ secrets.STAGING_KEY }}" ]; then
+            echo "Staging deployment secrets are not configured; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Prepare Docker Compose files
+        if: steps.secrets.outputs.skip != 'true'
         run: |
           mkdir -p deploy
           cp docker-compose.yml deploy/
@@ -25,6 +32,7 @@ jobs:
           cp apps/web/nginx.conf deploy/ 2>/dev/null || true
 
       - name: Deploy to staging via SSH
+        if: steps.secrets.outputs.skip != 'true'
         uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.STAGING_HOST }}
@@ -35,6 +43,7 @@ jobs:
           strip_components: 1
 
       - name: Restart staging services
+        if: steps.secrets.outputs.skip != 'true'
         uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.STAGING_HOST }}
@@ -52,6 +61,7 @@ jobs:
             curl -sf http://localhost:4000/health || { echo "Staging health check FAILED"; exit 1; }
 
       - name: Smoke tests against staging
+        if: steps.secrets.outputs.skip != 'true'
         run: |
           STAGING_URL="http://${{ secrets.STAGING_HOST }}:4000"
           echo "Running smoke tests against ${STAGING_URL}..."
@@ -74,7 +84,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Check production secrets
+        id: secrets
+        run: |
+          if [ -z "${{ secrets.DEPLOY_HOST }}" ] || [ -z "${{ secrets.DEPLOY_USER }}" ] || [ -z "${{ secrets.DEPLOY_KEY }}" ]; then
+            echo "Production deployment secrets are not configured; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Prepare Docker Compose files
+        if: steps.secrets.outputs.skip != 'true'
         run: |
           mkdir -p deploy
           cp docker-compose.yml deploy/
@@ -83,6 +102,7 @@ jobs:
           cp apps/web/nginx.conf deploy/ 2>/dev/null || true
 
       - name: Deploy via SSH
+        if: steps.secrets.outputs.skip != 'true'
         uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -93,6 +113,7 @@ jobs:
           strip_components: 1
 
       - name: Restart services
+        if: steps.secrets.outputs.skip != 'true'
         uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -114,6 +135,7 @@ jobs:
             docker image prune -f
 
       - name: Post-deploy smoke tests
+        if: steps.secrets.outputs.skip != 'true'
         run: |
           PROD_URL="http://${{ secrets.DEPLOY_HOST }}:4000"
           echo "Running post-deploy smoke tests..."
