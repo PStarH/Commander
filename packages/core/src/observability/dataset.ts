@@ -72,7 +72,8 @@ export class DatasetStore {
     if (this.persistenceDir) {
       try {
         fs.mkdirSync(this.persistenceDir, { recursive: true });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     }
@@ -134,7 +135,8 @@ export class DatasetStore {
       const filePath = path.join(this.persistenceDir, `${id}.json`);
       fs.writeFileSync(filePath, JSON.stringify(dataset, null, 2), 'utf-8');
       return true;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }
@@ -157,7 +159,8 @@ export class DatasetStore {
       if (!parsed.id || !parsed.rubricId || !Array.isArray(parsed.cases)) return undefined;
       this.datasets.set(parsed.id, parsed);
       return parsed;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return undefined;
     }
   }
@@ -171,7 +174,8 @@ export class DatasetStore {
       for (const f of files) {
         if (this.loadFromFile(path.join(this.persistenceDir, f))) n++;
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
     return n;
