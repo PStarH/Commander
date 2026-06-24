@@ -554,7 +554,8 @@ export function createFileChangeTrackingPlugin(options?: {
       let afterContent: string | null = null;
       try {
         afterContent = fs.readFileSync(filePath, 'utf-8');
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         return hookCtx.result;
       }
 

@@ -122,7 +122,8 @@ export class GoogleProvider implements LLMProvider {
         let responsePayload: unknown;
         try {
           responsePayload = JSON.parse(msg.content);
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           responsePayload = { result: msg.content };
         }
         parts.push({
@@ -137,7 +138,8 @@ export class GoogleProvider implements LLMProvider {
           let args: Record<string, unknown>;
           try {
             args = JSON.parse(tc.function.arguments);
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             args = {};
           }
           parts.push({
@@ -230,7 +232,8 @@ function tryParseGeminiResponse(
 
   try {
     return JSON.parse(trimmed) as Record<string, unknown>;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return undefined;
   }
 }

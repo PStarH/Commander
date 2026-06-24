@@ -122,7 +122,8 @@ export class FreezeDryManager {
       if (!fs.existsSync(manifestPath)) return null;
       const raw = fs.readFileSync(manifestPath, 'utf-8');
       return JSON.parse(raw) as FreezeManifest;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return null;
     }
   }
@@ -160,12 +161,14 @@ export class FreezeDryManager {
               fs.unlinkSync(filePath);
               pruned++;
             }
-          } catch {
+          } catch (err) {
+            console.warn('[Catch]', err);
             void 0;
           }
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       void 0;
     }
     return pruned;
