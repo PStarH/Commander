@@ -70,7 +70,8 @@ export class WebhookManager {
           this.rules.set(rule.id, rule);
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
   }
@@ -194,7 +195,8 @@ export class WebhookManager {
       // Length check before timingSafeEqual to avoid RangeError
       if (signature.length !== expected.length) return false;
       return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return false;
     }
   }

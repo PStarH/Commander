@@ -93,7 +93,8 @@ function parseCron(expr: string): {
       month: parseField(parts[3], 1, 12),
       dayOfWeek: parseField(parts[4], 0, 6),
     };
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return null;
   }
 }
@@ -184,7 +185,8 @@ export class TaskScheduler {
           this.tasks.set(task.id, task);
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
   }

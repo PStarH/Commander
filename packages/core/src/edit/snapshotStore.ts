@@ -104,7 +104,8 @@ export class SnapshotStore {
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
       return computeFileHash(content);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return null;
     }
   }
