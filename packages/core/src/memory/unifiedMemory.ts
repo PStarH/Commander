@@ -734,6 +734,17 @@ export class UnifiedMemory {
 
     return parts.join('\n');
   }
+
+  /**
+   * Gracefully close all underlying memory backends and flush pending writes.
+   */
+  async close(): Promise<void> {
+    await Promise.all([
+      this.memoryStore?.close(),
+      this.conversationStore?.close(),
+      this.userModel?.close(),
+    ]);
+  }
 }
 
 // ============================================================================

@@ -19,7 +19,6 @@
  */
 
 import { getGlobalLogger } from '../logging';
-import { mkdirSync, chmodSync } from 'fs';
 
 // ============================================================================
 // Types
@@ -150,21 +149,22 @@ export class ConversationStore {
     }
 
     this.initPromise = (async () => {
-      const dir = this.config.dbPath!.includes('/')
-        ? this.config.dbPath!.substring(0, this.config.dbPath!.lastIndexOf('/'))
-        : '.';
-      if (dir) {
-        mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const fs = await import('fs/promises');
+      const path = await import('path');
+      const dbPath = this.config.dbPath!;
+      const dir = path.dirname(dbPath);
+      if (dir && dir !== '.') {
+        await fs.mkdir(dir, { recursive: true, mode: 0o700 });
         try {
-          chmodSync(dir, 0o700);
+          await fs.chmod(dir, 0o700);
         } catch {
           /* best-effort */
         }
       }
 
-      this.db = new BetterSqlite3(this.config.dbPath!);
+      this.db = new BetterSqlite3(dbPath);
       try {
-        chmodSync(this.config.dbPath!, 0o600);
+        await fs.chmod(dbPath, 0o600);
       } catch {
         /* best-effort */
       }
