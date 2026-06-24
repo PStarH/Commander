@@ -62,7 +62,8 @@ export class VerificationTool implements Tool {
     if (args.directory) {
       try {
         directory = safePath(String(args.directory));
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         return `Error: Access denied: directory "${args.directory}" is outside workspace`;
       }
     } else {

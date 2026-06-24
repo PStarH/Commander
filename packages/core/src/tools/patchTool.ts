@@ -84,7 +84,8 @@ export class ApplyPatchTool implements Tool {
       let targetPath: string;
       try {
         targetPath = safePath(fileToPatch);
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         return `Error: Target file "${fileToPatch}" is outside the workspace.`;
       }
       if (!fs.existsSync(targetPath)) {
@@ -110,7 +111,8 @@ export class ApplyPatchTool implements Tool {
           });
           patchApplied = true;
           break;
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* try next variant */
         }
       }

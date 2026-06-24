@@ -250,7 +250,8 @@ Using specialized tools is REQUIRED because they return hashline-anchored output
     let resolvedWorkdir: string;
     try {
       resolvedWorkdir = safePath(workdir);
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return `Error: Access denied: workdir "${workdir}" is outside workspace`;
     }
     // Pass full args as backendArgs so the router can pick the right backend

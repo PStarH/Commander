@@ -191,7 +191,8 @@ export class MCPIntegrationManager {
     for (const client of this.clients) {
       try {
         await client.disconnect();
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* ignore disconnect errors */
       }
     }
@@ -233,7 +234,8 @@ export function readMCPConfig(configFile?: {
     try {
       const parsed = JSON.parse(envJson) as MCPIntegrationServerConfig[];
       if (Array.isArray(parsed)) return parsed;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       getGlobalLogger().warn('MCPConfig', 'Failed to parse COMMANDER_MCP_SERVERS env var');
     }
   }
@@ -255,7 +257,8 @@ export function readA2ADiscoveryConfig(configFile?: { a2aAgents?: string[] }): s
     try {
       const parsed = JSON.parse(envJson) as string[];
       if (Array.isArray(parsed)) return parsed;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       getGlobalLogger().warn('A2AConfig', 'Failed to parse COMMANDER_A2A_AGENTS env var');
     }
   }
