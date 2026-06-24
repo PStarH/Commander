@@ -870,7 +870,8 @@ function deriveTenantId(baseUrl: string, model: string): string {
   try {
     const host = new URL(baseUrl).hostname.replace(/^api\./, '').replace(/\./g, '_');
     return `${host}__${model}`;
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     return `unknown__${model}`;
   }
 }
