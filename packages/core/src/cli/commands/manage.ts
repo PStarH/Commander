@@ -10,23 +10,10 @@ import {
   listModels,
 } from '../../config/commanderConfig';
 import { getMetaLearner } from '../../selfEvolution/metaLearner';
-import { getEvolverAgent } from '../../selfEvolution/evolverAgent';
 import { getApprovalSystem } from '../../sandbox';
 import type { ApprovalMode } from '../../sandbox';
 import { getGlobalLogger } from '../../logging';
-import {
-  createRuntime,
-  $,
-  section,
-  kv,
-  bullet,
-  cmdHeader,
-  startSpinner,
-  onboardingMessage,
-  setTheme,
-  getThemeName,
-  listThemes,
-} from './_shared';
+import { createRuntime, $, section, kv, setTheme, listThemes } from './_shared';
 
 export async function cmdStatus() {
   const provider = detectProvider();
@@ -250,20 +237,14 @@ export async function cmdDoctor() {
 
   // Package manager
   let pm = 'unknown';
-  try {
-    const { execSync } = require('child_process');
-    if (fs.existsSync(path.join(process.cwd(), 'pnpm-lock.yaml'))) pm = 'pnpm';
-    else if (fs.existsSync(path.join(process.cwd(), 'yarn.lock'))) pm = 'yarn';
-    else if (fs.existsSync(path.join(process.cwd(), 'package-lock.json'))) pm = 'npm';
-    checks.push({
-      label: 'Package manager',
-      pass: pm !== 'unknown',
-      msg: pm !== 'unknown' ? pm : 'No lockfile found',
-    });
-  } catch (err) {
-    reportSilentFailure(err, 'manage:263');
-    checks.push({ label: 'Package manager', pass: false, msg: 'Unknown' });
-  }
+  if (fs.existsSync(path.join(process.cwd(), 'pnpm-lock.yaml'))) pm = 'pnpm';
+  else if (fs.existsSync(path.join(process.cwd(), 'yarn.lock'))) pm = 'yarn';
+  else if (fs.existsSync(path.join(process.cwd(), 'package-lock.json'))) pm = 'npm';
+  checks.push({
+    label: 'Package manager',
+    pass: pm !== 'unknown',
+    msg: pm !== 'unknown' ? pm : 'No lockfile found',
+  });
 
   // Provider
   checks.push({

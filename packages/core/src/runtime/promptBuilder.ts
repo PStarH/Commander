@@ -326,6 +326,7 @@ export function buildDynamicContext(
       `- Before finishing, you MUST call the verification tool "${ctx.verificationTool}" and ensure it reports success.`,
       '- Do not declare the task complete until the verification tool passes.',
       '- If the verification tool fails, fix the underlying issue and call it again.',
+      '- Do NOT call the verification tool as your first action. Complete the task using the available tools first, then verify.',
     );
   }
   lines.push('</context>');
