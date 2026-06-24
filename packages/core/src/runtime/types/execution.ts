@@ -267,4 +267,8 @@ export interface AgentRuntimeConfig {
   securityMonitor?: {
     enabled?: boolean;
   };
+  /** Cycle detector configuration. */
+  cycleDetection?: {
+    enabled?: boolean;
+  };
 }

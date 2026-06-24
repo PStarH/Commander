@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { AgentExecutionContext, RoutingDecision, Tool, AgentRuntimeConfig } from './types';
 import type { TokenGovernor } from './tokenGovernor';
 import { detectTaskType } from './taskAnalyzer';
@@ -480,8 +481,6 @@ function stableStringify(value: unknown): string | null {
   return '{' + body + '}';
 }
 
-let cryptoModule: typeof import('crypto') | null = null;
 function sha256Hex(input: string): string {
-  if (!cryptoModule) cryptoModule = require('crypto') as typeof import('crypto');
-  return cryptoModule.createHash('sha256').update(input).digest('hex');
+  return createHash('sha256').update(input).digest('hex');
 }

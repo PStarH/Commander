@@ -220,6 +220,20 @@ interface TenantResolutionResult {
   overrides?: TenantOverrides;
 }
 
+/** Recursively sort object keys for stable JSON comparison of tool arguments. */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, val) => {
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      const sorted: Record<string, unknown> = {};
+      for (const k of Object.keys(val).sort()) {
+        sorted[k] = (val as Record<string, unknown>)[k];
+      }
+      return sorted;
+    }
+    return val;
+  });
+}
+
 export class AgentRuntime implements AgentRuntimeInterface {
   private config: AgentRuntimeConfig;
   private providers: Map<string, LLMProvider> = new Map();
@@ -511,7 +525,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
       toolApproval,
     );
     this.planner = new ToolPlanner();
-    this.cycleDetector = new CycleDetector();
+    this.cycleDetector = new CycleDetector({
+      enabled: this.config.cycleDetection?.enabled !== false,
+    });
     this.contentScanner = createContentScanner();
     this.securityOrch = getSecurityOrchestrator();
     // Benchmarks may intentionally generate high tool-call volumes; let callers
@@ -747,8 +763,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
     tenantId: string | undefined,
     toolLoopCount: number,
   ): { detected: boolean; count: number } {
-    // Stable key ordering: sort object keys so {a:1,b:2} and {b:2,a:1} match.
-    const canonicalArgs = JSON.stringify(args, [...Object.keys(args)].sort());
+    // Stable key ordering: recursively sort object keys so nested arguments
+    // (e.g. payload.round) are included deterministically.
+    const canonicalArgs = canonicalJson(args);
     const pattern = `${toolName}:${canonicalArgs}`;
     patterns.push(pattern);
     if (patterns.length > RETRY_LOOP_PATTERN_HISTORY) patterns.shift();
@@ -1033,6 +1050,15 @@ export class AgentRuntime implements AgentRuntimeInterface {
   /** Expose the tool orchestrator's circuit breaker registry for runtime observation. */
   getBreakerRegistry(): import('./circuitBreakerRegistry').CircuitBreakerRegistry {
     return this.orchestrator.getBreakerRegistry();
+  }
+
+  /** Flush any buffered dead-letter-queue entries to disk for observation. */
+  flushDeadLetterQueue(): void {
+    try {
+      this.dlq.flush();
+    } catch {
+      /* best-effort */
+    }
   }
 
   getExecutionScheduler() {

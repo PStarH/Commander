@@ -165,8 +165,7 @@ export class StepErrorBoundary {
           const delayMs =
             classified.retryAfter ?? computeBackoff(attempt, this.config.retryDelayMs);
           await new Promise((r) => {
-            const t = setTimeout(r, delayMs);
-            t.unref();
+            setTimeout(r, delayMs);
           });
         }
       }
