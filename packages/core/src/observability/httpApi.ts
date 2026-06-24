@@ -722,7 +722,8 @@ async function readFeedbackBody(
     req.on('end', () => {
       try {
         resolve(data ? JSON.parse(data) : {});
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         reject(new Error('Invalid JSON'));
       }
     });
@@ -750,7 +751,8 @@ async function readBody(req: IncomingMessage): Promise<{
     req.on('end', () => {
       try {
         resolve(data ? JSON.parse(data) : { runId: '', substitutions: [], reExecuteLlm: false });
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         reject(new Error('Invalid JSON'));
       }
     });
@@ -772,7 +774,8 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
       }
       try {
         resolve(JSON.parse(data));
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         reject(new Error('Invalid JSON'));
       }
     });
