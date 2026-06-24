@@ -351,7 +351,8 @@ export async function installFromGit(gitUrl: string, targetName?: string): Promi
     // Cleanup temp directory
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
   }
@@ -400,7 +401,8 @@ export async function installFromNpm(
   } finally {
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* ignore */
     }
   }
