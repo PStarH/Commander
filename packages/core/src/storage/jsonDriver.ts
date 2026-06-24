@@ -272,7 +272,8 @@ function loadPersisted<T extends { id: string }>(filePath: string): PersistedFil
 function chmodSafe(target: string, mode: number): void {
   try {
     fs.chmodSync(target, mode);
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     if (process.platform === 'win32') return;
     // eslint-disable-next-line no-console
     console.warn(`[JsonDriver] chmod ${mode.toString(8)} on ${target} failed`);
