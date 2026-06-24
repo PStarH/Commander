@@ -1,6 +1,5 @@
 import type { ExecutionTrace, TraceEvent } from '../runtime/types';
 import { buildTimeline } from './timelineBuilder';
-import type { TimelineView } from './types';
 
 interface EventDiff {
   type: 'added' | 'removed' | 'unchanged' | 'modified';

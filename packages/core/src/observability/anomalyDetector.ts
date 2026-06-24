@@ -1,5 +1,4 @@
 import { reportSilentFailure } from '../silentFailureReporter';
-import type { TraceEvent } from '../runtime/types';
 import { getMetricsCollector } from '../runtime/metricsCollector';
 
 interface TokenUsageHistory {

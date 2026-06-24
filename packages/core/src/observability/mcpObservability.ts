@@ -6,7 +6,6 @@ import { buildExecutiveSummary } from './executiveSummary';
 import { buildDecisions, decisionsSummary } from './decisionProvenance';
 import { ToolMetricsCollector } from './toolMetrics';
 import { compareTraces } from './traceComparison';
-import { getCostModel } from './costModel';
 
 interface McpObsDeps {
   recorder: ExecutionTraceRecorder;

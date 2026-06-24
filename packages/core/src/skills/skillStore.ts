@@ -1,11 +1,10 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { Skill, SkillFrontmatter, SkillMetadata } from './types';
+import type { Skill } from './types';
 import { getGlobalLogger } from '../logging';
 
 const SKILLS_DIR = path.join(process.cwd(), '.commander', 'skills');
-const LEGACY_SKILLS_DIR = path.join(process.cwd(), '.commander_skills');
 
 /**
  * Minimal YAML frontmatter parser. Handles the subset of YAML used in
@@ -105,8 +104,7 @@ function parseYamlValue(value: string): unknown {
   return value;
 }
 
-function serializeYamlValue(value: unknown, indent: number): string {
-  const pad = '  '.repeat(indent);
+function serializeYamlValue(value: unknown): string {
   if (typeof value === 'string') {
     if (value.includes('\n') || value.includes(':') || value.includes('#')) {
       return `'${value.replace(/'/g, "''")}'`;
@@ -127,7 +125,7 @@ function serializeToYaml(obj: Record<string, unknown>, indent = 0): string {
       if (value.length === 0) {
         lines.push(`${pad}${key}: []`);
       } else if (value.every((v) => typeof v !== 'object' || v === null)) {
-        const items = value.map((v) => serializeYamlValue(v, indent)).join(', ');
+        const items = value.map((v) => serializeYamlValue(v)).join(', ');
         lines.push(`${pad}${key}: [${items}]`);
       } else {
         lines.push(`${pad}${key}:`);
@@ -135,10 +133,10 @@ function serializeToYaml(obj: Record<string, unknown>, indent = 0): string {
           if (typeof item === 'object' && item !== null) {
             lines.push(`${pad}-`);
             for (const [ik, iv] of Object.entries(item as Record<string, unknown>)) {
-              lines.push(`${pad}  ${ik}: ${serializeYamlValue(iv, indent + 2)}`);
+              lines.push(`${pad}  ${ik}: ${serializeYamlValue(iv)}`);
             }
           } else {
-            lines.push(`${pad}- ${serializeYamlValue(item, indent + 1)}`);
+            lines.push(`${pad}- ${serializeYamlValue(item)}`);
           }
         }
       }
@@ -146,7 +144,7 @@ function serializeToYaml(obj: Record<string, unknown>, indent = 0): string {
       lines.push(`${pad}${key}:`);
       lines.push(serializeToYaml(value as Record<string, unknown>, indent + 1));
     } else {
-      lines.push(`${pad}${key}: ${serializeYamlValue(value, indent)}`);
+      lines.push(`${pad}${key}: ${serializeYamlValue(value)}`);
     }
   }
   return lines.join('\n');

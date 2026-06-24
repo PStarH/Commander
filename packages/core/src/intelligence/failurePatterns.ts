@@ -8,7 +8,6 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // Types
@@ -145,7 +144,7 @@ export class FailurePatternLearner {
   /**
    * Check if current task might trigger a known failure pattern.
    */
-  checkWarnings(task: string, context?: string): FailureWarning[] {
+  checkWarnings(task: string, _context?: string): FailureWarning[] {
     const warnings: FailureWarning[] = [];
 
     for (const pattern of this.patterns.values()) {
