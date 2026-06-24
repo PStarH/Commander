@@ -19,8 +19,8 @@ import type { LLMMessage, LLMProvider } from './types';
 import { TokenGovernor, getTokenGovernor } from './tokenGovernor';
 import { getGlobalLogger } from '../logging';
 import { CPUWorkerPool } from './cpuWorkerPool';
-import type { RebuildParams, RebuildResult } from './rebuildPrompt';
-import { getRebuildPrompt, resetRebuildPrompt } from './rebuildPrompt';
+import type { RebuildParams } from './rebuildPrompt';
+import { getRebuildPrompt } from './rebuildPrompt';
 
 // ============================================================================
 // Failure correlation tracker
@@ -342,39 +342,6 @@ function estimateTokens(text: string): number {
 }
 
 /**
- * Cost-weighted token estimation.
- * Output tokens (assistant) are typically 3-5x more expensive than input tokens.
- * This function weights messages by their cost impact to make smarter compaction decisions.
- *
- * Evidence:
- * - Anthropic: input $3/M, output $15/M (5x ratio)
- * - OpenAI: input $2.5/M, output $10/M (4x ratio)
- * - Average across providers: ~4x cost ratio
- */
-function estimateCostWeightedTokens(messages: LLMMessage[]): number {
-  const INPUT_WEIGHT = 1.0;
-  const OUTPUT_WEIGHT = 4.0; // Average output-to-input cost ratio
-
-  let total = 0;
-  for (const msg of messages) {
-    const tokens = estimateTokens(msg.content) + 10;
-    const weight = msg.role === 'assistant' ? OUTPUT_WEIGHT : INPUT_WEIGHT;
-    total += tokens * weight;
-    if (msg.tool_calls) {
-      for (const tc of msg.tool_calls) {
-        total +=
-          (estimateTokens(tc.function.name) + estimateTokens(tc.function.arguments)) *
-          OUTPUT_WEIGHT;
-      }
-    }
-    if (msg.reasoning_content) {
-      total += estimateTokens(msg.reasoning_content) * OUTPUT_WEIGHT;
-    }
-  }
-  return total;
-}
-
-/**
  * Estimate the cost savings of removing a specific message.
  * Higher value = more expensive to keep = better compaction target.
  */
@@ -616,7 +583,7 @@ export class ContextCompactor {
    * Check if rebuild (Layer 5) should be triggered for a given run.
    * Public for use by agentRuntime to decide whether to invoke rebuild.
    */
-  needsRebuild(runId: string): boolean {
+  needsRebuild(_runId: string): boolean {
     return this.lastWasEmergency && this.compactionCount >= 2;
   }
 
@@ -1502,7 +1469,7 @@ export class ContextCompactor {
   ): { layer1: number; layer2: number; layer3: number; layer4: number } {
     const profile = this.getEffectiveProfile(taskType, messages);
 
-    let base = {
+    const base = {
       layer1: profile.layerTriggers.layer1,
       layer2: profile.layerTriggers.layer2,
       layer3: profile.layerTriggers.layer3,
