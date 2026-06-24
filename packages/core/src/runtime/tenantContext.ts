@@ -131,9 +131,5 @@ export function assertSameTenant(tenantId: string): void {
  * (typically `ctx.tenantId`), then undefined.
  */
 export function resolveActiveTenantId(explicitTenantId?: string): string | undefined {
-  return (
-    (getGlobalTenantProvider().getCurrentTenantId() ?? undefined) ??
-    explicitTenantId ??
-    undefined
-  );
+  return getGlobalTenantProvider().getCurrentTenantId() || explicitTenantId;
 }
