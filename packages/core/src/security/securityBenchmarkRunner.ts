@@ -1098,7 +1098,8 @@ export class SecurityBenchmarkRunner {
       }
 
       return baseline;
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       return null;
     }
   }
@@ -1328,7 +1329,8 @@ export class SecurityBenchmarkRunner {
           criticalFindings: report.criticalFindings,
         },
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
   }

@@ -1171,7 +1171,8 @@ export class ComplianceAuditManager {
           nistAlignment: nistRmfAlignment.alignmentPercentage,
         },
       });
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -1620,7 +1621,8 @@ export class ComplianceAuditManager {
           this.snapshots = parsed;
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       this.snapshots = [];
     }
   }

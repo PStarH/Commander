@@ -232,7 +232,8 @@ export class AuditChainLedger {
         1,
         [{ name: 'type', value: event.type }],
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -578,7 +579,8 @@ export function collectPersistedEntries(persistDir: string): AuditChainEntry[] {
         ) {
           entries.push(parsed as AuditChainEntry);
         }
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         // Skip malformed lines; worst-case we miss them in the verify,
         // never crash.
       }

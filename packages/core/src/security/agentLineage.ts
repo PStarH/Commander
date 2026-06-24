@@ -205,7 +205,8 @@ export class AgentLineage {
         1,
         [{ name: 'agent_id', value: childAgentId }],
       );
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       /* best-effort */
     }
 
@@ -259,7 +260,8 @@ export class AgentLineage {
         console.error(
           `[agentLineage] audit chain unavailable for handoff: ${(err as Error)?.message ?? String(err)}`,
         );
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* stderr inaccessible */
       }
     }
@@ -307,7 +309,8 @@ export class AgentLineage {
             node.capabilityTokenJti,
             `lineage_tree_revoke: ${reason}`,
           );
-        } catch {
+        } catch (err) {
+          console.warn('[Catch]', err);
           /* best-effort — token revocation is separate from lineage marking */
         }
       }
@@ -524,7 +527,8 @@ export class AgentLineage {
         console.error(
           `[agentLineage] audit chain unavailable: ${(err as Error)?.message ?? String(err)}`,
         );
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* stderr inaccessible */
       }
     }

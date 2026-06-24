@@ -451,7 +451,8 @@ export class OutputSanitizer {
           totalRedactions,
           [{ name: 'category', value: records[0]?.category ?? 'unknown' }],
         );
-      } catch {
+      } catch (err) {
+        console.warn('[Catch]', err);
         /* best-effort */
       }
     }
