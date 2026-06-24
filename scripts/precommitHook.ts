@@ -296,7 +296,8 @@ function runD25PlaintextGate(scannableFiles: string[]): void {
       const stat = fs.statSync(full);
       if (stat.size > MAX_FILE_BYTES) continue;
       content = fs.readFileSync(full, 'utf-8');
-    } catch {
+    } catch (err) {
+      console.warn('[Catch]', err);
       continue;
     }
     violations.push(...scanFileForPlaintextKeys(rel, content));
@@ -330,7 +331,8 @@ function runExecPolicySmoke(): void {
       env: { ...process.env, NODE_ENV: 'test' },
     });
     console.log('[D3 hook] ExecPolicy smoke green ✅');
-  } catch {
+  } catch (err) {
+    console.warn('[Catch]', err);
     throw new Error('precommit ExecPolicy smoke failed — see vitest output above');
   }
 }
