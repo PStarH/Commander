@@ -1,3 +1,4 @@
+import { reportSilentFailure } from '../silentFailureReporter';
 /**
  * TEESandbox — Trusted Execution Environment sandbox for Commander.
  *
@@ -198,16 +199,16 @@ export class TEESandbox implements PlatformSandbox {
         encoding: 'utf-8',
       });
       if (cpuInfo.includes('tdx')) return true;
-    } catch {
-      // ignore
+    } catch (_silentE_) {
+      reportSilentFailure(_silentE_, 'teeEnclave:201');
     }
 
     // SEV-SNP: check /sys/module/kvm_amd/parameters/sev_snp
     try {
       const snp = this.readSysFs('/sys/module/kvm_amd/parameters/sev_snp');
       if (snp === '1' || snp === 'Y') return true;
-    } catch {
-      // ignore
+    } catch (_silentE_) {
+      reportSilentFailure(_silentE_, 'teeEnclave:209');
     }
 
     return false;
@@ -224,16 +225,16 @@ export class TEESandbox implements PlatformSandbox {
         });
         if (cpuInfo.includes('tdx')) return 'Intel TDX';
       }
-    } catch {
-      /* ignore */
+    } catch (_silentE_) {
+      reportSilentFailure(_silentE_, 'teeEnclave:227');
     }
 
     // Check SEV-SNP
     try {
       const snp = this.readSysFs('/sys/module/kvm_amd/parameters/sev_snp');
       if (snp === '1' || snp === 'Y') return 'AMD SEV-SNP';
-    } catch {
-      /* ignore */
+    } catch (_silentE_) {
+      reportSilentFailure(_silentE_, 'teeEnclave:235');
     }
 
     // Check SEV
@@ -319,8 +320,9 @@ export class TEESandbox implements PlatformSandbox {
       // Step 5: Terminate enclave
       try {
         this.execSyncSafe(`nitro-cli terminate-enclave --enclave-cid ${vsockCid}`, 10000);
-      } catch {
-        // Best-effort termination
+      } catch (_silentE_) {
+        /* best-effort */
+        reportSilentFailure(_silentE_, 'teeEnclave:322');
       }
 
       // Step 6: Cleanup
@@ -510,8 +512,9 @@ export class TEESandbox implements PlatformSandbox {
         );
         measurements.push(`SEV-Report:${sevReport.slice(0, 200)}`);
       }
-    } catch {
-      /* measurement collection is best-effort */
+    } catch (_silentE_) {
+      /* best-effort */
+      reportSilentFailure(_silentE_, 'teeEnclave:513');
     }
 
     try {
@@ -521,16 +524,16 @@ export class TEESandbox implements PlatformSandbox {
         5000,
       );
       measurements.push(`TPM-PCRs:${tpmPcrs.slice(0, 500)}`);
-    } catch {
-      /* ignore */
+    } catch (_silentE_) {
+      reportSilentFailure(_silentE_, 'teeEnclave:524');
     }
 
     try {
       // TDX: read CCEL event log
       const ccel = this.readSysFs('/sys/firmware/acpi/tables/data/CCEL');
       if (ccel) measurements.push(`CCEL:present`);
-    } catch {
-      /* ignore */
+    } catch (_silentE_) {
+      reportSilentFailure(_silentE_, 'teeEnclave:532');
     }
 
     return measurements;
@@ -550,16 +553,16 @@ export class TEESandbox implements PlatformSandbox {
         encoding: 'utf-8',
       });
       if (parseInt(tdx.trim(), 10) > 0) indicators.push(true);
-    } catch {
-      /* ignore */
+    } catch (_silentE_) {
+      reportSilentFailure(_silentE_, 'teeEnclave:553');
     }
 
     // CVM indicator: CCEL ACPI table
     try {
       const ccel = this.readSysFs('/sys/firmware/acpi/tables/data/CCEL');
       if (ccel) indicators.push(true);
-    } catch {
-      /* ignore */
+    } catch (_silentE_) {
+      reportSilentFailure(_silentE_, 'teeEnclave:561');
     }
 
     // For a production attestation, you'd send a quote to GCP Attestation Verifier.
@@ -664,13 +667,13 @@ done
   private cleanupBuildDir(buildDir: string, imageName: string): void {
     try {
       fs.rmSync(buildDir, { recursive: true, force: true });
-    } catch {
-      /* ignore */
+    } catch (_silentE_) {
+      reportSilentFailure(_silentE_, 'teeEnclave:667');
     }
     try {
       execSync(`docker rmi ${imageName} 2>/dev/null || true`, { timeout: 10000 });
-    } catch {
-      /* ignore */
+    } catch (_silentE_) {
+      reportSilentFailure(_silentE_, 'teeEnclave:672');
     }
   }
 
