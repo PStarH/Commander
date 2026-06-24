@@ -283,51 +283,6 @@ describe('Cycle Detector for General-Purpose Tasks', () => {
   });
 });
 
-// ── LLM-Powered Deliberation (requires API key) ─────────────────────────────
-
-describe('LLM-Powered Deliberation', () => {
-  const hasApiKey = !!process.env.OPENAI_API_KEY;
-
-  it(
-    'produces deliberation plan via LLM',
-    async () => {
-      if (!hasApiKey) {
-        console.log('  Skipping (no OPENAI_API_KEY)');
-        return;
-      }
-
-      const { createMiMoProvider } = await import('../src/runtime/providers/mimoProvider');
-      const { deliberateWithLLM } = await import('../src/ultimate/deliberation');
-      const provider = createMiMoProvider({
-        apiKey: process.env.OPENAI_API_KEY!,
-        baseUrl: process.env.OPENAI_BASE_URL,
-        defaultModel: process.env.OPENAI_MODEL,
-      });
-
-      try {
-        const plan = await deliberateWithLLM(
-          'Analyze the trade-offs between monolithic and microservice architectures for a startup with 5 engineers',
-          provider,
-          { availableTools: ['web_search', 'file_read', 'file_write'] },
-        );
-
-        assert.ok(plan.taskType, 'LLM should classify task type');
-        assert.ok(plan.recommendedTopology, 'LLM should recommend topology');
-        assert.ok(plan.confidence > 0, 'LLM should provide confidence');
-        console.log(
-          '  LLM Deliberation:',
-          JSON.stringify({
-            taskType: plan.taskType,
-            topology: plan.recommendedTopology,
-            confidence: plan.confidence,
-            agents: plan.estimatedAgentCount,
-          }),
-        );
-      } catch (err) {
-        console.log('  LLM deliberation fell back to heuristic:', (err as Error).message);
-        assert.ok(true, 'fallback is acceptable');
-      }
-    },
-    { timeout: 60000 },
-  );
-});
+// ── LLM-Powered Deliberation (removed in Issue #6) ─────────────────────────
+// `deliberateWithLLM` was deleted because its output was always overwritten
+// by heuristic `deliberate()`. Heuristic coverage remains above.

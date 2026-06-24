@@ -84,7 +84,7 @@ const createMockServices = (overrides: Partial<HarnessServices> = {}): HarnessSe
     pushSteer: vi.fn(),
     popSteer: vi.fn(),
     drainSteerQueue: vi.fn(),
-    applyPatch: vi.fn(),
+    applyPatch: vi.fn(async () => ({ success: true, added: 0, removed: 0 })),
     updatePlanItem: vi.fn(),
     getPlanItems: vi.fn(),
     ...overrides,
