@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 /**
  * Three-Layer Memory System
  * 基于 ULTIMATE-FRAMEWORK.md 设计
