@@ -14,7 +14,7 @@
  * scattered `selfEvolution/` memory pieces should migrate behind this facade.
  */
 import type { UnifiedMemory } from './unifiedMemory';
-import type { MemoryStore, EpisodicMemoryItem, MemorySearchQuery } from '../memory';
+import type { EpisodicMemoryItem, MemorySearchQuery } from '../memory';
 import type { ConversationStore } from './conversationStore';
 import type { UserModelManager, UserProfile } from './userModel';
 
