@@ -2382,10 +2382,16 @@ export class AgentRuntime implements AgentRuntimeInterface {
                             // Publishes live at the call site so a spy on
                             // getMessageBus().publish counts exactly one
                             // publish for each gate kind — no double-fire.
+                            // `runId` is included so Phase 2 Hub Glue
+                            // {@link CycleCorrelator} can distinguish
+                            // concurrent runs that both trigger the same
+                            // cycle-detect gate (dedup key is now
+                            // `${runId}:${toolName}:${description}`).
                             bus.publish('system.alert', 'runtime', {
                               type: 'cycle_detected',
                               toolName: tc.name,
                               description: gate.description,
+                              runId,
                             });
                             bus.publish('tool.blocked', ctx.agentId, {
                               runId,
@@ -2557,10 +2563,17 @@ export class AgentRuntime implements AgentRuntimeInterface {
                           shouldBreak = true;
                           break;
                         case 'cycle':
+                          // `runId` propagates so the Phase 2 Hub Glue
+                          // CycleCorrelator can dedup by run (key
+                          // `${runId}:${toolName}:${description}`) instead
+                          // of false-correlating concurrent runs that trigger the
+                          // same gate. Mirrors the concurrent-path edit in the
+                          // Promise.allSettled closure.
                           bus.publish('system.alert', 'runtime', {
                             type: 'cycle_detected',
                             toolName: tc.name,
                             description: gate.description,
+                            runId,
                           });
                           bus.publish('tool.blocked', ctx.agentId, {
                             runId,
