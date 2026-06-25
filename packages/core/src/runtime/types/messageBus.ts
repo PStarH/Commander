@@ -77,6 +77,7 @@ export type MessageBusTopic =
   | 'runtime.dlq_enqueued'
   | 'runtime.cycle_correlated'
   | 'runtime.retry_block_correlated'
+  | 'runtime.circuit_correlated'
   // Sandbox arc
   | 'sandbox.escape_attempted'
   | 'sandbox.executed'
@@ -127,6 +128,26 @@ export interface SystemAlertSemanticCircuitTrip extends SystemAlertBase {
   type: 'semantic_circuit_trip';
   consecutiveFailures: number;
   reason: string;
+  /**
+   * Optional runId (added June 2026 for Hub Glue SemanticCircuitCorrelator).
+   * Stamped when the originating AgentRuntime's call to
+   * `circuitBreaker.recordSemanticFailure(reason, ctx)` carries
+   * `{ runId }`; falls back to AgentRuntime.ledgerCtx?.runId when the
+   * ctx is unset but the trip fires synchronously during execute().
+   * Producers that emit semantic_circuit_trip without runId (out-of-tree
+   * publishers) leave this undefined — the correlator's
+   * `requireToolNameOnAlert: false` config then matches by runId
+   * alone (with empty-runId as a distinct bucket for back-compat).
+   */
+  readonly runId?: string;
+  /**
+   * Optional toolName — populated when the semantic failure record
+   * carries a verifiable tool name (e.g. directly from the verification
+   * pipeline). Optional because the ReliabilityEngine / circuitBreaker
+   * is a singleton and not all semantic-failure paths have a clean
+   * tool reference.
+   */
+  readonly toolName?: string;
 }
 
 export interface SystemAlertRetryLoopDetected extends SystemAlertBase {
@@ -582,6 +603,22 @@ export interface BusPayloadMap {
     runId: string;
     toolName: string;
     pattern: string;
+    sourceEvents: ['system.alert', 'tool.blocked'];
+    correlatedAt: string;
+  };
+  // Phase 2 retrospective pair (Hub Glue SemanticCircuitCorrelator):
+  // a `system.alert semantic_circuit_trip` event paired with a
+  // subsequent `tool.blocked circuit_broken` event carrying the same
+  // runId within 5s TTL folds into ONE downstream event. The
+  // correlator's `requireToolNameOnAlert: false` config matches by
+  // runId alone because the system.alert semantic_circuit_trip does
+  // not always carry a clean tool reference (the circuit-breaker is a
+  // singleton). `toolName` and `reason` are OPTIONAL on the unified
+  // payload — they propagate from whichever side carries them first.
+  'runtime.circuit_correlated': {
+    runId: string;
+    toolName?: string;
+    reason?: string;
     sourceEvents: ['system.alert', 'tool.blocked'];
     correlatedAt: string;
   };

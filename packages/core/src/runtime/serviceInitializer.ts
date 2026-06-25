@@ -184,12 +184,14 @@ export function initializeServices(
     },
   });
 
-  circuitBreaker.setSemanticTripHandler((consecutiveFailures, reason) => {
+  circuitBreaker.setSemanticTripHandler((consecutiveFailures, reason, ctx) => {
     const bus = getMessageBus();
     bus.publish('system.alert', 'runtime', {
       type: 'semantic_circuit_trip',
       consecutiveFailures,
       reason,
+      ...(ctx?.runId !== undefined ? { runId: ctx.runId } : {}),
+      ...(ctx?.toolName !== undefined ? { toolName: ctx.toolName } : {}),
     });
     try {
       resolvedDlq.enqueue({
