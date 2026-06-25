@@ -3,7 +3,7 @@
  * Extracted from evolutionaryWorkflowEngine.ts to keep modules under 500 lines.
  */
 
-import type { WorkflowNode, WorkflowEdge, WorkflowDAG } from './evolutionaryWorkflowTypes';
+import type { WorkflowNode, WorkflowDAG } from './evolutionaryWorkflowTypes';
 import type { TaskTreeNode, ROMARole } from './types';
 
 /**
@@ -31,7 +31,7 @@ export function dagToTaskTree(dag: WorkflowDAG): TaskTreeNode {
   // Topological sort
   const topoOrder = topologicalSort(dag);
 
-  const buildNode = (workflowNode: WorkflowNode, index: number): TaskTreeNode => ({
+  const buildNode = (workflowNode: WorkflowNode, _index: number): TaskTreeNode => ({
     id: workflowNode.id,
     parentId: null,
     goal: workflowNode.goal,

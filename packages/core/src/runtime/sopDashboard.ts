@@ -81,7 +81,6 @@ export function listSOPs(customDir?: string): SOPListItem[] {
         for (const jsonFile of jsonFiles) {
           const runId = jsonFile.replace(/\.json$/, '');
           const jsonPath = path.join(agentPath, jsonFile);
-          const mdPath = path.join(agentPath, `${runId}.md`);
 
           try {
             const raw = fs.readFileSync(jsonPath, 'utf-8');

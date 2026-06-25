@@ -20,7 +20,6 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import { getSecurityMonitor } from './securityMonitor';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
@@ -500,7 +499,6 @@ export class ThreatIntelligenceFeed {
     if (this.signatures.length <= this.config.maxSignatures) return;
     // Remove deprecated first, then oldest
     const deprecated = this.signatures.filter((s) => s.deprecated);
-    const active = this.signatures.filter((s) => !s.deprecated);
     if (deprecated.length > 0) {
       deprecated.sort((a, b) => new Date(a.addedAt).getTime() - new Date(b.addedAt).getTime());
       const toRemove = deprecated.slice(0, this.signatures.length - this.config.maxSignatures);
@@ -549,7 +547,7 @@ export class ThreatIntelligenceFeed {
 const feedSingleton = createTenantAwareSingleton(() => new ThreatIntelligenceFeed());
 
 export function getThreatIntelligenceFeed(
-  config?: Partial<ThreatFeedConfig>,
+  _config?: Partial<ThreatFeedConfig>,
 ): ThreatIntelligenceFeed {
   return feedSingleton.get();
 }

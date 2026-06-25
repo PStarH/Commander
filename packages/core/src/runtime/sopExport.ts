@@ -14,7 +14,7 @@
  * Output: structured JSON + Markdown template suitable for few-shot injection.
  */
 
-import type { ExecutionTrace, TraceEvent, AgentExecutionResult, AgentExecutionStep } from './types';
+import type { ExecutionTrace, TraceEvent, AgentExecutionResult } from './types';
 
 // ============================================================================
 // Types

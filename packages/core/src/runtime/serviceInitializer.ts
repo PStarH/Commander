@@ -14,7 +14,6 @@ import {
 } from './runtimeConstants';
 
 import type { AgentRuntimeConfig } from './types';
-import type { TenantProvider } from './tenantProvider';
 
 import { ContextCompactor } from './contextCompactor';
 import { SlidingWindowOrchestrator } from './slidingWindowOrchestrator';
@@ -58,7 +57,6 @@ import { installProcessCrashHandlers } from './processCrashSafety';
 import { getSecurityMonitor } from '../security/securityMonitor';
 import { getOTelExporter } from './openTelemetryExporter';
 import { createMemoryStore } from '../memory';
-import { getServiceContainer } from './serviceContainer';
 
 import type { StateCheckpointer } from './stateCheckpointer';
 import type { DeadLetterQueue } from './deadLetterQueue';
@@ -113,8 +111,7 @@ export function initializeServices(
   svcConfig: ServiceInitializerConfig,
   tools: Map<string, import('./types').Tool>,
 ): InitializedServices {
-  const { config, checkpointer, dlq, traceStore, getRunHandle, getLedgerCtx, getActiveRuns } =
-    svcConfig;
+  const { config, getRunHandle, getLedgerCtx, getActiveRuns } = svcConfig;
 
   const compactor = new ContextCompactor({
     maxContextTokens: config.budgetHardCapTokens || DEFAULT_CONTEXT_WINDOW_TOKENS,

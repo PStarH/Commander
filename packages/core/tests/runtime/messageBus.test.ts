@@ -84,7 +84,7 @@ describe('MessageBus', () => {
       received.push(msg.topic);
     });
     bus.publish('agent.message', 'agent-1', 'hi');
-    bus.publish('system.alert', 'system', 'alert!');
+    bus.publish('system.alert', 'system', { type: 'tool_provisioned' });
     assert.deepEqual(received, ['agent.message', 'system.alert']);
     unsub();
     bus.publish('agent.message', 'agent-1', 'should not appear');
@@ -101,7 +101,7 @@ describe('MessageBus', () => {
       received.push(msg.topic);
     });
     bus.publish('agent.message', 'agent-1', 'hi');
-    bus.publish('system.alert', 'system', 'alert');
+    bus.publish('system.alert', 'system', { type: 'tool_provisioned' });
     bus.publish('mission.updated', 'system', { missionId: 'm1', status: 'done' });
     assert.deepEqual(received, ['agent.message', 'system.alert', 'mission.updated']);
   });
@@ -175,7 +175,7 @@ describe('MessageBus', () => {
 
   it('filters history by topic', () => {
     bus.publish('agent.message', 'agent-1', 'msg1');
-    bus.publish('system.alert', 'system', 'alert!');
+    bus.publish('system.alert', 'system', { type: 'tool_provisioned' });
     bus.publish('agent.message', 'agent-2', 'msg2');
 
     const filtered = bus.getHistory('agent.message');
@@ -214,7 +214,7 @@ describe('MessageBus', () => {
 
   it('getHistory with topic and limit', () => {
     bus.publish('agent.message', 'agent-1', 'a1');
-    bus.publish('system.alert', 'system', 's1');
+    bus.publish('system.alert', 'system', { type: 'tool_provisioned' });
     bus.publish('agent.message', 'agent-1', 'a2');
     bus.publish('agent.message', 'agent-1', 'a3');
 
@@ -252,7 +252,7 @@ describe('MessageBus', () => {
 
   it('tracks active topics from publishing', () => {
     bus.publish('agent.message', 'agent-1', 'hi');
-    bus.publish('system.alert', 'system', 'alert');
+    bus.publish('system.alert', 'system', { type: 'tool_provisioned' });
     const topics = bus.getActiveTopics();
     assert.ok(topics.includes('agent.message'));
     assert.ok(topics.includes('system.alert'));
@@ -264,7 +264,7 @@ describe('MessageBus', () => {
 
   it('clears message history', () => {
     bus.publish('agent.message', 'agent-1', 'test');
-    bus.publish('system.alert', 'system', 'alert');
+    bus.publish('system.alert', 'system', { type: 'tool_provisioned' });
     bus.clearHistory();
     assert.equal(bus.getHistory().length, 0);
     assert.equal(bus.getHistory('agent.message').length, 0);
@@ -276,7 +276,7 @@ describe('MessageBus', () => {
     bus.subscribe('system.alert', () => count++);
     bus.clearSubscribers('agent.message');
     bus.publish('agent.message', 'agent-1', 'test');
-    bus.publish('system.alert', 'system', 'alert');
+    bus.publish('system.alert', 'system', { type: 'tool_provisioned' });
     assert.equal(count, 1); // only system.alert handler fires
   });
 
@@ -286,7 +286,7 @@ describe('MessageBus', () => {
     bus.subscribe('system.alert', () => count++);
     bus.clearSubscribers();
     bus.publish('agent.message', 'agent-1', 'test');
-    bus.publish('system.alert', 'system', 'alert');
+    bus.publish('system.alert', 'system', { type: 'tool_provisioned' });
     assert.equal(count, 0);
   });
 

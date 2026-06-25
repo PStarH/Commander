@@ -21,7 +21,6 @@
 
 import * as crypto from 'crypto';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
-import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // Types
@@ -357,7 +356,7 @@ export class MultimodalContentScanner {
   }
 
   /** Scan video files for threats. */
-  private scanVideo(buffer: Buffer, extension: string): MultimodalThreat[] {
+  private scanVideo(buffer: Buffer, _extension: string): MultimodalThreat[] {
     const threats: MultimodalThreat[] = [];
 
     // Check for embedded subtitles with command injection
@@ -429,7 +428,7 @@ export class MultimodalContentScanner {
   }
 
   /** Scan PDF files for threats. */
-  private scanPdf(buffer: Buffer, extension: string): MultimodalThreat[] {
+  private scanPdf(buffer: Buffer, _extension: string): MultimodalThreat[] {
     const threats: MultimodalThreat[] = [];
 
     const content = buffer.toString('latin1', 0, Math.min(buffer.length, 100_000));
@@ -747,7 +746,7 @@ export class MultimodalContentScanner {
 const scannerSingleton = createTenantAwareSingleton(() => new MultimodalContentScanner());
 
 export function getMultimodalContentScanner(
-  config?: Partial<MultimodalScannerConfig>,
+  _config?: Partial<MultimodalScannerConfig>,
 ): MultimodalContentScanner {
   return scannerSingleton.get();
 }

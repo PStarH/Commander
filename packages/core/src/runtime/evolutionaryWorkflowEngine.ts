@@ -8,10 +8,8 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { AgentExecutionContext, AgentExecutionResult, ExecutionExperience } from './types';
-import type { TaskTreeNode } from './types';
+import type { ExecutionExperience } from './types';
 import { getMetaLearner } from '../selfEvolution/metaLearner';
-import { getGlobalReflectionEngine } from '../reflectionEngine';
 import { getGlobalLogger } from '../logging';
 import type {
   WorkflowNode,
@@ -160,9 +158,8 @@ export class EvolutionaryWorkflowEngine {
         break;
       }
 
-      let best: WorkflowDAG;
       try {
-        best = await this.population.evolve(async (dag) => {
+        await this.population.evolve(async (dag) => {
           return this.evaluateDAG(dag, availableTools, taskType);
         });
       } catch (err) {
@@ -175,7 +172,6 @@ export class EvolutionaryWorkflowEngine {
         improvements.push(`Gen ${gen}: evolution error, using previous best`);
         const currentBest = this.population.getBest();
         if (!currentBest) throw new Error('Evolution failed: no viable individuals');
-        best = currentBest;
       }
 
       const stats = this.population.getStats();
@@ -209,7 +205,6 @@ export class EvolutionaryWorkflowEngine {
     experiences: ExecutionExperience[],
   ): Promise<EvolutionResult | null> {
     const metaLearner = getMetaLearner();
-    const reflections = getGlobalReflectionEngine();
 
     const taskExperiences = experiences.filter((e) => e.taskType === taskType);
     if (taskExperiences.length < 3) return null;
@@ -249,7 +244,7 @@ export class EvolutionaryWorkflowEngine {
   private async evaluateByHybrid(
     dag: WorkflowDAG,
     availableTools: string[],
-    taskType: string,
+    _taskType: string,
   ): Promise<number> {
     let score = 0.5;
 
