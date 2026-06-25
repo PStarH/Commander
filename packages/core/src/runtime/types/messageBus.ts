@@ -76,6 +76,7 @@ export type MessageBusTopic =
   | 'runtime.conversation_turn'
   | 'runtime.dlq_enqueued'
   | 'runtime.cycle_correlated'
+  | 'runtime.retry_block_correlated'
   // Sandbox arc
   | 'sandbox.escape_attempted'
   | 'sandbox.executed'
@@ -135,6 +136,14 @@ export interface SystemAlertRetryLoopDetected extends SystemAlertBase {
   consecutiveCalls: number;
   // Every observed producer (agentRuntime.checkRetryLoop) emits toolLoopCount.
   toolLoopCount: number;
+  /**
+   * Optional now, populated by all current producers (agentRuntime.ts:765+
+   * via Hub Glue RetryHookCorrelator). Stamped so the correlator's
+   * `${runId}:${toolName}:${pattern}` key can distinguish concurrent
+   * runs that both trigger the same retry-loop pattern within the
+   * 5s TTL window.
+   */
+  readonly runId?: string;
 }
 
 export interface SystemAlertBatchRoutingSelected extends SystemAlertBase {
@@ -562,6 +571,17 @@ export interface BusPayloadMap {
     runId: string;
     toolName: string;
     description: string;
+    sourceEvents: ['system.alert', 'tool.blocked'];
+    correlatedAt: string;
+  };
+  // Phase 2 retrospective pair (Hub Glue RetryHookCorrelator): a
+  // `system.alert retry_loop_detected` event paired with a subsequent
+  // `tool.blocked hook_denied` event carrying the same (runId, tool,
+  // pattern) tuple within 5s TTL folds into ONE downstream event.
+  'runtime.retry_block_correlated': {
+    runId: string;
+    toolName: string;
+    pattern: string;
     sourceEvents: ['system.alert', 'tool.blocked'];
     correlatedAt: string;
   };

@@ -30,6 +30,7 @@ import { getGlobalLogger } from '../../logging';
 import type { BusMessage } from '../../runtime/types';
 import type { ToolBlockedVariant } from '../../runtime/types/messageBus';
 import { getCycleCorrelator } from './cycleCorrelator';
+import { getRetryHookCorrelator } from './retryHookCorrelator';
 
 const HUB_GLUE_SOURCE = 'hub-glue';
 
@@ -60,42 +61,51 @@ function routeByReason(payload: ToolBlockedVariant, sourceAgentId: string): void
       });
       return;
     }
+    case 'hook_denied': {
+      // Phase 2 / Hub Glue: the system.alert retry_loop_detected event
+      // (which carries `pattern: <tool>:<canonicalArgs>`) is the
+      // retrospective-pair partner of this denial. Pass the same
+      // (runId, toolName, pattern) tuple into RetryHookCorrelator — if
+      // a retry_loop_detected was registered within the 5s TTL, both
+      // sides fold into ONE `runtime.retry_block_correlated` event.
+      // The metric counter below still fires (dual-observation is fine).
+      try {
+        getRetryHookCorrelator().observeToolBlocked(
+          payload.runId,
+          payload.toolName,
+          payload.detail ?? '',
+        );
+      } catch (err) {
+        getGlobalLogger().debug('hub.toolBlocked', 'retryHookCorrelator.observe threw', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        // best-effort — never throw from a bus subscriber
+      }
+      break;
+    }
     case 'orchestrator_skipped':
     case 'circuit_broken':
-    case 'hook_denied':
     case 'not_allowed':
     case 'hook_blocked':
     case 'exec_policy_forbidden':
-    case 'guardian_blocked': {
-      // Atomic denial — record metric + log, no event emit.
-      try {
-        getMetricsCollector().incrementCounter(
-          'tool_blocked_total',
-          'Total tool.blocked denials',
-          1,
-          [{ name: 'reason', value: payload.reason }],
-        );
-      } catch {
-        // best-effort metrics — never throw from a bus subscriber
-      }
-      getGlobalLogger().debug('hub.toolBlocked', `tool.blocked ${payload.reason}`, {
-        runId: payload.runId,
-        toolName: payload.toolName,
-      });
-      return;
-    }
-    default: {
-      // never-guard: compile-time check that every ToolBlockedVariant
-      // reason is handled. If a new variant is added to the union without
-      // a case above, TS infers `payload` as the new variant here and the
-      // assignment below fails to typecheck.
-      const _exhaustive: never = payload;
-      void _exhaustive;
-      throw new Error(
-        `hub.toolBlocked.router: unhandled tool.blocked reason: ${(payload as ToolBlockedVariant).reason}`,
-      );
-    }
+    case 'guardian_blocked':
+      // Atomic denials — no retrospective correlator pair. Fall through to
+      // the shared metric + log handler below.
+      break;
   }
+
+  // Shared best-effort metric + log path for all non-routed denials.
+  try {
+    getMetricsCollector().incrementCounter('tool_blocked_total', 'Total tool.blocked denials', 1, [
+      { name: 'reason', value: payload.reason },
+    ]);
+  } catch {
+    // best-effort metrics — never throw from a bus subscriber
+  }
+  getGlobalLogger().debug('hub.toolBlocked', `tool.blocked ${payload.reason}`, {
+    runId: payload.runId,
+    toolName: payload.toolName,
+  });
 }
 
 let unsubscribe: () => void = () => {};
@@ -115,11 +125,14 @@ export function installToolBlockedHandler(bus?: MessageBus): () => void {
   }
   const useBus = bus ?? getMessageBus();
 
-  // Install the cycle-dedupe side first (registers the leading-edge
-  // system.alert subscriber). This must run before the tool.blocked
-  // subscriber so dispatch order at runtime is system.alert → tool.blocked
-  // within the same publish tick.
+  // Install both Tier-0 correlators FIRST (they each subscribe
+  // system.alert independently with their own internal filtering).
+  // Order between them doesn't matter (their pending maps are
+  // disjoint), but they MUST run before the tool.blocked subscriber so
+  // that when a single event tick publishes system.alert → tool.blocked,
+  // the correlator's leading-edge registration is ready.
   getCycleCorrelator().install(useBus);
+  getRetryHookCorrelator().install(useBus);
 
   // The bus dispatcher already wraps subscriber callbacks in try/catch,
   // so we don't re-wrap here — but we DO want to log router errors at
@@ -139,6 +152,8 @@ export function installToolBlockedHandler(bus?: MessageBus): () => void {
 export function uninstallToolBlockedHandler(): void {
   if (!installed) return;
   unsubscribe();
+  getCycleCorrelator().dispose();
+  getRetryHookCorrelator().dispose();
   installed = false;
 }
 
