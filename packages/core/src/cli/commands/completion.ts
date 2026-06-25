@@ -63,7 +63,6 @@ function generateBash(): string {
   const cmdCases = TOP_LEVEL.map((cmd) => {
     const subcmds = COMMANDS[cmd];
     if (subcmds.length === 0) return `        ${cmd}) COMPREPLY=() ;;`;
-    const subList = subcmds.map((s) => `"${s}"`).join(' ');
     return `        ${cmd}) COMPREPLY=($(compgen -W "${subcmds.join(' ')}" -- "$cur")) ;;`;
   }).join('\n');
 
@@ -112,7 +111,6 @@ function generateZsh(): string {
     if (subcmds.length === 0) {
       return `    "${cmd}"`;
     }
-    const subArgs = subcmds.map((s) => `"${s}"`).join(' ');
     return `    "${cmd}[${cmd} command]::subcommand:(${subcmds.join(' ')})"`;
   }).join('\n');
 
