@@ -2379,14 +2379,11 @@ export class AgentRuntime implements AgentRuntimeInterface {
                           }
                           if (gate.kind === 'cycle') {
                             cycleDetected = true;
-                            // Publishes live at the call site so a spy on
-                            // getMessageBus().publish counts exactly one
-                            // publish for each gate kind — no double-fire.
-                            // `runId` is included so Phase 2 Hub Glue
-                            // {@link CycleCorrelator} can distinguish
-                            // concurrent runs that both trigger the same
-                            // cycle-detect gate (dedup key is now
-                            // `${runId}:${toolName}:${description}`).
+                            // Publishes live at the call site (no double-fire).
+                            // `runId` propagates so Phase 2 Hub Glue
+                            // CycleCorrelator can dedup by run instead of
+                            // collapsing concurrent runs that hit the same
+                            // tool/args within the 5s TTL window.
                             bus.publish('system.alert', 'runtime', {
                               type: 'cycle_detected',
                               toolName: tc.name,
