@@ -2,9 +2,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { IncomingMessage, ServerResponse, createServer as createNodeHttpServer } from 'http';
 import { createServer as createHttpsServer, type ServerOptions as HttpsServerOptions } from 'https';
-import type { LLMProvider, MessageBusTopic } from './types';
-import type { HealthSources } from './healthCheck';
-import type { Tool } from './types';
+import type { LLMProvider, MessageBusTopic, Tool } from './types';
 import type { JSONRPCRequest } from '../mcp/types';
 import { AgentRuntime } from './agentRuntime';
 import { SSEStream } from './sseStream';
@@ -66,8 +64,8 @@ import { getGlobalExplorationEventLog } from '../ultimate/topologyStores';
 import { PersistentTraceStore } from './traceStore';
 import { LeaseManager } from '../atr/leaseManager';
 import type { AuthPlugin } from './oidcAuthPlugin';
-import type { SIEMEvent, SIEMForwarder } from './siemForwarder';
-import { type SecurityEvent, getSecurityAuditLogger } from '../security/securityAuditLogger';
+import type { SIEMForwarder } from './siemForwarder';
+import type { SecurityEvent } from '../security/securityAuditLogger';
 import { type DataRetentionJanitor, getDataRetentionJanitor } from '../storage/dataRetention';
 import {
   DETECTOR_TO_ASI_OVERRIDE,
@@ -408,7 +406,7 @@ export class CommanderHttpServer {
             leaseManager,
             activeRunIds: () => {
               const ids: string[] = [];
-              for (const [, entry] of this.runtimes) {
+              for (const [,] of this.runtimes) {
                 // Each runtime tracks its own activeRuns — aggregate them
               }
               return ids;

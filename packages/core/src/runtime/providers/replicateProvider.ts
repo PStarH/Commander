@@ -1,6 +1,5 @@
 import { reportSilentFailure } from '../../silentFailureReporter';
-import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types';
-import { getGlobalLogger } from '../../logging';
+import type { LLMProvider, LLMRequest, LLMResponse } from '../types';
 
 /**
  * Replicate Provider — Run open-source models via Replicate's API.
@@ -148,7 +147,6 @@ export class ReplicateProvider implements LLMProvider {
     id: string,
     maxAttempts = 60,
   ): Promise<{ status: string; output?: string[]; error?: string }> {
-    const logger = getGlobalLogger();
     for (let i = 0; i < maxAttempts; i++) {
       const res = await fetch(`${this.baseUrl}/predictions/${id}`, {
         headers: {

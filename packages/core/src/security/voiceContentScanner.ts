@@ -19,7 +19,6 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
-import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // Types
@@ -138,23 +137,6 @@ const VOICE_COMMAND_PATTERNS: Array<{
 ];
 
 // ============================================================================
-// DTMF Frequency Pairs (dual-tone multi-frequency)
-// ============================================================================
-
-const DTMF_FREQUENCIES: Array<{
-  digit: string;
-  lowFreq: number;
-  highFreq: number;
-  meaning: string;
-}> = [
-  { digit: '1', lowFreq: 697, highFreq: 1209, meaning: 'Keypad 1 — start sequence' },
-  { digit: '9', lowFreq: 852, highFreq: 1477, meaning: 'Keypad 9 — end sequence / disconnect' },
-  { digit: '*', lowFreq: 941, highFreq: 1209, meaning: 'Keypad * — special / mode switch' },
-  { digit: '#', lowFreq: 941, highFreq: 1477, meaning: 'Keypad # — enter / confirm' },
-  { digit: 'A', lowFreq: 697, highFreq: 1633, meaning: 'DTMF A — military/emergency (rare)' },
-  { digit: 'D', lowFreq: 941, highFreq: 1633, meaning: 'DTMF D — priority (rare)' },
-];
-
 // ============================================================================
 // Audio Format Header Offsets
 // ============================================================================
@@ -536,7 +518,7 @@ export class VoiceContentScanner {
 
 const scannerSingleton = createTenantAwareSingleton(() => new VoiceContentScanner());
 
-export function getVoiceContentScanner(config?: Partial<VoiceScannerConfig>): VoiceContentScanner {
+export function getVoiceContentScanner(_config?: Partial<VoiceScannerConfig>): VoiceContentScanner {
   return scannerSingleton.get();
 }
 

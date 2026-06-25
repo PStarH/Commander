@@ -17,6 +17,14 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { AsyncLocalStorage } from 'async_hooks';
 import { getGlobalLogger } from '../logging';
+import type { IncomingMessage, ServerResponse } from 'http';
+
+declare module 'http' {
+  interface IncomingMessage {
+    requestId?: string;
+    traceContext?: TraceContext;
+  }
+}
 
 // ============================================================================
 // Types
@@ -86,7 +94,7 @@ export function createTraceContext(requestId?: string): TraceContext {
 /**
  * Create a child span within the current trace context.
  */
-export function createChildSpan(options: SpanOptions): TraceContext | undefined {
+export function createChildSpan(_options: SpanOptions): TraceContext | undefined {
   const parent = getCurrentTraceContext();
   if (!parent) return undefined;
 
@@ -229,8 +237,9 @@ export function extractTraceFromEvent(event: { trace?: TraceContext }): TraceCon
 /**
  * Express middleware that sets up trace context for each request.
  */
-export function traceMiddleware(req: any, _res: any, next: () => void): void {
-  const requestId = req.headers['x-request-id'] ?? req.requestId ?? crypto.randomUUID();
+export function traceMiddleware(req: IncomingMessage, _res: ServerResponse, next: () => void): void {
+  const rawRequestId = req.headers['x-request-id'] ?? req.requestId ?? crypto.randomUUID();
+  const requestId = Array.isArray(rawRequestId) ? rawRequestId[0] : rawRequestId;
   const context = extractTraceFromHeaders(req.headers) ?? createTraceContext(requestId);
 
   // Store in request for downstream use

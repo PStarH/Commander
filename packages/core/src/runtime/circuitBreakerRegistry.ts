@@ -8,7 +8,7 @@
  *
  * Used by ToolOrchestrator and AgentRuntime to track per-call reliability.
  */
-import { CircuitBreaker, type CircuitState, type CircuitStats } from './circuitBreaker';
+import { CircuitBreaker, type CircuitStats } from './circuitBreaker';
 import { getGlobalLogger } from '../logging';
 
 export interface BreakerConfig {

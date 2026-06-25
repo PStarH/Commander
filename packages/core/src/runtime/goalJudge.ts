@@ -19,7 +19,7 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import type { LLMProvider, LLMRequest, TokenUsage } from './types';
+import type { LLMProvider, LLMRequest } from './types';
 import { ModelRouter, getModelRouter } from './modelRouter';
 import { getMessageBus } from './messageBus';
 import { getMetricsCollector } from './metricsCollector';

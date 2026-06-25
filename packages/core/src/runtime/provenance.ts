@@ -7,8 +7,6 @@
  * execution trace is reproducible.
  */
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as fs from 'fs';
-import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { getGlobalLogger } from '../logging';
 

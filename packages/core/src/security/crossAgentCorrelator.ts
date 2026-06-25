@@ -195,8 +195,8 @@ export class CrossAgentCorrelator {
   private rules: CorrelationRule[];
   private matches: CorrelationMatch[] = [];
 
-  constructor(config?: Partial<CorrelatorConfig>, customRules?: CorrelationRule[]) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+  constructor(_config?: Partial<CorrelatorConfig>, customRules?: CorrelationRule[]) {
+    this.config = { ...DEFAULT_CONFIG, ..._config };
     this.rules = customRules ?? DEFAULT_RULES;
   }
 
@@ -627,7 +627,7 @@ export class CrossAgentCorrelator {
 
 const correlatorSingleton = createTenantAwareSingleton(() => new CrossAgentCorrelator());
 
-export function getCrossAgentCorrelator(config?: Partial<CorrelatorConfig>): CrossAgentCorrelator {
+export function getCrossAgentCorrelator(_config?: Partial<CorrelatorConfig>): CrossAgentCorrelator {
   return correlatorSingleton.get();
 }
 

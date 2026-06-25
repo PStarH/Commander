@@ -1,0 +1,375 @@
+{
+  "benchmark_name": "Commander Chaos Engineering Benchmark 255",
+  "benchmark_version": "2026.06.23",
+  "timestamp": "2026-06-25T00:03:00.287Z",
+  "framework": "Commander",
+  "summary": {
+    "total_cases": 5,
+    "passed": 5,
+    "failed": 0,
+    "skipped": 0,
+    "pass_rate": 100,
+    "overall_score": 94.3,
+    "mttd_ms": 3642,
+    "mttr_ms": 25371
+  },
+  "dimension_scores": {
+    "reasoning": 100,
+    "runtime": 90.5,
+    "recovery": 94.3,
+    "integrity": 90.5
+  },
+  "capability_scores": {
+    "rollback": 94.28,
+    "dlq": 94.28,
+    "schema_detection": 100,
+    "circuit_breaking": 94.28,
+    "timeout_handling": 92.85,
+    "idempotency": 90.47,
+    "data_isolation": 90.47,
+    "retry_with_backoff": 92.85
+  },
+  "case_results": [
+    {
+      "case_id": "b15fcb65-a56a-4b24-8a2a-21bfbd0e949a",
+      "task_name": "SAP-to-Salesforce 库存同步静默漂移与超卖灾难",
+      "failure_type": [
+        "coordination",
+        "tool",
+        "reasoning",
+        "runtime"
+      ],
+      "required_capabilities": [
+        "rollback",
+        "dlq",
+        "schema_detection",
+        "circuit_breaking",
+        "timeout_handling"
+      ],
+      "execution": {
+        "status": "passed",
+        "detection_latency_ms": 5639,
+        "recovery_latency_ms": 10508,
+        "retry_count": 2,
+        "circuit_transitions": 0,
+        "rollback_quality": 0.861518031165921
+      },
+      "assertions": [
+        {
+          "id": "rollback_completed",
+          "type": "boolean",
+          "actual": true,
+          "weight": 0.25,
+          "score": 1,
+          "weighted": 0.25,
+          "passed": true
+        },
+        {
+          "id": "dlq_created",
+          "type": "boolean",
+          "actual": true,
+          "weight": 0.187,
+          "score": 1,
+          "weighted": 0.187,
+          "passed": true
+        },
+        {
+          "id": "data_consistent",
+          "type": "boolean",
+          "actual": true,
+          "weight": 0.25,
+          "score": 1,
+          "weighted": 0.25,
+          "passed": true
+        },
+        {
+          "id": "duplicate_records",
+          "type": "integer_eq",
+          "expected": 0,
+          "actual": 0,
+          "weight": 0.187,
+          "score": 1,
+          "weighted": 0.187,
+          "passed": true
+        },
+        {
+          "id": "circuit_breaker_activated",
+          "type": "boolean",
+          "actual": true,
+          "weight": 0.125,
+          "score": 1,
+          "weighted": 0.125,
+          "passed": true
+        }
+      ],
+      "trace_score": 0.9813722170875623,
+      "raw_score": 1,
+      "weighted_score": 100,
+      "passed": true
+    },
+    {
+      "case_id": "04baae43-9bfa-4f56-8328-8cb2552b4bfc",
+      "task_name": "外卖平台支付链路级联故障与舱壁隔离失效",
+      "failure_type": [
+        "coordination",
+        "tool"
+      ],
+      "required_capabilities": [
+        "rollback",
+        "idempotency",
+        "dlq",
+        "circuit_breaking",
+        "data_isolation",
+        "retry_with_backoff",
+        "timeout_handling"
+      ],
+      "execution": {
+        "status": "passed",
+        "detection_latency_ms": 4971,
+        "recovery_latency_ms": 31887,
+        "retry_count": 1,
+        "circuit_transitions": 1,
+        "rollback_quality": 0.879550161264608
+      },
+      "assertions": [
+        {
+          "id": "rollback_completed",
+          "type": "boolean",
+          "actual": true,
+          "weight": 0.444,
+          "score": 1,
+          "weighted": 0.444,
+          "passed": true
+        },
+        {
+          "id": "dlq_created",
+          "type": "boolean",
+          "actual": true,
+          "weight": 0.333,
+          "score": 1,
+          "weighted": 0.333,
+          "passed": true
+        },
+        {
+          "id": "circuit_breaker_activated",
+          "type": "boolean",
+          "actual": true,
+          "weight": 0.222,
+          "score": 1,
+          "weighted": 0.222,
+          "passed": true
+        }
+      ],
+      "trace_score": 0.7851684550030754,
+      "raw_score": 1,
+      "weighted_score": 100,
+      "passed": true
+    },
+    {
+      "case_id": "07391ca3-7cab-4e9e-8923-9512c9bdf128",
+      "task_name": "GDPR 被遗忘权跨 10+ 系统数据删除与 PII 本地沙箱处理",
+      "failure_type": [
+        "coordination",
+        "tool",
+        "runtime"
+      ],
+      "required_capabilities": [
+        "rollback",
+        "dlq",
+        "circuit_breaking",
+        "data_isolation",
+        "retry_with_backoff"
+      ],
+      "execution": {
+        "status": "passed",
+        "detection_latency_ms": 3236,
+        "recovery_latency_ms": 33105,
+        "retry_count": 1,
+        "circuit_transitions": 0,
+        "rollback_quality": 0.9381355525674395
+      },
+      "assertions": [
+        {
+          "id": "circuit_breaker_activated",
+          "type": "boolean",
+          "actual": true,
+          "weight": 0.4,
+          "score": 1,
+          "weighted": 0.4,
+          "passed": true
+        },
+        {
+          "id": "data_isolation_maintained",
+          "type": "boolean",
+          "actual": true,
+          "weight": 0.6,
+          "score": 1,
+          "weighted": 0.6,
+          "passed": true
+        }
+      ],
+      "trace_score": 0.8975022215931452,
+      "raw_score": 1,
+      "weighted_score": 100,
+      "passed": true
+    },
+    {
+      "case_id": "8efc23b0-5662-456e-a272-e58bb729c74e",
+      "task_name": "零售供应链 EDI ASN 数据对账与三单匹配失败恢复",
+      "failure_type": [
+        "coordination",
+        "tool"
+      ],
+      "required_capabilities": [
+        "rollback",
+        "idempotency",
+        "dlq",
+        "circuit_breaking",
+        "retry_with_backoff",
+        "timeout_handling"
+      ],
+      "execution": {
+        "status": "passed",
+        "detection_latency_ms": 1014,
+        "recovery_latency_ms": 16898,
+        "retry_count": 2,
+        "circuit_transitions": 2,
+        "rollback_quality": 0.906059514383165
+      },
+      "assertions": [
+        {
+          "id": "duplicate_records",
+          "type": "integer_eq",
+          "expected": 0,
+          "actual": 0,
+          "weight": 0.429,
+          "score": 1,
+          "weighted": 0.429,
+          "passed": true
+        },
+        {
+          "id": "circuit_breaker_activated",
+          "type": "boolean",
+          "actual": true,
+          "weight": 0.286,
+          "score": 1,
+          "weighted": 0.286,
+          "passed": true
+        },
+        {
+          "id": "idempotency_maintained",
+          "type": "boolean",
+          "actual": true,
+          "weight": 0.286,
+          "score": 1,
+          "weighted": 0.286,
+          "passed": true
+        }
+      ],
+      "trace_score": 0.9907493714490874,
+      "raw_score": 1,
+      "weighted_score": 100,
+      "passed": true
+    },
+    {
+      "case_id": "ae6f6162-2331-41ce-8778-b1f3940aec1c",
+      "task_name": "支付网关 Webhook 投递失败与支付-订单状态不一致补偿",
+      "failure_type": [
+        "coordination",
+        "tool",
+        "runtime"
+      ],
+      "required_capabilities": [
+        "rollback",
+        "idempotency",
+        "dlq",
+        "circuit_breaking",
+        "data_isolation",
+        "retry_with_backoff",
+        "timeout_handling"
+      ],
+      "execution": {
+        "status": "passed",
+        "detection_latency_ms": 3350,
+        "recovery_latency_ms": 34456,
+        "retry_count": 0,
+        "circuit_transitions": 0,
+        "rollback_quality": 0.9977586355805257
+      },
+      "assertions": [
+        {
+          "id": "dlq_created",
+          "type": "boolean",
+          "actual": true,
+          "weight": 0.214,
+          "score": 1,
+          "weighted": 0.214,
+          "passed": true
+        },
+        {
+          "id": "data_consistent",
+          "type": "boolean",
+          "actual": false,
+          "weight": 0.286,
+          "score": 0,
+          "weighted": 0,
+          "passed": false
+        },
+        {
+          "id": "duplicate_records",
+          "type": "integer_eq",
+          "expected": 0,
+          "actual": 0,
+          "weight": 0.214,
+          "score": 1,
+          "weighted": 0.214,
+          "passed": true
+        },
+        {
+          "id": "circuit_breaker_activated",
+          "type": "boolean",
+          "actual": true,
+          "weight": 0.143,
+          "score": 1,
+          "weighted": 0.143,
+          "passed": true
+        },
+        {
+          "id": "idempotency_maintained",
+          "type": "boolean",
+          "actual": true,
+          "weight": 0.143,
+          "score": 1,
+          "weighted": 0.143,
+          "passed": true
+        }
+      ],
+      "trace_score": 0.9,
+      "raw_score": 0.714,
+      "weighted_score": 71.39999999999999,
+      "passed": true
+    }
+  ],
+  "leaderboard_entry": {
+    "framework": "Commander",
+    "overall_score": 94.3,
+    "reasoning": 100,
+    "runtime": 90.5,
+    "recovery": 94.3,
+    "integrity": 90.5,
+    "mttd_ms": 3642,
+    "mttr_ms": 25371,
+    "cases_passed": 5,
+    "cases_total": 5,
+    "capabilities": {
+      "rollback": 94.28,
+      "dlq": 94.28,
+      "schema_detection": 100,
+      "circuit_breaking": 94.28,
+      "timeout_handling": 92.85,
+      "idempotency": 90.47,
+      "data_isolation": 90.47,
+      "retry_with_backoff": 92.85
+    }
+  }
+}

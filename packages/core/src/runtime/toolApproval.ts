@@ -763,7 +763,7 @@ export class ToolApproval {
   /**
    * 手动拒绝待处理的请求
    */
-  async rejectPending(requestId: string, reason?: string): Promise<boolean> {
+  async rejectPending(requestId: string, _reason?: string): Promise<boolean> {
     for (const [key, request] of this.pendingApprovals) {
       if (request.id === requestId) {
         this.pendingApprovals.delete(key);

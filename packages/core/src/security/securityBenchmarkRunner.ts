@@ -1359,7 +1359,7 @@ export class SecurityBenchmarkRunner {
 const runnerSingleton = createTenantAwareSingleton(() => new SecurityBenchmarkRunner());
 
 export function getSecurityBenchmarkRunner(
-  config?: Partial<BenchmarkRunnerConfig>,
+  _config?: Partial<BenchmarkRunnerConfig>,
 ): SecurityBenchmarkRunner {
   return runnerSingleton.get();
 }

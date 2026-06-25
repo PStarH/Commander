@@ -341,9 +341,6 @@ export class CostEstimator {
       const tier = this.inferModelTier(r.model);
       if (!tier) continue;
 
-      const costUsd =
-        r.costUsd ?? this.estimateCostFromTokens(r.model, r.promptTokens, r.completionTokens);
-
       this.recordActualCost(
         'general', // default — we don't have task category from raw records
         tier,
@@ -410,7 +407,7 @@ export class CostEstimator {
     return Math.min(score, 10);
   }
 
-  private computeComplexityMultiplier(ctx: AgentExecutionContext, complexityScore: number): number {
+  private computeComplexityMultiplier(ctx: AgentExecutionContext, _complexityScore: number): number {
     let multiplier = 1.0;
 
     // Goal length

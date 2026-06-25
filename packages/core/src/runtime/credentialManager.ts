@@ -100,7 +100,6 @@ const CONFIG_KEYS = [
 
 /** All known env var keys. */
 const ALL_KEYS = [...SECRET_KEYS, ...CONFIG_KEYS] as const;
-type EnvKey = (typeof ALL_KEYS)[number];
 
 export class CredentialManager {
   private store = new Map<string, string>();

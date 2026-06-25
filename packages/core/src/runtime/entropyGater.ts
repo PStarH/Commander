@@ -130,7 +130,6 @@ export function hasInformationGain(
       if (lastResult.error) {
         return true;
       }
-      const lastOutput = lastResult.output;
       if (name === 'web_search' || name === 'browser_search') {
         const currentQuery = JSON.stringify(tc.arguments).toLowerCase();
         for (const r of recent) {

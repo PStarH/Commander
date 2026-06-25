@@ -31,7 +31,7 @@ export interface ConfigField {
   fields?: Record<string, ConfigField>;
 }
 
-export type ConfigSchema<T> = Record<string, ConfigField>;
+export type ConfigSchema<_T> = Record<string, ConfigField>;
 
 export interface ConfigValidationResult<T = unknown> {
   valid: boolean;
@@ -47,24 +47,6 @@ export interface ConfigValidationError {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
-
-function resolveNested(
-  obj: Record<string, unknown>,
-  path: string,
-): { parent: Record<string, unknown>; key: string; value: unknown } | null {
-  const parts = path.split('.');
-  let current: unknown = obj;
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (current == null || typeof current !== 'object') return null;
-    current = (current as Record<string, unknown>)[parts[i]];
-  }
-  const key = parts[parts.length - 1];
-  return {
-    parent: current as Record<string, unknown>,
-    key,
-    value: (current as Record<string, unknown>)?.[key],
-  };
-}
 
 function getTypeName(val: unknown): FieldType {
   if (val === null) return 'string';
