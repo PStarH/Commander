@@ -769,6 +769,15 @@ export class AgentRuntime implements AgentRuntimeInterface {
         pattern: `${toolName}:${canonicalArgs.slice(0, TOOL_PATTERN_MAX_CHARS)}`,
         consecutiveCalls: count,
         toolLoopCount,
+        // `runId` propagates so Phase 2 Hub Glue
+        // RetryHookCorrelator can dedup by run
+        // (key `${runId}:${toolName}:${pattern}`) instead of
+        // collapsing concurrent runs that hit the same
+        // tool/args within the 5s TTL window. `runId`
+        // is the local param from `checkRetryLoop`'s
+        // closure — same value as agentRuntime.execute()'s
+        // top-level `const runId = generateId()`.
+        runId,
       });
       try {
         getMetricsCollector().incrementCounter(
