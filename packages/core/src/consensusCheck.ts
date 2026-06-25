@@ -257,7 +257,7 @@ export class ConsensusChecker {
    */
   private selectAgreedDecision(
     votes: ModelVote[],
-    scores: { overall: number; byModel: Map<string, number> },
+    _scores: { overall: number; byModel: Map<string, number> },
   ): string {
     // 多数投票：按决策分组，票数相同则比较总置信度
     const decisionCounts = new Map<string, { count: number; totalConfidence: number }>();

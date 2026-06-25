@@ -8,9 +8,6 @@ import type {
   GoalResult,
   RoundLedger,
   RoundDecision,
-  ManagerDecomposition,
-  ManagerReview,
-  CriticOutput,
   CritiqueResult,
 } from './types';
 import { DEFAULT_GOAL_CONFIG } from './types';
@@ -339,7 +336,6 @@ export class GoalOrchestrator {
 
       totalTokensUsed += roundTokens;
 
-      const pendingCount = getPendingNodes(goalTree).length;
       if (roundFailures > 0 && roundTokens === 0) {
         consecutiveFailedRounds++;
       } else {

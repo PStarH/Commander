@@ -31,7 +31,7 @@ import type {
 import type { AgentExecutionResult } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
 import { generateId } from '../runtime/runtimeHelpers';
-import { Tier1AgentLoop, type Tier1LoopParams, type Tier1LoopResult } from './tier1AgentLoop';
+import { Tier1AgentLoop } from './tier1AgentLoop';
 
 export { Tier1AgentLoop, type Tier1LoopParams, type Tier1LoopResult } from './tier1AgentLoop';
 
