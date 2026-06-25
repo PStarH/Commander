@@ -276,3 +276,4 @@ packages/core/tests/hub/
 # Guard against stray tsc emit inside source trees
 packages/core/src/**/*.js
 packages/core/src/**/*.d.ts
+report.json
