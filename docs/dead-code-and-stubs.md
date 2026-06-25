@@ -162,23 +162,23 @@ Note: `AdaptiveExecutionResult` kept locally because it uses `AgentExecutionResu
 
 ## Resolution Tracking
 
-| Item                                                                                  | Status       | Date                                              |
-| ------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------- |
-| `isValidTopology` missing canonical names                                             | **FIXED**    | 2026-06-24                                        |
-| `topologyRouter` epsilon default 0                                                    | **FIXED**    | 2026-06-24                                        |
-| `writeCheckpoint` all-zero stub                                                       | **FIXED**    | 2026-06-24                                        |
-| `runtimeWorkflowAdapter` duplicate types                                              | **FIXED**    | 2026-06-24                                        |
-| `stageDurations` never populated                                                      | **FIXED**    | 2026-06-24                                        |
-| `actor/` orphaned module (1,728 lines)                                                | **DELETED**  | 2026-06-24                                        |
-| `inspectorAgent` + `frameworkIntegration` orphaned                                    | **DELETED**  | 2026-06-24                                        |
-| `adaptiveOrchestrator` + `tokenBudgetAllocator` half-orphaned                         | **DELETED**  | 2026-06-24                                        |
-| `company.ts` duplicate of `ultimate/companyEngine.ts`                                 | **DELETED**  | 2026-06-24                                        |
-| Stricter topology enum in `commander.schema.json` (9 entries vs runtime 5 canonicals) | **DEFERRED** | awaiting user decision (ide-relax vs update-enum) |
-| 5 healthCheck stubs returning fake "healthy"                                          | **FIXED**    | 2026-06-24                                        |
-| `McpHarness` empty stub                                                               | **FIXED**    | 2026-06-24                                        |
-| `deliberation.ts:225` hardcoded year `2025`/`2026` in temporal detection              | **FIXED**    | 2026-06-24                                        |
-| `inspectorAgent` deprecated, replacement exists                                       | **DELETED**  | 2026-06-24                                        |
-| `atr/runtimeIntegration` deprecated, replacement exists                               | **OPEN**     | —                                                 |
-| Circuit-breaker snapshot only reflects CLOSED (no HALF-OPEN detection)                | **OPEN**     | —                                                 |
-| DLQ >500 unhealthy threshold is process-wide (not per-tenant)                         | **OPEN**     | —                                                 |
-| `/api/runtime/health` does not yet surface `HealthCheckResult` (doc promises it)      | **OPEN**     | —                                                 |
+| Item                                                                                  | Status       | Date                                                                                                                                  |
+| ------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `isValidTopology` missing canonical names                                             | **FIXED**    | 2026-06-24                                                                                                                            |
+| `topologyRouter` epsilon default 0                                                    | **FIXED**    | 2026-06-24                                                                                                                            |
+| `writeCheckpoint` all-zero stub                                                       | **FIXED**    | 2026-06-24                                                                                                                            |
+| `runtimeWorkflowAdapter` duplicate types                                              | **FIXED**    | 2026-06-24                                                                                                                            |
+| `stageDurations` never populated                                                      | **FIXED**    | 2026-06-24                                                                                                                            |
+| `actor/` orphaned module (1,728 lines)                                                | **DELETED**  | 2026-06-24                                                                                                                            |
+| `inspectorAgent` + `frameworkIntegration` orphaned                                    | **DELETED**  | 2026-06-24                                                                                                                            |
+| `adaptiveOrchestrator` + `tokenBudgetAllocator` half-orphaned                         | **DELETED**  | 2026-06-24                                                                                                                            |
+| `company.ts` duplicate of `ultimate/companyEngine.ts`                                 | **DELETED**  | 2026-06-24                                                                                                                            |
+| Stricter topology enum in `commander.schema.json` (9 entries vs runtime 5 canonicals) | **DEFERRED** | awaiting user decision (ide-relax vs update-enum)                                                                                     |
+| 5 healthCheck stubs returning fake "healthy"                                          | **FIXED**    | 2026-06-24                                                                                                                            |
+| `McpHarness` empty stub                                                               | **FIXED**    | 2026-06-24                                                                                                                            |
+| `deliberation.ts:225` hardcoded year `2025`/`2026` in temporal detection              | **FIXED**    | 2026-06-24                                                                                                                            |
+| `inspectorAgent` deprecated, replacement exists                                       | **DELETED**  | 2026-06-24                                                                                                                            |
+| `atr/runtimeIntegration` deprecated, replacement exists                               | **OPEN**     | —                                                                                                                                     |
+| Circuit-breaker snapshot only reflects CLOSED (no HALF-OPEN detection)                | **OPEN**     | —                                                                                                                                     |
+| DLQ >500 unhealthy threshold is process-wide (not per-tenant)                         | **RESOLVED** | 2026-06-25 — `tenantManager.ts` provides per-tenant store isolation with per-tenant rate limits, concurrency caps, and storage quotas |
+| `/api/runtime/health` does not yet surface `HealthCheckResult` (doc promises it)      | **OPEN**     | —                                                                                                                                     |
