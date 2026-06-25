@@ -7,8 +7,7 @@
  *   commander plugin uninstall <name>   Uninstall a plugin
  *   commander plugin info <name>        Show plugin details
  */
-import { section, kv, bullet, $, startSpinner } from '../util';
-import { getGlobalLogger } from '../../logging';
+import { section, kv, $, startSpinner } from '../util';
 
 export async function cmdPlugin(subargs: string[]) {
   const sub = subargs[0] || 'help';
