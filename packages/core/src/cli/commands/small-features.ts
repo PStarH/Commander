@@ -15,9 +15,7 @@
  */
 
 import { reportSilentFailure } from '../../silentFailureReporter';
-import { $, parseFlags } from '../util';
-import { deliberate } from '../../ultimate/deliberation';
-import { createRuntime } from './_shared';
+import { createRuntime, $ } from './_shared';
 import {
   readLLMCallRecords,
   aggregateCost,
@@ -31,7 +29,7 @@ import {
 // 1. commander ask — Quick Q&A mode
 // ============================================================================
 
-export async function cmdAsk(question: string, flags: Record<string, string>): Promise<void> {
+export async function cmdAsk(question: string, _flags: Record<string, string>): Promise<void> {
   console.log(`\n  ${$.cyan}${$.bold}Commander Ask${$.reset} — Quick Q&A Mode\n`);
   console.log(`  ${$.dim}Question:${$.reset} ${question}\n`);
 
@@ -65,7 +63,7 @@ export async function cmdAsk(question: string, flags: Record<string, string>): P
 // 2. commander diff — View recent changes
 // ============================================================================
 
-export async function cmdDiff(flags: Record<string, string>): Promise<void> {
+export async function cmdDiff(_flags: Record<string, string>): Promise<void> {
   console.log(`\n  ${$.cyan}${$.bold}Commander Diff${$.reset} — Recent Changes\n`);
 
   try {
@@ -171,7 +169,7 @@ export async function cmdCost(flags: Record<string, string>): Promise<void> {
 // 4. commander undo — Undo last operation
 // ============================================================================
 
-export async function cmdUndo(flags: Record<string, string>): Promise<void> {
+export async function cmdUndo(_flags: Record<string, string>): Promise<void> {
   console.log(`\n  ${$.cyan}${$.bold}Commander Undo${$.reset}\n`);
 
   try {
@@ -258,7 +256,7 @@ export function resolveAlias(cmd: string): string {
 // 9. Approval history
 // ============================================================================
 
-export async function cmdApprovalHistory(flags: Record<string, string>): Promise<void> {
+export async function cmdApprovalHistory(_flags: Record<string, string>): Promise<void> {
   console.log(`\n  ${$.cyan}${$.bold}Approval History${$.reset}\n`);
 
   try {
@@ -318,7 +316,7 @@ export { cmdIntelligence } from './intelligence';
 // 11. commander resume — Resume a crashed run from checkpoint
 // ============================================================================
 
-export async function cmdResume(args: string[], flags: Record<string, string>): Promise<void> {
+export async function cmdResume(args: string[], _flags: Record<string, string>): Promise<void> {
   console.log(`\n  ${$.cyan}${$.bold}Commander Resume${$.reset} — Crash Recovery\n`);
 
   try {
@@ -483,7 +481,7 @@ function getAge(isoStr: string): string {
   return `${Math.round(ms / 86_400_000)}d`;
 }
 
-export async function cmdTrace(flags: Record<string, string>): Promise<void> {
+export async function cmdTrace(_flags: Record<string, string>): Promise<void> {
   console.log(`\n  ${$.cyan}${$.bold}Commander Traces${$.reset}\n`);
 
   try {
