@@ -4,6 +4,7 @@
  * Handles:
  * - Per-tenant rate limiting
  * - Per-tenant concurrency limits
+ * - Per-tenant storage quota enforcement
  * - Per-tenant store isolation (samples, traces, checkpoints)
  * - Per-tenant memory isolation
  * - Tenant context resolution and restoration
@@ -11,6 +12,8 @@
  * Extracted from agentRuntime.ts for better separation of concerns.
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { TenantConfig } from './tenantProvider';
 import { SamplesStore } from './samplesStore';
 import { PersistentTraceStore } from './traceStore';
@@ -48,8 +51,10 @@ export class TenantManager {
   private tenantSamplesStores: Map<string, SamplesStore> = new Map();
   private tenantTraceStores: Map<string, PersistentTraceStore> = new Map();
   private tenantCheckpointers: Map<string, StateCheckpointer> = new Map();
+  private tenantStorageBytes: Map<string, { used: number; lastChecked: number }> = new Map();
 
   private static readonly MAX_TENANT_STORES = 50;
+  private static readonly STORAGE_CHECK_INTERVAL_MS = 60_000;
 
   /**
    * Resolve tenant context — enforce rate limits, concurrency limits,
@@ -92,6 +97,29 @@ export class TenantManager {
         return { allowed: false, error: 'TENANT_CONCURRENCY_LIMIT: too many concurrent runs' };
       }
       this.tenantRunningCounts.set(tenantId, current + 1);
+    }
+
+    // Enforce per-tenant storage quota
+    if (tenantCfg.maxStorageBytes && tenantCfg.maxStorageBytes > 0) {
+      const storageEntry = this.tenantStorageBytes.get(tenantId);
+      const now = Date.now();
+      if (
+        !storageEntry ||
+        now - storageEntry.lastChecked > TenantManager.STORAGE_CHECK_INTERVAL_MS
+      ) {
+        const used = this.computeTenantStorageBytes(tenantId, tenantCfg);
+        this.tenantStorageBytes.set(tenantId, { used, lastChecked: now });
+        if (used >= tenantCfg.maxStorageBytes) {
+          getGlobalLogger().warn('TenantManager', 'Tenant storage quota exceeded', {
+            tenantId,
+            usedBytes: used,
+            maxBytes: tenantCfg.maxStorageBytes,
+          });
+          return { allowed: false, error: 'TENANT_STORAGE_QUOTA: storage quota exceeded' };
+        }
+      } else if (storageEntry.used >= tenantCfg.maxStorageBytes) {
+        return { allowed: false, error: 'TENANT_STORAGE_QUOTA: storage quota exceeded' };
+      }
     }
 
     // Save original values for restore
@@ -213,6 +241,64 @@ export class TenantManager {
       for (const [tid, entry] of this.tenantRateLimits) {
         if (now > entry.resetAt) this.tenantRateLimits.delete(tid);
       }
+    }
+  }
+
+  private computeTenantStorageBytes(tenantId: string, cfg: TenantConfig): number {
+    let total = 0;
+    const dirs = new Set<string>();
+    const storePaths = [
+      cfg.storagePath,
+      process.env.COMMANDER_SAMPLES_DIR
+        ? path.join(process.env.COMMANDER_SAMPLES_DIR, `tenant_${tenantId}`)
+        : undefined,
+      process.env.COMMANDER_TRACES_DIR
+        ? path.join(process.env.COMMANDER_TRACES_DIR, `tenant_${tenantId}`)
+        : undefined,
+      process.env.COMMANDER_CHECKPOINT_DIR
+        ? path.join(process.env.COMMANDER_CHECKPOINT_DIR, `tenant_${tenantId}`)
+        : undefined,
+      path.join(process.cwd(), '.commander', 'queues', `tenant_${tenantId}`),
+    ];
+    for (const dir of storePaths) {
+      if (dir && !dirs.has(dir)) {
+        dirs.add(dir);
+        total += this.dirSizeBytes(dir);
+      }
+    }
+    return total;
+  }
+
+  private dirSizeBytes(dirPath: string): number {
+    try {
+      if (!fs.existsSync(dirPath)) return 0;
+      let total = 0;
+      const walk = (p: string): void => {
+        let entries: string[];
+        try {
+          entries = fs.readdirSync(p);
+        } catch {
+          return;
+        }
+        for (const entry of entries) {
+          const full = path.join(p, entry);
+          let stat: fs.Stats;
+          try {
+            stat = fs.statSync(full);
+          } catch {
+            continue;
+          }
+          if (stat.isDirectory()) {
+            walk(full);
+          } else if (stat.isFile()) {
+            total += stat.size;
+          }
+        }
+      };
+      walk(dirPath);
+      return total;
+    } catch {
+      return 0;
     }
   }
 
