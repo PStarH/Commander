@@ -20,11 +20,7 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import {
-  getSecurityAuditLogger,
-  type SecurityEvent,
-  type SecuritySeverity,
-} from './securityAuditLogger';
+import { getSecurityAuditLogger, type SecurityEvent } from './securityAuditLogger';
 import { getGlobalLogger, getGlobalMetrics } from '../logging';
 
 // ============================================================================
@@ -102,8 +98,6 @@ export class SecurityMonitor {
     this.running = true;
     this.startTime = Date.now();
 
-    // Subscribe to security audit events
-    const audit = getSecurityAuditLogger();
     // We'll poll recent events since SecurityAuditLogger doesn't have a listener pattern yet
     // In a future iteration, add onEvent() to SecurityAuditLogger
     this.healthCheckTimer = setInterval(() => {
@@ -256,7 +250,7 @@ export class SecurityMonitor {
 
   // ── Detectors ─────────────────────────────────────────────────────
 
-  private detectBurst(event: SecurityEvent): void {
+  private detectBurst(_event: SecurityEvent): void {
     const windowStart = Date.now() - this.config.burstWindowMs;
     const recentInWindow = this.eventWindow.filter(
       (e) => new Date(e.timestamp).getTime() > windowStart,

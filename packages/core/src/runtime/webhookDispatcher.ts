@@ -12,7 +12,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
 import { getMessageBus } from './messageBus';
-import type { MessageBusTopic } from './types';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -211,10 +210,7 @@ export class WebhookDispatcher {
     };
 
     const req = client.request(options, (res) => {
-      let responseBody = '';
-      res.on('data', (chunk: Buffer) => {
-        responseBody += chunk.toString();
-      });
+      res.on('data', () => {});
       res.on('end', () => {
         const statusCode = res.statusCode ?? 0;
         const success = statusCode >= 200 && statusCode < 300;

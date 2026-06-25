@@ -67,16 +67,6 @@ const STRATEGY_SEVERITY: Record<HITLStrategy, number> = {
   deny: 5,
 };
 
-/** Human-readable labels for reporting. */
-const STRATEGY_LABELS: Record<HITLStrategy, string> = {
-  auto: 'Auto-approve',
-  suggest: 'Suggest review',
-  confirm: 'Confirm before execution',
-  pause_and_review: 'Pause agent — human review required',
-  escalate: 'Escalate to SOC / operator',
-  deny: 'Deny execution',
-};
-
 /** Strategy descriptions for audit logs. */
 const STRATEGY_DESCRIPTIONS: Record<HITLStrategy, string> = {
   auto: 'All signals nominal — proceeding without human involvement.',

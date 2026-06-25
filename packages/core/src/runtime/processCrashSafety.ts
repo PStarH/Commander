@@ -57,7 +57,6 @@ export function installProcessCrashHandlers(deps: CrashSafetyDeps): void {
   installed = true;
 
   const log = getGlobalLogger();
-  const exitTimeoutMs = deps.exitTimeoutMs ?? 3000;
 
   const gracefulShutdown = (source: CrashSource, err?: Error) => {
     if (shuttingDown) return;

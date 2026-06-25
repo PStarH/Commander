@@ -14,7 +14,7 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import type { ToolCall, ToolResult, Tool } from './types';
 import { toolErrorRow } from './toolResultShape';
-import type { ToolApproval, ApprovalResult } from './toolApproval';
+import type { ToolApproval } from './toolApproval';
 import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
 export { CircuitBreakerRegistry };
 import { getApprovalSystem } from '../sandbox/approval';
