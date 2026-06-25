@@ -16,7 +16,7 @@
  *   # → /tmp/compliance-audit.md + /tmp/compliance-audit.json
  */
 
-import * as fs from 'fs';
+import * as fs from 'node:fs';
 import { ComplianceAuditManager } from './complianceAuditReport';
 import { getAuditChainLedger } from './auditChainLedger';
 

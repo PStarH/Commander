@@ -11,7 +11,7 @@
  * This module is the single source of truth for "how to hash an ATR request".
  */
 
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 
 // ============================================================================
 // Canonical JSON

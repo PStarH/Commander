@@ -17,8 +17,8 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import { mkdirSync } from 'fs';
-import { dirname } from 'path';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { getGlobalLogger } from '../logging';
 import type { LLMMessage } from './types/llm';
 import { walCheckpoint } from '../storage/walCheckpoint';

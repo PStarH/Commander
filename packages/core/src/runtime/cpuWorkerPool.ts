@@ -13,8 +13,8 @@ import { reportSilentFailure } from '../silentFailureReporter';
  * - Timeout support for long-running tasks
  */
 import { Worker, type WorkerOptions } from 'worker_threads';
-import * as path from 'path';
-import * as fs from 'fs';
+import * as path from 'node:path';
+import * as fs from 'node:fs';
 
 // ============================================================================
 // Types

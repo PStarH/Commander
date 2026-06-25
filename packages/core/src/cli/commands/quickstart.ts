@@ -6,8 +6,8 @@
  *   commander quickstart --check  Check prerequisites only
  */
 import { reportSilentFailure } from '../../silentFailureReporter';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { detectProvider, getEffectiveModel } from '../../config/commanderConfig';
 import { $, section, kv, bullet } from './_shared';
 import { t } from '../i18n';

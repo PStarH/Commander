@@ -38,9 +38,9 @@ import type { DeadLetterQueue } from './deadLetterQueue';
 import type { StepTimeoutManager } from './stepTimeoutManager';
 import type { PlannedToolCall } from '../compensation/rollbackPlanner';
 import type { CircuitBreakerRegistry } from './circuitBreakerRegistry';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as crypto from 'crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 
 export interface ToolExecutionRuntime {
   tools: Map<string, Tool>;

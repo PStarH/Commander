@@ -26,8 +26,8 @@ import type { MessageBusTopic, BusMessage } from './runtime/types';
 import { StateCheckpointer } from './runtime/stateCheckpointer';
 import { getGlobalLogger } from './logging';
 import { detectProvider, getEffectiveModel } from './config/commanderConfig';
-import * as path from 'path';
-import * as os from 'os';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
 // ============================================================================
 // Types

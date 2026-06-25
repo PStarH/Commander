@@ -7,8 +7,8 @@
  * with "not wired" messages (backward compatible).
  */
 import { reportSilentFailure } from '../silentFailureReporter';
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // ============================================================================
 // Types

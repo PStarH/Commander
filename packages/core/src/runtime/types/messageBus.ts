@@ -75,6 +75,7 @@ export type MessageBusTopic =
   // Runtime arc
   | 'runtime.conversation_turn'
   | 'runtime.dlq_enqueued'
+  | 'runtime.cycle_correlated'
   // Sandbox arc
   | 'sandbox.escape_attempted'
   | 'sandbox.executed'
@@ -92,7 +93,8 @@ export type MessageBusTopic =
   // Security arc
   | 'security.capability_minted'
   | 'security.capability_revoked'
-  | 'security.token_delegated';
+  | 'security.token_delegated'
+  | 'security.policy_denied';
 
 /**
  * Priority levels for messages.
@@ -297,6 +299,99 @@ export type SystemAlertVariant =
   | SystemAlertFusionConflicts
   | SystemAlertRegressionDetected;
 
+// ============================================================================
+// tool.blocked — discriminated-union variant taxonomy
+//
+// The variants below mirror the canonical denial classifications emitted
+// by the runtime guard system. Producers discriminate via the `reason`
+// field already present in every observed payload site, so no producer
+// edits are required — only the BusPayloadMap['tool.blocked'] entry swaps
+// from a flat `{name, reason}` shape to `ToolBlockedVariant`.
+//
+// Producer sites catalogued June 2026:
+//
+//   agentRuntime.ts — orchestrator_skipped, circuit_broken, cycle_detected,
+//                     hook_denied (×2), security_orchestrator_denied
+//                     (applyBeforeToolCallSecurity gate; distinct from
+//                     HookManager hooks because AdaptiveHITL denial has a
+//                     different recovery path and audit trail).
+//
+//   toolExecutionService.ts — not_allowed, hook_blocked,
+//                             exec_policy_forbidden, guardian_blocked.
+//
+// Shared shape: { runId, toolName, reason, detail? }
+// — `runId` and `toolName` are universally present; `detail` is the
+// human-readable denial message (optional — some test fixtures omit it).
+//
+// Cross-variant dedupe opportunity (Phase 2 / Hub Glue): the runtime emits
+// `SystemAlertCycleDetected` (system.alert) and `ToolBlockedCycleDetected`
+// (tool.blocked) **alongside each other** from the same cycle-detection
+// gate at agentRuntime.ts. Consider a single Hub Glue handler that
+// listens to both topics and emits one unified event downstream.
+//
+// Hub Glue handlers in Phase 2 can `switch (payload.reason)` with a
+// `never` guard for compile-time exhaustiveness checks. Adding a new
+// variant = declare a new ToolBlockedXxx interface + add it to the union.
+//
+// Discount mismatch with system.alert: `reason` (already in payload) is
+// reused as the discriminant here, instead of a synthetic `type` field.
+// This avoids forcing producers to add a new field — they were already
+// discriminating by `reason`.
+// ============================================================================
+
+interface ToolBlockedBase {
+  readonly runId: string;
+  readonly toolName: string;
+  readonly reason: string;
+  /** Denial-specific message — e.g. error string, mismatch reason, gate description. */
+  readonly detail?: string;
+}
+
+export interface ToolBlockedOrchestratorSkipped extends ToolBlockedBase {
+  reason: 'orchestrator_skipped';
+}
+export interface ToolBlockedCircuitBroken extends ToolBlockedBase {
+  reason: 'circuit_broken';
+}
+export interface ToolBlockedCycleDetected extends ToolBlockedBase {
+  reason: 'cycle_detected';
+}
+export interface ToolBlockedHookDenied extends ToolBlockedBase {
+  reason: 'hook_denied';
+}
+export interface ToolBlockedNotAllowed extends ToolBlockedBase {
+  reason: 'not_allowed';
+}
+export interface ToolBlockedHookBlocked extends ToolBlockedBase {
+  reason: 'hook_blocked';
+}
+export interface ToolBlockedExecPolicyForbidden extends ToolBlockedBase {
+  reason: 'exec_policy_forbidden';
+}
+export interface ToolBlockedGuardianBlocked extends ToolBlockedBase {
+  reason: 'guardian_blocked';
+}
+export interface ToolBlockedSecurityOrchestratorDenied extends ToolBlockedBase {
+  reason: 'security_orchestrator_denied';
+}
+
+/**
+ * Discriminated union of every tool.blocked sub-event variant observed in
+ * production code. Used as `BusPayloadMap['tool.blocked']` so Hub Glue
+ * handlers can `switch` on `payload.reason` with compile-time exhaustiveness
+ * checks.
+ */
+export type ToolBlockedVariant =
+  | ToolBlockedOrchestratorSkipped
+  | ToolBlockedCircuitBroken
+  | ToolBlockedCycleDetected
+  | ToolBlockedHookDenied
+  | ToolBlockedNotAllowed
+  | ToolBlockedHookBlocked
+  | ToolBlockedExecPolicyForbidden
+  | ToolBlockedGuardianBlocked
+  | ToolBlockedSecurityOrchestratorDenied;
+
 /**
  * Per-topic payload type map.
  * Each known topic declares what shape its payload has.
@@ -353,7 +448,7 @@ export interface BusPayloadMap {
   'tool.completed': { name: string; durationMs: number };
   'tool.timeout': { name: string; timeoutMs: number };
   'tool.retry': { name: string; attempt: number; error: string };
-  'tool.blocked': { name: string; reason: string };
+  'tool.blocked': ToolBlockedVariant;
   'tool.compensation_planned': { runId: string; toolName: string; stepCount: number; risk: string };
   'tool.compensation_step': {
     runId: string;
@@ -455,6 +550,13 @@ export interface BusPayloadMap {
     operation: string;
     error: string;
   };
+  'runtime.cycle_correlated': {
+    runId: string;
+    toolName: string;
+    description: string;
+    sourceEvents: ['system.alert', 'tool.blocked'];
+    correlatedAt: string;
+  };
   'sandbox.escape_attempted': {
     runId: string;
     lane: string;
@@ -528,6 +630,12 @@ export interface BusPayloadMap {
     parentId: string;
     childId: string;
     subjectId: string;
+  };
+  'security.policy_denied': {
+    runId: string;
+    toolName: string;
+    reason: string;
+    agentId: string;
   };
 }
 

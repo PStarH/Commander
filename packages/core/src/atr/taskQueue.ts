@@ -18,9 +18,9 @@
  * own AgentRuntime instance with isolation from other tasks.
  */
 import { reportSilentFailure } from '../silentFailureReporter';
-import { randomUUID } from 'crypto';
-import { mkdirSync } from 'fs';
-import { dirname } from 'path';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { AgentRuntime } from '../runtime/agentRuntime';
 import { getGlobalLogger } from '../logging';
 import { getMessageBus } from '../runtime/messageBus';

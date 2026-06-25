@@ -1,6 +1,6 @@
 import { reportSilentFailure } from '../../silentFailureReporter';
-import { spawn } from 'child_process';
-import { execSync } from 'child_process';
+import { spawn } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import type { ExecutionBackend, DockerExecConfig, SandboxExecutionResult } from '../types';
 
 /** Validate Docker container name/ID — must be alphanumeric with limited special chars. */

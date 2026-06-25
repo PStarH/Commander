@@ -1,5 +1,5 @@
-import * as fs from 'fs';
-import * as nodePath from 'path';
+import * as fs from 'node:fs';
+import * as nodePath from 'node:path';
 import { getGlobalLogger } from '../logging';
 import { BetaDistribution } from './betaDistribution';
 import type {

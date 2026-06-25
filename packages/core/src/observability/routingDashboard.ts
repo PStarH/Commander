@@ -24,7 +24,7 @@
  * is not leaked.
  */
 import { reportSilentFailure } from '../silentFailureReporter';
-import type { IncomingMessage, ServerResponse } from 'http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type {
   ExplorationEventLog,
   ExplorationEventLogFilter,

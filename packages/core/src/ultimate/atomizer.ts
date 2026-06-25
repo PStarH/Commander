@@ -6,7 +6,7 @@
  * steps, and RECURSIVE mode splits goal text at paragraph boundaries.
  */
 import type { TaskTreeNode, DeliberationPlan, OrchestrationTopology, ROMARole } from './types';
-import * as path from 'path';
+import * as path from 'node:path';
 
 /** Ms per estimated token for timeout calculation */
 const MS_PER_TOKEN = 5;

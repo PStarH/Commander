@@ -6,7 +6,7 @@
  *  - NullTenantProvider: single-tenant mode, no isolation (default)
  *  - SimpleTenantProvider: static config map for multi-tenant deployments
  */
-import * as path from 'path';
+import * as path from 'node:path';
 import { ThreeLayerMemory, getGlobalThreeLayerMemory } from '../threeLayerMemory';
 import { getCurrentTenantId as readCurrentTenantId } from './tenantContext';
 

@@ -1,5 +1,5 @@
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as nodePath from 'path';
+import * as nodePath from 'node:path';
 import type {
   EvolutionPrediction,
   ExecutionExperience,
