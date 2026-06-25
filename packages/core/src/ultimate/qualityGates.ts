@@ -114,7 +114,6 @@ class RuleBasedEvaluator implements QualityGateEvaluator {
 
   private checkConsistency(synthesis: string, taskTree?: TaskTreeNode): number {
     let score = 1.0;
-    const lower = synthesis.toLowerCase();
 
     // We no longer penalize single hedging / contrastive words.
     // Instead, we only flag *pairs* of directly contradictory strong claims.

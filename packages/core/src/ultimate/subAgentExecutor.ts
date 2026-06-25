@@ -353,7 +353,7 @@ export class SubAgentExecutor {
     for (const node of nodes) {
       outDegree.set(node.id, 0);
     }
-    for (const [nodeId, deps] of dependencyMap) {
+    for (const [, deps] of dependencyMap) {
       for (const _dep of deps) {
         outDegree.set(_dep, (outDegree.get(_dep) ?? 0) + 1);
       }
