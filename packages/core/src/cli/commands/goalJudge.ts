@@ -3,7 +3,6 @@
  *      commander goal conditions — Stop condition management
  */
 import { getGoalJudge, type StopCondition } from '../../runtime/goalJudge';
-import { getMessageBus } from '../../runtime/messageBus';
 
 interface FlagMap {
   set?: string;
@@ -220,7 +219,6 @@ export async function cmdGoalJudge(
 
     // For CLI, use a rule-based verdict (no LLM provider in CLI context)
     const goalJudge = getGoalJudge();
-    const conditions = goalJudge.getGlobalStopConditions();
 
     const verdict = await goalJudge.judge({
       runId: `cli-${Date.now()}`,
