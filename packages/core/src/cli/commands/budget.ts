@@ -6,7 +6,7 @@
  *   commander budget <runId>           Detailed budget breakdown for a run
  */
 import { getTokenBudgetManager } from '../../runtime/tokenBudgetManager';
-import type { RunBudgetStatus, SubAgentAllocation } from '../../runtime/tokenBudgetManager';
+import type { RunBudgetStatus } from '../../runtime/tokenBudgetManager';
 
 function kv(key: string, value: string): string {
   return `  ${key.padEnd(20)} ${value}`;

@@ -69,27 +69,6 @@ const STATUS_ICONS: Record<string, string> = {
   failed: '✗',
 };
 
-const TOPIC_ICONS: Record<string, string> = {
-  'agent.started': '▶',
-  'agent.completed': '✔',
-  'agent.failed': '✘',
-  'agent.message': '◆',
-  'system.alert': '⚠',
-  'tool.executed': '⚡',
-  'tool.started': '◇',
-  'tool.completed': '◆',
-  'tool.timeout': '⏱',
-  'tool.retry': '↻',
-  'tool.blocked': '⊘',
-  'mission.updated': '◈',
-  'mission.completed': '★',
-  'goal.started': '◉',
-  'goal.decomposed': '⊕',
-  'goal.worker_started': '◐',
-  'goal.worker_completed': '◑',
-  'goal.completed': '★',
-};
-
 // ============================================================================
 // Watch Renderer
 // ============================================================================

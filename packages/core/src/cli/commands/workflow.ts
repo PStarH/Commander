@@ -4,20 +4,10 @@ import { detectProvider } from '../../config/commanderConfig';
 import { TELOSOrchestrator } from '../../telos/telosOrchestrator';
 import { UltimateOrchestrator } from '../../ultimate/orchestrator';
 import { AgentRuntime } from '../../runtime/agentRuntime';
-import type { EffortLevel, OrchestrationTopology } from '../../ultimate/types';
+import type { EffortLevel } from '../../ultimate/types';
 import { Scheduler, WorkflowRegistry } from '../../scheduler';
 import type { ScheduleEntry, WorkflowTrigger } from '../../scheduler';
-import {
-  createRuntime,
-  loadTools,
-  $,
-  section,
-  kv,
-  bullet,
-  cmdHeader,
-  startSpinner,
-  onboardingMessage,
-} from './_shared';
+import { createRuntime, loadTools, $, onboardingMessage } from './_shared';
 
 export async function cmdWorkflow(subargs: string[]) {
   const subcmd = subargs[0];
