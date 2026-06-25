@@ -79,6 +79,31 @@ export interface PairConfig {
    *  BusPayloadMap with a typed payload, so subscribers can be type-safe.
    */
   readonly unifiedTopic: MessageBusTopic;
+  /**
+   * When `true`, the correlator's match key is `${runId}:${toolName}`
+   * (2-tuple) and the `contextKey` (third segment) is treated as
+   * INFO-ONLY — captured from the first-arriving peer and reflected in
+   * the unified payload, but NOT used for de-duplication matching.
+   *
+   * Use this when the two sides of a retrospective pair structurally
+   * carry different context-key fields (e.g. system.alert `pattern` is
+   * `<tool>:<canonicalArgs>` while tool.blocked `detail` is a
+   * human-readable rejection message). Without this flag, such pairs
+   * silently never correlate — the 3-tuple exact-match drops the
+   * dedupe opportunity on the floor.
+   *
+   * Trade-off: any (runId, toolName) tuple within the TTL window will
+   * pair a leading system.alert with a peer tool.blocked, even if
+   * their granular arguments differ. Within a 5s window this is
+   * acceptable for retrospective retrospective pairings since the
+   * leading edge is the strong signal — but producers should still
+   * prefer carrying the most-specific contextKey on the alert side so
+   * the unified event payload retains analytics-grade signal.
+   *
+   * Default `false` (3-tuple, exact match) — preserves the original
+   * CycleCorrelator semantics.
+   */
+  readonly ignoreContextKey?: boolean;
 }
 
 interface PendingPair {
@@ -89,8 +114,21 @@ interface PendingPair {
   registeredFrom: 'system.alert' | 'tool.blocked';
 }
 
-const pairKey = (runId: string, toolName: string, contextKey: string): string =>
-  `${runId}:${toolName}:${contextKey}`;
+/**
+ * Build the deduplication keystring for a peer-entry. Honors
+ * {@link PairConfig.ignoreContextKey}: when set, the contextKey
+ * (third segment) is excluded from matching and only retained as
+ * info-only metadata on the first registered side. Otherwise the
+ * full 3-tuple `${runId}:${toolName}:${contextKey}` is used (preserves
+ * the original CycleCorrelator semantics shipped in the prior PR).
+ */
+const pairKey = (
+  config: PairConfig,
+  runId: string,
+  toolName: string,
+  _contextKey: string,
+): string =>
+  config.ignoreContextKey ? `${runId}:${toolName}` : `${runId}:${toolName}:${_contextKey}`;
 
 /**
  * Lightweight log helper that defers to the bus's structured logger when
@@ -137,7 +175,7 @@ export class PairCorrelator {
    * authoritative input to fireUnified (no probe-fallback dance needed).
    */
   observeToolBlocked(runId: string, toolName: string, contextKey: string): void {
-    const key = pairKey(runId, toolName, contextKey);
+    const key = pairKey(this.config, runId, toolName, contextKey);
     const existing = this.pending.get(key);
     if (existing && existing.registeredFrom === 'system.alert') {
       this.fireUnified(existing.runId, toolName, existing.contextKey);
@@ -183,8 +221,17 @@ export class PairCorrelator {
       typeof payload[this.config.alertContextKeyField] === 'string'
         ? (payload[this.config.alertContextKeyField] as string)
         : '';
-    if (!runId || !toolName || !ctxValue) return;
-    const key = pairKey(runId, toolName, ctxValue);
+    if (this.config.ignoreContextKey) {
+      // 2-tuple mode: still capture ctxValue (carried as info-only in
+      // the pending entry), but the match key is runId+toolName.
+      // Empty-skipped: if either runId or toolName is missing, the key
+      // would collapse multiple runs — reject the leading edge rather
+      // than risk a cross-run false-correlation.
+      if (!runId || !toolName) return;
+    } else {
+      if (!runId || !toolName || !ctxValue) return;
+    }
+    const key = pairKey(this.config, runId, toolName, ctxValue);
     const existing = this.pending.get(key);
     if (existing && existing.registeredFrom === 'tool.blocked') {
       // Key-match implies runIds/keys are equal across both sides; the

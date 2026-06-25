@@ -1,3 +1,44 @@
 {
-  "tenants": []
+  "$schema": "../commander.schema.json",
+  "description": "Multi-tenant configuration. Each tenant gets isolated stores, rate limits, and concurrency caps.",
+  "tenants": [
+    {
+      "tenantId": "acme-corp",
+      "tokenBudget": 100000,
+      "maxConcurrency": 5,
+      "maxRunsPerMinute": 60,
+      "enabled": true,
+      "workspacePath": "/data/tenants/acme-corp",
+      "storagePath": "/data/tenants/acme-corp/storage",
+      "maxStorageBytes": 1073741824,
+      "metadata": {
+        "tier": "enterprise",
+        "billingCode": "acme-001"
+      }
+    },
+    {
+      "tenantId": "startup-inc",
+      "tokenBudget": 25000,
+      "maxConcurrency": 2,
+      "maxRunsPerMinute": 20,
+      "enabled": true,
+      "workspacePath": "/data/tenants/startup-inc",
+      "maxStorageBytes": 268435456,
+      "metadata": {
+        "tier": "starter",
+        "billingCode": "startup-002"
+      }
+    },
+    {
+      "tenantId": "dev-test",
+      "tokenBudget": 500000,
+      "maxConcurrency": 10,
+      "maxRunsPerMinute": 120,
+      "enabled": false,
+      "metadata": {
+        "tier": "internal",
+        "description": "Local development tenant — disabled by default"
+      }
+    }
+  ]
 }
