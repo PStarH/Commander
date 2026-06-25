@@ -10,7 +10,7 @@
  */
 import * as blessed from 'blessed';
 import type { Widgets } from 'blessed';
-import * as fs from 'fs';
+import * as fs from 'node:fs';
 import type { MessageBusTopic, BusMessage } from '../runtime/types';
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getMessageBus } from '../runtime/messageBus';

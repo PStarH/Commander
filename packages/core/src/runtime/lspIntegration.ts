@@ -7,9 +7,9 @@
  * The goal is fast, localized feedback without leaving the workflow.
  */
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as fs from 'fs';
-import * as path from 'path';
-import { spawn, ChildProcess } from 'child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { spawn, ChildProcess } from 'node:child_process';
 import { getGlobalLogger } from '../logging';
 import { safePath } from '../tools/fileSystemTool';
 import type { Tool } from '../runtime/types';

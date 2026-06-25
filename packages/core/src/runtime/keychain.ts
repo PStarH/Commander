@@ -1,5 +1,5 @@
 import { reportSilentFailure } from '../silentFailureReporter';
-import { execFileSync } from 'child_process';
+import { execFileSync } from 'node:child_process';
 
 const SERVICE = 'commander-agnes-api';
 

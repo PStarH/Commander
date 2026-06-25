@@ -1,5 +1,5 @@
 import { reportSilentFailure } from '../../../silentFailureReporter';
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 import type { ExecutionScheduler, RunHandle } from '../../scheduler';
 import type { PolicyInput, PolicyDecision, PolicyEngineOptions, PolicyEffect } from '../types';
 import { PolicyEngine } from '../engine';

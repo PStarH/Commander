@@ -61,8 +61,8 @@ export type { SecurityScanResult, SecurityWarning } from './skillSecurityScanner
 // Legacy backward-compatible API — delegates to the new SkillManager singleton
 // ============================================================================
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import { SkillStore } from './skillStore';
 import { SkillManager } from './skillManager';

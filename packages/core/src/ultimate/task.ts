@@ -5,8 +5,8 @@
  * Tasks write output to files for parallel sub-agent communication.
  */
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 
 export type TaskType = 'local_agent' | 'local_shell' | 'remote_agent' | 'dream';

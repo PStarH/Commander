@@ -114,6 +114,7 @@ export default defineConfig({
 
       // --- hub event glue (Phase 1) ---
       'tests/hub/eventGlue.test.ts',
+      'tests/hub/toolBlockedHandler.test.ts',
 
       // --- storage ---
       'tests/storage/dataRetention.test.ts',

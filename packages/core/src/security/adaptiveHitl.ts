@@ -34,7 +34,7 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as crypto from 'crypto';
+import * as crypto from 'node:crypto';
 import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getSecurityMonitor } from './securityMonitor';
 import { getMetricsCollector } from '../runtime/metricsCollector';

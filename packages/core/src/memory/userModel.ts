@@ -22,7 +22,7 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { mkdir, readFile, writeFile, access } from 'fs/promises';
-import { join } from 'path';
+import { join } from 'node:path';
 
 // ============================================================================
 // Types

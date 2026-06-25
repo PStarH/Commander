@@ -19,7 +19,7 @@
  *   - No actual decoding/transcoding — just boundary validation
  */
 
-import * as crypto from 'crypto';
+import * as crypto from 'node:crypto';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 // ============================================================================

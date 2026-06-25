@@ -1,5 +1,5 @@
 import { reportSilentFailure } from '../silentFailureReporter';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { getMessageBus } from '../runtime/messageBus';
 import { getGlobalLogger } from '../logging';
 import type { WorkQueueStore } from './workQueueStore';
