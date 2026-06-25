@@ -15,7 +15,7 @@
  * supplies the cycle-specific config and re-exports a singleton.
  */
 
-import { PairCorrelator, HUB_GLUE_SOURCE, type PairConfig } from './pairCorrelator';
+import { PairCorrelator, type PairConfig } from './pairCorrelator';
 
 const CYCLE_PAIR_CONFIG: PairConfig = {
   alertType: 'cycle_detected',
@@ -72,6 +72,3 @@ export function _resetCycleCorrelatorForTests(): void {
   }
   instance = null;
 }
-
-// Keep HUB_GLUE_SOURCE re-export for any callers that imported it from here.
-export { HUB_GLUE_SOURCE };
