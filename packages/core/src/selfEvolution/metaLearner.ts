@@ -500,7 +500,7 @@ export function resetMetaLearner(): void {
 }
 
 export function clearMetaLearnerState(): void {
-  const learner = metaLearnerSingleton.getGlobal();
+  const learner = metaLearnerSingleton.get();
   learner['experiences'] = [];
   learner['reflections'] = [];
   learner['shadowComparisons'] = [];
