@@ -46,6 +46,10 @@ import {
   getCycleCorrelator,
   _resetCycleCorrelatorForTests,
 } from '../../src/hub/handlers/cycleCorrelator';
+import {
+  getRetryHookCorrelator,
+  _resetRetryHookCorrelatorForTests,
+} from '../../src/hub/handlers/retryHookCorrelator';
 import { _resetHubGlueForTests } from '../../src/hub';
 import { resetMetricsCollector, getMetricsCollector } from '../../src/runtime/metricsCollector';
 import type { BusMessage, MessageBusTopic } from '../../src/runtime/types';
@@ -88,6 +92,7 @@ describe('Hub Glue: tool.blocked handler — Phase 2 cycle dedupe', () => {
     // Reset every singleton without breaking cross-test ordering
     _resetHubGlueForTests();
     _resetCycleCorrelatorForTests();
+    _resetRetryHookCorrelatorForTests();
     _resetToolBlockedHandlerForTests();
     resetMessageBus();
     resetMetricsCollector();
@@ -98,6 +103,7 @@ describe('Hub Glue: tool.blocked handler — Phase 2 cycle dedupe', () => {
   afterEach(() => {
     uninstallToolBlockedHandler();
     _resetCycleCorrelatorForTests();
+    _resetRetryHookCorrelatorForTests();
     _resetHubGlueForTests();
     _resetToolBlockedHandlerForTests();
     resetMessageBus();
@@ -262,9 +268,9 @@ describe('Hub Glue: tool.blocked handler — Phase 2 cycle dedupe', () => {
 
     // Force the entry's registeredAt into the past and call pruneNow().
     const correlator = getCycleCorrelator();
-    type WithMutablePending = { pending: Map<string, { registeredAt: number }> };
+    type WithMutablePending = { pair: { pending: Map<string, { registeredAt: number }> } };
     const mutable = correlator as unknown as WithMutablePending;
-    for (const entry of mutable.pending.values()) {
+    for (const entry of mutable.pair.pending.values()) {
       entry.registeredAt = Date.now() - 10_000; // older than TTL
     }
     const pruned = correlator.pruneNow();

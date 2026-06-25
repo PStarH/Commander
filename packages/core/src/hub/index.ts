@@ -26,6 +26,12 @@ export {
   _resetCycleCorrelatorForTests,
 } from './handlers/cycleCorrelator';
 
+export {
+  RetryHookCorrelator,
+  getRetryHookCorrelator,
+  _resetRetryHookCorrelatorForTests,
+} from './handlers/retryHookCorrelator';
+
 import { installToolBlockedHandler } from './handlers/toolBlockedHandler';
 
 let hubInstalled = false;
