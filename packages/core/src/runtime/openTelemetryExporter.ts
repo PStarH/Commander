@@ -379,22 +379,6 @@ export function executionTraceToOtlpSpans(trace: import('./types').ExecutionTrac
   return spans;
 }
 
-function eventDataToSpanName(input: unknown, output: unknown, type: string): string {
-  if (type === 'llm_call') {
-    const model =
-      typeof input === 'object' && input && 'model' in (input as Record<string, unknown>)
-        ? (String((input as Record<string, unknown>).model)
-            .split('/')
-            .pop() ?? 'llm')
-        : 'llm';
-    return `llm.${model}`;
-  }
-  if (type === 'tool_execution') return `tool.${String(input ?? 'unknown')}`;
-  if (type === 'error') return `error.${String(output ?? 'unknown').slice(0, 60)}`;
-  if (type === 'state_change') return `state.${String(input ?? 'transition')}`;
-  return `decision.${String(output ?? 'unknown').slice(0, 60)}`;
-}
-
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 
 let _otelConfig: OTelExporterConfig | undefined;

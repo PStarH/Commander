@@ -66,8 +66,8 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
   {
     match: (ctx) =>
       /timeout|timed\s*out|TOOL_TIMEOUT|ETIMEDOUT|exceeded\s+\d+\s*ms/i.test(ctx.error),
-    reflect: (ctx) => ({
-      whatFailed: `Action exceeded its time budget (${ctx.attemptedAction})`,
+    reflect: (_ctx) => ({
+      whatFailed: `Action exceeded its time budget (${_ctx.attemptedAction})`,
       whyFailed: `The operation was too slow to complete in the allotted time. Common causes: large input, slow downstream service, or infinite loop.`,
       whatToTryNext: `Break the operation into smaller parts, increase the timeout, or process the data in batches. If it's a query, narrow the filter.`,
       confidence: 0.85,
@@ -78,7 +78,7 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
       /\b(ENOENT|not\s+found|does\s+not\s+exist|no\s+such\s+file|cannot\s+find|missing)\b/i.test(
         ctx.error,
       ),
-    reflect: (ctx) => ({
+    reflect: (_ctx) => ({
       whatFailed: `Resource referenced in the action was not found`,
       whyFailed: `The path or identifier is incorrect, the resource was deleted, or the action is looking in the wrong location.`,
       whatToTryNext: `Verify the path/identifier exists first using a search or list tool. Check for typos and case sensitivity. If the path is relative, confirm the working directory.`,
@@ -90,7 +90,7 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
       /\b(EACCES|permission\s+denied|forbidden|unauthorized|401|403|insufficient\s+permissions)\b/i.test(
         ctx.error,
       ),
-    reflect: (ctx) => ({
+    reflect: (_ctx) => ({
       whatFailed: `Action was denied due to permissions`,
       whyFailed: `The agent or user does not have the required permissions to perform this action.`,
       whatToTryNext: `Check the permission requirements for this resource. If running in a sandbox, verify the file/network is allowed. For tools, check the approval policy.`,
@@ -99,7 +99,7 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
   },
   {
     match: (ctx) => /\b(429|rate\s*limit|too\s+many\s+requests|throttl)/i.test(ctx.error),
-    reflect: (ctx) => ({
+    reflect: (_ctx) => ({
       whatFailed: `External service rate-limited the request`,
       whyFailed: `Too many requests were sent in a short period, exceeding the service's quota.`,
       whatToTryNext: `Wait before retrying (use exponential backoff). Reduce request frequency, batch operations, or use cached results if available.`,
@@ -111,7 +111,7 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
       /\b(invalid\s+(argument|param|input|format)|validation\s+failed|missing\s+required|required\s+field|schema\s+validation)\b/i.test(
         ctx.error,
       ),
-    reflect: (ctx) => ({
+    reflect: (_ctx) => ({
       whatFailed: `Input failed validation`,
       whyFailed: `One or more arguments do not match the expected format, type, or required schema.`,
       whatToTryNext: `Re-read the tool's schema or documentation. Check argument types, required fields, and value ranges. Common culprits: wrong types (string vs number), missing required fields, enum values.`,
@@ -123,7 +123,7 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
       /\b(TypeError|cannot\s+read\s+(property|properties)|is\s+not\s+a\s+function|undefined\s+is\s+not|null\s+is\s+not)\b/i.test(
         ctx.error,
       ),
-    reflect: (ctx) => ({
+    reflect: (_ctx) => ({
       whatFailed: `Code threw a type error (likely null/undefined access)`,
       whyFailed: `A value was assumed to be present but was null/undefined, or a function was called on the wrong type.`,
       whatToTryNext: `Add null checks before accessing properties. Verify the value exists before calling methods on it. Inspect the actual data shape returned by the previous step.`,
@@ -135,7 +135,7 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
       /\b(SyntaxError|Unexpected\s+token|JSON\.parse|invalid\s+JSON|unexpected\s+end\s+of\s+JSON|malformed)\b/i.test(
         ctx.error,
       ),
-    reflect: (ctx) => ({
+    reflect: (_ctx) => ({
       whatFailed: `Failed to parse input (likely JSON, code, or structured data)`,
       whyFailed: `The input was not valid for the parser — likely truncated, malformed, or contains unexpected characters.`,
       whatToTryNext: `Inspect the raw input before parsing. Check for truncation (long outputs may be cut off), trailing commas, or escape characters. Try a more lenient parser or pre-process to clean the input.`,
@@ -147,7 +147,7 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
       /\b(ECONNREFUSED|ENETUNREACH|ECONNRESET|EHOSTUNREACH|network\s+error|fetch\s+failed|getaddrinfo|socket\s+hang\s+up)\b/i.test(
         ctx.error,
       ),
-    reflect: (ctx) => ({
+    reflect: (_ctx) => ({
       whatFailed: `Network request failed`,
       whyFailed: `Could not establish or maintain a connection to the target host. Common causes: host is down, DNS failure, firewall, or proxy issues.`,
       whatToTryNext: `Verify the host is reachable. Check the URL for typos. If behind a proxy or VPN, verify the network path. Try a known-good endpoint as a connectivity test.`,
@@ -157,7 +157,7 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
   {
     match: (ctx) =>
       /\b(409|conflict|already\s+exists|duplicate\s+key|UNIQUE\s+constraint)\b/i.test(ctx.error),
-    reflect: (ctx) => ({
+    reflect: (_ctx) => ({
       whatFailed: `Conflict: the resource already exists or state is incompatible`,
       whyFailed: `An attempt to create a new resource collided with an existing one, or the system is in an incompatible state.`,
       whatToTryNext: `Check if the resource exists first. If it does, decide whether to update vs. fail. For state conflicts, query the current state before retrying.`,
@@ -169,7 +169,7 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
       /\b(ENOSPC|out\s+of\s+(memory|disk|space)|heap\s+space|allocation\s+failed|memory\s+exhausted)\b/i.test(
         ctx.error,
       ),
-    reflect: (ctx) => ({
+    reflect: (_ctx) => ({
       whatFailed: `Ran out of memory, disk, or other resource`,
       whyFailed: `The operation required more resources than were available.`,
       whatToTryNext: `Process the data in smaller batches. Free up memory by streaming instead of loading. For disk, check available space and clean up temp files.`,
@@ -179,7 +179,7 @@ const HEURISTIC_PATTERNS: ReadonlyArray<HeuristicPattern> = [
   {
     match: (ctx) =>
       /\b(circuit\s+breaker|circuit\s+is\s+open|service\s+unavailable|503)\b/i.test(ctx.error),
-    reflect: (ctx) => ({
+    reflect: (_ctx) => ({
       whatFailed: `Service or circuit breaker is unavailable`,
       whyFailed: `The downstream service is failing repeatedly, so requests are being blocked to prevent cascading failures.`,
       whatToTryNext: `Wait for the circuit to reset, then retry. If the service is critical, use a fallback path or cached data. Consider switching to a different provider.`,

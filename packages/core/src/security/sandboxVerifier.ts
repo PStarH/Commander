@@ -22,7 +22,6 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getSandboxManager } from '../sandbox/manager';
 import { getAuditChainLedger } from './auditChainLedger';
-import { getGlobalLogger } from '../logging';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 // ============================================================================
@@ -115,7 +114,6 @@ const DEFAULT_CONFIG: VerifierConfig = {
 
 function buildTestSuite(osPlatform: string): VerificationTest[] {
   const isWindows = osPlatform === 'win32';
-  const isMac = osPlatform === 'darwin';
 
   // File paths that the sandbox should NOT be able to access
   const protectedPaths = isWindows
@@ -370,7 +368,7 @@ export class SandboxVerifier {
     reportId: string,
     sandboxMechanism: string,
     evidence: VerificationEvidence[],
-    startedAt: string,
+    _startedAt: string,
   ): SandboxVerificationReport {
     const results: SandboxVerificationReport['results'] = {
       file_isolation: { pass: 0, fail: 0, skip: 0, error: 0 },
@@ -454,7 +452,7 @@ export class SandboxVerifier {
 
 const verifierSingleton = createTenantAwareSingleton(() => new SandboxVerifier());
 
-export function getSandboxVerifier(config?: Partial<VerifierConfig>): SandboxVerifier {
+export function getSandboxVerifier(_config?: Partial<VerifierConfig>): SandboxVerifier {
   return verifierSingleton.get();
 }
 

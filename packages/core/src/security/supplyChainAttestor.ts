@@ -757,7 +757,7 @@ export class SupplyChainAttestor {
           signerIdentity: signerIdentity ?? 'ephemeral',
         },
       });
-    } catch (err) {
+    } catch {
       recordSinkFailure('supplyChainAttestor');
     }
   }
@@ -779,7 +779,7 @@ export class SupplyChainAttestor {
           warnings: result.warnings,
         },
       });
-    } catch (err) {
+    } catch {
       recordSinkFailure('supplyChainAttestor');
     }
   }
@@ -849,7 +849,7 @@ export function hashString(content: string): string {
 
 const attestorSingleton = createTenantAwareSingleton(() => new SupplyChainAttestor());
 
-export function getSupplyChainAttestor(config?: Partial<AttestorConfig>): SupplyChainAttestor {
+export function getSupplyChainAttestor(_config?: Partial<AttestorConfig>): SupplyChainAttestor {
   return attestorSingleton.get();
 }
 

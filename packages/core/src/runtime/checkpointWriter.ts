@@ -21,7 +21,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
 import { getMessageBus } from './messageBus';
-import { TokenGovernor } from './tokenGovernor';
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
 import type { LLMProvider, LLMMessage } from './types';
 
@@ -219,7 +218,7 @@ export class CheckpointWriter {
    * Force a checkpoint regardless of trigger points.
    * Useful for manual CLI invocation or pre-shutdown.
    */
-  forceTrigger(runId: string): CheckpointTrigger {
+  forceTrigger(_runId: string): CheckpointTrigger {
     return {
       percent: 0, // 0 = manual
       tokensUsed: 0,

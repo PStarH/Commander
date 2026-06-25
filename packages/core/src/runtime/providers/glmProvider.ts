@@ -1,4 +1,4 @@
-import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage, CacheConfig } from '../types';
+import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types';
 import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
 
