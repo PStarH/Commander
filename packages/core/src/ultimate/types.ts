@@ -8,7 +8,6 @@
 
 import type {
   ModelTier,
-  TokenUsage,
   TaskTreeNode,
   ROMARole,
   ArtifactReference,

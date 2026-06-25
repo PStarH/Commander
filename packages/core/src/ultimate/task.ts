@@ -7,7 +7,6 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import { getGlobalLogger } from '../logging';
 
 export type TaskType = 'local_agent' | 'local_shell' | 'remote_agent' | 'dream';

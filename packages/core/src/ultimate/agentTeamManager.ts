@@ -1,5 +1,4 @@
 import type { AgentTeam, TeamMember, SharedTask, InboxMessage, ArtifactReference } from './types';
-import { getArtifactSystem } from './artifactSystem';
 
 /** Maximum inbox messages per team before oldest are evicted */
 const MAX_INBOX_PER_TEAM = 1000;
