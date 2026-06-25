@@ -277,3 +277,4 @@ packages/core/tests/hub/
 packages/core/src/**/*.js
 packages/core/src/**/*.d.ts
 report.json
+.commander/e2e_cassettes/
