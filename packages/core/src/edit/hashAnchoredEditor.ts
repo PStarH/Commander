@@ -99,15 +99,6 @@ const ANCHOR_SIGIL = '@';
 /** Replacement separator (Unicode → and ASCII -> both accepted) */
 const REPLACEMENT_SEPS = ['→', '->'];
 
-/** Find the replacement separator position in a string. Returns -1 if not found. */
-function findReplacementSep(line: string): number {
-  for (const sep of REPLACEMENT_SEPS) {
-    const idx = line.indexOf(sep);
-    if (idx !== -1) return idx;
-  }
-  return -1;
-}
-
 /** Get the replacement separator used in a string. Returns '' if not found. */
 function getReplacementSep(line: string): string {
   for (const sep of REPLACEMENT_SEPS) {

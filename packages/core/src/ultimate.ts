@@ -16,7 +16,7 @@ import {
   measureTaskComplexity,
   shouldDecompose,
 } from './index';
-import { HallucinationDetector, getHallucinationDetector } from './hallucinationDetector';
+import { getHallucinationDetector } from './hallucinationDetector';
 
 // ============================================================================
 // 第一部分：自适应编排器 (Adaptive Orchestrator)
@@ -157,7 +157,7 @@ export class AdaptiveOrchestrator {
 
   private allocateTokens(
     mode: OrchestrationMode,
-    complexity: TaskComplexity,
+    _complexity: TaskComplexity,
   ): TokenBudgetAllocation {
     // 基础预算分配
     const baseBudget: TokenBudgetAllocation = {
