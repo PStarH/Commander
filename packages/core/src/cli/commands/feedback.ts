@@ -11,7 +11,7 @@
 import { reportSilentFailure } from '../../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
-import { $, section, kv, bullet, parseFlags } from './_shared';
+import { $, section, kv, parseFlags } from './_shared';
 
 // ============================================================================
 // Feedback storage

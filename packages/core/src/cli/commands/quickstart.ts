@@ -8,8 +8,8 @@
 import { reportSilentFailure } from '../../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
-import { detectProvider, getEffectiveModel, listProviders } from '../../config/commanderConfig';
-import { $, section, kv, bullet, startSpinner } from './_shared';
+import { detectProvider, getEffectiveModel } from '../../config/commanderConfig';
+import { $, section, kv, bullet } from './_shared';
 import { t } from '../i18n';
 
 // ============================================================================
