@@ -407,7 +407,10 @@ export class CostEstimator {
     return Math.min(score, 10);
   }
 
-  private computeComplexityMultiplier(ctx: AgentExecutionContext, _complexityScore: number): number {
+  private computeComplexityMultiplier(
+    ctx: AgentExecutionContext,
+    _complexityScore: number,
+  ): number {
     let multiplier = 1.0;
 
     // Goal length

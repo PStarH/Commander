@@ -237,7 +237,11 @@ export function extractTraceFromEvent(event: { trace?: TraceContext }): TraceCon
 /**
  * Express middleware that sets up trace context for each request.
  */
-export function traceMiddleware(req: IncomingMessage, _res: ServerResponse, next: () => void): void {
+export function traceMiddleware(
+  req: IncomingMessage,
+  _res: ServerResponse,
+  next: () => void,
+): void {
   const rawRequestId = req.headers['x-request-id'] ?? req.requestId ?? crypto.randomUUID();
   const requestId = Array.isArray(rawRequestId) ? rawRequestId[0] : rawRequestId;
   const context = extractTraceFromHeaders(req.headers) ?? createTraceContext(requestId);

@@ -12,7 +12,6 @@ import type {
   HookPoint,
   CommandOpts,
 } from '@commander/plugin-sdk';
-import { getHookManager } from './pluginManager';
 import { getGlobalLogger } from './logging';
 import type { Tool, ToolDefinition } from './runtime/types';
 
@@ -102,9 +101,6 @@ export function createPluginAPI(
   const pluginToolMap = new Map<string, PluginTool>();
   const registeredCommands: RegisteredCommandInfo[] = [];
   const hookHandlers = new Map<HookPoint, Set<Function>>();
-
-  // Track hook handlers for cleanup
-  const hookManager = getHookManager();
 
   const api: CommanderPluginAPI = {
     // ── Tool Registration ──

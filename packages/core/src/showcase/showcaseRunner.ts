@@ -14,7 +14,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { AgentRuntimeInterface } from '../runtime';
-import type { AgentExecutionContext, AgentExecutionResult } from '../runtime/types';
+import type { AgentExecutionContext } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
 
 // ============================================================================
