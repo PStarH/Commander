@@ -17,7 +17,7 @@ git commit --no-verify -m "chore: ignore packages/core/.commander/memory local c
 
 # 2. 文档/CI/根目录
 git add .github/workflows/ci.yml README.md docs/dead-code-and-stubs.md \
-  COMMANDER_MODULE_AUDIT.md COMMANDER_TASK_PACKAGES.md COMMANDER_TASK_PACKAGES_HARD_TO_EASY.md
+  COMMANDER_TASK_PACKAGES.md COMMANDER_TASK_PACKAGES_HARD_TO_EASY.md
 git commit --no-verify -m "docs: update README, CI workflow, and module audit docs"
 
 # 3. apps/api
