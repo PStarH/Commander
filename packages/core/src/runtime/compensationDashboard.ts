@@ -13,7 +13,6 @@
 import type { MessageBus } from './messageBus';
 import type { BusMessage } from './types';
 import { getMetricsCollector } from './metricsCollector';
-import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // Types
@@ -179,7 +178,6 @@ export function renderDashboardHtml(bus: MessageBus): string {
 
   const plannedTotal = data.counters.compensation_planned_total ?? 0;
   const stepsTotal = data.counters.compensation_steps_total ?? 0;
-  const outcomeTotal = data.counters.compensation_total ?? 0;
 
   const eventRows = data.recentEvents
     .map(

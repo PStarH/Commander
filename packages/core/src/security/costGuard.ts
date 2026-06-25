@@ -538,7 +538,7 @@ export class CostGuard {
     reason: string;
     source: string;
   }): CostGuardDecision {
-    const { fromModel, toModel, reason, source } = params;
+    const { fromModel, toModel, reason } = params;
     const fromCost = estimateCost(1000, fromModel, this.config);
     const toCost = estimateCost(1000, toModel, this.config);
 

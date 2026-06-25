@@ -19,11 +19,9 @@
 
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
-import { getSecurityMonitor } from '../security/securityMonitor';
 import { getAuditChainLedger } from '../security/auditChainLedger';
 import {
   getAdaptiveHitl,
-  maxStrategy,
   type HITLStrategy,
   type HITLSignalBundle,
   type HITLDecision,

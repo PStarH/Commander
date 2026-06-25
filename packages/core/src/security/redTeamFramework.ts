@@ -920,7 +920,7 @@ export class RedTeamFramework {
           criticalFindings: report.criticalFindings,
         },
       });
-    } catch (err) {
+    } catch {
       recordSinkFailure('redTeamFramework');
     }
   }

@@ -7,7 +7,6 @@
  * with "not wired" messages (backward compatible).
  */
 import { reportSilentFailure } from '../silentFailureReporter';
-import os from 'os';
 import fs from 'fs';
 import path from 'path';
 

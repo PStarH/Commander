@@ -881,7 +881,7 @@ export class ComplianceAuditManager {
 
     // Gaps
     const gaps: NistRmfAlignmentSummary['gaps'] = [];
-    for (const [func, subcategories] of Object.entries(NIST_RMF_SUBCATEGORIES)) {
+    for (const [, subcategories] of Object.entries(NIST_RMF_SUBCATEGORIES)) {
       const covered = new Set<string>();
       for (const control of this.controls) {
         for (const sub of control.nistSubcategories) {
@@ -1187,7 +1187,6 @@ export class ComplianceAuditManager {
    */
   formatAsMarkdown(report: ComplianceAuditReport): string {
     const lines: string[] = [];
-    const bar = '═'.repeat(68);
 
     lines.push(`# 🔒 Commander Security Compliance Audit Report`);
     lines.push('');
@@ -1658,7 +1657,7 @@ const complianceSingleton = createTenantAwareSingleton(() => new ComplianceAudit
 
 /** Get the global ComplianceAuditManager. */
 export function getComplianceAuditManager(
-  config?: Partial<ComplianceConfig>,
+  _config?: Partial<ComplianceConfig>,
 ): ComplianceAuditManager {
   return complianceSingleton.get();
 }

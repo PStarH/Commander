@@ -501,7 +501,7 @@ export class MLInjectionDetector {
 
 const detectorSingleton = createTenantAwareSingleton(() => new MLInjectionDetector());
 
-export function getMLInjectionDetector(config?: Partial<MLDetectorConfig>): MLInjectionDetector {
+export function getMLInjectionDetector(_config?: Partial<MLDetectorConfig>): MLInjectionDetector {
   return detectorSingleton.get();
 }
 
