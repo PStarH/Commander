@@ -501,7 +501,6 @@ export class DefaultContentScanner implements ContentScanner {
   // ── Semantic manipulation: indirect instructions, roleplay, hypothetical framing ──
   private scanSemanticManipulation(content: string): ContentThreat[] {
     const threats: ContentThreat[] = [];
-    const lowerContent = content.toLowerCase();
 
     for (const pattern of this.semanticManipulationPatterns) {
       pattern.lastIndex = 0;

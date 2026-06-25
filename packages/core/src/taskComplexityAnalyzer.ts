@@ -517,10 +517,6 @@ export class BatchComplexityAnalyzer {
     totalBudget: number;
     parallelGroups: number;
   } {
-    // Find highest complexity
-    const maxScore = Math.max(...scores.map((s) => s.score));
-    const maxLevel = scores.reduce((max, s) => (s.score > max.score ? s : max)).level;
-
     // If any task needs consensus, use consensus for all
     if (scores.some((s) => s.recommendedMode === 'CONSENSUS')) {
       return {

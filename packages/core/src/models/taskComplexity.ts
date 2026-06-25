@@ -131,7 +131,7 @@ function classifyComplexityLevel(
   treewidth: number,
   graphSize: number,
   dependencyDepth: number,
-  opts: Required<TaskComplexityOptions>,
+  _opts: Required<TaskComplexityOptions>,
 ): TaskComplexity['level'] {
   const treewidthScore = treewidth * 2;
   const graphScore = graphSize > 10 ? 2 : graphSize > 5 ? 1 : 0;

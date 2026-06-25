@@ -101,7 +101,7 @@ export class CompensationScheduler {
     return this.runOne(step, context);
   }
 
-  private async runOne(step: CompensableStep, context: SagaContext): Promise<CompensationAttempt> {
+  private async runOne(step: CompensableStep, _context: SagaContext): Promise<CompensationAttempt> {
     if (!step.node.compensate) {
       return { nodeId: step.node.id, success: true, attempts: 0 };
     }

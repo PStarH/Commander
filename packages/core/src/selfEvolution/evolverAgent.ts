@@ -1,7 +1,6 @@
 import type { EvolutionInsight, ExecutionExperience, FailureCategory } from '../runtime/types';
 import type { UltimateOrchestratorConfig, QualityGateConfig } from '../ultimate/types';
 import { getMetaLearner } from './metaLearner';
-import { getGlobalLogger } from '../logging';
 
 // ============================================================================
 // Mutation Types
@@ -236,36 +235,6 @@ const MUTATION_RULES: Record<FailureCategory, MutationRule[]> = {
   ],
   unclassified: [],
 };
-
-// ============================================================================
-// Config access helpers (navigates dot-separated paths in the config object)
-// ============================================================================
-
-function getConfigValue(config: Record<string, unknown>, path: string): unknown {
-  const parts = path.split('.');
-  let current: unknown = config;
-  for (const part of parts) {
-    if (current === null || current === undefined || typeof current !== 'object') return undefined;
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current;
-}
-
-function setConfigValue(config: Record<string, unknown>, path: string, value: unknown): void {
-  const parts = path.split('.');
-  let current: unknown = config;
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (current === null || current === undefined || typeof current !== 'object') return;
-    const next = (current as Record<string, unknown>)[parts[i]];
-    if (next === undefined || next === null || typeof next !== 'object') {
-      (current as Record<string, unknown>)[parts[i]] = {};
-    }
-    current = (current as Record<string, unknown>)[parts[i]];
-  }
-  if (current !== null && current !== undefined && typeof current === 'object') {
-    (current as Record<string, unknown>)[parts[parts.length - 1]] = value;
-  }
-}
 
 // ============================================================================
 // Path resolution helpers for special config structures

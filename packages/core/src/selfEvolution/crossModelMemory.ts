@@ -1,6 +1,6 @@
-import type { ExecutionExperience, PerModelStrategyStats } from '../runtime/types';
+import type { ExecutionExperience } from '../runtime/types';
+import type { PerModelStrategyStats } from '../runtime/types/selfEvolution';
 import { BetaDistribution } from './betaDistribution';
-import { STRATEGY_NAMES } from './strategyConstants';
 
 export class CrossModelMemory {
   /** Per-model, per-strategy Thompson Sampling: Map<modelId, Map<strategyName, BetaDistribution>> */
