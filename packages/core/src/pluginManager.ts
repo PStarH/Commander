@@ -1,6 +1,5 @@
 import { reportSilentFailure } from './silentFailureReporter';
 import type {
-  ToolCall,
   ToolResult,
   LLMRequest,
   LLMResponse,

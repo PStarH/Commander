@@ -61,13 +61,6 @@ export interface ReviewConfig {
 
 const SEVERITY_ORDER: FindingSeverity[] = ['P0', 'P1', 'P2', 'P3'];
 
-const SEVERITY_LABELS: Record<FindingSeverity, string> = {
-  P0: 'Critical',
-  P1: 'High',
-  P2: 'Medium',
-  P3: 'Low',
-};
-
 // ============================================================================
 // Git helpers
 // ============================================================================
@@ -126,7 +119,7 @@ function getGitDiff(scope: ReviewScope, baseRef?: string, commitSha?: string): G
       maxBuffer: 50 * 1024 * 1024,
     });
     files = filesOutput.split('\n').filter(Boolean);
-  } catch (e) {
+  } catch {
     // Git diff may fail if ref doesn't exist — fallback to empty
     files = [];
   }

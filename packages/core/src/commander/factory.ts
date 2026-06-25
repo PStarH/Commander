@@ -7,12 +7,8 @@
  */
 
 import { AgentRuntime } from '../runtime/agentRuntime';
-import { ModelRouter, getModelRouter } from '../runtime/modelRouter';
-import {
-  NullTenantProvider,
-  SimpleTenantProvider,
-  setGlobalTenantProvider,
-} from '../runtime/tenantProvider';
+import { getModelRouter } from '../runtime/modelRouter';
+import { SimpleTenantProvider, setGlobalTenantProvider } from '../runtime/tenantProvider';
 import { getGlobalLogger } from '../logging';
 import { createAllTools } from '../tools/index';
 import type { ResolvedConfig } from './tier';

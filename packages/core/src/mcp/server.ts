@@ -23,7 +23,7 @@ type ToolHandler = (args: Record<string, unknown>) => Promise<MCPToolResult | MC
 type ResourceReader = (uri: string) => Promise<MCPResourceContents[]>;
 type PromptHandler = (args: Record<string, string>) => Promise<GetPromptResult>;
 
-import type { Tool, ToolDefinition } from '../runtime/types';
+import type { Tool } from '../runtime/types';
 
 export interface MCPToolRegistration {
   definition: MCPTool;

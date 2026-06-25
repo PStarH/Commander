@@ -413,7 +413,7 @@ function applyOperations(
   // Sort ops by start line descending (apply from bottom to top)
   const sorted = [...ops].sort((a, b) => b.startLine - a.startLine);
 
-  let result = [...lines];
+  const result = [...lines];
 
   for (const op of sorted) {
     switch (op.type) {
@@ -528,7 +528,7 @@ function applyOperations(
 function applyWithRecovery(
   section: HashlineSection,
   snapshot: FileSnapshot,
-  currentContent: string,
+  _currentContent: string,
 ): HashlineApplyResult {
   const warnings: string[] = [
     `File changed since last read. Applying edits to snapshot version.`,

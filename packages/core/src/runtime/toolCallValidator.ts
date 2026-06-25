@@ -86,12 +86,21 @@ export function validateToolCall(
 
   // Step 2: Check required fields
   for (const field of schema.requiredFields) {
-    if (repaired[field] === undefined || repaired[field] === null) {
+    const value = repaired[field];
+    if (value === undefined || value === null) {
       errors.push({
         path: field,
         message: `required but missing`,
         expectedType: schema.propertyTypes.get(field),
-        actualValue: repaired[field],
+        actualValue: value,
+      });
+    } else if (value === '' || (Array.isArray(value) && value.length === 0)) {
+      // LLMs often send empty strings or empty arrays when they omit a required argument.
+      errors.push({
+        path: field,
+        message: `required but received an empty ${Array.isArray(value) ? 'array' : 'string'}`,
+        expectedType: schema.propertyTypes.get(field),
+        actualValue: value,
       });
     }
   }
