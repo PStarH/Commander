@@ -41,7 +41,11 @@ export class CircuitBreaker {
   private consecutiveSemanticFailures = 0;
   private semanticFailureThreshold = 3;
   private lastSemanticFailureTime = 0;
-  private onSemanticTrip?: (consecutiveFailures: number, reason: string) => void;
+  private onSemanticTrip?: (
+    consecutiveFailures: number,
+    reason: string,
+    ctx?: { runId?: string; toolName?: string },
+  ) => void;
   // Aggregated counters for semantic drift and security events
   private semanticFailureCount = 0;
   private securityEventCount = 0;
@@ -193,16 +197,37 @@ export class CircuitBreaker {
   }
 
   /**
+   * Optional context attached to the LAST recorded semantic failure so
+   * the {@link onSemanticTrip} callback can stamp runId / toolName on
+   * its system.alert emit. Set via the `ctx` argument on
+   * {@link recordSemanticFailure}; cleared by {@link reset} and
+   * superseded on every subsequent semantic failure. Producers that
+   * do not pass ctx (legacy callers) leave both fields undefined and
+   * the system.alert payload will not carry runId — consumers should
+   * tolerate that absence (runId is optional on
+   * SystemAlertSemanticCircuitTrip for back-compat).
+   */
+  private lastSemanticFailureContext: { runId?: string; toolName?: string } | null = null;
+
+  /**
    * Record a semantic/quality failure (e.g., verification failed, hallucination detected).
    * Tracks consecutive failures as a proxy for semantic drift.
-   * When threshold is reached, fires onSemanticTrip callback.
+   * When threshold is reached, fires onSemanticTrip callback with the
+   * recorded `ctx` (if any) so the Hub Glue {@link SemanticCircuitCorrelator}
+   * can correlate the trip with the corresponding `tool.blocked circuit_broken`
+   * event for the same run via the runId-strengthened dedupe key.
    * This is separate from operational failures (network errors, timeouts).
    */
-  recordSemanticFailure(reason: string): void {
+  recordSemanticFailure(reason: string, ctx?: { runId?: string; toolName?: string }): void {
     this.consecutiveSemanticFailures++;
     this.lastSemanticFailureTime = Date.now();
+    this.lastSemanticFailureContext = ctx ?? null;
     if (this.consecutiveSemanticFailures >= this.semanticFailureThreshold) {
-      this.onSemanticTrip?.(this.consecutiveSemanticFailures, reason);
+      this.onSemanticTrip?.(
+        this.consecutiveSemanticFailures,
+        reason,
+        this.lastSemanticFailureContext ?? undefined,
+      );
     }
   }
 
@@ -220,8 +245,22 @@ export class CircuitBreaker {
     };
   }
 
-  /** Set callback for semantic trip events. */
-  setSemanticTripHandler(handler: (consecutiveFailures: number, reason: string) => void): void {
+  /**
+   * Set callback for semantic trip events. The callback receives
+   * `ctx?: { runId?, toolName? }` as a third optional argument —
+   * populated from the most recent {@link recordSemanticFailure} ctx
+   * or undefined if the caller didn't pass context. This lets the
+   * callback include runId + toolName on the system.alert emit so
+   * the Hub Glue {@link SemanticCircuitCorrelator} can correlate with
+   * the corresponding `tool.blocked circuit_broken` event.
+   */
+  setSemanticTripHandler(
+    handler: (
+      consecutiveFailures: number,
+      reason: string,
+      ctx?: { runId?: string; toolName?: string },
+    ) => void,
+  ): void {
     this.onSemanticTrip = handler;
   }
 
@@ -262,6 +301,7 @@ export class CircuitBreaker {
     this.consecutiveSemanticFailures = 0;
     this.semanticFailureCount = 0;
     this.securityEventCount = 0;
+    this.lastSemanticFailureContext = null;
     if (was !== 'CLOSED') this.onStateChange?.(was, 'CLOSED');
   }
 

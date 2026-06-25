@@ -104,6 +104,23 @@ export interface PairConfig {
    * CycleCorrelator semantics.
    */
   readonly ignoreContextKey?: boolean;
+  /**
+   * When `true` (default), the system.alert side MUST carry both
+   * `runId` and `toolName` for {@link PairCorrelator.onSystemAlert} to
+   * register a pending entry at all. Set `false` for retrospective
+   * pairs whose alert side is a system-wide event type (e.g.
+   * `semantic_circuit_trip` from a singleton ReliabilityEngine
+   * {@link CircuitBreaker}) where only `runId` is reliably available
+   * — matching then proceeds by runId alone within the 5s TTL.
+   *
+   * When `false`, the PairCorrelator still REQUIRES runId (the
+   * strongest identity signal, prevents cross-run collapse) but
+   * allows absent toolName. The unified payload still propagates
+   * toolName when present; when absent, the unified emit's
+   * `payload.toolName` field is omitted (BusPayloadMap typed payload
+   * declares toolName as optional for these pairs).
+   */
+  readonly requireToolNameOnAlert?: boolean;
 }
 
 interface PendingPair {
@@ -126,9 +143,29 @@ const pairKey = (
   config: PairConfig,
   runId: string,
   toolName: string,
-  _contextKey: string,
-): string =>
-  config.ignoreContextKey ? `${runId}:${toolName}` : `${runId}:${toolName}:${_contextKey}`;
+  contextKey: string,
+): string => {
+  // Config-flag-driven key derivation.
+  //   ignoreContextKey=false (default): 3-tuple exact match.
+  //   ignoreContextKey=true + requireToolNameOnAlert=true: 2-tuple
+  //     (runId+toolName) when toolNames available on BOTH sides.
+  //   ignoreContextKey=true + requireToolNameOnAlert=false: 1-tuple
+  //     (runId only) — used for retrospective pairs whose alert side
+  //     (e.g. singleton ReliabilityEngine emits) lacks a clean tool
+  //     reference. The toolName arg on either side is irrelevant and
+  //     not included in the key. The 1-tuple mode ALSO subsumes the
+  //     requireToolNameOnAlert branch when toolName is empty/absent
+  //     on one side, so a future publisher without toolName still
+  //     matches a peer that DOES carry toolName — the strongest
+  //     available tiebreaker is runId alone within the 5s TTL.
+  if (config.ignoreContextKey && config.requireToolNameOnAlert === false) {
+    return `${runId}`;
+  }
+  if (config.ignoreContextKey) {
+    return `${runId}:${toolName}`;
+  }
+  return `${runId}:${toolName}:${contextKey}`;
+};
 
 /**
  * Lightweight log helper that defers to the bus's structured logger when
@@ -222,12 +259,19 @@ export class PairCorrelator {
         ? (payload[this.config.alertContextKeyField] as string)
         : '';
     if (this.config.ignoreContextKey) {
-      // 2-tuple mode: still capture ctxValue (carried as info-only in
-      // the pending entry), but the match key is runId+toolName.
-      // Empty-skipped: if either runId or toolName is missing, the key
-      // would collapse multiple runs — reject the leading edge rather
-      // than risk a cross-run false-correlation.
-      if (!runId || !toolName) return;
+      // 2-tuple mode (default requireToolNameOnAlert=true): match by
+      // runId+toolName; ctxValue is INFO-ONLY.
+      if (this.config.requireToolNameOnAlert !== false) {
+        if (!runId || !toolName) return;
+      } else {
+        // requireToolNameOnAlert=false: match by runId alone; toolName
+        // is OPTIONAL. Strengthens the third Tier-0 correlator
+        // (semantic_circuit_correlated) where the singleton
+        // ReliabilityEngine emits system.alert without a clean tool
+        // ref. runId is still required so cross-run collapse can't
+        // happen.
+        if (!runId) return;
+      }
     } else {
       if (!runId || !toolName || !ctxValue) return;
     }
@@ -269,12 +313,17 @@ export class PairCorrelator {
 
   private fireUnified(runId: string, toolName: string, contextKey: string): void {
     // Build payload dynamically to support per-config unifiedContextField.
+    // `toolName` is omitted when undefined so consumers of pairs whose
+    // alert side lacks toolName (SemantiCircuitCorrelator's
+    // requireToolNameOnAlert=false path) don't see a misleading empty
+    // string. BusPayloadMap typed payloads for these pairs declare
+    // toolName as optional.
     const payload: Record<string, unknown> = {
       runId,
-      toolName,
       sourceEvents: ['system.alert', 'tool.blocked'] as ['system.alert', 'tool.blocked'],
       correlatedAt: new Date().toISOString(),
     };
+    if (toolName) payload.toolName = toolName;
     payload[this.config.unifiedContextField] = contextKey;
     safeEmit(this.config.unifiedTopic, payload);
   }
