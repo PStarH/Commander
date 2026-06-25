@@ -2,12 +2,6 @@ import type { LLMProvider, LLMRequest, LLMResponse } from '../types';
 import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
 
-interface OpenRouterCompletionUsage {
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-}
-
 export class OpenRouterProvider implements LLMProvider {
   readonly name = 'openrouter';
   private apiKey: string;

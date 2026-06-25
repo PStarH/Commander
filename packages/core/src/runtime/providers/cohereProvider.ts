@@ -1,5 +1,4 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types';
-import { getGlobalLogger } from '../../logging';
 
 interface CohereContent {
   type: 'text';
@@ -21,11 +20,6 @@ interface CohereToolCall {
   id: string;
   type: 'function';
   function: { name: string; arguments: Record<string, unknown> };
-}
-
-interface CohereUsage {
-  input_tokens: number;
-  output_tokens: number;
 }
 
 /**

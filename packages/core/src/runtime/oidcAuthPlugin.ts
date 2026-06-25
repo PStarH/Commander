@@ -31,7 +31,6 @@ import * as https from 'https';
 import { getGlobalLogger } from '../logging';
 import { getSecurityAuditLogger } from '../security/securityAuditLogger';
 import type { AuthRole } from './authManager';
-import { ROLE_HIERARCHY } from './authManager';
 
 // ============================================================================
 // Types

@@ -350,7 +350,7 @@ export class ExecutionTraceRecorder {
     }
 
     // Re-fetch after potential fallback creation
-    const finalTrace = this.traces.get(runId)!;
+    this.traces.get(runId)!;
 
     return {
       spanId,

@@ -25,6 +25,7 @@ import type {
   RedTeamTestResult,
   RedTeamRunReport,
 } from './redTeamFramework';
+import type { LLMMessage } from '../runtime/types';
 
 const ALL_CATEGORIES: AttackCategory[] = [
   'prompt_injection',
@@ -120,7 +121,7 @@ async function generateAdversarialPayload(
 
   const response = await provider.call({
     model: 'step-3.7-flash',
-    messages: messages as any,
+    messages: messages as LLMMessage[],
     maxTokens: 1024,
     temperature: 0.9,
     cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },

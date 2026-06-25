@@ -216,7 +216,6 @@ class LSPClient {
     const diagnostics = this.getFileDiagnostics(filePath);
     if (diagnostics.length === 0) return content;
 
-    const lines = content.split('\n');
     const errors: string[] = [];
     const warnings: string[] = [];
 

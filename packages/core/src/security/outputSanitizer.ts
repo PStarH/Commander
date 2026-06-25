@@ -679,7 +679,7 @@ export class OutputSanitizer {
           tenantId: getCurrentTenantId(),
         },
       });
-    } catch (err) {
+    } catch {
       recordSinkFailure('outputSanitizer');
     }
   }

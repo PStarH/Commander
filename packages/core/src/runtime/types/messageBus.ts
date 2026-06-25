@@ -99,6 +99,204 @@ export type MessageBusTopic =
  */
 export type MessagePriority = 'low' | 'normal' | 'high' | 'critical';
 
+// ============================================================================
+// system.alert — discriminated-union variant taxonomy
+//
+// Each variant carries `type: '<literal>'` as the discriminant. Producers
+// (agentRuntime.ts, orchestrator.ts, compensationService.ts, regressionGate.ts,
+// swarmOrchestrator.ts, toolExecutionService.ts) emit these literal-level
+// discriminated payloads. Consumers (Hub Glue handlers in Phase 2) do
+// `switch (payload.type)` with a `never`-guard default to enforce exhaustive
+// coverage at compile time.
+//
+// Adding a new variant: declare a new `SystemAlertXxx extends SystemAlertBase`
+// interface, then add it to the `SystemAlertVariant` union below. Every
+// `switch (payload.type)` consumer will fail to compile until it handles the
+// new variant (the `never` guard surfaces this loudly).
+// ============================================================================
+
+interface SystemAlertBase {
+  /** Discriminant — every system.alert payload carries one of these literals. */
+  readonly type: string;
+}
+
+export interface SystemAlertSemanticCircuitTrip extends SystemAlertBase {
+  type: 'semantic_circuit_trip';
+  consecutiveFailures: number;
+  reason: string;
+}
+
+export interface SystemAlertRetryLoopDetected extends SystemAlertBase {
+  type: 'retry_loop_detected';
+  toolName: string;
+  pattern: string;
+  consecutiveCalls: number;
+  // Every observed producer (agentRuntime.checkRetryLoop) emits toolLoopCount.
+  toolLoopCount: number;
+}
+
+export interface SystemAlertBatchRoutingSelected extends SystemAlertBase {
+  type: 'batch_routing_selected';
+  model: string;
+  provider: string;
+  tier: string;
+  // agentRuntime writes `$${cost}` — every emission includes this; required.
+  estimatedSavings: string;
+}
+
+export interface SystemAlertPrivacyRoutingLocal extends SystemAlertBase {
+  type: 'privacy_routing_local';
+  originalModel: string;
+  routedModel: string;
+  provider: string;
+  // privacyRouter.decision.matches.length — every emission has this; required.
+  matchCount: number;
+}
+
+export interface SystemAlertToolProvisioned extends SystemAlertBase {
+  type: 'tool_provisioned';
+}
+
+export interface SystemAlertTokenUsageAnomaly extends SystemAlertBase {
+  type: 'token_usage_anomaly';
+  // Spread from anomalyDetector.checkForAnomaly() result; allow additional
+  // fields permissively because the producer spreads a dynamic record.
+  [key: string]: unknown;
+}
+
+export interface SystemAlertStagnation extends SystemAlertBase {
+  type: 'stagnation';
+  similarity: number;
+  runId: string;
+  agentId: string;
+  stepNumber: number;
+}
+
+export interface SystemAlertEntropyGate extends SystemAlertBase {
+  type: 'entropy_gate';
+  reason: string;
+}
+
+export interface SystemAlertCycleDetected extends SystemAlertBase {
+  type: 'cycle_detected';
+  toolName: string;
+  description: string;
+}
+
+export interface SystemAlertToolOutputInjectionBlocked extends SystemAlertBase {
+  type: 'tool_output_injection_blocked';
+  reason: string;
+  // toolCallId is emitted from contentScanner callers but not all sites —
+  // declared optional so union matches every observed shape.
+  toolCallId?: string;
+}
+
+export interface SystemAlertToolOutputSanitized extends SystemAlertBase {
+  type: 'tool_output_sanitized';
+  categories: string[];
+  toolCallId?: string;
+}
+
+export interface SystemAlertSlidingWindowSolidify extends SystemAlertBase {
+  type: 'sliding_window_solidify';
+  turnsSolidified: number;
+  tokensFreed: number;
+}
+
+export interface SystemAlertSlidingWindowApplied extends SystemAlertBase {
+  type: 'sliding_window_applied';
+  turnsDropped: number;
+  tokensFreed: number;
+}
+
+export interface SystemAlertSlidingWindowRetrieval extends SystemAlertBase {
+  type: 'sliding_window_retrieval';
+  entriesRetrieved: number;
+  injectedTokens: number;
+}
+
+export interface SystemAlertContextCompaction extends SystemAlertBase {
+  type: 'context_compaction';
+  layer: string;
+  droppedCount: number;
+  tokensSaved: number;
+}
+
+export interface SystemAlertCascadeEscalation extends SystemAlertBase {
+  type: 'cascade_escalation';
+  from: string;
+  to: string;
+}
+
+export interface SystemAlertContentThreatBlocked extends SystemAlertBase {
+  type: 'content_threat_blocked';
+  threats: string[];
+  riskScore: number;
+}
+
+export interface SystemAlertCompensationSagaThrew extends SystemAlertBase {
+  type: 'compensation_saga_threw';
+  error: string;
+  totalSteps: number;
+  runId: string;
+}
+
+export interface SystemAlertNonReversibleTool extends SystemAlertBase {
+  type: 'non_reversible_tool';
+  tool: string;
+  runId: string;
+  agentId: string;
+}
+
+export interface SystemAlertEvolutionApplied extends SystemAlertBase {
+  type: 'evolution_applied';
+  applied: number;
+  details: string[];
+}
+
+export interface SystemAlertFusionConflicts extends SystemAlertBase {
+  type: 'fusion_conflicts';
+  round: number;
+  conflictCount: number;
+}
+
+export interface SystemAlertRegressionDetected extends SystemAlertBase {
+  type: 'regression_detected';
+  strategy: string;
+  modelId: string;
+  dropRatio: number;
+}
+
+/**
+ * Discriminated union of every system.alert sub-event variant observed in
+ * production code (Phase 2 catalog, June 2026). Used as
+ * `BusPayloadMap['system.alert']` so Hub Glue handlers can `switch` on
+ * `payload.type` with compile-time exhaustiveness checks.
+ */
+export type SystemAlertVariant =
+  | SystemAlertSemanticCircuitTrip
+  | SystemAlertRetryLoopDetected
+  | SystemAlertBatchRoutingSelected
+  | SystemAlertPrivacyRoutingLocal
+  | SystemAlertToolProvisioned
+  | SystemAlertTokenUsageAnomaly
+  | SystemAlertStagnation
+  | SystemAlertEntropyGate
+  | SystemAlertCycleDetected
+  | SystemAlertToolOutputInjectionBlocked
+  | SystemAlertToolOutputSanitized
+  | SystemAlertSlidingWindowSolidify
+  | SystemAlertSlidingWindowApplied
+  | SystemAlertSlidingWindowRetrieval
+  | SystemAlertContextCompaction
+  | SystemAlertCascadeEscalation
+  | SystemAlertContentThreatBlocked
+  | SystemAlertCompensationSagaThrew
+  | SystemAlertNonReversibleTool
+  | SystemAlertEvolutionApplied
+  | SystemAlertFusionConflicts
+  | SystemAlertRegressionDetected;
+
 /**
  * Per-topic payload type map.
  * Each known topic declares what shape its payload has.
@@ -149,7 +347,7 @@ export interface BusPayloadMap {
   };
   'memory.written': { layer: string; content: string; tags?: string[] };
   'skills.created': { skills: string[]; execId: string };
-  'system.alert': { level: 'info' | 'warn' | 'error'; message: string; detail?: string };
+  'system.alert': SystemAlertVariant;
   'tool.executed': { name: string; durationMs: number; success: boolean };
   'tool.started': { name: string };
   'tool.completed': { name: string; durationMs: number };

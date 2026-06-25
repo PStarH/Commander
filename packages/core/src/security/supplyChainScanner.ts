@@ -26,11 +26,7 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
 import { getAuditChainLedger } from './auditChainLedger';
-import {
-  scanSkillContent,
-  SecurityScanResult,
-  SecurityWarning,
-} from '../skills/skillSecurityScanner';
+import { scanSkillContent, SecurityScanResult } from '../skills/skillSecurityScanner';
 import { getCurrentTenantId } from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { recordSinkFailure } from '../observability/sinkFailureCounter';
@@ -676,7 +672,7 @@ export class SupplyChainScanner {
         },
         context: { tenantId: getCurrentTenantId() },
       });
-    } catch (err) {
+    } catch {
       recordSinkFailure('supplyChainScanner');
     }
   }

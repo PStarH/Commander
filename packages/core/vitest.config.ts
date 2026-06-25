@@ -41,6 +41,7 @@ export default defineConfig({
       'tests/runtime/owaspAsiHttpRoute.test.ts',
       'tests/runtime/siemForwarder.test.ts',
       'tests/runtime/localEmbedding.test.ts',
+      'tests/runtime/messageBus.test.ts',
       'tests/runtime/metaLearner.test.ts',
       'tests/runtime/metaTool.test.ts',
       'tests/runtime/metricsCollector.test.ts',
