@@ -227,7 +227,11 @@ describe('Tool Lifecycle Events', () => {
     msgBus.publish('tool.completed', 'agent-1', { toolName: 'test' });
     msgBus.publish('tool.timeout', 'agent-1', { toolName: 'test' });
     msgBus.publish('tool.retry', 'agent-1', { toolName: 'test' });
-    msgBus.publish('tool.blocked', 'agent-1', { runId: 'r', toolName: 'test', reason: 'not_allowed' });
+    msgBus.publish('tool.blocked', 'agent-1', {
+      runId: 'r',
+      toolName: 'test',
+      reason: 'not_allowed',
+    });
 
     const eventText = events.join(' ');
     assert.ok(

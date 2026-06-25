@@ -183,6 +183,14 @@ export interface SystemAlertCycleDetected extends SystemAlertBase {
   type: 'cycle_detected';
   toolName: string;
   description: string;
+  /**
+   * Optional now, populated by all current producers (agentRuntime.ts:2388+
+   * and :2563+). The Hub Glue {@link CycleCorrelator} uses runId in its
+   * dedup key so it can distinguish concurrent runs that both trigger the
+   * same cycle-detect gate. Optional defensively for backward compatibility
+   * with any future publisher that emits cycle_detected without runId.
+   */
+  readonly runId?: string;
 }
 
 export interface SystemAlertToolOutputInjectionBlocked extends SystemAlertBase {
