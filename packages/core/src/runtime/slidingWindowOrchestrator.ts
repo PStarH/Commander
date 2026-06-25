@@ -377,7 +377,6 @@ export class SlidingWindowOrchestrator {
 
     // Calculate how many messages we're dropping
     const droppedMessages = turnsToDrop.flat();
-    const tokensBefore = estimateMessagesTokens(messages);
     const tokensFreed = estimateMessagesTokens(droppedMessages);
 
     // Build the new message array: system messages + kept messages

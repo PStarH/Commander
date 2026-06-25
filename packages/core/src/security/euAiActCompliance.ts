@@ -19,7 +19,7 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import { AuditChainLedger, getAuditChainLedger } from './auditChainLedger';
+import { getAuditChainLedger } from './auditChainLedger';
 import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getSecurityMonitor } from './securityMonitor';
 import { getGlobalLogger } from '../logging';

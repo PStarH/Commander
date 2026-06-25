@@ -61,7 +61,7 @@ export class WorkflowPopulation {
   initializeFromTaskTree(
     taskType: string,
     existingTree: TaskTreeNode,
-    availableNodes: WorkflowNode[],
+    _availableNodes: WorkflowNode[],
   ): void {
     this.individuals = [];
     this.generation = 0;

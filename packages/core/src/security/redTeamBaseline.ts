@@ -615,7 +615,7 @@ export class RedTeamBaselineManager {
 const baselineSingleton = createTenantAwareSingleton(() => new RedTeamBaselineManager());
 
 /** Get the global RedTeamBaselineManager. */
-export function getRedTeamBaseline(config?: Partial<BaselineConfig>): RedTeamBaselineManager {
+export function getRedTeamBaseline(_config?: Partial<BaselineConfig>): RedTeamBaselineManager {
   return baselineSingleton.get();
 }
 
