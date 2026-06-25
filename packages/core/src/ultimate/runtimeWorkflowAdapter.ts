@@ -259,17 +259,6 @@ class WorkflowAdapter {
 // 执行时管道
 // ============================================================================
 
-interface StageConfig {
-  /** 阶段名称 */
-  name: string;
-  /** 阶段超时时间 */
-  timeoutMs: number;
-  /** 最大重试次数 */
-  maxRetries: number;
-  /** 最小成功率阈值，低于此则触发重新规划 */
-  minSuccessRate: number;
-}
-
 export interface AdaptiveExecutionResult {
   finalResult: AgentExecutionResult;
   taskState: TaskState;

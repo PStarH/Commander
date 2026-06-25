@@ -9,9 +9,8 @@
  * Reference: research-notes.md - Multi-Agent Orchestration Patterns (2026-04-09)
  */
 
-import type { CommanderAgentCard, CommanderRunContextV2 } from '../index';
+import type { CommanderRunContextV2 } from '../index';
 import type { MultiAgentStrategy, TaskComplexity } from '../index';
-import { measureTaskComplexity, shouldDecompose } from '../index';
 
 /**
  * Carrier for retry/breaker routing. Lets a pipeline builder attach the
