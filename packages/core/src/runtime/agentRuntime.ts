@@ -363,12 +363,20 @@ export class AgentRuntime implements AgentRuntimeInterface {
     // threshold, publish an alert and enqueue a dead-letter entry for operator
     // review. This enables operators to detect systemic quality degradation
     // (e.g., a model version regression) vs. isolated operational errors.
-    this.circuitBreaker.setSemanticTripHandler((consecutiveFailures, reason) => {
+    this.circuitBreaker.setSemanticTripHandler((consecutiveFailures, reason, ctx) => {
       const bus = getMessageBus();
+      // Phase 2 Hub Glue / SemanticCircuitCorrelator:
+      // `ctx?.runId` is populated when verification-failure recordSemanticFailure
+      // calls carry runId + toolName from `execute()`'s loop. We also fall back
+      // to `this.ledgerCtx?.runId` (the AgentRuntime's per-run ledger context)
+      // so the unified event emit can still correlate with the resulting
+      // `tool.blocked circuit_broken` for the originating run.
       bus.publish('system.alert', 'runtime', {
         type: 'semantic_circuit_trip',
         consecutiveFailures,
         reason,
+        runId: ctx?.runId ?? this.ledgerCtx?.runId,
+        ...(ctx?.toolName ? { toolName: ctx.toolName } : {}),
       });
       try {
         this.dlq.enqueue({
@@ -3493,6 +3501,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
               if (!verifReport.passed) {
                 this.circuitBreaker.recordSemanticFailure(
                   `verification_failed: ${(verifReport.signals[0] && ((verifReport.signals[0] as { type?: string }).type ?? (verifReport.signals[0] as { name?: string }).name)) || 'unknown'}`,
+                  // Phase 2 Hub Glue / SemanticCircuitCorrelator: stamp the
+                  // current runId so the semantic_circuit_trip callback can
+                  // correlate with the corresponding `tool.blocked circuit_broken`
+                  // via the runId-strengthened 1-tuple key. toolName is intentionally
+                  // OMITTED — see pairCorrelator.ts requireToolNameOnAlert:false.
+                  { runId },
                 );
               } else {
                 this.circuitBreaker.recordSemanticSuccess();

@@ -116,6 +116,7 @@ export default defineConfig({
       'tests/hub/toolBlockedHandler.test.ts',
       'tests/hub/retryHookCorrelator.test.ts',
       'tests/hub/retryHookCorrelator.test.ts',
+      'tests/hub/semanticCircuitCorrelator.test.ts',
 
       // --- storage ---
       'tests/storage/dataRetention.test.ts',
