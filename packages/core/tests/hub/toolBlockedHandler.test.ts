@@ -2,18 +2,25 @@
  * Hub Glue: tool.blocked handler — Phase 2 / cycle_correlated dedupe
  *
  * What this test covers:
- *   1. Cycle dedupe — system.alert `cycle_detected` + tool.blocked
- *      `cycle_detected` fired in sequence from the same gate at
- *      agentRuntime.ts:2388 / :2563 collapse into ONE
+ *   1. Cycle dedupe (runId-bearing) — system.alert `cycle_detected` +
+ *      tool.blocked `cycle_detected` fired in sequence from the same gate
+ *      at agentRuntime.ts:2388+ / :2563+ collapse into ONE
  *      `runtime.cycle_correlated` event with `sourceEvents: ['system.alert',
- *      'tool.blocked']`.
+ *      'tool.blocked']`. Both producers now stamp `runId` on the cycle
+ *      payload (added June 2026 to close the concurrent-run false-positive
+ *      window).
  *   2. Reversed-order dedupe — if hand-order changes (e.g. tool.blocked
  *      fires first), the correlator still matches the pair.
- *   3. security_orchestrator_denied routes to security.policy_denied with
+ *   3. Concurrent-run isolation — two distinct runIds firing the same
+ *      toolName+description within the 5s TTL produce TWO separate
+ *      unified events (not a false-collapsed one). This is the regression
+ *      test for the documented false-positive window that motivated the
+ *      runId-strengthened key.
+ *   4. security_orchestrator_denied routes to security.policy_denied with
  *      a real agentId (surfaces the bus source as agentId).
- *   4. Atomic denials (hook_denied here) feed the `tool_blocked_total`
+ *   5. Atomic denials (hook_denied here) feed the `tool_blocked_total`
  *      metric counter with a `reason` tag.
- *   5. Stale-pending pruning — entries older than 5s are dropped on
+ *   6. Stale-pending pruning — entries older than 5s are dropped on
  *      `pruneNow()` without emitting a unified event.
  *
  * Notes:
@@ -63,11 +70,14 @@ function publishCycleAlert(
   toolName: string,
   description: string,
   source = 'runtime',
+  /** Optional — must match the tool.blocked runId to dedupe-pair. */
+  runId?: string,
 ): void {
   bus.publish('system.alert', source, {
     type: 'cycle_detected',
     toolName,
     description,
+    ...(runId !== undefined ? { runId } : {}),
   });
 }
 
@@ -93,7 +103,7 @@ describe('Hub Glue: tool.blocked handler — Phase 2 cycle dedupe', () => {
     resetMessageBus();
   });
 
-  it('correlates system.alert cycle_detected + tool.blocked cycle_detected into ONE runtime.cycle_correlated event', () => {
+  it('correlates system.alert cycle_detected + tool.blocked cycle_detected (same runId) into ONE runtime.cycle_correlated event', () => {
     const received: Array<{
       topic: MessageBusTopic;
       payload: Record<string, unknown>;
@@ -108,8 +118,10 @@ describe('Hub Glue: tool.blocked handler — Phase 2 cycle dedupe', () => {
       const runId = 'run-X';
       const toolName = 'shell_execute';
       const description = 'cycle description';
-      // Mirror agentRuntime.ts:2388 → 2396 ordering.
-      publishCycleAlert(bus, toolName, description);
+      // Mirror agentRuntime.ts:2388+ → 2396+ ordering. Both sites now
+      // stamp runId (added June 2026 for Hub Glue CycleCorrelator
+      // disambiguation).
+      publishCycleAlert(bus, toolName, description, 'runtime', runId);
       publishCycleBlocked(bus, runId, toolName, description);
 
       expect(received).toHaveLength(1);
@@ -125,7 +137,37 @@ describe('Hub Glue: tool.blocked handler — Phase 2 cycle dedupe', () => {
     }
   });
 
-  it('handles reversed-order publish (tool.blocked before system.alert) without double-emitting', () => {
+  it('handles reversed-order publish (tool.blocked before system.alert, same runId) without double-emitting', () => {
+    const received: Array<{
+      topic: MessageBusTopic;
+      payload: Record<string, unknown>;
+    }> = [];
+    const unsub = bus.subscribe('runtime.cycle_correlated', (msg: BusMessage) => {
+      received.push({
+        topic: msg.topic,
+        payload: msg.payload as Record<string, unknown>,
+      });
+    });
+    try {
+      const runId = 'run-R';
+      const toolName = 'python_execute';
+      const description = 'reversed-order cycle';
+      // tool.blocked first — analog of a future publisher emitting in
+      // the opposite order; we want exactly one unified emit, not zero,
+      // not two. runId must match across both sides for the keys to
+      // align (the strengthened key is `${runId}:${toolName}:${description}`).
+      publishCycleBlocked(bus, runId, toolName, description);
+      publishCycleAlert(bus, toolName, description, 'runtime', runId);
+
+      expect(received).toHaveLength(1);
+      expect(received[0].payload.runId).toBe(runId);
+      expect(getCycleCorrelator().getPendingCount()).toBe(0);
+    } finally {
+      unsub();
+    }
+  });
+
+  it('emits TWO separate runtime.cycle_correlated events for concurrent runs hitting the same tool/description (runId disambiguation regression test)', () => {
     const received: Array<{
       topic: MessageBusTopic;
       payload: Record<string, unknown>;
@@ -138,14 +180,25 @@ describe('Hub Glue: tool.blocked handler — Phase 2 cycle dedupe', () => {
     });
     try {
       const toolName = 'python_execute';
-      const description = 'reversed-order cycle';
-      // tool.blocked first — analog of a future publisher emitting in the
-      //  opposite order; we want exactly one unified emit, not zero, not two.
-      publishCycleBlocked(bus, 'run-R', toolName, description);
-      publishCycleAlert(bus, toolName, description);
+      const description = 'concurrent-run collision';
+      // Two concurrent runs both trigger CycleDetector with identical
+      // tool+args. Before the runId-strengthened key, they would have
+      // FALSE-CORRELATED into a single misleading unified event.
+      // Each run now has its own key (`run-1:tool:desc` vs
+      // `run-2:tool:desc`), so each pair collapses independently.
+      publishCycleAlert(bus, toolName, description, 'runtime', 'run-1');
+      publishCycleBlocked(bus, 'run-1', toolName, description);
+      publishCycleAlert(bus, toolName, description, 'runtime', 'run-2');
+      publishCycleBlocked(bus, 'run-2', toolName, description);
 
-      expect(received).toHaveLength(1);
-      expect(received[0].payload.runId).toBe('run-R');
+      expect(received).toHaveLength(2);
+      const runIds = received.map((r) => r.payload.runId).sort();
+      expect(runIds).toEqual(['run-1', 'run-2']);
+      for (const evt of received) {
+        expect(evt.payload.toolName).toBe(toolName);
+        expect(evt.payload.description).toBe(description);
+        expect(evt.payload.sourceEvents).toEqual(['system.alert', 'tool.blocked']);
+      }
       expect(getCycleCorrelator().getPendingCount()).toBe(0);
     } finally {
       unsub();
@@ -203,7 +256,7 @@ describe('Hub Glue: tool.blocked handler — Phase 2 cycle dedupe', () => {
     const description = 'stale-pending';
     // Register only the leading edge (system.alert) — no matching
     // tool.blocked yet, so pending stays full.
-    publishCycleAlert(bus, toolName, description);
+    publishCycleAlert(bus, toolName, description, 'runtime', 'run-stale');
     const pendingBefore = getCycleCorrelator().getPendingCount();
     expect(pendingBefore).toBe(1);
 
