@@ -14,10 +14,10 @@
  * - PlanTracker (Codex plan mode)
  */
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as fs from 'fs';
+import * as fs from 'node:fs';
 import * as fsp from 'fs/promises';
-import * as path from 'path';
-import * as os from 'os';
+import * as path from 'node:path';
+import * as os from 'node:os';
 import { safePath } from '../tools/fileSystemTool';
 import type {
   HarnessEvent,

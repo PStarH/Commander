@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process';
+import { execFileSync } from 'node:child_process';
 import type { ExecutionBackend, SandboxExecutionResult } from '../types';
 import { getSandboxManager } from '../manager';
 

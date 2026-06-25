@@ -1,8 +1,8 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../runtime/types';
-import { execFileSync } from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
+import { execFileSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { execSandboxed } from './sandboxedExec';
 import { getGlobalLogger } from '../logging';
 import { safePath } from './fileSystemTool';

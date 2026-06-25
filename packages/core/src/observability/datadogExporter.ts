@@ -1,5 +1,5 @@
 import type { ExecutionTrace, TraceEvent } from '../runtime/types';
-import * as https from 'https';
+import * as https from 'node:https';
 import { getGlobalLogger } from '../logging';
 
 interface DatadogSpan {
