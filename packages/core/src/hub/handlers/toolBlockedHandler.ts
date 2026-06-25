@@ -31,8 +31,7 @@ import type { BusMessage } from '../../runtime/types';
 import type { ToolBlockedVariant } from '../../runtime/types/messageBus';
 import { getCycleCorrelator } from './cycleCorrelator';
 import { getRetryHookCorrelator } from './retryHookCorrelator';
-
-const HUB_GLUE_SOURCE = 'hub-glue';
+import { HUB_GLUE_SOURCE } from './pairCorrelator';
 
 function routeByReason(payload: ToolBlockedVariant, sourceAgentId: string): void {
   switch (payload.reason) {
