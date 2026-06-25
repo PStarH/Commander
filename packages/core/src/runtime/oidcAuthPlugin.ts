@@ -26,8 +26,8 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as crypto from 'crypto';
-import * as https from 'https';
+import * as crypto from 'node:crypto';
+import * as https from 'node:https';
 import { getGlobalLogger } from '../logging';
 import { getSecurityAuditLogger } from '../security/securityAuditLogger';
 import type { AuthRole } from './authManager';

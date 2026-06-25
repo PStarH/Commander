@@ -8,7 +8,7 @@
  *   Remote Agent → HTTP POST / → A2A JSON-RPC → A2AServer → AgentRuntimeInterface → Response
  */
 import { reportSilentFailure } from '../silentFailureReporter';
-import { createServer, IncomingMessage, ServerResponse } from 'http';
+import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import type { AgentRuntimeInterface } from '../runtime';
 import type {
   A2AAgentCard,

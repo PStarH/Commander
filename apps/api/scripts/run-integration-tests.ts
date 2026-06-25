@@ -5,7 +5,7 @@
  * Builds the API, starts the server on a free port, runs the TypeScript
  * integration tests in apps/api/tests, then shuts the server down.
  */
-import { reportSilentFailure } from '../../../packages/core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import * as path from 'node:path';

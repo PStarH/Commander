@@ -29,7 +29,7 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as crypto from 'crypto';
+import * as crypto from 'node:crypto';
 import { getGlobalLogger } from '../logging';
 
 // ============================================================================

@@ -1,8 +1,8 @@
 import { reportSilentFailure } from '../../silentFailureReporter';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as http from 'http';
-import { spawn } from 'child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as http from 'node:http';
+import { spawn } from 'node:child_process';
 import { getConfigResolver } from '../../config/configResolver';
 import { getMetricsCollector } from '../../runtime/metricsCollector';
 import { $, section } from './_shared';

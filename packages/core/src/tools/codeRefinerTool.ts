@@ -2,7 +2,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSandboxed } from './sandboxedExec';
 import { safePath } from './fileSystemTool';
-import * as fs from 'fs';
+import * as fs from 'node:fs';
 
 const DEFINITION: ToolDefinition = {
   name: 'refine_code',
