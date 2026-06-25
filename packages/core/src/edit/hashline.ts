@@ -18,7 +18,7 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as fs from 'fs';
+import * as fs from 'node:fs';
 import { computeFileHash, getSnapshotStore, type FileSnapshot } from './snapshotStore';
 
 // ============================================================================

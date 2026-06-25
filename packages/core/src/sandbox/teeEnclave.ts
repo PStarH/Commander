@@ -25,10 +25,10 @@ import { reportSilentFailure } from '../silentFailureReporter';
  *   - NIST SP 800-190 (container security) / FIPS 140-3
  */
 
-import * as os from 'os';
-import * as fs from 'fs';
-import * as path from 'path';
-import { execSync, spawn } from 'child_process';
+import * as os from 'node:os';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { execSync, spawn } from 'node:child_process';
 import type { PlatformSandbox, SandboxProfile, SandboxExecutionResult } from './types';
 import { getGlobalLogger } from '../logging';
 

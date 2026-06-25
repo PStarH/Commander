@@ -17,7 +17,7 @@ import type {
   MCPInitializeResult,
   MCPServerCapabilities,
 } from './types';
-import { ChildProcess } from 'child_process';
+import { ChildProcess } from 'node:child_process';
 import { getGlobalLogger } from '../logging';
 
 function uuid(): string {

@@ -6,7 +6,7 @@
  *  commander checkpoint --prune N    Keep only the N newest checkpoints
  */
 
-import * as path from 'path';
+import * as path from 'node:path';
 import { getCheckpointWriter } from '../../runtime/checkpointWriter';
 
 export async function cmdCheckpoint(args: string[]): Promise<void> {

@@ -22,9 +22,9 @@ import { reportSilentFailure } from '../silentFailureReporter';
  * ), so tenant A cannot reclaim tenant B's lease.
  */
 
-import { createHash, randomUUID } from 'crypto';
-import { mkdirSync } from 'fs';
-import { dirname } from 'path';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { RunLease } from './types';
 import { getGlobalLogger } from '../logging';
 

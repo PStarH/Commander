@@ -25,9 +25,9 @@ import { reportSilentFailure } from '../silentFailureReporter';
  * tenant's run records are physically isolated.
  */
 
-import { randomUUID } from 'crypto';
-import { mkdirSync } from 'fs';
-import { dirname } from 'path';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { CompensableAction, RunState, RunTransaction } from './types';
 import { LeaseManager, type AcquireResult } from './leaseManager';
 import { IdempotencyStore, getIdempotencyStore } from './idempotencyStore';

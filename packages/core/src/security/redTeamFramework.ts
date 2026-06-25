@@ -26,7 +26,7 @@
  * └────────────────────────────────────────────────────────────────────┘
  */
 
-import * as crypto from 'crypto';
+import * as crypto from 'node:crypto';
 import { getAuditChainLedger } from './auditChainLedger';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { recordSinkFailure } from '../observability/sinkFailureCounter';

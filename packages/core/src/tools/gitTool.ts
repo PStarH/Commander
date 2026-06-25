@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process';
+import { execFileSync } from 'node:child_process';
 import type { Tool, ToolDefinition } from '../runtime/types';
 
 // Git subcommands that do NOT mutate repository state in dangerous ways.

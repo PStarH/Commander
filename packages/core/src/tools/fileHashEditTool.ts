@@ -16,7 +16,7 @@
  * includeHashes:true is set. Each line gets a #XXXXXX hash annotation.
  */
 
-import * as fs from 'fs';
+import * as fs from 'node:fs';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { isHashlineFormat, parseHashline, applyHashlineSection } from '../edit/hashline';
 import { parseAndApplyHashEdit, isHashEditFormat } from '../edit/hashAnchoredEditor';

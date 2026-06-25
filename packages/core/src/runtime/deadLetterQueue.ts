@@ -5,8 +5,8 @@
  * Uses append-only writes for performance. Supports per-category isolation (llm, tool, execution).
  */
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import type { ErrorClass } from './llmRetry';
 

@@ -10,8 +10,8 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { calculateCostBreakdown } from '../telos/tokenSentinel';
 import { getModelRouter } from '../runtime/modelRouter';
 import { getMetricsCollector } from '../runtime/metricsCollector';

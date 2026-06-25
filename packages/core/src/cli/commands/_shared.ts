@@ -42,7 +42,7 @@ import { detectProvider, getEffectiveModel } from '../../config/commanderConfig'
 import { getApprovalSystem } from '../../sandbox';
 import { getGlobalLogger } from '../../logging';
 import { StateCheckpointer } from '../../runtime/stateCheckpointer';
-import { spawn } from 'child_process';
+import { spawn } from 'node:child_process';
 import { TaskPool } from '../../ultimate/taskPool';
 import { GoalOrchestrator } from '../../goal/goalOrchestrator';
 import type { GoalConfig } from '../../goal/types';

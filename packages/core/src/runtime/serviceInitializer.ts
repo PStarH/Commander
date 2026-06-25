@@ -57,6 +57,7 @@ import { installProcessCrashHandlers } from './processCrashSafety';
 import { getSecurityMonitor } from '../security/securityMonitor';
 import { getOTelExporter } from './openTelemetryExporter';
 import { createMemoryStore } from '../memory';
+import { installHubGlue } from '../hub';
 
 import type { StateCheckpointer } from './stateCheckpointer';
 import type { DeadLetterQueue } from './deadLetterQueue';
@@ -462,6 +463,16 @@ export function initializeServices(
     getSecurityMonitor().start();
   } catch (err) {
     reportSilentFailure(err, 'serviceInitializer:466');
+    /* best-effort */
+  }
+
+  // Phase 2 / Hub Glue: install the closed-loop event handler chain
+  // (tool.blocked routing, system.alert cycle-dedupe). Idempotent across
+  // calls — survives repeated AgentRuntime construction in test suites.
+  try {
+    installHubGlue();
+  } catch (err) {
+    reportSilentFailure(err, 'serviceInitializer:installHubGlue');
     /* best-effort */
   }
 

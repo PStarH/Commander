@@ -3,8 +3,8 @@ import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSandboxed } from './sandboxedExec';
 import { safePath } from './fileSystemTool';
 import { getGlobalLogger } from '../logging';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const DEFINITION: ToolDefinition = {
   name: 'verify',
