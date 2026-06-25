@@ -10,15 +10,8 @@ import type {
   SlimLogLine,
   CreateSlimSnapshotOptions,
   ProjectBattleReport,
-  AgentWorkload,
-  AgentStatus,
   MissionStatus,
   MissionPriority,
-  MissionRiskLevel,
-  MissionGovernanceMode,
-  AgentGovernanceRole,
-  LogLevel,
-  ProjectStatus,
 } from './types';
 
 const missionPriorityWeight: Record<MissionPriority, number> = {

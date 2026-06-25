@@ -1,11 +1,4 @@
-import type {
-  CommanderAgentCard,
-  CommanderRunContextV2,
-  SlimMissionCard,
-  MultiAgentStrategy,
-  AgentGovernanceRole,
-  AgentStatus,
-} from './types';
+import type { CommanderAgentCard, CommanderRunContextV2, MultiAgentStrategy } from './types';
 
 function pickSenateAgents(roster: CommanderAgentCard[], limit = 2): string[] {
   return roster

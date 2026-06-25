@@ -74,11 +74,6 @@ export class StrategyPerformanceTracker {
     string,
     { totalRuns: number; successRate: number; avgTokens: number }
   > {
-    const modelMap = new Map<
-      string,
-      { totalRuns: number; successCount: number; totalTokens: number }
-    >();
-
     // Build model stats from the strategy performance entries by scanning experiences
     // We need experiences to do this, but this method was called with experiences from MetaLearner.
     // Since we don't have experiences here, we return empty. The facade will handle this.
