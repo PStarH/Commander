@@ -185,7 +185,7 @@ export class ReliabilityEngine {
           /* best-effort */
         }
       },
-      onFailed: (action, err) => {
+      onFailed: (action, _err) => {
         try {
           getMetricsCollector().recordCompensation(action.toolName, 'failed');
         } catch (err) {

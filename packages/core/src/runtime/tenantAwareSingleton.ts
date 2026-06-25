@@ -62,12 +62,6 @@ export interface TenantAwareSingleton<T> {
   lifetimeTenantCount(): number;
 }
 
-const DEFAULT_QUOTA: TenantQuota = {
-  maxTenants: 100,
-  tenantTtlMs: 30 * 60 * 1000, // 30 minutes
-  maxLifetimeTenants: undefined,
-};
-
 /**
  * Create a tenant-aware singleton wrapper.
  *

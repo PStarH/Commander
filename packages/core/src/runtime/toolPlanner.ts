@@ -430,7 +430,6 @@ export class ToolPlanner {
    * Heuristic: if b's arguments reference a's name or output format.
    */
   private hasDataDependency(a: ToolCall, b: ToolCall): boolean {
-    const aStr = JSON.stringify(a.arguments ?? {});
     const bStr = JSON.stringify(b.arguments ?? {});
 
     // Check if b's args reference a's tool name

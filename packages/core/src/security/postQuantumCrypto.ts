@@ -30,7 +30,6 @@
 
 import { reportSilentFailure } from '../silentFailureReporter';
 import * as crypto from 'crypto';
-import { getAuditChainLedger } from './auditChainLedger';
 import { getGlobalLogger } from '../logging';
 
 // ============================================================================
