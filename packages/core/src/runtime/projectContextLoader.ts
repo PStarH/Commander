@@ -14,9 +14,9 @@
  * instructions have stronger recency in the model's attention.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
-import * as crypto from 'crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 
 /** Max size per file in bytes. Prevents one giant file from eating the context window. */
 const MAX_FILE_BYTES = 50_000;

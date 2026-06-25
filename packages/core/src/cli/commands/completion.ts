@@ -7,8 +7,8 @@
  *   commander completion fish     Print fish completion script
  *   commander completion install  Auto-detect shell and install
  */
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { $, section, kv } from './_shared';
 
 // ============================================================================

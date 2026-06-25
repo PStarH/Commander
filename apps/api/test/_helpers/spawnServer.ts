@@ -1,4 +1,4 @@
-import { reportSilentFailure } from '../../../../packages/core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 import { spawn, ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';

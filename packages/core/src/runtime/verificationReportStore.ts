@@ -10,8 +10,8 @@
  * Storage: append-only NDJSON per run under .commander_verifications/.
  */
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import type { VerificationReport } from './unifiedVerificationTypes';
 

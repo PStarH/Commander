@@ -19,9 +19,9 @@ import { reportSilentFailure } from '../silentFailureReporter';
 // Tenancy: when tenantId is provided, the stored key is
 //   SHA256(tenantId || "::" || inputKey) — prevents cross-tenant collisions.
 
-import { createHash, randomUUID } from 'crypto';
-import { mkdirSync } from 'fs';
-import { dirname } from 'path';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { getGlobalLogger } from '../logging';
 import type { IdempotencyOptions, IdempotencyRecord, IdempotencyState } from './types';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
