@@ -31,6 +31,7 @@ import type { BusMessage } from '../../runtime/types';
 import type { ToolBlockedVariant } from '../../runtime/types/messageBus';
 import { getCycleCorrelator } from './cycleCorrelator';
 import { getRetryHookCorrelator } from './retryHookCorrelator';
+import { getSemanticCircuitCorrelator } from './semanticCircuitCorrelator';
 import { HUB_GLUE_SOURCE } from './pairCorrelator';
 
 function routeByReason(payload: ToolBlockedVariant, sourceAgentId: string): void {
@@ -82,8 +83,31 @@ function routeByReason(payload: ToolBlockedVariant, sourceAgentId: string): void
       }
       break;
     }
+    case 'circuit_broken': {
+      // Phase 2 / Hub Glue: the system.alert semantic_circuit_trip event
+      // (singleton ReliabilityEngine's CircuitBreaker.setSemanticTripHandler
+      // closure) is the retrospective-pair partner. The alert is runId-
+      // stamped by the verification-failure ctx (see pairCorrelator's
+      // requireToolNameOnAlert:false config). Pass the (runId, toolName,
+      // detail: '<broken circuit provider>') tuple — if a semantic trip
+      // was registered within the 5s TTL for the same runId, both sides
+      // fold into ONE `runtime.circuit_correlated` event. The metric
+      // counter below still fires (dual-observation is fine).
+      try {
+        getSemanticCircuitCorrelator().observeToolBlocked(
+          payload.runId,
+          payload.toolName,
+          payload.detail ?? '',
+        );
+      } catch (err) {
+        getGlobalLogger().debug('hub.toolBlocked', 'semanticCircuitCorrelator.observe threw', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        // best-effort — never throw from a bus subscriber
+      }
+      break;
+    }
     case 'orchestrator_skipped':
-    case 'circuit_broken':
     case 'not_allowed':
     case 'hook_blocked':
     case 'exec_policy_forbidden':
@@ -124,7 +148,7 @@ export function installToolBlockedHandler(bus?: MessageBus): () => void {
   }
   const useBus = bus ?? getMessageBus();
 
-  // Install both Tier-0 correlators FIRST (they each subscribe
+  // Install all three Tier-0 correlators FIRST (they each subscribe
   // system.alert independently with their own internal filtering).
   // Order between them doesn't matter (their pending maps are
   // disjoint), but they MUST run before the tool.blocked subscriber so
@@ -132,6 +156,7 @@ export function installToolBlockedHandler(bus?: MessageBus): () => void {
   // the correlator's leading-edge registration is ready.
   getCycleCorrelator().install(useBus);
   getRetryHookCorrelator().install(useBus);
+  getSemanticCircuitCorrelator().install(useBus);
 
   // The bus dispatcher already wraps subscriber callbacks in try/catch,
   // so we don't re-wrap here — but we DO want to log router errors at
@@ -153,6 +178,7 @@ export function uninstallToolBlockedHandler(): void {
   unsubscribe();
   getCycleCorrelator().dispose();
   getRetryHookCorrelator().dispose();
+  getSemanticCircuitCorrelator().dispose();
   installed = false;
 }
 

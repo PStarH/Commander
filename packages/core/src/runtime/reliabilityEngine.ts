@@ -218,8 +218,22 @@ export class ReliabilityEngine {
 
   // ── Semantic Circuit Breaker Wiring ─────────────────────────────────────
 
-  /** Set a handler for semantic trip events (verification degradation, etc.). */
-  setSemanticTripHandler(handler: (consecutiveFailures: number, reason: string) => void): void {
+  /**
+   * Set a handler for semantic trip events (verification degradation, etc.).
+   * The optional third `ctx` argument carries `{ runId?, toolName? }` as
+   * recorded by the most recent {@link recordSemanticFailure} call.
+   * Letting the handler see runId + toolName is what enables the Hub
+   * Glue {@link SemanticCircuitCorrelator} to fold the system.alert
+   * `semantic_circuit_trip` and the corresponding `tool.blocked
+   * circuit_broken` event into a single `runtime.circuit_correlated`.
+   */
+  setSemanticTripHandler(
+    handler: (
+      consecutiveFailures: number,
+      reason: string,
+      ctx?: { runId?: string; toolName?: string },
+    ) => void,
+  ): void {
     this._circuitBreaker.setSemanticTripHandler(handler);
   }
 
@@ -240,9 +254,18 @@ export class ReliabilityEngine {
     this._circuitBreaker.onFailure();
   }
 
-  /** Record a semantic/quality failure (verification, hallucination, etc.). */
-  recordSemanticFailure(reason: string): void {
-    this._circuitBreaker.recordSemanticFailure(reason);
+  /**
+   * Record a semantic/quality failure (verification, hallucination, etc.).
+   * Passing `ctx: { runId?, toolName? }` is RECOMMENDED — the next
+   * {@link setSemanticTripHandler} callback invocation will receive
+   * this ctx as its third optional argument, which is what enables
+   * the Hub Glue `runtime.circuit_correlated` pipeline.
+   */
+  recordSemanticFailure(
+    reason: string,
+    ctx?: { runId?: string; toolName?: string },
+  ): void {
+    this._circuitBreaker.recordSemanticFailure(reason, ctx);
   }
 
   /** Reset semantic failure counter after recovery. */

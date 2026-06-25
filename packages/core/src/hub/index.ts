@@ -32,6 +32,12 @@ export {
   _resetRetryHookCorrelatorForTests,
 } from './handlers/retryHookCorrelator';
 
+export {
+  SemanticCircuitCorrelator,
+  getSemanticCircuitCorrelator,
+  _resetSemanticCircuitCorrelatorForTests,
+} from './handlers/semanticCircuitCorrelator';
+
 import { installToolBlockedHandler } from './handlers/toolBlockedHandler';
 
 let hubInstalled = false;
