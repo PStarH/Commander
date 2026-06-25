@@ -11,7 +11,7 @@
 
 import { reportSilentFailure } from '../silentFailureReporter';
 import * as fsp from 'fs/promises';
-import * as path from 'path';
+import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 
 export interface ToolOutputEntry {

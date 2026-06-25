@@ -1,7 +1,10 @@
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as crypto from 'crypto';
-import { IncomingMessage, ServerResponse, createServer as createNodeHttpServer } from 'http';
-import { createServer as createHttpsServer, type ServerOptions as HttpsServerOptions } from 'https';
+import * as crypto from 'node:crypto';
+import { IncomingMessage, ServerResponse, createServer as createNodeHttpServer } from 'node:http';
+import {
+  createServer as createHttpsServer,
+  type ServerOptions as HttpsServerOptions,
+} from 'node:https';
 import type { LLMProvider, MessageBusTopic, Tool } from './types';
 import type { JSONRPCRequest } from '../mcp/types';
 import { AgentRuntime } from './agentRuntime';

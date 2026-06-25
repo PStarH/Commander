@@ -8,7 +8,7 @@
  * - Subagents bound to a task_id may write anywhere under tasks/<TID>/*
  */
 
-import * as path from 'path';
+import * as path from 'node:path';
 
 export interface MemoryWriteContext {
   agentType: 'main' | 'checkpoint-writer' | 'subagent';

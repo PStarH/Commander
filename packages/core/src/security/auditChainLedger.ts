@@ -50,9 +50,9 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as crypto from 'crypto';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { getCurrentTenantId } from '../runtime/tenantContext';
 import { getMetricsCollector } from '../runtime/metricsCollector';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';

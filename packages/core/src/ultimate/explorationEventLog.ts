@@ -19,8 +19,8 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import type { OrchestrationTopology } from './types';
 import { EpsilonStore, type EpsilonOverride } from './epsilonStore';
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
-import { dirname } from 'path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 export interface ExplorationEvent {
   /** ISO-8601 timestamp recorded at insertion time. */

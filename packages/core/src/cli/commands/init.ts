@@ -8,8 +8,8 @@
  * This is the main onboarding experience for Commander.
  */
 import { reportSilentFailure } from '../../silentFailureReporter';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { probeEnvironment, testConnectivity, recommendFallbackChain } from '../../commander/probe';
 import type { ConnectivityResult } from '../../commander/probe';
 import { createSeedWarRoomData } from '../../models/projections';

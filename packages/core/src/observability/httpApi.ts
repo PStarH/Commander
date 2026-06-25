@@ -1,5 +1,5 @@
 import { reportSilentFailure } from '../silentFailureReporter';
-import type { IncomingMessage, ServerResponse } from 'http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ExecutionTrace, TraceEvent } from '../runtime/types';
 import { PersistentTraceStore, type TraceStore } from '../runtime/traceStore';
 import type { ExecutionTraceRecorder } from '../runtime/executionTrace';

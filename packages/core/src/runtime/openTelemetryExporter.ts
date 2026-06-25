@@ -17,10 +17,10 @@
  *   await exporter.stop();
  */
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as http from 'http';
-import * as https from 'https';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as http from 'node:http';
+import * as https from 'node:https';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import { eventToOtelAttrs, spanNameForEvent } from '../observability/otelSemConv';
 

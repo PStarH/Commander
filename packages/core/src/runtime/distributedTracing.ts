@@ -15,9 +15,9 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import { AsyncLocalStorage } from 'async_hooks';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { getGlobalLogger } from '../logging';
-import type { IncomingMessage, ServerResponse } from 'http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 declare module 'http' {
   interface IncomingMessage {

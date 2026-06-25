@@ -8,7 +8,7 @@
  * `createTenantAwareSingleton` are scoped per tenant, but storage backends
  * must still key their data by tenant. The helpers below make that easier.
  */
-import { AsyncLocalStorage } from 'async_hooks';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { getGlobalTenantProvider } from './tenantProvider';
 
 export interface TenantContextValue {

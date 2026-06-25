@@ -1,5 +1,5 @@
 import { reportSilentFailure } from '../../silentFailureReporter';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   type PolicyDecision,
   type PolicyEffect,
