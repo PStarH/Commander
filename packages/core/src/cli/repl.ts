@@ -156,8 +156,6 @@ function saveHistoryLine(line: string): void {
 
 // ── Profile transcript ──────────────────────────────────────────────────
 
-const PROFILE_AUTO_PATTERN = 'commander-repl-{datetime}.log';
-
 function resolveProfilePath(profile: string | true): string {
   if (profile === true) {
     const now = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); // 2026-06-22T12-34-56

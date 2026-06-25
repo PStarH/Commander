@@ -4,7 +4,6 @@ import * as path from 'path';
 import * as http from 'http';
 import { spawn } from 'child_process';
 import { getConfigResolver } from '../../config/configResolver';
-import { getFreezeDryManager } from '../../runtime/freezeDry';
 import { getMetricsCollector } from '../../runtime/metricsCollector';
 import { $, section } from './_shared';
 import { cmdRun } from './core';

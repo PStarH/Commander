@@ -6,7 +6,6 @@
  *  commander checkpoint --prune N    Keep only the N newest checkpoints
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
 import { getCheckpointWriter } from '../../runtime/checkpointWriter';
 

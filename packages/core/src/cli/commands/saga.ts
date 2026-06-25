@@ -1,6 +1,6 @@
 import { reportSilentFailure } from '../../silentFailureReporter';
 import { existsSync, readdirSync, readFileSync, mkdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import {
   CheckpointManager,
   ApprovalManager,
@@ -207,7 +207,6 @@ async function cmdSagaRun(args: string[]) {
   const ctx = buildContext(runId, input, timeoutMs);
 
   console.log('');
-  const t0 = Date.now();
   const result = await runSaga(graph, ctx, runtime.checkpoint, runtime.approval, runtime);
   formatResult(result);
 
@@ -363,7 +362,6 @@ async function cmdSagaResume(args: string[]) {
     console.log();
 
     // Re-run saga — the coordinator skips already completed nodes
-    const t0 = Date.now();
     const result = await runEx(graph, ctx, runtime.checkpoint, runtime.approval, runtime);
     console.log(`\n  ${bold('Resume result:')}`);
     formatResult(result);
