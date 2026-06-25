@@ -114,6 +114,8 @@ export default defineConfig({
 
       // --- hub event glue (Phase 2) ---
       'tests/hub/toolBlockedHandler.test.ts',
+      'tests/hub/retryHookCorrelator.test.ts',
+      'tests/hub/retryHookCorrelator.test.ts',
 
       // --- storage ---
       'tests/storage/dataRetention.test.ts',
