@@ -235,4 +235,54 @@ describe('Hub Glue: RetryHookCorrelator — Phase 2 retrospective pairing', () =
     const matched = incSpy.mock.calls.find(([name]: unknown[]) => name === 'tool_blocked_total');
     expect(matched).toBeDefined();
   });
+
+  it('tolerates structural field-shape differences between alert `pattern` and block `detail` (the regression test for the documented false-silence key-format coupling)', () => {
+    // The original RetryHookCorrelator used a 3-tuple exact-match key
+    // `${runId}:${toolName}:${contextKey}`, which would NEVER fire in
+    // production: the leading edge carries `pattern: '<tool>:<args>'`
+    // while the trailing edge carries `detail: '<human rejection msg>'`
+    // — these strings structurally cannot align without a brittle
+    // substring parser, so the correlator sat silently until TTL.
+    //
+    // The May-2026 audit shipped `ignoreContextKey: true` for this
+    // pair, narrowing the match key to `${runId}:${toolName}` and
+    // keeping the alert's `pattern` as info-only metadata propagated
+    // into the unified payload. This test would FAIL on a 3-tuple
+    // architecture and PASS on the 2-tuple shipped architecture.
+    const received: Array<{
+      topic: MessageBusTopic;
+      payload: Record<string, unknown>;
+    }> = [];
+    const unsub = bus.subscribe('runtime.retry_block_correlated', (msg: BusMessage) => {
+      received.push({
+        topic: msg.topic,
+        payload: msg.payload as Record<string, unknown>,
+      });
+    });
+    try {
+      const runId = 'run-shape';
+      const toolName = 'shell_execute';
+      const patternOnAlertSide = 'shell_execute:{}:canonical';
+      const detailOnBlockSide = 'plugin denied: explicit signature mismatch';
+      // Note: patternOnAlertSide ≠ detailOnBlockSide — exactly the
+      // production asymmetry that broke the prior 3-tuple arch.
+      publishRetryLoopAlert(bus, runId, toolName, patternOnAlertSide);
+      publishHookDenied(bus, runId, toolName, detailOnBlockSide);
+
+      // Even with mismatched contextKey strings, the 2-tuple key
+      // correlates the pair:
+      expect(received).toHaveLength(1);
+      expect(received[0].payload.runId).toBe(runId);
+      expect(received[0].payload.toolName).toBe(toolName);
+      // The unified payload preserves the FIRST-arriving peer's
+      // contextKey (here: the alert's `pattern`) for analytics-grade
+      // observability. This is what makes the unified event
+      // diagnostics useful rather than just an audit-trail marker.
+      expect(received[0].payload.pattern).toBe(patternOnAlertSide);
+      expect(received[0].payload.sourceEvents).toEqual(['system.alert', 'tool.blocked']);
+      expect(getRetryHookCorrelator().getPendingCount()).toBe(0);
+    } finally {
+      unsub();
+    }
+  });
 });

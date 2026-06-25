@@ -28,6 +28,8 @@ export interface TenantConfig {
   workspacePath?: string;
   /** Optional override for storage base directory. */
   storagePath?: string;
+  /** Max storage bytes across all tenant-scoped stores. 0 = unlimited. */
+  maxStorageBytes?: number;
   /** Arbitrary metadata (labels, tags, billing code). */
   metadata?: Record<string, string>;
 }
