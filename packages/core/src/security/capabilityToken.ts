@@ -61,7 +61,7 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
-import * as crypto from 'crypto';
+import * as crypto from 'node:crypto';
 import { SecurityEvent } from './securityAuditLogger';
 import { getAuditChainLedger } from './auditChainLedger';
 import { getMetricsCollector } from '../runtime/metricsCollector';

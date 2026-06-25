@@ -24,7 +24,7 @@ import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getSecurityMonitor } from './securityMonitor';
 import { getGlobalLogger } from '../logging';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
-import * as crypto from 'crypto';
+import * as crypto from 'node:crypto';
 
 // ============================================================================
 // Types

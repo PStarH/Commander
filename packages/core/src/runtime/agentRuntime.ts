@@ -161,8 +161,8 @@ import {
 } from './promptBuilder';
 import { loadProjectContext } from './projectContextLoader';
 import { ReflexionGenerator, type ReflexionContext } from './reflexionGenerator';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import { getDataRetentionJanitor } from '../storage/dataRetention';
 import type { CompactTaskType } from './contextCompactor';
@@ -983,6 +983,21 @@ export class AgentRuntime implements AgentRuntimeInterface {
   }
 
   registerTool(name: string, tool: Tool): void {
+    // Normalize OpenAI-style `parameters` to ToolDefinition's `inputSchema` so
+    // runtime validation and prompt rendering work for all registered tools.
+    type LegacyToolDefinition = ToolDefinition & { parameters?: Record<string, unknown> };
+    const def = tool.definition as LegacyToolDefinition;
+    if (def.parameters && (!def.inputSchema || Object.keys(def.inputSchema).length === 0)) {
+      def.inputSchema = def.parameters;
+    }
+    if (!tool.compiledSchema && def.inputSchema) {
+      try {
+        const { compileSchema } = require('./toolCallValidator');
+        tool.compiledSchema = compileSchema(def.inputSchema);
+      } catch {
+        /* best-effort */
+      }
+    }
     this.tools.set(name, tool);
   }
 

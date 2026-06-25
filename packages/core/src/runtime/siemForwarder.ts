@@ -18,9 +18,9 @@
 
 import * as dgram from 'dgram';
 import * as net from 'net';
-import * as https from 'https';
-import * as http from 'http';
-import * as os from 'os';
+import * as https from 'node:https';
+import * as http from 'node:http';
+import * as os from 'node:os';
 import { getGlobalLogger } from '../logging';
 
 // ============================================================================

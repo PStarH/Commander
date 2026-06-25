@@ -9,8 +9,8 @@
  *   commander feedback --feature="..."  Request a feature
  */
 import { reportSilentFailure } from '../../silentFailureReporter';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { $, section, kv, parseFlags } from './_shared';
 
 // ============================================================================

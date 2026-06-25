@@ -20,9 +20,9 @@
  *   // Then pass to bwrap: --seccomp 3 with fd 3 = tmpFile
  */
 
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 // ============================================================================
 // BPF instruction encoding

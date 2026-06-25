@@ -1,8 +1,8 @@
 /**
  * @experimental — Plugin system scaffolding. Not wired into the main execution flow.
  */
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { getHookManager, type CommanderPlugin } from './pluginManager';
 import { getGlobalLogger } from './logging';
 
@@ -202,7 +202,7 @@ export class PluginLoader {
   }
 }
 
-import * as os from 'os';
+import * as os from 'node:os';
 
 import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
 
