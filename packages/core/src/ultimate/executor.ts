@@ -22,7 +22,6 @@ import type {
   SequentialEvent,
   SequentialEventHandler,
   TokenUsage,
-  OrchestrationMetrics,
 } from './sequential';
 import { getGlobalLogger } from '../logging';
 import type { ReliabilityEngine } from '../runtime/reliabilityEngine';
@@ -565,7 +564,7 @@ export class SequentialPipelineExecutor {
     input: unknown,
     context: SequentialContext,
     state: ExecutionState,
-    stepIndex: number,
+    _stepIndex: number,
   ): Promise<SequentialStepResult> {
     const maxRetries = step.maxRetries ?? this.config.defaultMaxRetries;
     const timeoutMs = step.timeout ?? this.config.defaultStepTimeout;
