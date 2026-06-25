@@ -1,4 +1,4 @@
-import type { ModelTier, TokenUsage, RoutingDecision } from '../runtime/types';
+import type { ModelTier, TokenUsage } from '../runtime/types';
 
 // ============================================================================
 // TELOS Token Budget Types

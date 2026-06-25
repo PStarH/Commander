@@ -12,13 +12,8 @@ import type {
 import { DEFAULT_SWARM_CONFIG } from './types';
 import { FusionEngine } from './fusionEngine';
 import { getMessageBus } from '../runtime/messageBus';
-import { getGlobalLogger } from '../logging';
 import {
   generateNodeId,
-  findNodeById,
-  collectAllNodes,
-  countActiveNodes,
-  getPendingNodes,
   sharedManagerDecompose,
   sharedManagerReview,
   sharedWorkerExecute,

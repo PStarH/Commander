@@ -5,16 +5,7 @@
  * run a Commander goal against the configured provider and available tools.
  */
 import { MCPServer } from './server';
-import type {
-  LLMMessage,
-  LLMProvider,
-  LLMRequest,
-  LLMResponse,
-  Tool,
-  ToolCall,
-  ToolDefinition,
-  ToolResult,
-} from '../runtime/types';
+import type { LLMMessage, LLMRequest, Tool, ToolDefinition, ToolResult } from '../runtime/types';
 import type { HarnessServices } from '../harness/harnessTypes';
 import { getGlobalLogger } from '../logging';
 

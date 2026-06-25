@@ -67,7 +67,7 @@ export class StrategySelector {
       string,
       { totalRuns: number; p95DurationMs?: number; avgTokenCost?: number }
     >,
-    modelId?: string,
+    _modelId?: string,
   ): string {
     const { samples, explorationBonuses, speedFactors, costFactors, explorationWeight } =
       this.computeAdjustmentFactors(taskType, strategyPerformance);

@@ -3,8 +3,6 @@ import type {
   SlimMissionCard,
   CommanderRunIntent,
   CommanderInvocationDisposition,
-  CommanderOperation,
-  AgentGovernanceRole,
   AgentInvocationProfile,
 } from './types';
 
@@ -88,15 +86,6 @@ export function getDefaultInvocationProfile(input: {
 }): AgentInvocationProfile {
   const governance = getMissionGovernanceDisposition(input);
   const rationale = [...governance.rationale];
-
-  const baseAllowed: CommanderOperation[] = ['READ_CONTEXT', 'WRITE_LOG'];
-  const baseForbidden: CommanderOperation[] = [
-    'UPDATE_MISSION_STATUS',
-    'UPDATE_MISSION_FIELDS',
-    'WRITE_MEMORY',
-    'UPDATE_AGENT_STATE',
-    'REQUEST_APPROVAL',
-  ];
 
   if (governance.disposition === 'ALLOW_EXECUTION' && input.intent === 'EXECUTE') {
     return {

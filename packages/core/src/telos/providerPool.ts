@@ -13,16 +13,6 @@ import { getModelRouter } from '../runtime/modelRouter';
 // Built-in providers (will be fleshed out when API keys are configured)
 // ============================================================================
 
-class NoOpProvider implements LLMProvider {
-  readonly name: string;
-  constructor(name: string) {
-    this.name = name;
-  }
-  async call(_request: LLMRequest): Promise<LLMResponse> {
-    throw new Error(`${this.name} provider not configured — set API key`);
-  }
-}
-
 // ============================================================================
 // Provider Pool
 // ============================================================================

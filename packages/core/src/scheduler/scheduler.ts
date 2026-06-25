@@ -2,15 +2,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { getGlobalLogger } from '../logging';
-import type {
-  WorkflowDefinition,
-  ScheduleEntry,
-  ExecutionRecord,
-  SchedulerConfig,
-  WorkflowTrigger,
-} from './types';
+import type { ScheduleEntry, ExecutionRecord, SchedulerConfig, WorkflowTrigger } from './types';
 import type { UltimateOrchestrator } from '../ultimate/orchestrator';
-import type { EffortLevel, OrchestrationTopology } from '../ultimate/types';
 
 // ============================================================================
 // Default config
@@ -330,7 +323,7 @@ export class Scheduler {
     try {
       const now = new Date();
 
-      for (const [id, entry] of this.schedules) {
+      for (const [, entry] of this.schedules) {
         if (!entry.enabled) continue;
         if (!entry.nextRunAt) continue;
         if (this.running >= this.config.maxConcurrency) break;

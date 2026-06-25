@@ -6,7 +6,6 @@ import type {
   MCPResource,
   MCPPrompt,
   MCPToolResult,
-  MCPContentItem,
   MCPResourceContents,
   JSONRPCRequest,
   JSONRPCResponse,
@@ -19,7 +18,6 @@ import type {
   MCPServerCapabilities,
 } from './types';
 import { ChildProcess } from 'child_process';
-import { MCP_ERROR_CODES } from './types';
 import { getGlobalLogger } from '../logging';
 
 function uuid(): string {

@@ -1,7 +1,5 @@
 import type {
-  ExecutionExperience,
   OptimizationSuggestion,
-  PerModelStrategyStats,
   RegressionEvent,
   StrategyPerformance,
 } from '../runtime/types';
