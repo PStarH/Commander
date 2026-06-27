@@ -1,4 +1,5 @@
 import { BaseOpenAICompatibleProvider, type OpenAICompatibleConfig } from './baseOpenAICompatible';
+import type { LLMRequest } from '../types/llm';
 
 /**
  * Mistral AI Provider — Mistral's API (OpenAI-compatible).
@@ -24,5 +25,14 @@ export class MistralProvider extends BaseOpenAICompatibleProvider {
 
   protected getExtraConfig(): Partial<OpenAICompatibleConfig> {
     return {};
+  }
+
+  protected getExtraBody(request: LLMRequest): Record<string, unknown> {
+    const extra: Record<string, unknown> = {};
+    // Mistral safe_prompt: enables additional safety moderation
+    if (request.safePrompt) {
+      extra.safe_prompt = true;
+    }
+    return extra;
   }
 }

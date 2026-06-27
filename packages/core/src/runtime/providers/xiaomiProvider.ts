@@ -53,7 +53,7 @@ export class XiaomiProvider implements LLMProvider {
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {
-    const model = this.defaultModel || request.model;
+    const model = request.model || this.defaultModel;
     const body = this.buildBody(request, model);
 
     const lastAssistant = [...request.messages].reverse().find((m) => m.role === 'assistant');
@@ -104,6 +104,19 @@ export class XiaomiProvider implements LLMProvider {
     if (request.tools && request.tools.length > 0) {
       body.tools = FormatBridge.adaptToolsForProvider(request.tools, 'xiaomi');
       body.parallel_tool_calls = true;
+    }
+
+    // Xiaomi MiMo prefix caching: prompt_cache_key improves cache routing
+    if (request.cacheConfig?.promptCacheKey) {
+      body.prompt_cache_key = request.cacheConfig.promptCacheKey;
+    }
+
+    // Xiaomi MiMo reasoning support (enable_thinking + reasoning_effort)
+    const rc = request.reasoningConfig;
+    if (rc?.enabled) {
+      body.enable_thinking = true;
+      if (rc.effort) body.reasoning_effort = rc.effort;
+      if (rc.budget && rc.budget > 0) body.max_thinking_tokens = rc.budget;
     }
 
     return body;
@@ -171,6 +184,7 @@ export class XiaomiProvider implements LLMProvider {
           promptTokens: usage.prompt_tokens,
           completionTokens: usage.completion_tokens,
           totalTokens: usage.total_tokens,
+          cacheReadTokens: usage.prompt_tokens_details?.cached_tokens ?? 0,
         }
       : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
@@ -213,7 +227,7 @@ export class XiaomiProvider implements LLMProvider {
         };
         finish_reason?: string;
       }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
     },
     model: string,
   ): LLMResponse {
@@ -224,6 +238,7 @@ export class XiaomiProvider implements LLMProvider {
       promptTokens: data.usage?.prompt_tokens ?? 0,
       completionTokens: data.usage?.completion_tokens ?? 0,
       totalTokens: data.usage?.total_tokens ?? 0,
+      cacheReadTokens: data.usage?.prompt_tokens_details?.cached_tokens ?? 0,
     };
 
     // Parse text-format tool calls too
