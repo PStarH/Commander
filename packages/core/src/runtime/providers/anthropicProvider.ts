@@ -1,6 +1,7 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types';
 import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
+import { executeViaBatchAPI, supportsNativeBatchAPI, type BatchAPIConfig } from '../batchApiClient';
 
 interface AnthropicContent {
   type: string;
@@ -38,6 +39,25 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {
+    // ── Batch API path (50% cost discount for non-urgent tasks) ──
+    // When isBatch flag is set, try native batch API first.
+    // Fail-closed: if batch fails or times out, fall back to standard API.
+    if (request.cacheConfig?.isBatch && supportsNativeBatchAPI(this.name)) {
+      const batchConfig: BatchAPIConfig = {
+        pollIntervalMs: 10000,
+        maxPollAttempts: 60, // 10 min max wait
+        apiKey: this.apiKey,
+        baseUrl: this.baseUrl,
+      };
+      const batchResult = await executeViaBatchAPI(request, this.name, batchConfig);
+      if (batchResult) {
+        batchResult.model = request.model || this.defaultModel;
+        return batchResult;
+      }
+      getGlobalLogger().warn('AnthropicProvider', 'Batch API failed, falling back to standard API');
+    }
+
+    // ── Standard API path ──
     const model = request.model || this.defaultModel;
     const anthropicMessages = this.buildMessages(request);
     const systemWithCache = this.buildSystemWithCache(request);
@@ -64,6 +84,28 @@ export class AnthropicProvider implements LLMProvider {
       }
     }
 
+    // Anthropic recommends top-level cache_control for automatic breakpoint management.
+    // This auto-manages cache breakpoints as the conversation grows, eliminating the
+    // need for manual cache_control markers on individual content blocks.
+    // We use it when cacheSystemPrompt is enabled; the system block cache_control above
+    // is still compatible and provides the initial breakpoint.
+    if (request.cacheConfig?.cacheSystemPrompt && request.cacheConfig?.useCacheControl) {
+      const topLevelCache: { type: string; ttl?: string } = { type: 'ephemeral' };
+      if (request.cacheConfig?.cacheTtl) topLevelCache.ttl = request.cacheConfig.cacheTtl;
+      body.cache_control = topLevelCache;
+    }
+
+    // Extended Thinking with tool use (beta feature).
+    // Enables Claude's internal chain-of-thought reasoning before responding.
+    // Requires anthropic-beta header: "interleaved-thinking-2025-05-14"
+    const rc = request.reasoningConfig;
+    if (rc?.enabled) {
+      body.thinking = {
+        type: 'enabled',
+        budget_tokens: rc.budget ?? 4096,
+      };
+    }
+
     // Anthropic does not support response_format natively. Use a dummy tool
     // with the output schema as its input_schema so the model can emit
     // structured data via tool_use.
@@ -77,14 +119,20 @@ export class AnthropicProvider implements LLMProvider {
       (body.tools as Record<string, unknown>[]).push(structuredTool);
     }
 
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-api-key': this.apiKey,
+      'anthropic-version': '2023-06-01',
+      ...(useStreaming ? { accept: 'text/event-stream' } : {}),
+    };
+    // Extended Thinking requires beta header
+    if (request.reasoningConfig?.enabled) {
+      headers['anthropic-beta'] = 'interleaved-thinking-2025-05-14';
+    }
+
     const response = await fetch(`${this.baseUrl}/messages`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': this.apiKey,
-        'anthropic-version': '2023-06-01',
-        ...(useStreaming ? { accept: 'text/event-stream' } : {}),
-      },
+      headers,
       body: JSON.stringify(useStreaming ? { ...body, stream: true } : body),
     });
 
