@@ -57,6 +57,44 @@ const WEBHOOKS_FILE = path.join(process.cwd(), '.commander', 'webhooks.json');
 const DEFAULT_RETRY_MAX = 3;
 const RETRY_DELAYS_MS = [1000, 5000, 15000]; // exponential backoff
 
+// ── Security: SSRF prevention ────────────────────────────────────────────────
+// Block requests to private/internal IP ranges and cloud metadata endpoints.
+// Per OWASP SSRF Prevention Cheat Sheet: validate scheme, reject private IPs.
+const PRIVATE_IP_PATTERNS = [
+  /^127\./,                          // Loopback
+  /^10\./,                           // RFC 1918
+  /^172\.(1[6-9]|2[0-9]|3[0-1])\./, // RFC 1918
+  /^192\.168\./,                     // RFC 1918
+  /^169\.254\./,                     // Link-local / cloud metadata (AWS/GCP)
+  /^0\./,                            // Current network
+  /^::1$/,                           // IPv6 loopback
+  /^fc00:/,                          // IPv6 ULA
+  /^fe80:/,                          // IPv6 link-local
+];
+
+/**
+ * Validate a webhook URL to prevent SSRF attacks.
+ * Only allows http/https schemes and rejects private/internal IP ranges.
+ * Security: Based on OWASP SSRF Prevention Cheat Sheet.
+ */
+function isSafeWebhookUrl(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    // Only allow http and https schemes — block file:, javascript:, data:, etc.
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    // Reject private/internal IP ranges and cloud metadata endpoints
+    const hostname = parsed.hostname;
+    for (const pattern of PRIVATE_IP_PATTERNS) {
+      if (pattern.test(hostname)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Dispatcher ─────────────────────────────────────────────────────
 
 export class WebhookDispatcher {
@@ -105,6 +143,13 @@ export class WebhookDispatcher {
   // ── Webhook CRUD ─────────────────────────────────────────────────
 
   registerWebhook(config: Omit<WebhookConfig, 'id' | 'createdAt'>): WebhookConfig {
+    // Security: SSRF prevention — reject private/internal URLs at registration time.
+    // Per OWASP SSRF Prevention Cheat Sheet: validate before storing.
+    if (!isSafeWebhookUrl(config.url)) {
+      throw new Error(
+        'Webhook URL must use http/https and must not point to private/internal IP ranges',
+      );
+    }
     const id = `wh_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const webhook: WebhookConfig = {
       ...config,
@@ -185,6 +230,16 @@ export class WebhookDispatcher {
   // ── Internal ─────────────────────────────────────────────────────
 
   private sendWithRetry(wh: WebhookConfig, event: WebhookEvent, attempt: number): void {
+    // Security: SSRF prevention — re-validate URL at send time to catch any
+    // stored webhook configs that predate the registration-time check.
+    if (!isSafeWebhookUrl(wh.url)) {
+      getGlobalLogger().warn('WebhookDispatcher', 'Blocked unsafe webhook URL', {
+        id: wh.id,
+        url: wh.url,
+      });
+      this.logDelivery(wh.id, event.event, 'failed', 0, attempt + 1);
+      return;
+    }
     const body = JSON.stringify(event);
     const signature = crypto.createHmac('sha256', wh.secret!).update(body).digest('hex');
 

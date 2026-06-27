@@ -135,7 +135,7 @@ export class ToolPlanner {
         tc,
         parsedArgs,
         argsStr: JSON.stringify(parsedArgs),
-        nameLower: tc.name.toLowerCase(),
+        nameLower: (tc.name ?? '').toLowerCase(),
       };
     });
 
@@ -333,6 +333,7 @@ export class ToolPlanner {
    * Check if a tool call is read-only (no side effects).
    */
   private isReadOnly(tc: ToolCall, tools: Map<string, Tool>): boolean {
+    if (!tc.name) return false;
     const tool = tools.get(tc.name);
     if (tool?.isReadOnly) return true;
 
