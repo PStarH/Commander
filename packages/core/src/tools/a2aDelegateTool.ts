@@ -7,6 +7,8 @@
  */
 import type { Tool, ToolDefinition } from '../runtime/types';
 import type { A2ADiscoveryManager } from '../mcp/a2aClient';
+import { sanitizeIfNeeded } from '../security/outputSanitizer';
+import { scanToolOutputForInjection } from '../contentScanner';
 
 const DEFINITION: ToolDefinition = {
   name: 'a2a_delegate',
@@ -84,6 +86,16 @@ export class A2ADelegateTool implements Tool {
         .join('\n');
     }
 
+    // SECURITY: scan the delegation task for injection patterns.
+    try {
+      const scan = scanToolOutputForInjection(task);
+      if (scan.blocked) {
+        return `[A2A delegation blocked: task contains injection pattern — ${scan.reason}]`;
+      }
+    } catch {
+      /* best-effort */
+    }
+
     const agent = this.discoveryManager.getAgent(agentLabel);
     if (!agent) {
       const available =
@@ -119,7 +131,13 @@ export class A2ADelegateTool implements Tool {
             .map((p) => (p as { type: 'text'; text: string }).text),
         );
         const resultText = texts.join('\n\n') || `Task completed with no output artifacts.`;
-        return `[A2A "${agentLabel}" completed]\n\n${resultText.slice(0, 50000)}`;
+        const rawOutput = `[A2A "${agentLabel}" completed]\n\n${resultText.slice(0, 50000)}`;
+        try {
+          const sanitizeResult = sanitizeIfNeeded(rawOutput, { source: `a2a:${agentLabel}` });
+          return sanitizeResult.wasRedacted ? sanitizeResult.output : rawOutput;
+        } catch {
+          return `[A2A output suppressed due to sanitization error]`;
+        }
       }
 
       return `[A2A "${agentLabel}" ${completed.status.state}]\n${completed.status.message || 'No details'}`;

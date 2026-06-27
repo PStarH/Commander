@@ -8,6 +8,9 @@ import { MCPServer } from './server';
 import type { LLMMessage, LLMRequest, Tool, ToolDefinition, ToolResult } from '../runtime/types';
 import type { HarnessServices } from '../harness/harnessTypes';
 import { getGlobalLogger } from '../logging';
+import { registerObservabilityTools } from '../observability/mcpObservability';
+import type { ExecutionTraceRecorder } from '../runtime/executionTrace';
+import type { TraceStore } from '../runtime/traceStore';
 
 export interface CommanderMcpServerOptions {
   services: HarnessServices;
@@ -15,6 +18,11 @@ export interface CommanderMcpServerOptions {
   providerName?: string;
   maxSteps?: number;
   timeoutMs?: number;
+  /** Optional observability tools (timeline/summary/compare/tool-metrics). */
+  observability?: {
+    recorder: ExecutionTraceRecorder;
+    traceStore: TraceStore;
+  };
 }
 
 export interface ExecuteGoalArgs {
@@ -44,6 +52,9 @@ export class CommanderMcpServer {
   constructor(private readonly options: CommanderMcpServerOptions) {
     this.server = new MCPServer('commander', '0.2.0');
     this.registerExecuteGoalTool();
+    if (this.options.observability) {
+      registerObservabilityTools(this.server, this.options.observability);
+    }
   }
 
   async executeGoal(args: ExecuteGoalArgs & { signal?: AbortSignal }): Promise<ExecuteGoalResult> {
