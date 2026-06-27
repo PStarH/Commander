@@ -120,8 +120,10 @@ export class BackgroundTaskManager extends EventEmitter {
     logStream.write(`[${new Date().toISOString()}] Starting: ${job.task}\n`);
 
     try {
-      // Run the task as a child process
-      const child = spawn('npx', ['tsx', 'packages/core/src/cli.ts', 'run', job.task], {
+      // Run the task as a child process using the locally-installed tsx binary.
+      // npx would resolve from the network and is a supply-chain RCE vector.
+      const tsxBin = path.join(process.cwd(), 'node_modules', '.bin', 'tsx');
+      const child = spawn(tsxBin, ['packages/core/src/cli.ts', 'run', job.task], {
         cwd: process.cwd(),
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],

@@ -256,7 +256,73 @@ export class NotificationManager {
   getConfig(): NotificationConfig {
     return { ...this.config };
   }
+
+  // ── Runtime alert subscription ──────────────────────────────────────────
+
+  private alertSubscriptionActive = false;
+
+  /**
+   * Start listening to `system.alert` events on the MessageBus and
+   * automatically send notifications when alerts are published.
+   *
+   * This closes the gap where SLO violations, anomaly detections, and
+   * health check degradations were published to the bus but never
+   * triggered Slack/Discord notifications — the NotificationManager
+   * was only reachable via manual CLI `commander notify` commands.
+   *
+   * Should be called once at startup from serviceInitializer.
+   */
+  startAlertListener(): void {
+    if (this.alertSubscriptionActive) return;
+
+    try {
+      // Lazy import to avoid circular dependency at module load time
+      const { getMessageBus } = require('../runtime/messageBus');
+      const bus = getMessageBus();
+
+      bus.subscribe('system.alert', (event: { topic: string; source: string; payload: Record<string, unknown> }) => {
+        const payload = event.payload || {};
+        const type = (payload.type as string) || 'unknown_alert';
+        const severity = (payload.severity as string) || 'warning';
+
+        // Map severity to notification priority
+        const priority: NotificationMessage['priority'] =
+          severity === 'critical' ? 'urgent' : severity === 'error' ? 'high' : 'normal';
+
+        // Build notification message
+        const title = `Commander Alert: ${type.replace(/_/g, ' ')}`;
+        const bodyParts: string[] = [];
+        if (payload.runId) bodyParts.push(`Run: ${payload.runId}`);
+        if (payload.agentId) bodyParts.push(`Agent: ${payload.agentId}`);
+        if (payload.metric) bodyParts.push(`Metric: ${payload.metric}`);
+        if (payload.actualValue !== undefined && payload.threshold !== undefined) {
+          bodyParts.push(`Value: ${payload.actualValue} (threshold: ${payload.threshold})`);
+        }
+        if (payload.reason) bodyParts.push(`Reason: ${payload.reason}`);
+        if (payload.detail) bodyParts.push(`Detail: ${String(payload.detail).slice(0, 200)}`);
+        const body = bodyParts.join(' | ') || JSON.stringify(payload).slice(0, 500);
+
+        // Send to all enabled channels (fire-and-forget)
+        this.send({
+          title,
+          body,
+          priority,
+          metadata: payload,
+        }).catch(() => {
+          /* best-effort — don't let notification failures crash the bus */
+        });
+      });
+
+      this.alertSubscriptionActive = true;
+      getGlobalLogger().info('NotificationManager', 'Alert listener started — system.alert events will trigger notifications');
+    } catch (err) {
+      reportSilentFailure(err, 'notifications:startAlertListener');
+      /* best-effort */
+    }
+  }
 }
+
+// (Singleton already defined below — using existing getNotificationManager)
 
 // ============================================================================
 // Singleton
