@@ -32,6 +32,7 @@
 
 import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { computeFileHash, getSnapshotStore } from './snapshotStore';
 
@@ -504,6 +505,38 @@ function parseHashEditOp(line: string, sep: string): { op?: HashEditOp; error?: 
 // ============================================================================
 
 /**
+ * Validate a file path to prevent path traversal attacks.
+ *
+ * When `allowRoot` is provided, the resolved path must fall within that root
+ * directory. Without an explicit root, absolute paths and paths containing
+ * `..` traversal segments are rejected.
+ *
+ * @throws Error if the path is deemed unsafe.
+ */
+function validateFilePath(filePath: string, allowRoot?: string): void {
+  if (allowRoot) {
+    const root = path.resolve(allowRoot);
+    const resolved = path.resolve(filePath);
+    const rel = path.relative(root, resolved);
+    // A safe relative path does not start with ".." and is not absolute.
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new Error(
+        `Path traversal detected: "${filePath}" resolves outside the allowed root "${root}"`,
+      );
+    }
+    return;
+  }
+
+  // Without an explicit root, reject absolute paths and traversal segments.
+  if (path.isAbsolute(filePath)) {
+    throw new Error(`Absolute paths are not allowed: "${filePath}"`);
+  }
+  if (filePath.includes('..')) {
+    throw new Error(`Path traversal detected: "${filePath}" contains ".."`);
+  }
+}
+
+/**
  * Apply a parsed hash-edit section to a file.
  *
  * Steps:
@@ -516,6 +549,17 @@ function parseHashEditOp(line: string, sep: string): { op?: HashEditOp; error?: 
  */
 export function applyHashEdit(section: HashEditSection): HashEditApplyResult {
   const store = getSnapshotStore();
+
+  // 0. Validate file path to prevent path traversal before any I/O
+  try {
+    validateFilePath(section.filePath);
+  } catch (err) {
+    return {
+      success: false,
+      filePath: section.filePath,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 
   // 1. Read file
   let content: string;

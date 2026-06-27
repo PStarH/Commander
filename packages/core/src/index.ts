@@ -799,6 +799,109 @@ export {
 } from './reflectionEngine';
 export { ConsensusChecker, createConsensusChecker } from './consensusCheck';
 
+// Consensus & Fault Tolerance Module (Commander-BFT-C3)
+export {
+  // Adaptive stopping (Beta-Binomial + KS test)
+  AdaptiveStoppingController,
+  BetaBinomialTracker,
+  ksTest,
+  answersToNumeric,
+  // BPD detector (graph backward propagation)
+  BPDDetector,
+  getBPDDetector,
+  resetBPDDetector,
+  // Topology state machine (4-state dynamic switching)
+  TopologyStateMachine,
+  getTopologyStateMachine,
+  resetTopologyStateMachine,
+  // SAC protocol (receiver-side consensus)
+  SACProtocol,
+  getSACProtocol,
+  resetSACProtocol,
+  // CourtEval (adversarial court evaluation)
+  CourtEvalEngine,
+} from './consensus';
+export type {
+  DebateRound,
+  AdaptiveStoppingResult,
+  AdaptiveStoppingConfig,
+  AgentNode as ConsensusAgentNode,
+  CommunicationEdge,
+  RejectionSignal,
+  AgentAnomalyReport,
+  BPDConfig,
+  TopologyState,
+  TopologyStateConfig,
+  StateTransitionEvent,
+  TopologyStateSnapshot,
+  SACProposal,
+  SACEvaluation,
+  SACConsensusResult,
+  SACConfig,
+  CourtRole,
+  CourtParticipant,
+  GraderScores,
+  CriticAttack,
+  DefenseResponse,
+  CourtVerdict,
+  CourtEvalConfig,
+} from './consensus';
+
+// Incremental SCC Detector (deadlock prevention)
+export {
+  IncrementalSCCDetector,
+  getIncrementalSCCDetector,
+  resetIncrementalSCCDetector,
+} from './runtime/incrementalSCC';
+export type {
+  SCCNode,
+  SCCEdge,
+  SCCComponent,
+  DeadlockAlert,
+  IncrementalSCCConfig,
+} from './runtime/incrementalSCC';
+
+// Hierarchical Timeout Manager
+export {
+  HierarchicalTimeoutManager,
+  getHierarchicalTimeoutManager,
+  resetHierarchicalTimeoutManager,
+} from './runtime/hierarchicalTimeout';
+export type {
+  TimeoutLevel,
+  TimeoutAction,
+  TimeoutConfig,
+  TimeoutEvent,
+  ActiveTimeout,
+  HierarchicalTimeoutConfig,
+} from './runtime/hierarchicalTimeout';
+
+// Supervision Tree (OTP-inspired)
+export {
+  Supervisor,
+  SupervisionTreeRegistry,
+  getSupervisionTreeRegistry,
+  resetSupervisionTreeRegistry,
+} from './runtime/supervisionTree';
+export type {
+  RestartStrategy,
+  ChildState,
+  ChildSpec,
+  ChildHandle,
+  ChildHealthStatus,
+  ChildEntry,
+  SupervisorConfig,
+  SupervisionEvent,
+  SupervisionEventHandler,
+} from './runtime/supervisionTree';
+
+// PRM (Process Reward Model) regression gate types
+export type {
+  PRMScoreEntry,
+  PRMRegressionAlert,
+  PRMConfig,
+} from './selfEvolution/regressionGate';
+
 export { TaskComplexityAnalyzer } from './taskComplexityAnalyzer';
 
 // Runtime Enhancements — Agent Execution Improvements
