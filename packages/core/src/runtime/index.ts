@@ -19,6 +19,7 @@ export type {
   MessagePriority,
   BusMessage,
   MessageHandler,
+  BusPayloadMap,
   TraceEvent,
   TraceSpan,
   ExecutionTrace,
@@ -68,6 +69,7 @@ export { AnyscaleProvider } from './providers/anyscaleProvider';
 export { DeepInfraProvider } from './providers/deepinfraProvider';
 export { AgnesProvider } from './providers/agnesProvider';
 export { StepFunProvider } from './providers/stepfunProvider';
+export { MiniMaxProvider } from './providers/minimaxProvider';
 export {
   BaseOpenAICompatibleProvider,
   callOpenAICompatibleAPI,
@@ -238,3 +240,5 @@ export { VCRProvider, createVCRProvider } from './vcrProvider';
 export type { VCREntry, VCRCassette, VCRConfig } from './vcrProvider';
 export { BatchLLMProvider, createBatchProvider } from './batchProvider';
 export type { BatchJob, BatchProviderConfig } from './batchProvider';
+export { executeViaBatchAPI, supportsNativeBatchAPI } from './batchApiClient';
+export type { BatchAPIConfig, BatchSubmissionResult, BatchPollResult } from './batchApiClient';
