@@ -347,6 +347,11 @@ export class CircuitBreaker {
   /** Force the breaker into the OPEN state. */
   open(): void {
     this.transitionTo('OPEN');
+    // Set lastFailureTime so isAvailable() doesn't immediately transition
+    // to HALF_OPEN. Without this, forceOpen() is a no-op because the
+    // recovery timer has already elapsed (lastFailureTime defaults to 0).
+    this.lastFailureTime = Date.now();
+    this.openCount++;
   }
 
   private transitionTo(newState: CircuitState): void {

@@ -25,6 +25,7 @@ import { AgentRuntime } from '../runtime/agentRuntime';
 import { getGlobalLogger } from '../logging';
 import { getMessageBus } from '../runtime/messageBus';
 import { getWebhookDispatcher } from '../runtime/webhookDispatcher';
+import { getCurrentTenantId } from '../runtime/tenantContext';
 import { walCheckpoint } from '../storage/walCheckpoint';
 import type { LLMProvider } from '../runtime/types';
 
@@ -187,7 +188,8 @@ export class TaskQueue {
   /** Get a task record by job ID. */
   get(jobId: string): TaskRecord | null {
     if (!this.db || !this.stmtGet) return null;
-    const row = this.stmtGet.get(jobId) as TaskRow | undefined;
+    const tenantId = getCurrentTenantId() ?? null;
+    const row = this.stmtGet.get(jobId, tenantId, tenantId) as TaskRow | undefined;
     if (!row) return null;
     return this.rowToRecord(row);
   }
@@ -195,15 +197,16 @@ export class TaskQueue {
   /** List tasks by status. If status omitted, returns all. */
   list(status?: TaskStatus, limit: number = 100): TaskRecord[] {
     if (!this.db || !this.stmtListByStatus) return [];
+    const tenantId = getCurrentTenantId() ?? null;
     if (status) {
-      const rows = this.stmtListByStatus.all(status, limit) as TaskRow[];
+      const rows = this.stmtListByStatus.all(status, tenantId, tenantId, limit) as TaskRow[];
       return rows.map((r) => this.rowToRecord(r));
     }
     // List all statuses
     const allStatuses: TaskStatus[] = ['pending', 'running', 'completed', 'failed'];
     const results: TaskRecord[] = [];
     for (const s of allStatuses) {
-      const rows = this.stmtListByStatus.all(s, limit) as TaskRow[];
+      const rows = this.stmtListByStatus.all(s, tenantId, tenantId, limit) as TaskRow[];
       results.push(...rows.map((r) => this.rowToRecord(r)));
     }
     return results.sort(
@@ -282,6 +285,14 @@ export class TaskQueue {
 
   private signalWorkAvailable(): void {
     if (!this.running) return;
+    // Clear any previously scheduled poll timer before overwriting the
+    // reference. Without this, repeated calls to signalWorkAvailable()
+    // would leak the old interval handles (they keep running but are no
+    // longer reachable for clearInterval).
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
     this.fillWorkers();
     this.pollTimer = setInterval(() => this.poll(), this.config.pollIntervalMs);
     if (typeof this.pollTimer.unref === 'function') this.pollTimer.unref();
@@ -303,7 +314,8 @@ export class TaskQueue {
     if (!idleWorker) return;
 
     const now = new Date().toISOString();
-    const row = this.stmtClaimPending.get('pending', now) as TaskRow | undefined;
+    const tenantId = getCurrentTenantId() ?? null;
+    const row = this.stmtClaimPending.get(now, tenantId, tenantId) as TaskRow | undefined;
     if (!row) return;
 
     const task = this.rowToRecord(row);
@@ -460,10 +472,24 @@ export class TaskQueue {
 
   // ── Provider Resolution ────────────────────────────────────────
 
-  private resolveProvider(_provider: string): LLMProvider | null {
+  private resolveProvider(provider: string): LLMProvider | null {
     try {
+      // Route by provider name. Lazy require() avoids circular imports and
+      // keeps provider modules out of memory until actually needed.
+      // NOTE: When the project migrates to pure ESM, replace with dynamic
+      // `await import()` and make this method async.
+      const normalized = (provider ?? '').toLowerCase();
+      if (normalized === 'anthropic') {
+        const { AnthropicProvider } = require('../runtime/providers/anthropicProvider');
+        return new AnthropicProvider({
+          apiKey: process.env.ANTHROPIC_API_KEY ?? '',
+        }) as LLMProvider;
+      }
+      // Default: OpenAI (also covers OpenAI-compatible providers).
       const { OpenAIProvider } = require('../runtime/providers/openaiProvider');
-      return new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY ?? '' }) as LLMProvider;
+      return new OpenAIProvider({
+        apiKey: process.env.OPENAI_API_KEY ?? '',
+      }) as LLMProvider;
     } catch (err) {
       reportSilentFailure(err, 'taskQueue:468');
       return null;
@@ -515,13 +541,16 @@ export class TaskQueue {
          created_at, started_at, completed_at, metadata_json)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    this.stmtGet = this.db.prepare(`SELECT * FROM tasks WHERE job_id = ? LIMIT 1`);
+    this.stmtGet = this.db.prepare(
+      `SELECT * FROM tasks WHERE job_id = ? AND (tenant_id IS ? OR ? IS NULL) LIMIT 1`,
+    );
     this.stmtClaimPending = this.db.prepare(`
       UPDATE tasks
       SET status = 'running', started_at = ?
       WHERE job_id = (
         SELECT job_id FROM tasks
         WHERE status = 'pending'
+          AND (tenant_id IS ? OR ? IS NULL)
         ORDER BY created_at ASC
         LIMIT 1
       )
@@ -535,7 +564,7 @@ export class TaskQueue {
     `);
     this.stmtListByStatus = this.db.prepare(`
       SELECT * FROM tasks
-      WHERE status = ?
+      WHERE status = ? AND (tenant_id IS ? OR ? IS NULL)
       ORDER BY created_at DESC
       LIMIT ?
     `);

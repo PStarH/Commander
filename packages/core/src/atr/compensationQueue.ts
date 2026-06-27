@@ -32,6 +32,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { getCurrentTenantId } from '../runtime/tenantContext';
 
 interface BetterSqlite3Stmt {
   run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
@@ -161,13 +162,16 @@ export class CompensationQueue {
         attempt_count, max_attempts, status, enqueued_at, next_attempt_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'pending', ?, ?)
     `);
-    this.stmtGet = this.db.prepare(`SELECT * FROM compensation_queue WHERE id = ?`);
+    this.stmtGet = this.db.prepare(
+      `SELECT * FROM compensation_queue WHERE id = ? AND (tenant_id IS ? OR ? IS NULL)`,
+    );
     this.stmtList = this.db.prepare(
-      `SELECT * FROM compensation_queue ORDER BY enqueued_at DESC LIMIT ?`,
+      `SELECT * FROM compensation_queue WHERE (tenant_id IS ? OR ? IS NULL) ORDER BY enqueued_at DESC LIMIT ?`,
     );
     this.stmtListPending = this.db.prepare(`
       SELECT * FROM compensation_queue
       WHERE status = 'pending' AND next_attempt_at <= ?
+        AND (tenant_id IS ? OR ? IS NULL)
       ORDER BY next_attempt_at ASC LIMIT ?
     `);
     this.stmtClaim = this.db.prepare(`
@@ -192,7 +196,8 @@ export class CompensationQueue {
       WHERE id = ? AND status = 'escalated'
     `);
     this.stmtCount = this.db.prepare(`
-      SELECT status, COUNT(*) as count FROM compensation_queue GROUP BY status
+      SELECT status, COUNT(*) as count FROM compensation_queue
+      WHERE (tenant_id IS ? OR ? IS NULL) GROUP BY status
     `);
     this.stmtDelete = this.db.prepare(`DELETE FROM compensation_queue WHERE id = ?`);
   }
@@ -231,7 +236,8 @@ export class CompensationQueue {
   claimNext(): CompensationQueueItem | null {
     if (!this.stmtListPending || !this.stmtClaim) return null;
     const now = new Date().toISOString();
-    const candidates = this.stmtListPending.all(now, 1) as Array<Record<string, unknown>>;
+    const tenantId = getCurrentTenantId() ?? null;
+    const candidates = this.stmtListPending.all(now, tenantId, tenantId, 1) as Array<Record<string, unknown>>;
     if (candidates.length === 0) return null;
     const id = candidates[0].id as string;
     const result = this.stmtClaim.run(now, id);
@@ -282,7 +288,8 @@ export class CompensationQueue {
 
   get(id: string): CompensationQueueItem | null {
     if (!this.stmtGet) return null;
-    const row = this.stmtGet.get(id) as Record<string, unknown> | undefined;
+    const tenantId = getCurrentTenantId() ?? null;
+    const row = this.stmtGet.get(id, tenantId, tenantId) as Record<string, unknown> | undefined;
     if (!row) return null;
     return rowToItem(row);
   }
@@ -290,20 +297,22 @@ export class CompensationQueue {
   list(opts: { limit?: number; status?: CompensationStatus } = {}): CompensationQueueItem[] {
     if (!this.stmtList) return [];
     const limit = opts.limit ?? 100;
+    const tenantId = getCurrentTenantId() ?? null;
     if (opts.status) {
       // Ad-hoc filtered query
       const rows = this.db!.prepare(
-        `SELECT * FROM compensation_queue WHERE status = ? ORDER BY enqueued_at DESC LIMIT ?`,
-      ).all(opts.status, limit) as Array<Record<string, unknown>>;
+        `SELECT * FROM compensation_queue WHERE status = ? AND (tenant_id IS ? OR ? IS NULL) ORDER BY enqueued_at DESC LIMIT ?`,
+      ).all(opts.status, tenantId, tenantId, limit) as Array<Record<string, unknown>>;
       return rows.map(rowToItem);
     }
-    const rows = this.stmtList.all(limit) as Array<Record<string, unknown>>;
+    const rows = this.stmtList.all(tenantId, tenantId, limit) as Array<Record<string, unknown>>;
     return rows.map(rowToItem);
   }
 
   countByStatus(): Record<CompensationStatus, number> {
     if (!this.stmtCount) return { pending: 0, in_progress: 0, escalated: 0 };
-    const rows = this.stmtCount.all() as Array<{ status: string; count: number }>;
+    const tenantId = getCurrentTenantId() ?? null;
+    const rows = this.stmtCount.all(tenantId, tenantId) as Array<{ status: string; count: number }>;
     const result: Record<CompensationStatus, number> = { pending: 0, in_progress: 0, escalated: 0 };
     for (const r of rows) {
       if (r.status in result) result[r.status as CompensationStatus] = r.count;

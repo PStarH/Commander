@@ -32,6 +32,10 @@ import { RunLedger, getRunLedgerBundle, type CompensationOutcome } from './runLe
 import { CompensationBridge } from './compensationBridge';
 import { defaultCompensationHandlers } from './defaultCompensation';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+import { createGitSnapshot, restoreGitSnapshot, clearGitSnapshot } from './gitSnapshot';
+import { getMessageBus } from '../runtime/messageBus';
+import { getGlobalLogger } from '../logging';
+import { reportSilentFailure } from '../silentFailureReporter';
 
 export interface BeginRunInput {
   runId?: string;
@@ -135,6 +139,17 @@ export class ExecutionScheduler {
     this.ledger.beginExecuting(result.tx.runId, result.tx.leaseToken, result.tx.fencingEpoch, {
       tenantId: input.tenantId,
     });
+
+    // Create a git snapshot before the run starts — this provides a full-workspace
+    // rollback baseline that complements the per-file .atr-snapshot mechanism.
+    // If the process crashes and .atr-snapshot files are lost, the git snapshot
+    // can still restore the workspace to its pre-run state.
+    try {
+      createGitSnapshot(result.tx.runId);
+    } catch {
+      /* best-effort — don't block run start on snapshot failure */
+    }
+
     return {
       runId: result.tx.runId,
       state: 'EXECUTING',
@@ -243,6 +258,10 @@ export class ExecutionScheduler {
     });
     if (!ok) return { committed: false, reason: 'fenced' };
     this.lease.release(input.runId, input.leaseToken, { tenantId: input.tenantId });
+
+    // Run committed successfully — clear the git snapshot, no rollback needed
+    clearGitSnapshot(input.runId);
+
     return { committed: true };
   }
 
@@ -276,6 +295,25 @@ export class ExecutionScheduler {
       { tenantId: input.tenantId, maxAttempts: input.maxAttempts },
     );
     this.lease.release(input.runId, input.leaseToken, { tenantId: input.tenantId });
+
+    // If compensation had failures, attempt a git snapshot restore as a
+    // last-resort full-workspace rollback. This catches the case where
+    // per-file .atr-snapshot files were lost or incomplete.
+    if (res.outcome.failed > 0) {
+      try {
+        const restored = restoreGitSnapshot(input.runId);
+        if (restored) {
+          // Log that we performed a full git restore — operators need to know
+          // this happened because it discards ALL changes made during the run
+        }
+      } catch {
+        /* best-effort — compensation already attempted */
+      }
+    } else {
+      // All compensations succeeded — clear the snapshot
+      clearGitSnapshot(input.runId);
+    }
+
     return {
       aborted: res.aborted,
       reason: res.aborted ? undefined : 'fenced',
@@ -397,6 +435,51 @@ function createSchedulerSingleton() {
 export function getExecutionScheduler(): ExecutionScheduler {
   if (!schedulerSingleton) {
     schedulerSingleton = createSchedulerSingleton();
+    // Subscribe to circuit.compensation_trigger events — when a circuit breaker
+    // opens, trigger abortRun + compensation for the affected run.
+    // Previously this event had no consumer, so circuit breaker trips never
+    // triggered rollback of already-committed mutations.
+    try {
+      getMessageBus().subscribe(
+        'circuit.compensation_trigger',
+        (event) => {
+          const payload = (event.payload || {}) as Record<string, unknown>;
+          const runId = payload.runId as string | undefined;
+          if (!runId) return;
+
+          getGlobalLogger().warn(
+            'ExecutionScheduler',
+            'Circuit breaker compensation trigger — aborting run',
+            { runId, reason: payload.reason },
+          );
+
+          // Abort and compensate the run — this triggers saga compensation
+          // for any uncommitted mutations, and restores the git snapshot if
+          // compensation has failures. Fire-and-forget (async) since the bus
+          // callback is synchronous.
+          try {
+            const sched = schedulerSingleton?.get();
+            if (sched) {
+              sched
+                .abortRun({
+                  runId,
+                  leaseToken: '', // fence-safe: abort will use stored lease
+                  fencingEpoch: 0,
+                  reason: `circuit_breaker_open: ${payload.reason ?? 'unknown'}`,
+                  tenantId: payload.tenantId as string | undefined,
+                })
+                .catch((err: unknown) => {
+                  reportSilentFailure(err, 'scheduler:circuit-compensation-abort');
+                });
+            }
+          } catch (err) {
+            reportSilentFailure(err, 'scheduler:circuit-compensation-trigger');
+          }
+        },
+      );
+    } catch (err) {
+      reportSilentFailure(err, 'scheduler:subscribe-compensation-trigger');
+    }
   }
   return schedulerSingleton.get();
 }
