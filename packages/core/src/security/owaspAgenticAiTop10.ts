@@ -169,6 +169,10 @@ export const SECURITY_EVENT_TYPE_TO_ASI: Record<SecurityEventType, readonly Owas
   key_rotation_dry_run: ['ASI08'],
   token_budget_breach: ['ASI04'],
   circuit_breaker_short_circuit: ['ASI04'],
+  security_decision: [], // informational only
+  a2a_security_violation: ['ASI05'],
+  threat_learned: [],
+  signature_matched: ['ASI01'],
 };
 
 /**
@@ -645,6 +649,10 @@ const _SECURITY_TYPE_IS_EXHAUSTIVE: Record<SecurityEventType, true> = {
   key_rotation_dry_run: true,
   token_budget_breach: true,
   circuit_breaker_short_circuit: true,
+  security_decision: true,
+  a2a_security_violation: true,
+  threat_learned: true,
+  signature_matched: true,
 };
 void _SECURITY_TYPE_IS_EXHAUSTIVE;
 

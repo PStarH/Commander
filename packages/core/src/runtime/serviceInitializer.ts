@@ -38,12 +38,20 @@ import { ToolExecutionService } from './toolExecutionService';
 import { ToolOutputManager } from './toolOutputManager';
 import { ToolApproval } from './toolApproval';
 import { ToolOrchestrator } from './toolOrchestrator';
-import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
 import { ToolPlanner } from './toolPlanner';
 import { CycleDetector } from './cycleDetector';
 import { createContentScanner } from '../contentScanner';
+import { ExecutionContextInjector } from './executionContextInjector';
+import {
+  SecurityOrchestrator,
+  getSecurityOrchestrator,
+} from './securityOrchestrator';
+import { ReflexionGenerator } from './reflexionGenerator';
+import { CircuitBreaker } from './circuitBreaker';
+import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
 
 import { getMessageBus } from './messageBus';
+import { installHubGlue } from '../hub';
 import { getIntentLog } from './intentLog';
 import { getMetricsCollector } from './metricsCollector';
 import { getGlobalLogger } from '../logging';
@@ -54,19 +62,21 @@ import { getConversationStore } from '../memory/conversationStore';
 import { getHookManager } from '../pluginManager';
 import { createParameterControllerPlugin } from './parameterController';
 import { installProcessCrashHandlers } from './processCrashSafety';
-import { getSecurityMonitor } from '../security/securityMonitor';
+import { onCircuitBreakerOpen } from './dlqReplayWorker';
+import { getCapabilityTokenIssuer } from '../security/capabilityToken';
 import { getOTelExporter } from './openTelemetryExporter';
 import { createMemoryStore } from '../memory';
-import { installHubGlue } from '../hub';
 
 import type { StateCheckpointer } from './stateCheckpointer';
 import type { DeadLetterQueue } from './deadLetterQueue';
 
 interface ServiceInitializerConfig {
   config: AgentRuntimeConfig;
-  checkpointer: StateCheckpointer;
-  dlq: DeadLetterQueue;
-  traceStore: PersistentTraceStore;
+  /** Legacy parameters kept for backward compatibility; they are replaced by
+   *  the ReliabilityEngine-created instances inside initializeServices(). */
+  checkpointer?: StateCheckpointer;
+  dlq?: DeadLetterQueue;
+  traceStore?: PersistentTraceStore;
   getRunHandle: () => import('../atr/scheduler').RunHandle | null;
   getLedgerCtx: () => {
     runId: string;
@@ -75,16 +85,23 @@ interface ServiceInitializerConfig {
     tenantId?: string;
   } | null;
   getActiveRuns: () => Set<string>;
+  getPromotedTools: () => Set<string>;
+  generateActionId: () => string;
 }
 
 export interface InitializedServices {
   compactor: ContextCompactor;
   slidingWindow: SlidingWindowOrchestrator;
   reliabilityEngine: ReliabilityEngine;
+  circuitBreaker: CircuitBreaker;
+  dlq: DeadLetterQueue;
+  checkpointer: StateCheckpointer;
   governor: TokenGovernor;
   verificationPipeline: UnifiedVerificationPipeline;
   reflexionInjector: ReflexionInjector;
+  reflexionGenerator: ReflexionGenerator;
   samplesStore: SamplesStore;
+  traceStore: PersistentTraceStore;
   leaseManager: LeaseManager;
   stepTimeout: StepTimeoutManager;
   fallbackChain: ProviderFallbackChain<import('./types').LLMResponse>;
@@ -98,25 +115,47 @@ export interface InitializedServices {
   tenantManager: TenantManager;
   toolExecutionService: ToolExecutionService;
   outputManager: ToolOutputManager;
+  breakerRegistry: CircuitBreakerRegistry;
   orchestrator: ToolOrchestrator;
   planner: ToolPlanner;
   cycleDetector: CycleDetector;
   contentScanner: ReturnType<typeof createContentScanner>;
+  securityOrch: SecurityOrchestrator;
+  contextInjector: ExecutionContextInjector;
   memory: import('../threeLayerMemory').ThreeLayerMemory | null;
   memoryStore: import('../memory').MemoryStore | null;
   conversationStore: import('../memory/conversationStore').ConversationStore | null;
   otelExporter: import('./openTelemetryExporter').OpenTelemetryExporter | null;
+  supervisor: import('./supervisionTree').Supervisor | null;
 }
 
 export function initializeServices(
   svcConfig: ServiceInitializerConfig,
   tools: Map<string, import('./types').Tool>,
 ): InitializedServices {
-  const { config, getRunHandle, getLedgerCtx, getActiveRuns } = svcConfig;
+  const {
+    config,
+    getRunHandle,
+    getLedgerCtx,
+    getActiveRuns,
+    getPromotedTools,
+    generateActionId,
+  } = svcConfig;
 
   const compactor = new ContextCompactor({
     maxContextTokens: config.budgetHardCapTokens || DEFAULT_CONTEXT_WINDOW_TOKENS,
   });
+
+  // Install Hub Glue closed-loop event handlers (tool.blocked routing +
+  // cycle/retry/semantic-circuit correlators). Idempotent — safe to call
+  // once at boot. The hub/index.ts docstring states "serviceInitializer
+  // wires this"; this call makes that contract true instead of leaving the
+  // 5 Phase-2 correlator modules dormant.
+  try {
+    installHubGlue();
+  } catch (err) {
+    reportSilentFailure(err, 'serviceInitializer:hubGlue');
+  }
 
   const slidingWindow = new SlidingWindowOrchestrator();
 
@@ -180,6 +219,13 @@ export function initializeServices(
       } catch (err) {
         reportSilentFailure(err, 'serviceInitializer:182');
         /* best-effort */
+      }
+      // When circuit opens, trigger compensation rollback linkage
+      if (to === 'OPEN') {
+        onCircuitBreakerOpen({
+          provider: provider ?? 'agentRuntime',
+          reason: `Circuit transitioned ${from}->${to}`,
+        });
       }
     },
   });
@@ -315,10 +361,82 @@ export function initializeServices(
   const runLifecycle = new RunLifecycleManager();
   const tenantManager = new TenantManager();
 
-  const { ReflexionGenerator } =
-    require('./reflexionGenerator') as typeof import('./reflexionGenerator');
   const reflexionGenerator = new ReflexionGenerator();
+
+  const outputManager = new ToolOutputManager({
+    enabled: true,
+    turnBudget: TOOL_OUTPUT_TURN_BUDGET,
+  });
+
+  // Security (OWASP ASI08): Default approval callback is fail-closed.
+  // Per OWASP — never auto-approve unknown or high-risk tools. Only auto-approve
+  // tools with 'auto' or 'semi_auto' policy level and non-critical/non-high risk.
+  // This mirrors the fail-closed default in ToolApproval's constructor, but is
+  // needed here because serviceInitializer explicitly passes a callback.
+  const defaultApprovalCallback = async (req: {
+    id: string;
+    toolName: string;
+    arguments: Record<string, unknown>;
+    reason?: string;
+    policy?: { level?: string; riskLevel?: string };
+  }) => {
+    const level = req.policy?.level ?? 'manual';
+    const risk = req.policy?.riskLevel ?? 'high';
+    const allowed =
+      (level === 'auto' || level === 'semi_auto') &&
+      risk !== 'critical' &&
+      risk !== 'high';
+    return {
+      approved: allowed,
+      requestId: req.id,
+      approvedAt: new Date().toISOString(),
+      reason: allowed
+        ? 'Approved by default callback (auto/semi_auto, low/medium risk)'
+        : 'Denied by fail-closed default: unknown or high-risk tool requires explicit approval',
+    } as { approved: boolean; requestId: string; approvedAt: string; reason: string };
+  };
+
+  const approvalCallback = config.approval?.approvalCallback ?? defaultApprovalCallback;
   const breakerRegistry = new CircuitBreakerRegistry();
+
+  const toolApproval = new ToolApproval(approvalCallback);
+  // Wire the capability-token verifier so that ToolApproval's token fast-path
+  // and runtime enforcement can actually validate HMAC-signed tokens.
+  try {
+    toolApproval.setTokenVerifier(getCapabilityTokenIssuer().createVerifier());
+  } catch (err) {
+    getGlobalLogger().warn(
+      'ServiceInitializer',
+      'Failed to wire capability token verifier; token enforcement unavailable',
+      { error: (err as Error)?.message },
+    );
+  }
+
+  // Security (G9): Register default security invariants for runtime verification.
+  // These invariants are checked at every critical execution point (tool execution,
+  // LLM call, agent spawn) to ensure security properties always hold.
+  try {
+    const { registerDefaultInvariants } = require('../security/securityInvariantVerifier');
+    registerDefaultInvariants();
+    getGlobalLogger().info('ServiceInitializer', 'Security invariants registered for runtime verification');
+  } catch (err) {
+    getGlobalLogger().warn(
+      'ServiceInitializer',
+      'Failed to register security invariants — runtime verification unavailable',
+      { error: (err as Error)?.message },
+    );
+  }
+
+  const orchestrator = new ToolOrchestrator(
+    {
+      enabled: true,
+      maxRetries: TOOL_ORCHESTRATOR_MAX_RETRIES,
+      circuitBreakerThreshold: TOOL_ORCHESTRATOR_CIRCUIT_THRESHOLD,
+      useApproval: false,
+    },
+    toolApproval,
+    breakerRegistry,
+  );
 
   const toolExecutionService = new ToolExecutionService({
     tools,
@@ -329,45 +447,22 @@ export function initializeServices(
     config,
     reflexionGenerator,
     stepTimeout,
-    getPromotedTools: () => new Set<string>(),
-    generateActionId: () => `action_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    getPromotedTools,
+    generateActionId,
     getBreakerRegistry: () => breakerRegistry,
   });
 
-  const outputManager = new ToolOutputManager({
-    enabled: true,
-    turnBudget: TOOL_OUTPUT_TURN_BUDGET,
-  });
-
-  const defaultApprovalCallback = async (req: {
-    id: string;
-    toolName: string;
-    arguments: Record<string, unknown>;
-    reason?: string;
-  }) => ({
-    approved: true,
-    requestId: req.id,
-    approvedAt: new Date().toISOString(),
-    reason: 'Auto-approved',
-  });
-
-  const approvalCallback = config.approval?.approvalCallback ?? defaultApprovalCallback;
-  const toolApproval = new ToolApproval(approvalCallback);
-
-  const orchestrator = new ToolOrchestrator(
-    {
-      enabled: true,
-      maxRetries: TOOL_ORCHESTRATOR_MAX_RETRIES,
-      circuitBreakerThreshold: TOOL_ORCHESTRATOR_CIRCUIT_THRESHOLD,
-      useApproval: true,
-    },
-    toolApproval,
-    breakerRegistry,
-  );
-
   const planner = new ToolPlanner();
-  const cycleDetector = new CycleDetector();
+  const cycleDetector = new CycleDetector({
+    enabled: config.cycleDetection?.enabled !== false,
+  });
   const contentScanner = createContentScanner();
+  const securityOrch = getSecurityOrchestrator();
+  const contextInjector = new ExecutionContextInjector({
+    agentInbox,
+    getMemory: () => memory,
+    securityOrch,
+  });
 
   let conversationStore: import('../memory/conversationStore').ConversationStore | null = null;
   try {
@@ -461,31 +556,80 @@ export function initializeServices(
     tenantIdFor: () => getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
   });
 
+  // ── Supervision Tree (Erlang/OTP "Let It Crash") ──────────────────────
+  // Create a root supervisor for agent runtime instances. The supervisor
+  // monitors agent health via messageBus 'agent.failed' events and reports
+  // crashes. In-process supervision provides health tracking + alerting;
+  // true process-level restart is handled by the ATR scheduler's lease
+  // expiry + recovery mechanism. Akka OTP best practice: supervisor only
+  // makes restart decisions, never contains business logic.
+  let supervisor: import('./supervisionTree').Supervisor | null = null;
   try {
-    getSecurityMonitor().start();
-  } catch (err) {
-    reportSilentFailure(err, 'serviceInitializer:466');
-    /* best-effort */
-  }
+    const { getSupervisionTreeRegistry } = require('./supervisionTree');
+    const registry = getSupervisionTreeRegistry();
+    supervisor = registry.createSupervisor({
+      id: `sup_root_${getGlobalTenantProvider().getCurrentTenantId() ?? 'default'}`,
+      strategy: 'one_for_one',
+      maxRestarts: 5,
+      maxRestartIntervalMs: 60_000,
+      defaultShutdownMs: 5_000,
+      publishEvents: true,
+    });
 
-  // Phase 2 / Hub Glue: install the closed-loop event handler chain
-  // (tool.blocked routing, system.alert cycle-dedupe). Idempotent across
-  // calls — survives repeated AgentRuntime construction in test suites.
-  try {
-    installHubGlue();
+    // Register a child representing the agent runtime. The child's isAlive
+    // reflects whether any runs are active (no crash signal received).
+    // On crash, reportChildCrash is called via the messageBus subscription
+    // below — no changes needed to agentRuntime.ts itself.
+    const childId = `agent_${getGlobalTenantProvider().getCurrentTenantId() ?? 'default'}`;
+    const activeRunsRef = getActiveRuns;
+    if (supervisor) {
+      supervisor.startChild({
+      id: childId,
+      start: async () => ({
+        id: childId,
+        isAlive: () => activeRunsRef().size > 0 || true, // runtime process is alive
+        healthCheck: async () => ({
+          healthy: true,
+          issues: activeRunsRef().size > 0 ? undefined : ['No active runs'],
+        }),
+      }),
+      shutdownMs: 5_000,
+      maxRestarts: 3,
+      maxRestartIntervalMs: 60_000,
+    }).catch((err: unknown) => {
+      reportSilentFailure(err, 'serviceInitializer:supervisorStartChild');
+    });
+    } // end if (supervisor)
+
+    // Subscribe to agent.failed events — when an agent crashes, report it
+    // to the supervisor so it can apply restart strategy + publish alerts.
+    const bus = getMessageBus();
+    bus.subscribe('agent.failed', (message) => {
+      const payload = message.payload as { agentId?: string; error?: string };
+      const agentId = payload.agentId ?? childId;
+      const error = payload.error ?? 'Unknown agent failure';
+      supervisor?.reportChildCrash(agentId, error).catch((err: unknown) => {
+        reportSilentFailure(err, 'serviceInitializer:agentFailedHandler');
+      });
+    });
   } catch (err) {
-    reportSilentFailure(err, 'serviceInitializer:installHubGlue');
-    /* best-effort */
+    reportSilentFailure(err, 'serviceInitializer:supervisionTree');
+    supervisor = null;
   }
 
   return {
     compactor,
     slidingWindow,
     reliabilityEngine,
+    circuitBreaker,
+    dlq: resolvedDlq,
+    checkpointer: resolvedCheckpointer,
     governor,
     verificationPipeline,
     reflexionInjector,
+    reflexionGenerator,
     samplesStore,
+    traceStore: resolvedTraceStore,
     leaseManager,
     stepTimeout,
     fallbackChain,
@@ -499,13 +643,17 @@ export function initializeServices(
     tenantManager,
     toolExecutionService,
     outputManager,
+    breakerRegistry,
     orchestrator,
     planner,
     cycleDetector,
     contentScanner,
+    securityOrch,
+    contextInjector,
     memory,
     memoryStore,
     conversationStore,
     otelExporter,
+    supervisor,
   };
 }

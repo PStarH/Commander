@@ -20,6 +20,7 @@ import { getGlobalLogger } from '../logging';
 import { getMetricsCollector } from './metricsCollector';
 import { getHookManager } from '../pluginManager';
 import { getGuardianAgent } from '../security/guardianAgent';
+import { reviewToolCall as guardianReviewToolCall, isRuntimeGuardianAvailable } from './runtimeGuardianBridge';
 import { getExecutionScheduler, type RunHandle } from '../atr/scheduler';
 import { generateIdempotencyKey } from '../atr/canonicalJson';
 import { StepErrorBoundary } from './stepErrorBoundary';
@@ -31,7 +32,14 @@ import {
   formatValidationErrorsJson,
 } from './toolCallValidator';
 import { isMutationTool } from './runtimeHelpers';
+import { getCapabilityTokenIssuer } from '../security/capabilityToken';
+import { getGlobalBiscuitCapabilityAdapter, BiscuitCapabilityAdapter } from '../security/biscuitCapabilityAdapter';
 import { ReflexionGenerator, type Reflexion, type ReflexionContext } from './reflexionGenerator';
+import {
+  getPatternTracker,
+  planSpeculativeExecution,
+  isSpeculativelySafe,
+} from './speculativeExecutor';
 import type { CompensationService } from './compensationService';
 import type { CacheManager } from './cacheManager';
 import type { DeadLetterQueue } from './deadLetterQueue';
@@ -57,6 +65,10 @@ export interface ToolExecutionRuntime {
 }
 
 export class ToolExecutionService {
+  /** Sliding window of recent tool call names for speculative pattern tracking */
+  private recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> = [];
+  private static readonly MAX_RECENT_CALLS = 10;
+
   constructor(private runtime: ToolExecutionRuntime) {}
 
   async execute(
@@ -67,11 +79,72 @@ export class ToolExecutionService {
     allowedTools?: string[],
     agentCtx?: AgentExecutionContext,
     executedMutations?: PlannedToolCall[],
+    capabilityToken?: string,
   ): Promise<ToolResult> {
     const tracer = getTraceRecorder();
     const bus = getMessageBus();
     const startTime = Date.now();
     try {
+      // Capability-token verification: if a token is supplied, it must authorize
+      // this exact tool and argument shape. Invalid tokens are rejected.
+      //
+      // Dual verification: Biscuit tokens (Ed25519, 'bsc_' prefix) are verified
+      // via the BiscuitCapabilityAdapter; HMAC tokens are verified via the
+      // existing CapabilityTokenIssuer. This allows incremental migration
+      // to Ed25519 signatures without breaking existing token issuers.
+      if (capabilityToken) {
+        try {
+          let verdict: { ok: boolean; reason?: string; detail?: string; jti?: string };
+
+          if (BiscuitCapabilityAdapter.isBiscuitToken(capabilityToken)) {
+            // Biscuit (Ed25519) verification
+            const biscuitVerifier = getGlobalBiscuitCapabilityAdapter().createVerifier(tenantId ?? '*');
+            verdict = biscuitVerifier.verify(capabilityToken, {
+              tool: toolCall.name,
+              args: toolCall.arguments as Record<string, unknown>,
+            });
+          } else {
+            // HMAC verification (legacy)
+            const verifier = getCapabilityTokenIssuer().createVerifier(tenantId ?? '*');
+            verdict = verifier.verify(capabilityToken, {
+              tool: toolCall.name,
+              args: toolCall.arguments as Record<string, unknown>,
+            });
+          }
+          if (!verdict.ok) {
+            const errorMsg = `CAPABILITY_TOKEN_REJECTED: ${verdict.reason}${verdict.detail ? ` (${verdict.detail})` : ''}`;
+            bus.publish('tool.blocked', agentId, {
+              runId,
+              toolName: toolCall.name,
+              reason: 'capability_token_rejected',
+              detail: errorMsg,
+            });
+            return {
+              toolCallId: toolCall.id,
+              name: toolCall.name,
+              output: errorMsg,
+              error: errorMsg,
+              durationMs: 0,
+            };
+          }
+        } catch (err) {
+          const errorMsg = `CAPABILITY_TOKEN_ERROR: ${err instanceof Error ? err.message : String(err)}`;
+          bus.publish('tool.blocked', agentId, {
+            runId,
+            toolName: toolCall.name,
+            reason: 'capability_token_error',
+            detail: errorMsg,
+          });
+          return {
+            toolCallId: toolCall.id,
+            name: toolCall.name,
+            output: errorMsg,
+            error: errorMsg,
+            durationMs: 0,
+          };
+        }
+      }
+
       if (toolCall.name.startsWith('chaos_')) {
         console.warn(
           `[ToolExecSvc] ENTER ${toolCall.name} round=${String((toolCall.arguments as { payload?: { round?: number | string } }).payload?.round ?? '?')}`,
@@ -393,19 +466,42 @@ export class ToolExecutionService {
               };
             }
             if (decision.decision === 'prompt') {
-              // Log the policy decision but allow execution (approval system handles prompting)
-              getGlobalLogger().debug(
-                'ToolExecutionService',
-                `ExecPolicy: "${command.slice(0, 80)}..." requires approval (rule: ${decision.rule?.id})`,
-              );
+              // Block execution for commands requiring approval.
+              // Previously this only logged and allowed execution, which meant
+              // destructive commands like `rm -rf` could execute without approval
+              // when useApproval was false (the default). Now we fail-safe by
+              // blocking the command and returning an error.
+              const errorMsg = `EXEC_POLICY_REQUIRES_APPROVAL: Command blocked — requires explicit approval. Rule: ${decision.rule?.id ?? 'unknown'}. Justification: ${decision.rule?.justification ?? 'destructive command'}. Command: "${command.slice(0, 100)}"`;
+              bus.publish('tool.blocked', agentId, {
+                runId,
+                toolName: toolCall.name,
+                reason: 'exec_policy_requires_approval',
+                detail: errorMsg,
+              });
+              return {
+                toolCallId: toolCall.id,
+                name: toolCall.name,
+                output: errorMsg,
+                error: errorMsg,
+                durationMs: 0,
+              };
             }
           } catch (e) {
-            // Policy engine load failure — proceed without gating (fail-open for availability)
-            getGlobalLogger().warn(
-              'ToolExecutionService',
-              'ExecPolicy load failed, proceeding without gate',
-              { error: (e as Error)?.message },
-            );
+            // Policy engine load failure — fail closed for shell/Python commands.
+            const errorMsg = `EXEC_POLICY_ERROR: Security policy engine unavailable: ${(e as Error)?.message}`;
+            bus.publish('tool.blocked', agentId, {
+              runId,
+              toolName: toolCall.name,
+              reason: 'exec_policy_error',
+              detail: errorMsg,
+            });
+            return {
+              toolCallId: toolCall.id,
+              name: toolCall.name,
+              output: errorMsg,
+              error: errorMsg,
+              durationMs: 0,
+            };
           }
         }
       }
@@ -459,8 +555,66 @@ export class ToolExecutionService {
             };
           }
         } catch (err) {
-          reportSilentFailure(err, 'toolExecutionService:461');
-          /* best-effort */
+          // Fail closed: if the guardian cannot evaluate the tool, block it.
+          const errorMsg = `GUARDIAN_ERROR: Security guardian unavailable for ${toolCall.name}: ${err instanceof Error ? err.message : String(err)}`;
+          bus.publish('tool.blocked', agentId, {
+            runId,
+            toolName: toolCall.name,
+            reason: 'guardian_error',
+            detail: errorMsg,
+          });
+          return {
+            toolCallId: toolCall.id,
+            name: toolCall.name,
+            output: errorMsg,
+            error: errorMsg,
+            durationMs: Date.now() - startTime,
+          };
+        }
+      }
+
+      // Runtime Guardian LLM review — semantic tool call analysis.
+      // This complements GuardianAgent's rule-based checks with LLM understanding,
+      // catching dangerous commands that don't match regex patterns (e.g.,
+      // "curl ... | bash", "python -c 'import os; os.system(...)'").
+      // Only runs when a provider is available; fails open on errors.
+      if (isRuntimeGuardianAvailable()) {
+        try {
+          const goal = (this.runtime as any).config?.goal || 'unknown';
+          const guardianDecision = await guardianReviewToolCall(toolCall, goal);
+          if (!guardianDecision.approved) {
+            const errorMsg = `RUNTIME_GUARDIAN_BLOCKED: ${guardianDecision.reason}`;
+            const durationMs = Date.now() - startTime;
+            bus.publish('tool.blocked', agentId, {
+              runId,
+              toolName: toolCall.name,
+              reason: 'runtime_guardian_blocked',
+              detail: errorMsg,
+            });
+            return {
+              toolCallId: toolCall.id,
+              name: toolCall.name,
+              output: errorMsg,
+              error: errorMsg,
+              durationMs,
+            };
+          }
+        } catch (err) {
+          // Fail closed: if the runtime guardian LLM review errors, block the call.
+          const errorMsg = `RUNTIME_GUARDIAN_ERROR: Semantic review unavailable for ${toolCall.name}: ${err instanceof Error ? err.message : String(err)}`;
+          bus.publish('tool.blocked', agentId, {
+            runId,
+            toolName: toolCall.name,
+            reason: 'runtime_guardian_error',
+            detail: errorMsg,
+          });
+          return {
+            toolCallId: toolCall.id,
+            name: toolCall.name,
+            output: errorMsg,
+            error: errorMsg,
+            durationMs: Date.now() - startTime,
+          };
         }
       }
 
@@ -662,7 +816,8 @@ export class ToolExecutionService {
       // The head preserves context/setup; the tail preserves results/errors.
       const maxSize = tool.maxOutputSize ?? this.runtime.config.observationMaskWindow * 1000;
       if (typeof output === 'string' && output.length > maxSize && maxSize > 0) {
-        const hash = crypto.createHash('md5').update(output).digest('hex').slice(0, 8);
+        // Security: Use SHA-256 instead of MD5 for cryptographic safety.
+        const hash = crypto.createHash('sha256').update(output).digest('hex').slice(0, 8);
         const resultDir = path.join(process.cwd(), '.commander_results');
         try {
           await fs.promises.mkdir(resultDir, { recursive: true });
@@ -712,6 +867,19 @@ export class ToolExecutionService {
         }
       }
 
+      // PASTE speculative execution: record tool call pattern after successful
+      // execution. Only records on success so failed calls don't pollute the
+      // pattern database. PatternTracker learns n-gram sequences across tasks.
+      try {
+        this.recentToolCalls.push({ name: toolCall.name, arguments: toolCall.arguments as Record<string, unknown> });
+        if (this.recentToolCalls.length > ToolExecutionService.MAX_RECENT_CALLS) {
+          this.recentToolCalls.shift();
+        }
+        getPatternTracker().recordSequence([toolCall.name]);
+      } catch (err) {
+        reportSilentFailure(err, 'toolExecutionService:recordPattern');
+      }
+
       return {
         toolCallId: toolCall.id,
         name: toolCall.name,
@@ -734,6 +902,77 @@ export class ToolExecutionService {
         reportSilentFailure(err, 'toolExecutionService:733');
         /* best-effort */
       }
+    }
+  }
+
+  /**
+   * PASTE-style speculative execution: during LLM thinking time, pre-execute
+   * predicted read-only tools and cache their results in ToolResultCache.
+   * When the LLM returns the actual tool call, the cache hit is consumed
+   * transparently (durationMs: 0) — achieving zero-wait for predicted calls.
+   *
+   * Safety constraints (following CPU speculative execution best practices):
+   *   - Only read-only tools (isSpeculativelySafe whitelist)
+   *   - Max 2 predictions per cycle (hard limit in planSpeculativeExecution)
+   *   - Min confidence 0.3 (configurable)
+   *   - Fire-and-forget: never blocks the main execution loop
+   *   - Wrong predictions discarded at zero cost (cache key includes args)
+   *
+   * Config: speculativeExecution.enabled must be true (defaults to false).
+   */
+  async triggerSpeculativeExecution(tenantId?: string): Promise<void> {
+    const specConfig = (this.runtime.config as AgentRuntimeConfig & {
+      speculativeExecution?: { enabled?: boolean };
+    }).speculativeExecution;
+    if (!specConfig?.enabled) return;
+
+    try {
+      const tracker = getPatternTracker();
+      const recentCalls = this.recentToolCalls;
+      const availableTools = Array.from(this.runtime.tools.keys());
+
+      const plan = planSpeculativeExecution(
+        tracker,
+        recentCalls,
+        availableTools,
+      );
+
+      if (plan.length === 0) return;
+
+      const toolCache = this.runtime.cacheManager.getToolCache();
+
+      await Promise.allSettled(
+        plan.map(async (pred) => {
+          if (!isSpeculativelySafe(pred.name)) return;
+
+          const tool = this.runtime.tools.get(pred.name);
+          if (!tool) return;
+
+          // Build a synthetic ToolCall for cache key compatibility
+          const syntheticCall: ToolCall = {
+            id: `spec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            name: pred.name,
+            arguments: pred.arguments,
+          };
+
+          // Skip if already cached (idempotency)
+          if (toolCache.get(syntheticCall, tenantId)) return;
+
+          const result = await tool.execute(pred.arguments);
+          const toolResult: ToolResult = {
+            toolCallId: syntheticCall.id,
+            name: pred.name,
+            output: typeof result === 'string' ? result : JSON.stringify(result),
+            durationMs: 0, // speculative — no wall-clock cost to consumer
+          };
+
+          if (!toolResult.error) {
+            toolCache.set(syntheticCall, toolResult, tenantId);
+          }
+        }),
+      );
+    } catch (err) {
+      reportSilentFailure(err, 'toolExecutionService:speculativeExec');
     }
   }
 }

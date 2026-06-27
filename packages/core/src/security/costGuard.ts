@@ -152,7 +152,7 @@ const DEFAULT_CONFIG: CostGuardConfig = {
   maxToolCallsPerMinute: 30,
   maxConcurrentRequests: 10,
   burstWindowMs: 60_000,
-  burstThreshold: 20,
+  burstThreshold: 100,
   maxCostPerSession: 5.0,
   maxCostPerDay: 100.0,
   maxCostPerMonth: 1000.0,

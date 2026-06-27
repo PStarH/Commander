@@ -569,6 +569,210 @@ export {
   formatReport,
   parseArgs,
 } from './rotationSignoffVerifier';
+
+// EncryptedSecretsVault — AES-256-GCM 加密密钥保险库，替代明文环境变量存储
+export {
+  EncryptedSecretsVault,
+  getEncryptedSecretsVault,
+  resetEncryptedSecretsVault,
+} from './encryptedSecretsVault';
+export type {
+  SecretMetadata,
+  StoredSecret,
+  VaultConfig,
+  VaultExportBundle,
+  VaultStats,
+} from './encryptedSecretsVault';
+
+// DataLossPrevention — 全面数据泄露防护系统，覆盖 API/日志/工具/Agent/SSE 出口点
+export {
+  DataLossPrevention,
+  getDataLossPrevention,
+  resetDataLossPrevention,
+  scanContent,
+  sanitizeContent,
+  dlpResponseMiddleware,
+} from './dataLossPrevention';
+export type {
+  DLPRiskLevel,
+  SensitiveDataType,
+  RedactionStrategy as DLPRedactionStrategy,
+  DLPExitPoint,
+  SensitiveDataMatch,
+  DLPScanResult,
+  DLPConfig,
+  DLPStats,
+} from './dataLossPrevention';
+
+// BillExplosionGuard — 不可绕过的账单爆炸防护系统，五层硬性成本上限
+export {
+  BillExplosionGuard,
+  getBillExplosionGuard,
+  resetBillExplosionGuard,
+} from './billExplosionGuard';
+export type {
+  BillGuardAction,
+  BillAttackPattern,
+  BillingPeriod,
+  BillGuardConfig,
+  BillGuardState,
+  CostCheckResult,
+  CostSnapshot,
+  BillCostReport,
+  SessionState,
+  TenantCostState,
+} from './billExplosionGuard';
+
+// ZeroTrustValidator — 零信任请求验证器，HMAC 签名 + 防重放 + 时序安全比较
+export {
+  ZeroTrustValidator,
+  getZeroTrustValidator,
+  resetZeroTrustValidator,
+  zeroTrustMiddleware,
+} from './zeroTrustValidator';
+export type {
+  ZeroTrustValidationResult,
+  ZeroTrustRejectReason,
+  SigningKeyEntry,
+  ZeroTrustConfig,
+  SignRequestParams,
+  GeneratedSignature,
+} from './zeroTrustValidator';
+
+// EnterpriseSecurityGateway — 企业级统一安全网关，7 层纵深防御协调器
+export {
+  EnterpriseSecurityGateway,
+  getEnterpriseSecurityGateway,
+  resetEnterpriseSecurityGateway,
+} from './enterpriseSecurityGateway';
+export type {
+  EnterpriseGatewayConfig,
+  PreLLMCheckParams,
+  PostLLMCheckParams,
+  PreToolCheckParams,
+  PostToolCheckParams,
+  SecurityCheckResult,
+  SecurityLayer,
+  GatewayStatus,
+} from './enterpriseSecurityGateway';
+
+// RuntimeDependencyGuard — 运行时依赖完整性防护（防篡改、依赖混淆、post-install 审计、typosquatting 检测）
+export {
+  RuntimeDependencyGuard,
+  getRuntimeDependencyGuard,
+  resetRuntimeDependencyGuard,
+} from './runtimeDependencyGuard';
+export type {
+  DependencyIntegrityRecord,
+  PostInstallScriptAnalysis,
+  TyposquattingResult,
+  DependencyConfusionCheck,
+  RuntimeDependencyGuardConfig,
+  IntegrityViolation,
+} from './runtimeDependencyGuard';
+
+// ToolPoisoningGuard — MCP 工具中毒攻击（TPA）防护
+export {
+  ToolPoisoningGuard,
+  getToolPoisoningGuard,
+  resetToolPoisoningGuard,
+  POISONING_PATTERNS,
+} from './toolPoisoningGuard';
+export type {
+  ToolDescriptionScanResult,
+  PoisoningFinding,
+  ToolBehaviorBaseline,
+  ToolSecurityClassification,
+  PoisoningPattern,
+  ToolPoisoningConfig,
+} from './toolPoisoningGuard';
+
+// CVEDatabaseIntegration — CVE 数据库集成与实时漏洞检查
+export {
+  CVEDatabaseIntegration,
+  getCVEDatabaseIntegration,
+  resetCVEDatabaseIntegration,
+} from './cveDatabaseIntegration';
+
+// ZeroDayDefenseEngine — 零日攻击防御引擎（行为基线 + 统计异常 + 未知攻击推测）
+export {
+  ZeroDayDefenseEngine,
+  getZeroDayDefenseEngine,
+  resetZeroDayDefenseEngine,
+} from './zeroDayDefenseEngine';
+export type {
+  BehaviorBaseline,
+  AnomalySignal,
+  ZeroDayRiskAssessment,
+  RecommendedAction as ZeroDayRecommendedAction,
+  ZeroDayConfig,
+  MetricType,
+} from './zeroDayDefenseEngine';
+
+// ActiveDeceptionSystem — 主动欺骗防御系统（蜜罐端点 + 金丝雀令牌 + 诱饵凭证）
+export {
+  ActiveDeceptionSystem,
+  getActiveDeceptionSystem,
+  resetActiveDeceptionSystem,
+} from './activeDeceptionSystem';
+export type {
+  HoneypotEndpoint,
+  CanaryToken,
+  DecoyCredential,
+  AttackerProfile,
+  DeceptionResponse,
+  DeceptionConfig,
+  CanaryTokenType,
+} from './activeDeceptionSystem';
+
+// SecuritySelfHealingEngine — 安全自愈引擎（自动隔离 + 恢复 + 加固 + 攻击后分析）
+export {
+  SecuritySelfHealingEngine,
+  getSecuritySelfHealingEngine,
+  resetSecuritySelfHealingEngine,
+  BUILTIN_PLAYBOOKS,
+} from './securitySelfHealingEngine';
+export type {
+  Playbook as SelfHealingPlaybook,
+  PlaybookStep,
+  PlaybookAction as SelfHealingPlaybookAction,
+  HealingResult,
+  AttackTimeline,
+  AttackTimelineEvent,
+  SelfHealingConfig,
+  IsolationScope,
+} from './securitySelfHealingEngine';
+
+// UltimateDefenseCoordinator — 终极防御协调器（12 层防御矩阵统一指挥中枢）
+export {
+  UltimateDefenseCoordinator,
+  getUltimateDefenseCoordinator,
+  resetUltimateDefenseCoordinator,
+} from './ultimateDefenseCoordinator';
+export type {
+  DefenseLayer,
+  DefenseLayerStatus,
+  DefensePosture,
+  RequestSecurityContext,
+  UltimateSecurityResult,
+  LayerCheckSummary,
+  UDCConfig,
+} from './ultimateDefenseCoordinator';
+export type {
+  CVEEntry,
+  CVESeverity,
+  CVECategory,
+  AffectedProduct,
+  FixedVersion,
+  PackageToCheck,
+  VulnerabilityMatch,
+  CVECheckResult,
+  VulnerabilityReport,
+  RemediationSuggestion,
+  CVEFeedSource,
+  CVEConfig,
+} from './cveDatabaseIntegration';
+
 export type {
   SignoffRow,
   CliArgs,
@@ -585,3 +789,143 @@ export type {
   //                        '@commander/core/security/rotationSignoffVerifier'
   //   • Main-barrel alias: import type { RotationSignoffResult } from '@commander/core'
 } from './rotationSignoffVerifier';
+
+// A2AMessageSecurity — A2A 协议消息级安全（OWASP ASI07）：HMAC 签名 + AES-256-GCM
+// 加密 + 身份证明 + 重放防御。注意：本模块的 `VerificationResult` 类型与
+// `./sandboxVerifier` 导出的同名类型冲突，因此此处以 `A2AVerificationResult`
+// 别名导出；如需原名，请直接从本模块路径导入。
+export {
+  A2AMessageSecurity,
+  getA2AMessageSecurity,
+  resetA2AMessageSecurity,
+} from './a2aMessageSecurity';
+export type {
+  SecurityLevel,
+  AgentIdentity,
+  SenderContext,
+  A2AMessage,
+  SecuredMessage,
+  A2AMessageSecurityConfig,
+  SemanticAnalyzer,
+} from './a2aMessageSecurity';
+export type { VerificationResult as A2AVerificationResult } from './a2aMessageSecurity';
+
+// MemoryPoisoningDefenseEngine — 全面记忆投毒防御引擎 (OWASP ASI06/ASI07)
+// 覆盖全部 5 类攻击: 写入/检索/摘要/反思/跨会话持久化投毒
+export {
+  MemoryPoisoningDefenseEngine,
+  getMemoryPoisoningDefenseEngine,
+  resetMemoryPoisoningDefenseEngine,
+} from './memoryPoisoningDefenseEngine';
+
+// GoalHijackDetector — 目标劫持检测器 (OWASP ASI01)
+// 运行时检测 4 类目标劫持：直接覆盖、间接注入、目标漂移、递归篡改
+export {
+  GoalHijackDetector,
+  getGoalHijackDetector,
+  resetGoalHijackDetector,
+} from './goalHijackDetector';
+export type {
+  HijackType,
+  HijackSeverity,
+  OriginalGoal,
+  GoalContext,
+  HijackDetectionResult,
+  GoalModificationRecord,
+  GoalHijackConfig,
+} from './goalHijackDetector';
+
+// SemanticFirewall — 语义防火墙 (OWASP ASI06/ASI07)
+// 5 层纵深防御：内容净化 → 溯源追踪 → 写入前验证(正则+LLM语义) → 隔离区 → 审计日志
+export {
+  SemanticFirewall,
+  getSemanticFirewall,
+  resetSemanticFirewall,
+} from './semanticFirewall';
+export type {
+  ProvenanceOrigin,
+  TrustLevel,
+  WriteDecision,
+  DangerCategory,
+  ProvenanceRecord,
+  SemanticAnalysisResult,
+  SemanticAnalyzerCallback,
+  WriteContext,
+  ValidationResult,
+  QuarantinedItem,
+  AuditLogEntry,
+  SemanticFirewallConfig,
+} from './semanticFirewall';
+export type { SanitizeResult as SemanticFirewallSanitizeResult } from './semanticFirewall';
+export type {
+  PoisoningType,
+  PoisoningSeverity,
+  SourceCredibility,
+  MemoryWriteContext,
+  DefenseResult,
+  RetrievedMemoryEntry,
+  RetrievalValidationResult,
+  TaintEntry,
+  TaintReport,
+  MemoryPoisoningDefenseConfig,
+} from './memoryPoisoningDefenseEngine';
+
+// AdaptiveThreatLearningEngine — 自适应威胁学习引擎
+// 从每次检测到的攻击中学习，生成可复用签名，实时合成新检测规则，威胁模型演化
+export {
+  AdaptiveThreatLearningEngine,
+  getAdaptiveThreatLearningEngine,
+  resetAdaptiveThreatLearningEngine,
+} from './adaptiveThreatLearningEngine';
+export type {
+  SignatureCategory,
+  SignatureStatus,
+  RuleAction,
+  AttackFamilyType,
+  AttackContext,
+  AttackSignature,
+  SynthesizedRule,
+  AttackFamily,
+  ThreatModel,
+  SignatureMatchResult,
+  SignatureCheckRequest,
+  AdaptiveLearningConfig,
+} from './adaptiveThreatLearningEngine';
+
+// DynamicCostGuardian — 动态成本卫士
+// 每租户消费指纹、自适应阈值、新型经济攻击向量检测、实时成本异常响应
+export {
+  DynamicCostGuardian,
+  getDynamicCostGuardian,
+  resetDynamicCostGuardian,
+} from './dynamicCostGuardian';
+export type {
+  SpendingPeriod,
+  DeviationLevel,
+  EconomicAttackType,
+  SpendingFingerprint,
+  DynamicThreshold,
+  EconomicAttackDetection,
+  CostAnomalyResponse,
+  CostRecord,
+  DynamicCostConfig,
+} from './dynamicCostGuardian';
+
+// AttackCampaignTracker — 攻击战役追踪器
+// 跨事件/天/代理追踪演化的攻击战役，战役演化分析，战役关联，预测性防御
+export {
+  AttackCampaignTracker,
+  getAttackCampaignTracker,
+  resetAttackCampaignTracker,
+} from './attackCampaignTracker';
+export type {
+  CampaignPhase,
+  CampaignSeverity,
+  PredictionType,
+  AttackEvent,
+  AttackCampaign,
+  CampaignEvolution,
+  CampaignGroup,
+  CampaignPrediction,
+  CampaignTrackerConfig,
+} from './attackCampaignTracker';
