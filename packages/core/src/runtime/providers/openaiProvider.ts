@@ -1,6 +1,7 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types';
 import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
+import { executeViaBatchAPI, supportsNativeBatchAPI, type BatchAPIConfig } from '../batchApiClient';
 
 interface OpenAICompletionUsage {
   prompt_tokens: number;
@@ -39,7 +40,28 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {
-    const model = this.defaultModel || request.model;
+    // ── Batch API path (50% cost discount for non-urgent tasks) ──
+    // When isBatch flag is set, try native batch API first.
+    // Fail-closed: if batch fails or times out, fall back to standard API.
+    if (request.cacheConfig?.isBatch && supportsNativeBatchAPI(this.name)) {
+      const batchConfig: BatchAPIConfig = {
+        pollIntervalMs: 10000,
+        maxPollAttempts: 60, // 10 min max wait
+        apiKey: this.apiKey,
+        baseUrl: this.baseUrl,
+      };
+      const batchResult = await executeViaBatchAPI(request, this.name, batchConfig);
+      if (batchResult) {
+        // Batch succeeded — annotate model name and return
+        batchResult.model = request.model || this.defaultModel;
+        return batchResult;
+      }
+      // Batch failed — fall through to standard API (fail-closed)
+      getGlobalLogger().warn('OpenAIProvider', 'Batch API failed, falling back to standard API');
+    }
+
+    // ── Standard API path ──
+    const model = request.model || this.defaultModel;
     const body = this.buildBody(request, model);
     // Include tool_calls if present on the last assistant message (for multi-turn)
     const lastAssistant = [...request.messages].reverse().find((m) => m.role === 'assistant');
@@ -114,6 +136,10 @@ export class OpenAIProvider implements LLMProvider {
     }
     if (request.cacheConfig?.promptCacheKey) {
       body.prompt_cache_key = request.cacheConfig.promptCacheKey;
+    }
+    // Extended prompt cache retention for gpt-5.x models (24h vs default 5-10min)
+    if (request.cacheConfig?.promptCacheRetention) {
+      body.prompt_cache_retention = request.cacheConfig.promptCacheRetention;
     }
 
     return body;
