@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { contentScanner, ScanResult } from './contentScanner';
 import { MemoryPoisoningDetector } from './memoryPoisoningDetector';
 import { toErrorMessage } from './routeHelpers';
+import { validateBody } from './validationMiddleware';
+import { securityScanEntryBody, assessCredibilityBody } from './schemas';
 
 export function createSecurityRouter(): Router {
   const router = Router();
@@ -76,18 +78,15 @@ export function createSecurityRouter(): Router {
     });
   });
 
-  router.post('/api/memory/assess-credibility', async (req, res) => {
-    const { id, content, timestamp, source, embedding, metadata } = req.body ?? {};
-    if (!content || !source) {
-      return res.status(400).json({ error: 'content and source are required' });
-    }
+  // Security: Validate input with Zod schema to prevent type confusion.
+  router.post('/api/memory/assess-credibility', validateBody(assessCredibilityBody), async (req, res) => {
+    const { source, content, context } = req.body;
     const result = await memoryPoisoningDetector.assessCredibility({
-      id: id ?? `mem-${Date.now()}`,
+      id: `mem-${Date.now()}`,
       content,
-      timestamp: timestamp ? new Date(timestamp) : new Date(),
+      timestamp: new Date(),
       source,
-      embedding,
-      metadata,
+      metadata: context,
     });
     res.json(result);
   });
