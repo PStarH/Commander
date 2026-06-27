@@ -7,6 +7,10 @@ interface OpenAICompletionUsage {
   completion_tokens: number;
   total_tokens: number;
   prompt_tokens_details?: { cached_tokens?: number };
+  /** DeepSeek-specific: tokens served from disk-based context cache */
+  prompt_cache_hit_tokens?: number;
+  /** DeepSeek-specific: tokens not served from cache */
+  prompt_cache_miss_tokens?: number;
 }
 
 interface OpenAIStreamChunk {
@@ -48,7 +52,7 @@ export class DeepSeekProvider implements LLMProvider {
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {
-    const model = this.defaultModel || request.model;
+    const model = request.model || this.defaultModel;
     const body = this.buildBody(request, model);
 
     const lastAssistant = [...request.messages].reverse().find((m) => m.role === 'assistant');
@@ -99,6 +103,19 @@ export class DeepSeekProvider implements LLMProvider {
     if (request.tools && request.tools.length > 0) {
       body.tools = FormatBridge.adaptToolsForProvider(request.tools, 'deepseek');
       body.parallel_tool_calls = true;
+    }
+
+    // DeepSeek context caching is automatic (disk-based), but prompt_cache_key
+    // helps the API route to the same cache shard for better hit rates.
+    if (request.cacheConfig?.promptCacheKey) {
+      body.prompt_cache_key = request.cacheConfig.promptCacheKey;
+    }
+
+    // Apply reasoning configuration for deepseek-reasoner models
+    const rc = request.reasoningConfig;
+    if (rc?.enabled) {
+      if (rc.effort) body.reasoning_effort = rc.effort;
+      if (rc.budget && rc.budget > 0) body.max_thinking_tokens = rc.budget;
     }
 
     return body;
@@ -166,6 +183,8 @@ export class DeepSeekProvider implements LLMProvider {
           promptTokens: usage.prompt_tokens,
           completionTokens: usage.completion_tokens,
           totalTokens: usage.total_tokens,
+          cacheReadTokens: usage.prompt_cache_hit_tokens ??
+            usage.prompt_tokens_details?.cached_tokens ?? 0,
         }
       : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
@@ -203,7 +222,14 @@ export class DeepSeekProvider implements LLMProvider {
         };
         finish_reason?: string;
       }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+        prompt_tokens_details?: { cached_tokens?: number };
+        prompt_cache_hit_tokens?: number;
+        prompt_cache_miss_tokens?: number;
+      };
     },
     model: string,
   ): LLMResponse {
@@ -214,6 +240,8 @@ export class DeepSeekProvider implements LLMProvider {
       promptTokens: data.usage?.prompt_tokens ?? 0,
       completionTokens: data.usage?.completion_tokens ?? 0,
       totalTokens: data.usage?.total_tokens ?? 0,
+      cacheReadTokens: data.usage?.prompt_cache_hit_tokens ??
+        data.usage?.prompt_tokens_details?.cached_tokens ?? 0,
     };
 
     const toolCalls = message.tool_calls?.map(
