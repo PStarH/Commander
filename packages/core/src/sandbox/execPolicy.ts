@@ -133,7 +133,34 @@ export class ExecPolicyEngine {
         priority: 10,
       },
 
-      // Destructive: always prompt
+      // Catastrophic destructive: always forbidden (can never be approved)
+      {
+        id: 'forbid-catastrophic',
+        pattern: [
+          'rm -rf /',
+          'rm -rf ~',
+          'rm -rf *',
+          'rm -rf .',
+          'rm -rf $HOME',
+          'rm -rf $PWD',
+          'rm -fr /',
+          'rm -fr ~',
+          'rm -fr *',
+          'rm -fr .',
+          'rm -r /',
+          'rm -r ~',
+          'rm -r *',
+          'rm -r .',
+          'chmod -R 777 /',
+          'chmod -R 777 ~',
+        ],
+        decision: 'forbidden',
+        justification:
+          'Catastrophic destructive operation — can never be approved (protects root/home/workspace from deletion)',
+        priority: 99,
+      },
+
+      // Destructive: always prompt (requires explicit approval)
       {
         id: 'prompt-destructive',
         pattern: [
@@ -242,7 +269,10 @@ export class ExecPolicyEngine {
     matchedPattern?: string;
   } {
     this.ensureUserRulesLoaded();
-    const normalized = command.toLowerCase().trim();
+    // Normalize: lowercase, trim, AND collapse internal whitespace (spaces, tabs, newlines)
+    // to single spaces. This prevents bypass via multiple spaces/tabs: `rm  -rf  /`
+    // would otherwise not match `rm -rf /` and fall through to 'prompt' instead of 'forbidden'.
+    const normalized = command.toLowerCase().trim().replace(/\s+/g, ' ');
 
     // Strip process wrapper prefixes for matching (Claude Code pattern)
     let strippedCommand = command;
@@ -254,6 +284,8 @@ export class ExecPolicyEngine {
         break; // only strip one wrapper level
       }
     }
+    // Normalize whitespace in stripped command too, so candidates match patterns
+    strippedCommand = strippedCommand.toLowerCase().trim().replace(/\s+/g, ' ');
 
     const candidates = this.extractCommandCandidates(strippedCommand);
     const sorted = [...this.rules].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
@@ -574,4 +606,23 @@ interface CommandCandidates {
   rawCommands: Set<string>;
   segments: Set<string>;
   commandNames: Set<string>;
+}
+
+// ── Singleton accessor ────────────────────────────────────────────────────
+// Mirrors the getGuardianAgent()/resetGuardianAgent() pattern so callers can
+// obtain a shared ExecPolicyEngine without re-loading rules on every call.
+
+let defaultExecPolicyInstance: ExecPolicyEngine | undefined;
+
+/** Get the shared singleton ExecPolicyEngine instance. */
+export function getExecPolicyEngine(): ExecPolicyEngine {
+  if (!defaultExecPolicyInstance) {
+    defaultExecPolicyInstance = new ExecPolicyEngine();
+  }
+  return defaultExecPolicyInstance;
+}
+
+/** Reset the singleton (primarily for tests). */
+export function resetExecPolicyEngine(): void {
+  defaultExecPolicyInstance = undefined;
 }

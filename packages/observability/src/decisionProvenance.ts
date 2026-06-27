@@ -1,4 +1,4 @@
-import { reportSilentFailure } from '../../core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 import type { TraceEvent, ExecutionTrace } from '@commander/core';
 import type { DecisionNode } from './types';
 
