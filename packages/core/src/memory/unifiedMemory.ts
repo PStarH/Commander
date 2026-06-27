@@ -34,6 +34,19 @@ import { MemoryCurator, getMemoryCurator } from './curator';
 import type { CurationResult } from './curator';
 import { UserModelManager, getUserModelManager } from './userModel';
 import type { UserProfile } from './userModel';
+import {
+  fuseAndRerank,
+  getGlobalCrossEncoderScorer,
+} from './rankingFusion';
+import type { FusedResult, RankingFusionConfig } from './rankingFusion';
+import {
+  getGlobalSemanticMemoryStore,
+} from './semanticStore';
+import type { SemanticMemoryStore } from './semanticStore';
+import {
+  getGlobalMemoryFederation,
+} from './federation';
+import type { MemoryFederation, FederationResult } from './federation';
 
 // ============================================================================
 // Types
@@ -92,7 +105,7 @@ export interface RecallOptions {
   since?: string;
 }
 
-export type MemorySource = 'working' | 'episodic' | 'longterm' | 'conversations' | 'user_model';
+export type MemorySource = 'working' | 'episodic' | 'longterm' | 'conversations' | 'user_model' | 'semantic' | 'federated';
 
 export interface UnifiedRecallResult {
   /** Working memory matches */
@@ -103,12 +116,18 @@ export interface UnifiedRecallResult {
   longterm: MemoryEntry[];
   /** Conversation history matches */
   conversations: ConversationSearchResult[];
+  /** Semantic knowledge graph matches */
+  semantic: import('../contracts/pillarIV').ISemanticEntity[];
+  /** Federated (cross-agent) memory matches */
+  federated: FederationResult | null;
   /** User model context (if requested) */
   userProfile?: UserProfile;
   /** Total results across all sources */
   totalCount: number;
   /** Unified context string for LLM injection */
   contextString: string;
+  /** Fused and reranked results across all sources (RRF + cross-encoder) */
+  fusedResults: FusedResult[];
 }
 
 export interface UnifiedContext {
@@ -150,6 +169,8 @@ export class UnifiedMemory {
   private curator: MemoryCurator;
   private userModel: UserModelManager;
   private memoryStore: MemoryStore | null = null;
+  private semanticStore: SemanticMemoryStore;
+  private federation: MemoryFederation;
   private writeCount = 0;
   private initialized = false;
   private initPromise: Promise<void> | null = null;
@@ -165,6 +186,8 @@ export class UnifiedMemory {
     this.userModel = getUserModelManager({
       modelPath: `${this.config.dataPath}/user-models`,
     });
+    this.semanticStore = getGlobalSemanticMemoryStore();
+    this.federation = getGlobalMemoryFederation();
   }
 
   /**
@@ -260,11 +283,16 @@ export class UnifiedMemory {
   /**
    * Search across all memory systems with a single query.
    * Returns results from all sources plus a unified context string.
+   *
+   * Ranking pipeline:
+   * 1. Each source returns its own ranked list
+   * 2. Reciprocal Rank Fusion (RRF) merges lists into a unified ranking
+   * 3. Optional cross-encoder reranking improves top-K precision
    */
   async recall(options: RecallOptions): Promise<UnifiedRecallResult> {
     this.ensureInitialized();
 
-    const sources = options.sources ?? ['working', 'episodic', 'longterm', 'conversations'];
+    const sources = options.sources ?? ['working', 'episodic', 'longterm', 'conversations', 'semantic', 'federated'];
     const limit = options.limit ?? 5;
 
     // Search across all sources
@@ -272,7 +300,9 @@ export class UnifiedMemory {
     let episodicResults: EpisodicMemoryItem[] = [];
     let longtermResults: MemoryEntry[] = [];
     let conversationResults: ConversationSearchResult[] = [];
+    let federatedResults: FederationResult | null = null;
     let userProfile: UserProfile | undefined;
+    let semanticResults: import('../contracts/pillarIV').ISemanticEntity[] = [];
 
     // Working memory search
     if (sources.includes('working')) {
@@ -327,28 +357,172 @@ export class UnifiedMemory {
         this.userModel.getProfile(options.userId);
     }
 
-    // Build unified context string
+    // Semantic memory (knowledge graph) search
+    if (sources.includes('semantic')) {
+      try {
+        semanticResults = await this.semanticStore.query({
+          text: options.query,
+          limit,
+          minSimilarity: options.minRelevance ?? 0.1,
+        });
+      } catch (e) {
+        getGlobalLogger().debug('UnifiedMemory', 'Semantic search failed', {
+          error: (e as Error)?.message,
+        });
+      }
+    }
+
+    // Federated (cross-agent) memory search
+    if (sources.includes('federated')) {
+      try {
+        federatedResults = await this.federation.query({
+          text: options.query,
+          limit,
+          includeProcedural: true,
+        });
+      } catch (e) {
+        getGlobalLogger().debug('UnifiedMemory', 'Federated search failed', {
+          error: (e as Error)?.message,
+        });
+      }
+    }
+
+    // ---- RRF Fusion + Cross-Encoder Reranking ----
+    // Build ranked lists from each source for fusion
+    const rankedLists: import('./rankingFusion').RankedItem[][] = [];
+
+    if (workingResults.length > 0) {
+      rankedLists.push(
+        workingResults.map((entry, rank) => ({
+          id: `working:${entry.id}`,
+          text: `${entry.content} ${entry.context} ${entry.tags.join(' ')}`,
+          source: 'working',
+          sourceRank: rank,
+          item: entry,
+        })),
+      );
+    }
+
+    if (episodicResults.length > 0) {
+      rankedLists.push(
+        episodicResults.map((item, rank) => ({
+          id: `episodic:${item.id}`,
+          text: `${item.title} ${item.content} ${item.tags.join(' ')}`,
+          source: 'episodic',
+          sourceRank: rank,
+          item,
+        })),
+      );
+    }
+
+    if (longtermResults.length > 0) {
+      rankedLists.push(
+        longtermResults.map((entry, rank) => ({
+          id: `longterm:${entry.id}`,
+          text: `${entry.content} ${entry.context} ${entry.tags.join(' ')}`,
+          source: 'longterm',
+          sourceRank: rank,
+          item: entry,
+        })),
+      );
+    }
+
+    if (conversationResults.length > 0) {
+      rankedLists.push(
+        conversationResults.map((conv, rank) => ({
+          id: `conv:${conv.session.id}`,
+          text: `${conv.session.goal ?? ''} ${conv.matchingTurns.map((t) => t.content).join(' ')}`,
+          source: 'conversations',
+          sourceRank: rank,
+          item: conv,
+        })),
+      );
+    }
+
+    if (semanticResults.length > 0) {
+      rankedLists.push(
+        semanticResults.map((entity, rank) => ({
+          id: `semantic:${entity.id}`,
+          text: `${entity.name} (${entity.type}) ${entity.description} ${entity.relationships.map((r: { type: string }) => r.type).join(' ')}`,
+          source: 'semantic',
+          sourceRank: rank,
+          item: entity,
+        })),
+      );
+    }
+
+    // Add federated entities to the RRF fusion
+    if (federatedResults && federatedResults.entities.length > 0) {
+      rankedLists.push(
+        federatedResults.entities.map((entity, rank) => ({
+          id: `federated:${entity.id}`,
+          text: `${entity.name} (${entity.type}) ${entity.description} ${entity.relationships.map((r) => r.type).join(' ')}`,
+          source: 'federated',
+          sourceRank: rank,
+          item: entity,
+        })),
+      );
+    }
+
+    // Run fusion pipeline
+    let fusedResults: FusedResult[] = [];
+    if (rankedLists.length > 0) {
+      const fusionConfig: Partial<RankingFusionConfig> = {
+        rrfK: 60,
+        rerankTopK: Math.min(10, limit * 2),
+        enableReranking: true,
+        rrfWeight: 0.4,
+      };
+      try {
+        fusedResults = await fuseAndRerank(
+          options.query,
+          rankedLists,
+          getGlobalCrossEncoderScorer(),
+          fusionConfig,
+        );
+      } catch (e) {
+        getGlobalLogger().warn('UnifiedMemory', 'RRF fusion failed, falling back to raw results', {
+          error: (e as Error)?.message,
+        });
+        // Fallback: construct FusedResult from raw results without fusion
+        for (const list of rankedLists) {
+          for (let rank = 0; rank < list.length; rank++) {
+            const r = list[rank];
+            fusedResults.push({
+              item: r.item,
+              id: r.id,
+              text: r.text,
+              sources: [r.source],
+              rrfScore: 1 / (60 + rank),
+              finalScore: 1 / (60 + rank),
+            });
+          }
+        }
+      }
+    }
+
+    // Build unified context string — use fused ordering for better relevance
+    const contextString = this.buildFusedContextString(fusedResults);
+
     const totalCount =
       workingResults.length +
       episodicResults.length +
       longtermResults.length +
-      conversationResults.length;
-
-    const contextString = this.buildRecallContextString(
-      workingResults,
-      episodicResults,
-      longtermResults,
-      conversationResults,
-    );
+      conversationResults.length +
+      semanticResults.length +
+      (federatedResults?.entities.length ?? 0);
 
     return {
       working: workingResults,
       episodic: episodicResults,
       longterm: longtermResults,
       conversations: conversationResults,
+      semantic: semanticResults,
+      federated: federatedResults,
       userProfile,
       totalCount,
       contextString,
+      fusedResults,
     };
   }
 
@@ -755,6 +929,28 @@ export class UnifiedMemory {
       for (const item of working.slice(-5)) {
         parts.push(`- ${item.content.substring(0, 150)}`);
       }
+    }
+
+    return parts.join('\n');
+  }
+
+  /**
+   * Build a context string from fused results, ordered by relevance.
+   *
+   * This replaces the source-bucketed approach with a unified relevance
+   * ordering: the most relevant items appear first regardless of which
+   * memory source they came from.
+   */
+  private buildFusedContextString(fused: FusedResult[]): string {
+    if (fused.length === 0) return '';
+
+    const parts: string[] = ['## Relevant Memories (fused ranking)'];
+
+    for (const result of fused.slice(0, 15)) {
+      const sourceTag = result.sources.join('+');
+      const text = result.text.substring(0, 200);
+      const score = result.finalScore.toFixed(4);
+      parts.push(`- [${sourceTag}|${score}] ${text}`);
     }
 
     return parts.join('\n');
