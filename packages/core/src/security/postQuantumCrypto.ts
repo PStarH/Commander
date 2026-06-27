@@ -349,21 +349,16 @@ export class PostQuantumCrypto {
   /**
    * Generate a shared secret using a PQ-safe key agreement.
    *
-   * Currently uses HKDF with 512-bit random for PQ strength.
-   * Ready for ML-KEM-768 (Kyber) key encapsulation when available.
+   * @unimplemented Not yet implemented. Do not rely on this for cryptographic
+   * security. Use established cryptographic channels instead.
    */
   generateSharedSecret(peerPublicKey: string, localKeyPair: PqKeyPair): Buffer {
-    const peerKey = Buffer.from(peerPublicKey, 'hex');
+    // Placeholder PQ-safe key agreement using HKDF-like construction.
+    // In production this should be replaced with ML-KEM-768 encapsulation.
     const privateKey = Buffer.from(localKeyPair.privateKey, 'hex');
-
-    // Simulate ECDH-style shared secret derivation with PQ-safe sizes
-    const combined = Buffer.concat([peerKey, privateKey]);
-    const salt = crypto.randomBytes(32);
-
-    return crypto
-      .createHmac('sha512', salt)
-      .update(Buffer.concat([combined, Buffer.from('commander:pq:kex')]))
-      .digest();
+    const peerKey = Buffer.from(peerPublicKey, 'hex');
+    const salt = Buffer.from(`commander:pq:kex:${localKeyPair.algorithm}`);
+    return crypto.createHmac('sha512', privateKey).update(peerKey).update(salt).digest();
   }
 
   // ── CSPRNG (PQ-strength) ──────────────────────────────────────────

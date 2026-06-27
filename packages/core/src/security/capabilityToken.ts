@@ -440,6 +440,17 @@ export class CapabilityTokenIssuer {
     return encoded;
   }
 
+  /**
+   * Create a verifier bound to this issuer's master key and default audience.
+   * This is the intended wiring point for runtime token enforcement.
+   */
+  createVerifier(expectedAud?: string): CapabilityTokenVerifier {
+    return new CapabilityTokenVerifier({
+      masterKey: this.masterKey,
+      expectedAud,
+    });
+  }
+
   /** Revoke a jti by adding it to the revocation ledger. Returns true if added. */
   revoke(jti: string, reason: string = 'manual_revoke'): boolean {
     const added = RevocationSet.shared.add(jti, reason);
