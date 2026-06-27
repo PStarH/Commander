@@ -25,7 +25,7 @@
  *    break the run.
  */
 
-import { reportSilentFailure } from '../../core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 import type { LLMRequest, LLMResponse } from '@commander/core';
 
 /** A rubric describes HOW to score something. */

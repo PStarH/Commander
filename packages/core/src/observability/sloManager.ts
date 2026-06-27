@@ -1,4 +1,5 @@
 import type { ExecutionTrace } from '../runtime/types';
+import { getMessageBus } from '../runtime/messageBus';
 
 interface SLODefinition {
   id: string;
@@ -131,6 +132,26 @@ export class SLOManager {
         };
         violations.push(violation);
         this.violations.push(violation);
+
+        // Publish SLO violation as a system alert so that WebhookDispatcher
+        // and NotificationManager can pick it up and notify operators.
+        // Previously violations were only recorded in-memory metrics, meaning
+        // enterprise users defined SLOs but never received alerts.
+        try {
+          getMessageBus().publish('system.alert', 'sloManager', {
+            type: 'slo_violation',
+            severity,
+            sloId: slo.id,
+            sloName: slo.name,
+            metric: slo.metric,
+            actualValue,
+            threshold: slo.threshold,
+            runId: trace.runId,
+            timestamp: violation.timestamp,
+          });
+        } catch {
+          /* best-effort — don't let alert publishing break SLO checking */
+        }
       }
     }
 

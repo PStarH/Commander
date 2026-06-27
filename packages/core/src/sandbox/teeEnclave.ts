@@ -28,9 +28,46 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execSync, spawn } from 'node:child_process';
+import { execSync, spawn, execFileSync } from 'node:child_process';
 import type { PlatformSandbox, SandboxProfile, SandboxExecutionResult } from './types';
 import { getGlobalLogger } from '../logging';
+import { ExecPolicyEngine } from './execPolicy';
+
+// ── Security: Command validation for TEE sandbox ─────────────────────────────
+// Shared ExecPolicyEngine instance to validate commands before shell execution.
+// Per OWASP OS Command Injection Defense Cheat Sheet: use allowlist-based
+// validation even within sandboxed environments, as defense-in-depth.
+const teeExecPolicy = new ExecPolicyEngine();
+
+// Commands explicitly forbidden from TEE execution regardless of policy rules.
+const TEE_FORBIDDEN_PATTERNS = [
+  /rm\s+-rf\s+\//,       // Recursive root deletion
+  /\bmkfs\b/,             // Filesystem formatting
+  /\bdd\s+if=.*of=\/dev\//, // Direct device writes
+  /:\(\)\s*\{\s*:\|:&\s*\}\s*;/, // Fork bomb
+];
+
+/**
+ * Validate a command before executing it in the TEE sandbox.
+ * Security: Defense-in-depth — even though TEE provides hardware isolation,
+ * we still validate commands to prevent sandbox escape via malicious payloads.
+ */
+function validateTEECommand(cmd: string): { allowed: boolean; reason?: string } {
+  // Check explicit forbidden patterns
+  for (const pattern of TEE_FORBIDDEN_PATTERNS) {
+    if (pattern.test(cmd)) {
+      return { allowed: false, reason: `Command matches forbidden pattern: ${pattern.source}` };
+    }
+  }
+
+  // Check against ExecPolicy
+  const decision = teeExecPolicy.evaluate(cmd);
+  if (decision.decision === 'forbidden') {
+    return { allowed: false, reason: `Blocked by exec policy: ${decision.rule?.justification ?? 'forbidden'}` };
+  }
+
+  return { allowed: true };
+}
 
 // ============================================================================
 // Types
@@ -280,6 +317,22 @@ export class TEESandbox implements PlatformSandbox {
     const start = Date.now();
     const containerName = `commander-tee-${Date.now()}`;
 
+    // Security: Validate command before sending to Nitro Enclave.
+    // Per OWASP: defense-in-depth — validate even within hardware-isolated enclave.
+    const validation = validateTEECommand(cmd);
+    if (!validation.allowed) {
+      getGlobalLogger().warn('TEESandbox', 'Blocked forbidden command in Nitro Enclave', {
+        reason: validation.reason,
+      });
+      return {
+        stdout: '',
+        stderr: `Command rejected: ${validation.reason}`,
+        exitCode: 126,
+        durationMs: Date.now() - start,
+        sandboxMechanism: 'tee',
+      };
+    }
+
     try {
       // Step 1: Build minimal enclave Docker image
       const dockerfile = this.buildNitroDockerfile(profile);
@@ -427,6 +480,22 @@ export class TEESandbox implements PlatformSandbox {
     const env = filterEnv(profile);
     const MAX_OUTPUT = 10 * 1024 * 1024;
     const timeout = profile.timeout ?? 60000;
+
+    // Security: Validate command before execution in TEE.
+    // Per OWASP: defense-in-depth — validate even within hardware-isolated sandbox.
+    const validation = validateTEECommand(cmd);
+    if (!validation.allowed) {
+      getGlobalLogger().warn('TEESandbox', 'Blocked forbidden command in GCP CVM', {
+        reason: validation.reason,
+      });
+      return {
+        stdout: '',
+        stderr: `Command rejected: ${validation.reason}`,
+        exitCode: 126,
+        durationMs: Date.now() - start,
+        sandboxMechanism: 'tee',
+      };
+    }
 
     // Execute the command directly (memory is hardware-encrypted on CVM)
     return new Promise((resolve) => {
@@ -617,9 +686,19 @@ while true; do
     continue
   fi
 
-  # Set up environment
+  # Set up environment — parse KEY=VALUE lines safely (no eval to prevent injection)
   if [ -n "$ENV" ]; then
-    eval "export $(echo "$ENV" | tr '\n' ' ')" 2>/dev/null || true
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      key="\${line%%=*}"
+      val="\${line#*=}"
+      [ "$key" = "$line" ] && continue
+      # Reject keys with unsafe characters
+      case "$key" in
+        *[!A-Za-z0-9_]*) continue ;;
+      esac
+      export "$key=$val"
+    done <<< "$ENV"
   fi
 
   # Execute in specified directory
@@ -664,9 +743,11 @@ done
       reportSilentFailure(_silentE_, 'teeEnclave:667');
     }
     try {
-      execSync(`docker rmi ${imageName} 2>/dev/null || true`, { timeout: 10000 });
-    } catch (_silentE_) {
-      reportSilentFailure(_silentE_, 'teeEnclave:672');
+      // Security: Use execFileSync with explicit argv to prevent command injection.
+      // Per OWASP OS Command Injection Defense Cheat Sheet: avoid shell interpretation.
+      execFileSync('docker', ['rmi', imageName], { timeout: 10000, stdio: 'ignore' });
+    } catch (_silentE) {
+      reportSilentFailure(_silentE, 'teeEnclave:672');
     }
   }
 

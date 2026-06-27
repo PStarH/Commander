@@ -3,12 +3,13 @@ import { execSync, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import type { PlatformSandbox, SandboxProfile, SandboxExecutionResult } from './types';
+import type { PlatformSandbox, SandboxProfile, SandboxExecutionResult, SandboxMechanism } from './types';
 import { getGlobalLogger } from '../logging';
 import { buildSeccompFilter, countAllowedSyscalls } from './seccompBpf';
 import { getLLMAPIDomains, shquote, writeProxyScript } from './networkProxy';
 import { AppContainerSB } from './appContainer';
 import { TEESandbox } from './teeEnclave';
+import { isV8IsolateAvailable, getV8IsolateSandbox } from './v8Isolate';
 
 // Expanded deny list — covers common secret-bearing env vars beyond the original 5
 const EXTRA_DENY = [
@@ -47,6 +48,36 @@ function filterEnv(p: SandboxProfile): Record<string, string> {
 
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB
 
+/**
+ * Safely split a command string into argv without shell interpretation.
+ * Security: Per OWASP OS Command Injection Defense Cheat Sheet, avoid shell
+ * execution. This tokenizer handles basic quoting (single/double) but does NOT
+ * interpret shell metacharacters (;, |, $(), backticks, &&, ||).
+ */
+function safeSplitCommand(cmd: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i];
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+    } else if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+    } else if (ch === ' ' && !inSingle && !inDouble) {
+      if (current.length > 0) {
+        parts.push(current);
+        current = '';
+      }
+    } else {
+      current += ch;
+    }
+  }
+  if (current.length > 0) parts.push(current);
+  return parts;
+}
+
 /** Execute a command as an explicit argv array (no shell interpolation). */
 function execArgv(
   argv: string[],
@@ -58,8 +89,14 @@ function execArgv(
 }
 
 /**
- * Execute a command. If `cmd` is a string, runs via shell (for backward compat with NoopSB).
- * If `cmd` is a string[], uses spawn with explicit args (shell: false) to prevent injection.
+ * Execute a command. If `cmd` is a string, splits it safely without shell invocation
+ * to prevent command injection. If `cmd` is a string[], uses spawn with explicit
+ * args (shell: false) as before.
+ *
+ * Security: Per OWASP OS Command Injection Defense Cheat Sheet, never use
+ * shell: true with user-influenced data. String commands are now split using
+ * a safe tokenizer and executed with shell: false to prevent metacharacter
+ * injection (;, |, $(), backticks).
  */
 function exec(
   cmd: string | string[],
@@ -70,9 +107,15 @@ function exec(
   return new Promise((resolve) => {
     const start = Date.now();
     const isArr = Array.isArray(cmd);
-    const child = isArr
-      ? spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'pipe', 'pipe'], cwd, env })
-      : spawn(cmd, [], { stdio: ['pipe', 'pipe', 'pipe'], cwd, env, shell: true });
+    // Security: Never use shell: true — always use argument array form.
+    // For string commands (backward compat), split safely without shell interpretation.
+    const cmdParts: string[] = isArr ? cmd : safeSplitCommand(cmd);
+    const child = spawn(cmdParts[0], cmdParts.slice(1), {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd,
+      env,
+      shell: false,
+    });
     let stdout = '',
       stderr = '';
     let stdoutTruncated = false,
@@ -493,7 +536,9 @@ class BwrapSB implements PlatformSandbox {
         allowNetwork: p.network === 'full' || p.network === 'proxy',
         allowProcessCreation: true,
       });
-      seccompFile = path.join(os.tmpdir(), `.cmd-seccomp-${Date.now()}.bpf`);
+      // Security: Use mkdtempSync for unpredictable temp file names to prevent TOCTOU/symlink attacks.
+      const seccompTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), '.cmd-seccomp-'));
+      seccompFile = path.join(seccompTmpDir, 'filter.bpf');
       fs.writeFileSync(seccompFile, bpf);
       args.push('--seccomp', '3');
       const syscallCount = countAllowedSyscalls({ allowNetwork: p.network === 'full' });
@@ -720,10 +765,15 @@ class GVisorSB implements PlatformSandbox {
 
     if (p.memoryLimitMB && p.memoryLimitMB > 0) args.push('--memory', `${p.memoryLimitMB}m`);
 
+    // Security: CPU resource limit — prevent crypto-mining / DoS via CPU exhaustion.
+    args.push('--cpus', '2', '--cpu-quota', '200000');
+
     // Environment filtering
     const env = filterEnv(p);
     const cleanupPaths: string[] = [];
-    const envFile = path.join(os.tmpdir(), `.cmd-env-${Date.now()}.txt`);
+    // Security: Use mkdtempSync for unpredictable temp file names to prevent TOCTOU/symlink attacks.
+    const envTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), '.cmd-env-'));
+    const envFile = path.join(envTmpDir, 'env.txt');
     try {
       fs.writeFileSync(
         envFile,
@@ -942,6 +992,8 @@ class DockerSB implements PlatformSandbox {
     }
 
     if (p.memoryLimitMB && p.memoryLimitMB > 0) args.push('--memory', `${p.memoryLimitMB}m`);
+    // Security: CPU resource limit — prevent crypto-mining / DoS via CPU exhaustion.
+    args.push('--cpus', '2', '--cpu-quota', '200000');
     args.push(
       '--cap-drop',
       'ALL',
@@ -954,7 +1006,9 @@ class DockerSB implements PlatformSandbox {
 
     // Use --env-file to prevent env var injection via special characters
     const env = filterEnv(p);
-    const envFile = path.join(os.tmpdir(), `.cmd-env-${Date.now()}.txt`);
+    // Security: Use mkdtempSync for unpredictable temp file names to prevent TOCTOU/symlink attacks.
+    const envTmpDir2 = fs.mkdtempSync(path.join(os.tmpdir(), '.cmd-env-'));
+    const envFile = path.join(envTmpDir2, 'env.txt');
     try {
       fs.writeFileSync(
         envFile,
@@ -1049,7 +1103,87 @@ class NoopSB implements PlatformSandbox {
   }
 }
 
+/**
+ * V8 Isolate sandbox — process-level memory isolation for JavaScript code.
+ *
+ * This is the lightest-weight sandbox tier: no OS-level process spawning,
+ * no seccomp, no Docker. Instead, it uses V8's Isolate API to create a
+ * separate heap with memory limits and execution timeouts.
+ *
+ * Only suitable for executing JavaScript/TypeScript code, not shell commands.
+ * Non-JS commands are rejected with an error — they must use OS-level sandboxes.
+ *
+ * NOTE: V8IsolateSB is NOT included in discoverSandboxes() because it is
+ * not an OS-level sandbox. It is registered separately via the
+ * HybridSandboxScheduler for JS-only code execution. This prevents
+ * shell commands from silently falling back to NoopSB (no sandbox).
+ */
+class V8IsolateSB implements PlatformSandbox {
+  readonly name = 'v8-isolate' as SandboxMechanism;
+  readonly available = isV8IsolateAvailable();
+
+  async execute(cmd: string, p: SandboxProfile, wd?: string): Promise<SandboxExecutionResult> {
+    // V8 Isolate is ONLY for JavaScript code execution.
+    // Non-JS commands must use OS-level sandboxes, NOT fall back to NoopSB.
+    if (!this.looksLikeJavaScript(cmd)) {
+      return {
+        stdout: '',
+        stderr: `V8IsolateSB only supports JavaScript code, not shell commands. Use an OS-level sandbox for: ${cmd.substring(0, 80)}`,
+        exitCode: 126, // "Command invoked cannot execute" (POSIX)
+        durationMs: 0,
+        sandboxMechanism: this.name,
+      };
+    }
+
+    const sandbox = getV8IsolateSandbox();
+    const startTime = Date.now();
+
+    try {
+      const result = await sandbox.execute(cmd, [], {
+        timeoutMs: p.timeout ?? 5000,
+        maxHeapMb: p.memoryLimitMB ?? 128,
+      });
+
+      return {
+        stdout: typeof result.output === 'string' ? result.output : JSON.stringify(result.output ?? ''),
+        stderr: result.error ?? '',
+        exitCode: result.success ? 0 : 1,
+        durationMs: result.executionTimeMs,
+        sandboxMechanism: this.name,
+      };
+    } catch (err) {
+      return {
+        stdout: '',
+        stderr: (err as Error)?.message ?? String(err),
+        exitCode: 1,
+        durationMs: Date.now() - startTime,
+        sandboxMechanism: this.name,
+      };
+    }
+  }
+
+  /**
+   * Heuristic: does this look like JavaScript code rather than a shell command?
+   * V8 Isolate is only for JS; shell commands must use OS-level sandboxes.
+   */
+  private looksLikeJavaScript(cmd: string): boolean {
+    const trimmed = cmd.trim();
+    // Common shell command prefixes → not JS
+    const shellPrefixes = ['ls', 'cat', 'echo', 'rm', 'cp', 'mv', 'mkdir', 'git', 'npm', 'npx', 'node', 'python', 'bash', 'sh', 'cd ', 'export '];
+    if (shellPrefixes.some((p) => trimmed.startsWith(p))) return false;
+
+    // JS patterns: function/const/let/var/return/import/class
+    const jsPatterns = /^(function|const|let|var|return|import|export|class|async|await|if|for|while|try|throw|\(|\{|\[)/;
+    return jsPatterns.test(trimmed);
+  }
+}
+
 export function discoverSandboxes(): PlatformSandbox[] {
+  // NOTE: V8IsolateSB is intentionally NOT in this list.
+  // It is a JS-only in-process isolation layer, not an OS-level sandbox.
+  // Including it here would cause shell commands to silently fall back to
+  // NoopSB (no sandbox) when isolated-vm is installed — a security regression.
+  // V8IsolateSB is registered separately via the HybridSandboxScheduler.
   const candidates: PlatformSandbox[] = [
     new SeatbeltSB(),
     new BwrapSB(),
@@ -1058,7 +1192,21 @@ export function discoverSandboxes(): PlatformSandbox[] {
     new GVisorSB(),
     new TEESandbox(),
   ];
-  return candidates.filter((s) => s.available);
+  const available = candidates.filter((s) => s.available);
+
+  // Security: In production, refuse to operate without an OS-level sandbox.
+  // NoopSB provides zero isolation — no filesystem, network, or process boundaries.
+  // Falling back to NoopSB in production would expose the host to all attack vectors
+  // that the sandbox is designed to prevent.
+  if (available.length === 0 && process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'CRITICAL: No OS-level sandbox available in production environment. ' +
+      'Install at least one of: Docker, Bubblewrap, Seatbelt, gVisor, or run in a TEE. ' +
+      'Refusing to start without sandbox isolation for security.'
+    );
+  }
+
+  return available;
 }
 
 export { NoopSB };

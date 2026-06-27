@@ -1,6 +1,4 @@
-import type { MCPServer } from '@commander/core';
-import type { ExecutionTraceRecorder } from '@commander/core';
-import type { TraceStore } from '@commander/core';
+import type { MCPServer, ExecutionTraceRecorder, TraceStore, ExecutionTrace, TraceEvent } from '@commander/core';
 import { buildTimeline } from './timelineBuilder';
 import { buildExecutiveSummary } from './executiveSummary';
 import { buildDecisions, decisionsSummary } from './decisionProvenance';
@@ -13,13 +11,41 @@ interface McpObsDeps {
   traceStore: TraceStore;
 }
 
-function loadTrace(recorder: ExecutionTraceRecorder, runId: string, store: TraceStore) {
+function loadTrace(recorder: ExecutionTraceRecorder, runId: string, store: TraceStore): ExecutionTrace | null {
   const fromRecorder = recorder.getTrace(runId);
   if (fromRecorder && fromRecorder.events.length > 0) return fromRecorder;
   const fromStore =
     (store as { readTrace?: (runId: string) => unknown[] }).readTrace?.(runId) ?? [];
   if (fromStore.length === 0) return null;
-  return fromRecorder;
+  // Rebuild trace from store events instead of returning empty recorder trace
+  const events = fromStore as TraceEvent[];
+  const first = events[0]!;
+  const last = events[events.length - 1]!;
+  return {
+    runId,
+    traceId: first.traceId,
+    agentId: first.agentId,
+    startedAt: first.timestamp ?? new Date().toISOString(),
+    completedAt: last?.timestamp
+      ? new Date(
+          new Date(last.timestamp).getTime() + (last.durationMs ?? 0),
+        ).toISOString()
+      : undefined,
+    events,
+    summary: {
+      totalDurationMs: events.reduce((s, e) => s + (e.durationMs ?? 0), 0),
+      totalTokens: events.reduce(
+        (s, e) => s + ((e.data as { tokenUsage?: { totalTokens?: number } })?.tokenUsage?.totalTokens ?? 0),
+        0,
+      ),
+      totalEvents: events.length,
+      llmCalls: events.filter((e) => e.type === 'llm_call').length,
+      toolExecutions: events.filter((e) => e.type === 'tool_execution').length,
+      errors: events.filter((e) => e.type === 'error').length,
+      decisions: events.filter((e) => e.type === 'decision').length,
+      modelUsed: (events.find((e) => e.type === 'llm_call')?.data as { modelInfo?: { model?: string } })?.modelInfo?.model ?? 'unknown',
+    },
+  } as ExecutionTrace;
 }
 
 export function registerObservabilityTools(server: MCPServer, deps: McpObsDeps): void {

@@ -106,8 +106,37 @@ export class SandboxManager {
   ): Promise<SandboxExecutionResult> {
     const p =
       typeof profile === 'string' ? this.getProfile(profile) : (profile ?? this.getProfile());
-    const sb = this.getSandbox(mechanism);
-    return sb.execute(command, p, workdir);
+
+    // Security (G6): Pre-execution sandbox escape detection.
+    // Analyze command for known escape patterns before executing in the sandbox.
+    // If a critical indicator is detected, refuse execution entirely.
+    try {
+      const { preCheckSandboxEscape, postCheckSandboxEscape } = require('../security/sandboxEscapeDetector');
+      const preCheck = preCheckSandboxEscape(command, p);
+      if (preCheck.blocked) {
+        return {
+          stdout: '',
+          stderr: `Command blocked by sandbox escape detector: ${preCheck.indicators.map((i: { pattern: string }) => i.pattern).join(', ')}`,
+          exitCode: 126,
+          durationMs: 0,
+          sandboxMechanism: 'none',
+          violated: preCheck.indicators.map((i: { pattern: string }) => i.pattern),
+        };
+      }
+
+      const sb = this.getSandbox(mechanism);
+      const result = await sb.execute(command, p, workdir);
+
+      // Security (G6): Post-execution sandbox escape detection.
+      // Analyze output for escape evidence and trigger RASP response if detected.
+      postCheckSandboxEscape(command, result, workdir ?? process.cwd());
+
+      return result;
+    } catch {
+      // If the escape detector fails to load, fall through to normal execution.
+      const sb = this.getSandbox(mechanism);
+      return sb.execute(command, p, workdir);
+    }
   }
 }
 
