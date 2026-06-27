@@ -1,8 +1,25 @@
 import type { RetryPolicy } from './types';
 
+/**
+ * Cooldown before a tripped circuit breaker transitions to the half-open
+ * state. Once this elapses, the next request is allowed through as a probe:
+ *   - probe success  → circuit fully closes
+ *   - probe failure  → circuit re-opens and the cooldown restarts
+ */
+const CIRCUIT_RECOVERY_COOLDOWN_MS = 60_000;
+
 export class RetryController {
   private consecutiveFailures = 0;
   private circuitOpen = false;
+  /**
+   * Half-open flag: the circuit has cooled down and a single probe request
+   * has been allowed through. While true, isCircuitOpen() reports false so
+   * the probe can execute; the probe's outcome (recordSuccess/recordFailure)
+   * resolves the state back to closed or open.
+   */
+  private halfOpen = false;
+  /** Epoch ms when the circuit was last opened. null when closed/half-open. */
+  private circuitOpenedAt: number | null = null;
 
   constructor(private readonly policy: RetryPolicy) {
     if (policy.maxAttempts < 1) {
@@ -36,25 +53,53 @@ export class RetryController {
 
   recordFailure(): void {
     this.consecutiveFailures++;
+    // A failed half-open probe re-opens the circuit immediately and
+    // restarts the cooldown timer.
+    if (this.halfOpen) {
+      this.circuitOpen = true;
+      this.halfOpen = false;
+      this.circuitOpenedAt = Date.now();
+      return;
+    }
     if (
       this.policy.circuitBreakerAfter !== undefined &&
       this.consecutiveFailures >= this.policy.circuitBreakerAfter
     ) {
       this.circuitOpen = true;
+      this.halfOpen = false;
+      this.circuitOpenedAt = Date.now();
     }
   }
 
   recordSuccess(): void {
+    // A successful half-open probe fully closes the circuit.
     this.consecutiveFailures = 0;
+    this.halfOpen = false;
   }
 
   resetCircuit(): void {
     this.circuitOpen = false;
+    this.halfOpen = false;
     this.consecutiveFailures = 0;
+    this.circuitOpenedAt = null;
   }
 
   isCircuitOpen(): boolean {
-    return this.circuitOpen;
+    if (!this.circuitOpen) return false;
+    // A half-open probe is already in flight — let it through.
+    if (this.halfOpen) return false;
+    // Cooldown elapsed → transition to half-open and allow the next request
+    // to act as a probe. If the probe succeeds the circuit closes; if it
+    // fails, recordFailure() re-opens it.
+    if (
+      this.circuitOpenedAt !== null &&
+      Date.now() - this.circuitOpenedAt >= CIRCUIT_RECOVERY_COOLDOWN_MS
+    ) {
+      this.circuitOpen = false;
+      this.halfOpen = true;
+      return false;
+    }
+    return true;
   }
 
   get consecutiveFailureCount(): number {

@@ -412,21 +412,21 @@ export class RebuildPrompt {
       const memory = getGlobalThreeLayerMemory();
 
       // Search for relevant memories across layers
-      const episodic = memory.query({
+      const episodic = await memory.query({
         layer: 'episodic',
         keywords: goal.split(/\s+/).filter((w) => w.length > 3),
         limit: 5,
         importanceThreshold: 0.5,
       });
 
-      const longTerm = memory.query({
+      const longTerm = await memory.query({
         layer: 'longterm',
         keywords: goal.split(/\s+/).filter((w) => w.length > 3),
         limit: 5,
         importanceThreshold: 0.5,
       });
 
-      const procedural = memory.query({
+      const procedural = await memory.query({
         layer: 'procedural',
         keywords: goal.split(/\s+/).filter((w) => w.length > 3),
         limit: 3,

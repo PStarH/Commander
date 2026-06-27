@@ -155,6 +155,7 @@ export class ToolResultCache {
    * for deterministic ordering since tool args are typically flat objects.
    */
   private static fastCanonicalize(args: Record<string, unknown>): string {
+    if (!args || typeof args !== 'object') return '{}';
     const keys = Object.keys(args).sort();
     let result = '{';
     for (let i = 0; i < keys.length; i++) {
