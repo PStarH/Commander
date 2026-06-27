@@ -12,6 +12,16 @@ import { StateCheckpointer } from '../src/runtime/stateCheckpointer';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// Suppress unhandledRejection from LiteLLM pricing fetch failures during chaos tests.
+// The pricing fetch is best-effort and failures are expected in offline test environments.
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  if (msg.includes('fetch failed') || msg.includes('LiteLLM')) {
+    return; // Swallow expected network failures
+  }
+  console.error('Unhandled rejection:', reason);
+});
+
 // Chaos Monkey Configuration
 const CHAOS_CONFIG = {
   randomDelay: { enabled: true, minMs: 0, maxMs: 5000 },
