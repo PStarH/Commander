@@ -15,6 +15,8 @@ import type { Tool, ToolDefinition, AgentExecutionContext } from '../runtime/typ
 import type { AgentRuntimeInterface } from '../runtime';
 import { getHookManager } from '../pluginManager';
 import { getGlobalLogger } from '../logging';
+import { scanToolOutputForInjection } from '../contentScanner';
+import { sanitizeIfNeeded } from '../security/outputSanitizer';
 
 export interface AgentDef {
   name: string;
@@ -86,6 +88,17 @@ export class AgentTool implements Tool {
     const name = String(args.name || 'general');
     const tools = (args.tools as string[]) || ['browser_search', 'python_execute', 'file_read'];
 
+    // SECURITY: scan the sub-agent task for indirect prompt injection before
+    // it becomes the child agent's goal.
+    try {
+      const scan = scanToolOutputForInjection(task);
+      if (scan.blocked) {
+        return `[Sub-agent "${name}" blocked: task contains injection pattern — ${scan.reason}]`;
+      }
+    } catch {
+      /* best-effort */
+    }
+
     // Look up agent definition
     const agentDef = this.registeredAgents.get(name);
     const goal = agentDef ? `${agentDef.prompt}\n\nTask: ${task}` : task;
@@ -132,12 +145,17 @@ export class AgentTool implements Tool {
         );
 
       const result = await this.runtime.execute(ctx);
-      if (result.status === 'success' && result.summary) {
-        // Return condensed summary (Claude Code pattern: ~1-2K tokens)
-        const summary = result.summary.slice(0, 2000);
-        return `[Sub-agent "${name}" completed]\n\n${summary}`;
+      const rawSummary =
+        result.status === 'success' && result.summary
+          ? result.summary.slice(0, 2000)
+          : `[Sub-agent "${name}" ${result.status}]\n${result.error || 'No output'}`;
+      // Sanitize sub-agent output before returning to parent LLM context.
+      try {
+        const sanitizeResult = sanitizeIfNeeded(rawSummary, { source: `subagent:${name}` });
+        return sanitizeResult.wasRedacted ? sanitizeResult.output : rawSummary;
+      } catch {
+        return `[Sub-agent output suppressed due to sanitization error]`;
       }
-      return `[Sub-agent "${name}" ${result.status}]\n${result.error || 'No output'}`;
     } catch (err: unknown) {
       return `[Sub-agent "${name}" error]\n${err instanceof Error ? err.message : String(err)}`;
     }

@@ -24,6 +24,9 @@ type ResourceReader = (uri: string) => Promise<MCPResourceContents[]>;
 type PromptHandler = (args: Record<string, string>) => Promise<GetPromptResult>;
 
 import type { Tool } from '../runtime/types';
+import { getGuardianAgent, type GuardianAction } from '../security/guardianAgent';
+import { getExecPolicyEngine } from '../sandbox/execPolicy';
+import { reportSilentFailure } from '../silentFailureReporter';
 
 export interface MCPToolRegistration {
   definition: MCPTool;
@@ -44,6 +47,19 @@ export interface MCPPromptRegistration {
 // MCP Server — handle JSON-RPC requests for tools, resources, prompts
 // ============================================================================
 
+/**
+ * Tools too dangerous to expose to external MCP clients (Claude Desktop,
+ * Cursor, etc.) by default. These give unsandboxed shell / file destructive
+ * access and are filtered out in registerCommanderTools unless the caller
+ * explicitly opts in via { allowDangerousTools: true }.
+ */
+const DANGEROUS_MCP_TOOLS: ReadonlySet<string> = new Set([
+  'shell_execute',
+  'file_delete',
+  'file_write',
+  'python_execute',
+]);
+
 export class MCPServer {
   private tools: Map<string, MCPToolRegistration> = new Map();
   private resources: Map<string, MCPResourceRegistration> = new Map();
@@ -59,6 +75,11 @@ export class MCPServer {
 
   registerTool(tool: MCPTool, handler: ToolHandler): void {
     this.tools.set(tool.name, { definition: tool, handler });
+  }
+
+  /** Return all registered tool definitions. */
+  listTools(): MCPTool[] {
+    return Array.from(this.tools.values()).map((t) => t.definition);
   }
 
   registerResource(resource: MCPResource, handler: ResourceReader): void {
@@ -165,9 +186,63 @@ export class MCPServer {
             error: { code: MCP_ERROR_CODES.METHOD_NOT_FOUND, message: `Tool not found: ${p.name}` },
           };
         }
+        const toolArgs = p.arguments ?? {};
+        // ── Security gate ──────────────────────────────────────────────────
+        // External MCP clients must not bypass GuardianAgent / ExecPolicyEngine.
+        // Every tools/call is monitored before execution. Fail-open on internal
+        // errors (logged via reportSilentFailure) so a broken security hook
+        // never takes down a legitimate tool call.
+        try {
+          const guardianAgent = getGuardianAgent();
+          const action: GuardianAction = {
+            agentId: 'mcp-external-client',
+            timestamp: Date.now(),
+            type: 'tool_call',
+            content: `${p.name}(${JSON.stringify(toolArgs)})`,
+            metadata: { toolName: p.name, args: toolArgs },
+          };
+          const intervention = guardianAgent.monitor(action);
+          if (intervention) {
+            return {
+              jsonrpc: '2.0',
+              id,
+              error: {
+                code: MCP_ERROR_CODES.INTERNAL_ERROR,
+                message: `Tool "${p.name}" blocked by GuardianAgent (${intervention})`,
+              },
+            };
+          }
+
+          // ExecPolicy: evaluate shell/python payloads for forbidden commands.
+          if (p.name === 'shell_execute' || p.name === 'python_execute') {
+            const execPolicyEngine = getExecPolicyEngine();
+            const payload =
+              typeof toolArgs.command === 'string'
+                ? toolArgs.command
+                : typeof toolArgs.code === 'string'
+                  ? toolArgs.code
+                  : '';
+            if (payload) {
+              const policyResult = execPolicyEngine.evaluate(payload);
+              if (policyResult.decision === 'forbidden') {
+                return {
+                  jsonrpc: '2.0',
+                  id,
+                  error: {
+                    code: MCP_ERROR_CODES.INTERNAL_ERROR,
+                    message: `Tool "${p.name}" blocked by ExecPolicyEngine (${policyResult.rule?.id ?? 'forbidden'}): ${policyResult.rule?.justification ?? 'forbidden command'}`,
+                  },
+                };
+              }
+            }
+          }
+        } catch (err) {
+          reportSilentFailure(err, 'mcpServer:tools/call:securityGate');
+          // fail-open: proceed to execution
+        }
         const MCP_TOOL_TIMEOUT_MS = 60000;
         const result = await this.withTimeout(
-          reg.handler(p.arguments ?? {}),
+          reg.handler(toolArgs),
           MCP_TOOL_TIMEOUT_MS,
           'Tool execution',
         );
@@ -314,8 +389,13 @@ export class MCPServer {
   registerCommanderTools(
     tools: Map<string, Tool>,
     filter?: (name: string, tool: Tool) => boolean,
+    options?: { allowDangerousTools?: boolean },
   ): void {
+    const allowDangerous = options?.allowDangerousTools === true;
     for (const [name, tool] of tools) {
+      // Default security filter: never expose destructive tools to external
+      // MCP clients unless the caller explicitly opts in via allowDangerousTools.
+      if (!allowDangerous && DANGEROUS_MCP_TOOLS.has(name)) continue;
       if (filter && !filter(name, tool)) continue;
       const def = tool.definition;
       this.registerTool(

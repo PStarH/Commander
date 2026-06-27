@@ -14,8 +14,64 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import { getGlobalLogger } from '../logging';
 import { getBackgroundTaskManager } from './background';
+
+// ============================================================================
+// At-rest encryption for webhook secrets
+// ============================================================================
+// Webhook signing secrets are sensitive — anyone who can read the webhooks
+// JSON file can forge payloads. We encrypt the `secret` field at rest using
+// AES-256-GCM with a key derived from COMMANDER_MASTER_KEY (same env var
+// used by EncryptedSecretsVault). When no master key is set, we fall back
+// to plaintext with a warning (development mode only).
+
+const WEBHOOK_ENC_PREFIX = 'enc:v1:';
+
+function getMasterKey(): Buffer | null {
+  const envKey = process.env.COMMANDER_MASTER_KEY;
+  if (!envKey || envKey.length < 32) return null;
+  return crypto.createHash('sha256').update(envKey).digest();
+}
+
+function encryptSecret(plaintext: string): string {
+  const key = getMasterKey();
+  if (!key) {
+    // No master key — store plaintext (development mode)
+    return plaintext;
+  }
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return WEBHOOK_ENC_PREFIX + iv.toString('hex') + ':' + tag.toString('hex') + ':' + encrypted.toString('hex');
+}
+
+function decryptSecret(stored: string): string {
+  if (!stored.startsWith(WEBHOOK_ENC_PREFIX)) {
+    // Plaintext (legacy or development mode)
+    return stored;
+  }
+  const key = getMasterKey();
+  if (!key) {
+    // Encrypted but no master key available — can't decrypt
+    getGlobalLogger().warn('WebhookManager', 'Encrypted webhook secret found but COMMANDER_MASTER_KEY not set');
+    return '';
+  }
+  try {
+    const parts = stored.slice(WEBHOOK_ENC_PREFIX.length).split(':');
+    const iv = Buffer.from(parts[0], 'hex');
+    const tag = Buffer.from(parts[1], 'hex');
+    const encrypted = Buffer.from(parts[2], 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    return decipher.update(encrypted) + decipher.final('utf8');
+  } catch (err) {
+    reportSilentFailure(err, 'webhooks:decryptSecret');
+    return '';
+  }
+}
 
 // ============================================================================
 // Types
@@ -41,6 +97,8 @@ export interface WebhookEvent {
   payload: Record<string, unknown>;
   headers: Record<string, string>;
   timestamp: string;
+  /** Original raw request body string, used for accurate HMAC signature verification. */
+  rawBody?: string;
 }
 
 // ============================================================================
@@ -68,6 +126,10 @@ export class WebhookManager {
       if (fs.existsSync(indexFile)) {
         const data = JSON.parse(fs.readFileSync(indexFile, 'utf-8'));
         for (const rule of data) {
+          // Decrypt the secret field if it was encrypted at rest
+          if (rule.secret) {
+            rule.secret = decryptSecret(rule.secret);
+          }
           this.rules.set(rule.id, rule);
         }
       }
@@ -79,13 +141,26 @@ export class WebhookManager {
 
   private saveRules(): void {
     const indexFile = path.join(this.rulesDir, 'index.json');
-    fs.writeFileSync(indexFile, JSON.stringify(Array.from(this.rules.values()), null, 2));
+    // Encrypt the secret field before writing to disk
+    const encryptedRules = Array.from(this.rules.values()).map((rule) => ({
+      ...rule,
+      secret: rule.secret ? encryptSecret(rule.secret) : undefined,
+    }));
+    fs.writeFileSync(indexFile, JSON.stringify(encryptedRules, null, 2));
   }
 
   /**
    * Add a webhook rule.
+   * SECURITY: A signing secret is mandatory. Unsigned webhooks allow anyone who
+   * discovers the endpoint to forge payloads and trigger arbitrary tasks.
    */
   add(rule: Omit<WebhookRule, 'id' | 'createdAt' | 'triggerCount'>): WebhookRule {
+    if (!rule.secret || rule.secret.length < 16) {
+      throw new Error(
+        'Webhook rules must configure a signing secret of at least 16 characters.',
+      );
+    }
+
     const id = `wh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const newRule: WebhookRule = {
       ...rule,
@@ -129,8 +204,16 @@ export class WebhookManager {
       // Check filters
       if (rule.filters && !this.matchesFilters(event.payload, rule.filters)) continue;
 
-      // Verify signature if secret is set
-      if (rule.secret && !this.verifySignature(event, rule.secret)) {
+      // Verify signature. Rules without a secret are rejected at add() time;
+      // this guard prevents legacy/loaded rules from being processed unsigned.
+      if (!rule.secret) {
+        getGlobalLogger().warn(
+          'WebhookManager',
+          `Skipping unsigned rule: ${rule.name}. Webhook rules must have a secret.`,
+        );
+        continue;
+      }
+      if (!this.verifySignature(event, rule.secret)) {
         getGlobalLogger().warn(
           'WebhookManager',
           `Signature verification failed for rule: ${rule.name}`,
@@ -183,15 +266,16 @@ export class WebhookManager {
     return true;
   }
 
-  private verifySignature(event: WebhookEvent, secret: string): boolean {
+  private verifySignature(event: WebhookEvent, secret: string, rawBody?: string): boolean {
     // GitHub-style HMAC-SHA256 verification
     const signature = event.headers['x-hub-signature-256'] ?? event.headers['x-signature-256'];
     if (!signature) return false;
 
     try {
-      const crypto = require('crypto');
       const hmac = crypto.createHmac('sha256', secret);
-      const body = JSON.stringify(event.payload);
+      // Prefer the original raw request body for signature computation to avoid
+      // mismatches caused by JSON re-serialization (key ordering, whitespace, etc.).
+      const body = rawBody ?? event.rawBody ?? JSON.stringify(event.payload);
       const expected = `sha256=${hmac.update(body).digest('hex')}`;
       // Length check before timingSafeEqual to avoid RangeError
       if (signature.length !== expected.length) return false;
@@ -204,8 +288,16 @@ export class WebhookManager {
 
   /**
    * Start a webhook listener server.
+   * SECURITY: authToken is mandatory. Anonymous webhook servers allow anyone who
+   * can reach the port to submit payloads and trigger background tasks.
    */
   async startServer(port: number = 9876, authToken?: string): Promise<void> {
+    if (!authToken || authToken.length < 16) {
+      throw new Error(
+        'Webhook server requires an authToken of at least 16 characters.',
+      );
+    }
+
     const http = await import('http');
 
     this.server = http.createServer(async (req, res) => {
@@ -215,10 +307,18 @@ export class WebhookManager {
         return;
       }
 
-      // Authentication check
+      // Authentication check (timing-safe comparison)
       if (authToken) {
         const providedAuth = req.headers['authorization'] ?? '';
-        if (providedAuth !== `Bearer ${authToken}`) {
+        const expectedAuth = `Bearer ${authToken}`;
+        const providedBuf = Buffer.from(providedAuth);
+        const expectedBuf = Buffer.from(expectedAuth);
+        // Length check before timingSafeEqual to avoid RangeError, then
+        // timing-safe comparison to prevent timing attacks.
+        if (
+          providedBuf.length !== expectedBuf.length ||
+          !crypto.timingSafeEqual(providedBuf, expectedBuf)
+        ) {
           res.writeHead(401);
           res.end(JSON.stringify({ error: 'Unauthorized' }));
           return;
@@ -250,6 +350,7 @@ export class WebhookManager {
             payload,
             headers: req.headers as Record<string, string>,
             timestamp: new Date().toISOString(),
+            rawBody: body,
           };
 
           const triggered = await this.processEvent(webhookEvent);

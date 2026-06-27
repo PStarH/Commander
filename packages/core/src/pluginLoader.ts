@@ -5,6 +5,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getHookManager, type CommanderPlugin } from './pluginManager';
 import { getGlobalLogger } from './logging';
+import { getSupplyChainScanner } from './security/supplyChainScanner';
 
 interface PluginManifest {
   name: string;
@@ -86,11 +87,28 @@ export class PluginLoader {
       return this.loaded.get(manifest.name)!;
     }
 
+    // SECURITY: supply-chain scan before loading any plugin code.
     const mainFile = manifest.main ?? 'index.js';
     const mainPath = path.join(resolvedDir, mainFile);
     let pluginInstance: CommanderPlugin;
 
     if (fs.existsSync(mainPath)) {
+      const pluginContent = fs.readFileSync(mainPath, 'utf-8');
+      const scanResult = getSupplyChainScanner().scan({
+        name: manifest.name,
+        content: pluginContent,
+        tools: manifest.tools ?? [],
+        provenance: {
+          source: 'local',
+          author: manifest.name,
+        },
+      });
+      if (!scanResult.passed) {
+        throw new Error(
+          `Supply chain scan blocked plugin "${manifest.name}": ${scanResult.recommendation} (risk=${scanResult.riskScore})`,
+        );
+      }
+
       try {
         const mod = await import(mainPath);
         pluginInstance = mod.default ?? mod.plugin ?? mod;

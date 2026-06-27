@@ -9,6 +9,7 @@
  */
 import { reportSilentFailure } from '../silentFailureReporter';
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
+import * as crypto from 'node:crypto';
 import type { AgentRuntimeInterface } from '../runtime';
 import type {
   A2AAgentCard,
@@ -33,6 +34,8 @@ import {
   A2A_TERMINAL_STATES,
 } from './a2aCompliance';
 import { getGlobalLogger } from '../logging';
+import { createContentScanner } from '../contentScanner';
+import { getEnterpriseSecurityGateway } from '../security/enterpriseSecurityGateway';
 
 // ============================================================================
 // Server Configuration
@@ -52,6 +55,11 @@ export interface A2AServerConfig {
   corsAllowedOrigins?: string[];
   /** Maximum JSON request body size in bytes. Default: 1 MiB. */
   maxBodyBytes?: number;
+  /** Required bearer token for authenticating non-GET (JSON-RPC) requests.
+   * POST requests must include `Authorization: Bearer <token>`.
+   * Security: Per OWASP — authentication is mandatory for A2A servers to
+   * prevent agentjacking (unauthorized agents joining the swarm). */
+  authToken: string;
 }
 
 const DEFAULT_CONFIG: Partial<A2AServerConfig> = {
@@ -77,6 +85,13 @@ export class A2AServer {
   private static readonly MAX_TASKS = 500;
 
   constructor(config: A2AServerConfig, runtime: AgentRuntimeInterface) {
+    // SECURITY: A2A server authentication is mandatory. Anonymous A2A endpoints
+    // allow any remote agent to submit tasks to the local runtime.
+    if (!config.authToken || config.authToken.length < 16) {
+      throw new Error(
+        'A2AServer requires an authToken of at least 16 characters.',
+      );
+    }
     this.config = { ...DEFAULT_CONFIG, ...config } as A2AServerConfig;
     this.runtime = runtime;
   }
@@ -161,6 +176,26 @@ export class A2AServer {
     }
 
     if (pathPart === this.config.endpoint && req.method === 'POST') {
+      // Security: Authentication is mandatory for all JSON-RPC requests.
+      // Per OWASP — never allow unauthenticated A2A access to prevent agentjacking.
+      if (!this.config.authToken) {
+        this.sendJson(res, 500, this.makeErrorResponse(null, -32005,
+          'A2A server authToken is not configured. Refusing unauthenticated requests.'));
+        return;
+      }
+      const providedAuth = req.headers['authorization'] ?? '';
+      const expectedAuth = `Bearer ${this.config.authToken}`;
+      const providedBuf = Buffer.from(providedAuth);
+      const expectedBuf = Buffer.from(expectedAuth);
+      // Length check before timingSafeEqual to avoid RangeError, then
+      // timing-safe comparison to prevent timing attacks.
+      if (
+        providedBuf.length !== expectedBuf.length ||
+        !crypto.timingSafeEqual(providedBuf, expectedBuf)
+      ) {
+        this.sendJson(res, 401, { error: 'Unauthorized' });
+        return;
+      }
       try {
         const body = await this.parseBody(req);
         const response = await this.handleJsonRpc(body as A2AJsonRpcRequest);
@@ -237,7 +272,7 @@ export class A2AServer {
     const { message, configuration } = params;
     const returnImmediately = configuration?.returnImmediately === true;
 
-    const taskId = `a2a_${Date.now()}_${this.nextTaskId++}`;
+    const taskId = `a2a_${crypto.randomUUID()}`;
     const contextId = message.contextId ?? `ctx_${taskId}`;
 
     const task: A2ATask = {
@@ -262,6 +297,48 @@ export class A2AServer {
       .filter(Boolean)
       .join('\n');
 
+    // SECURITY: scan inbound A2A message for injection / exfiltration patterns
+    // before it becomes the agent's goal. Remote agents are untrusted input sources.
+    let blockedReason: string | undefined;
+    try {
+      const scanner = createContentScanner();
+      const scan = await scanner.scan(userMessage);
+      if (!scan.isSafe) {
+        blockedReason =
+          scan.threats.map((t) => t.type).join(', ') || 'A2A content policy violation';
+      }
+      const gateway = getEnterpriseSecurityGateway();
+      const inputCheck = gateway.preLLMCheck({
+        model: 'a2a-inbound',
+        estimatedTokens: userMessage.length / 4,
+        source: 'a2a-server',
+        input: userMessage,
+      });
+      if (!inputCheck.allowed) {
+        blockedReason = inputCheck.reason ?? 'A2A security gateway violation';
+      }
+    } catch (err) {
+      getGlobalLogger().warn('A2AServer', 'Inbound message scan failed', {
+        error: (err as Error)?.message,
+        taskId,
+      });
+    }
+
+    if (blockedReason) {
+      this.updateTaskState(taskId, 'FAILED', blockedReason);
+      return this.tasks.get(taskId)!;
+    }
+
+    // SECURITY: A2A-triggered runs must not use the full tool set. Restrict to
+    // a safe, read-only subset and explicitly forbid shell/code execution.
+    const A2A_ALLOWED_TOOLS = [
+      'web_search',
+      'web_fetch',
+      'browser_search',
+      'file_read',
+      'code_search',
+    ];
+
     const executeTask = async () => {
       try {
         const timeoutMs = this.config.taskTimeoutMs ?? 120000;
@@ -269,7 +346,7 @@ export class A2AServer {
           agentId: `a2a-${taskId}`,
           projectId: 'a2a-server',
           goal: userMessage || '(empty message)',
-          availableTools: [],
+          availableTools: A2A_ALLOWED_TOOLS,
           maxSteps: returnImmediately ? 1 : 25,
           tokenBudget: 50000,
           contextData: {

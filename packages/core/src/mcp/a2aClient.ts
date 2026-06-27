@@ -29,6 +29,26 @@ import {
 } from './a2aCompliance';
 import { getGlobalLogger } from '../logging';
 
+// ── Security: SSRF prevention ────────────────────────────────────────────────
+// Per OWASP SSRF Prevention Cheat Sheet: validate scheme, reject private IPs.
+const PRIVATE_IP_PATTERNS = [
+  /^127\./, /^10\./, /^172\.(1[6-9]|2[0-9]|3[0-1])\./, /^192\.168\./,
+  /^169\.254\./, /^0\./, /^::1$/, /^fc00:/, /^fe80:/,
+];
+
+function isSafeA2AUrl(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    for (const pattern of PRIVATE_IP_PATTERNS) {
+      if (pattern.test(parsed.hostname)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ============================================================================
 // A2AClient — connect to a single remote A2A agent
 // ============================================================================
@@ -38,11 +58,47 @@ export class A2AClient {
   private authToken?: string;
   private logger = getGlobalLogger();
   private requestTimeoutMs: number;
+  // Security: mTLS (mutual TLS) for transport-level authentication.
+  // Per OWASP — bearer tokens alone are vulnerable to interception/replay.
+  // mTLS provides channel binding and prevents MITM even if token is leaked.
+  private mtlsAgent?: unknown;
 
-  constructor(baseUrl: string, authToken?: string, timeoutMs = 30000) {
+  constructor(baseUrl: string, authToken: string, timeoutMs = 30000, mTLSConfig?: {
+    cert: string;
+    key: string;
+    ca: string;
+  }) {
+    // Security: SSRF prevention — validate URL at construction time.
+    // Per OWASP SSRF Prevention Cheat Sheet: reject private/internal hosts.
+    if (!isSafeA2AUrl(baseUrl)) {
+      throw new Error(
+        'A2A client URL must use http/https and must not point to private/internal IP ranges',
+      );
+    }
+    // SECURITY: A2A client authentication is mandatory. Unauthenticated outbound
+    // A2A connections trust any remote agent that responds on the URL.
+    if (!authToken || authToken.length < 16) {
+      throw new Error('A2AClient requires an authToken of at least 16 characters.');
+    }
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.authToken = authToken;
     this.requestTimeoutMs = timeoutMs;
+
+    // Security: Configure mTLS if certificates are provided.
+    if (mTLSConfig) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const https = require('node:https');
+        this.mtlsAgent = new https.Agent({
+          cert: mTLSConfig.cert,
+          key: mTLSConfig.key,
+          ca: mTLSConfig.ca,
+          rejectUnauthorized: true, // Reject if server cert is invalid
+        });
+      } catch {
+        this.logger.warn('A2AClient', 'Failed to create mTLS agent — falling back to standard TLS');
+      }
+    }
   }
 
   getBaseUrl(): string {
@@ -189,7 +245,12 @@ export class A2AClient {
     const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     timer.unref();
     try {
-      const response = await fetch(url, { ...options, signal: controller.signal });
+      // Security: Apply mTLS agent if configured for transport-level authentication.
+      const fetchOptions: RequestInit & { agent?: unknown } = { ...options, signal: controller.signal };
+      if (this.mtlsAgent) {
+        (fetchOptions as Record<string, unknown>).agent = this.mtlsAgent;
+      }
+      const response = await fetch(url, fetchOptions);
       return response;
     } finally {
       clearTimeout(timer);
@@ -217,7 +278,12 @@ export class A2ADiscoveryManager {
    * Discover and register a remote A2A agent.
    * Fetches the Agent Card to verify it's a valid A2A endpoint.
    */
-  async discoverAgent(label: string, url: string, authToken?: string): Promise<A2ADiscoveredAgent> {
+  async discoverAgent(label: string, url: string, authToken: string): Promise<A2ADiscoveredAgent> {
+    if (!authToken || authToken.length < 16) {
+      throw new Error(
+        `A2A discovery for "${label}" requires an authToken of at least 16 characters.`,
+      );
+    }
     const client = new A2AClient(url, authToken);
     const card = await client.getAgentCard();
     const agent: A2ADiscoveredAgent = {
@@ -258,8 +324,12 @@ export class A2ADiscoveryManager {
   async discoverFromConfig(
     configs: Array<{ label: string; url: string; authToken?: string }>,
   ): Promise<void> {
+    const validConfigs = configs.filter(
+      (cfg): cfg is { label: string; url: string; authToken: string } =>
+        typeof cfg.authToken === 'string' && cfg.authToken.length >= 16,
+    );
     const results = await Promise.allSettled(
-      configs.map((cfg) => this.discoverAgent(cfg.label, cfg.url, cfg.authToken)),
+      validConfigs.map((cfg) => this.discoverAgent(cfg.label, cfg.url, cfg.authToken)),
     );
     let succeeded = 0,
       failed = 0;
@@ -296,7 +366,7 @@ export class A2ARpcError extends Error {
 // Factory helpers
 // ============================================================================
 
-export function createA2AClient(baseUrl: string, authToken?: string): A2AClient {
+export function createA2AClient(baseUrl: string, authToken: string): A2AClient {
   return new A2AClient(baseUrl, authToken);
 }
 

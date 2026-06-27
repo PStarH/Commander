@@ -19,6 +19,7 @@ import type {
 } from './types';
 import { ChildProcess } from 'node:child_process';
 import { getGlobalLogger } from '../logging';
+import { getSupplyChainScanner } from '../security/supplyChainScanner';
 
 function uuid(): string {
   return `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -220,6 +221,26 @@ export class MCPClient {
   }
 
   async connect(): Promise<void> {
+    // SECURITY: run a supply-chain scan before opening a connection to an
+    // external MCP server. Block on critical/malicious findings.
+    const scanInput = this.config.transport === 'stdio'
+      ? `${this.config.command ?? ''} ${(this.config.args ?? []).join(' ')}`
+      : this.config.url ?? '';
+    const scanResult = getSupplyChainScanner().scan({
+      name: `mcp:${scanInput}`,
+      content: scanInput,
+      tools: [],
+      provenance: {
+        source: this.config.transport === 'stdio' ? 'local' : 'url',
+        sourceUrl: this.config.url,
+      },
+    });
+    if (!scanResult.passed) {
+      throw new Error(
+        `Supply chain scan blocked MCP connection to "${scanInput}": ${scanResult.recommendation} (risk=${scanResult.riskScore})`,
+      );
+    }
+
     await this.transport.start();
     await this.initialize();
     // Auto-fetch tools after connection so the cache is populated.
