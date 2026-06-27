@@ -8,6 +8,8 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 // ============================================================================
 // Types
@@ -51,7 +53,6 @@ export class FailurePatternLearner {
 
   private loadPatterns(): void {
     try {
-      const fs = require('fs');
       if (fs.existsSync(this.patternsPath)) {
         const data = JSON.parse(fs.readFileSync(this.patternsPath, 'utf-8'));
         for (const p of data) {
@@ -66,8 +67,6 @@ export class FailurePatternLearner {
 
   private savePatterns(): void {
     try {
-      const fs = require('fs');
-      const path = require('path');
       fs.mkdirSync(path.dirname(this.patternsPath), { recursive: true });
       fs.writeFileSync(
         this.patternsPath,

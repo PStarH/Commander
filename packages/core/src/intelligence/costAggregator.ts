@@ -385,8 +385,14 @@ function buildCacheTypeBreakdown(records: LLMCallRow[]): Record<CacheType, Cache
   // semantic cache cost saved (it overlaps with prompt's hit count, but the two
   // are actually different: prompt = server-side, semantic = response-level).
   const prompt = empty();
-  const promptHits = semanticHitCost > 0 ? 0 : 0; // placeholder: tracked at hit level only
-  prompt.events.hit = promptHits; // not tracked per record
+  // Derive the prompt-cache hit count from actual records: each record with
+  // cacheReadTokens > 0 represents one LLM call that benefited from the
+  // server-side prompt cache. Unlike semantic/tool caches, prompt-cache hits
+  // are not emitted as discrete events — they are inferred from per-record
+  // cacheReadTokens. (semanticHitCost is a USD-savings figure, not a hit
+  // count, so it cannot be used to infer hits.)
+  const promptHits = records.filter((r) => !r.error && (r.cacheReadTokens ?? 0) > 0).length;
+  prompt.events.hit = promptHits;
   prompt.savingsUsd = round5(
     records.reduce((sum, r) => {
       if (r.error) return sum;
