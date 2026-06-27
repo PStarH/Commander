@@ -13,6 +13,8 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { calculateCostBreakdown } from '../telos/tokenSentinel';
 import { getModelRouter } from '../runtime/modelRouter';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 // ============================================================================
 // Types
@@ -68,7 +70,6 @@ export class CostPredictor {
 
   private loadHistory(): void {
     try {
-      const fs = require('fs');
       if (fs.existsSync(this.historyPath)) {
         this.history = JSON.parse(fs.readFileSync(this.historyPath, 'utf-8'));
       }
@@ -80,8 +81,6 @@ export class CostPredictor {
 
   private saveHistory(): void {
     try {
-      const fs = require('fs');
-      const path = require('path');
       fs.mkdirSync(path.dirname(this.historyPath), { recursive: true });
       fs.writeFileSync(this.historyPath, JSON.stringify(this.history.slice(-1000), null, 2));
     } catch (err) {

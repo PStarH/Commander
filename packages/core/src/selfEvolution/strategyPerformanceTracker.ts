@@ -1,7 +1,14 @@
 import type { ExecutionExperience, StrategyPerformance } from '../runtime/types';
 
+interface ModelPerformanceEntry {
+  totalRuns: number;
+  successCount: number;
+  totalTokens: number;
+}
+
 export class StrategyPerformanceTracker {
   private strategyPerformance: Map<string, StrategyPerformance> = new Map();
+  private modelPerformance: Map<string, ModelPerformanceEntry> = new Map();
 
   recordExperience(exp: ExecutionExperience): void {
     const existing = this.strategyPerformance.get(exp.strategyUsed) ?? {
@@ -46,6 +53,18 @@ export class StrategyPerformanceTracker {
     }
 
     this.strategyPerformance.set(exp.strategyUsed, existing);
+
+    // Track model-level performance for analyzeModelPerformance().
+    const modelKey = exp.modelUsed || 'unknown';
+    const modelEntry = this.modelPerformance.get(modelKey) ?? {
+      totalRuns: 0,
+      successCount: 0,
+      totalTokens: 0,
+    };
+    modelEntry.totalRuns += 1;
+    modelEntry.successCount += exp.success ? 1 : 0;
+    modelEntry.totalTokens += exp.tokenCost;
+    this.modelPerformance.set(modelKey, modelEntry);
   }
 
   getStrategyPerformance(): Map<string, StrategyPerformance> {
@@ -74,10 +93,15 @@ export class StrategyPerformanceTracker {
     string,
     { totalRuns: number; successRate: number; avgTokens: number }
   > {
-    // Build model stats from the strategy performance entries by scanning experiences
-    // We need experiences to do this, but this method was called with experiences from MetaLearner.
-    // Since we don't have experiences here, we return empty. The facade will handle this.
-    return new Map<string, { totalRuns: number; successRate: number; avgTokens: number }>();
+    const result = new Map<string, { totalRuns: number; successRate: number; avgTokens: number }>();
+    for (const [model, entry] of this.modelPerformance) {
+      result.set(model, {
+        totalRuns: entry.totalRuns,
+        successRate: entry.totalRuns > 0 ? entry.successCount / entry.totalRuns : 0,
+        avgTokens: entry.totalRuns > 0 ? entry.totalTokens / entry.totalRuns : 0,
+      });
+    }
+    return result;
   }
 
   /** Normalize strategy speed to [0, 1] where 1 = fastest. */

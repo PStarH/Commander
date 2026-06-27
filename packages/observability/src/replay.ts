@@ -1,4 +1,4 @@
-import { reportSilentFailure } from '../../core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 import type { ExecutionTrace, TraceEvent } from '@commander/core';
 import type { ReplayResult, ReplaySpec, TimelineView, TimelineNode } from './types';
 import { buildTimeline } from './timelineBuilder';

@@ -9,6 +9,8 @@
 
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 // ============================================================================
 // Types
@@ -131,8 +133,6 @@ export class ImpactAnalyzer {
     if (Date.now() - this.lastScanTime < this.scanIntervalMs) return;
 
     try {
-      const fs = require('fs');
-      const path = require('path');
       const root = this.projectRoot ?? process.cwd();
 
       // Scan source files
@@ -153,9 +153,6 @@ export class ImpactAnalyzer {
   }
 
   private scanDirectory(dir: string): void {
-    const fs = require('fs');
-    const path = require('path');
-
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
@@ -173,8 +170,6 @@ export class ImpactAnalyzer {
   }
 
   private scanFile(filePath: string): void {
-    const fs = require('fs');
-
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
       const imports = this.extractImports(content);
