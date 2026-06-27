@@ -98,6 +98,15 @@ export class CohereProvider implements LLMProvider {
 
     if (request.temperature !== undefined) body.temperature = request.temperature;
 
+    // Command A Reasoning: reasoning_effort parameter
+    const rc = request.reasoningConfig;
+    if (rc?.enabled) {
+      if (rc.effort) body.reasoning_effort = rc.effort;
+      if (rc.budget && rc.budget > 0) {
+        body.max_tokens = Math.min(request.maxTokens ?? 4096, rc.budget);
+      }
+    }
+
     // Map tools to Cohere's tool format
     if (request.tools && request.tools.length > 0) {
       body.tools = request.tools.map((t) => ({
