@@ -32,7 +32,9 @@ import { XAIProvider } from './providers/xaiProvider';
 import { AnyscaleProvider } from './providers/anyscaleProvider';
 import { DeepInfraProvider } from './providers/deepinfraProvider';
 import { AgnesProvider } from './providers/agnesProvider';
+import { resolveSecureApiKey } from '../security/secureApiKeyResolver';
 import { StepFunProvider } from './providers/stepfunProvider';
+import { MiniMaxProvider } from './providers/minimaxProvider';
 import { MCPServer } from '../mcp/server';
 import { getGlobalLogger } from '../logging';
 import { getMetricsCollector } from './metricsCollector';
@@ -40,6 +42,10 @@ import { installProcessCrashHandlers } from './processCrashSafety';
 import { getDeadLetterQueue } from './deadLetterQueueSingleton';
 import { openApiSpec } from './openapi';
 import { handleAtrHttpRequest, type AtrHttpDeps } from '../atr/atrHttp';
+import { handleSLOOperationsRequest } from '../observability/sloOperations';
+import { getAPIVersionManager } from './apiVersioning';
+import { sendProblem, ApiError, errorToProblem } from './apiErrors';
+import { validateOrThrow, Schemas } from './apiValidation';
 import { getExecutionScheduler } from '../atr/scheduler';
 import { handleObservabilityRequest, type ObservabilityDeps } from '../observability/httpApi';
 import {
@@ -75,6 +81,8 @@ import {
   SECURITY_EVENT_TYPE_TO_ASI,
   getOwaspAsiTop10,
 } from '../security/owaspAgenticAiTop10';
+import { getComplianceAuditManager } from '../security/complianceAuditReport';
+import { getEuAiActComplianceReporter } from '../security/euAiActCompliance';
 
 export interface HttpServerConfig {
   port: number;
@@ -368,6 +376,149 @@ export class CommanderHttpServer {
     }
   }
 
+  /**
+   * Build live HealthSources from the server's runtime state so the
+   * HealthCollector reports real component status instead of "not wired".
+   *
+   * Each getter is called fresh on every collect() so the returned data
+   * reflects current system state.  When no runtime is registered yet
+   * (cold start), the source is omitted so the check falls back to the
+   * "not wired" default rather than crashing.
+   */
+  private buildHealthSources(): import('./healthCheck').HealthSources {
+    const sources: import('./healthCheck').HealthSources = {};
+
+    // Event bus info — always available (server owns the bus singleton).
+    sources.getEventBusInfo = () => ({
+      activeTopics: this.bus.getActiveTopics().length,
+      subscriberCount: Object.values(this.bus.getAllSubscriberCounts()).reduce(
+        (a, b) => a + b,
+        0,
+      ),
+    });
+
+    // Circuit breaker + provider info — from the first active runtime.
+    const firstRuntime = this.runtimes.values().next();
+    if (!firstRuntime.done && firstRuntime.value?.runtime) {
+      const rt = firstRuntime.value.runtime;
+
+      sources.getCircuitBreakerInfo = () => {
+        try {
+          const health = rt.getProviderHealth();
+          const open = health
+            .filter((h) => h.state === 'open')
+            .map((h) => h.provider);
+          return { open, total: health.length };
+        } catch {
+          return { open: [], total: 0 };
+        }
+      };
+
+      sources.getProviderInfo = () => {
+        try {
+          const health = rt.getProviderHealth();
+          const available = health.filter((h) => h.state !== 'open').length;
+          return { available, total: health.length };
+        } catch {
+          return { available: 0, total: 0 };
+        }
+      };
+
+      sources.getCompensationInfo = () => {
+        try {
+          const reg = rt.getCompensationRegistry();
+          const pending = reg.getPendingCount?.() ?? 0;
+          const compensated = reg.getCompensatedCount?.() ?? 0;
+          return { pending, compensated };
+        } catch {
+          return { pending: 0, compensated: 0 };
+        }
+      };
+    }
+
+    // DLQ info — from the global dead-letter-queue singleton.
+    sources.getDLQInfo = () => {
+      try {
+        const dlq = getDeadLetterQueue();
+        const byCategory = dlq.getStats();
+        const totalEntries = byCategory.reduce((sum, c) => sum + c.count, 0);
+        return { totalEntries, byCategory };
+      } catch {
+        return { totalEntries: 0, byCategory: [] };
+      }
+    };
+
+    return sources;
+  }
+
+  /**
+   * Probe whether the server can actually satisfy a plan's required tools.
+   *
+   * Returns 'verified' when at least one runtime has a registered provider
+   * AND all requiredTools are found in either the runtime's tool registry
+   * or the MCP server's tool list.  Returns 'degraded' when a runtime
+   * exists but is missing tools or providers.  Returns 'unknown' on timeout
+   * or when no runtime is registered at all.
+   *
+   * This replaces the previous fake probe that instantiated an AgentRuntime
+   * with a dummy 'probe' apiKey and always returned 'verified'.
+   */
+  private async probeCapability(
+    requiredTools: string[],
+  ): Promise<'verified' | 'degraded' | 'unknown'> {
+    const timeout = new Promise<'unknown'>((res) =>
+      setTimeout(() => res('unknown'), 200),
+    );
+
+    const check = (async (): Promise<'verified' | 'degraded' | 'unknown'> => {
+      // No runtime registered → cannot verify anything.
+      if (this.runtimes.size === 0) return 'unknown';
+
+      const firstEntry = this.runtimes.values().next();
+      if (firstEntry.done || !firstEntry.value?.runtime) return 'unknown';
+      const rt = firstEntry.value.runtime;
+
+      // Check provider availability.
+      const providerHealth = rt.getProviderHealth();
+      const hasProvider = providerHealth.some((h) => h.state !== 'open');
+      if (!hasProvider) return 'degraded';
+
+      // If no tools required, provider availability is sufficient.
+      if (requiredTools.length === 0) return 'verified';
+
+      // Check tool satisfaction: MCP server tools or runtime tool registry.
+      const availableToolNames = new Set<string>();
+
+      // Collect tools from the MCP server if registered.
+      if (this.mcpServer) {
+        try {
+          const mcpTools = this.mcpServer.listTools();
+          for (const t of mcpTools) {
+            availableToolNames.add(t.name);
+          }
+        } catch {
+          // MCP server listTools failed — skip.
+        }
+      }
+
+      // Collect tools from the runtime's tool registry.
+      try {
+        const runtimeTools = rt.listToolNames();
+        for (const name of runtimeTools) {
+          availableToolNames.add(name);
+        }
+      } catch {
+        // Runtime tool list failed — skip.
+      }
+
+      // Verify all required tools are available.
+      const missing = requiredTools.filter((t) => !availableToolNames.has(t));
+      return missing.length === 0 ? 'verified' : 'degraded';
+    })();
+
+    return Promise.race([check, timeout]);
+  }
+
   async start(): Promise<void> {
     return new Promise((resolve) => {
       const handler = (req: IncomingMessage, res: ServerResponse) => {
@@ -587,6 +738,16 @@ export class CommanderHttpServer {
     return false;
   }
 
+  /** Read the full request body as a string (for POST/PUT requests). */
+  private async readRequestBody(req: IncomingMessage): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+      req.on('error', reject);
+    });
+  }
+
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     this.applyCommonHeaders(req, res);
     if (req.method === 'OPTIONS') {
@@ -609,7 +770,7 @@ export class CommanderHttpServer {
     if (segments[0] === 'health' && (req.method ?? 'GET') === 'GET') {
       if (protectHealth && !(await this.authenticateRequest(req, res))) return;
       const { HealthCollector } = await import('./healthCheck');
-      const collector = new HealthCollector();
+      const collector = new HealthCollector({ sources: this.buildHealthSources() });
       const report = await collector.collect();
       const status = report.status === 'healthy' ? 'healthy' : 'degraded';
       sendJson(res, status === 'healthy' ? 200 : 503, {
@@ -627,7 +788,7 @@ export class CommanderHttpServer {
     if (segments[0] === 'health' && segments[1] === 'detailed' && (req.method ?? 'GET') === 'GET') {
       if (protectHealth && !(await this.authenticateRequest(req, res))) return;
       const { HealthCollector } = await import('./healthCheck');
-      const collector = new HealthCollector();
+      const collector = new HealthCollector({ sources: this.buildHealthSources() });
       const report = await collector.collect();
       sendJson(res, report.status === 'healthy' ? 200 : 503, {
         ...report,
@@ -664,6 +825,30 @@ export class CommanderHttpServer {
           nodeVersion: process.version,
           timestamp: new Date().toISOString(),
         });
+      }
+      return;
+    }
+
+    // SLO Operations endpoints: /api/v1/slo, /api/v1/alerts, /api/v1/incidents
+    if (
+      (segments[0] === 'slo' || segments[0] === 'alerts' || segments[0] === 'incidents') &&
+      segments.length >= 1
+    ) {
+      if (protectHealth && !(await this.authenticateRequest(req, res))) return;
+      let reqBody: string | undefined;
+      if (req.method === 'POST' || req.method === 'PUT') {
+        reqBody = await this.readRequestBody(req);
+      }
+      const result = handleSLOOperationsRequest(
+        req.method ?? 'GET',
+        segments,
+        reqBody,
+      );
+      if (result) {
+        res.writeHead(result.statusCode, result.headers);
+        res.end(result.body);
+      } else {
+        sendJson(res, 404, { error: 'SLO operations endpoint not found' });
       }
       return;
     }
@@ -705,7 +890,7 @@ export class CommanderHttpServer {
       if (protectHealth && !(await this.authenticateRequest(req, res))) return;
       const mem = process.memoryUsage();
       const { HealthCollector } = await import('./healthCheck');
-      const collector = new HealthCollector();
+      const collector = new HealthCollector({ sources: this.buildHealthSources() });
       const report = await collector.collect();
       const ready = report.status === 'healthy';
       sendJson(res, ready ? 200 : 503, {
@@ -781,8 +966,22 @@ export class CommanderHttpServer {
         sendJson(res, 404, { error: 'Not found' });
       }
     } catch (err) {
-      const status = err instanceof HttpRequestError ? err.statusCode : 500;
-      if (err instanceof HttpRequestError) {
+      // Standardized error response via RFC 7807 Problem Details
+      if (err instanceof ApiError) {
+        sendProblem(res, err.code, err.message, {
+          instance: req.url ?? '',
+          requestId: this.getRequestId(req),
+          errors: err.fieldErrors,
+          extensions: err.extensions,
+        });
+      } else if (err instanceof HttpRequestError) {
+        const code = err.statusCode === 413 ? 'PAYLOAD_TOO_LARGE'
+          : err.statusCode === 400 ? 'INVALID_JSON'
+          : 'INTERNAL_ERROR';
+        sendProblem(res, code, err.message, {
+          instance: req.url ?? '',
+          requestId: this.getRequestId(req),
+        });
         getGlobalLogger().warn('HttpServer', err.message);
       } else {
         getGlobalLogger().error(
@@ -790,14 +989,29 @@ export class CommanderHttpServer {
           'Request error',
           err instanceof Error ? err : new Error(String(err)),
         );
+        sendProblem(res, 'INTERNAL_ERROR', err instanceof Error ? err.message : String(err), {
+          instance: req.url ?? '',
+          requestId: this.getRequestId(req),
+        });
       }
-      sendJson(res, status, { error: err instanceof Error ? err.message : String(err) });
     }
   }
 
   private applyCommonHeaders(req: IncomingMessage, res: ServerResponse): void {
     const requestId = this.getRequestId(req);
     res.setHeader('X-Request-Id', requestId);
+
+    // Security: Set essential security headers on all responses.
+    // Per Node.js security best practices and OWASP HTTP Headers Cheat Sheet.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    // Security: X-XSS-Protection is deprecated; set to 0 and rely on CSP.
+    res.setHeader('X-XSS-Protection', '0');
+    if (this.config.https) {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+
     if (!this.config.cors) return;
 
     const allowedOrigins = this.config.corsAllowedOrigins;
@@ -807,8 +1021,25 @@ export class CommanderHttpServer {
       res.setHeader('Access-Control-Allow-Origin', allowAll ? '*' : origin);
       if (!allowAll) res.setHeader('Vary', 'Origin');
     }
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-Id');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-Id, Accept-Version');
+
+    // API versioning: add stability and version headers for API endpoints
+    const url = req.url ?? '/';
+    const pathPart = url.split('?')[0];
+    if (pathPart.startsWith('/api/') || pathPart.startsWith('/slo') || pathPart.startsWith('/alerts') || pathPart.startsWith('/incidents')) {
+      try {
+        const versionMgr = getAPIVersionManager();
+        const deprecationHeaders = versionMgr.getDeprecationHeaders(req.method ?? 'GET', pathPart);
+        const stabilityHeaders = versionMgr.getStabilityHeaders(req.method ?? 'GET', pathPart);
+        for (const [key, val] of Object.entries({ ...deprecationHeaders, ...stabilityHeaders })) {
+          res.setHeader(key, val);
+        }
+        versionMgr.recordRequest(req.method ?? 'GET', pathPart);
+      } catch {
+        // Version manager not available — skip headers
+      }
+    }
   }
 
   private getRequestId(req: IncomingMessage): string {
@@ -829,11 +1060,11 @@ export class CommanderHttpServer {
       const [, resource, id] = segments;
       if (resource === 'runtime') {
         if (method === 'POST') {
-          const body = (await parseBody(req, this.config.maxBodyBytes)) as {
-            sessionId?: string;
-            provider?: string;
-            model?: string;
-          };
+          const rawBody = await parseBody(req, this.config.maxBodyBytes);
+          const body = validateOrThrow<{
+            sessionId?: string; provider?: string; model?: string;
+            apiKey?: string; systemPrompt?: string; maxTokens?: number;
+          }>(rawBody, Schemas.createRuntime);
           const sessionId = body.sessionId ?? `session_${Date.now()}`;
           const runtime = new AgentRuntime();
           runtime.registerProvider(
@@ -868,13 +1099,13 @@ export class CommanderHttpServer {
       }
       if (resource === 'execute') {
         if (method === 'POST') {
-          const body = (await parseBody(req, this.config.maxBodyBytes)) as {
-            prompt: string;
-            sessionId?: string;
-            provider?: string;
-            model?: string;
-            outputSchema?: Record<string, unknown>;
-          };
+          const rawBody = await parseBody(req, this.config.maxBodyBytes);
+          // Schema validation — standardized error response
+          const body = validateOrThrow<{
+            prompt: string; sessionId?: string; provider?: string;
+            model?: string; outputSchema?: Record<string, unknown>;
+            maxTokens?: number; temperature?: number; runtimeId?: string; tools?: string[];
+          }>(rawBody, Schemas.execute);
           const sessionId = body.sessionId ?? `session_${Date.now()}`;
           // Derive tenantId from API key (never trust request body for tenant)
           const tenantId = this.resolveTenantFromAuth(req);
@@ -1082,23 +1313,13 @@ export class CommanderHttpServer {
         // Plan-v2 fields: tool-required extraction + capability probe.
         const requiredTools = extractRequiredTools(taskText);
         const mcpAvailable = this.mcpServer !== null;
-        // Real-world capability probe must not lie (see audit MED item 3
-        // /health lesson). Wire a synthetic executor dry-run that exercises
-        // the same code path execute() uses, with a 100ms timeout so a hung
-        // runtime can't hang the plan endpoint. Falls back to 'unknown' on
-        // timeout/throw rather than a false 'verified'.
-        const probe = await Promise.race<'verified' | 'degraded' | 'unknown'>([
-          (async () => {
-            try {
-              const dry = new AgentRuntime();
-              dry.registerProvider('openai', new OpenAIProvider({ apiKey: 'probe' }));
-              return 'verified' as const;
-            } catch {
-              return 'degraded' as const;
-            }
-          })(),
-          new Promise<'unknown'>((res) => setTimeout(() => res('unknown'), 100)),
-        ]);
+        // Real capability probe — check whether the registered runtime(s)
+        // have at least one working provider AND whether the MCP server
+        // (or runtime tool registry) can satisfy the required tools.
+        // This replaces the previous fake probe that created an
+        // AgentRuntime with a dummy 'probe' apiKey and lied 'verified'
+        // even when no real provider was configured.
+        const probe = await this.probeCapability(requiredTools);
         const degradationReasons: string[] = [];
         if (!mcpAvailable) degradationReasons.push('mcp_server_not_registered');
         if (probe === 'degraded') degradationReasons.push('executor_init_failed');
@@ -1317,6 +1538,32 @@ export class CommanderHttpServer {
           });
           return;
         }
+      }
+      // /api/v1/security/compliance-audit
+      // GET → ComplianceAuditManager.generateFullReport() (ISO 42001 + NIST AI RMF)
+      // /api/v1/security/eu-ai-act
+      // GET → EuAiActComplianceReporter.generateReport() (Articles 12/13/14)
+      // Both reporters are zero-config singletons that read existing security
+      // state (audit chain, security monitor, posture snapshots). Exposing them
+      // as read-only GET endpoints fills a gap: the report generators were
+      // fully implemented but had no runtime caller.
+      if (resource === 'security' && segments[2] === 'compliance-audit' && method === 'GET') {
+        const tenantId = this.requireTenant(req, res);
+        if (res.writableEnded) return;
+        const report = await runWithTenant(tenantId, async () =>
+          getComplianceAuditManager().generateFullReport(),
+        );
+        sendJson(res, 200, report);
+        return;
+      }
+      if (resource === 'security' && segments[2] === 'eu-ai-act' && method === 'GET') {
+        const tenantId = this.requireTenant(req, res);
+        if (res.writableEnded) return;
+        const report = await runWithTenant(tenantId, async () =>
+          getEuAiActComplianceReporter().generateReport(),
+        );
+        sendJson(res, 200, report);
+        return;
       }
       if (resource === 'topology') {
         const eventLog = getGlobalExplorationEventLog(
@@ -1675,15 +1922,17 @@ export class CommanderHttpServer {
   }
 
   private getDefaultProvider(provider: string = 'openai'): LLMProvider {
+    // Security: Use SecureApiKeyResolver instead of direct process.env access.
+    // Keys are decrypted from EncryptedSecretsVault at rest, with env var fallback.
     switch (provider) {
       case 'openai':
-        return new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY ?? '' });
+        return new OpenAIProvider({ apiKey: resolveSecureApiKey('OPENAI_API_KEY') });
       case 'anthropic':
-        return new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' });
+        return new AnthropicProvider({ apiKey: resolveSecureApiKey('ANTHROPIC_API_KEY') });
       case 'google':
-        return new GoogleProvider({ apiKey: process.env.GOOGLE_API_KEY ?? '' });
+        return new GoogleProvider({ apiKey: resolveSecureApiKey('GOOGLE_API_KEY') });
       case 'openrouter':
-        return new OpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY ?? '' });
+        return new OpenRouterProvider({ apiKey: resolveSecureApiKey('OPENROUTER_API_KEY') });
       case 'deepseek':
         return new DeepSeekProvider({ apiKey: process.env.DEEPSEEK_API_KEY ?? '' });
       case 'glm':
@@ -1721,15 +1970,17 @@ export class CommanderHttpServer {
       case 'xai':
         return new XAIProvider({ apiKey: process.env.XAI_API_KEY ?? '' });
       case 'anyscale':
-        return new AnyscaleProvider({ apiKey: process.env.ANYSCALE_API_KEY ?? '' });
+        return new AnyscaleProvider({ apiKey: resolveSecureApiKey('ANYSCALE_API_KEY') });
       case 'deepinfra':
-        return new DeepInfraProvider({ apiKey: process.env.DEEPINFRA_API_KEY ?? '' });
+        return new DeepInfraProvider({ apiKey: resolveSecureApiKey('DEEPINFRA_API_KEY') });
       case 'agnes':
-        return new AgnesProvider({ apiKey: process.env.AGNES_API_KEY ?? '' });
+        return new AgnesProvider({ apiKey: resolveSecureApiKey('AGNES_API_KEY') });
       case 'stepfun':
-        return new StepFunProvider({ apiKey: process.env.STEPFUN_API_KEY ?? '' });
+        return new StepFunProvider({ apiKey: resolveSecureApiKey('STEPFUN_API_KEY') });
+      case 'minimax':
+        return new MiniMaxProvider({ apiKey: resolveSecureApiKey('MINIMAX_API_KEY') });
       default:
-        return new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY ?? '' });
+        return new OpenAIProvider({ apiKey: resolveSecureApiKey('OPENAI_API_KEY') });
     }
   }
 }
