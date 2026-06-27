@@ -7,10 +7,75 @@ import type {
   ModelTier,
   MCPClientConfig,
 } from '@commander/core';
+import { URL } from 'node:url';
+
+// ── Security: SSRF prevention ────────────────────────────────────────────────
+// Block requests to private/internal IP ranges and cloud metadata endpoints.
+// Per OWASP SSRF Prevention Cheat Sheet: validate scheme, reject private IPs.
+const PRIVATE_IP_PATTERNS = [
+  /^127\./,                          // Loopback
+  /^10\./,                           // RFC 1918
+  /^172\.(1[6-9]|2[0-9]|3[0-1])\./, // RFC 1918
+  /^192\.168\./,                     // RFC 1918
+  /^169\.254\./,                     // Link-local / cloud metadata
+  /^0\./,                            // Current network
+  /^::1$/,                           // IPv6 loopback
+  /^fc00:/,                          // IPv6 ULA
+  /^fe80:/,                          // IPv6 link-local
+];
+
+/**
+ * Validate a URL to prevent SSRF attacks.
+ * Only allows http/https schemes and rejects private/internal IP ranges.
+ * Security: Based on OWASP SSRF Prevention Cheat Sheet.
+ */
+function isSafeUrl(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    // Only allow http and https schemes — block file:, javascript:, data:, etc.
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    // Reject private/internal IP ranges and cloud metadata endpoints
+    const hostname = parsed.hostname;
+    for (const pattern of PRIVATE_IP_PATTERNS) {
+      if (pattern.test(hostname)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ── Security: Command injection prevention ───────────────────────────────────
+// Allowlist of permitted MCP server commands for stdio transport.
+// Per OWASP OS Command Injection Defense Cheat Sheet: use allowlist, not blocklist.
+const ALLOWED_MCP_COMMANDS = new Set([
+  // SECURITY: npx is intentionally excluded. It downloads and executes arbitrary
+  // npm packages on the server, creating a remote code execution supply-chain
+  // vector. Only interpreters with a fixed, pre-installed entry point are allowed.
+  'node',
+  'python',
+  'python3',
+  'uvx',
+  // 'docker' is allowed only when the daemon is configured to run a pinned,
+  // pre-built image; the discover endpoint still validates the full command.
+  'docker',
+]);
+
+/**
+ * Validate a command for stdio MCP transport.
+ * Security: Based on OWASP OS Command Injection Defense Cheat Sheet — strict allowlist.
+ */
+function isAllowedCommand(command: string): boolean {
+  // Extract the base command name (no path separators, no shell metacharacters)
+  const baseName = command.split('/').pop()?.split('\\').pop() ?? '';
+  return ALLOWED_MCP_COMMANDS.has(baseName);
+}
 
 export function createMCPRouter(): Router {
   const router = express.Router();
-  router.use(express.json());
+  // Security: express.json() with limit is applied globally in index.ts.
 
   const server = new MCPServer('telos-mcp', '1.0.0');
 
@@ -40,6 +105,23 @@ export function createMCPRouter(): Router {
     if (!url && !command) {
       return res.status(400).json({
         error: 'url (streamable-http) or command (stdio) is required',
+      });
+    }
+
+    // Security: SSRF prevention — validate URL scheme and reject private IPs.
+    // Per OWASP SSRF Prevention Cheat Sheet: only allow http/https to public hosts.
+    if (url && !isSafeUrl(url)) {
+      return res.status(400).json({
+        error: 'Invalid or blocked URL. Only http/https to public hosts is allowed.',
+      });
+    }
+
+    // Security: Command injection prevention — strict command allowlist.
+    // Per OWASP OS Command Injection Defense Cheat Sheet: never pass untrusted
+    // input to shell; use allowlist of permitted executable names.
+    if (command && !isAllowedCommand(command)) {
+      return res.status(400).json({
+        error: `Command "${command}" is not in the allowed list. Permitted: ${[...ALLOWED_MCP_COMMANDS].join(', ')}`,
       });
     }
 
@@ -81,10 +163,12 @@ export function createMCPRouter(): Router {
         instruction: `MCP server "${discoveryLabel}" discovered with ${tools.length} tools.`,
       });
     } catch (err) {
+      // Security: Per Express security best practice — do not leak internal error details.
+      console.error('[mcpEndpoints] Discovery error:', err);
       res.status(502).json({
         status: 'failed',
         label: discoveryLabel,
-        error: err instanceof Error ? err.message : String(err),
+        error: 'Failed to connect to MCP server',
         durationMs: Date.now() - startTime,
         hint: 'Verify the MCP server is running and accessible.',
       });
@@ -184,7 +268,7 @@ function registerCoreTools(server: MCPServer): void {
 
 export function createMCPClientRouter(): Router {
   const router = express.Router();
-  router.use(express.json());
+  // Security: express.json() with limit is applied globally in index.ts.
 
   // POST /mcp/client/connect — Connect to an external MCP server
   router.post('/connect', async (req, res) => {

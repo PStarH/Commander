@@ -367,3 +367,52 @@ export const selfAssessBody = z.object({
   missionId: z.string().optional(),
   context: z.record(z.string(), z.unknown()).optional(),
 });
+
+// ── Security: Input validation schemas for previously unvalidated endpoints ──
+
+// POST /api/runtime/execute
+export const runtimeExecuteBody = z.object({
+  agentId: z.string().min(1, 'agentId is required').max(200),
+  projectId: z.string().min(1).max(200).optional(),
+  missionId: z.string().min(1).max(200).optional(),
+  goal: z.string().min(1, 'goal is required').max(10000),
+  contextData: z.record(z.string(), z.unknown()).optional(),
+  availableTools: z.array(z.string().max(200)).max(50).optional(),
+  tokenBudget: z.number().int().min(1).max(1000000).optional(),
+});
+
+// POST /api/state-machine/create
+export const stateMachineCreateBody = z.object({
+  taskId: z.string().min(1).max(200).optional(),
+  projectId: z.string().min(1).max(200).optional(),
+  agentId: z.string().min(1).max(200).optional(),
+  type: z.enum(['standard', 'saga', 'pipeline']).default('standard'),
+  initialData: z.record(z.string(), z.unknown()).optional(),
+});
+
+// POST /api/state-machine/:id/resume-from-checkpoint
+export const resumeFromCheckpointBody = z.object({
+  checkpointId: z.string().regex(/^[a-zA-Z0-9_-]+$/, 'Invalid checkpointId format'),
+});
+
+// POST /api/security/scan
+export const securityScanEntryBody = z.object({
+  id: z.string().min(1).max(200).optional(),
+  content: z.string().min(1, 'content is required').max(100000),
+  timestamp: z.string().optional(),
+  source: z.string().max(500).optional(),
+  embedding: z.array(z.number()).max(10000).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+// POST /mcp/discover — validated separately in mcpEndpoints.ts via inline checks
+export const mcpDiscoverBody = z.object({
+  url: z.string().url().optional(),
+  transport: z.enum(['stdio', 'sse', 'streamable-http']).optional(),
+  command: z.string().max(500).optional(),
+  args: z.array(z.string().max(500)).max(50).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  label: z.string().max(200).optional(),
+}).refine(data => data.url || data.command, {
+  message: 'Either url or command is required',
+});

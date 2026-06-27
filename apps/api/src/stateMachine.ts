@@ -205,9 +205,15 @@ function saveCheckpoint(state: AgentState): string {
 
 /**
  * Load checkpoint
+ *
+ * Security: Use path.basename() to strip any directory traversal sequences
+ * from checkpointId. Per OWASP Path Traversal prevention: never pass
+ * user-controlled input directly to filesystem APIs.
  */
 function loadCheckpoint(checkpointId: string): AgentState | null {
-  const checkpointFile = path.join(CHECKPOINTS_DIR, `${checkpointId}.json`);
+  // Security: Strip path separators to prevent traversal (e.g. "../../etc/passwd")
+  const safeId = path.basename(checkpointId);
+  const checkpointFile = path.join(CHECKPOINTS_DIR, `${safeId}.json`);
   if (!fs.existsSync(checkpointFile)) return null;
 
   try {

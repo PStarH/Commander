@@ -23,7 +23,7 @@
  * ```
  */
 
-import { reportSilentFailure } from '../../core/src/silentFailureReporter';
+import { reportSilentFailure } from '@commander/core';
 import type { CommanderOptions } from '@commander/core';
 
 import type {
@@ -150,16 +150,31 @@ export class CommanderClient {
     // Wire SSE events
     const { getMessageBus } = await import('@commander/core');
     const bus = getMessageBus();
-    bus.subscribe('agent.started', () => {
+    bus.subscribe('agent.started', (msg) => {
       this.activeSessions++;
+      this.dispatchEvent({
+        type: 'agent.started',
+        timestamp: msg.timestamp,
+        data: (msg.payload as Record<string, unknown>) ?? {},
+      });
     });
-    bus.subscribe('agent.completed', () => {
+    bus.subscribe('agent.completed', (msg) => {
       this.runCount++;
       this.activeSessions = Math.max(0, this.activeSessions - 1);
+      this.dispatchEvent({
+        type: 'agent.completed',
+        timestamp: msg.timestamp,
+        data: (msg.payload as Record<string, unknown>) ?? {},
+      });
     });
-    bus.subscribe('agent.failed', () => {
+    bus.subscribe('agent.failed', (msg) => {
       this.runCount++;
       this.activeSessions = Math.max(0, this.activeSessions - 1);
+      this.dispatchEvent({
+        type: 'agent.failed',
+        timestamp: msg.timestamp,
+        data: (msg.payload as Record<string, unknown>) ?? {},
+      });
     });
 
     this.connected = true;
@@ -356,11 +371,19 @@ export class CommanderClient {
     }
   }
 
+  /**
+   * @deprecated 此方法当前返回占位数据（空数组），将在未来版本实现。
+   * Memory access is best-effort — returns empty on failure.
+   */
   queryMemory(options: MemoryQueryOptions = {}): MemoryItem[] {
     // Memory access is best-effort — returns empty on failure
     return [];
   }
 
+  /**
+   * @deprecated 此方法当前返回占位数据（全零统计），将在未来版本实现。
+   * Memory stats via core Commander — best-effort, returns zeros on failure.
+   */
   async getMemoryStats(): Promise<MemoryStats> {
     // Memory stats via core Commander — best-effort, returns zeros on failure
     return {
@@ -376,6 +399,21 @@ export class CommanderClient {
   // ==========================================================================
   // Events
   // ==========================================================================
+
+  /**
+   * Dispatch an execution event to all registered handlers (best-effort).
+   * Errors thrown by individual handlers are swallowed so one failing handler
+   * cannot disrupt event delivery to the others.
+   */
+  private dispatchEvent(event: ExecutionEvent): void {
+    this.eventHandlers.forEach((h) => {
+      try {
+        h(event);
+      } catch {
+        /* best-effort: swallow handler errors */
+      }
+    });
+  }
 
   onEvent(handler: (event: ExecutionEvent) => void): () => void {
     this.eventHandlers.add(handler);
@@ -413,6 +451,9 @@ export class CommanderClient {
     };
   }
 
+  /**
+   * @deprecated 此方法当前返回占位数据（硬编码 CLOSED/零值），将在未来版本实现。
+   */
   getReliabilityStats(): SDKReliabilityStats {
     return {
       circuitState: 'CLOSED',

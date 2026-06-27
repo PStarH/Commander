@@ -1,6 +1,25 @@
 import { Router } from 'express';
 import { NamespacedMemoryStore } from './namespacedMemoryStore';
 
+// Security: Valid RBAC roles for namespaced memory access.
+// Per security best practice: roles must come from server-side auth, not user input.
+const VALID_ROLES = new Set(['reader', 'writer', 'admin', 'system']);
+
+/**
+ * Extract role from authenticated request context, NOT from user-controlled query params.
+ * Security: Per OWASP — never trust user-supplied role/permission values.
+ * Falls back to 'reader' (least privilege) when no authenticated role is available.
+ */
+function getAuthenticatedRole(req: any): string {
+  // Use role from authenticated API key scopes if available
+  const authRole = req.apiScopes?.role;
+  if (typeof authRole === 'string' && VALID_ROLES.has(authRole)) {
+    return authRole;
+  }
+  // Default to least privilege
+  return 'reader';
+}
+
 export function createNamespacedMemoryRouter(): Router {
   const router = Router();
   const namespacedStore = new NamespacedMemoryStore();
@@ -10,7 +29,6 @@ export function createNamespacedMemoryRouter(): Router {
     const {
       key,
       value,
-      role,
       agentId,
       projectId,
       kind,
@@ -21,6 +39,8 @@ export function createNamespacedMemoryRouter(): Router {
     if (!key || value === undefined) {
       return res.status(400).json({ error: 'key and value are required' });
     }
+    // Security: Role comes from authenticated context, not request body.
+    const role = getAuthenticatedRole(req);
     const result = namespacedStore.write(
       {
         namespace,
@@ -30,7 +50,7 @@ export function createNamespacedMemoryRouter(): Router {
         content: memContent ?? value,
         tags: tags ?? [],
       },
-      { agentId: agentId ?? 'api', role: role ?? 'system', namespace },
+      { agentId: agentId ?? 'api', role, namespace },
     );
     if (!result) {
       return res.status(403).json({ error: 'Permission denied' });
@@ -40,7 +60,8 @@ export function createNamespacedMemoryRouter(): Router {
 
   router.get('/api/namespaced-memory/:namespace/read/:id', (req, res) => {
     const { namespace, id } = req.params;
-    const role = (req.query.role as string) ?? 'reader';
+    // Security: Role from authenticated context, not user-controlled query param.
+    const role = getAuthenticatedRole(req);
     const agentId = (req.query.agentId as string) ?? 'api';
     const item = namespacedStore.read(id, { agentId, role, namespace });
     if (!item) {
@@ -52,7 +73,8 @@ export function createNamespacedMemoryRouter(): Router {
   router.get('/api/namespaced-memory/:namespace/search', (req, res) => {
     const { namespace } = req.params;
     const q = (req.query.q as string) ?? '';
-    const role = (req.query.role as string) ?? 'reader';
+    // Security: Role from authenticated context, not user-controlled query param.
+    const role = getAuthenticatedRole(req);
     const agentId = (req.query.agentId as string) ?? 'api';
     const projectId = (req.query.projectId as string) ?? 'default';
     const results = namespacedStore.search(
