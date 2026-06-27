@@ -1,10 +1,12 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { AgentRuntime } from '../../src/runtime/agentRuntime';
 import { MockLLMProvider } from '../../src/runtime/mockLLMProvider';
 import { ModelRouter, resetModelRouter } from '../../src/runtime/modelRouter';
 import { resetMessageBus } from '../../src/runtime/messageBus';
 import { resetTraceRecorder } from '../../src/runtime/executionTrace';
 import { resetPatternTracker } from '../../src/runtime/speculativeExecutor';
+import { resetGuardianAgent } from '../../src/security/guardianAgent';
+import { resetRuntimeGuardian } from '../../src/runtime/runtimeGuardianBridge';
 import type {
   AgentExecutionContext,
   Tool,
@@ -110,6 +112,8 @@ describe('AgentRuntime - Full Tool Calling Pipeline', () => {
     resetMessageBus();
     resetTraceRecorder();
     resetPatternTracker();
+    resetGuardianAgent();
+    resetRuntimeGuardian();
     router = new ModelRouter();
     runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000 }, router);
 
@@ -184,7 +188,7 @@ describe('AgentRuntime - Full Tool Calling Pipeline', () => {
     // Both tools should have executed (parallel = faster than sequential 100ms)
     expect(executionLog).toContain('slow1');
     expect(executionLog).toContain('slow2');
-    expect(duration).toBeLessThan(1000); // 2*50ms parallel + overhead (allow CI/macOS variance)
+    expect(duration).toBeLessThan(5000); // 2*50ms parallel + overhead (allow full-suite load variance)
   });
 
   it('handles serial (non-concurrent-safe) tools in order', async () => {

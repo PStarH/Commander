@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   createTenantAwareSingleton,
   type TenantAwareSingletonOptions,
@@ -91,7 +91,15 @@ describe('tenantAwareSingleton', () => {
   const factory = () => ({ value: Math.random() });
 
   beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // Use fake timers WITHOUT shouldAdvanceTime so that vi.setSystemTime()
+    // controls the clock deterministically.  shouldAdvanceTime: true makes
+    // the fake clock drift with real wall-clock time between setSystemTime
+    // calls, causing the TTL eviction test to race.
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('returns same instance for same tenant', () => {
