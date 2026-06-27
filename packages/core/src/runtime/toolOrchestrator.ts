@@ -16,7 +16,9 @@ import type { ToolCall, ToolResult, Tool } from './types';
 import { toolErrorRow } from './toolResultShape';
 import type { ToolApproval } from './toolApproval';
 import { CircuitBreakerRegistry } from './circuitBreakerRegistry';
-export { CircuitBreakerRegistry };
+import { getGuardianAgent } from '../security/guardianAgent';
+import { reviewToolCall as guardianReviewToolCall, isRuntimeGuardianAvailable } from './runtimeGuardianBridge';
+
 import { getApprovalSystem } from '../sandbox/approval';
 import { getIdempotencyStore } from '../atr/idempotencyStore';
 import { generateIdempotencyKey } from '../atr/canonicalJson';
@@ -35,7 +37,7 @@ export interface OrchestratorConfig {
   turnTimeoutMs: number;
   /** Max retries per tool call (default: 1) */
   maxRetries: number;
-  /** Whether to use approval gate (default: false) */
+  /** Whether to use approval gate (default: false — Guardian check in execute() provides security) */
   useApproval: boolean;
   /** Circuit breaker: consecutive failures before disabling tool (default: 3) */
   circuitBreakerThreshold: number;
@@ -290,6 +292,84 @@ export class ToolOrchestrator {
       }
 
       try {
+        // Security gate: GuardianAgent check before tool execution.
+        // This closes the critical bypass where ToolOrchestrator.execute()
+        // called tool.execute() directly without any security checks.
+        // The tier1 harness uses this path, so without this gate, agents
+        // could execute dangerous commands unchecked.
+        try {
+          const guardian = getGuardianAgent();
+          const content = `${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 200)})`;
+          const intervention = guardian.monitor({
+            type: 'tool_call',
+            agentId: context.runId ?? 'orchestrator',
+            runId: context.runId,
+            timestamp: Date.now(),
+            content,
+            metadata: { args: toolCall.arguments },
+          });
+          if (intervention) {
+            const errorMsg = `GUARDIAN_BLOCKED: ${intervention}`;
+            return {
+              result: {
+                toolCallId: toolCall.id,
+                name: toolCall.name,
+                output: errorMsg,
+                error: errorMsg,
+                durationMs: Date.now() - startTime,
+              },
+              retries,
+            };
+          }
+        } catch (err) {
+          // Fail closed: guardian evaluation failure blocks the tool call.
+          const errorMsg = `GUARDIAN_ERROR: Security guardian unavailable for ${toolCall.name}: ${err instanceof Error ? err.message : String(err)}`;
+          return {
+            result: {
+              toolCallId: toolCall.id,
+              name: toolCall.name,
+              output: errorMsg,
+              error: errorMsg,
+              durationMs: Date.now() - startTime,
+            },
+            retries,
+          };
+        }
+
+        // Security gate: Runtime Guardian LLM review
+        if (isRuntimeGuardianAvailable()) {
+          try {
+            const goal = (context as any).goal || 'unknown';
+            const decision = await guardianReviewToolCall(toolCall, goal);
+            if (!decision.approved) {
+              const errorMsg = `RUNTIME_GUARDIAN_BLOCKED: ${decision.reason}`;
+              return {
+                result: {
+                  toolCallId: toolCall.id,
+                  name: toolCall.name,
+                  output: errorMsg,
+                  error: errorMsg,
+                  durationMs: Date.now() - startTime,
+                },
+                retries,
+              };
+            }
+          } catch (err) {
+            // Fail closed: runtime guardian LLM review failure blocks the call.
+            const errorMsg = `RUNTIME_GUARDIAN_ERROR: Semantic review unavailable for ${toolCall.name}: ${err instanceof Error ? err.message : String(err)}`;
+            return {
+              result: {
+                toolCallId: toolCall.id,
+                name: toolCall.name,
+                output: errorMsg,
+                error: errorMsg,
+                durationMs: Date.now() - startTime,
+              },
+              retries,
+            };
+          }
+        }
+
         const execPromise = tool.execute(toolCall.arguments);
         const timeoutPromise = new Promise<never>((_, reject) => {
           const timer = setTimeout(
