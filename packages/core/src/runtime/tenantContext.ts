@@ -79,7 +79,6 @@ export function hasTenantContext(): boolean {
 }
 
 /**
-<<<<<<< Updated upstream
  * Sanitize a tenant ID so it can be safely embedded in file paths, cache keys,
  * and database identifiers without traversal/injection issues.
  */
@@ -112,11 +111,13 @@ export function tenantPathSegment(tenantId: string): string {
 /**
  * Assert that the given tenantId matches the current tenant context.
  * Use this in storage backends before returning data.
+ * When no tenant context is active, the assertion is skipped (single-tenant mode).
+ * When a tenant context IS active, it must match the requested tenantId.
  */
 export function assertSameTenant(tenantId: string): void {
   validateTenantId(tenantId);
   const current = getCurrentTenantId();
-  if (current && current !== tenantId) {
+  if (current !== undefined && current !== tenantId) {
     throw new TenantIsolationError(
       `Cross-tenant access blocked: requested=${tenantId}, current=${current}`,
     );
