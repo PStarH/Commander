@@ -360,8 +360,20 @@ export class AdaptiveHITL {
     timestamp: string;
   }> = [];
 
+  // Thompson Sampling posteriors for each signal source weight.
+  // Beta(α, β) tracks how well each source predicts human override decisions.
+  // α = "source's factor direction matched human decision"
+  // β = "source's factor direction did not match human decision"
+  private weightPosteriors: Map<string, { alpha: number; beta: number }> = new Map();
+
   constructor(config: Partial<AdaptiveHITLConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+
+    // Initialize Thompson Sampling posteriors for each weight source
+    const sources = ['toolRisk', 'agentConfidence', 'correlation', 'verification', 'mission', 'timeDecay'];
+    for (const source of sources) {
+      this.weightPosteriors.set(source, { alpha: 1, beta: 1 }); // Beta(1,1) = uniform prior
+    }
   }
 
   // ── Core Evaluation ──────────────────────────────────────────────────
@@ -977,18 +989,174 @@ export class AdaptiveHITL {
   }
 
   /**
-   * Adjust scoring weights based on historical accuracy.
-   * If tool risk scores consistently dominate but agent behavior is more predictive,
-   * gradually shift weight toward agent confidence.
+   * Adjust scoring weights based on historical accuracy using Thompson Sampling.
    *
-   * TODO: Implement Thompson Sampling weight learning from override history.
-   * Currently uses static weights. Future: analyze override patterns to determine
-   * which signal sources best predict human operator decisions.
+   * For each signal source, we maintain a Beta(α, β) posterior tracking how well
+   * that source's factor direction matches human override decisions:
+   * - If a source's factor score was high (risky) AND the human escalated → α++
+   * - If a source's factor score was low (safe) AND the human de-escalated → α++
+   * - Otherwise → β++
+   *
+   * We sample from each Beta posterior to determine new weight proportions,
+   * then normalize so weights sum to 1. This naturally explores different
+   * weight configurations while converging on the most predictive ones.
    */
   private learnWeights(_profile: AgentBehaviorProfile): void {
-    // No-op placeholder — learning is configured via enableWeightLearning flag.
-    // Future iterations will use the overrideHistory to compute which factors
-    // best predict human override decisions, then adjust weights via gradient descent.
+    // Need at least 5 overrides to start learning
+    if (this.overrideHistory.length < 5) {
+      return;
+    }
+
+    const strategySeverity: Record<HITLStrategy, number> = {
+      auto: 0,
+      suggest: 1,
+      confirm: 2,
+      pause_and_review: 3,
+      escalate: 4,
+      deny: 5,
+    };
+
+    // For each override, check which factors correctly predicted the human's decision
+    for (const override of this.overrideHistory) {
+      const original = this.decisionHistory.find((d) => d.decisionId === override.decisionId);
+      if (!original) continue;
+
+      const humanEscalated =
+        strategySeverity[override.overridden] > strategySeverity[override.original];
+
+      // Check each factor's direction
+      for (const factor of original.factors) {
+        const sourceKey = this.mapFactorSourceToKey(factor.source);
+        if (!sourceKey) continue;
+
+        const posterior = this.weightPosteriors.get(sourceKey);
+        if (!posterior) continue;
+
+        // Did this factor's score direction match the human's decision?
+        const factorSaidRisky = factor.score > 50;
+        const factorMatched =
+          (humanEscalated && factorSaidRisky) ||
+          (!humanEscalated && !factorSaidRisky);
+
+        if (factorMatched) {
+          posterior.alpha += 1;
+        } else {
+          posterior.beta += 1;
+        }
+      }
+    }
+
+    // Sample from each posterior to determine new weight proportions
+    const samples: Record<string, number> = {};
+    let totalSampled = 0;
+
+    for (const [source, posterior] of this.weightPosteriors) {
+      const sample = this.sampleBeta(posterior.alpha, posterior.beta);
+      samples[source] = sample;
+      totalSampled += sample;
+    }
+
+    // Normalize and apply with learning rate
+    const learningRate = this.config.learningRate;
+    if (totalSampled > 0) {
+      const newWeights = {
+        toolRisk: samples.toolRisk / totalSampled,
+        agentConfidence: samples.agentConfidence / totalSampled,
+        correlation: samples.correlation / totalSampled,
+        verification: samples.verification / totalSampled,
+        mission: samples.mission / totalSampled,
+        timeDecay: samples.timeDecay / totalSampled,
+      };
+
+      // Blend learned weights with current weights via learning rate
+      this.config.toolRiskWeight =
+        this.config.toolRiskWeight * (1 - learningRate) + newWeights.toolRisk * learningRate;
+      this.config.agentConfidenceWeight =
+        this.config.agentConfidenceWeight * (1 - learningRate) + newWeights.agentConfidence * learningRate;
+      this.config.correlationWeight =
+        this.config.correlationWeight * (1 - learningRate) + newWeights.correlation * learningRate;
+      this.config.verificationWeight =
+        this.config.verificationWeight * (1 - learningRate) + newWeights.verification * learningRate;
+      this.config.missionWeight =
+        this.config.missionWeight * (1 - learningRate) + newWeights.mission * learningRate;
+      this.config.timeDecayWeight =
+        this.config.timeDecayWeight * (1 - learningRate) + newWeights.timeDecay * learningRate;
+
+      // Normalize to ensure they sum to 1
+      const weightSum =
+        this.config.toolRiskWeight +
+        this.config.agentConfidenceWeight +
+        this.config.correlationWeight +
+        this.config.verificationWeight +
+        this.config.missionWeight +
+        this.config.timeDecayWeight;
+
+      if (weightSum > 0) {
+        this.config.toolRiskWeight /= weightSum;
+        this.config.agentConfidenceWeight /= weightSum;
+        this.config.correlationWeight /= weightSum;
+        this.config.verificationWeight /= weightSum;
+        this.config.missionWeight /= weightSum;
+        this.config.timeDecayWeight /= weightSum;
+      }
+    }
+  }
+
+  /**
+   * Map a factor source name to the config weight key.
+   */
+  private mapFactorSourceToKey(source: string): string | null {
+    const map: Record<string, string> = {
+      tool_risk: 'toolRisk',
+      agent_confidence: 'agentConfidence',
+      correlation: 'correlation',
+      verification: 'verification',
+      mission: 'mission',
+      time_decay: 'timeDecay',
+    };
+    return map[source] ?? null;
+  }
+
+  /**
+   * Sample from a Beta(α, β) distribution using the gamma method.
+   * Beta(α, β) = Gamma(α) / (Gamma(α) + Gamma(β))
+   */
+  private sampleBeta(alpha: number, beta: number): number {
+    const x = this.sampleGamma(alpha);
+    const y = this.sampleGamma(beta);
+    return x / (x + y);
+  }
+
+  /**
+   * Sample from a Gamma(shape, 1) distribution using Marsaglia-Tsang method.
+   */
+  private sampleGamma(shape: number): number {
+    if (shape < 1) {
+      const u = Math.random();
+      return this.sampleGamma(shape + 1) * Math.pow(u, 1 / shape);
+    }
+    const d = shape - 1 / 3;
+    const c = 1 / Math.sqrt(9 * d);
+    while (true) {
+      let x: number, v: number;
+      do {
+        x = this.sampleNormal();
+        v = 1 + c * x;
+      } while (v <= 0);
+      v = v * v * v;
+      const u = Math.random();
+      if (u < 1 - 0.0331 * x * x * x * x) return d * v;
+      if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
+    }
+  }
+
+  /**
+   * Sample from standard normal distribution (Box-Muller).
+   */
+  private sampleNormal(): number {
+    const u1 = Math.random();
+    const u2 = Math.random();
+    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
   }
 
   // ── Recording ───────────────────────────────────────────────────────

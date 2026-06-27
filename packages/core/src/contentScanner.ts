@@ -12,6 +12,9 @@
  * 基于 Google DeepMind "AI Agent Traps" (2026-03) 研究成果
  */
 
+import { getMLInjectionDetector } from './security/mlInjectionDetector';
+import { reportSilentFailure } from './silentFailureReporter';
+
 export type ContentThreatType =
   | 'hidden_html'
   | 'css_injection'
@@ -284,12 +287,12 @@ export class DefaultContentScanner implements ContentScanner {
     }
 
     const scanDurationMs = Date.now() - startTime;
-    const riskScore = this.calculateRiskScore(threats);
+    let riskScore = this.calculateRiskScore(threats);
 
     // isSafe: block when (1) any HIGH/CRITICAL threat, OR (2) accumulated
     // riskScore >= 50 (composite MEDIUM threats that individually wouldn't
     // block but collectively indicate a likely attack).
-    const hasHighOrCritical = threats.some(
+    let hasHighOrCritical = threats.some(
       (t) => t.severity === 'HIGH' || t.severity === 'CRITICAL',
     );
     // Composite block: requires riskScore >= 75 (>=5 MEDIUM matches) AND at
@@ -298,7 +301,55 @@ export class DefaultContentScanner implements ContentScanner {
     // while not over-blocking benign text that contains one or two MEDIUM
     // keywords in passing (e.g. a docs FAQ mentioning "hypothetical scenarios").
     const distinctTypes = new Set(threats.map((t) => t.type));
-    const compositeDangerous = riskScore >= 75 && distinctTypes.size >= 2;
+    let compositeDangerous = riskScore >= 75 && distinctTypes.size >= 2;
+
+    // ── Second-layer semantic analysis (ML injection detector) ──
+    // Defense-in-depth: the regex scanner above is a fast first layer. For
+    // content it flagged as suspicious (regex patterns matched) but did NOT
+    // block, run the embedding-based ML detector to catch paraphrased or
+    // semantically-similar injection attempts that bypass pattern matching.
+    // The ML detector only runs on suspicious-but-not-blocked content to avoid
+    // performance overhead on clean input and redundant work on already-blocked
+    // content. It is gated on enablePromptInjectionScan because it is a
+    // prompt-injection detector (semantic variant) and must honor the same
+    // enable flag as the regex prompt-injection scanner — otherwise disabling
+    // prompt-injection scanning would be silently bypassed. Fail-open: if the
+    // ML detector throws, the regex scanner's verdict stands unchanged.
+    const regexBlocked = hasHighOrCritical || compositeDangerous;
+    if (
+      threats.length > 0 &&
+      !regexBlocked &&
+      effectiveConfig.enablePromptInjectionScan
+    ) {
+      try {
+        const mlResult = getMLInjectionDetector().detect(content);
+        const mlScore =
+          mlResult.isInjection && mlResult.nearestMatch
+            ? mlResult.nearestMatch.similarity
+            : 0;
+        if (mlResult.isInjection && mlScore > 0.8) {
+          // High-confidence semantic injection — upgrade the finding to blocked.
+          threats.push({
+            type: 'prompt_injection',
+            severity: 'CRITICAL',
+            description: `ML injection detector flagged semantic prompt injection (similarity=${mlScore.toFixed(2)}, confidence=${mlResult.confidence}%, nearest="${mlResult.nearestMatch?.text.slice(0, 60) ?? ''}")`,
+            location: {
+              start: 0,
+              end: content.length,
+              snippet: content.substring(0, 100),
+            },
+            remediation: this.getRemediation({ type: 'prompt_injection' } as ContentThreat),
+          });
+          hasHighOrCritical = true;
+          compositeDangerous = true;
+          riskScore = this.calculateRiskScore(threats);
+        }
+      } catch (err) {
+        // Fail-open: log the error but keep the regex scanner's result.
+        reportSilentFailure(err, 'contentScanner:mlInjectionDetector');
+      }
+    }
+
     return {
       isSafe: !hasHighOrCritical && !compositeDangerous,
       threats,

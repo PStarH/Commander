@@ -133,6 +133,10 @@ export class AgentLineage {
    * Record a child agent spawn. Creates a new LineageNode, writes to the
    * audit chain, and returns the node for caller use.
    *
+   * Security: Verifies that the caller claiming to be parentInstanceId actually
+   * exists in the lineage tree. Per OWASP — never trust self-reported agent
+   * identity without verification; prevents agent impersonation (agentjacking).
+   *
    * @param parentInstanceId - The spawning agent's instance ID, or null for root.
    * @param childAgentId - The child agent's type/template ID.
    * @param options - Scope, capability token JTI, role, metadata.
@@ -152,6 +156,16 @@ export class AgentLineage {
   ): LineageNode {
     const tenantId = getCurrentTenantId();
     const instanceId = options.instanceId ?? crypto.randomUUID().replace(/-/g, '');
+
+    // Security: Verify parent exists in the lineage tree to prevent identity spoofing.
+    // A null parentInstanceId is valid (root spawn), but a non-null ID that doesn't
+    // exist in the tree indicates a spoofing attempt.
+    if (parentInstanceId !== null && !this.nodes.has(parentInstanceId)) {
+      throw new Error(
+        `AgentLineage: Cannot spawn child for unknown parent "${parentInstanceId}". ` +
+        'This may indicate an agent identity spoofing attempt (agentjacking).',
+      );
+    }
 
     // Compute depth: if parent exists, parent.depth + 1; else from options or 0.
     let depth = options.depth ?? 0;

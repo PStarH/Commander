@@ -389,7 +389,7 @@ export class HallucinationDetector {
         if (!nearHedging) {
           signals.push({
             type: 'unsupported_specificity',
-            severity: hasHedging ? 'low' : 'low',
+            severity: hasHedging ? 'low' : 'medium',
             evidence: `Specific claim without source: "${match[0]}"`,
             suggestion: 'Add attribution or hedge: "approximately", "around", "according to..."',
           });

@@ -55,6 +55,7 @@ export type SecurityEventType =
   | 'command_injection_attempt'
   | 'memory_poisoning_detected'
   | 'skill_security_violation'
+  | 'a2a_security_violation'
   | 'config_change'
   | 'security_scan'
   // Audit #1/#4/#7 hardening — operational events emitted by the
@@ -65,7 +66,13 @@ export type SecurityEventType =
   | 'key_rotation_confirmed'
   | 'key_rotation_dry_run'
   | 'token_budget_breach'
-  | 'circuit_breaker_short_circuit';
+  | 'circuit_breaker_short_circuit'
+  | 'security_decision'
+  // Adaptive Threat Learning Engine — 学习型安全事件。
+  // - threat_learned: 新签名/规则/攻击家族被学习或规则生命周期变更
+  // - signature_matched: 入侵请求命中已学习的签名
+  | 'threat_learned'
+  | 'signature_matched';
 
 export type SecuritySeverity = 'low' | 'medium' | 'high' | 'critical';
 
