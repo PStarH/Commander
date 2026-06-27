@@ -78,6 +78,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     priority: 0,
     supportsJSONMode: false,
     supportsStructuredOutput: false,
+    supportsBatchAPI: true,
+    maxBatchSize: 100000,
   },
   {
     id: 'gpt-4o-mini',
@@ -91,6 +93,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     priority: 1,
     supportsJSONMode: true,
     supportsStructuredOutput: true,
+    supportsBatchAPI: true,
+    maxBatchSize: 50000,
   },
   {
     id: 'gemini-2-flash',
@@ -192,6 +196,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     priority: 0,
     supportsJSONMode: false,
     supportsStructuredOutput: false,
+    supportsBatchAPI: true,
+    maxBatchSize: 100000,
   },
   {
     id: 'gpt-4o',
@@ -205,6 +211,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     priority: 1,
     supportsJSONMode: true,
     supportsStructuredOutput: true,
+    supportsBatchAPI: true,
+    maxBatchSize: 50000,
   },
   {
     id: 'gemini-2-pro',
@@ -369,6 +377,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     priority: 0,
     supportsJSONMode: false,
     supportsStructuredOutput: false,
+    supportsBatchAPI: true,
+    maxBatchSize: 100000,
   },
   {
     id: 'gpt-5',
@@ -382,9 +392,11 @@ const DEFAULT_MODELS: ModelConfig[] = [
     priority: 1,
     supportsJSONMode: true,
     supportsStructuredOutput: true,
+    supportsBatchAPI: true,
+    maxBatchSize: 50000,
   },
   {
-    id: 'claude-sonnet-4-6',
+    id: 'bedrock-claude-sonnet-4-6',
     provider: 'bedrock',
     tier: 'power',
     costPer1MInput: 3,
@@ -1059,15 +1071,17 @@ export class ModelRouter {
    * @returns true if the task can be deferred to batch processing
    */
   static isBatchEligible(ctx: AgentExecutionContext): boolean {
-    // Multi-step interactive tasks (>5 steps) need real-time tool interaction
-    // Single-step or short-chain tasks (≤5 steps) can be batched if token budget fits
+    // Fail-closed: never batch interactive multi-step tool chains
+    // (>5 steps need real-time tool interaction and feedback loops)
     if (ctx.maxSteps > 5) return false;
+    // Fail-closed: never batch when tools are present (tool calls require
+    // real-time execution and result feedback — batch can't do this)
+    if (ctx.availableTools && ctx.availableTools.length > 0) return false;
     // Low-budget tasks can tolerate delay (and batch savings matter proportionally more)
     if (ctx.tokenBudget <= 4000) return true;
     // High-token tasks benefit most from 50% batch savings (absolute $ savings)
     if (ctx.tokenBudget > 50000) return true;
     // Medium-budget tasks with ≤5 steps: batch if not time-sensitive
-    // Check for interactive signal: no parentRunId (not a sub-agent) = likely user-facing
     // Sub-agents and evaluation runs (with parentRunId) can be batched
     if (ctx.maxSteps <= 5 && ctx.parentRunId) return true;
     // Single-step tasks with moderate budget still benefit from batch savings
