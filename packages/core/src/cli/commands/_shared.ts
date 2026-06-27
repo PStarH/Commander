@@ -23,6 +23,8 @@ import { XAIProvider } from '../../runtime/providers/xaiProvider';
 import { AnyscaleProvider } from '../../runtime/providers/anyscaleProvider';
 import { DeepInfraProvider } from '../../runtime/providers/deepinfraProvider';
 import { AgnesProvider } from '../../runtime/providers/agnesProvider';
+import { StepFunProvider } from '../../runtime/providers/stepfunProvider';
+import { MiniMaxProvider } from '../../runtime/providers/minimaxProvider';
 import { getModelRouter } from '../../runtime/modelRouter';
 import { createAllTools, wireResourceToolDependencies } from '../../tools/index';
 import {
@@ -126,6 +128,8 @@ export function createRuntime(): AgentRuntime | null {
     anyscale: AnyscaleProvider,
     deepinfra: DeepInfraProvider,
     agnes: AgnesProvider,
+    stepfun: StepFunProvider,
+    minimax: MiniMaxProvider,
   };
   const ProviderClass = ProviderMap[provider.type] ?? OpenAIProvider;
 
